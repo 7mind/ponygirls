@@ -466,7 +466,8 @@ try {
     else if (change === 'disconnect') { fixture.restart(); await page.clock.runFor(200); }
     else { fixture.mode = 'unauthorized'; fixture.restart(); await page.clock.runFor(200); await page.getByRole('heading', { name: /^Sign in/ }).waitFor(); }
     const reply = fixture.pendingFind.shift(); if (reply !== undefined) reply();
-    if (change === 'source-acl') { await finder(page).getByRole('alert').waitFor(); assert.equal(await findInput(page).inputValue(), ''); }
+    // A denied Find is a denied read of the source: the page leaves the transcript, outline and Find (draft and hits) for its notice.
+    if (change === 'source-acl') { await main(page).getByRole('alert').filter({ hasText: 'This session can no longer be read' }).waitFor(); assert.equal(await page.locator('[data-message-id], [data-passage-id], [role="search"][aria-label="Find in selected history"], [aria-label="Matching messages"]').count(), 0); }
     else if (change === 'same-owner-auth' || change === 'account') {
       if (change === 'account') fixture.user = new api.UserInfo('bob', 'bob', [api.Scope.Read, api.Scope.Raw]);
       await page.getByLabel('Username', { exact: true }).fill(change === 'account' ? 'bob' : 'alice'); await page.getByLabel('Password', { exact: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -735,8 +736,21 @@ try {
     await search.locator('[data-row-id]').first().getByRole('link', { name, exact: true }).click(); await main(page).waitFor();
   }
   const pinnedTo = (operation, view) => operation.view !== undefined && operation.view.revision === view.revision && operation.view.generationId === view.generationId;
-  await run('a Search link carries the revision, generation, message and Find text, and the page reads exactly that place', fromSearch(() => {}), async ({ page, fixture }) => {
+  // The first match lands on the last bytes of m65, far beyond the folded preview of that long message.
+  const LATE_MATCH = 'continued source';
+  function lateMatch(fixture) {
+    const text = fixture.messagesAt(fixture.view.revision)[64].text, start = Buffer.byteLength(text.slice(0, text.lastIndexOf(LATE_MATCH)));
+    fixture.archiveSearchTransform = result => result.with({ evidence: result.evidence.map(evidence => evidence.with({ matches: evidence.matches.map((match, index) => index === 0 ? match.with({ span: new api.Span('m65', start, start + Buffer.byteLength(LATE_MATCH)) }) : match) })) });
+  }
+  await run('a Search link carries the revision, generation, message, matched bytes and Find text, and the page lands exactly there: unfolded, highlighted, focused', fromSearch(lateMatch), async ({ page, fixture }) => {
     await openFromSearch(page, 'Open at first match'); await ready(page); await waitTop(page, 'm65');
+    const landed = message(page, 'm65');
+    assert.equal(await landed.locator('mark').textContent(), LATE_MATCH, 'exactly the matched bytes are highlighted');
+    assert.equal(await landed.locator('.msg-fold').count(), 0, 'the message is unfolded'); assert.equal(await landed.getByRole('button', { name: 'Show full message', exact: true }).count(), 0);
+    assert.equal(await landed.getAttribute('aria-current'), 'location');
+    await page.waitForFunction(() => document.activeElement?.classList.contains('find-landing') === true);
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Search result · message 65 · m65', 'the landing marker takes the focus');
+    assert.match(await page.getByRole('status', { name: 'Source navigation status', exact: true }).textContent(), /^Search result: found matching message 65 · m65/);
     assert.ok(calls(fixture, api.Operation_GetSession).every(call => pinnedTo(call.operation, fixture.view)), 'the session is read at the linked pin only');
     const located = calls(fixture, api.Operation_LocateMessage).at(-1).operation;
     assert.equal(located.messageId, 'm65'); assert.ok(pinnedTo(located, fixture.view), 'the linked message is located in the linked view');
@@ -744,7 +758,7 @@ try {
     assert.equal(literal.literal, 'source'); assert.ok(pinnedTo(literal, fixture.view), 'the Find text runs once on arrival, in the linked view'); assert.equal(await findInput(page).inputValue(), 'source');
     await page.waitForFunction(() => /matching messages/.test(document.querySelector('[aria-label="Find status"]')?.textContent ?? ''));
     assert.match(await findStatus(page).textContent(), /^0 matching messages · end of matches$/, 'the arrival Find keeps its result: the landing at `at` does not discard it');
-    assert.doesNotMatch(await hash(page), /find=/, 'the Find text is not kept in the address');
+    assert.doesNotMatch(await hash(page), /find=|span=/, 'the Find text and the matched bytes are not kept in the address');
   });
   await run('a link to a retired generation shows the unavailable state, never stale or default-view content', fromSearch(fixture => { fixture.conversationFailure = operation => operation.view !== undefined && operation.view.generationId !== undefined ? 'indexed-view-retired' : null; }), async ({ page, fixture }) => {
     await openFromSearch(page, 'Search conversation 1'); await main(page).getByRole('region', { name: 'Indexed view unavailable', exact: true }).waitFor();

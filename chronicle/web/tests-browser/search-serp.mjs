@@ -15,11 +15,16 @@ const origin = `http://127.0.0.1:${server.httpServer.address().port}`, PAGE = 't
 const browser = await chromium.launch({ headless: true }), results = [], errors = [], dialogs = [];
 const SEARCH_TEXT = 'mode:semantic source', FIRST_BATCH = 10, TOTAL_ROWS = 23, MASTHEAD_HEIGHT = 48, SCROLL_TOLERANCE = 2, SCROLLED_TO = 1500, STICKY_SLACK = 40;
 const TITLE = index => `Search conversation ${index}`;
-async function scene(configure, { width = 1440, height = 1000, theme = 'light', text = SEARCH_TEXT } = {}) {
+async function scene(configure, { width = 1440, height = 1000, theme = 'light', text = SEARCH_TEXT, probe = false } = {}) {
   const context = await browser.newContext({ viewport: { width, height }, colorScheme: theme }), page = await context.newPage(), fixture = new SearchFixture();
   page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message)); page.on('dialog', dialog => { dialogs.push(dialog.type()); void dialog.dismiss(); });
   if (configure) configure(fixture);
-  await page.clock.install(); await fixture.install(page); await page.goto(`${origin}/${PAGE}`);
+  await page.clock.install(); await fixture.install(page);
+  // probe: counts the WebSocket messages the page received (installed after the fixture's routing, which replaces
+  // WebSocket; its listener runs before the app's), so that a case can wait
+  // until a released reply has been delivered.
+  if (probe) await page.addInitScript(() => { const Native = window.WebSocket; window.__inbound = 0; window.WebSocket = class extends Native { constructor(...args) { super(...args); this.addEventListener('message', () => { window.__inbound++; }); } }; });
+  await page.goto(`${origin}/${PAGE}`);
   await searchMain(page).waitFor();
   if (text !== null) await input(page).fill(text);
   return { context, page, fixture };
@@ -27,6 +32,12 @@ async function scene(configure, { width = 1440, height = 1000, theme = 'light', 
 const calls = (fixture, Type) => fixture.calls.filter(call => call.operation instanceof Type).map(call => call.operation);
 const searchMain = page => page.getByRole('main', { name: 'Search', exact: true });
 const sessionMain = page => page.getByRole('main', { name: 'Session', exact: true });
+const inbound = page => page.evaluate(() => window.__inbound);
+// Lets the page run its queued tasks (the delivered reply's handlers, renders, effects) without advancing the page clock.
+const quiesce = page => page.evaluate(rounds => new Promise(resolve => { const channel = new MessageChannel(); let left = rounds; channel.port1.onmessage = () => { if (--left === 0) resolve(); else channel.port2.postMessage(0); }; channel.port2.postMessage(0); }), 20);
+// Transcript, outline and Find of the session page, anywhere in the document.
+const SOURCE_CONTENT = '[data-message-id], [data-passage-id], [role="search"][aria-label="Find in selected history"], [aria-label="Matching messages"]';
+const sourceText = session => session.evaluate(element => element.innerHTML.includes('Literal archived text') || element.innerHTML.includes('continued source'));
 const input = page => searchMain(page).getByRole('combobox', { name: 'Search conversations', exact: true });
 const submit = page => searchMain(page).getByRole('button', { name: 'Search', exact: true }).click();
 // Scoped to the Search landmark: the retained Archive's table rows carry data-row-id too.
@@ -139,7 +150,7 @@ try {
       return { key: links[0].dataset.focusKey, id: links[0].closest('[data-row-id]').dataset.rowId };
     });
     // The session page runs the Find text once and then drops it from its address: the link itself carries it.
-    assert.match(await page.locator(`[data-focus-key="${opener.key}"]`).getAttribute('href'), /\?at=m65&find=source&gen=[^&]+&rev=\d+$/, 'Open at first match carries message, Find text, generation and revision');
+    assert.match(await page.locator(`[data-focus-key="${opener.key}"]`).getAttribute('href'), /\?at=m65&find=source&gen=[^&]+&rev=\d+&span=\d+-\d+$/, 'Open at first match carries message, Find text, generation, revision and the matched bytes');
     await page.locator(`[data-focus-key="${opener.key}"]`).click();
     await page.waitForFunction(id => location.hash.startsWith(`#/session/${id}?`), opener.id);
     await page.goBack(); await searchMain(page).waitFor();
@@ -247,8 +258,8 @@ try {
     const reads = calls(fixture, api.Operation_ReadMessageContext).filter(read => read.sessionId === fixture.session.id);
     assert.ok(reads.some(read => read.view.revision === fixture.session.revision && read.view.generationId === undefined), 'the literal witness is read at the HEAD pin');
     assert.ok(reads.some(read => read.view.revision === fixture.view.revision && read.view.generationId === fixture.view.generationId), 'the semantic witness is read at its published pin');
-    assert.match(await hits(literal).getAttribute('href'), new RegExp(`\\?at=m66&find=Separate&rev=${fixture.session.revision}$`));
-    assert.match(await hits(published).getAttribute('href'), new RegExp(`\\?at=m65&find=source&gen=${fixture.view.generationId}&rev=${fixture.view.revision}$`));
+    assert.match(await hits(literal).getAttribute('href'), new RegExp(`\\?at=m66&find=Separate&rev=${fixture.session.revision}&span=0-9$`));
+    assert.match(await hits(published).getAttribute('href'), new RegExp(`\\?at=m65&find=source&gen=${fixture.view.generationId}&rev=${fixture.view.revision}&span=0-21$`));
     assert.notEqual(fixture.session.revision, fixture.view.revision); await context.close();
   });
   await group('session links keep the complete pin: published and archive-only views of one revision stay distinct and decode back', async () => {
@@ -257,7 +268,7 @@ try {
     const first = rows(page).first(), published = await hits(first.locator(`[data-match-kind="${api.ArchiveMatchKind.Semantic}"]`)).getAttribute('href'), archiveOnly = await hits(first.locator(`[data-match-kind="${api.ArchiveMatchKind.Literal}"]`)).getAttribute('href');
     assert.notEqual(published.replace(/at=[^&]*&find=[^&]*&/, ''), archiveOnly.replace(/at=[^&]*&find=[^&]*&/, ''), 'the same revision with and without a generation gives different links');
     assert.deepEqual(await sessionPinOf(page, published), pinOf(fixture.view)); assert.deepEqual(await sessionPinOf(page, archiveOnly), { revision: 1, generationId: null });
-    assert.match(await link(first, TITLE(1)).getAttribute('href'), /\?at=m65&find=source&gen=[^&]+&rev=1$/, 'the title link keeps the published pin of its landing match'); await context.close();
+    assert.match(await link(first, TITLE(1)).getAttribute('href'), /\?at=m65&find=source&gen=[^&]+&rev=1&span=0-21$/, 'the title link keeps the published pin of its landing match'); await context.close();
   });
   await group('expanded hits show the messages between non-adjacent matches', async () => {
     const { page, context } = await scene(f => { f.archiveSearchTransform = result => result.with({ evidence: result.evidence.map(evidence => evidence.with({ matches: [evidence.matches[0], evidence.matches[1].with({ span: new api.Span('m80', 0, 3) })] })) }); });
@@ -305,7 +316,7 @@ try {
   await group('keyboard reaches Open at first match; the session route carries the match and Back returns focus to the opener', async () => {
     const { page, fixture, context } = await scene(); await submit(page); await ready(page);
     const reads = calls(fixture, api.Operation_ArchiveSearch).length, open = rows(page).first().getByRole('link', { name: 'Open at first match' });
-    assert.match(await open.getAttribute('href'), /\?at=m65&find=source&gen=[^&]+&rev=1$/);
+    assert.match(await open.getAttribute('href'), /\?at=m65&find=source&gen=[^&]+&rev=1&span=0-21$/);
     await open.focus(); await page.keyboard.press('Enter');
     await page.waitForFunction(id => location.hash.startsWith(`#/session/${id}?`), fixture.session.id);
     await page.goBack(); await searchMain(page).waitFor();
@@ -424,6 +435,8 @@ try {
     await link(rows(page).first(), 'Open at first match').click();
     await page.waitForFunction(() => window.__denials.length === 1);
     assert.deepEqual((await denials(page)).map(item => [item.origin, item.sessionId, item.view, item.code]), [['session', fixture.session.id, pinOf(fixture.view), 'forbidden']], 'the nested Find denial is published with the pin it searched');
+    await sessionMain(page).getByRole('alert').filter({ hasText: 'This session can no longer be read' }).waitFor();
+    assert.equal(await page.locator(SOURCE_CONTENT).count(), 0, 'the page itself leaves its transcript, outline and Find'); assert.equal(await sourceText(sessionMain(page)), false);
     await page.goBack(); await page.locator('[data-state="intro"]').waitFor();
     fixture.findFailure = null; await submit(page); await ready(page);
     const related = async (title, sessionId) => {
@@ -462,6 +475,33 @@ try {
     assert.deepEqual((await denials(page)).find(item => item.sessionId === fixture.session.id), { origin: 'search', sessionId: fixture.session.id, view: pinOf(fixture.view), code: 'forbidden', message: 'Synthetic source unavailable' });
     assert.equal(await page.locator('[data-message-id], [data-passage-id], [data-pane="transcript"]').count(), 0, 'no transcript element stays in the document');
     assert.equal(await session.evaluate(element => element.innerHTML.includes('Literal archived text') || element.innerHTML.includes('continued source')), false, 'no transcript text stays in the document');
+    await context.close();
+  });
+  for (const kind of ['find', 'locator', 'append']) await group(`a denied ${kind} read clears the session page's transcript, outline and Find from the document, also against a late reply of an earlier read, and clears Search`, async () => {
+    const { page, fixture, context } = await scene(f => { f.messageCount = 400; f.holdFind = kind === 'append'; }, { probe: true }); await submit(page); await ready(page);
+    await link(rows(page).first(), TITLE(1)).click(); const session = sessionMain(page); await session.locator('#message-m65').waitFor();
+    // The earlier read whose reply arrives after the denial: the arrival Find (held) for an appended page, else a later message page.
+    if (kind !== 'append') { const pages = calls(fixture, api.Operation_GetMessages).length; fixture.holdMessages = true; await session.locator('[data-pane="transcript"]').evaluate(pane => pane.scrollTo({ top: pane.scrollHeight, behavior: 'instant' })); await fixture.waitCall(api.Operation_GetMessages, pages + 1); }
+    else await fixture.waitCall(api.Operation_SearchSessionMessages, 1);
+    if (kind === 'find') { fixture.findFailure = 'forbidden'; await session.getByRole('search', { name: 'Find in selected history', exact: true }).getByRole('button', { name: 'Find messages', exact: true }).click(); }
+    else if (kind === 'locator') { fixture.locatorFailure = 'forbidden'; await session.getByRole('list', { name: 'Passages', exact: true }).getByRole('button', { name: /Keep original source independent/ }).click(); }
+    else { fixture.messagesFailure = 'forbidden'; await session.locator('[data-pane="transcript"]').evaluate(pane => pane.scrollTo({ top: pane.scrollHeight, behavior: 'instant' })); }
+    await session.getByRole('alert').filter({ hasText: 'This session can no longer be read' }).waitFor();
+    assert.equal(await page.locator(SOURCE_CONTENT).count(), 0, 'no transcript, outline or Find element stays in the document'); assert.equal(await sourceText(session), false);
+    const delivered = await inbound(page);
+    if (kind === 'append') { fixture.holdFind = false; fixture.pendingFind.splice(0).forEach(reply => reply()); } else fixture.releaseMessages();
+    await page.waitForFunction(count => window.__inbound > count, delivered); await quiesce(page);
+    assert.equal(await page.locator(SOURCE_CONTENT).count(), 0, 'the late reply brings nothing back'); assert.equal(await sourceText(session), false);
+    await page.goBack(); await page.locator('[data-state="intro"]').waitFor(); assert.equal(await rows(page).count(), 0, 'the denial is published to Search');
+    await context.close();
+  });
+  await group('a denied Related read of the open session clears the page and the Search results that show the session', async () => {
+    const { page, fixture, context } = await scene(); await submit(page); await ready(page); await watchDenials(page); fixture.relatedFailure = 'forbidden';
+    await link(rows(page).first(), TITLE(1)).click(); const session = sessionMain(page);
+    await session.getByRole('alert').filter({ hasText: 'This session can no longer be read' }).waitFor();
+    assert.equal(await page.locator(SOURCE_CONTENT).count(), 0); assert.equal(await sourceText(session), false);
+    assert.deepEqual((await denials(page)).map(item => [item.origin, item.sessionId, item.view, item.code]), [['session', fixture.session.id, null, 'forbidden']], 'the Related read is unpinned: it reports the session with no pin');
+    await page.goBack(); await page.locator('[data-state="intro"]').waitFor(); assert.equal(await rows(page).count(), 0);
     await context.close();
   });
   await group('an abandoned session read changes nothing: a denial that arrives after leaving the page is neither published nor applied', async () => {

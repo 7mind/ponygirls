@@ -240,6 +240,8 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
   // the page as revocations, which the page applies when they concern the shown view. Revocations belong to the page
   // instance they were given to: they are dropped when another session (or no session) is shown, and for another owner.
   const [revocations, setRevocations] = useState<{ owner: string | null; sessionId: string; items: readonly SourceRevocation[] } | null>(null);
+  // Revocations a page has applied or found not to concern it: a remounted page (reconnect, new arrival) does not apply them again.
+  const settledRevocations = useRef(new WeakSet<SourceRevocation>());
   useEffect(() => { setRevocations(previous => previous !== null && previous.sessionId !== openSession ? null : previous); }, [openSession]);
   const revoke = useCallback((owner: string | null, sessionId: string, revocation: SourceRevocation) => setRevocations(previous =>
     previous !== null && previous.owner === owner && previous.sessionId === sessionId ? { ...previous, items: [...previous.items, revocation] } : { owner, sessionId, items: [revocation] }), []);
@@ -302,7 +304,7 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
     if (openSession === null) return null;
     const list = retainedRoute(sessionParent, scope.cache), parent: ParentList = { href: formatRoute(list), label: NAV_ITEMS.find(item => item.view === sessionParent)!.label };
     const shownRevocations = revocations !== null && revocations.owner === scope.owner && revocations.sessionId === openSession ? revocations.items : NO_REVOCATIONS;
-    return <SessionPage key={`${scope.owner ?? ""}:${openSession}`} connection={connection} stats={stats} user={user} findReads={findReads} route={route} router={router} parent={parent} back={() => router.back(list)} onSourceUnavailable={reportSession} revocations={shownRevocations}/>;
+    return <SessionPage key={`${scope.owner ?? ""}:${openSession}`} connection={connection} stats={stats} user={user} findReads={findReads} route={route} router={router} parent={parent} back={() => router.back(list)} onSourceUnavailable={reportSession} revocations={shownRevocations} settledRevocations={settledRevocations.current}/>;
   }
   return <RouteStateContext.Provider value={scope.cache}><div className="app-shell" onFocusCapture={dismissPopoverOnExternalFocus}><a className="skip-link" href={`#${MAIN_CONTENT_ID}`} onClick={skipToContent}>Skip to content</a>
     <header className="masthead"><Brand/>

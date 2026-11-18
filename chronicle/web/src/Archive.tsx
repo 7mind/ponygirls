@@ -42,7 +42,7 @@ export function emptyArchive(): ArchiveState { return { submitted: '', sort: Arc
 /** The session page of a row, pinned to the view the row shows (its matched view, else its published view, else its HEAD). */
 function sessionOf(row: ArchiveRow): Route {
   const view = row.matchedView ?? row.publishedView ?? row.head.view;
-  return sessionPlaceRoute(row.head.id, { pin: { revision: view.revision, generationId: view.generationId ?? null }, at: null, find: null, pane: null, passage: null });
+  return sessionPlaceRoute(row.head.id, { pin: { revision: view.revision, generationId: view.generationId ?? null }, at: null, find: null, pane: null, passage: null, span: null });
 }
 interface When { absolute: string; relative: string }
 function when(value: string | undefined, now: number): When | null {

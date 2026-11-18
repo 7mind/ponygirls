@@ -3,7 +3,7 @@ export { api };
 export class SearchFixture extends Goal50Fixture {
   relatedHits = [];
   archiveSearchCount = 23; archiveSearchScope = api.ArchiveTextScope.BoundedCandidateSets; archiveSearchRelevance = true; archiveSearchFailure = null; archiveSearchTransform = result => result;
-  holdSearch = false; pendingSearch = []; holdContext = false; pendingContext = []; contextFailure = null; contextTransform = result => result; searchTransform = result => result; locatorWrongPin = false; conversationFailure = null; findFailure = null; holdFind = false; pendingFind = [];
+  holdSearch = false; pendingSearch = []; holdContext = false; pendingContext = []; contextFailure = null; contextTransform = result => result; searchTransform = result => result; locatorWrongPin = false; conversationFailure = null; relatedFailure = null; locatorFailure = null; messagesFailure = null; findFailure = null; holdFind = false; pendingFind = [];
   messagesAt(revision) {
     return super.messagesAt(revision).map(message => message.id === 'm65' ? message.with({ role: 'user', text: `Exact 猫🦄 matched source r${revision}. <script>literal()</script> ` + 'continued source '.repeat(1400) }) : message.id === 'm66' ? message.with({ role: 'assistant', text: `Separate assistant source r${revision}.` }) : message);
   }
@@ -44,7 +44,10 @@ export class SearchFixture extends Goal50Fixture {
       const reply = () => send(new api.Result_Error(new api.Failure(conversationFailure, 'Pinned conversation source access removed')));
       if (this.holdSessions) this.pendingSessions.push(reply); else reply(); return true;
     }
-    if (operation instanceof api.Operation_Related) { send(new api.Result_Related(new api.RelatedResult(this.relatedHits))); return true; }
+    if (operation instanceof api.Operation_Related) { send(this.relatedFailure === null ? new api.Result_Related(new api.RelatedResult(this.relatedHits)) : new api.Result_Error(new api.Failure(this.relatedFailure, 'Related conversations access removed'))); return true; }
+    // locatorFailure / messagesFailure: a code for every later LocateMessage / GetMessages.
+    if (this.locatorFailure !== null && operation instanceof api.Operation_LocateMessage) { send(new api.Result_Error(new api.Failure(this.locatorFailure, 'Source locator access removed'))); return true; }
+    if (this.messagesFailure !== null && operation instanceof api.Operation_GetMessages) { send(new api.Result_Error(new api.Failure(this.messagesFailure, 'Source messages access removed'))); return true; }
     if (operation instanceof api.Operation_ArchiveSearch) {
       if (this.archiveSearchFailure !== null) { send(new api.Result_Error(new api.Failure(this.archiveSearchFailure, 'Synthetic expression search unavailable'))); return true; }
       const offset = operation.query.cursor === undefined ? 0 : Number(operation.query.cursor);

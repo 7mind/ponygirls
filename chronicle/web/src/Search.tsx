@@ -33,12 +33,13 @@ function Notice({ title, children, actions }: { title: string; children: ReactNo
 function sentence(text: string): string { return `${text.replace(/[.\s]+$/, '')}.`; }
 function timestamp(value: string): string { return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }); }
 // Links to the session route (spec §5) carry the complete pin of the view they read (router sessionPlaceRoute) and the match to land on.
-function sessionLink(sessionId: string, view: ContentView, landing: Pick<SessionPlace, 'at' | 'find'>): string {
+// A match link lands on the exact matched bytes (`span`), which the session page highlights, unfolds and focuses.
+function sessionLink(sessionId: string, view: ContentView, landing: Pick<SessionPlace, 'at' | 'find' | 'span'>): string {
   return formatRoute(sessionPlaceRoute(sessionId, { pin: { revision: view.revision, generationId: view.generationId ?? null }, ...landing, pane: null, passage: null }));
 }
-function matchLink(sessionId: string, match: ArchiveSourceMatch): string { return sessionLink(sessionId, match.view, { at: match.span.messageId, find: match.operand }); }
+function matchLink(sessionId: string, match: ArchiveSourceMatch): string { return sessionLink(sessionId, match.view, { at: match.span.messageId, find: match.operand, span: match.span.end > match.span.start ? { start: match.span.start, end: match.span.end } : null }); }
 function titleLink(sessionId: string, view: ContentView, landing: ArchiveSourceMatch | undefined): string {
-  return landing === undefined ? sessionLink(sessionId, view, { at: null, find: null }) : matchLink(sessionId, landing);
+  return landing === undefined ? sessionLink(sessionId, view, { at: null, find: null, span: null }) : matchLink(sessionId, landing);
 }
 function matchTitle(match: ArchiveSourceMatch): string { return `${match.kind === ArchiveMatchKind.Literal ? 'Literal' : 'Semantic'} match for ${match.operand}`; }
 function Highlighted({ parts }: { parts: readonly TextPart[] }) {

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ReactNode, RefObject } from 'react';
+import type { ReactNode } from 'react';
 import { SessionFind, type FindChoice } from './SessionFind.tsx';
 import { recordedYoloProfile } from './recorded-yolo-profile.ts';
 import type { SessionFindReadGate } from './session-find.ts';
@@ -13,7 +13,7 @@ import { ErrorNotice, formatDate } from './App.tsx';
 import { CopyButton, MessageContent, sourceOnly } from './MessageContent.tsx';
 import { Anchored } from './Popover.tsx';
 import { Icon } from './Icon.tsx';
-import { HashRouter, InvalidSessionAddress, formatRoute, parseFragment, routeSlot, sessionIdOf, sessionPlaceOf, sessionPlaceRoute, useRouteState, SESSION_PANES, type Route, type SessionPane, type SessionPlace } from './router.ts';
+import { HashRouter, InvalidSessionAddress, formatRoute, parseFragment, routeSlot, sessionIdOf, sessionPlaceOf, sessionPlaceRoute, useRouteState, SESSION_PANES, type Route, type SessionPane, type SessionPlace, type SessionSpan } from './router.ts';
 import { contentViewKey, requireContentView } from './source-view.ts';
 import { isAuthorityDenial, sourceFailureAffectsView } from './source-authority.ts';
 import { PASSAGE_PAGE_SIZE, validatePassages, validatePassageSpans } from './passages.ts';
@@ -36,7 +36,7 @@ const SIDE_TABS: readonly { readonly pane: Exclude<SessionPane, 'closed'>; reado
 const TOOL_ROLES: ReadonlySet<string> = new Set(['tool', 'toolresult', 'function_call']);
 const PROMPT_ROLES: ReadonlySet<string> = new Set(['system', 'developer']);
 const ROLE_LABELS: ReadonlyMap<string, string> = new Map([['user', 'User'], ['assistant', 'Assistant'], ['system', 'System'], ['developer', 'Developer'], ['tool', 'Tool'], ['toolresult', 'Tool result'], ['function_call', 'Function call']]);
-type SourceNavigationOrigin = 'annotation' | 'find' | 'place';
+type SourceNavigationOrigin = 'annotation' | 'find' | 'search' | 'place';
 interface SourceNavigation { operation: number; origin: SourceNavigationOrigin }
 /** A navigation waiting for its message page: by message id (located) or, for the position bar, by position only. */
 interface PendingSourceScroll extends SourceNavigation { messageId: string | null; position: number; focus: boolean }
@@ -50,7 +50,7 @@ interface PageIntegration {
   back(): void;
   /** The parent list, for the header's crumb and the notices' Back. */
   parent: ParentList;
-  initial: { readonly at: string | null; readonly find: string | null; readonly passage: string | null };
+  initial: { readonly at: string | null; readonly find: string | null; readonly passage: string | null; readonly span: SessionSpan | null };
   messageLink(view: ContentView, messageId: string): string;
   report(update: { readonly view: ContentView; readonly at: string | null; readonly passage: string | null }): void;
 }
@@ -76,7 +76,7 @@ const UNAVAILABLE_CODES: ReadonlySet<string> = new Set(['indexed-view-retired', 
 interface SessionViewProps {
   connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; sessionId: string; initialView: ContentView | undefined; findReads: SessionFindReadGate;
   relatedHref(sessionId: string): string; pane: SessionPane; setPane(pane: SessionPane): void; page: PageIntegration;
-  report(report: SourceUnavailableReport): void; revocations: readonly SourceRevocation[];
+  report(report: SourceUnavailableReport): void; revocations: readonly SourceRevocation[]; settledRevocations: WeakSet<SourceRevocation>;
 }
 interface HeadScope { connection: ChronicleConnection; userId: string; sessionId: string; generation: number; activeId: number | null; invalidation: number }
 interface KnownHead extends HeadScope { ownerId: string; revision: number }
@@ -94,19 +94,21 @@ function initialPane(): SessionPane { return storedPane(window.localStorage) ?? 
 
 // Last reading place per session of this owner: reopening a session from a list returns to it (spec §5, groundwork S5).
 const SESSION_PLACES = routeSlot<SessionPlace | null>('session-place', () => null);
-const EMPTY_PLACE: SessionPlace = { pin: null, at: null, find: null, pane: null, passage: null };
+const EMPTY_PLACE: SessionPlace = { pin: null, at: null, find: null, pane: null, passage: null, span: null };
 type Arrival = { readonly epoch: number; readonly place: SessionPlace } | { readonly epoch: number; readonly invalid: string };
 function sameSessionPin(left: SessionPlace['pin'], right: SessionPlace['pin']): boolean { return left !== null && right !== null && left.revision === right.revision && left.generationId === right.generationId; }
 /**
  * The routed session page (`#/session/<id>?…`, scroll model B). The address holds the reading place and is replaced, never
  * pushed, while reading; an address that changes otherwise (an edited fragment) reopens the session at the new place.
  */
-export function SessionPage({ connection, stats, user, findReads, route, router, parent, back, onSourceUnavailable, revocations }: {
+export function SessionPage({ connection, stats, user, findReads, route, router, parent, back, onSourceUnavailable, revocations, settledRevocations }: {
   connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; findReads: SessionFindReadGate; route: Route; router: HashRouter; parent: ParentList; back: () => void;
   /** Every denial of this session's source reads (see SourceUnavailableReport). */
   onSourceUnavailable: (report: SourceUnavailableReport) => void;
   /** Signals since the page opened; one that applies clears the source into the source-unavailable state, as the page's own denials do. */
   revocations: readonly SourceRevocation[];
+  /** The host's record of revocations already applied or found not to concern the page (a remount does not apply them again). */
+  settledRevocations: WeakSet<SourceRevocation>;
 }) {
   const sessionId = sessionIdOf(route), [saved, setSaved] = useRouteState(SESSION_PLACES, sessionId);
   const written = useRef<string | null>(null), current = useRef<SessionPlace>(EMPTY_PLACE);
@@ -131,25 +133,25 @@ export function SessionPage({ connection, stats, user, findReads, route, router,
       setArrival(previous => ({ epoch: epoch(previous), invalid: cause.message })); return;
     }
     // An address with no place, or only the pin of the last place (a list's link), returns to the last place.
-    const reopened = saved !== null && fromUrl.at === null && fromUrl.find === null && fromUrl.pane === null && fromUrl.passage === null && (fromUrl.pin === null || sameSessionPin(fromUrl.pin, saved.pin));
+    const reopened = saved !== null && fromUrl.at === null && fromUrl.find === null && fromUrl.span === null && fromUrl.pane === null && fromUrl.passage === null && (fromUrl.pin === null || sameSessionPin(fromUrl.pin, saved.pin));
     const place = reopened ? saved : fromUrl;
     setArrival(previous => ({ epoch: epoch(previous), place }));
-    // A Find literal runs once on arrival and is not kept in the address.
-    write({ ...place, find: null });
+    // A Find literal and a Search landing's matched bytes apply once on arrival and are not kept in the address.
+    write({ ...place, find: null, span: null });
   }, [address]);
   const [preference, setPreference] = useState<SessionPane>(initialPane);
   if (arrival === null) return null;
   if ('invalid' in arrival) return <main className="session" aria-label="Session" data-view="session"><div className="page session-state"><div className="notice notice-danger" role="alert"><Icon name="alert" small={false}/><div><div className="notice-title">This session address is invalid</div>{arrival.invalid}. No source was read.<div className="notice-actions"><button type="button" className="btn btn-sm" onClick={back}>Back to {parent.label}</button></div></div></div></div></main>;
   const pane = arrival.place.pane ?? current.current.pane ?? preference;
   const page: PageIntegration = {
-    back, parent, initial: { at: arrival.place.at, find: arrival.place.find, passage: arrival.place.passage },
-    messageLink: (view, messageId) => `${window.location.origin}${window.location.pathname}${window.location.search}${formatRoute(sessionPlaceRoute(sessionId, { pin: { revision: view.revision, generationId: view.generationId ?? null }, at: messageId, find: null, pane: null, passage: null }))}`,
+    back, parent, initial: { at: arrival.place.at, find: arrival.place.find, passage: arrival.place.passage, span: arrival.place.span },
+    messageLink: (view, messageId) => `${window.location.origin}${window.location.pathname}${window.location.search}${formatRoute(sessionPlaceRoute(sessionId, { pin: { revision: view.revision, generationId: view.generationId ?? null }, at: messageId, find: null, pane: null, passage: null, span: null }))}`,
     report: update => write({ ...current.current, pin: { revision: update.view.revision, generationId: update.view.generationId ?? null }, at: update.at, passage: update.passage }),
   };
   const pin = arrival.place.pin;
   return <main className="session" aria-label="Session" data-view="session">
     <SessionView key={arrival.epoch} connection={connection} stats={stats} user={user} sessionId={sessionId} findReads={findReads}
-      initialView={pin === null ? undefined : new ContentView(pin.revision, pin.generationId ?? undefined)} report={onSourceUnavailable} revocations={revocations}
+      initialView={pin === null ? undefined : new ContentView(pin.revision, pin.generationId ?? undefined)} report={onSourceUnavailable} revocations={revocations} settledRevocations={settledRevocations}
       relatedHref={id => formatRoute(sessionPlaceRoute(id, EMPTY_PLACE))} pane={pane}
       setPane={value => { rememberPane(window.localStorage, value); setPreference(value); setArrival(previous => previous === null || !('place' in previous) ? previous : { ...previous, place: { ...previous.place, pane: null } }); write({ ...current.current, pane: value }); }} page={page}/>
   </main>;
@@ -160,9 +162,6 @@ function SessionView(props: SessionViewProps) {
   // The place a routed page arrived with applies to the first view only; an explicitly chosen view starts at its top.
   const [initial, setInitial] = useState<PageIntegration['initial'] | null>(props.page.initial);
   const [attempt, setAttempt] = useState(0);
-  // A revocation is settled once: applied (with every earlier one) or found not to concern the shown view. A Retry or another
-  // chosen view then reads again.
-  const settledRevocations = useRef(new Set<SourceRevocation>());
   const invalidation = useRef(0);
   const scope: HeadScope = { connection: props.connection, userId: props.user.id, sessionId: props.sessionId, generation: props.stats.generation, activeId: props.stats.activeId, invalidation: invalidation.current };
   const liveScope = useRef(scope); liveScope.current = scope;
@@ -179,7 +178,7 @@ function SessionView(props: SessionViewProps) {
     });
   }
   function chooseView(next: ContentView | undefined) { setInitial(null); setView(next); }
-  return <ConversationSnapshot key={`${contentViewKey(view)}:${attempt}`} {...props} view={view} chooseView={chooseView} resolveView={setView} retry={() => setAttempt(value => value + 1)} initial={initial} settledRevocations={settledRevocations} knownHead={knownHead !== null && sameHeadScope(knownHead, scope) ? knownHead : null} rememberHead={rememberHead}/>;
+  return <ConversationSnapshot key={`${contentViewKey(view)}:${attempt}`} {...props} view={view} chooseView={chooseView} resolveView={setView} retry={() => setAttempt(value => value + 1)} initial={initial} knownHead={knownHead !== null && sameHeadScope(knownHead, scope) ? knownHead : null} rememberHead={rememberHead}/>;
 }
 
 function roleOf(message: Message): string { return message.role.toLowerCase(); }
@@ -336,7 +335,7 @@ function InfoPane({ session, view, sessionId, headRevision, passages, link }: { 
   </div>;
 }
 
-function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref, view, chooseView, resolveView, retry, initial, settledRevocations, knownHead, rememberHead, findReads, report: reportUnavailable, revocations, pane, setPane, page }: SessionViewProps & { view: ContentView | undefined; chooseView(view: ContentView | undefined): void; resolveView(view: ContentView): void; retry(): void; initial: PageIntegration['initial'] | null; settledRevocations: RefObject<Set<SourceRevocation>>; knownHead: KnownHead | null; rememberHead: (ownerId: string, revision: number) => void }) {
+function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref, view, chooseView, resolveView, retry, initial, settledRevocations, knownHead, rememberHead, findReads, report: reportUnavailable, revocations, pane, setPane, page }: SessionViewProps & { view: ContentView | undefined; chooseView(view: ContentView | undefined): void; resolveView(view: ContentView): void; retry(): void; initial: PageIntegration['initial'] | null; knownHead: KnownHead | null; rememberHead: (ownerId: string, revision: number) => void }) {
   const [messageStart, setMessageStart] = useState(0), [retired, setRetired] = useState(false);
   const [passage, setPassage] = useState<PassageInfo | null>(null), [spanOffset, setSpanOffset] = useState(0);
   const [seekError, setSeekError] = useState<string | null>(null), [seeking, setSeeking] = useState(false), [revealedMessage, setRevealedMessage] = useState<string | null>(null);
@@ -344,7 +343,8 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
   const initialAttempted = useRef(false);
   // A passage restored from the address: kept (and reported) until it is selected or the whole outline shows it is gone.
   const [pendingPassage, setPendingPassage] = useState(initial === null ? null : initial.passage);
-  const [landed, setLanded] = useState<LandedSource | null>(null);
+  const [landed, setLanded] = useState<LandedSource | null>(null), [searchSpan, setSearchSpan] = useState<Span | null>(null);
+  const arrivalSpan = initial === null || initial.at === null || initial.span === null ? null : new Span(initial.at, initial.span.start, initial.span.end);
   const navigation = useRef(0), currentSourceNavigation = useRef<SourceNavigation | null>(null), pendingScroll = useRef<PendingSourceScroll | null>(null);
   const [sourcePane, setSourcePane] = useState<HTMLDivElement | null>(null), [findBar, setFindBar] = useState<HTMLDivElement | null>(null), [findList, setFindList] = useState<HTMLDivElement | null>(null);
   const [findOpen, setFindOpen] = useState(initial !== null && initial.find !== null);
@@ -366,15 +366,23 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
   }, [retired]);
   const accessEpoch = useRef(0), accessScope = JSON.stringify([user.id, stats.activeId, stats.generation, contentViewKey(view)]), liveAccessScope = useRef(accessScope); liveAccessScope.current = accessScope;
   function retireIndexedView() { navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; setLanded(null); setPassage(null); setSpanOffset(0); setSeeking(false); setSeekError(null); setRevealedMessage(null); setFindEpoch(epoch => epoch + 1); setRetired(true); }
-  function sourceUnavailable(cause: RequestFailure) {
-    if (UNAVAILABLE_CODES.has(cause.code)) reportUnavailable({ sessionId, pin: view === undefined ? null : view, code: cause.code, message: cause.message });
+  // The source-unavailable state: transcript, outline, Find and landing leave the document; replies of reads started before
+  // it are fenced (access epoch, navigation, disabled resources). Retry reads again.
+  const [revoked, setRevoked] = useState<string | null>(null);
+  function clearSource(message: string) {
+    accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null;
+    setLanded(null); setPassage(null); setSpanOffset(0); setSeeking(false); setSeekError(null); setRevealedMessage(null); setSearchSpan(null); setFindEpoch(epoch => epoch + 1); setRevoked(message);
+  }
+  /** A read of this session failed: an authority or retirement failure is published (`pin` the read's view, null for the default view or an unpinned read) and applied here. */
+  function sourceUnavailable(cause: RequestFailure, pin: ContentView | null) {
+    if (UNAVAILABLE_CODES.has(cause.code)) reportUnavailable({ sessionId, pin, code: cause.code, message: cause.message });
     if (cause.code === 'indexed-view-retired') retireIndexedView();
+    else if (isAuthorityDenial(cause.code)) clearSource(cause.message);
   }
   // A failure another view saw that concerns the shown view: a retired generation retires this view; any other failure, and a
-  // withdrawal, clears the source into the same notice a denied session read shows (Retry reads again).
-  const [revoked, setRevoked] = useState<string | null>(null);
+  // withdrawal, clears the source like a denied read of the page.
   useEffect(() => {
-    const settled = settledRevocations.current;
+    const settled = settledRevocations;
     let revocation: SourceRevocation | null = null;
     for (const item of revocations) {
       if (settled.has(item)) continue;
@@ -386,17 +394,18 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     if (revocation === null) return;
     for (const item of revocations) settled.add(item);
     if (revocation.kind === 'source-failure' && revocation.code === 'indexed-view-retired') { retireIndexedView(); return; }
-    accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null;
-    setLanded(null); setPassage(null); setSpanOffset(0); setSeeking(false); setSeekError(null); setRevealedMessage(null); setFindEpoch(epoch => epoch + 1); setRevoked(revocation.message);
+    clearSource(revocation.message);
   }, [revocations, view]);
-  async function readPinned<T>(operation: Operation, extract: (reply: Result) => T | null): Promise<T> {
+  /** Every read of this session: a failure of the current access scope is handled by `sourceUnavailable`; replies of abandoned reads are not. */
+  async function readSource<T>(operation: Operation, extract: (reply: Result) => T | null, pin: ContentView | null): Promise<T> {
     const epoch = accessEpoch.current;
     try { return await read(connection, operation, extract); }
     catch (cause) {
-      if (cause instanceof RequestFailure && epoch === accessEpoch.current && liveAccessScope.current === accessScope) sourceUnavailable(cause);
+      if (cause instanceof RequestFailure && epoch === accessEpoch.current && liveAccessScope.current === accessScope) sourceUnavailable(cause, pin);
       throw cause;
     }
   }
+  function readPinned<T>(operation: Operation, extract: (reply: Result) => T | null): Promise<T> { return readSource(operation, extract, view === undefined ? null : view); }
   useEffect(() => connection.onInvalidate(() => { accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; setLanded(null); setPassage(null); setSpanOffset(0); setRetired(false); setRevoked(null); setSeeking(false); setSeekError(null); setRevealedMessage(null); }), [connection]);
   useEffect(() => () => { accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; }, []);
   const session = useResource(connection, stats, `${sessionId}:${contentViewKey(view)}`, '', true, async () => {
@@ -404,7 +413,8 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     if (view !== undefined) requireContentView(view, result.session.view);
     return result;
   });
-  useEffect(() => { if (view === undefined && session.data !== null) resolveView(session.data.session.view); }, [view, session.data, resolveView]);
+  // A cleared source stays cleared: a late default-view reply does not choose a view (Retry reads again).
+  useEffect(() => { if (view === undefined && session.data !== null && revoked === null) resolveView(session.data.session.view); }, [view, session.data, resolveView, revoked]);
   const snapshot = view === undefined || retired || revoked !== null ? null : session.data;
   const passages = useInfiniteResource<PassageInfo, PassagesResult, number>(connection, stats, `${sessionId}:${contentViewKey(view)}`, '', snapshot !== null, undefined, async cursor => {
     const offset = cursor === undefined ? 0 : cursor;
@@ -431,7 +441,8 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     requireContentView(view!, result.view);
     return { items: result.messages, next: result.offset + result.messages.length < result.total ? result.offset + result.messages.length : undefined, previous: result.offset > 0 ? Math.max(0, result.offset - MESSAGE_PAGE_SIZE) : undefined, meta: result };
   }, item => item.id);
-  const related = useResource(connection, stats, sessionId, '', snapshot !== null, () => read(connection, new Operation_Related(sessionId, RELATED_LIMIT), value => value instanceof Result_Related ? value.result : null));
+  // Related sessions are read for the session, not a pin: a denial reports the session's default view (null).
+  const related = useResource(connection, stats, sessionId, '', snapshot !== null, () => readSource(new Operation_Related(sessionId, RELATED_LIMIT), value => value instanceof Result_Related ? value.result : null, null));
   const messageOffset = messages.meta === null ? 0 : messages.meta.offset;
   function messageAt(position: number): Message | undefined { return messages.meta === null ? undefined : messages.items[position - messageOffset]; }
   // Instant: a smooth scroll would be cut short by ScrollAnchor's corrections when the highlighted rows render.
@@ -443,7 +454,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     return true;
   }
   function finishSourceScroll(pending: PendingSourceScroll & { messageId: string }) {
-    if (pending.origin === 'find') setLanded(pending);
+    if (pending.origin === 'find' || pending.origin === 'search') setLanded(pending);
     else scrollToMessage(pending.messageId);
     pendingScroll.current = null;
   }
@@ -467,7 +478,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
   }
   async function showSource(target: string | undefined, expectedPosition: number | null, origin: SourceNavigationOrigin, focus: boolean) {
     const operation = ++navigation.current; currentSourceNavigation.current = { operation, origin }; pendingScroll.current = null;
-    setSeekError(null); setSeeking(false); setLanded(null);
+    setSeekError(null); setSeeking(false); setLanded(null); setSearchSpan(null);
     if (target === undefined) { setSeekError('This annotation has no verified source span; no logical extent is asserted.'); return; }
     if (origin === 'annotation' && expectedPosition === null && messages.items.some(message => message.id === target) && scrollToMessage(target)) return;
     setSeeking(true);
@@ -476,6 +487,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
       if (navigation.current !== operation) return;
       try { requireContentView(view!, location.view); } catch (cause) { throw new UnverifiedSourceLocator(cause instanceof Error ? cause.message : 'Unverified source pin.'); }
       if (!Number.isInteger(location.position) || location.position < 0 || location.position >= location.total || (expectedPosition !== null && location.position !== expectedPosition)) throw new UnverifiedSourceLocator('The source locator returned an invalid message position.');
+      if (origin === 'search' && arrivalSpan !== null) setSearchSpan(arrivalSpan);
       const pending = { messageId: target, operation, origin, position: location.position, focus };
       if (messages.items.some(message => message.id === target)) finishSourceScroll(pending);
       else { pendingScroll.current = pending; setMessageStart(Math.floor(location.position / MESSAGE_PAGE_SIZE) * MESSAGE_PAGE_SIZE); }
@@ -497,7 +509,9 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     if (initialAttempted.current || snapshot === null || view === undefined) return;
     if (initial !== null && initial.at !== null) {
       initialAttempted.current = true;
-      void showSource(initial.at, null, 'place', false);
+      // A Search landing: its message unfolds, the matched bytes are highlighted and the landing marker takes the focus.
+      if (arrivalSpan !== null) { setRevealedMessage(initial.at); setRevealEpoch(epoch => epoch + 1); void showSource(initial.at, null, 'search', true); }
+      else void showSource(initial.at, null, 'place', false);
     }
   }, [snapshot, view]);
   function showPassage(selected: PassageInfo) { setPendingPassage(null); setPassage(selected); setSpanOffset(0); void showSource(selected.start.messageId, selected.start.messagePosition, 'annotation', false); }
@@ -518,6 +532,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     if (rect.top < bounds.top || rect.bottom > bounds.bottom) scroller.scrollTo({ top: scroller.scrollTop + rect.top - bounds.top - SOURCE_SCROLL_GAP, behavior: 'instant' });
   }, [passage, pane]);
   const passageHighlightSpans = sourceSpans.data !== null && passage !== null ? sourceSpans.data.spans.map(span => new Span(span.messageId, span.start, span.end)) : [];
+  const highlightSpans = searchSpan !== null && landed !== null && landed.origin === 'search' && messages.error === null ? [searchSpan] : passageHighlightSpans;
   const headRevision = snapshot === null ? undefined : Math.max(snapshot.session.revision, knownHead !== null && knownHead.ownerId === snapshot.session.ownerId ? knownHead.revision : snapshot.session.revision);
   useEffect(() => { if (snapshot !== null && headRevision !== undefined) rememberHead(snapshot.session.ownerId, headRevision); }, [snapshot, headRevision, rememberHead]);
   // The routed page keeps its reading place in the address: the pinned view, the top message after scrolling, the passage.
@@ -601,7 +616,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     const content = <><span className="outline-n" aria-hidden="true">{index + 1}</span><span className="outline-title">{target.metadata.title || 'Untitled conversation'}</span><span className="outline-sub">{target.metadata.project ?? 'No project'}<span className="sep">{formatDate(target.metadata.startedAt)}</span></span></>;
     return <a className="outline-item" href={relatedHref(target.id)}>{content}</a>;
   }
-  const rows = transcript(messages.items, messageOffset, (message, position) => <TranscriptMessage message={message} position={position} spans={passageHighlightSpans} reveal={message.id === revealedMessage ? revealEpoch : 0} landed={landed !== null && landed.messageId === message.id ? landed : null} landingLabel="Find result" passages={passages.items} selectPassage={selectPassage} link={view === undefined ? null : page.messageLink(view, message.id)}/>);
+  const rows = transcript(messages.items, messageOffset, (message, position) => <TranscriptMessage message={message} position={position} spans={highlightSpans} reveal={message.id === revealedMessage ? revealEpoch : 0} landed={landed !== null && landed.messageId === message.id ? landed : null} landingLabel={landed !== null && landed.origin === 'search' ? 'Search result' : 'Find result'} passages={passages.items} selectPassage={selectPassage} link={view === undefined ? null : page.messageLink(view, message.id)}/>);
   return <>{head}
     <div className="split" ref={split} data-rail={rail === null ? 'closed' : 'open'}>
       <section className="pane-main" aria-label="Transcript">
@@ -609,7 +624,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
         <div className="pane" ref={setSourcePane} tabIndex={-1} data-pane="transcript">
           <ScrollAnchor><div className="session-transcript" data-scroll-container aria-busy={loading || messages.loading || messages.refreshing}>
             {loading && <div className="transcript-skeleton"><p className="sr-only" role="status">Rechecking source access…</p>{['user', 'assistant', 'tool', 'assistant'].map((role, index) => <div className="msg" data-role={role} key={index} aria-hidden="true"><span className="skeleton sk-30"/><span className="skeleton"/><span className="skeleton sk-60"/></div>)}</div>}
-            <p className="xs source-navigation-status" role="status" aria-label="Source navigation status" aria-live="polite" aria-atomic="true">{landed === null || view === undefined ? '' : `Found matching message ${landed.position + 1} · ${landed.messageId} in selected source r${view.revision}.`}</p>
+            <p className="xs source-navigation-status" role="status" aria-label="Source navigation status" aria-live="polite" aria-atomic="true">{landed === null || view === undefined ? '' : `${landed.origin === 'search' ? 'Search result: found' : 'Found'} matching message ${landed.position + 1} · ${landed.messageId} in selected source r${view.revision}.`}</p>
             {seekError !== null && <ErrorNotice>{seekError}</ErrorNotice>}{seeking && <p className="xs" role="status">Locating the original message…</p>}
             <InfiniteTrigger enabled={messages.hasPrevious && messages.error === null} loading={messages.loadingPrevious || messages.refreshing} load={messages.loadPrevious} label="Loading earlier messages…"/>
             {messages.error !== null && <ErrorNotice>{messages.error}. Message content has been cleared.</ErrorNotice>}{messages.loading && <div className="session-loading" role="status">Loading original messages…</div>}
@@ -633,6 +648,6 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     </div>
     {snapshot !== null && messages.error === null && <SessionFind key={JSON.stringify([user.id, stats.generation, stats.activeId, sessionId, contentViewKey(view), findEpoch])} connection={connection} stats={stats} ownerId={user.id} sessionId={sessionId} view={view!} navigation={navigation} reads={findReads}
       initialLiteral={arrivalFind.current} bar={findBar} list={findList} open={() => setFindOpen(true)} close={() => setFindOpen(false)}
-      sourceUnavailable={sourceUnavailable} supersedeSourceNavigation={supersedeFindNavigation} select={(hit, choice: FindChoice) => { setRevealedMessage(hit.messageId); setRevealEpoch(epoch => epoch + 1); if (choice === 'list') revealTranscript(); void showSource(hit.messageId, hit.position, 'find', choice === 'list'); }}/>}
+      sourceUnavailable={cause => sourceUnavailable(cause, view!)} supersedeSourceNavigation={supersedeFindNavigation} select={(hit, choice: FindChoice) => { setRevealedMessage(hit.messageId); setRevealEpoch(epoch => epoch + 1); if (choice === 'list') revealTranscript(); void showSource(hit.messageId, hit.position, 'find', choice === 'list'); }}/>}
   </>;
 }
