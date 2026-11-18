@@ -206,6 +206,11 @@ const markdownRendered = async (page) => {
   assert.match(mermaidLabels, /Finish/, 'Mermaid must retain its finish label after sanitization');
   assert.equal(await page.locator('main a[href^="javascript:" i]').count(), 0);
   assert.equal(await page.locator("main script").count(), 0);
+  // Regression (review R5): an authored icon-like span stays inert text; page icon hydration builds nothing from it.
+  const authored = page.locator("article.markdown span").filter({ hasText: "Authored icon placeholder" });
+  assert.equal(await authored.count(), 1);
+  assert.equal(await authored.getAttribute("data-icon"), null, "uploaded data-icon attributes are removed");
+  assert.equal(await page.locator('main img[src*="hydrate"]').count(), 0);
   assert.equal(await page.locator('main *').evaluateAll((nodes) => nodes.some((node) => [...node.attributes].some((attribute) => /^on/i.test(attribute.name)))), false);
 };
 const management = async (page, command) => {
@@ -220,6 +225,17 @@ const management = async (page, command) => {
 await check("markdown renders headings, GFM and both fenced diagrams without executing uploaded content", async (page) => {
   await open(page, "markdown");
   await markdownRendered(page);
+  // Even a placeholder that reached the DOM some other way becomes only the named icon: its classes never become markup.
+  await page.evaluate(() => {
+    const slot = document.createElement("span");
+    slot.dataset.icon = "box";
+    slot.className = 'icon-sm x"><img src="https://viewer-attacker.invalid/direct.png">';
+    slot.id = "hostile-placeholder";
+    document.querySelector("main").append(slot);
+  });
+  await page.waitForFunction(() => !document.getElementById("hostile-placeholder"));
+  assert.deepEqual(await page.locator("main > svg").last().evaluate((svg) => [...svg.classList]), ["icon", "icon-sm"]);
+  assert.equal(await page.locator('main img[src*="direct"]').count(), 0);
   await rawEqual(page, "markdown");
   await downloadEqual(page, "markdown");
   await page.setViewportSize({ width: 375, height: 800 });

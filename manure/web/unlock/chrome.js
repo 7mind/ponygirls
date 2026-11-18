@@ -11,13 +11,25 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 const THEME_ICONS = { light: 'sun', dark: 'moon' };
 
-const { icon } = await import(ICONS_URL);
+// The only extra classes a placeholder may pass on to its icon.
+const ICON_CLASSES = new Set(['icon-sm']);
 
+const { icon, ICON_NAMES } = await import(ICONS_URL);
+
+/** Placeholders never reach markup: the icon is parsed from the shared set's own markup for a known name,
+ * and only allowlisted classes are copied through the DOM. Uploaded documents cannot carry data-icon
+ * (the viewer's sanitizer removes it); this keeps any other placeholder inert as well. */
+function iconElement(slot) {
+  const name = slot.dataset.icon;
+  if (!ICON_NAMES.includes(name)) throw new Error(`unknown icon placeholder ${JSON.stringify(name)}`);
+  const template = document.createElement('template');
+  template.innerHTML = icon(name);
+  const svg = template.content.firstElementChild;
+  for (const cls of slot.classList) if (ICON_CLASSES.has(cls)) svg.classList.add(cls);
+  return svg;
+}
 function hydrateIcons(root) {
-  for (const slot of root.querySelectorAll('span[data-icon]')) {
-    const extra = [...slot.classList].filter(name => name !== 'icon');
-    slot.outerHTML = icon(slot.dataset.icon, ...extra);
-  }
+  for (const slot of root.querySelectorAll('span[data-icon]')) slot.replaceWith(iconElement(slot));
 }
 
 function toast(message) {

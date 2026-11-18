@@ -77,6 +77,7 @@ digraph G { alpha -> beta; }
 <script>window.__viewerExecuted = true</script>
 <img src="https://viewer-attacker.invalid/raw.png" onerror="window.__viewerExecuted = true">
 <svg onload="window.__viewerExecuted = true"></svg>
+<span data-icon="box" class='x"><img src="https://viewer-attacker.invalid/hydrate.png" onerror="window.__viewerExecuted = true">'>Authored icon placeholder</span>
 [unsafe](javascript:window.__viewerExecuted=true)
 ![remote](https://viewer-attacker.invalid/remote.png)
 

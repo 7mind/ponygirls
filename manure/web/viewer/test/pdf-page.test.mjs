@@ -11,20 +11,21 @@ const start = source.indexOf('  async function render(number) {');
 const end = source.indexOf('\n  await render(1);', start);
 assert.ok(start > 0 && end > start);
 function harness(getPage) {
-  const timers = new Map(); let serial = 0; let destroyed = 0;
+  const timers = new Map(); let serial = 0; let destroyed = 0; let zoomApplied = 0;
   const errors = [];
   const context = {
     doc: {numPages:2, getPage},
     // pdf.js 6 documents have no destroy(); the loading task owns the document and its workers.
     task: {destroy:() => { destroyed++; return Promise.resolve(); }},
     busy:false, pageNumber:1, pageWidth:0, previous:{}, next:{}, canvas:{getContext:() => ({})}, label:{},
+    applyZoom:() => { zoomApplied++; },
     fail:error => errors.push(error.message),
     setTimeout:(callback, ms) => { const id = ++serial; timers.set(id,{callback,ms}); return id; },
     clearTimeout:id => timers.delete(id),
   };
   vm.createContext(context);
   vm.runInContext(`${source.slice(start,end)}\nglobalThis.renderPage = render;`, context);
-  return {context,timers,errors,get destroyed() {return destroyed;}};
+  return {context,timers,errors,get destroyed() {return destroyed;},get zoomApplied() {return zoomApplied;}};
 }
 function expire(h) {
   assert.equal(h.timers.size,1,'GetPage must immediately have a deadline timer');
@@ -78,5 +79,6 @@ test('successful page render clears deadline and preserves live document', async
   await settled(h.context.renderPage(2));
   assert.equal(cleaned,1); assert.equal(h.destroyed,0); assert.equal(h.timers.size,0);
   assert.equal(h.context.label.textContent,'Page 2 of 2');
+  assert.equal(h.zoomApplied,1,'the selected zoom is reapplied to the newly rendered page');
   assert.equal(h.errors.length,0); assert.equal(h.context.busy,false);
 });

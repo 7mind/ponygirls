@@ -186,7 +186,8 @@ function sanitizedMarkdown(html) {
     }
     if (node.tagName === 'A') node.setAttribute('rel','noopener noreferrer');
   });
-  return purifier.sanitize(html, {USE_PROFILES:{html:true}, FORBID_TAGS:['style','iframe','object','embed','form','input','video','audio','source'], FORBID_ATTR:['style','srcset','background']});
+  // data-icon is reserved for the page chrome's own icon placeholders.
+  return purifier.sanitize(html, {USE_PROFILES:{html:true}, FORBID_TAGS:['style','iframe','object','embed','form','input','video','audio','source'], FORBID_ATTR:['style','srcset','background','data-icon']});
 }
 function markdownLinks(article) {
   const headings = [...article.querySelectorAll('h1,h2,h3,h4,h5,h6')];
@@ -436,11 +437,11 @@ async function pdf() {
     try {
       await Promise.race([operation, timeout]);
       pageNumber = number; label.textContent = `Page ${number} of ${doc.numPages}`;
+      applyZoom(); // a numeric zoom scales the new page's own width
     } catch (error) { fail(error); }
     finally {clearTimeout(deadline); busy = false; previous.disabled = pageNumber <= 1; next.disabled = pageNumber >= doc.numPages;}
   }
   await render(1);
-  applyZoom();
 }
 function crumbs() {
   const nav = document.querySelector('#crumbs');
