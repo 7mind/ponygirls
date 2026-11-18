@@ -1,242 +1,243 @@
 # Chronicle browser suites on a loaded host: why they fail, and what fixes it (unit U03b)
 
 Base: integration commit `5b23cef6` (`agent/overhaul`), pool runner `chronicle/web/tests-browser/run-all.mjs`.
-Host: 128 vCPU VM, load average 150–240 during every measurement below (each run records `uptime` and PSI; raw data
-under `/tmp/u03b/`, see "Data"). Evidence labels: **[M]** measured here, **[I]** inferred from measurements, **[S]** read in source.
+Host: 128 vCPU VM, load average 145–240 during every measurement (each run records `uptime` and PSI; raw data under
+`/tmp/u03b/`, see "Data"). Evidence labels: **[M]** measured here, **[I]** inferred from measurements, **[S]** read in source.
 
-## 1. Answer in five lines
+## 1. Answer
 
-1. The dominant failure mechanism is **in the page, not in the host scheduler**: the fixture entry `tests-browser/harness.tsx`
-   configures the dashboard's connection-liveness detector with sub-second real-time limits (timer-pause threshold 400 ms, pong
-   deadline 300 ms). Any main-thread task longer than ≈ 400 ms makes the app declare the socket stale, reconnect and invalidate its
-   snapshot, which resets sort state, focus and loaded rows in the middle of a scenario [M].
-2. Main-thread tasks of 250–770 ms are common in the dev-server mode the suite uses (React development build, ≈ 125–200 unbundled
-   modules per page); the host makes them longer (the same pooled run needed 2.3× the page CPU time when host idle fell from 64 % to
-   32 %) [M], but the host is not I/O- or memory-bound: the load is runnable threads, I/O and memory PSI stay below 3 % [M].
-3. Serving a **prebuilt production bundle** removes most of that work (page script time ÷ 5.5, CPU of the whole run ÷ 2, wall
-   −25 %) and the reconnect-induced failures disappeared in 8 pooled runs [M] — but it **exposes latent assert-before-render races**
-   in two scenarios (`activity-tables.mjs:288-290` failed 6 of 8 bundle runs; it read the DOM 24–25 ms before the reply rendered in
-   5 of 5 probes) [M]. Green rate: dev 7/10 (+ the runs in §4.4), bundle 1/8. So the bundle is **committed as opt-in**
-   (`CHRONICLE_BROWSER_SERVE=bundle`), not as the default.
-4. **The ≥ 14/15 target is not reachable without scenario edits.** The remaining causes are scenario-level (§6): the harness
-   liveness constants, real-time polling windows, and waits that observe a *request* instead of the *rendered result*.
-5. Once the two listed races are fixed, flip the default to `bundle` and re-measure; the mechanism data predict the reconnect
-   failures go away with it.
+Four independent mechanisms make the suite red; none of them is "the host has no CPU left".
+
+| # | Mechanism | Symptom in the logs | Evidence | Fixable at launch level? |
+|---|---|---|---|---|
+| A | `tests-browser/harness.tsx` runs the dashboard's connection-liveness detector with sub-second limits (timer pause > 400 ms, pong 300 ms). A main-thread stall of > 400 ms makes the app reconnect and invalidate its snapshot, which resets sort, focus, columns and rows mid-scenario. | `activity-tables`/`ux`: "sort focus survives resource replacement", `aria-sort` `none`, "rows did not match", header locator timeouts | [M] app event log `Timer pause: 404–550 ms → STALE (long resume) → snapshot generation 2` in every failure that prints it; probe gap 517 ms = app's `Timer pause: 517ms`, with 725 ms of long tasks in that window | No: the limits are fixture content (§6 item 1). A bundle makes stalls rarer (B). |
+| B | Dev-server pages do 5× more main-thread script work than the production bundle (React development build, ≈ 180–200 unbundled modules per page) | long tasks 250–770 ms in dev, ≤ 315 ms in the bundle | [M] CDP and Long Tasks API, §3.3 | Yes: `CHRONICLE_BROWSER_SERVE=bundle` |
+| C | Docker on this host creates and deletes `veth` interfaces; Chromium's network-change notifier then aborts every in-flight request with `net::ERR_NETWORK_CHANGED`. A page that loses one ES module never mounts (31 DOM nodes, no navigation). | "waiting for … 'Main navigation' … 'archive'" for 10/30 s | [M] 3 of 3 traced "navigation missing" failures had `ERR_NETWORK_CHANGED` on their `/@fs/…` module requests; every traced page with the error failed; `ip monitor` shows a `veth` deletion in the same second as an abort | Yes: `CHRONICLE_BROWSER_NETNS=1` (private network namespace); Nix sandboxes are isolated already |
+| D | Scenario races hidden by dev-mode latency: waits that observe the *request*, then read the *rendered result* immediately | bundle mode: `activity-tables.mjs:288-290` `filteredIds: []` | [M] probe: rows empty at the first read in 5/5 bundle runs, rendered 24–25 ms later; present in 5/5 dev runs | No (§6 items 3–4) |
+
+Host contention amplifies A–C (the same scenarios needed 2.3× the page CPU time when host idle fell from 64 % to 32 %) but does
+not explain them: failures happened at host idle 0.63 with 2 % run-queue delay, and in serial runs (pool 1) at the same rate as
+pooled. The load average of 150–240 is runnable threads, not I/O waiters (I/O and memory PSI < 3 %, `procs_blocked` ≈ 1).
+
+**Green rates (full runs, 313 cases each when green):** dev server pool 7: 8/15 untraced (+ 2/7 traced); dev pool 1: 2/5;
+production bundle pool 7: 1/8 (all but one failure = race D); **dev + private network namespace pool 7: 8/10, both failures
+mechanism A**. The best configuration without scenario edits is therefore `CHRONICLE_BROWSER_NETNS=1` (dev serving).
+**The ≥ 14/15 target was not reached and is not reachable without scenario edits**: A and D are scenario/fixture content.
+The launch-level switches added here remove B and C; they are opt-in because D makes the bundle worse today and the namespace
+needs host tools that the pinned dev shell does not provide (and Nix sandboxes are already isolated).
 
 ## 2. Method
 
 - **Host sampler** (`debug/u03b/sampler.py`, throwaway): every 1 s, `/proc/stat` (idle, `procs_running`, `procs_blocked`, context
-  switches), `/proc/pressure/{cpu,io,memory}` (deltas of `total`), and for every thread of the run's process tree
-  `/proc/<pid>/task/<tid>/schedstat` (on-CPU time and **run-queue delay**), grouped by process type (Node test process, Chromium
-  browser/renderer/GPU/utility). "wait-frac" below = run-queue delay ÷ (on-CPU + run-queue delay): the share of the time our threads
-  wanted a CPU and did not get one.
-- **Launch-layer trace** (`debug/u03b/trace.mjs`, loaded with `NODE_OPTIONS=--import`, never committed): wraps `chromium.launch` and
-  `browser.newContext`, records per page: navigations, load time, request count, Vite console lines, CDP `Performance.getMetrics`
-  deltas every second (TaskDuration, ScriptDuration, Layout, RecalcStyle, DOM nodes), Long Tasks API entries and a 100 ms real-timer
-  gap probe injected with `addInitScript`, and the Node event-loop delay of the test process. No scenario file was edited.
-- **Runs**: full pooled runs of `node tests-browser/run-all.mjs` (default pool 7), solo runs of single scripts, and one single-case
-  probe (a scratch copy of `activity-tables.mjs` with one extra read; deleted afterwards). Every run logs `uptime` and PSI at start
-  and end; "passes" = number of `PASS` lines (313 in a fully green run).
-- Comparisons are sequential, not interleaved; the bundle runs happened during a busier period (mean host idle 0.30–0.54 against
-  0.43–0.57 for the dev baseline). That confound works *against* the bundle in §4.3, and does not explain its dominant failure,
-  which is deterministic in solo runs (§3.4).
-
-Measurement defect to avoid (found here): the first trace version installed a `process.on('uncaughtException')` handler, which
-turns a crashing scenario into **exit 0 with missing cases**. Three traced runs looked green and were not (295/296 of 313 passes).
-They are reported below by their pass counts; the handler was removed. The runner trusts exit codes, so nothing loaded into a
-scenario process may install such a handler.
+  switches), `/proc/pressure/{cpu,io,memory}` deltas, and per thread of the run's process tree `/proc/<pid>/task/<tid>/schedstat`
+  (on-CPU time and run-queue delay), grouped by process type. "wait-frac" = run-queue delay ÷ (on-CPU + run-queue delay): the share
+  of time our threads wanted a CPU and did not get one.
+- **Launch-layer trace** (`debug/u03b/trace.mjs`, `NODE_OPTIONS=--import`, not committed): wraps `chromium.launch` and
+  `browser.newContext`; per page records navigations, load time, request count, failed requests and HTTP ≥ 400, console errors and
+  Vite lines, CDP `Performance.getMetrics` deltas per second (task, script, layout, style, DOM nodes), Long Tasks API entries and a
+  100 ms real-timer gap probe (`addInitScript`), connection-widget state and presence of the main navigation; Node event-loop delay.
+- **Network monitor**: `ip -timestamp monitor all` during traced runs.
+- **Runs**: full runs of `node tests-browser/run-all.mjs` (pool 7 unless stated), solo scripts, and a one-case probe (scratch copy of
+  `activity-tables.mjs` with one extra read, deleted afterwards). No scenario file was edited. "passes" = `PASS` lines.
+- Runs are sequential, not interleaved: bundle runs met a busier host (mean idle 0.30–0.54 against 0.43–0.57); this works against
+  the bundle, but its dominant failure (D) is deterministic in solo runs.
+- **Measurement defect found and corrected**: the first trace version installed `process.on('uncaughtException')`; scenarios that
+  crashed then exited 0 with cases missing (three "green" traced runs had 295/296 of 313 passes). They are counted as red here.
+  Nothing loaded into a scenario process may install such a handler; runners should count cases, not only exit codes.
 
 ## 3. Measurements
 
 ### 3.1 Host state (question 2)
 
-| Run set | Mean host idle | CPU PSI some | I/O PSI some | Memory PSI some | `procs_running` | `procs_blocked` | Context switches/s |
-|---|---|---|---|---|---|---|---|
-| dev baseline, 10 runs | 0.43–0.57 | 0.17–0.22 | ≤ 0.009 | ≤ 0.011 | 89–127 | 0.2–1.6 | 354–565 k |
-| traced dev, 3 runs | 0.32–0.64 | 0.21–0.29 | ≤ 0.005 | ≤ 0.007 | 77–143 | 0.6–1.2 | 347–475 k |
-| bundle, 7 runs | 0.30–0.54 | 0.17–0.23 | ≤ 0.025 | ≤ 0.012 | 96–139 | 0.3–5.9 | 382–505 k |
+| Run set | Mean idle | CPU PSI some | I/O PSI some | Mem PSI some | `procs_running` | `procs_blocked` | Ctx switches/s | Our wait-frac |
+|---|---|---|---|---|---|---|---|---|
+| dev, pool 7, 15 untraced | 0.36–0.66 | 0.17–0.23 | ≤ 0.009 | ≤ 0.031 | 75–127 | 0.2–1.6 | 339–641 k | 0.031–0.119 |
+| dev, pool 7, 7 traced | 0.32–0.64 | 0.19–0.29 | ≤ 0.014 | ≤ 0.012 | 77–143 | 0.3–1.7 | 333–475 k | 0.018–0.21 |
+| dev, pool 1, 5 | 0.45–0.62 | 0.24–0.51 | ≤ 0.006 | ≤ 0.001 | 92–111 | 0.4–0.9 | 264–354 k | 0.024–0.081 |
+| bundle, pool 7, 8 | 0.30–0.54 | 0.17–0.23 | ≤ 0.025 | ≤ 0.012 | 96–139 | 0.3–5.9 | 382–505 k | 0.050–0.307 |
+| dev + netns, pool 7, 10 | 0.39–0.70 | 0.19–0.39 | ≤ 0.014 | ≤ 0.008 | 80–152 | 0.0–1.2 | 240–452 k | 0.015–0.094 |
 
-- **The load average of 150–240 is made of runnable threads, not I/O waiters** [M]: `procs_blocked` averages 0.2–6, I/O PSI stays
-  below 2.5 %. `procs_running` (≈ 100) is below the CPU count and idle is ≈ 50 %, yet CPU PSI "some" is ≈ 20 %: wake-ups are
-  bursty (350–565 k context switches/s), so runnable threads queue for short periods although the average CPU is half idle.
-- No cgroup throttling: `cpu.max` is `max` from `user.slice` down to our scope, `nr_throttled` 0 [M].
-- Correlation with failures is **weak at whole-run granularity** [M]: our wait-frac was 0.053–0.21 in red dev runs (mean 0.10)
-  and 0.031–0.082 in green ones (mean 0.05); host idle overlaps completely. The failures are triggered by second-scale bursts:
-  e.g. dev run `base-1` lost 4 scripts within the same second at t ≈ 58–61 s, when `procs_running` jumped to 195, host idle fell to
-  0.12 and our wait-frac reached 0.41 [M].
-- **Self-inflicted burst at pool start** [M]: every Node scenario process holds 224 `rolldown-worker` threads (Vite 8), i.e. ≈ 1,570
-  threads for 7 scripts. In the first second of every dev run, while seven Vite servers pre-bundle dependencies, our wait-frac is
-  0.16–0.58. In bundle mode the same burst comes from the runner's own build (0.25–0.89 for 1–2 s); it is before any page opens.
-- **Busy host inflates the page's own CPU time** [M, cause I]: traced dev runs did the same scenarios with 44 s (idle 0.64 and 0.53)
-  and 103 s (idle 0.32) of page script time; renderer wait-frac was 0.00–0.03 in the first two and 0.21 in the third. Run-queue
-  delay alone does not account for the 2.3× CPU-time inflation; SMT-sibling/cache contention on a busy VM is the likely cause (the
-  VM does not expose host frequency or steal: `st` = 0, 2,100 MHz constant) [I].
+- **Load is runnable threads** [M]: `procs_blocked` 0.2–6, I/O PSI ≤ 2.5 %; `procs_running` ≈ 100 on 128 CPUs with ≈ 50 % idle and
+  CPU PSI "some" ≈ 20 %: bursty wake-ups (300–650 k context switches/s), short queues, half-idle averages. No cgroup throttling
+  (`cpu.max` = `max` from `user.slice` down, `nr_throttled` 0) [M].
+- **Whole-run host metrics do not separate red from green** [M]: red dev runs had wait-frac 0.018–0.21, green ones 0.024–0.082;
+  `dt-1` and `dt-2` failed at idle 0.63 and wait-frac ≈ 0.02. Second-scale bursts do coincide with clusters (run `base-1` lost 4
+  scripts in one second at `procs_running` 195, idle 0.12, wait-frac 0.41) [M].
+- **Pool start is a self-inflicted burst** [M]: each Node scenario process holds 224 `rolldown-worker` threads (Vite 8), ≈ 1,570 for
+  seven scripts; in the first second of a dev run, while seven Vite servers pre-bundle dependencies, wait-frac is 0.16–0.58. In one
+  run this coincided with a host burst and two first `page.goto` calls exceeded 10 s (`et-1`). In bundle mode the burst comes from
+  the runner's own build (1–2 s, before any page opens).
+- **A busy host inflates page CPU time** [M, cause I]: identical traced runs used 44 s (idle 0.64/0.53) and 103 s (idle 0.32) of page
+  script time; renderer run-queue delay was 0.00–0.03 and 0.21. Queueing alone does not explain a 2.3× CPU-time increase; SMT
+  sibling and cache contention in the VM is the likely cause (host frequency and steal are not visible: `st` 0, 2,100 MHz) [I].
+- `/dev/shm` is a 788 GB tmpfs (20 MB used); GPU processes are ≈ 5 % of our CPU [M].
 
-### 3.2 The failure mechanism (question 1)
+### 3.2 Mechanisms A and C in detail (question 1)
 
-Every `activity-tables` header-sort failure that printed the dashboard event log (its `aria-sort` diagnostics; 7 U03 logs in
-`/tmp/u03-out` and 1 here) shows the same sequence [M]; the other symptom of the same check ("sort focus survives resource
-replacement") prints no event log, so its cause is inferred to be the same [I]:
+**A.** Code path [S]: `src/transport/manager.ts` `tick()` runs every `tickInterval`; a gap above `tickInterval + pauseThreshold`
+(100 + 300 = 400 ms in `harness.tsx`) calls `resume(gap >= pongTimeout)`, always "long" with `pongTimeout` = 300 ms, which marks the
+live socket STALE, opens a replacement and `invalidate()`s the snapshot. Production values: tick 1,000 ms, pause 2,000 ms, pong
+5,000 ms (`types.ts:51-54`). Every `activity-tables` failure that printed the event log (8: 7 in U03's `/tmp/u03-out`, 1 here, plus
+3 pauses in `dt-1`) shows `Timer pause: 404–550 ms` followed by the reconnect [M]. The trace probe saw the same 517 ms gap, inside
+which the Long Tasks API reported 725 ms of tasks (longest 292 ms); a 436 ms gap in the same page had no long task, i.e. scheduling
+delay alone can cross 400 ms [M]. CDP showed that page's main thread 97–98 % busy for seconds with 65 k–130 k DOM nodes [M].
+`goal50.tsx:7` uses pong 1,000 ms and production tick limits: same mechanism, wider margin.
 
-```text
-Timer pause: 432ms  →  Socket 1: STALE (long resume)  →  Socket 2: NEW  →  Socket 2: ALIVE, snapshot generation 2
-```
-
-Observed pause lengths in those 8 logs: 404–550 ms. The code path [S]: `manager.ts` `tick()` runs every
-`tickInterval`; a gap above `tickInterval + pauseThreshold` (100 + 300 = 400 ms in `harness.tsx`) calls `resume(gap >= pongTimeout)`;
-with `pongTimeout` = 300 ms that is always a "long resume", which marks the live socket STALE, opens a replacement and
-`invalidate()`s the snapshot. The table reloads with its default sort, focus leaves the clicked header, and the scenario sees
-`aria-sort="none"`, "sort focus survives resource replacement" = false, empty rows, or a locator that never appears.
-Production values are 1,000 + 2,000 ms tick/pause and 5,000 ms pong (`types.ts:51-54`).
-
-What produces the gaps [M]: the Long Tasks API in the page reported tasks of 248–490 ms (bt-2) and up to 772 ms (bt-3) inside the
-gaps; CDP `TaskDuration` showed the `activity-tables` page main thread 97–98 % busy for several seconds with 65 k–130 k DOM nodes.
-Renderer main-thread run-queue delay was small in the same seconds (≤ 0.14 s/s). So the stalls are page work (React development
-render, layout of large tables, module evaluation at load), lengthened by host contention, not the renderer waiting for a CPU.
-
-Other symptoms in the dev baseline: `rebuild`, `popup-regression` and `goal50` failing in the same second of one run (10 s locator
-timeouts during the host burst above), and one 7.5 s `until` window expiring (`activity-tables.mjs:231`). `goal50.html`
-(`goal50.tsx:7`) uses pong 1,000 ms / stale grace 1,000 ms with production tick limits, so it is less sensitive; the
-`goal50.mjs:153` failure (a second MCP read restarting at sequence 0 instead of 40) is consistent with a snapshot restart there
-too [I].
-
-The Vite dev server itself is not the bottleneck while pages are open [M]: first page load 0.3–0.4 s median (max 3.1 s, at pool
-start), no slow module request after the first page of a script, Node event-loop delay p99 of per-second maxima 190–255 ms. No
-Vite-initiated reload was observed: the only second Vite sockets in a page coincide with the scenarios' own `page.reload()` calls.
+**C.** In the traced runs `dt-2` and `dt-4`, all three "Main navigation never appeared" failures (`rebuild`, `run`, `history-find`)
+have, on the failing page, 6–19 aborted `/@fs/…` module requests with `net::ERR_NETWORK_CHANGED` within ≈ 100 ms of load, after
+which the page stays at 31–34 DOM nodes with ≈ 0 script time until the 10/30 s locator timeout [M]. Across all traced runs that
+recorded failed requests (`dt-1…4`, `et-1`), 4 pages had the error and each was the page on which its script failed (the fourth:
+`tool-catalog` in `et-1`, "MCP tools" group never visible); no page with the error passed [M]. During run `et-1`, `ip monitor` recorded `[LINK] Deleted … veth… master docker0` at 03:52:34 and the trace
+recorded the abort in the same second [M]. The navigation renders only after `Whoami` (`App.tsx:72` `{user && <nav …>}`) [S], so a
+failed module import means "navigation never appears". This symptom accounts for 12 of the 26 classified dev-mode script failures
+in §3.4 (all pools; 5 of 9 in serial runs) [M]. In bundle mode a page makes ≈ 7 requests instead of ≈ 180, which shrinks the
+exposure window; no bundle run showed the symptom (8 runs) [M].
 
 ### 3.3 Where the page time goes: dev server versus prebuilt bundle
 
-Same scenario set, pooled at 7, traced (dev: bt-1 313 passes; bundle: pptrace-1 309 passes) [M]:
+Pooled at 7, traced. Dev: `bt-1…3`, `dt-1…4` (295–313 passes); bundle: `pptrace-1` (309 passes) [M]:
 
-| | dev server (bt-1 / bt-2 / bt-3) | production bundle (pptrace-1) |
+| | dev server (7 runs) | production bundle |
 |---|---|---|
-| Page script time (CDP ScriptDuration, all pages) | 44 / 44 / 103 s | 8 s |
-| Page main-thread task time | 84 / 70 / 184 s | 44 s |
-| Page load, median / p90 | 299–392 / 378–684 ms | 122 / 161 ms |
-| Gaps > 400 ms with a long task ≥ 150 ms | 1 / 5 / 60 | 1 |
-| Longest long task | 331 / 490 / 772 ms | 315 ms |
-| CPU of the whole run (all processes) | 645 / 593 / 879 s | 300 s |
-| Node event-loop delay, max | 400–790 ms | 137 ms |
+| Page script time (CDP ScriptDuration, all pages) | 38–103 s | 8 s |
+| Page main-thread task time | 70–184 s | 44 s |
+| Page load, median / p90 | 294–392 / 378–684 ms | 122 / 161 ms |
+| Gaps > 400 ms with a long task ≥ 150 ms | 1–60 | 1 |
+| Longest long task | 331–772 ms | 315 ms |
+| CPU of the whole run (all processes) | 560–879 s | 300 s |
+| Node event-loop delay, max | 356–790 ms | 137 ms |
 
-Untraced, the dev baseline used 538–701 CPU-s and 105–128 s wall; bundle runs 268–424 CPU-s and 86–100 s wall. Building the eight
-bundle pages takes 4.1–4.2 s (one build per page, see §5).
+Untraced: dev 103–128 s wall and 526–701 CPU-s; bundle 86–100 s wall and 268–424 CPU-s. Building the eight pages takes 4.1–4.2 s.
 
 ### 3.4 Green rates (question 3)
 
-| Configuration | Runs | Green | Failing scripts (count) | Wall |
+| Configuration | Runs | Green | Script failures by class | Wall |
 |---|---|---|---|---|
-| U03, dev, pool 7 (for reference, other session) | 13 | 5 | activity-tables, run, ux, goal50, … | 95–119 s |
-| dev, pool 7 (`base-1…10`, unmodified behaviour) | 10 | **7** | activity-tables 3, rebuild 1, popup-regression 1, goal50 1 | 105–128 s |
-| dev, pool 7, traced (`bt-1…3`) | 3 | 1 | activity-tables, ux/transcript (masked, see §2) | 115–142 s |
-| production bundle, pool 7 (`pptrace-1`, `pp-1…7`) | 8 | **1** | activity-tables 6 (all at the lease case below), goal50 1 | 86–100 s |
-| dev, pool 7, after the change (`final-1…5`) | 5 | see §4.4 | | |
-| dev, pool 1 (`serial-1…5`) | 5 | see §4.4 | | |
+| U03, dev, pool 7 (other session, for reference) | 13 | 5 | | 95–119 s |
+| dev, pool 7, untraced (`base-1…10`, `final-1…5`) | 15 | **8** | A 4, C 4, other 5 | 103–128 s |
+| dev, pool 7, traced (`bt-1…3`, `dt-1…4`) | 7 | 2 | A 1, C 3 (`dt`); `bt-2/3` masked, see §2 | 103–142 s |
+| dev, pool 1 (`serial-1…5`) | 5 | **2** | A 1, C 5, other 3 | 534–711 s |
+| production bundle, pool 7 (`pptrace-1`, `pp-1…7`) | 8 | **1** | D 6, MCP read restart (`goal50.mjs:153`) 1 | 86–100 s |
+| dev + `CHRONICLE_BROWSER_NETNS=1`, pool 7 (`ns-1…10`, consecutive) | 10 | **8** | A 2 | 91–139 s |
 
-Bundle-mode failure, isolated [M]: "activity truth lease cells agree with details and lease-unleased metadata filtering"
-(`activity-tables.mjs:282-291`) waits until the fixture has *received* the sorted request (`until(() => fixture.calls.some(...))`)
-and then reads the rows immediately. A one-case probe (scratch copy, one extra read before the assertion, 5 runs per mode) showed:
-dev server — rows present at the first read in 5/5; production bundle — **rows empty at the first read in 5/5, rendered 24–25 ms
-later**. A development-mode bundle (React development build, bundled) fails the same case (2/2), so the exposure comes from
-bundled loading, not from React's production build [M]. The case set is otherwise identical: a green bundle run passes the same
-313 `PASS` lines as a green dev run (diff empty) [M].
+The namespace runs met a somewhat calmer host (wait-frac 0.015–0.094 against 0.031–0.119), so part of the difference may be
+host variation; the class counts are the stronger evidence: C went from 4 script failures in 15 runs (12 of 26 across all dev runs)
+to 0 in 10, and the remaining failures are A, which the namespace cannot affect. Combining `NETNS=1` with `SERVE=bundle` was not
+measured. The `base-1…10` runs used the runner before this unit's first commit, `final-1…5` the committed runner in its default
+(`dev`) mode, whose behaviour is identical; one more default-mode run after the namespace option was added (`check-1`) was green
+(313 passes, 110 s). Classes: A = reconnect symptoms in `activity-tables`/`ux`; C = "Main navigation"
+never appeared; "other" = locator/`page.goto` timeouts and assertions without trace data.
 
-A multi-entry build (all pages in one `vite build`) changed the CSS cascade: the masthead measured 90 px instead of the deployed
-58 px and `popup-regression`/`goal50` layout assertions failed [M]. One single-entry build per page reproduces the deployed
-cascade (both scripts green, 8/8 and 38/38 cases) [M].
+Bundle-mode race D, isolated [M]: "activity truth lease cells agree with details and lease-unleased metadata filtering"
+(`activity-tables.mjs:282-291`) waits until the fixture *received* the sorted request, then reads rows. One-case probe, 5 runs per
+mode: dev — rows present at the first read 5/5; production bundle — empty 5/5, rendered 24–25 ms later. A development-mode bundle
+(React development build, bundled) fails the same case 2/2, so the exposure comes from bundled loading, not React's production
+build. A green bundle run passes the same 313 `PASS` lines as a green dev run (diff empty).
+
+A multi-entry build (all pages in one `vite build`) changed the CSS cascade (masthead 90 px instead of the deployed 58 px;
+`popup-regression` and `goal50` layout assertions failed) [M]; one single-entry build per page reproduces it (8/8 and 38/38) [M].
 
 ## 4. Root causes, with evidence strength
 
 | # | Cause | Strength | Owner |
 |---|---|---|---|
-| R1 | `harness.tsx` liveness limits (400 ms timer pause, 300 ms pong, 600 ms heartbeat, 700 ms request timeout) turn any long main-thread task into reconnect + snapshot invalidation | measured (event logs of every header-sort failure; code path read) | scenario/harness content (UX workstream) |
-| R2 | Long page tasks in dev mode (React development render, unbundled module evaluation, 65–130 k-node tables) | measured (Long Tasks API, CDP metrics; ÷ 5.5 script time with a bundle) | launch layer (bundle) + app |
-| R3 | Host bursts lengthen those tasks (CPU-time inflation 2.3×, run-queue delay up to 0.4 of demanded time for seconds) | measured correlation per second; per-run correlation weak; SMT/cache cause inferred | host; not fixable here |
-| R4 | Assert-before-render races hidden by dev-mode latency (`activity-tables.mjs:282-291`, likely `goal50.mjs:153`) | measured (probe 5/5) for the first; inferred for the second | scenario content |
-| R5 | Fixed real-time windows (`until` 7.5 s, `waitForTimeout` negatives, 7 s locator timeouts on 4 s polls) | measured once (`:231` window expired); others read in source | scenario content |
-| R6 | Pool-start thread storm (7 × 224 rolldown workers + dependency pre-bundling) | measured (wait-frac 0.16–0.58 in the first second) | launch layer |
-
-### 4.4 Final measurements of the committed state
-
-(Filled in from `/tmp/u03b/summary` after the runs; see the unit's final message for the same numbers.)
+| R1 (A) | Sub-second liveness limits in `harness.tsx` (and `goal50.tsx`) | measured (event logs, probe, code path) | fixture content (UX workstream) |
+| R2 (B) | Long page tasks in dev mode | measured (Long Tasks, CDP; ÷ 5 script time with a bundle) | launch layer (bundle) + app |
+| R3 (C) | Host network-interface churn aborts in-flight module loads (`ERR_NETWORK_CHANGED`) | measured (3/3 traced failures; same-second `veth` deletion once) | launch layer (network namespace); absent in Nix sandboxes |
+| R4 (D) | Assert-before-render races exposed by faster loading | measured (probe 5/5) for `activity-tables.mjs:288-290`; inferred for `goal50.mjs:153` | scenario content |
+| R5 | Host bursts lengthen tasks and add queueing (2.3× CPU time; wait-frac up to 0.41 for seconds) | measured per second; weak per run; SMT/cache cause inferred | host |
+| R6 | Pool-start thread storm (7 × 224 rolldown workers, dependency pre-bundling) | measured (wait-frac 0.16–0.58 in the first second) | launch layer (bundle removes the per-script part) |
+| R7 | Fixed real-time windows (`until` 5–7.5 s, `waitForTimeout` before reads, 300 ms positive waits) | one expiry measured (`activity-tables.mjs:231`); others read in source | scenario content |
 
 ## 5. What changed
 
-Committed (launch layer only):
+Committed (launch layer only; command line, existing variables and exit codes unchanged):
 
-- `tests-browser/run-all.mjs`: new switch `CHRONICLE_BROWSER_SERVE` = `dev` (default, unchanged behaviour) | `bundle`. In bundle mode
-  the runner builds `index.html` and every `tests-browser/*.html` once — one single-entry `vite build` per page into one directory,
-  because a multi-entry build changes the CSS cascade — and passes `CHRONICLE_BROWSER_BUNDLE=<dir>` to every scenario process.
-  Invalid values exit 2 like the other configuration errors. Command line, other variables and exit codes are unchanged.
-- `vite.config.ts`: when `CHRONICLE_BROWSER_BUNDLE` is set, a middleware serves files of that directory before Vite's transforms
-  (after Vite's host validation and CORS), and dependency pre-bundling is switched off (nothing in the browser uses it then). Paths
-  not in the bundle fall through to Vite (`ssrLoadModule` in `run.mjs` keeps working). Without the variable the configuration is
-  identical to before; the production `vite build` (`nix build .#chronicle-web`) is unaffected.
+- `tests-browser/run-all.mjs`
+  - `CHRONICLE_BROWSER_SERVE` = `dev` (default, unchanged) | `bundle`: the runner builds `index.html` and every
+    `tests-browser/*.html` once (one single-entry `vite build` per page, which keeps the deployed CSS cascade) and passes
+    `CHRONICLE_BROWSER_BUNDLE=<dir>` to every script.
+  - `CHRONICLE_BROWSER_NETNS` = `0` (default) | `1`: every script runs under
+    `unshare --user --map-root-user --net -- sh -c 'ip link set lo up && exec …'`, so it sees only loopback and no host interface
+    events. A probe runs first; if the namespace cannot be created the runner exits 2.
+  - Invalid values of either variable exit 2.
+- `vite.config.ts`: with `CHRONICLE_BROWSER_BUNDLE` set, a middleware serves that directory ahead of Vite's transforms (after host
+  validation and CORS) and dependency pre-bundling is off; unknown paths fall through to Vite (`run.mjs` `ssrLoadModule` works).
+  Without the variable the configuration is identical to before; `nix build .#chronicle-web` is unaffected.
 
-Why opt-in and not default: it is the change that removes R2 and R6 and most of the CPU (§3.3), but with today's scenarios its green
-rate is 1/8 against 7/10, entirely because of R4. Flip the default (one line, `serveMode()`) after the two R4 fixes in §6 land, then
-run 15 pooled runs.
+Recommended now, without scenario edits: run the suite on this host with `CHRONICLE_BROWSER_NETNS=1` (8/10 against 8/15).
+
+Why both are opt-in:
+- `bundle`: 1/8 green today against 8/15 for dev, entirely because of race D. Flip the default (`serveMode()`, one line) after §6
+  items 3–4 land, then accept it with 15 pooled runs.
+- `netns`: needs `unshare` (util-linux) and `ip` (iproute2) on `PATH`; on this host they come from the user profile and `/usr/sbin`,
+  not from the pinned `.#chronicle` dev shell, and Nix sandboxes (U05's `chronicle-browser` check) already have a loopback-only
+  network namespace, so the check gains nothing from it. Requested Nix change, if the owner wants it as the developer default: add
+  `util-linux` and `iproute2` to the `chronicle` dev shell; then the default can become `1` outside Nix.
 
 Not changed, and why:
-
-- **Chromium flags** (`--disable-gpu`, `--renderer-process-limit`, raster thread counts, `--disable-dev-shm-usage`): GPU processes used
-  5 % of our CPU and renderer main threads had ≤ 3 % run-queue delay except in host bursts [M]; the stalls are main-thread work, which
-  these flags do not shorten. `/dev/shm` is a 788 GB tmpfs, 20 MB used [M]. Not run for a green rate (time); expected effect small [I].
-- **Shared browser with a context per script**: needs every scenario to accept an injected browser (scenario edit); the plan's
-  "one server and one browser per shard" shape belongs to the UX rewrite.
-- **`nice` / CPU affinity**: raising priority needs privileges; lowering it hurts us; affinity cannot keep other tenants' threads off
-  the chosen cores. Not attempted.
-- **Pool size / ordering**: U03 measured pool 4–6 not reliably green either (`/tmp/u03-out/exp.summary`: 5 of 10 runs at pool 4–6
-  red); failures are triggered by in-page thresholds, not by our own CPU share (our mean demand 4–7 cores of 128). Not changed.
-- **Shared pre-warmed dependency cache**: in bundle mode the dependency optimiser is off entirely, which subsumes it. In dev mode the
-  startup burst (R6) is real but the failing waits happen 20–70 s later; not measured separately.
+- **Chromium flags** (`--disable-gpu`, `--renderer-process-limit`, raster threads, `--disable-dev-shm-usage`): GPU ≈ 5 % of our CPU,
+  renderer run-queue delay ≤ 3 % outside host bursts; the stalls are main-thread work these flags do not shorten [M/I]. Chromium has
+  no switch to ignore host interface changes [I]; the namespace does it from outside. Not run for a green rate.
+- **One shared browser, context per script**: requires every scenario to accept an injected browser (scenario edit).
+- **`nice` / affinity**: raising priority needs privileges, lowering it hurts, affinity cannot keep other tenants off our cores.
+- **Pool size / order**: pool 1 was no greener than pool 7 (2/5 versus 8/15) and U03 saw 5 of 10 pool 4–6 runs red; our mean demand
+  is 4–7 cores of 128. Not changed.
+- **Pre-warmed shared dependency cache**: subsumed by the bundle; in dev mode the pool-start burst is real but the failing waits
+  are mostly 10–70 s later.
 
 ## 6. Scenario-level causes for the dashboard units (question 4)
 
-Paths relative to `chronicle/web/tests-browser/`. None of these was edited here.
+Paths relative to `chronicle/web/tests-browser/`. Nothing here was edited by this unit.
 
 | # | Location | Wait / value | Why it is fragile | Robust form |
 |---|---|---|---|---|
-| 1 | `harness.tsx:7-11` | `pongTimeout 300`, `heartbeatInterval 600`, `tickInterval 100` + `pauseThreshold 300`, `staleGrace 900`, `requestTimeout 700`, `connectTimeout 500` | A ≥ 400 ms main-thread task or a 300 ms reply delay reconnects and invalidates every loaded table (R1, measured). Used by `activity-tables`, `persistent-login`, `refresh-regression`, `run`, `theme-retry`, `ux`, `ui-controls`. | Default page uses production `connectionConfig`. Scenarios about liveness install `page.clock` and drive pauses with `clock.pauseAt` / `fastForward` / `runFor` (as `activity-tables.mjs:119,129` and `live-archive.mjs` already do), or use a dedicated liveness page. `theme-retry.mjs:119,125,135` rely on the real 600 ms heartbeat and must move to the clock as well. |
-| 2 | `goal50.tsx:7` | `pongTimeout 1000`, `staleGrace 1000`, `connectTimeout 500` | Same mechanism, wider margin; `goal50.mjs:153` failure (second MCP read from sequence 0) is consistent with it [I]. | As item 1. |
-| 3 | `activity-tables.mjs:288-290` | `until(request observed)` then immediate `rowIds` | Waits for the *request*, asserts the *rendered result*; empty in 5/5 bundle probes, 24–25 ms before render (R4, measured). Blocks making the bundle the default. | Wait for the result: `await until(async () => JSON.stringify(await rowIds(page, '.activity-job-row')) === JSON.stringify([id]), …)` or the table's `aria-busy="false"`, as `:97-98` already do. |
-| 4 | `goal50.mjs:153` | reads `fixture.calls` for `ReadMcpTest` right after the UI step | Same request-versus-render pattern; failed once in bundle mode [M]. | Wait until the expected second read exists (`fixture.waitCall`-style helper, as `filter-table-ux.mjs:67` uses). |
-| 5 | `activity-tables.mjs:8`, `ux.mjs:37`, `live-archive.mjs:22` | `until`: 150 × 50 ms (7.5 s), 100 × 50 ms (5 s) real-time polling | Real-time budget; `:231` expired once in the dev baseline. | Event-driven: have the fixture resolve a promise when the expected call arrives (`fixture.waitCall`), or `page.waitForFunction` on page state with the suite-wide default timeout; under `page.clock`, advance time explicitly. |
-| 6 | `run.mjs:462` | `dispatchEvent('resume')`, `waitForTimeout(300)`, then `sockets.length > count` | Positive assertion after a fixed 300 ms: fails whenever the replacement socket takes longer. | Wait for the condition (`waitForCalls`-style loop on `fixture.sockets.length`), no fixed sleep. |
-| 7 | `run.mjs:453,459`; `live-archive.mjs:33,83` | `waitForTimeout(1200 / 1000 / 500 / 50)` then "nothing happened" | Negative assertions on real time: pass vacuously when the page is slow, so they lose power under load rather than fail. | Install `page.clock`, `runFor` past the relevant timer, then assert absence. |
-| 8 | `activity-tables.mjs:180,186`; `ux.mjs:99,151,158,357`; `live-archive.mjs:70,141,179`; `run.mjs:272,378`; `refresh-regression.mjs:171` | `waitForTimeout(100–400)` "let it settle" before reading state | Settling time is load-dependent; under load the read races the render. | Wait for the specific state that "settled" means (row ids, `aria-busy`, a counter). |
-| 9 | `refresh-regression.mjs:184`; `run.mjs:157-160` (7 s locator timeouts on 4 s polls) | real 20 s `ARCHIVE_REFRESH_MS`, real 4 s polls | Real time is the floor of the script and leaves 3 s margin per poll. | `page.clock.install()` + `fastForward(ARCHIVE_REFRESH_MS)` (plan W6). |
-| 10 | `run.mjs:76`, `search-serp.mjs:313` | 10 s busy-wait loops on fixture calls | Same as item 5. | Same as item 5. |
+| 1 | `harness.tsx:7-11` | `pongTimeout 300`, `heartbeatInterval 600`, `tickInterval 100` + `pauseThreshold 300`, `staleGrace 900`, `requestTimeout 700`, `connectTimeout 500`, `maxAttempts 3` | Any ≥ 400 ms main-thread stall (or ≥ 300 ms reply delay) reconnects and invalidates all loaded state (A, measured). Used by `activity-tables`, `persistent-login`, `refresh-regression`, `run`, `theme-retry`, `ux`, `ui-controls`. | Default fixture page with production `connectionConfig`; liveness scenarios install `page.clock` and use `pauseAt`/`fastForward`/`runFor` (as `activity-tables.mjs:119,129`, `live-archive.mjs` already do), or a dedicated liveness page. `theme-retry.mjs:119,125,135` depend on the real 600 ms heartbeat and must move to the clock too. |
+| 2 | `goal50.tsx:7` | `pongTimeout 1000`, `staleGrace 1000`, `connectTimeout 500`, `maxAttempts 3` | Same mechanism, wider margin; `goal50.mjs:153` (second MCP read restarting at sequence 0) is consistent with a snapshot restart [I]. | As item 1. |
+| 3 | `activity-tables.mjs:288-290` | `until(request observed)`, then immediate `rowIds` | Waits for the request, asserts the rendered result: empty in 5/5 bundle probes (D, measured). Blocks the bundle default. | `await until(async () => JSON.stringify(await rowIds(page, '.activity-job-row')) === JSON.stringify([id]), …)` or wait for `aria-busy="false"`, as `:97-98` do. |
+| 4 | `goal50.mjs:153` | reads `fixture.calls` for `ReadMcpTest` right after the UI step | Same request-versus-result pattern; failed once in bundle mode. | Wait until the expected second read exists (a `fixture.waitCall`-style promise, as `filter-table-ux.mjs:67` uses). |
+| 5 | `activity-tables.mjs:8`, `ux.mjs:37`, `live-archive.mjs:22` | `until`: 150 × 50 ms (7.5 s), 100 × 50 ms (5 s) | Real-time budget; `activity-tables.mjs:231` expired once (R7). | Fixture resolves a promise when the expected call arrives; or `page.waitForFunction` on page state with one suite-wide timeout; under `page.clock`, advance time explicitly. |
+| 6 | `run.mjs:462` | `dispatchEvent('resume')`, `waitForTimeout(300)`, then `sockets.length > count` | Positive assertion after a fixed 300 ms. | Wait for the condition (poll `fixture.sockets.length` with the suite timeout). |
+| 7 | `run.mjs:453,459`; `live-archive.mjs:33,83` | `waitForTimeout(1200/1000/500/50)` then "nothing happened" | Negative assertions on real time lose power when the page is slow. | `page.clock`: `runFor` past the timer, then assert absence. |
+| 8 | `activity-tables.mjs:180,186`; `ux.mjs:99,151,158,357`; `live-archive.mjs:70,141,179`; `run.mjs:272,378`; `refresh-regression.mjs:171` | `waitForTimeout(100–400)` "let it settle" before reading | Settling time depends on load. | Wait for the state "settled" means (row ids, `aria-busy`, a counter). |
+| 9 | `refresh-regression.mjs:184`; `run.mjs:157-160` | real 20 s `ARCHIVE_REFRESH_MS`; real 4 s polls with 7 s locator timeouts | Real time sets the script's floor; 3 s margin per poll. | `page.clock.install()` + `fastForward` (plan W6). |
+| 10 | `run.mjs:76`, `search-serp.mjs:313` | 10 s busy-wait loops on fixture calls | As item 5. | As item 5. |
+| 11 | every scene | first `page.goto`/navigation wait at pool start (10 s default timeouts) | With the dev server, the first page of each script waits for dependency pre-bundling during the pool-start burst (R6); two `goal50.html` loads exceeded 10 s in `et-1`. | Bundle mode (launch) removes it; scenarios should not set per-call timeouts below the suite default for page loads. |
 
 ## 7. Rules for every browser check in this repository (Chronicle, Haystack, Manure, shared account views)
 
-1. **No real-time liveness limits in test pages.** Run the app with its production timing constants; test timing behaviour with a
-   controlled clock (Playwright `page.clock`). A sub-second deadline in a test build converts host noise into application state
-   changes, and the failure then looks like a product defect.
-2. **Wait for the rendered result, not for the request.** After an action, wait on the DOM state you will assert (locator assertion,
-   `waitForFunction`, `aria-busy="false"`), never on "the fixture saw the request" or on a fixed sleep.
-3. **Negative assertions use the clock.** "Nothing happens within N ms" is only meaningful when the test advances time itself.
-4. **Polling windows are event-driven or suite-wide.** No per-call 5–7.5 s loops; one default timeout per suite, and fixtures expose
-   promises for calls they receive.
-5. **Serve built assets in the browser suites.** A prebuilt bundle per page halves the CPU of a Chronicle run and removes
-   per-script dependency pre-bundling; per-page builds keep the deployed CSS cascade. Keep the dev server for interactive debugging.
-6. **Nothing loaded into a scenario process may catch `uncaughtException`/`unhandledRejection`**, and runners should count executed
-   cases, not only exit codes: a swallowed exception exits 0 with cases missing (observed here).
-7. **Measure before tuning**: record `uptime`, PSI, `procs_running`/`procs_blocked` and per-thread run-queue delay with every
-   timing; on this host load ≈ 200 means ≈ 100 runnable threads with ≈ 50 % idle CPU and bursty contention, not I/O.
-8. **Accept a configuration by repeated pooled runs** (≥ 15 for a default change), and compare case sets (`PASS` lines) between
-   modes; a faster harness can expose races a slower one hid.
+1. **No real-time liveness limits in test pages.** Run the app with production timing constants; test timing behaviour with a
+   controlled clock (`page.clock`). A sub-second deadline in a test build converts host noise into application state changes that
+   look like product defects.
+2. **Wait for the rendered result, not for the request.** After an action, wait on the DOM state you assert next (locator
+   assertions, `waitForFunction`, `aria-busy="false"`), never on "the fixture saw the request" or a fixed sleep.
+3. **Negative assertions use the clock.** "Nothing happens within N ms" only means something when the test advances time.
+4. **Event-driven waits, one suite-wide timeout.** Fixtures expose promises for calls they receive; no per-call 5–7.5 s loops.
+5. **Serve built assets.** One build per page keeps the deployed CSS cascade; a page then makes ≈ 7 requests instead of ≈ 180,
+   does ⅕ of the script work and is not exposed to per-module failures. Keep the dev server for interactive debugging.
+6. **Isolate the browser's network on shared hosts.** Container churn (`veth` add/delete) makes Chromium abort in-flight requests
+   with `ERR_NETWORK_CHANGED`. Run browser checks in a loopback-only network namespace (Nix sandboxes already are; outside Nix use
+   `CHRONICLE_BROWSER_NETNS=1` or the equivalent `unshare -rn`). Use `127.0.0.1`/host-resolver rules, never external names.
+7. **Nothing in a scenario process may catch `uncaughtException`/`unhandledRejection`, and runners should count executed cases**:
+   a swallowed exception exits 0 with cases missing (observed here).
+8. **Measure before tuning**: record `uptime`, PSI, `procs_running`/`procs_blocked` and per-thread run-queue delay with every timing;
+   on this host load ≈ 200 means ≈ 100 runnable threads, ≈ 50 % idle CPU and bursty contention, not I/O.
+9. **Accept a configuration by repeated runs** (≥ 15 pooled for a default change) and compare case sets between modes: a faster
+   harness exposes races a slower one hid.
 
 ### How to write a browser check that survives this host
 
-- Start the app with production timing; install `page.clock` before navigation when the scenario involves timers.
+- Production timing in the page; `page.clock.install()` before navigation whenever timers matter.
 - After every action, wait for the exact DOM state you assert next; prefer role/label locators with Playwright's auto-waiting.
-- Let the fixture resolve promises (`waitCall(operation, count)`) instead of polling arrays with sleeps.
-- No `waitForTimeout` except as an explicitly justified real-time test, and then assert with margins measured under load.
-- One browser and one server per process; contexts per scene; no files written by scenes.
-- Run it 15× pooled at load before declaring it stable; report green count, wall time, `uptime` and PSI.
+- Fixtures resolve promises (`waitCall(operation, count)`) instead of being polled with sleeps.
+- No `waitForTimeout`, except in an explicitly real-time test whose margins were measured under load.
+- One browser and one server per process, a context per scene, no files written by scenes, served from a prebuilt bundle,
+  inside a loopback-only network namespace.
+- Run it 15× pooled on the loaded host before declaring it stable; report green count, wall time, `uptime` and PSI.
 
 ## Data
 
 `/tmp/u03b/` (local to this host, not committed): `summary` (one line per run: exit, passes, wall, load), `<run>/run.log`,
-`<run>/samples.jsonl` (sampler), `<run>/trace/*.jsonl` (traced runs), `solo/`, `lease-*.log` (race probe), `analyze.py`,
-`hostcorr.py`. Diagnostic scripts: `debug/u03b/` in the unit's worktree (git-ignored, not committed).
+`<run>/samples.jsonl` (sampler), `<run>/trace/*.jsonl` (traced runs: `bt-*`, `dt-*`, `et-1`, `pptrace-1`), `ipmon.log`, `solo/`,
+`lease-*.log` (race probe), `analyze.py`, `hostcorr.py`. Throwaway diagnostic scripts: `debug/u03b/` in the unit's worktree
+(git-ignored, not committed).

@@ -8,10 +8,13 @@
 //                                          'bundle': build the app and fixture pages once, and every script's Vite server serves that
 //                                          production bundle (CHRONICLE_BROWSER_BUNDLE, read by vite.config.ts). Not the default until
 //                                          the scenario races listed in docs/drafts/20261118-0110-browser-suite-reliability.md are fixed.
+//   CHRONICLE_BROWSER_NETNS                '1': run every script in a private user+network namespace with only loopback (needs
+//                                          `unshare` and `ip` on PATH). Host interface changes (container veths) otherwise make
+//                                          Chromium abort in-flight module loads with ERR_NETWORK_CHANGED. Nix sandboxes are isolated already.
 // Each child gets its own Vite cache directory (CHRONICLE_VITE_CACHE_DIR, read by vite.config.ts) under $TMPDIR;
 // scenario scripts bind port 0, so ports are per process as well.
 // Exit status: 0 all scripts passed; 1 a script failed or timed out; 2 invalid configuration or no script ran.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { availableParallelism, tmpdir } from 'node:os';
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -23,6 +26,7 @@ const NODE_ARGS = ['--experimental-transform-types', '--import', './tests/resolv
 const DEFAULT_POOL_CEILING = 7, CORES_PER_SCRIPT = 2, DEFAULT_SCRIPT_TIMEOUT_MS = 480000;
 const EXIT_FAILED = 1, EXIT_CONFIGURATION = 2;
 const SERVE_MODES = ['bundle', 'dev'], FIXTURE_PAGES = 'tests-browser';
+const NETNS_PREFIX = ['unshare', '--user', '--map-root-user', '--net', '--', 'sh', '-c', 'ip link set lo up && exec "$0" "$@"'];
 // Registration: add the entry file name here. Longest scripts first, so the pool's tail is short.
 const SCRIPTS = [
   'rebuild.mjs', 'run.mjs', 'goal50.mjs', 'ux.mjs', 'activity-tables.mjs', 'refresh-regression.mjs', 'theme-retry.mjs',
@@ -55,6 +59,15 @@ function serveMode() {
   if (!SERVE_MODES.includes(value)) throw new Error(`CHRONICLE_BROWSER_SERVE must be one of ${SERVE_MODES.join(', ')}, got '${value}'`);
   return value;
 }
+// Command prefix for every script: empty, or a private network namespace after a probe that fails fast when unavailable.
+function launchPrefix() {
+  const value = process.env.CHRONICLE_BROWSER_NETNS;
+  if (value === undefined || value === '' || value === '0') return [];
+  if (value !== '1') throw new Error(`CHRONICLE_BROWSER_NETNS must be 0 or 1, got '${value}'`);
+  const probe = spawnSync(NETNS_PREFIX[0], [...NETNS_PREFIX.slice(1), 'true'], { stdio: 'inherit' });
+  if (probe.status !== 0) throw new Error(`CHRONICLE_BROWSER_NETNS=1, but '${NETNS_PREFIX.join(' ')} true' failed (${probe.error?.message ?? `exit ${probe.status}`})`);
+  return NETNS_PREFIX;
+}
 // Production builds of index.html and every fixture page into one directory; returns the environment that makes the scripts'
 // Vite servers serve it. One build per page: a multi-entry build splits shared CSS into chunks whose order changes the cascade
 // (measured: masthead 90 px instead of the deployed 58 px), so each page keeps the chunking of the deployed single-entry build.
@@ -70,7 +83,7 @@ async function bundleEnvironment(mode, cacheRoot) {
 const children = new Set();
 function killGroup(child) { if (child.pid === undefined) return; try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; } }
 
-function runScript(script, cacheRoot, timeoutMs, serveEnvironment) {
+function runScript(script, cacheRoot, timeoutMs, serveEnvironment, prefix) {
   return new Promise(resolve => {
     const started = Date.now(), chunks = [];
     let child, timer, finished = false;
@@ -81,7 +94,8 @@ function runScript(script, cacheRoot, timeoutMs, serveEnvironment) {
       resolve({ script, status, detail, seconds: (Date.now() - started) / 1000, output: Buffer.concat(chunks).toString('utf8') });
     };
     try {
-      child = spawn(process.execPath, [...NODE_ARGS, `tests-browser/${script}`], {
+      const command = [...prefix, process.execPath, ...NODE_ARGS, `tests-browser/${script}`];
+      child = spawn(command[0], command.slice(1), {
         cwd: WEB_ROOT, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...process.env, ...serveEnvironment, CHRONICLE_VITE_CACHE_DIR: join(cacheRoot, script) },
       });
@@ -97,13 +111,13 @@ function runScript(script, cacheRoot, timeoutMs, serveEnvironment) {
 }
 
 async function main() {
-  const pool = poolSize(), timeoutMs = envInteger('CHRONICLE_BROWSER_SCRIPT_TIMEOUT_MS', DEFAULT_SCRIPT_TIMEOUT_MS), mode = serveMode();
+  const pool = poolSize(), timeoutMs = envInteger('CHRONICLE_BROWSER_SCRIPT_TIMEOUT_MS', DEFAULT_SCRIPT_TIMEOUT_MS), mode = serveMode(), prefix = launchPrefix();
   if (SCRIPTS.length === 0) throw new Error('No browser scripts registered');
   const cacheRoot = await mkdtemp(join(tmpdir(), 'chronicle-browser-')), results = [], queue = [...SCRIPTS], started = Date.now();
-  console.log(`browser pool: ${SCRIPTS.length} scripts, ${pool} at a time, serving ${mode}`);
+  console.log(`browser pool: ${SCRIPTS.length} scripts, ${pool} at a time, serving ${mode}${prefix.length === 0 ? '' : ', private network namespace'}`);
   async function worker(serveEnvironment) {
     for (let script = queue.shift(); script !== undefined; script = queue.shift()) {
-      const result = await runScript(script, cacheRoot, timeoutMs, serveEnvironment);
+      const result = await runScript(script, cacheRoot, timeoutMs, serveEnvironment, prefix);
       results.push(result);
       console.log(`=== ${result.script}: ${result.status === 'ok' ? 'ok' : `FAIL (${result.detail})`} in ${result.seconds.toFixed(1)} s`);
       process.stdout.write(result.output.endsWith('\n') || result.output === '' ? result.output : `${result.output}\n`);
