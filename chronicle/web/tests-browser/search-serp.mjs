@@ -13,7 +13,7 @@ if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Provisioned browsers
 const server = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), server: { host: '127.0.0.1', port: 0, watch: null }, logLevel: 'error' }); await server.listen();
 const origin = `http://127.0.0.1:${server.httpServer.address().port}`, PAGE = 'tests-browser/goal50.html';
 const browser = await chromium.launch({ headless: true }), results = [], errors = [], dialogs = [];
-const SEARCH_TEXT = 'mode:semantic source', FIRST_BATCH = 10, TOTAL_ROWS = 23, MASTHEAD_HEIGHT = 48, SCROLL_TOLERANCE = 2, SCROLLED_TO = 1500;
+const SEARCH_TEXT = 'mode:semantic source', FIRST_BATCH = 10, TOTAL_ROWS = 23, MASTHEAD_HEIGHT = 48, SCROLL_TOLERANCE = 2, SCROLLED_TO = 1500, STICKY_SLACK = 40;
 const TITLE = index => `Search conversation ${index}`;
 async function scene(configure, { width = 1440, height = 1000, theme = 'light', text = SEARCH_TEXT } = {}) {
   const context = await browser.newContext({ viewport: { width, height }, colorScheme: theme }), page = await context.newPage(), fixture = new SearchFixture();
@@ -57,6 +57,14 @@ function withSpan(result, span) {
 function mixedPins(result) {
   return result.with({ evidence: result.evidence.map((evidence, index) => evidence.with({ matches: [evidence.matches[0], evidence.matches[1].with({ view: result.page.rows[index].head.view, kind: api.ArchiveMatchKind.Literal, operand: 'Separate', summary: undefined })] })) });
 }
+const denials = page => page.evaluate(() => window.__denials);
+const watchDenials = page => page.evaluate(() => { window.__denials = []; document.addEventListener('chronicle:source-unavailable', event => window.__denials.push(event.detail)); });
+const reportDenial = (page, detail) => page.evaluate(value => document.dispatchEvent(new CustomEvent('chronicle:source-unavailable', { detail: value })), detail);
+const pinOf = view => ({ revision: view.revision, generationId: view.generationId ?? null });
+const sessionPinOf = (page, href) => page.evaluate(async hash => {
+  const { parseFragment } = await import('/src/router.ts'), { sessionPin } = await import('/src/session-link.ts'), fragment = parseFragment(hash);
+  const pin = sessionPin(fragment.route.params); return pin === null ? null : { revision: pin.revision, generationId: pin.generationId ?? null };
+}, href);
 async function group(name, body) {
   if (process.env.CHRONICLE_SEARCH_CASE !== undefined && !name.includes(process.env.CHRONICLE_SEARCH_CASE)) return;
   await body(); results.push(name); console.log(`PASS search: ${name}`); }
@@ -94,16 +102,18 @@ try {
     assert.deepEqual(calls(fixture, api.Operation_ArchiveSearch).map(operation => operation.query.cursor).slice(0, 3), [undefined, '10', '10']);
     await loadAll(page); assert.equal(await rows(page).count(), TOTAL_ROWS); await context.close();
   });
-  await group('the document is the only vertical scroller; the view bar sticks under the masthead', async () => {
+  await group('the document is the only vertical scroller; the query bar and the counter stick together under the masthead', async () => {
     const { page, context } = await scene();
     await submit(page); await ready(page); await loadAll(page);
     assert.deepEqual(await scrollers(page), [], 'no nested scroller');
     assert.equal(await page.evaluate(() => document.scrollingElement.scrollHeight > innerHeight), true);
     await scrollAt(page, SCROLLED_TO);
-    const masthead = await page.getByRole('banner').boundingBox(), viewBar = await bar(page).boundingBox();
+    const masthead = await page.getByRole('banner').boundingBox(), field = await input(page).boundingBox(), counter = await bar(page).boundingBox();
     assert.equal(Math.round(masthead.height), MASTHEAD_HEIGHT);
-    assert.equal(Math.round(viewBar.y), MASTHEAD_HEIGHT, 'the view bar sticks directly under the masthead');
-    await context.close();
+    assert.ok(field.y >= MASTHEAD_HEIGHT && field.y < MASTHEAD_HEIGHT + STICKY_SLACK, `the query field stays under the masthead (${field.y})`);
+    assert.ok(counter.y >= MASTHEAD_HEIGHT && counter.y < MASTHEAD_HEIGHT + STICKY_SLACK, 'the counter stays under the masthead');
+    assert.ok(field.x + field.width <= counter.x, 'query bar and counter do not overlap'); assert.ok(Math.abs(field.y + field.height / 2 - (counter.y + counter.height / 2)) < STICKY_SLACK, 'one row');
+    await barText(page, `${TOTAL_ROWS} conversations · ${TOTAL_ROWS} loaded`); await context.close();
   });
   await group('loaded rows, scroll and the opener survive a session round trip and a tab round trip; reload restores the query', async () => {
     const { page, fixture, context } = await scene();
@@ -115,7 +125,7 @@ try {
     });
     await page.locator(`[data-focus-key="${opener.key}"]`).click();
     await page.waitForFunction(id => location.hash.startsWith(`#/session/${id}?`), opener.id);
-    assert.match(await page.evaluate(() => location.hash), /\?at=m65&find=source&rev=\d+$/, 'Open at first match carries message, Find text and revision');
+    assert.match(await page.evaluate(() => location.hash), /\?at=m65&find=source&gen=[^&]+&rev=\d+$/, 'Open at first match carries message, Find text, generation and revision');
     await page.goBack(); await searchMain(page).waitFor();
     assert.equal(await rows(page).count(), 2 * FIRST_BATCH, 'the loaded batches survive');
     await page.waitForFunction(([top, tolerance]) => Math.abs(scrollY - top) <= tolerance, [SCROLLED_TO, SCROLL_TOLERANCE]);
@@ -222,8 +232,16 @@ try {
     assert.ok(reads.some(read => read.view.revision === fixture.session.revision && read.view.generationId === undefined), 'the literal witness is read at the HEAD pin');
     assert.ok(reads.some(read => read.view.revision === fixture.view.revision && read.view.generationId === fixture.view.generationId), 'the semantic witness is read at its published pin');
     assert.match(await hits(literal).getAttribute('href'), new RegExp(`\\?at=m66&find=Separate&rev=${fixture.session.revision}$`));
-    assert.match(await hits(published).getAttribute('href'), new RegExp(`\\?at=m65&find=source&rev=${fixture.view.revision}$`))
+    assert.match(await hits(published).getAttribute('href'), new RegExp(`\\?at=m65&find=source&gen=${fixture.view.generationId}&rev=${fixture.view.revision}$`));
     assert.notEqual(fixture.session.revision, fixture.view.revision); await context.close();
+  });
+  await group('session links keep the complete pin: published and archive-only views of one revision stay distinct and decode back', async () => {
+    const { page, fixture, context } = await scene(f => { f.archiveSearchTransform = result => mixedPins(result.with({ page: result.page.with({ rows: result.page.rows.map(row => row.with({ head: row.head.with({ revision: 1, indexedRevision: 1, view: new api.ContentView(1, undefined) }) })) }) })); });
+    await submit(page); await ready(page);
+    const first = rows(page).first(), published = await hits(first.locator(`[data-match-kind="${api.ArchiveMatchKind.Semantic}"]`)).getAttribute('href'), archiveOnly = await hits(first.locator(`[data-match-kind="${api.ArchiveMatchKind.Literal}"]`)).getAttribute('href');
+    assert.notEqual(published.replace(/at=[^&]*&find=[^&]*&/, ''), archiveOnly.replace(/at=[^&]*&find=[^&]*&/, ''), 'the same revision with and without a generation gives different links');
+    assert.deepEqual(await sessionPinOf(page, published), pinOf(fixture.view)); assert.deepEqual(await sessionPinOf(page, archiveOnly), { revision: 1, generationId: null });
+    assert.match(await link(first, TITLE(1)).getAttribute('href'), /\?at=m65&find=source&gen=[^&]+&rev=1$/, 'the title link keeps the published pin of its landing match'); await context.close();
   });
   await group('expanded hits show the messages between non-adjacent matches', async () => {
     const { page, context } = await scene(f => { f.archiveSearchTransform = result => result.with({ evidence: result.evidence.map(evidence => evidence.with({ matches: [evidence.matches[0], evidence.matches[1].with({ span: new api.Span('m80', 0, 3) })] })) }); });
@@ -272,9 +290,12 @@ try {
     const { page, fixture, context } = await scene(); await submit(page); await ready(page);
     const reads = calls(fixture, api.Operation_ArchiveSearch).length, open = rows(page).first().getByRole('link', { name: 'Open at first match' });
     await open.focus(); await page.keyboard.press('Enter');
-    await page.waitForFunction(id => location.hash.startsWith(`#/session/${id}?`), fixture.session.id); assert.match(await page.evaluate(() => location.hash), /\?at=m65&find=source&rev=1$/);
+    await page.waitForFunction(id => location.hash.startsWith(`#/session/${id}?`), fixture.session.id); assert.match(await page.evaluate(() => location.hash), /\?at=m65&find=source&gen=[^&]+&rev=1$/);
     await page.goBack(); await searchMain(page).waitFor();
     await page.waitForFunction(() => document.activeElement?.textContent === 'Open at first match'); assert.equal(await rows(page).count(), FIRST_BATCH); assert.equal(calls(fixture, api.Operation_ArchiveSearch).length, reads);
+    const hit = hits(rows(page).first()).first(); await hit.focus(); await page.keyboard.press('Enter');
+    await page.waitForFunction(id => location.hash.startsWith(`#/session/${id}?`), fixture.session.id); await page.goBack(); await searchMain(page).waitFor();
+    await page.waitForFunction(() => document.activeElement?.dataset.focusKey?.startsWith('hit:')); assert.equal(calls(fixture, api.Operation_ArchiveSearch).length, reads, 'a highlighted hit is remembered as the opener too');
     await context.close();
   });
   await group('IME Enter and Search withhold execution until composition ends', async () => {
@@ -305,10 +326,59 @@ try {
     else if (failure === 'wrong-session') fixture.contextTransform = result => result.with({ sessionId: '00000000-0000-4000-8000-000000099999' });
     else if (failure === 'wrong-anchor') fixture.contextTransform = result => result.with({ anchor: result.anchor.with({ start: 1 }) });
     else fixture.contextFailure = failure;
+    await watchDenials(page);
     const first = rows(page).first(); await expand(first); await hitGroups(first).first().getByRole('button', { name: 'Later context', exact: true }).click(); await first.getByRole('alert').waitFor();
+    const reported = await denials(page); assert.equal(reported.length, 1, 'the failure is reported once, to the views that retain the same source');
+    assert.deepEqual([reported[0].origin, reported[0].sessionId, reported[0].view], ['search', fixture.session.id, pinOf(fixture.view)]);
+    assert.equal(reported[0].code, ['forbidden', 'indexed-view-retired'].includes(failure) ? failure : null, 'a service code is passed on, a client-side validation failure carries none');
     assert.equal(await first.locator('[data-hit]').count(), 0); assert.equal(await link(first, TITLE(1)).count(), 0, 'an unavailable result cannot be opened from its title'); assert.equal(await first.locator('h2 [aria-disabled="true"]').count(), 1);
     assert.ok(await hits(rows(page).nth(1)).count() > 0, 'other results keep their hits'); assert.equal(await link(rows(page).nth(1), TITLE(2)).count(), 1);
     assert.equal(calls(fixture, api.Operation_GetSession).length, 0); assert.equal(calls(fixture, api.Operation_GetMessages).length, 0); await context.close();
+  });
+  await group('the pin of a reported denial is the failing hit\'s own view (HEAD literal versus published semantic)', async () => {
+    const { page, fixture, context } = await scene(f => { f.archiveSearchTransform = mixedPins; }); await submit(page); await ready(page); await watchDenials(page);
+    const first = rows(page).first(), literal = first.locator(`[data-match-kind="${api.ArchiveMatchKind.Literal}"]`);
+    await literal.locator('mark').first().waitFor(); fixture.contextFailure = 'forbidden'; await expand(first); await literal.getByRole('button', { name: 'Later context', exact: true }).click(); await first.getByRole('alert').waitFor();
+    assert.deepEqual((await denials(page)).map(item => item.view), [{ revision: fixture.session.revision, generationId: null }]); await context.close();
+  });
+  await group('an abandoned context window cannot report a late denial', async () => {
+    const { page, fixture, context } = await scene(); await submit(page); await ready(page); await watchDenials(page);
+    const first = rows(page).first(), group1 = hitGroups(first).first(), reads = calls(fixture, api.Operation_ReadMessageContext).length; fixture.holdContext = true; fixture.contextFailure = 'forbidden';
+    await expand(first); await group1.getByRole('button', { name: 'Later context', exact: true }).click(); await fixture.waitCall(api.Operation_ReadMessageContext, reads + 1); fixture.contextFailure = null;
+    await first.getByRole('button', { name: 'Collapse', exact: true }).click(); await fixture.waitCall(api.Operation_ReadMessageContext, reads + 2);
+    const [denied, matched] = fixture.pendingContext.splice(0, 2); fixture.holdContext = false; matched(); await hits(group1).first().waitFor(); denied();
+    await loadRows(page, 2 * FIRST_BATCH);
+    assert.deepEqual(await denials(page), [], 'the late denial of the abandoned window is neither reported nor shown'); assert.equal(await first.getByRole('alert').count(), 0); await context.close();
+  });
+  for (const code of ['forbidden', 'not-found', 'authorization-changed', 'unauthorized']) await group(`a session-reported ${code} denial clears the retained results; Search is then re-run explicitly`, async () => {
+    const { page, fixture, context } = await scene(); await submit(page); await ready(page);
+    await reportDenial(page, { origin: 'session', sessionId: fixture.session.id, view: pinOf(fixture.view), code, message: 'Pinned conversation source access removed' });
+    await page.locator('[data-state="intro"]').waitFor(); assert.equal(await rows(page).count(), 0);
+    await searchMain(page).getByRole('alert').filter({ hasText: 'Search results cleared after a denied or unavailable pinned source' }).waitFor();
+    assert.equal(await input(page).inputValue(), SEARCH_TEXT, 'the draft is kept'); assert.equal(calls(fixture, api.Operation_ArchiveSearch).length, 1, 'nothing is re-read behind the denial');
+    await submit(page); await ready(page); assert.equal(await searchMain(page).getByRole('alert').count(), 0); await context.close();
+  });
+  for (const name of ['published', 'HEAD']) await group(`a session-reported view failure of the ${name} pin of a displayed result clears the results`, async () => {
+    const { page, fixture, context } = await scene(); await submit(page); await ready(page);
+    await reportDenial(page, { origin: 'session', sessionId: fixture.session.id, view: name === 'published' ? pinOf(fixture.view) : { revision: fixture.session.revision, generationId: null }, code: 'indexed-view-retired', message: 'Indexed view retired' });
+    await page.locator('[data-state="intro"]').waitFor(); assert.equal(await rows(page).count(), 0); await context.close();
+  });
+  await group('a session-reported failure that concerns no displayed pin or session leaves the results; the same report for a displayed pin then clears them', async () => {
+    const { page, fixture, context } = await scene(); await submit(page); await ready(page); await loadRows(page, 2 * FIRST_BATCH);
+    const own = { origin: 'session', sessionId: fixture.session.id, view: pinOf(fixture.view), message: 'Source failure' };
+    for (const detail of [
+      { ...own, view: { revision: 7, generationId: null }, code: 'indexed-view-retired' }, { ...own, view: { revision: fixture.view.revision, generationId: 'another-generation' }, code: 'indexed-view-retired' },
+      { ...own, sessionId: '00000000-0000-4000-8000-000000099999', code: 'forbidden' }, { ...own, sessionId: '00000000-0000-4000-8000-000000099999', code: 'indexed-view-retired' },
+      { ...own, origin: 'search', code: 'forbidden' }, { ...own, view: { revision: 7, generationId: null }, code: null },
+    ]) await reportDenial(page, detail);
+    assert.equal(await rows(page).count(), 2 * FIRST_BATCH, 'view-local failures of other pins, other sessions and the view\'s own reports leave the results'); assert.equal(await page.locator('[data-state="intro"]').count(), 0);
+    await reportDenial(page, { ...own, code: 'forbidden' }); await page.locator('[data-state="intro"]').waitFor(); await context.close();
+  });
+  await group('a session-reported denial fences pending source replies', async () => {
+    const { page, fixture, context } = await scene(f => { f.holdContext = true; }); await submit(page); await rows(page).first().waitFor();
+    await reportDenial(page, { origin: 'session', sessionId: fixture.session.id, view: pinOf(fixture.view), code: 'forbidden', message: 'Pinned conversation source access removed' }); await page.locator('[data-state="intro"]').waitFor();
+    fixture.pendingContext.splice(0).forEach(reply => reply()); await page.clock.runFor(100);
+    assert.equal(await page.locator('[data-hit]').count(), 0); assert.equal(await rows(page).count(), 0); await context.close();
   });
   await group('BOM scalars remain literal in valid Search snippets', async () => {
     const failures = [];
@@ -357,7 +427,8 @@ try {
   for (const [width, theme] of [[1024, 'light'], [1024, 'dark'], [390, 'light'], [390, 'dark']]) await group(`layout ${width}px ${theme}: no horizontal overflow and no clipped hits`, async () => {
     const { page, context } = await scene(undefined, { width, height: width === 390 ? 844 : 700, theme }); await submit(page); await ready(page);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'No horizontal document overflow');
-    assert.equal(await page.evaluate(() => [...document.querySelectorAll('[data-hit]')].every(element => element.getBoundingClientRect().right <= innerWidth)), true, 'every hit fits the viewport'); await context.close();
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('[data-hit]')].every(element => element.getBoundingClientRect().right <= innerWidth)), true, 'every hit fits the viewport');
+    await scrollAt(page, 600); const field = await input(page).boundingBox(); assert.ok(field.y >= MASTHEAD_HEIGHT && field.y < MASTHEAD_HEIGHT + STICKY_SLACK && field.x >= 0 && field.x + field.width <= width, 'the query field stays visible after scrolling'); await context.close();
   });
   assert.deepEqual(errors, []); assert.deepEqual(dialogs, [], 'no native dialogs');
   console.log(`Search browser: ${results.length} groups passed`);
