@@ -8,6 +8,5 @@ chronicle.CoreTest
 chronicle.ExpressionHintContextTest
 chronicle.ProblemPassagesTest
 chronicle.ProblemsPublicationTest
-chronicle.ProtocolEvolutionTest
 chronicle.ProviderUsageTest
 chronicle.RevisionSortAnchorTest
