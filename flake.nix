@@ -372,7 +372,9 @@
             MANURE_POSIX_STATIC = "${(pkgs.callPackage ./nix/pkg/manure/posix.nix { }).static}/lib";
           });
         devShells.chronicle = pkgs.mkShell {
-          packages = [ chronicleTools.graal chronicleTools.baboon chronicleTools.sbt chronicleTools.postgres pkgs.nodejs_24 pkgs.python3 pkgs.git pkgs.pkg-config pkgs.zlib pkgs.openssl pkgs.stdenv.cc ];
+          packages = [ chronicleTools.graal chronicleTools.baboon chronicleTools.sbt chronicleTools.postgres pkgs.nodejs_24 pkgs.python3 pkgs.git pkgs.pkg-config pkgs.zlib pkgs.openssl pkgs.stdenv.cc ]
+            # `unshare` and `ip` for the network namespaces of chronicle/web/tests-browser/run-all.mjs (CHRONICLE_BROWSER_NETNS).
+            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.util-linux pkgs.iproute2 ];
           JAVA_HOME = chronicleTools.graal.home;
           GRAALVM_HOME = chronicleTools.graal.home;
           CHRONICLE_NATIVE_IMAGE_FLAGS = pkgs.lib.concatStringsSep " " chronicleTools.nativeImageFlags;
