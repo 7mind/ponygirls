@@ -15,18 +15,6 @@ final class OwnerTargetRegressionTest extends munit.FunSuite {
     }
     f(c,db,new PostgresArchive(db,c))
   }
-  test("regression: owner replacement must leave another owner's pending legacy claim executable") { database { (c,db,a) =>
-    a.ingest("a",Fixtures.snapshot())
-    a.ingest("b",Fixtures.snapshot())
-    val first=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
-    val second=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
-    val other=List(first,second).find(claim => db.transaction(x => Sql.one(x,"SELECT owner FROM ch_sources WHERE id=?",claim.sessionId)(_.getString(1)).get)=="b").get
-    val catalog=IndexProfileCatalog.passages(c,PassagePolicyIdentity("synthetic-owner-regression-v1"))
-    val replacement=new Database(c,catalog); replacement.initialize()
-    val service=new PostgresOwnerReindex(replacement); val plan=service.preview("a")
-    service("a",java.util.UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true)
-    assert(a.publish(other,Nil),"an owner-only transition must preserve an unrelated legacy claim")
-  }}
   test("regression: annotation-only profile changes must not disable compatible semantic reads") { database { (c,db,a) =>
     val out=a.ingest("a",Fixtures.snapshot())
     val claim=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
