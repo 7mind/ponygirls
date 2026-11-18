@@ -44,7 +44,7 @@ test("badge initializes, ages while idle without polling, and stops on shutdown"
       });
     });
     const widgets: Array<{ content: unknown; options: unknown }> = [];
-    const ctx = { mode: "tui", hasUI: true, model: { provider: "anthropic" }, modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: "fixture" } }) }, ui: { custom, setWidget: (_key: string, content: unknown, options: unknown) => { widgets.push({ content, options }); } } };
+    const ctx = { mode: "tui", hasUI: true, model: { provider: "anthropic" }, modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: "fixture" } }), getAvailable: () => [] }, ui: { custom, setWidget: (_key: string, content: unknown, options: unknown) => { widgets.push({ content, options }); } } };
     const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
     handlers.get("session_start")!({}, ctx);
     await flush();

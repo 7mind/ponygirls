@@ -18,6 +18,7 @@ const NO_QUOTA = new NoQuotaEndpoint();
 
 const ADAPTERS = new Map<string, QuotaAdapter>([
   ["anthropic", new ClaudeQuota()],
+  ["claude-code", new ClaudeQuota()],
   ["github-copilot", new CopilotQuota()],
   ["kimi-coding", new KimiQuota()],
   ["meta", new MetaQuota()],
