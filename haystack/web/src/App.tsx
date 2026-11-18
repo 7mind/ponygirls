@@ -3,7 +3,7 @@ import { api, AuthError, type Principal } from "./api";
 import { Login } from "./Login";
 import { Browse } from "./Browse";
 import { browseHash, DEFAULT_SORT, PRESETS, type Preset } from "./browse-state";
-import { Detail } from "./Detail";
+import { RecordPage } from "./Record";
 import { LiveProvider, useLiveUpdates } from "./Live";
 import { Masthead, SignedOutMasthead, type Identity, type NavState } from "./Masthead";
 import { adoptItem, closeEdit, isAccountHash, leaveItem, parseRoute, presetOf, pushEdit, pushItem, type Route } from "./router";
@@ -135,7 +135,7 @@ export function App() {
     return () => { current = false; };
   }, [userId]);
 
-  // Stable identity: Detail's data effect depends on this. An inline closure
+  // Stable identity: RecordPage's data effect depends on this. An inline closure
   // would remount item data (and wipe save outcomes) on every App render.
   const handleAuthLost = useCallback(() => {
     refreshSequence.current++;
@@ -270,7 +270,7 @@ function Workspace({ identity, notice, onAuthLost }: { identity: Identity; notic
         {view.lists.map((entry) => <div key={entry.id} hidden={route.name !== "list" || entry.id !== view.shown} data-list={entry.route.preset} data-list-entry={entry.id}>
           <Browse preset={entry.route.preset} initial={entry.route.state} onOpen={openItem} onAuthLost={onAuthLost} />
         </div>)}
-        {route.name === "item" && <Detail key={route.key} itemKey={route.key} edit={route.edit} onAuthLost={onAuthLost}
+        {route.name === "item" && <RecordPage key={route.key} itemKey={route.key} edit={route.edit} onAuthLost={onAuthLost}
           onBack={leaveItem}
           onEdit={() => { pushEdit(route.key); sync(); }}
           onEditDone={() => { if (closeEdit(route.key) === "replaced") sync(); }} />}

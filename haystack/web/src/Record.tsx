@@ -1,19 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, AuthError, NetworkError, buildDocumentJson, parseTagsInput, uuidv7, summaryKey, type Item, type RevisionMeta, type Summary } from "./api";
+import { useCallback, useEffect, useState } from "react";
+import { api, AuthError, NetworkError, buildDocumentJson, uuidv7, summaryKey, type Item, type RevisionMeta, type Summary } from "./api";
 import { useLiveUpdates } from "./Live";
 import { Icon } from "./Icon";
 import { FieldsView } from "./FieldsView";
-import { FieldsEditor } from "./FieldsEditor";
-import { inspectFields } from "./fields";
+import { RecordEdit } from "./RecordEdit";
 
-interface Conflict {
-  currentRevision: number;
-  currentTitle: string;
-  currentModifiedBy: string;
-  currentModifiedAt: string;
-}
-
-export function Detail({ itemKey, edit, onBack, onEdit, onEditDone, onAuthLost }: {
+export function RecordPage({ itemKey, edit, onBack, onEdit, onEditDone, onAuthLost }: {
   itemKey: string;
   /** The edit route (#/item/<key>/edit) is current: the editor opens once the record is loaded. */
   edit: boolean;
@@ -24,18 +16,13 @@ export function Detail({ itemKey, edit, onBack, onEdit, onEditDone, onAuthLost }
 }) {
   const [item, setItem] = useState<Item | null>(null);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState({ title: "", description: "", type: "", status: "", importance: "", attention: "cleared", fieldsJson: "", linksText: "", tagsText: "" });
-  const fieldsInspection = useMemo(() => inspectFields(draft.fieldsJson), [draft.fieldsJson]);
   const [incoming, setIncoming] = useState<Summary[]>([]);
   const [incomingNote, setIncomingNote] = useState("");
   const [history, setHistory] = useState<RevisionMeta[]>([]);
   const [snapshot, setSnapshot] = useState<Item | null>(null);
   const [compareWith, setCompareWith] = useState<Item | null>(null);
-  const [conflict, setConflict] = useState<Conflict | null>(null);
   const [status, setStatus] = useState("");
   const [targetStatus, setTargetStatus] = useState("");
-  const [remoteUpdate, setRemoteUpdate] = useState(false);
-  const editRevision = useRef<number | null>(null);
   const live = useLiveUpdates();
 
   const load = useCallback(async (keepStatus = false) => {
@@ -69,7 +56,6 @@ export function Detail({ itemKey, edit, onBack, onEdit, onEditDone, onAuthLost }
 
   useEffect(() => {
     setEditing(false);
-    setConflict(null);
     setSnapshot(null);
     setCompareWith(null);
     void load();
@@ -77,166 +63,16 @@ export function Detail({ itemKey, edit, onBack, onEdit, onEditDone, onAuthLost }
 
   useEffect(() => {
     if (live.version === 0) return;
-    if (editing) {
-      if (live.key === null || (live.key === itemKey && item !== null && live.revision !== null && live.revision > item.revision)) setRemoteUpdate(true);
-      return;
-    }
+    // An open editor reports remote changes itself; the record is not reloaded under it.
+    if (editing) return;
     void load(true);
   }, [live.version, load]);
 
   const loaded = item !== null;
   useEffect(() => {
     if (!edit) setEditing(false);
-    else if (loaded) startEdit();
+    else if (loaded) setEditing(true);
   }, [edit, loaded]);
-
-  function startEdit() {
-    if (item === null) return;
-    setDraft({
-      title: item.document.title,
-      description: item.document.description,
-      type: item.document.type,
-      status: item.document.status,
-      importance: item.document.importance,
-      attention: item.document.humanAttention,
-      fieldsJson: item.document.fieldsJson,
-      linksText: item.document.links.map(([t, target]) => `${t} ${target}`).join("\n"),
-      tagsText: item.document.tags.join(", "),
-    });
-    setConflict(null);
-    editRevision.current = item.revision;
-    setRemoteUpdate(false);
-    setEditing(true);
-  }
-
-  function parseLinks(text: string): Array<[string, string]> {
-    const out: Array<[string, string]> = [];
-    for (const line of text.split("\n")) {
-      const trimmed = line.trim();
-      if (trimmed === "") continue;
-      const space = trimmed.search(/\s/);
-      if (space < 0) throw new Error(`link line needs "type target": ${trimmed}`);
-      out.push([trimmed.slice(0, space), trimmed.slice(space).trim()]);
-    }
-    return out;
-  }
-
-  async function save() {
-    if (item === null) return;
-    setStatus("Saving…");
-    let links: Array<[string, string]>;
-    try {
-      links = parseLinks(draft.linksText);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Bad links.");
-      return;
-    }
-    let documentJson: string;
-    try {
-      // fieldsJson spliced raw: edited big integers never round-trip.
-      documentJson = buildDocumentJson({
-        title: draft.title,
-        description: draft.description,
-        fieldsRaw: draft.fieldsJson,
-        type: draft.type,
-        status: draft.status,
-        importance: draft.importance,
-        attention: draft.attention,
-        links,
-        tags: parseTagsInput(draft.tagsText),
-      });
-    } catch {
-      setStatus("fields is not valid JSON.");
-      return;
-    }
-    try {
-      if (editRevision.current === null) throw new Error("Missing edit revision");
-      const out = await api.put(item.key, documentJson, editRevision.current, uuidv7());
-      setConflict(null);
-      setEditing(false);
-      onEditDone();
-      setRemoteUpdate(false);
-      setStatus(`Saved as revision ${out.revision}.`);
-      await load(true);
-    } catch (err) {
-      if (err instanceof AuthError) {
-        onAuthLost();
-        return;
-      }
-      if (err instanceof ApiError && err.code === "conflict") {
-        // Stale save: keep the draft, show the winner.
-        try {
-          const latest = await api.get(item.key);
-          setConflict({
-            currentRevision: latest.revision,
-            currentTitle: latest.document.title,
-            currentModifiedBy: latest.metadata.modifiedBy,
-            currentModifiedAt: latest.metadata.modifiedAt,
-          });
-          setItem(latest);
-          setStatus("Someone else saved first — your draft is preserved below.");
-        } catch {
-          setStatus("Save conflicted and the latest revision is unreadable.");
-        }
-        return;
-      }
-      setStatus(`Save failed: ${err instanceof Error ? err.message : "unknown"}`);
-    }
-  }
-
-  async function retryOnLatest() {
-    // Certain-conflict retry is a NEW operation (fresh id) on the latest rev.
-    if (item === null) return;
-    setConflict(null);
-    setStatus("Saving…");
-    editRevision.current = item.revision;
-    await saveWithRevision(item.revision);
-  }
-
-  async function saveWithRevision(revision: number) {
-    if (item === null) return;
-    let links: Array<[string, string]>;
-    try {
-      links = parseLinks(draft.linksText);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Bad links.");
-      return;
-    }
-    let documentJson: string;
-    try {
-      // fieldsJson spliced raw: edited big integers never round-trip.
-      documentJson = buildDocumentJson({
-        title: draft.title,
-        description: draft.description,
-        fieldsRaw: draft.fieldsJson,
-        type: draft.type,
-        status: draft.status,
-        importance: draft.importance,
-        attention: draft.attention,
-        links,
-        tags: parseTagsInput(draft.tagsText),
-      });
-    } catch {
-      setStatus("fields is not valid JSON.");
-      return;
-    }
-    try {
-      const out = await api.put(item.key, documentJson, revision, uuidv7());
-      setConflict(null);
-      setEditing(false);
-      onEditDone();
-      setRemoteUpdate(false);
-      setStatus(`Saved as revision ${out.revision}.`);
-      await load(true);
-    } catch (err) {
-      if (err instanceof AuthError) { onAuthLost(); return; }
-      if (err instanceof ApiError && err.code === "conflict") {
-        setStatus("Conflicted again — reload and reconcile manually.");
-        return;
-      }
-      setStatus(`Save failed: ${err instanceof Error ? err.message : "unknown"}`);
-    }
-  }
 
   async function clearAttention() {
     if (item === null) return;
@@ -307,21 +143,6 @@ export function Detail({ itemKey, edit, onBack, onEdit, onEditDone, onAuthLost }
         <p role="note">Skill draft awaiting human review — not installed, not active.</p>
       )}
       {status !== "" && <p role="status">{status}</p>}
-      {editing && remoteUpdate && <p className="notice" role="status">This record may have changed elsewhere. Your draft is preserved; saving will check its original revision.</p>}
-      {conflict !== null && (
-        <div role="alert">
-          <p>
-            Conflict: revision {conflict.currentRevision} by {conflict.currentModifiedBy} at {conflict.currentModifiedAt} —
-            “{conflict.currentTitle}”. Your draft text is preserved.
-          </p>
-          <button type="button" disabled={fieldsInspection.error !== null} onClick={() => void retryOnLatest()}>
-            Save my draft on top of revision {conflict.currentRevision}
-          </button>
-          <button type="button" onClick={() => { setConflict(null); setEditing(false); onEditDone(); void load(); }}>
-            Discard draft and reload
-          </button>
-        </div>
-      )}
       {!editing ? (
         <div className="record-content">
           <p className="record-description">{item.document.description}</p>
@@ -365,47 +186,10 @@ export function Detail({ itemKey, edit, onBack, onEdit, onEditDone, onAuthLost }
           </div>
         </div>
       ) : (
-        <form
-          className="editor-panel"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void save();
-          }}
-        >
-          <label>Title<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label>
-          <label>Description<textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
-          <label>Type<input value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })} list="haystack-types" /></label>
-          <label>Status<input value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })} list="haystack-statuses" /></label>
-          <label>Importance<input value={draft.importance} onChange={(e) => setDraft({ ...draft, importance: e.target.value })} list="haystack-importances" /></label>
-          <label>
-            Attention
-            <select value={draft.attention} onChange={(e) => setDraft({ ...draft, attention: e.target.value })}>
-              <option value="required">required</option>
-              <option value="cleared">cleared</option>
-            </select>
-          </label>
-          <FieldsEditor raw={draft.fieldsJson} inspection={fieldsInspection} onChange={(fieldsJson) => setDraft({ ...draft, fieldsJson })} />
-          <label>
-            Tags (comma-separated)
-            <input value={draft.tagsText} onChange={(e) => setDraft({ ...draft, tagsText: e.target.value })} placeholder="mcp, urgent" autoComplete="off" />
-          </label>
-          <label>
-            Links (one per line: “type project:item”)
-            <textarea value={draft.linksText} onChange={(e) => setDraft({ ...draft, linksText: e.target.value })} rows={4} cols={60} aria-label="Links" />
-          </label>
-          <datalist id="haystack-types">
-            <option value="todo" /><option value="fact" /><option value="github-issue" />
-            <option value="github-pr" /><option value="skill-draft" /><option value="actual" />
-          </datalist>
-          <datalist id="haystack-statuses">
-            <option value="actual" /><option value="archived" />
-          </datalist>
-          <datalist id="haystack-importances">
-            <option value="high" /><option value="low" />
-          </datalist>
-          <button className="primary" type="submit" disabled={fieldsInspection.error !== null}>Save as new revision</button>
-          <button type="button" onClick={() => { setEditing(false); onEditDone(); }}>Cancel</button>
-        </form>
+        <RecordEdit itemKey={itemKey} item={item} onItem={setItem} onStatus={setStatus} onAuthLost={onAuthLost}
+          onSaved={async (saved) => { setEditing(false); onEditDone(); setStatus(saved); await load(true); }}
+          onCancel={() => { setEditing(false); onEditDone(); }}
+          onDiscard={() => { setEditing(false); onEditDone(); void load(); }} />
       )}
       <div className="detail-panel history-panel"><h3>Revision history</h3>
       {history.length === 0 ? (
