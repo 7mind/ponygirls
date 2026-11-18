@@ -12,13 +12,11 @@ in {
     runner = "bash chronicle/scripts/test-postgres.sh";
     reports = [ "chronicle/target/test-reports" ];
   };
-  # The runner records the source commit and working diff, so the filtered source becomes a one-commit repository.
   haystack-jvm = suite {
     name = "haystack-jvm";
     source = sources.haystackJvmTests;
-    nativeBuildInputs = [ pkgs.git ];
-    runner = "git init -q . && git -c user.name=check -c user.email=check@localhost commit -q --allow-empty -m source"
-      + " && bash haystack/scripts/test-postgres-scala.sh";
+    nativeBuildInputs = [ ];
+    runner = "bash haystack/scripts/test-postgres-scala.sh";
     reports = [ "haystack/server/target/test-reports" ];
   };
   shared-jvm = suite {

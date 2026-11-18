@@ -31,6 +31,10 @@ assert !(selected sources.web "server/src/main/scala/chronicle/Http.scala" "regu
 assert !(selected sources.haystackTests "haystack/server/src/test/scala/haystack/Example.scala" "regular");
 assert !(selected sources.manureJvmTests "manure/web/dashboard/app.js" "regular");
 assert !(selected sources.manureTargetTests "manure/docs/query.md" "regular");
+# Inner-loop dispatchers are not inputs of the checks whose runners they call.
+assert !(selected tests "chronicle/scripts/test.sh" "regular");
+assert !(selected sources.haystackTests "haystack/scripts/test.sh" "regular");
+assert !(selected sources.manureTargetTests "manure/scripts/test.sh" "regular");
 pkgs.runCommand "backend-source-layout-test" {
   serverSource = server;
   testSource = tests;

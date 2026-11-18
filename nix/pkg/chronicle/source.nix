@@ -32,7 +32,9 @@ let
     "manure/web/unlock" "manure/web/viewer/index.html" "manure/web/viewer/styles.css" ];
   runtime = common ++ shared ++ [ "chronicle/generated/scala" "chronicle/server/src/main" "chronicle/migrations" ];
   webEntries = [ "package.json" "web" "generated/typescript" "tests/archive-expression-cases.json" "tests/recorded-yolo-profile-cases.json" ];
-  tests = [ "chronicle/server/src/test" "chronicle/tests" "chronicle/models" "chronicle/config.example.json" "chronicle/scripts" ];
+  # The scripts the fast gate and chronicle-backend-full run; not the inner-loop dispatcher chronicle/scripts/test.sh.
+  tests = [ "chronicle/server/src/test" "chronicle/tests" "chronicle/models" "chronicle/config.example.json"
+    "chronicle/scripts/test-postgres.sh" "chronicle/scripts/test-fast.sh" "chronicle/scripts/fast-suites.txt" "chronicle/scripts/sbt.sh" ];
   sharedModuleTests = [ "shared/lossless-json/src/test"
     "shared/service-runtime/src/test" "shared/service-auth/src/test" "shared/model-http/src/test"
     "shared/retrieval-core/src/test" "shared/retrieval-postgres/src/test" ];
@@ -61,13 +63,16 @@ in {
   ritesTests = backendSource "rites-tests-source" (common ++ shared ++ [ "rites/generated/scala" "rites/server/src" "rites/migrations" "rites/models" "rites/tests" "rites/scripts" "rites/config.example.json" ]);
   haystackServer = backendSource "haystack-native-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/models" "haystack/server/src/main" "haystack/migrations" ]);
   manureServer = backendSource "manure-native-source" (common ++ shared ++ [ "manure/generated/scala" "manure/models" "manure/migration/schema.sql" "manure/backend/src/main" "manure/migrations" "manure/server/src/main" "manure/server/native-image" ]);
-  haystackTests = backendSource "haystack-native-tests-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/migrations" "haystack/tests" "haystack/server/tests-current" "haystack/scripts" "haystack/docs/scala-config.example.json" "haystack/generated/typescript" "haystack/package.json" "haystack/package-lock.json" "haystack/web/package.json" "haystack/server/package.json" ]);
-  # haystack/generated/typescript: the runner's input audit lists it.
-  haystackJvmTests = backendSource "haystack-jvm-tests-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/generated/typescript"
+  haystackTests = backendSource "haystack-native-tests-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/migrations" "haystack/tests" "haystack/server/tests-current"
+    "haystack/scripts/test-current.sh" "haystack/scripts/register-generated.mjs" "scripts/junit-gate.py"
+    "haystack/docs/scala-config.example.json" "haystack/generated/typescript" "haystack/package.json" "haystack/package-lock.json" "haystack/web/package.json" "haystack/server/package.json" ]);
+  haystackJvmTests = backendSource "haystack-jvm-tests-source" (common ++ shared ++ [ "haystack/generated/scala"
     "haystack/models" "haystack/server/src" "haystack/migrations" "haystack/scripts/test-postgres-scala.sh" "scripts/junit-gate.py" ]);
   haystackBrowserTests = backendSource "haystack-browser-tests-source" (common ++ shared ++ [ "haystack" "shared/account-web" "shared/ui-web" ]);
   manureTargetTests = backendSource "manure-target-tests-source" (common ++ shared ++ [
-    "manure/tests" "manure/manure" "manure/scripts" "manure/web" "manure/models" "manure/generated/typescript"
+    "manure/tests" "manure/manure" "manure/web" "manure/models" "manure/generated/typescript"
+    # The runner, and the launcher and tool pins that test_current_target_harness.py reads.
+    "manure/scripts/target-suite.py" "manure/scripts/run-owned-target.sh" "manure/scripts/acceptance-tools-x86_64-linux.json"
     "manure/pyproject.toml" "shared/account-web" "shared/ui-web" ]);
   manureJvmTests = backendSource "manure-jvm-tests-source" (common ++ shared ++ manureSharedTestFixtures ++ manureServedAssets ++ [
     "manure/generated/scala" "manure/backend/src" "manure/server/src" "manure/migration/schema.sql" "manure/models/fixtures" ]);

@@ -15,7 +15,6 @@ in pkgs.runCommand "haystack-native-current-transport" ({
   chmod -R u+w source
   cd source
   ln -s ${dependencies}/lib/node_modules haystack/node_modules
-  cp ${../../scripts/junit-gate.py} scripts/junit-gate.py
   # Toolchain-only adaptation: the sandbox has no /bin/sh.
   substituteInPlace haystack/server/tests-current/fixture.mjs \
     --replace-fail "'/bin/sh'" "'${pkgs.runtimeShell}'"
