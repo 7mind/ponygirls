@@ -1,9 +1,33 @@
 import type { ContentView } from './api.ts';
+import { sameContentView } from './source-view.ts';
 
-// Source-authority notices between the views that read a pinned source (Search excerpts, the opened session). A view that
-// receives a denial or retirement of a pinned source reports it; every other view that retains data of that source decides
-// for itself with `sourceFailureAffectsView` / `sourceDenialAffectsResults` (search-source.ts). Document events, like the
-// shell's `account:*` events, so that no view needs a reference to another.
+/*
+ * Source-authority contract between the views that read a pinned source (Search excerpts, the opened session).
+ * A view that learns that a pinned source was denied or retired reports it; every other view that retains data of that
+ * source decides for itself with `sourceFailureAffectsView`. Document events (like the shell's `account:*` events), so
+ * that no view holds a reference to another. Search implements both halves (Search.tsx).
+ *
+ * A SESSION VIEW MUST
+ *  1. Publish, whenever a read of its source fails with an authority or retirement failure — get session, locate
+ *     message, message pages, nested Find (`SearchSessionMessages`), related-session reads, i.e. wherever the legacy
+ *     Conversation called `onSourceUnavailable` (codes `indexed-view-retired`, `forbidden`, `not-found`, `unauthorized`):
+ *       reportSourceUnavailable(document, { origin: 'session', sessionId, view: sourcePin(pinOfTheFailedRead), code: failure.code, message: failure.message })
+ *     `view` is the pin the FAILED read used (an archive-only HEAD view has `generationId: null`), `sessionId` the session
+ *     that read addressed (a related session reports its own id), `code` the service code (null only for a client-side
+ *     validation failure). Publish only for the current read: a reply of an abandoned or superseded read must not publish.
+ *  2. React to notices of `origin: 'search'` for its own session: when `sourceFailureAffectsView(failedView, itsPin, code)`
+ *     holds, clear the displayed source (messages, passages, Find hits) and show the failure, without a fallback read. A
+ *     view-local failure of another pin (same revision with another generation, another revision) must not clear it; an
+ *     authority code clears every pin of that session. Ignore notices of other sessions and of `origin: 'session'`.
+ * SEARCH publishes the same notice (origin 'search') for every failed excerpt read and, on a notice of origin 'session',
+ * clears its results when `sourceDenialAffectsResults` holds (same session displayed, and an authority code or a retained pin
+ * equal to the failed view), keeping the draft and re-reading nothing.
+ */
+const AUTHORITY_DENIALS = ['forbidden', 'not-found', 'unauthorized', 'authorization-changed'];
+/** Authority denials concern the whole source of a session; every other failure concerns only the pin that failed. */
+export function sourceFailureAffectsView(failed: ContentView, selected: ContentView, code: string | null): boolean {
+  return sameContentView(failed, selected) || (code !== null && AUTHORITY_DENIALS.includes(code));
+}
 export const SOURCE_UNAVAILABLE_EVENT = 'chronicle:source-unavailable';
 export type SourceUnavailableOrigin = 'search' | 'session';
 export interface SourcePin { readonly revision: number; readonly generationId: string | null }
@@ -12,7 +36,7 @@ export function sourcePin(view: ContentView): SourcePin { return { revision: vie
 export function reportSourceUnavailable(target: EventTarget, detail: SourceUnavailable): void {
   target.dispatchEvent(new CustomEvent(SOURCE_UNAVAILABLE_EVENT, { detail }));
 }
-function readDetail(event: Event): SourceUnavailable {
+export function readSourceUnavailable(event: Event): SourceUnavailable {
   const detail: unknown = event instanceof CustomEvent ? event.detail : null;
   if (detail === null || typeof detail !== 'object') throw new Error('A source-unavailable notice carries no detail');
   const { origin, sessionId, view, code, message } = detail as Record<string, unknown>;
@@ -22,7 +46,7 @@ function readDetail(event: Event): SourceUnavailable {
   return { origin, sessionId, view: { revision: pin.revision as number, generationId: pin.generationId as string | null }, code, message };
 }
 export function listenSourceUnavailable(target: EventTarget, listener: (detail: SourceUnavailable) => void): () => void {
-  const handler = (event: Event) => listener(readDetail(event));
+  const handler = (event: Event) => listener(readSourceUnavailable(event));
   target.addEventListener(SOURCE_UNAVAILABLE_EVENT, handler);
   return () => target.removeEventListener(SOURCE_UNAVAILABLE_EVENT, handler);
 }

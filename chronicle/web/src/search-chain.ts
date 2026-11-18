@@ -14,16 +14,18 @@ export interface SearchChain {
   error: string | null;
   appendError: string | null;
   hasMore: boolean;
+  // Settled pages so far: changes after every successful cursor advance, also when the page added no new conversation.
+  settled: number;
   loadMore: () => void;
 }
 interface Scope { connection: ResourceConnection; generation: number; activeId: number | null; key: string }
 interface ChainState extends Scope {
-  rows: readonly SearchResultRow[]; meta: ArchiveResult | null; next: string | undefined; seen: readonly string[];
+  rows: readonly SearchResultRow[]; meta: ArchiveResult | null; next: string | undefined; seen: readonly string[]; settled: number;
   loading: boolean; loadingMore: boolean; error: string | null; appendError: string | null;
 }
 const REPEATED_CURSOR = 'The server repeated a paging cursor.';
 function empty(scope: Scope, loading: boolean): ChainState {
-  return { ...scope, rows: [], meta: null, next: undefined, seen: [], loading, loadingMore: false, error: null, appendError: null };
+  return { ...scope, rows: [], meta: null, next: undefined, seen: [], settled: 0, loading, loadingMore: false, error: null, appendError: null };
 }
 function failure(cause: unknown): string { return cause instanceof Error ? cause.message : 'Request failed'; }
 
@@ -46,7 +48,7 @@ export function useSearchChain(connection: ResourceConnection, stats: ManagerSta
     setState(empty(scope, ready));
     if (ready) void loader.current(undefined).then(result => {
       if (sequence.current !== operation) return;
-      setState({ ...scope, rows: resultRows(result), meta: result.page, next: result.page.nextCursor, seen: [], loading: false, loadingMore: false, error: null, appendError: null });
+      setState({ ...scope, rows: resultRows(result), meta: result.page, next: result.page.nextCursor, seen: [], settled: 1, loading: false, loadingMore: false, error: null, appendError: null });
     }).catch((cause: unknown) => {
       if (sequence.current === operation) setState({ ...empty(scope, false), error: failure(cause) });
     });
@@ -62,7 +64,7 @@ export function useSearchChain(connection: ResourceConnection, stats: ManagerSta
       const seen = [...snapshot.seen, cursor];
       if (result.page.nextCursor !== undefined && seen.includes(result.page.nextCursor)) throw new Error(REPEATED_CURSOR);
       appending.current = false;
-      setState(value => ({ ...value, rows: appendResultRows(value.rows, resultRows(result)), next: result.page.nextCursor, seen, loadingMore: false }));
+      setState(value => ({ ...value, rows: appendResultRows(value.rows, resultRows(result)), next: result.page.nextCursor, seen, settled: value.settled + 1, loadingMore: false }));
     }).catch((cause: unknown) => {
       if (sequence.current !== operation) return;
       appending.current = false;
@@ -70,5 +72,5 @@ export function useSearchChain(connection: ResourceConnection, stats: ManagerSta
     });
   }
   const visible = matches(state) && ready ? state : empty(scope, ready);
-  return { rows: visible.rows, meta: visible.meta, loading: visible.loading, loadingMore: visible.loadingMore, error: visible.error, appendError: visible.appendError, hasMore: visible.next !== undefined, loadMore };
+  return { rows: visible.rows, meta: visible.meta, loading: visible.loading, loadingMore: visible.loadingMore, error: visible.error, appendError: visible.appendError, hasMore: visible.next !== undefined, settled: visible.settled, loadMore };
 }

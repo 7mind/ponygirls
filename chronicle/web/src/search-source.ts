@@ -1,16 +1,13 @@
 import { ArchiveMatchKind, ArchiveTextScope, Span, type ArchiveRow, type ArchiveSearchResult, type ArchiveSourceMatch, type ContentView, type ContextExcerpt, type MessageContextResult } from './api.ts';
 import { highlightUtf8, type TextPart } from './highlight.ts';
 import { requireContentView, sameContentView } from './source-view.ts';
+import { sourceFailureAffectsView } from './source-authority.ts';
 export const SEARCH_PAGE_SIZE = 10;
 export const SNIPPET_BYTES = 512;
 export const CONTEXT_BYTES = 2048;
 const MAX_CONTEXT_EXCERPTS = 9;
 export interface SearchSourceFailure { code: string | null; message: string }
-const AUTHORITY_DENIALS = ['forbidden', 'not-found', 'unauthorized', 'authorization-changed'];
-// Authority denials concern the whole source of a session; every other failure concerns only the pin that failed.
-export function sourceFailureAffectsView(failed: ContentView, selected: ContentView, code: string | null): boolean {
-  return sameContentView(failed, selected) || (code !== null && AUTHORITY_DENIALS.includes(code));
-}
+export { sourceFailureAffectsView };
 const MAX_REPRESENTATIVE_MATCHES = 2;
 const MAX_ARCHIVE_TOTAL = 9_223_372_036_854_775_807n;
 function validateView(view: ContentView): void {

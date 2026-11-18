@@ -88,6 +88,19 @@ try {
     assert.equal(await page.getByRole('navigation', { name: /Result pages|Source spans/ }).count(), 0);
     await context.close();
   });
+  await group('a page that adds no new conversation does not stall loading: the next cursor is requested and the list ends with its marker', async () => {
+    let first, answered = 0;
+    const { page, fixture, context } = await scene(f => { f.archiveSearchTransform = result => {
+      answered++; if (answered === 1) { first = result; return result; }
+      return answered === 2 ? result.with({ page: result.page.with({ rows: first.page.rows }), evidence: first.evidence }) : result;
+    }; });
+    await submit(page); await ready(page);
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await page.locator('[data-list-foot="end"]').waitFor();
+    assert.deepEqual(calls(fixture, api.Operation_ArchiveSearch).map(operation => operation.query.cursor), [undefined, '10', '20'], 'the duplicate-only page was followed by the next cursor without further scrolling');
+    assert.equal(await rows(page).count(), TOTAL_ROWS - FIRST_BATCH, 'the first batch plus the third page; the repeated conversations are not listed twice');
+    await context.close();
+  });
   await group('a failed append keeps the loaded rows and offers Retry; Retry continues from the same cursor', async () => {
     const { page, fixture, context } = await scene();
     await submit(page); await ready(page); fixture.archiveSearchFailure = 'unavailable';

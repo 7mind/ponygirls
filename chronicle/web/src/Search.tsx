@@ -42,7 +42,7 @@ function matchTitle(match: ArchiveSourceMatch): string { return `${match.kind ==
 function Highlighted({ parts }: { parts: readonly TextPart[] }) {
   return <>{parts.map((part, index) => part.highlighted ? <mark key={index}>{part.text}</mark> : <span key={index}>{part.text}</span>)}</>;
 }
-function SearchHit({ connection, stats, user, sessionId, match, expanded, positions, fail }: SearchScope & { sessionId: string; match: ArchiveSourceMatch; expanded: boolean; positions: (range: MessageRange | null) => void; fail: (failure: SearchSourceFailure) => void }) {
+function SearchHit({ connection, stats, user, sessionId, match, ordinal, expanded, positions, fail }: SearchScope & { sessionId: string; match: ArchiveSourceMatch; ordinal: number; expanded: boolean; positions: (range: MessageRange | null) => void; fail: (failure: SearchSourceFailure) => void }) {
   const { span, view } = match;
   const [moved, setMoved] = useState<ContextPage | null>(null), page = moved ?? { anchor: snippetAnchor(span), before: 0, after: SNIPPET_BYTES };
   useEffect(() => { if (!expanded) setMoved(null); }, [expanded]);
@@ -73,7 +73,7 @@ function SearchHit({ connection, stats, user, sessionId, match, expanded, positi
     {context.loading && <p className="hit hit-loading" role="status"><span className="skeleton"/><span className="sr-only">Loading source excerpts…</span></p>}
     {shown.map(excerpt => {
       const range = excerpt.source, content = <><span className="hit-role" data-role={excerpt.role}>{excerpt.role}</span><span className="hit-text" data-hit-text=""><Highlighted parts={excerpt.parts}/></span><span className="hit-at">message {range.messagePosition + 1}</span></>;
-      return matched(excerpt) ? <a className="hit" data-hit="match" data-focus-key={`hit:${sessionId}:${span.messageId}:${span.start}`} key={`${range.messageId}:${range.start}`} href={href} title={matchTitle(match)}>{content}</a> : <div className="hit hit-context" data-hit="context" key={`${range.messageId}:${range.start}`}>{content}</div>;
+      return matched(excerpt) ? <a className="hit" data-hit="match" data-focus-key={`hit:${sessionId}:${ordinal}`} key={`${range.messageId}:${range.start}`} href={href} title={matchTitle(match)}>{content}</a> : <div className="hit hit-context" data-hit="context" key={`${range.messageId}:${range.start}`}>{content}</div>;
     })}
     {span.end - span.start > CONTEXT_BYTES && <p className="hit-note">Partial preview · source span exceeds {CONTEXT_BYTES} bytes.</p>}
     {expanded && source !== null && <div className="hit-nav">
@@ -101,9 +101,9 @@ function SearchResult({ item: { row, matches }, ...scope }: SearchScope & { item
     {unavailable !== null ? <Notice title="Source unavailable" actions={null}>{sentence(unavailable)} This result's source excerpts have been cleared. Submit a new search to recheck access; no HEAD fallback is used.</Notice>
       : matches.length === 0 ? <p className="result-note">No positive source spans. Open the conversation to read its source.</p>
       : <>
-        <div className="hits">{matches.map((match, index) => <div key={`${match.span.messageId}:${match.span.start}:${match.span.end}`}>
+        <div className="hits">{matches.map((match, index) => <div key={index}>
           {index > 0 && expanded && gap > 0 && <div className="hit-gap">⋯ {gap} {gap === 1 ? 'message' : 'messages'} between</div>}
-          <SearchHit {...scope} sessionId={row.head.id} match={match} expanded={expanded} positions={reports.current[index]!} fail={fail}/></div>)}</div>
+          <SearchHit {...scope} sessionId={row.head.id} match={match} ordinal={index} expanded={expanded} positions={reports.current[index]!} fail={fail}/></div>)}</div>
         {summaries.map(summary => <p className="result-note" key={summary}><b>Generated annotation</b> · {summary}</p>)}
         <div className="result-foot">
           <button type="button" className="btn btn-sm" aria-expanded={expanded} onClick={() => setExpanded(value => !value)} data-focus-key={`expand:${row.head.id}`}><Icon name={expanded ? 'chevron-up' : 'chevron-down'} small={true}/>{expanded ? 'Collapse' : 'Context'}</button>
@@ -121,7 +121,7 @@ function ResultsInfo({ meta }: { meta: ArchiveResult }) {
       <p className="xs muted">{bounded ? `Up to ${meta.annChunkLimitPerOperand} published chunks per text operand, not a row cap. Hybrid also includes exact lexical HEAD matches. ` : ''}Counts are exact for the retrieved candidates. Highlights mark matched bytes; the spans are not proof of every Boolean operand.</p></div>
   </Anchored>;
 }
-function ResultsFoot({ enabled, end, loading, load, children }: { enabled: boolean; end: boolean; loading: boolean; load: () => void; children: ReactNode }) {
+function ResultsFoot({ enabled, settled, end, loading, load, children }: { enabled: boolean; settled: number; end: boolean; loading: boolean; load: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null), loader = useRef(load); loader.current = load;
   useEffect(() => {
     const element = ref.current;
@@ -129,7 +129,7 @@ function ResultsFoot({ enabled, end, loading, load, children }: { enabled: boole
     const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) loader.current(); }, { rootMargin: LOAD_AHEAD_MARGIN });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [enabled]);
+  }, [enabled, settled]);
   return <div className={end ? 'list-foot list-end' : 'list-foot'} ref={ref} data-list-foot={end ? 'end' : 'more'} role="status" aria-live="polite">{loading ? <><span className="spinner" aria-hidden="true"/>Loading more conversations…</> : children}</div>;
 }
 // A retained (hidden) view loses focus; when it is shown again the control that was last used gets it back.
@@ -182,7 +182,7 @@ export function Search({ connection, stats, user, query }: SearchScope & { query
       : chain.loading ? <div className="results" data-state="loading" aria-busy="true">{Array.from({ length: SKELETON_RESULTS }, (_, index) => <div className="result" key={index}><span className="skeleton sk-30"/><span className="skeleton sk-60"/><span className="skeleton"/><span className="skeleton sk-60"/></div>)}</div>
       : meta !== null && chain.rows.length === 0 ? <section className="empty" data-state="empty"><Icon name="search" small={false}/><h2>No conversations match</h2><p>Nothing matches <code>{submitted}</code>. Try fewer words, remove a filter, or search the text without quotes.</p><div className="row"><a className="btn btn-ghost" href={formatRoute(viewRoute('archive'))}>Browse the Archive</a></div></section>
       : <><div className="results" data-list="results" data-state={edited ? 'stale' : 'current'}>{chain.rows.map(item => <SearchResult key={`${item.row.head.id}:${contentViewKey(item.row.head.view)}`} {...{ connection, stats, user }} item={item}/>)}</div>
-        <ResultsFoot enabled={chain.hasMore && chain.appendError === null} end={!chain.hasMore && meta !== null} loading={chain.loadingMore} load={chain.loadMore}>
+        <ResultsFoot enabled={chain.hasMore && chain.appendError === null} settled={chain.settled} end={!chain.hasMore && meta !== null} loading={chain.loadingMore} load={chain.loadMore}>
           {chain.appendError !== null ? <Notice title="Could not load more results" actions={<button type="button" className="btn btn-sm" onClick={chain.loadMore}>Retry</button>}>{sentence(chain.appendError)}</Notice>
             : !chain.hasMore && meta !== null ? `End of results · ${meta.total.toString()} conversations` : null}
         </ResultsFoot></>}
