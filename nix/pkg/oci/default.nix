@@ -18,8 +18,12 @@
 # Mounted-config contracts (images supply packaged web assets only, the
 # deployment supplies everything else):
 #   haystack  server JSON with webRoot "/share/haystack/web"
-#   manure    server JSON with dashboard_dir "/share/manure/web/dashboard" and
-#             unlock_shell_dir "/share/manure/web/unlock"
+#   manure    server JSON with dashboard_dir "/share/manure/web/dashboard",
+#             unlock_shell_dir "/share/manure/web/unlock" and viewer_dir
+#             "/share/manure/web/viewer" (or an explicit null); serve refuses to
+#             start when a configured directory is missing (stage=assets), see
+#             manure/backend/README.md "OCI image configuration and upgrade
+#             requirement"
 #   chronicle server JSON; CHRONICLE_WEB_ROOT is baked in as the in-image
 #             /share/chronicle/web (webPackage supplies those assets)
 #   crawl4ai  no config file; CRAWL4AI_API_TOKEN and REDIS_PASSWORD come from
