@@ -88,7 +88,6 @@ in {
     "manure/server/native-tests/NativeSelfTest.java"
   ];
   manureAcceptance = backendSource "manure-posix-acceptance-source" (common ++ manure ++ manureScripts);
-  foundation = backendSource "backend-foundation-source" (common ++ shared ++ [ "shared/lossless-json/src/test" "manure/server/src" "scripts/backend-foundation-report.py" ]);
   backendDevelopment = backendSource "backend-development-source" (runtime ++ tests ++ sharedTests ++ ontologyRuntime ++ ontologyTests ++ [
     "haystack/generated/scala" "haystack/server/src" "haystack/migrations"
     "manure/generated/scala" "manure/backend/src" "manure/server/src" "manure/migrations"

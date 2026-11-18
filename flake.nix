@@ -1236,11 +1236,6 @@
           chronicle-hm-server = import ./nix/tests/chronicle-hm-server.nix { inherit pkgs; chronicleModule = self.homeManagerModules.chronicleServer; };
           agentic-services-hm-eval = import ./nix/tests/agentic-services-hm-eval.nix { inherit pkgs inputs; agenticServicesModule = self.homeManagerModules.agenticServicesServer; };
           chronicle-models = import ./nix/tests/chronicle-models.nix { inherit pkgs nixpkgs; chronicleModule = self.nixosModules.chronicle; };
-          backend-foundation-policy = pkgs.runCommand "backend-foundation-policy-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-            python3 ${./nix/tests/backend-foundation-report.py} ${./scripts/backend-foundation-report.py}
-            touch "$out"
-          '';
-          backend-foundation = pkgs.callPackage ./nix/pkg/backend-foundation.nix { squishLib = inputs.squish.lib; };
           manure-toolchain-routing = pkgs.runCommand "manure-toolchain-routing-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
             python3 ${./nix/tests/manure-toolchain-routing.py} ${./scripts/manure-native-image.sh} ${./manure/server/native-image/PosixLinkFeature.java} ${./nix/pkg/services/native.nix} ${chronicleTools.graal}/release
             touch "$out"
