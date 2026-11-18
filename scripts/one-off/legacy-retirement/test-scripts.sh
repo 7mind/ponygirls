@@ -184,7 +184,7 @@ cat >"$base/bin/kubectl" <<'FAKE'
 #!/usr/bin/env bash
 # Fake kubectl for the op.sh tests. Modes ($LR_FAKE_DIR/fake-mode): normal, cut-no-marker (exec psql output loses its
 # last line, exit 0), failure-marker (psql error lines dropped, exit 0, so the last line is a failure marker),
-# probe-before-fail (first 'get pod' fails), probe-after-fail (second 'get pod' fails), restart-during (second
+# dump-cut (the pg_dump stream ends early with exit 0), probe-before-fail (first 'get pod' fails), probe-after-fail (second 'get pod' fails), restart-during (second
 # 'get pod' reports one more chronicle restart), bad-url (the haystack ConfigMap holds an unparseable PG URL).
 d=$LR_FAKE_DIR; mode=$(cat "$d/fake-mode"); echo "$*" >>"$d/kubectl.calls"
 args=("$@"); cmd=(); for i in "${!args[@]}"; do [[ ${args[$i]} == -- ]] && { cmd=("${args[@]:$((i+1))}"); break; }; done
@@ -219,7 +219,10 @@ JSON
             if [[ $mode == cut-no-marker ]]; then psql -h "$d" -U postgres "${out[@]}" 2>&1 | head -n -1; exit 0
             elif [[ $mode == failure-marker ]]; then psql -h "$d" -U postgres "${out[@]}" 2>&1 | grep -vE '^(psql:|ERROR|CONTEXT|DETAIL)'; exit 0
             else exec psql -h "$d" -U postgres "${out[@]}"; fi ;;
-      env) exec pg_dump -h "$d" -U postgres --format=custom -d haystack ;;
+      env) db=''; for i in "${!cmd[@]}"; do [[ ${cmd[$i]} == -d ]] && db=${cmd[$((i+1))]}; done
+           [[ -n $db ]] || { echo 'fake kubectl: pg_dump without -d' >&2; exit 9; }
+           if [[ $mode == dump-cut ]]; then pg_dump -h "$d" -U postgres --format=custom -d "$db" | head -c 4096; exit 0; fi
+           exec pg_dump -h "$d" -U postgres --format=custom -d "$db" ;;
     esac ;;
   *) echo "fake kubectl: unexpected $*" >&2; exit 9 ;;
 esac
@@ -296,6 +299,21 @@ if [[ -f $OP ]]; then
   grep -q "^LR.backup.file|$base/hs-backup.dump|" "$base/op.out" && ok t4-backup-record || ko t4-backup-record
   expect_last t4-rename-failure-no-success 3 'OP\.result\|failed\|3\|.*' mv-fail backup-haystack "$base/hs-backup2.dump"
   expect_last t4-checksum-drift-no-success 3 'OP\.result\|failed\|3\|.*' sha-drift backup-haystack "$base/hs-backup3.dump"
+  # OP-BACKUP: one backup implementation for Haystack and Manure, each routed to its own database; Chronicle refused (Q102)
+  routed() { grep -q " exec .*pg_dump .*-d $1\( \|$\)" "$base/kubectl.calls" && pg_restore --list "$2" | grep -q " TABLE .* $3 "; }
+  routed haystack "$base/hs-backup.dump" items && ok bk-haystack-routed-to-haystack || ko bk-haystack-routed-to-haystack
+  expect_last bk-manure-published 0 'OP\.result\|ok\|LR\.result\|backup-published' normal backup-manure "$base/mn-backup.dump"
+  grep -q "^LR.backup.file|$base/mn-backup.dump|[1-9][0-9]*|[0-9a-f]\{64\}$" "$base/op.out" && ok bk-manure-record || ko bk-manure-record
+  routed manure "$base/mn-backup.dump" pony_retrieval_profiles && ok bk-manure-routed-to-manure || ko bk-manure-routed-to-manure
+  expect_last bk-manure-truncated-refused 3 'OP\.result\|failed\|3\|.*' dump-cut backup-manure "$base/mn-backup2.dump"
+  [[ ! -e $base/mn-backup2.dump ]] && ok bk-manure-truncated-not-published || ko bk-manure-truncated-not-published
+  expect_last bk-haystack-truncated-refused 3 'OP\.result\|failed\|3\|.*' dump-cut backup-haystack "$base/hs-backup4.dump"
+  expect_last bk-manure-rename-failure-refused 3 'OP\.result\|failed\|3\|.*' mv-fail backup-manure "$base/mn-backup3.dump"
+  expect_last bk-manure-checksum-drift-refused 3 'OP\.result\|failed\|3\|.*' sha-drift backup-manure "$base/mn-backup4.dump"
+  for wrong in backup-chronicle backup-postgres backup-; do
+    expect_last "bk-wrong-target-refused-$wrong" 2 'OP\.result\|failed\|2\|.*' normal "$wrong" "$base/wrong.dump"
+    if grep -q ' exec ' "$base/kubectl.calls" 2>/dev/null || [[ -e $base/wrong.dump || -e $base/wrong.dump.partial ]]; then ko "bk-wrong-target-sent-nothing-$wrong"; else ok "bk-wrong-target-sent-nothing-$wrong"; fi
+  done
   expect_last s6-check-legacy-free-remote 3 'OP\.result\|failed\|3\|.*' normal check-legacy-free haystack
   expect_last t7-op-check-legacy-free-formats-kept 0 'OP\.result\|ok\|LF\.result\|legacy-free' normal check-legacy-free chronicle -v require_formats=f
 else

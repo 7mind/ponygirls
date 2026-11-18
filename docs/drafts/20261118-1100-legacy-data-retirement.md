@@ -544,7 +544,7 @@ means done.**
 | `OP.result|failed|7|…` | 7 | a container restarted or the pod was replaced during the command | check the service; re-check the command's state (preflight / plan) before anything else |
 
 **What the operator must have:** the tooling checkout, bash, `python3`, `kubectl` with the context; `nix develop
-.#chronicle` for `codec-check` (JVM) and `backup-haystack` (local `pg_restore`); a browser session as the owning
+.#chronicle` for `codec-check` (JVM) and `backup-haystack` / `backup-manure` (local `pg_restore`); a browser session as the owning
 account for step 5; the running Chronicle service with workers and model endpoints for step 5.
 
 Owner decisions: **Q102** — no backup of `chronicle` (not in production use): the apply takes
@@ -568,6 +568,7 @@ fence (7.2) relies on.
 | # | Step | Command (exactly) | Success: the record `OP.result|ok|…` ends with | Stop when |
 |---|---|---|---|---|
 | 0 | Tooling checkout; settings; identity | see the block above | `OP.confirm|identified` (above it `OP.confirm|pod=…|system_identifier=…`) | anything differs from the deployment repository |
+| 0a | Pre-deployment net: **before `./redeploy-team-tools --apply`** (the deployment replaces pod `core-0` and restarts PostgreSQL; it is reversible, these dumps are a cheap net) | `"$OP" backup-haystack /<dir>/haystack-<time>.dump`; `"$OP" backup-manure /<dir>/manure-<time>.dump` | `LR.result|backup-published` each (above it `LR.backup.file|<file>|<size>|<sha256>`) | any other last line: do not deploy |
 | 1 | The binary built from `main` (`de43b916` or later, CH-FIX) deployed with the **deployed** config, unchanged (Q101); credential preflight | `bullshit-renew status --json`; `"$OP" ready` | `OP.ready|observed` with all containers `ready` and `OP.ready|pod|True` above it | not ready |
 | 2 | Chronicle preflight and worklist | `"$OP" chronicle preflight`; `"$OP" chronicle worklist` | `LR.result|preflight-complete`; `LR.result|worklist-complete` (one `LR.reindex_job|<job>|<source>|<owner>|…` per source) | schema ≠ `2,3,6,8,9,14,17,20`; counters far from section 1 |
 | 3 | Haystack, Manure preflight; codec check | `"$OP" haystack preflight`; `"$OP" manure preflight`; `"$OP" codec-check` | `preflight-complete` twice (with `LP.retrieval.not_proven_v2|0`); `LR.result|stored-documents-strict-ok` | a retrieval counter non-zero; codec check fails |
@@ -612,7 +613,8 @@ fence (7.2) relies on.
   `"$OP" drop restore --oid <OID> --confirm-database <copy>`; success `DB.result|restored|oid=<OID>`), or
   `DB.tombstone_unowned|…` — not this script's; investigate, the script neither drops nor restores it. No SQL is
   printed for an operator to paste.
-- Lost during **backup-haystack**: the `.partial` file is never renamed; delete it and run the command again. The
+- Lost during **backup-haystack** or **backup-manure** (one implementation, each routed to its own database; there is
+  no Chronicle dump, Q102): the `.partial` file is never renamed; delete it and run the command again. The
   final file exists only after rename, and `LR.result|backup-published` is printed only after the final file was
   re-read with the recorded size and checksum.
 

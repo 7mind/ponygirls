@@ -9,7 +9,7 @@
 #   op.sh identify | ready | restarts
 #   op.sh <chronicle|haystack|manure> <run.sh mode> [options]   run.sh against that target's own database
 #   op.sh drop [plan | drop --drop NAME --confirm-database NAME --expect-oid OID | restore --oid OID --confirm-database NAME]
-#   op.sh backup-haystack FILE | backup-chronicle NAME | codec-check | check-legacy-free <chronicle|haystack> [-v require_formats=f]
+#   op.sh backup-haystack FILE | backup-manure FILE | backup-chronicle NAME | codec-check | check-legacy-free <chronicle|haystack> [-v require_formats=f]
 #
 # The LAST line of every invocation is ONE record of this wrapper:
 #   OP.result|ok|<the command's own success line>                          exit 0
@@ -46,7 +46,7 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 # --- the only places that name kubectl ------------------------------------------------------------------------------
 kube_get() { kubectl "--context=$LR_CONTEXT" -n "$LR_NAMESPACE" --request-timeout=30s get "$@" -o json; }
 psql_cmd() { printf 'kubectl --context=%s -n %s exec -i %s -c %s -- psql -h %s -U %s -d %s' "$LR_CONTEXT" "$LR_NAMESPACE" "$LR_POD" "$LR_CONTAINER" "$LR_SOCKET" "$LR_ROLE" "$1"; }
-pg_dump_stream() { kubectl "--context=$LR_CONTEXT" -n "$LR_NAMESPACE" exec "$LR_POD" -c "$LR_CONTAINER" -- env PGAPPNAME=lr:backup:haystack pg_dump -h "$LR_SOCKET" -U "$LR_ROLE" --lock-wait-timeout=10s --format=custom -d "$1"; }
+pg_dump_stream() { kubectl "--context=$LR_CONTEXT" -n "$LR_NAMESPACE" exec "$LR_POD" -c "$LR_CONTAINER" -- env "PGAPPNAME=lr:backup:$1" pg_dump -h "$LR_SOCKET" -U "$LR_ROLE" --lock-wait-timeout=10s --format=custom -d "$1"; }
 
 # --- THE gateway: checked QUIET MARKER_ERE LABEL CMD… -----------------------------------------------------------------
 # Runs CMD, streams its output (unless quiet) while capturing it; succeeds only when CMD exited 0 AND the last
@@ -197,13 +197,14 @@ case $cmd in
       *) marker='DB\.result\|plan-complete-nothing-dropped' ;;
     esac
     checked show "$marker" drop sh "$here/drop-databases.sh" "$@" --configured-databases "$dbs"; after $? drop ;;
-  backup-haystack)
-    [[ $# -eq 1 ]] && single "$1" '/[A-Za-z0-9._/-]{1,200}' || usage 'backup-haystack FILE (absolute path of a new local file)'
+  backup-haystack|backup-manure) # one implementation; the target is the command's own database (no Chronicle dump: Q102)
+    target=${cmd#backup-}
+    [[ $# -eq 1 ]] && single "$1" '/[A-Za-z0-9._/-]{1,200}' || usage "$cmd FILE (absolute path of a new local file)"
     file=$1; [[ ! -e $file && ! -e $file.partial ]] || usage "$file exists"
     command -v pg_restore >/dev/null || usage 'pg_restore is required locally (nix develop .#chronicle)'
     before_probe
     publish() { # every step checked; the success line only after the final file re-reads as recorded
-      (umask 077; pg_dump_stream haystack >"$file.partial") || { echo 'op: pg_dump failed'; return 3; }
+      (umask 077; pg_dump_stream "$target" >"$file.partial") || { echo 'op: pg_dump failed'; return 3; }
       pg_restore --list "$file.partial" >/dev/null && pg_restore --exit-on-error --file=/dev/null "$file.partial" || { echo 'op: the archive does not decode to the end (incomplete): not a backup'; return 3; }
       local size sum; size=$(stat -c %s "$file.partial") && sum=$(sha256sum "$file.partial" | cut -d' ' -f1) || { echo 'op: cannot measure the archive'; return 3; }
       [[ $size =~ ^[1-9][0-9]*$ && $sum =~ ^[0-9a-f]{64}$ ]] || { echo 'op: implausible size or checksum'; return 3; }
@@ -213,7 +214,7 @@ case $cmd in
       echo "LR.backup.file|$file|$size|$sum"
       echo 'LR.result|backup-published'
     }
-    checked show 'LR\.result\|backup-published' backup-haystack publish; after $? backup-haystack ;;
+    checked show 'LR\.result\|backup-published' "$cmd" publish; after $? "$cmd" ;;
   backup-chronicle)
     [[ $# -eq 1 ]] && single "$1" 'lr_backup_chronicle_[0-9]{12}' || usage 'backup-chronicle NAME, NAME = lr_backup_chronicle_<YYYYMMDDHHMM>'
     before_probe
