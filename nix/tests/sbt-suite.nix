@@ -17,9 +17,13 @@ runCommand name {
   ${environment.setup}
   status=0
   ${runner} || status=$?
+  # Every report directory must exist and hold test cases: one module's empty run cannot hide behind the others.
+  gated=()
   for report in ${lib.escapeShellArgs reports}; do
-    if [[ -d "$report" ]]; then mkdir -p "$out/$report" && cp "$report"/*.xml "$out/$report/"; fi
+    mkdir -p "$out/$report"
+    if [[ -d "$report" ]]; then find "$report" -maxdepth 1 -name '*.xml' -exec cp -t "$out/$report" {} +; fi
+    gated+=("$out/$report")
   done
-  python3 ${../../scripts/junit-gate.py} "$out"
+  python3 ${../../scripts/junit-gate.py} --counts "$out/counts.json" "''${gated[@]}"
   exit "$status"
 ''

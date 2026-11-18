@@ -1,46 +1,54 @@
 #!/usr/bin/env python3
 """Gate a test run on its JUnit XML.
 
-Usage: junit-gate.py DIR [DIR...]
-Reads every *.xml below the given directories. Exits 1 when they hold no test case or any failure, error or skipped
-element (or a suite reports one in its attributes); otherwise prints the counts and writes them to DIR/counts.json
-of the first DIR.
+Usage: junit-gate.py --counts FILE DIR [DIR...]
+Reads every *.xml below each DIR. Exits 1 when a DIR is missing or holds no test case, or when any report holds a
+failure, error or skipped element anywhere (or a suite reports one in its attributes); otherwise prints the counts
+over all DIRs and writes them to FILE.
 """
+import argparse
 import json
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 OUTCOMES = {"failure": "failures", "error": "errors", "skipped": "skipped"}
-EXIT_REJECTED, EXIT_USAGE = 1, 2
+EXIT_REJECTED = 1
 
 
-def case_name(case: ET.Element) -> str:
-    return f"{case.get('classname', '')}.{case.get('name', '')}"
+def owner(element: ET.Element) -> str:
+    if element.tag == "testcase":
+        return f"{element.get('classname', '')}.{element.get('name', '')}"
+    return f"{element.tag} {element.get('name', '')}"
 
 
-def main(directories: list[str]) -> int:
-    if not directories:
-        print(__doc__, file=sys.stderr)
-        return EXIT_USAGE
-    roots = [ET.parse(report).getroot() for directory in directories for report in sorted(Path(directory).rglob("*.xml"))]
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--counts", required=True, type=Path)
+    parser.add_argument("directories", nargs="+", type=Path)
+    arguments = parser.parse_args()
+    problems, roots = [], []
+    for directory in arguments.directories:
+        found = [ET.parse(report).getroot() for report in sorted(directory.rglob("*.xml"))] if directory.is_dir() else []
+        if not any(True for root in found for _ in root.iter("testcase")):
+            problems.append(f"no test case under {directory}")
+        roots += found
     suites = [suite for root in roots for suite in root.iter("testsuite")]
     cases = [case for root in roots for case in root.iter("testcase")]
-    rejected = {outcome: [case_name(case) for case in cases if case.find(outcome) is not None] for outcome in OUTCOMES}
+    # Outcome elements count wherever they appear, including suite-level ones that no case carries.
+    rejected = {outcome: [owner(parent) for root in roots for parent in root.iter() for child in parent if child.tag == outcome]
+                for outcome in OUTCOMES}
     counts = {"suites": len(suites), "cases": len(cases)} | {key: len(rejected[outcome]) for outcome, key in OUTCOMES.items()}
-    # A suite can report an outcome (an aborted suite, for example) without a case element carrying it.
-    suite_level = [suite.get("name", "") for suite in suites if any(int(suite.get(key, "0")) > 0 for key in OUTCOMES.values())]
     print(json.dumps(counts))
-    problems = [f"{outcome}: {name}" for outcome, names in rejected.items() for name in names]
-    problems += [f"suite reports a failure, error or skip: {name}" for name in suite_level]
-    if not cases:
-        problems.append(f"no test case in {len(roots)} JUnit XML files under {' '.join(directories)}")
+    problems += [f"{outcome}: {name}" for outcome, names in rejected.items() for name in names]
+    problems += [f"suite reports a failure, error or skip: {suite.get('name', '')}" for suite in suites
+                 if any(int(suite.get(key, "0")) > 0 for key in OUTCOMES.values())]
     if problems:
         print("\n".join(["JUnit gate rejected the run:"] + problems), file=sys.stderr)
         return EXIT_REJECTED
-    Path(directories[0], "counts.json").write_text(json.dumps(counts, indent=2) + "\n")
+    arguments.counts.write_text(json.dumps(counts, indent=2) + "\n")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())

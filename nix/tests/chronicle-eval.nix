@@ -16,6 +16,6 @@ in runCommand "chronicle-eval" {
   python3 -m xmlrunner --output "$out/python" --outsuffix "" discover -s eval/relevance/tests -v || status=$?
   node --test --test-reporter=spec --test-reporter-destination=stdout \
     --test-reporter=junit --test-reporter-destination="$out/node/eval.xml" eval/relevance/tests/*.test.mjs || status=$?
-  python3 ${../../scripts/junit-gate.py} "$out"
+  python3 ${../../scripts/junit-gate.py} --counts "$out/counts.json" "$out/python" "$out/node"
   exit "$status"
 ''

@@ -23,7 +23,7 @@ in buildNpmPackage {
     export HOME="$TMPDIR"
     status=0
     (cd web && CHRONICLE_BROWSER_JUNIT_DIR="$out" node tests-browser/run-all.mjs) || status=$?
-    python3 ${../../scripts/junit-gate.py} "$out"
+    python3 ${../../scripts/junit-gate.py} --counts "$out/counts.json" "$out"
     if (( status != 0 )); then exit "$status"; fi
     runHook postBuild
   '';

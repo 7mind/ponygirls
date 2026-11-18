@@ -27,7 +27,7 @@ in buildNpmPackage {
     mkdir -p "$out"
     printf '<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="account-web-browser" tests="1">\n  <testcase classname="shared.account-web" name="%s" time="%s">%s</testcase>\n</testsuite>\n' \
       ${entry} "$((SECONDS - started))" "$outcome" > "$out/account-web-browser.xml"
-    python3 ${../../scripts/junit-gate.py} "$out"
+    python3 ${../../scripts/junit-gate.py} --counts "$out/counts.json" "$out"
     runHook postBuild
   '';
   installPhase = "runHook preInstall; runHook postInstall";
