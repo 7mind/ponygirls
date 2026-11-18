@@ -126,7 +126,9 @@ naming the session owner: missing or malformed `400 invalid`, another owner
 Non-admins get `403 forbidden`, a declarative session on self-service `403
 forbidden`, a wrong `currentPassword` or code on these endpoints `403
 proof-rejected` (not 401: the session is alive). Path ids are imperative
-usernames or `enrollment-<uuid>`. New error codes: `totp-required` (401),
+usernames (`/admin/users/{username}/…`) or `enrollment-<lower-case uuid>`
+(`/admin/enrollments/{enrollment}/revoke`); any other segment is `404` before
+anything is read or logged. New error codes: `totp-required` (401),
 `pending-approval` (403), `proof-rejected` (403), `weak-password` (400),
 `totp-mismatch` (400), `username-unavailable` (409). Every 429 and 503 carries
 `Retry-After` (seconds). Codes and secrets are returned once and never logged.
@@ -143,8 +145,12 @@ Limits, all in memory and only while the master switch is on
 for each of login, signup, recovery, inspection and redemption; 5 successful
 signups per address and day and 20 per hour in total; 5 failed admin proofs per
 quarter hour for a declarative admin (imperative admins have a persistent
-counter); PBKDF2 work of login, signup, redemption and recovery runs through 2
-slots with a queue of 16, beyond which the answer is `503`. Every map is
+counter). Signups and declarative proofs take their slot when they start and
+return it unless they succeed (signup) or fail (proof), also when the request is
+cancelled, so concurrent attempts cannot overrun a window. PBKDF2 work of login,
+signup, redemption and recovery runs through 2 slots with a queue of 16, beyond
+which the answer is `503`; a waiting request leaves the queue when it is
+cancelled (for example by the server's request timeout). Every map is
 bounded; a new key that does not fit is refused. `ClientAddress.resolve` takes
 the right-most `X-Forwarded-For` element only from a trusted peer, otherwise the
 socket peer.

@@ -102,24 +102,35 @@ enum AccountEndpoint(val method: String, val segments: Vector[String]) {
   case ReplaceTotp extends AccountEndpoint(AccountEndpoint.Post, Vector("profile", "totp"))
   case SetTotpRequired extends AccountEndpoint(AccountEndpoint.Post, Vector("profile", "totp-required"))
   case ListUsers extends AccountEndpoint(AccountEndpoint.Get, Vector("admin", "users"))
-  case Approve extends AccountEndpoint(AccountEndpoint.Post, Vector("admin", "users", AccountEndpoint.Id, "approve"))
-  case Reject extends AccountEndpoint(AccountEndpoint.Post, Vector("admin", "users", AccountEndpoint.Id, "reject"))
-  case SetEnabled extends AccountEndpoint(AccountEndpoint.Post, Vector("admin", "users", AccountEndpoint.Id, "enabled"))
-  case SetAdmin extends AccountEndpoint(AccountEndpoint.Post, Vector("admin", "users", AccountEndpoint.Id, "admin"))
-  case IssueReset extends AccountEndpoint(AccountEndpoint.Post, Vector("admin", "users", AccountEndpoint.Id, "reset"))
+  case Approve extends AccountEndpoint(AccountEndpoint.Post, Vector("admin", "users", AccountEndpoint.Username, "approve"))
+  case Reject extends AccountEndpoint(AccountEndpoint.Post, Vector("admin", "users", AccountEndpoint.Username, "reject"))
+  case SetEnabled extends AccountEndpoint(AccountEndpoint.Post, Vector("admin", "users", AccountEndpoint.Username, "enabled"))
+  case SetAdmin extends AccountEndpoint(AccountEndpoint.Post, Vector("admin", "users", AccountEndpoint.Username, "admin"))
+  case IssueReset extends AccountEndpoint(AccountEndpoint.Post, Vector("admin", "users", AccountEndpoint.Username, "reset"))
   case ListEnrollments extends AccountEndpoint(AccountEndpoint.Get, Vector("admin", "enrollments"))
   case IssueInvitation extends AccountEndpoint(AccountEndpoint.Post, Vector("admin", "enrollments"))
-  case RevokeEnrollment extends AccountEndpoint(AccountEndpoint.Post, Vector("admin", "enrollments", AccountEndpoint.Id, "revoke"))
+  case RevokeEnrollment extends AccountEndpoint(AccountEndpoint.Post, Vector("admin", "enrollments", AccountEndpoint.Enrollment, "revoke"))
 
-  /** A fixed route label, for example `/admin/users/{id}/approve`, usable as a telemetry label. */
+  /** A fixed route label, for example `/admin/users/{username}/approve`, usable as a telemetry label. */
   def label: String = segments.mkString("/", "/", "")
 }
 object AccountEndpoint {
   // Constant definitions (`final val`) are inlined: the cases above are initialized before this object's fields.
   final val Get = "GET"
   final val Post = "POST"
-  final val Id = "{id}"
+  /** Path segment holding an imperative username. */
+  final val Username = "{username}"
+  /** Path segment holding an enrollment id, `enrollment-<lower-case UUID>`. */
+  final val Enrollment = "{enrollment}"
+  private val EnrollmentId = "^enrollment-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+  /** Whether `segment` fills the route segment `expected`; ids are validated before they reach the core or an event. */
+  private[auth] def fills(expected: String, segment: String): Boolean = expected match {
+    case Username => ImperativePolicy.validUsername(segment)
+    case Enrollment => segment.matches(EnrollmentId)
+    case literal => literal == segment
+  }
 }
+/** `id` is the validated path parameter: a username or an enrollment id. */
 final case class AccountRoute(endpoint: AccountEndpoint, id: Option[String])
 
 /** Transport-neutral dispatcher of the account endpoints added for imperative accounts (design §5.1 with the
@@ -181,19 +192,17 @@ final class ImperativeAccountApi(limiter: AttemptLimiter, gate: CredentialGate) 
         val fields = body(request.body, Set("username", "email", "password", "totpSecret", "totpCode", "requireTotp"), Set.empty)
         val (name, email, offered) = (fields.text("username", MaximumTextLength), fields.text("email", EmailMaximumLength), credentials(fields))
         admitted(request, CredentialEndpoint.Signup) {
-          IO(limiter.reserveSignup(request.clientAddress)).flatMap {
-            case Left(wait) => IO.pure(rateLimited(wait))
-            case Right(reservation) =>
-              gate.run(transactions.run(_.signup(name, email, offered, previous))).onError { case _ => IO(limiter.refund(reservation)) }.flatMap {
-                case Some(Completed(SignupResult.Pending)) =>
-                  IO.pure(AccountReply(Accepted, ImperativeAccountJson.signupPending, CookieEffect.Keep, None,
-                    Vector(event(AccountEventKind.Signup, None, Some(name), Some(AccountStatus.Pending.text)))))
-                case Some(Completed(SignupResult.Active(signedIn))) =>
-                  IO.pure(AccountReply(Ok, ImperativeAccountJson.signupActive(signedIn.user), CookieEffect.Set(signedIn.session.secret), None,
-                    Vector(event(AccountEventKind.Signup, None, Some(name), Some(AccountStatus.Active.text)))))
-                case Some(refused: Rejected) => IO(limiter.refund(reservation)).as(rejection(request, refused, None, None, None))
-                case None => IO(limiter.refund(reservation)).as(unavailable)
-              }
+          holding(limiter.reserveSignup(request.clientAddress)) { hold =>
+            gate.run(transactions.run(core => hold.keepWhen(core.signup(name, email, offered, previous)) { case Completed(_) => true; case _ => false })).map {
+              case Some(Completed(SignupResult.Pending)) =>
+                AccountReply(Accepted, ImperativeAccountJson.signupPending, CookieEffect.Keep, None,
+                  Vector(event(AccountEventKind.Signup, None, Some(name), Some(AccountStatus.Pending.text))))
+              case Some(Completed(SignupResult.Active(signedIn))) =>
+                AccountReply(Ok, ImperativeAccountJson.signupActive(signedIn.user), CookieEffect.Set(signedIn.session.secret), None,
+                  Vector(event(AccountEventKind.Signup, None, Some(name), Some(AccountStatus.Active.text))))
+              case Some(refused: Rejected) => rejection(request, refused, None, None, None)
+              case None => unavailable
+            }
           }
         }
       case E.InspectEnrollment =>
@@ -267,14 +276,16 @@ final class ImperativeAccountApi(limiter: AttemptLimiter, gate: CredentialGate) 
         val fields = body(request.body, Set("admin", "currentPassword"), Set.empty)
         val (admin, current) = (fields.flag("admin"), fields.text("currentPassword", PasswordMaximumLength))
         val kind = if (admin) AccountEventKind.AdminGranted else AccountEventKind.AdminRevoked
-        proven(declared, session)(transactions.run(_.setAdmin(session, id, admin, current))).map(administration(request, session, kind, Some(id)))
+        proven(declared, session)(hold => transactions.run(core => hold.keepWhen(core.setAdmin(session, id, admin, current))(proofFailed))
+          .map(administration(request, session, kind, Some(id))))
       }
       case E.IssueReset => authenticated(request, mutation = true) { session =>
         val current = body(request.body, Set("currentPassword"), Set.empty).text("currentPassword", PasswordMaximumLength)
         val actor = Some(session.userId)
-        proven(declared, session)(transactions.run(_.issueReset(session, id, current))).map(reply(request, _, actor, actor, Some(id)) { issued =>
-          AccountReply(Ok, ImperativeAccountJson.issued(issued), CookieEffect.Keep, None, Vector(event(AccountEventKind.ResetIssued, actor, Some(id), None)))
-        })
+        proven(declared, session)(hold => transactions.run(core => hold.keepWhen(core.issueReset(session, id, current))(proofFailed))
+          .map(reply(request, _, actor, actor, Some(id)) { issued =>
+            AccountReply(Ok, ImperativeAccountJson.issued(issued), CookieEffect.Keep, None, Vector(event(AccountEventKind.ResetIssued, actor, Some(id), None)))
+          }))
       }
       case E.ListEnrollments => authenticated(request, mutation = false) { session =>
         noBody(request.body)
@@ -283,7 +294,7 @@ final class ImperativeAccountApi(limiter: AttemptLimiter, gate: CredentialGate) 
       case E.IssueInvitation => authenticated(request, mutation = true) { session =>
         val name = body(request.body, Set("username"), Set.empty).text("username", MaximumTextLength)
         val actor = Some(session.userId)
-        transactions.run(_.issueInvitation(session, name)).map(reply(request, _, actor, None, Some(name)) { issued =>
+        transactions.run(_.issueInvitation(session, name)).map(reply(request, _, actor, None, Some(name).filter(validUsername)) { issued =>
           AccountReply(Ok, ImperativeAccountJson.issued(issued), CookieEffect.Keep, None,
             Vector(event(AccountEventKind.EnrollmentCreated, actor, Some(issued.enrollment.username), None)))
         })
@@ -328,16 +339,27 @@ final class ImperativeAccountApi(limiter: AttemptLimiter, gate: CredentialGate) 
     reply(request, outcome, actor, actor, target)(_ =>
       AccountReply(Ok, ImperativeAccountJson.ok, CookieEffect.Keep, None, Vector(AccountEvent(kind, actor, target, None, request.clientAddress))))
   }
-  /** Fresh-proof operations: a declarative actor has no persistent password counter, so its failed proofs are
-    * bounded by the in-memory window (design §4.6.3); an imperative actor's proofs count on its row.
+  /** Fresh-proof operations: a declarative actor has no persistent password counter, so its proofs take a slot
+    * of the in-memory window before the password is checked and keep it only when the proof failed (design
+    * §4.6.3); an imperative actor's proofs count on its row.
     */
-  private def proven[A](declared: DeclaredDirectory, session: AccountCredential)(run: IO[AccountOutcome[A]]): IO[AccountOutcome[A]] =
-    if (!declared.contains(session.userId)) run
-    else IO(limiter.proofBlocked(session.userId)).flatMap {
-      case Some(wait) => IO.pure(Rejected(AccountRejection.RateLimited(wait), None))
-      case None => run.flatTap {
-        case Rejected(AccountRejection.ProofRejected, _) => IO(limiter.proofFailed(session.userId))
-        case _ => IO.unit
+  private def proven(declared: DeclaredDirectory, session: AccountCredential)(work: Hold => IO[AccountReply]): IO[AccountReply] =
+    if (declared.contains(session.userId)) holding(limiter.reserveProof(session.userId))(work) else work(new Hold(None))
+  private def proofFailed(outcome: AccountOutcome[?]): Boolean = outcome match {
+    case Rejected(AccountRejection.ProofRejected, _) => true
+    case _ => false
+  }
+
+  /** Runs `work` with a reserved slot that is refunded unless `work` decided, inside its transaction, to keep
+    * it. The refund also happens when `work` fails, is refused by the gate or is cancelled, waiting or not.
+    */
+  private def holding(reserve: => Either[Duration, AttemptReservation])(work: Hold => IO[AccountReply]): IO[AccountReply] =
+    IO.uncancelable { poll =>
+      IO(reserve).flatMap {
+        case Left(wait) => IO.pure(rateLimited(wait))
+        case Right(reservation) =>
+          val hold = new Hold(Some(reservation -> limiter))
+          poll(work(hold)).guarantee(IO(hold.settle()))
       }
     }
 
@@ -363,6 +385,17 @@ final class ImperativeAccountApi(limiter: AttemptLimiter, gate: CredentialGate) 
 
 }
 object ImperativeAccountApi {
+  /** One reserved limiter slot. `keepWhen` runs inside the transaction, so a slot is kept as soon as the attempt
+    * counts, even if the reply is never delivered; `settle` refunds a slot that was not kept, exactly once.
+    */
+  private final class Hold(slot: Option[(AttemptReservation, AttemptLimiter)]) {
+    private val decided = new java.util.concurrent.atomic.AtomicBoolean(false)
+    def keepWhen[A](outcome: AccountOutcome[A])(counts: AccountOutcome[A] => Boolean): AccountOutcome[A] = {
+      if (counts(outcome)) decided.set(true)
+      outcome
+    }
+    def settle(): Unit = if (decided.compareAndSet(false, true)) slot.foreach((reservation, limiter) => limiter.refund(reservation))
+  }
   private val Ok = 200
   private val Accepted = 202
   private val NotFoundCode = "not-found"
@@ -403,18 +436,19 @@ object ImperativeAccountApi {
   /** A submitted name, kept for an event only when it is a well-formed username. */
   private def username(value: String): Option[String] = Some(ImperativePolicy.fold(value)).filter(ImperativePolicy.validUsername)
 
-  private def validId(segment: String): Boolean =
-    segment.nonEmpty && segment.length <= ImperativeAccountJson.MaximumTextLength && !segment.exists(c => c.isControl || c.isWhitespace)
+  private val Placeholders = Set(AccountEndpoint.Username, AccountEndpoint.Enrollment)
 
-  /** The endpoint of `method` and `path`, or none; ids are single non-empty path segments. */
+  /** The endpoint of `method` and `path`, or none; a path parameter that is not a well-formed id of its kind
+    * (a username for user actions, an enrollment id for revocation) matches nothing.
+    */
   def route(method: String, path: String): Option[AccountRoute] =
     if (!path.startsWith(PathSeparator)) None
     else {
       val segments = path.substring(PathSeparator.length).split(PathSeparator, -1).toVector
       AccountEndpoint.values.iterator.filter(endpoint => endpoint.method == method && endpoint.segments.size == segments.size).flatMap { endpoint =>
         val pairs = endpoint.segments.zip(segments)
-        val ids = pairs.collect { case (AccountEndpoint.Id, segment) => segment }
-        val matches = pairs.forall { case (expected, actual) => if (expected == AccountEndpoint.Id) validId(actual) else expected == actual }
+        val ids = pairs.collect { case (expected, segment) if Placeholders(expected) => segment }
+        val matches = pairs.forall { case (expected, actual) => AccountEndpoint.fills(expected, actual) }
         Option.when(matches)(AccountRoute(endpoint, ids.headOption))
       }.nextOption()
     }

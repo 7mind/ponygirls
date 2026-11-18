@@ -5,8 +5,9 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import java.nio.file.Files
 import java.time.{Clock, Duration, Instant, ZoneId, ZoneOffset}
-import ponygirls.runtime.AdmissionConfig
-import scala.concurrent.duration.*
+import cats.effect.std.CountDownLatch
+import cats.syntax.all.*
+import java.util.concurrent.atomic.AtomicInteger
 
 /** The dispatcher over the in-memory imperative store and the shared session store, with an injected clock. */
 final class ImperativeAccountApiSuite extends munit.FunSuite {
@@ -61,7 +62,8 @@ final class ImperativeAccountApiSuite extends munit.FunSuite {
       Some(ImperativeSettings("api", true, false, true, 100, Duration.ofHours(24), "Api test", Set.empty, vault))
     var transactionCount = 0
     val replies = scala.collection.mutable.ArrayBuffer.empty[AccountReply]
-    val api = new ImperativeAccountApi(new AttemptLimiter(AttemptLimiter.Capacity, clock), gate)
+    val limiter = new AttemptLimiter(AttemptLimiter.Capacity, clock)
+    val api = new ImperativeAccountApi(limiter, gate)
     private var addresses = 0
     new Accounts(rows, clock).reconcile(declared.users)
 
@@ -82,10 +84,11 @@ final class ImperativeAccountApiSuite extends munit.FunSuite {
       }
     }
     val transactions: ImperativeTransactions = new ImperativeTransactions {
-      def run[A](work: ImperativeAccounts => A): IO[A] = IO {
+      // The stores are not thread-safe; a database serializes the same work through its locks.
+      def run[A](work: ImperativeAccounts => A): IO[A] = IO(Fixture.this.synchronized {
         transactionCount += 1
         transaction((core, _) => work(core))
-      }
+      })
     }
     /** The service's declarative path, with the test hasher in place of PBKDF2. */
     val declarative: DeclarativeLogin = (login, secret, previous) => IO(transaction { (core, shared) =>
@@ -110,11 +113,12 @@ final class ImperativeAccountApiSuite extends munit.FunSuite {
     def anonymous(method: String, path: String, body: Option[Json]): AccountReply =
       send(AccountRequest(method, path, body, Vector.empty, None, None, address()))
     /** A browser request with the session's cookie and, for a POST, its actor binding. */
-    def as(secret: String, method: String, path: String, body: Option[Json]): AccountReply = {
+    def requestAs(secret: String, method: String, path: String, body: Option[Json]): AccountRequest = {
       val session = credential(secret)
       val actor = if (method == E.Post) session.map(found => AccountJson.actor(found.userId)).toVector else Vector.empty
-      send(AccountRequest(method, path, body, actor, session, Some(secret), address()))
+      AccountRequest(method, path, body, actor, session, Some(secret), address())
     }
+    def as(secret: String, method: String, path: String, body: Option[Json]): AccountReply = send(requestAs(secret, method, path, body))
     def login(name: String, secret: String, totp: Option[String], address: String): AccountReply =
       record(api.login(settings.get, declared, transactions, declarative, AccountRequest(E.Post, "/login",
         json(s"""{"login":"$name","password":"$secret"${totp.fold("")(code => s""","totp":"$code"""")}}"""), Vector.empty, None, None, address)))
@@ -141,18 +145,21 @@ final class ImperativeAccountApiSuite extends munit.FunSuite {
     case CookieEffect.Keep => fail(s"expected a new session in $reply")
   }
   private def kinds(reply: AccountReply): Vector[String] = reply.events.map(_.kind.text)
+  private val enrollmentId = "enrollment-0f8e2a6c-2b1d-4c3e-9f00-5a6b7c8d9e0f"
+  private val parameters: Map[String, String] = Map(AccountEndpoint.Username -> "alice", AccountEndpoint.Enrollment -> enrollmentId)
   private val concrete: Map[AccountEndpoint, String] = AccountEndpoint.values.map(endpoint =>
-    endpoint -> endpoint.segments.map(segment => if (segment == AccountEndpoint.Id) "alice" else segment).mkString("/", "/", "")).toMap
+    endpoint -> endpoint.segments.map(segment => parameters.getOrElse(segment, segment)).mkString("/", "/", "")).toMap
 
   test("routing table: every endpoint by method and path; anything else, and everything with the master switch off, is not-found") {
     AccountEndpoint.values.foreach { endpoint =>
-      val expectedId = Option.when(endpoint.segments.contains(AccountEndpoint.Id))("alice")
+      val expectedId = endpoint.segments.collectFirst(parameters)
       assertEquals(ImperativeAccountApi.route(endpoint.method, concrete(endpoint)), Some(AccountRoute(endpoint, expectedId)), endpoint.toString)
     }
     assertEquals(AccountEndpoint.values.map(endpoint => (endpoint.method, endpoint.label)).distinct.length, AccountEndpoint.values.length)
-    assertEquals(ImperativeAccountApi.route(E.Post, "/admin/users/enrollment-0f8e/approve").map(_.id), Some(Some("enrollment-0f8e")))
     for ((method, path) <- Vector(E.Get -> "/signup", E.Post -> "/policy", E.Post -> "/login", E.Get -> "", E.Get -> "/", E.Post -> "/tokens",
-        E.Get -> "/policy/", E.Post -> "/admin/users//approve", E.Post -> "/admin/users/a b/approve", E.Post -> "/admin/users/alice/delete",
+        E.Get -> "/policy/", E.Post -> "/admin/users//approve", E.Post -> "/admin/users/a b/approve", E.Post -> "/admin/users/alice/delete", E.Post -> "/admin/users/Alice/approve",
+        E.Post -> "/admin/users/alice@example.test/admin", E.Post -> s"/admin/users/$enrollmentId/approve", E.Post -> "/admin/enrollments/alice/revoke",
+        E.Post -> s"/admin/enrollments/${enrollmentId.toUpperCase}/revoke",
         E.Get -> "policy", "PUT" -> "/profile/email", E.Get -> "/admin/users/alice"))
       assertEquals(ImperativeAccountApi.route(method, path), None, s"$method $path")
     withFixture { fixture =>
@@ -332,37 +339,79 @@ final class ImperativeAccountApiSuite extends munit.FunSuite {
     }
   }
 
-  test("failed admin proofs of a declarative admin are answered proof-rejected, then bounded in memory") {
+  test("declarative admin proofs: attempts beyond the window are refused before any verification, also concurrently; " +
+    "path ids outside the id vocabulary reach neither the core nor an event") {
     withFixture { fixture =>
       fixture.signup("alice", false)
       val root = fixture.rootSession
-      (1 to AttemptLimiter.ProofFailuresPerActor).foreach { _ =>
-        val refused = fixture.as(root, E.Post, "/admin/users/alice/admin", json(s"""{"admin":true,"currentPassword":"$wrongPassword"}"""))
+      val before = fixture.transactionCount
+      for (path <- Vector("/admin/users/alice@example.test/admin", s"/admin/users/${Secrets.generate()}/reset",
+          s"/admin/enrollments/${Secrets.generate()}/revoke", "/admin/enrollments/alice/revoke")) {
+        val refused = fixture.as(root, E.Post, path, json(s"""{"admin":true,"currentPassword":"$wrongPassword"}"""))
+        assertEquals((refused.status, refused.events), (404, Vector.empty), path)
+      }
+      assertEquals(fixture.transactionCount, before)
+
+      val limit = AttemptLimiter.ProofFailuresPerActor
+      val entered = CountDownLatch[IO](limit).unsafeRunSync()
+      val release = Deferred.unsafe[IO, Unit]
+      val verifications = new AtomicInteger(0)
+      val held: ImperativeTransactions = new ImperativeTransactions {
+        def run[A](work: ImperativeAccounts => A): IO[A] =
+          IO(verifications.incrementAndGet()).flatMap(count => if (count <= limit) entered.release *> release.get else IO.unit) *> fixture.transactions.run(work)
+      }
+      def attempt(secret: String): IO[AccountReply] = fixture.api.handle(fixture.settings, fixture.declared, held,
+        fixture.requestAs(root, E.Post, "/admin/users/alice/admin", json(s"""{"admin":true,"currentPassword":"$secret"}""")))
+      val (failed, excess) = (for {
+        running <- List.fill(limit)(attempt(wrongPassword)).traverse(_.start)
+        _ <- entered.await
+        excess <- attempt(password)
+        _ <- release.complete(())
+        failed <- running.traverse(_.joinWithNever)
+      } yield (failed, excess)).unsafeRunSync()
+      assertEquals((excess.status, excess.retryAfterSeconds, verifications.get), (429, Some(AttemptLimiter.ProofWindow.getSeconds), limit))
+      failed.foreach { refused =>
         assertError(refused, 403, "proof-rejected")
         assertEquals(refused.events.map(event => (event.kind, event.actor, event.target)), Vector((AccountEventKind.ProofRejected, Some("root"), Some("alice"))))
       }
-      val blocked = fixture.as(root, E.Post, "/admin/users/alice/admin", json(s"""{"admin":true,"currentPassword":"$password"}"""))
-      assertEquals((blocked.status, blocked.retryAfterSeconds), (429, Some(AttemptLimiter.ProofWindow.getSeconds)))
+      assertError(fixture.as(root, E.Post, "/admin/users/alice/admin", json(s"""{"admin":true,"currentPassword":"$password"}""")), 429, "rate-limited")
       fixture.clock.advance(AttemptLimiter.ProofWindow)
       val granted = fixture.as(root, E.Post, "/admin/users/alice/admin", json(s"""{"admin":true,"currentPassword":"$password"}"""))
       assertEquals((granted.status, kinds(granted)), (200, Vector("account.admin.granted")))
     }
   }
 
-  test("a saturated credential gate answers 503 with Retry-After") {
-    val (gate, close) = CredentialGate.resource(AdmissionConfig(1, 0, 1.second)).allocated.unsafeRunSync()
+  test("a saturated credential gate answers 503 with Retry-After; a signup cancelled while queued returns both signup slots") {
+    val (gate, close) = CredentialGate.resource(1, 1).allocated.unsafeRunSync()
     try {
       val fixture = new Fixture(gate)
       val (entered, release) = (Deferred.unsafe[IO, Unit], Deferred.unsafe[IO, Unit])
       val held: ImperativeTransactions = new ImperativeTransactions {
         def run[A](work: ImperativeAccounts => A): IO[A] = entered.complete(()) *> release.get *> fixture.transactions.run(work)
       }
-      def attempt(transactions: ImperativeTransactions): IO[AccountReply] = fixture.api.login(fixture.settings.get, fixture.declared, transactions,
+      def login(transactions: ImperativeTransactions): IO[AccountReply] = fixture.api.login(fixture.settings.get, fixture.declared, transactions,
         fixture.declarative, AccountRequest(E.Post, "/login", json(s"""{"login":"nobody","password":"$password"}"""), Vector.empty, None, None, fixture.address()))
-      val (admitted, refused) = IO.both(attempt(held), entered.get *> attempt(fixture.transactions) <* release.complete(())).unsafeRunSync()
+      val address = "198.51.100.1"
+      val signup = fixture.api.handle(fixture.settings, fixture.declared, fixture.transactions, AccountRequest(E.Post, "/signup",
+        json(s"""{"username":"alice","email":"alice@example.test","password":"$password","totpSecret":"$secretText","totpCode":"${fixture.code}",""" +
+          """"requireTotp":false}"""), Vector.empty, None, None, address))
+      def queued: IO[Unit] = gate.occupancy.flatMap(count => if (count == 2) IO.unit else IO.cede *> queued)
+      val (admitted, refused) = (for {
+        holder <- login(held).start
+        _ <- entered.get
+        waiting <- signup.start
+        _ <- queued
+        refused <- login(fixture.transactions)
+        _ <- waiting.cancel
+        _ <- release.complete(())
+        admitted <- holder.joinWithNever
+      } yield (admitted, refused)).unsafeRunSync()
       assertError(refused, 503, "unavailable")
       assertEquals(refused.retryAfterSeconds, Some(ImperativeAccountApi.UnavailableRetryAfterSeconds))
       assertError(admitted, 401, "unauthorized")
+      assertEquals(fixture.transactionCount, 1)
+      assert((1 to AttemptLimiter.SignupsPerAddress).forall(_ => fixture.limiter.reserveSignup(address).isRight))
+      assert((AttemptLimiter.SignupsPerAddress + 1 to AttemptLimiter.SignupsGlobal).forall(n => fixture.limiter.reserveSignup(s"203.0.113.$n").isRight))
     } finally close.unsafeRunSync()
   }
 }
