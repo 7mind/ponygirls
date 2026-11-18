@@ -228,6 +228,7 @@ export function createDetail(ctx, catalogue) {
     $("detail-kind").replaceChildren(); $("detail-access").replaceChildren(); $("detail-state").replaceChildren();
     $("file-list").textContent = "";
     $("manifest-filter").value = "";
+    setText("upload-received", ""); $("upload-progress").hidden = true;
     renderManifest();
   }
   function showDetail(id) {
@@ -248,6 +249,7 @@ export function createDetail(ctx, catalogue) {
       renderDetail(info, id);
       if (accessMutations.has(id)) { accessNotice("info", "An access or password update is still in progress. Wait for its status to be refreshed.", false); }
       loadFiles();
+      if (info.state !== "ready") { loadProgress(id, generation, epoch); }
     }).catch(function (error) {
       if (epoch !== ctx.sessionEpoch || generation !== detailGeneration) { return; }
       currentDetailId = null; currentDetailInfo = null;
@@ -278,6 +280,24 @@ export function createDetail(ctx, catalogue) {
       $("manifest-foot").dataset.state = "error";
       setText("files-status", "Files could not be loaded (" + errorLabel(error) + ").");
       $("files-retry-button").hidden = false;
+    });
+  }
+
+  // One snapshot of an unfinished upload's received bytes (Reload reads it again).
+  function loadProgress(id, generation, epoch) {
+    apiFetch(current.uploadStatus(id)).then(function (status) {
+      if (epoch !== ctx.sessionEpoch || generation !== detailGeneration || id !== currentDetailId) { return; }
+      if (status.artifact_id !== id || !Array.isArray(status.files)) { throw new Error("bad-response"); }
+      var total = 0, received = 0;
+      status.files.forEach(function (file) { total += Number(file.size); received += Number(file.received_bytes); });
+      var percent = total === 0 ? 100 : Math.floor(received * 100 / total);
+      setText("upload-received", bytes(received) + " of " + bytes(total) + " received. ");
+      $("upload-progress-bar").setAttribute("aria-valuenow", String(percent));
+      $("upload-progress-bar").firstElementChild.style.setProperty("width", percent + "%");
+      setText("upload-progress-text", percent + " %");
+      $("upload-progress").hidden = false;
+    }).catch(function (error) {
+      if (epoch === ctx.sessionEpoch && generation === detailGeneration && id === currentDetailId) { setText("upload-received", "Upload progress is unavailable (" + errorLabel(error) + "). "); }
     });
   }
 

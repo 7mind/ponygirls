@@ -154,6 +154,7 @@ export const rename = (id,name) => [new p.Command_PatchArtifact(id,new p.Artifac
 // seconds: from now (the server bounds it); null removes the expiry.
 export const expiry = (id,seconds) => [new p.Command_PatchArtifact(id,new p.ArtifactPatch(null,null,
   seconds === null ? new p.ExpiryChange_Clear() : new p.ExpiryChange_Set(seconds))),p.Result_ArtifactPatched,r=>local(r.artifact)];
+export const uploadStatus = id => [new p.Command_GetUploadStatus(id),p.Result_UploadProgress,r=>local(r.status)];
 export const rotate = id => [new p.Command_RotateExternalPassword(id),p.Result_PasswordRotated,r=>local(r)];
 export const externalPassword = id => [new p.Command_GetExternalPassword(id),p.Result_ExternalPasswordRetrieved,
   r=>({external_password:r.externalPassword === undefined ? null : r.externalPassword})];
