@@ -79,7 +79,9 @@ in {
     "manure/scripts/target-suite.py" "manure/scripts/run-owned-target.sh" "manure/scripts/acceptance-tools-x86_64-linux.json"
     "manure/pyproject.toml" "shared/account-web" "shared/ui-web" ]);
   manureJvmTests = backendSource "manure-jvm-tests-source" (common ++ shared ++ manureSharedTestFixtures ++ manureServedAssets ++ [
-    "manure/generated/scala" "manure/backend/src" "manure/server/src" "manure/migration/schema.sql" "manure/models/fixtures" ]);
+    "manure/generated/scala" "manure/backend/src" "manure/server/src" "manure/migration/schema.sql" "manure/models/fixtures"
+    # LegacyFreeCheckSuite runs the retained post-deployment check.
+    "manure/scripts/check-legacy-free.sql" ]);
   manureTests = backendSource "manure-native-tests-source" (common ++ shared ++ manureSharedTestFixtures ++ [ "manure/generated/scala" "manure/backend/src" "manure/migrations" "manure/server/src" "manure/server/native-image" "manure/tests" ]);
   backendTests = backendSource "chronicle-backend-tests-source" (runtime ++ tests);
   sharedJvmTests = backendSource "shared-jvm-tests-source" (common ++ shared ++ sharedModuleTests ++ [ "scripts/junit-gate.py" ]);
