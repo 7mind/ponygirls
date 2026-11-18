@@ -320,14 +320,16 @@
           assert builtins.all (asset: !(builtins.elem asset piSharedAssets)) [ "auth.json" "sessions" "historian.json" "historian-chronicle.json" ];
           assert worktreeDefault == null;
           assert worktreeCustom == "/srv/nvme/subagents-worktrees";
-          assert worktreeManagedDefault == false;
+          assert worktreeManagedDefault == true;
+          assert (evalWorktree { }).smind.hm.dev.llm.pi.subagentsAllowAllModels;
+          assert !((evalWorktree { subagentsAllowAllModels = false; }).home.file ? "/home/alice/.pi/agent/subagents-policy.json");
           assert worktreeManagedCustom == true;
           assert builtins.any (a: !a.assertion && builtins.match ".*subagentsWorktreeRoot.*" a.message != null) worktreeInvalidAssertions;
           assert builtins.any (a: !a.assertion && builtins.match ".*subagentsWorktreeRoot.*" a.message != null) worktreeEmptyAssertions;
           assert limitsDefault.programs.pi.settings.httpIdleTimeoutMs == 900000;
           assert !(limitsDefault.programs.pi.settings.retry.provider ? timeoutMs);
           assert [ limitsDefault.smind.hm.dev.llm.pi.subagentsMaxRunnable limitsDefault.smind.hm.dev.llm.pi.subagentsMaxResidentWorkers limitsDefault.smind.hm.dev.llm.pi.subagentsMaxOpenAgents ] == [ 4 8 32 ];
-          assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/subagents-policy.json");
+          assert limitsDefault.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
           assert limitsCustom.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
           assert observerExtensions == [ "ponygirls-subagents" "ponygirls-historian" ];
           assert builtins.elem "ponygirls-cuckoo" (map builtins.baseNameOf limitsDefault.programs.pi.settings.extensions);
@@ -352,7 +354,10 @@
           assert !(failedLimitAssertion limitsDefault.assertions);
           assert !(failedLimitAssertion limitsCustom.assertions);
           assert failedLimitAssertion limitsMisordered.assertions;
-          pkgs.runCommandLocal "subagents-policy-shape-test" { } "touch $out";
+          pkgs.runCommandLocal "subagents-policy-shape-test" { } ''
+            ${pkgs.jq}/bin/jq -e '.allowedModels == null' ${limitsDefault.home.file."/home/alice/.pi/agent/subagents-policy.json".source}
+            touch $out
+          '';
       in
       {
         # One pinned JVM/toolchain environment for all common-build modules.

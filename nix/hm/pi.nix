@@ -604,13 +604,13 @@ in
 
     smind.hm.dev.llm.pi.subagentsAllowAllModels = lib.mkOption {
       type = lib.types.bool;
-      default = false;
+      default = true;
       description = ''
         Let Pi subagents use any model: writes `"allowedModels": null` to
         `subagents-policy.json` (see {option}`smind.hm.dev.llm.pi.subagentsAllowedModels`),
         skipping the root model allowlist for `spawn_agent` overrides and
-        gate reviewers. Deny-by-default stays when this is false and the
-        list is empty. Takes precedence over
+        gate reviewers. Explicit model overrides are denied when this is false
+        and the list is empty. Takes precedence over
         {option}`smind.hm.dev.llm.pi.subagentsAllowedModels` when both are set.
         Setting this or a non-empty list manages `subagents-policy.json`
         declaratively (read-only store symlink); otherwise a hand-maintained
@@ -640,8 +640,8 @@ in
         Models Pi subagents may be assigned explicitly (`spawn_agent`
         `model` overrides and gate reviewers), written as `allowedModels`
         into `subagents-policy.json` (see
-        {option}`smind.hm.dev.llm.pi.subagentsAllowAllModels`). Empty (the
-        default) denies every explicit model override; children then inherit
+        {option}`smind.hm.dev.llm.pi.subagentsAllowAllModels`). When that option
+        is false, an empty list denies every explicit model override; children then inherit
         the governing session's model.
       '';
     };
