@@ -197,7 +197,7 @@ final class LegacyRetirementScriptsTest extends munit.FunSuite {
 
     // Default: a published retired-format generation is refused, with the counts by format and state.
     val untouched=s.everything()
-    List(s.run("dry-run","--allow-active-connections"),apply("--expect-plan",preflight.value("LR.plan"),"--allow-active-connections")).foreach { refused=>
+    List(s.run("dry-run","--allow-active-connections"),apply("--expect-plan",preflight.value("LR.plan"))).foreach { refused=>
       assertEquals(refused.exit,3,refused.out); assert(refused.err.contains("still published in a retired output format"),refused.err)
       assert(refused.err.contains("ContiguousProblems/published=1, LegacyAnnotations/history=1, LegacyAnnotations/published=1"),refused.err)
     }
@@ -205,16 +205,18 @@ final class LegacyRetirementScriptsTest extends munit.FunSuite {
     val token=preflight.value("LR.plan")
     assertEquals(s.run("apply","--confirm-database",s.name,"--expect-plan",token,"--backup-reference","x","--skip-formats").exit,2)
     assertEquals(s.run("apply","--apply-irreversible","--confirm-database",s.name,"--expect-plan",token,"--skip-formats").exit,2)
-    val wrongName=s.run("apply","--apply-irreversible","--confirm-database","chronicle","--expect-plan",token,"--backup-reference","x","--skip-formats","--allow-active-connections")
+    val wrongName=s.run("apply","--apply-irreversible","--confirm-database","chronicle","--expect-plan",token,"--backup-reference","x","--skip-formats")
     assertEquals(wrongName.exit,3); assert(wrongName.err.contains("--confirm-database does not name the connected database"),wrongName.err)
-    val stale=apply("--expect-plan","1.2.3","--skip-formats","--allow-active-connections")
+    val stale=apply("--expect-plan","1.2.3","--skip-formats")
     assertEquals(stale.exit,3); assert(stale.err.contains("differ from the preflight plan token"),stale.err)
+    // I1: the Chronicle apply has no bypass of the connection guard (usage refusal before any session).
+    assertEquals(apply("--expect-plan",token,"--skip-formats","--allow-active-connections").exit,2)
     s.db.transaction { _=>
       val connected=apply("--expect-plan",token,"--skip-formats")
       assertEquals(connected.exit,3); assert(connected.err.contains("other client connection"),connected.err)
     }
     s.exec("UPDATE ch_jobs SET state='Running',lease_until=clock_timestamp()+interval '5 minutes' WHERE id=?",seeded.unfinishedJob)
-    val leased=apply("--expect-plan",token,"--skip-formats","--allow-active-connections")
+    val leased=apply("--expect-plan",token,"--skip-formats")
     assertEquals(leased.exit,3); assert(leased.err.contains("hold a live lease"),leased.err)
     s.exec("UPDATE ch_jobs SET state='Failed',lease_until=NULL WHERE id=?",seeded.unfinishedJob)
     assertEquals(s.everything(),untouched)

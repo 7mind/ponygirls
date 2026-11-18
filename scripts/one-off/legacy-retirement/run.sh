@@ -5,6 +5,8 @@
 #   run.sh haystack  <preflight|dry-run|apply|verify|export-stored-documents> [options]
 #   run.sh manure    <preflight|verify>                    (shared retrieval model identity only)
 #   run.sh <target>  sessions | terminate --application-name NAME     (this tool's own backends; see below)
+#   run.sh chronicle worklist                              (read-only: the jobs to retry, by identifier)
+#   run.sh chronicle fence|unfence|fence-status --role chronicle   (database-side fence of the Chronicle service role)
 #
 # The script composes ONE psql session (a script on standard input) and runs it with `${PSQL:-psql}`.
 # Connection parameters are the operator's: the standard PG* environment variables, or a complete command in PSQL
@@ -18,6 +20,12 @@
 #   verify     read-only; exits non-zero unless every legacy counter of the selected items is zero
 #   export-stored-documents  (haystack) read-only; every stored document as hex, for check-stored-documents.sh
 #   sessions   read-only; this tool's backends on the database (application_name lr:*), with state and ages
+#   worklist   (chronicle) read-only; one line per published old-format source: job id, source id, owner id,
+#              revision, job state and error code (identifiers only), to find each job in the product's Activity
+#   fence      (chronicle) ALTER ROLE <service role> NOLOGIN, then ends that role's backends; idempotent; marks the
+#              role with a comment so unfence restores only what fence changed. Prints the state before and after.
+#   unfence    (chronicle) restores LOGIN of a role this tool fenced; idempotent
+#   fence-status (chronicle) read-only; LOGIN state, fence marker, backends of the role
 #   terminate  ends the backends whose application_name is exactly --application-name NAME (a name printed as
 #              LR.application_name by an earlier invocation); never another client's backend
 #
@@ -31,6 +39,8 @@
 #   --expect-plan TOKEN          the LR.plan value printed by preflight (apply)
 #   --apply-irreversible         acknowledges that apply cannot be undone without the backup (apply)
 #   --backup-reference REF       identifier of the restorable backup taken for this run; recorded in the output (apply)
+#                                chronicle only: the literal none-owner-decision-Q102 records the owner's decision to
+#                                migrate Chronicle without a backup (Q102); no other "no backup" spelling is accepted
 #   --skip-formats               chronicle: leave the publication-formats item alone (dry-run, apply, verify)
 #   --retire-history             chronicle: retire non-retired historical generations of the old formats, the way a
 #                                rebuild retires them (tombstone stays, derived rows go). Never the default.
@@ -41,6 +51,7 @@
 #   --lock-timeout D             default 5s
 #   --statement-timeout D        default 120s (read-only modes) or 900s (dry-run, apply)
 #   --application-name NAME      the backend name to end (terminate)
+#   --role ROLE                  fence modes: must be the service role of the target (chronicle: chronicle)
 #   --emit                       print the psql session instead of running it
 #
 # Output: lines `LR.<key>|<value>` (counts and state only, never row contents; export-stored-documents is the one
@@ -49,7 +60,7 @@
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-usage() { sed -n '2,48p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,59p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 fail() { printf 'legacy-retirement: %s\n' "$1" >&2; exit 2; }
 
 [ $# -ge 2 ] || usage
@@ -59,11 +70,12 @@ case $target:$mode in
   haystack:preflight|haystack:dry-run|haystack:apply|haystack:verify|haystack:export-stored-documents) ;;
   manure:preflight|manure:verify) ;;
   chronicle:sessions|haystack:sessions|manure:sessions|chronicle:terminate|haystack:terminate|manure:terminate) ;;
+  chronicle:worklist|chronicle:fence|chronicle:unfence|chronicle:fence-status) ;;
   *) usage ;;
 esac
 
 confirm_database=''; expect_plan=''; acknowledged=f; allow_connections=f; emit=f; backup_reference=''
-skip_formats=f; retire_history=f; confirm_retire_history=''; terminate_name=''
+skip_formats=f; retire_history=f; confirm_retire_history=''; terminate_name=''; role=''
 batch_size=50; max_batches=200; lock_timeout=5s; statement_timeout=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -80,13 +92,21 @@ while [ $# -gt 0 ]; do
     --lock-timeout) [ $# -ge 2 ] || usage; lock_timeout=$2; shift 2 ;;
     --statement-timeout) [ $# -ge 2 ] || usage; statement_timeout=$2; shift 2 ;;
     --application-name) [ $# -ge 2 ] || usage; terminate_name=$2; shift 2 ;;
+    --role) [ $# -ge 2 ] || usage; role=$2; shift 2 ;;
     --emit) emit=t; shift ;;
     *) usage ;;
   esac
 done
 
 # Every value below is interpolated into the psql session: accept only closed alphabets.
-matches() { printf '%s' "$1" | grep -Eq "^$2\$"; }
+# Every value below is interpolated into the psql session. grep matches line by line, so a value with an embedded
+# newline would pass on its first line: reject any line break or control character first, then match the whole value.
+nl='
+'
+matches() {
+  case $1 in *"$nl"*|*"$(printf '\r')"*) return 1 ;; esac
+  printf '%s' "$1" | LC_ALL=C grep -Eq "^$2\$" && [ "$(printf '%s' "$1" | LC_ALL=C tr -d '[:cntrl:]')" = "$1" ]
+}
 matches "$batch_size" '[1-9][0-9]{0,5}' || fail '--batch-size must be a positive integer'
 matches "$max_batches" '[1-9][0-9]{0,3}' || fail '--max-batches must be a positive integer below 10000'
 matches "$lock_timeout" '[0-9]+(ms|s|min)' || fail '--lock-timeout must look like 5s'
@@ -103,7 +123,24 @@ fi
 [ -z "$confirm_database" ] || matches "$confirm_database" '[A-Za-z0-9_.-]{1,63}' || fail '--confirm-database has unexpected characters'
 [ -z "$expect_plan" ] || matches "$expect_plan" '[0-9]+(\.[0-9]+)*' || fail '--expect-plan is not a plan token'
 [ -z "$backup_reference" ] || matches "$backup_reference" '[A-Za-z0-9_.:/@+=-]{1,200}' || fail '--backup-reference has unexpected characters'
+# Owner decision Q102 (2026-11-18): Chronicle may be migrated without a backup. That is stated with exactly one literal,
+# accepted for the Chronicle target only and recorded in the output; anything else that reads like "no backup" is refused.
+no_backup_literal=none-owner-decision-Q102
+if [ "$backup_reference" = "$no_backup_literal" ]; then
+  [ "$target" = chronicle ] || fail "$no_backup_literal applies to the chronicle target only: $target needs a real backup"
+elif printf '%s' "$backup_reference" | LC_ALL=C grep -Eqi '^(none|no|skip|n/?a|null|nil|-)([^a-z0-9]|$)'; then
+  fail "--backup-reference '$backup_reference' reads like 'no backup': name a backup, or (chronicle only) $no_backup_literal"
+fi
 [ -z "$confirm_retire_history" ] || matches "$confirm_retire_history" '[0-9]{1,9}' || fail '--confirm-retire-history must be a number'
+# I1: Chronicle is migrated offline. Its apply never runs beside connected clients (the guards and part 3 re-check).
+if [ "$target" = chronicle ] && [ "$mode" = apply ] && [ "$allow_connections" = t ]; then
+  fail '--allow-active-connections is not available for the chronicle apply: stop or fence the service first'
+fi
+case $mode in
+  fence|unfence|fence-status)
+    [ "$role" = chronicle ] || fail "--role must be the chronicle service role 'chronicle' (got '$role')" ;;
+  *) [ -z "$role" ] || fail '--role applies to the fence modes only' ;;
+esac
 if [ "$mode" = terminate ]; then
   matches "$terminate_name" 'lr:[a-z]+:[a-z-]+:[0-9]{6}-[0-9]{1,10}' || fail 'terminate requires --application-name NAME as printed in LR.application_name'
 else
@@ -138,12 +175,15 @@ compose() {
   printf "\\\\set backup_reference '%s'\n\\\\set skip_formats '%s'\n\\\\set retire_history '%s'\n\\\\set confirm_retire_history '%s'\n" "${backup_reference:--}" "$skip_formats" "$retire_history" "$confirm_retire_history"
   printf "\\\\set batch_size %s\n\\\\set lock_timeout '%s'\n\\\\set statement_timeout '%s'\n" "$batch_size" "$lock_timeout" "$statement_timeout"
   if [ "$mode" = apply ]; then flag lr_apply t; flag lr_dry_run f; else flag lr_apply f; flag lr_dry_run t; fi
+  if [ "$mode" = apply ] && [ "$backup_reference" = "$no_backup_literal" ]; then printf '%s\n' '\echo LR.backup|none (owner decision Q102)'; fi
   flag lr_skip_formats "$skip_formats"; flag lr_retire_history "$retire_history"
   printf '\\echo LR.tool|legacy-retirement %s %s\n' "$target" "$mode"
   case $mode in
     preflight) fragment preflight.sql ;;
     verify) fragment verify.sql ;;
     export-stored-documents) fragment export-stored-documents.sql ;;
+    worklist) fragment worklist.sql ;;
+    fence|unfence|fence-status) printf "\\\\set lr_role '%s'\n" "$role"; fragment "$mode.sql" ;;
     sessions)
       printf '%s\n' "SET default_transaction_read_only = on;" "SET statement_timeout = '15s';" \
         "SELECT 'LR.session', a.pid, a.application_name, coalesce(a.state, '-'), coalesce(a.wait_event_type, '-'), coalesce(extract(epoch FROM now() - a.xact_start)::bigint, -1), coalesce(extract(epoch FROM now() - a.state_change)::bigint, -1), cardinality(pg_blocking_pids(a.pid)), (SELECT count(*) FROM pg_stat_activity b WHERE a.pid = ANY (pg_blocking_pids(b.pid))) FROM pg_stat_activity a WHERE a.datname = current_database() AND a.application_name LIKE 'lr:%' AND a.pid <> pg_backend_pid() ORDER BY a.backend_start;" \

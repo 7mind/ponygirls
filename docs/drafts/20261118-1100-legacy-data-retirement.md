@@ -296,8 +296,8 @@ not configured *(report)*. Acceptable mechanisms, chosen with the owner at go ti
 | `pg_dump --format=custom` to a named location, service stopped | at most `LR.size.table_data_bytes` before compression; with `--exclude-table-data=ch_index_checkpoints` at most `LR.size.table_data_without_checkpoints_bytes` (a restore then recomputes accepted work on retries) | preflight prints both; free space at the destination with `df` |
 | Same-cluster template copy: `CREATE DATABASE <copy> TEMPLATE chronicle` (no connections to the source) | `LR.size.database_bytes` again on the same volume | `df -h` on the data directory inside the pod |
 
-The existing rollback copies are not such a backup: they are from 2026-11-05/06. For Haystack: `pg_dump` (33 MB
-*(report)*).
+The existing rollback copies are not such a backup: they are from 2026-11-05/06. For Haystack: `pg_dump` (33 MB *(report)*) via `op.sh backup-haystack FILE`, accepted only when the whole archive
+decodes (`pg_restore --file=/dev/null`; `pg_restore --list` alone accepts a cut stream). For Chronicle: none, decision Q102.
 
 Abort: end the psql session. Before part 3 commits, the database is in a state the current binary reads. After it
 commits, rollback means restoring the backup.
@@ -504,51 +504,56 @@ tables and serves again, so a deployment rollback is possible there; the retaine
 
 ## 7. Runbook
 
-Conventions. `RUN` = `sh scripts/one-off/legacy-retirement/run.sh`. Every invocation composes **one psql session**
-locally and writes it to psql's standard input. The operator is an agent working through an exec into the database
-pod; the psql command is supplied in `PSQL`:
-
-```sh
-PSQL='kubectl <context/namespace flags> exec -i <database pod> -c <container> -- psql -h <socket dir> -U <role> -d <database>' RUN chronicle preflight
-# or review first, then pipe the reviewed file
-RUN chronicle dry-run --emit > session.sql ;  kubectl … exec -i … -- psql -X -q -v ON_ERROR_STOP=1 -d <database> -f - < session.sql
-```
-
-Context, namespace, pod, socket directory and role are in the deployment repository and in the report's
-`run_sql.sh`; they are deliberately not written here.
+Conventions (LEG-SAFE, 2026-11-18). Every production step goes through the operator wrapper
+`OP=scripts/one-off/legacy-retirement/op.sh` (tested in `test-scripts.sh`): it needs `LR_CONTEXT`, `LR_NAMESPACE`,
+`LR_POD`, `LR_CONTAINER`, `LR_SOCKET`, `LR_ROLE` (values in the deployment repository), builds the exec-path psql
+for each target's **own** database (`op.sh chronicle …` → `-d chronicle`; `drop`/`backup-chronicle` → `-d postgres`),
+exports it as `PSQL`, and prints the database pod's container restart counts before and after every command
+(`LR.restarts|before|…`, `LR.restarts|after|…`, `LR.restarts.changed|…` on any change — then stop and check the
+service). A step is complete only when its own end marker arrived (`LR.result|…`, `DB.result|…`); after a broken
+stream follow 7.1. Run fixture tests only from a clean shell: they refuse any inherited `PSQL`/`PG*`/`LR_*`/kube
+setting (`test-guard.sh`).
 
 **What the operator must have at each stage**
 
 | Stage | Inside the database pod | On the operator's host | Elsewhere |
 |---|---|---|---|
-| preflight, dry-run, apply, verify (`run.sh`), `drop-databases.sh`, retained checks | `psql` only | the repository, POSIX `sh`, `awk`, `grep` | — |
-| C-F step 1 (re-index) | — | a browser session as each owning account | the running service **with workers** and both **model endpoints** |
-| H-2 codec check | `psql` only | the repository inside `nix develop .#chronicle` (**JVM**, sbt) | — |
-| Backup | by mechanism (2.6) | — | destination with the measured space |
-| Rehearsal clone | `pg_dump` (inferred to be in the PostgreSQL image; **not verified**) | `nix develop .#chronicle` (PostgreSQL 18 + pgvector), bash, the private directory under `/mnt/dev-data` | model endpoints or a local stub (section 8) |
+| `op.sh` with run.sh modes, drop, retained checks | `psql` only | the repository, bash, POSIX tools, `python3`, `kubectl` with the context | — |
+| C-F step 1 (re-index) | — | a browser session as the owning account; job ids from `op.sh chronicle worklist` | the running service **with workers** and both **model endpoints** |
+| H-2 codec check | `psql` only | `nix develop .#chronicle` (**JVM**, sbt) | — |
+| Haystack backup | `pg_dump` (present, 18.7) | `pg_restore` (`nix develop .#chronicle`), space for ~20 MB | — |
 
-Stop condition for every step unless stated: an exit status other than 0, or an `ERROR:` line. A message that
-starts with `legacy-retirement refused:` is read and reported, never worked around.
+Owner decisions applied here: **Q102** — no backup of `chronicle` (it is not in production use): the Chronicle apply
+takes `--backup-reference none-owner-decision-Q102` (recorded as `LR.backup|none (owner decision Q102)`; accepted
+for Chronicle only; no other "no backup" spelling is accepted), and the **dry-run stays, immediately before the
+apply**, as the remaining safety net (orchestrator). Haystack is in use: its `pg_dump` backup, fully decoded, stays
+required. **Q101** — the two process-exit defects (batch-size mismatch, failed claim) are fixed by a separate unit;
+until that fix is deployed the deployed Chronicle config must stay unchanged (`indexing` absent → batch size 16), and
+the fixed binary is to be re-checked on the clone (retry of a Failed job holding saved results, batch size 4).
+
+Stop condition for every step unless stated: an exit status other than 0, an `ERROR:` line, a missing end marker,
+or `LR.restarts.changed`. A message that starts with `legacy-retirement refused:` / `drop-databases refused:` is read
+and reported, never worked around.
 
 | # | Step | Command | Expected | Stop when |
 |---|---|---|---|---|
-| 1 | Current overhaul binary deployed; credential preflight of the deployment repository | — | services healthy | — |
-| 2 | Chronicle preflight | `RUN chronicle preflight` | `LR.schema_migrations|2,3,6,8,9,14,17,20`; counters near section 1; `LR.old_format|…` lines; `LR.reindex_worklist|…` (12 sources); `LR.unfinished_runs|…`; `LR.size.*` | schema differs; counters far from the report |
-| 3 | Haystack and Manure preflight; Haystack codec check | `RUN haystack preflight`; `RUN manure preflight`; `sh scripts/one-off/legacy-retirement/check-stored-documents.sh` (JVM) | `LR.replay.node_format|185` or fewer; `LR.retrieval.v1_profiles|0` twice; `LR.result|stored-documents-strict-ok` | a retrieval counter is non-zero (guard R code stays); the codec check fails (inventory 6.4 stays) — report, continue with the other items |
-| 4 | Measure one scan of `ch_search_chunks` (read-only) | `EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM ch_search_chunks WHERE profile = repeat('0', 64);` under `SET statement_timeout = '300s'` | one sequential scan; note its time | above about 5 min: plan `--statement-timeout` accordingly (2.4) |
-| 5 | C-F step 1: re-index the worklist, service running | per-job "Retry indexing job" as in 2.3 | jobs Complete; `RUN chronicle preflight`: `LR.generations.old_format.published|0` | a job fails again, a source has no target job, or an owner is disabled: **stop and report to the owner**; C-I can still proceed with `--skip-formats` |
-| 6 | Owner's explicit go for the irreversible part, and the choice of the backup mechanism | — | explicit | no go |
-| 7 | Stop Chronicle (workers and API); wait for leases (a stopped worker's last claim keeps its lease for up to 300 s; rehearsed: about 5 min) | deployment repository | `RUN chronicle preflight`: `LR.info.jobs.running_live_lease|0`, `LR.other_client_backends|0` | either is non-zero |
-| 8 | **Backup** (2.6), sized from `LR.size.*` and `df` | deployment repository | a restorable artefact; its identifier becomes `REF` | no restorable backup |
-| 9 | Chronicle dry-run | `RUN chronicle dry-run --retire-history --confirm-retire-history <LR.generations.old_format.history> --batch-size 10` | `LR.result|dry-run-rolled-back`; `LR.after.*` all 0; `LR.step.history_generations_retired` sums to the confirmed number | refusal |
-| 10 | Chronicle apply | `RUN chronicle preflight` (take `LR.plan`), then `RUN chronicle apply --apply-irreversible --confirm-database <name> --expect-plan <LR.plan> --backup-reference <REF> --retire-history --confirm-retire-history <n> --batch-size 10` | `LR.backup_reference|<REF>`; `LR.result|applied` | refusal; `legacy-retirement incomplete` → preflight and apply again |
-| 11 | Chronicle verify; start the service (same binary); product checks (2.5) | `RUN chronicle verify` | `LR.result|verify-zero`; searches return hits; a pinned old-format link shows "retired" | non-zero: restore decision with the owner |
-| 12 | Haystack: backup (`pg_dump`), dry-run, apply, verify; service may stay up | `RUN haystack dry-run --allow-active-connections`; `RUN haystack preflight`; `RUN haystack apply --apply-irreversible --confirm-database <name> --expect-plan <LR.plan> --backup-reference <REF> --allow-active-connections`; `RUN haystack verify` | `LR.step.node_replay_rows_deleted` sums to the preflight count; `verify-zero` | refusal |
-| 13 | **Pre-removal verification** — the last use of the one-off scripts against production | `RUN chronicle verify`; `RUN haystack verify`; `RUN manure verify`; `check-stored-documents.sh` | three times `verify-zero`; `stored-documents-strict-ok`. Record the outputs: they are the guards of section 6 | any guard not met: its inventory block is not deleted |
+| 1 | Current overhaul binary deployed with the **deployed** config (batch size 16, Q101); credential preflight (`bullshit-renew status --json`) | — | services healthy; `$OP restarts` recorded | — |
+| 2 | Chronicle preflight; worklist | `$OP chronicle preflight`; `$OP chronicle worklist` | `LR.schema_migrations|2,3,6,8,9,14,17,20`; counters near section 1; `LR.reindex_job|<job id>|<source id>|<owner id>|…` per published old-format source (12 in the rehearsal) | schema differs; counters far from the report |
+| 3 | Haystack and Manure preflight; Haystack codec check | `$OP haystack preflight`; `$OP manure preflight`; `$OP codec-check` | `LR.replay.node_format|185` or fewer; `LR.retrieval.not_v2_profiles|0` and `invalid_descriptors|0` twice; `LR.result|stored-documents-strict-ok` | a retrieval counter non-zero (guard R code stays); codec check fails (6.4 stays) |
+| 4 | (measured in the rehearsal: the `ch_search_chunks` scan takes ~0.1 s; not repeated) | — | — | — |
+| 5 | C-F step 1: re-index the worklist, service running | Activity → each job id of step 2 → "Retry indexing job" (never "Retry failed") | jobs Complete; `$OP chronicle preflight`: `LR.generations.old_format.published|0`; note `LR.generations.old_format.history` = N (rehearsal: 0) | a job fails again, `no-target-job`, owner disabled: stop and report |
+| 6 | Owner's explicit go for the irreversible part (Q102: no Chronicle backup) | — | explicit | no go |
+| 7 | **Take only Chronicle offline: fence** (7.2) and wait for leases | `$OP chronicle fence --role chronicle`; then `$OP chronicle preflight` until `LR.info.jobs.running_live_lease|0` and `LR.other_client_backends|0` (≤ 5 min) | `LR.result|fenced`; the Chronicle container exits and restarts with back-off (acceptable: not in production use; Haystack/Manure stay up only if the pod stays Ready — see 7.2) | role not fenced; leases or connections remain after 5 min |
+| 8 | Backup: **none for Chronicle (Q102)** | — | — | — |
+| 9 | Chronicle dry-run, immediately before the apply | `$OP chronicle dry-run --retire-history --confirm-retire-history N --batch-size 10` | `LR.result|dry-run-rolled-back`; `LR.after.*` all 0 (rehearsal: 154–168 s, ~9.7 GB WAL) | refusal |
+| 10 | Chronicle apply | `$OP chronicle preflight` (take `LR.plan`), then `$OP chronicle apply --apply-irreversible --confirm-database chronicle --expect-plan <LR.plan> --backup-reference none-owner-decision-Q102 --retire-history --confirm-retire-history N --batch-size 10` (no `--allow-active-connections`: refused for Chronicle) | `LR.backup|none (owner decision Q102)`; `LR.result|applied` (~2.5 min, lock ~2.3 min) | refusal (incl. the in-transaction re-check of connections/leases); `legacy-retirement incomplete` → preflight and apply again |
+| 11 | Chronicle verify; unfence; product checks (2.5) | `$OP chronicle verify`; `$OP chronicle unfence --role chronicle`; `$OP restarts` until the chronicle container is Ready | `LR.result|verify-zero`; `LR.result|unfenced`; service back within the current back-off (≤ 5 min, 7.2) | verify non-zero; service not back after 6 min |
+| 12 | Haystack: backup, dry-run, apply, verify; service stays up | `$OP backup-haystack /path/haystack-<time>.dump` (accepted only with `LR.result|backup-decoded-completely`); `$OP haystack dry-run --allow-active-connections`; `$OP haystack preflight`; `$OP haystack apply --apply-irreversible --confirm-database haystack --expect-plan <LR.plan> --backup-reference <file>:<sha256> --allow-active-connections`; `$OP haystack verify` | `LR.step.node_replay_rows_deleted` sums to the preflight count; `verify-zero` | refusal; backup not fully decoded |
+| 13 | **Pre-removal verification** — the last use of the one-off scripts against production | `$OP chronicle verify`; `$OP haystack verify`; `$OP manure verify`; `$OP codec-check` | three times `verify-zero`; `stored-documents-strict-ok` | any guard not met: its inventory block is not deleted |
 | 14 | Tag the last commit that contains the legacy code and these scripts | `git tag` (name chosen by the owner) | tag exists | — |
 | 15 | Repository work: delete the legacy code per section 6 for every guard met; add the clean-up migrations (6.6); full suites. `scripts/one-off/legacy-retirement` is removed here; the two `check-legacy-free.sql` files stay | — | suites green | — |
-| 16 | Deploy the legacy-free binaries (their start-up applies 6.6), then the **post-deployment check** with the retained files | `psql -X -q -v ON_ERROR_STOP=1 -f - < chronicle/scripts/check-legacy-free.sql` (through the same exec path; add `-v require_formats=f` if C-F was skipped); the same with `haystack/scripts/check-legacy-free.sql` | Chronicle: `LF.legacy_tables_present|0`, `LF.embedding_spaces.not_v2|0`, `LF.owner_targets.not_executable|0`, `LF.published.retired_or_unregistered|0`, `LF.sessions.deadline|0`, `LF.generations.not_retired_old_format|0`, `LF.generations.current_format_constraint|1`, `LF.result|legacy-free`. Haystack: `LF.replay.other_digest_format|0`, `LF.replay.column_default_present|0`, `LF.replay.current_format_constraint|1`, `LF.schema.node_replay_retired_marker|1`, `LF.result|legacy-free` | `LF.result|legacy-present`. Chronicle can be rolled back to the tag of step 14 (6.6); Haystack cannot once 0007 is applied — restore from the backup of step 12 instead |
-| 17 | **Separately confirmed:** drop the four rollback copies | `PGDATABASE=postgres sh scripts/one-off/legacy-retirement/drop-databases.sh` (from the tag of step 14; default mode = plan, drops nothing; the four names are fixed in the script, it takes no free-form names), then **for each name, after the owner confirms that name**: `… drop-databases.sh drop --drop <name> --confirm-database <name> --expect-oid <OID from the plan>` | plan: four `DB.would_drop|<name>|<oid>|<bytes>|0|f|ok` lines and `DB.stays|…` for `chronicle`, `haystack`, `manure`, `postgres`, then `DB.result|plan-complete-nothing-dropped`. Each drop: `DB.remaining|0`, `DB.result|dropped` | any `DB.refuse` line (absent, connections, written during the 10 s sample window, service database); a refusal of a drop. The script refuses every name except the four copies, the live service databases explicitly (rehearsal incident: the earlier version dropped a live-named database given its OID) |
+| 16 | Deploy the legacy-free binaries (their start-up applies 6.6), then the **post-deployment check** with the retained files | `psql -X -q -v ON_ERROR_STOP=1 -f - < chronicle/scripts/check-legacy-free.sql` through the exec path of `op.sh` (`-d chronicle`; add `-v require_formats=f` if C-F was skipped); the same with `haystack/scripts/check-legacy-free.sql` (`-d haystack`) | as before (`LF.result|legacy-free` for both) | `LF.result|legacy-present` |
+| 17 | **Separately confirmed:** drop the four rollback copies | `$OP drop` (plan; reads the configured service databases from the ConfigMaps; drops nothing), then **for each name, after the owner confirms that name**: `$OP drop drop --drop <name> --confirm-database <name> --expect-oid <OID from the plan>` | plan: four `DB.would_drop|<name>|<oid>|<bytes>|0|f|ok`, `DB.stays|…`, `DB.result|plan-complete-nothing-dropped`; each drop: `DB.tombstoned|<name>|lr_drop_<oid>`, `DB.remaining_oid|0`, `DB.result|dropped` | any `DB.refuse` (absent, connections, written in the sample window, service or configured database); any refusal; a leftover `DB.tombstone` → re-run the same drop (it resumes) or undo as printed in the script header |
 
 Order note for steps 13–16: `run.sh … verify` reads the tables that the clean-up drops and is bound to the
 pre-clean-up schema, and it is deleted in step 15. It is therefore the **pre-removal** check (step 13) only. After
@@ -613,6 +618,55 @@ Consequences for every step that goes through `PSQL='kubectl … exec -i … psq
 
 Rehearsed on the clone with `simulate_break.sh` (rehearsal report): standard input cut inside a batch and before a
 batch's `COMMIT`, standard input stalled with the stream gone, explicit `terminate`, then a complete re-run.
+
+
+**Sessions near a running Chronicle (rehearsal §12.0, I3).** During the rehearsal export a long read-only session
+of ours (`count(*)` of every table in one transaction, ~3 min, ACCESS SHARE on all tables) blocked the start-up of a
+restarting production Chronicle, which gave up after its 30 s statement timeout and exited. Therefore:
+- any stop rule of a monitor near a running Chronicle triggers well below the service's 30 s statement timeout
+  (blocked for more than 10 s → end our session);
+- no session of ours holds locks on all tables for more than a few seconds while the service can start. Measured on
+  the full clone (`out/safety/i3-lock-footprint.txt`): `preflight` ≤ 0.86 s (57 relations, ACCESS SHARE), `verify`
+  ≤ 0.34 s (40), `worklist` 0.02 s (18); Haystack/Manure ≤ 0.02 s. Long sessions (dry-run, apply, exports, counts)
+  run only while Chronicle is fenced or stopped;
+- after **every** production session of ours, compare the pod's container restart counts with the ones taken
+  before (`op.sh` prints `LR.restarts|before|…` / `|after|…` and `LR.restarts.changed|…`); a change stops the run
+  until its cause is known.
+
+### 7.2 Taking only Chronicle offline: the database-side fence (I2)
+
+The deployment has no "stop Chronicle, keep PostgreSQL" command (rehearsal report §12.4): Chronicle is a container of
+the `core` StatefulSet next to PostgreSQL, Haystack and Manure. Chronicle connects as its own role `chronicle`
+(production, read-only query 16:53Z: the only Chronicle backend is `usename chronicle`; our maintenance session is
+`postgres`). The fence works on that role only:
+
+- `op.sh chronicle fence --role chronicle`: `ALTER ROLE chronicle NOLOGIN` (committed first, so no new session can
+  start), a role comment `legacy-retirement fence since <time>` as marker, then `pg_terminate_backend` of every
+  backend of the role; prints the state before/after; idempotent; refuses any role but the service role, a
+  superuser, its own role, a missing role and a role that is NOLOGIN or commented for another reason.
+- `op.sh chronicle unfence --role chronicle`: restores LOGIN only on a role carrying the marker; idempotent.
+- `op.sh chronicle fence-status --role chronicle`: read-only (`unfenced` / `fenced` / `nologin-not-by-this-tool`).
+
+Rehearsed on the clone with the real binary connecting as role `chronicle` (`out/safety/rehearse-fence-*.txt`):
+fence at 17:15:58 → the binary's workers failed (`JdbcFailure`) and the process exited 1 s later; every restart then
+exited after ~2 s (`database-unavailable`); restarts followed the kubelet back-off (10, 20, 40, 80, 160, 300 s);
+leases expired by 17:20:54; a `TEMPLATE … FILE_COPY` copy succeeded under the fence (no connection needed, 135 s);
+apply with a client connecting during the batches was refused at the identity step (batches committed); dry-run
+132 s; apply 127 s; `verify-zero`; unfence 17:29:07 → the next scheduled restart (17:31:22) served at 17:31:25.
+
+What Kubernetes does: the container exits on every start while fenced, `restartCount` rises and the restart back-off
+doubles from 10 s to its 5-minute cap (reset after 10 minutes of running). After `unfence` the service returns at the
+next scheduled restart: **up to ~5 minutes**. The owner can shorten that only by restarting the container now, which
+in this deployment means deleting pod `core-0` (it restarts PostgreSQL, Haystack and Manure too) — not recommended;
+otherwise wait. While the Chronicle container is not Ready the `core` pod is not Ready, and the `haystack`,
+`manure` and `chronicle` Services all select that pod (chart `services.yaml`): **Haystack and Manure lose their
+Service endpoints for the fence window** (inferred from the chart; not observed). Accepted for Chronicle (not in
+production use, decision Q102 (e)); for Haystack/Manure users it is an outage of up to ~15 minutes — tell them.
+
+What the fence does NOT prevent: sessions of other roles (`postgres`, Haystack's, Manure's, ours); a superuser
+reverting it; requests to the Chronicle HTTP endpoint failing (collectors retry or lose nothing only if they
+retry); the restart loop itself; a deployment rollout during the window (it would not unfence). Fence only right
+before step 9 and unfence right after step 11.
 
 ## 8. Rehearsal (requirement A; review R4)
 

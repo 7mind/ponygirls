@@ -2,12 +2,14 @@
 # Runs the two suites that exercise run.sh against fixture databases on one owned, throwaway PostgreSQL cluster:
 #   chronicle.LegacyRetirementScriptsTest and haystack.storage.LegacyRetirementScriptsTest.
 # Usage, from the repository root:  nix develop .#chronicle --command bash scripts/one-off/legacy-retirement/test.sh
-# Optional argument: chronicle | haystack | drop (default: all; drop = test-drop-databases.sh, its own cluster).
+# Optional argument: chronicle | haystack | drop | scripts (default: all; drop = test-drop-databases.sh and
+# scripts = test-scripts.sh, each on its own cluster). Refuses an inherited connection or deployment target (test-guard.sh).
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
+. scripts/one-off/legacy-retirement/test-guard.sh
 : "${POSTGRES_HOME:?run inside nix develop .#chronicle (PostgreSQL 18 with pgvector)}"
 which=${1:-both}
-case $which in chronicle|haystack|drop|both) ;; *) echo 'usage: test.sh [chronicle|haystack|drop]' >&2; exit 2 ;; esac
+case $which in chronicle|haystack|drop|scripts|both) ;; *) echo 'usage: test.sh [chronicle|haystack|drop|scripts]' >&2; exit 2 ;; esac
 # Short private root: unix-socket paths are limited to 107 bytes.
 base=$(mktemp -d /tmp/lr-test.XXXXXX)
 stop() { "$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -m immediate -w stop >/dev/null 2>&1 || true; rm -rf "$base"; }
@@ -38,5 +40,8 @@ if [[ $which == haystack || $which == both ]]; then
 fi
 if [[ $which == drop || $which == both ]]; then
   bash scripts/one-off/legacy-retirement/test-drop-databases.sh || status=1
+fi
+if [[ $which == scripts || $which == both ]]; then
+  bash scripts/one-off/legacy-retirement/test-scripts.sh || status=1
 fi
 exit "$status"

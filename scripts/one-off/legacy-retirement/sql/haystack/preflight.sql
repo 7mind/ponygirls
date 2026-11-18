@@ -11,9 +11,19 @@ SELECT 'LR.' || key, value FROM counts ORDER BY key;
 SELECT 'LR.plan', string_agg(value::text, '.' ORDER BY key) FROM counts WHERE in_plan;
 SELECT to_regclass('pony_retrieval_profiles') IS NOT NULL AS lr_has_retrieval \gset
 \if :lr_has_retrieval
-SELECT 'LR.retrieval.v1_profiles', count(*) FROM pony_retrieval_profiles WHERE descriptor LIKE '["embedding-space-v1"%';
+-- Descriptors are parsed as the product parses them (JSON array, version tag first); text matching would miss a
+-- v1 descriptor written with other whitespace. Invalid JSON and unknown versions count as not current (fail closed).
+SELECT 'LR.retrieval.profiles', count(*) FROM pony_retrieval_profiles;
+SELECT 'LR.retrieval.v1_profiles', count(*) FROM pony_retrieval_profiles WHERE CASE WHEN pg_input_is_valid(descriptor, 'jsonb') THEN jsonb_typeof(descriptor::jsonb) = 'array' AND descriptor::jsonb->>0 = 'embedding-space-v1' ELSE false END;
+SELECT 'LR.retrieval.invalid_descriptors', count(*) FROM pony_retrieval_profiles WHERE NOT pg_input_is_valid(descriptor, 'jsonb');
+SELECT 'LR.retrieval.unrecognised_profiles', count(*) FROM pony_retrieval_profiles WHERE pg_input_is_valid(descriptor, 'jsonb') AND NOT (CASE WHEN pg_input_is_valid(descriptor, 'jsonb') THEN jsonb_typeof(descriptor::jsonb) = 'array' AND descriptor::jsonb->>0 = 'embedding-space-v1' ELSE false END) AND NOT (CASE WHEN pg_input_is_valid(descriptor, 'jsonb') THEN jsonb_typeof(descriptor::jsonb) = 'array' AND descriptor::jsonb->>0 = 'embedding-space-v2' ELSE false END);
+SELECT 'LR.retrieval.not_v2_profiles', count(*) FROM pony_retrieval_profiles WHERE NOT (CASE WHEN pg_input_is_valid(descriptor, 'jsonb') THEN jsonb_typeof(descriptor::jsonb) = 'array' AND descriptor::jsonb->>0 = 'embedding-space-v2' ELSE false END);
 \else
+\echo LR.retrieval.profiles|0
 \echo LR.retrieval.v1_profiles|0
+\echo LR.retrieval.invalid_descriptors|0
+\echo LR.retrieval.unrecognised_profiles|0
+\echo LR.retrieval.not_v2_profiles|0
 \endif
 SELECT 'LR.size.database_bytes', pg_database_size(current_database());
 SELECT 'LR.other_client_backends', count(*) FROM pg_stat_activity

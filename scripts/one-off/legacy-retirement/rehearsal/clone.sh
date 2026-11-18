@@ -7,7 +7,8 @@
 #       SOURCE_PG_DUMP is the complete pg_dump command line AT THE SOURCE without the database argument, for example
 #       an exec into the database pod (`kubectl … exec -i POD -c CONTAINER -- pg_dump -h SOCKETDIR -U ROLE`).
 #       Default: `pg_dump` with the PG* variables. CLONE_COMPRESS (default 1) is pg_dump's --compress value
-#       (0 = compress nowhere, e.g. to keep CPU off the source host). The archive must pass `pg_restore --list`.
+#       (0 = compress nowhere, e.g. to keep CPU off the source host). The archive must decode completely
+#       (`pg_restore --file=/dev/null`); `pg_restore --list` alone is not evidence of completeness.
 #   clone.sh init-cluster --dir DIR        initdb + start a scratch PostgreSQL in DIR: unix socket for psql, and
 #                                          127.0.0.1:${CLONE_PORT:-54329} with a generated password for the binary
 #   clone.sh start-cluster --dir DIR       start the existing scratch cluster again (same listeners)
@@ -69,8 +70,10 @@ case $mode in
       # shellcheck disable=SC2086
       rc=0; ${SOURCE_PG_DUMP:-pg_dump} --format=custom --compress="${CLONE_COMPRESS:-1}" --no-owner --no-privileges --dbname="$database" >"$dir/dumps/$database.dump.partial" || rc=$?
       [[ $rc -eq 0 ]] || fail "$database: pg_dump exited with status $rc"
-      # A complete custom-format archive has a readable table of contents; a cut stream does not.
-      pg pg_restore --list "$dir/dumps/$database.dump.partial" >/dev/null || fail "$database: the dump stream is incomplete"
+      # A readable table of contents does not prove completeness: a stream cut after it still lists (observed). The
+      # archive is accepted only when every entry, data included, decodes to the end (pg_restore into a null sink).
+      pg pg_restore --list "$dir/dumps/$database.dump.partial" >/dev/null || fail "$database: the dump has no readable table of contents"
+      pg pg_restore --exit-on-error --file=/dev/null "$dir/dumps/$database.dump.partial" || fail "$database: the dump does not decode to the end (incomplete stream)"
       mv "$dir/dumps/$database.dump.partial" "$dir/dumps/$database.dump"
       printf '%s %s bytes=%s seconds=%s sha256=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$database" "$(stat -c %s "$dir/dumps/$database.dump")" "$(( $(date +%s) - start ))" "$(sha256sum "$dir/dumps/$database.dump" | cut -d' ' -f1)" | tee -a "$dir/MANIFEST"
     done ;;

@@ -7,6 +7,19 @@ BEGIN;
 \endif
 SELECT pg_advisory_xact_lock(hashtextextended('model-identity-migration-v2', 0)) \gset lr_ignored_
 LOCK TABLE ch_jobs, ch_owner_targets IN SHARE ROW EXCLUSIVE MODE;
+-- I1: re-check, under the lock, what the guards checked before the batches: the service must be gone. A client that
+-- connected or a worker that claimed in the meantime aborts this transaction (committed batches stay; run again).
+DO $$
+DECLARE n bigint;
+BEGIN
+  -- (--allow-active-connections reaches here only for a dry-run: run.sh refuses it for the Chronicle apply.)
+  SELECT count(*) INTO n FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend';
+  IF n > 0 AND current_setting('lr.allow_connections') <> 't' THEN
+    RAISE EXCEPTION 'legacy-retirement refused: % other client connection(s) to this database at the identity step; stop or fence the service', n;
+  END IF;
+  SELECT count(*) INTO n FROM ch_jobs WHERE state = 'Running' AND lease_until > clock_timestamp();
+  IF n > 0 THEN RAISE EXCEPTION 'legacy-retirement refused: % indexing job(s) hold a live lease at the identity step', n; END IF;
+END $$;
 CREATE TEMP TABLE lr_log(ord serial, step text NOT NULL, n bigint NOT NULL) ON COMMIT DROP;
 -- circe `noSpaces` of arrays of scalars and arrays; objects are not reproducible (jsonb reorders keys) and yield NULL.
 CREATE FUNCTION pg_temp.lr_nospaces(v jsonb) RETURNS text LANGUAGE plpgsql IMMUTABLE AS $f$

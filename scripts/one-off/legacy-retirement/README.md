@@ -20,7 +20,9 @@ restore of an older database copy needs that binary and these scripts. Two files
 | `drop-databases.sh` | as `run.sh` | Separately confirmed drop of rollback copies, one named database at a time. |
 | `rehearsal/clone.sh` | bash, PostgreSQL 18 + pgvector locally; `pg_dump` at the source | Export, restore and deletion of the rehearsal clone (real content; private 0700 directory). |
 | `sql/*/proposed-cleanup*.sql` | — | The schema clean-up the legacy-free binaries are proposed to apply; used to validate the runbook. Not applied by `run.sh`. |
-| `test.sh` | `nix develop .#chronicle` | The fixture tests on an owned throwaway PostgreSQL. |
+| `op.sh` | bash, `kubectl`, `python3`; `LR_*` settings | **The operator wrapper for production** (plan 7): each target's own database, maintenance database for drop/backup, container restart counts before/after every command, Haystack backup with full-decode check. |
+| `sql/chronicle/worklist.sql`, `fence*.sql`, `unfence.sql` | — | `run.sh chronicle worklist` (job ids to retry); the database-side fence of the Chronicle role (plan 7.2). |
+| `test.sh` | `nix develop .#chronicle` | The fixture tests on owned throwaway PostgreSQL clusters: the two Scala suites, `test-drop-databases.sh`, `test-scripts.sh`; all refuse an inherited connection or deployment target (`test-guard.sh`). |
 
 No host, credential or deployment name is in these files. The operator supplies the connection: standard `PG*`
 environment variables, or a complete psql command line in `PSQL` (for example an exec into a database pod).
