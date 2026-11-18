@@ -1,7 +1,8 @@
 // The shared accounts flow (shared/account-web/tests/e2e/flow.mjs) against a real Chronicle server: the selected
 // executable in `serve-standby` mode (API, account plane and dashboard; no indexing workers), an owned PostgreSQL
-// database, the built dashboard, and a generated configuration with `accounts` enabled (approval-gated sign-up,
-// invitations), one configured admin and a generated TOTP key file.
+// database, the built dashboard, and a generated configuration with `accounts` enabled (sign-up whose approval
+// setting is omitted: the default, approval required, is what the scenario expects; invitations), one configured
+// admin and a generated TOTP key file.
 // Inputs (all required): CHRONICLE_SERVER (absolute executable), CHRONICLE_WEB_ROOT (built dashboard),
 // PONYGIRLS_TEST_DATABASE_CHRONICLE (owned database descriptor of nix/tests/with-owned-postgres.py),
 // PLAYWRIGHT_BROWSERS_PATH (pinned Chromium). Optional: ACCOUNT_E2E_EVIDENCE_DIR (absolute; step screenshots).
@@ -95,7 +96,7 @@ try {
     listenHost: '127.0.0.1', listenPort: port, allowedOrigin: base, secureCookies: false,
     jdbcUrl: database.jdbcUrl, databaseUser: database.user, databasePasswordFile: database.passwordFile, databaseLimits: database.limits,
     users: [{ id: ADMIN, login: ADMIN, passwordHashFile: path.join(dir, 'admin.password'), enabled: true, admin: true }],
-    accounts: { enabled: true, keyFile: path.join(dir, 'accounts.key'), signup: { enabled: true, requireApproval: true }, enrollment: { enabled: true }, issuer: 'Chronicle (127.0.0.1)' },
+    accounts: { enabled: true, keyFile: path.join(dir, 'accounts.key'), signup: { enabled: true }, enrollment: { enabled: true }, issuer: 'Chronicle (127.0.0.1)' },
     maxBodyBytes: 8388608, maxFiles: 16, maxFileBytes: 4194304, maxMessages: 10000, sessionTtlSeconds: 2592000,
     annotation: { requestPolicy: 'strict-json-schema', endpoint: UNUSED_MODEL_ENDPOINT, model: 'unused', revision: 'unused', credentialFile: path.join(dir, 'model-credential'), timeoutSeconds: 60, maxResponseBytes: 65536 },
     embedding: { endpoint: UNUSED_MODEL_ENDPOINT, model: 'unused', revision: 'unused', credentialFile: path.join(dir, 'model-credential'), timeoutSeconds: 60, maxResponseBytes: 1048576, dimensions: 1024, queryPrefix: 'query: ', documentPrefix: 'passage: ' }

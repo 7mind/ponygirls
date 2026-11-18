@@ -108,10 +108,12 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
     return remember(totpCode(secret, step));
   }
   // A code of a replaced key for a step the account has not used: it would be accepted if the key still counted.
+  // Never T-1, which could leave the window in transit and be refused for that reason instead.
   async function probeCode(account, secret, purpose) {
     for (;;) {
-      const step = usableStep(account);
-      if (step !== null) return remember(totpCode(secret, step));
+      const current = Math.floor(nowSeconds() / STEP_SECONDS), floor = lastStep.has(account) ? lastStep.get(account) : -1;
+      const step = [current, current + 1].find(candidate => candidate > floor);
+      if (step !== undefined) return remember(totpCode(secret, step));
       await waitForBoundary(purpose);
     }
   }
@@ -273,10 +275,10 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
       await aliceLaptop.getByRole('link', { name: 'Create an account', exact: true }).click();
       const form = aliceLaptop.locator('form[data-view="signup"]');
       await form.waitFor();
+      keys.alice = await readKey(form);
       await form.getByLabel('Username', { exact: true }).fill(ALICE);
       await form.getByLabel('E-mail', { exact: true }).fill(email);
       await form.getByLabel('Password', { exact: true }).fill(passwords.alice);
-      keys.alice = await readKey(form);
       await form.getByLabel('Enter the 6-digit code the app shows', { exact: true }).fill(setupCode(ALICE, keys.alice));
       await shot(aliceLaptop, 'signup-form');
       await button(form, 'Create account').click();
@@ -392,13 +394,13 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
       await bobLaptop.goto(invitation);
       const form = bobLaptop.locator('form[data-view="enrollment"]');
       await form.getByRole('heading', { name: 'Finish setting up your account' }).waitFor();
+      keys.bob = await readKey(form);
       assert.ok(!bobLaptop.url().includes('#account-enroll='), 'the code is removed from the address bar');
       const username = form.getByLabel('Username', { exact: true });
       assert.equal(await username.inputValue(), BOB);
       assert.equal(await username.isEditable(), false, 'the invited username is fixed');
       await form.getByLabel('E-mail', { exact: true }).fill(`${BOB}@example.test`);
       await form.getByLabel('Password', { exact: true }).fill(passwords.bob);
-      keys.bob = await readKey(form);
       await form.getByLabel('Enter the 6-digit code the app shows', { exact: true }).fill(setupCode(BOB, keys.bob));
       await shot(bobLaptop, 'enrollment-form');
       await button(form, 'Create account and sign in').click();
@@ -450,12 +452,12 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
       await alicePhone.goto(reset);
       const form = alicePhone.locator('form[data-view="enrollment"]');
       await form.getByRole('heading', { name: 'Reset your credentials' }).waitFor();
-      assert.equal(await form.getByLabel('Username', { exact: true }).inputValue(), ALICE);
-      assert.equal(await form.getByLabel('E-mail', { exact: true }).count(), 0, 'a reset keeps the e-mail');
-      await form.getByLabel('Password', { exact: true }).fill(passwords.aliceReset);
       const oldKey = keys.alice;
       keys.alice = await readKey(form);
       assert.notEqual(keys.alice, oldKey);
+      assert.equal(await form.getByLabel('Username', { exact: true }).inputValue(), ALICE);
+      assert.equal(await form.getByLabel('E-mail', { exact: true }).count(), 0, 'a reset keeps the e-mail');
+      await form.getByLabel('Password', { exact: true }).fill(passwords.aliceReset);
       await form.getByLabel('Enter the 6-digit code the app shows', { exact: true }).fill(setupCode(ALICE, keys.alice));
       await shot(alicePhone, 'reset-form');
       await button(form, 'Replace credentials and sign in').click();
@@ -471,6 +473,23 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
       await button(recover, 'Set new password and sign in').click();
       await recover.getByRole('alert').filter({ hasText: 'Recovery was not accepted.' }).waitFor();
       await shot(aliceLaptop, 'old-authenticator-rejected');
+
+      // The new credentials work on their own: a fresh sign-in with the new password (the reset form left codes at
+      // sign-in off) and a code-protected change with a code of the newly shown key.
+      const aliceDesk = await device(alice);
+      await openSignedOut(aliceDesk);
+      await signIn(aliceDesk, ALICE, passwords.aliceReset);
+      await menu(aliceDesk, ALICE, 'Account settings');
+      await section(aliceDesk, 'profile').waitFor();
+      await accountNav(aliceDesk, 'Two-factor', 'two-factor');
+      const twoFactor = section(aliceDesk, 'two-factor');
+      await twoFactor.getByText('Off', { exact: true }).waitFor();
+      await twoFactor.getByRole('checkbox', { name: /^Require a code at every sign-in/ }).click();
+      const confirm = dialog(aliceDesk, 'Require a code at every sign-in?');
+      await confirm.getByLabel('Authenticator code', { exact: true }).fill(await nextCode(ALICE, keys.alice, 'new authenticator after reset'));
+      await button(confirm, 'Require codes').click();
+      await toast(aliceDesk, 'Codes are now required at sign-in');
+      await twoFactor.getByText('On', { exact: true }).waitFor();
     });
 
     await step('h. disabling ends the open session and refuses sign-in', async () => {

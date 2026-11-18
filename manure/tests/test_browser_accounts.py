@@ -1,5 +1,5 @@
 """Accounts end to end in real Chromium against the real Manure server and dashboard: the shared scenario of
-shared/account-web/tests/e2e/flow.mjs with `accounts` enabled (approval-gated sign-up, invitations), one configured
+shared/account-web/tests/e2e/flow.mjs with `accounts` enabled (sign-up with the default approval, invitations), one configured
 admin and a generated key file. ACCOUNT_E2E_EVIDENCE_DIR=/absolute/dir saves the step screenshots there."""
 import base64
 import json
@@ -15,6 +15,7 @@ import browser_fixtures as bf
 ADMIN = "operator"
 ACCOUNT_KEY_BYTES = 32
 FLOW_TIMEOUT_S = 300
+FAILURE_REPORT_CHARS = 12000
 
 
 class AccountsEndToEndTests(unittest.TestCase):
@@ -27,7 +28,7 @@ class AccountsEndToEndTests(unittest.TestCase):
         key_file.chmod(0o600)
         users = [{"id": ADMIN, "type": "human", "displayName": "Operator", "enabled": True, "login": ADMIN,
                   "passwordHashFile": admin.password_hash_file, "tokens": [], "admin": True}]
-        accounts = {"enabled": True, "key_file": str(key_file), "signup": {"enabled": True, "require_approval": True},
+        accounts = {"enabled": True, "key_file": str(key_file), "signup": {"enabled": True},
                     "enrollment": {"enabled": True}, "issuer": "Manure (127.0.0.1)"}
         fix = bf.start_server(suffix_mode="separate", config_overrides={
             "users": users, "accounts": accounts, "rate_limit_per_min": 10000, "login_rate_per_min_per_ip": 1000})
@@ -38,7 +39,8 @@ class AccountsEndToEndTests(unittest.TestCase):
                    "evidence": None if evidence is None else str(Path(evidence).resolve())}
         result = subprocess.run([bf.node_bin(), str(Path(__file__).resolve().parent / "browser/accounts.mjs")],
                                 input=json.dumps(payload).encode(), capture_output=True, timeout=FLOW_TIMEOUT_S)
-        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace")[-6000:])
+        # The report opens with the failed step and its error, then the page dumps.
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace")[:FAILURE_REPORT_CHARS])
         report = json.loads(result.stdout)
         self.assertTrue(report["ok"])
         for wait in report["waits"]:

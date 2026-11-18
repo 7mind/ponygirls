@@ -1,6 +1,7 @@
 // The shared accounts flow (shared/account-web/tests/e2e/flow.mjs) against the real Haystack server selected by
 // HAYSTACK_SERVER_COMMAND, an owned PostgreSQL database and the built web/dist, with auth.accounts enabled:
-// approval-gated sign-up, invitations, one configured admin and a generated TOTP key file.
+// sign-up whose approval setting is omitted (the default, approval required, is what the scenario expects),
+// invitations, one configured admin and a generated TOTP key file.
 // Runs alone after `npm run build`: node --import ../scripts/register-generated.mjs tests-browser/accounts-e2e.mjs
 // ACCOUNT_E2E_EVIDENCE_DIR=/absolute/dir saves the screenshots of each step there.
 import os from "node:os";
@@ -37,7 +38,7 @@ try {
   const auth = {
     activityProjectId: "agent-activity",
     users: [{ id: ADMIN, type: "human", displayName: "Operator", enabled: true, login: ADMIN, passwordHashFile: path.join(dir, "admin.password"), tokens: [], admin: true }],
-    accounts: { enabled: true, keyFile: path.join(dir, "accounts.key"), signup: { enabled: true, requireApproval: true }, enrollment: { enabled: true }, issuer: "Haystack (127.0.0.1)" },
+    accounts: { enabled: true, keyFile: path.join(dir, "accounts.key"), signup: { enabled: true }, enrollment: { enabled: true }, issuer: "Haystack (127.0.0.1)" },
     cookieSecure: true, allowedHosts: ["127.0.0.1"], allowedOrigins: [base], insecureHttpOrigins: [base], rateLimit: { windowMs: 60000, max: 600 },
   };
   const configFile = path.join(dir, "config.json");
