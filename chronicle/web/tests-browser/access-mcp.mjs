@@ -81,6 +81,7 @@ try {
     assert.deepEqual(await scrollers(page), [], 'no nested vertical scroller');
     assert.ok(await page.evaluate(() => document.scrollingElement.scrollHeight > innerHeight), 'the document scrolls');
     assert.equal(await page.getByRole('button', { name: 'Open token settings', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('textbox', { name: 'Token name', exact: true }).count(), 0, 'token creation belongs to the account page, not a competing Access form');
     const link = page.getByRole('link', { name: 'Account → Access tokens', exact: true });
     assert.equal(await link.getAttribute('href'), '#account/tokens');
     await link.click(); await page.getByRole('heading', { name: 'Access tokens', exact: true }).waitFor();
@@ -185,6 +186,7 @@ try {
   });
   await group('MCP page: prompt and Run are visible at 390px, one document scroller, the catalogue stays beside the work column', async () => {
     const narrow = await mcpScene(undefined, { width: 390, height: 844 });
+    assert.equal(await runButton(narrow.page).isDisabled(), true, 'an empty prompt cannot be run');
     for (const control of [prompt(narrow.page), runButton(narrow.page)]) {
       const bounds = await control.boundingBox();
       assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= 844, `Prompt and Run are visible before scrolling: ${JSON.stringify(bounds)}`);
@@ -217,7 +219,7 @@ try {
   });
   await group('MCP validates the scalar UTF-8 prompt limit before Start and displays the declared limits', async () => {
     const { context, page, fixture } = await mcpScene();
-    await prompt(page).fill('🦄'.repeat(4097)); assert.equal(await runButton(page).isDisabled(), true); assert.equal(calls(fixture, api.Operation_StartMcpTest).length, 0);
+    await prompt(page).fill('🦄'.repeat(4097)); assert.equal(await prompt(page).count(), 1, 'the controlled prompt keeps its accessible name after typing'); assert.equal(await runButton(page).isDisabled(), true); assert.equal(calls(fixture, api.Operation_StartMcpTest).length, 0);
     await page.getByRole('button', { name: 'Runtime limits', exact: true }).click();
     const text = await page.getByRole('region', { name: 'Current MCP test catalog', exact: true }).innerText() + await page.getByRole('dialog', { name: 'Runtime limits', exact: true }).innerText();
     for (const value of ['65536', 'MAX', '524288', '131072', '900', '600', 'maximumRequestBytes', 'maximumResultBytes']) assert.ok(text.includes(value), value);
