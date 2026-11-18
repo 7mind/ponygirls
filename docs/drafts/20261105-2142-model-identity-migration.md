@@ -1,5 +1,13 @@
 # Transport-independent model identity and retained-work migration
 
+Status: **superseded** (2026-11-18). The procedures below are retired: the `migrate-model-identities` CLI, the
+retained-read approvals (`ch_retained_profile_reads`), the relocation mapping and checkpoint namespaces, and
+`PostgresRetrieval.migrateModelIdentities` were deleted (legacy-code deletion unit DEL-C1). Remaining v1 data is
+migrated by the one-off procedure of [the legacy data retirement plan](20261118-1100-legacy-data-retirement.md)
+(§2.2 C-I, §3.3 R), reachable from that plan's tag. A v1 descriptor is now refused (`unavailable`), and leftover
+approval, mapping or namespace rows make Chronicle's start-up refuse (`migration-required`). The Contract section
+still describes current identity; everything after it is history.
+
 ## Contract
 
 `embedding-space-v2` binds the model ID, immutable revision, dimensions,
