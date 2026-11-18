@@ -65,7 +65,7 @@ export function FieldsEditor({ fields, nextId, problems, onChange, onFocusReques
     onChange({ view, text: pretty, editing: null });
   }
 
-  const previewOf = (row: FieldRow): boolean => previews.get(row.id) ?? true;
+  const previewOf = (row: FieldRow): boolean => previews.get(row.id) ?? row.value.kind === "md";
   const setPreview = (id: number, on: boolean) => setPreviews(new Map(previews).set(id, on));
   const problemsAt = (anchor: string) => problems.filter((problem) => problem.anchor === anchor);
 
@@ -79,7 +79,7 @@ export function FieldsEditor({ fields, nextId, problems, onChange, onFocusReques
     </div>
     {fields.view === "raw" ? <RawFields text={fields.text} problems={problemsAt(RAW_FIELDS_ANCHOR)}
       onChange={(text) => onChange({ view: "raw", text, editing: null })} /> :
-      typed !== null && typed.shape === "root" ? <TypedNode name="Value" value={typed.value} preview={previews.get(0) ?? true}
+      typed !== null && typed.shape === "root" ? <TypedNode name="Value" value={typed.value} preview={previews.get(0) ?? typed.value.kind === "md"}
         onPreview={(on) => setPreview(0, on)} onChange={(value) => onChange({ view: "typed", text: updateTypedField(fields.text, null, value), editing: { shape: "root", value } })} /> :
       typed !== null && typed.shape === "rows" ? <Rows rows={typed.rows} previewOf={previewOf} onPreview={setPreview} problemsAt={problemsAt} addButton={addButton}
         onRows={(rows) => onChange(withRows(fields, rows))} onAdd={(row) => { onChange(withRows(fields, [...typed.rows, row])); onFocusRequest(fieldNameAnchor(row.id)); }}
@@ -188,12 +188,11 @@ function TypedNode({ name, value, preview, onPreview, onChange }: {
     head={<><span className="field-name">{name}</span><span className="chip">{label}</span></>} />;
 }
 
-/** One typed node (Markdown, code, text): its heading controls, the content editor and, for Markdown, a live preview. */
+/** One typed node (Markdown, code, text): its heading controls, the content editor and, for Markdown, a live preview that is on for Markdown and opt-in for code and text. */
 function TypedCard({ name, dataName, value, preview, onPreview, onChange, head, remove, error, contentId }: {
   name: string; dataName: string; value: TypedContent; preview: boolean; onPreview: (on: boolean) => void; onChange: (value: TypedContent) => void;
   head: ReactNode; remove?: ReactNode; error?: ReactNode; contentId?: string;
 }) {
-  const previewable = value.kind === "md";
   const setContent = (content: string) => onChange({ ...value, content });
   const languages = value.kind === "code" && !CODE_LANGUAGES.includes(value.language) ? [value.language, ...CODE_LANGUAGES] : CODE_LANGUAGES;
   return <section className="card field-edit" aria-label={`Edit field: ${name}`} data-field-editor={dataName}>
@@ -203,16 +202,16 @@ function TypedCard({ name, dataName, value, preview, onPreview, onChange, head, 
         {languages.map((language) => <option key={language} value={language}>{language}</option>)}
       </select>}
       <span className="spacer" />
-      {previewable && <label className="check"><input type="checkbox" checked={preview} aria-label={`Preview ${name}`} onChange={(event) => onPreview(event.target.checked)} />Preview</label>}
+      <label className="check"><input type="checkbox" checked={preview} aria-label={`Preview ${name}`} onChange={(event) => onPreview(event.target.checked)} />Preview</label>
       {remove}
     </div>
-    <div className={previewable && preview ? "md-split" : "md-single"}>
+    <div className={preview ? "md-split" : "md-single"}>
       <div className="md-pane">
-        {previewable && preview && <span className="eyebrow md-pane-label">Write</span>}
+        {preview && <span className="eyebrow md-pane-label">Write</span>}
         <textarea id={contentId} className={value.kind === "md" ? "textarea textarea-auto" : "textarea textarea-auto code-edit"} aria-label={`Content: ${name}`} spellCheck={false}
           value={value.content} onChange={(event) => setContent(event.target.value)} />
       </div>
-      {previewable && preview && <section className="md-pane" aria-label={`Preview: ${name}`}><span className="eyebrow md-pane-label">Preview</span>
+      {preview && <section className="md-pane" aria-label={`Preview: ${name}`}><span className="eyebrow md-pane-label">Preview</span>
         <div className="md-preview"><FieldPreview value={value} /></div></section>}
     </div>
     {error}

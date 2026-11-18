@@ -89,14 +89,18 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
     setFocusId(null);
   }, [focusId]);
 
-  const leave = (action: () => void) => { if (dirty) setLeaving({ run: action }); else action(); };
-  useLeaveGuard(dirty, unconfirmed !== undefined, (hash) => leave(() => { location.hash = hash; }));
+  // Every way out first removes the guard's history entry, so that the router's own history arithmetic is undisturbed.
+  const guard = useLeaveGuard(dirty, unconfirmed !== undefined, (hash) => leave(() => { location.hash = hash; }), () => setLeaving({ run: () => history.back() }));
+  const exit = (action: () => void) => { void guard.release().then(action); };
+  const leave = (action: () => void) => { if (dirty) setLeaving({ run: action }); else exit(action); };
+  const stay = () => { setLeaving(null); guard.rearm(); };
 
   async function submit(revision: number) {
     setSaving(true); setFailure(null); setReconciled(null);
     try {
       // The fields text is spliced raw into the document: edited big integers never round-trip.
       const out = await api.put(item.key, documentJsonOf(draft), revision, uuidv7());
+      await guard.release();
       await onSaved(out.revision);
     } catch (error) {
       if (error instanceof AuthError) { onAuthLost(); return; }
@@ -199,11 +203,11 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
       </aside>
     </div></div>
     {leaving !== null && <ConfirmDialog title="Discard unsaved changes?" confirmLabel="Discard changes" cancelLabel="Keep editing" danger busy={false}
-      onConfirm={() => { const { run } = leaving; setLeaving(null); run(); }} onCancel={() => setLeaving(null)}>
+      onConfirm={() => { const { run } = leaving; setLeaving(null); exit(run); }} onCancel={stay}>
       <p>You changed <strong>{listOf(parts)}</strong> of <span className="mono nowrap">{itemKey}</span>. Leaving now loses these changes; nothing has been saved.</p>
     </ConfirmDialog>}
     {discarding && <ConfirmDialog title="Discard your draft?" confirmLabel="Discard draft and reload" cancelLabel="Keep my draft" danger busy={false}
-      onConfirm={() => { setDiscarding(false); onDiscard(); }} onCancel={() => setDiscarding(false)}>
+      onConfirm={() => { setDiscarding(false); exit(onDiscard); }} onCancel={() => setDiscarding(false)}>
       <p>Your changes to <span className="mono nowrap">{itemKey}</span> are dropped and revision {item.revision} is loaded. Nothing of your draft was saved.</p>
     </ConfirmDialog>}
   </div>;

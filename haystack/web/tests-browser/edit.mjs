@@ -75,6 +75,7 @@ try {
   await put("ui:uncertain", docOf({ title: "Uncertain fixture" }), 0);
   await put("ui:conflict", docOf({ title: "Conflict fixture" }), 0);
   await put("ui:discard", docOf({ title: "Discard fixture" }), 0);
+  await put("ui:histnav", docOf({ title: "History navigation fixture" }), 0);
   await put("ui:guard", docOf({ title: "Guard fixture" }), 0);
   await put("ui:guard", docOf({ title: "Guard fixture, revised" }), 1);
   const long = (what, count) => Array.from({ length: count }, (_, i) => `${what} line ${i}`).join("\n");
@@ -139,11 +140,22 @@ try {
       const preview = page.getByRole("region", { name: "Preview: skill", exact: true });
       await preview.getByRole("heading", { name: "Edited skill", exact: true }).waitFor();
       assert.equal(await preview.locator("strong").textContent(), "exact bytes");
+      await page.getByRole("checkbox", { name: "Preview skill", exact: true }).uncheck();
+      assert.equal(await preview.count(), 0, "unchecking hides the preview");
+      await page.getByRole("checkbox", { name: "Preview skill", exact: true }).check();
+      await preview.getByRole("heading", { name: "Edited skill", exact: true }).waitFor();
       assert.ok(await preview.locator(".hljs-keyword").count() > 0, "the preview highlights code");
             await page.getByLabel("Language: snippet", { exact: true }).selectOption("typescript");
       await page.getByLabel("Content: snippet", { exact: true }).fill('const text: string = "🐎";');
-      assert.equal(await page.getByRole("region", { name: "Preview: snippet", exact: true }).count(), 0, "only Markdown has a preview");
+      const snippet = page.getByRole("region", { name: "Preview: snippet", exact: true });
+      assert.equal(await snippet.count(), 0, "a code field's preview is opt-in");
+      await page.getByRole("checkbox", { name: "Preview snippet", exact: true }).check();
+      assert.equal(await snippet.locator("code").getAttribute("data-language"), "typescript");
       await page.getByLabel("Content: literal", { exact: true }).fill("**literal**\nsecond line");
+      await page.getByRole("checkbox", { name: "Preview literal", exact: true }).check();
+      const literal = page.getByRole("region", { name: "Preview: literal", exact: true });
+      assert.equal(await literal.locator("pre").textContent(), "**literal**\nsecond line");
+      assert.equal(await literal.locator("strong").count(), 0, "plain text is not rendered as Markdown");
       await page.getByLabel("Content: __proto__", { exact: true }).fill("Prototype field edited");
       await page.getByLabel("Value: flag", { exact: true }).selectOption("false");
       await page.getByRole("button", { name: "Remove field label", exact: true }).click();
@@ -378,6 +390,51 @@ try {
     } finally { await context.close(); }
   });
 
+  await check("browser history: Back asks before the editor unmounts, staying keeps route and draft and asks again, confirmed Back and Forward behave as without a guard", async () => {
+    const { context, page } = await open();
+    try {
+      const record = encodeURIComponent("ui:histnav");
+      const confirm = dialog(page, "Discard unsaved changes?");
+      const title = page.getByLabel("Title", { exact: true });
+      await page.goto(`${base}/#/item/${record}`);
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      // A pristine editor is left by Back without a question, and Forward reopens it.
+      await page.goBack();
+      await page.getByRole("button", { name: "Edit", exact: true }).waitFor();
+      await page.goForward();
+      await page.locator('[data-record="editing"]').waitFor();
+      await title.fill("Changed by the history case");
+      await page.goBack();
+      await confirm.waitFor();
+      assert.match(page.url(), /#\/item\/ui%3Ahistnav\/edit$/, "the route did not change");
+      assert.equal(await title.inputValue(), "Changed by the history case", "the editor is still mounted with its draft");
+      await confirm.getByRole("button", { name: "Keep editing", exact: true }).click();
+      await confirm.waitFor({ state: "detached" });
+      // Staying re-arms the guard: the next Back asks again.
+      await page.goBack();
+      await confirm.waitFor();
+      assert.equal(await title.inputValue(), "Changed by the history case");
+      await confirm.getByRole("button", { name: "Discard changes", exact: true }).click();
+      await page.getByRole("button", { name: "Edit", exact: true }).waitFor();
+      assert.match(page.url(), /#\/item\/ui%3Ahistnav$/, "confirmed Back lands on the record, as without the guard");
+      // Forward reopens an editor without the discarded draft.
+      await page.goForward();
+      await page.locator('[data-record="editing"]').waitFor();
+      assert.equal(await title.inputValue(), "History navigation fixture");
+      // Saving after the guard was armed still closes the editor onto the record.
+      await title.fill("Saved after the guard");
+      await save(page).click();
+      await page.getByText("Saved as revision 2", { exact: true }).waitFor();
+      assert.match(page.url(), /#\/item\/ui%3Ahistnav$/);
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      assert.equal(await title.inputValue(), "Saved after the guard");
+      assert.equal(page.puts.length, 1, "only the save was sent");
+      await page.quiet();
+    } finally { await context.close(); }
+  });
+
   await check("edit page: the document is the only scroller, the edit bar and rail stick, textareas grow, and a phone does not overflow", async () => {
     const { context, page } = await open();
     try {
@@ -403,5 +460,5 @@ try {
   });
 } finally { await cleanup(); }
 console.log(`# ${results.length} checks; ${results.filter((line) => line.startsWith("FAIL")).length} failures; 0 skipped`);
-assert.equal(results.length, 7);
+assert.equal(results.length, 8);
 process.exit(process.exitCode ?? 0);
