@@ -71,39 +71,11 @@
 .filters>summary{font-size:11px;list-style:none;border-left:1px solid var(--rule);padding-left:20px}
 .filters>summary span{margin-left:8px}
 .workspace{display:grid;grid-template-columns:minmax(310px,.82fr) minmax(0,1.35fr);gap:24px;margin-top:30px;align-items:start}
-.conversation-intro{padding:25px 25px 20px}
-.conversation-intro>h2{font-family:var(--font-sans);font-size:30px;font-weight:400;line-height:1.2;letter-spacing:-1px;margin:12px 0 17px}
-.provenance{display:flex;flex-wrap:wrap;gap:5px 14px;margin-top:18px;font-size:10px;color:var(--muted)}
-.provenance strong{font-weight:500;color:var(--ink)}
 .provenance-details{margin-top:16px;border-top:1px solid var(--rule);padding-top:12px;font-size:11px}
 .provenance-details summary{color:var(--muted)}
 .provenance-details dl{display:grid;grid-template-columns:100px 1fr;gap:8px;margin-bottom:0}
 .provenance-details dd{margin:0;overflow-wrap:anywhere}
 .provenance-details dt{color:var(--muted)}
-.passages{border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:14px 24px;background:var(--passage-surface)}
-.passages>summary{font-size:11px;font-weight:600}
-.passages>summary>span{float:right;color:var(--muted);font-weight:400}
-.passage-list{display:grid;grid-template-columns:1fr;gap:6px;margin-top:13px;max-height:260px;overflow:auto}
-.passage{border:1px solid transparent;text-align:left;display:flex;align-items:start;gap:12px;width:100%;padding:10px;background:var(--passage-item)}
-.passage-number{font-family:var(--font-sans);font-size:19px;color:var(--passage-number);padding-top:1px}
-.passage>span:last-child{display:flex;flex-direction:column;gap:7px;align-items:start}
-.passage strong{font-size:12px;font-weight:500;line-height:1.6}
-.passage .tiny{font-size:9px}
-.passage.selected-passage{border-color:var(--passage-selected-border);background:var(--passage-selected)}
-.transcript{max-height:600px;overflow:auto;overscroll-behavior:contain;scroll-behavior:smooth}
-.original-message{padding:20px 24px;border-bottom:1px solid var(--message-rule);content-visibility:auto;contain-intrinsic-size:auto 180px}
-.original-message header{display:flex;align-items:baseline;gap:12px;margin-bottom:13px;font-size:9px;color:var(--muted);flex-wrap:wrap}
-.original-message header strong{text-transform:uppercase;font-size:10px;letter-spacing:.8px;color:var(--role-ink)}
-.original-message header code{margin-left:auto;font-size:9px}
-.original-message footer{font-size:9px;color:var(--muted);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:14px}
-.original-message footer code{font-size:9px}
-.original-message>details>summary{font-size:11px;color:var(--accent);margin-bottom:12px}
-.highlighted-message{background:var(--message-highlight);border-left:3px solid var(--message-highlight-border);padding-left:21px}
-.related{padding:21px 24px;border-top:1px solid var(--rule)}
-.related h3{font-size:12px}
-:where(.dashboard-page,.legacy-view,.global-mutation-notices,.mutation-toast) .related .eyebrow{font-size:8px}
-.related-link{display:flex;align-items:center;justify-content:space-between;gap:20px;border:0;border-top:1px solid var(--rule);border-radius:0;text-align:left;width:100%;padding:13px 0;font-size:12px;margin-top:10px}
-.related-link span:last-child{color:var(--rust)}
 .page-heading{margin-bottom:35px}
 .page-heading h1{margin:10px 0 14px}
 .page-heading>p{font-size:13px;color:var(--muted)}
@@ -142,10 +114,6 @@
 }
 @media(max-width:850px){:where(.dashboard-page,.legacy-view,.global-mutation-notices,.mutation-toast) h1{font-size:36px}
 .workspace{grid-template-columns:minmax(250px,.8fr) minmax(0,1.1fr)}
-.conversation-intro,.original-message{padding-left:18px;padding-right:18px}
-.conversation-intro>h2{font-size:25px}
-.passages{padding:12px 18px}
-.related{padding-left:18px;padding-right:18px}
 .management-grid{grid-template-columns:1fr}
 .job-row{gap:15px;grid-template-columns:95px 1fr auto}
 }
@@ -160,10 +128,6 @@
 .filters>summary{padding-left:12px;font-size:10px}
 .filters>summary span{margin-left:3px}
 .workspace{display:block;margin-top:25px}
-.conversation-intro{padding:22px 18px}
-.conversation-intro>h2{font-size:28px}
-.transcript{max-height:65vh}
-.original-message pre{font-size:11px}
 .page-heading h1{font-size:34px}
 .page-heading>p{font-size:12px}
 .management-grid{gap:28px}

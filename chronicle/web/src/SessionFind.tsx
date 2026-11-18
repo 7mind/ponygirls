@@ -65,10 +65,14 @@ export function SessionFind({ connection, stats, ownerId, sessionId, view, navig
       if (advance.current && first !== undefined) { advance.current = false; choose(first, 'bar'); }
     } catch (cause) {
       advance.current = false;
-      if (cause instanceof RequestFailure && cause.code === 'indexed-view-retired' && mounted.current && currentScope.current === atScope) { sequence.current++; setDraft(''); setFound(null); setSelected(null); setNotice(null); sourceUnavailable(cause); return; }
-      if (!authoritative()) return;
+      const current = mounted.current && currentScope.current === atScope;
+      if (cause instanceof RequestFailure && cause.code === 'indexed-view-retired' && current) { sequence.current++; setDraft(''); setFound(null); setSelected(null); setNotice(null); sourceUnavailable(cause); return; }
+      const denied = cause instanceof RequestFailure && ['forbidden', 'not-found', 'unauthorized'].includes(cause.code);
+      // A denial concerns the source, not this Find: it is reported while the source scope holds, also after a navigation
+      // superseded the Find (a Search link's `at` and `find` run together).
+      if (!authoritative()) { if (denied && current) sourceUnavailable(cause); return; }
       setFound(null); setSelected(null);
-      if (cause instanceof RequestFailure && ['forbidden', 'not-found', 'unauthorized'].includes(cause.code)) { setDraft(''); sourceUnavailable(cause); }
+      if (denied) { setDraft(''); sourceUnavailable(cause); }
       setError(cause instanceof Error ? cause.message : 'Find failed; restart the search.');
     } finally { release(); }
   }

@@ -85,10 +85,11 @@ export async function activityReady(page) {
   await page.locator('.activity-job-row').first().waitFor();
   await page.locator('.activity-table[aria-busy="false"]').first().waitFor();
 }
+/** Waits for the routed session page opened from a list (a title link or row) to show its transcript. */
 export async function openSession(page) {
-  await page.getByRole('dialog', { name: 'Source conversation', exact: true }).waitFor();
-  await page.locator('.conversation-intro h2').waitFor();
-  await page.locator('.original-message').first().waitFor();
+  const session = page.getByRole('main', { name: 'Session', exact: true });
+  await session.locator('h1.session-title').waitFor();
+  await session.locator('[data-pane="transcript"] [data-message-id]').first().waitFor();
 }
 export const settle = (page, ms = 250) => page.waitForTimeout(ms);
 

@@ -1,5 +1,0 @@
-.conversation-dialog{width:90vw;height:90vh;height:90dvh;max-width:90vw;max-height:90dvh;padding:0;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--bg-surface);color:var(--text);overflow:hidden;box-shadow:var(--shadow-2)}
-.conversation-dialog[open]{display:flex;flex-direction:column}.conversation-dialog::backdrop{background:var(--bg-scrim)}
-.dialog-heading{flex-shrink:0;display:flex;justify-content:flex-end;padding:var(--space-1) var(--space-2) 0}
-.dialog-close{width:var(--control-h);height:var(--control-h);padding:0;font-size:var(--text-lg)}
-.dialog-content{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}

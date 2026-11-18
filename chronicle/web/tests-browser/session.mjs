@@ -9,6 +9,7 @@ import { chromium } from 'playwright-core';
 import { ChronicleFixture, advanceClock, advanceClockUntil, api, connectionConfig, pauseClock, retryBudgetMillis } from './fixture.mjs';
 import { Goal50Fixture } from './goal50-fixture.mjs';
 import { HistoryFixture, FIND_LITERAL } from './history-fixture.mjs';
+import { SearchFixture } from './search-fixture.mjs';
 
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Set PLAYWRIGHT_BROWSERS_PATH to the provisioned browsers; tests never download browsers.');
 const server = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), server: { host: '127.0.0.1', port: 0, watch: null }, logLevel: 'error' });
@@ -721,6 +722,30 @@ try {
     assert.equal(await node.evaluate(element => element.isConnected && element === document.getElementById('message-m1')), true);
     assert.ok(Math.abs(await transcriptPane(page).evaluate(pane => pane.scrollTop) - top) <= SCROLL_TOLERANCE);
     assert.equal(sourceReads(), before, 'elapsed time does not re-read or navigate the session');
+  });
+  // ── Opened from Search (one document: the real Search view links to the page) ──
+  const fromSearch = configure => ({ Fixture: SearchFixture, page: 'goal50.html', hash: () => '#/search', configure });
+  async function openFromSearch(page, name) {
+    const search = page.getByRole('main', { name: 'Search', exact: true });
+    await search.getByRole('combobox', { name: 'Search conversations', exact: true }).fill('mode:semantic source'); await search.getByRole('button', { name: 'Search', exact: true }).click();
+    await search.locator('[data-row-id]').first().getByRole('link', { name, exact: true }).click(); await main(page).waitFor();
+  }
+  const pinnedTo = (operation, view) => operation.view !== undefined && operation.view.revision === view.revision && operation.view.generationId === view.generationId;
+  await run('a Search link carries the revision, generation, message and Find text, and the page reads exactly that place', fromSearch(() => {}), async ({ page, fixture }) => {
+    await openFromSearch(page, 'Open at first match'); await ready(page); await waitTop(page, 'm65');
+    assert.ok(calls(fixture, api.Operation_GetSession).every(call => pinnedTo(call.operation, fixture.view)), 'the session is read at the linked pin only');
+    const located = calls(fixture, api.Operation_LocateMessage).at(-1).operation;
+    assert.equal(located.messageId, 'm65'); assert.ok(pinnedTo(located, fixture.view), 'the linked message is located in the linked view');
+    await fixture.waitCall(api.Operation_SearchSessionMessages, 1); const literal = calls(fixture, api.Operation_SearchSessionMessages)[0].operation;
+    assert.equal(literal.literal, 'source'); assert.ok(pinnedTo(literal, fixture.view), 'the Find text runs once on arrival, in the linked view'); assert.equal(await findInput(page).inputValue(), 'source');
+    assert.doesNotMatch(await hash(page), /find=/, 'the Find text is not kept in the address');
+  });
+  await run('a link to a retired generation shows the unavailable state, never stale or default-view content', fromSearch(fixture => { fixture.conversationFailure = operation => operation.view !== undefined && operation.view.generationId !== undefined ? 'indexed-view-retired' : null; }), async ({ page, fixture }) => {
+    await openFromSearch(page, 'Search conversation 1'); await main(page).getByRole('region', { name: 'Indexed view unavailable', exact: true }).waitFor();
+    assert.equal(await page.locator('[data-message-id]').count(), 0, 'no transcript content');
+    assert.deepEqual(calls(fixture, api.Operation_GetSession).map(call => [call.operation.view.revision, call.operation.view.generationId]), [[fixture.view.revision, fixture.view.generationId]], 'no read of another view');
+    assert.equal(calls(fixture, api.Operation_GetMessages).length, 0);
+    await main(page).getByRole('button', { name: `View archived source r${fixture.view.revision}`, exact: true }).waitFor();
   });
 } finally { await browser.close(); await server.close(); }
 console.log(`PASS session: ${cases} cases`);

@@ -95,7 +95,7 @@ export function appendResultRows(loaded: readonly SearchResultRow[], appended: r
   return [...loaded, ...appended.filter(item => !seen.has(item.row.head.id))];
 }
 // A failure another view reported for a source: does it concern anything these results retain of that session?
-export function sourceDenialAffectsResults(sessionId: string, failed: ContentView, code: string | null, results: readonly SearchResultRow[]): boolean {
+export function sourceDenialAffectsResults(sessionId: string, failed: ContentView | null, code: string | null, results: readonly SearchResultRow[]): boolean {
   return results.some(({ row, matches }) => row.head.id === sessionId
     && [row.head.view, row.publishedView, row.matchedView, ...matches.map(match => match.view)].some(pin => pin !== undefined && sourceFailureAffectsView(failed, pin, code)));
 }

@@ -1,10 +1,10 @@
 import './styles.css';
 import { Anchored, dismissPopoverOnExternalFocus } from './Popover.tsx';
-import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { ThemeControl } from './ThemeControl.tsx';
 import type { ThemeController } from './theme.ts';
-import { ActivityCollectorSort, ActivityQuery, ArchiveSort, ArchiveSort_values, Operation_Activity, Operation_Whoami, Result_Activity, Result_Whoami, Scope, SortDirection, type ActivityResult, type SessionInfo, type UserInfo } from './api.ts';
+import { ActivityCollectorSort, ActivityQuery, ArchiveSort, ArchiveSort_values, ContentView, Operation_Activity, Operation_Whoami, Result_Activity, Result_Whoami, Scope, SortDirection, type ActivityResult, type SessionInfo, type UserInfo } from './api.ts';
 import type { ChronicleConnection } from './client.ts';
 import { read } from './client.ts';
 import { useConnection, useResource } from './hooks.ts';
@@ -13,7 +13,8 @@ import { ConnectionHealth } from './ConnectionHealth.tsx';
 import { Search } from './Search.tsx';
 import { Archive, emptyArchive } from './Archive.tsx';
 import type { ArchiveState } from './Archive.tsx';
-import { SessionPage } from './Conversation.tsx';
+import { SessionPage, type ParentList, type SourceRevocation, type SourceUnavailableReport } from './Conversation.tsx';
+import { listenSourceUnavailable, reportSourceUnavailable, sourcePin } from './source-authority.ts';
 import { Icon } from './Icon.tsx';
 import { DEFAULT_ROUTE, HashRouter, RouteParams, RouteStateCache, RouteStateContext, formatRoute, routeSlot, sessionIdOf, useRouteState, useRouteSync, useRouter, viewRoute, viewRouteWith, type Route, type View } from './router.ts';
 import type { ManagerStats } from './transport/types.ts';
@@ -50,6 +51,10 @@ const SHORTCUT_TARGETS: Readonly<Partial<Record<NavView, string>>> = { archive: 
 // One collector page is enough to see stale collectors next to the owner-wide failure and lease counts.
 const ATTENTION_COLLECTOR_LIMIT = 50;
 const ACCOUNT_PROFILE_URL = '/api/account/v1/profile';
+// The list a session page belongs to when it was not opened from one (an address, a reload).
+const SESSION_PARENT_DEFAULT: NavView = 'archive';
+const WITHDRAWN_MESSAGE = 'The Archive no longer lists this conversation for you';
+const NO_REVOCATIONS: readonly SourceRevocation[] = [];
 interface OwnerScope { readonly owner: string | null; readonly cache: RouteStateCache }
 function newOwnerScope(owner: string | null): OwnerScope { return { owner, cache: new RouteStateCache() }; }
 
@@ -136,16 +141,16 @@ function Brand() {
   return <a href={useRetainedHref(HOME_VIEW)} className="brand" aria-label="Chronicle home"><span className="brand-mark"><Icon name="book" small={false}/></span><span className="brand-name">chronicle</span></a>;
 }
 interface ViewRouting { readonly active: boolean; readonly route: Route; readonly router: HashRouter }
-function ArchiveView({ routing, ...props }: { connection: ChronicleConnection; requests: ArchiveReadLane; findReads: SessionFindReadGate; stats: ManagerStats; user: UserInfo; routing: ViewRouting }) {
+function ArchiveView({ routing, ...props }: { connection: ChronicleConnection; requests: ArchiveReadLane; stats: ManagerStats; user: UserInfo; routing: ViewRouting; withdrawn: (sessionId: string) => void }) {
   const [archive, setArchive] = useRouteState(ARCHIVE_STATE, ARCHIVE_INSTANCE), [draft, setDraft] = useRouteState(ARCHIVE_DRAFT, ARCHIVE_INSTANCE);
   const fromUrl = archiveParams({ ...archive, ...archiveFromParams(routing.route.params) }).toString(), fromState = archiveParams(archive).toString();
   useRouteSync('archive', routing.active && routing.route.view === 'archive', fromUrl, fromState, () => {
     const applied = archiveFromParams(routing.route.params);
     props.requests.invalidate(); setArchive(value => ({ ...value, ...applied, selection: null })); setDraft(applied.submitted);
   }, () => routing.router.navigate(viewRouteWith('archive', archiveParams(archive)), 'replace'));
-  return <Archive {...props} draft={draft} setDraft={setDraft} archive={archive} setArchive={setArchive}/>;
+  return <Archive {...props} draft={draft} setDraft={setDraft} archive={archive} setArchive={setArchive} openSession={route => routing.router.navigate(route, 'push')}/>;
 }
-function SearchView({ routing, ...props }: { connection: ChronicleConnection; findReads: SessionFindReadGate; stats: ManagerStats; user: UserInfo; routing: ViewRouting }) {
+function SearchView({ routing, ...props }: { connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; routing: ViewRouting }) {
   const [submitted, setSubmitted] = useRouteState(SEARCH_SUBMITTED, SEARCH_INSTANCE), [draft, setDraft] = useRouteState(SEARCH_DRAFT, SEARCH_INSTANCE);
   const query = routing.route.params.get(QUERY_PARAM);
   useRouteSync('search', routing.active, searchParams(query).toString(), searchParams(submitted).toString(), () => { setSubmitted(query); setDraft(query ?? ''); },
@@ -155,7 +160,9 @@ function SearchView({ routing, ...props }: { connection: ChronicleConnection; fi
 export function App({ connection, theme }: { connection: ChronicleConnection; theme: ThemeController }) {
   const stats = useConnection(connection);
   const router = useMemo(() => new HashRouter(window), []), location = useRouter(router), route = location.route;
-  useEffect(() => router.start(), [router]);
+  // The router's snapshot is its default route until it has read the address.
+  const [routerStarted, setRouterStarted] = useState(false);
+  useEffect(() => { const stop = router.start(); setRouterStarted(true); return stop; }, [router]);
   useLayoutEffect(() => router.rendered(), [router, location]);
   // Register transport lifecycle verification before renewal's return/focus listener.
   useEffect(() => { connection.start(); return () => connection.dispose(); }, [connection]);
@@ -220,9 +227,37 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
     if (target === null) throw new Error('Missing main content');
     target.focus();
   }
-  const current: NavView = route.view === 'session' ? 'archive' : route.view;
-  // The session is a routed page (scroll model B): it covers its parent list, which stays mounted with its state.
-  const sessionShown = route.view === 'session';
+  // The session is a routed page (scroll model B): it covers the list it was opened from (its parent), which stays mounted
+  // with its state and stays the current navigation item; Back and the page's crumb lead to it.
+  const [sessionParent, setSessionParent] = useState<NavView>(SESSION_PARENT_DEFAULT);
+  useLayoutEffect(() => { if (routerStarted && route.view !== 'session') setSessionParent(route.view); }, [routerStarted, route.view]);
+  const current: NavView = route.view === 'session' ? sessionParent : route.view;
+  const sessionShown = route.view === 'session', openSession = sessionShown ? sessionIdOf(route) : null;
+  // The session host's half of the source-authority contract (source-authority.ts): the page's denials are published as
+  // notices of origin 'session'; Search's notices about the open session, and the opening list's withdrawal of it, reach
+  // the page as revocations, which the page applies when they concern the shown view. Revocations belong to the page
+  // instance they were given to: they are dropped when another session (or no session) is shown, and for another owner.
+  const [revocations, setRevocations] = useState<{ owner: string | null; sessionId: string; items: readonly SourceRevocation[] } | null>(null);
+  useEffect(() => { setRevocations(previous => previous !== null && previous.sessionId !== openSession ? null : previous); }, [openSession]);
+  const revoke = useCallback((owner: string | null, sessionId: string, revocation: SourceRevocation) => setRevocations(previous =>
+    previous !== null && previous.owner === owner && previous.sessionId === sessionId ? { ...previous, items: [...previous.items, revocation] } : { owner, sessionId, items: [revocation] }), []);
+  useEffect(() => {
+    if (openSession === null) return;
+    return listenSourceUnavailable(document, notice => {
+      if (notice.origin !== 'search' || notice.sessionId !== openSession) return;
+      const pin = notice.view === null ? null : new ContentView(notice.view.revision, notice.view.generationId ?? undefined);
+      revoke(scope.owner, openSession, { kind: 'source-failure', pin, code: notice.code, message: notice.message });
+    });
+  }, [openSession, scope.owner, revoke]);
+  // Read through a ref: the hidden Archive keeps the props of its last shown render (RetainedView).
+  const shownSession = useRef({ sessionId: openSession, parent: sessionParent, owner: scope.owner }); shownSession.current = { sessionId: openSession, parent: sessionParent, owner: scope.owner };
+  const withdrawn = useCallback((sessionId: string) => {
+    const shown = shownSession.current;
+    if (sessionId === shown.sessionId && shown.parent === 'archive') revoke(shown.owner, sessionId, { kind: 'withdrawn', message: WITHDRAWN_MESSAGE });
+  }, [revoke]);
+  function reportSession(report: SourceUnavailableReport) {
+    reportSourceUnavailable(document, { origin: 'session', sessionId: report.sessionId, view: report.pin === null ? null : sourcePin(report.pin), code: report.code, message: report.message });
+  }
   // Visited views stay mounted (hidden) for the owner, so their loaded lists, drafts, selection and scroll survive
   // tab switches and Back/Forward (spec §5 rule 2); a new owner starts with none.
   const [visited, setVisited] = useState<{ owner: string | null; views: ReadonlySet<NavView> }>({ owner: null, views: new Set() });
@@ -251,8 +286,8 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
   function view(item: NavView, user: UserInfo) {
     const routing: ViewRouting = { active: item === current && !sessionShown, route, router };
     switch (item) {
-      case 'archive': return <ArchiveView connection={connection} requests={archiveRequests} findReads={findReads} stats={stats} user={user} routing={routing}/>;
-      case 'search': return <SearchView connection={connection} stats={stats} user={user} findReads={findReads} routing={routing}/>;
+      case 'archive': return <ArchiveView connection={connection} requests={archiveRequests} stats={stats} user={user} routing={routing} withdrawn={withdrawn}/>;
+      case 'search': return <SearchView connection={connection} stats={stats} user={user} routing={routing}/>;
       case 'activity': return <Activity connection={connection} stats={stats} user={user} actions={actions}/>;
       case 'mcp': return <McpTester tester={tester}/>;
       case 'access': return <Access connection={connection} stats={stats} user={user} actions={actions}/>;
@@ -262,8 +297,10 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
     return NAV_ITEMS.filter(item => mounted.has(item.view)).map(item => <div key={`${scope.owner ?? ''}:${item.view}`} className="app-route" data-view={item.view} hidden={item.view !== current || sessionShown} ref={element => { if (element === null) panels.current.delete(item.view); else panels.current.set(item.view, element); }}><RetainedView active={item.view === current && !sessionShown} render={() => view(item.view, user)}/></div>);
   }
   function sessionPage(user: UserInfo) {
-    if (!sessionShown) return null;
-    return <SessionPage key={`${scope.owner ?? ""}:${sessionIdOf(route)}`} connection={connection} stats={stats} user={user} findReads={findReads} route={route} router={router} parent={formatRoute(retainedRoute('archive', scope.cache))} back={() => router.back(retainedRoute('archive', scope.cache))} onSourceUnavailable={null} revocation={null}/>;
+    if (openSession === null) return null;
+    const list = retainedRoute(sessionParent, scope.cache), parent: ParentList = { href: formatRoute(list), label: NAV_ITEMS.find(item => item.view === sessionParent)!.label };
+    const shownRevocations = revocations !== null && revocations.owner === scope.owner && revocations.sessionId === openSession ? revocations.items : NO_REVOCATIONS;
+    return <SessionPage key={`${scope.owner ?? ""}:${openSession}`} connection={connection} stats={stats} user={user} findReads={findReads} route={route} router={router} parent={parent} back={() => router.back(list)} onSourceUnavailable={reportSession} revocations={shownRevocations}/>;
   }
   return <RouteStateContext.Provider value={scope.cache}><div className="app-shell" onFocusCapture={dismissPopoverOnExternalFocus}><a className="skip-link" href={`#${MAIN_CONTENT_ID}`} onClick={skipToContent}>Skip to content</a>
     <header className="masthead"><Brand/>

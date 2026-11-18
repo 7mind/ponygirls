@@ -36,29 +36,45 @@ export function sessionIdOf(route: Route): string {
 /**
  * Reading place of a session route (spec §5): the pinned source view (`rev`, and `gen` for an annotation generation), the
  * message at the top of the transcript (`at`, a message id), a Find literal to run on arrival (`find`), the side pane
- * (`pane`) and the selected passage (`passage`). Absent or malformed values are null.
+ * (`pane`) and the selected passage (`passage`). The pin is the complete source view: `rev`, and `gen` for a published
+ * (annotated) view; a link without `gen` names the archive-only view of that revision. A malformed pin is an error, never a
+ * default view; other absent or malformed values are null.
  */
 export const SESSION_PANES = ['outline', 'find', 'related', 'info', 'closed'] as const;
 export type SessionPane = (typeof SESSION_PANES)[number];
 export interface SessionPin { readonly revision: number; readonly generationId: string | null }
 export interface SessionPlace { readonly pin: SessionPin | null; readonly at: string | null; readonly find: string | null; readonly pane: SessionPane | null; readonly passage: string | null }
 const SESSION_PARAM = { revision: 'rev', generation: 'gen', at: 'at', find: 'find', pane: 'pane', passage: 'passage' } as const;
+const SOURCE_REVISION = /^[1-9][0-9]*$/;
+/** A session address whose source pin is malformed. */
+export class InvalidSessionAddress extends Error {}
 export function sessionPlaceRoute(sessionId: string, place: SessionPlace): Route {
   const entries: [string, string][] = [];
   if (place.pin !== null) {
-    if (!Number.isSafeInteger(place.pin.revision) || place.pin.revision < 0) throw new Error('A session pin needs a source revision');
+    if (!Number.isSafeInteger(place.pin.revision) || place.pin.revision < 1) throw new Error('A session pin needs a source revision');
+    if (place.pin.generationId === '') throw new Error('A session pin names an empty generation');
     entries.push([SESSION_PARAM.revision, String(place.pin.revision)]);
     if (place.pin.generationId !== null) entries.push([SESSION_PARAM.generation, place.pin.generationId]);
   }
   for (const [name, value] of [[SESSION_PARAM.at, place.at], [SESSION_PARAM.find, place.find], [SESSION_PARAM.pane, place.pane], [SESSION_PARAM.passage, place.passage]] as const) if (value !== null) entries.push([name, value]);
   return { ...sessionRoute(sessionId), params: new RouteParams(entries) };
 }
+function sessionPinOf(params: RouteParams): SessionPin | null {
+  const revision = params.get(SESSION_PARAM.revision), generation = params.get(SESSION_PARAM.generation);
+  if (revision === null) {
+    if (generation !== null) throw new InvalidSessionAddress('The session address names a generation without a source revision');
+    return null;
+  }
+  if (!SOURCE_REVISION.test(revision) || !Number.isSafeInteger(Number(revision))) throw new InvalidSessionAddress('The session address names an invalid source revision');
+  if (generation === '') throw new InvalidSessionAddress('The session address names an empty generation');
+  return { revision: Number(revision), generationId: generation };
+}
+/** The reading place of a session route; throws InvalidSessionAddress for a malformed pin. */
 export function sessionPlaceOf(route: Route): SessionPlace {
   const text = (name: string) => { const value = route.params.get(name); return value === null || value.length === 0 ? null : value; };
-  const revision = text(SESSION_PARAM.revision), pane = text(SESSION_PARAM.pane);
-  const parsed = revision !== null && /^(0|[1-9][0-9]*)$/.test(revision) ? Number(revision) : null;
+  const pane = text(SESSION_PARAM.pane);
   return {
-    pin: parsed === null || !Number.isSafeInteger(parsed) ? null : { revision: parsed, generationId: text(SESSION_PARAM.generation) },
+    pin: sessionPinOf(route.params),
     at: text(SESSION_PARAM.at), find: text(SESSION_PARAM.find), passage: text(SESSION_PARAM.passage),
     pane: SESSION_PANES.find(value => value === pane) ?? null,
   };

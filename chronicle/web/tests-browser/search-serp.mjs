@@ -26,9 +26,11 @@ async function scene(configure, { width = 1440, height = 1000, theme = 'light', 
 }
 const calls = (fixture, Type) => fixture.calls.filter(call => call.operation instanceof Type).map(call => call.operation);
 const searchMain = page => page.getByRole('main', { name: 'Search', exact: true });
+const sessionMain = page => page.getByRole('main', { name: 'Session', exact: true });
 const input = page => searchMain(page).getByRole('combobox', { name: 'Search conversations', exact: true });
 const submit = page => searchMain(page).getByRole('button', { name: 'Search', exact: true }).click();
-const rows = page => page.locator('[data-row-id]');
+// Scoped to the Search landmark: the retained Archive's table rows carry data-row-id too.
+const rows = page => searchMain(page).locator('[data-row-id]');
 const hits = scope => scope.locator('[data-hit="match"]');
 const hitGroups = scope => scope.locator('[data-match-kind]');
 const bar = page => page.locator('[data-view-bar]');
@@ -62,8 +64,8 @@ const watchDenials = page => page.evaluate(() => { window.__denials = []; docume
 const reportDenial = (page, detail) => page.evaluate(value => document.dispatchEvent(new CustomEvent('chronicle:source-unavailable', { detail: value })), detail);
 const pinOf = view => ({ revision: view.revision, generationId: view.generationId ?? null });
 const sessionPinOf = (page, href) => page.evaluate(async hash => {
-  const { parseFragment } = await import('/src/router.ts'), { sessionPin } = await import('/src/session-link.ts'), fragment = parseFragment(hash);
-  const pin = sessionPin(fragment.route.params); return pin === null ? null : { revision: pin.revision, generationId: pin.generationId ?? null };
+  const { parseFragment, sessionPlaceOf } = await import('/src/router.ts'), fragment = parseFragment(hash);
+  return sessionPlaceOf(fragment.route).pin;
 }, href);
 async function group(name, body) {
   if (process.env.CHRONICLE_SEARCH_CASE !== undefined && !name.includes(process.env.CHRONICLE_SEARCH_CASE)) return;
@@ -136,9 +138,10 @@ try {
       const links = [...document.querySelectorAll('[data-focus-key^="open:"]')].filter(element => { const rect = element.getBoundingClientRect(); return rect.top > 200 && rect.bottom < innerHeight; });
       return { key: links[0].dataset.focusKey, id: links[0].closest('[data-row-id]').dataset.rowId };
     });
+    // The session page runs the Find text once and then drops it from its address: the link itself carries it.
+    assert.match(await page.locator(`[data-focus-key="${opener.key}"]`).getAttribute('href'), /\?at=m65&find=source&gen=[^&]+&rev=\d+$/, 'Open at first match carries message, Find text, generation and revision');
     await page.locator(`[data-focus-key="${opener.key}"]`).click();
     await page.waitForFunction(id => location.hash.startsWith(`#/session/${id}?`), opener.id);
-    assert.match(await page.evaluate(() => location.hash), /\?at=m65&find=source&gen=[^&]+&rev=\d+$/, 'Open at first match carries message, Find text, generation and revision');
     await page.goBack(); await searchMain(page).waitFor();
     assert.equal(await rows(page).count(), 2 * FIRST_BATCH, 'the loaded batches survive');
     await page.waitForFunction(([top, tolerance]) => Math.abs(scrollY - top) <= tolerance, [SCROLLED_TO, SCROLL_TOLERANCE]);
@@ -302,8 +305,9 @@ try {
   await group('keyboard reaches Open at first match; the session route carries the match and Back returns focus to the opener', async () => {
     const { page, fixture, context } = await scene(); await submit(page); await ready(page);
     const reads = calls(fixture, api.Operation_ArchiveSearch).length, open = rows(page).first().getByRole('link', { name: 'Open at first match' });
+    assert.match(await open.getAttribute('href'), /\?at=m65&find=source&gen=[^&]+&rev=1$/);
     await open.focus(); await page.keyboard.press('Enter');
-    await page.waitForFunction(id => location.hash.startsWith(`#/session/${id}?`), fixture.session.id); assert.match(await page.evaluate(() => location.hash), /\?at=m65&find=source&gen=[^&]+&rev=1$/);
+    await page.waitForFunction(id => location.hash.startsWith(`#/session/${id}?`), fixture.session.id);
     await page.goBack(); await searchMain(page).waitFor();
     await page.waitForFunction(() => document.activeElement?.textContent === 'Open at first match'); assert.equal(await rows(page).count(), FIRST_BATCH); assert.equal(calls(fixture, api.Operation_ArchiveSearch).length, reads);
     const hit = hits(rows(page).first()).first(); await hit.focus(); await page.keyboard.press('Enter');
@@ -392,6 +396,83 @@ try {
     await reportDenial(page, { origin: 'session', sessionId: fixture.session.id, view: pinOf(fixture.view), code: 'forbidden', message: 'Pinned conversation source access removed' }); await page.locator('[data-state="intro"]').waitFor();
     fixture.pendingContext.splice(0).forEach(reply => reply()); await page.clock.runFor(100);
     assert.equal(await page.locator('[data-hit]').count(), 0); assert.equal(await rows(page).count(), 0); await context.close();
+  });
+  // ── The fence with the real session page, both directions (one document: Search links to the routed page) ──
+  await group('the session page publishes its denied reads: a denial of the pin a result shows clears Search; a retired pin Search does not show leaves it', async () => {
+    const { page, fixture, context } = await scene(); await submit(page); await ready(page); await watchDenials(page);
+    const reads = calls(fixture, api.Operation_ArchiveSearch).length, retired = { revision: fixture.view.revision, generationId: 'retired-generation' };
+    fixture.conversationFailure = operation => operation.view !== undefined && operation.view.generationId === retired.generationId ? 'indexed-view-retired' : null;
+    await page.evaluate(target => { location.hash = target; }, `#/session/${fixture.session.id}?gen=${retired.generationId}&rev=${retired.revision}`);
+    await sessionMain(page).getByRole('region', { name: 'Indexed view unavailable', exact: true }).waitFor();
+    assert.deepEqual((await denials(page)).map(item => [item.origin, item.sessionId, item.view, item.code]), [['session', fixture.session.id, retired, 'indexed-view-retired']]);
+    await page.goBack(); await searchMain(page).waitFor();
+    assert.equal(await rows(page).count(), FIRST_BATCH, 'a view-local failure of a pin no result shows leaves the results'); assert.equal(await page.locator('[data-state="intro"]').count(), 0);
+    fixture.conversationFailure = 'forbidden';
+    await link(rows(page).first(), TITLE(1)).click(); await sessionMain(page).getByRole('alert').filter({ hasText: 'This session can no longer be read' }).waitFor();
+    assert.equal(await page.locator('[data-message-id]').count(), 0);
+    const reported = (await denials(page)).at(-1);
+    assert.deepEqual([reported.origin, reported.sessionId, reported.view, reported.code], ['session', fixture.session.id, pinOf(fixture.view), 'forbidden'], 'the denial names the pin the link opened');
+    await page.goBack(); await page.locator('[data-state="intro"]').waitFor(); assert.equal(await rows(page).count(), 0);
+    await searchMain(page).getByRole('alert').filter({ hasText: 'Search results cleared after a denied or unavailable pinned source' }).waitFor();
+    assert.equal(await input(page).inputValue(), SEARCH_TEXT, 'the draft is kept'); assert.equal(calls(fixture, api.Operation_ArchiveSearch).length, reads, 'nothing is re-read behind the denial');
+    await context.close();
+  });
+  await group('a nested Find denial and a related session\'s denial in the session page clear the results that show that session; a related session no result shows leaves them', async () => {
+    const shown = '00000000-0000-4000-8000-000000008001', unshown = '00000000-0000-4000-8000-000000099999';
+    const { page, fixture, context } = await scene(f => { f.findFailure = 'forbidden'; f.relatedHits = [unshown, shown].map(id => f.hit.with({ session: f.hit.session.with({ id, metadata: f.metadata.with({ title: `Related ${id.slice(-5)}` }) }) })); });
+    await submit(page); await ready(page); await watchDenials(page);
+    await link(rows(page).first(), 'Open at first match').click();
+    await page.waitForFunction(() => window.__denials.length === 1);
+    assert.deepEqual((await denials(page)).map(item => [item.origin, item.sessionId, item.view, item.code]), [['session', fixture.session.id, pinOf(fixture.view), 'forbidden']], 'the nested Find denial is published with the pin it searched');
+    await page.goBack(); await page.locator('[data-state="intro"]').waitFor();
+    fixture.findFailure = null; await submit(page); await ready(page);
+    const related = async (title, sessionId) => {
+      await link(rows(page).first(), TITLE(1)).click(); await sessionMain(page).locator('[data-message-id]').first().waitFor();
+      await sessionMain(page).getByRole('tab', { name: /^Related/ }).click();
+      fixture.conversationFailure = operation => operation.sessionId === sessionId ? 'forbidden' : null;
+      await sessionMain(page).getByRole('list', { name: 'Related conversations', exact: true }).getByRole('link', { name: new RegExp(title) }).click();
+      await page.waitForFunction(id => location.hash.startsWith(`#/session/${id}`), sessionId); await sessionMain(page).getByRole('alert').filter({ hasText: 'This session can no longer be read' }).waitFor();
+      assert.equal((await denials(page)).at(-1).sessionId, sessionId, 'a related session reports its own id');
+      fixture.conversationFailure = null; await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Search', exact: true }).click(); await searchMain(page).waitFor();
+    };
+    await related('Related 99999', unshown);
+    assert.equal(await rows(page).count(), FIRST_BATCH, 'the denial of a session no result shows leaves the results'); assert.equal(await page.locator('[data-state="intro"]').count(), 0);
+    await related('Related 08001', shown);
+    await page.locator('[data-state="intro"]').waitFor(); assert.equal(await rows(page).count(), 0);
+    await context.close();
+  });
+  await group('a Search denial clears the open session of that pin while it is read, leaving no transcript in the document; a failure of another pin of that session leaves it', async () => {
+    // Search's excerpt reads are held; the session is opened from the first result's title (its published pin, landing on m65).
+    async function opened(failure) {
+      const current = await scene(f => { f.archiveSearchTransform = mixedPins; f.holdContext = true; failure(f); });
+      await submit(current.page); await rows(current.page).first().waitFor(); await watchDenials(current.page);
+      await link(rows(current.page).first(), TITLE(1)).click(); await sessionMain(current.page).locator('#message-m65').waitFor();
+      return { ...current, held: current.fixture.pendingContext.splice(0) };
+    }
+    const first = await opened(f => { f.contextTransform = result => result.view.generationId === undefined ? result.with({ anchor: result.anchor.with({ start: 1 }) }) : result; });
+    first.held.filter(reply => reply.view.generationId === undefined).forEach(reply => reply());
+    await first.page.waitForFunction(id => window.__denials.some(item => item.sessionId === id), first.fixture.session.id);
+    assert.deepEqual((await denials(first.page)).filter(item => item.sessionId === first.fixture.session.id).map(item => [item.origin, item.view, item.code]), [['search', { revision: first.fixture.session.revision, generationId: null }, null]]);
+    assert.equal(await sessionMain(first.page).getByRole('alert').count(), 0, 'a failure of the HEAD pin leaves the session open on its published pin');
+    assert.ok(await sessionMain(first.page).locator('[data-message-id]').count() > 0); await first.context.close();
+    const { page, fixture, context, held } = await opened(f => { f.contextFailure = operation => operation.view.generationId === undefined ? null : 'forbidden'; });
+    const session = sessionMain(page); assert.ok(await session.locator('[data-message-id]').count() > 0);
+    held.filter(reply => reply.view.generationId !== undefined).forEach(reply => reply());
+    await session.getByRole('alert').filter({ hasText: 'This session can no longer be read' }).waitFor();
+    assert.deepEqual((await denials(page)).find(item => item.sessionId === fixture.session.id), { origin: 'search', sessionId: fixture.session.id, view: pinOf(fixture.view), code: 'forbidden', message: 'Synthetic source unavailable' });
+    assert.equal(await page.locator('[data-message-id], [data-passage-id], [data-pane="transcript"]').count(), 0, 'no transcript element stays in the document');
+    assert.equal(await session.evaluate(element => element.innerHTML.includes('Literal archived text') || element.innerHTML.includes('continued source')), false, 'no transcript text stays in the document');
+    await context.close();
+  });
+  await group('an abandoned session read changes nothing: a denial that arrives after leaving the page is neither published nor applied', async () => {
+    const { page, fixture, context } = await scene(f => { f.holdSessions = true; f.conversationFailure = 'forbidden'; }); await submit(page); await ready(page); await watchDenials(page);
+    await link(rows(page).first(), TITLE(1)).click(); await sessionMain(page).waitFor(); await fixture.waitCall(api.Operation_GetSession, 1);
+    await page.goBack(); await searchMain(page).waitFor(); fixture.releaseSessions();
+    // A later reply on the same connection: the released denial has been delivered once this context renders.
+    const first = rows(page).first(); await expand(first); await hitGroups(first).first().getByRole('button', { name: 'Later context', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('[data-match-kind] [data-hit="context"]') !== null);
+    assert.deepEqual(await denials(page), [], 'the abandoned read publishes nothing'); assert.equal(await rows(page).count(), FIRST_BATCH); assert.equal(await page.locator('[data-state="intro"]').count(), 0);
+    await context.close();
   });
   await group('BOM scalars remain literal in valid Search snippets', async () => {
     const failures = [];

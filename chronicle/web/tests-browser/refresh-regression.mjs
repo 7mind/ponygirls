@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
-import { ChronicleFixture } from './fixture.mjs';
+import { ChronicleFixture, api } from './fixture.mjs';
 
 // Regression: Behavioral-Active Blackbox / Good Communication; synthetic source only.
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Set PLAYWRIGHT_BROWSERS_PATH; browser downloads are disabled.');
@@ -123,19 +123,24 @@ try {
   }
   console.log('PASS browser: infinite chain atomic refresh, authoritative shrink, no prepend, focus/anchor continuity and stale cursor/identity/error guards');
   {
-    // Authorization: the Archive view still opens a session in its own dialog. A successful refresh whose authorized list
-    // no longer contains the row clears the row and the open session, without waiting for a forbidden source read.
+    // Authorization: a session page opened from an Archive row is bound to it. A successful refresh of the (retained, hidden)
+    // Archive whose authorized list no longer contains the row clears the row and the page's source, without waiting for a
+    // forbidden source read; no transcript content stays in the document.
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage(), fixture = new ChronicleFixture();
     await fixture.install(page);
     await page.goto(`http://127.0.0.1:${address.port}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click();
-    await page.getByRole('main', { name: 'Archive', exact: true }).waitFor();
-    await page.locator('.archive-row .table-title').first().click();
-    const dialog = page.getByRole('dialog', { name: 'Source conversation', exact: true }); await dialog.waitFor(); await dialog.locator('[data-message-id]').first().waitFor();
+    // The Archive stays mounted, hidden, under the session page: address it with the hidden elements included.
+    const archive = page.getByRole('main', { name: 'Archive', exact: true, includeHidden: true }); await archive.waitFor();
+    await archive.locator('.archive-row .table-title').first().click();
+    const session = page.getByRole('main', { name: 'Session', exact: true }); await session.locator('[data-message-id]').first().waitFor();
+    const reads = fixture.calls.length;
     fixture.archiveExcluded.add(fixture.session.id);
-    await page.getByRole('button', { name: 'Refresh archive', exact: true }).evaluate(element => element.click());
-    await dialog.waitFor({ state: 'detached' });
-    assert.equal(await page.locator('.archive-row, [data-message-id]').count(), 0, 'a successful authorized list shrink clears the excluded row and the session bound to it');
+    await archive.getByRole('button', { name: 'Refresh archive', exact: true, includeHidden: true }).evaluate(element => element.click());
+    await session.getByRole('alert').filter({ hasText: 'This session can no longer be read' }).waitFor();
+    await archive.locator(`.archive-row[data-row-id="${fixture.session.id}"]`).waitFor({ state: 'detached' });
+    assert.equal(await page.locator('.archive-row, [data-message-id], [data-passage-id]').count(), 0, 'a successful authorized list shrink clears the excluded row and the session bound to it');
+    assert.equal(fixture.calls.slice(reads).filter(call => [api.Operation_GetSession, api.Operation_GetMessages, api.Operation_GetPassages, api.Operation_LocateMessage].some(type => call.operation instanceof type)).length, 0, 'the withdrawal reads no source');
     await context.close();
     console.log('PASS browser: successful membership shrink clears the excluded row and its open session');
   }

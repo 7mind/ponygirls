@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { SessionFind, type FindChoice } from './SessionFind.tsx';
 import { recordedYoloProfile } from './recorded-yolo-profile.ts';
 import type { SessionFindReadGate } from './session-find.ts';
-import { ContentView, Span, PassageFormat, Operation_GetPassages, Operation_GetPassageSpans, Result_Passages, Result_PassageSpans, type PassageInfo, type PassagesResult, Operation_GetSession, Operation_GetMessages, Operation_Related, Operation_LocateMessage, Result_Session, Result_Messages, Result_Related, Result_LocatedMessage, type UserInfo, type ArchiveRow, type Message, type MessagesResult, type Operation, type Result, type SessionInfo } from './api.ts';
+import { ContentView, Span, PassageFormat, Operation_GetPassages, Operation_GetPassageSpans, Result_Passages, Result_PassageSpans, type PassageInfo, type PassagesResult, Operation_GetSession, Operation_GetMessages, Operation_Related, Operation_LocateMessage, Result_Session, Result_Messages, Result_Related, Result_LocatedMessage, type UserInfo, type Message, type MessagesResult, type Operation, type Result, type SessionInfo } from './api.ts';
 import { read, type ChronicleConnection } from './client.ts';
 import { useResource } from './hooks.ts';
 import { useInfiniteResource } from './infinite.ts';
@@ -13,8 +13,9 @@ import { ErrorNotice, formatDate } from './App.tsx';
 import { CopyButton, MessageContent, sourceOnly } from './MessageContent.tsx';
 import { Anchored } from './Popover.tsx';
 import { Icon } from './Icon.tsx';
-import { HashRouter, formatRoute, routeSlot, sessionIdOf, sessionPlaceOf, sessionPlaceRoute, useRouteState, SESSION_PANES, type Route, type SessionPane, type SessionPlace } from './router.ts';
-import { contentViewKey, sameContentView, requireContentView } from './source-view.ts';
+import { HashRouter, InvalidSessionAddress, formatRoute, routeSlot, sessionIdOf, sessionPlaceOf, sessionPlaceRoute, useRouteState, SESSION_PANES, type Route, type SessionPane, type SessionPlace } from './router.ts';
+import { contentViewKey, requireContentView } from './source-view.ts';
+import { isAuthorityDenial, sourceFailureAffectsView } from './source-authority.ts';
 import { PASSAGE_PAGE_SIZE, validatePassages, validatePassageSpans } from './passages.ts';
 import './session.css';
 import { RequestFailure, type ManagerStats } from './transport/types.ts';
@@ -35,21 +36,20 @@ const SIDE_TABS: readonly { readonly pane: Exclude<SessionPane, 'closed'>; reado
 const TOOL_ROLES: ReadonlySet<string> = new Set(['tool', 'toolresult', 'function_call']);
 const PROMPT_ROLES: ReadonlySet<string> = new Set(['system', 'developer']);
 const ROLE_LABELS: ReadonlyMap<string, string> = new Map([['user', 'User'], ['assistant', 'Assistant'], ['system', 'System'], ['developer', 'Developer'], ['tool', 'Tool'], ['toolresult', 'Tool result'], ['function_call', 'Function call']]);
-type SourceNavigationOrigin = 'annotation' | 'find' | 'search' | 'place';
-export interface SourceLanding { view: ContentView; span: Span; position: number | null }
+type SourceNavigationOrigin = 'annotation' | 'find' | 'place';
 interface SourceNavigation { operation: number; origin: SourceNavigationOrigin }
 /** A navigation waiting for its message page: by message id (located) or, for the position bar, by position only. */
 interface PendingSourceScroll extends SourceNavigation { messageId: string | null; position: number; focus: boolean }
 interface LandedSource extends PendingSourceScroll { messageId: string }
 class UnverifiedSourceLocator extends Error {}
 
-/** How Related sessions open: as routed links (Back returns) or by replacing the embedded session (legacy dialog). */
-type RelatedTarget = { readonly kind: 'link'; href(sessionId: string): string } | { readonly kind: 'select'; select(sessionId: string): void };
-/** What only the routed page has: Back, links to messages, and the reading place it keeps in the address. */
+/** The list a session page was opened from (the parent list for an address): its address with its retained query, and its name. */
+export interface ParentList { readonly href: string; readonly label: string }
+/** What the routed page integrates: Back, links to messages, and the reading place it keeps in the address. */
 interface PageIntegration {
   back(): void;
-  /** Address of the parent list (with its retained query), for the header's crumb. */
-  parent: string;
+  /** The parent list, for the header's crumb and the notices' Back. */
+  parent: ParentList;
   initial: { readonly at: string | null; readonly find: string | null; readonly passage: string | null };
   messageLink(view: ContentView, messageId: string): string;
   report(update: { readonly view: ContentView; readonly at: string | null; readonly passage: string | null }): void;
@@ -59,16 +59,24 @@ interface PageIntegration {
  * saw, its failure code, the pin the failed read used (null while the default view is still being chosen) and the session.
  */
 export interface SourceUnavailableReport { readonly sessionId: string; readonly pin: ContentView | null; readonly code: string; readonly message: string }
-/** The host learned elsewhere (another view's denial) that the source of `pin` became unavailable; one object per signal. */
-export interface SourceRevocation { readonly pin: ContentView; readonly code: string; readonly message: string }
-const UNAVAILABLE_CODES: ReadonlySet<string> = new Set(['indexed-view-retired', 'forbidden', 'not-found', 'unauthorized']);
-interface ConversationProps {
-  connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; sessionId: string;
-  initialView: ContentView | undefined; initialLanding?: SourceLanding | undefined; onSourceUnavailable?: ((message: string) => void) | undefined; archiveHead: ArchiveRow | null; select: (id: string) => void; refresh: number; findReads: SessionFindReadGate;
+/**
+ * What the host learned elsewhere about this session's source; one object per signal, in arrival order. `source-failure`: another view's read
+ * of `pin` failed (`pin` null: the session's default view); it applies when `sourceFailureAffectsView` holds for the shown
+ * view. `withdrawn`: the list that opened the session no longer lists it; it applies to every view.
+ */
+export type SourceRevocation =
+  | { readonly kind: 'source-failure'; readonly pin: ContentView | null; readonly code: string | null; readonly message: string }
+  | { readonly kind: 'withdrawn'; readonly message: string };
+/** Whether a revocation concerns the shown view; null while the default view is still being chosen and only its pin could tell. */
+function revocationAffects(revocation: SourceRevocation, view: ContentView | undefined): boolean | null {
+  if (revocation.kind === 'withdrawn' || isAuthorityDenial(revocation.code)) return true;
+  return view === undefined ? null : sourceFailureAffectsView(revocation.pin, view, revocation.code);
 }
-interface SessionViewProps extends Omit<ConversationProps, 'select' | 'onSourceUnavailable'> {
-  related: RelatedTarget; pane: SessionPane; setPane(pane: SessionPane): void; page: PageIntegration | null;
-  report: ((report: SourceUnavailableReport) => void) | null; revocation: SourceRevocation | null;
+const UNAVAILABLE_CODES: ReadonlySet<string> = new Set(['indexed-view-retired', 'forbidden', 'not-found', 'unauthorized']);
+interface SessionViewProps {
+  connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; sessionId: string; initialView: ContentView | undefined; findReads: SessionFindReadGate;
+  relatedHref(sessionId: string): string; pane: SessionPane; setPane(pane: SessionPane): void; page: PageIntegration;
+  report(report: SourceUnavailableReport): void; revocations: readonly SourceRevocation[];
 }
 interface HeadScope { connection: ChronicleConnection; userId: string; sessionId: string; generation: number; activeId: number | null; invalidation: number }
 interface KnownHead extends HeadScope { ownerId: string; revision: number }
@@ -84,30 +92,25 @@ function storedPane(storage: Storage): SessionPane | null {
 function rememberPane(storage: Storage, pane: SessionPane) { try { storage.setItem(PANE_STORAGE_KEY, pane); } catch { /* not remembered; see storedPane */ } }
 function initialPane(): SessionPane { return storedPane(window.localStorage) ?? (window.matchMedia(WIDE_SESSION_QUERY).matches ? 'outline' : 'closed'); }
 
-/** The session embedded in the legacy Archive/Search dialog (until those views open the routed page). */
-export function Conversation({ select, onSourceUnavailable, ...props }: ConversationProps) {
-  const [pane, setPane] = useState<SessionPane>(initialPane);
-  return <SessionView {...props} related={{ kind: 'select', select }} pane={pane} setPane={value => { rememberPane(window.localStorage, value); setPane(value); }} page={null}
-    report={onSourceUnavailable === undefined ? null : report => onSourceUnavailable(report.message)} revocation={null}/>;
-}
-
 // Last reading place per session of this owner: reopening a session from a list returns to it (spec §5, groundwork S5).
 const SESSION_PLACES = routeSlot<SessionPlace | null>('session-place', () => null);
 const EMPTY_PLACE: SessionPlace = { pin: null, at: null, find: null, pane: null, passage: null };
+type Arrival = { readonly epoch: number; readonly place: SessionPlace } | { readonly epoch: number; readonly invalid: string };
+function sameSessionPin(left: SessionPlace['pin'], right: SessionPlace['pin']): boolean { return left !== null && right !== null && left.revision === right.revision && left.generationId === right.generationId; }
 /**
  * The routed session page (`#/session/<id>?…`, scroll model B). The address holds the reading place and is replaced, never
  * pushed, while reading; an address that changes otherwise (an edited fragment) reopens the session at the new place.
  */
-export function SessionPage({ connection, stats, user, findReads, route, router, parent, back, onSourceUnavailable, revocation }: {
-  connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; findReads: SessionFindReadGate; route: Route; router: HashRouter; parent: string; back: () => void;
-  /** Every denial of this session's source reads (see SourceUnavailableReport); null when the host does not listen. */
-  onSourceUnavailable: ((report: SourceUnavailableReport) => void) | null;
-  /** Clears the source of the matching pin and shows the source-unavailable state, as the page's own denials do. */
-  revocation: SourceRevocation | null;
+export function SessionPage({ connection, stats, user, findReads, route, router, parent, back, onSourceUnavailable, revocations }: {
+  connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; findReads: SessionFindReadGate; route: Route; router: HashRouter; parent: ParentList; back: () => void;
+  /** Every denial of this session's source reads (see SourceUnavailableReport). */
+  onSourceUnavailable: (report: SourceUnavailableReport) => void;
+  /** Signals since the page opened; one that applies clears the source into the source-unavailable state, as the page's own denials do. */
+  revocations: readonly SourceRevocation[];
 }) {
   const sessionId = sessionIdOf(route), [saved, setSaved] = useRouteState(SESSION_PLACES, sessionId);
   const written = useRef<string | null>(null), current = useRef<SessionPlace>(EMPTY_PLACE);
-  const [arrival, setArrival] = useState<{ epoch: number; place: SessionPlace } | null>(null);
+  const [arrival, setArrival] = useState<Arrival | null>(null);
   const address = formatRoute(route);
   function write(place: SessionPlace) {
     current.current = place;
@@ -118,14 +121,22 @@ export function SessionPage({ connection, stats, user, findReads, route, router,
   }
   useLayoutEffect(() => {
     if (address === written.current) return;
-    const fromUrl = sessionPlaceOf(route), bare = route.params.entries().length === 0;
-    const place = bare && saved !== null ? saved : fromUrl;
-    setArrival(previous => ({ epoch: previous === null ? 0 : previous.epoch + 1, place }));
+    const epoch = (previous: Arrival | null) => previous === null ? 0 : previous.epoch + 1;
+    let fromUrl: SessionPlace;
+    try { fromUrl = sessionPlaceOf(route); } catch (cause) {
+      if (!(cause instanceof InvalidSessionAddress)) throw cause;
+      setArrival(previous => ({ epoch: epoch(previous), invalid: cause.message })); return;
+    }
+    // An address with no place, or only the pin of the last place (a list's link), returns to the last place.
+    const reopened = saved !== null && fromUrl.at === null && fromUrl.find === null && fromUrl.pane === null && fromUrl.passage === null && (fromUrl.pin === null || sameSessionPin(fromUrl.pin, saved.pin));
+    const place = reopened ? saved : fromUrl;
+    setArrival(previous => ({ epoch: epoch(previous), place }));
     // A Find literal runs once on arrival and is not kept in the address.
     write({ ...place, find: null });
   }, [address]);
   const [preference, setPreference] = useState<SessionPane>(initialPane);
   if (arrival === null) return null;
+  if ('invalid' in arrival) return <main className="session" aria-label="Session" data-view="session"><div className="page session-state"><div className="notice notice-danger" role="alert"><Icon name="alert" small={false}/><div><div className="notice-title">This session address is invalid</div>{arrival.invalid}. No source was read.<div className="notice-actions"><button type="button" className="btn btn-sm" onClick={back}>Back to {parent.label}</button></div></div></div></div></main>;
   const pane = arrival.place.pane ?? current.current.pane ?? preference;
   const page: PageIntegration = {
     back, parent, initial: { at: arrival.place.at, find: arrival.place.find, passage: arrival.place.passage },
@@ -134,18 +145,21 @@ export function SessionPage({ connection, stats, user, findReads, route, router,
   };
   const pin = arrival.place.pin;
   return <main className="session" aria-label="Session" data-view="session">
-    <SessionView key={arrival.epoch} connection={connection} stats={stats} user={user} sessionId={sessionId} findReads={findReads} refresh={0} archiveHead={null}
-      initialView={pin === null ? undefined : new ContentView(pin.revision, pin.generationId ?? undefined)} initialLanding={undefined} report={onSourceUnavailable} revocation={revocation}
-      related={{ kind: 'link', href: id => formatRoute(sessionPlaceRoute(id, EMPTY_PLACE)) }} pane={pane}
-      setPane={value => { rememberPane(window.localStorage, value); setPreference(value); setArrival(previous => previous === null ? previous : { ...previous, place: { ...previous.place, pane: null } }); write({ ...current.current, pane: value }); }} page={page}/>
+    <SessionView key={arrival.epoch} connection={connection} stats={stats} user={user} sessionId={sessionId} findReads={findReads}
+      initialView={pin === null ? undefined : new ContentView(pin.revision, pin.generationId ?? undefined)} report={onSourceUnavailable} revocations={revocations}
+      relatedHref={id => formatRoute(sessionPlaceRoute(id, EMPTY_PLACE))} pane={pane}
+      setPane={value => { rememberPane(window.localStorage, value); setPreference(value); setArrival(previous => previous === null || !('place' in previous) ? previous : { ...previous, place: { ...previous.place, pane: null } }); write({ ...current.current, pane: value }); }} page={page}/>
   </main>;
 }
 
 function SessionView(props: SessionViewProps) {
   const [view, setView] = useState<ContentView | undefined>(props.initialView), [knownHead, setKnownHead] = useState<KnownHead | null>(null);
   // The place a routed page arrived with applies to the first view only; an explicitly chosen view starts at its top.
-  const [initial, setInitial] = useState(props.page === null ? null : props.page.initial);
+  const [initial, setInitial] = useState<PageIntegration['initial'] | null>(props.page.initial);
   const [attempt, setAttempt] = useState(0);
+  // A revocation is settled once: applied (with every earlier one) or found not to concern the shown view. A Retry or another
+  // chosen view then reads again.
+  const settledRevocations = useRef(new Set<SourceRevocation>());
   const invalidation = useRef(0);
   const scope: HeadScope = { connection: props.connection, userId: props.user.id, sessionId: props.sessionId, generation: props.stats.generation, activeId: props.stats.activeId, invalidation: invalidation.current };
   const liveScope = useRef(scope); liveScope.current = scope;
@@ -162,7 +176,7 @@ function SessionView(props: SessionViewProps) {
     });
   }
   function chooseView(next: ContentView | undefined) { setInitial(null); setView(next); }
-  return <ConversationSnapshot key={`${contentViewKey(view)}:${attempt}`} {...props} view={view} chooseView={chooseView} resolveView={setView} retry={() => setAttempt(value => value + 1)} initial={initial} knownHead={knownHead !== null && sameHeadScope(knownHead, scope) ? knownHead : null} rememberHead={rememberHead}/>;
+  return <ConversationSnapshot key={`${contentViewKey(view)}:${attempt}`} {...props} view={view} chooseView={chooseView} resolveView={setView} retry={() => setAttempt(value => value + 1)} initial={initial} settledRevocations={settledRevocations} knownHead={knownHead !== null && sameHeadScope(knownHead, scope) ? knownHead : null} rememberHead={rememberHead}/>;
 }
 
 function roleOf(message: Message): string { return message.role.toLowerCase(); }
@@ -281,7 +295,7 @@ function PositionBar({ pane, total, loading, items, goTo }: { pane: HTMLElement 
   </div>;
 }
 
-function InfoPane({ session, view, sessionId, headRevision, archiveHead, passages, link }: { session: SessionInfo; view: ContentView; sessionId: string; headRevision: number; archiveHead: ArchiveRow | null; passages: PassagesResult | null; link: string | null }) {
+function InfoPane({ session, view, sessionId, headRevision, passages, link }: { session: SessionInfo; view: ContentView; sessionId: string; headRevision: number; passages: PassagesResult | null; link: string }) {
   const metadata = session.metadata, source = session.source;
   return <div className="info-pane">
     <section className="rail-section" aria-label="Source"><h3>Source</h3><dl className="dl dl-fixed">
@@ -294,7 +308,6 @@ function InfoPane({ session, view, sessionId, headRevision, archiveHead, passage
       {session.redacted && <><dt>Redaction</dt><dd>Redacted before upload</dd></>}
       <dt>Collector</dt><dd className="mono">{source.collectorNamespace}</dd>
       <dt>Producer</dt><dd>{metadata.producer}</dd>
-      {archiveHead !== null && archiveHead.matchedView !== undefined && <><dt>Matched view</dt><dd>Representative matched view · Boolean operands may match different revisions.</dd></>}
     </dl></section>
     <section className="rail-section" aria-label="Index"><h3>Index</h3><dl className="dl dl-fixed">
       <dt>Passages</dt><dd>{passages === null ? 'unavailable' : passages.format === PassageFormat.Unindexed ? 'Unindexed' : passages.total.toString()}</dd>
@@ -303,7 +316,7 @@ function InfoPane({ session, view, sessionId, headRevision, archiveHead, passage
     <section className="rail-section" aria-label="Identifiers"><h3>Identifiers</h3><dl className="dl dl-stack">
       <dt>Archive identity</dt><dd className="mono xs">{sessionId}</dd>
       <dt>Annotation generation</dt><dd className="mono xs">{view.generationId ?? 'none · archive-only view'}</dd>
-    </dl><div className="row row-wrap"><CopyButton text={sessionId} label="Copy session id" done="Session id copied" compact={false}/>{link !== null && <CopyButton text={link} label="Copy link to this session" done="Link copied" compact={false}/>}</div></section>
+    </dl><div className="row row-wrap"><CopyButton text={sessionId} label="Copy session id" done="Session id copied" compact={false}/><CopyButton text={link} label="Copy link to this session" done="Link copied" compact={false}/></div></section>
     <section className="rail-section" aria-label="Recorded provenance"><h3>Recorded provenance</h3><dl className="dl dl-stack provenance-details">
       <dt>Source identity</dt><dd>{source.discoveryRootId} / {source.collectorNamespace} / {source.producerSessionId}</dd>
       <dt>Source format</dt><dd>{source.format}</dd>
@@ -320,7 +333,7 @@ function InfoPane({ session, view, sessionId, headRevision, archiveHead, passage
   </div>;
 }
 
-function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead, related: relatedTarget, refresh, view, chooseView, resolveView, retry, initial, knownHead, rememberHead, findReads, initialLanding, report: reportUnavailable, revocation, pane, setPane, page }: SessionViewProps & { view: ContentView | undefined; chooseView(view: ContentView | undefined): void; resolveView(view: ContentView): void; retry(): void; initial: PageIntegration['initial'] | null; knownHead: KnownHead | null; rememberHead: (ownerId: string, revision: number) => void }) {
+function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref, view, chooseView, resolveView, retry, initial, settledRevocations, knownHead, rememberHead, findReads, report: reportUnavailable, revocations, pane, setPane, page }: SessionViewProps & { view: ContentView | undefined; chooseView(view: ContentView | undefined): void; resolveView(view: ContentView): void; retry(): void; initial: PageIntegration['initial'] | null; settledRevocations: RefObject<Set<SourceRevocation>>; knownHead: KnownHead | null; rememberHead: (ownerId: string, revision: number) => void }) {
   const [messageStart, setMessageStart] = useState(0), [retired, setRetired] = useState(false);
   const [passage, setPassage] = useState<PassageInfo | null>(null), [spanOffset, setSpanOffset] = useState(0);
   const [seekError, setSeekError] = useState<string | null>(null), [seeking, setSeeking] = useState(false), [revealedMessage, setRevealedMessage] = useState<string | null>(null);
@@ -328,7 +341,6 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
   const initialAttempted = useRef(false);
   // A passage restored from the address: kept (and reported) until it is selected or the whole outline shows it is gone.
   const [pendingPassage, setPendingPassage] = useState(initial === null ? null : initial.passage);
-  const [searchSpan, setSearchSpan] = useState<Span | null>(null);
   const [landed, setLanded] = useState<LandedSource | null>(null);
   const navigation = useRef(0), currentSourceNavigation = useRef<SourceNavigation | null>(null), pendingScroll = useRef<PendingSourceScroll | null>(null);
   const [sourcePane, setSourcePane] = useState<HTMLDivElement | null>(null), [findBar, setFindBar] = useState<HTMLDivElement | null>(null), [findList, setFindList] = useState<HTMLDivElement | null>(null);
@@ -352,19 +364,28 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
   const accessEpoch = useRef(0), accessScope = JSON.stringify([user.id, stats.activeId, stats.generation, contentViewKey(view)]), liveAccessScope = useRef(accessScope); liveAccessScope.current = accessScope;
   function retireIndexedView() { navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; setLanded(null); setPassage(null); setSpanOffset(0); setSeeking(false); setSeekError(null); setRevealedMessage(null); setFindEpoch(epoch => epoch + 1); setRetired(true); }
   function sourceUnavailable(cause: RequestFailure) {
-    if (reportUnavailable !== null && UNAVAILABLE_CODES.has(cause.code)) reportUnavailable({ sessionId, pin: view === undefined ? null : view, code: cause.code, message: cause.message });
+    if (UNAVAILABLE_CODES.has(cause.code)) reportUnavailable({ sessionId, pin: view === undefined ? null : view, code: cause.code, message: cause.message });
     if (cause.code === 'indexed-view-retired') retireIndexedView();
   }
-  // A denial seen by another view for this pin: a retired generation retires this view; any other code clears the source
-  // into the same notice a denied session read shows (Retry reads again).
-  const [revoked, setRevoked] = useState<string | null>(null), appliedRevocation = useRef<SourceRevocation | null>(null);
+  // A failure another view saw that concerns the shown view: a retired generation retires this view; any other failure, and a
+  // withdrawal, clears the source into the same notice a denied session read shows (Retry reads again).
+  const [revoked, setRevoked] = useState<string | null>(null);
   useEffect(() => {
-    if (revocation === null || revocation === appliedRevocation.current || view === undefined || !sameContentView(view, revocation.pin) || !UNAVAILABLE_CODES.has(revocation.code)) return;
-    appliedRevocation.current = revocation;
-    if (revocation.code === 'indexed-view-retired') { retireIndexedView(); return; }
+    const settled = settledRevocations.current;
+    let revocation: SourceRevocation | null = null;
+    for (const item of revocations) {
+      if (settled.has(item)) continue;
+      const affected = revocationAffects(item, view);
+      if (affected === null) continue;
+      settled.add(item);
+      if (affected) { revocation = item; break; }
+    }
+    if (revocation === null) return;
+    for (const item of revocations) settled.add(item);
+    if (revocation.kind === 'source-failure' && revocation.code === 'indexed-view-retired') { retireIndexedView(); return; }
     accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null;
     setLanded(null); setPassage(null); setSpanOffset(0); setSeeking(false); setSeekError(null); setRevealedMessage(null); setFindEpoch(epoch => epoch + 1); setRevoked(revocation.message);
-  }, [revocation, view]);
+  }, [revocations, view]);
   async function readPinned<T>(operation: Operation, extract: (reply: Result) => T | null): Promise<T> {
     const epoch = accessEpoch.current;
     try { return await read(connection, operation, extract); }
@@ -375,19 +396,19 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
   }
   useEffect(() => connection.onInvalidate(() => { accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; setLanded(null); setPassage(null); setSpanOffset(0); setRetired(false); setRevoked(null); setSeeking(false); setSeekError(null); setRevealedMessage(null); }), [connection]);
   useEffect(() => () => { accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; }, []);
-  const session = useResource(connection, stats, `${sessionId}:${contentViewKey(view)}`, `${refresh}`, true, async () => {
+  const session = useResource(connection, stats, `${sessionId}:${contentViewKey(view)}`, '', true, async () => {
     const result = await readPinned(new Operation_GetSession(sessionId, view), value => value instanceof Result_Session ? value.result : null);
     if (view !== undefined) requireContentView(view, result.session.view);
     return result;
   });
   useEffect(() => { if (view === undefined && session.data !== null) resolveView(session.data.session.view); }, [view, session.data, resolveView]);
   const snapshot = view === undefined || retired || revoked !== null ? null : session.data;
-  const passages = useInfiniteResource<PassageInfo, PassagesResult, number>(connection, stats, `${sessionId}:${contentViewKey(view)}`, `${refresh}`, snapshot !== null, undefined, async cursor => {
+  const passages = useInfiniteResource<PassageInfo, PassagesResult, number>(connection, stats, `${sessionId}:${contentViewKey(view)}`, '', snapshot !== null, undefined, async cursor => {
     const offset = cursor === undefined ? 0 : cursor;
     const result = validatePassages(await readPinned(new Operation_GetPassages(sessionId, view!, offset, PASSAGE_PAGE_SIZE), reply => reply instanceof Result_Passages ? reply.result : null), view!, offset);
     return { items: result.passages, next: result.format === PassageFormat.ContextAwareProblems && BigInt(result.offset + result.passages.length) < result.total ? result.offset + result.passages.length : undefined, previous: undefined, meta: result };
   }, item => item.id);
-  const sourceSpans = useResource(connection, stats, `${sessionId}:${contentViewKey(view)}:${passage?.id ?? 'none'}:${spanOffset}`, `${refresh}`, snapshot !== null && passage !== null && passages.error === null, async () => validatePassageSpans(await readPinned(new Operation_GetPassageSpans(sessionId, view!, passage!.id, spanOffset, PASSAGE_PAGE_SIZE), reply => reply instanceof Result_PassageSpans ? reply.result : null), view!, passage!.id, spanOffset));
+  const sourceSpans = useResource(connection, stats, `${sessionId}:${contentViewKey(view)}:${passage?.id ?? 'none'}:${spanOffset}`, '', snapshot !== null && passage !== null && passages.error === null, async () => validatePassageSpans(await readPinned(new Operation_GetPassageSpans(sessionId, view!, passage!.id, spanOffset, PASSAGE_PAGE_SIZE), reply => reply instanceof Result_PassageSpans ? reply.result : null), view!, passage!.id, spanOffset));
   useEffect(() => {
     if (passages.error !== null || (passage !== null && passages.meta !== null && !passages.refreshing && !passages.items.some(item => item.id === passage.id))) { setPassage(null); pendingScroll.current = null; }
   }, [passages.error, passages.items, passages.meta, passages.refreshing, passage]);
@@ -401,13 +422,13 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
     setPendingPassage(null);
   }, [pendingPassage, passages.items, passages.meta, passages.loading, passages.refreshing, passages.loadingMore, passages.hasMore]);
   useEffect(() => { if (passages.error !== null) setPendingPassage(null); }, [passages.error]);
-  const messages = useInfiniteResource<Message, MessagesResult, number>(connection, stats, `${sessionId}:${contentViewKey(view)}:${messageStart}`, `${refresh}`, snapshot !== null, messageStart, async cursor => {
+  const messages = useInfiniteResource<Message, MessagesResult, number>(connection, stats, `${sessionId}:${contentViewKey(view)}:${messageStart}`, '', snapshot !== null, messageStart, async cursor => {
     const offset = cursor === undefined ? messageStart : cursor;
     const result = await readPinned(new Operation_GetMessages(sessionId, offset, MESSAGE_PAGE_SIZE, view), value => value instanceof Result_Messages ? value.result : null);
     requireContentView(view!, result.view);
     return { items: result.messages, next: result.offset + result.messages.length < result.total ? result.offset + result.messages.length : undefined, previous: result.offset > 0 ? Math.max(0, result.offset - MESSAGE_PAGE_SIZE) : undefined, meta: result };
   }, item => item.id);
-  const related = useResource(connection, stats, sessionId, `${refresh}`, snapshot !== null, () => read(connection, new Operation_Related(sessionId, RELATED_LIMIT), value => value instanceof Result_Related ? value.result : null));
+  const related = useResource(connection, stats, sessionId, '', snapshot !== null, () => read(connection, new Operation_Related(sessionId, RELATED_LIMIT), value => value instanceof Result_Related ? value.result : null));
   const messageOffset = messages.meta === null ? 0 : messages.meta.offset;
   function messageAt(position: number): Message | undefined { return messages.meta === null ? undefined : messages.items[position - messageOffset]; }
   // Instant: a smooth scroll would be cut short by ScrollAnchor's corrections when the highlighted rows render.
@@ -419,7 +440,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
     return true;
   }
   function finishSourceScroll(pending: PendingSourceScroll & { messageId: string }) {
-    if (pending.origin === 'find' || pending.origin === 'search') setLanded(pending);
+    if (pending.origin === 'find') setLanded(pending);
     else scrollToMessage(pending.messageId);
     pendingScroll.current = null;
   }
@@ -443,7 +464,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
   }
   async function showSource(target: string | undefined, expectedPosition: number | null, origin: SourceNavigationOrigin, focus: boolean) {
     const operation = ++navigation.current; currentSourceNavigation.current = { operation, origin }; pendingScroll.current = null;
-    setSeekError(null); setSeeking(false); setLanded(null); setSearchSpan(null);
+    setSeekError(null); setSeeking(false); setLanded(null);
     if (target === undefined) { setSeekError('This annotation has no verified source span; no logical extent is asserted.'); return; }
     if (origin === 'annotation' && expectedPosition === null && messages.items.some(message => message.id === target) && scrollToMessage(target)) return;
     setSeeking(true);
@@ -452,7 +473,6 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
       if (navigation.current !== operation) return;
       try { requireContentView(view!, location.view); } catch (cause) { throw new UnverifiedSourceLocator(cause instanceof Error ? cause.message : 'Unverified source pin.'); }
       if (!Number.isInteger(location.position) || location.position < 0 || location.position >= location.total || (expectedPosition !== null && location.position !== expectedPosition)) throw new UnverifiedSourceLocator('The source locator returned an invalid message position.');
-      if (origin === 'search' && initialLanding !== undefined) setSearchSpan(initialLanding.span);
       const pending = { messageId: target, operation, origin, position: location.position, focus };
       if (messages.items.some(message => message.id === target)) finishSourceScroll(pending);
       else { pendingScroll.current = pending; setMessageStart(Math.floor(location.position / MESSAGE_PAGE_SIZE) * MESSAGE_PAGE_SIZE); }
@@ -470,15 +490,11 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
   }
   useEffect(() => {
     if (initialAttempted.current || snapshot === null || view === undefined) return;
-    if (initialLanding !== undefined && sameContentView(initialLanding.view, view)) {
-      initialAttempted.current = true;
-      setRevealedMessage(initialLanding.span.messageId); setRevealEpoch(epoch => epoch + 1);
-      void showSource(initialLanding.span.messageId, initialLanding.position, 'search', true);
-    } else if (initial !== null && initial.at !== null) {
+    if (initial !== null && initial.at !== null) {
       initialAttempted.current = true;
       void showSource(initial.at, null, 'place', false);
     }
-  }, [snapshot, initialLanding, view]);
+  }, [snapshot, view]);
   function showPassage(selected: PassageInfo) { setPendingPassage(null); setPassage(selected); setSpanOffset(0); void showSource(selected.start.messageId, selected.start.messagePosition, 'annotation', false); }
   function revealTranscript() { if (pane !== 'closed' && window.matchMedia(PHONE_QUERY).matches) setPane('closed'); }
   function selectPassage(selected: PassageInfo) {
@@ -497,17 +513,15 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
     if (rect.top < bounds.top || rect.bottom > bounds.bottom) scroller.scrollTo({ top: scroller.scrollTop + rect.top - bounds.top - SOURCE_SCROLL_GAP, behavior: 'instant' });
   }, [passage, pane]);
   const passageHighlightSpans = sourceSpans.data !== null && passage !== null ? sourceSpans.data.spans.map(span => new Span(span.messageId, span.start, span.end)) : [];
-  const highlightSpans = searchSpan !== null && landed?.origin === 'search' && messages.error === null ? [searchSpan] : passageHighlightSpans;
-  const headRevision = snapshot === null ? undefined : Math.max(snapshot.session.revision, archiveHead !== null && archiveHead.head.id === sessionId && archiveHead.head.ownerId === snapshot.session.ownerId ? archiveHead.head.revision : snapshot.session.revision, knownHead !== null && knownHead.ownerId === snapshot.session.ownerId ? knownHead.revision : snapshot.session.revision);
+  const headRevision = snapshot === null ? undefined : Math.max(snapshot.session.revision, knownHead !== null && knownHead.ownerId === snapshot.session.ownerId ? knownHead.revision : snapshot.session.revision);
   useEffect(() => { if (snapshot !== null && headRevision !== undefined) rememberHead(snapshot.session.ownerId, headRevision); }, [snapshot, headRevision, rememberHead]);
-  const publishedView = archiveHead === null ? undefined : archiveHead.publishedView;
   // The routed page keeps its reading place in the address: the pinned view, the top message after scrolling, the passage.
   const topMessage = useRef<string | null>(initial === null ? null : initial.at);
-  const report = page === null ? null : page.report;
+  const report = page.report;
   const reportedPassage = passage !== null ? passage.id : pendingPassage;
-  useEffect(() => { if (report !== null && view !== undefined && snapshot !== null) report({ view, at: topMessage.current, passage: reportedPassage }); }, [view, snapshot !== null, reportedPassage]);
+  useEffect(() => { if (view !== undefined && snapshot !== null) report({ view, at: topMessage.current, passage: reportedPassage }); }, [view, snapshot !== null, reportedPassage]);
   useEffect(() => {
-    if (report === null || sourcePane === null || view === undefined) return;
+    if (sourcePane === null || view === undefined) return;
     const settled = () => {
       const bounds = sourcePane.getBoundingClientRect();
       const top = [...sourcePane.querySelectorAll<HTMLElement>('[data-message-id]')].find(element => element.getBoundingClientRect().bottom > bounds.top + SOURCE_SCROLL_GAP);
@@ -520,14 +534,13 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
   }, [report, sourcePane, view, reportedPassage]);
   // `/` opens Find on the routed page, as in the mockup; Escape inside the bar closes it.
   useEffect(() => {
-    if (page === null) return;
     const key = (event: KeyboardEvent) => {
       if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey || !(event.target instanceof HTMLElement) || event.target.closest('input,textarea,select,[contenteditable="true"]') !== null) return;
       event.preventDefault(); setFindOpen(true);
     };
     document.addEventListener('keydown', key);
     return () => document.removeEventListener('keydown', key);
-  }, [page]);
+  }, []);
   useEffect(() => { if (snapshot !== null && messages.error === null) arrivalFind.current = null; });
   const title = snapshot === null ? 'Session' : snapshot.session.metadata.title || 'Untitled conversation';
   const loading = !retired && revoked === null && (session.loading || (snapshot === null && session.error === null));
@@ -540,22 +553,21 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
     : snapshot.session.indexedRevision === undefined ? { tone: 'chip', text: `Source r${view.revision} · index pending` }
     : { tone: 'chip chip-ok', text: 'Indexed · latest' };
   const head = <header className="session-head">
-    {page !== null && <button type="button" className="btn btn-ghost btn-icon" aria-label="Back" title="Back to the list you came from" onClick={page.back}><Icon name="arrow-left" small={false}/></button>}
+    <button type="button" className="btn btn-ghost btn-icon" aria-label="Back" title="Back to the list you came from" onClick={page.back}><Icon name="arrow-left" small={false}/></button>
     <div className="grow session-heading">
       {loading ? <><span className="skeleton sk-60" aria-hidden="true"/><span className="skeleton sk-30" aria-hidden="true"/><h1 className="sr-only">{title}</h1></> : <h1 className="session-title" title={title}>{title}</h1>}
       {snapshot !== null && view !== undefined && headRevision !== undefined && <div className="session-meta">
-        {page !== null && <a href={page.parent}>Archive</a>}<span className={page === null ? '' : 'sep'}>{snapshot.session.metadata.producer}</span><span className="sep">{snapshot.session.metadata.project ?? 'No project'}</span>{snapshot.session.metadata.gitBranch !== undefined && <span className="sep mono">{snapshot.session.metadata.gitBranch}</span>}<span className="sep">{timeSpan(snapshot.session)}</span>
+        <a href={page.parent.href}>{page.parent.label}</a><span className="sep">{snapshot.session.metadata.producer}</span><span className="sep">{snapshot.session.metadata.project ?? 'No project'}</span>{snapshot.session.metadata.gitBranch !== undefined && <span className="sep mono">{snapshot.session.metadata.gitBranch}</span>}<span className="sep">{timeSpan(snapshot.session)}</span>
         {messages.meta !== null && <span className="sep hide-md">{messages.meta.total.toLocaleString()} messages</span>}
         {chip !== null && <span className={`${chip.tone} hide-md`} title={`Viewing source r${view.revision} · HEAD r${headRevision} / index ${snapshot.session.indexedRevision === undefined ? 'pending' : `r${snapshot.session.indexedRevision}`} (details in Info)`}>{chip.text}</span>}
       </div>}
     </div>
     {snapshot !== null && <>
-      <button type="button" className="btn" aria-pressed={findOpen} onClick={() => setFindOpen(!findOpen)}><Icon name="search" small={false}/>Find{page !== null && <span className="kbd hide-md" aria-hidden="true">/</span>}</button>
+      <button type="button" className="btn" aria-pressed={findOpen} onClick={() => setFindOpen(!findOpen)}><Icon name="search" small={false}/>Find<span className="kbd hide-md" aria-hidden="true">/</span></button>
       <button type="button" className="btn" aria-pressed={rail !== null} onClick={() => setPane(rail === null ? lastRail.current : 'closed')}><Icon name="panel" small={false}/>Side pane</button>
       <Anchored className="session-menu" buttonClassName="btn btn-icon" buttonState={undefined} label={<Icon name="more" small={false}/>} ariaLabel="More session actions" describedBy={undefined} panel="menu" panelClassName="menu" panelLabel={undefined}>
         <button type="button" role="menuitem" className="menu-item" title="Read the source snapshot again with the default view" onClick={() => chooseView(undefined)}><Icon name="refresh" small={false}/>Recheck source</button>
         {headRevision !== undefined && view !== undefined && (view.revision !== headRevision || view.generationId !== undefined) && <button type="button" role="menuitem" className="menu-item" title="Latest archived revision, without annotations" onClick={() => chooseView(new ContentView(headRevision, undefined))}><Icon name="arrow-up" small={false}/>Go to latest archive</button>}
-        {publishedView !== undefined && view !== undefined && !sameContentView(view, publishedView) && <button type="button" role="menuitem" className="menu-item" title="Current published annotations" onClick={() => chooseView(publishedView)}>View published annotations</button>}
         <div className="menu-sep" role="separator"/>
         <button type="button" role="menuitem" className="menu-item" onClick={() => setPane('info')}><Icon name="info" small={false}/>Provenance and metadata</button>
       </Anchored>
@@ -563,7 +575,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
   </header>;
   if (retired) return <>{head}<div className="page session-state"><section className="notice notice-warn" role="region" aria-label="Indexed view unavailable"><div><h3 className="notice-title" ref={retiredHeading} tabIndex={-1}>Indexed view unavailable</h3><p>This indexed view is unavailable because its derived generation was retired.</p>{view !== undefined && <div className="notice-actions"><button type="button" className="btn btn-sm" onClick={() => chooseView(new ContentView(view.revision, undefined))}>View archived source r{view.revision}</button></div>}<p className="xs">This explicitly requests the same source revision without a generation. No HEAD or published view is selected automatically.</p></div></section></div></>;
   const unreadable = session.error !== null ? session.error : revoked;
-  if (unreadable !== null) return <>{head}<div className="page session-state"><div className="notice notice-danger" role="alert"><Icon name="alert" small={false}/><div><div className="notice-title">This session can no longer be read</div>{unreadable}. Source content has been cleared.<div className="notice-actions">{page !== null && <button type="button" className="btn btn-sm" onClick={page.back}>Back to Archive</button>}<button type="button" className="btn btn-sm btn-ghost" onClick={retry}>Retry</button></div></div></div></div></>;
+  if (unreadable !== null) return <>{head}<div className="page session-state"><div className="notice notice-danger" role="alert"><Icon name="alert" small={false}/><div><div className="notice-title">This session can no longer be read</div>{unreadable}. Source content has been cleared.<div className="notice-actions"><button type="button" className="btn btn-sm" onClick={page.back}>Back to {page.parent.label}</button><button type="button" className="btn btn-sm btn-ghost" onClick={retry}>Retry</button></div></div></div></div></>;
   const outline = <div className="outline-pane" ref={outlinePane}>
     <div className="rail-search"><span className="grow" role="status">{passages.loading ? 'Loading passage metadata…' : passages.meta === null ? 'Passages' : passages.meta.format === PassageFormat.Unindexed ? 'Unindexed · no published passages for this source view.' : passages.meta.total === 0n ? 'No problems classified in this published context-aware generation.' : `Passages in transcript order · ${passages.meta.total.toString()}`}</span>{passages.updateAvailable && <button type="button" className="btn btn-sm" onClick={passages.applyUpdates}>Updated problem passages available</button>}</div>
     {passages.error !== null && <div className="notice" role="status"><div><p>Problem metadata unavailable. Original source remains readable; no legacy annotation fallback is used.</p><ErrorNotice>{passages.error}</ErrorNotice></div></div>}
@@ -582,9 +594,9 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
   </div>;
   function relatedLink(target: SessionInfo, index: number) {
     const content = <><span className="outline-n" aria-hidden="true">{index + 1}</span><span className="outline-title">{target.metadata.title || 'Untitled conversation'}</span><span className="outline-sub">{target.metadata.project ?? 'No project'}<span className="sep">{formatDate(target.metadata.startedAt)}</span></span></>;
-    return relatedTarget.kind === 'link' ? <a className="outline-item" href={relatedTarget.href(target.id)}>{content}</a> : <button type="button" className="outline-item" onClick={() => relatedTarget.select(target.id)}>{content}</button>;
+    return <a className="outline-item" href={relatedHref(target.id)}>{content}</a>;
   }
-  const rows = transcript(messages.items, messageOffset, (message, position) => <TranscriptMessage message={message} position={position} spans={highlightSpans} reveal={message.id === revealedMessage ? revealEpoch : 0} landed={landed !== null && landed.messageId === message.id ? landed : null} landingLabel={landed?.origin === 'search' ? 'Search result' : 'Find result'} passages={passages.items} selectPassage={selectPassage} link={page === null || view === undefined ? null : page.messageLink(view, message.id)}/>);
+  const rows = transcript(messages.items, messageOffset, (message, position) => <TranscriptMessage message={message} position={position} spans={passageHighlightSpans} reveal={message.id === revealedMessage ? revealEpoch : 0} landed={landed !== null && landed.messageId === message.id ? landed : null} landingLabel="Find result" passages={passages.items} selectPassage={selectPassage} link={view === undefined ? null : page.messageLink(view, message.id)}/>);
   return <>{head}
     <div className="split" ref={split} data-rail={rail === null ? 'closed' : 'open'}>
       <section className="pane-main" aria-label="Transcript">
@@ -592,7 +604,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
         <div className="pane" ref={setSourcePane} tabIndex={-1} data-pane="transcript">
           <ScrollAnchor><div className="session-transcript" data-scroll-container aria-busy={loading || messages.loading || messages.refreshing}>
             {loading && <div className="transcript-skeleton"><p className="sr-only" role="status">Rechecking source access…</p>{['user', 'assistant', 'tool', 'assistant'].map((role, index) => <div className="msg" data-role={role} key={index} aria-hidden="true"><span className="skeleton sk-30"/><span className="skeleton"/><span className="skeleton sk-60"/></div>)}</div>}
-            <p className="xs source-navigation-status" role="status" aria-label="Source navigation status" aria-live="polite" aria-atomic="true">{landed === null || view === undefined ? '' : `${landed.origin === 'search' ? 'Search result: found' : 'Found'} matching message ${landed.position + 1} · ${landed.messageId} in selected source r${view.revision}.`}</p>
+            <p className="xs source-navigation-status" role="status" aria-label="Source navigation status" aria-live="polite" aria-atomic="true">{landed === null || view === undefined ? '' : `Found matching message ${landed.position + 1} · ${landed.messageId} in selected source r${view.revision}.`}</p>
             {seekError !== null && <ErrorNotice>{seekError}</ErrorNotice>}{seeking && <p className="xs" role="status">Locating the original message…</p>}
             <InfiniteTrigger enabled={messages.hasPrevious && messages.error === null} loading={messages.loadingPrevious || messages.refreshing} load={messages.loadPrevious} label="Loading earlier messages…"/>
             {messages.error !== null && <ErrorNotice>{messages.error}. Message content has been cleared.</ErrorNotice>}{messages.loading && <div className="session-loading" role="status">Loading original messages…</div>}
@@ -610,7 +622,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
           {rail === 'outline' && outline}
           {rail === 'find' && <div ref={setFindList}/>}
           {rail === 'related' && relatedList}
-          {rail === 'info' && (snapshot !== null && view !== undefined && headRevision !== undefined ? <InfoPane session={snapshot.session} view={view} sessionId={sessionId} headRevision={headRevision} archiveHead={archiveHead} passages={passages.meta} link={page === null ? null : window.location.href}/> : <p className="rail-note" role="status">Rechecking source access…</p>)}
+          {rail === 'info' && (snapshot !== null && view !== undefined && headRevision !== undefined ? <InfoPane session={snapshot.session} view={view} sessionId={sessionId} headRevision={headRevision} passages={passages.meta} link={window.location.href}/> : <p className="rail-note" role="status">Rechecking source access…</p>)}
         </div></ScrollAnchor></div>
       </aside>}
     </div>

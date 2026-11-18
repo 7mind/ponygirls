@@ -6,8 +6,7 @@ import { RequestFailure, type ManagerStats } from './transport/types.ts';
 import type { TextPart } from './highlight.ts';
 import { useResource } from './hooks.ts';
 import { Anchored } from './Popover.tsx';
-import { formatRoute, viewRoute } from './router.ts';
-import { sessionLink } from './session-link.ts';
+import { formatRoute, sessionPlaceRoute, viewRoute, type SessionPlace } from './router.ts';
 import { listenSourceUnavailable, reportSourceUnavailable, sourcePin } from './source-authority.ts';
 import { contentViewKey, sameContentView } from './source-view.ts';
 import { CONTEXT_BYTES, SEARCH_PAGE_SIZE, SNIPPET_BYTES, snippetAnchor, sourceDenialAffectsResults, validateContext, validateArchiveSearchPage, contextParts, type SearchResultRow, type SearchSourceFailure } from './search-source.ts';
@@ -33,10 +32,13 @@ function Notice({ title, children, actions }: { title: string; children: ReactNo
 }
 function sentence(text: string): string { return `${text.replace(/[.\s]+$/, '')}.`; }
 function timestamp(value: string): string { return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }); }
-// Links to the session route (spec §5) carry the complete pin of the view they read (session-link.ts) and the match to land on.
-function matchLink(sessionId: string, match: ArchiveSourceMatch): string { return sessionLink(sessionId, match.view, { messageId: match.span.messageId, find: match.operand }); }
+// Links to the session route (spec §5) carry the complete pin of the view they read (router sessionPlaceRoute) and the match to land on.
+function sessionLink(sessionId: string, view: ContentView, landing: Pick<SessionPlace, 'at' | 'find'>): string {
+  return formatRoute(sessionPlaceRoute(sessionId, { pin: { revision: view.revision, generationId: view.generationId ?? null }, ...landing, pane: null, passage: null }));
+}
+function matchLink(sessionId: string, match: ArchiveSourceMatch): string { return sessionLink(sessionId, match.view, { at: match.span.messageId, find: match.operand }); }
 function titleLink(sessionId: string, view: ContentView, landing: ArchiveSourceMatch | undefined): string {
-  return landing === undefined ? sessionLink(sessionId, view, undefined) : matchLink(sessionId, landing);
+  return landing === undefined ? sessionLink(sessionId, view, { at: null, find: null }) : matchLink(sessionId, landing);
 }
 function matchTitle(match: ArchiveSourceMatch): string { return `${match.kind === ArchiveMatchKind.Literal ? 'Literal' : 'Semantic'} match for ${match.operand}`; }
 function Highlighted({ parts }: { parts: readonly TextPart[] }) {
@@ -165,7 +167,7 @@ export function Search({ connection, stats, user, query }: SearchScope & { query
   const loaded = useRef(chain.rows); loaded.current = chain.rows;
   // The opened session reports a denied or retired pinned source: results that retain data of it are cleared, as an authority fence.
   useEffect(() => listenSourceUnavailable(document, detail => {
-    if (detail.origin !== 'session' || !sourceDenialAffectsResults(detail.sessionId, new ContentView(detail.view.revision, detail.view.generationId ?? undefined), detail.code, loaded.current)) return;
+    if (detail.origin !== 'session' || !sourceDenialAffectsResults(detail.sessionId, detail.view === null ? null : new ContentView(detail.view.revision, detail.view.generationId ?? undefined), detail.code, loaded.current)) return;
     setCleared(`${sentence(detail.message)} Search results cleared after a denied or unavailable pinned source. Submit to recheck; no fallback was used.`); setSubmitted(null);
   }), [setSubmitted]);
   const root = useRef<HTMLElement>(null), returnFocus = useReturnFocus(root);

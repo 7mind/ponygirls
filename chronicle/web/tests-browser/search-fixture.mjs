@@ -37,7 +37,13 @@ export class SearchFixture extends Goal50Fixture {
       const reply = () => send(failure === null ? new api.Result_SessionMessageSearch(new api.SessionMessageSearchResult(operation.view, [], undefined)) : new api.Result_Error(new api.Failure(failure, 'Nested Find source unavailable')));
       if (this.holdFind) this.pendingFind.push(reply); else reply(); return true;
     }
-    if (this.conversationFailure !== null && operation instanceof api.Operation_GetSession) { send(new api.Result_Error(new api.Failure(this.conversationFailure, 'Pinned conversation source access removed'))); return true; }
+    // conversationFailure: a code, or a function of the GetSession operation returning a code or null. Held like every
+    // GetSession reply while holdSessions is set.
+    const conversationFailure = operation instanceof api.Operation_GetSession ? typeof this.conversationFailure === 'function' ? this.conversationFailure(operation) : this.conversationFailure : null;
+    if (conversationFailure !== null) {
+      const reply = () => send(new api.Result_Error(new api.Failure(conversationFailure, 'Pinned conversation source access removed')));
+      if (this.holdSessions) this.pendingSessions.push(reply); else reply(); return true;
+    }
     if (operation instanceof api.Operation_Related) { send(new api.Result_Related(new api.RelatedResult(this.relatedHits))); return true; }
     if (operation instanceof api.Operation_ArchiveSearch) {
       if (this.archiveSearchFailure !== null) { send(new api.Result_Error(new api.Failure(this.archiveSearchFailure, 'Synthetic expression search unavailable'))); return true; }
@@ -62,8 +68,10 @@ export class SearchFixture extends Goal50Fixture {
       const reply = () => send(new api.Result_Search(result)); if (this.holdSearch) this.pendingSearch.push(reply); else reply(); return true;
     }
     if (operation instanceof api.Operation_ReadMessageContext) {
-      const result = this.contextTransform(this.context(operation)), failure = this.contextFailure;
+      // contextFailure: a code, or a function of the operation returning a code or null. A held reply records the view it reads.
+      const result = this.contextTransform(this.context(operation)), failure = typeof this.contextFailure === 'function' ? this.contextFailure(operation) : this.contextFailure;
       const reply = () => send(failure === null ? new api.Result_MessageContext(result) : new api.Result_Error(new api.Failure(failure, 'Synthetic source unavailable')));
+      reply.view = operation.view;
       if (this.holdContext) this.pendingContext.push(reply); else reply(); return true;
     }
     if (this.locatorWrongPin && operation instanceof api.Operation_LocateMessage) { send(new api.Result_LocatedMessage(new api.MessageLocation(this.viewAt(2), 64, this.messageCount))); return true; }
