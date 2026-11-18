@@ -190,6 +190,22 @@ await check("a new artifact target cannot retain old metadata, manifest or destr
   assert.equal(await page.getByRole("button", { name: "Delete artifact…" }).isEnabled(), true);
 });
 
+await check("an unfinished upload shows its received bytes; access, edits and downloads wait for it", async (page) => {
+  await open(page, input.uploading, "artifact-uploading");
+  const progress = page.getByRole("progressbar", { name: "Upload progress" });
+  await progress.waitFor();
+  assert.equal(await progress.getAttribute("aria-valuenow"), "50");
+  await page.getByText("4 B of 8 B received.", { exact: true }).waitFor();
+  await page.getByText("Access can be changed once the upload is ready.", { exact: true }).waitFor();
+  assert.equal(await mode(page, "Internal").isDisabled(), true);
+  assert.equal(await page.getByRole("button", { name: "Open artifact", exact: true }).isDisabled(), true);
+  for (const action of ["Save access mode", "Rename", "Change expiry"]) {
+    assert.equal(await page.getByRole("button", { name: action, exact: true }).count(), 0, action + " waits for the finished upload");
+  }
+  await rowCount(page, 2);
+  assert.equal(await page.getByRole("link", { name: /^Download / }).count(), 0, "declared paths have no download yet");
+});
+
 await check("a missing artifact is a page state; a denied retrieval hit leaves no evidence behind", async (page) => {
   await page.goto(input.base + "/#/artifact/" + "0".repeat(32), { waitUntil: "domcontentloaded" });
   await pageState(page, "not-found");

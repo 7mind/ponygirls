@@ -747,7 +747,7 @@ async function snap(page, name, what) {
   await sleep(250);
   const file = name + ".png";
   await page.screenshot({ path: path.join(OUT, file) });
-  index.push({ n: index.length + 1, file, what, how: currentScene === "m2" ? "UX-M2 scene" : "UX-M1 scene", scene: currentScene });
+  index.push({ n: index.length + 1, file, what, how: currentScene + " scene", scene: currentScene });
   log(`snap ${file}`);
 }
 async function themed(page, scheme) {
