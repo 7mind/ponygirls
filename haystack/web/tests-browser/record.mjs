@@ -331,7 +331,7 @@ try {
     } finally { await context.close(); }
   });
 
-  await check("a record read that never answers ends after the page's timeout with Retry, and Retry loads the record", async () => {
+  await check("a record read that never answers ends after the page's timeout with Retry, Retry loads the record, and leaving gives a read in flight up", async () => {
     const { context, page } = await open();
     try {
       // No live connection: nothing but the held read and Retry reads the record.
@@ -345,6 +345,14 @@ try {
       const failed = page.locator('[data-record="failed"]');
       await failed.getByRole("button", { name: "Retry", exact: true }).click();
       await page.getByRole("heading", { name: "Arrived at", exact: true }).waitFor();
+      // Leaving the record while its read is still in flight gives the read up.
+      await page.route("**/api/v1/get", () => {}, { times: 1 });
+      const abandoned = page.waitForRequest("**/api/v1/get");
+      await page.evaluate((hash) => { location.hash = hash; }, `#/item/${encodeURIComponent("ui:late-a")}`);
+      const read = await abandoned;
+      const given = page.waitForEvent("requestfailed", (request) => request === read);
+      await page.evaluate(() => { location.hash = "#/browse"; });
+      await given;
       await page.quiet();
     } finally {
       await page.unrouteAll({ behavior: "ignoreErrors" });

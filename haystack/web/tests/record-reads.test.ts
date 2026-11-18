@@ -42,3 +42,16 @@ test("ancillary answers apply only at their key and revision; a change announced
   assert.deepEqual(offered.effects, ["apply 3", "ancillary 3"], "an offered record below the floor is not applied");
   assert.equal(shows(offered.state, KEY, 1), false);
 });
+
+test("a result never replaces a newer one already applied: an older answer releases the lane and honours queued work", () => {
+  const shown = run(NOWHERE, { kind: "entered", key: KEY }, { kind: "answered", key: KEY, request: 1, item: item(1), floor: 0 }).state;
+  // A refresh in flight; the editor's conflicting save then offers revision 3; the refresh answers with revision 2.
+  const stale = run(shown, { kind: "requested" }, { kind: "offered", item: item(3), floor: 0 }, { kind: "answered", key: KEY, request: 2, item: item(2), floor: 0 },
+    { kind: "offered", item: item(2), floor: 0 });
+  assert.deepEqual(stale.effects, ["get 2", "apply 3", "ancillary 3"]);
+  assert.deepEqual([stale.state.shown, stale.state.lane.kind], [3, "idle"]);
+  const queued = run(shown, { kind: "requested" }, { kind: "offered", item: item(3), floor: 0 }, { kind: "announced" },
+    { kind: "answered", key: KEY, request: 2, item: item(2), floor: 0 });
+  assert.deepEqual(queued.effects, ["get 2", "apply 3", "ancillary 3", "get 3"], "the request made meanwhile is still read");
+  assert.equal(queued.state.shown, 3);
+});
