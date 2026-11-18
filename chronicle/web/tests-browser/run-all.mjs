@@ -29,9 +29,9 @@ const SERVE_MODES = ['bundle', 'dev'], FIXTURE_PAGES = 'tests-browser';
 const NETNS_PREFIX = ['unshare', '--user', '--map-root-user', '--net', '--', 'sh', '-c', 'ip link set lo up && exec "$0" "$@"'];
 // Registration: add the entry file name here. Longest scripts first, so the pool's tail is short.
 const SCRIPTS = [
-  'rebuild.mjs', 'run.mjs', 'goal50.mjs', 'ux.mjs', 'activity-tables.mjs', 'refresh-regression.mjs', 'theme-retry.mjs',
-  'filter-table-ux.mjs', 'archive.mjs', 'shell.mjs', 'tool-catalog.mjs', 'history-find.mjs',
-  'persistent-login.mjs', 'search-serp.mjs', 'transcript.mjs', 'usage-presentation.mjs', 'source-filters.mjs', 'prior-error-regression.mjs',
+  'session.mjs', 'rebuild.mjs', 'run.mjs', 'goal50.mjs', 'ux.mjs', 'activity-tables.mjs', 'refresh-regression.mjs', 'theme-retry.mjs',
+  'filter-table-ux.mjs', 'archive.mjs', 'shell.mjs', 'tool-catalog.mjs',
+  'persistent-login.mjs', 'search-serp.mjs', 'usage-presentation.mjs', 'source-filters.mjs', 'prior-error-regression.mjs',
   'ui-controls.mjs', 'access-mcp.mjs',
 ];
 
