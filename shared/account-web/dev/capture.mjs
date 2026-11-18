@@ -13,16 +13,17 @@ const { chromium } = require('playwright-core');
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Use the pinned Chromium environment (nix develop .#chronicle); no browser downloads.');
 
 const DEFAULT_OUT = '/home/pavel/work/flakes/ponygirls/.local/overhaul-20261117/ux/account/after';
-const WIDE = { w: 1440, h: 900 }, NARROW = { w: 1024, h: 700 };
+const WIDE = { w: 1440, h: 900 }, NARROW = { w: 1024, h: 700 }, PHONE = { w: 390, h: 844 };
 const READY_TIMEOUT_MS = 10_000;
 const LONG_LIST_SCROLL_PX = 700;
-// Main states also rendered at 1024×700 and in dark (spec: 1440 for all, 1024 and dark for the main ones).
+// Main states also rendered at 1024×700, 390×844 and in dark (spec: 1440 for all; 1024, 390 and dark for the main ones).
 const MAIN = ['login-default', 'signup-default', 'settings-tokens', 'settings-tokens-secret', 'users-default'];
 
 const shots = [];
 for (const name of SCENARIOS.keys()) shots.push({ file: `account-${name}-${WIDE.w}`, scenario: name, ...WIDE, theme: 'light', app: 'chronicle', scroll: 0 });
 for (const name of MAIN) {
   shots.push({ file: `account-${name}-${NARROW.w}`, scenario: name, ...NARROW, theme: 'light', app: 'chronicle', scroll: 0 });
+  shots.push({ file: `account-${name}-${PHONE.w}`, scenario: name, ...PHONE, theme: 'light', app: 'chronicle', scroll: 0 });
   shots.push({ file: `account-${name}-dark-${WIDE.w}`, scenario: name, ...WIDE, theme: 'dark', app: 'chronicle', scroll: 0 });
 }
 shots.push(
