@@ -11,12 +11,7 @@ final case class CheckpointKey(stage: IndexingStage,window: Int,part: Int,inputH
 }
 /** The slot of a key holds accepted work for another input, e.g. an embedding part grouped under another batch size. */
 final class CheckpointInputMismatch extends DomainError("internal","checkpoint identity mismatch")
-final case class CheckpointNamespace(profile: String,embeddingSpace: String) {
-  def key(claim: Claim,stage: IndexingStage,window: Int,part: Int,algorithm: String,input: Json): CheckpointKey =
-    IndexCheckpoints.key(claim.copy(profile=profile),stage,window,part,if(stage==IndexingStage.Embedding) embeddingSpace else algorithm,input)
-}
 trait IndexCheckpoints {
-  def checkpointNamespace(claim: Claim,currentEmbeddingSpace: String): CheckpointNamespace
   def reserveAnnotation(claim: Claim,key: CheckpointKey): AnnotationReservation
   def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String): Int
   def checkpoint(claim: Claim,key: CheckpointKey): Option[Json]

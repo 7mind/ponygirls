@@ -269,15 +269,6 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     checkpointAuthority(c,claim)
     rejected
   }
-  def checkpointNamespace(claim: Claim,currentEmbeddingSpace: String): CheckpointNamespace = db.transaction { c =>
-    checkpointAuthority(c,claim)
-    val namespace=Sql.one(c,"SELECT profile,embedding_space FROM ch_checkpoint_namespaces WHERE job_id=? AND run_id=?",claim.jobId,claim.runId)(r=>CheckpointNamespace(r.getString(1),r.getString(2)))
-    namespace.foreach { value =>
-      Check(Sql.one(c,"SELECT canonical_profile=? AND canonical_space=? AND legacy_space=? FROM ch_model_identity_migrations WHERE legacy_profile=?",claim.profile,currentEmbeddingSpace,value.embeddingSpace,value.profile)(_.getBoolean(1)).contains(true),"internal","unverified checkpoint namespace migration")
-    }
-    checkpointAuthority(c,claim)
-    namespace.getOrElse(CheckpointNamespace(claim.profile,currentEmbeddingSpace))
-  }
   def checkpoint(claim: Claim,key: CheckpointKey): Option[Json] = db.transaction { c =>
     checkpointAuthority(c,claim)
     val value=IndexCheckpoints.read(c,claim,key)
