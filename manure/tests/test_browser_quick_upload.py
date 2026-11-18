@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import browser_fixtures as bf
 
-CHECKS = 8
+CHECKS = 9
 
 
 class QuickUploadBrowserTests(unittest.TestCase):

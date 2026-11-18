@@ -386,7 +386,44 @@ await check("one document scroller, no horizontal overflow at 1440, 1024 and 390
   await page.waitForFunction(() => window.__clipboard.startsWith("manure upload"));
   // Back to Upload keeps the staged files.
   await page.goBack();
+  await page.locator("#upload-section").waitFor({ state: "visible" });
   await rowCount(page, 24);
+});
+
+await check("Upload keeps its scroll position and focused control across a CLI round trip and Details/Back", async (page) => {
+  const names = Array.from({ length: 12 }, (_, index) => `place-${String(index).padStart(2, "0")}.txt`);
+  await goUpload(page);
+  await access(page, "Public");
+  await files(page, names.map((name) => [name, Buffer.from(name)]));
+  await uploadButton(page).click();
+  await rowStates(page, "ready", names.length);
+  const nav = (label) => page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: label });
+  const placed = (y, label) => page.waitForFunction((wanted) => Math.abs(scrollY - wanted) <= 2, y).catch(async (error) => { throw new Error(`${label}: scrollY is ${await page.evaluate(() => scrollY)}, wanted ${y}: ${error.message.split("\n")[0]}`); });
+  const scrollTo = async (y) => { await page.evaluate((top) => window.scrollTo(0, top), y); return page.evaluate(() => scrollY); };
+  // CLI round trip: scroll position and the last focused control come back.
+  await scrollTo(450);
+  const focusName = `Remove ${names[3]} from the list`;
+  await row(page, names[3]).getByRole("button", { name: focusName, exact: true }).focus();
+  const first = await page.evaluate(() => scrollY);
+  assert.ok(first > 300, "the page scrolled");
+  await nav("CLI").click();
+  await page.getByRole("heading", { name: "Command-line client", level: 1 }).waitFor();
+  await nav("Upload").click();
+  await page.locator("#upload-section").waitFor({ state: "visible" });
+  await placed(first, "after the CLI round trip");
+  assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), focusName, "focus returns to the control");
+  // Details and Back: focus returns to the Details link that was used.
+  const details = row(page, names[8]).getByRole("link", { name: `Details of ${names[8]}` });
+  await scrollTo(first + 250);
+  await details.scrollIntoViewIfNeeded();
+  const second = await page.evaluate(() => scrollY);
+  await details.click();
+  await page.locator("#detail-section").waitFor({ state: "visible" });
+  await page.goBack();
+  await page.locator("#upload-section").waitFor({ state: "visible" });
+  await placed(second, "after Details and Back");
+  assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), `Details of ${names[8]}`, "focus returns to the originating link");
+  assert.equal(await page.locator("tbody[data-upload-row]").count(), names.length);
 });
 
 await browser.close();

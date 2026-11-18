@@ -185,7 +185,10 @@ export function createUpload(ctx, catalogue) {
       Promise.resolve(pending).then(function () {
         if (item.password === null) { return; }
         state.copied = true; state.failure = null; overlays.toast("Password copied."); update();
-      }, function () { state.failure = "Clipboard unavailable. Reveal the password and copy it manually."; update(); });
+      }, function () {
+        if (item.password === null) { return; }
+        state.failure = "Clipboard unavailable. Reveal the password and copy it manually."; update();
+      });
     });
     saved.addEventListener("click", function () { confirmHide([item], function () { release(); }); });
     var line = node("div", "up-secret-line", null);
@@ -381,8 +384,27 @@ export function createUpload(ctx, catalogue) {
     uploads.forEach(function (item) { item.clear(); });
     uploads = []; uploadBusy = false; cancelRequested = false;
     $("upload-files").value = ""; $("upload-notice").hidden = true;
+    places.forEach(function (place) { place.y = 0; place.focus = null; });
     resetSettings(); renderAll();
   }
+
+  // The shell scrolls a view to the top when it is shown again. A view keeps its document scroll position and the
+  // control last focused inside it, and puts both back once it is visible (the observer runs after the shell's scroll).
+  var places = [];
+  function retainPlace(section) {
+    var place = { y: 0, focus: null };
+    places.push(place);
+    function remember() { if (!section.hidden) { place.y = window.scrollY; } }
+    window.addEventListener("scroll", remember, { passive: true });
+    document.addEventListener("click", remember, true);
+    section.addEventListener("focusin", function (event) { place.focus = event.target; });
+    new window.MutationObserver(function () {
+      if (section.hidden) { return; }
+      window.scrollTo(0, place.y);
+      if (place.focus !== null && place.focus.isConnected && !place.focus.hidden) { place.focus.focus({ preventScroll: true }); }
+    }).observe(section, { attributes: true, attributeFilter: ["hidden"] });
+  }
+  retainPlace($("upload-section")); retainPlace($("cli-section"));
 
   // ── Publishing ──────────────────────────────────────────────────────────
   async function start(only) {
