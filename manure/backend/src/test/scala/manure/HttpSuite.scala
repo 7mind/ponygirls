@@ -583,10 +583,33 @@ final class HttpSuite extends FunSuite:
       _ <- f.artifacts.finish(f.identity,a.artifact.id)
       response <- h.app.run(request(Method.GET,s"/view/${a.artifact.id}/styles.css"))
       data <- response.as[String]
-      _ <- IO { assertEquals(data,"user css"); assertEquals(response.status.code,200); assert(response.headers.headers.exists(x => x.name == CIString("Content-Security-Policy") && x.value.contains("frame-ancestors 'none'"))); assert(response.headers.headers.exists(x => x.name == CIString("Cache-Control") && x.value == "no-store")) }
+      _ <- IO {
+        assertEquals(data,"user css"); assertEquals(response.status.code,200)
+        def header(name: String) = response.headers.headers.find(_.name == CIString(name)).map(_.value)
+        val policy = header("Content-Security-Policy").getOrElse("")
+        Vector("frame-ancestors 'none'","base-uri 'none'","form-action 'self'").foreach(directive => assert(policy.contains(directive),policy))
+        assert(!policy.contains("sandbox"),policy)
+        assertEquals(header("Cache-Control"),Some("no-store"))
+        assertEquals(header("X-Content-Type-Options"),Some("nosniff"))
+        assertEquals(header("Referrer-Policy"),Some("no-referrer"))
+        assertEquals(header("Cross-Origin-Resource-Policy"),Some("same-origin"))
+        assertEquals(header("Cross-Origin-Opener-Policy"),Some("same-origin"))
+        assertEquals(header("Origin-Agent-Cluster"),Some("?1"))
+        assertEquals(header("Access-Control-Allow-Origin"),None)
+      }
       api <- h.app.run(request(Method.POST,s"/view/${a.artifact.id}/api/current",Some(f.token)))
       _ <- IO(assertEquals(api.status.code,404))
     yield ()
+  }}
+  test("reserved path prefixes never become user content: upload init refuses them as invalid-path") { run { (f,h) =>
+    val digest = SecretCodec.sha256(Exact.utf8("x"))
+    Vector("__manure/x.txt","api/y.txt","__manure","api").traverse_ { path =>
+      h.app.run(command(wire.Command.InitUpload("reserved",wire.ArtifactKind.Directory,wire.Visibility.Internal,None,
+        List(wire.ManifestEntry.File(path,1L,digest)),Nil,None,None),Some(f.token))).flatMap(r => r.as[String].map { text =>
+        assertEquals(r.status.code,400,path)
+        assertEquals(CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(text)).result.asInstanceOf[wire.Result.Error].failure.code,wire.ErrorCode.InvalidPath,path)
+      })
+    }
   }}
   test("content form redirects have exactly zero framed body bytes and preserve cookie and location effects") { run { (f,h) =>
     def form(id: String,action: String,value: String,cookie: Option[String] = None): Request[IO] =
