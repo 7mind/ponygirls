@@ -123,9 +123,17 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
       drafts.submit(itemKey, lineage, requestId, { base, draft, baseRevision: revision, lastId: lastId.current });
       // The fields text is spliced raw into the document: edited big integers never round-trip.
       const out = await api.put(item.key, documentJsonOf(draft), revision, requestId);
-      // The store ended the saved draft (`drafts.confirmed`). Edits made since keep the editor open; one that was left stays closed.
-      if (!mounted.current || drafts.get(itemKey) !== undefined) return;
+      // The store ended the saved draft (`drafts.confirmed`). Edits made since keep the editor open; one that was left stays
+      // closed. Checked again once the guard entry is gone: the reader can edit while that traversal is under way.
+      const newer = () => drafts.get(itemKey) !== undefined;
+      if (!mounted.current || newer()) return;
       await guard.release();
+      if (!mounted.current) return;
+      if (newer()) {
+        guard.rearm();
+        setReconciled(`Saved as revision ${out.revision}. Your later changes are kept and are now based on it.`);
+        return;
+      }
       await onSaved(out.revision);
     } catch (error) {
       if (error instanceof AuthError) { onAuthLost(); return; }

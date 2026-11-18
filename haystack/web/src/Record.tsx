@@ -155,19 +155,25 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
   // announced live; an open editor is not reloaded under.
   const editingNow = useRef(editing);
   editingNow.current = editing;
-  useEffect(() => api.subscribeConfirmedWrite((operation) => {
+  /** The highest revision a confirmed write of this record produced in this page. */
+  const [confirmedRevision, setConfirmedRevision] = useState(0);
+  useEffect(() => api.subscribeConfirmedWrite((operation, result) => {
     if (latestItem.current === null || operation.key !== latestItem.current.key) return;
+    setConfirmedRevision((revision) => Math.max(revision, result.revision));
     if (editingNow.current) stale.current = true;
     else void reload(true);
   }), [reload]);
 
   const ready = load.kind === "ready";
+  // A fresh editor starts from the record shown, so not from one older than a confirmed write: it waits for the reload. A
+  // kept draft carries its own base (exactly what it saves against) and opens at once.
+  const behind = ready && load.item.revision < confirmedRevision && draft === undefined;
   useEffect(() => {
     if (!edit) { setEditing(false); return; }
-    if (!ready) return;
+    if (!ready || behind) return;
     showLatest();
     setEditing(true);
-  }, [edit, ready]);
+  }, [edit, ready, behind]);
 
   const copy: CopyText = useCallback((text, what) => {
     setFailure(null);
@@ -293,7 +299,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
           {snapshot === null ? <span className="sep">Revision {latest.revision}</span> : <span className="chip chip-accent">Snapshot · revision {snapshot.item.revision} of {latest.revision}</span>}
           {viewed.document.status === "archived" && <span className="chip">archived</span>}</div></div>
       {attention && <button type="button" className="btn record-clear" disabled={busy} onClick={() => void clearAttention(latest)}><UiIcon name="check" />Clear attention</button>}
-      {snapshot === null && <button type="button" className="btn btn-primary" onClick={onEdit}><UiIcon name="edit" />Edit</button>}
+      {snapshot === null && !edit && <button type="button" className="btn btn-primary" onClick={onEdit}><UiIcon name="edit" />Edit</button>}
       <MoreMenu raw={!rawFields || (snapshot !== null && !snapshotOnly)} onRaw={() => { setRawFields(true); setSnapshotOnly(true); }}
         onCopyKey={() => copy(latest.key, "key")} onCopyLink={() => copy(`${location.origin}${location.pathname}${itemHash(latest.key, false)}`, "link")} />
     </div>
@@ -302,6 +308,8 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
       onLatest={showLatest} onRestore={() => setRestoring(true)} />}
     <div className="page"><div className="page-narrow with-rail">
       <div className="record-main">
+        {edit && behind && <div className="notice notice-row" role="status"><span className="spinner" aria-hidden="true" /><div className="grow">
+          <span className="notice-title">Loading revision {confirmedRevision} before editing</span> · the editor opens on the revision your save created.</div></div>}
         {draft !== undefined && <div className="notice notice-row" role="note"><UiIcon name="edit" /><div className="grow">
           <span className="notice-title">You have an unsaved draft of this record</span> · started from revision {draft.baseRevision}.</div>
           <button type="button" className="btn btn-sm btn-primary" onClick={onEdit}>Continue editing</button>

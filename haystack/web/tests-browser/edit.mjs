@@ -583,7 +583,7 @@ try {
   };
   const basedOn = (page, revision) => page.locator(".record-sub").getByText(`based on revision ${revision}`, { exact: true });
 
-  await check("a completing save ends only the draft it sent: later edits stay in the editor, now based on the saved revision, also after leaving and restoring", async () => {
+  await check("a completing save ends only the draft it sent: later edits stay in the editor, now based on the saved revision, also after leaving and restoring and during its own way out", async () => {
     const { context, page } = await open();
     try {
       const key = "ui:draft-generation";
@@ -617,15 +617,29 @@ try {
       await basedOn(page, 3).waitFor();
       assert.match(page.url(), /\/edit$/, "a completion in an editor that was left does not close the current one");
       assert.equal(await title.inputValue(), "Edited after restoring");
+      // Saved, then edited while the guard's history entry is being removed (that traversal held): the editor stays, guarded.
+      await page.evaluate(() => {
+        const back = History.prototype.back;
+        history.back = () => { delete history.back; window.releaseTraversal = () => back.call(history); };
+      });
       await save(page).click();
-      await page.getByText("Saved as revision 4", { exact: true }).waitFor();
-      assert.deepEqual(page.puts.map((request) => request.expectedRevision), [1, 2, 3], "each save builds on the previous one: no conflict with the reader's own saves");
-      assert.equal((await stored(key)).document.title, "Edited after restoring");
+      await page.waitForFunction(() => typeof window.releaseTraversal === "function");
+      await title.fill("Edited during the traversal");
+      await page.evaluate(() => window.releaseTraversal());
+      await page.getByRole("status").filter({ hasText: "Saved as revision 4. Your later changes are kept and are now based on it." }).waitFor();
+      assert.match(page.url(), /\/edit$/, "the completion does not close an editor edited during its traversal");
+      assert.equal(await title.inputValue(), "Edited during the traversal");
+      await browserTraversal(page, -1);
+      await dialog(page, "Discard unsaved changes?").getByRole("button", { name: "Keep editing", exact: true }).click();
+      await save(page).click();
+      await page.getByText("Saved as revision 5", { exact: true }).waitFor();
+      assert.deepEqual(page.puts.map((request) => request.expectedRevision), [1, 2, 3, 4], "each save builds on the previous one: no conflict with the reader's own saves");
+      assert.equal((await stored(key)).document.title, "Edited during the traversal");
       await page.quiet();
     } finally { await context.close(); }
   });
 
-  await check("a save whose answer was lost, confirmed through the page's retry notice after the editor was left without any live announcement, ends its draft", async () => {
+  await check("a save whose answer was lost, confirmed through the page's retry notice after the editor was left without any live announcement, ends its draft; no editor starts from the replaced revision", async () => {
     const { context, page } = await open();
     try {
       const key = "ui:draft-replay";
@@ -649,12 +663,21 @@ try {
       await page.evaluate(() => history.go(-2));
       await draftNote(page).waitFor();
       const notice = page.locator("main > .notice").filter({ hasText: "is pending or uncertain" });
+      // The refresh that the confirmation starts is held: the page still has revision 1, which no editor may start from.
+      let releaseGet;
+      const heldGet = new Promise((resolve) => { releaseGet = resolve; });
+      await page.route("**/api/v1/get", async (route) => { await heldGet; await route.continue(); }, { times: 1 });
+      const refresh = page.waitForRequest("**/api/v1/get");
       await notice.getByRole("button", { name: "Retry original write", exact: true }).click();
       await page.getByText(/Original write confirmed as revision 2/).waitFor();
+      await refresh;
       assert.equal(await draftNote(page).count(), 0, "the confirmed draft is not offered again");
-      await page.getByRole("heading", { name: "Committed, answer lost", exact: true }).waitFor();
       await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.getByRole("status").filter({ hasText: "Loading revision 2 before editing" }).waitFor();
+      assert.equal(await page.locator('[data-record="editing"]').count(), 0, "no editor starts from the revision the confirmed write replaced");
+      releaseGet();
       await page.locator('[data-record="editing"]').waitFor();
+      assert.equal(await title.inputValue(), "Committed, answer lost");
       assert.equal(await restoredNotice(page).count(), 0);
       await title.fill("After the confirmed write");
       await save(page).click();
