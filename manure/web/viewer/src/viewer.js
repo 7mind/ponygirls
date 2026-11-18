@@ -432,7 +432,7 @@ function crumbs() {
     const link = element('a', text); link.href = href;
     nav.append(link, element('span', '/', 'crumb-sep'));
   }
-  const here = element('span', segments.at(-1), 'crumb-here'); here.setAttribute('aria-current', 'page');
+  const here = element('span', segments.at(-1), 'crumb-here'); here.setAttribute('aria-current', 'page'); here.title = meta.path;
   nav.append(here);
 }
 async function main() {

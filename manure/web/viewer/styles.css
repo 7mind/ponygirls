@@ -21,7 +21,7 @@
 span[data-icon] { display: inline-block; }
 summary.btn { list-style: none; cursor: pointer; }
 summary.btn::-webkit-details-marker { display: none; }
-.cli-fetch .popover { width: 400px; }
+.cli-fetch .popover { width: min(480px, calc(100vw - 2 * var(--gutter))); }
 .cli-fetch .code-block { overflow-wrap: anywhere; white-space: pre-wrap; }
 
 /* ── Content columns and states ──────────────────────────────────────────── */
