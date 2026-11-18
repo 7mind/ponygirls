@@ -34,7 +34,9 @@ in pkgs.runCommand "manure-native-full-target" ({
   export MANURE_TEST_JDBC_USER=manure
   export MANURE_TEST_JDBC_PASSWORD_FILE=$(python3 -c 'import json,os;print(json.loads(os.environ["PONYGIRLS_TEST_DATABASE_MANURE"])["passwordFile"])')
   export PYTHONPATH="$PWD/manure:$PWD/manure/tests"
-  timeout --signal=TERM --kill-after=15s 1800s python3 manure/scripts/target-suite.py --report "$REPORT" > "$REPORT/run.log" 2>&1
+  # Class shards in NIX_BUILD_CORES (at most 8) worker processes against the one
+  # owned cluster; the slowest shard (~145 s under load 150) bounds the run.
+  timeout --signal=TERM --kill-after=15s 420s python3 manure/scripts/target-suite.py --report "$REPORT" > "$REPORT/run.log" 2>&1
   SH
   python3 ${./with-owned-postgres.py} ${pkgs.runtimeShell} run-target.sh || { cat "$out/run.log"; exit 1; }
 ''
