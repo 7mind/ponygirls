@@ -49,7 +49,7 @@ async function activityReady(page) { await page.getByRole('main', { name: 'Activ
 async function userMenu(page, login) { await page.getByRole('button', { name: login, exact: true }).click(); return page.getByRole('menu', { name: login, exact: true }); }
 const archiveRows = page => page.getByRole('table', { name: 'Conversations', exact: true }).locator('tbody tr');
 const archiveReads = fixture => fixture.calls.filter(call => call.operation instanceof api.Operation_Archive);
-const searchSummary = page => page.getByRole('main', { name: 'Search', exact: true }).getByRole('status').filter({ hasText: /matching conversations/ });
+const searchSummary = page => page.getByRole('main', { name: 'Search', exact: true }).locator('[data-view-bar] [role="status"]').filter({ hasText: /conversations · \d+ loaded/ });
 async function loadArchiveRows(page, count) {
   await archiveRows(page).first().waitFor();
   while (await archiveRows(page).count() < count) {
