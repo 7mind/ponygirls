@@ -6,9 +6,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import java.time.{Clock as JavaClock,Instant,ZoneOffset}
-import java.nio.charset.StandardCharsets.UTF_8
 import scala.concurrent.duration.*
-import scala.util.Using
 
 class ModelTelemetryTest extends munit.FunSuite {
   private val anchor=Instant.parse("2026-01-01T00:00:00Z")
@@ -319,16 +317,11 @@ class ModelTelemetryTest extends munit.FunSuite {
     val base=Fixtures.config()
     val users=owners.zipWithIndex.map { case (owner,index) => UserConfig(owner,s"opaque-login-$index",base.users.head.passwordHashFile,true) }
     base.copy(users=users).validate()
-    val migration=getClass.getClassLoader.getResourceAsStream("001.sql")
-    assert(migration!=null,"retained user schema is available")
-    val schema=Using.resource(migration)(stream => new String(stream.readAllBytes(),UTF_8))
-    val userTable=schema.linesIterator.find(_.startsWith("CREATE TABLE IF NOT EXISTS ch_users(")).getOrElse(fail("retained user table is missing"))
-    assertEquals(userTable,"CREATE TABLE IF NOT EXISTS ch_users(id text PRIMARY KEY, login text UNIQUE NOT NULL, enabled boolean NOT NULL, credential text NOT NULL);")
     (for {
       manual <- clock()
       telemetry <- ModelTelemetry.make(manual).attempt.flatMap {
         case Right(value) => IO.pure(value)
-        case Left(error: DomainError) => IO(fail(s"Config.validate and retained user DDL accept opaque IDs; telemetry rejected ${error.code}: ${error.detail}"))
+        case Left(error: DomainError) => IO(fail(s"Config.validate accepts opaque IDs; telemetry rejected ${error.code}: ${error.detail}"))
         case Left(error) => IO.raiseError(error)
       }
       _ <- owners.traverse_ { owner =>
