@@ -83,7 +83,7 @@ Storage failures fail closed rather than issuing uncoordinated requests.
 
 ## Tool
 
-`tokemon({ include_models?: boolean, include_quotas?: boolean, include_context?: boolean })` returns JSON (`include_models` defaults to false, `include_quotas` and `include_context` to true):
+`tokemon({ include_models?, include_older_models?, include_quotas?, include_context? })` returns JSON. All parameters are booleans; `include_models` and `include_older_models` default to false, `include_quotas` and `include_context` to true:
 
 ```json
 {
@@ -106,8 +106,10 @@ Storage failures fail closed rather than issuing uncoordinated requests.
 
 `state` is `ok`, `low` (90% or more used), `EXHAUSTED`, or `unlimited`.
 `models` (each provider's available models with the effort levels pi can run
-them at) is present only with `include_models: true`. `include_quotas: false`
-drops the quota `windows` (plan, login, notes, and errors stay). `context` is
+them at) is present only with `include_models: true`. It shows the latest
+available generation of each recognized family per provider and route, keeping
+separate tiers and unrecognized models. Add `include_older_models: true` to
+list the full available catalogue. `include_quotas: false` drops the quota `windows` (plan, login, notes, and errors stay). `context` is
 the calling session's context size and usage; it is present unless
 `include_context: false` or the usage is unknown. Answers are cached for a
 minute. Top-level `fetchedAt` is report assembly time; each provider exposes

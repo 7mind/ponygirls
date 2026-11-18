@@ -56,6 +56,7 @@ async function loadExtension(agentDir: string): Promise<{ tools: Map<string, Too
     cwd: agentDir,
     model: { provider: "test", id: "model" },
     modelRegistry: {
+      getAvailable: () => [],
       getRegisteredProviderConfig: () => undefined,
       getRegisteredNativeProvider: () => undefined,
     },
@@ -134,6 +135,27 @@ test("capacity tool descriptions explain descendant authority and reclaimable op
     assert.match(descriptions.get("close_agent")!, /cumulative usage.*preserved/);
     for (const name of ["spawn_agent", "send_message", "close_agent"]) assert.doesNotMatch(descriptions.get(name)!, /lifetime.*cap|cannot refund/);
   } finally { rmSync(agentDir, { recursive: true, force: true }); }
+});
+
+test("policy loading defaults to latest generations only and requires a boolean to opt out", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "subagents-model-policy-"));
+  const priorDir = process.env["PI_CODING_AGENT_DIR"];
+  process.env["PI_CODING_AGENT_DIR"] = agentDir;
+  try {
+    const { loadPolicy } = await import("../index.ts");
+    const path = join(agentDir, "subagents-policy.json");
+    assert.equal(loadPolicy().policy.latestModelsOnly, true);
+    writeFileSync(path, JSON.stringify({ allowedModels: null }));
+    assert.equal(loadPolicy().policy.latestModelsOnly, true);
+    writeFileSync(path, JSON.stringify({ latestModelsOnly: false }));
+    assert.equal(loadPolicy().policy.latestModelsOnly, false);
+    writeFileSync(path, JSON.stringify({ latestModelsOnly: "false" }));
+    assert.throws(() => loadPolicy(), /POLICY_DENIED.*latestModelsOnly must be a boolean/);
+  } finally {
+    if (priorDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+    else process.env["PI_CODING_AGENT_DIR"] = priorDir;
+    rmSync(agentDir, { recursive: true, force: true });
+  }
 });
 
 test("list_agents reports the scheduler limits configured in the policy file", async () => {

@@ -17,8 +17,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { newerModelIn, type ModelIdentity } from "../../model-generations.ts";
 import { ToolBroker, type BrokerCaller, type CallerSandbox, type ToolExecutors } from "./broker.ts";
-import { err } from "./errors.ts";
+import { err, type SubagentsError } from "./errors.ts";
 import { historyPath, nativeHistoryId, openRegisteredHistoryFile, publicHistorySource, readRegisteredHistoryPage, reconstructedHistoryPrefix, type HistoryFeed, type RegisteredHistorySource } from "./history.ts";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { BackendSlot, type BackendRegistry } from "./backends.ts";
@@ -351,6 +352,8 @@ export interface SupervisorOptions {
   policy: SupervisorPolicy;
   /** The governing session at the current call: what top-level children start from. */
   governor: () => GovernorContext;
+  /** Available chat models in the governing registry, independent of cycling scope. */
+  availableModels?: () => readonly ModelIdentity[];
   parentModels?: ParentModels;
   backends?: () => BackendRegistry;
   /** Admission capacity (index.ts passes the policy file's validated limits); depth comes from policy.maxDepth only. */
@@ -1523,6 +1526,7 @@ export class Supervisor implements GateHost {
         throw err("CONFLICT", "owner workspace is locked for review; writers excluded until review ends");
       }
       const model = this.resolveChildModel(parentRt, params.model ?? null);
+      this.assertLatestModel(model);
       if (this.opts.parentModels !== undefined) { if (this.opts.backends === undefined || this.opts.backends().select(model) === null) this.opts.parentModels.describe(model); }
       const gateSpec = params.gate ? this.gate.validateSpec(params.gate) : params.review ? this.gate.validateSpec(params.review, "review") : null;
       if (gateSpec) assertGateFits(gateSpec, params.profile === "writer");
@@ -1654,6 +1658,18 @@ export class Supervisor implements GateHost {
     const inherited = parentRt ? parentRt.record.model : this.opts.governor().model;
     if (!inherited) throw err("MODEL_UNAVAILABLE", "no resolved model to inherit; pass an explicit model");
     return { ...inherited };
+  }
+
+  private olderModelDenial(model: ModelIdentity): SubagentsError | undefined {
+    if (!this.policy.latestModelsOnly || this.opts.availableModels === undefined) return undefined;
+    const newer = newerModelIn(this.opts.availableModels())(model);
+    if (newer === undefined) return undefined;
+    return err("POLICY_DENIED", `model ${model.provider}/${model.id} is an older generation; use ${newer.provider}/${newer.id} or another model allowed by root policy`);
+  }
+
+  assertLatestModel(model: ModelIdentity): void {
+    const denial = this.olderModelDenial(model);
+    if (denial !== undefined) throw denial;
   }
 
   private agentTmp(agentId: AgentId): string {
@@ -2951,20 +2967,28 @@ export class Supervisor implements GateHost {
    * parking, no auto-resume on healed storage, nothing swallowed).
    */
   private async onProviderAdmission(rt: AgentRuntime, worker: WorkerPort, payload: ProviderAdmissionPayload, envelope: IpcEnvelope): Promise<ProviderAdmissionResponse> {
-    const admission = this.checkProviderAdmission(rt, worker, payload, envelope);
+    const check = (): ProviderAdmissionResponse => {
+      const owned = this.checkProviderAdmission(rt, worker, payload, envelope);
+      if (!owned.ok) return owned;
+      // Both stock and native workers ask before a new request. Backend
+      // transport frames may belong to a request that has already started.
+      const denial = this.olderModelDenial({ provider: payload.provider, id: payload.modelId });
+      return denial === undefined ? owned : { ok: false, code: denial.code, error: denial.message };
+    };
+    const admission = check();
     if (!admission.ok || rt.parentModel === null || rt.backend !== null || payload.reason !== "auth") return admission;
     const source = this.opts.parentModels;
     if (source === undefined) return { ok: false, code: "MODEL_UNAVAILABLE", error: "parent model authentication source is unavailable" };
     try {
       const result = await source.resolveAuth(rt.parentModel);
       // Auth can refresh asynchronously; close/recovery/reuse must fence the reply too.
-      const current = this.checkProviderAdmission(rt, worker, payload, envelope);
+      const current = check();
       if (!current.ok) return current;
       if (!result.ok) return { ok: false, code: "MODEL_UNAVAILABLE", error: "governing provider authentication is unavailable" };
       const { ok: _ok, ...auth } = result;
       return { ok: true, auth: parseProviderRequestAuth(auth) };
     } catch {
-      const current = this.checkProviderAdmission(rt, worker, payload, envelope);
+      const current = check();
       return current.ok ? { ok: false, code: "MODEL_UNAVAILABLE", error: "governing provider authentication failed" } : current;
     }
   }
@@ -3776,6 +3800,8 @@ export class Supervisor implements GateHost {
       }
       if (rt && opts.model !== undefined) this.checkControl(caller, rt.record);
       const model = opts.model === undefined ? null : this.validateReuseModel(rt, opts.model);
+      const selected = model ?? rt?.record.model;
+      if (mode === "task" && selected != null) this.assertLatestModel(selected);
       const messageId = randomUUID();
       const taskRunId = mode === "task" ? randomUUID() : (rt?.record.currentTaskRunId ?? null);
       const deadlineAt = opts.requestReply === true ? new Date(Date.now() + this.questionTtlMs).toISOString() : undefined;
@@ -4982,6 +5008,7 @@ export class Supervisor implements GateHost {
       if (rt.activeRun) throw err("CONFLICT", "agent has an unfinished run");
       const resumeHold = this.admissionHoldError();
       if (resumeHold !== null) throw resumeHold;
+      if (rt.record.model !== null) this.assertLatestModel(rt.record.model);
       rt.held = false;
       // Move it to the front: the explicit choice dispatches first.
       rt.queue = [queued, ...rt.queue.filter((q) => q !== queued)];
@@ -5014,9 +5041,11 @@ export class Supervisor implements GateHost {
         case "resume_review":
           this.gate.resumeReview(action.taskRunId, action.reviewId, commandId);
           return { taskRunId: action.taskRunId };
-        case "retry_review":
-          assertGateFits(this.gate.validateSpec(action.gate ?? state.spec), main.record.allocation.writableRoot !== null);
-          return { taskRunId: this.gate.retryReview(action.taskRunId, action.candidateId, action.gate, commandId) };
+        case "retry_review": {
+          const spec = this.gate.validateSpec(action.gate ?? state.spec);
+          assertGateFits(spec, main.record.allocation.writableRoot !== null);
+          return { taskRunId: this.gate.retryReview(action.taskRunId, action.candidateId, spec, commandId) };
+        }
         case "bypass":
           return { taskRunId: this.gate.bypass(action.taskRunId, action.candidateId, action.reason, commandId) };
         case "set_limits":

@@ -161,6 +161,7 @@ for `sandbox` children and sets nesting, model, gate, and capacity limits
     }
   ],
   "allowedModels": [{ "provider": "zai", "id": "glm-5.3" }],
+  "latestModelsOnly": true,
   "gateBypassAllowed": false,
   "gateMaxRoundsCeiling": 3,
   "allowedTools": ["mcp__codegraph__codegraph_explore"],
@@ -255,15 +256,29 @@ session (reported at start and by every subagent tool).
 `workspace_path` is accepted; a list that is not absolute paths is an
 error.
 
-Children inherit the governing session's current model and thinking level;
-`model` on `spawn_agent` overrides it only with an `allowedModels` entry
-(`"allowedModels": null` allows every model instead of listing them).
-Every reviewer model must also be allowlisted (or run under `null`). A dispatch reserves one agent identity plus one per reviewer before creating anything; reviewers share the normal runnable/resident limits and can drain a panel even with one slot.
+Children inherit their owner's selected model and thinking level.
+Explicit overrides and reviewer models must be in `allowedModels` (or the
+allowlist must be disabled with `"allowedModels": null`). Independently,
+`latestModelsOnly` (default `true`) rejects older generations for inherited
+and explicit models, reviewers, and reused agents. A model is older only if
+the governing registry has an available, strictly newer version of the same
+recognized family and serving variant on that provider route. Unrecognized
+IDs and floating aliases are not retired. No model is switched automatically.
+
+To permit older generations in Home Manager, set
+`smind.hm.dev.llm.pi.subagentsLatestModelsOnly = false;`. If you maintain
+`subagents-policy.json` yourself, set `"latestModelsOnly": false` instead.
+The explicit model allowlist still applies.
+
+A dispatch reserves one agent identity plus one per reviewer before creating
+anything; reviewers share the normal runnable/resident limits and can drain a
+panel even with one slot.
 The whole file is declarative in home-manager — setting any of these
 manages `subagents-policy.json` complete, so partial files are never
 half-clobbered:
-`smind.hm.dev.llm.pi.subagentsAllowAllModels` (allow every model, wins on
-conflict), `...AllowedModels`, `...MaxDepth` (1–2), `...Nesting` (needs
+`smind.hm.dev.llm.pi.subagentsAllowAllModels` (disable the explicit allowlist;
+takes precedence over `...AllowedModels`), `...AllowedModels`,
+`...LatestModelsOnly` (default true), `...MaxDepth` (1–2), `...Nesting` (needs
 depth 2), `...Repos` (`repoId`, `checkoutPath`, optional `readRoots`,
 `allowWriters`), `...GateBypassAllowed`, `...GateMaxRoundsCeiling`
 (`null` for unlimited), `...AllowedTools` (explicit full-name allowlist for
@@ -278,7 +293,9 @@ ordering above is asserted at evaluation).
 
 Built-in and declarative `models.json` providers retain live access to the
 approved `~/.pi/agent/auth.json` through `PI_SUBAGENTS_HOST_AGENT_DIR`;
-`auth.json` is never copied and is hidden from sandboxed tool views.
+`auth.json` is never copied and is hidden from sandboxed tool views. Stock
+workers load Pi's saved `models-store.json` from that directory even when
+`models.json` is absent; they do not fetch the model catalogue at launch.
 For a parent extension's legacy registration using a stock SDK API, only the
 selected model's public metadata is transferred. The parent resolves fresh
 request credentials and headers over private, generation-fenced IPC; workers

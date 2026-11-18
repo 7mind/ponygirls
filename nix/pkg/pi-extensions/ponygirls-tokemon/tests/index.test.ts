@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ENV_PROVIDER_KEYS } from "../src/discovery.ts";
 import { quotaWindow } from "../src/quota.ts";
-import { toolReport } from "../src/report.ts";
+import { toolReport, type ProviderReport, type ToolReport } from "../src/report.ts";
 import type { QueryResult } from "../src/service.ts";
 import { fixture, renderBorderWidget, untag } from "./scripted-http.ts";
 
@@ -43,21 +43,41 @@ test("the tool lists configured providers and, on request, their models; /tokemo
       ui: { notify: (text: string) => notices.push(text) },
       modelRegistry: {
         getProviderAuth: async (provider: string) => ({ auth: { apiKey: provider === "meta" ? "m" : "x" } }),
-        getAvailable: () => [{ provider: "meta", id: "muse-spark" }, { provider: "xiaomi", id: "mimo-1", reasoning: true }, { provider: "xiaomi", id: "mimo-2" }],
+        getAvailable: () => [
+          { provider: "meta", id: "muse-spark-1.2", reasoning: true },
+          { provider: "meta", id: "muse-spark-1.3" },
+          { provider: "meta", id: "muse-ember-1.0" },
+          { provider: "xiaomi", id: "mimo-v2.6-pro" },
+        ],
       },
       getContextUsage: () => ({ tokens: 12345, contextWindow: 200000, percent: 6.17 }),
     };
-    const plain = JSON.parse((await tools.get("tokemon")!("t1", {}, undefined, undefined, ctx)).content[0]!.text) as { providers: Array<{ provider: string; note: string | null; windows: unknown[] }>; models?: unknown; context?: unknown };
+    const call = async (params: object): Promise<ToolReport> => {
+      const result = await tools.get("tokemon")!("report", params, undefined, undefined, ctx);
+      assert.equal(result.isError, undefined, result.content[0]!.text);
+      return JSON.parse(result.content[0]!.text) as ToolReport;
+    };
+    const plain = await call({});
     assert.deepEqual(plain.providers.map((p) => [p.provider, p.note]), [["meta", "API key: no plan quota endpoint"], ["xiaomi", "no quota endpoint"]]);
     assert.equal(plain.models, undefined);
     assert.deepEqual(plain.context, { tokens: 12345, contextWindow: 200000, percent: 6.17 }, "context rides along by default");
-    const withModels = JSON.parse((await tools.get("tokemon")!("t2", { include_models: true }, undefined, undefined, ctx)).content[0]!.text) as { models: Record<string, Array<{ id: string; efforts: string[] }>> };
+    const withModels = await call({ include_models: true });
+    const ember = { id: "muse-ember-1.0", efforts: ["off"] };
+    const spark = { id: "muse-spark-1.3", efforts: ["off"] };
     assert.deepEqual(withModels.models, {
-      meta: [{ id: "muse-spark", efforts: ["off"] }],
-      xiaomi: [{ id: "mimo-1", efforts: ["off", "minimal", "low", "medium", "high"] }, { id: "mimo-2", efforts: ["off"] }],
+      meta: [ember, spark],
+      xiaomi: [{ id: "mimo-v2.6-pro", efforts: ["off"] }],
     });
-    const noContext = JSON.parse((await tools.get("tokemon")!("t3", { include_context: false }, undefined, undefined, ctx)).content[0]!.text) as { context?: unknown };
-    assert.equal(noContext.context, undefined);
+    const full = await call({ include_models: true, include_older_models: true });
+    assert.deepEqual(full.models, {
+      ...withModels.models,
+      meta: [ember, { id: "muse-spark-1.2", efforts: ["off", "minimal", "low", "medium", "high"] }, spark],
+    });
+    const withoutAge = ({ ageSeconds: _age, ...provider }: ProviderReport) => provider;
+    assert.deepEqual(full.providers.map(withoutAge), withModels.providers.map(withoutAge));
+    assert.deepEqual(full.context, plain.context);
+    assert.equal((await call({ include_older_models: true })).models, undefined, "the toggle alone does not enable model reporting");
+    assert.equal((await call({ include_context: false })).context, undefined);
     await commands.get("tokemon")!("", ctx);
     assert.match(notices[0]!, /Provider\s+Src\s+Login/);
     assert.match(notices[0]!, /2 rows hidden: 2 without quota data/);

@@ -1550,8 +1550,10 @@ async function resolveModel(sdk: SdkModules, init: InitializePayload, agentDir: 
   const modelsPath = join(hostAgentDir, "models.json");
   let parentProvider: ParentModelProvider | null = null;
   const parentCredentials = init.providerModel === undefined && init.providerBackend === undefined ? null : new (await loadCompat()).InMemoryCredentialStore();
+  // Even without models.json, Pi uses its directory to restore the saved
+  // models-store.json overlay. A null path disables both.
   const modelRuntime = await sdk.ModelRuntime.create(parentCredentials === null
-    ? { authPath: join(hostAgentDir, "auth.json"), modelsPath: existsSync(modelsPath) ? modelsPath : null }
+    ? { authPath: join(hostAgentDir, "auth.json"), modelsPath, allowModelNetwork: false }
     : { credentials: parentCredentials, modelsPath: null });
   if (init.providerModel !== undefined) {
     const descriptor = parseParentModel(init.providerModel, init.model);

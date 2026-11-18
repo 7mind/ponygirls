@@ -98,6 +98,10 @@ export function loadPolicy(): LoadedPolicy {
   else if (Array.isArray(raw.allowedModels)) {
     policy.allowedModels = raw.allowedModels.filter((m) => typeof m?.provider === "string" && typeof m?.id === "string");
   }
+  if (raw.latestModelsOnly !== undefined) {
+    if (typeof raw.latestModelsOnly !== "boolean") throw new Error(`POLICY_DENIED: ${path}: latestModelsOnly must be a boolean`);
+    policy.latestModelsOnly = raw.latestModelsOnly;
+  }
   // Generic external allowlist: malformed lists/patterns fail visibly, never
   // silently discarded (empty default = no external delegation).
   if (raw.allowedTools === undefined) {
@@ -344,6 +348,7 @@ export default function (pi: ExtensionAPI): void {
       schedulerLimits,
       governor: () => ({ model: binding.model, cwd: binding.cwd, instructions: binding.instructions }),
       backends: () => binding.backends,
+      availableModels: () => binding.modelRegistry.getAvailable(),
       parentModels: new GoverningModels(() => {
         if (!binding.providerActive) throw new Error("STALE_GENERATION: governing model registry is no longer active");
         return binding.modelRegistry;

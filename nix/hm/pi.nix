@@ -339,6 +339,7 @@ let
   piSubagentsPolicyJson = jsonFormat.generate "pi-subagents-policy.json" (import ../lib/subagents-policy.nix {
     allowAllModels = cfg.pi.subagentsAllowAllModels;
     allowedModels = cfg.pi.subagentsAllowedModels;
+    latestModelsOnly = cfg.pi.subagentsLatestModelsOnly;
     allowedTools = cfg.pi.subagentsAllowedTools;
     worktreeRoot = cfg.pi.subagentsWorktreeRoot;
     maxDepth = cfg.pi.subagentsMaxDepth;
@@ -359,6 +360,7 @@ let
   subagentsPolicyManaged =
     cfg.pi.subagentsAllowAllModels
     || cfg.pi.subagentsAllowedModels != [ ]
+    || !cfg.pi.subagentsLatestModelsOnly
     || cfg.pi.subagentsAllowedTools != [ ]
     || cfg.pi.subagentsWorktreeRoot != null
     || cfg.pi.subagentsMaxDepth != 1
@@ -606,15 +608,29 @@ in
       type = lib.types.bool;
       default = true;
       description = ''
-        Let Pi subagents use any model: writes `"allowedModels": null` to
+        Disable the explicit model allowlist: writes `"allowedModels": null` to
         `subagents-policy.json` (see {option}`smind.hm.dev.llm.pi.subagentsAllowedModels`),
         skipping the root model allowlist for `spawn_agent` overrides and
-        gate reviewers. Explicit model overrides are denied when this is false
-        and the list is empty. Takes precedence over
+        gate reviewers. The generation filter still applies independently
+        (see {option}`smind.hm.dev.llm.pi.subagentsLatestModelsOnly`). Explicit
+        model overrides are denied when this is false and the list is empty.
+        Takes precedence over
         {option}`smind.hm.dev.llm.pi.subagentsAllowedModels` when both are set.
         Setting this or a non-empty list manages `subagents-policy.json`
         declaratively (read-only store symlink); otherwise a hand-maintained
         file is left alone.
+      '';
+    };
+
+    smind.hm.dev.llm.pi.subagentsLatestModelsOnly = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Reject older generations for Pi subagents when a newer release in the
+        same model family is available on that provider. Applies to inherited
+        models, overrides, and reviewers, independently of the explicit model
+        allowlist. Set to false to permit older generations; this manages
+        `subagents-policy.json` declaratively.
       '';
     };
 
