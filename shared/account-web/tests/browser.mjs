@@ -668,5 +668,44 @@ try {
     assert.equal(await profileMarkup('manure'), await profileMarkup('chronicle'));
   });
 
+  // Spec §8 item 9 at a phone width: no view scrolls sideways, and the list tables keep every cell and row action
+  // inside the viewport (no column is dropped and there is no inner scroller, spec §1).
+  await run('390 px: no account view scrolls sideways; every table cell and row action stays within the viewport', async ({ page, errors }) => {
+    const PHONE = { width: 390, height: 844 };
+    // Each scenario is driven into its state by the harness (with ?steps), on its own page: the states with a shown-once
+    // value hold navigation away (beforeunload). The last one stays open for the 1440 check.
+    const VIEWS = ['login-default', 'login-totp', 'login-pending', 'signup-default', 'signup-pending', 'signup-enroll', 'recover-default',
+      'settings-profile', 'settings-password', 'settings-totp-replace', 'users-menu', 'settings-tokens-secret', 'users-enroll-link'];
+    const outside = view => view.evaluate(() => {
+      const width = document.scrollingElement.clientWidth;
+      const out = node => { const box = node.getBoundingClientRect(); return box.width === 0 || box.left < 0 || box.right > width; };
+      const cells = [...document.querySelectorAll('table[data-list] tbody tr')].flatMap(row => [...row.cells]
+        .filter(cell => !cell.checkVisibility() || out(cell) || cell.scrollWidth > cell.clientWidth).map(cell => `${row.dataset.rowId} cell ${cell.cellIndex}`));
+      const actions = [...document.querySelectorAll('table[data-list] tbody button')].filter(button => button.closest('[role="menu"]') === null)
+        .filter(button => !button.checkVisibility({ opacityProperty: true, visibilityProperty: true }) || out(button)).map(button => button.getAttribute('aria-label'));
+      const menus = [...document.querySelectorAll('[role="menu"]')].filter(menu => menu.checkVisibility() && out(menu)).map(menu => menu.getAttribute('aria-label'));
+      return [...cells, ...actions, ...menus];
+    });
+    let view = null;
+    for (const name of VIEWS) {
+      if (view !== null) await view.close({ runBeforeUnload: false });
+      view = await page.context().newPage();
+      view.on('pageerror', error => errors.push(error.message));
+      await view.setViewportSize(PHONE);
+      await view.goto(`${server.origin}/?scenario=${name}`);
+      await view.waitForFunction(() => document.documentElement.dataset.harnessReady === 'true');
+      assert.deepEqual(await view.evaluate(() => [document.scrollingElement.scrollWidth, document.scrollingElement.clientWidth]), [PHONE.width, PHONE.width], `${name}: no sideways scroll`);
+      assert.deepEqual(await outside(view), [], `${name}: every cell and row action is within the viewport`);
+      if (name === 'settings-tokens-secret') assert.ok(await view.locator('table[data-list="tokens"] tbody tr').count() >= 2);
+    }
+    for (const row of ['bob', 'erin']) assert.equal(await view.locator(`tr[data-row-id="${row}"]`).count(), 1, `${row}: a pending applicant and an ordinary user are listed`);
+    // 1440 keeps the table form: one header row with every column side by side.
+    await view.setViewportSize({ width: 1440, height: 900 });
+    const heads = await view.locator('table[data-list="users"] thead th').evaluateAll(cells => cells.map(cell => [cell.getBoundingClientRect().top, cell.getBoundingClientRect().width > 0]));
+    assert.equal(heads.length, 6);
+    assert.deepEqual(heads, heads.map(() => [heads[0][0], true]));
+    await view.close({ runBeforeUnload: false });
+  });
+
   console.log(`PASS ${cases} account view browser cases`);
 } finally { await browser.close(); await server.close(); }

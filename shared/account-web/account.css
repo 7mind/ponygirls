@@ -34,6 +34,8 @@
 .is-revoked .cell-sub { text-decoration: none; }
 .col-t-name { width: 26%; } .col-t-scope { width: 180px; } .col-t-source { width: 160px; } .col-t-date { width: 130px; } .col-t-act { width: 104px; }
 .col-u-status { width: 190px; } .col-u-src { width: 160px; } .col-u-totp { width: 130px; } .col-u-date { width: 130px; } .col-u-act { width: 116px; }
+/* An optional column gives way where the table is narrower than the md breakpoint; the stacked rows show it again. */
+@media (720px < width <= 1100px) { .account .col-optional { display: none; } }
 
 /* ── One-time secret or link: cannot be lost by accident ─────────────────── */
 .secret { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--warn-bd); border-left: 4px solid var(--warn-fg); border-radius: var(--radius-md); background: var(--warn-bg); }
@@ -74,4 +76,32 @@
   .account-nav .eyebrow, .account-who { display: none; }
   .signup-grid { grid-template-columns: 1fr; }
   .signup-grid > section + section { padding-left: 0; border-left: 0; padding-top: var(--space-5); border-top: 1px solid var(--border); }
+}
+
+/* ── Narrow (the shared sm breakpoint, 720 px): list tables stack their rows ─────────
+ * Their columns need about 600 px; a phone would scroll the document sideways and squeeze the first column to nothing.
+ * Spec §1 forbids an inner horizontal scroller, and every column's content must stay reachable, so each row stacks:
+ * its first cell and its actions share the first line, the other cells follow two to a line under a caption with their
+ * column header (data-label; the caption is not part of the cell's accessible name). The header row stays for
+ * assistive technology only, and the list head wraps and no longer sticks. */
+@media (max-width: 720px) {
+  .account-list-head { position: static; flex-wrap: wrap; padding-top: var(--space-2); padding-bottom: var(--space-2); }
+  .account-list-head > .grow { flex-basis: 100%; }
+  .account-list-head .segmented { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: 1 1 100%; height: auto; }
+  .account-list-head .segmented > button { justify-content: center; min-height: var(--control-h-sm); }
+  .token-filter, .user-filter { flex: 1 1 auto; width: auto; }
+  .account .table, .account .table tbody { display: block; }
+  .account .table colgroup { display: none; }
+  .account .table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .account .table tbody tr { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--space-3); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border); }
+  .account .table tbody tr:last-child { border-bottom: 0; }
+  .account .table tbody tr::after { content: ''; order: 1; flex-basis: 100%; }
+  .account .table td { order: 2; flex: 1 1 40%; height: auto; margin-top: var(--space-2); padding: 0; border-bottom: 0; white-space: normal; overflow-wrap: anywhere; }
+  .account .table td:first-child { order: 0; flex: 1 1 0; min-width: 0; margin-top: 0; padding: 0; }
+  .account .table td.col-actions { order: 1; flex: none; margin-top: 0; padding: 0; }
+  .account .table td[data-label]::before { content: attr(data-label) / ''; display: block; color: var(--text-muted); font-size: var(--text-xs); }
+  .account .table tbody tr:hover td, .account .table tbody tr[aria-selected="true"] td { background: none; }
+  .account .table tbody tr:hover { background: var(--bg-hover); }
+  .account .table tbody tr[aria-selected="true"] { background: var(--accent-soft); }
+  .account .row-actions { opacity: 1; }
 }

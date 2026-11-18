@@ -36,6 +36,9 @@ const ACTOR_HEADER = 'X-Account-Actor';
 const KNOWN_SCOPES = ['api', 'Ingest', 'Read', 'Raw'];
 const SCOPE_MEANINGS = { Ingest: 'upload sessions (collectors)', Read: 'search and read indexed sessions', Raw: 'original source records; includes Read' };
 const APP_NAMES = { chronicle: 'Chronicle', haystack: 'Haystack', manure: 'Manure' };
+// Column headers of the two list tables; a narrow screen repeats them as labels of the stacked cells (data-label).
+const TOKEN_COLUMNS = { name: 'Name', scopes: 'Permissions', source: 'Source', created: 'Created', id: 'Token ID' };
+const USER_COLUMNS = { user: 'User', status: 'Status', source: 'Source', twoFactor: 'Two-factor', created: 'Created' };
 const USER_FILTERS = [['all', 'All'], ['pending', 'Pending approval'], ['disabled', 'Disabled'], ['admins', 'Admins']];
 const PROOF_FIELD = { name: 'currentPassword', label: 'Your current password', type: 'password', hint: 'Required for this change; used for this request only.' };
 const PROOF_REJECTED_TEXT = 'Your password was not accepted.';
@@ -1226,7 +1229,7 @@ export function installAccountUI(environment) {
       const tbody = h('tbody', {});
       const tableCard = h('div', { class: 'card' }, h('table', { class: 'table table-inset', 'aria-label': 'Access tokens', 'data-list': 'tokens' },
         h('colgroup', {}, h('col', { class: 'col-t-name' }), h('col', { class: 'col-t-scope' }), h('col', { class: 'col-t-source' }), h('col', { class: 'col-t-date' }), h('col', {}), h('col', { class: 'col-t-act' })),
-        h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Permissions'), h('th', {}, 'Source'), h('th', {}, 'Created'), h('th', {}, 'Token ID'), h('th', { class: 'col-actions' }, h('span', { class: 'sr-only' }, 'Actions')))),
+        h('thead', {}, h('tr', {}, ...[TOKEN_COLUMNS.name, TOKEN_COLUMNS.scopes, TOKEN_COLUMNS.source, TOKEN_COLUMNS.created, TOKEN_COLUMNS.id].map(label => h('th', {}, label)), h('th', { class: 'col-actions' }, h('span', { class: 'sr-only' }, 'Actions')))),
         tbody));
       const emptyCreate = h('button', { class: 'btn btn-primary', type: 'button', onclick: () => openForm() }, icon('plus'), 'New token');
       const empty = h('div', { class: 'card empty', hidden: true }, icon('key'), h('h2', {}, 'No access tokens yet'), h('p', {}, 'Create one for each collector or CLI so that you can revoke them separately.'), h('div', { class: 'row' }, emptyCreate));
@@ -1285,10 +1288,10 @@ export function installAccountUI(environment) {
           onclick: async () => { if (await copyText(token.id)) toast('Token ID copied'); } }, icon('copy'));
         return h('tr', { class: token.revoked ? 'is-revoked' : null, 'aria-selected': isNew ? 'true' : null, 'data-row-id': token.id },
           h('td', {}, h('span', { class: 'cell-title' }, token.name, isNew ? [' ', h('span', { class: 'chip chip-accent' }, 'new')] : null)),
-          h('td', {}, ...token.scopes.flatMap((scope, index) => [index === 0 ? null : ' ', h('span', { class: 'chip' }, scope)])),
-          h('td', {}, configured ? h('span', { class: 'muted', title: 'Managed in server configuration; read-only here' }, icon('lock', true), ' Configuration') : 'Issued here'),
-          h('td', {}, recentDate(token.createdAt)),
-          h('td', {}, h('span', { class: 'token-id-cell' }, h('span', { class: 'token-id', title: token.id }, token.id.length > TOKEN_ID_TAIL ? `…${token.id.slice(-TOKEN_ID_TAIL)}` : token.id), h('span', { class: 'row-actions' }, copyId))),
+          h('td', { 'data-label': TOKEN_COLUMNS.scopes }, ...token.scopes.flatMap((scope, index) => [index === 0 ? null : ' ', h('span', { class: 'chip' }, scope)])),
+          h('td', { 'data-label': TOKEN_COLUMNS.source }, configured ? h('span', { class: 'muted', title: 'Managed in server configuration; read-only here' }, icon('lock', true), ' Configuration') : 'Issued here'),
+          h('td', { 'data-label': TOKEN_COLUMNS.created }, recentDate(token.createdAt)),
+          h('td', { 'data-label': TOKEN_COLUMNS.id }, h('span', { class: 'token-id-cell' }, h('span', { class: 'token-id', title: token.id }, token.id.length > TOKEN_ID_TAIL ? `…${token.id.slice(-TOKEN_ID_TAIL)}` : token.id), h('span', { class: 'row-actions' }, copyId))),
           h('td', { class: 'col-actions' }, token.revoked ? h('span', { class: 'chip' }, 'Revoked') : configured ? h('span', { class: 'xs muted' }, 'read-only')
             : entry(h('button', { class: 'btn btn-sm btn-danger-quiet', type: 'button', 'aria-label': `Revoke ${token.name}`, onclick: () => confirmRevoke(token) }, 'Revoke'), false)));
       }
@@ -1449,8 +1452,8 @@ export function installAccountUI(environment) {
       const slot = h('div', { class: 'stack', hidden: true });
       const tbody = h('tbody', {});
       const tableCard = h('div', { class: 'card' }, h('table', { class: 'table table-inset table-2line', 'aria-label': 'Users', 'data-list': 'users' },
-        h('colgroup', {}, h('col', {}), h('col', { class: 'col-u-status' }), h('col', { class: 'col-u-src' }), h('col', { class: 'col-u-totp' }), h('col', { class: 'col-u-date hide-md' }), h('col', { class: 'col-u-act' })),
-        h('thead', {}, h('tr', {}, h('th', {}, 'User'), h('th', {}, 'Status'), h('th', {}, 'Source'), h('th', {}, 'Two-factor'), h('th', { class: 'hide-md' }, 'Created'), h('th', { class: 'col-actions' }, h('span', { class: 'sr-only' }, 'Actions')))),
+        h('colgroup', {}, h('col', {}), h('col', { class: 'col-u-status' }), h('col', { class: 'col-u-src' }), h('col', { class: 'col-u-totp' }), h('col', { class: 'col-u-date col-optional' }), h('col', { class: 'col-u-act' })),
+        h('thead', {}, h('tr', {}, ...[USER_COLUMNS.user, USER_COLUMNS.status, USER_COLUMNS.source, USER_COLUMNS.twoFactor].map(label => h('th', {}, label)), h('th', { class: 'col-optional' }, USER_COLUMNS.created), h('th', { class: 'col-actions' }, h('span', { class: 'sr-only' }, 'Actions')))),
         tbody));
       const foot = h('p', { class: 'xs muted' });
       const section = h('section', { class: 'account-section', 'data-view': 'users', 'aria-labelledby': titleId },
@@ -1532,15 +1535,15 @@ export function installAccountUI(environment) {
         const twoFactor = user.totpRequired === null ? '—' : user.totpRequired ? 'Required' : 'Recovery only';
         return h('tr', { class: user.status === 'disabled' ? 'is-revoked' : null, 'data-row-id': user.id },
           h('td', {}, h('span', { class: 'cell-title' }, nameOf(user)), h('span', { class: 'cell-sub' }, user.email ?? (user.displayName === nameOf(user) ? '' : user.displayName))),
-          h('td', {}, h('div', { class: 'row row-wrap' }, ...chips)), h('td', {}, source), h('td', {}, twoFactor),
-          h('td', { class: 'hide-md' }, recentDate(user.createdAt)),
+          h('td', { 'data-label': USER_COLUMNS.status }, h('div', { class: 'row row-wrap' }, ...chips)), h('td', { 'data-label': USER_COLUMNS.source }, source), h('td', { 'data-label': USER_COLUMNS.twoFactor }, twoFactor),
+          h('td', { class: 'col-optional', 'data-label': USER_COLUMNS.created }, recentDate(user.createdAt)),
           h('td', { class: 'col-actions' }, userActions(user)));
       }
       function inviteRow(enrollment) {
         return h('tr', { 'data-row-id': `invite:${enrollment.username}` },
           h('td', {}, h('span', { class: 'cell-title' }, enrollment.username), h('span', { class: 'cell-sub' }, 'no account yet')),
-          h('td', {}, h('div', { class: 'row row-wrap' }, chip('info', 'Invitation sent'), h('span', { class: 'xs muted' }, `expires ${expiryText(enrollment.expiresAt)}`))),
-          h('td', {}, `Invited by ${enrollment.createdBy}`), h('td', {}, '—'), h('td', { class: 'hide-md' }, recentDate(enrollment.createdAt)),
+          h('td', { 'data-label': USER_COLUMNS.status }, h('div', { class: 'row row-wrap' }, chip('info', 'Invitation sent'), h('span', { class: 'xs muted' }, `expires ${expiryText(enrollment.expiresAt)}`))),
+          h('td', { 'data-label': USER_COLUMNS.source }, `Invited by ${enrollment.createdBy}`), h('td', { 'data-label': USER_COLUMNS.twoFactor }, '—'), h('td', { class: 'col-optional', 'data-label': USER_COLUMNS.created }, recentDate(enrollment.createdAt)),
           h('td', { class: 'col-actions' }, entry(h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': `Revoke the invitation for ${enrollment.username}`, onclick: () => confirmRevokeInvite(enrollment) }, 'Revoke link'), false)));
       }
       function userActions(user) {
