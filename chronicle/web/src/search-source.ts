@@ -1,4 +1,4 @@
-import { ArchiveMatchKind, ArchiveTextScope, Span, type ArchiveSearchResult, type ContentView, type ContextExcerpt, type MessageContextResult } from './api.ts';
+import { ArchiveMatchKind, ArchiveTextScope, Span, type ArchiveRow, type ArchiveSearchResult, type ArchiveSourceMatch, type ContentView, type ContextExcerpt, type MessageContextResult } from './api.ts';
 import { highlightUtf8, type TextPart } from './highlight.ts';
 import { requireContentView, sameContentView } from './source-view.ts';
 export const SEARCH_PAGE_SIZE = 10;
@@ -85,4 +85,13 @@ export function validateContext(result: MessageContextResult, sessionId: string,
   if (before > 0 && after === 0 && result.previous !== undefined && sameSpan(result.previous, anchor)) throw new Error('Context continuation did not advance.');
   if (after > 0 && before === 0 && result.next !== undefined && sameSpan(result.next, anchor)) throw new Error('Context continuation did not advance.');
   return result;
+}
+export interface SearchResultRow { readonly row: ArchiveRow; readonly matches: readonly ArchiveSourceMatch[] }
+export function resultRows(result: ArchiveSearchResult): SearchResultRow[] {
+  return result.page.rows.map((row, index) => ({ row, matches: result.evidence[index]!.matches }));
+}
+// A conversation can move between cursor pages while the archive changes: the first occurrence stays, in server order.
+export function appendResultRows(loaded: readonly SearchResultRow[], appended: readonly SearchResultRow[]): SearchResultRow[] {
+  const seen = new Set(loaded.map(item => item.row.head.id));
+  return [...loaded, ...appended.filter(item => !seen.has(item.row.head.id))];
 }

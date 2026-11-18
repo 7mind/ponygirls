@@ -116,8 +116,9 @@ Tests classify cheap blackbox contracts and controlled local communication separ
 Authenticated sessions open on Search, including after sign-in or account changes.
 Archive and Activity table headers contain vertical three-dot options for fitting
 width/content and selecting columns; resizing remains available on each header.
-Search source matches are numbered. Result pages expose visited cursor-backed
-pages plus the next available page, not arbitrary jumps to unseen cursors.
+Search results load cursor by cursor as the page scrolls and end with an explicit
+marker; there are no numbered pages. A result expands in place to show its source
+matches with context.
 
 ## Configure and run
 

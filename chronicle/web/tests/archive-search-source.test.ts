@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ArchiveMatchKind, ArchiveRow, ArchiveSearchEvidence, ArchiveSearchResult, ArchiveSourceMatch, ArchiveResult, ArchiveTextScope, Completion, ContentView, Metadata, SessionInfo, SourceIdentity, SourceFormat, Span } from '../src/api.ts';
-import { sourceFailureAffectsView, validateArchiveSearchPage } from '../src/search-source.ts';
+import { appendResultRows, resultRows, sourceFailureAffectsView, validateArchiveSearchPage } from '../src/search-source.ts';
 const headView = new ContentView(3, undefined), publishedView = new ContentView(1, 'generation');
 function result(): ArchiveSearchResult {
   const metadata = new Metadata('Title', 'project', undefined, undefined, undefined, undefined, 'producer', undefined, undefined, undefined, []);
@@ -52,4 +52,11 @@ test('BA: metadata-only and negative-only rows need no fabricated textual witnes
   assert.equal(validateArchiveSearchPage(page, undefined), page);
   const empty = new ArchiveSearchResult(page.page.with({ rows: [], total: 0n }), []);
   assert.equal(validateArchiveSearchPage(empty, undefined), empty);
+});
+test('BA: appended search pages keep the first occurrence of a conversation, in server order, with its own evidence', () => {
+  const valid = result(), first = resultRows(valid), moved = valid.page.rows[0]!.with({ head: valid.page.rows[0]!.head.with({ id: 'other' }) });
+  const second = resultRows(valid.with({ page: valid.page.with({ rows: [valid.page.rows[0]!, moved] }), evidence: [valid.evidence[0]!, valid.evidence[0]!.with({ sessionId: 'other' })] }));
+  const merged = appendResultRows(first, second);
+  assert.deepEqual(merged.map(item => item.row.head.id), [valid.page.rows[0]!.head.id, 'other']);
+  assert.equal(merged[0], first[0]); assert.deepEqual(merged[1]!.matches, valid.evidence[0]!.matches);
 });

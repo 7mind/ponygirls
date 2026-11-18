@@ -1,25 +1,51 @@
 import { useEffect, useRef, useState } from 'react';
-import { Operation_ArchiveSearch, Result_ArchiveSearch, ArchiveQuery, ArchiveSort, ArchiveTextScope, ExpressionHintTarget_Archive, SortDirection, ArchiveMatchKind, Operation_ReadMessageContext, Result_MessageContext, Span, type ArchiveRow, type ArchiveSourceMatch, type ContentView, type MessageContextResult, type PassageSourceSpan, type UserInfo } from './api.ts';
+import type { ReactNode } from 'react';
+import { Operation_ArchiveSearch, Result_ArchiveSearch, ArchiveQuery, ArchiveSort, type ArchiveResult, ArchiveTextScope, ExpressionHintTarget_Archive, SortDirection, ArchiveMatchKind, Operation_ReadMessageContext, Result_MessageContext, Span, type ArchiveRow, type ArchiveSourceMatch, type ContentView, type MessageContextResult, type PassageSourceSpan, type UserInfo } from './api.ts';
 import { read, type ChronicleConnection } from './client.ts';
 import { RequestFailure, type ManagerStats } from './transport/types.ts';
 import type { TextPart } from './highlight.ts';
 import { useResource } from './hooks.ts';
-import { ErrorNotice, SessionMeta, Tags } from './App.tsx';
-import { Dialog } from './Dialog.tsx';
-import { Conversation, type SourceLanding } from './Conversation.tsx';
-import type { SessionFindReadGate } from './session-find.ts';
+import { Anchored } from './Popover.tsx';
+import { RouteParams, formatRoute, sessionRoute, viewRoute } from './router.ts';
 import { contentViewKey, sameContentView } from './source-view.ts';
-import { CONTEXT_BYTES, SEARCH_PAGE_SIZE, SNIPPET_BYTES, snippetAnchor, validateContext, validateArchiveSearchPage, contextParts, sourceFailureAffectsView, type SearchSourceFailure } from './search-source.ts';
+import { CONTEXT_BYTES, SEARCH_PAGE_SIZE, SNIPPET_BYTES, snippetAnchor, validateContext, validateArchiveSearchPage, contextParts, type SearchResultRow, type SearchSourceFailure } from './search-source.ts';
+import { useSearchChain } from './search-chain.ts';
 import { ExpressionEditor, archiveFields } from './ExpressionEditor.tsx';
-import { Pagination } from './Pagination.tsx';
 import './search.css';
-interface Selection { row: ArchiveRow; view: ContentView; landing: SourceLanding | undefined }
 interface SearchScope { connection: ChronicleConnection; stats: ManagerStats; user: UserInfo }
 interface ContextPage { anchor: Span; before: number; after: number }
 interface SourceExcerpt { source: PassageSourceSpan; role: string; parts: TextPart[] }
+interface MessageRange { first: number; last: number }
 type ContextRead = { kind: 'source'; result: MessageContextResult; excerpts: SourceExcerpt[] } | { kind: 'failure'; failure: SearchSourceFailure };
-function SourceContext({ connection, stats, user, sessionId, view, span, open, fail }: SearchScope & { sessionId: string; view: ContentView; span: Span; open: (landing: SourceLanding) => void; fail: (failure: SearchSourceFailure) => void }) {
-  const [page, setPage] = useState<ContextPage>(() => ({ anchor: snippetAnchor(span), before: 0, after: SNIPPET_BYTES }));
+type IconName = 'search' | 'info' | 'chevron-down' | 'chevron-up' | 'arrow-right' | 'arrow-up' | 'arrow-down' | 'alert';
+const SESSION_REVISION_PARAM = 'rev', SESSION_MESSAGE_PARAM = 'at', SESSION_FIND_PARAM = 'find';
+const ICON_SPRITE = '/ui/icons.svg';
+const SKELETON_RESULTS = 4;
+const LOAD_AHEAD_MARGIN = '0px 0px 400px 0px';
+const VISIBLE_TAGS = 3;
+const EXAMPLE_QUERIES: readonly string[] = ['migration retry', '"lock timeout" project:chronicle', 'tag:flaky after:2026-11-01', 'producer:pi AND NOT branch:main'];
+function Icon({ name, small }: { name: IconName; small: boolean }) {
+  return <svg className={small ? 'icon icon-sm' : 'icon'} viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href={`${ICON_SPRITE}#${name}`}/></svg>;
+}
+function Notice({ title, children, actions }: { title: string; children: ReactNode; actions: ReactNode }) {
+  return <div className="notice notice-danger" role="alert"><Icon name="alert" small={false}/><div><div className="notice-title">{title}</div>{children}{actions !== null && <div className="notice-actions">{actions}</div>}</div></div>;
+}
+function sentence(text: string): string { return `${text.replace(/[.\s]+$/, '')}.`; }
+function timestamp(value: string): string { return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }); }
+// The session route (spec §5): revision pin, message and the Find text of the match; the session view applies them.
+function sessionHref(sessionId: string, view: ContentView, match: ArchiveSourceMatch | undefined): string {
+  const entries: [string, string][] = [[SESSION_REVISION_PARAM, String(view.revision)]];
+  if (match !== undefined) entries.push([SESSION_MESSAGE_PARAM, match.span.messageId], [SESSION_FIND_PARAM, match.operand]);
+  return formatRoute({ ...sessionRoute(sessionId), params: new RouteParams(entries) });
+}
+function matchTitle(match: ArchiveSourceMatch): string { return `${match.kind === ArchiveMatchKind.Literal ? 'Literal' : 'Semantic'} match for ${match.operand}`; }
+function Highlighted({ parts }: { parts: readonly TextPart[] }) {
+  return <>{parts.map((part, index) => part.highlighted ? <mark key={index}>{part.text}</mark> : <span key={index}>{part.text}</span>)}</>;
+}
+function SearchHit({ connection, stats, user, sessionId, match, expanded, positions, fail }: SearchScope & { sessionId: string; match: ArchiveSourceMatch; expanded: boolean; positions: (range: MessageRange | null) => void; fail: (failure: SearchSourceFailure) => void }) {
+  const { span, view } = match;
+  const [moved, setMoved] = useState<ContextPage | null>(null), page = moved ?? { anchor: snippetAnchor(span), before: 0, after: SNIPPET_BYTES };
+  useEffect(() => { if (!expanded) setMoved(null); }, [expanded]);
   const context = useResource<ContextRead>(connection, stats, JSON.stringify([user.id, sessionId, contentViewKey(view), page.anchor.toJSON(), page.before, page.after]), '', true, async () => {
     try {
       const result = validateContext(await read(connection, new Operation_ReadMessageContext(sessionId, view, page.anchor, page.before, page.after), reply => reply instanceof Result_MessageContext ? reply.result : null), sessionId, view, page.anchor, page.before, page.after);
@@ -33,59 +59,120 @@ function SourceContext({ connection, stats, user, sessionId, view, span, open, f
   const code = context.data !== null && context.data.kind === 'failure' ? context.data.failure.code : null;
   const message = context.error ?? (context.data !== null && context.data.kind === 'failure' ? context.data.failure.message : null);
   useEffect(() => { if (message !== null) fail({ code, message }); }, [code, message, fail]);
-  return <section className="search-source" aria-label="Original source excerpts" aria-busy={context.loading}>
-    {context.loading && <p role="status">Loading source excerpts…</p>}
-    {message !== null && <ErrorNotice>{message}. Source excerpts cleared; no fallback used.</ErrorNotice>}
-    {source !== null && <><div className="search-excerpts">{source.excerpts.map(excerpt => {
-      const range = excerpt.source, parts = excerpt.parts;
-      return <article className="search-excerpt" key={`${range.messageId}:${range.start}`}><header><strong>{excerpt.role}</strong><button type="button" className="text-button" onClick={() => open({ view, span: new Span(range.messageId, range.start, range.end), position: range.messagePosition })}>Open {range.messageId} · UTF-8 bytes [{range.start}, {range.end})</button></header><pre>{parts.map((part, index) => part.highlighted ? <mark key={index}>{part.text}</mark> : <span key={index}>{part.text}</span>)}</pre></article>;
-    })}</div><div className="button-row"><button type="button" className="small-button" disabled={source.result.previous === undefined} onClick={() => { if (source.result.previous !== undefined) setPage({ anchor: source.result.previous, before: CONTEXT_BYTES, after: 0 }); }}>Earlier context</button><button type="button" className="small-button" disabled={source.result.next === undefined} onClick={() => { if (source.result.next !== undefined) setPage({ anchor: source.result.next, before: 0, after: CONTEXT_BYTES }); }}>Later context</button><button type="button" className="small-button" onClick={() => setPage({ anchor: snippetAnchor(span), before: 0, after: SNIPPET_BYTES })}>Matched source</button></div></>}
-  </section>;
+  const first = source === null ? undefined : source.excerpts[0]?.source, last = source === null ? undefined : source.excerpts.at(-1)?.source;
+  const firstPosition = first === undefined ? null : first.messagePosition, lastPosition = last === undefined ? null : last.messagePosition;
+  useEffect(() => { positions(firstPosition === null || lastPosition === null ? null : { first: firstPosition, last: lastPosition }); }, [firstPosition, lastPosition, positions]);
+  const href = sessionHref(sessionId, view, match), matched = (excerpt: SourceExcerpt) => excerpt.source.messageId === span.messageId && excerpt.parts.some(part => part.highlighted || moved === null);
+  const shown = source === null ? [] : expanded ? source.excerpts : source.excerpts.filter(matched).slice(0, 1);
+  return <div className="hit-group" data-match-kind={match.kind} aria-busy={context.loading}>
+    {context.loading && <p className="hit hit-loading" role="status"><span className="skeleton"/><span className="sr-only">Loading source excerpts…</span></p>}
+    {shown.map(excerpt => {
+      const range = excerpt.source, content = <><span className="hit-role" data-role={excerpt.role}>{excerpt.role}</span><span className="hit-text" data-hit-text=""><Highlighted parts={excerpt.parts}/></span><span className="hit-at">message {range.messagePosition + 1}</span></>;
+      return matched(excerpt) ? <a className="hit" data-hit="match" key={`${range.messageId}:${range.start}`} href={href} title={matchTitle(match)}>{content}</a> : <div className="hit hit-context" data-hit="context" key={`${range.messageId}:${range.start}`}>{content}</div>;
+    })}
+    {span.end - span.start > CONTEXT_BYTES && <p className="hit-note">Partial preview · source span exceeds {CONTEXT_BYTES} bytes.</p>}
+    {expanded && source !== null && <div className="hit-nav">
+      <button type="button" className="btn btn-sm" disabled={source.result.previous === undefined} onClick={() => { if (source.result.previous !== undefined) setMoved({ anchor: source.result.previous, before: CONTEXT_BYTES, after: 0 }); }}><Icon name="arrow-up" small={true}/>Earlier context</button>
+      <button type="button" className="btn btn-sm" disabled={source.result.next === undefined} onClick={() => { if (source.result.next !== undefined) setMoved({ anchor: source.result.next, before: 0, after: CONTEXT_BYTES }); }}><Icon name="arrow-down" small={true}/>Later context</button>
+    </div>}
+  </div>;
 }
-function SourceMatches({ matches, fail, ...props }: SearchScope & { sessionId: string; matches: readonly ArchiveSourceMatch[]; open: (landing: SourceLanding) => void; fail: (view: ContentView, failure: SearchSourceFailure) => void }) {
-  const [index, setIndex] = useState(0), match = matches[index];
-  if (match === undefined) throw new Error('Search representative source is missing.');
-  const { span, view } = match;
-  return <section className="search-match"><p className="tiny">{match.summary !== undefined && <>Generated annotation: {match.summary}<br/></>}{match.kind === ArchiveMatchKind.Literal ? 'Literal source' : 'Semantic retrieval source'} for <code>{match.operand}</code> · representative {index + 1} of {matches.length} · source r{view.revision} · generation {view.generationId ?? 'archive-only'}.{span.end - span.start > CONTEXT_BYTES && <> Partial preview · source span exceeds {CONTEXT_BYTES} bytes.</>}</p><SourceContext key={JSON.stringify([index, contentViewKey(view), span.messageId, span.start, span.end])} {...props} view={view} span={span} fail={error => fail(view, error)}/>{matches.length > 1 && <Pagination label="Source spans" itemLabel="Source span" count={matches.length} current={index} disabled={false} select={setIndex}/>}</section>;
+function Crumb({ row }: { row: ArchiveRow }) {
+  const metadata = row.head.metadata, tags = row.tags.slice(0, VISIBLE_TAGS), more = row.tags.length - tags.length;
+  return <div className="result-crumb"><span>{metadata.producer}</span><span className="sep">{metadata.project ?? 'No project'}</span>{metadata.gitBranch !== undefined && <span className="sep branch">{metadata.gitBranch}</span>}<span className="sep">{row.messageCount.toLocaleString()} messages</span>
+    {row.publishedView === undefined && <span className="chip" title="Not indexed yet: matched by exact text only">exact text only · not indexed</span>}
+    {tags.map(tag => <span className="chip chip-outline" key={tag}>{tag}</span>)}{more > 0 && <span className="chip chip-outline">+{more}</span>}</div>;
 }
-function SearchCard({ row, matches, open, sourceUnavailable, ...scope }: SearchScope & { row: ArchiveRow; matches: readonly ArchiveSourceMatch[]; open: (view: ContentView, landing: SourceLanding | undefined) => void; sourceUnavailable: (sessionId: string, view: ContentView, failure: SearchSourceFailure) => void }) {
-  const [unavailable, setUnavailable] = useState<string | null>(null), view = row.matchedView ?? row.publishedView ?? row.head.view;
-  const first = matches.find(match => sameContentView(match.view, view));
-  function fail(failedView: ContentView, failure: SearchSourceFailure) { setUnavailable(failure.message); sourceUnavailable(row.head.id, failedView, failure); }
-  return <article className="search-card"><SessionMeta session={row.head}/><h2><button type="button" className="search-title" disabled={unavailable !== null} onClick={() => open(view, first === undefined ? undefined : { view, span: first.span, position: null })}>{row.head.metadata.title || 'Untitled conversation'}</button></h2><Tags tags={row.tags}/><p className="tiny">HEAD r{row.head.revision} · {row.publishedView === undefined ? 'not indexed' : `published r${row.publishedView.revision}`}</p>
-    {unavailable !== null ? <ErrorNotice>{unavailable}. This result's source excerpts have been cleared. Submit a new search to recheck access; no HEAD fallback is used.</ErrorNotice> : matches.length === 0 ? <p>No positive source spans. Open the conversation to read its source.</p> : <SourceMatches {...scope} sessionId={row.head.id} matches={matches} open={landing => open(landing.view, landing)} fail={fail}/>}
+function SearchResult({ item: { row, matches }, ...scope }: SearchScope & { item: SearchResultRow }) {
+  const [unavailable, setUnavailable] = useState<string | null>(null), [expanded, setExpanded] = useState(false), [ranges, setRanges] = useState<(MessageRange | null)[]>([]);
+  const view = row.matchedView ?? row.publishedView ?? row.head.view, landing = matches.find(match => sameContentView(match.view, view)), firstMatch = matches[0];
+  const title = row.head.metadata.title || 'Untitled conversation', summaries = [...new Set(matches.flatMap(match => match.summary === undefined ? [] : [match.summary]))];
+  const gap = ranges[0] !== undefined && ranges[0] !== null && ranges[1] !== undefined && ranges[1] !== null ? ranges[1].first - ranges[0].last - 1 : 0;
+  function fail(failure: SearchSourceFailure) { setUnavailable(failure.message); }
+  const reports = useRef(matches.map((_, index) => (range: MessageRange | null) => setRanges(value => { const next = [...value]; next[index] = range; return next; })));
+  return <article className="result" data-row-id={row.head.id} data-open={expanded}>
+    <div className="result-head"><h2 className="result-title">{unavailable === null ? <a href={sessionHref(row.head.id, view, landing)} data-focus-key={`title:${row.head.id}`}>{title}</a> : <span aria-disabled="true">{title}</span>}</h2>{row.lastTimestamp !== undefined && <time className="result-time" dateTime={row.lastTimestamp} title={row.lastTimestamp}>{timestamp(row.lastTimestamp)}</time>}</div>
+    <Crumb row={row}/>
+    {unavailable !== null ? <Notice title="Source unavailable" actions={null}>{sentence(unavailable)} This result's source excerpts have been cleared. Submit a new search to recheck access; no HEAD fallback is used.</Notice>
+      : matches.length === 0 ? <p className="result-note">No positive source spans. Open the conversation to read its source.</p>
+      : <>
+        <div className="hits">{matches.map((match, index) => <div key={`${match.span.messageId}:${match.span.start}:${match.span.end}`}>
+          {index > 0 && expanded && gap > 0 && <div className="hit-gap">⋯ {gap} {gap === 1 ? 'message' : 'messages'} between</div>}
+          <SearchHit {...scope} sessionId={row.head.id} match={match} expanded={expanded} positions={reports.current[index]!} fail={fail}/></div>)}</div>
+        {summaries.map(summary => <p className="result-note" key={summary}><b>Generated annotation</b> · {summary}</p>)}
+        <div className="result-foot">
+          <button type="button" className="btn btn-sm" aria-expanded={expanded} onClick={() => setExpanded(value => !value)} data-focus-key={`expand:${row.head.id}`}><Icon name={expanded ? 'chevron-up' : 'chevron-down'} small={true}/>{expanded ? 'Collapse' : 'Context'}</button>
+          {firstMatch !== undefined && <a className="btn btn-sm btn-ghost" href={sessionHref(row.head.id, firstMatch.view, firstMatch)} data-focus-key={`open:${row.head.id}`}>Open at first match<Icon name="arrow-right" small={true}/></a>}
+          {expanded && <span className="push xs muted">{matches.length} representative {matches.length === 1 ? 'match' : 'matches'} shown</span>}
+        </div></>}
   </article>;
+}
+function ResultsInfo({ meta }: { meta: ArchiveResult }) {
+  const bounded = meta.textScope === ArchiveTextScope.BoundedCandidateSets;
+  return <Anchored className="search-info" buttonClassName="btn btn-ghost btn-icon" buttonState={undefined} ariaLabel="How these results were found" describedBy={undefined} panel="dialog" panelClassName="popover" panelLabel="How these results were found" label={<Icon name="info" small={false}/>}>
+    <div className="stack-sm"><strong>How these results were found</strong>
+      <dl className="dl xs"><dt>Order</dt><dd>{meta.relevanceOrdered ? 'relevance' : 'last activity'}</dd><dt>Retrieval</dt><dd>{bounded ? 'semantic candidates' : 'exact lexical and metadata'}</dd>
+        {bounded && <><dt>Candidates</dt><dd>bounded, {meta.annChunkLimitPerOperand} published chunks per text operand</dd></>}<dt>Evidence</dt><dd>up to two representative source spans per conversation</dd></dl>
+      <p className="xs muted">{bounded ? `Up to ${meta.annChunkLimitPerOperand} published chunks per text operand, not a row cap. Hybrid also includes exact lexical HEAD matches. ` : ''}Counts are exact for the retrieved candidates. Highlights mark matched bytes; the spans are not proof of every Boolean operand.</p></div>
+  </Anchored>;
+}
+function ResultsFoot({ enabled, end, loading, load, children }: { enabled: boolean; end: boolean; loading: boolean; load: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null), loader = useRef(load); loader.current = load;
+  useEffect(() => {
+    const element = ref.current;
+    if (element === null || !enabled) return;
+    const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) loader.current(); }, { rootMargin: LOAD_AHEAD_MARGIN });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [enabled]);
+  return <div className={end ? 'list-foot list-end' : 'list-foot'} ref={ref} data-list-foot={end ? 'end' : 'more'} role="status" aria-live="polite">{loading ? <><span className="spinner" aria-hidden="true"/>Loading more conversations…</> : children}</div>;
+}
+// A retained (hidden) view loses focus; when it is shown again the control that was last used gets it back.
+function useReturnFocus(root: React.RefObject<HTMLElement | null>): (event: React.FocusEvent) => void {
+  const last = useRef<string | null>(null);
+  useEffect(() => {
+    const element = root.current;
+    if (element === null) return;
+    let hidden = element.getClientRects().length === 0;
+    const observer = new ResizeObserver(() => {
+      const shown = element.getClientRects().length > 0;
+      if (shown && hidden && last.current !== null && (document.activeElement === null || document.activeElement === document.body)) {
+        element.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(last.current)}"]`)?.focus({ preventScroll: true });
+      }
+      hidden = !shown;
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [root]);
+  return event => { const key = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-focus-key]')?.dataset.focusKey : undefined; if (key !== undefined) last.current = key; };
 }
 // The draft and the submitted expression are owned by the shell (per-route state, the submitted one in the URL).
 export interface SearchQueryState { draft: string; setDraft: (draft: string) => void; submitted: string | null; setSubmitted: (submitted: string | null) => void }
-export function Search({ connection, stats, user, findReads, query }: SearchScope & { findReads: SessionFindReadGate; query: SearchQueryState }) {
-  const { draft, setDraft, submitted, setSubmitted } = query, [composing, setComposing] = useState(false);
-  const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]), [pageIndex, setPageIndex] = useState(0), [epoch, setEpoch] = useState(0);
-  const [selection, setSelection] = useState<Selection | null>(null), [related, setRelated] = useState<string | null>(null), [sourceFailure, setSourceFailure] = useState<string | null>(null);
-  useEffect(() => connection.onInvalidate(() => { setSubmitted(null); close(); setPageIndex(0); setCursors([undefined]); setSourceFailure(null); }), [connection]);
-  const resultSummary = useRef<HTMLParagraphElement>(null), focusPage = useRef(false);
-  function close() { setSelection(null); setRelated(null); focusPage.current = false; }
-  function change(value: string) { setDraft(value); setSubmitted(null); setPageIndex(0); setCursors([undefined]); close(); }
-  function submit(expression: string) { if (composing || stats.activeId === null) return; setSubmitted(expression); setPageIndex(0); setCursors([undefined]); close(); setSourceFailure(null); setEpoch(n => n + 1); }
-  const cursor = cursors[pageIndex];
-  const results = useResource(connection, stats, JSON.stringify([user.id, submitted, cursor, pageIndex, epoch]), '', submitted !== null, async () => {
+export function Search({ connection, stats, user, query }: SearchScope & { query: SearchQueryState }) {
+  const { draft, setDraft, submitted, setSubmitted } = query, [composing, setComposing] = useState(false), [epoch, setEpoch] = useState(0);
+  useEffect(() => connection.onInvalidate(() => setSubmitted(null)), [connection]);
+  function submit(expression: string) { if (composing || stats.activeId === null) return; setSubmitted(expression); setEpoch(value => value + 1); }
+  const chain = useSearchChain(connection, stats, submitted === null ? null : JSON.stringify([user.id, submitted, epoch]), async cursor => {
     if (submitted === null) throw new Error('Search has no submitted expression.');
-    const query = new ArchiveQuery(submitted, ArchiveSort.LastTimestamp, SortDirection.Desc, cursor, SEARCH_PAGE_SIZE, true);
-    const result = await read(connection, new Operation_ArchiveSearch(query), reply => reply instanceof Result_ArchiveSearch ? reply.result : null);
-    return validateArchiveSearchPage(result, cursor);
+    const request = new ArchiveQuery(submitted, ArchiveSort.LastTimestamp, SortDirection.Desc, cursor, SEARCH_PAGE_SIZE, true);
+    return validateArchiveSearchPage(await read(connection, new Operation_ArchiveSearch(request), reply => reply instanceof Result_ArchiveSearch ? reply.result : null), cursor);
   });
-  useEffect(() => { if (results.data !== null && focusPage.current) { resultSummary.current!.focus(); focusPage.current = false; } }, [results.data]);
-  function clearSource(message: string) { setSourceFailure(message); setSubmitted(null); setPageIndex(0); setCursors([undefined]); close(); }
-  // A related dialog selects its own pin internally; invalidate its matching session conservatively.
-  function sourceUnavailable(sessionId: string, view: ContentView, failure: SearchSourceFailure) { if (selection !== null && (related ?? selection.row.head.id) === sessionId && (related !== null || sourceFailureAffectsView(view, selection.view, failure.code))) clearSource(failure.message); }
-  const nextCursor = results.data === null ? undefined : results.data.page.nextCursor;
-  const reachableCursors = nextCursor === undefined ? cursors.slice(0, pageIndex + 1) : cursors[pageIndex + 1] === nextCursor ? cursors : [...cursors.slice(0, pageIndex + 1), nextCursor];
-  function selectPage(index: number) { close(); focusPage.current = true; setCursors(reachableCursors); setPageIndex(index); }
-  return <main className="dashboard-page search-page" aria-label="Search">
-    <ExpressionEditor submission="explicit" completion={{ connection, stats, owner: user.id, target: new ExpressionHintTarget_Archive() }} value={draft} applied={submitted ?? ''} change={change} submit={submit} compositionChange={setComposing} composing={composing} disabled={stats.activeId === null} fields={archiveFields} help={<><p>Search returns up to two representative source spans per conversation, not proof of every Boolean operand. Highlights mark matched bytes; surrounding text is context. Each excerpt keeps its own revision and generation. Pages are live snapshots.</p>{results.data !== null && results.data.page.textScope === ArchiveTextScope.BoundedCandidateSets && <p>Up to {results.data.page.annChunkLimitPerOperand} published chunks per text operand, not a row cap. Hybrid also includes exact lexical HEAD matches.</p>}</>}/>
-    {sourceFailure !== null && <ErrorNotice>{sourceFailure}. Search source cleared after a denied or unavailable pinned source. Submit to recheck; no fallback was used.</ErrorNotice>}
-    {results.loading && <p className="loading-line" role="status">Searching conversations…</p>}{results.error !== null && <ErrorNotice>{results.error}. Search results cleared. No fallback search was used.</ErrorNotice>}
-    {results.data !== null && <><p ref={resultSummary} tabIndex={-1} className="search-count" role="status">{results.data.page.total.toString()} matching conversations · {results.data.page.textScope === ArchiveTextScope.ExactLexical ? 'exact lexical/metadata' : `bounded semantic candidates · ${results.data.page.annChunkLimitPerOperand} chunks/operand`}{results.data.page.relevanceOrdered ? ' · ordered by relevance' : ' · ordered by last activity'} · page {pageIndex + 1} · {results.data.page.rows.length} shown</p><div className="search-results">{results.data.page.rows.map((row, index) => <SearchCard key={JSON.stringify([epoch, pageIndex, row.head.id, contentViewKey(row.head.view)])} connection={connection} stats={stats} user={user} row={row} matches={results.data!.evidence[index]!.matches} sourceUnavailable={sourceUnavailable} open={(view, landing) => { setRelated(null); setSelection({ row, view, landing }); }}/>)}</div><Pagination label="Search result pages" itemLabel="Result page" count={reachableCursors.length} current={pageIndex} disabled={results.loading} select={selectPage}/></>}
-    {selection !== null && <Dialog title="Source conversation" close={close}><Conversation key={related ?? JSON.stringify([selection.row.head.id, contentViewKey(selection.view), selection.landing])} connection={connection} stats={stats} user={user} sessionId={related ?? selection.row.head.id} initialView={related === null ? selection.view : undefined} initialLanding={related === null ? selection.landing : undefined} onSourceUnavailable={clearSource} archiveHead={related === null ? selection.row : null} select={setRelated} refresh={epoch} findReads={findReads}/></Dialog>}
+  const root = useRef<HTMLElement>(null), returnFocus = useReturnFocus(root);
+  const edited = submitted !== null && draft !== submitted, meta = chain.meta;
+  const counter = edited ? <span className="stale-hint">Query edited · Enter to update</span>
+    : chain.loading ? 'Searching…' : chain.error !== null ? 'Not loaded' : meta === null ? '' : chain.rows.length === 0 ? 'No matches' : <><strong>{meta.total.toString()}</strong> conversations · {chain.rows.length} loaded</>;
+  return <main className="search-page" aria-label="Search" data-view="search" ref={root} onFocus={returnFocus}>
+    <div className="search-editor"><ExpressionEditor submission="explicit" completion={{ connection, stats, owner: user.id, target: new ExpressionHintTarget_Archive() }} value={draft} applied={submitted ?? ''} change={setDraft} submit={submit} compositionChange={setComposing} composing={composing} disabled={stats.activeId === null} fields={archiveFields} help={null}/></div>
+    {submitted !== null && <div className="viewbar search-bar" data-view-bar><div className="viewbar-meta" role="status" aria-live="polite">{counter}</div>{meta !== null && <ResultsInfo meta={meta}/>}</div>}
+    {submitted === null ? <section className="empty" data-state="intro"><Icon name="search" small={false}/><h2>Search every conversation you can read</h2><p>Plain words find passages by meaning and by exact text. Fields narrow the set. Results load as you scroll — no pages.</p>
+      <div className="row row-wrap search-examples">{EXAMPLE_QUERIES.map(example => <button type="button" className="filter filter-field" key={example} onClick={() => { setDraft(example); submit(example); }}>{example}</button>)}</div></section>
+      : chain.error !== null ? <div className="search-notice"><Notice title="Search failed" actions={<button type="button" className="btn btn-sm" onClick={() => submit(submitted)}>Retry</button>}>{sentence(chain.error)} Search results cleared; your query is kept. No fallback search was used.</Notice></div>
+      : chain.loading ? <div className="results" data-state="loading" aria-busy="true">{Array.from({ length: SKELETON_RESULTS }, (_, index) => <div className="result" key={index}><span className="skeleton sk-30"/><span className="skeleton sk-60"/><span className="skeleton"/><span className="skeleton sk-60"/></div>)}</div>
+      : meta !== null && chain.rows.length === 0 ? <section className="empty" data-state="empty"><Icon name="search" small={false}/><h2>No conversations match</h2><p>Nothing matches <code>{submitted}</code>. Try fewer words, remove a filter, or search the text without quotes.</p><div className="row"><a className="btn btn-ghost" href={formatRoute(viewRoute('archive'))}>Browse the Archive</a></div></section>
+      : <><div className="results" data-list="results" data-state={edited ? 'stale' : 'current'}>{chain.rows.map(item => <SearchResult key={`${item.row.head.id}:${contentViewKey(item.row.head.view)}`} {...{ connection, stats, user }} item={item}/>)}</div>
+        <ResultsFoot enabled={chain.hasMore && chain.appendError === null} end={!chain.hasMore && meta !== null} loading={chain.loadingMore} load={chain.loadMore}>
+          {chain.appendError !== null ? <Notice title="Could not load more results" actions={<button type="button" className="btn btn-sm" onClick={chain.loadMore}>Retry</button>}>{sentence(chain.appendError)}</Notice>
+            : !chain.hasMore && meta !== null ? `End of results · ${meta.total.toString()} conversations` : null}
+        </ResultsFoot></>}
   </main>;
 }
