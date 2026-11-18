@@ -1,67 +1,68 @@
-import { VARIANTS, withScene, gotoTab, settle, inspect, scrollTo } from './lib.mjs';
+// Search view (UX-C4), named like the mockup shots (`chronicle-search-<state>[-dark]-<width>.png`, spec §8 item 10).
+import { VARIANTS, withScene, gotoTab, settle, inspect } from './lib.mjs';
 import { seededFixture } from './seed.mjs';
 
-const input = page => page.getByRole('combobox', { name: 'Search conversations' });
+const QUERY = 'migration';
+const input = page => page.getByRole('combobox', { name: 'Search conversations', exact: true });
+const named = (base, variant) => `${base}${variant.suffix}-${variant.viewport.tag}.png`;
+async function openSearch(page) { await gotoTab(page, 'search'); await page.getByRole('main', { name: 'Search', exact: true }).waitFor(); }
+// The editor's completion list opens while typing and stays open after Enter; captures show the view, not the list.
+async function quiet(page) { await settle(page, 700); await input(page).blur(); await settle(page, 300); }
 async function submit(page, expression) {
-  await input(page).fill(expression); await page.getByRole('button', { name: 'Search', exact: true }).click();
-  await page.locator('.search-card .search-excerpt').first().waitFor(); await settle(page, 600);
+  await input(page).fill(expression); await input(page).press('Enter');
+  await page.locator('[data-list="results"] article.result .hit').first().waitFor();
+  await quiet(page);
 }
 
 export function registerSearch(scenario) {
   for (const [key, variant] of Object.entries(VARIANTS)) {
     scenario(`search-${key}`, async ctx => {
       await withScene(ctx, variant, { fixture: seededFixture() }, async ({ page, shot }) => {
-        await gotoTab(page, 'search'); await page.getByRole('main', { name: 'Search' }).waitFor(); await settle(page);
-        await shot('search', 'first-render', 'Search tab before any query: expression editor with filter shortcut chips, no results area', 'click nav "search" (the default tab after sign-in)');
-        await submit(page, 'migration retry');
-        await shot('search', 'results-page-1', 'Search results page 1: ten numbered-page cards with source excerpts', 'type "migration retry" + Search');
-        await shot('search', 'results-page-1', 'Search results page 1, whole document (full-page capture)', 'same, full-page', { full: true });
-        await inspect(page, ctx.recorder, `search-${key}`);
-        await ctx.recorder.dump(`search-card-geometry-${key}`, await page.evaluate(() => ({ viewport: [innerWidth, innerHeight], documentHeight: document.documentElement.scrollHeight, firstCardTop: Math.round(document.querySelector('.search-card').getBoundingClientRect().top + scrollY), cardHeights: [...document.querySelectorAll('.search-card')].map(el => Math.round(el.getBoundingClientRect().height)), cardsFullyInFirstViewport: [...document.querySelectorAll('.search-card')].filter(el => el.getBoundingClientRect().bottom <= innerHeight).length })));
+        const capture = (state, shows, reached, options = {}) => shot('chronicle-search', state, shows, reached, { file: named(`chronicle-search-${state}`, variant), ...options });
+        await openSearch(page); await page.locator('[data-state="intro"]').waitFor(); await settle(page, 300);
+        await capture('default', 'Search before a query: what Search does and four example queries', 'nav link Search');
+        await submit(page, QUERY); await settle(page, 600);
+        await capture('results', 'Results: compact blocks with highlighted hits, counter and info button in the view bar', `type "${QUERY}" + Search`);
+        await inspect(page, ctx.recorder, `search-results-${key}`);
         if (!variant.deep) return;
-        await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight)); await settle(page);
-        await shot('search', 'results-pager', 'Bottom of the results page: numbered "Result page 1 2 3 …" pager', 'scroll page to bottom');
-        await page.getByRole('button', { name: 'Result page 2', exact: true }).click(); await page.locator('.search-card .search-excerpt').first().waitFor(); await settle(page, 600);
-        await shot('search', 'results-page-2', 'Result page 2 after clicking the numbered pager; focus moved to the summary line', 'click "Result page 2"');
-        await page.getByRole('button', { name: 'Result page 1', exact: true }).click(); await page.locator('.search-card .search-excerpt').first().waitFor();
-        const card = page.locator('.search-card').first(), spans = card.getByRole('navigation', { name: 'Source spans' });
-        if (await spans.count() > 0) { await spans.getByRole('button', { name: 'Source span 2' }).click(); await settle(page, 700); await card.scrollIntoViewIfNeeded(); await shot('search', 'card-second-source-span', 'First result card with its second source span selected (numbered inner pager)', 'click "Source span 2" in the first card'); }
-        await page.getByRole('button', { name: 'Search syntax' }).click(); await page.waitForTimeout(300);
-        await shot('search', 'syntax-popover', 'Search syntax popover', 'click "Search syntax"'); await page.keyboard.press('Escape');
-        await input(page).fill('pro'); await page.waitForTimeout(900);
-        await shot('search', 'completion-hints', 'Completion dropdown under the input (results already cleared by typing)', 'type "pro" in the input');
-        const resultsCleared = await page.locator('.search-card').count() === 0;
-        await ctx.recorder.dump(`search-typing-clears-results-${key}`, { resultsClearedWhileTyping: resultsCleared });
-        await shot('search', 'results-cleared-while-typing', 'Typing in the box discards the displayed results at once (no stale results kept until Search is pressed)', 'edit the draft after a search');
-        await submit(page, 'migration retry');
-        await card.locator('.search-title').click(); await page.getByRole('dialog', { name: 'Source conversation' }).waitFor(); await page.locator('.original-message').first().waitFor(); await settle(page, 1200);
-        await shot('search', 'result-opened', 'Source dialog opened from a search card: landed on the matched message ("Search result: found matching message …")', 'click a result title');
-        await page.getByRole('button', { name: 'Close conversation' }).click(); await settle(page);
-        // empty
-        await input(page).fill('zzzz-nothing-matches'); await page.getByRole('button', { name: 'Search', exact: true }).click(); await page.locator('.search-count').waitFor(); await settle(page, 500);
-        await shot('search', 'empty-result', 'Search with zero matches: summary line only', 'type unmatched expression + Search');
-        ctx.errors.length;
+        await page.locator('article.result').first().getByRole('button', { name: 'Context', exact: true }).click(); await settle(page, 600);
+        await capture('expanded', 'First result expanded in place: all hits with context and Earlier/Later buttons', 'click "Context" on the first result');
+        await page.locator('article.result').first().getByRole('button', { name: 'Collapse', exact: true }).click();
+        await page.evaluate(() => window.scrollTo(0, 1500)); await settle(page, 600);
+        await capture('results-scrolled', 'Results scrolled by 1500 px: the view bar sticks under the masthead; more results were appended', 'scroll the document');
+        await page.evaluate(() => window.scrollTo(0, 0)); await settle(page, 300);
+        await input(page).fill(`${QUERY} project:chron`); await quiet(page);
+        await capture('stale', 'Query edited, not yet submitted: previous results dimmed, "Query edited · Enter to update" in the counter slot', 'edit the draft after a search');
+        await page.getByRole('button', { name: 'Search syntax', exact: true }).click({ force: true }); await settle(page, 300);
+        await capture('syntax', 'Search syntax popover of the shared editor', 'click "Search syntax"'); await page.keyboard.press('Escape');
+        await input(page).fill('zzzz-nothing-matches'); await input(page).press('Enter'); await page.locator('[data-state="empty"]').waitFor(); await quiet(page);
+        await capture('empty', 'Search with zero matches', 'type an unmatched expression + Search');
       });
     });
   }
   scenario('search-states', async ctx => {
     await withScene(ctx, VARIANTS.deep, { fixture: seededFixture(f => { f.holdSearch = true; }) }, async ({ page, fixture, shot }) => {
-      await gotoTab(page, 'search'); await input(page).fill('migration'); await page.getByRole('button', { name: 'Search', exact: true }).click(); await page.getByText('Searching conversations…').waitFor(); await settle(page, 300);
-      await shot('search', 'loading', 'Search in flight: "Searching conversations…"', 'server holds ArchiveSearch');
-      fixture.releaseSearch(); await page.locator('.search-card').first().waitFor();
+      await openSearch(page); await input(page).fill(QUERY); await input(page).press('Enter'); await page.locator('[data-state="loading"]').waitFor(); await quiet(page);
+      await shot('chronicle-search', 'loading', 'Search in flight: skeleton results, "Searching…"', 'server holds ArchiveSearch', { file: 'chronicle-search-loading-1440.png' });
+      fixture.releaseSearch(); await page.locator('article.result').first().waitFor();
     });
     await withScene(ctx, VARIANTS.deep, { fixture: seededFixture(f => { f.archiveSearchFailure = 'Semantic search is unavailable: embedding provider returned 503.'; }) }, async ({ page, shot }) => {
-      await gotoTab(page, 'search'); await input(page).fill('migration'); await page.getByRole('button', { name: 'Search', exact: true }).click(); await page.locator('.notice.error').waitFor(); await settle(page, 300);
-      await shot('search', 'error', 'Search error state', 'server returns Failure for ArchiveSearch');
+      await openSearch(page); await input(page).fill(QUERY); await input(page).press('Enter'); await page.getByRole('alert').waitFor(); await quiet(page);
+      await shot('chronicle-search', 'error', 'Search failed notice with Retry; the query is kept', 'server returns Failure for ArchiveSearch', { file: 'chronicle-search-error-1440.png' });
     });
-    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture() }, async ({ page, shot }) => {
-      await gotoTab(page, 'search'); await submit(page, 'migration retry');
-      const state = { before: await page.locator('.search-card').count(), draft: await input(page).inputValue() };
-      await gotoTab(page, 'archive'); await page.locator('.archive-table').waitFor(); await gotoTab(page, 'search'); await settle(page, 600);
-      state.afterTabRoundtrip = { cards: await page.locator('.search-card').count(), draft: await input(page).inputValue() };
-      await shot('flow', 'search-after-tab-roundtrip', 'Search tab after visiting Archive and returning: draft and results are gone', 'search > archive > search');
-      await submit(page, 'migration retry'); await page.reload(); await page.getByRole('navigation', { name: 'Main navigation' }).waitFor(); await settle(page, 800);
-      state.afterReload = { activeTab: await page.locator('nav[aria-label="Main navigation"] .nav-active').textContent(), cards: await page.locator('.search-card').count(), url: page.url() };
+    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture(f => { f.archiveRows = f.archiveRows.slice(0, 24); }) }, async ({ page, shot }) => {
+      await openSearch(page); await submit(page, QUERY);
+      for (let batch = 0; await page.locator('[data-list-foot="end"]').count() === 0; batch++) {
+        if (batch > 5) throw new Error('The short archive did not end within six batches');
+        const loaded = await page.locator('[data-row-id]').count();
+        await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+        await page.waitForFunction(count => document.querySelectorAll('[data-row-id]').length > count || document.querySelector('[data-list-foot="end"]') !== null, loaded);
+      }
+      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight)); await settle(page, 300);
+      await shot('chronicle-search', 'results-end', 'Bottom of the list: the end marker after the last batch', 'scroll to the bottom', { file: 'chronicle-search-results-end-1440.png' });
+      const state = { cards: await page.locator('article.result').count(), draft: await input(page).inputValue(), scrollY: await page.evaluate(() => scrollY) };
+      await gotoTab(page, 'archive'); await page.getByRole('main', { name: 'Archive', exact: true }).waitFor(); await gotoTab(page, 'search'); await page.getByRole('main', { name: 'Search', exact: true }).waitFor(); await settle(page, 600);
+      state.afterTabRoundtrip = { cards: await page.locator('article.result').count(), draft: await input(page).inputValue(), scrollY: await page.evaluate(() => scrollY) };
       await ctx.recorder.dump('search-state-survival', state);
     });
   });
