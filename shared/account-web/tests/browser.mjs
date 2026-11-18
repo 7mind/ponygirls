@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { startDevServer } from '../dev/serve.mjs';
 import { FAKE_PASSWORD, FAKE_TOKEN_SECRET, FAKE_WRONG_CODE } from '../dev/fake-server.js';
+import { LONG_TOKEN_NAME, longLogin } from '../dev/scenarios.js';
 
 const require = createRequire(new URL('../../../chronicle/web/package.json', import.meta.url));
 const { chromium } = require('playwright-core');
@@ -668,23 +669,45 @@ try {
     assert.equal(await profileMarkup('manure'), await profileMarkup('chronicle'));
   });
 
-  // Spec §8 item 9 at a phone width: no view scrolls sideways, and the list tables keep every cell and row action
+  // Spec §8 item 9 at a phone width: no view scrolls sideways, every text (also user-supplied strings without a break
+  // opportunity) is drawn inside the viewport and its clipping boxes, and the list tables keep every cell and row action
   // inside the viewport (no column is dropped and there is no inner scroller, spec §1).
-  await run('390 px: no account view scrolls sideways; every table cell and row action stays within the viewport', async ({ page, errors }) => {
-    const PHONE = { width: 390, height: 844 };
+  await run('390 px: no account view scrolls sideways or clips text; table cells, row actions and dialogs stay within the viewport', async ({ page, errors }) => {
+    const PHONE = { width: 390, height: 844 }, WIDE = { width: 1440, height: 900 };
     // Each scenario is driven into its state by the harness (with ?steps), on its own page: the states with a shown-once
-    // value hold navigation away (beforeunload). The last one stays open for the 1440 check.
+    // value hold navigation away (beforeunload). The last one stays open for the 1440 checks.
     const VIEWS = ['login-default', 'login-totp', 'login-pending', 'signup-default', 'signup-pending', 'signup-enroll', 'recover-default',
-      'settings-profile', 'settings-password', 'settings-totp-replace', 'users-menu', 'settings-tokens-secret', 'users-enroll-link'];
+      'settings-profile', 'settings-password', 'settings-totp-replace', 'users-menu', 'settings-tokens-long-strings', 'users-long-strings',
+      'settings-tokens-secret', 'users-enroll-link'];
     const outside = view => view.evaluate(() => {
       const width = document.scrollingElement.clientWidth;
       const out = node => { const box = node.getBoundingClientRect(); return box.width === 0 || box.left < 0 || box.right > width; };
       const cells = [...document.querySelectorAll('table[data-list] tbody tr')].flatMap(row => [...row.cells]
         .filter(cell => !cell.checkVisibility() || out(cell) || cell.scrollWidth > cell.clientWidth).map(cell => `${row.dataset.rowId} cell ${cell.cellIndex}`));
-      const actions = [...document.querySelectorAll('table[data-list] tbody button')].filter(button => button.closest('[role="menu"]') === null)
-        .filter(button => !button.checkVisibility({ opacityProperty: true, visibilityProperty: true }) || out(button)).map(button => button.getAttribute('aria-label'));
-      const menus = [...document.querySelectorAll('[role="menu"]')].filter(menu => menu.checkVisibility() && out(menu)).map(menu => menu.getAttribute('aria-label'));
-      return [...cells, ...actions, ...menus];
+      const actions = [...document.querySelectorAll('table[data-list] tbody button, dialog[open] button')].filter(button => button.closest('[role="menu"]') === null)
+        .filter(button => !button.checkVisibility({ opacityProperty: true, visibilityProperty: true }) || out(button)).map(button => button.getAttribute('aria-label') ?? button.textContent);
+      const overlays = [...document.querySelectorAll('[role="menu"], dialog[open]')].filter(overlay => overlay.checkVisibility() && out(overlay)).map(overlay => overlay.tagName);
+      return [...cells, ...actions, ...overlays];
+    });
+    // Text of the account surfaces that is drawn outside the viewport or cut by a box that clips its overflow.
+    const clippedText = view => view.evaluate(() => {
+      const width = document.scrollingElement.clientWidth, cut = [];
+      for (const root of document.querySelectorAll('[data-account-outlet]:not([hidden]), [data-account-auth], dialog[open], [data-account-toasts]')) {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+          if (node.textContent.trim() === '' || !node.parentElement.checkVisibility() || node.parentElement.closest('thead, .sr-only') !== null) continue;
+          const range = document.createRange(); range.selectNodeContents(node);
+          const box = range.getBoundingClientRect();
+          let inside = box.left >= 0 && box.right <= width;
+          for (let box2 = node.parentElement; inside && box2 !== root.parentElement; box2 = box2.parentElement) {
+            if (getComputedStyle(box2).overflowX === 'visible') continue;
+            const clip = box2.getBoundingClientRect();
+            inside = box.left >= clip.left - 0.5 && box.right <= clip.right + 0.5;
+          }
+          if (!inside) cut.push(node.textContent.trim().slice(0, 24));
+        }
+      }
+      return cut;
     });
     let view = null;
     for (const name of VIEWS) {
@@ -695,12 +718,23 @@ try {
       await view.goto(`${server.origin}/?scenario=${name}`);
       await view.waitForFunction(() => document.documentElement.dataset.harnessReady === 'true');
       assert.deepEqual(await view.evaluate(() => [document.scrollingElement.scrollWidth, document.scrollingElement.clientWidth]), [PHONE.width, PHONE.width], `${name}: no sideways scroll`);
-      assert.deepEqual(await outside(view), [], `${name}: every cell and row action is within the viewport`);
-      if (name === 'settings-tokens-secret') assert.ok(await view.locator('table[data-list="tokens"] tbody tr').count() >= 2);
+      assert.deepEqual(await outside(view), [], `${name}: every cell, row action and dialog is within the viewport`);
+      assert.deepEqual(await clippedText(view), [], `${name}: no text is drawn outside the viewport or clipped`);
+      if (name === 'settings-tokens-long-strings') {
+        await view.getByText(`Copy the secret for “${LONG_TOKEN_NAME}” now`).waitFor();
+        assert.equal(await view.locator('tr.is-revoked').count(), 1, 'the revoked token is shown');
+      }
+      if (name === 'users-long-strings') {
+        const application = view.getByRole('dialog', { name: `Application of “${longLogin('bob')}”`, exact: true });
+        for (const action of ['Approve', 'Reject application…', 'Cancel']) assert.equal(await application.getByRole('button', { name: action, exact: true }).isVisible(), true, action);
+      }
+      if (name === 'settings-tokens-secret') {
+        assert.ok(await view.locator('table[data-list="tokens"] tbody tr').count() >= 2);
+      }
     }
     for (const row of ['bob', 'erin']) assert.equal(await view.locator(`tr[data-row-id="${row}"]`).count(), 1, `${row}: a pending applicant and an ordinary user are listed`);
     // 1440 keeps the table form: one header row with every column side by side.
-    await view.setViewportSize({ width: 1440, height: 900 });
+    await view.setViewportSize(WIDE);
     const heads = await view.locator('table[data-list="users"] thead th').evaluateAll(cells => cells.map(cell => [cell.getBoundingClientRect().top, cell.getBoundingClientRect().width > 0]));
     assert.equal(heads.length, 6);
     assert.deepEqual(heads, heads.map(() => [heads[0][0], true]));

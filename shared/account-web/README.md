@@ -232,8 +232,12 @@ for the main ones) named like the mockup shots.
 
 Below 720 px (the shared `sm` breakpoint) the Access tokens and Users tables stack
 their rows: the first cell and the row actions share a line, the other cells
-follow two to a line under a caption with their column header; nothing is hidden
-and the document does not scroll sideways (spec §1, §8 item 9).
+follow two to a line under a caption with their column header; nothing is hidden and the document does not scroll
+sideways (spec §1, §8 item 9). Every surface the module renders into breaks
+user-supplied strings anywhere (`overflow-wrap: anywhere`), so a token name,
+login or e-mail without a break opportunity never widens the page; table cells
+in table form keep truncating with an ellipsis. The harness scenarios
+`settings-tokens-long-strings` and `users-long-strings` hold such strings.
 
 ## Verification
 

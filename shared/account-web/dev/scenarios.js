@@ -22,6 +22,17 @@ const recover = (state, spec) => scenario('recover', state, { signedIn: false, h
 const settings = (state, spec) => scenario('settings', state, spec);
 const users = (state, spec) => scenario('users', state, { hash: '#account/users', ready: 'tr[data-row-id="erin"]', ...spec });
 const TOKENS = '#account/tokens', TOKEN_ROWS = 'table[data-list="tokens"] tr[data-row-id]';
+// User-supplied strings without a break opportunity: the longest token name the form accepts, logins and e-mails.
+export const LONG_TOKEN_NAME = 'W'.repeat(120);
+export const longLogin = id => `${id}${'w'.repeat(60)}`;
+const longEmail = id => `${longLogin(id)}@${'e'.repeat(40)}.example.org`;
+function longStrings(f) {
+  for (const user of [f.user, ...f.users]) { user.login = longLogin(user.id); if (user.email !== null) user.email = longEmail(user.id); }
+  f.profile.email = longEmail(f.user.id);
+  for (const enrollment of f.enrollments) if (enrollment.kind === 'invite') enrollment.username = longLogin(enrollment.username);
+  f.tokens[2].name = LONG_TOKEN_NAME;
+  f.tokens[6].name = 'R'.repeat(120);
+}
 
 export const SCENARIOS = new Map([
   auth('default', {}),
@@ -63,6 +74,7 @@ export const SCENARIOS = new Map([
   settings('tokens-error', { hash: TOKENS, fixture: f => { f.account = 'error'; }, ready: '[data-view="tokens"] .notice-danger' }),
   settings('tokens-empty', { hash: TOKENS, fixture: f => { f.tokens = []; }, ready: '[data-view="tokens"] .empty:not([hidden])' }),
   settings('legacy', { hash: TOKENS, fixture: f => { f.policy = null; f.profile = null; }, ready: TOKEN_ROWS }),
+  settings('tokens-long-strings', { hash: TOKENS, fixture: longStrings, steps: async d => { await d.wait(TOKEN_ROWS); await d.click('Show'); await newToken(d, LONG_TOKEN_NAME); await d.click('Create token'); }, ready: '[data-account-secret]' }),
   users('default', {}),
   users('pending', { steps: d => d.click('Pending approval'), ready: 'tr[data-row-id="bob"]' }),
   users('menu', { steps: async d => { await d.wait('tr[data-row-id="erin"]'); await d.click('Actions for erin'); }, ready: '[role="menu"]:not([hidden])' }),
@@ -74,5 +86,6 @@ export const SCENARIOS = new Map([
   users('grant-admin', { steps: d => userMenu(d, 'Grant admin…'), ready: 'dialog[open]' }),
   users('reset', { steps: d => userMenu(d, 'Reset credentials…'), ready: 'dialog[open]' }),
   users('reset-link', { steps: async d => { await userMenu(d, 'Reset credentials…'); await d.fill('Your current password', FAKE_PASSWORD); await d.click('Create reset link'); }, ready: '[data-account-link]' }),
+  users('long-strings', { fixture: longStrings, steps: async d => { await d.wait('tr[data-row-id="bob"]'); await d.click(`Approve ${longLogin('bob')}…`); }, ready: 'dialog[open]' }),
   users('signup-only', { fixture: f => { f.profile.manage.enrollment = false; f.policy.enrollment = false; }, steps: async d => { await d.wait('tr[data-row-id="erin"]'); await d.click('Actions for erin'); }, ready: '[role="menu"]:not([hidden])' })
 ]);

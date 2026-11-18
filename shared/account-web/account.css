@@ -4,6 +4,10 @@
 
 /* ── Outlet: the routed account page replaces the host main while an #account/… route is active ── */
 [data-account-outlet] { min-height: calc(100dvh - var(--masthead-h)); background: var(--bg-canvas); }
+/* User-supplied strings (token names, logins, e-mails, echoed input) may have no break opportunity: every surface the
+ * module renders into may break them anywhere rather than widen its box past the viewport. Layout of ordinary text is
+ * unchanged; no-wrap elements (table cells in table form, chips, buttons) keep truncating. */
+[data-account-outlet], [data-account-auth], [data-account-login], [data-account-login-totp], [data-account-dialog], [data-account-toasts] { overflow-wrap: anywhere; }
 
 /* ── Settings / admin layout: section navigation + one section per route ── */
 .account { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: var(--space-6); align-items: start; max-width: 1320px; margin: 0 auto; padding: var(--space-5) var(--gutter) var(--space-7); }
@@ -96,7 +100,7 @@
   .account .table tbody tr { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--space-3); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border); }
   .account .table tbody tr:last-child { border-bottom: 0; }
   .account .table tbody tr::after { content: ''; order: 1; flex-basis: 100%; }
-  .account .table td { order: 2; flex: 1 1 40%; height: auto; margin-top: var(--space-2); padding: 0; border-bottom: 0; white-space: normal; overflow-wrap: anywhere; }
+  .account .table td { order: 2; flex: 1 1 40%; height: auto; margin-top: var(--space-2); padding: 0; border-bottom: 0; white-space: normal; }
   .account .table td:first-child { order: 0; flex: 1 1 0; min-width: 0; margin-top: 0; padding: 0; }
   .account .table td.col-actions { order: 1; flex: none; margin-top: 0; padding: 0; }
   .account .table td[data-label]::before { content: attr(data-label) / ''; display: block; color: var(--text-muted); font-size: var(--text-xs); }
