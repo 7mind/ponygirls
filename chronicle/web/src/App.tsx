@@ -1,9 +1,9 @@
 import './styles.css';
-import { dismissPopoverOnExternalFocus } from './Popover.tsx';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Anchored, dismissPopoverOnExternalFocus } from './Popover.tsx';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { ThemeControl } from './ThemeControl.tsx';
 import type { ThemeController } from './theme.ts';
-import { Operation_Whoami, Operation_Logout, Result_Whoami, Scope, type SessionInfo } from './api.ts';
+import { ActivityCollectorSort, ActivityQuery, Operation_Activity, Operation_Whoami, Result_Activity, Result_Whoami, Scope, SortDirection, type ActivityResult, type SessionInfo, type UserInfo } from './api.ts';
 import type { ChronicleConnection } from './client.ts';
 import { read } from './client.ts';
 import { useConnection, useResource } from './hooks.ts';
@@ -12,6 +12,11 @@ import { ConnectionHealth } from './ConnectionHealth.tsx';
 import { Search } from './Search.tsx';
 import { Archive, emptyArchive } from './Archive.tsx';
 import type { ArchiveState } from './Archive.tsx';
+import { Dialog } from './Dialog.tsx';
+import { Conversation } from './Conversation.tsx';
+import { Icon } from './Icon.tsx';
+import { DEFAULT_ROUTE, HashRouter, RouteStateCache, RouteStateContext, formatRoute, parentRoute, routeSlot, sessionIdOf, sessionRoute, useRouteState, useRouter, viewRoute, type View } from './router.ts';
+import type { ManagerStats } from './transport/types.ts';
 import { ArchiveReadLane } from './archive-requests.ts';
 import { SessionFindReadGate } from './session-find.ts';
 import { ReindexProgress, useRebuildProgress } from './ReindexProgress.tsx';
@@ -25,53 +30,152 @@ export function Blank({ title, children }: { title: string; children: React.Reac
 export function Tags({ tags }: { tags: readonly string[] }) { return <span className="tags">{tags.map(tag => <span className="tag" key={tag}>{tag}</span>)}</span>; }
 export function formatDate(value: string | undefined): string { if (!value) return 'date unavailable'; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); }
 export function SessionMeta({ session }: { session: SessionInfo }) { return <span className="meta"><span>{session.source.format}</span><span>{session.metadata.project ?? 'No project'}</span><span>{formatDate(session.metadata.startedAt)}</span></span>; }
-function LoginPanel() {
-  return <main className="login-layout"><div className="login-story"><span className="eyebrow">SESSION ARCHIVE</span><h1>Archive</h1><p>Search archived agent sessions and read their source messages.</p><div className="story-rule"/></div>
-    <section className="login-card"><span className="eyebrow">ACCOUNT</span><h2>Sign in</h2>
-      <form data-account-login method="post" action="/api/account/v1/login"><label>Login<input name="login" autoComplete="username" required maxLength={200}/></label><label>Password<input name="password" type="password" autoComplete="current-password" required maxLength={1000}/></label><button className="primary">Sign in →</button></form>
-    </section></main>;
+type NavView = Exclude<View, 'session'>;
+const NAV_ITEMS: readonly { readonly view: NavView; readonly label: string }[] = [
+  { view: 'archive', label: 'Archive' }, { view: 'search', label: 'Search' }, { view: 'activity', label: 'Activity' }, { view: 'access', label: 'Access' }, { view: 'mcp', label: 'MCP' },
+];
+// Document-like views sit on the canvas; list views are full-bleed on the surface (spec §2.2 Layout).
+const CANVAS_VIEWS: readonly View[] = ['access', 'mcp'];
+const MAIN_CONTENT_ID = 'main-content';
+const ARCHIVE_STATE = routeSlot<ArchiveState>('archive', emptyArchive);
+const ARCHIVE_DRAFT = routeSlot<string>('archive-draft', () => '');
+const ARCHIVE_INSTANCE = 'archive';
+// One collector page is enough to see stale collectors next to the owner-wide failure and lease counts.
+const ATTENTION_COLLECTOR_LIMIT = 50;
+const ACCOUNT_PROFILE_URL = '/api/account/v1/profile';
+interface OwnerScope { readonly owner: string | null; readonly cache: RouteStateCache }
+function newOwnerScope(owner: string | null): OwnerScope { return { owner, cache: new RouteStateCache() }; }
+
+function plural(count: bigint, noun: string): string { return `${count} ${noun}${count === 1n ? '' : 's'}`; }
+/** The Activity nav dot: failed current jobs, expired leases or stale collectors (null: nothing needs attention). */
+export function activityAttention(activity: ActivityResult): string | null {
+  const stale = BigInt(activity.collectors.filter(collector => collector.status !== undefined && collector.status.stale).length);
+  const parts = [[activity.current.failed, 'failed job'], [activity.current.expiredRunning, 'expired lease'], [stale, 'stale collector']] as const;
+  const shown = parts.filter(([count]) => count > 0n).map(([count, noun]) => plural(count, noun));
+  return shown.length === 0 ? null : `${shown.join(', ')} need attention`;
+}
+// Users is offered to administrators only; servers without GET /profile (404) have no administrators to offer it to.
+function useAccountAdmin(userId: string | null): boolean {
+  const [admin, setAdmin] = useState<{ userId: string; admin: boolean } | null>(null);
+  useEffect(() => {
+    if (userId === null) return;
+    const controller = new AbortController();
+    void window.fetch(ACCOUNT_PROFILE_URL, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' }, signal: controller.signal })
+      .then(async response => response.ok ? await response.json() as unknown : null)
+      .then(profile => {
+        const value = profile !== null && typeof profile === 'object' ? profile as { user?: { id?: unknown }; admin?: unknown } : null;
+        setAdmin({ userId, admin: value !== null && value.user !== undefined && value.user.id === userId && value.admin === true });
+      }, () => { if (!controller.signal.aborted) setAdmin({ userId, admin: false }); });
+    return () => controller.abort();
+  }, [userId]);
+  return admin !== null && admin.userId === userId && admin.admin;
+}
+function UserMenu({ user, admin }: { user: UserInfo; admin: boolean }) {
+  return <Anchored className="user-menu" buttonClassName="user-button" buttonState={undefined} ariaLabel={user.login} describedBy={undefined} panel="menu" panelClassName="menu" panelLabel={undefined}
+    label={<><span className="avatar" aria-hidden="true">{user.login.charAt(0)}</span><span className="user-name">{user.login}</span><Icon name="chevron-down" small={true}/></>}>
+    <div className="menu-label">Signed in as <strong>{user.login}</strong>{admin ? ' · admin' : ''}</div>
+    <button type="button" role="menuitem" className="menu-item" data-account-settings=""><Icon name="user" small={false}/>Account settings</button>
+    <button type="button" role="menuitem" className="menu-item" data-account-settings="tokens"><Icon name="key" small={false}/>Access tokens</button>
+    {admin && <button type="button" role="menuitem" className="menu-item" data-account-settings="users"><Icon name="users" small={false}/>Users</button>}
+    <div className="menu-sep" role="separator"/>
+    <button type="button" role="menuitem" className="menu-item" data-account-logout=""><Icon name="arrow-right" small={false}/>Sign out</button>
+  </Anchored>;
+}
+function ArchiveView(props: { connection: ChronicleConnection; requests: ArchiveReadLane; findReads: SessionFindReadGate; stats: ManagerStats; user: UserInfo }) {
+  const [archive, setArchive] = useRouteState(ARCHIVE_STATE, ARCHIVE_INSTANCE), [draft, setDraft] = useRouteState(ARCHIVE_DRAFT, ARCHIVE_INSTANCE);
+  return <Archive {...props} draft={draft} setDraft={setDraft} archive={archive} setArchive={setArchive}/>;
 }
 export function App({ connection, theme }: { connection: ChronicleConnection; theme: ThemeController }) {
-  const stats = useConnection(connection), [tab, setTab] = useState<'archive' | 'search' | 'activity' | 'access' | 'mcp'>('search');
+  const stats = useConnection(connection);
+  const router = useMemo(() => new HashRouter(window), []), location = useRouter(router), route = location.route;
+  useEffect(() => router.start(), [router]);
+  useLayoutEffect(() => router.rendered(), [router, location]);
   // Register transport lifecycle verification before renewal's return/focus listener.
   useEffect(() => { connection.start(); return () => connection.dispose(); }, [connection]);
-  const [archive, setArchive] = useState<ArchiveState>(emptyArchive);
   const archiveRequests = useMemo(() => new ArchiveReadLane(), [connection]);
   const findReads = useMemo(() => new SessionFindReadGate(), [connection]);
   useEffect(() => {
     const unsubscribe = connection.onInvalidate(() => { archiveRequests.invalidate(); document.dispatchEvent(new Event('account:invalidate')); });
     return () => { unsubscribe(); archiveRequests.invalidate(); };
   }, [connection, archiveRequests]);
-  const [draft, setDraft] = useState('');
-  const [archiveOwner, setArchiveOwner] = useState<string | null>(null);
-  const resetArchive = useCallback((owner: string | null) => {
-    archiveRequests.invalidate(); setArchive(emptyArchive()); setDraft(''); setTab('search'); setArchiveOwner(owner);
-  }, [archiveRequests]);
+  const [scope, setScope] = useState<OwnerScope>(() => newOwnerScope(null));
+  // A new owner gets a new per-route cache; switching from one account to another also leaves its route.
+  function resetOwner(owner: string | null) {
+    archiveRequests.invalidate();
+    if (scope.owner !== null && owner !== null) router.navigate(DEFAULT_ROUTE, 'replace');
+    setScope(newOwnerScope(owner));
+  }
   const identity = useResource(connection, stats, 'identity', '', true, () => read(connection, new Operation_Whoami(), r => r instanceof Result_Whoami ? r.user : null));
   useEffect(() => {
-    if (stats.terminal === 'unauthorized') { if (archiveOwner !== null) resetArchive(null); return; }
-    if (identity.data !== null && identity.data.id !== archiveOwner) resetArchive(identity.data.id);
-  }, [identity.data?.id, archiveOwner, stats.terminal, resetArchive]);
-  const user = identity.data !== null && identity.data.id === archiveOwner ? identity.data : null;
+    // Expired or revoked credentials: the next sign-in starts at the default route like a new session.
+    if (stats.terminal === 'unauthorized') { if (scope.owner !== null) { resetOwner(null); router.navigate(DEFAULT_ROUTE, 'replace'); } return; }
+    if (identity.data !== null && identity.data.id !== scope.owner) resetOwner(identity.data.id);
+  }, [identity.data?.id, scope.owner, stats.terminal]);
+  const user = identity.data !== null && identity.data.id === scope.owner ? identity.data : null;
   const [logoutGeneration, setLogoutGeneration] = useState<number | null>(null);
   const renewal = useSessionRenewal(connection, stats, logoutGeneration === stats.generation ? null : user?.id ?? null);
-  const tester = useMcpTester(connection, stats, user === null ? null : user.id, tab === 'mcp');
+  const tester = useMcpTester(connection, stats, user === null ? null : user.id, route.view === 'mcp');
   const actions = useMutations(connection, identity.data?.id ?? null);
-  const rebuild = useRebuildProgress(connection, stats, user === null ? null : user.id, user !== null && user.scopes.includes(Scope.Read), actions.ownerReindexed);
+  const canRead = user !== null && user.scopes.includes(Scope.Read);
+  const rebuild = useRebuildProgress(connection, stats, user === null ? null : user.id, canRead, actions.ownerReindexed);
+  const attention = useResource(connection, stats, `attention:${user === null ? '' : user.id}`, '', canRead, () => read(connection, new Operation_Activity(new ActivityQuery('', ActivityCollectorSort.CollectorId, SortDirection.Asc, undefined, ATTENTION_COLLECTOR_LIMIT)), r => r instanceof Result_Activity ? r.result : null));
+  const attentionText = attention.data === null ? null : activityAttention(attention.data);
+  const admin = useAccountAdmin(user === null ? null : user.id);
+  // The account module signs out and reports another owner or a teardown; the identity is then read again.
+  const renewalSuspend = renewal.suspend;
   useEffect(() => {
-    const changed = () => connection.retry();
+    const changed = () => { renewalSuspend(); setLogoutGeneration(stats.generation); resetOwner(null); router.navigate(DEFAULT_ROUTE, 'replace'); connection.retry(); };
     document.addEventListener('account:changed', changed);
     return () => document.removeEventListener('account:changed', changed);
-  }, [connection]);
-  async function logout() {
-    document.dispatchEvent(new Event('account:invalidate'));
-    renewal.suspend(); setLogoutGeneration(stats.generation); resetArchive(null);
-    if (await actions.run(new Operation_Logout(), 'Sign out')) connection.retry();
+  });
+  // The account module reports its routed page (`account:route`); it covers the view, which stays mounted, and no
+  // main navigation item is current meanwhile. Registered before the module can route the outlet of this commit.
+  const [accountSection, setAccountSection] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    const routed = (event: Event) => {
+      const detail: unknown = event instanceof CustomEvent ? event.detail : null;
+      const section = detail !== null && typeof detail === 'object' && 'section' in detail ? detail.section : null;
+      if (section !== null && typeof section !== 'string') throw new Error('account:route carries an invalid section');
+      setAccountSection(section);
+    };
+    document.addEventListener('account:route', routed);
+    return () => document.removeEventListener('account:route', routed);
+  }, []);
+  const accountShown = user !== null && accountSection !== null;
+  const canvas = user === null || CANVAS_VIEWS.includes(route.view);
+  useEffect(() => { document.body.classList.toggle('on-canvas', canvas); }, [canvas]);
+  function skipToContent(event: React.MouseEvent) {
+    event.preventDefault();
+    const target = document.getElementById(MAIN_CONTENT_ID);
+    if (target === null) throw new Error('Missing main content');
+    target.focus();
   }
-  return <div className="app-shell" onFocusCapture={dismissPopoverOnExternalFocus}><a className="skip-link" href="#main-content">Skip to content</a><header className="masthead"><a href="/" className="brand" aria-label="Chronicle home"><span className="brand-mark" aria-hidden="true">C<span>·</span></span>chronicle</a>{user && <><nav aria-label="Main navigation">{(['archive', 'search', 'activity', 'access', 'mcp'] as const).map(item => <button className={tab === item ? 'nav-active' : ''} onClick={() => setTab(item)} key={item} aria-current={tab === item ? 'page' : undefined}>{item}</button>)}</nav><div className="identity"><span>{user.login}</span><button className="text-button" data-account-settings data-account-user-id={user.id}>Settings</button><button className="text-button" disabled={actions.busy || actions.uncertain !== null} onClick={() => void logout()}>Sign out</button></div></>}<ThemeControl controller={theme}/><ConnectionHealth connection={connection} stats={stats}/></header>
-    <div id="main-content" tabIndex={-1}><div className="global-mutation-notices"><MutationNotice actions={actions}/><ReindexProgress progress={rebuild}/></div>{identity.error && stats.terminal !== 'unauthorized' && <ErrorNotice>{identity.error}</ErrorNotice>}
-      {renewal.error && <ErrorNotice>{renewal.error}. Your credentials have not been rejected. <button onClick={renewal.retry}>Retry session renewal</button></ErrorNotice>}
-      {stats.terminal === 'unauthorized' ? <LoginPanel/> : stats.terminal === 'update-required' ? <section className="blank"><h2>Dashboard update required</h2><p role="status">This dashboard version is no longer supported. Reload to update before checking your session.</p><button onClick={() => window.location.reload()}>Reload dashboard</button></section> : identity.data === null ? <section className="blank"><h2>{identity.error || stats.terminal !== null ? 'Session unavailable' : stats.activeId === null ? 'Reconnecting' : 'Checking session'}</h2><p role="status">{identity.error || stats.terminal !== null ? 'Session unavailable. Retry without entering credentials.' : stats.activeId === null ? 'Reconnecting and checking your existing session…' : 'Checking your existing session…'}</p><button onClick={() => connection.retry()}>Retry session</button></section> : user === null ? <div className="loading-line" role="status">Preparing an account-scoped archive…</div> : tab === 'archive' ? <Archive connection={connection} requests={archiveRequests} findReads={findReads} stats={stats} user={user} draft={draft} setDraft={setDraft} archive={archive} setArchive={setArchive}/> : tab === 'search' ? <Search key={JSON.stringify([user.id, stats.generation, stats.activeId])} connection={connection} stats={stats} user={user} findReads={findReads}/> : tab === 'activity' ? <Activity connection={connection} stats={stats} user={user} actions={actions}/> : tab === 'mcp' ? <McpTester tester={tester}/> : <Access connection={connection} stats={stats} user={user} actions={actions}/>}</div>
-    <footer className="app-footer"><span>Chronicle</span></footer>
-  </div>;
+  const current: NavView = route.view === 'session' ? 'archive' : route.view;
+  function mainView(user: UserInfo) {
+    switch (current) {
+      case 'archive': return <ArchiveView connection={connection} requests={archiveRequests} findReads={findReads} stats={stats} user={user}/>;
+      case 'search': return <Search key={JSON.stringify([user.id, stats.generation, stats.activeId])} connection={connection} stats={stats} user={user} findReads={findReads}/>;
+      case 'activity': return <Activity connection={connection} stats={stats} user={user} actions={actions}/>;
+      case 'mcp': return <McpTester tester={tester}/>;
+      case 'access': return <Access connection={connection} stats={stats} user={user} actions={actions}/>;
+    }
+  }
+  // Until the session becomes a routed page (UX-C3) a session route opens the dialog over its parent list.
+  function sessionDialog(user: UserInfo) {
+    if (route.view !== 'session') return null;
+    const sessionId = sessionIdOf(route);
+    return <div className="legacy-view"><Dialog title="Source conversation" close={() => router.back(parentRoute(route))}><Conversation key={sessionId} connection={connection} stats={stats} user={user} sessionId={sessionId} initialView={undefined} archiveHead={null} select={id => router.navigate(sessionRoute(id), 'push')} refresh={0} findReads={findReads}/></Dialog></div>;
+  }
+  return <RouteStateContext.Provider value={scope.cache}><div className="app-shell" onFocusCapture={dismissPopoverOnExternalFocus}><a className="skip-link" href={`#${MAIN_CONTENT_ID}`} onClick={skipToContent}>Skip to content</a>
+    <header className="masthead"><a href={formatRoute(DEFAULT_ROUTE)} className="brand" aria-label="Chronicle home"><span className="brand-mark"><Icon name="book" small={false}/></span><span className="brand-name">chronicle</span></a>
+      {user && <nav className="nav" aria-label="Main navigation">{NAV_ITEMS.map(item => <a key={item.view} href={formatRoute(viewRoute(item.view))} aria-current={!accountShown && current === item.view ? 'page' : undefined} title={item.view === 'activity' && attentionText !== null ? attentionText : undefined}>{item.label}{item.view === 'activity' && attentionText !== null && <span className="nav-dot" title={attentionText} aria-hidden="true"/>}</a>)}</nav>}
+      <div className="masthead-end">{stats.terminal !== 'unauthorized' && <ConnectionHealth connection={connection} stats={stats}/>}<ThemeControl controller={theme}/>{user && <UserMenu user={user} admin={admin}/>}</div></header>
+    <div id={MAIN_CONTENT_ID} className="app-views" tabIndex={-1}><div className="global-mutation-notices"><MutationNotice actions={actions}/><ReindexProgress progress={rebuild}/></div>
+      {identity.error && stats.terminal !== 'unauthorized' && <div className="page shell-notice"><div className="notice notice-danger" role="alert">{identity.error}</div></div>}
+      {renewal.error && <div className="page shell-notice"><div className="notice notice-danger" role="alert"><div>{renewal.error}. Your credentials have not been rejected. <div className="notice-actions"><button type="button" className="btn btn-sm" onClick={renewal.retry}>Retry session renewal</button></div></div></div></div>}
+      {stats.terminal === 'unauthorized' ? <main data-account-auth=""/> : stats.terminal === 'update-required' ? <ShellState title="Dashboard update required" status="This dashboard version is no longer supported. Reload to update before checking your session." action="Reload dashboard" run={() => window.location.reload()}/> : identity.data === null ? <ShellState title={identity.error || stats.terminal !== null ? 'Session unavailable' : stats.activeId === null ? 'Reconnecting' : 'Checking session'} status={identity.error || stats.terminal !== null ? 'Session unavailable. Retry without entering credentials.' : stats.activeId === null ? 'Reconnecting and checking your existing session…' : 'Checking your existing session…'} action="Retry session" run={() => connection.retry()}/> : user === null ? <main className="page shell-state"><p className="muted" role="status">Preparing an account-scoped archive…</p></main> : <><div className="app-view" hidden={accountShown}>{mainView(user)}{sessionDialog(user)}</div><div data-account-outlet="" data-account-user-id={user.id} hidden/></>}</div>
+  </div></RouteStateContext.Provider>;
+}
+function ShellState({ title, status, action, run }: { title: string; status: string; action: string; run: () => void }) {
+  return <main className="page shell-state"><div className="empty"><h2>{title}</h2><p role="status">{status}</p><div className="row"><button type="button" className="btn" onClick={run}>{action}</button></div></div></main>;
 }

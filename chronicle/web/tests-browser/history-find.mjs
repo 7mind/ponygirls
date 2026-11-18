@@ -13,7 +13,7 @@ const browser = await chromium.launch({ headless: true }), results = [], errors 
 async function scene(configure, width, theme) {
   const context = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme: theme }), page = await context.newPage(), fixture = new HistoryFixture();
   page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message)); configure(fixture);
-  await page.clock.install(); await fixture.install(page); await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();  await page.locator('.archive-row').first().waitFor(); await page.locator('.archive-row .table-title').first().click(); await page.locator('.original-message').first().waitFor();
+  await page.clock.install(); await fixture.install(page); await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click();  await page.locator('.archive-row').first().waitFor(); await page.locator('.archive-row .table-title').first().click(); await page.locator('.original-message').first().waitFor();
   const finder = page.getByRole('region', { name: 'Find in selected history', exact: true }), input = page.getByRole('textbox', { name: 'Literal message text', exact: true });
   return { context, page, fixture, finder, input };
 }
@@ -154,7 +154,7 @@ try {
   for (const reset of ['reload', 'reopen', 'tab']) await group(`no overlapping unsettled Find across ${reset}`, async () => {
     const s = await scene(fixture => { fixture.holdFind = true; }, 1440, 'light'); await find(s, FIND_LITERAL); await s.fixture.waitCall(api.Operation_SearchSessionMessages, 1);
     if (reset === 'reload') await s.page.getByRole('button', { name: 'Reload source snapshot ↻', exact: true }).click();
-    else { await s.page.getByRole('button', { name: 'Close conversation', exact: true }).click(); if (reset === 'tab') { await s.page.getByRole('button', { name: 'activity', exact: true }).click(); await s.page.locator('.activity-overview').waitFor(); await s.page.getByRole('button', { name: 'archive', exact: true }).click(); } await s.page.locator('.archive-row .table-title').first().click(); }
+    else { await s.page.getByRole('button', { name: 'Close conversation', exact: true }).click(); if (reset === 'tab') { await s.page.getByRole('link', { name: 'Activity', exact: true }).click(); await s.page.locator('.activity-overview').waitFor(); await s.page.getByRole('link', { name: 'Archive', exact: true }).click(); } await s.page.locator('.archive-row .table-title').first().click(); }
     await s.page.getByRole('textbox', { name: 'Literal message text', exact: true }).fill(FIND_LITERAL); await s.page.getByRole('textbox', { name: 'Literal message text', exact: true }).press('Enter'); assert.equal(calls(s.fixture).length, 1, 'New finder cannot overlap the unsettled old Find');
     s.fixture.pendingFind.shift()(); await s.page.waitForFunction(() => document.querySelector('.session-find button[type=submit]').getAttribute('aria-disabled') === 'false'); assert.equal(await s.page.locator('.find-hits button').count(), 0);
     await s.page.getByRole('region', { name: 'Find in selected history', exact: true }).getByRole('button', { name: 'Find messages', exact: true }).click(); await s.fixture.waitCall(api.Operation_SearchSessionMessages, 2); s.fixture.pendingFind.shift()(); await s.context.close();
@@ -179,11 +179,11 @@ try {
     else if (change === 'navigation') await page.locator('.passage-list .passage').first().click();
     else if (change === 'source-acl') { fixture.sourceDenied = true; fixture.findFailure = 'forbidden'; }
     else if (change === 'disconnect') { fixture.restart(); await page.clock.runFor(200); }
-    else { fixture.mode = 'unauthorized'; fixture.restart(); await page.clock.runFor(200); await page.getByRole('heading', { name: 'Sign in', exact: true }).waitFor(); }
+    else { fixture.mode = 'unauthorized'; fixture.restart(); await page.clock.runFor(200); await page.getByRole('heading', { name: /^Sign in/ }).waitFor(); }
     const reply = fixture.pendingFind.shift(); if (reply !== undefined) reply();
     if (change === 'source-acl') { await finder.getByRole('alert').waitFor(); assert.equal(await input.inputValue(), ''); }
     else if (change === 'pin' || change === 'session' || change === 'disconnect') { await page.getByRole('textbox', { name: 'Literal message text', exact: true }).waitFor(); assert.equal(await page.getByRole('textbox', { name: 'Literal message text', exact: true }).inputValue(), ''); }
-    else if (change === 'same-owner-auth' || change === 'account') { await page.getByLabel('Login', { exact: true }).fill(change === 'account' ? 'bob' : 'alice'); await page.getByLabel('Password', { exact: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in →', exact: true }).click(); await page.getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); await page.locator('.archive-row .table-title').first().click(); assert.equal(await page.getByRole('textbox', { name: 'Literal message text', exact: true }).inputValue(), ''); }
+    else if (change === 'same-owner-auth' || change === 'account') { await page.getByLabel('Username', { exact: true }).fill(change === 'account' ? 'bob' : 'alice'); await page.getByLabel('Password', { exact: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.getByRole('link', { name: 'Archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); await page.locator('.archive-row .table-title').first().click(); assert.equal(await page.getByRole('textbox', { name: 'Literal message text', exact: true }).inputValue(), ''); }
     assert.equal(await page.locator('.find-hits button').count(), 0); await s.context.close();
   });
   for (const width of [1440, 390, 320]) for (const theme of ['light', 'dark']) await group(`${theme} ${width} geometry, keyboard and focus`, async () => {

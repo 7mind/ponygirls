@@ -1,5 +1,5 @@
-import { useId, useLayoutEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import './popover.css';
 
 export function closePopovers() {
@@ -14,6 +14,44 @@ export function dismissPopoverOnExternalFocus(event: { target: EventTarget | nul
   for (const panel of document.querySelectorAll<HTMLElement>('.transient-popover:popover-open')) {
     if (!panel.contains(target) && !target.closest(`[popovertarget="${panel.id}"]`)) panel.hidePopover();
   }
+}
+
+const MENU_ITEM = '[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"]';
+export type AnchoredPanel = 'menu' | 'dialog';
+/**
+ * A trigger with a panel anchored below it (shared `.anchor` + `.menu`/`.popover`), not in the top layer.
+ * Closes on Escape (focus returns to the trigger), on a pointer press or focus outside, and after a menu item
+ * was chosen. A `menu` panel is labelled by its trigger and supports the arrow, Home and End keys.
+ */
+export function Anchored({ className, buttonClassName, buttonState, label, ariaLabel, describedBy, panel, panelClassName, panelLabel, children }: {
+  className: string; buttonClassName: string; buttonState: string | undefined; label: ReactNode; ariaLabel: string | undefined; describedBy: string | undefined;
+  panel: AnchoredPanel; panelClassName: string; panelLabel: string | undefined; children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false), anchor = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null), panelRef = useRef<HTMLDivElement>(null), triggerId = useId(), panelId = useId();
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => { if (event.target instanceof Node && !anchor.current!.contains(event.target)) setOpen(false); };
+    document.addEventListener('pointerdown', outside, true);
+    if (panel === 'menu') panelRef.current!.querySelector<HTMLElement>(MENU_ITEM)?.focus();
+    return () => document.removeEventListener('pointerdown', outside, true);
+  }, [open, panel]);
+  function keyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (!open) return;
+    if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); trigger.current!.focus(); return; }
+    if (panel !== 'menu' || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const items = [...panelRef.current!.querySelectorAll<HTMLElement>(MENU_ITEM)], at = items.indexOf(document.activeElement as HTMLElement);
+    if (items.length === 0) return;
+    event.preventDefault();
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (at + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length;
+    const target = items[next];
+    if (target === undefined) throw new Error('Menu item index out of range');
+    target.focus();
+  }
+  function chosen(event: MouseEvent<HTMLDivElement>) { if (event.target instanceof Element && event.target.closest(MENU_ITEM) !== null) setOpen(false); }
+  return <div className={`anchor ${className}`} ref={anchor} onKeyDown={keyDown} onBlur={event => { if (event.relatedTarget instanceof Node && !anchor.current!.contains(event.relatedTarget)) setOpen(false); }}>
+    <button type="button" id={triggerId} ref={trigger} className={buttonClassName} data-state={buttonState} aria-label={ariaLabel} aria-describedby={describedBy} aria-haspopup={panel} aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(value => !value)}>{label}</button>
+    <div id={panelId} ref={panelRef} className={panelClassName} role={panel} aria-labelledby={panelLabel === undefined ? triggerId : undefined} aria-label={panelLabel} hidden={!open} onClick={chosen}>{children}</div>
+  </div>;
 }
 
 export function Popover({ label, children, className, panelClassName, ariaLabel, describedBy, dataState }: {

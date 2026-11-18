@@ -8,6 +8,7 @@ import { chromium } from 'playwright-core';
 export const WEB_ROOT = fileURLToPath(new URL('..', import.meta.url));
 export const PRIMARY = { width: 1440, height: 900, tag: '1440' };
 export const SECONDARY = { width: 1024, height: 700, tag: '1024' };
+export const PHONE = { width: 390, height: 844, tag: '390' };
 
 export async function startRig() {
   if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Set PLAYWRIGHT_BROWSERS_PATH to the pinned Playwright 1.64.1 browsers (the chronicle dev shell does this); nothing is downloaded.');
@@ -36,8 +37,9 @@ export class Recorder {
       return { width: image.width, height: image.height, dominantShare: +(top / total).toFixed(3), colours: counts.size };
     }, buffer.toString('base64'));
   }
-  async shot(page, { name, state, viewport, full = false, clip }, shows, reached) {
-    const file = `${String(++this.counter).padStart(3, '0')}-${name}-${state}${full ? '-full' : ''}-${viewport.tag}.png`;
+  // `file` names the capture like its mockup shot (`<app>-<view>-<state>-<width>.png`); otherwise it is numbered.
+  async shot(page, { name, state, viewport, full = false, clip, file: named }, shows, reached) {
+    const file = named ?? `${String(++this.counter).padStart(3, '0')}-${name}-${state}${full ? '-full' : ''}-${viewport.tag}.png`;
     const buffer = await page.screenshot({ path: join(this.outDir, file), fullPage: full, ...(clip === undefined ? {} : { clip }) });
     const stats = await this.imageStats(buffer);
     if (stats.dominantShare > 0.985 || stats.colours < 4) this.blank.push(`${file} dominantShare=${stats.dominantShare} colours=${stats.colours}`);
@@ -68,7 +70,8 @@ export async function openScene(rig, { viewport = PRIMARY, scheme = 'light', fix
   return { context, page };
 }
 
-export const nav = (page, tab) => page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: tab, exact: true });
+const NAV_LABELS = { archive: 'Archive', search: 'Search', activity: 'Activity', access: 'Access', mcp: 'MCP' };
+export const nav = (page, tab) => page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: NAV_LABELS[tab], exact: true });
 export async function gotoTab(page, tab) { await nav(page, tab).click(); }
 
 export async function archiveReady(page) {
@@ -153,7 +156,7 @@ export const VARIANTS = {
   deep: { viewport: PRIMARY, scheme: 'light', suffix: '', deep: true },
   tablet: { viewport: SECONDARY, scheme: 'light', suffix: '', deep: false },
   dark: { viewport: PRIMARY, scheme: 'dark', suffix: '-dark', deep: false },
-  mobile: { viewport: { width: 390, height: 844, tag: '390' }, scheme: 'light', suffix: '', deep: false },
+  mobile: { viewport: PHONE, scheme: 'light', suffix: '', deep: false },
 };
 
 /** Opens a scene, runs body({page, fixture, shot}), always closes the context. */

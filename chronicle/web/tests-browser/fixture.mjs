@@ -199,9 +199,16 @@ export class ChronicleFixture {
         this.user = new api.UserInfo(body.login, body.login, [api.Scope.Read, api.Scope.Raw]); this.signedIn = true; this.mode = 'normal';
         return reply(200, { user: user() }, { 'Set-Cookie': 'chronicle_session=synthetic; HttpOnly; SameSite=Strict; Path=/; Max-Age=34560000' });
       }
+      // Today's server has five account endpoints; policy, profile and administration answer 404 (degraded mode).
+      if (request.method() === 'GET' && path !== '/api/account/v1') return reply(404, { error: { code: 'not-found', message: 'Not found' } });
       if (!this.signedIn || this.mode === 'unauthorized') return reply(401, { error: { code: 'unauthorized', message: 'Sign in' } });
       if (request.method() === 'GET') return reply(200, { user: user(), tokens: [...this.staticTokens.map(info => token(info, 'configured')), ...this.tokens.map(info => token(info, 'issued'))], scopes: [api.Scope.Ingest, api.Scope.Read, api.Scope.Raw] });
       if (request.headers()['x-account-actor'] !== user().actor) return reply(409, { error: { code: 'conflict', message: 'Account changed' } });
+      if (path.endsWith('/logout')) {
+        if (this.dropLogout) return route.abort('failed');
+        this.signedIn = false; this.mode = 'unauthorized';
+        return reply(200, { ok: true }, { 'Set-Cookie': 'chronicle_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0' });
+      }
       if (path.endsWith('/revoke')) {
         const id = path.split('/').at(-2); this.tokens = this.tokens.map(info => info.id === id ? info.with({ revoked: true }) : info);
         return reply(200, { ok: true });

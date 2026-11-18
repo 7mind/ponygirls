@@ -61,6 +61,6 @@ test('shared bootstrap and Chronicle prepaint agree with the theme policy, inclu
     const root = { dataset: { app: 'chronicle' } as Record<string, string>, style: { colorScheme: '', backgroundColor: '' } }, meta = { content: '' }, listen = () => {};
     const context = { document: { documentElement: root, querySelector: () => meta, addEventListener: listen }, window: { get localStorage() { if (denied) throw new Error('Storage denied'); return { getItem: () => raw }; }, matchMedia: () => ({ matches: dark, addEventListener: listen }), addEventListener: listen } };
     runInNewContext(bootstrap, context); runInNewContext(prepaint, context);
-    assert.deepEqual(root.dataset, { app: 'chronicle', theme: expected.resolved, themeChoice: expected.preference, themePersistence: expected.persistence }); assert.equal(root.style.colorScheme, expected.resolved); assert.equal(root.style.backgroundColor, expected.resolved === 'dark' ? '#242c37' : '#f1f5f9'); assert.equal(meta.content, root.style.backgroundColor);
+    assert.deepEqual(root.dataset, { app: 'chronicle', theme: expected.resolved, themeChoice: expected.preference, themePersistence: expected.persistence }); assert.equal(root.style.colorScheme, expected.resolved); assert.equal(root.style.backgroundColor, expected.resolved === 'dark' ? '#151920' : '#ffffff'); assert.equal(meta.content, root.style.backgroundColor);
   }
 });

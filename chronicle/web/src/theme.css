@@ -1,35 +1,16 @@
+/* Legacy view palette names, mapped onto the shared design tokens (shared/ui-web/tokens.css). Legacy control
+ * outlines keep their 3:1 contrast (faint text token) until the views move to the shared components.
+ * The shared tokens switch with <html data-theme>, so no dark block is needed here. View units replace these
+ * names with the shared tokens as they restyle their views; nothing new may use them. */
 :root{
-  color-scheme:light;
-  --canvas:#f1f5f9;--paper:#fff;--ink:#1c2938;--muted:#4f6073;--rule:#bcc9d6;--accent:#245b88;--soft:#e7eef6;--rust:#964e2c;--error:#9e302d;
-  --on-accent:#fff;--accent-hover:#173f63;--control-border:#6a7e93;--control-hover:#e4edf6;--control-hover-border:#4f6b86;--focus:#1f5fa0;--selection:#caddf2;--selection-ink:#142f4b;
-  --mark:#ffe19a;--mark-ink:#42300b;--tag-ink:#315477;--tag-border:#9aafc5;--tag-surface:#e9f0f8;--link-rule:#7891ab;
-  --notice-surface:#e8f1f9;--notice-border:#7898b7;--notice-accent:#386c9f;--error-surface:#ffebe7;--error-border:#bd7c73;--error-ink:#892b2b;
-  --warning-surface:#fff2d4;--warning-border:#b78f44;--warning-accent:#8e650e;--warning-ink:#77520e;--ornament:#51718d;--placeholder:#586b80;
-  --row-hover:#e9f0f7;--row-selected:#dbe9f7;--table-heading:#e6edf5;--table-sorted:#d5e3f2;--table-heading-border:#8097ae;
-  --passage-surface:#e8eef6;--passage-item:#fff;--passage-number:#3c5f80;--passage-selected:#dfebf6;--passage-selected-border:#4e779c;--role-ink:#345d80;--message-rule:#c5d1dc;
-  --message-highlight:#fff5dd;--message-highlight-border:#a17720;--raw-surface:#e8eef6;--secret-surface:#e7f1ea;--secret-border:#60896e;--success:#2d6b43;
-  --health-border:#6c8b78;--healthy:#316a42;--ring-track:#c8d6cc;--socket-border:#63866c;--socket-surface:#e8f2eb;
-  --disabled-ink:#4f6073;--disabled-surface:#e1e8ef;--disabled-border:#8798a9;
-  --shadow-soft:#14283c1f;--shadow-dialog:#0d1a2a66;--backdrop:#0d1a2a99;
+  --canvas:var(--bg-canvas);--paper:var(--bg-surface);--ink:var(--text);--muted:var(--text-muted);--rule:var(--border);--soft:var(--accent-soft);--rust:var(--accent);--error:var(--danger-fg);
+  --on-accent:var(--bg-surface);--accent-hover:var(--info-fg);--control-border:var(--text-faint);--control-hover:var(--bg-hover);--control-hover-border:var(--text-muted);--selection:var(--accent-soft-border);--selection-ink:var(--text);
+  --mark:var(--mark-bg);--mark-ink:var(--mark-fg);--tag-ink:var(--text-muted);--tag-border:var(--border);--tag-surface:var(--bg-sunken);--link-rule:var(--border-strong);
+  --notice-surface:var(--info-bg);--notice-border:var(--info-bd);--notice-accent:var(--info-fg);--error-surface:var(--danger-bg);--error-border:var(--danger-bd);--error-ink:var(--danger-fg);
+  --warning-surface:var(--warn-bg);--warning-border:var(--warn-bd);--warning-accent:var(--warn-fg);--warning-ink:var(--warn-fg);--ornament:var(--text-faint);--placeholder:var(--text-faint);
+  --row-hover:var(--bg-hover);--row-selected:var(--accent-soft);--table-heading:var(--bg-sunken);--table-sorted:var(--accent-soft);--table-heading-border:var(--border);
+  --passage-surface:var(--bg-sunken);--passage-item:var(--bg-surface);--passage-number:var(--text-muted);--passage-selected:var(--accent-soft);--passage-selected-border:var(--accent-soft-border);--role-ink:var(--accent);--message-rule:var(--border);
+  --message-highlight:var(--warn-bg);--message-highlight-border:var(--warn-fg);--raw-surface:var(--bg-sunken);--secret-surface:var(--ok-bg);--secret-border:var(--ok-bd);--success:var(--ok-fg);
+  --disabled-ink:var(--text-faint);--disabled-surface:var(--bg-sunken);--disabled-border:var(--border);
+  --shadow-soft:var(--border);--shadow-dialog:var(--bg-scrim);--backdrop:var(--bg-scrim);
 }
-:root[data-theme=dark]{
-  color-scheme:dark;
-  --canvas:#242c37;--paper:#323d4b;--ink:#f4f7fb;--muted:#d0dbe8;--rule:#70839a;--accent:#a5cfff;--soft:#3a485a;--rust:#ffc59c;--error:#ffc0b5;
-  --on-accent:#142c48;--accent-hover:#c4e0ff;--control-border:#91a5bd;--control-hover:#425168;--control-hover-border:#b4c6dc;--focus:#ffd185;--selection:#50627b;--selection-ink:#fff;
-  --mark:#85622e;--mark-ink:#fff6d7;--tag-ink:#d5e5fc;--tag-border:#879db8;--tag-surface:#37485e;--link-rule:#a5bedb;
-  --notice-surface:#34475b;--notice-border:#8caccb;--notice-accent:#b4d7ff;--error-surface:#523d42;--error-border:#ca9994;--error-ink:#ffcdc3;
-  --warning-surface:#4d412f;--warning-border:#b79b67;--warning-accent:#f6d490;--warning-ink:#ffe0a5;--ornament:#a2b9d2;--placeholder:#c0cddd;
-  --row-hover:#3b4a5e;--row-selected:#435671;--table-heading:#3b495b;--table-sorted:#4a5c75;--table-heading-border:#8ea4be;
-  --passage-surface:#2c3745;--passage-item:#354253;--passage-number:#c7dcf7;--passage-selected:#40546b;--passage-selected-border:#a8c8e8;--role-ink:#c3d9f3;--message-rule:#71839a;
-  --message-highlight:#4c4332;--message-highlight-border:#ddb365;--raw-surface:#2a3542;--secret-surface:#324b43;--secret-border:#8db6a0;--success:#b5e1bf;
-  --health-border:#8eafa0;--healthy:#b7dfc4;--ring-track:#667d73;--socket-border:#99c6ad;--socket-surface:#344d43;
-  --disabled-ink:#c0cddd;--disabled-surface:#3a4554;--disabled-border:#8496ab;
-  --shadow-soft:#09111f40;--shadow-dialog:#040c1a80;--backdrop:#080f1cb3;
-}
-.theme-control{margin-left:auto;font-size:11px;flex-shrink:0}
-.identity+.theme-control{margin-left:0}
-.theme-control>button{list-style:none;display:flex;align-items:center;gap:7px;border:1px solid var(--control-border);border-radius:3px;padding:6px 9px;background:var(--paper)}
-.theme-label{text-transform:capitalize;color:var(--muted)}
-.theme-control small{color:var(--warning-ink);font-size:10px}
-.theme-menu label{font-size:11px}.theme-menu select{width:100%;font-size:12px;margin-top:6px}.theme-menu p{margin-top:9px}.theme-menu .theme-save-warning{color:var(--warning-ink)}
-@media(max-width:640px){.masthead .theme-control{margin-left:auto}}

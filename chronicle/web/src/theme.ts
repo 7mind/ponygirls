@@ -60,7 +60,7 @@ export function browserTheme(window: Window, document: Document): ThemeControlle
     const shown = { resolved: root.dataset.theme, preference: root.dataset.themeChoice, persistence: root.dataset.themePersistence };
     if (shown.resolved !== theme.resolved || shown.preference !== theme.preference || shown.persistence !== theme.persistence) throw new Error(`Theme bootstrap state ${JSON.stringify(shown)} disagrees with ${JSON.stringify(theme)}.`);
     root.style.colorScheme = theme.resolved; root.style.removeProperty('background-color');
-    const color = window.getComputedStyle(root).getPropertyValue('--canvas').trim(), meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    const color = window.getComputedStyle(root).getPropertyValue('--bg-surface').trim(), meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
     if (meta !== null && color.length > 0) meta.content = color;
   } };
   return new ThemeController(store, system, target);

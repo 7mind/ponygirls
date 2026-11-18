@@ -12,7 +12,7 @@ async function scene(path = 'notifications', width = 1280, colorScheme = 'light'
   page.setDefaultTimeout(5000); page.on('pageerror', error => errors.push(error.message)); await page.clock.install();
   const fixture = new ChronicleFixture(); if (path === 'harness') await fixture.install(page);
   await page.goto(`${origin}/tests-browser/${path}.html`);
-  if (path === 'harness') { await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); } else await page.getByRole('heading', { name: 'Notification fixture', exact: true }).waitFor();
+  if (path === 'harness') { await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); } else await page.getByRole('heading', { name: 'Notification fixture', exact: true }).waitFor();
   return { context, page, fixture };
 }
 async function group(name, body) { if (process.env.CHRONICLE_UI_CASE !== undefined && !name.includes(process.env.CHRONICLE_UI_CASE)) return; await body(); console.log(`PASS browser UI controls: ${name}`); }
@@ -53,10 +53,10 @@ try {
     }
   });
   await group('the application retry action reports routine success through the global toast', async () => {
-    const { context, page, fixture } = await scene('harness'); await page.getByRole('button', { name: 'activity', exact: true }).click();
+    const { context, page, fixture } = await scene('harness'); await page.getByRole('link', { name: 'Activity', exact: true }).click();
     await page.getByRole('button', { name: 'Retry indexing', exact: true }).click(); const toast = notifications(page); await toast.getByRole('status').getByText('Retry indexing job completed.', { exact: true }).waitFor();
     assert.equal(await page.locator('.global-mutation-notices .notice').count(), 0); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_RetryJob).length, 1);
-    await page.getByRole('button', { name: 'archive', exact: true }).click(); assert.equal(await toast.isVisible(), true, 'Changing tabs must not promote a success to an in-page notice or reset it');
+    await page.getByRole('link', { name: 'Archive', exact: true }).click(); assert.equal(await toast.isVisible(), true, 'Changing tabs must not promote a success to an in-page notice or reset it');
     await context.close();
   });
   await group('notification authorization boundaries clear current and late successes', async () => {
@@ -102,7 +102,7 @@ try {
     for (const width of [1280, 390]) {
       const { context, page, fixture } = await scene('harness', width);
       for (const name of ['Conversations', 'Collectors', 'Indexing jobs']) {
-        if (name === 'Collectors') { await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.locator('.activity-job-row').first().waitFor(); }
+        if (name === 'Collectors') { await page.getByRole('link', { name: 'Activity', exact: true }).click(); await page.locator('.activity-job-row').first().waitFor(); }
         const controls = page.getByRole('region', { name: `${name} table controls`, exact: true }), table = page.getByRole('table', { name, exact: true });
         assert.equal(await controls.getByRole('button').count(), 1, 'Only the menu trigger is exposed in the column header');
         const trigger = controls.getByRole('button', { name: `${name} table options`, exact: true }); assert.equal(await trigger.innerText(), '⋮'); assert.equal(await trigger.getAttribute('aria-expanded'), 'false');

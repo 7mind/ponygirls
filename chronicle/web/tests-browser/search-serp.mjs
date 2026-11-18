@@ -63,7 +63,7 @@ try {
     for (const width of [1440, 768, 390, 320]) for (const theme of ['light', 'dark']) {
       const { page, context } = await scene(undefined, width, theme);
       try {
-        await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'archive', exact: true }).click();
+        await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Archive', exact: true }).click();
         await page.locator('.archive-row').first().waitFor();
         const bounds = await page.locator('.archive .expression-editor .search-form').evaluate(form => {
           const row = form.querySelector('.search-line'), input = form.querySelector('input');
@@ -107,7 +107,7 @@ try {
       await page.getByRole('button', { name: 'Result page 1', exact: true }).click(); await ready(page); assert.equal(calls(fixture, api.Operation_ArchiveSearch).at(-1).query.cursor, undefined);
     }
     assert.equal(calls(fixture, api.Operation_Search).length, 0, 'The full DSL never falls back to the narrower MCP Search operation');
-    await page.getByRole('navigation').getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); assert.equal(await page.getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), '');
+    await page.getByRole('navigation').getByRole('link', { name: 'Archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); assert.equal(await page.getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), '');
     await context.close();
   });
   await group('shared authorized completion accepts a mode directive into the draft without executing Search', async () => {

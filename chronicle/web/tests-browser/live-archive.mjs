@@ -14,7 +14,7 @@ async function scene(configure) {
   page.on('pageerror', error => errors.push(error.message));
   if (configure !== undefined) configure(fixture);
   await page.clock.install();
-  await fixture.install(page); await page.goto(`http://127.0.0.1:${address.port}/tests-browser/live-archive.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();
+  await fixture.install(page); await page.goto(`http://127.0.0.1:${address.port}/tests-browser/live-archive.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click();
   await page.locator('.archive-row').first().waitFor();
   return { context, page, fixture };
 }
@@ -136,8 +136,8 @@ try {
     const input = page.getByRole('combobox', { name: 'Search conversations', exact: true }), before = archiveCalls(fixture).length;
     fixture.holdArchive = true; await input.fill('mode:lexical held-a'); await input.press('Enter');
     await until(() => archiveCalls(fixture).length === before + 1, 'First held read did not start.');
-    await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.locator('.activity-job-row').first().waitFor();
-    await page.getByRole('button', { name: 'archive', exact: true }).click(); await input.waitFor();
+    await page.getByRole('link', { name: 'Activity', exact: true }).click(); await page.locator('.activity-job-row').first().waitFor();
+    await page.getByRole('link', { name: 'Archive', exact: true }).click(); await input.waitFor();
     await input.fill('mode:lexical queued-b'); await input.press('Enter'); await page.waitForTimeout(100);
     assert.equal(archiveCalls(fixture).length, before + 1, 'A tab remount released the unsettled request permit.');
     fixture.holdArchive = false; fixture.releaseArchive(); await page.locator('.archive-row').first().waitFor();
@@ -158,9 +158,9 @@ try {
     const expression = 'mode:lexical PRIVATE_SAME_OWNER_UNSENT_DRAFT';
     await page.getByRole('combobox', { name: 'Search conversations', exact: true }).fill(expression);
     fixture.mode = 'unauthorized'; await page.getByRole('button', { name: 'Refresh archive', exact: true }).click();
-    await page.getByRole('button', { name: 'Sign in →', exact: true }).waitFor();
-    await page.getByLabel('Login', { exact: true }).fill('alice'); await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
-    await page.getByRole('button', { name: 'Sign in →', exact: true }).click(); await page.getByRole('button', { name: 'archive', exact: true }).click();
+    await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+    await page.getByLabel('Username', { exact: true }).fill('alice'); await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.getByRole('link', { name: 'Archive', exact: true }).click();
     await page.locator('.archive-row').first().waitFor();
     assert.equal(await page.getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), '', 'A new session retained the old unsent private draft.');
     await page.clock.runFor(500); assert.equal(archiveCalls(fixture).filter(call => call.operation.query.expression === expression).length, 0, 'A prior-session draft was automatically replayed.');

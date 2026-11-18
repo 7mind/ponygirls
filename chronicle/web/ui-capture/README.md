@@ -35,6 +35,7 @@ sticky elements, table column widths, contrast / font-size / target-size audit, 
 | `lib.mjs` | Vite+Chromium rig, `Recorder` (PNG + blank check + index), DOM inspection/audit functions, variants (deep / tablet / dark / mobile) |
 | `seed.mjs`, `transcripts.mjs` | `CaptureFixture`: 420 archive rows, 36 collectors, ~290 jobs, tokens, groups, usage; 6 deterministic transcript templates (4–260 messages, giant tool outputs, Markdown, CJK) |
 | `scenes-*.mjs` | scenarios per area; `scenes.mjs` registers them |
+| `scenes-shell.mjs` | shell (masthead, menus, routes) and the account outlet/login at 1440/1024/390 in light and dark, named like the mockup shots (`chronicle-archive-1440.png`, `account-settings-tokens-dark-1024.png`, …) instead of numbered |
 
 ## Adding a capture
 
@@ -44,4 +45,4 @@ sticky elements, table column widths, contrast / font-size / target-size audit, 
 4. `await inspect(page, recorder, 'name')` dumps scroll containers / sticky elements / tables / audit.
 5. For the three variants use `VARIANTS` (`deep` runs everything, others should only take first-render shots: `if (!variant.deep) return;`).
 
-Limits: native `window.confirm` dialogs (token revoke, group delete) are not part of a page screenshot; their text is recorded in `inventory/account-native-confirms.json`.
+Limits: native `window.confirm` dialogs (group delete in Access) are not part of a page screenshot. Token revoke is an in-app dialog of the shared account module.

@@ -30,7 +30,7 @@ async function scene(configure) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } }), page = await context.newPage(), fixture = new ChronicleFixture();
   page.on('pageerror', error => errors.push(error.message));
   if (configure) configure(fixture);
-  await fixture.install(page); await page.goto(`http://127.0.0.1:${address.port}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();
+  await fixture.install(page); await page.goto(`http://127.0.0.1:${address.port}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click();
   await page.getByRole('table', { name: 'Conversations', exact: true }).waitFor();
   await page.locator('.archive-row').first().waitFor();
   return { context, page, fixture };
@@ -177,7 +177,7 @@ try {
       const history = Array.from({ length: 58 }, (_, index) => activity(job(`00000000-0000-4000-8000-${String(91000 + index).padStart(12, '0')}`, index % 3 === 1 ? 2 : 1, api.JobState.Failed, `Historical failure ${index + 1}`), index % 3 === 0 ? 'target-profile' : 'obsolete-profile', index % 3 === 0 ? api.ActivityJobClass.SupersededRevision : index % 3 === 1 ? api.ActivityJobClass.ObsoleteProfile : api.ActivityJobClass.SupersededRevisionAndProfile, undefined, false, false));
       fixture.activityJobs = [failed, ...running, ...history];
     });
-    await page.getByRole('button', { name: 'activity', exact: true }).click();
+    await page.getByRole('link', { name: 'Activity', exact: true }).click();
     const totals = page.getByRole('table', { name: 'All your current and historical indexing jobs', exact: true });
     await totals.waitFor();
     assert.deepEqual(await totals.locator('tbody tr').first().locator('td').allTextContents(), ['4', '0', '3', '1', '0']);
@@ -224,7 +224,7 @@ try {
   });
   await run('Activity scope text contrast meets WCAG AA in selected/unselected normal and hover states', async () => {
     const { context, page } = await scene(); await page.setViewportSize({ width: 1440, height: 900 });
-    await page.getByRole('button', { name: 'activity', exact: true }).click();
+    await page.getByRole('link', { name: 'Activity', exact: true }).click();
     const group = page.getByRole('group', { name: 'Indexing job scope', exact: true });
     for (const selected of ['Current', 'History']) {
       await group.getByRole('button', { name: selected, exact: true }).click();
@@ -241,7 +241,7 @@ try {
       const report = new api.CollectorProgressUpdate(fixture.source.collectorNamespace, 1n, '00000000-0000-4000-8000-000000000090', api.CollectorPhase.Idle, '2026-10-26T11:00:00Z', new api.CollectorCounters(0,0,0,0,0,0,0,0,0,0,0,0,0n), 0n, 0n, undefined, undefined);
       fixture.collectors = [new api.CollectorStatus(report, '2026-10-26T11:59:00Z', false)];
     });
-    await page.setViewportSize({ width: 1440, height: 900 }); await page.getByRole('button', { name: 'activity', exact: true }).click();
+    await page.setViewportSize({ width: 1440, height: 900 }); await page.getByRole('link', { name: 'Activity', exact: true }).click();
     const collector = page.locator('.activity-collector-row').first(); await collector.waitFor();
     for (const [label, locator] of [['collector ID', collector.locator('td[data-column="CollectorId"]')], ['phase', collector.locator('td[data-column="Phase"]')], ['freshness', collector.locator('td[data-column="Freshness"]')], ['Current total', collector.locator('td[data-column="CurrentTotal"]')], ['Current done', collector.locator('td[data-column="CurrentComplete"]')], ['Current failed', collector.locator('td[data-column="CurrentFailed"]')]]) {
       const visible = await locator.evaluate(element => { const rect = element.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, height: innerHeight }; });
@@ -305,7 +305,7 @@ try {
     await page.getByText('HEAD r2 / index r1', { exact: true }).waitFor();
     assert.equal(await page.getByText('HEAD r4 / index r1', { exact: true }).count(), 0, 'new connection authorization cannot inherit the prior generation\'s high-water mark');
     fixture.mode = 'unauthorized'; fixture.restart();
-    await page.locator('.connection-widget[data-state="unauthorized"]').waitFor();
+    await page.locator('main[data-account-auth]').waitFor();
     assert.equal(await page.getByRole('dialog').count(), 0, 'authorization invalidation removes the source modal and known HEAD');
     assert.equal(await page.locator('.provenance').count(), 0);
     await context.close();
@@ -367,21 +367,21 @@ try {
     await archiveRead(page, fixture, () => search(page, 'original source'), 'Ordered by relevance');
     const manual = { expression: 'original source', sort: api.ArchiveSort.Title, direction: api.SortDirection.Asc, preferRelevance: false };
     assertArchiveQuery(await archiveRead(page, fixture, () => page.getByRole('button', { name: 'Sort by Conversation', exact: true }).click(), 'Ordered by Conversation · ascending'), manual);
-    const remount = await archiveRead(page, fixture, async () => { await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.locator('.activity-job-row').first().waitFor(); await page.getByRole('button', { name: 'archive', exact: true }).click(); }, 'Ordered by Conversation · ascending');
+    const remount = await archiveRead(page, fixture, async () => { await page.getByRole('link', { name: 'Activity', exact: true }).click(); await page.locator('.activity-job-row').first().waitFor(); await page.getByRole('link', { name: 'Archive', exact: true }).click(); }, 'Ordered by Conversation · ascending');
     assertArchiveQuery(remount, manual, 'tab remount keeps the parent-owned manual order');
     assertArchiveQuery(await archiveRead(page, fixture, () => fixture.restart(), 'Ordered by Conversation · ascending'), manual, 'same-owner reconnect keeps the manual order');
     assert.equal(await relevanceControl(page).getAttribute('aria-pressed'), 'false');
     const nextUser = transition === 'owner' ? 'bob' : 'alice'; let boundary = fixture.requests.length;
     if (transition === 'owner') { fixture.user = new api.UserInfo('bob', 'bob', [api.Scope.Read, api.Scope.Raw]); fixture.restart(); }
     else {
-      if (transition === 'logout') await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+      if (transition === 'logout') { await page.getByRole('button', { name: 'alice', exact: true }).click(); await page.getByRole('menuitem', { name: 'Sign out', exact: true }).click(); }
       else { fixture.mode = 'unauthorized'; await page.getByRole('button', { name: 'Refresh archive', exact: true }).click(); }
-      await page.getByRole('button', { name: 'Sign in →', exact: true }).waitFor(); boundary = fixture.requests.length;
-      await page.getByLabel('Login', { exact: true }).fill(nextUser); await page.getByLabel('Password', { exact: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in →', exact: true }).click();
+      await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor(); boundary = fixture.requests.length;
+      await page.getByLabel('Username', { exact: true }).fill(nextUser); await page.getByLabel('Password', { exact: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     }
-    await page.locator('.identity').getByText(nextUser, { exact: true }).waitFor();
-    assert.equal(await page.getByRole('button', { name: 'search', exact: true }).getAttribute('aria-current'), 'page');
-    await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); await archiveOrder(page, 'Ordered by Last activity · descending');
+    await page.getByRole('button', { name: nextUser, exact: true }).waitFor();
+    assert.equal(await page.getByRole('link', { name: 'Search', exact: true }).getAttribute('aria-current'), 'page');
+    await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); await archiveOrder(page, 'Ordered by Last activity · descending');
     const reads = fixture.requests.slice(boundary).filter(request => request.userId === nextUser && request.envelope.operation instanceof api.Operation_Archive).map(request => request.envelope.operation.query);
     assert.ok(reads.length > 0); for (const query of reads) assertArchiveQuery(query, { expression: '', sort: api.ArchiveSort.LastTimestamp, direction: api.SortDirection.Desc, preferRelevance: true }, `${transition} resets every Archive intent before the next read`);
     assert.equal(await relevanceControl(page).getAttribute('aria-pressed'), 'true');

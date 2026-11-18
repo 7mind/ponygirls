@@ -15,9 +15,9 @@ try {
     const page = await context.newPage(), fixture = new Goal50Fixture();
     fixture.jobs = [api.JobState.Queued, api.JobState.Running, api.JobState.Complete, api.JobState.Failed].map((state, index) => fixture.jobs[0].with({ id: `00000000-0000-4000-8000-${String(91000 + index).padStart(12, '0')}`, state, error: `retained-${state}` }));
     await fixture.install(page);
-    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click();
     await page.locator('.archive-row').first().waitFor();
-    await page.getByRole('button', { name: 'activity', exact: true }).click();
+    await page.getByRole('link', { name: 'Activity', exact: true }).click();
     for (const job of fixture.jobs) {
       const row = page.locator(`.activity-job-row[data-scroll-anchor="${job.id}"]`);
       await row.getByText('Details', { exact: true }).click();

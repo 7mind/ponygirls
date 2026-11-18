@@ -2,21 +2,15 @@ import { PRIMARY, VARIANTS, withScene, gotoTab, settle, inspect, sleep } from '.
 import { seededFixture } from './seed.mjs';
 
 export function registerOther(scenario) {
-  // ---- login
-  for (const [key, variant] of Object.entries(VARIANTS)) {
-    scenario(`login-${key}`, async ctx => {
-      await withScene(ctx, variant, { fixture: seededFixture(f => { f.signedIn = false; }), waitSignedIn: false }, async ({ page, shot }) => {
-        await page.locator('.login-card').waitFor(); await settle(page, 500);
-        await shot('login', 'first-render', 'Login page: story column with "Archive" heading, sign-in card; masthead without navigation', 'open / while signed out');
-        await inspect(page, ctx.recorder, `login-${key}`);
-        if (!variant.deep) return;
-        await page.getByLabel('Login').fill('alice'); await page.getByLabel('Password').fill('wrong-password'); await settle(page, 200);
-        await shot('login', 'filled', 'Login form filled', 'type credentials');
-        await page.getByRole('button', { name: /Sign in/ }).click(); await page.locator('[data-account-login-error]:not([hidden])').waitFor(); await settle(page, 300);
-        await shot('login', 'error', 'Login error: "Invalid login or password. Try again." under the form', 'submit wrong password');
-      });
+  // ---- login (shared account module in the auth mount; mockup-named shots are in scenes-shell.mjs)
+  scenario('login-flows', async ctx => {
+    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture(f => { f.signedIn = false; }), waitSignedIn: false }, async ({ page, shot }) => {
+      await page.locator('main[data-account-auth] form[data-account-login]').waitFor();
+      await page.getByLabel('Username', { exact: true }).fill('alice'); await page.getByLabel('Password', { exact: true }).fill('wrong-password');
+      await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.locator('[data-account-login-error]:not([hidden])').waitFor(); await settle(page, 300);
+      await shot('login', 'error', 'Login error under the card heading', 'submit wrong password', { file: 'account-login-error-1440.png' });
     });
-  }
+  });
   // ---- access, mcp
   for (const [key, variant] of Object.entries(VARIANTS)) {
     scenario(`access-${key}`, async ctx => {
@@ -49,19 +43,12 @@ export function registerOther(scenario) {
   scenario('chrome', async ctx => {
     await withScene(ctx, VARIANTS.deep, { fixture: seededFixture() }, async ({ page, shot }) => {
       await gotoTab(page, 'archive'); await page.locator('.archive-row').first().waitFor();
-      await page.getByRole('button', { name: 'Theme settings' }).click(); await page.waitForTimeout(300);
-      await shot('chrome', 'theme-menu', 'Theme menu popover (System / Light / Dark select)', 'masthead > Theme');
-      await page.keyboard.press('Escape');
-      await page.locator('.connection-widget > button').click(); await page.waitForTimeout(400);
-      await shot('chrome', 'connection-health-panel', 'Connection health popover opened from the floating "live" pill (bottom right)', 'click the connection pill');
-      await page.keyboard.press('Escape');
       await page.keyboard.press('Tab'); await settle(page, 200);
       await shot('chrome', 'skip-link-focus', 'First Tab press: skip-to-content link appears at the top left', 'press Tab once on a fresh page');
     });
     await withScene(ctx, VARIANTS.deep, { fixture: seededFixture() }, async ({ page, shot }) => {
       await gotoTab(page, 'archive'); await page.locator('.archive-row').first().waitFor();
-      await page.getByRole('button', { name: 'Theme settings' }).click(); await page.getByLabel('Color theme').selectOption('dark'); await settle(page, 500);
-      await page.keyboard.press('Escape');
+      await page.getByRole('button', { name: 'Theme settings' }).click(); await page.getByRole('menuitemradio', { name: 'Dark', exact: true }).click(); await settle(page, 500);
       await shot('chrome', 'forced-dark-archive', 'Archive after choosing Dark in the theme menu (class/data-theme path, as opposed to the OS colour-scheme path in the -dark captures)', 'Theme menu > Dark');
     });
     await withScene(ctx, VARIANTS.deep, { fixture: seededFixture(f => { f.mode = 'version'; }), waitSignedIn: false }, async ({ page, shot }) => {
@@ -75,7 +62,7 @@ export function registerOther(scenario) {
     await withScene(ctx, VARIANTS.deep, { fixture: seededFixture() }, async ({ page, fixture, shot }) => {
       await gotoTab(page, 'archive'); await page.locator('.archive-row').first().waitFor();
       fixture.blackholeActive(); await page.waitForFunction(() => /stale|retrying|connecting|offline/.test(document.querySelector('.connection-widget')?.getAttribute('data-state') ?? ''), null, { timeout: 40000 }).catch(() => null); await settle(page, 500);
-      await shot('chrome', 'connection-lost', 'Connection pill after the active socket stops answering (state shown in the pill; content stays on screen)', 'server stops answering pings');
+      await shot('chrome', 'connection-lost', 'Masthead connection indicator after the active socket stops answering (content stays on screen)', 'server stops answering pings');
     });
   });
 }
