@@ -134,7 +134,7 @@ async function signIn(page, hash) {
 }
 async function loadBatches(page, batches) {
   for (let batch = 1; batch < batches; batch++) {
-    await records(page).evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     await waitRows(page, PAGE * (batch + 1));
   }
 }
@@ -167,13 +167,12 @@ try {
       await page.goto(`${base}/#/browse`);
       await waitRows(page, PAGE);
       await loadBatches(page, 3);
-      await records(page).evaluate((element) => { element.scrollTop = 700; });
-      await page.evaluate(() => window.scrollTo(0, 120));
+      await page.evaluate(() => window.scrollTo(0, 700));
       const opener = page.getByRole("button", { name: "notes:record-45", exact: true });
       await opener.focus();
       const listSearches = () => state.searches.filter((search) => search.query === "").length;
-      const before = { searches: listSearches(), rows: await rowCount(page), panel: await records(page).evaluate((element) => element.scrollTop), page: await page.evaluate(() => window.scrollY) };
-      assert.ok(before.page > 0 && before.panel > 0, "the list is scrolled before opening a record");
+      const before = { searches: listSearches(), rows: await rowCount(page), page: await page.evaluate(() => window.scrollY) };
+      assert.ok(before.page > 0, "the list is scrolled before opening a record");
       await page.keyboard.press("Enter");
       await page.getByRole("heading", { name: "Title of notes:record-45", exact: true }).waitFor();
       assert.equal(new URL(page.url()).hash, "#/item/notes%3Arecord-45");
@@ -182,8 +181,6 @@ try {
       await page.getByRole("button", { name: "Back to Browse", exact: true }).click();
       await waitRows(page, before.rows);
       assert.equal(new URL(page.url()).hash, "#/browse");
-      const panelAfter = await records(page).evaluate((element) => element.scrollTop);
-      assert.ok(Math.abs(panelAfter - before.panel) <= 2, `list scroll is restored: ${before.panel} → ${panelAfter}`);
       const pageAfter = await page.evaluate(() => window.scrollY);
       assert.ok(Math.abs(pageAfter - before.page) <= 2, `page scroll is restored: ${before.page} → ${pageAfter}`);
       assert.equal(await opener.evaluate((element) => element === document.activeElement), true, "focus returns to the originating row");
@@ -191,16 +188,14 @@ try {
       // Preset round trip: an unsubmitted query draft, three batches and the scroll survive Inbox and browser Back.
       const query = page.getByRole("combobox", { name: "Query", exact: true });
       await query.fill("draft not submitted");
-      await records(page).evaluate((element) => { element.scrollTop = 800; });
-      await page.evaluate(() => window.scrollTo(0, 100));
-      const left = { panel: await records(page).evaluate((element) => element.scrollTop), page: await page.evaluate(() => window.scrollY) };
+      await page.evaluate(() => window.scrollTo(0, 800));
+      const left = { page: await page.evaluate(() => window.scrollY) };
       await nav(page).getByRole("link", { name: "Inbox", exact: true }).click();
       await page.getByRole("button", { name: "todo:review-00", exact: true }).waitFor();
       await page.goBack();
       await waitRows(page, before.rows);
       assert.equal(new URL(page.url()).hash, "#/browse");
       assert.equal(await query.inputValue(), "draft not submitted", "the query draft is kept");
-      assert.ok(Math.abs(await records(page).evaluate((element) => element.scrollTop) - left.panel) <= 2, "list scroll is kept across presets");
       assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - left.page) <= 2, "page scroll is kept across presets");
       // Focus in the list (an address change keeps it there) returns with the list.
       const row = page.getByRole("button", { name: "notes:record-30", exact: true });
@@ -214,15 +209,13 @@ try {
       // Sort and query round trips within the list: Back restores the previous route's chain and scroll instead of
       // searching it again; only the new sort's first page is searched.
       const keptRoute = async () => {
-        await records(page).evaluate((element) => { element.scrollTop = 600; });
-        await page.evaluate(() => window.scrollTo(0, 80));
-        return { panel: await records(page).evaluate((element) => element.scrollTop), page: await page.evaluate(() => window.scrollY), searches: listSearches() };
+        await page.evaluate(() => window.scrollTo(0, 600));
+        return { page: await page.evaluate(() => window.scrollY), searches: listSearches() };
       };
       const backTo = async (route, searched, what) => {
         await page.goBack();
         await waitRows(page, before.rows);
         assert.equal(new URL(page.url()).hash, "#/browse", what);
-        assert.ok(Math.abs(await records(page).evaluate((element) => element.scrollTop) - route.panel) <= 2, `${what}: list scroll is restored`);
         assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - route.page) <= 2, `${what}: page scroll is restored`);
         assert.equal(listSearches(), route.searches + searched, `${what}: Back does not search the previous route again`);
       };
@@ -235,7 +228,7 @@ try {
       await query.fill("missing");
       route = await keptRoute();
       await page.getByRole("button", { name: "Search", exact: true }).evaluate((button) => button.click());
-      await page.getByRole("heading", { name: "No records found", exact: true }).waitFor();
+      await page.getByRole("heading", { name: "No matching records", exact: true }).waitFor();
       await backTo(route, 0, "query round trip");
       assert.equal(await query.inputValue(), "", "the restored route shows its own query");
       // Edit is a route: Cancel returns to the record, Back from the record to the list; a reload keeps the editor.
@@ -355,7 +348,7 @@ try {
       await page.getByRole("button", { name: "notes:fresh", exact: true }).waitFor();
       assert.equal(await page.getByRole("button", { name: "Records changed · Show", exact: true }).count(), 0, "an untouched list needs no announcement");
       await loadBatches(page, 3);
-      await records(page).evaluate((element) => { element.scrollTop = 900; });
+      await page.evaluate(() => window.scrollTo(0, 900));
       const listSearches = () => state.searches.filter((search) => search.query === "").length;
       const searches = listSearches();
       state.data[""].unshift(summary("notes:later", "Later record", {}));
@@ -364,10 +357,11 @@ try {
       await pill.waitFor();
       await frames(page);
       assert.equal(await rowCount(page), PAGE * 3, "rows are kept");
-      assert.equal(await records(page).evaluate((element) => element.scrollTop), 900, "scroll is kept");
+      assert.equal(await page.evaluate(() => window.scrollY), 900, "scroll is kept");
       assert.equal(listSearches(), searches, "the list is not reloaded until the reader asks");
+      // The first row below the sticky table header.
       const firstVisible = () => records(page).evaluate((element) => {
-        const top = element.getBoundingClientRect().top;
+        const top = element.querySelector("thead").getBoundingClientRect().bottom;
         const row = [...element.querySelectorAll("tbody tr")].find((candidate) => candidate.getBoundingClientRect().bottom > top);
         return { key: row.dataset.rowId, top: row.getBoundingClientRect().top };
       });
@@ -389,6 +383,10 @@ try {
       await signIn(page, "#/inbox");
       await waitRows(page, PAGE);
       await page.evaluate(() => window.scrollTo(0, 100));
+      // The document is the list's scroller: scrolling near its end may load the next batch; let it settle.
+      await frames(page);
+      await page.waitForFunction(() => [...document.querySelectorAll("section.browse")].every((view) => view.getClientRects().length === 0 || view.getAttribute("aria-busy") === "false"));
+      const shownRows = await rowCount(page);
       const scrolled = await page.evaluate(() => window.scrollY);
       const row = page.getByRole("button", { name: "todo:review-00", exact: true });
       await row.evaluate((element) => { element.keptProbe = true; });
@@ -402,7 +400,7 @@ try {
       await nav(page).getByRole("link", { name: "Inbox", exact: true }).click();
       await page.getByRole("heading", { name: "Access tokens", exact: true }).waitFor({ state: "hidden" });
       await page.getByRole("main").waitFor();
-      assert.equal(await rowCount(page), PAGE, "the list is shown again with its rows");
+      assert.equal(await rowCount(page), shownRows, "the list is shown again with its rows");
       assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - scrolled) <= 2, "leaving the account page restores the list scroll");
       assert.deepEqual(await current(page), ["Inbox25"]);
       assert.equal(await row.evaluate((element) => element.keptProbe), true, "the list stayed mounted under the account page");
@@ -434,7 +432,7 @@ try {
       await page.goBack();
       await diagnostics.getByText(INVALID_SPAN.message, { exact: false }).waitFor();
       await page.getByRole("alert").filter({ hasText: "Invalid search query." }).waitFor();
-      assert.equal(await page.getByRole("heading", { name: "No records found", exact: true }).count(), 0, "a failed route is not shown as an empty result");
+      assert.equal(await page.getByRole("heading", { name: "No matching records", exact: true }).count(), 0, "a failed route is not shown as an empty result");
       assert.equal(searchesOf((body) => body.query === invalid), invalidSearches, "the failed route is restored, not searched again");
       // An initial search left in flight is not kept: returning searches once more and renders its rows.
       const skills = (body) => body.query === "type:skill-draft" && body.cursor === null;
@@ -457,7 +455,7 @@ try {
       const settled = await records(page).locator("tbody tr").evaluateAll((rows) => rows.map((row) => row.dataset.rowId));
       const append = (body) => body.query === "" && body.cursor === String(PAGE);
       const heldAppend = state.hold(append);
-      await records(page).evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
       await heldAppend.seen;
       await submit("type:skill-draft");
       await page.getByRole("button", { name: "skills:draft-1", exact: true }).waitFor();

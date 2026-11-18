@@ -1,200 +1,599 @@
+// Behavioral blackbox: Browse and its presets (spec §3.2; §8 items 1–5, 7, 11) — the built dashboard (web/dist)
+// served by the selected Scala/native server with its own owned database, records seeded through the
+// authenticated public API, pinned Chromium. Fault and timing scenarios use page routes and Playwright's clock.
+// Runs alone (after `npm run build`):
+//   HAYSTACK_SERVER_COMMAND=… HAYSTACK_CHROMIUM=… HAYSTACK_TEST_PG=… HAYSTACK_FIXTURE_ADMIN_AUTHORIZED=1 \
+//     node --import ../scripts/register-generated.mjs tests-browser/browse.mjs
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { chromium } from "playwright-core";
+import { prerequisites } from "./prerequisites.mjs";
+import { writePasswordHash } from "./credentials.mjs";
+import { ownedDatabase, configFor, atomicConfig, startServer, stopServer, publicClient, freePort } from "./native.mjs";
 
-export async function checkBrowse({ browser, base, login, navLink, humanPassword, check, seed, agent, docOf, rid, interceptSearch }) {
-  const total = 45;
-  // Reverse insertion order makes real modified-at desc match the original
-  // constant-clock/key-order fixture, without injecting private server state.
-  for (let index = total - 1; index >= 0; index--) {
-    await seed.put({ key: `scroll:${String(index).padStart(2, "0")}`, documentJson: docOf({ title: `Record ${String(total - index - 1).padStart(2, "0")}`, tags: [index % 2 ? "odd" : "even"] }), expectedRevision: 0, requestId: rid() }, agent);
+const PAGE = 20;
+const TOTAL = 45;
+const DESKTOP = { width: 1440, height: 900 };
+const SMALL = { width: 1024, height: 700 };
+const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+await prerequisites("main");
+
+let database; let dir; let backend; let browser;
+const cleanup = async () => {
+  if (browser) await browser.close();
+  await stopServer(backend);
+  if (database) await database.close();
+  if (dir) await rm(dir, { recursive: true, force: true });
+};
+process.once("SIGTERM", () => { void cleanup().finally(() => process.exit(143)); });
+let failures = 0;
+const results = [];
+async function check(name, run) {
+  console.log(`# check - ${name}`);
+  try {
+    await run();
+    results.push(name);
+    console.log(`ok - ${name}`);
+  } catch (error) {
+    failures++;
+    console.log(`FAIL - ${name}: ${String(error.message).split("\n")[0]}`);
+    console.error(error);
   }
-  const open = async (page) => {
-    await login(page, humanPassword);
-    await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
-    await page.goto(`${base}/#/browse?${new URLSearchParams({ q: "project:scroll" })}`);
-    await page.waitForFunction(() => document.querySelectorAll(".records-panel tbody .record-open").length === 20);
+}
+
+try {
+  dir = await mkdtemp(path.join(os.tmpdir(), "haystack-browse-"));
+  database = await ownedDatabase({ connectionString: process.env.HAYSTACK_TEST_PG, dir });
+  const password = randomBytes(32).toString("base64url");
+  await writePasswordHash(path.join(dir, "human.password"), password);
+  const agentToken = randomBytes(32).toString("base64url");
+  await writeFile(path.join(dir, "agent.sha"), createHash("sha256").update(agentToken, "ascii").digest("hex") + "\n");
+  const port = await freePort();
+  const base = `http://127.0.0.1:${port}`;
+  const auth = {
+    activityProjectId: "agent-activity",
+    users: [
+      { id: "op", type: "human", displayName: "Op", enabled: true, login: "op", passwordHashFile: path.join(dir, "human.password"), tokens: [] },
+      { id: "agent", type: "agent", displayName: "Agent", tokens: [{ id: "default", hashFile: path.join(dir, "agent.sha") }] },
+    ],
+    cookieSecure: true, allowedHosts: ["127.0.0.1"], allowedOrigins: [base], insecureHttpOrigins: [base], rateLimit: { windowMs: 60000, max: 6000 },
   };
-  const count = (page, expected) => page.waitForFunction((n) => document.querySelectorAll(".records-panel tbody .record-open").length === n, expected);
-  const bottom = (page) => page.locator(".records-panel").evaluate((element) => { element.scrollTop = element.scrollHeight; });
-  const titles = (page) => page.locator(".record-open strong").allTextContents();
-  const settle = (page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const configFile = path.join(dir, "config.json");
+  await atomicConfig(configFile, await configFor({ database: database.runtime, port, webRoot: path.join(webRoot, "dist"), auth }));
+  backend = await startServer(configFile, port, path.join(dir, "server.log"));
+  const seed = publicClient(base, agentToken);
+  let requests = 0;
+  const rid = () => `0193e8d5-6f5c-7a1b-8c2d-${String(++requests).padStart(12, "0")}`;
+  const docOf = (over) => JSON.stringify({ title: "t", description: "d", fields: {}, type: "fact", status: "actual", importance: "low", "human-attention": "cleared", links: [], ...over });
+  const put = (key, over, expectedRevision = 0) => seed.put({ key, documentJson: docOf(over), expectedRevision, requestId: rid() });
+  // Reverse insertion order: newest-modified first lists "Record 00" first.
+  for (let index = TOTAL - 1; index >= 0; index--) await put(`scroll:${String(index).padStart(2, "0")}`, { title: `Record ${String(TOTAL - index - 1).padStart(2, "0")}`, tags: [index % 2 ? "odd" : "even"] });
+  await put("ui:note", { title: "hello memory" });
+  await put("ui:old", { title: "buried memory", status: "archived" });
+  await put("ui:todo", { title: "needs attention", type: "todo", "human-attention": "required" });
 
-  await check("browse uses sortable table columns instead of pagination", async () => {
-    const ctx = await browser.newContext();
-    try {
-      const page = await ctx.newPage();
-      await open(page);
-      assert.equal(await page.getByRole("button", { name: "Next", exact: true }).count(), 0);
-      await page.getByRole("columnheader", { name: "Project" }).waitFor();
-      assert.equal(await page.getByRole("columnheader", { name: "Sort by Modified" }).getAttribute("aria-sort"), "descending");
-      await page.getByRole("button", { name: "Sort by Record", exact: true }).focus();
-      await page.keyboard.press("Enter");
-      await page.waitForFunction(() => document.querySelector(".record-open strong")?.textContent === "Record 00");
-      assert.equal(await page.getByRole("columnheader", { name: "Sort by Record" }).getAttribute("aria-sort"), "ascending");
-      assert.ok((await page.evaluate(() => location.hash)).includes("sort=title"));
-      await page.reload();
-      await page.waitForFunction(() => document.querySelector(".record-open strong")?.textContent === "Record 00");
-      await page.emulateMedia({ colorScheme: "dark" });
-      await page.setViewportSize({ width: 390, height: 844 });
-      assert.equal(await page.getByRole("columnheader", { name: "Sort by Project" }).isVisible(), true);
-      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "table must scroll within its container on mobile");
-    } finally { await ctx.close(); }
-  });
+  browser = await chromium.launch({ executablePath: process.env.HAYSTACK_CHROMIUM, args: ["--no-sandbox", "--no-proxy-server"] });
+  const nav = (page) => page.getByRole("navigation", { name: "Main navigation" });
+  /** The list shown: lists of other routes stay mounted, hidden. */
+  const list = (page) => page.locator("section.browse").filter({ visible: true });
+  const query = (page) => list(page).getByRole("combobox", { name: "Query", exact: true });
+  const searchButton = (page) => list(page).getByRole("button", { name: "Search", exact: true });
+  const rowKeys = (page) => list(page).locator("tbody tr[data-row-id]").evaluateAll((rows) => rows.map((row) => row.dataset.rowId));
+  const titles = (page) => list(page).locator("tbody .cell-title").allTextContents();
+  const waitRows = (page, count) => page.waitForFunction((n) => [...document.querySelectorAll("section.browse")]
+    .some((view) => view.getClientRects().length > 0 && view.getAttribute("aria-busy") === "false" && view.querySelectorAll("tbody tr[data-row-id]").length === n), count);
+  const firstTitle = (page, title) => page.waitForFunction((value) => [...document.querySelectorAll("section.browse")]
+    .some((view) => view.getClientRects().length > 0 && view.querySelector("tbody .cell-title")?.textContent === value), title);
+  const counter = (page) => list(page).locator(".viewbar-meta");
+  const toEnd = (page) => page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const frames = (page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  /** A signed-in page; native dialogs and page errors are recorded and asserted absent by `done` (spec §8 item 7). */
+  async function open({ viewport = DESKTOP, hash = "#/browse", clock = false } = {}) {
+    const context = await browser.newContext({ viewport });
+    await context.addInitScript(() => {
+      window.nativeDialogs = [];
+      for (const name of ["alert", "confirm", "prompt"]) window[name] = (...args) => { window.nativeDialogs.push([name, ...args]); return null; };
+    });
+    const page = await context.newPage();
+    if (clock) await page.clock.install();
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    page.on("dialog", (dialog) => { errors.push(`native dialog: ${dialog.message()}`); void dialog.dismiss(); });
+    await page.goto(`${base}/${hash}`);
+    await page.getByLabel("Username", { exact: true }).fill("op");
+    await page.getByLabel("Password", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
+    const done = async () => {
+      assert.deepEqual(errors, [], "no page errors or native dialogs");
+      assert.deepEqual(await page.evaluate(() => window.nativeDialogs), [], "window.alert/confirm/prompt are never called");
+      await context.close();
+    };
+    return { context, page, done };
+  }
+  const scrollList = `#/browse?${new URLSearchParams({ q: "project:scroll" })}`;
 
-  await check("browse appends every page once and stops at the end", async () => {
-    const ctx = await browser.newContext();
-    try {
-      const page = await ctx.newPage();
-      const cursors = [];
-      page.on("request", (request) => {
-        if (request.url().endsWith("/api/v1/search") && request.postDataJSON().query === "project:scroll" && request.postDataJSON().cursor) cursors.push(request.postDataJSON().cursor);
+  await check("browse: the document is the only scroller; the view bar and the table header stick under the masthead", async () => {
+    for (const viewport of [DESKTOP, SMALL]) {
+      const { page, done } = await open({ viewport, hash: scrollList });
+      await waitRows(page, PAGE);
+      for (const rows of [2 * PAGE, TOTAL]) { await toEnd(page); await waitRows(page, rows); }
+      const scrollers = await page.evaluate(() => [...document.querySelectorAll("body *")].filter((element) => {
+        const style = getComputedStyle(element);
+        return /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight + 1 && element.getBoundingClientRect().height > 0;
+      }).map((element) => element.outerHTML.slice(0, 80)));
+      assert.deepEqual(scrollers, [], `${viewport.width}: no element scrolls vertically but the document`);
+      assert.ok(await page.evaluate(() => document.scrollingElement.scrollHeight > innerHeight), "the document scrolls");
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no horizontal document overflow");
+      await page.evaluate(() => window.scrollTo(0, 1500));
+      const tops = await page.evaluate(() => {
+        const view = [...document.querySelectorAll("section.browse")].find((element) => element.getClientRects().length > 0);
+        return { masthead: document.querySelector(".masthead").getBoundingClientRect().height, bar: view.querySelector(".viewbar").getBoundingClientRect(),
+          header: view.querySelector("thead th").getBoundingClientRect().top, scrollY };
       });
-      await open(page);
-      await bottom(page);
-      await count(page, 40);
-      await bottom(page);
-      await count(page, total);
-      await page.getByText("All 45 records loaded.", { exact: true }).waitFor();
-      assert.equal(new Set(await page.locator(".record-open").evaluateAll((elements) => elements.map((element) => element.getAttribute("aria-label")))).size, total);
-      assert.equal(await page.getByRole("button", { name: "Load more records", exact: true }).count(), 0);
-      assert.equal(cursors.length, 2);
-      assert.equal(new Set(cursors).size, 2);
-    } finally { await ctx.close(); }
+      assert.equal(tops.scrollY, 1500);
+      assert.equal(tops.bar.top, tops.masthead, `${viewport.width}: the view bar sticks under the masthead`);
+      assert.equal(tops.header, tops.masthead + tops.bar.height, `${viewport.width}: the table header sticks under the view bar`);
+      if (viewport === DESKTOP) assert.equal(tops.header, 104, "48 px masthead + 56 px view bar (spec §8 item 2)");
+      for (const column of ["Record", "Type", "Tags", "Attention", "Importance", "Modified"]) await list(page).getByRole("columnheader", { name: column }).waitFor();
+      const hidden = await list(page).getByRole("columnheader", { name: "Project" }).isVisible();
+      assert.equal(hidden, viewport === DESKTOP, "Project is shown at 1440 and hidden at 1024: the table stays a table");
+      await done();
+    }
   });
 
-  await check("browse sort applies to the complete result set and resets loaded rows", async () => {
-    const ctx = await browser.newContext();
-    try {
-      const page = await ctx.newPage();
-      await open(page);
-      await page.getByRole("button", { name: "Sort by Record", exact: true }).click();
-      await page.waitForFunction(() => document.querySelector(".record-open strong")?.textContent === "Record 00");
-      assert.deepEqual(await titles(page), Array.from({ length: 20 }, (_, i) => `Record ${String(i).padStart(2, "0")}`));
-      await bottom(page);
-      await count(page, 40);
-      assert.deepEqual(await titles(page), Array.from({ length: 40 }, (_, i) => `Record ${String(i).padStart(2, "0")}`));
-      await page.getByRole("button", { name: "Sort by Record", exact: true }).click();
-      await page.waitForFunction(() => document.querySelector(".record-open strong")?.textContent === "Record 44");
-      assert.deepEqual(await titles(page), Array.from({ length: 20 }, (_, i) => `Record ${String(44 - i).padStart(2, "0")}`));
-    } finally { await ctx.close(); }
+  await check("browse sorts the complete result set from the header, restarts the loaded chain and keeps the sort across a reload", async () => {
+    const { page, done } = await open({ hash: scrollList });
+    await waitRows(page, PAGE);
+    assert.equal(await list(page).getByRole("button", { name: "Next", exact: true }).count(), 0);
+    assert.equal(await list(page).getByRole("columnheader", { name: "Modified" }).getAttribute("aria-sort"), "descending");
+    await toEnd(page);
+    await waitRows(page, 2 * PAGE);
+    await list(page).getByRole("button", { name: "Sort by Record", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await firstTitle(page, "Record 00");
+    await waitRows(page, PAGE);
+    assert.deepEqual(await titles(page), Array.from({ length: PAGE }, (_, i) => `Record ${String(i).padStart(2, "0")}`));
+    assert.equal(await list(page).getByRole("columnheader", { name: "Record" }).getAttribute("aria-sort"), "ascending");
+    assert.equal(await list(page).getByRole("columnheader", { name: "Modified" }).getAttribute("aria-sort"), null, "only the sorted column carries aria-sort");
+    assert.equal(await page.evaluate(() => window.scrollY), 0, "a new sort starts at the top of its list");
+    await toEnd(page);
+    await waitRows(page, 2 * PAGE);
+    assert.deepEqual(await titles(page), Array.from({ length: 2 * PAGE }, (_, i) => `Record ${String(i).padStart(2, "0")}`));
+    await list(page).getByRole("button", { name: "Sort by Record", exact: true }).click();
+    await firstTitle(page, "Record 44");
+    assert.deepEqual(await titles(page), Array.from({ length: PAGE }, (_, i) => `Record ${String(44 - i).padStart(2, "0")}`));
+    assert.equal(new URLSearchParams(new URL(page.url()).hash.split("?")[1]).get("direction"), "desc");
+    await page.reload();
+    await firstTitle(page, "Record 44");
+    assert.equal(await query(page).inputValue(), "project:scroll", "reload restores the query");
+    assert.equal(await list(page).getByRole("columnheader", { name: "Record" }).getAttribute("aria-sort"), "descending", "reload restores the sort");
+    await done();
+  });
+
+  await check("browse loads the document-scrolled list to an explicit end marker, every row once, without pagination controls", async () => {
+    const { page, done } = await open({ hash: scrollList });
+    const cursors = [];
+    page.on("request", (request) => {
+      if (request.url().endsWith("/api/v1/search") && request.postDataJSON().query === "project:scroll" && request.postDataJSON().cursor) cursors.push(request.postDataJSON().cursor);
+    });
+    await waitRows(page, PAGE);
+    await counter(page).getByText(`${PAGE} loaded · more available`, { exact: true }).waitFor();
+    assert.equal(await list(page).locator("[data-list-end]").count(), 0);
+    await toEnd(page);
+    await waitRows(page, 2 * PAGE);
+    await toEnd(page);
+    await waitRows(page, TOTAL);
+    await counter(page).getByText(`All ${TOTAL} records loaded`, { exact: true }).waitFor();
+    await list(page).getByText(`End of list · ${TOTAL} records`, { exact: true }).waitFor();
+    assert.equal(new Set(await rowKeys(page)).size, TOTAL);
+    for (const name of [/Load more/, /^Result page/, /^Source span/, /^Next$/]) assert.equal(await page.getByRole("button", { name }).count(), 0, `no ${name} control`);
+    assert.equal(cursors.length, 2);
+    assert.equal(new Set(cursors).size, 2);
+    await done();
   });
 
   await check("browse ignores an old in-flight page after sorting", async () => {
-    const ctx = await browser.newContext();
-    let release;
+    const { page, done } = await open({ hash: scrollList });
+    await waitRows(page, PAGE);
+    let arrived; let release;
+    const started = new Promise((resolve) => { arrived = resolve; });
+    const held = new Promise((resolve) => { release = resolve; });
+    await page.route("**/api/v1/search", async (route) => {
+      if (route.request().postDataJSON().cursor !== null) { arrived(); await held; }
+      await route.continue();
+    });
+    const stale = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().cursor !== null);
     try {
-      const page = await ctx.newPage();
-      await open(page);
-      let pending;
-      const started = new Promise((resolve) => { pending = resolve; });
-      const held = new Promise((resolve) => { release = resolve; });
-      interceptSearch(async (body, _res, next) => {
-        if (body.cursor) { pending(); await held; }
-        next();
-      });
-      await bottom(page);
+      await toEnd(page);
       await started;
-      await page.getByRole("button", { name: "Sort by Record", exact: true }).click();
-      await page.waitForFunction(() => document.querySelector(".record-open strong")?.textContent === "Record 00");
-      const response = page.waitForResponse((res) => res.url().endsWith("/api/v1/search") && Boolean(res.request().postDataJSON().cursor));
-      release();
-      await response;
-      await settle(page);
-      assert.deepEqual(await titles(page), Array.from({ length: 20 }, (_, i) => `Record ${String(i).padStart(2, "0")}`));
-    } finally { if (release) release(); interceptSearch(null); await ctx.close(); }
+      await list(page).getByRole("button", { name: "Sort by Record", exact: true }).click();
+      await firstTitle(page, "Record 00");
+    } finally { release(); }
+    await (await stale).finished();
+    await frames(page);
+    assert.deepEqual(await titles(page), Array.from({ length: PAGE }, (_, i) => `Record ${String(i).padStart(2, "0")}`));
+    await done();
   });
 
-  await check("browse preserves rows on append failure and retries the same cursor", async () => {
-    const ctx = await browser.newContext();
-    try {
-      const page = await ctx.newPage();
-      await open(page);
-      const attempts = [];
-      interceptSearch((body, res, next) => {
-        if (body.cursor) {
-          attempts.push(body.cursor);
-          if (attempts.length === 1) { res.status(503).json({ error: { code: "unavailable", message: "injected failure" } }); return; }
-        }
-        next();
-      });
-      await bottom(page);
-      await page.getByRole("alert").filter({ hasText: "Server unreachable" }).waitFor();
-      assert.equal((await titles(page)).length, 20);
-      await settle(page);
-      assert.equal(attempts.length, 1, "failed pages must not retry in an observer loop");
-      await page.getByRole("button", { name: "Retry loading records", exact: true }).click();
-      await count(page, 40);
-      assert.deepEqual(attempts, [attempts[0], attempts[0]]);
-    } finally { interceptSearch(null); await ctx.close(); }
+  await check("browse keeps the rows when an append fails, pauses loading and retries the same cursor", async () => {
+    const { page, done } = await open({ hash: scrollList });
+    await waitRows(page, PAGE);
+    const attempts = [];
+    await page.route("**/api/v1/search", async (route) => {
+      const cursor = route.request().postDataJSON().cursor;
+      if (cursor !== null) {
+        attempts.push(cursor);
+        if (attempts.length === 1) { await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "unavailable", message: "injected failure", spans: [], currentRevision: null }) }); return; }
+      }
+      await route.continue();
+    });
+    await toEnd(page);
+    const alert = list(page).getByRole("alert").filter({ hasText: "The next records could not be loaded." });
+    await alert.waitFor();
+    assert.match(await alert.textContent(), /Server unreachable.*The 20 records above are kept/);
+    assert.equal((await rowKeys(page)).length, PAGE);
+    await toEnd(page);
+    await frames(page);
+    assert.equal(attempts.length, 1, "a failed page is not retried in an observer loop");
+    await list(page).getByRole("button", { name: "Retry loading records", exact: true }).click();
+    await waitRows(page, 2 * PAGE);
+    assert.deepEqual(attempts, [attempts[0], attempts[0]]);
+    await done();
   });
 
   await check("browse route tag changes reset the infinite list", async () => {
-    const ctx = await browser.newContext();
-    try {
-      const page = await ctx.newPage();
-      await open(page);
-      await page.goto(`${base}/#/browse?${new URLSearchParams({ q: "project:scroll tag:odd" })}`);
-      await page.waitForFunction(() => document.querySelector(".record-open")?.getAttribute("aria-label") === "scroll:01");
-      assert.equal(await page.getByRole("combobox", { name: "Query", exact: true }).inputValue(), "project:scroll tag:odd");
-      assert.ok((await page.locator(".record-open").evaluateAll((elements) => elements.map((element) => element.getAttribute("aria-label")))).every((key) => Number(key.split(":")[1]) % 2 === 1));
-    } finally { await ctx.close(); }
+    const { page, done } = await open({ hash: scrollList });
+    await waitRows(page, PAGE);
+    await page.goto(`${base}/#/browse?${new URLSearchParams({ q: "project:scroll tag:odd" })}`);
+    await page.waitForFunction(() => document.querySelector("section.browse tbody tr")?.dataset.rowId === "scroll:01");
+    assert.equal(await query(page).inputValue(), "project:scroll tag:odd");
+    assert.ok((await rowKeys(page)).every((key) => Number(key.split(":")[1]) % 2 === 1));
+    await done();
   });
 
   await check("legacy URL filters become the exact visible applied expression", async () => {
-    const ctx = await browser.newContext();
-    try {
-      const page = await ctx.newPage();
-      await open(page);
-      const query = page.getByRole("combobox", { name: "Query", exact: true });
-      const expression = '(((id:"ui:note" OR project:scroll) project:"scroll") tag:"odd") archived:"all"';
-      const result = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === expression);
-      await page.goto(`${base}/#/browse?${new URLSearchParams({ q: 'id:"ui:note" OR project:scroll', project: "scroll", tag: "odd", archive: "show" })}`);
-      assert.equal((await result).request().postDataJSON().project, null, "there is no hidden project scope");
-      await count(page, 20);
-      assert.equal(await query.inputValue(), expression);
-      const params = new URLSearchParams(new URL(page.url()).hash.split("?")[1]);
-      assert.equal(params.get("q"), expression);
-      for (const field of ["project", "tag", "archive"]) assert.equal(params.has(field), false);
-      assert.ok((await page.locator(".record-open").evaluateAll((elements) => elements.map((element) => element.getAttribute("aria-label")))).every((key) => key.startsWith("scroll:") && Number(key.split(":")[1]) % 2 === 1), "scope constrains the entire OR body");
-      await page.reload();
-      await count(page, 20);
-      assert.equal(await query.inputValue(), expression, "canonical URL does not compose the scopes twice");
-      const archive = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === "archived:true");
-      await navLink(page, "Archive").click();
-      assert.equal((await archive).request().postDataJSON().project, null);
-      assert.equal(await query.inputValue(), "archived:true", "navigation presets also use the expression");
-      await page.getByRole("button", { name: "ui:old", exact: true }).waitFor();
-    } finally { await ctx.close(); }
+    const { page, done } = await open();
+    const expression = '(((id:"ui:note" OR project:scroll) project:"scroll") tag:"odd") archived:"all"';
+    const result = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === expression);
+    await page.goto(`${base}/#/browse?${new URLSearchParams({ q: 'id:"ui:note" OR project:scroll', project: "scroll", tag: "odd", archive: "show" })}`);
+    assert.equal((await result).request().postDataJSON().project, null, "there is no hidden project scope");
+    await waitRows(page, PAGE);
+    assert.equal(await query(page).inputValue(), expression);
+    const params = new URLSearchParams(new URL(page.url()).hash.split("?")[1]);
+    assert.equal(params.get("q"), expression);
+    for (const field of ["project", "tag", "archive"]) assert.equal(params.has(field), false);
+    assert.ok((await rowKeys(page)).every((key) => key.startsWith("scroll:") && Number(key.split(":")[1]) % 2 === 1), "scope constrains the entire OR body");
+    await page.reload();
+    await waitRows(page, PAGE);
+    assert.equal(await query(page).inputValue(), expression, "canonical URL does not compose the scopes twice");
+    const archive = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === "archived:true");
+    await nav(page).getByRole("link", { name: "Archive", exact: true }).click();
+    assert.equal((await archive).request().postDataJSON().project, null);
+    await list(page).getByRole("button", { name: "ui:old", exact: true }).waitFor();
+    assert.equal(await query(page).inputValue(), "archived:true", "navigation presets also use the expression");
+    assert.equal(await list(page).getByRole("button", { name: "Archived", exact: true }).getAttribute("aria-pressed"), "true", "the Archived shortcut reflects the preset expression");
+    await done();
   });
 
   await check("unsafe legacy URL filters show a migration error without searching", async () => {
-    const ctx = await browser.newContext();
-    try {
-      const page = await ctx.newPage();
-      await open(page);
-      const searches = [];
-      page.on("request", (request) => { if (request.url().endsWith("/api/v1/search")) searches.push(request.postDataJSON()); });
-      for (const draft of ['tag:"unfinished', "type:fact OR", "(type:fact", 'link:["depends-on","p:i"', 'link:["depends-on",]', 'link:["depends-on"]', 'field["/n"]', 'field["/n"] >=']) {
-        const hash = `#/browse?${new URLSearchParams({ q: draft, project: "scroll", archive: "show" })}`;
-        await page.goto(`${base}/${hash}`);
-        await page.waitForFunction((value) => {
-          const input = document.querySelector('input[role="combobox"]');
-          return input !== null && input.value === value;
-        }, draft);
-        await page.getByRole("alert").filter({ hasText: "Cannot safely migrate legacy URL filters" }).waitFor();
-        assert.equal(await page.getByRole("combobox", { name: "Query", exact: true }).inputValue(), draft);
-        assert.equal(await page.getByRole("button", { name: "Search", exact: true }).isDisabled(), true);
-        assert.equal(await page.locator(".record-open").count(), 0, "previous rows cannot masquerade as unscoped results");
-        assert.equal(new URL(page.url()).hash, hash, "failed migration retains the recoverable original URL");
-        await settle(page);
-        assert.equal(searches.length, 0);
-      }
-      // Browse shows the empty-query route again (kept by the list since sign-in, so not necessarily searched again).
-      await navLink(page, "Browse").click();
-      await page.waitForFunction(() => location.hash === "#/browse");
-      await page.waitForFunction(() => document.querySelector('input[role="combobox"]').value === "");
-      assert.equal(await page.getByRole("combobox", { name: "Query", exact: true }).inputValue(), "");
-      assert.equal(await page.getByRole("button", { name: "Search", exact: true }).isEnabled(), true);
-    } finally { await ctx.close(); }
+    const { page, done } = await open();
+    const searches = [];
+    page.on("request", (request) => { if (request.url().endsWith("/api/v1/search")) searches.push(request.postDataJSON()); });
+    for (const draft of ['tag:"unfinished', "type:fact OR", "(type:fact", 'link:["depends-on","p:i"', 'link:["depends-on",]', 'link:["depends-on"]', 'field["/n"]', 'field["/n"] >=']) {
+      const hash = `#/browse?${new URLSearchParams({ q: draft, project: "scroll", archive: "show" })}`;
+      await page.goto(`${base}/${hash}`);
+      await page.waitForFunction((value) => document.querySelector('section.browse input[role="combobox"]')?.value === value, draft);
+      await list(page).getByRole("alert").filter({ hasText: "Cannot safely migrate legacy URL filters" }).waitFor();
+      assert.equal(await searchButton(page).isDisabled(), true);
+      assert.equal(await list(page).locator("tbody tr[data-row-id]").count(), 0, "previous rows cannot masquerade as unscoped results");
+      assert.equal(new URL(page.url()).hash, hash, "failed migration retains the recoverable original URL");
+      assert.equal(searches.length, 0);
+    }
+    await nav(page).getByRole("link", { name: "Browse", exact: true }).click();
+    await page.waitForFunction(() => location.hash === "#/browse");
+    await page.waitForFunction(() => [...document.querySelectorAll('section.browse input[role="combobox"]')].some((input) => input.getClientRects().length > 0 && input.value === ""));
+    assert.equal(await searchButton(page).isEnabled(), true);
+    await done();
   });
 
-}
+  await check("browse: Back from a record restores three loaded batches, the document scroll and the row focus", async () => {
+    const { page, done } = await open({ hash: scrollList });
+    await waitRows(page, PAGE);
+    for (const rows of [2 * PAGE, TOTAL]) { await toEnd(page); await waitRows(page, rows); }
+    await page.evaluate(() => window.scrollTo(0, 900));
+    const opener = list(page).getByRole("button", { name: "scroll:20", exact: true });
+    await opener.evaluate((element) => element.focus({ preventScroll: true }));
+    const scrolled = await page.evaluate(() => window.scrollY);
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => location.hash.startsWith("#/item/"));
+    await page.getByRole("button", { name: "Edit", exact: true }).waitFor();
+    await page.goBack();
+    await waitRows(page, TOTAL);
+    assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - scrolled) <= 2, "the document scroll is restored");
+    assert.equal(await opener.evaluate((element) => element === document.activeElement), true, "focus returns to the originating row");
+    await done();
+  });
+
+  await check("browse: a live change while scrolled shows the pill, keeps rows and scroll until Show merges it in place", async () => {
+    const { page, done } = await open({ hash: scrollList });
+    await waitRows(page, PAGE);
+    await toEnd(page);
+    await waitRows(page, 2 * PAGE);
+    await page.evaluate(() => window.scrollTo(0, 700));
+    const before = await page.evaluate(() => window.scrollY);
+    await put("scroll:44", { title: "Record 00 changed", tags: ["even"] }, 1);
+    const pill = list(page).getByRole("button", { name: "Records changed · Show", exact: true });
+    await pill.waitFor();
+    await frames(page);
+    assert.equal((await rowKeys(page)).length, 2 * PAGE, "rows are kept until the reader applies the change");
+    assert.equal(await page.evaluate(() => window.scrollY), before, "the scroll position is kept");
+    assert.equal(await list(page).getByText("Record 00 changed", { exact: true }).count(), 0);
+    await pill.click();
+    await list(page).getByText("Record 00 changed", { exact: true }).waitFor({ state: "attached" });
+    assert.equal(await pill.count(), 0);
+    assert.equal((await rowKeys(page)).length, 2 * PAGE, "Show reloads the loaded chain in place");
+    await done();
+  });
+
+  await check("one expression, filter shortcuts, clear, keyboard focus and explicit Search keep the draft separate", async () => {
+    const { page, done } = await open();
+    const searches = [];
+    // Record-list searches only: the masthead's Inbox count is a search of its own.
+    page.on("request", (request) => { if (request.url().endsWith("/api/v1/search") && request.postDataJSON().limit === PAGE) searches.push(request.postDataJSON().query); });
+    const input = query(page);
+    await input.fill("type:todo OR type:fact");
+    for (const role of ["radio", "checkbox"]) assert.equal(await page.getByRole(role).count(), 0);
+    assert.equal(await page.getByRole("combobox").count(), 1);
+    assert.equal(await list(page).locator("select").count(), 0);
+    await list(page).getByRole("status").filter({ hasText: "Draft · press Enter to apply" }).waitFor();
+    const review = list(page).getByRole("button", { name: "Needs review", exact: true });
+    assert.equal(await review.getAttribute("aria-pressed"), "false");
+    await review.click();
+    assert.equal(await input.inputValue(), "(type:todo OR type:fact) human-attention:required", "a shortcut conjoins its term with the whole draft");
+    assert.equal(await review.getAttribute("aria-pressed"), "true");
+    assert.equal(await input.evaluate((element) => element === document.activeElement), true, "focus returns to the query");
+    await review.click();
+    assert.equal(await input.inputValue(), "(type:todo OR type:fact)");
+    await list(page).getByRole("button", { name: "Add tag filter", exact: true }).click();
+    assert.equal(await input.inputValue(), "(type:todo OR type:fact) tag:");
+    assert.equal(await input.evaluate((element) => element === document.activeElement && element.selectionStart === element.value.length), true);
+    await list(page).getByRole("listbox", { name: "Query suggestions" }).getByRole("option").first().waitFor();
+    await input.fill("ty");
+    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
+    await input.press("Escape");
+    assert.equal(await input.inputValue(), "ty");
+    await input.press("Escape");
+    assert.equal(await input.inputValue(), "");
+    assert.equal(await input.evaluate((element) => element === document.activeElement && element.selectionStart === 0), true);
+    await input.fill("type:todo");
+    await list(page).getByRole("button", { name: "Clear search expression" }).click();
+    assert.equal(await input.inputValue(), "");
+    assert.equal(await input.evaluate((element) => element === document.activeElement), true);
+    await page.keyboard.press("Control+k");
+    assert.equal(await input.evaluate((element) => element === document.activeElement && element.selectionStart === 0), true);
+    assert.deepEqual(searches.filter((value) => value !== ""), [], "edits never search before an explicit submit");
+    const syntax = list(page).getByRole("button", { name: "Query syntax", exact: true });
+    await syntax.click();
+    const dialog = page.getByRole("dialog", { name: "Query syntax" });
+    await dialog.getByText("human-attention:required", { exact: true }).waitFor();
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "hidden" });
+    assert.equal(await syntax.evaluate((element) => element === document.activeElement), true, "focus returns to the trigger");
+    const expression = "  type:todo  ";
+    await input.fill(expression);
+    const applied = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === expression);
+    await searchButton(page).click();
+    assert.equal((await applied).request().postDataJSON().project, null, "no invisible project constraint is sent");
+    assert.equal(await input.inputValue(), expression, "the applied query is exactly the visible text, including whitespace");
+    await list(page).getByRole("button", { name: "ui:todo", exact: true }).waitFor();
+    assert.equal(await list(page).getByText("Draft · press Enter to apply").count(), 0);
+    await done();
+  });
+
+  await check("query typing retains focus", async () => {
+    const { page, done } = await open();
+    await query(page).pressSequentially("hello", { delay: 100 });
+    assert.equal(await query(page).inputValue(), "hello");
+    assert.equal(await query(page).evaluate((element) => element === document.activeElement), true);
+    await done();
+  });
+
+  await check("delayed search navigation preserves a newer query draft", async () => {
+    const context = await browser.newContext();
+    await context.addInitScript(() => {
+      const add = window.addEventListener.bind(window);
+      window.addEventListener = (type, listener, options) => {
+        if (type !== "hashchange") { add(type, listener, options); return; }
+        add(type, (event) => window.setTimeout(() => {
+          if (typeof listener === "function") listener.call(window, event);
+          else if (listener !== null) listener.handleEvent(event);
+        }, 250), options);
+      };
+    });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${base}/#/browse`);
+      await page.getByLabel("Username", { exact: true }).fill("op");
+      await page.getByLabel("Password", { exact: true }).fill(password);
+      await page.getByRole("button", { name: "Sign in", exact: true }).click();
+      await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
+      await query(page).fill("hello");
+      const response = page.waitForResponse((value) => value.url().endsWith("/api/v1/search") && value.request().postDataJSON().query === "hello");
+      await searchButton(page).click();
+      await query(page).fill("bogus:1");
+      await response;
+      await list(page).getByRole("button", { name: "ui:note", exact: true }).waitFor();
+      assert.equal(await query(page).inputValue(), "bogus:1", "the submitted route must not overwrite a newer query draft");
+    } finally { await context.close(); }
+  });
+
+  await check("query completion supports keyboard, caret insertion, and pointer selection", async () => {
+    const { page, done } = await open();
+    const input = query(page);
+    await input.fill("type:f");
+    await page.getByRole("option", { name: "type:fact", exact: true }).waitFor();
+    await input.press("Enter");
+    assert.equal(await input.inputValue(), "type:fact ");
+    await input.pressSequentially("status:actual");
+    assert.equal(await input.inputValue(), "type:fact status:actual", "a completed value separates the next term");
+    assert.equal(new URL(page.url()).hash, "#/browse", "accepting a completion must not submit the query");
+    assert.equal(await input.evaluate((element) => element === document.activeElement), true);
+    await input.fill("type:");
+    await page.getByRole("option", { name: "type:fact", exact: true }).waitFor();
+    const options = page.getByRole("option");
+    assert.ok(await options.count() > 1);
+    const second = await options.nth(1).textContent();
+    assert.match(second, /^type:.+/);
+    const secondId = await options.nth(1).getAttribute("id");
+    await input.press("ArrowDown");
+    assert.equal(await input.getAttribute("aria-activedescendant"), secondId);
+    await input.press("ArrowUp");
+    assert.equal(await input.getAttribute("aria-activedescendant"), await options.nth(0).getAttribute("id"));
+    await input.press("ArrowDown");
+    await input.press("Enter");
+    assert.equal(await input.inputValue(), `${second} `);
+    await input.fill("(ty) AND importance:high");
+    await input.evaluate((element) => element.setSelectionRange(3, 3));
+    await input.press("Control+Space");
+    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
+    await input.press("Enter");
+    assert.equal(await input.inputValue(), "(type:) AND importance:high");
+    assert.equal(await input.evaluate((element) => element.selectionStart), 6);
+    await input.fill("ty");
+    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
+    await input.press("Tab");
+    assert.equal(await input.inputValue(), "ty", "Tab must not accept a suggestion");
+    assert.equal(await list(page).getByRole("button", { name: "Clear search expression" }).evaluate((element) => element === document.activeElement), true);
+    await input.fill("status:actual AND ui:no");
+    await page.getByRole("option", { name: 'id:"ui:note"', exact: true }).click();
+    assert.equal(await input.inputValue(), 'status:actual AND id:"ui:note" ');
+    assert.equal(await input.evaluate((element) => element === document.activeElement), true);
+    await input.fill("ty");
+    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
+    await input.press("Escape");
+    await input.press("Control+Space");
+    await page.getByRole("listbox", { name: "Query suggestions" }).waitFor();
+    await input.press("Escape");
+    assert.equal(await page.getByRole("listbox", { name: "Query suggestions" }).count(), 0);
+    await done();
+  });
+
+  await check("accepted field prefixes immediately offer value hints", async () => {
+    const { page, done } = await open();
+    const input = query(page);
+    await input.fill("ty");
+    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
+    await input.press("Enter");
+    await page.getByRole("option", { name: "type:fact", exact: true }).waitFor();
+    assert.equal(await input.inputValue(), "type:");
+    assert.equal(await input.evaluate((element) => element.selectionStart), 5);
+    await done();
+  });
+
+  await check("query completion coalesces in-flight requests and replaces a mid-token suffix", async () => {
+    const { page, done } = await open({ clock: true });
+    await page.evaluate(() => {
+      window.completionFragments = [];
+      const original = window.fetch.bind(window);
+      window.fetch = (resource, init) => {
+        if (String(resource).endsWith("/api/v1/complete")) window.completionFragments.push(JSON.parse(String(init.body)).query);
+        return original(resource, init);
+      };
+    });
+    const fragments = () => page.evaluate(() => window.completionFragments);
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    let first;
+    const firstSeen = new Promise((resolve) => { first = resolve; });
+    let served = 0;
+    await page.route("**/api/v1/complete", async (route) => {
+      if (++served === 1) { first(); await held; await route.fulfill({ json: { suggestions: ["type:"] } }); }
+      else await route.continue();
+    });
+    try {
+      await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now()) + 1000));
+      const input = query(page);
+      await input.fill("ty");
+      await page.clock.runFor(250);
+      await firstSeen;
+      await input.fill("type:todo");
+      await input.fill("typEXTRA");
+      await input.evaluate((element) => element.setSelectionRange(2, 2));
+      await input.press("Control+Space");
+      await page.clock.runFor(250);
+      assert.deepEqual(await fragments(), ["ty"], "only one hint request may be in flight");
+    } finally { release(); }
+    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
+    await query(page).press("Enter");
+    assert.equal(await query(page).inputValue(), "type:");
+    assert.equal(await query(page).evaluate((element) => element.selectionStart), 5);
+    assert.deepEqual(await fragments(), ["ty", "ty"], "only the latest desired caret/text is requested");
+    await done();
+  });
+
+  await check("dismissed query completions do not reopen after a delayed response", async () => {
+    const { page, done } = await open();
+    let resolveRequest;
+    const pending = new Promise((resolve) => { resolveRequest = resolve; });
+    await page.route("**/api/v1/complete", (route) => resolveRequest(route));
+    const input = query(page);
+    await input.fill("ty");
+    const route = await pending;
+    await input.press("Escape");
+    const response = page.waitForResponse((value) => value.url().endsWith("/api/v1/complete"));
+    await route.fulfill({ json: { suggestions: ["type:"] } });
+    await (await response).finished();
+    await frames(page);
+    assert.equal(await page.getByRole("listbox", { name: "Query suggestions" }).count(), 0);
+    assert.equal(await input.inputValue(), "ty");
+    await done();
+  });
+
+  await check("search + diagnostics + archive, and presets are routes with their own expressions", async () => {
+    const { page, done } = await open();
+    const input = query(page);
+    await input.fill("hello");
+    await searchButton(page).click();
+    await counter(page).getByText("All 1 record loaded", { exact: true }).waitFor();
+    const applied = new URL(page.url()).hash;
+    await input.fill("bogus:1");
+    await searchButton(page).click();
+    await list(page).getByRole("list", { name: "Search errors" }).waitFor();
+    await list(page).getByRole("alert").filter({ hasText: "Invalid search query." }).waitFor();
+    await counter(page).getByText("Query not applied · 1 loaded", { exact: true }).waitFor();
+    assert.equal(new URL(page.url()).hash, applied, "an invalid query is not applied");
+    assert.deepEqual(await rowKeys(page), ["ui:note"], "the list keeps the applied query's rows");
+    await input.fill("buried");
+    await searchButton(page).click();
+    await list(page).getByRole("heading", { name: "No matching records", exact: true }).waitFor();
+    await list(page).getByRole("button", { name: "Include archived", exact: true }).click();
+    await list(page).getByRole("button", { name: "ui:old", exact: true }).waitFor();
+    assert.equal(await input.inputValue(), '(buried) archived:"all"');
+    await nav(page).getByRole("link", { name: "Inbox", exact: true }).click();
+    await list(page).getByRole("button", { name: "ui:todo", exact: true }).waitFor();
+    assert.equal(new URL(page.url()).hash, "#/inbox");
+    assert.equal(await input.inputValue(), "human-attention:required");
+    assert.equal(await list(page).getByRole("button", { name: "Needs review", exact: true }).getAttribute("aria-pressed"), "true");
+    assert.equal(await list(page).getByRole("heading", { name: "Inbox", exact: true }).count(), 1, "the list is named by its preset");
+    await done();
+  });
+
+  await check("inaccessible server keeps the list and reports a connection failure", async () => {
+    const { page, done } = await open();
+    await list(page).getByRole("button", { name: "ui:note", exact: true }).waitFor();
+    await page.route("**/api/**", (route) => route.abort());
+    await query(page).fill("hello");
+    await searchButton(page).click();
+    await list(page).getByRole("alert").filter({ hasText: "Server unreachable" }).waitFor();
+    await list(page).getByRole("button", { name: "Retry", exact: true }).waitFor();
+    await done();
+  });
+} finally { await cleanup(); }
+console.log(`# ${results.length} checks; ${failures} failures; 0 skipped`);
+process.exit(failures === 0 ? 0 : 1);

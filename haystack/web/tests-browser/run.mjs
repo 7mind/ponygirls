@@ -15,7 +15,6 @@ import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { chromium, firefox } from "playwright-core";
-import { checkBrowse } from "./browse.mjs";
 import { writePasswordHash } from "./credentials.mjs";
 import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
 import { GetRequest } from "../../generated/typescript/haystack/api/GetRequest.ts";
@@ -65,11 +64,6 @@ const auth = {
 // HTTP/WebSocket handling is performed by the separate Scala/native process.
 const backendPort = await freePort();
 const parent = express();
-let searchInterceptor = null;
-parent.post("/api/v1/search", express.json(), (req, res, next) => {
-  if (searchInterceptor === null) return next();
-  Promise.resolve(searchInterceptor(req.body, res, next)).catch(next);
-});
 parent.use((req, res) => {
   const headers = { ...req.headers };
   let body;
@@ -357,216 +351,6 @@ await check("invalid field JSON reports an inline error before saving", async ()
   } finally { await ctx.close(); }
 });
 
-// Regression: fragment persistence must not remount a focused query editor.
-await check("query typing retains focus", async () => {
-  const ctx = await browser.newContext();
-  try {
-    const page = await ctx.newPage();
-    await login(page, humanPassword);
-    await page.getByLabel("Query", { exact: true }).pressSequentially("hello", { delay: 100 });
-    assert.equal(await page.getByLabel("Query", { exact: true }).inputValue(), "hello");
-  } finally { await ctx.close(); }
-});
-
-await check("delayed search navigation preserves a newer query draft", async () => {
-  const ctx = await browser.newContext();
-  try {
-    await ctx.addInitScript(() => {
-      const add = window.addEventListener.bind(window);
-      window.addEventListener = (type, listener, options) => {
-        if (type !== "hashchange") { add(type, listener, options); return; }
-        add(type, (event) => window.setTimeout(() => {
-          if (typeof listener === "function") listener.call(window, event);
-          else if (listener !== null) listener.handleEvent(event);
-        }, 250), options);
-      };
-    });
-    const page = await ctx.newPage();
-    await login(page, humanPassword);
-    await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
-    const query = page.getByRole("combobox", { name: "Query", exact: true });
-    await query.fill("hello");
-    const response = page.waitForResponse((value) => value.url().endsWith("/api/v1/search") && value.request().postDataJSON().query === "hello");
-    await page.getByRole("button", { name: "Search", exact: true }).click();
-    await query.fill("bogus:1");
-    await response;
-    assert.equal(await query.inputValue(), "bogus:1", "the submitted route must not overwrite a newer query draft");
-  } finally { await ctx.close(); }
-});
-
-await check("query completion supports keyboard, caret insertion, and pointer selection", async () => {
-  const ctx = await browser.newContext();
-  try {
-    const page = await ctx.newPage();
-    await login(page, humanPassword);
-    const query = page.getByRole("combobox", { name: "Query", exact: true });
-    await query.fill("type:f");
-    await page.getByRole("option", { name: "type:fact", exact: true }).waitFor();
-    await query.press("Enter");
-    assert.equal(await query.inputValue(), "type:fact ");
-    await query.pressSequentially("status:actual");
-    assert.equal(await query.inputValue(), "type:fact status:actual", "a completed value separates the next term");
-    assert.equal(new URL(page.url()).hash, "#/browse", "accepting a completion must not submit the query");
-    assert.equal(await query.evaluate((element) => element === document.activeElement), true);
-
-    await query.fill("type:");
-    await page.getByRole("option", { name: "type:fact", exact: true }).waitFor();
-    const options = page.getByRole("option");
-    assert.ok(await options.count() > 1);
-    const second = await options.nth(1).textContent();
-    assert.match(second, /^type:.+/);
-    const secondId = await options.nth(1).getAttribute("id");
-    await query.press("ArrowDown");
-    assert.equal(await query.getAttribute("aria-activedescendant"), secondId);
-    await query.press("ArrowUp");
-    assert.equal(await query.getAttribute("aria-activedescendant"), await options.nth(0).getAttribute("id"));
-    await query.press("ArrowDown");
-    await query.press("Enter");
-    assert.equal(await query.inputValue(), `${second} `);
-    assert.equal(await query.evaluate((element) => element === document.activeElement), true);
-
-    await query.fill("(ty) AND importance:high");
-    await query.evaluate((element) => element.setSelectionRange(3, 3));
-    await query.press("Control+Space");
-    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
-    await query.press("Enter");
-    assert.equal(await query.inputValue(), "(type:) AND importance:high");
-    assert.equal(await query.evaluate((element) => element.selectionStart), 6);
-    assert.equal(await query.evaluate((element) => element === document.activeElement), true);
-    await query.fill("ty");
-    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
-    await query.press("Tab");
-    assert.equal(await query.inputValue(), "ty", "Tab must not accept a suggestion");
-    assert.equal(await page.getByRole("button", { name: "Clear search expression" }).evaluate((element) => element === document.activeElement), true);
-
-    await query.fill("status:actual AND ui:no");
-    await page.getByRole("option", { name: 'id:"ui:note"', exact: true }).click();
-    assert.equal(await query.inputValue(), 'status:actual AND id:"ui:note" ');
-    assert.equal(await query.evaluate((element) => element === document.activeElement), true);
-    await query.fill("ty");
-    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
-    await query.press("Escape");
-    await query.press("Control+Space");
-    await page.getByRole("listbox", { name: "Query suggestions" }).waitFor();
-    await query.press("Escape");
-    assert.equal(await page.getByRole("listbox", { name: "Query suggestions" }).count(), 0);
-  } finally { await ctx.close(); }
-});
-
-await check("one expression, clear, keyboard focus and explicit Search keep draft separate", async () => {
-  const ctx = await browser.newContext();
-  try {
-    const page = await ctx.newPage();
-    await login(page, humanPassword);
-    const query = page.getByRole("combobox", { name: "Query", exact: true });
-    const searches = [];
-    // Record-list searches only: the masthead's Inbox count is a search of its own.
-    page.on("request", (request) => { if (request.url().endsWith("/api/v1/search") && request.postDataJSON().limit === 20) searches.push(request.postDataJSON().query); });
-    await query.fill("type:todo OR type:fact");
-    assert.equal(await page.getByLabel("Project scope").count(), 0);
-    assert.equal(await page.getByLabel("Tag filter").count(), 0);
-    assert.equal(await page.getByRole("radio").count(), 0);
-    assert.equal(await page.getByRole("checkbox").count(), 0);
-    assert.equal(await page.getByRole("combobox").count(), 1);
-    assert.equal(await page.getByRole("button", { name: "tag:", exact: true }).count(), 0);
-    assert.equal(await page.getByText("Draft changed · press Search to update results.").count(), 1);
-    await query.fill("ty");
-    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
-    await query.press("Escape");
-    assert.equal(await query.inputValue(), "ty");
-    await query.press("Escape");
-    assert.equal(await query.inputValue(), "");
-    assert.equal(await query.evaluate((input) => input === document.activeElement && input.selectionStart === 0), true);
-    await query.fill("type:todo");
-    await page.getByRole("button", { name: "Clear search expression" }).click();
-    assert.equal(await query.inputValue(), "");
-    assert.equal(await query.evaluate((input) => input === document.activeElement), true);
-    await page.keyboard.press("Control+k");
-    assert.equal(await query.evaluate((input) => input === document.activeElement && input.selectionStart === 0), true);
-    assert.deepEqual(searches.filter((value) => value !== ""), [], "edits never search before explicit submit");
-    const expression = "  type:todo  ";
-    await query.fill(expression);
-    const applied = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === expression);
-    await page.getByRole("button", { name: "Search", exact: true }).click();
-    assert.equal((await applied).request().postDataJSON().project, null, "no invisible project constraint is sent");
-    assert.equal(await query.inputValue(), expression, "applied query is exactly the visible text, including whitespace");
-    assert.equal(await page.getByText("Draft changed · press Search to update results.").count(), 0);
-  } finally { await ctx.close(); }
-});
-
-await check("accepted field prefixes immediately offer value hints without a preset row", async () => {
-  const ctx = await browser.newContext();
-  try {
-    const page = await ctx.newPage();
-    await login(page, humanPassword);
-    const query = page.getByRole("combobox", { name: "Query", exact: true });
-    await query.fill("ty");
-    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
-    await query.press("Enter");
-    await page.getByRole("option", { name: "type:fact", exact: true }).waitFor();
-    assert.equal(await query.inputValue(), "type:");
-    assert.equal(await query.evaluate((element) => element.selectionStart), 5);
-    assert.equal(await page.locator(".query-presets").count(), 0);
-  } finally { await ctx.close(); }
-});
-
-await check("query completion coalesces in-flight requests and replaces a mid-token suffix", async () => {
-  const ctx = await browser.newContext();
-  let release;
-  try {
-    const page = await ctx.newPage();
-    await login(page, humanPassword);
-    const query = page.getByRole("combobox", { name: "Query", exact: true });
-    const held = new Promise((resolve) => { release = resolve; });
-    let first, latest;
-    const firstSeen = new Promise((resolve) => { first = resolve; });
-    const latestSeen = new Promise((resolve) => { latest = resolve; });
-    const sent = [];
-    await page.route("**/api/v1/complete", async (route) => {
-      const fragment = route.request().postDataJSON().query;
-      sent.push(fragment);
-      if (sent.length === 1) { first(); await held; await route.fulfill({ json: { suggestions: ["type:"] } }); }
-      else { latest(); await route.continue(); }
-    });
-    await query.fill("ty");
-    await Promise.race([firstSeen, new Promise((_, reject) => setTimeout(() => reject(new Error("first hint request timed out")), 5000))]);
-    await query.fill("type:todo");
-    await query.fill("typEXTRA");
-    await query.evaluate((input) => input.setSelectionRange(2, 2));
-    await query.press("Control+Space");
-    await page.waitForTimeout(240);
-    assert.deepEqual(sent, ["ty"], "only one hint request may be in flight");
-    release();
-    await Promise.race([latestSeen, new Promise((_, reject) => setTimeout(() => reject(new Error("latest hint request timed out")), 5000))]);
-    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
-    await query.press("Enter");
-    assert.equal(await query.inputValue(), "type:");
-    assert.equal(await query.evaluate((input) => input.selectionStart), 5);
-    assert.deepEqual(sent, ["ty", "ty"], "only the latest desired caret/text is requested");
-  } finally { release?.(); await ctx.close(); }
-});
-
-await check("dismissed query completions do not reopen after a delayed response", async () => {
-  const ctx = await browser.newContext();
-  try {
-    const page = await ctx.newPage();
-    await login(page, humanPassword);
-    let resolveRequest;
-    const pending = new Promise((resolve) => { resolveRequest = resolve; });
-    await page.route("**/api/v1/complete", (route) => resolveRequest(route));
-    const query = page.getByRole("combobox", { name: "Query", exact: true });
-    await query.fill("ty");
-    const route = await pending;
-    await query.press("Escape");
-    const response = page.waitForResponse((value) => value.url().endsWith("/api/v1/complete"));
-    await route.fulfill({ json: { suggestions: ["type:"] } });
-    await (await response).finished();
-    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    assert.equal(await page.getByRole("listbox", { name: "Query suggestions" }).count(), 0);
-    assert.equal(await query.inputValue(), "ty");
-  } finally { await ctx.close(); }
-});
-
 // Owner decision (spec §9.3): the shared radius tokens replace Haystack's square corners.
 await check("system theme changes update native controls and shared radius tokens without reloading", async () => {
   const ctx = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 1000 } });
@@ -613,47 +397,6 @@ await check("system theme changes update native controls and shared radius token
     await page.emulateMedia({ colorScheme: "light" });
     await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
     assert.equal((await theme()).scheme, "light");
-  } finally { await ctx.close(); }
-});
-
-// Regression: opening an inbox must retain its route and selected navigation.
-await check("inbox route persists", async () => {
-  const ctx = await browser.newContext();
-  try {
-    const page = await ctx.newPage();
-    await login(page, humanPassword);
-    await openPreset(page, "Inbox");
-    await page.getByText("needs attention").filter({ visible: true }).waitFor(); // other preset lists stay mounted, hidden
-    assert.equal(new URL(page.url()).hash, "#/inbox");
-  } finally { await ctx.close(); }
-});
-
-await check("search + diagnostics + archive", async () => {
-  const ctx = await browser.newContext();
-  const page = await ctx.newPage();
-  const trace = [];
-  page.on("request", (request) => {
-    if (request.url().endsWith("/api/v1/search")) trace.push({ request: request.postDataJSON().query });
-  });
-  try {
-    await login(page, humanPassword);
-    await page.getByLabel("Query").fill("hello");
-    await page.getByRole("button", { name: "Search", exact: true }).click();
-    await page.getByText("hello memory").waitFor();
-    trace.push({ stage: "hello visible", input: await page.getByLabel("Query").inputValue(), hash: new URL(page.url()).hash });
-    await page.getByLabel("Query").fill("bogus:1");
-    trace.push({ stage: "invalid input filled", input: await page.getByLabel("Query").inputValue(), hash: new URL(page.url()).hash });
-    await page.getByRole("button", { name: "Search", exact: true }).click();
-    trace.push({ stage: "invalid input submitted", input: await page.getByLabel("Query").inputValue(), hash: new URL(page.url()).hash });
-    await page.getByLabel("Search errors").waitFor();
-    await page.getByLabel("Query").fill("buried");
-    await page.getByRole("button", { name: "Search", exact: true }).click();
-    await page.getByRole("heading", { name: "No records found", exact: true }).waitFor();
-    await page.getByLabel("Query").fill("archived:all buried");
-    await page.getByRole("button", { name: "Search", exact: true }).click();
-    await page.getByText("buried memory").waitFor();
-  } catch (error) {
-    throw new Error(`${error.message}\nSearch trace: ${JSON.stringify(trace)}`);
   } finally { await ctx.close(); }
 });
 
@@ -832,19 +575,6 @@ await check("an unavailable logout does not pretend the session was cleared", as
   } finally { await ctx.close(); }
 });
 
-// Inaccessible API is a network failure, not an auth failure. The UI shell
-// stays loaded (separate static route would survive); abort only /api/*.
-await check("inaccessible server", async () => {
-  const ctx = await browser.newContext();
-  const page = await ctx.newPage();
-  await login(page, humanPassword);
-  await page.route("**/api/**", (route) => route.abort());
-  await page.getByLabel("Query").fill("hello");
-  await page.getByRole("button", { name: "Search", exact: true }).click();
-  await page.getByText("Server unreachable").waitFor({ timeout: 15000 });
-  await ctx.close();
-});
-
 await check("live writes refresh browse and preserve concurrent drafts", async () => {
   const ctx = await browser.newContext();
   try {
@@ -941,10 +671,6 @@ await check("navigation suspension and resume restore live updates", async () =>
     await page.getByText("Event log", { exact: true }).click();
     await page.getByText(/Checking connection after resume/).first().waitFor();
   } finally { await ctx.close(); }
-});
-
-await checkBrowse({ browser, base, login, navLink, humanPassword, check, seed, agent, docOf, rid,
-  interceptSearch: (handler) => { searchInterceptor = handler; },
 });
 
 console.log(`# ${results.length} checks; ${results.filter(line => line.startsWith("FAIL")).length} failures; 0 skipped`);

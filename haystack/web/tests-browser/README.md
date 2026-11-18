@@ -139,19 +139,27 @@ the masthead at 1440, 1024 and 390 pixels in both themes, live changes on scroll
 and untouched lists, which searches a route keeps (only settled ones), the account
 outlet over a kept list and module-owned sign-out, and no native dialogs. Needs `HAYSTACK_CHROMIUM` and a prior `npm run build`.
 
+## Browse
+
+`node --import ../scripts/register-generated.mjs tests-browser/browse.mjs` starts the selected server
+(`HAYSTACK_SERVER_COMMAND`) with its own owned database (`HAYSTACK_TEST_PG` with
+`HAYSTACK_FIXTURE_ADMIN_AUTHORIZED=1`, or `HAYSTACK_TEST_PROVISION_COMMAND`), seeds records through the public
+API and drives the built `web/dist` in pinned Chromium: the document as the only scroller with the sticky view bar
+and table header, sorting, infinite loading to an explicit end marker, append failure and retry, legacy URL
+migration, Back from a record, live-change announcement, the query editor (filter shortcuts, completions, draft
+versus applied query, analyzer rejection) and no native dialogs. Fault and timing scenarios use page routes and
+Playwright's clock.
+
 ## Viewport layout regression
 
-The controlled-API layout fixture renders the actual App in pinned Chromium.
-It checks 1440, 1101, 1100, 1024, 801, 800, 390 and 320 pixel viewports in
-light/dark mode with long
-unbroken titles, identifiers, projects, types, tags and modifier identities.
-Ordinary desktop rows stay compact.
-Page, results region and table must fit horizontally without clipping metadata;
-every sort control and the open-record action is exercised by keyboard. Account
-identity changes refresh the principal, update the account outlet's owner and
-invalidate stale account state. The masthead is covered by the shell checks.
-Accessibility snapshots retain the table, rows, column headers and cells. This is UI layout
-coverage, not backend/protocol acceptance. It also runs in `test:browser`.
+The controlled-API layout fixture renders the actual App in pinned Chromium at 1440, 1024 and 390 pixels in
+light and dark with long unbroken titles, identifiers, projects, types, tags and modifier identities: no
+horizontal overflow, the table stays a table (Project and Rev hide at 1100 px, all but Record and Modified at
+720 px) with unclipped headers, every truncated value is available as a tooltip, visible text is at least 12 px
+with 4.5:1 contrast, and every visible sort control, the skip link and the open-record action work by keyboard.
+Account identity changes refresh the principal, update the account outlet's owner and invalidate stale account
+state; the uncertain-write recovery fits 320 pixels. The masthead is covered by the shell checks. This is UI
+layout coverage, not backend/protocol acceptance. It also runs in `test:browser`.
 
 ```sh
 HAYSTACK_CHROMIUM=/absolute/pinned/chromium \

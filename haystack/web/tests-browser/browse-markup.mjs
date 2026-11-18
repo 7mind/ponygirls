@@ -27,6 +27,6 @@ try {
   assert.doesNotMatch(html, /Project scope|Tag filter|All projects|tag name \(exact\)|type="(?:radio|checkbox)"|<select|Insert filter|query-presets/, "all filtering belongs in the expression, not secondary controls or presets");
   assert.equal((html.match(/role="combobox"/g) ?? []).length, 1, "only the query editor has a completion combobox");
   assert.match(html, /Clear search expression/);
-  assert.match(html, /Search syntax/);
+  assert.match(html, /Query syntax/);
   console.log("ok - browse initial markup exposes one expression, secondary help and sortable columns without pagination");
 } finally { await vite.close(); }
