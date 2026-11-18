@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
-import { ChronicleFixture, api } from './fixture.mjs';
+import { ChronicleFixture, advanceClock, advanceClockUntil, api, connectionConfig, pauseClock, retryBudgetMillis } from './fixture.mjs';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = '1';
@@ -22,7 +22,7 @@ async function scene(configure) {
 async function sceneAt(sceneOrigin, waitForArchive, configure) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1060 } });
   const page = await context.newPage(); page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message));
-  const fixture = new ChronicleFixture(); if (configure) configure(fixture); await fixture.install(page);
+  const fixture = new ChronicleFixture(); if (configure) await configure(fixture, page); await fixture.install(page);
   await page.goto(`${sceneOrigin}/tests-browser/harness.html`);
   if (fixture.signedIn) { await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click(); await page.getByRole('main', { name: 'Archive', exact: true }).waitFor(); }
   if (waitForArchive) await archiveReady(page);
@@ -400,7 +400,7 @@ try {
     await winner.click(); await page.locator('#message-m65 mark').waitFor();
     await context.close(); console.log('PASS browser: all 205 annotations are scroll-reachable in bounded pages; late winner navigates with a pinned locator and original source highlighting');
   }
-  const { context, page, fixture } = await scene();
+  const { context, page, fixture } = await scene(async (fixture, page) => { await page.clock.install(); });
   for (const shortcut of ['Control+k', 'Meta+k']) {
     await page.keyboard.press(shortcut);
     assert.equal(await page.getByRole('combobox', { name: 'Search conversations' }).evaluate(element => element === document.activeElement), true);
@@ -419,6 +419,9 @@ try {
   assert.ok(fixture.calls.some(envelope => envelope.operation instanceof api.Operation_LocateMessage && envelope.operation.messageId === 'm65'));
   assert.ok(fixture.calls.some(envelope => envelope.operation instanceof api.Operation_GetMessages && envelope.operation.offset === 40 && envelope.operation.limit === 40));
   const before = fixture.searchCount; fixture.blackholeActive();
+  // The next heartbeat goes unanswered; its pong deadline marks the silent socket stale.
+  await advanceClock(page, connectionConfig.heartbeatInterval + connectionConfig.pongTimeout);
+  await page.locator('.event-log li').filter({ hasText: 'STALE (matching pong deadline)' }).waitFor({ state: 'attached' });
   await waitForCalls(fixture, call => call.operation instanceof api.Operation_Archive, before + 1);
   await page.locator('.connection-widget[data-state="live"]').waitFor();
   await page.locator('.conversation-intro h2').waitFor();
@@ -469,13 +472,14 @@ try {
     await context.close(); console.log(`PASS browser: ${state} clears protected content and stops without loop`);
   }
   {
-    const { context, page, fixture } = await scene(); fixture.mode = 'outage'; fixture.restart();
-    await page.locator('.connection-widget[data-state="stopped"]').waitFor(); const count = fixture.sockets.length;
-    await page.waitForTimeout(1000); assert.equal(fixture.sockets.length, count);
+    const { context, page, fixture } = await scene(async (fixture, page) => { await pauseClock(page); }); fixture.mode = 'outage'; fixture.restart();
+    await advanceClockUntil(page, async () => await page.locator('.connection-widget[data-state="stopped"]').count() === 1, retryBudgetMillis(connectionConfig), 'the connection did not stop retrying');
+    const count = fixture.sockets.length;
+    await advanceClock(page, connectionConfig.retryCap + 2 * connectionConfig.connectTimeout); assert.equal(fixture.sockets.length, count);
     fixture.mode = 'normal'; await page.getByLabel('Connection: stopped').click(); await page.getByRole('button', { name: 'Try again manually' }).click();
     await page.locator('.connection-widget[data-state="live"]').waitFor();
-    await page.evaluate(() => { document.dispatchEvent(new Event('resume')); }); await page.waitForTimeout(300);
-    assert.ok(fixture.sockets.length > count); await context.close(); console.log('PASS browser: finite retries → stopped → manual recovery; resume replacement');
+    const live = fixture.sockets.length; await page.evaluate(() => { document.dispatchEvent(new Event('resume')); });
+    await fixture.waitUntil(() => fixture.sockets.length > live, 'resume did not open a replacement socket'); await context.close(); console.log('PASS browser: finite retries → stopped → manual recovery; resume replacement');
   }
   {
     const { context, page, fixture } = await scene(); fixture.mintUncertain = true;

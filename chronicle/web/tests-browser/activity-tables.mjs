@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { showAllTableColumns } from './table-controls.mjs';
-import { ChronicleFixture, api } from './fixture.mjs';
+import { ChronicleFixture, advanceClock, api, connectionConfig, pauseClock } from './fixture.mjs';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
@@ -118,7 +118,8 @@ async function runActivityTableCases({ browser, origin, run, errors }) {
   await run('counterfactual timer pause without scrolling renews the authorization epoch', async () => {
     const { context, page, fixture } = await scene(async (fixture, page) => { largeFixture(fixture); const at = Date.parse('2026-10-28T12:00:00Z'); await page.clock.install({ time: at }); await page.clock.pauseAt(at + 1000); });
     const before = fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length;
-    await page.clock.fastForward(600);
+    // One jump of a pong deadline: longer than the timer-pause threshold, so the transport treats it as a long resume.
+    await page.clock.fastForward(connectionConfig.pongTimeout);
     await until(() => fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length > before, 'A timer pause alone must trigger the existing authorization refresh');
     console.log('Timer-only counterfactual diagnostics:', await page.locator('.event-log').textContent());
     assert.equal(await page.locator('.activity-collector-scroll').evaluate(element => element.scrollTop), 0); await context.close();
@@ -216,9 +217,11 @@ async function runActivityTableCases({ browser, origin, run, errors }) {
     assert.equal(await page.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }).isDisabled(), true); await context.close();
   });
   await run('bulk lost success reply reconciles one committed apply through its typed receipt without replay', async () => {
-    const { context, page, fixture } = await scene(value => { value.bulkDropReply = true; });
+    const { context, page, fixture } = await scene(async (value, page) => { value.bulkDropReply = true; await pauseClock(page); });
     await page.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }).click(); await page.getByRole('checkbox', { name: /I confirm retrying all/ }).check(); await page.getByRole('button', { name: 'Confirm retry indexing jobs', exact: true }).click();
-    await page.getByRole('heading', { name: 'Confirm before repeating', exact: true }).waitFor(); await page.locator('.connection-widget[data-state="live"]').waitFor();
+    await fixture.waitUntil(() => fixture.calls.some(call => call.operation instanceof api.Operation_ApplyRetryFailed), 'retry apply was not sent');
+    await advanceClock(page, connectionConfig.requestTimeout - 1); assert.equal(await page.getByRole('heading', { name: 'Confirm before repeating', exact: true }).count(), 0, 'a lost reply is not uncertain before the request deadline');
+    await advanceClock(page, 1); await page.getByRole('heading', { name: 'Confirm before repeating', exact: true }).waitFor(); await page.locator('.connection-widget[data-state="live"]').waitFor();
     assert.equal(fixture.bulkApplyExecutions, 1); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyRetryFailed).length, 1);
     await page.getByRole('button', { name: 'Look up receipt', exact: true }).click(); const result = page.getByRole('region', { name: 'Indexing retry result', exact: true }); await result.waitFor();
     assert.match(await result.innerText(), /Server retried 1 indexing jobs to Queued/); assert.equal(await page.getByRole('heading', { name: 'Confirm before repeating', exact: true }).count(), 0);

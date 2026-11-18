@@ -5,7 +5,8 @@ import { createServer as httpServer } from 'node:http';
 import { resolve, extname } from 'node:path';
 import { build, createServer } from 'vite';
 import { chromium } from 'playwright-core';
-import { ChronicleFixture, api } from './fixture.mjs';
+import { ChronicleFixture, advanceClock, api, connectionConfig, connectionTiming, pauseClock } from './fixture.mjs';
+import { ACTIVITY_POLL_INTERVAL_MS } from '../src/progress.ts';
 import { themeBehaviorContract } from '../tests/theme-contract.ts';
 
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Set PLAYWRIGHT_BROWSERS_PATH; tests never download browsers.');
@@ -19,9 +20,11 @@ const origin = `http://127.0.0.1:${address.port}`, browser = await chromium.laun
 const THEME_SURFACE_RGB = { light: 'rgb(255, 255, 255)', dark: 'rgb(21, 25, 32)' };
 const SIGN_IN = /^Sign in/, CHOICE_LABELS = { system: 'System', light: 'Light', dark: 'Dark' };
 const MAX_COMPACT_RETRY_WIDTH = 280, MIN_SUMMARY_TABLE_FRACTION = .9, DESKTOP = { width: 1440, height: 900 }, MOBILE = { width: 390, height: 844 }, THEME_KEY = 'chronicle.theme.preference';
-async function scene(viewport, configure) {
+async function scene(viewport, configure) { return sceneWith(viewport, '', configure); }
+// `connection`: query string of the page load (connectionTiming), '' for production connection settings.
+async function sceneWith(viewport, connection, configure) {
   const context = await browser.newContext({ viewport }), page = await context.newPage(), fixture = new ChronicleFixture();
-  page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message)); await configure({ context, page, fixture }); await fixture.install(page); await page.goto(`${origin}/tests-browser/harness.html`); if (fixture.signedIn) { await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); } else await page.getByRole('heading', { name: SIGN_IN }).waitFor();
+  page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message)); await configure({ context, page, fixture }); await fixture.install(page); await page.goto(`${origin}/tests-browser/harness.html${connection}`); if (fixture.signedIn) { await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); } else await page.getByRole('heading', { name: SIGN_IN }).waitFor();
   return { context, page, fixture };
 }
 async function run(name, body) { if (process.env.CHRONICLE_THEME_CASE !== undefined && !name.includes(process.env.CHRONICLE_THEME_CASE)) return; await body(); console.log(`PASS browser theme/retry: ${name}`); }
@@ -107,24 +110,26 @@ async function themeCases() {
     await page.locator('.conversation-source').evaluate(element => { element.scrollTop = 320; }); const message = await page.locator('.original-message').first().elementHandle(), pin = await page.locator('.provenance').innerText(), sourceCalls = fixture.calls.length;
     const focused = page.getByRole('button', { name: 'Close conversation', exact: true }); await focused.focus(); const sourceScroll = await page.locator('.conversation-source').evaluate(element => element.scrollTop); const other = await context.newPage(); await other.goto(`${origin}/theme-init.js`); await storeInTab(other, 'dark'); await waitStoredTheme(page, 'dark');
     assert.equal(await focused.evaluate(element => element === document.activeElement), true); assert.equal(await page.locator('.conversation-source').evaluate(element => element.scrollTop), sourceScroll); assert.equal(await message.evaluate(element => element.isConnected && element === document.querySelector('.original-message')), true); assert.equal(await page.locator('.provenance').innerText(), pin); assert.equal(fixture.calls.length, sourceCalls);
-    const HARNESS_HEARTBEAT_MS = 600;
-    await page.clock.runFor(HARNESS_HEARTBEAT_MS);
+    await advanceClock(page, connectionConfig.heartbeatInterval - 1); assert.equal(fixture.calls.length, sourceCalls, 'no heartbeat before its interval');
+    await advanceClock(page, 1); await fixture.waitUntil(() => fixture.calls.length > sourceCalls, 'no heartbeat after its interval');
     const afterTheme = fixture.calls.slice(sourceCalls);
     assert.equal(afterTheme.length, 1, 'one real heartbeat runs after the paused source-theme assertions');
     assert.equal(afterTheme[0].operation instanceof api.Operation_Ping, true, 'theme does not queue an application or mutation request');
     await context.close();
   });
   await run('owner-wide preview stays confirmed through theme changes, independent of History and filters; no Apply is implied', async () => {
-    const { context, page, fixture } = await scene(DESKTOP, async ({ page }) => {
-      // Isolate theme's request invariant from the real transport's 600ms heartbeat.
+    // Activity polls every ACTIVITY_POLL_INTERVAL_MS: a heartbeat inside one poll interval keeps the transport's Ping the only envelope the clock step may add.
+    const heartbeatInterval = ACTIVITY_POLL_INTERVAL_MS / 2;
+    const { context, page, fixture } = await sceneWith(DESKTOP, connectionTiming({ heartbeatInterval }), async ({ page }) => {
+      // Isolate theme's request invariant from the real transport's heartbeat.
       await page.clock.install({ time: new Date('2030-01-01T00:00:00Z') });
       await page.clock.pauseAt(new Date('2030-01-01T00:01:00Z'));
     }); await activity(page); await page.getByRole('button', { name: 'History', exact: true }).click(); await page.getByRole('combobox', { name: 'Search indexing job metadata', exact: true }).fill('status:Failed'); await page.locator('.activity-jobs').getByRole('button', { name: 'Filter', exact: true }).click(); await page.locator('.activity-job-table[aria-busy="false"]').waitFor();
     const trigger = page.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }); await trigger.click(); const preview = page.getByRole('region', { name: 'Retry failed indexing preview', exact: true }), checkbox = preview.getByRole('checkbox'); await checkbox.check(); const node = await preview.elementHandle(), counts = await preview.locator('table').innerText(), calls = fixture.calls.length;
     await choose(page, 'dark'); assert.equal(await checkbox.isChecked(), true); assert.equal(await node.evaluate(element => element.isConnected && element === document.querySelector('.retry-failed-preview')), true); assert.equal(await preview.locator('table').innerText(), counts); assert.equal(await preview.getByRole('button', { name: 'Confirm retry indexing jobs', exact: true }).isEnabled(), true); if (fixture.calls.length !== calls) console.log('Owner-theme request count diagnostics:', JSON.stringify(fixture.calls.slice(calls).map(call => call.operation.toJSON()))); assert.equal(fixture.calls.length, calls); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyRetryFailed).length, 0);
-    const HARNESS_HEARTBEAT_MS = 600; // Matches tests-browser/harness.tsx, not the production default.
     const callsBeforeHeartbeat = fixture.calls.length;
-    await page.clock.runFor(HARNESS_HEARTBEAT_MS);
+    await advanceClock(page, heartbeatInterval - 1); assert.equal(fixture.calls.length, callsBeforeHeartbeat, 'no heartbeat before its interval');
+    await advanceClock(page, 1); await fixture.waitUntil(() => fixture.calls.length > callsBeforeHeartbeat, 'no heartbeat after its interval');
     const afterTheme = fixture.calls.slice(callsBeforeHeartbeat);
     assert.equal(afterTheme.length, 1, 'one real heartbeat runs after the paused theme assertions');
     assert.equal(afterTheme[0].operation instanceof api.Operation_Ping, true, 'the added envelope is the actual transport Ping');
@@ -133,7 +138,10 @@ async function themeCases() {
     await preview.getByRole('button', { name: 'Cancel retry preview', exact: true }).click(); assert.equal(await trigger.evaluate(element => element === document.activeElement), true); await context.close();
   });
   await run('theme changes cannot clear delivered retry uncertainty or resend Apply', async () => {
-    const { context, page, fixture } = await scene(DESKTOP, async ({ fixture }) => { fixture.bulkDropReply = true; }); await activity(page); await page.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }).click(); const preview = page.getByRole('region', { name: 'Retry failed indexing preview', exact: true }); await preview.getByRole('checkbox').check(); await preview.getByRole('button', { name: 'Confirm retry indexing jobs', exact: true }).click(); await page.getByRole('region', { name: 'Uncertain mutation', exact: true }).waitFor();
+    const { context, page, fixture } = await scene(DESKTOP, async ({ fixture, page }) => { fixture.bulkDropReply = true; await pauseClock(page); }); await activity(page); await page.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }).click(); const preview = page.getByRole('region', { name: 'Retry failed indexing preview', exact: true }); await preview.getByRole('checkbox').check(); await preview.getByRole('button', { name: 'Confirm retry indexing jobs', exact: true }).click();
+    await fixture.waitUntil(() => fixture.calls.some(call => call.operation instanceof api.Operation_ApplyRetryFailed), 'retry apply was not sent');
+    await advanceClock(page, connectionConfig.requestTimeout - 1); assert.equal(await page.getByRole('region', { name: 'Uncertain mutation', exact: true }).count(), 0, 'a lost reply is not uncertain before the request deadline');
+    await advanceClock(page, 1); await page.getByRole('region', { name: 'Uncertain mutation', exact: true }).waitFor(); await page.locator('.connection-widget[data-state="live"]').waitFor();
     const uncertain = await page.locator('.notice.uncertain').innerText(), applies = fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyRetryFailed).map(call => call.requestId); await choose(page, 'dark'); await choose(page, 'light'); assert.equal(await page.locator('.notice.uncertain').innerText(), uncertain); assert.equal(await page.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }).isDisabled(), true); assert.deepEqual(fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyRetryFailed).map(call => call.requestId), applies); await context.close();
   });
   await productionPrepaint();

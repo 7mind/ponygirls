@@ -1,7 +1,39 @@
 import * as api from '../src/api.ts';
 import { createHash } from 'node:crypto';
 import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRuntime.ts';
+import { connectionConfig } from '../src/transport/types.ts';
 const context = BaboonCodecContext.Default;
+/**
+ * Query string of one fixture page load (harness.html, goal50.html) that replaces the named production connection settings
+ * (parsed by connection-timing.ts). Pages load with production timing by default.
+ */
+export function connectionTiming(settings) {
+  for (const [name, value] of Object.entries(settings)) if (!Object.hasOwn(connectionConfig, name) || !Number.isSafeInteger(value) || value <= 0) throw new Error(`Invalid fixture connection setting ${name}=${value}`);
+  return `?${new URLSearchParams(Object.entries(settings).map(([name, value]) => [name, String(value)]))}`;
+}
+const FIXTURE_WAIT_MS = 10_000;
+// The clock runs from install until pauseAt; the pause instant must still lie ahead after that round trip.
+const PAUSED_CLOCK_INSTALL = Date.parse('2030-01-01T00:00:00Z'), PAUSED_CLOCK_LEAD_MS = 1000;
+/** Installs a paused page clock before the page loads: page timers then fire only when the scenario advances the clock. */
+export async function pauseClock(page) { await page.clock.install({ time: PAUSED_CLOCK_INSTALL }); await page.clock.pauseAt(PAUSED_CLOCK_INSTALL + PAUSED_CLOCK_LEAD_MS); }
+/** Longest page-clock jump that the connection's timer-pause check (transport/manager.ts tick) still treats as on-time timers. */
+const ON_TIME_CLOCK_STEP_MS = connectionConfig.tickInterval + connectionConfig.pauseThreshold;
+/**
+ * Advances an installed page clock by `millis` in on-time steps: every timer due in a step fires once at its end, and the
+ * page handles socket messages between steps. A single jump would itself be a timer pause and reconnect the page.
+ */
+export async function advanceClock(page, millis) {
+  for (let advanced = 0; advanced < millis;) { const step = Math.min(ON_TIME_CLOCK_STEP_MS, millis - advanced); await page.clock.fastForward(step); advanced += step; }
+}
+/** As `advanceClock`, until `condition()` holds; fails once `limitMillis` have passed without it. */
+export async function advanceClockUntil(page, condition, limitMillis, message) {
+  for (let advanced = 0; !(await condition()); advanced += ON_TIME_CLOCK_STEP_MS) {
+    if (advanced >= limitMillis) throw new Error(`${message} within ${limitMillis} ms of page time`);
+    await page.clock.fastForward(ON_TIME_CLOCK_STEP_MS);
+  }
+}
+/** Upper bound of page time from a lost connection to 'stopped' under `config`: every attempt waits its longest back-off and both connect deadlines, each up to one clock step late. */
+export function retryBudgetMillis(config) { return config.maxAttempts * (config.retryCap + 2 * config.connectTimeout + 3 * ON_TIME_CLOCK_STEP_MS); }
 const ID = { session: '00000000-0000-4000-8000-000000000001', chunk: '00000000-0000-4000-8000-000000000002', token: '00000000-0000-4000-8000-000000000003', group: '00000000-0000-4000-8000-000000000004', invitation: '00000000-0000-4000-8000-000000000005', job: '00000000-0000-4000-8000-000000000006', otherGroup: '00000000-0000-4000-8000-000000000007' };
 function ordered(rows, value, id, direction) {
   return [...rows].sort((left, right) => {
@@ -18,6 +50,17 @@ function fixturePage(rows, cursor, limit, key) {
 }
 function leaseState(item) { return item.leaseExpiresAt === undefined ? 'unleased' : item.job.state !== api.JobState.Running ? 'inactive' : item.leaseActive ? 'active' : 'expired'; }
 export class ChronicleFixture {
+  #observers = new Set();
+  #changed() { for (const observer of [...this.#observers]) observer(); }
+  /** Resolves once `condition()` holds, checked whenever a socket opens or an envelope arrives; fails after FIXTURE_WAIT_MS. */
+  waitUntil(condition, message) {
+    if (condition()) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const observer = () => { if (condition()) { clearTimeout(timer); this.#observers.delete(observer); resolve(); } };
+      const timer = setTimeout(() => { this.#observers.delete(observer); reject(new Error(message)); }, FIXTURE_WAIT_MS);
+      this.#observers.add(observer);
+    });
+  }
   user = new api.UserInfo('alice', 'alice', [api.Scope.Read, api.Scope.Raw]);
   version = new api.VersionInfo(api.ClientEnvelope.BaboonDomainVersion, api.ClientEnvelope.BaboonDomainVersion, [api.ClientEnvelope.BaboonDomainVersion]);
   sockets = []; calls = []; requests = []; receipts = new Map(); tokens = []; staticTokens = []; collectors = []; collectionDenied = false;
@@ -233,11 +276,11 @@ export class ChronicleFixture {
       return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Set-Cookie': 'chronicle_session=synthetic; HttpOnly; SameSite=Strict; Path=/' }, body: JSON.stringify(api.LoginResponse_JsonCodec.instance.encode(context, new api.LoginResponse(this.user, this.version))) });
     });
     await page.routeWebSocket('**/api/ws', socket => {
-      const entry = { socket, mode: this.mode, closed: false }; this.sockets.push(entry);
+      const entry = { socket, mode: this.mode, closed: false }; this.sockets.push(entry); this.#changed();
       socket.onClose(() => { entry.closed = true; });
       socket.onMessage(data => {
         const envelope = api.ClientEnvelope_JsonCodec.instance.decode(context, JSON.parse(String(data)));
-        this.calls.push(envelope); this.requests.push({ userId: this.user.id, envelope }); const operation = envelope.operation;
+        this.calls.push(envelope); this.requests.push({ userId: this.user.id, envelope }); this.#changed(); const operation = envelope.operation;
         if (entry.mode === 'blackhole' || this.mode === 'outage') return;
         const send = result => socket.send(JSON.stringify(api.ServerEnvelope_JsonCodec.instance.encode(context, new api.ServerEnvelope(envelope.requestId, result))));
         if (this.mode === 'unauthorized' || !this.signedIn) { send(new api.Result_Error(new api.Failure('unauthorized', 'Your session expired. Sign in again.'))); return; }
@@ -340,4 +383,4 @@ export class ChronicleFixture {
   blackholeActive() { const active = this.sockets.filter(s => !s.closed).at(-1); if (!active) throw new Error('No socket'); active.mode = 'blackhole'; }
   restart() { for (const entry of this.sockets.filter(s => !s.closed)) entry.socket.close({ code: 1012, reason: 'Synthetic server restart' }); }
 }
-export { api };
+export { api, connectionConfig };

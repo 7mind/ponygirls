@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
-import { ChronicleFixture, api } from './fixture.mjs';
+import { ChronicleFixture, advanceClockUntil, api, connectionConfig, pauseClock, retryBudgetMillis } from './fixture.mjs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
@@ -27,12 +27,12 @@ async function run(name, body) {
 }
 try {
   await run('transient disconnect clears private content without asking for credentials', async ({ page, fixture }) => {
-    await page.goto(`${origin}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor();
+    await pauseClock(page); await page.goto(`${origin}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor();
     fixture.mode = 'outage'; fixture.restart();
     await page.locator('.archive-row').waitFor({ state: 'detached' });
     assert.equal(await page.getByRole('heading', { name: SIGN_IN }).count(), 0, 'recoverable disconnect is not credential rejection');
     await page.getByRole('status').filter({ hasText: /Reconnecting|Session unavailable/ }).first().waitFor();
-    await page.locator('.connection-widget[data-state="stopped"]').waitFor();
+    await advanceClockUntil(page, async () => await page.locator('.connection-widget[data-state="stopped"]').count() === 1, retryBudgetMillis(connectionConfig), 'the connection did not stop retrying');
     fixture.mode = 'normal'; await page.getByRole('button', { name: 'Retry session', exact: true }).click();
     await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor();
   });
