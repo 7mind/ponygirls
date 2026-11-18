@@ -51,10 +51,17 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
   onAuthLost: () => void;
 }) {
   // A draft left behind by an earlier visit (the router unmounts the editor however the reader left) is restored.
-  const [restored] = useState(() => drafts.get(itemKey));
+  const [restored] = useState(() => {
+    const kept = drafts.get(itemKey);
+    // The record page opens a fresh editor only on a record at or above its confirmed-revision floor (edit-drafts.ts).
+    if (kept === undefined && item.revision < drafts.floor(itemKey))
+      throw new Error(`A fresh editor of ${itemKey} cannot start from revision ${item.revision}, below its confirmed revision ${drafts.floor(itemKey)}`);
+    return kept;
+  });
   const lastId = useRef(restored === undefined ? 0 : restored.lastId);
   const nextId = useCallback(() => ++lastId.current, []);
-  const [base] = useState<Draft>(() => restored === undefined ? draftOf(item, nextId) : restored.base);
+  const [lineage] = useState(() => restored === undefined ? drafts.lineage() : restored.lineage);
+  const [base, setBase] = useState<Draft>(() => restored === undefined ? draftOf(item, nextId) : restored.base);
   const [draft, setDraft] = useState<Draft>(() => restored === undefined ? draftOf(item, nextId) : restored.draft);
   const [baseRevision, setBaseRevision] = useState(restored === undefined ? item.revision : restored.baseRevision);
   const [conflict, setConflict] = useState<Conflict | null>(null);
@@ -72,6 +79,8 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
   // Only changes announced after the editor opened can concern this draft.
   const openedAt = useRef(live.version);
   const formId = useId();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const parts = useMemo(() => changedParts(base, draft), [base, draft]);
   const problems = useMemo(() => problemsOf(draft), [draft]);
@@ -82,14 +91,23 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
 
   useEffect(() => {
     if (live.version === openedAt.current) return;
-    if (isRemoteChange(live, { key: itemKey, revision: item.revision }, pending)) setRemote({ revision: live.revision });
+    // The draft's base may be newer than `item`: the reader's own save that the editor stayed open after.
+    if (isRemoteChange(live, { key: itemKey, revision: Math.max(item.revision, baseRevision) }, pending)) setRemote({ revision: live.revision });
   }, [live.version]);
 
   // Written through on every change; nothing removes it but a confirmed save or an explicit discard (not unmounting).
   useEffect(() => {
-    if (dirty) drafts.put(itemKey, { base, draft, baseRevision, lastId: lastId.current });
+    if (dirty) drafts.put(itemKey, lineage, { base, draft, baseRevision, lastId: lastId.current });
     else drafts.drop(itemKey);
-  }, [dirty, draft, baseRevision]);
+  }, [dirty, draft, base, baseRevision]);
+
+  // A save of this draft was confirmed, by its own answer or a replay, possibly sent by an earlier editor of the draft: what
+  // was saved is the new base, so that later edits save on top of it.
+  useEffect(() => drafts.subscribeConfirmed((confirmation) => {
+    if (confirmation.key !== itemKey || confirmation.lineage !== lineage) return;
+    setBase(confirmation.draft); setBaseRevision(confirmation.revision);
+    if (confirmation.kept) setReconciled(`Saved as revision ${confirmation.revision}. Your later changes are kept and are now based on it.`);
+  }), [itemKey, lineage]);
 
   useEffect(() => {
     if (focusId === null) return;
@@ -107,10 +125,21 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
   async function submit(revision: number) {
     setSaving(true); setFailure(null); setReconciled(null);
     try {
+      const requestId = uuidv7();
+      drafts.submit(itemKey, lineage, requestId, { base, draft, baseRevision: revision, lastId: lastId.current });
       // The fields text is spliced raw into the document: edited big integers never round-trip.
-      const out = await api.put(item.key, documentJsonOf(draft), revision, uuidv7());
-      drafts.drop(itemKey);
+      const out = await api.put(item.key, documentJsonOf(draft), revision, requestId);
+      // The store ended the saved draft (`drafts.confirmed`). Edits made since keep the editor open; one that was left stays
+      // closed. Checked again once the guard entry is gone: the reader can edit while that traversal is under way.
+      const newer = () => drafts.get(itemKey) !== undefined;
+      if (!mounted.current || newer()) return;
       await guard.release();
+      if (!mounted.current) return;
+      if (newer()) {
+        guard.rearm();
+        setReconciled(`Saved as revision ${out.revision}. Your later changes are kept and are now based on it.`);
+        return;
+      }
       await onSaved(out.revision);
     } catch (error) {
       if (error instanceof AuthError) { onAuthLost(); return; }

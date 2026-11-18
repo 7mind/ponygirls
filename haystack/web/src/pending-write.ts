@@ -15,12 +15,17 @@ export class WriteCoordinator<T> {
   private pending: Readonly<WriteOperation> | undefined;
   private flight: Promise<T> | undefined;
   private readonly listeners = new Set<() => void>();
+  private readonly confirmations = new Set<(operation: Readonly<WriteOperation>, result: T) => void>();
   private readonly send: (op: WriteOperation) => Promise<T>;
   private readonly terminal: (error: unknown) => boolean;
   constructor(send: (op: WriteOperation) => Promise<T>, terminal: (error: unknown) => boolean) { this.send = send; this.terminal = terminal; }
   snapshot = (): Readonly<WriteOperation> | undefined => this.pending;
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private publish(): void { for (const listener of this.listeners) listener(); }
+  /** Observes every write the server confirmed, by its first answer or by a replay, whoever sent or replayed it. */
+  subscribeConfirmed = (listener: (operation: Readonly<WriteOperation>, result: T) => void): (() => void) => {
+    this.confirmations.add(listener); return () => { this.confirmations.delete(listener); };
+  };
   clear(): void { this.pending = undefined; this.flight = undefined; this.publish(); }
   execute(operation: WriteOperation): Promise<T> {
     if (this.pending && (this.pending.key !== operation.key || this.pending.documentJson !== operation.documentJson ||
@@ -34,6 +39,7 @@ export class WriteCoordinator<T> {
     if (!operation) return Promise.reject(new Error("No pending write"));
     const flight = Promise.resolve().then(() => this.send(operation)).then((result) => {
       if (this.pending === operation) this.clear();
+      for (const listener of this.confirmations) listener(operation, result);
       return result;
     }, (error: unknown) => {
       if (this.pending === operation) {

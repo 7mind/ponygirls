@@ -267,6 +267,7 @@ export const api = {
   pendingWrite: writes.snapshot,
   clearSessionWrites: () => { writes.clear(); sessionIdentity = { key: undefined }; },
   subscribePendingWrite: writes.subscribe,
+  subscribeConfirmedWrite: writes.subscribeConfirmed,
   retryPendingWrite: () => writes.retry(),
   logout: async () => { const result = await call("/api/v1/logout", Ack.jsonCodec()); writes.clear(); sessionIdentity = { key: undefined }; return result; },
   whoami: async (isCurrent: () => boolean): Promise<Principal> => {
