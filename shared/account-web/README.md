@@ -227,8 +227,13 @@ nix develop .#chronicle --command node shared/account-web/dev/serve.mjs 8123
 `?steps=0` loads a scenario's fixture without driving the views into the state.
 `/ui/*` is served from `shared/ui-web/` when it exists, otherwise from the
 reference copies in `docs/drafts/20261117-2130-dashboard-redesign/`.
-`dev/capture.mjs` renders every scenario (1440×900; 1024×700 and dark for the
-main ones) named like the mockup shots.
+`dev/capture.mjs` renders every scenario (1440×900; 1024×700, 390×844 and dark
+for the main ones) named like the mockup shots.
+
+Below 720 px (the shared `sm` breakpoint) the Access tokens and Users tables stack
+their rows: the first cell and the row actions share a line, the other cells
+follow two to a line under a caption with their column header; nothing is hidden
+and the document does not scroll sideways (spec §1, §8 item 9).
 
 ## Verification
 
