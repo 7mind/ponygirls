@@ -42,7 +42,7 @@ BEGIN
   SELECT count(*) INTO n FROM write_requests w, haystack_contract_cutovers c
   WHERE c.contract = 'haystack.api/1.0.0' AND w.digest_format = 'haystack-op-v1' AND w.created_at >= c.installed_at;
   IF n > 0 THEN RAISE EXCEPTION 'legacy-retirement refused: % haystack-op-v1 replay row(s) were created after the Scala cut-over', n; END IF;
-  SELECT count(*) INTO n FROM write_requests WHERE digest_format NOT IN ('haystack-op-v1', 'haystack-op-scala-v1');
+  SELECT count(*) INTO n FROM write_requests WHERE digest_format IS NULL OR digest_format NOT IN ('haystack-op-v1', 'haystack-op-scala-v1');
   IF n > 0 THEN RAISE EXCEPTION 'legacy-retirement refused: % replay row(s) carry an unknown digest format', n; END IF;
   SELECT count(*) INTO n FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend';
   IF n > 0 AND current_setting('lr.allow_connections') <> 't' THEN

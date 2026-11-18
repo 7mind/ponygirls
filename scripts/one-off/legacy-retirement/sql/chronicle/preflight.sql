@@ -13,7 +13,7 @@ SELECT 'LR.plan', string_agg(value::text, '.' ORDER BY key) FROM counts WHERE in
 SELECT 'LR.old_format', coalesce(g.passage_format, '<null>'),
        CASE WHEN g.retired THEN 'retired-tombstone' WHEN EXISTS (SELECT 1 FROM ch_sources s WHERE s.published = g.id) THEN 'published' ELSE 'history' END, count(*)
 FROM ch_generations g
-WHERE g.passage_format IS DISTINCT FROM 'ContextAwareProblems' OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1')
+WHERE g.passage_format IS DISTINCT FROM 'ContextAwareProblems' OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1')
 GROUP BY 2, 3 ORDER BY 2, 3;
 -- Worklist for the product re-index: published generations in a retired format, by owner state and by the state of
 -- the head job on the owner's target profile. Counts and safe codes only.
@@ -24,17 +24,17 @@ FROM ch_sources s JOIN ch_generations g ON g.id = s.published JOIN ch_users u ON
 LEFT JOIN ch_owner_targets t ON t.owner = s.owner
 LEFT JOIN ch_jobs j ON j.session_id = s.id AND j.revision = s.revision AND j.profile = t.profile
 WHERE NOT g.retired AND (g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
-   OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1'))
+   OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1'))
 GROUP BY 2, 3, 4, 5, 6 ORDER BY 2, 3, 4, 5, 6;
 -- Publications whose model identity is v1 (relocated or re-homed by SQL, no model), by policy and format.
 SELECT 'LR.relocation_worklist', p.policy, coalesce(g.passage_format, '<null>'), count(*)
 FROM ch_sources s JOIN ch_generations g ON g.id = s.published JOIN ch_index_profiles p ON p.profile = g.profile
 JOIN ch_embedding_spaces e ON e.id = p.embedding_space
-WHERE e.descriptor->>0 IS DISTINCT FROM 'embedding-space-v2' GROUP BY 2, 3 ORDER BY 2, 3;
+WHERE (jsonb_typeof(e.descriptor) = 'array' AND e.descriptor->>0 = 'embedding-space-v2') IS NOT TRUE GROUP BY 2, 3 ORDER BY 2, 3;
 -- Unfinished runs whose accepted work will be discarded, by job state.
 SELECT 'LR.unfinished_runs', j.state, count(*) FROM ch_jobs j
-WHERE j.state <> 'Complete' AND (EXISTS (SELECT 1 FROM ch_checkpoint_namespaces n WHERE n.job_id = j.id AND n.run_id = j.run_id)
-   OR (j.profile IN (SELECT p.profile FROM ch_index_profiles p JOIN ch_embedding_spaces e ON e.id = p.embedding_space WHERE e.descriptor->>0 IS DISTINCT FROM 'embedding-space-v2')
+WHERE j.state IS DISTINCT FROM 'Complete' AND (EXISTS (SELECT 1 FROM ch_checkpoint_namespaces n WHERE n.job_id = j.id AND n.run_id = j.run_id)
+   OR (j.profile IN (SELECT p.profile FROM ch_index_profiles p JOIN ch_embedding_spaces e ON e.id = p.embedding_space WHERE (jsonb_typeof(e.descriptor) = 'array' AND e.descriptor->>0 = 'embedding-space-v2') IS NOT TRUE)
        AND (EXISTS (SELECT 1 FROM ch_index_checkpoints c WHERE c.job_id = j.id AND c.run_id = j.run_id)
          OR EXISTS (SELECT 1 FROM ch_annotation_attempts a WHERE a.job_id = j.id AND a.run_id = j.run_id AND a.retry_epoch = j.annotation_retry_epoch))))
 GROUP BY 2 ORDER BY 2;

@@ -3,11 +3,11 @@
 -- item: 'identity' (model identity v1, sessions, singleton, opaque targets), 'formats' (retired output formats),
 -- 'info' (not legacy by itself). Read-only. Counts only: no identifiers or content leave the database.
 WITH legacy_spaces AS (
-  SELECT id FROM ch_embedding_spaces WHERE descriptor->>0 IS DISTINCT FROM 'embedding-space-v2'
+  SELECT id FROM ch_embedding_spaces WHERE (jsonb_typeof(descriptor) = 'array' AND descriptor->>0 = 'embedding-space-v2') IS NOT TRUE
 ), space_profiles AS (
   SELECT profile FROM ch_index_profiles WHERE embedding_space IN (SELECT id FROM legacy_spaces)
 ), policy_profiles AS (
-  SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1'
+  SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1'
 ), old_format AS (
   -- stored output of a retired policy, by format label or by the policy of the producing profile
   SELECT g.id, g.retired, EXISTS (SELECT 1 FROM ch_sources s WHERE s.published = g.id) AS published
@@ -16,7 +16,7 @@ WITH legacy_spaces AS (
 ), unfinished AS (
   -- unfinished runs whose checkpoint identity changes: a v1 namespace row is removed, or the profile leaves a v1 space
   SELECT j.id, j.run_id FROM ch_jobs j
-  WHERE j.state <> 'Complete' AND (
+  WHERE j.state IS DISTINCT FROM 'Complete' AND (
     EXISTS (SELECT 1 FROM ch_checkpoint_namespaces n WHERE n.job_id = j.id AND n.run_id = j.run_id)
     OR (j.profile IN (SELECT profile FROM space_profiles) AND (
          EXISTS (SELECT 1 FROM ch_index_checkpoints c WHERE c.job_id = j.id AND c.run_id = j.run_id)
@@ -24,7 +24,7 @@ WITH legacy_spaces AS (
 ), counts(key, value, item, must_be_zero, in_plan) AS (
   SELECT 'spaces.v1', (SELECT count(*) FROM legacy_spaces), 'identity', true, true
   UNION ALL SELECT 'profiles.v1_space', (SELECT count(*) FROM space_profiles), 'identity', true, true
-  UNION ALL SELECT 'profiles.v1_descriptor.current_policy', (SELECT count(*) FROM ch_index_profiles WHERE policy = 'ContextAwareProblemsV1' AND descriptor->>0 = 'index-profile-descriptor-v1'), 'identity', true, false
+  UNION ALL SELECT 'profiles.current_policy.descriptor_not_v2', (SELECT count(*) FROM ch_index_profiles WHERE policy = 'ContextAwareProblemsV1' AND (jsonb_typeof(descriptor) = 'array' AND descriptor->>0 = 'index-profile-descriptor-v2') IS NOT TRUE), 'identity', true, false
   UNION ALL SELECT 'generations.v1_space', (SELECT count(*) FROM ch_generations WHERE profile IN (SELECT profile FROM space_profiles)), 'identity', true, true
   UNION ALL SELECT 'generations.v1_space.published', (SELECT count(*) FROM ch_generations g WHERE g.profile IN (SELECT profile FROM space_profiles) AND EXISTS (SELECT 1 FROM ch_sources s WHERE s.published = g.id)), 'identity', true, false
   UNION ALL SELECT 'generations.unregistered_profile', (SELECT count(*) FROM ch_generations g WHERE NOT EXISTS (SELECT 1 FROM ch_index_profiles p WHERE p.profile = g.profile)), 'identity', true, false

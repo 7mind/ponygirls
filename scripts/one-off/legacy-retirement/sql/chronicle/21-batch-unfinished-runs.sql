@@ -13,9 +13,9 @@ DECLARE
 BEGIN
   SELECT array_agg(d.id) INTO jobs FROM (
     SELECT j.id FROM ch_jobs j
-    WHERE j.state <> 'Complete' AND (
+    WHERE j.state IS DISTINCT FROM 'Complete' AND (
       EXISTS (SELECT 1 FROM ch_checkpoint_namespaces n WHERE n.job_id = j.id AND n.run_id = j.run_id)
-      OR (j.profile IN (SELECT p.profile FROM ch_index_profiles p JOIN ch_embedding_spaces e ON e.id = p.embedding_space WHERE e.descriptor->>0 IS DISTINCT FROM 'embedding-space-v2')
+      OR (j.profile IN (SELECT p.profile FROM ch_index_profiles p JOIN ch_embedding_spaces e ON e.id = p.embedding_space WHERE (jsonb_typeof(e.descriptor) = 'array' AND e.descriptor->>0 = 'embedding-space-v2') IS NOT TRUE)
           AND (EXISTS (SELECT 1 FROM ch_index_checkpoints c WHERE c.job_id = j.id AND c.run_id = j.run_id)
             OR EXISTS (SELECT 1 FROM ch_annotation_attempts a WHERE a.job_id = j.id AND a.run_id = j.run_id AND a.retry_epoch = j.annotation_retry_epoch))))
     ORDER BY j.id LIMIT current_setting('lr.batch_size')::int FOR UPDATE OF j) d;

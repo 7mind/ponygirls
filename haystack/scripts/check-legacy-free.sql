@@ -14,7 +14,7 @@ SET lock_timeout = '5s';
 BEGIN TRANSACTION READ ONLY ISOLATION LEVEL REPEATABLE READ;
 SELECT 'LF.database', current_database();
 SELECT 'LF.schema_migrations', coalesce(string_agg(version, ',' ORDER BY version), '') FROM schema_migrations;
-SELECT count(*) AS lf_replay FROM write_requests WHERE digest_format <> 'haystack-op-scala-v1' \gset
+SELECT count(*) AS lf_replay FROM write_requests WHERE digest_format IS DISTINCT FROM 'haystack-op-scala-v1' \gset
 SELECT count(*) AS lf_default FROM information_schema.columns
 WHERE table_schema = current_schema() AND table_name = 'write_requests' AND column_name = 'digest_format' AND column_default IS NOT NULL \gset
 SELECT count(*) AS lf_constraint FROM pg_constraint WHERE conrelid = 'write_requests'::regclass AND conname = 'write_requests_current_digest_format_check' \gset

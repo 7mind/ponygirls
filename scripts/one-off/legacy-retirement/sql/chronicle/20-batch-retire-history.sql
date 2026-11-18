@@ -12,7 +12,7 @@ BEGIN
   SELECT array_agg(d.id) INTO ids FROM (
     SELECT g.id FROM ch_generations g
     WHERE NOT g.retired AND (g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
-           OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1'))
+           OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1'))
       AND NOT EXISTS (SELECT 1 FROM ch_sources s WHERE s.published = g.id)
     ORDER BY g.id LIMIT current_setting('lr.batch_size')::int FOR UPDATE OF g) d;
   IF ids IS NULL THEN

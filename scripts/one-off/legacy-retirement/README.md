@@ -20,9 +20,9 @@ restore of an older database copy needs that binary and these scripts. Two files
 | `drop-databases.sh` | as `run.sh` | Separately confirmed drop of rollback copies, one named database at a time. |
 | `rehearsal/clone.sh` | bash, PostgreSQL 18 + pgvector locally; `pg_dump` at the source | Export, restore and deletion of the rehearsal clone (real content; private 0700 directory). |
 | `sql/*/proposed-cleanup*.sql` | — | The schema clean-up the legacy-free binaries are proposed to apply; used to validate the runbook. Not applied by `run.sh`. |
-| `op.sh` | bash, `kubectl`, `python3`; `LR_*` settings | **The operator wrapper for production** (plan 7): each target's own database, maintenance database for drop/backup, container restart counts before/after every command, Haystack backup with full-decode check. |
+| `op.sh` (mode 755) | bash, `kubectl`, `python3`; `LR_*` settings incl. `LR_SYSTEM_IDENTIFIER` | **The operator wrapper for production** (plan 7): every remote command through one fail-closed gateway (own success marker as the last line, exit 0 alone is not success); before/after probes (pod identity, restart counts, system identifier, `FENCED since` banner); `identify`, `ready`, run.sh modes per target database, `drop` (strict ConfigMap parsing), `backup-haystack` (complete decode), `codec-check`, `check-legacy-free`. |
 | `sql/chronicle/worklist.sql`, `fence*.sql`, `unfence.sql` | — | `run.sh chronicle worklist` (job ids to retry); the database-side fence of the Chronicle role (plan 7.2). |
-| `test.sh` | `nix develop .#chronicle` | The fixture tests on owned throwaway PostgreSQL clusters: the two Scala suites, `test-drop-databases.sh`, `test-scripts.sh`; all refuse an inherited connection or deployment target (`test-guard.sh`). |
+| `test.sh` | `nix develop .#chronicle` | The fixture tests on owned throwaway PostgreSQL clusters: the two Scala suites, `test-drop-databases.sh`, `test-scripts.sh` (runs the real `op.sh` against a fake `kubectl`). Every test sources `test-guard.sh` first, which refuses any inherited input the scripts read (derived from the scripts by grep). |
 
 No host, credential or deployment name is in these files. The operator supplies the connection: standard `PG*`
 environment variables, or a complete psql command line in `PSQL` (for example an exec into a database pod).

@@ -6,7 +6,7 @@ WITH cutover AS (
   SELECT min(installed_at) AS at FROM haystack_contract_cutovers WHERE contract = 'haystack.api/1.0.0'
 ), counts(key, value, must_be_zero, in_plan) AS (
   SELECT 'replay.node_format', (SELECT count(*) FROM write_requests WHERE digest_format = 'haystack-op-v1'), true, true
-  UNION ALL SELECT 'replay.unknown_format', (SELECT count(*) FROM write_requests WHERE digest_format NOT IN ('haystack-op-v1', 'haystack-op-scala-v1')), true, true
+  UNION ALL SELECT 'replay.unknown_format', (SELECT count(*) FROM write_requests WHERE digest_format IS NULL OR digest_format NOT IN ('haystack-op-v1', 'haystack-op-scala-v1')), true, true
   UNION ALL SELECT 'replay.node_format_after_cutover', (SELECT count(*) FROM write_requests w, cutover c WHERE w.digest_format = 'haystack-op-v1' AND (c.at IS NULL OR w.created_at >= c.at)), true, true
   UNION ALL SELECT 'info.replay.current_format', (SELECT count(*) FROM write_requests WHERE digest_format = 'haystack-op-scala-v1'), false, false
   UNION ALL SELECT 'info.items', (SELECT count(*) FROM items), false, false

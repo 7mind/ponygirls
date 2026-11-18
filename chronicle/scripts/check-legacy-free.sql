@@ -20,7 +20,7 @@ SELECT 'LF.database', current_database();
 SELECT 'LF.schema_migrations', coalesce(string_agg(version::text, ',' ORDER BY version), '') FROM ch_schema_migrations;
 SELECT count(*) AS lf_tables FROM (VALUES ('ch_retained_profile_reads'), ('ch_checkpoint_namespaces'), ('ch_model_identity_migrations'), ('ch_profile')) t(name)
 WHERE to_regclass(t.name) IS NOT NULL \gset
-SELECT count(*) AS lf_spaces FROM ch_embedding_spaces WHERE descriptor->>0 IS DISTINCT FROM 'embedding-space-v2' \gset
+SELECT count(*) AS lf_spaces FROM ch_embedding_spaces WHERE (jsonb_typeof(descriptor) = 'array' AND descriptor->>0 = 'embedding-space-v2') IS NOT TRUE \gset
 SELECT count(*) AS lf_targets FROM ch_owner_targets t
 WHERE NOT EXISTS (SELECT 1 FROM ch_index_profiles p WHERE p.profile = t.profile AND p.policy = 'ContextAwareProblemsV1') \gset
 SELECT count(*) AS lf_published FROM ch_sources s JOIN ch_generations g ON g.id = s.published
@@ -28,7 +28,7 @@ WHERE g.retired OR NOT EXISTS (SELECT 1 FROM ch_index_profiles p WHERE p.profile
 SELECT count(*) AS lf_sessions FROM ch_sessions WHERE expires IS NOT NULL \gset
 SELECT count(*) AS lf_formats FROM ch_generations g
 WHERE NOT g.retired AND (g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
-   OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1')) \gset
+   OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1')) \gset
 SELECT count(*) AS lf_constraint FROM pg_constraint WHERE conrelid = 'ch_generations'::regclass AND conname = 'ch_generations_current_format_check' \gset
 SELECT count(*) AS lf_tombstones FROM ch_generations WHERE retired \gset
 ROLLBACK;

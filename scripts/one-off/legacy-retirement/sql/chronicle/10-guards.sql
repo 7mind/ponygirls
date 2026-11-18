@@ -66,20 +66,20 @@ BEGIN
              CASE WHEN EXISTS (SELECT 1 FROM ch_sources s WHERE s.published = g.id) THEN 'published' ELSE 'history' END AS state
       FROM ch_generations g
       WHERE NOT g.retired AND (g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
-         OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1'))
+         OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1'))
     ), grouped AS (SELECT format, state, count(*) AS c FROM old_format GROUP BY format, state)
     SELECT coalesce(string_agg(format || '/' || state || '=' || c, ', ' ORDER BY format, state), 'none') INTO breakdown FROM grouped;
     -- A published generation in a retired format cannot be converted or retired by SQL: it needs the product re-index.
     SELECT count(*) INTO n FROM ch_sources s JOIN ch_generations g ON g.id = s.published
     WHERE g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
-       OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1');
+       OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1');
     IF n > 0 THEN
       RAISE EXCEPTION 'legacy-retirement refused: % source(s) are still published in a retired output format (%); re-index them with the product first (LR.reindex_worklist in preflight), or pass --skip-formats to leave the formats item alone', n, breakdown;
     END IF;
     -- Unpublished, not retired: a readable pinned view of an earlier revision. Never removed by default.
     SELECT count(*) INTO n FROM ch_generations g
     WHERE NOT g.retired AND (g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
-       OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1'));
+       OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1'));
     IF current_setting('lr.retire_history') <> 't' THEN
       IF n > 0 THEN
         RAISE EXCEPTION 'legacy-retirement refused: % historical generation(s) in a retired output format are not retired and remain readable as pinned views (%). Nothing is removed by default: pass --skip-formats, or retire them explicitly with --retire-history --confirm-retire-history %', n, breakdown, n;

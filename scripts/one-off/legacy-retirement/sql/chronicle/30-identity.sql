@@ -50,9 +50,9 @@ DECLARE
 BEGIN
   -- The batched part must be complete before identities are rewritten.
   SELECT count(*) INTO n FROM ch_jobs j
-  WHERE j.state <> 'Complete' AND (
+  WHERE j.state IS DISTINCT FROM 'Complete' AND (
     EXISTS (SELECT 1 FROM ch_checkpoint_namespaces ns WHERE ns.job_id = j.id AND ns.run_id = j.run_id)
-    OR (j.profile IN (SELECT q.profile FROM ch_index_profiles q JOIN ch_embedding_spaces e ON e.id = q.embedding_space WHERE e.descriptor->>0 IS DISTINCT FROM 'embedding-space-v2')
+    OR (j.profile IN (SELECT q.profile FROM ch_index_profiles q JOIN ch_embedding_spaces e ON e.id = q.embedding_space WHERE (jsonb_typeof(e.descriptor) = 'array' AND e.descriptor->>0 = 'embedding-space-v2') IS NOT TRUE)
         AND (EXISTS (SELECT 1 FROM ch_index_checkpoints c WHERE c.job_id = j.id AND c.run_id = j.run_id)
           OR EXISTS (SELECT 1 FROM ch_annotation_attempts a WHERE a.job_id = j.id AND a.run_id = j.run_id AND a.retry_epoch = j.annotation_retry_epoch))));
   IF n > 0 THEN RAISE EXCEPTION 'legacy-retirement incomplete: % unfinished run(s) still hold v1-identity accepted work; run again (raise --max-batches or --batch-size)', n; END IF;
@@ -75,9 +75,10 @@ BEGIN
 
   -- Relocation of every profile still registered on a v1 embedding space.
   total := 0;
-  FOR s1 IN SELECT id, descriptor FROM ch_embedding_spaces WHERE descriptor->>0 IS DISTINCT FROM 'embedding-space-v2' ORDER BY id LOOP
-    IF jsonb_typeof(s1.descriptor) <> 'array' OR s1.descriptor->>0 <> 'embedding-space-v1' OR jsonb_array_length(s1.descriptor) <> 9
-       OR (s1.descriptor->>1) !~ '^[0-9a-f]{64}$' OR pg_temp.lr_sha256(pg_temp.lr_nospaces(s1.descriptor)) IS DISTINCT FROM s1.id THEN
+  FOR s1 IN SELECT id, descriptor FROM ch_embedding_spaces WHERE (jsonb_typeof(descriptor) = 'array' AND descriptor->>0 = 'embedding-space-v2') IS NOT TRUE ORDER BY id LOOP
+    -- IS NOT FALSE: a NULL test (missing element) refuses instead of passing (three-valued logic)
+    IF (jsonb_typeof(s1.descriptor) <> 'array' OR s1.descriptor->>0 <> 'embedding-space-v1' OR jsonb_array_length(s1.descriptor) <> 9
+       OR (s1.descriptor->>1) !~ '^[0-9a-f]{64}$' OR pg_temp.lr_sha256(pg_temp.lr_nospaces(s1.descriptor)) IS DISTINCT FROM s1.id) IS NOT FALSE THEN
       RAISE EXCEPTION 'legacy-retirement refused: an embedding space is neither v2 nor a verifiable v1 descriptor';
     END IF;
     -- V1 prepends a transport hash to the model tuple; the canonical space is the one with the identical tuple
@@ -99,25 +100,25 @@ BEGIN
       IF EXISTS (SELECT 1 FROM ch_model_identity_migrations WHERE legacy_profile = p.profile) THEN
         RAISE EXCEPTION 'legacy-retirement refused: a profile the product already relocated is referenced again';
       END IF;
-      IF p.policy <> 'ContextAwareProblemsV1' THEN
+      IF p.policy IS DISTINCT FROM 'ContextAwareProblemsV1' THEN
         -- A retired policy has no derivable canonical id (its writer is gone) and its id is opaque to the current
         -- code: the registry row is re-homed onto the canonical space, id and descriptor unchanged.
         UPDATE ch_index_profiles SET embedding_space = canonical_space WHERE profile = p.profile;
         rehomed := rehomed + 1;
         CONTINUE;
       END IF;
-      IF jsonb_typeof(p.descriptor) <> 'array' OR jsonb_array_length(p.descriptor) <> 3 OR p.descriptor->>0 <> 'index-profile-descriptor-v1'
+      IF (jsonb_typeof(p.descriptor) <> 'array' OR jsonb_array_length(p.descriptor) <> 3 OR p.descriptor->>0 <> 'index-profile-descriptor-v1'
          OR jsonb_typeof(p.descriptor->2) <> 'string' OR p.descriptor->>2 = '' OR jsonb_typeof(p.descriptor->1) <> 'array' OR jsonb_array_length(p.descriptor->1) <> 5
          OR (p.descriptor->1->>0) !~ '^[0-9a-f]{64}$'
          OR EXISTS (SELECT 1 FROM jsonb_array_elements(p.descriptor->1) e WHERE jsonb_typeof(e) <> 'string' OR e #>> '{}' = '')
-         OR pg_temp.lr_sha256(pg_temp.lr_nospaces(jsonb_build_array('context-aware-problems-profile-v1', s1.id, p.descriptor))) IS DISTINCT FROM p.profile THEN
+         OR pg_temp.lr_sha256(pg_temp.lr_nospaces(jsonb_build_array('context-aware-problems-profile-v1', s1.id, p.descriptor))) IS DISTINCT FROM p.profile) IS NOT FALSE THEN
         RAISE EXCEPTION 'legacy-retirement refused: a referenced v1 profile does not verify against its descriptor; re-index its sources with the product instead';
       END IF;
       new_descriptor := jsonb_build_array('index-profile-descriptor-v2', (p.descriptor->1) - 0, p.descriptor->2);
       new_profile := pg_temp.lr_sha256(pg_temp.lr_nospaces(jsonb_build_array('context-aware-problems-profile-v2', canonical_space, new_descriptor)));
       INSERT INTO ch_index_profiles(profile, embedding_space, policy, descriptor) VALUES (new_profile, canonical_space, p.policy, new_descriptor) ON CONFLICT DO NOTHING;
       SELECT embedding_space, policy, descriptor INTO existing FROM ch_index_profiles WHERE profile = new_profile;
-      IF existing.embedding_space <> canonical_space OR existing.policy <> p.policy OR existing.descriptor <> new_descriptor THEN
+      IF (existing.embedding_space <> canonical_space OR existing.policy <> p.policy OR existing.descriptor <> new_descriptor) IS NOT FALSE THEN
         RAISE EXCEPTION 'legacy-retirement refused: canonical profile id collides with a different registered profile';
       END IF;
       SELECT count(*) INTO n FROM ch_jobs a JOIN ch_jobs b ON b.session_id = a.session_id AND b.revision = a.revision WHERE a.profile = p.profile AND b.profile = new_profile;
@@ -146,19 +147,19 @@ BEGIN
   DELETE FROM ch_model_identity_migrations;
   GET DIAGNOSTICS n = ROW_COUNT; INSERT INTO lr_log(step, n) VALUES ('model_identity_migrations_deleted', n);
   SELECT count(*) INTO n FROM ch_index_profiles q
-  WHERE q.embedding_space IN (SELECT id FROM ch_embedding_spaces WHERE descriptor->>0 IS DISTINCT FROM 'embedding-space-v2')
+  WHERE q.embedding_space IN (SELECT id FROM ch_embedding_spaces WHERE (jsonb_typeof(descriptor) = 'array' AND descriptor->>0 = 'embedding-space-v2') IS NOT TRUE)
     AND (EXISTS (SELECT 1 FROM ch_profile WHERE active = q.profile OR target = q.profile) OR EXISTS (SELECT 1 FROM ch_owner_targets WHERE profile = q.profile)
       OR EXISTS (SELECT 1 FROM ch_jobs WHERE profile = q.profile) OR EXISTS (SELECT 1 FROM ch_generations WHERE profile = q.profile)
       OR EXISTS (SELECT 1 FROM ch_reindex_requests WHERE target_profile = q.profile));
   IF n > 0 THEN RAISE EXCEPTION 'legacy-retirement refused: % v1 registry profile(s) are still referenced', n; END IF;
   -- One scan instead of one per profile: no search row may still name a registry row that is about to go.
   SELECT count(*) INTO n FROM (SELECT 1 FROM ch_search_chunks WHERE profile IN (SELECT q.profile FROM ch_index_profiles q
-    WHERE q.embedding_space IN (SELECT id FROM ch_embedding_spaces WHERE descriptor->>0 IS DISTINCT FROM 'embedding-space-v2')) LIMIT 1) one;
+    WHERE q.embedding_space IN (SELECT id FROM ch_embedding_spaces WHERE (jsonb_typeof(descriptor) = 'array' AND descriptor->>0 = 'embedding-space-v2') IS NOT TRUE)) LIMIT 1) one;
   IF n > 0 THEN RAISE EXCEPTION 'legacy-retirement refused: search rows still name a v1 registry profile that no generation uses'; END IF;
   DELETE FROM ch_index_profiles q
-  WHERE q.embedding_space IN (SELECT id FROM ch_embedding_spaces WHERE descriptor->>0 IS DISTINCT FROM 'embedding-space-v2');
+  WHERE q.embedding_space IN (SELECT id FROM ch_embedding_spaces WHERE (jsonb_typeof(descriptor) = 'array' AND descriptor->>0 = 'embedding-space-v2') IS NOT TRUE);
   GET DIAGNOSTICS n = ROW_COUNT; INSERT INTO lr_log(step, n) VALUES ('v1_registry_profiles_deleted', n);
-  DELETE FROM ch_embedding_spaces WHERE descriptor->>0 IS DISTINCT FROM 'embedding-space-v2';
+  DELETE FROM ch_embedding_spaces WHERE (jsonb_typeof(descriptor) = 'array' AND descriptor->>0 = 'embedding-space-v2') IS NOT TRUE;
   GET DIAGNOSTICS n = ROW_COUNT; INSERT INTO lr_log(step, n) VALUES ('v1_embedding_spaces_deleted', n);
 END $$;
 SELECT 'LR.step.' || step, n FROM lr_log ORDER BY ord;
