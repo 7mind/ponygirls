@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="./ui/tokens.css">
 <link rel="stylesheet" href="./ui/components.css">
 <link rel="stylesheet" href="./styles.css">
+<link rel="stylesheet" href="./upload.css">
 <link rel="stylesheet" href="/account.css">
 <script type="module" src="/account.js"></script>
 <script type="module" src="./app.js"></script>
@@ -118,33 +119,105 @@
 </section>
 
 <section id="upload-section" data-view="upload" class="page page-narrow stack" aria-labelledby="upload-heading" hidden>
-<div class="page-head"><div><h1 id="upload-heading" class="page-title">Upload</h1><p class="page-sub">Each file becomes its own artifact; nothing is published until you press Upload. Directories and resumable uploads go through the <a href="#/cli">CLI</a>.</p></div></div>
-<section id="quick-upload" class="detail-panel quick-upload" aria-label="Quick upload" title="Paste or drop files to stage; Upload publishes each file. Directories use the CLI.">
-<form id="upload-form">
-<label for="upload-files" class="sr-only">Stage files</label>
-<input id="upload-files" type="file" multiple aria-label="Stage files" title="Choose files, paste, or drop to stage. Upload publishes each file separately.">
-<fieldset id="upload-visibility" class="access-segments" aria-label="Upload access">
-<legend class="sr-only">Upload access</legend>
-<label title="Authenticated readers only"><input id="upload-internal" type="radio" name="upload-access" value="internal" checked><span>Internal</span></label>
-<label title="Password required; shown once after upload"><input id="upload-external" type="radio" name="upload-access" value="external"><span>External</span></label>
-<label title="Anyone with the link can read"><input id="upload-public" type="radio" name="upload-access" value="public"><span>Public</span></label>
-</fieldset>
-<button id="upload-submit" type="submit" class="primary" title="Publish staged files or retry the same uploads" disabled>Upload</button>
-<button id="upload-clear" type="button" title="Dismiss staged files, outcomes and displayed passwords">Dismiss</button>
-</form>
-<p id="upload-access-help" role="status" hidden>External passwords appear after upload and remain retrievable by signed-in users. Share them securely; links never include passwords.</p>
-<p id="upload-status" role="status" aria-live="polite"></p>
-<ul id="upload-list" aria-label="Staged uploads"></ul>
+<h1 id="upload-heading" class="sr-only">Upload</h1>
+<div class="dropzone" role="group" aria-labelledby="upload-drop-title" data-state="empty">
+<span data-icon="upload"></span>
+<div id="upload-drop-title" class="dropzone-title">Drop or paste files here</div>
+<button type="button" id="upload-choose" class="btn btn-primary"><span data-icon="plus"></span>Choose files…</button>
+<input id="upload-files" type="file" multiple hidden>
+<p class="xs">Each file becomes its own artifact; nothing is published until you press Upload. Directories and resumable uploads go through the <a href="#/cli">CLI</a>.</p>
+</div>
+<div id="upload-notice" class="notice notice-warn" role="status" hidden><span data-icon="alert"></span><div id="upload-notice-text"></div></div>
+
+<section class="card" aria-labelledby="upload-settings-heading">
+<div class="card-head"><h2 id="upload-settings-heading">Settings for this upload</h2><span id="upload-lock" class="xs muted" hidden><span data-icon="lock" data-icon-class="icon-sm"></span> <span id="upload-lock-text"></span></span><span id="upload-next" class="xs muted" hidden>For the next files you add · artifacts below keep theirs</span></div>
+<div class="card-body">
+<div class="upload-settings">
+<div class="field">
+<span class="label" id="upload-access-label">Access</span>
+<div id="upload-access" class="segmented" role="group" aria-labelledby="upload-access-label">
+<button type="button" data-access="internal" aria-pressed="true">Internal</button>
+<button type="button" data-access="external" aria-pressed="false">External</button>
+<button type="button" data-access="public" aria-pressed="false">Public</button>
+</div>
+</div>
+<div class="field">
+<label class="label" for="upload-expiry">Expires</label>
+<select id="upload-expiry" class="select">
+<option value="never">Never</option>
+<option value="1">In 1 day</option>
+<option value="7">In 7 days</option>
+<option value="30">In 30 days</option>
+<option value="custom">Custom…</option>
+</select>
+<div id="upload-days-field" class="field" hidden>
+<label class="label" for="upload-days">Days from upload <span class="muted xs">1–365</span></label>
+<input id="upload-days" class="input" type="number" inputmode="numeric" min="1" max="365" step="1" autocomplete="off">
+<p id="upload-days-error" class="field-error" hidden></p>
+</div>
+</div>
+<div class="field">
+<label class="label" for="upload-tags">Tags <span class="muted xs">optional</span></label>
+<input id="upload-tags" class="input" type="text" placeholder="release, report — comma separated, exact and case-sensitive" autocomplete="off" spellcheck="false" aria-describedby="upload-tags-error">
+<p id="upload-tags-error" class="field-error" hidden></p>
+</div>
+</div>
+<p id="upload-access-help" class="hint upload-hint" aria-live="polite"></p>
+</div>
+</section>
+
+<section id="upload-files-card" class="card" aria-labelledby="upload-files-heading" hidden>
+<div class="card-head"><h2 id="upload-files-heading">Files <span id="upload-summary" class="muted small"></span></h2><button type="button" id="upload-clear" class="btn btn-ghost btn-sm">Clear list</button></div>
+<table id="upload-table" class="table table-inset table-static" aria-label="Files to upload" data-list="uploads">
+<colgroup><col><col class="col-up-size hide-sm"><col class="col-up-status"><col class="col-up-actions"></colgroup>
+<thead><tr><th scope="col">File</th><th scope="col" class="col-num hide-sm">Size</th><th scope="col">Status</th><th scope="col" class="col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+</table>
+<div class="card-foot">
+<p id="upload-status" class="small muted grow" role="status"></p>
+<a id="upload-view-link" class="btn" href="#/artifacts" hidden>View in Artifacts</a>
+<button type="button" id="upload-cancel" class="btn" hidden>Cancel upload</button>
+<button type="button" id="upload-submit" class="btn btn-primary" disabled><span data-icon="upload"></span><span id="upload-submit-label">Upload</span></button>
+</div>
 </section>
 </section>
 
 <section id="cli-section" data-view="cli" class="page page-narrow stack" aria-labelledby="cli-heading" hidden>
-<div class="page-head"><div><h1 id="cli-heading" class="page-title">Command-line client</h1><p class="page-sub">For directories, resumable uploads across sessions, and advanced options, use the CLI.</p></div><button type="button" class="btn" data-account-settings="tokens"><span data-icon="key"></span>Access tokens</button></div>
-<section class="card"><div class="card-body stack">
-<pre class="code-block"><code>manure upload ./path --access internal</code></pre>
-<p>Access modes: <code>internal</code>, <code>external</code>, or <code>public</code>.</p>
-<p class="muted">All configured users can manage all artifacts. Subdomain mode isolates artifact origins; path mode does not.</p>
-</div></section>
+<div class="page-head"><div><h1 id="cli-heading" class="page-title">Command-line client</h1><p class="page-sub">For directories, large or resumable uploads, scripted downloads and CI.</p></div><button type="button" class="btn" data-account-settings="tokens"><span data-icon="key"></span>Access tokens</button></div>
+<div class="cli-grid">
+<section class="card" aria-labelledby="cli-setup-heading">
+<div class="card-head"><h2 id="cli-setup-heading">1 · Set up</h2></div>
+<div class="card-body stack">
+<div class="cli-step"><h3>Install</h3>
+<div class="code-row"><pre class="code-block" id="cli-install">nix shell .#manure -c manure whoami</pre><button type="button" class="btn btn-sm btn-icon" data-copy-from="cli-install" aria-label="Copy install command"><span data-icon="copy"></span></button></div>
+<p class="hint">The Home Manager module installs <code>manure</code> and sets the variables below for you.</p></div>
+<div class="cli-step"><h3>Point it at this server</h3>
+<div class="code-row"><pre class="code-block" id="cli-env">export MANURE_URL=<span id="cli-origin"></span>
+export MANURE_TOKEN_FILE=~/.config/manure/token</pre><button type="button" class="btn btn-sm btn-icon" data-copy-from="cli-env" aria-label="Copy environment commands"><span data-icon="copy"></span></button></div>
+<p class="hint">The token file holds one access token. Create it under <button type="button" class="link-button" data-account-settings="tokens">Account settings → Access tokens</button>; the secret is shown once.</p></div>
+<div class="cli-step"><h3>Check</h3>
+<div class="code-row"><pre class="code-block" id="cli-check">manure whoami</pre><button type="button" class="btn btn-sm btn-icon" data-copy-from="cli-check" aria-label="Copy check command"><span data-icon="copy"></span></button></div>
+<p class="hint">Prints the user and token this machine uses.</p></div>
+</div>
+</section>
+<section class="card" aria-labelledby="cli-use-heading">
+<div class="card-head"><h2 id="cli-use-heading">2 · Use</h2></div>
+<div class="card-body stack">
+<div class="cli-step"><h3>Upload a file or a directory</h3>
+<div class="code-row"><pre class="code-block" id="cli-upload">manure upload ./site --access external --expires-in 7d
+manure upload ./report.md --access public --tag release</pre><button type="button" class="btn btn-sm btn-icon" data-copy-from="cli-upload" aria-label="Copy upload commands"><span data-icon="copy"></span></button></div>
+<p class="hint"><code>--access internal|external|public</code> is required. An external upload prints its password once; signed-in users can retrieve it later on the artifact page. An interrupted upload resumes when you repeat the command.</p></div>
+<div class="cli-step"><h3>Download and verify</h3>
+<div class="code-row"><pre class="code-block" id="cli-fetch">manure fetch &lt;id&gt; ./out
+manure fetch &lt;content-url&gt; ./out --password-file ./pw</pre><button type="button" class="btn btn-sm btn-icon" data-copy-from="cli-fetch" aria-label="Copy download commands"><span data-icon="copy"></span></button></div></div>
+<div class="cli-step"><h3>Find and manage</h3>
+<div class="code-row"><pre class="code-block" id="cli-manage">manure search 'access:public tag:release'
+manure info &lt;id&gt;
+manure rotate-password &lt;id&gt;
+manure delete &lt;id&gt;</pre><button type="button" class="btn btn-sm btn-icon" data-copy-from="cli-manage" aria-label="Copy management commands"><span data-icon="copy"></span></button></div>
+<p class="hint">Search uses the same expression syntax as the Artifacts page. Add <code>--json</code> to any command for scripts.</p></div>
+</div>
+</section>
+</div>
 </section>
 
 <section id="detail-section" aria-labelledby="detail-name" hidden>

@@ -73,6 +73,13 @@ test('expiry and tags travel in the reservation; an expiry beyond the server max
   await assert.rejects(run(refused,late,check),/invalid-ttl/);assert.equal(late.state.inits,0);assert.equal(refused.phase,'staged');
 });
 
+test('cancelling before the reservation leaves a plain staged file and no artifact',async()=>{
+  const t=transport({limit:100,visibility:'Internal'}), item=new FileUpload(file(),'internal'), controller=new AbortController();
+  controller.abort();
+  await assert.rejects(item.run(t.request,t.fetch,check,controller.signal,()=>{}),/cancelled/);
+  assert.equal(t.state.inits,0);assert.equal(item.phase,'staged');assert.equal(item.id,null);
+});
+
 test('tag input is comma separated, trimmed, exact and bounded',()=>{
   assert.deepEqual(parseTags(' release , Report 1,, '),{tags:['release','Report 1'],error:null});
   assert.deepEqual(parseTags(''),{tags:[],error:null});

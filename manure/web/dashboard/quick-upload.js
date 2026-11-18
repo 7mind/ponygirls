@@ -16,7 +16,7 @@ export function parseTags(text) {
 // correlation IDs do not deduplicate InitUpload.
 export class FileUpload {
   constructor(file,visibility) {
-    this.file=file;this.visibility=visibility;this.expiresInSeconds=null;this.tags=[];this.id=null;this.offset=0;
+    this.file=file;this.visibility=visibility;this.expiresInSeconds=null;this.tags=[];this.error=null;this.stopped=false;this.id=null;this.offset=0;
     this.chunkBytes=null;this.password=null;this.link=null;this.phase='staged';this.busy=false;
   }
   async run(request,fetch,check,signal,progress) {
@@ -30,6 +30,8 @@ export class FileUpload {
         if(BigInt(this.file.size)>caps.max_file_bytes || BigInt(this.file.size)>caps.max_artifact_bytes || caps.max_files_per_artifact<1) throw new Error('too-large');
         if(this.expiresInSeconds!==null && this.expiresInSeconds>caps.max_ttl_seconds) throw new Error('invalid-ttl');
         const digest=await hashBlob(this.file,check);check();
+        // Cancelling stops before the reservation; after it, the ID and password must be recorded first.
+        if(signal.aborted) throw new Error('cancelled');
         this.phase='initializing';progress();
         // Once dispatched, a lost/malformed response may still have reserved an
         // artifact. Do not silently create another reservation on Retry.

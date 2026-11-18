@@ -491,25 +491,6 @@ await check("latest unsent catalogue expression replaces queued reads", async (p
   assert.equal(await page.evaluate(()=>window.__ux.listPeak),1);
 });
 
-await check("quick upload is one desktop row, accessible segments and bounded mobile wrap", async (page) => {
-  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Upload" }).click();
-  await page.locator("#upload-section").waitFor({ state: "visible" });
-  const boxes=await Promise.all(['#upload-files','#upload-visibility','#upload-submit','#upload-clear'].map(selector=>page.locator(selector).boundingBox()));
-  const centers=boxes.map(b=>b.y+b.height/2);
-  assert.ok(Math.max(...centers)-Math.min(...centers)<3,'all upload controls share one desktop row');
-  assert.ok(boxes[0].width<=240,'file picker remains short');
-  assert.equal(await page.locator('#quick-upload h2, #quick-upload select').count(),0);
-  await page.locator('#upload-external').check();
-  assert.equal(await page.locator('#upload-access-help').isVisible(),true);
-  await page.locator('#upload-public').check();
-  assert.equal(await page.locator('#upload-access-help').isVisible(),false);
-  await page.setViewportSize({width:390,height:844});
-  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-  for (const selector of ['#upload-files','#upload-visibility','#upload-submit','#upload-clear']) {
-    const box=await page.locator(selector).boundingBox(); assert.ok(box.x>=0 && box.x+box.width<=390);
-  }
-});
-
 await browser.close();
 process.stdout.write(JSON.stringify(results));
 process.exitCode = results.some((result) => !result.ok) ? 1 : 0;

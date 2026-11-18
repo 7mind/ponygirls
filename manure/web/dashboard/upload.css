@@ -1,0 +1,61 @@
+/* Upload page and CLI view on ui/tokens.css + ui/components.css (tokens only). Document scroll (model A):
+ * the page is centred on the canvas, the files table is a plain table inside its card, nothing scrolls on its own.
+ */
+
+/* ── Drop zone ──────────────────────────────────────────────────────────── */
+.dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); min-height: 176px; padding: var(--space-5); border: 2px dashed var(--border-strong); border-radius: var(--radius-lg); background: var(--bg-surface); color: var(--text-muted); text-align: center; }
+.dropzone > .icon { width: 28px; height: 28px; color: var(--accent); }
+.dropzone-title { font-size: var(--text-lg); font-weight: var(--weight-semibold); color: var(--text); }
+
+/* ── Settings ───────────────────────────────────────────────────────────── */
+.upload-settings { display: grid; grid-template-columns: max-content 200px minmax(0, 1fr); gap: var(--space-4) var(--space-5); align-items: start; }
+.upload-hint { margin-top: var(--space-3); }
+.card-head > [hidden] { display: none; }
+.input:disabled, .select:disabled { background-color: var(--bg-sunken); color: var(--text-faint); cursor: not-allowed; }
+.segmented > button:disabled { cursor: not-allowed; opacity: 0.6; }
+
+/* ── Files ──────────────────────────────────────────────────────────────── */
+.col-up-size { width: 110px; }
+.col-up-status { width: 200px; }
+.col-up-actions { width: 120px; }
+#upload-table td { height: auto; padding-top: var(--space-2); padding-bottom: var(--space-2); vertical-align: top; }
+#upload-table tbody:last-of-type tr:last-child td { border-bottom: 0; }
+#upload-table .up-extra-row td { padding-top: 0; white-space: normal; overflow: visible; }
+#upload-table tbody:has(.up-extra-row:not([hidden])) > tr:first-child td { border-bottom: 0; }
+.up-line { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-h-sm); }
+.col-num > .up-line, .col-actions > .up-line { justify-content: flex-end; }
+.up-line > .name-cell { flex: 1; }
+.kind-sm { width: 24px; height: 24px; border-radius: var(--radius-sm); }
+.up-bar { display: block; width: 100%; height: 6px; margin-top: var(--space-2); border-radius: var(--radius-full); background: var(--bg-sunken); overflow: hidden; }
+.up-bar > span { display: block; height: 100%; background: var(--info-fg); border-radius: var(--radius-full); }
+.up-sub { display: block; color: var(--text-muted); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; }
+.up-extra { display: flex; flex-direction: column; gap: var(--space-2); max-width: var(--measure); }
+.up-extra .field-error { align-items: flex-start; white-space: normal; }
+.up-link { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.up-link .input { flex: 1; min-width: 0; text-overflow: ellipsis; }
+.up-secret { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--warn-bd); border-radius: var(--radius-md); background: var(--warn-bg); font-size: var(--text-sm); min-width: 0; }
+.up-secret-line { display: flex; align-items: center; gap: var(--space-2); min-width: 0; flex-wrap: wrap; }
+.up-secret-line > .icon { color: var(--warn-fg); }
+.up-secret-label { font-weight: var(--weight-medium); white-space: nowrap; }
+.up-secret-line .input { flex: 1; min-width: 160px; height: var(--control-h-sm); background: var(--bg-surface); }
+.up-secret .btn { background: var(--bg-surface); }
+.up-secret-foot { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; font-size: var(--text-xs); color: var(--text-muted); }
+.up-secret-foot > .btn { margin-left: auto; }
+.up-note { color: var(--text-muted); font-size: var(--text-xs); white-space: normal; }
+
+/* ── CLI ────────────────────────────────────────────────────────────────── */
+.cli-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+.cli-step { display: flex; flex-direction: column; gap: var(--space-2); }
+.cli-step h3 { font-size: var(--text-sm); font-weight: var(--weight-semibold); }
+.code-row { position: relative; }
+.code-row .btn { position: absolute; top: var(--space-2); right: var(--space-2); background: var(--bg-surface); }
+.code-row .code-block { margin: 0; padding-right: var(--space-7); }
+
+@media (max-width: 1100px) {
+  .cli-grid { grid-template-columns: 1fr; }
+  .upload-settings { grid-template-columns: 1fr; gap: var(--space-3); }
+}
+@media (max-width: 720px) {
+  .col-up-status { width: 128px; }
+  .col-up-actions { width: 96px; }
+}
