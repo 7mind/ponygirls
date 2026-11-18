@@ -1,5 +1,11 @@
 # Dashboard layout validation (2026-11-07)
 
+> **Superseded (2026-11-18, dashboard redesign unit UX-M4).** The unlock card, the viewer and the
+> server-rendered directory listing now use the shared design system (`shared/ui-web`, served on the
+> content origin under `/__manure/ui/`); viewer previews no longer scroll in nested boxes. The
+> layout described below is historical. Current behaviour and checks:
+> `docs/drafts/20261117-2130-dashboard-redesign-spec.md` §3.3, `manure/tests/browser/viewers.mjs`.
+
 Scope: factual dashboard copy, Chronicle slate/blue tokens across dashboard,
 unlock and viewer, catalogue/manifest wrapping without hidden horizontal content.
 User-authored viewer Markdown tables and image/diagram viewports retain their

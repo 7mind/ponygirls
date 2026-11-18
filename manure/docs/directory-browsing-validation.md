@@ -1,5 +1,12 @@
 # Directory browsing diagnostic evidence
 
+> **Superseded (2026-11-18, dashboard redesign unit UX-M4).** Listings are now a styled table
+> (Name, Type, Size, Open/Download) with a breadcrumb, a "Download all (CLI)" disclosure and the
+> README rendered beneath, under a CSP limited to Manure's reserved assets. The behaviour rules
+> below (immediate children, README selection, escaping, index precedence) still hold; the page
+> markup and the evidence are historical. Current checks: `manure/tests/browser/viewers.mjs`,
+> `HttpSuite` ("directory listing links the shared design system …").
+
 Source base: `51993848b545d9184622a1db8405117011a563b3`, plus this task's
 changes. No deployment or native-runtime acceptance was performed.
 

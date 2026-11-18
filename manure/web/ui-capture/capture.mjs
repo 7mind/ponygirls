@@ -617,70 +617,93 @@ SCENES.account = async () => {
   }
 };
 
+// UX-M4 states are named after the mockup shots (<app>-<view>-<state>-<width>[-dark].png) for the look comparison.
+const vpName = (vp) => String(vp.width);
+async function stateShot(page, name, what, how) {
+  await sleep(150);
+  const file = `${name}.png`;
+  const buffer = await page.screenshot({ path: path.join(OUT, file) });
+  index.push({ n: index.length + 1, file, what, how, scene: currentScene });
+  evidence.push({ file, pixels: await pixelStats(buffer), ...(await pageText(page, STATUS_SELECTORS)) });
+  log(`shot ${file}`);
+}
+const unlockAnswer = (status) => async (route) => (route.request().method() === "POST"
+  ? route.fulfill({ status, contentType: "application/json", body: "{}" }) : route.continue());
+
 SCENES.unlock = async () => {
-  for (const [vp, scheme] of [[VP.d, "light"], [VP.s, "light"], [VP.d, "dark"]]) {
+  for (const [vp, scheme] of [[VP.d, "light"], [VP.d, "dark"], [VP.m, "light"]]) {
     const primary = vp === VP.d && scheme === "light";
+    const suffix = `${scheme === "dark" ? "dark-" : ""}${vpName(vp)}`;
     const page = await newPage({ vp, scheme });
     await gotoContent(page, "external_md");
     await page.waitForSelector("#unlock-form", { timeout: 15000 });
-    await shot(page, "unlock-empty", "External-artifact password page on the content origin", "anonymous goto <content-url> of an external artifact", { probe: primary });
-    await page.fill("#password-input", "definitely-wrong");
-    await page.click("#unlock-form button[type=submit]");
-    await page.waitForSelector("#unlock-error:not([hidden])", { timeout: 10000 }); await sleep(200);
-    await shot(page, "unlock-error", "Wrong password: 'Unlock failed' error alert", "submit wrong password", {});
+    await stateShot(page, `manure-unlock-${suffix}`, "External-artifact password card on the content origin", "anonymous goto <content-url> of an external artifact");
     if (primary) {
+      await page.fill("#password-input", "definitely-wrong");
+      await page.click("#unlock-form button[type=submit]");
+      await page.waitForSelector("#unlock-error:not([hidden])", { timeout: 10000 });
+      await stateShot(page, "manure-unlock-error-1440", "Wrong password: field error under the input", "submit a wrong password");
+      await page.route("**/__manure/unlock", unlockAnswer(429));
+      await page.fill("#password-input", "throttled");
+      await page.click("#unlock-form button[type=submit]");
+      await page.waitForSelector("#unlock-throttled:not([hidden])", { timeout: 10000 });
+      await stateShot(page, "manure-unlock-rate-limited-1440", "Throttled: warning notice, form paused", "unlock POST answered 429 (route)");
+      await page.reload({ waitUntil: "load" });
+      await page.unroute("**/__manure/unlock");
+      await page.route("**/__manure/unlock", unlockAnswer(404));
+      await page.fill("#password-input", "gone");
+      await page.click("#unlock-form button[type=submit]");
+      await page.waitForSelector("#unlock-gone:not([hidden])", { timeout: 10000 });
+      await stateShot(page, "manure-unlock-expired-1440", "Artifact deleted or expired while the card was open", "unlock POST answered 404 (route)");
+      await page.unroute("**/__manure/unlock");
+      await page.reload({ waitUntil: "load" });
       await page.fill("#password-input", ROLES.external_md.external_password);
       await page.click("#unlock-form button[type=submit]");
       await page.waitForURL(/artifacts\.localhost/); await waitViewer(page);
-      await shot(page, "viewer-external-after-unlock", "Artifact content (Markdown viewer) after a correct password", "submit correct password", {});
+      await stateShot(page, "manure-viewer-after-unlock-1440", "Markdown viewer after the correct password", "submit correct password");
     }
     await page.context().close();
   }
 };
 
 SCENES.viewer = async () => {
-  const entries = [
-    ["md_report", "viewer-markdown", "Markdown viewer: GFM table, task list, Mermaid diagram rendered, code, headings with anchors, Preview/Show raw tabs", true],
-    ["mermaid", "viewer-mermaid-file", "Standalone .mmd file rendered as a diagram"],
-    ["dot", "viewer-graphviz-file", "Standalone .dot file rendered as a diagram"],
-    ["svg", "viewer-svg", "SVG artifact shown as an image with fit/zoom tools"],
-    ["png", "viewer-png", "Large PNG with fit/zoom toolbar"],
-    ["pdf", "viewer-pdf", "PDF viewer (canvas, Previous/Next)"],
-    ["bad_dot", "viewer-render-error", "Malformed Graphviz source: viewer error state"],
-    ["code_py", "viewer-code-file", "Python file: no viewer, browser shows the raw response"],
-    ["html_file", "viewer-html-file", "Standalone HTML artifact served as-is"],
-    ["site_dir", "viewer-static-site", "Directory artifact with index.html served as a static site"],
-    ["browse_dir", "viewer-directory-listing", "Directory without index: server-generated listing (unstyled) + README rendered by the viewer below"],
-  ];
-  for (const [role, name, what, probe] of entries) {
-    const page = await newPage({});
-    const res = await gotoContent(page, role);
-    if (res && res.error) { metrics.notes.push(`viewer ${role}: ${res.error}`); await page.context().close(); continue; }
-    if (!["code_py", "html_file", "site_dir", "browse_dir"].includes(role)) await waitViewer(page); else await sleep(800);
-    await shot(page, name, what, `anonymous goto <content-url> (${role})`, { probe: !!probe });
-    if (["md_report", "browse_dir"].includes(role)) await shot(page, name, `Full-page capture: ${what}`, "fullPage", { full: true });
-    if (role === "md_report") {
-      await page.click("#markdown-tab-1"); await sleep(300);
-      await shot(page, "viewer-markdown-raw", "Markdown viewer, 'Show raw' tab (source with light highlighting)", "click Show raw", {});
-    }
-    if (role === "browse_dir") {
-      await page.goto(ROLES.browse_dir.content_url.replace(/\/$/, "") + "/samples/", { waitUntil: "load" }); await sleep(600);
-      await shot(page, "viewer-directory-listing-subdir", "Nested directory listing with 'Parent directory' link (no README)", "goto <content-url>/samples/", {});
+  const open = async (role, suffix = "", options = {}) => {
+    const page = await newPage(options);
+    const res = await gotoContent(page, role, suffix);
+    if (res && res.error) throw new Error(`viewer ${role}: ${res.error}`);
+    await page.waitForSelector("body[data-viewer]");
+    if (await page.locator("#content").count()) await waitViewer(page); else await sleep(500);
+    return page;
+  };
+  for (const [vp, scheme] of [[VP.d, "light"], [VP.d, "dark"], [VP.s, "light"], [VP.m, "light"]]) {
+    const suffix = `${scheme === "dark" ? "dark-" : ""}${vpName(vp)}`;
+    const page = await open("md_report", "", { vp, scheme });
+    await stateShot(page, `manure-viewer-markdown-${suffix}`, "Markdown viewer: bar, meta line, rendered document", "anonymous goto <content-url> (md_report)");
+    if (vp === VP.d && scheme === "light") {
+      await page.getByRole("button", { name: "Raw", exact: true }).click();
+      await stateShot(page, "manure-viewer-raw-1440", "Markdown viewer, Raw: numbered source with light highlighting", "click Raw");
     }
     await page.context().close();
+    const listing = await open("browse_dir", "", { vp, scheme });
+    await stateShot(listing, `manure-viewer-directory-${suffix}`, "Directory listing with the README rendered beneath", "anonymous goto <content-url> (browse_dir)");
+    if (vp === VP.d && scheme === "light") {
+      await listing.getByText("Download all (CLI)…", { exact: true }).click();
+      await stateShot(listing, "manure-viewer-directory-cli-1440", "Directory listing, 'Download all (CLI)' disclosure open", "click Download all (CLI)");
+    }
+    await listing.context().close();
   }
-  for (const [vp, scheme] of [[VP.s, "light"], [VP.m, "light"], [VP.d, "dark"]]) {
-    const page = await newPage({ vp, scheme });
-    await gotoContent(page, "md_report"); await waitViewer(page);
-    await shot(page, "viewer-markdown", `Markdown viewer at ${vp.tag}${scheme === "dark" ? " dark" : ""}`, "anonymous goto <content-url>", {});
-    await page.context().close();
-  }
-  // viewer zoom controls and pdf page 2
-  {
-    const page = await newPage({});
-    await gotoContent(page, "pdf"); await waitViewer(page);
-    await page.click("button:has-text('Next')"); await sleep(1200);
-    await shot(page, "viewer-pdf-page-2", "PDF viewer after Next", "click Next →", {});
+  for (const [role, suffix, name, what] of [
+    ["browse_dir", "samples/", "manure-viewer-directory-subdir-1440", "Nested listing without README: parent row, folder and file rows"],
+    ["browse_dir", "__manure/view/notes/%C3%BC-%C3%BCn%C3%AFcode%20%26%20%3Cb%3E.md", "manure-viewer-nested-1440", "Markdown file inside a directory artifact: breadcrumb with the folder path"],
+    ["pdf", "", "manure-viewer-pdf-1440", "PDF viewer: sticky page toolbar, page on the canvas stage"],
+    ["png", "", "manure-viewer-image-1440", "Image viewer: zoom toolbar, image on the canvas stage"],
+    ["mermaid", "", "manure-viewer-diagram-1440", "Standalone Mermaid file rendered as a diagram image"],
+    ["bad_dot", "", "manure-viewer-error-1440", "Graphviz render error: notice with Download original and the raw source"],
+    ["code_py", "", "manure-viewer-text-1440", "Python source file: numbered text preview (was a download)"],
+    ["zip_file", "", "manure-viewer-archive-1440", "ZIP archive: no-preview card with Download original (was a bare download)"],
+  ]) {
+    const page = await open(role, suffix);
+    await stateShot(page, name, what, `anonymous goto <content-url>/${suffix} (${role})`);
     await page.context().close();
   }
 };
