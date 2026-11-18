@@ -23,9 +23,9 @@ IDs are `contracts` (Scala2 generated code), `losslessJson`, `manureStorage`, an
 `nix develop .#backend --command bash scripts/backend-sbt.sh testFull` for aggregate
 JVM tests or pass `losslessJson/testFull` and `manureStorage/testFull` for the foundation
 modules. In sbt2, `test` is incremental; `testFull` executes every suite.
-`nix build .#checks.x86_64-linux.backend-foundation` runs complete
-foundation-module tests offline with nonempty inventory-bound reports; its
-receipt is separate from Chronicle's fast subset and is not native acceptance.
+`nix build .#checks.x86_64-linux.shared-jvm` runs the complete shared-module
+suites (including `losslessJson`) offline on an owned PostgreSQL cluster;
+`manureStorage` runs in `manure-backend`.
 Chronicle tests fork with `chronicle/` as their working directory so existing
 fixture/config paths retain their meaning.
 
@@ -43,22 +43,20 @@ prerequisites are failures to report, not reasons to skip suites.
 
 ### Fast Nix checks and full agent verification
 
-Routine Nix builds use the 13 explicitly named parser/codec/pure/dummy suites
+Routine Nix builds use the explicitly named parser/codec/pure/dummy suites
 in `scripts/fast-suites.txt`, not the full PostgreSQL/concurrency/deadline suite.
 The fast command is `nix develop .#chronicle --command bash chronicle/scripts/test-fast.sh`
 from the repository root. It clears the PostgreSQL URL and makes accidental
-PostgreSQL use fail rather than silently skip. Selected-suite reports must be
-nonempty, match the allowlist/discovered inventory, and contain no failures,
-errors or skips. Their scope is explicitly a fast subset, not full validation.
+PostgreSQL use fail rather than silently skip. The Nix check requires a report
+with test cases for every selected suite and rejects any failure, error or skip
+(`scripts/junit-gate.py`). Its scope is explicitly a fast subset, not full validation.
 
 ```bash
 # Fast backend subset:
 nix build .#checks.x86_64-linux.chronicle-backend
-# Complete fast sole current1.9.0 generated TypeScript codec checks (17 fixture groups):
+# Complete fast sole current 1.9.0 generated TypeScript codec checks:
 nix build .#checks.x86_64-linux.chronicle-protocol
-# Exact-artifact receipt for fast backend + single-version codec checks:
-nix build .#checks.x86_64-linux.chronicle-validation
-# Native package + fast checked dashboard + scoped evidence:
+# Native package + fast checked dashboard; builds only after both checks above pass:
 nix build .#chronicle
 # Compile-only artifact; no test pass implied:
 nix build .#chronicle-native-dev
@@ -66,11 +64,9 @@ nix build .#chronicle-native-dev
 
 Dashboard packaging retains typechecking, bundling and its complete fast Node
 suite; Chromium is run separately, not on ordinary Nix rebuilds. Collector
-packaging retains its fast tests. The package receipt at
-`share/chronicle/validation.json` binds immutable runtime/test and validation
-identities to the final post-fixup ELF, but explicitly claims only the selected
-backend subset and single-version codec coverage. It is not evidence that the
-full backend or browser suites passed, nor native behavioral equivalence.
+packaging retains its fast tests. The package depends on the fast backend and
+protocol checks at build time; a built package is not evidence that the full
+backend or browser suites passed, nor native behavioral equivalence.
 
 Full-suite execution is an agent responsibility, documented in repository-root
 [`AGENTS.md`](../AGENTS.md), rather than a mandatory Nix release gate. Before
@@ -85,8 +81,7 @@ routine builds faster.
 
 Nix reuses checks only for matching input identities. UI-only changes reuse
 native/backend checks; collector changes do not rebuild the server; test-only
-changes reuse native compilation. Missing or malformed scoped evidence and
-failing fast checks still fail closed. Nix trusted-builder/cache assumptions
+changes reuse native compilation. Failing fast checks still fail closed. Nix trusted-builder/cache assumptions
 apply; arbitrary explicit service-package overrides remain the operator's
 responsibility. See [the cache contract and historical measurements](docs/drafts/20261028-build-validation-cache.md).
 

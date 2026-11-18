@@ -30,10 +30,7 @@ registration. The required feature is honest `nixos-test`, with real TCG fallbac
 The driver owns baseline/results per `HmLifecycle` instance. Guest, controller,
 source identity, output and VM-start callback are required explicit dependencies;
 only the Nix test-script entry boundary consumes injected driver globals. Chain
-selection and probe selection have no argument defaults. The fast harness type
-checks this driver and executes five context contracts plus two entry-loader
-checks (including rejection of any unselected database/migration/app activation), without monkeypatching or
-claiming real VM execution. The three database files have distinct known
+selection and probe selection have no argument defaults. The three database files have distinct known
 synthetic per-name values, exercising independent credential wiring.
 
 Preparation/evaluation is not runtime acceptance. Only the parent may launch the
