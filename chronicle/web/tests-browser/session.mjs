@@ -743,7 +743,7 @@ try {
   await run('a link to a retired generation shows the unavailable state, never stale or default-view content', fromSearch(fixture => { fixture.conversationFailure = operation => operation.view !== undefined && operation.view.generationId !== undefined ? 'indexed-view-retired' : null; }), async ({ page, fixture }) => {
     await openFromSearch(page, 'Search conversation 1'); await main(page).getByRole('region', { name: 'Indexed view unavailable', exact: true }).waitFor();
     assert.equal(await page.locator('[data-message-id]').count(), 0, 'no transcript content');
-    assert.deepEqual(calls(fixture, api.Operation_GetSession).map(call => [call.operation.view.revision, call.operation.view.generationId]), [[fixture.view.revision, fixture.view.generationId]], 'no read of another view');
+    assert.deepEqual(calls(fixture, api.Operation_GetSession).map(call => call.operation.view === undefined ? 'default view' : [call.operation.view.revision, call.operation.view.generationId]), [[fixture.view.revision, fixture.view.generationId]], 'no read of another view');
     assert.equal(calls(fixture, api.Operation_GetMessages).length, 0);
     await main(page).getByRole('button', { name: `View archived source r${fixture.view.revision}`, exact: true }).waitFor();
   });

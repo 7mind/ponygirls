@@ -1,6 +1,6 @@
 // Session page (spec §3.1 Session, UX-C3): the routed transcript with its side pane, named like the mockup shots
 // (`chronicle-session-<state>[-dark]-<width>.png`, spec §8 item 10) so that each pairs with its mockup for `look`.
-import { PRIMARY, SECONDARY, PHONE, withScene, settle, inspect } from './lib.mjs';
+import { PRIMARY, SECONDARY, PHONE, withScene, settle, inspect, openSession } from './lib.mjs';
 import { seededFixture } from './seed.mjs';
 import { templateFor } from './transcripts.mjs';
 
@@ -66,6 +66,29 @@ export function registerSession(scenario) {
       });
     });
   }
+  // The page opened from the lists (one way to open a session) and cleared in place by a Search denial of its source.
+  scenario('session-opened', async ctx => {
+    await withScene(ctx, LIGHT, { fixture: seededFixture() }, async ({ page, shot }) => {
+      await page.evaluate(() => { location.hash = '#/archive'; });
+      const archive = page.getByRole('main', { name: 'Archive', exact: true }); await archive.locator('tbody tr[data-row-id] a.cell-title').first().waitFor();
+      await archive.locator('tbody tr[data-row-id] a.cell-title').first().click(); await openSession(page); await settle(page, 400);
+      await shot('session', 'from-archive', 'Session page opened from the first Archive row; Archive stays the current list (crumb, Back)', 'Archive title link', { file: named('from-archive', LIGHT) });
+      await page.getByRole('button', { name: 'Back', exact: true }).click(); await archive.waitFor();
+      await page.evaluate(() => { location.hash = '#/search'; });
+      const search = page.getByRole('main', { name: 'Search', exact: true }); await search.waitFor();
+      await search.getByRole('combobox', { name: 'Search conversations', exact: true }).fill('timeout'); await search.getByRole('button', { name: 'Search', exact: true }).click();
+      const open = search.locator('[data-row-id]').getByRole('link', { name: 'Open at first match', exact: true }).first(); await open.waitFor();
+      await open.click(); await openSession(page); await settle(page, 600);
+      await shot('session', 'from-search', 'Session page opened from Search "Open at first match": its message at the top, the Find bar with the operand, Search the current list', 'Search "timeout", Open at first match', { file: named('from-search', LIGHT) });
+      // The real notice path (source-authority.ts): a Search denial of the open session's source clears the page in place.
+      await page.evaluate(() => {
+        const [path, query] = location.hash.slice(2).split('?'), params = new URLSearchParams(query);
+        document.dispatchEvent(new CustomEvent('chronicle:source-unavailable', { detail: { origin: 'search', sessionId: path.split('/')[1], view: { revision: Number(params.get('rev')), generationId: params.get('gen') }, code: 'forbidden', message: 'Source access was removed' } }));
+      });
+      await page.getByRole('alert').filter({ hasText: 'This session can no longer be read' }).waitFor(); await settle(page, 300);
+      await shot('session', 'revoked', 'Source unavailable after a Search denial: header kept, transcript cleared, Back to Search and Retry', 'source-authority notice of origin search (forbidden)', { file: named('revoked', LIGHT) });
+    });
+  });
   scenario('session-states', async ctx => {
     await withScene(ctx, LIGHT, { fixture: seededFixture(fixture => { fixture.holdSessions = true; }) }, async ({ page, fixture, shot }) => {
       await open(page, longSession(fixture), ''); await page.getByRole('status').filter({ hasText: 'Rechecking source access…' }).waitFor({ state: 'attached' }); await settle(page, 300);
