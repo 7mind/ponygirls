@@ -26,6 +26,8 @@ let
   manure = [ "manure/server/src" "manure/server/native-image" ];
   manureScripts = [ "scripts/manure-native-image.sh" "scripts/manure-probe-classpath.sh" ];
   # Web assets the JVM HTTP suites serve from MANURE_SOURCE_ROOT.
+  # The shared in-memory imperative-account store, reused by Manure's test dummy (sbt test->test dependency).
+  manureSharedTestFixtures = [ "shared/service-auth/src/test/scala/ponygirls/auth/MemoryImperativeUsers.scala" ];
   manureServedAssets = [ "manure/web/dashboard/index.html" "manure/web/dashboard/favicon.svg" "manure/web/dashboard/current"
     "manure/web/unlock" "manure/web/viewer/index.html" "manure/web/viewer/styles.css" ];
   runtime = common ++ shared ++ [ "chronicle/generated/scala" "chronicle/server/src/main" "chronicle/migrations" ];
@@ -63,9 +65,9 @@ in {
   manureTargetTests = backendSource "manure-target-tests-source" (common ++ shared ++ [
     "manure/tests" "manure/manure" "manure/scripts" "manure/web" "manure/models" "manure/generated/typescript"
     "manure/pyproject.toml" "shared/account-web" "shared/ui-web" ]);
-  manureJvmTests = backendSource "manure-jvm-tests-source" (common ++ shared ++ manureServedAssets ++ [
+  manureJvmTests = backendSource "manure-jvm-tests-source" (common ++ shared ++ manureSharedTestFixtures ++ manureServedAssets ++ [
     "manure/generated/scala" "manure/backend/src" "manure/server/src" "manure/migration/schema.sql" "manure/models/fixtures" ]);
-  manureTests = backendSource "manure-native-tests-source" (common ++ shared ++ [ "manure/generated/scala" "manure/backend/src" "manure/migrations" "manure/server/src" "manure/server/native-image" "manure/tests" ]);
+  manureTests = backendSource "manure-native-tests-source" (common ++ shared ++ manureSharedTestFixtures ++ [ "manure/generated/scala" "manure/backend/src" "manure/migrations" "manure/server/src" "manure/server/native-image" "manure/tests" ]);
   backendTests = backendSource "chronicle-backend-tests-source" (runtime ++ tests);
   manurePosix = backendSource "manure-posix-source" [ "manure/server/src/main/c"
     "manure/server/src/main/java/manure/storage/PosixNative.java"
