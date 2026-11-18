@@ -521,15 +521,31 @@ form). No automatic staging outside the Nix build.
 
 ## Tests (what runs where — and what does not count)
 
-- Full target suite (inside `nix develop .#chronicle`): `manure/scripts/test-target.sh
-  native /absolute/manure-server` or
-  `manure/scripts/test-target.sh jvm`; `nix build .#checks.x86_64-linux.manure-native`
-  runs the same `manure/scripts/target-suite.py` against the native ELF. The runner
-  discovers every `manure/tests/test_*.py` module and `*.test.mjs` suite and fails on
-  any failure, error, skip, expected failure, unexpected success or an empty run.
-  Test names after the mode (`test-target.sh jvm test_cli_process`) run a diagnostic
-  subset. Do not run `unittest discover` directly: the target tests need the owned
-  PostgreSQL provider and target executable that these runners supply.
+- Full verification, the evidence for a finished change: `scripts/verify manure`
+  from the repository root. It builds `verify-manure`, a set of exact-input Nix
+  checks: the package (with the viewer's Node tests), the Scala suites on owned
+  PostgreSQL clusters (`manure-backend`), the target suite against the native ELF
+  (`manure-native`), the client, configuration, JNI and POSIX checks, the NixOS
+  and Home Manager evaluations and the shared modules. Unchanged checks are reused
+  from the store. `nix build .#manure` alone is only the package gate.
+- Inner loop (inside `nix develop .#chronicle`, after `npm ci` in
+  `manure/web/viewer`): `manure/scripts/test.sh [jvm|target|viewer]` runs the parts
+  concurrently and prints one line per part with its log under
+  `manure/target/test-runs/`. `jvm` is `manure/scripts/test-backend.sh` (suite
+  groups, one owned cluster each; `MANURE_TEST_GROUPS=1` runs them serially);
+  `target` runs `manure/scripts/test-target.sh native` against the ELF built from
+  the tree, in the environment of the `manure-native` check and on an owned
+  provider cluster; `viewer` is the viewer's `npm test`. The target runner
+  (`manure/scripts/target-suite.py`, also used by `manure-native`) discovers every
+  `manure/tests/test_*.py` module and `*.test.mjs` suite, shards a full run by test
+  class (`MANURE_TARGET_SHARDS=1` for one process) and fails on any failure, error,
+  skip, expected failure, unexpected success or an empty run. A full run requires
+  the paired provision helper and the driver/browser/SDK environment below, which
+  `manure/scripts/test.sh target` supplies. Test names after the mode
+  (`manure/scripts/test-target.sh jvm test_cli_process`) run a diagnostic subset
+  on a disposable cluster of their own. Do not run `unittest discover` directly:
+  the target tests need the owned PostgreSQL provider and target executable that
+  these runners supply.
 - Driver: absolute dir with `playwright-core`'s `package.json`;
   browser: `MANURE_CHROMIUM_BIN` else PATH/Nix; SDK:
   `MANURE_MCP_SDK_PATH` = the `@modelcontextprotocol/sdk` **package
@@ -549,10 +565,11 @@ directory** (resolved absolutely, first existing hit wins). Browser
   selects Firefox instead of Chromium; `MANURE_UX_ARTIFACTS` optionally writes
   screenshots to a scratch directory. A Firefox UX run does not replace the
   mandatory Chromium, TLS or NixOS/HM security gates.
-- Absolute scratch paths from a developer run are not gates either;
-  release acceptance is the parent-run F/B/N matrix (`CONTRACT.md` §13).
-  Linux covers service/storage acceptance; CLI portability beyond Linux
-  is unknown (not claimed).
+- On demand, not part of `scripts/verify manure`: `nix build .#onDemand.manure-vm`
+  when the NixOS/Home Manager modules, the nginx/TLS edge or the HM client wiring
+  change, and `nix build .#onDemand.manure-portable-root` when root-authority or
+  root-binding code changes. Linux covers service/storage acceptance; CLI
+  portability beyond Linux is unknown (not claimed).
 
 ## Security & deployment
 

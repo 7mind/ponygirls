@@ -8,8 +8,8 @@ Pinned toolchain: sbt2.0.12, server Scala3.9.0, generated-only Scala2.13.18, Izu
 
 ```bash
 export SBT_LAUNCH_JAR=/path/to/sbt-launch.jar
-./scripts/sbt.sh compile testFull assembly
-# Fresh unprivileged real cluster; full suite MUST execute PostgreSQL leg:
+./scripts/sbt.sh compile assembly
+# Complete backend suite on fresh owned clusters; PostgreSQL cases execute, never skip:
 POSTGRES_HOME=/path/to/postgresql-with-pgvector ./scripts/test-postgres.sh
 BABOON=/path/to/baboon ./scripts/generate.sh
 # No JVM fallback; actual native executable:
@@ -31,59 +31,53 @@ fixture/config paths retain their meaning.
 
 Assembly: `target/chronicle-server.jar` (relative to `chronicle/`); native executable: `target/native/chronicle-server`. sbt/coursier standard caches are used (`~/.sbt`, `~/.ivy2`, `~/.cache/coursier`); Nix integration supplies project-local cache homes and repository override/offline settings. No downloads are performed by the service. Generated sources are checked in and regenerated with pinned executable checksum and model lockfile. `models/chronicle.baboon` is the only self-contained API schema (1.9.0); edit it in place for this owned deployment. No retained-version codecs, conversion chains or post-generation rewriting are used.
 
-For full manual verification on a fresh checkout, run commands inside the pinned
-shell (`nix develop .#chronicle --command bash -c '<commands>'` from the repository
-root). Provision locked JavaScript dependencies with
-`(cd chronicle/web && npm ci)` and `(cd chronicle/collector && npm ci)` using an
-approved registry/cache; this replaces local node_modules without changing the
-lockfiles. From `chronicle/`, the protocol command is
-`TSC="$PWD/web/node_modules/.bin/tsc" ./scripts/test-codecs.sh`. The shell supplies
-Python, PostgreSQL/pgvector, Node, Chromium and font configuration. Missing
-prerequisites are failures to report, not reasons to skip suites.
+Run commands inside the pinned shell (`nix develop .#chronicle --command bash -c '<commands>'` from the
+repository root). It supplies Python, PostgreSQL/pgvector, Node, the pinned Chromium and font configuration.
+On a fresh checkout, provision the locked JavaScript dependencies with `npm ci` in `chronicle/web`,
+`chronicle/collector` and `chronicle/cli` using an approved registry or cache; this replaces local
+`node_modules` without changing the lockfiles. Missing prerequisites are failures to report, not reasons to
+skip suites.
 
-### Fast Nix checks and full agent verification
+### Verification
 
-Routine Nix builds use the explicitly named parser/codec/pure/dummy suites
-in `scripts/fast-suites.txt`, not the full PostgreSQL/concurrency/deadline suite.
-The fast command is `nix develop .#chronicle --command bash chronicle/scripts/test-fast.sh`
-from the repository root. It clears the PostgreSQL URL and makes accidental
-PostgreSQL use fail rather than silently skip. The Nix check requires a report
-with test cases for every selected suite and rejects any failure, error or skip
-(`scripts/junit-gate.py`). Its scope is explicitly a fast subset, not full validation.
+Three levels, each with one command from the repository root:
 
-```bash
-# Fast backend subset:
-nix build .#checks.x86_64-linux.chronicle-backend
-# Complete fast sole current 1.9.0 generated TypeScript codec checks:
-nix build .#checks.x86_64-linux.chronicle-protocol
-# Native package + fast checked dashboard; builds only after both checks above pass:
-nix build .#chronicle
-# Compile-only artifact; no test pass implied:
-nix build .#chronicle-native-dev
-```
+- **Package gate** — `nix build .#chronicle`. The package builds only after the fast backend subset and the
+  protocol check pass, and its dashboard and collector builds run their typecheck and Node tests. The fast
+  subset is the explicitly named parser/codec/pure/dummy suites in `scripts/fast-suites.txt`, run by
+  `scripts/test-fast.sh`, which clears the PostgreSQL URL so that accidental PostgreSQL use fails rather than
+  skips. A built package is not evidence that the full backend or browser suites passed, nor of native
+  behaviour.
+- **Full verification** — `scripts/verify chronicle`. It builds `verify-chronicle`, a set of exact-input Nix
+  checks: the package, the complete backend suite on owned PostgreSQL clusters (`chronicle-backend-full`), the
+  dashboard Chromium suite (`chronicle-browser`), the dashboard, collector, CLI and protocol checks, the
+  relevance-evaluation unit tests (`chronicle-eval`), the NixOS/Home Manager module checks and the shared JVM
+  modules. A check whose inputs did not change is reused from the store; that is the same proof, obtained
+  earlier. The script lists the built and reused checks and the case counts of the built ones. This is the
+  evidence for a finished task (repository-root [`AGENTS.md`](../AGENTS.md)).
+- **Inner loop** — `nix develop .#chronicle --command chronicle/scripts/test.sh [part...]`, parts `backend`,
+  `fast`, `web`, `browser`, `collector`, `cli`, `codecs`, `eval` (default: all but `fast`, which `backend`
+  contains). It runs the same runners outside the sandbox, the parts concurrently, and prints one line per part
+  with its log under `chronicle/target/test-runs/`. For one runner: `bash chronicle/scripts/test-postgres.sh`
+  (complete backend suite in parallel groups, one owned cluster each; `CHRONICLE_TEST_GROUPS=1` runs it
+  serially), `scripts/sbt.sh 'testOnly chronicle.SuiteName'` from `chronicle/` for one suite (without
+  `CHRONICLE_TEST_JDBC` its PostgreSQL cases are skipped), or from `chronicle/`
+  `TSC="$PWD/web/node_modules/.bin/tsc" ./scripts/test-codecs.sh` for the protocol fixtures. The inner loop
+  does not replace full verification.
 
-Dashboard packaging retains typechecking, bundling and its complete fast Node
-suite; Chromium is run separately, not on ordinary Nix rebuilds. Collector
-packaging retains its fast tests. The package depends on the fast backend and
-protocol checks at build time; a built package is not evidence that the full
-backend or browser suites passed, nor native behavioral equivalence.
+Individual checks are built with `nix build .#checks.x86_64-linux.<name>` (for example `chronicle-backend`,
+the fast subset, or `chronicle-protocol`); `nix build .#chronicle-native-dev` is compile-only and implies no
+test pass. Nix reuses a check only for identical inputs: dashboard-only changes reuse the backend and native
+checks, collector changes do not rebuild the server, test-only changes reuse native compilation. Nix
+trusted-builder and cache assumptions apply; explicit service-package overrides remain the operator's
+responsibility.
 
-Full-suite execution is an agent responsibility, documented in repository-root
-[`AGENTS.md`](../AGENTS.md), rather than a mandatory Nix release gate. Before
-completing a Chronicle task, run the unfiltered owned-PostgreSQL backend suite,
-generated protocol checks, full dashboard Node/Chromium suites and collector
-suite. The backend command is
-`nix develop .#chronicle --command bash chronicle/scripts/test-postgres.sh`.
-Use `scripts/sbt.sh 'testOnly chronicle.SuiteName'` only for focused iteration,
-not as a substitute for final full runs. Keep shared-database tests serial and
-preserve real deadline/concurrency assertions; no timeout is shortened to make
-routine builds faster.
+On demand, not part of full verification; run them when you change what they guard:
 
-Nix reuses checks only for matching input identities. UI-only changes reuse
-native/backend checks; collector changes do not rebuild the server; test-only
-changes reuse native compilation. Failing fast checks still fail closed. Nix trusted-builder/cache assumptions
-apply; arbitrary explicit service-package overrides remain the operator's
-responsibility. See [the cache contract and historical measurements](docs/drafts/20261028-build-validation-cache.md).
+- indexing worker recovery against a native executable: [`tests/README.md`](tests/README.md);
+- the CLI against a real server: [`cli/README.md`](cli/README.md), section "Build and verification";
+- the CUDA embedding runtime: [`docs/cuda-validation.md`](docs/cuda-validation.md) (`scripts/test-cuda.sh`);
+- the relevance workflow's controlled real-server and live-provider legs: [`eval/relevance/README.md`](eval/relevance/README.md).
 
 ### Controlled search relevance experiments
 

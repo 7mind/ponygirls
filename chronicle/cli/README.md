@@ -239,12 +239,13 @@ Use the repository's pinned development shell and locked dependency tree:
 nix develop .#chronicle --command bash -c 'cd chronicle/cli && npm ci && npm run typecheck && npm test'
 ```
 
-The fast CLI suite includes specified blackbox codec/command/output contracts
-and actual CLI subprocesses against owned HTTP/WS fixtures. Nix packaging also
-runs the complete process suite against the final installed `bin/chronicle`
-and the resource/presentation suites against its exported installed modules,
-not just imports or help. Set `CHRONICLE_CLI_EXECUTABLE` to an installed
-absolute binary path to run those process tests explicitly: `node --test
+The same suite runs as `chronicle/scripts/test.sh cli` in the inner loop. It
+includes specified blackbox codec/command/output contracts and actual CLI
+subprocesses against owned HTTP/WS fixtures. The Nix package (`nix build
+.#chronicle-cli`, a member of `scripts/verify chronicle`) runs it once in its
+build and then a short smoke test (`test/smoke.mjs`) against the installed
+`bin/chronicle` wrapper. Set `CHRONICLE_CLI_EXECUTABLE` to an installed absolute
+binary path to run the process tests against it: `node --test
 dist/cli/test/cli.test.js` from `cli/` after a source build. No live credential
 or service is used. Regenerate the boundary schema only when the current model
 changes: `cd chronicle/cli && node scripts/schema.mjs`, then inspect/test it.
@@ -256,11 +257,18 @@ the command budget. Direct native-adapter tests cover these resource guarantees.
 The held-stdin CLI case checks input-budget rejection, not a whole-process
 reproduction of the exported transport acquisition defect.
 
-Real-server acceptance requires a source-bound executable, fresh owned provider
-cluster and Linux `/proc` listener-ownership proof. For example, inside the
-pinned shell, set `CHRONICLE_SERVER` to the verified native executable and invoke
-`with-service-postgres bash chronicle/cli/scripts/test-server.sh` from repository
-root. The provider supplies `PONYGIRLS_OWNED_FIXTURE_ROOT` and the Chronicle DB
+Real-server acceptance runs on demand, not in `scripts/verify chronicle`: run it
+when the CLI's server contract changes. It requires a source-bound executable,
+fresh owned provider cluster and Linux `/proc` listener-ownership proof. Inside
+the pinned shell, from the repository root:
+
+```bash
+CHRONICLE_SERVER="$(nix build --no-link --print-out-paths .#chronicle.nativeArtifact)/libexec/chronicle-server" \
+  "$(nix build --no-link --print-out-paths .#service-test-fixture-tools)/bin/with-service-postgres" \
+  bash chronicle/cli/scripts/test-server.sh
+```
+
+The provider supplies `PONYGIRLS_OWNED_FIXTURE_ROOT` and the Chronicle DB
 manifest; arbitrary/live database options are deliberately unavailable. The
 runner accepts `CHRONICLE_CLI_EXECUTABLE=/nix/store/.../bin/chronicle` for actual
 installed-binary acceptance, or explicitly labels the default as source-built.
@@ -274,7 +282,6 @@ creates a fresh ignored `cli/artifacts/server-*/receipt.json` with source hashes
 case counts and errors/skips, plus sanitized owned server logs. It terminates
 only its own child server and the provider removes its owned cluster.
 
-These CLI checks do not replace repository-mandated full backend, protocol,
-dashboard Node/browser, collector or relevance workflow suites. Native fixture
+These CLI checks do not replace full verification (`scripts/verify chronicle`). Native fixture
 acceptance establishes only the exercised local application paths, not live
 availability, deployment, real providers or semantic retrieval quality.

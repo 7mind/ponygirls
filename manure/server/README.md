@@ -91,7 +91,9 @@ OS race simulations, exhaustive concurrent-race tests or complete storage recove
 tests. Pure name vectors are BA. No business-logic consumer exists to dual-test;
 add a hand-written dummy and shared repository tests when that application seam exists.
 
-Run inside the pinned backend shell, with Python 3, coreutils `mkfifo`, trusted
+The Scala suites run in the `manure-backend` check (`scripts/verify manure`) and in the
+inner loop as `manure/scripts/test.sh jvm`. To run the scenarios directly, work inside
+the pinned backend shell, with Python 3, coreutils `mkfifo`, trusted
 procfs and `/dev/null` available. MUnit requires exactly one explicit environment
 boundary: `MANURE_POSIX_LIBRARY=/absolute/path/libmanure_posix.so`. The standalone
 probe requires loader arguments (never environment precedence):
@@ -112,42 +114,28 @@ current Java home/classpath and explicit shared library; native children execute
 the same actual executable with `--linked`. The Python leg uses only stdlib kernel
 claims, not the existing application's metadata or recovery machinery.
 
-## Local execution receipt
+## Regression history
 
-On 2026-11-02, the dedicated Scala worktree compiled the real sibling Java ABI plus
-these Scala sources, including iterative cleanup and size/truncate inside `nix develop .#chronicle` with cached pinned Scala 3.9.0,
-MUnit 1.3.6 and Graal JDK 25.0.4.1.1. Against a strict-built shared library compiled from the C writer's actual sources, **26/26 MUnit cases and the identical 26 standalone JVM scenarios passed**,
-zero failures/skips; standalone exit 0. The raw invalid-UTF8 root regression was
-first reproduced as **23 cases / 1 failure**, then fixed with the pre-open exact
-Path roundtrip check. The 1500-level cleanup regression was first reproduced as
-**25 cases / 1 StackOverflowError**, then passed with iterative fd ownership;
-there is no recursion or catch-and-ignore workaround. An earlier child-readiness assertion failed on JVM warning
-output; readiness now scans bounded output for its exact marker. Neither failure
-was skipped or weakened.
-
-Ignored `manure/server/target/posix-scala/` retains compiler/classpath, commands,
-JVM logs and the fail-first log. These local JVM observations do **not** establish
-static-native acceptance, integrated Nix packaging, power-cut consistency or live
-deployment. The integration worktree owns the actual native/linkage receipt and
-artifact/source binding. Previous public-JDK static SDS refusal is historical
-baseline evidence, not a blocker imposed on this explicit POSIX implementation.
+The raw invalid-UTF8 root regression is fixed by the pre-open exact Path roundtrip
+check, and the 1500-level cleanup regression (a StackOverflowError) by iterative fd
+ownership, with no recursion or catch-and-ignore workaround. Child readiness scans
+bounded output for its exact marker instead of failing on JVM warning output. JVM
+runs do **not** establish static-native acceptance, power-cut consistency or live
+deployment; the native leg is below.
 
 ## Integrated native acceptance
 
-The pinned Nix check now builds the glibc shared JNI library and musl static archive,
-compares regenerated JNI headers with the Java ABI, and executes the `FilesystemBehavior`
-contracts on the actual static-musl ELF; `ConfinedDirectorySuite` runs the same contracts on the
-JVM in `manure-backend`.
-The parent independently reran the final ELF outside the builder, exit 0:
-`da94bbff8e7af38c8d5ce8314da78e84fb714873d05670691035c24ff2971302`.
-Its program headers contain no interpreter and its dynamic section has no dependency.
-
-A separate Nix check runs **1,257 direct JNI assertions** against the production shared
-library with `-Xcheck:jni`. Parent strict and ASan/UBSan runs also passed 1,257 assertions
-each. An additional owned-device `mknod` fixture was unavailable (observed exit 1);
-mandatory existing-device rejection uses `/dev/null` and passed on both runtimes.
-Build-only hosted registration is isolated behind an exact Graal CE 25.4.4.1.1 guard and
-invokes that Java home's tools.
+The `manure-posix-acceptance` check builds the glibc shared JNI library and musl static
+archive, compares regenerated JNI headers with the Java ABI, checks that the static-musl
+probe has no interpreter and no dynamic dependency, and executes the `FilesystemBehavior`
+contracts on that ELF; `ConfinedDirectorySuite` runs the same contracts on the JVM in
+`manure-backend`. The `manure-direct-jni` check runs the direct JNI assertions against the
+production shared library with `-Xcheck:jni` (strict and sanitizer runs:
+[`native-tests/README.md`](native-tests/README.md)). Mandatory existing-device rejection
+uses `/dev/null`; the owned-device `mknod` fixture is optional and reported as unavailable
+when the host refuses it. Build-only hosted registration is isolated behind an exact
+Graal CE 25.4.4.1.1 guard and invokes that Java home's tools. Both checks are members of
+`scripts/verify manure`; individually:
 
 ```sh
 nix build .#checks.x86_64-linux.manure-posix-acceptance

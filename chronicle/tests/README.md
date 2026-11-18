@@ -1,6 +1,9 @@
 # Native indexing recovery acceptance
 
-From the repository root, using an actual native ELF (not a JVM or launcher script):
+On demand, not part of `scripts/verify chronicle`: run it when indexing worker
+recovery changes. From the repository root, using an actual native ELF (not a JVM
+or launcher script, for example `libexec/chronicle-server` of
+`nix build --no-link --print-out-paths .#chronicle.nativeArtifact`):
 
 ```bash
 nix develop .#chronicle --command bash -c '
