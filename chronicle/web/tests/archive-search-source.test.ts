@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ArchiveMatchKind, ArchiveRow, ArchiveSearchEvidence, ArchiveSearchResult, ArchiveSourceMatch, ArchiveResult, ArchiveTextScope, Completion, ContentView, Metadata, SessionInfo, SourceIdentity, SourceFormat, Span } from '../src/api.ts';
-import { appendResultRows, resultRows, sourceFailureAffectsView, validateArchiveSearchPage } from '../src/search-source.ts';
+import { appendResultRows, resultRows, sourceDenialAffectsResults, sourceFailureAffectsView, validateArchiveSearchPage } from '../src/search-source.ts';
 const headView = new ContentView(3, undefined), publishedView = new ContentView(1, 'generation');
 function result(): ArchiveSearchResult {
   const metadata = new Metadata('Title', 'project', undefined, undefined, undefined, undefined, 'producer', undefined, undefined, undefined, []);
@@ -59,4 +59,12 @@ test('BA: appended search pages keep the first occurrence of a conversation, in 
   const merged = appendResultRows(first, second);
   assert.deepEqual(merged.map(item => item.row.head.id), [valid.page.rows[0]!.head.id, 'other']);
   assert.equal(merged[0], first[0]); assert.deepEqual(merged[1]!.matches, valid.evidence[0]!.matches);
+});
+test('BA: a reported failure affects retained results only through the same session, and for a view failure only through a retained pin', () => {
+  const rows = resultRows(result()), id = rows[0]!.row.head.id;
+  assert.equal(sourceDenialAffectsResults(id, publishedView, 'indexed-view-retired', rows), true);
+  assert.equal(sourceDenialAffectsResults(id, headView, 'indexed-view-retired', rows), true);
+  assert.equal(sourceDenialAffectsResults(id, new ContentView(1, 'other'), 'indexed-view-retired', rows), false);
+  assert.equal(sourceDenialAffectsResults(id, new ContentView(9, undefined), 'forbidden', rows), true);
+  assert.equal(sourceDenialAffectsResults('other', publishedView, 'forbidden', rows), false);
 });

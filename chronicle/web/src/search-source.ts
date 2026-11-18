@@ -6,8 +6,10 @@ export const SNIPPET_BYTES = 512;
 export const CONTEXT_BYTES = 2048;
 const MAX_CONTEXT_EXCERPTS = 9;
 export interface SearchSourceFailure { code: string | null; message: string }
+const AUTHORITY_DENIALS = ['forbidden', 'not-found', 'unauthorized', 'authorization-changed'];
+// Authority denials concern the whole source of a session; every other failure concerns only the pin that failed.
 export function sourceFailureAffectsView(failed: ContentView, selected: ContentView, code: string | null): boolean {
-  return sameContentView(failed, selected) || (code !== null && ['forbidden', 'not-found', 'unauthorized', 'authorization-changed'].includes(code));
+  return sameContentView(failed, selected) || (code !== null && AUTHORITY_DENIALS.includes(code));
 }
 const MAX_REPRESENTATIVE_MATCHES = 2;
 const MAX_ARCHIVE_TOTAL = 9_223_372_036_854_775_807n;
@@ -94,4 +96,9 @@ export function resultRows(result: ArchiveSearchResult): SearchResultRow[] {
 export function appendResultRows(loaded: readonly SearchResultRow[], appended: readonly SearchResultRow[]): SearchResultRow[] {
   const seen = new Set(loaded.map(item => item.row.head.id));
   return [...loaded, ...appended.filter(item => !seen.has(item.row.head.id))];
+}
+// A failure another view reported for a source: does it concern anything these results retain of that session?
+export function sourceDenialAffectsResults(sessionId: string, failed: ContentView, code: string | null, results: readonly SearchResultRow[]): boolean {
+  return results.some(({ row, matches }) => row.head.id === sessionId
+    && [row.head.view, row.publishedView, row.matchedView, ...matches.map(match => match.view)].some(pin => pin !== undefined && sourceFailureAffectsView(failed, pin, code)));
 }

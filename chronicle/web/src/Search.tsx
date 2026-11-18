@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Operation_ArchiveSearch, Result_ArchiveSearch, ArchiveQuery, ArchiveSort, type ArchiveResult, ArchiveTextScope, ExpressionHintTarget_Archive, SortDirection, ArchiveMatchKind, Operation_ReadMessageContext, Result_MessageContext, Span, type ArchiveRow, type ArchiveSourceMatch, type ContentView, type MessageContextResult, type PassageSourceSpan, type UserInfo } from './api.ts';
+import { Operation_ArchiveSearch, Result_ArchiveSearch, ArchiveQuery, ArchiveSort, ContentView, type ArchiveResult, ArchiveTextScope, ExpressionHintTarget_Archive, SortDirection, ArchiveMatchKind, Operation_ReadMessageContext, Result_MessageContext, Span, type ArchiveRow, type ArchiveSourceMatch, type MessageContextResult, type PassageSourceSpan, type UserInfo } from './api.ts';
 import { read, type ChronicleConnection } from './client.ts';
 import { RequestFailure, type ManagerStats } from './transport/types.ts';
 import type { TextPart } from './highlight.ts';
 import { useResource } from './hooks.ts';
 import { Anchored } from './Popover.tsx';
-import { RouteParams, formatRoute, sessionRoute, viewRoute } from './router.ts';
+import { formatRoute, viewRoute } from './router.ts';
+import { sessionLink } from './session-link.ts';
+import { listenSourceUnavailable, reportSourceUnavailable, sourcePin } from './source-authority.ts';
 import { contentViewKey, sameContentView } from './source-view.ts';
-import { CONTEXT_BYTES, SEARCH_PAGE_SIZE, SNIPPET_BYTES, snippetAnchor, validateContext, validateArchiveSearchPage, contextParts, type SearchResultRow, type SearchSourceFailure } from './search-source.ts';
+import { CONTEXT_BYTES, SEARCH_PAGE_SIZE, SNIPPET_BYTES, snippetAnchor, sourceDenialAffectsResults, validateContext, validateArchiveSearchPage, contextParts, type SearchResultRow, type SearchSourceFailure } from './search-source.ts';
 import { useSearchChain } from './search-chain.ts';
 import { ExpressionEditor, archiveFields } from './ExpressionEditor.tsx';
 import './search.css';
@@ -18,7 +20,6 @@ interface SourceExcerpt { source: PassageSourceSpan; role: string; parts: TextPa
 interface MessageRange { first: number; last: number }
 type ContextRead = { kind: 'source'; result: MessageContextResult; excerpts: SourceExcerpt[] } | { kind: 'failure'; failure: SearchSourceFailure };
 type IconName = 'search' | 'info' | 'chevron-down' | 'chevron-up' | 'arrow-right' | 'arrow-up' | 'arrow-down' | 'alert';
-const SESSION_REVISION_PARAM = 'rev', SESSION_MESSAGE_PARAM = 'at', SESSION_FIND_PARAM = 'find';
 const ICON_SPRITE = '/ui/icons.svg';
 const SKELETON_RESULTS = 4;
 const LOAD_AHEAD_MARGIN = '0px 0px 400px 0px';
@@ -32,11 +33,10 @@ function Notice({ title, children, actions }: { title: string; children: ReactNo
 }
 function sentence(text: string): string { return `${text.replace(/[.\s]+$/, '')}.`; }
 function timestamp(value: string): string { return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }); }
-// The session route (spec §5): revision pin, message and the Find text of the match; the session view applies them.
-function sessionHref(sessionId: string, view: ContentView, match: ArchiveSourceMatch | undefined): string {
-  const entries: [string, string][] = [[SESSION_REVISION_PARAM, String(view.revision)]];
-  if (match !== undefined) entries.push([SESSION_MESSAGE_PARAM, match.span.messageId], [SESSION_FIND_PARAM, match.operand]);
-  return formatRoute({ ...sessionRoute(sessionId), params: new RouteParams(entries) });
+// Links to the session route (spec §5) carry the complete pin of the view they read (session-link.ts) and the match to land on.
+function matchLink(sessionId: string, match: ArchiveSourceMatch): string { return sessionLink(sessionId, match.view, { messageId: match.span.messageId, find: match.operand }); }
+function titleLink(sessionId: string, view: ContentView, landing: ArchiveSourceMatch | undefined): string {
+  return landing === undefined ? sessionLink(sessionId, view, undefined) : matchLink(sessionId, landing);
 }
 function matchTitle(match: ArchiveSourceMatch): string { return `${match.kind === ArchiveMatchKind.Literal ? 'Literal' : 'Semantic'} match for ${match.operand}`; }
 function Highlighted({ parts }: { parts: readonly TextPart[] }) {
@@ -58,17 +58,22 @@ function SearchHit({ connection, stats, user, sessionId, match, expanded, positi
   const source = context.data !== null && context.data.kind === 'source' ? context.data : null;
   const code = context.data !== null && context.data.kind === 'failure' ? context.data.failure.code : null;
   const message = context.error ?? (context.data !== null && context.data.kind === 'failure' ? context.data.failure.message : null);
-  useEffect(() => { if (message !== null) fail({ code, message }); }, [code, message, fail]);
+  const failure = useRef(fail); failure.current = fail;
+  useEffect(() => {
+    if (message === null) return;
+    failure.current({ code, message });
+    reportSourceUnavailable(document, { origin: 'search', sessionId, view: sourcePin(view), code, message });
+  }, [code, message, sessionId, view]);
   const first = source === null ? undefined : source.excerpts[0]?.source, last = source === null ? undefined : source.excerpts.at(-1)?.source;
   const firstPosition = first === undefined ? null : first.messagePosition, lastPosition = last === undefined ? null : last.messagePosition;
   useEffect(() => { positions(firstPosition === null || lastPosition === null ? null : { first: firstPosition, last: lastPosition }); }, [firstPosition, lastPosition, positions]);
-  const href = sessionHref(sessionId, view, match), matched = (excerpt: SourceExcerpt) => excerpt.source.messageId === span.messageId && excerpt.parts.some(part => part.highlighted || moved === null);
+  const href = matchLink(sessionId, match), matched = (excerpt: SourceExcerpt) => excerpt.source.messageId === span.messageId && excerpt.parts.some(part => part.highlighted || moved === null);
   const shown = source === null ? [] : expanded ? source.excerpts : source.excerpts.filter(matched).slice(0, 1);
   return <div className="hit-group" data-match-kind={match.kind} aria-busy={context.loading}>
     {context.loading && <p className="hit hit-loading" role="status"><span className="skeleton"/><span className="sr-only">Loading source excerpts…</span></p>}
     {shown.map(excerpt => {
       const range = excerpt.source, content = <><span className="hit-role" data-role={excerpt.role}>{excerpt.role}</span><span className="hit-text" data-hit-text=""><Highlighted parts={excerpt.parts}/></span><span className="hit-at">message {range.messagePosition + 1}</span></>;
-      return matched(excerpt) ? <a className="hit" data-hit="match" key={`${range.messageId}:${range.start}`} href={href} title={matchTitle(match)}>{content}</a> : <div className="hit hit-context" data-hit="context" key={`${range.messageId}:${range.start}`}>{content}</div>;
+      return matched(excerpt) ? <a className="hit" data-hit="match" data-focus-key={`hit:${sessionId}:${span.messageId}:${span.start}`} key={`${range.messageId}:${range.start}`} href={href} title={matchTitle(match)}>{content}</a> : <div className="hit hit-context" data-hit="context" key={`${range.messageId}:${range.start}`}>{content}</div>;
     })}
     {span.end - span.start > CONTEXT_BYTES && <p className="hit-note">Partial preview · source span exceeds {CONTEXT_BYTES} bytes.</p>}
     {expanded && source !== null && <div className="hit-nav">
@@ -91,7 +96,7 @@ function SearchResult({ item: { row, matches }, ...scope }: SearchScope & { item
   function fail(failure: SearchSourceFailure) { setUnavailable(failure.message); }
   const reports = useRef(matches.map((_, index) => (range: MessageRange | null) => setRanges(value => { const next = [...value]; next[index] = range; return next; })));
   return <article className="result" data-row-id={row.head.id} data-open={expanded}>
-    <div className="result-head"><h2 className="result-title">{unavailable === null ? <a href={sessionHref(row.head.id, view, landing)} data-focus-key={`title:${row.head.id}`}>{title}</a> : <span aria-disabled="true">{title}</span>}</h2>{row.lastTimestamp !== undefined && <time className="result-time" dateTime={row.lastTimestamp} title={row.lastTimestamp}>{timestamp(row.lastTimestamp)}</time>}</div>
+    <div className="result-head"><h2 className="result-title">{unavailable === null ? <a href={titleLink(row.head.id, view, landing)} data-focus-key={`title:${row.head.id}`}>{title}</a> : <span aria-disabled="true">{title}</span>}</h2>{row.lastTimestamp !== undefined && <time className="result-time" dateTime={row.lastTimestamp} title={row.lastTimestamp}>{timestamp(row.lastTimestamp)}</time>}</div>
     <Crumb row={row}/>
     {unavailable !== null ? <Notice title="Source unavailable" actions={null}>{sentence(unavailable)} This result's source excerpts have been cleared. Submit a new search to recheck access; no HEAD fallback is used.</Notice>
       : matches.length === 0 ? <p className="result-note">No positive source spans. Open the conversation to read its source.</p>
@@ -102,7 +107,7 @@ function SearchResult({ item: { row, matches }, ...scope }: SearchScope & { item
         {summaries.map(summary => <p className="result-note" key={summary}><b>Generated annotation</b> · {summary}</p>)}
         <div className="result-foot">
           <button type="button" className="btn btn-sm" aria-expanded={expanded} onClick={() => setExpanded(value => !value)} data-focus-key={`expand:${row.head.id}`}><Icon name={expanded ? 'chevron-up' : 'chevron-down'} small={true}/>{expanded ? 'Collapse' : 'Context'}</button>
-          {firstMatch !== undefined && <a className="btn btn-sm btn-ghost" href={sessionHref(row.head.id, firstMatch.view, firstMatch)} data-focus-key={`open:${row.head.id}`}>Open at first match<Icon name="arrow-right" small={true}/></a>}
+          {firstMatch !== undefined && <a className="btn btn-sm btn-ghost" href={matchLink(row.head.id, firstMatch)} data-focus-key={`open:${row.head.id}`}>Open at first match<Icon name="arrow-right" small={true}/></a>}
           {expanded && <span className="push xs muted">{matches.length} representative {matches.length === 1 ? 'match' : 'matches'} shown</span>}
         </div></>}
   </article>;
@@ -149,21 +154,28 @@ function useReturnFocus(root: React.RefObject<HTMLElement | null>): (event: Reac
 // The draft and the submitted expression are owned by the shell (per-route state, the submitted one in the URL).
 export interface SearchQueryState { draft: string; setDraft: (draft: string) => void; submitted: string | null; setSubmitted: (submitted: string | null) => void }
 export function Search({ connection, stats, user, query }: SearchScope & { query: SearchQueryState }) {
-  const { draft, setDraft, submitted, setSubmitted } = query, [composing, setComposing] = useState(false), [epoch, setEpoch] = useState(0);
+  const { draft, setDraft, submitted, setSubmitted } = query, [composing, setComposing] = useState(false), [epoch, setEpoch] = useState(0), [cleared, setCleared] = useState<string | null>(null);
   useEffect(() => connection.onInvalidate(() => setSubmitted(null)), [connection]);
-  function submit(expression: string) { if (composing || stats.activeId === null) return; setSubmitted(expression); setEpoch(value => value + 1); }
+  function submit(expression: string) { if (composing || stats.activeId === null) return; setCleared(null); setSubmitted(expression); setEpoch(value => value + 1); }
   const chain = useSearchChain(connection, stats, submitted === null ? null : JSON.stringify([user.id, submitted, epoch]), async cursor => {
     if (submitted === null) throw new Error('Search has no submitted expression.');
     const request = new ArchiveQuery(submitted, ArchiveSort.LastTimestamp, SortDirection.Desc, cursor, SEARCH_PAGE_SIZE, true);
     return validateArchiveSearchPage(await read(connection, new Operation_ArchiveSearch(request), reply => reply instanceof Result_ArchiveSearch ? reply.result : null), cursor);
   });
+  const loaded = useRef(chain.rows); loaded.current = chain.rows;
+  // The opened session reports a denied or retired pinned source: results that retain data of it are cleared, as an authority fence.
+  useEffect(() => listenSourceUnavailable(document, detail => {
+    if (detail.origin !== 'session' || !sourceDenialAffectsResults(detail.sessionId, new ContentView(detail.view.revision, detail.view.generationId ?? undefined), detail.code, loaded.current)) return;
+    setCleared(`${sentence(detail.message)} Search results cleared after a denied or unavailable pinned source. Submit to recheck; no fallback was used.`); setSubmitted(null);
+  }), [setSubmitted]);
   const root = useRef<HTMLElement>(null), returnFocus = useReturnFocus(root);
   const edited = submitted !== null && draft !== submitted, meta = chain.meta;
   const counter = edited ? <span className="stale-hint">Query edited · Enter to update</span>
     : chain.loading ? 'Searching…' : chain.error !== null ? 'Not loaded' : meta === null ? '' : chain.rows.length === 0 ? 'No matches' : <><strong>{meta.total.toString()}</strong> conversations · {chain.rows.length} loaded</>;
   return <main className="search-page" aria-label="Search" data-view="search" ref={root} onFocus={returnFocus}>
     <div className="search-editor"><ExpressionEditor submission="explicit" completion={{ connection, stats, owner: user.id, target: new ExpressionHintTarget_Archive() }} value={draft} applied={submitted ?? ''} change={setDraft} submit={submit} compositionChange={setComposing} composing={composing} disabled={stats.activeId === null} fields={archiveFields} help={null}/></div>
-    {submitted !== null && <div className="viewbar search-bar" data-view-bar><div className="viewbar-meta" role="status" aria-live="polite">{counter}</div>{meta !== null && <ResultsInfo meta={meta}/>}</div>}
+    {submitted !== null && <div className="search-bar" data-view-bar><div className="viewbar-meta" role="status" aria-live="polite">{counter}</div>{meta !== null && <ResultsInfo meta={meta}/>}</div>}
+    {cleared !== null && submitted === null && <div className="search-notice"><Notice title="Search results cleared" actions={null}>{cleared}</Notice></div>}
     {submitted === null ? <section className="empty" data-state="intro"><Icon name="search" small={false}/><h2>Search every conversation you can read</h2><p>Plain words find passages by meaning and by exact text. Fields narrow the set. Results load as you scroll — no pages.</p>
       <div className="row row-wrap search-examples">{EXAMPLE_QUERIES.map(example => <button type="button" className="filter filter-field" key={example} onClick={() => { setDraft(example); submit(example); }}>{example}</button>)}</div></section>
       : chain.error !== null ? <div className="search-notice"><Notice title="Search failed" actions={<button type="button" className="btn btn-sm" onClick={() => submit(submitted)}>Retry</button>}>{sentence(chain.error)} Search results cleared; your query is kept. No fallback search was used.</Notice></div>
