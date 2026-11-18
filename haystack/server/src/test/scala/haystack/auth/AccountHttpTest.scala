@@ -6,6 +6,9 @@ import haystack.application.ItemService
 import haystack.http.{Http,LiveHub,Wire}
 import haystack.retrieval.{HaystackRetrieval,ProjectionPolicy}
 import haystack.storage.{ContractSuite,Migrations,PostgresItemRepository,TestSupport}
+import cats.effect.Deferred
+import fs2.Stream
+import java.nio.charset.StandardCharsets
 import org.http4s.{Header,Method,Request,Response,Status,Uri}
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.typelevel.ci.CIString
@@ -81,12 +84,24 @@ class AccountHttpTest extends ContractSuite {
   }
   private final class Seam(val db:ponygirls.runtime.JdbcDatabase,val http:Http,val accounts:AccountService,val auth:AtomicReference[Either[Throwable,Auth]],ws:WebSocketBuilder2[IO]) {
     def send(method:Method,path:String,body:Option[String],cookie:Option[String]=None,actor:Option[String]=None,
-      origin:Boolean=true,bearer:Option[String]=None):IO[(Response[IO],String)]={
+      origin:Boolean=true,bearer:Option[String]=None):IO[(Response[IO],String)]=
+      exchange(method,path,body.map(text=>Stream.emits(text.getBytes(StandardCharsets.UTF_8)).covary[IO]),cookie,actor,origin,bearer)
+    /** A POST whose body is held after the route admitted it, while `during` changes the configuration. */
+    def held(path:String,body:String,cookie:Option[String],actor:Option[String])(during:IO[Unit]):IO[(Response[IO],String)]=for{
+      entered<-Deferred[IO,Unit];release<-Deferred[IO,Unit]
+      stream=Stream.eval(entered.complete(())).drain ++ Stream.eval(release.get).drain ++ Stream.emits(body.getBytes(StandardCharsets.UTF_8)).covary[IO]
+      fiber<-exchange(Method.POST,path,Some(stream),cookie,actor,true,None).start
+      _<-entered.get
+      _<-during
+      _<-release.complete(())
+      result<-fiber.joinWithNever
+    }yield result
+    private def exchange(method:Method,path:String,body:Option[Stream[IO,Byte]],cookie:Option[String],actor:Option[String],
+      origin:Boolean,bearer:Option[String]):IO[(Response[IO],String)]={
       val headers=Vector(Header.Raw(CIString("Host"),"ts.test:8445"))++Option.when(origin)(Header.Raw(CIString("Origin"),Secure))++
         cookie.map(secret=>Header.Raw(CIString("Cookie"),"__Host-haystack="+secret))++actor.map(id=>Header.Raw(CIString("X-Account-Actor"),AccountJson.actor(id)))++
-        bearer.map(token=>Header.Raw(CIString("Authorization"),"Bearer "+token))
-      val request=body.fold(Request[IO](method,Uri.unsafeFromString(path)))(text=>Request[IO](method,Uri.unsafeFromString(path)).withEntity(text)
-        .putHeaders(Header.Raw(CIString("Content-Type"),"application/json")))
+        bearer.map(token=>Header.Raw(CIString("Authorization"),"Bearer "+token))++body.map(_=>Header.Raw(CIString("Content-Type"),"application/json"))
+      val request=body.fold(Request[IO](method,Uri.unsafeFromString(path)))(bytes=>Request[IO](method,Uri.unsafeFromString(path)).withBodyStream(bytes))
       http.routes(ws).orNotFound(headers.foldLeft(request)((r,header)=>r.putHeaders(header))).flatMap(response=>response.bodyText.compile.string.map(response->_))
     }
     def login(name:String,password:String):IO[(Response[IO],String)]=
@@ -113,6 +128,8 @@ class AccountHttpTest extends ContractSuite {
 
   test("imperative signup waits for a declared admin's approval, then logs in, reads its profile and logs out; suspension and disable cut its session") { directory { dir=>
     val cfg=accountsConfig(dir,requireApproval=true);val on=Auth.load(cfg);val off=Auth.load(cfg.copy(accounts=None))
+    val demoted=Auth.load(cfg.copy(users=cfg.users.updated(0,cfg.users.head.copy(admin=false)):+
+      UserConfig("olga","human","Olga",Vector.empty,Some("olga"),cfg.users.head.passwordHashFile,true,admin=true)))
     seam(on) { h=>for{
       (applied,appliedBody)<-h.signup("carol")
       _=assertEquals((applied.status,appliedBody),(Status.Accepted,"""{"status":"pending"}"""))
@@ -120,6 +137,13 @@ class AccountHttpTest extends ContractSuite {
       (early,earlyBody)<-h.login("carol",UserPassword)
       _=assertEquals((early.status,code(earlyBody)),(Status.Forbidden,"pending-approval"))
       (admin,_)<-h.login("alice",AlicePassword)
+      _<-h.accounts.install(demoted)
+      (stale,staleBody)<-h.held("/api/account/v1/admin/users/carol/approve","{}",Some(cookie(admin)),Some("alice"))(IO(h.auth.set(Right(demoted))))
+      _=assertEquals((stale.status,code(staleBody)),(Status.Forbidden,"forbidden"))
+      (stillPending,stillPendingBody)<-h.login("carol",UserPassword)
+      _=assertEquals((stillPending.status,code(stillPendingBody)),(Status.Forbidden,"pending-approval"))
+      _<-IO(h.auth.set(Right(on)))
+      _<-h.accounts.install(on)
       (approved,approvedBody)<-h.send(Method.POST,"/api/account/v1/admin/users/carol/approve",Some("{}"),Some(cookie(admin)),Some("alice"))
       _=assertEquals((approved.status,approvedBody),(Status.Ok,"""{"ok":true}"""))
       (signed,signedBody)<-h.login("carol",UserPassword)
@@ -161,15 +185,21 @@ class AccountHttpTest extends ContractSuite {
       (issued,issuedBody)<-h.send(Method.POST,"/api/account/v1/tokens",Some("""{"name":"cli","scopes":["api"]}"""),Some(session),Some("alice"))
       _=assertEquals((issued.status,io.circe.parser.parse(issuedBody).toOption.flatMap(_.asObject).map(_.keys.toSet)),(Status.Ok,Some(Set("token","secret"))))
       (rootOn,rootOnBody)<-h.send(Method.GET,"/api/account/v1",None,Some(session))
-      _<-IO(h.auth.set(Right(off)))
+      (suspendedSignup,suspendedSignupBody)<-h.held("/api/account/v1/signup",
+        s"""{"username":"dora","email":"dora@example.test","password":"$UserPassword","totpSecret":"$TotpSecret","totpCode":"$TotpCode","requireTotp":false}""",
+        None,None)(IO(h.auth.set(Right(off))))
       (policyOff,policyOffBody)<-h.send(Method.GET,"/api/account/v1/policy",None)
       (signupOff,signupOffBody)<-h.signup("dora")
-      _=assertEquals(Vector(policyOff.status->policyOffBody,signupOff.status->signupOffBody),Vector.fill(2)(Status.NotFound->AccountJson.failure("not-found").noSpaces))
+      _=assertEquals(Vector(suspendedSignup.status->suspendedSignupBody,policyOff.status->policyOffBody,signupOff.status->signupOffBody),
+        Vector.fill(3)(Status.NotFound->AccountJson.failure("not-found").noSpaces))
       (loginOff,loginOffBody)<-h.login("alice",AlicePassword)
       (rootOff,rootOffBody)<-h.send(Method.GET,"/api/account/v1",None,Some(session))
       _=assertEquals(Vector(loginOff.status->loginOffBody,rootOff.status->rootOffBody),Vector(loginOn.status->loginOnBody,rootOn.status->rootOnBody))
       (out,outBody)<-h.send(Method.POST,"/api/account/v1/logout",Some("{}"),Some(cookie(loginOff)),Some("alice"))
       _=assertEquals((out.status,outBody),(Status.Ok,"""{"ok":true}"""))
+      _<-IO(h.auth.set(Right(on)))
+      (dora,doraBody)<-h.login("dora",UserPassword)
+      _=assertEquals((dora.status,code(doraBody)),(Status.Unauthorized,"unauthorized"),"the suspended signup created no application")
     }yield()}
   }}
 

@@ -74,24 +74,28 @@ final class AccountService(database:JdbcDatabase,getAuth:()=>Auth,imperative:Imp
     current
   }
   /** The declarative password login; a refusal is raised, because it persists nothing (design D27). */
-  private def declarativeLogin(auth:Auth):DeclarativeLogin=(login,password,previous)=>database.transaction { c=>
-    val users=directory(c,auth)
+  private val declarativeLogin:DeclarativeLogin=(login,password,previous)=>database.transaction { c=>
+    val users=directory(c,getAuth())
     val result=AccountSql.loginReplacing(c,users,login,password,previous)
     SignedIn(user(users,result.session.credential.userId),result.session)
   }
-  def login(login:String,password:String,previous:Option[String]):IO[SignedIn]=IO.defer(declarativeLogin(getAuth()).login(login,password,previous))
-  /** One database transaction per imperative operation over the `auth` snapshot of the request; it commits
-    * whatever the operation returns, so rejections keep their failure counters (design D27). */
-  private def transactions(auth:Auth):ImperativeTransactions=new ImperativeTransactions {
+  def login(login:String,password:String,previous:Option[String]):IO[SignedIn]=declarativeLogin.login(login,password,previous)
+  /** One database transaction per imperative operation; it commits whatever the operation returns, so rejections
+    * keep their failure counters (design D27). The configuration is read inside the transaction, never taken from
+    * the request: a reload published while the request waited (for its body or the credential gate) decides it —
+    * suspension, creation flags and admin flags take effect, and a failed reload fails it closed. */
+  private val transactions:ImperativeTransactions=new ImperativeTransactions {
     def run[A](work:ImperativeAccounts=>A):IO[A]=database.transaction { c=>
+      val auth=getAuth()
       val sessions=new SharedAccountSessions(c,identity,()=>directory(c,auth))
       work(ImperativeAccountSql.accounts(c,auth.imperative,auth.declared,sessions,new HaystackIdentityHistory(c,sessions),imperative.hasher,imperative.clock))
     }
   }
   /** `POST /login` while the master switch is on: declared logins take `declarativeLogin`, every other login
-    * the imperative decision; the reply is decided after commit. */
+    * the imperative decision; the reply is decided after commit. `auth` is the snapshot taken after the body
+    * was read; it routes the request, and each transaction rereads the configuration. */
   def imperativeLogin(auth:Auth,settings:ImperativeSettings,body:Json,presented:Option[String],clientAddress:String):IO[AccountReply]=
-    imperative.api.login(settings,auth.declared,transactions(auth),declarativeLogin(auth),
+    imperative.api.login(settings,auth.declared,transactions,declarativeLogin,
       AccountRequest(AccountEndpoint.Post,AccountService.LoginPath,Some(body),Vector.empty,None,presented,clientAddress))
   /** Every account path other than the five existing endpoints. The presented cookie is resolved under the
     * merged directory; the dispatcher revalidates it under its owner's lock before any effect. */
@@ -100,7 +104,7 @@ final class AccountService(database:JdbcDatabase,getAuth:()=>Auth,imperative:Imp
       case None=>IO.pure(None)
       case Some(token)=>database.transaction(c=>AccountSql.browser(c,directory(c,auth),token))
     }
-    session.flatMap(found=>imperative.api.handle(Some(settings),auth.declared,transactions(auth),AccountRequest(method,path,body,actor,found,presented,clientAddress)))
+    session.flatMap(found=>imperative.api.handle(Some(settings),auth.declared,transactions,AccountRequest(method,path,body,actor,found,presented,clientAddress)))
   }
   def logoutLegacy(captured:Authenticated):IO[Unit]=logoutSession(captured,None)
   def logout(captured:Authenticated,actor:Vector[String]):IO[Unit]=logoutSession(captured,Some(actor))

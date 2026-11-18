@@ -137,15 +137,28 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       case CookieEffect.Set(secret)=>previous.traverse_(hub.endSession).as(response.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(secret),secure))))
     })
   }
-  /** Account paths added for imperative accounts, behind the same boundary as the five existing endpoints. */
-  private def imperativeAccount(r:Request[IO],auth:Auth,settings:ImperativeSettings):IO[Response[IO]]={
+  /** Account paths added for imperative accounts, behind the same boundary as the five existing endpoints. The
+    * configuration is taken again after the body was read: availability, cookie selection and dispatch never use
+    * a snapshot older than the body. */
+  private def imperativeAccount(r:Request[IO]):IO[Response[IO]]={
     val entity=r.method==Method.POST || r.contentLength.exists(_>0) || r.isChunked
     (if(entity)accountBody(r).map(Some(_)) else IO.pure(None)).flatMap { body=>
       accountBoundary(r)
-      val (secure,previous)=presented(auth,r)
-      accounts.imperativeRequest(auth,settings,r.method.name,r.uri.path.renderString.stripPrefix(Http.AccountRoot),body,all(r,"X-Account-Actor"),previous,clientAddress(r))
-        .flatMap(accountReply(_,secure,previous))
+      val auth=getAuth()
+      auth.imperative match {
+        case None=>IO.pure(json(Status.NotFound,AccountJson.failure("not-found")))
+        case Some(settings)=>
+          val (secure,previous)=presented(auth,r)
+          accounts.imperativeRequest(auth,settings,r.method.name,r.uri.path.renderString.stripPrefix(Http.AccountRoot),body,all(r,"X-Account-Actor"),previous,clientAddress(r))
+            .flatMap(accountReply(_,secure,previous))
+      }
     }
+  }
+  /** The imperative-account protocol: a `503` raised outside the dispatcher once a request was routed to it (for
+    * example an unavailable database or a reload that failed meanwhile) also carries `Retry-After`. */
+  private def imperativeHandled(operation: =>IO[Response[IO]]):IO[Response[IO]]=accountHandled(operation).map { response=>
+    if(response.status!=Status.ServiceUnavailable || response.headers.get(CIString("Retry-After")).nonEmpty)response
+    else response.putHeaders(Header.Raw(CIString("Retry-After"),ImperativeAccountApi.UnavailableRetryAfterSeconds.toString))
   }
   /** Fixed telemetry labels of the account endpoints added for imperative accounts. */
   private def accountLabel(method:Method,path:String):Option[String]=
@@ -161,7 +174,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
           case Some(settings)=>
             accountBoundary(r)
             val (secure,previous)=presented(auth,r)
-            accounts.imperativeLogin(auth,settings,raw,previous,clientAddress(r)).flatMap(accountReply(_,secure,previous))
+            imperativeHandled(accounts.imperativeLogin(auth,settings,raw,previous,clientAddress(r)).flatMap(accountReply(_,secure,previous)))
           case None=>
             val (login,password)=AccountJson.decodeLogin(raw)
             accountBoundary(r)
@@ -189,11 +202,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       emptyAccountBody(r,a) *> accounts.logout(a,all(r,"X-Account-Actor")) *> hub.endSession(a.token).as(json(Status.Ok,Json.obj("ok"->Json.True)).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(None,a.secureCookie))))
     }}
     case r if r.uri.path.renderString.startsWith(Http.AccountPrefix)=>accountHandled {IO(accountBoundary(r)) *> IO.defer {
-      val auth=getAuth()
-      auth.imperative match {
-        case Some(settings)=>imperativeAccount(r,auth,settings)
-        case None=>IO.pure(json(Status.NotFound,AccountJson.failure("not-found")))
-      }
+      if(getAuth().imperative.isEmpty)IO.pure(json(Status.NotFound,AccountJson.failure("not-found"))) else imperativeHandled(imperativeAccount(r))
     }}
     case r if r.uri.path.renderString.startsWith("/api/account/")=>accountHandled {IO {accountBoundary(r);json(Status.NotFound,AccountJson.failure("not-found"))}}
     case r @ POST -> Root / "api" / "v1" / "login" =>handled {
