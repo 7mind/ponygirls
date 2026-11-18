@@ -54,12 +54,13 @@ test('supported theme listener restart retains an unsaved tab-local preference a
   fixture.readFails = true; fixture.externalPreference('dark'); assert.deepEqual(controller.getSnapshot(), { preference: 'system', resolved: 'light', persistence: 'unavailable' });
   fixture.readFails = false; fixture.externalPreference('dark'); assert.deepEqual(controller.getSnapshot(), { preference: 'dark', resolved: 'dark', persistence: 'available' }); stopSystem();
 });
-test('external prepaint initializer agrees with the theme policy, including denied and invalid persistence', () => {
-  const source = readFileSync(new URL('../public/theme-init.js', import.meta.url), 'utf8');
+test('shared bootstrap and Chronicle prepaint agree with the theme policy, including denied and invalid persistence', () => {
+  const bootstrap = readFileSync(process.env.UI_WEB_ROOT === undefined ? new URL('../../../shared/ui-web/theme-init.js', import.meta.url) : `${process.env.UI_WEB_ROOT}/theme-init.js`, 'utf8'), prepaint = readFileSync(new URL('../public/theme-init.js', import.meta.url), 'utf8');
   for (const raw of [null, 'system', 'light', 'dark', 'invalid']) for (const dark of [false, true]) for (const denied of [false, true]) {
     const fixture = new ThemeFixture(); fixture.value = raw; fixture.dark = dark; fixture.readFails = denied; const expected = fixture.controller().getSnapshot();
-    const root = { dataset: {} as Record<string, string>, style: { colorScheme: '', backgroundColor: '' } }, meta = { content: '' };
-    runInNewContext(source, { document: { documentElement: root, querySelector: () => meta }, window: { get localStorage() { if (denied) throw new Error('Storage denied'); return { getItem: () => raw }; }, matchMedia: () => ({ matches: dark }) } });
-    assert.deepEqual(root.dataset, { theme: expected.resolved, themePreference: expected.preference, themePersistence: expected.persistence }); assert.equal(root.style.colorScheme, expected.resolved); assert.equal(root.style.backgroundColor, expected.resolved === 'dark' ? '#242c37' : '#f1f5f9'); assert.equal(meta.content, root.style.backgroundColor);
+    const root = { dataset: { app: 'chronicle' } as Record<string, string>, style: { colorScheme: '', backgroundColor: '' } }, meta = { content: '' }, listen = () => {};
+    const context = { document: { documentElement: root, querySelector: () => meta, addEventListener: listen }, window: { get localStorage() { if (denied) throw new Error('Storage denied'); return { getItem: () => raw }; }, matchMedia: () => ({ matches: dark, addEventListener: listen }), addEventListener: listen } };
+    runInNewContext(bootstrap, context); runInNewContext(prepaint, context);
+    assert.deepEqual(root.dataset, { app: 'chronicle', theme: expected.resolved, themeChoice: expected.preference, themePersistence: expected.persistence }); assert.equal(root.style.colorScheme, expected.resolved); assert.equal(root.style.backgroundColor, expected.resolved === 'dark' ? '#242c37' : '#f1f5f9'); assert.equal(meta.content, root.style.backgroundColor);
   }
 });

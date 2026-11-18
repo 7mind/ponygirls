@@ -5,7 +5,8 @@
  * unknown value → system + invalid) and keeps data-theme in step with the OS while the choice is system.
  * Hosts change the choice with document.dispatchEvent(new CustomEvent('ui:theme-choice', { detail: 'dark' })):
  * it is applied at once and persisted when storage is writable (otherwise persistence becomes unavailable
- * and the choice lasts for this page). Other tabs follow through the storage event.
+ * and the choice lasts for this page). Other tabs follow through the storage event; an unreadable
+ * store keeps the current choice.
  * This script must be the only writer of these attributes.
  */
 (() => {
@@ -37,7 +38,8 @@
   media.addEventListener('change', apply);
   window.addEventListener('storage', event => {
     if (event.key !== key && event.key !== null) return;
-    state = read();
+    const saved = read();
+    state = saved.persistence === 'unavailable' ? { choice: state.choice, persistence: 'unavailable' } : saved;
     apply();
   });
   document.addEventListener(CHOICE_EVENT, event => {

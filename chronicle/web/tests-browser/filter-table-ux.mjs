@@ -50,6 +50,13 @@ try {
     await page.getByRole('button', { name: 'activity', exact: true }).click(); const code = page.locator('.activity-collector-row td[data-column="CollectorId"] code').first(); await code.waitFor(); await (await openTableOptions(page, 'Collectors')).getByRole('button', { name: 'Fit to content', exact: true }).click();
     const measured = await code.evaluate(element => ({ scroll: element.scrollWidth, client: element.clientWidth, font: getComputedStyle(element).font, parentFont: getComputedStyle(element.parentElement).font })); assert.ok(measured.scroll <= measured.client + 1, `Fit must honor the rendered font: ${JSON.stringify(measured)}`); await context.close();
   });
+  await group('content fitting honours tabular numerals of the self-hosted font', async () => {
+    // Inter (shared/ui-web) has proportional default digits; tabular-nums cells are wider than their canvas metrics.
+    const { context, page } = await scene(1280, 'light'); await page.addStyleTag({ url: '/ui/tokens.css' }); await page.evaluate(() => document.fonts.load('10px Inter'));
+    await (await openTableOptions(page, 'Conversations')).getByRole('button', { name: 'Fit to content', exact: true }).click();
+    const cells = await page.locator('.archive-row td[data-column-id="LastTimestamp"]').evaluateAll(elements => elements.map(element => ({ text: element.textContent, scroll: element.scrollWidth, client: element.clientWidth, numeric: getComputedStyle(element).fontVariantNumeric })));
+    assert.ok(cells.length > 0); for (const cell of cells) assert.ok(cell.scroll <= cell.client, `Fit must honor tabular numerals: ${JSON.stringify(cell)}`); await context.close();
+  });
   await group('content fitting follows rendered whitespace collapse in metadata titles', async () => {
     const { context, page } = await scene(1280, 'light', fixture => { fixture.activityJobs = fixture.jobRows.map(row => row.with({ session: row.session.with({ metadata: row.session.metadata.with({ title: 'word\n'.repeat(18) }) }) })); }); await page.getByRole('button', { name: 'activity', exact: true }).click(); const title = page.locator('.activity-job-title').first(); await title.waitFor(); await (await openTableOptions(page, 'Indexing jobs')).getByRole('button', { name: 'Fit to content', exact: true }).click(); const size = await title.evaluate(element => ({ scroll: element.scrollWidth, client: element.clientWidth, whitespace: getComputedStyle(element).whiteSpace })); assert.ok(size.scroll <= size.client + 1, `Fit must follow rendered whitespace: ${JSON.stringify(size)}`); await context.close();
   });

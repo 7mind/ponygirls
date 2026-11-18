@@ -55,9 +55,11 @@ base rules (box sizing, margin resets, body background, `.masthead`, `.brand`, `
 restyle the current views. The shell units (UX-C1, UX-H1, UX-M1) activate it by removing that attribute
 when they replace the shell. `tokens.css` is active and inert for the current views: their own
 unlayered custom properties win, and they already name `Inter` first in their font stacks, so the only
-visible effect is that Inter is now actually available. Chronicle still runs its own
-`chronicle/web/public/theme-init.js` and `src/theme.ts` (same storage key `chronicle.theme.preference`);
-UX-C1 replaces them with `/ui/theme-init.js` — two writers of `data-theme` must not run together.
+visible effect is that Inter is now actually available. All three hosts run `/ui/theme-init.js`.
+In Chronicle it is the only writer of the theme attributes: `src/theme.ts` keeps the existing control
+and storage key (`chronicle.theme.preference`), changes the choice through the `ui:theme-choice` event
+and fails fast if the attributes disagree with its state; `public/theme-init.js` only adds Chronicle's
+prepaint canvas colour and `theme-color` from the resolved `data-theme`.
 
 ## Theme
 

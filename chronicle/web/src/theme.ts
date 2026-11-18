@@ -44,16 +44,22 @@ export class ThemeController {
   }
 }
 
+// /ui/theme-init.js (shared/ui-web) is the only writer of data-theme, data-theme-choice and data-theme-persistence and
+// persists the choice; this controller reads the same storage and asks the bootstrap to change the choice.
+export const THEME_CHOICE_EVENT = 'ui:theme-choice';
 export function browserTheme(window: Window, document: Document): ThemeController {
-  const media = window.matchMedia('(prefers-color-scheme: dark)');
+  const root = document.documentElement, media = window.matchMedia('(prefers-color-scheme: dark)');
+  if (root.dataset.themeChoice === undefined) throw new Error('The theme bootstrap /ui/theme-init.js did not run.');
   const store: ThemePreferenceStore = {
     read: () => window.localStorage.getItem(THEME_STORAGE_KEY),
-    write: preference => window.localStorage.setItem(THEME_STORAGE_KEY, preference),
+    write: preference => { document.dispatchEvent(new CustomEvent(THEME_CHOICE_EVENT, { detail: preference })); if (root.dataset.themePersistence === 'unavailable') throw new Error('Theme preference cannot be saved.'); },
     subscribe: changed => { const listener = (event: StorageEvent) => { if (event.key === THEME_STORAGE_KEY || event.key === null) changed(); }; window.addEventListener('storage', listener); return () => window.removeEventListener('storage', listener); },
   };
   const system: SystemTheme = { isDark: () => media.matches, subscribe: changed => { media.addEventListener('change', changed); return () => media.removeEventListener('change', changed); } };
   const target: ThemeTarget = { apply: theme => {
-    const root = document.documentElement; root.dataset.theme = theme.resolved; root.dataset.themePreference = theme.preference; root.dataset.themePersistence = theme.persistence; root.style.colorScheme = theme.resolved; root.style.removeProperty('background-color');
+    const shown = { resolved: root.dataset.theme, preference: root.dataset.themeChoice, persistence: root.dataset.themePersistence };
+    if (shown.resolved !== theme.resolved || shown.preference !== theme.preference || shown.persistence !== theme.persistence) throw new Error(`Theme bootstrap state ${JSON.stringify(shown)} disagrees with ${JSON.stringify(theme)}.`);
+    root.style.colorScheme = theme.resolved; root.style.removeProperty('background-color');
     const color = window.getComputedStyle(root).getPropertyValue('--canvas').trim(), meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
     if (meta !== null && color.length > 0) meta.content = color;
   } };

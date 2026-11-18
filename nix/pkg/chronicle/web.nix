@@ -34,7 +34,7 @@ buildNpmPackage {
   checkPhase = ''
     runHook preCheck
     cd web
-    npm test
+    UI_WEB_ROOT=${uiWeb} npm test
     cd ..
     runHook postCheck
   '';
