@@ -14,4 +14,7 @@ class TimingDefaultsTest extends munit.FunSuite {
   test("the service is wired with a 10 s Hello wait, a Ping every 20 s answered within 10 s, and a session recheck every second") {
     assertEquals(wired[Http.SocketLiveness],Http.SocketLiveness(10.seconds,20.seconds,10.seconds,1.second))
   }
+  test("the service is wired with a 2 s worker back-off after a failed job") {
+    assertEquals(wired[Worker.FailureBackoff],Worker.FailureBackoff(2.seconds))
+  }
 }

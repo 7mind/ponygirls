@@ -29,6 +29,7 @@ object ChroniclePlugin extends PluginDef {
   make[ModelHttp]
   make[ProblemPassageAnnotator].from[OpenAIProblemPassageAnnotator]
   make[Embedder].from[OpenAIEmbedder]
+  make[Worker.FailureBackoff].fromValue(Worker.FailureBackoff.production)
   make[Worker]
   make[java.time.Clock].fromValue(java.time.Clock.systemUTC())
   make[CollectorProgressStore].from[PostgresCollectorProgressStore]

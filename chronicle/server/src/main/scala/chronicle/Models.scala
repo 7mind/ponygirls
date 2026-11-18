@@ -83,7 +83,7 @@ final class OpenAIEmbedder(http: ModelHttp,config: Config) extends Embedder {
     }
   }
 }
-final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger) {
+final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger,failureBackoff: Worker.FailureBackoff) {
   private val leaseSeconds = 300
   private final class AnnotationExhausted(val reason: String) extends RuntimeException(AnnotationAttempts.exhaustedCode) {
     def code: String = if(reason==AnnotationAttempts.callLimitReason) AnnotationAttempts.reservationExhaustedCode else AnnotationAttempts.exhaustedCode
@@ -216,7 +216,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
           val origin=failureOrigin(error); val details=failureDetails(error); val reason=details.reason; val httpStatus=details.httpStatus
           IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code exceptionClass=$exceptionClass origin=$origin reason=$reason httpStatus=$httpStatus")) *> IO.blocking {
             stage match { case Some(value) => archive.fail(claim,code,value); case None => archive.fail(claim,code) }
-          } *> IO.sleep(2.seconds)
+          } *> IO.sleep(failureBackoff.delay)
       }
     }
   }
@@ -229,5 +229,12 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   def run: IO[Nothing] = {
     val lane: IO[Nothing]=(once.flatMap(found => if(found) IO.unit else IO.sleep(1.second))).foreverM
     List.fill(config.indexing.annotationSessions)(lane).parSequence.map(_.head)
+  }
+}
+object Worker {
+  /** How long a worker lane stays idle after recording a failed job. */
+  final case class FailureBackoff(delay: FiniteDuration)
+  object FailureBackoff {
+    val production: FailureBackoff = FailureBackoff(2.seconds)
   }
 }

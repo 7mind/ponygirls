@@ -5,6 +5,8 @@ import cats.effect.unsafe.implicits.global
 import org.http4s.client.Client
 
 object ModelFixtures {
+  // Tests do not wait out the production back-off after a failed job.
+  val failureBackoff: Worker.FailureBackoff = Worker.FailureBackoff(scala.concurrent.duration.DurationInt(10).millis)
   def http(client: Client[IO],config: Config): ModelHttp = {
     val clock=new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO])
     (for {
@@ -20,6 +22,6 @@ object ModelFixtures {
   }
   def worker(archive: SessionArchive,annotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,logger: logstage.IzLogger): Worker = {
     val admission=ModelAdmission.make(config.indexing).unsafeRunSync()
-    new Worker(archive,annotator,embedder,config,IndexProfileCatalog.current(config),admission,logger)
+    new Worker(archive,annotator,embedder,config,IndexProfileCatalog.current(config),admission,logger,failureBackoff)
   }
 }
