@@ -40,6 +40,7 @@ object ChroniclePlugin extends PluginDef {
   make[ModelConfig].from { (config: Config) => config.annotation }
   make[McpTestModel].from[OpenAIMcpTestModel]
   make[McpRunClock].from[SystemMcpRunClock]
+  make[Http.SocketLiveness].fromValue(Http.SocketLiveness.production)
   make[Http.WebRoot].from { () => Http.WebRoot(sys.env.get("CHRONICLE_WEB_ROOT")) }
   make[VersionedWire]
   make[McpTestWire]

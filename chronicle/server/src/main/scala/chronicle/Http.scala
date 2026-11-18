@@ -14,7 +14,7 @@ import ponygirls.auth.{AccountJson,AccountFailure,PersistentCookie,AccountCreden
 import java.nio.file.{Files,Path}
 import scala.concurrent.duration.*
 
-final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot,protocol: VersionedWire,rpc: BrowserRpc,controls: BrowserControlAdmission) {
+final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot,protocol: VersionedWire,rpc: BrowserRpc,controls: BrowserControlAdmission,liveness: Http.SocketLiveness) {
   private val socketQueueCapacity = 32
   private val retryableCloseCode = 1013
   private val normalCloseCode = 1000
@@ -259,6 +259,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     heartbeat <- Ref.of[IO,Option[(UUID,String,FiniteDuration)]](None)
     connectionId <- IO(UUID.randomUUID())
     opened <- IO.monotonic
+    nextPing <- Ref.of[IO,FiniteDuration](opened+liveness.pingEvery)
     close = (code: Int,failure: Option[ServerEnvelope]) => IO.uncancelable(_ => closed.set(true) *> cleanup.get.flatten *> ending.complete(Http.SocketClose(code,failure)).void)
     enqueue = (output: Http.SocketOutput) => closed.get.ifM(IO.unit,queue.tryOffer(output).flatMap { accepted =>
       if(accepted) IO.unit else close(retryableCloseCode,None)
@@ -320,19 +321,19 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
         case _ => error(new UUID(0,0),DomainError("protocol-error","text JSON frames required"))
       }
     })
-    tick = Stream.awakeEvery[IO](1.second).evalMap { _ => closed.get.ifM(IO.unit,IO.monotonic.flatMap { now =>
+    tick = Stream.awakeEvery[IO](liveness.tick).evalMap { _ => closed.get.ifM(IO.unit,IO.monotonic.flatMap { now =>
       IO.blocking(auth.browser(cookie(r))).attempt.flatMap {
         case Left(d: DomainError) if d.code=="unauthorized" => error(new UUID(0,0),d)
         case Left(_) =>
           // A bare retryable close cannot overtake Hello with an ordinary, not-yet-negotiated error frame.
           IO(logger.error("session verification failed")) *> close(retryableCloseCode,None)
         case Right(_) => negotiated.get.flatMap { ready =>
-          if(ready.isEmpty && now-opened>10.seconds) close(retryableCloseCode,None)
+          if(ready.isEmpty && now-opened>liveness.hello) close(retryableCloseCode,None)
           else if(ready.isEmpty) IO.unit
           else heartbeat.get.flatMap {
             case Some((_,_,deadline)) if now>deadline => close(retryableCloseCode,None)
             case Some(_) => IO.unit
-            case None => if((now-opened).toSeconds%20==0) { val id=UUID.randomUUID(); val nonce=Wire.secret(); heartbeat.set(Some((id,nonce,now+10.seconds))) *> send(ServerEnvelope(id,Result.Ping(nonce))) } else IO.unit
+            case None => nextPing.get.flatMap(due => if(now>=due) { val id=UUID.randomUUID(); val nonce=Wire.secret(); nextPing.set(now+liveness.pingEvery) *> heartbeat.set(Some((id,nonce,now+liveness.pongWithin))) *> send(ServerEnvelope(id,Result.Ping(nonce))) } else IO.unit)
           }
         }
       }
@@ -385,6 +386,11 @@ object Http {
   def loopback(peer: String): Boolean = try java.net.InetAddress.ofLiteral(peer).isLoopbackAddress catch { case _: IllegalArgumentException => false }
   def retryAfterSeconds(wait: java.time.Duration): Long = math.max(1L,wait.getSeconds+(if(wait.getNano>0) 1L else 0L))
   final case class WebRoot(path: Option[String])
+  /** `hello` bounds the wait for Hello, a Ping is due every `pingEvery` and its Pong within `pongWithin`; the session is rechecked every `tick`. */
+  final case class SocketLiveness(hello: FiniteDuration,pingEvery: FiniteDuration,pongWithin: FiniteDuration,tick: FiniteDuration)
+  object SocketLiveness {
+    val production: SocketLiveness = SocketLiveness(10.seconds,20.seconds,10.seconds,1.second)
+  }
   private enum SocketOutput {
     case Reply(value: BrowserReply)
     case Frame(value: WebSocketFrame)
