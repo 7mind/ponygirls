@@ -98,6 +98,13 @@ try {
     await context.addInitScript(() => {
       window.nativeDialogs = [];
       for (const name of ["alert", "confirm", "prompt"]) window[name] = (...args) => { window.nativeDialogs.push([name, ...args]); return null; };
+      // Record-list searches as the page sends them (the masthead's Inbox count uses its own page size).
+      window.listSearches = [];
+      const send = window.fetch.bind(window);
+      window.fetch = (resource, init) => {
+        if (String(resource).endsWith("/api/v1/search") && JSON.parse(String(init.body)).limit === 20) window.listSearches.push(JSON.parse(String(init.body)).query);
+        return send(resource, init);
+      };
     });
     const page = await context.newPage();
     if (clock) await page.clock.install();
@@ -145,6 +152,14 @@ try {
       assert.equal(hidden, viewport === DESKTOP, "Project is shown at 1440 and hidden at 1024: the table stays a table");
       await done();
     }
+  });
+
+  await check("browse: the first connection does not refetch the list it has just loaded", async () => {
+    const { page, done } = await open({ hash: scrollList });
+    await waitRows(page, PAGE);
+    await frames(page);
+    assert.deepEqual(await page.evaluate(() => window.listSearches), ["project:scroll"], "one search: the first resync does not reload the list (spec §5 rule 6, H-03)");
+    await done();
   });
 
   await check("browse sorts the complete result set from the header, restarts the loaded chain and keeps the sort across a reload", async () => {

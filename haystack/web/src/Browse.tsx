@@ -348,8 +348,11 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
   // A live change never resets a list: an untouched first page reloads in place; a list the reader has scrolled or
   // extended announces the change, and Show reloads the whole loaded chain in place (spec §1.5, §5 rule 6).
   const refresh = () => run(applied.current, { kind: "refresh", rows: Math.max(items.length, PAGE_SIZE) });
+  // The first connection's resynchronisation follows the list's own first load and does not refetch it (spec §5
+  // rule 6, H-03); a list mounted later starts from the live version it was mounted at.
+  const mountedVersion = useRef(live.version);
   useEffect(() => {
-    if (live.version === 0) return;
+    if (live.version === mountedVersion.current || (live.version === 1 && live.key === null)) return;
     const top = visible(section.current) ? window.scrollY : pageTop.current;
     if (top === 0 && items.length <= PAGE_SIZE) void refresh();
     else setChanged(true);
