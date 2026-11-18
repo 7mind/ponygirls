@@ -4,6 +4,9 @@ cd "$(dirname "$0")/../.."
 # Usage: test-target.sh jvm [TEST...]
 #        test-target.sh native /absolute/server [TEST...]
 # Without TEST names the run is full; named tests are an iterative diagnostic.
+# A full run shards by test class over worker processes against the one owned
+# cluster (target-suite.py --shards); MANURE_TARGET_SHARDS=N overrides the count,
+# MANURE_TARGET_SHARDS=1 runs one serial process.
 : "${POSTGRES_HOME:?use pinned nix develop .#chronicle}"
 mode=${1:?jvm or native}; shift
 # Never inherit operator/agent live-service settings into disposable verification.
@@ -67,7 +70,7 @@ if [[ $mode == jvm ]]; then
 fi
 set +e
 # Finite whole-suite deadline, in addition to fixture/readiness/body/DB/browser bounds.
-timeout 1800 python3 manure/scripts/target-suite.py --report "$report" "$@" 2>&1 | tee "$report/run.log"
+timeout 1800 python3 manure/scripts/target-suite.py --report "$report" ${MANURE_TARGET_SHARDS:+--shards "$MANURE_TARGET_SHARDS"} "$@" 2>&1 | tee "$report/run.log"
 status=${PIPESTATUS[0]}
 set -e
 if [[ $owned_direct == 1 ]]; then cp "$base/server.log" "$report/postgres-server.log"; fi
