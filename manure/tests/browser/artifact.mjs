@@ -28,7 +28,8 @@ const check = async (name, run) => {
     page.on("request", (request) => urls.push(request.url()));
     await page.addInitScript(() => {
       // commands: names of the API commands sent; failPatch: answer the next PatchArtifact with 503; holdInfo: hold a GetArtifact reply.
-      window.__artifact = { commands: [], patches: [], failPatch: false, holdInfo: null, releaseInfo: null };
+      // dropDelete: send the next DeleteArtifact, then lose its answer; refuseClipboard: set while a held clipboard write waits.
+      window.__artifact = { commands: [], patches: [], failPatch: false, holdInfo: null, releaseInfo: null, dropDelete: false, refuseClipboard: null };
       const original = window.fetch.bind(window);
       window.fetch = (url, options) => {
         const state = window.__artifact;
@@ -42,6 +43,10 @@ const check = async (name, run) => {
             state.failPatch = false;
             return Promise.resolve(new Response(JSON.stringify({ requestId: envelope.requestId, result: { Error: { failure: { code: "Unavailable", message: "controlled fixture", retryAfterSeconds: 1 } } } }), { status: 503, headers: { "Content-Type": "application/json" } }));
           }
+        }
+        if (command?.DeleteArtifact && state.dropDelete) {
+          state.dropDelete = false;
+          return original(url, options).then((res) => res.text()).then(() => { throw new Error("test-response-lost"); });
         }
         const response = original(url, options);
         if (command?.GetArtifact && command.GetArtifact.artifactId === state.holdInfo) {
@@ -226,7 +231,7 @@ await check("a missing artifact is a page state; a denied retrieval hit leaves n
   assert.equal(await page.locator("#retrieval-results").textContent(), "", "the denied artifact and its evidence are not shown again");
 });
 
-await check("the external password is masked; Reveal and Copy read it without rotating; Rotate asks first; it clears on leaving", async (page) => {
+await check("the external password is masked; Reveal and Copy read it without rotating; a refused clipboard stays in the page; Rotate asks first; it clears on leaving", async (page) => {
   await open(page, input.rotating, "artifact-rotating");
   assert.equal(await password(page).textContent(), "", "masked until revealed");
   await page.getByRole("button", { name: "Reveal password", exact: true }).click();
@@ -238,6 +243,13 @@ await check("the external password is masked; Reveal and Copy read it without ro
   await page.getByText("External password copied", { exact: true }).waitFor();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), input.rotatingPassword);
   assert.equal(await password(page).textContent(), "", "copying does not reveal");
+  // A refused clipboard shows the password in the page's own box, never in a separate dialog.
+  await page.evaluate(() => Object.defineProperty(navigator.clipboard, "writeText", { configurable: true, value: () => Promise.reject(new DOMException("denied", "NotAllowedError")) }));
+  await page.getByRole("button", { name: "Copy password", exact: true }).click();
+  await page.getByText(/^The browser did not allow clipboard access/).waitFor();
+  assert.equal(await password(page).textContent(), input.rotatingPassword);
+  assert.equal(await page.getByRole("dialog").count(), 0, "no dialog holds the password");
+  await page.getByRole("button", { name: "Hide password", exact: true }).click();
   const confirm = page.getByRole("dialog", { name: "Rotate the external password?" });
   await page.getByRole("button", { name: "Rotate password…", exact: true }).click();
   await confirm.waitFor();
@@ -257,10 +269,20 @@ await check("the external password is masked; Reveal and Copy read it without ro
   assert.match(rotated, /^[A-Za-z0-9_-]{43}$/);
   assert.notEqual(rotated, input.rotatingPassword);
   assert.equal(await commands(page, "RotateExternalPassword"), 1, "only the confirmation rotates");
-  assert.equal(await commands(page, "GetExternalPassword"), 2, "Reveal and Copy each read once");
+  assert.equal(await commands(page, "GetExternalPassword"), 3, "Reveal and each Copy read once");
+  // A clipboard refusal that arrives after leaving the page shows nothing.
+  await page.evaluate(() => Object.defineProperty(navigator.clipboard, "writeText", { configurable: true,
+    value: () => new Promise((_, reject) => { window.__artifact.refuseClipboard = () => reject(new DOMException("denied", "NotAllowedError")); }) }));
+  await page.getByRole("button", { name: "Copy password", exact: true }).click();
+  await page.waitForFunction(() => typeof window.__artifact.refuseClipboard === "function");
   await page.locator("#detail-viewbar").getByRole("link", { name: "Back to artifacts", exact: true }).click();
   await page.locator('[data-view="catalogue"]').waitFor({ state: "visible" });
   assert.equal(await password(page).textContent(), "", "leaving clears the password");
+  await page.evaluate(() => window.__artifact.refuseClipboard());
+  await settle(page);
+  assert.equal(await page.getByRole("dialog").count(), 0);
+  assert.equal(await page.evaluate((secret) => document.documentElement.outerHTML.includes(secret) ||
+    [...document.querySelectorAll("input, textarea")].some((field) => field.value.includes(secret)), rotated), false, "the password is nowhere in the page after leaving");
   await open(page, input.rotating, "artifact-rotating");
   assert.equal(await password(page).textContent(), "");
   await page.getByRole("button", { name: "Reveal password", exact: true }).click();
@@ -311,7 +333,7 @@ await check("access changes wait for the confirmation; a failed change shows the
   assert.equal(await commands(page, "PatchArtifact"), 2);
 });
 
-await check("rename and expiry are PatchArtifact edits; Escape and an invalid date send nothing", async (page) => {
+await check("rename and expiry are PatchArtifact edits; Escape, an invalid date, a switched editor or a stale draft send nothing", async (page) => {
   await open(page, input.editable, "artifact-editable");
   await page.getByRole("button", { name: "Rename", exact: true }).click();
   const field = page.getByRole("textbox", { name: "Artifact name", exact: true });
@@ -324,6 +346,25 @@ await check("rename and expiry are PatchArtifact edits; Escape and an invalid da
   await field.press("Enter");
   await page.getByRole("heading", { level: 1, name: "artifact-renamed", exact: true }).waitFor();
   assert.equal((await info(page, input.editable)).name, "artifact-renamed");
+  // One editor at a time, and no draft follows to another artifact or back.
+  const expires = page.getByRole("combobox", { name: "Expires", exact: true });
+  await page.getByRole("button", { name: "Rename", exact: true }).click();
+  await field.fill("draft before switching");
+  await page.getByRole("button", { name: "Change expiry", exact: true }).click();
+  assert.equal(await field.count(), 0, "opening the expiry editor closes rename");
+  await page.getByRole("button", { name: "Rename", exact: true }).click();
+  assert.equal(await expires.count(), 0, "opening rename closes the expiry editor");
+  assert.equal(await field.inputValue(), "artifact-renamed", "a closed draft is not restored");
+  await field.fill("stale draft");
+  await open(page, input.bundle, "artifact-bundle");
+  assert.equal(await field.count(), 0, "no rename draft on another artifact");
+  await page.getByRole("button", { name: "Change expiry", exact: true }).click();
+  await page.goBack();
+  await page.getByRole("heading", { level: 1, name: "artifact-renamed", exact: true }).waitFor();
+  await pageState(page, "loaded");
+  assert.equal(await field.count() + await expires.count(), 0, "no editor survives the round trip");
+  assert.equal(await commands(page, "PatchArtifact"), 1, "no stale draft was sent");
+  assert.equal((await info(page, input.bundle)).name, "artifact-bundle");
   await page.getByRole("button", { name: "Change expiry", exact: true }).click();
   await page.getByRole("combobox", { name: "Expires", exact: true }).selectOption("custom");
   await page.getByLabel("Expiry date and time", { exact: true }).fill("2001-01-01T00:00");
@@ -347,7 +388,7 @@ await check("rename and expiry are PatchArtifact edits; Escape and an invalid da
     { name: null, visibility: null, expiry: { Clear: {} } }]);
 });
 
-await check("delete confirms in an in-app dialog naming the artifact; a hostile name stays inert text", async (page) => {
+await check("delete confirms in an in-app dialog naming the artifact; a hostile name stays inert text; a lost answer is reconciled", async (page) => {
   await page.addInitScript(() => { window.confirm = () => { throw new Error("window.confirm used"); }; window.alert = () => { throw new Error("window.alert used"); }; });
   const name = '<img src=x onerror=alert("xss")> artifact-hostile';
   await page.getByRole("combobox", { name: "Search artifacts" }).fill("artifact-hostile");
@@ -373,6 +414,20 @@ await check("delete confirms in an in-app dialog naming the artifact; a hostile 
   await page.locator('[data-view="catalogue"]').waitFor({ state: "visible" });
   await page.getByText("Artifact deleted", { exact: true }).waitFor();
   assert.equal((await api(page, { GetArtifact: { artifactId: input.hostile } })).status, 404);
+  // A delete applied by the server whose answer is lost: the page re-reads the artifact and shows it is gone.
+  await page.getByRole("combobox", { name: "Search artifacts" }).fill("artifact-doomed");
+  await page.getByRole("combobox", { name: "Search artifacts" }).press("Enter");
+  await page.getByRole("link", { name: "artifact-doomed", exact: true }).click();
+  await pageState(page, "loaded");
+  await page.evaluate(() => { window.__artifact.dropDelete = true; });
+  await remove.click();
+  await confirm.getByRole("button", { name: "Delete artifact", exact: true }).click();
+  await pageState(page, "not-found");
+  assert.equal((await api(page, { GetArtifact: { artifactId: input.doomed } })).status, 404);
+  await page.locator("#detail-missing").getByRole("link", { name: "Back to artifacts", exact: true }).click();
+  await page.locator('[data-view="catalogue"]').waitFor({ state: "visible" });
+  await counterLoaded(page);
+  assert.equal(await page.locator(`#artifact-list tr[data-artifact-id="${input.doomed}"]`).count(), 0, "the list does not restore the deleted row");
 });
 
 await check("Open artifact hands an internal artifact to its isolated origin without dashboard credentials", async (page) => {

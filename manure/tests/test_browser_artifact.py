@@ -32,6 +32,7 @@ class ArtifactPageTests(unittest.TestCase):
         rotating = put("artifact-rotating", "file", "external", {"note.txt": b"rotating"})
         public = put("artifact-public", "dir", "public", {"index.html": b"<h1>Public preview</h1>"})
         hostile = put('<img src=x onerror=alert("xss")> artifact-hostile', "file", "internal", {"note.txt": b"inert"})
+        doomed = put("artifact-doomed", "file", "internal", {"note.txt": b"doomed"})
         denied = put("artifact-denied", "dir", "internal", {"index.html": b"denied"})
         access = put("artifact-access", "file", "internal", {"note.txt": b"access"})
         editable = put("artifact-editable", "file", "internal", {"note.txt": b"edit"}, expires_in_s=3600)
@@ -51,7 +52,7 @@ class ArtifactPageTests(unittest.TestCase):
                    "bundle": bundle["artifact_id"], "big": big["artifact_id"], "files": SHARDS * PARTS + 1,
                    "protected": protected["artifact_id"], "protectedPassword": protected["external_password"],
                    "rotating": rotating["artifact_id"], "rotatingPassword": rotating["external_password"],
-                   "public": public["artifact_id"], "hostile": hostile["artifact_id"], "denied": denied["artifact_id"],
+                   "public": public["artifact_id"], "hostile": hostile["artifact_id"], "doomed": doomed["artifact_id"], "denied": denied["artifact_id"],
                    "access": access["artifact_id"], "editable": editable["artifact_id"], "uploading": uploading}
         result = subprocess.run([bf.node_bin(), str(Path(__file__).resolve().parent / "browser/artifact.mjs")],
                                 input=json.dumps(payload).encode(), capture_output=True, timeout=300)
