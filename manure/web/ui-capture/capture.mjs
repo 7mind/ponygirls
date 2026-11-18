@@ -856,8 +856,9 @@ SCENES.m2 = async () => {
   }
   const settings = async (page, access) => {
     if (access) await page.getByRole("group", { name: "Access" }).getByRole("button", { name: access, exact: true }).click();
-    await page.getByLabel("Expires", { exact: true }).selectOption("7");
-    await page.getByLabel(/^Tags/).fill("release, report");
+    const card = page.getByRole("region", { name: "Settings for this upload" });
+    await card.getByLabel("Expires", { exact: true }).selectOption("7");
+    await card.getByLabel(/^Tags/).fill("release, report");
   };
   const press = (page) => page.getByRole("button", { name: /^Upload \d+ files?$/ }).click();
   for (const [vp, scheme] of [[VP.d, "light"], [VP.s, "light"], [VP.m, "light"], [VP.d, "dark"], [VP.m, "dark"]]) {
