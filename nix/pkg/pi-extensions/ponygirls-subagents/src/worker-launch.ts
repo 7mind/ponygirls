@@ -101,6 +101,8 @@ export class WorkerHandle {
   private onPrepareRequest: ToolPrepareHandler | null = null;
   private onTicketRelease: ToolTicketReleaseHandler | null = null;
   private onProviderAdmissionRequest: ProviderAdmissionHandler | null = null;
+  private onBackendRequest: ((payload: unknown, envelope: IpcEnvelope) => Promise<unknown>) | null = null;
+  private onBackendDispose: (() => void) | null = null;
   private onExit: WorkerExitHandler | null = null;
   private stdoutTail = Buffer.alloc(0);
   private stderrTail = Buffer.alloc(0);
@@ -152,6 +154,17 @@ export class WorkerHandle {
 
   setProviderAdmissionRequestHandler(handler: ProviderAdmissionHandler): void {
     this.onProviderAdmissionRequest = handler;
+  }
+
+  setBackendRequestHandler(handler: (payload: unknown, envelope: IpcEnvelope) => Promise<unknown>, dispose: () => void): void {
+    this.onBackendRequest = handler;
+    this.onBackendDispose = dispose;
+  }
+
+  private retireBackend(): void {
+    const dispose = this.onBackendDispose;
+    this.onBackendDispose = null;
+    if (dispose !== null) dispose();
   }
 
   /** Called once if the process exits without being disposed by the supervisor. */
@@ -207,7 +220,9 @@ export class WorkerHandle {
         reject(new Error(`worker exited during handshake (code ${code}, signal ${signal}): ${this.stderrTail.toString("utf8").slice(-2000)}`));
       });
     });
+    proc.on("disconnect", () => this.retireBackend());
     proc.on("exit", (code, signal) => {
+      this.retireBackend();
       this.exited = { code, signal };
       for (const [id, p] of this.pending) {
         clearTimeout(p.timer);
@@ -262,6 +277,7 @@ export class WorkerHandle {
   }
 
   kill(): void {
+    this.retireBackend();
     this.disposed = true;
     for (const [, p] of this.pending) {
       clearTimeout(p.timer);
@@ -293,7 +309,7 @@ export class WorkerHandle {
       // A request is answered even when rejected, so its caller never waits
       // for a timer; anything else malformed is dropped.
       const r = raw as Record<string, unknown> | null;
-      if (r?.["type"] === "request" && (r["operation"] === "tool.execute" || r["operation"] === "tool.prepare" || r["operation"] === "provider.admission") && typeof r["requestId"] === "string") {
+      if (r?.["type"] === "request" && (r["operation"] === "tool.execute" || r["operation"] === "tool.prepare" || r["operation"] === "provider.admission" || r["operation"] === "provider.backend") && typeof r["requestId"] === "string") {
         const hint = checked.code === "PAYLOAD_TOO_LARGE" ? "; split the content into smaller pieces" : "";
         this.send({
           protocolVersion: PROTOCOL_VERSION,
@@ -316,6 +332,15 @@ export class WorkerHandle {
       return;
     }
     const env = checked.envelope;
+    if (env.operation === "provider.backend" && env.type === "request") {
+      let payload: unknown;
+      try {
+        if (this.onBackendRequest === null) throw new Error("UNSUPPORTED: backend service unavailable");
+        payload = await this.onBackendRequest(env.payload, env);
+      } catch (e) { payload = { ok: false, error: e instanceof Error ? e.message : "backend service failed" }; }
+      this.send({ ...env, type: "response", seq: null, payload });
+      return;
+    }
     if (env.operation === "ready") return; // consumed by the handshake
     if (env.type === "response" && env.requestId !== null) {
       const pending = this.pending.get(env.requestId);

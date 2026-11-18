@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { inlineParts, messageBlocks } from '../src/message-format.ts';
+import { diffLines, inlineParts, messageBlocks } from '../src/message-format.ts';
 
 test('fenced code retains exact Unicode, indentation and trailing newlines for copying', () => {
   assert.deepEqual(messageBlocks('Intro\n\n```ts\n  const x = "猫🦄";\n\n```\nAfter'), [
@@ -37,4 +37,10 @@ test('inline formatting never interprets HTML or links', () => {
     { kind: 'text', text: 'A ' }, { kind: 'strong', text: 'bold' }, { kind: 'text', text: ' ' }, { kind: 'emphasis', text: 'italic' }, { kind: 'text', text: ' ' }, { kind: 'code', text: '猫🦄' }, { kind: 'text', text: ' <b>literal</b>' },
   ]);
   assert.deepEqual(inlineParts('plain\n[link](javascript:alert(1))'), [{ kind: 'text', text: 'plain\n[link](javascript:alert(1))' }]);
+});
+test('tool output marks unified-diff additions and deletions, never file headers, and keeps the exact text', () => {
+  const text = 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\r\n+new\n unchanged\n';
+  const lines = diffLines(text);
+  assert.equal(lines.map(line => line.text).join(''), text);
+  assert.deepEqual(lines.map(line => line.kind), ['plain', 'plain', 'plain', 'plain', 'deleted', 'added', 'plain']);
 });

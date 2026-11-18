@@ -111,7 +111,7 @@ fn print_help() {
 yolo-clipboard-proxy — fixed-op clipboard bridge for the yolo sandbox
 
 Usage:
-  yolo-clipboard-proxy broker --listen PATH --tmux-socket PATH [--tmux BIN] [--max-bytes N]
+  yolo-clipboard-proxy broker --listen PATH --tmux-socket PATH [--tmux BIN] [--max-bytes N] [--trace]
   yolo-clipboard-proxy tmux-shim [tmux-args...]
   yolo-clipboard-proxy client set|get
   (argv0 == tmux)  → tmux-shim
@@ -142,6 +142,8 @@ struct BrokerConfig {
     tmux_socket: PathBuf,
     tmux_bin: PathBuf,
     max_bytes: u32,
+    /// Announce the listening socket on stderr at startup (`yolo --trace`).
+    trace: bool,
 }
 
 fn run_broker(args: &[String]) -> Result<(), String> {
@@ -175,11 +177,13 @@ fn run_broker(args: &[String]) -> Result<(), String> {
     fs::set_permissions(&cfg.listen, sock_perms)
         .map_err(|e| format!("chmod {}: {e}", cfg.listen.display()))?;
 
-    eprintln!(
-        "yolo-clipboard-proxy broker: listening on {} (tmux socket {})",
-        cfg.listen.display(),
-        cfg.tmux_socket.display()
-    );
+    if cfg.trace {
+        eprintln!(
+            "yolo-clipboard-proxy broker: listening on {} (tmux socket {})",
+            cfg.listen.display(),
+            cfg.tmux_socket.display()
+        );
+    }
 
     loop {
         match listener.accept() {
@@ -199,6 +203,7 @@ fn parse_broker_args(args: &[String]) -> Result<BrokerConfig, String> {
     let mut tmux_socket: Option<PathBuf> = None;
     let mut tmux_bin = PathBuf::from("tmux");
     let mut max_bytes = CLIPBOARD_MAX_BYTES;
+    let mut trace = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -224,6 +229,7 @@ fn parse_broker_args(args: &[String]) -> Result<BrokerConfig, String> {
                     return Err("--max-bytes must be > 0".into());
                 }
             }
+            "--trace" => trace = true,
             other => return Err(format!("broker: unknown argument '{other}'")),
         }
         i += 1;
@@ -233,6 +239,7 @@ fn parse_broker_args(args: &[String]) -> Result<BrokerConfig, String> {
         tmux_socket: tmux_socket.ok_or("broker: --tmux-socket is required")?,
         tmux_bin,
         max_bytes,
+        trace,
     })
 }
 

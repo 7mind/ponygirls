@@ -1,7 +1,6 @@
 /* Shell on the shared components (shared/ui-web/components.css): masthead menus, connection details,
- * full-page states and the frame of the legacy views. View CSS belongs to the view files. */
-.dashboard-page,.global-mutation-notices{width:100%;max-width:none;min-width:0;margin:0;padding:0 var(--gutter)}
-.dashboard-page{padding-top:var(--space-3)}
+ * full-page states and the frame of the global notices. View CSS belongs to the view files. */
+.global-mutation-notices{width:100%;max-width:none;min-width:0;margin:0;padding:0 var(--gutter)}
 .context-help{display:inline-flex;align-self:center}.context-help>button{width:28px;height:28px;padding:0;border-radius:50%}
 .app-views:focus{outline:none}
 .shell-notice{padding-bottom:0}

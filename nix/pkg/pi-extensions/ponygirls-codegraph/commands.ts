@@ -19,7 +19,8 @@ function pathArgument(text: string): string {
 
 export function parseCommand(args: string): CgCommand {
   const match = args.trim().match(/^(\S+)(?:\s+([\s\S]*))?$/);
-  if (match === null) return { name: "help" };
+  // Bare `/cg` shows the status; `/cg help` prints the reference.
+  if (match === null) return { name: "status", target: null, all: false };
   const name = match[1]!;
   const rest = match[2] === undefined ? "" : match[2].trim();
   if (name === "help" && rest === "") return { name: "help" };

@@ -21,7 +21,6 @@ import {
 
 import {
   FEATURES,
-  featureActivation,
   type FeatureId,
   type FeatureSwitches,
 } from './features.ts';
@@ -251,7 +250,7 @@ function fields(
 ): ScopedSettingFields<ScopeValues> {
   return {
     enabled: scopedBooleanField(
-      'Automatic mode (master)',
+      MASTER_LABEL,
       'Controls automatic checkpoints and new features. Saved recall/history ' +
         'and explicitly requested manual inquiries remain available while off.',
     ),
@@ -340,6 +339,24 @@ function featureSwitches(
   };
 }
 
+const MASTER_LABEL = 'Automatic mode';
+
+/** Names short enough for a row note (`needs Evidence`). */
+const FEATURE_SHORT_NAME: Readonly<Record<FeatureId, string>> = {
+  evidence: 'Evidence',
+  corrections: 'Corrections',
+  verifiers: 'Verification',
+  reader: 'Memory reader',
+  transfer: 'Transfer',
+  vectors: 'Vector retrieval',
+  critic: 'Critic',
+};
+
+/**
+ * Row note: empty while the setting works as switched; otherwise what it
+ * needs. A switched-off feature names only its switched-off prerequisites,
+ * so the user sees what to enable first.
+ */
 function inactiveExplanation(
   key: ScopedSettingKey<ScopeValues>,
   effective: Readonly<ScopeValues>,
@@ -348,22 +365,20 @@ function inactiveExplanation(
 
   if (key === 'enabled') {
     return effective.enabled
-      ? 'automatic on'
-      : (
-          'automatic off; manual inquiry and passive recall/history ' +
-          'remain available'
-        );
+      ? ''
+      : 'manual inquiry, recall and history still work';
   }
 
-  const activation = featureActivation(
-    effective.enabled,
-    featureSwitches(effective),
-    key,
-  );
+  const switches = featureSwitches(effective);
+  const definition = FEATURES.find(feature => feature.id === key);
+  if (definition === undefined) throw new Error(`Unknown Cuckoo feature: ${key}`);
 
-  return activation.activeBySettings
-    ? 'ready by settings'
-    : `inactive: ${activation.reasons.join(', ')}`;
+  const needs = definition.requires
+    .filter(dependency => !switches[dependency])
+    .map(dependency => FEATURE_SHORT_NAME[dependency]);
+  if (switches[key] && !effective.enabled) needs.unshift(MASTER_LABEL);
+
+  return needs.length === 0 ? '' : `needs ${needs.join(', ')}`;
 }
 
 class CuckooSettingsAdapter

@@ -85,6 +85,7 @@ final class OpenAIEmbedder(http: ModelHttp,config: Config) extends Embedder {
 }
 final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger,failureBackoff: Worker.FailureBackoff) {
   private val leaseSeconds = 300
+  private val idleDelay = 1.second
   private final class AnnotationExhausted(val reason: String) extends RuntimeException(AnnotationAttempts.exhaustedCode) {
     def code: String = if(reason==AnnotationAttempts.callLimitReason) AnnotationAttempts.reservationExhaustedCode else AnnotationAttempts.exhaustedCode
   }
@@ -153,13 +154,23 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       case staged: StagedFailure => IO.raiseError(staged)
       case error => failed(error,index,"annotation",0)
     }
-    def embed(chunks: List[Chunk],index: Int,attempt: Int): IO[List[IndexedChunk]] =
-      chunks.grouped(config.indexing.embeddingBatchSize).toList.zipWithIndex.traverse { (batch,part) =>
+    def embed(chunks: List[Chunk],index: Int,attempt: Int): IO[List[IndexedChunk]] = {
+      val batchSize=config.indexing.embeddingBatchSize
+      val batches=chunks.grouped(batchSize).toList
+      val parts=batches.zipWithIndex.traverse { (batch,part) =>
         val key=namespace.key(claim,IndexingStage.Embedding,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,CheckpointJson.chunks(batch))
         def validated(vectors: List[List[Double]]): List[List[Double]] = { CheckpointJson.validateVectors(vectors,batch.size,config.embedding.dimensions); vectors }
         accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(IO.defer(embedder.documents(claim.owner,batch.map(_.text))).map(validated))
           .map(vectors => batch.zip(vectors).map(IndexedChunk.apply.tupled))
-      }.map(_.flatten).handleErrorWith(error => failed(error,index,"embedding",attempt))
+      }.map(_.flatten)
+      // A part accepted under another batch size addresses other pieces: none of the window's parts is reused.
+      parts.recoverWith { case _: CheckpointInputMismatch =>
+        IO.blocking(archive.discardCheckpoints(claim,IndexingStage.Embedding,index)).flatMap { discarded =>
+          val currentParts=batches.size
+          IO(logger.warn(s"accepted work discarded jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total stage=embedding discardedParts=$discarded currentParts=$currentParts embeddingBatchSize=$batchSize"))
+        } *> parts
+      }.handleErrorWith(error => failed(error,index,"embedding",attempt))
+    }
   }
   private def count(source: ProblemPassages.Source): Int = {
     var cursor=ProblemPassages.SourceCursor.start
@@ -220,18 +231,29 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       }
     }
   }
-  def once: IO[Boolean] = admission.annotationSession.use { _ =>
-    IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds)).flatMap {
-      case None => IO.pure(false)
-      case Some(claim) => process(claim).as(true)
-    }
+  private def claimFailed(error: Throwable): IO[Worker.Iteration] = {
+    val code=failureCode(error); val exceptionClass=error.getClass.getName; val origin=failureOrigin(error)
+    val sqlState=error match { case sql: java.sql.SQLException => Option(sql.getSQLState).getOrElse("unavailable"); case _ => "unavailable" }
+    IO(logger.warn(s"job claim failed code=$code exceptionClass=$exceptionClass sqlState=$sqlState origin=$origin")).as(Worker.Iteration.ClaimFailed)
   }
+  private def iteration: IO[Worker.Iteration] = admission.annotationSession.use { _ =>
+    IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds)).redeemWith(claimFailed,{
+      case None => IO.pure(Worker.Iteration.Idle)
+      case Some(claim) => process(claim).as(Worker.Iteration.Processed)
+    })
+  }
+  def once: IO[Boolean] = iteration.map(_==Worker.Iteration.Processed)
   def run: IO[Nothing] = {
-    val lane: IO[Nothing]=(once.flatMap(found => if(found) IO.unit else IO.sleep(1.second))).foreverM
+    val lane: IO[Nothing]=iteration.flatMap {
+      case Worker.Iteration.Processed => IO.unit
+      case Worker.Iteration.Idle => IO.sleep(idleDelay)
+      case Worker.Iteration.ClaimFailed => IO.sleep(failureBackoff.delay)
+    }.foreverM
     List.fill(config.indexing.annotationSessions)(lane).parSequence.map(_.head)
   }
 }
 object Worker {
+  private enum Iteration { case Processed,Idle,ClaimFailed }
   /** How long a worker lane stays idle after recording a failed job. */
   final case class FailureBackoff(delay: FiniteDuration)
   object FailureBackoff {

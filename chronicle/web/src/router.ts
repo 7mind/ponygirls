@@ -33,6 +33,67 @@ export function sessionIdOf(route: Route): string {
   if (route.view !== 'session' || sessionId === undefined) throw new Error('Not a session route');
   return sessionId;
 }
+/**
+ * Reading place of a session route (spec §5): the pinned source view (`rev`, and `gen` for an annotation generation), the
+ * message at the top of the transcript (`at`, a message id), a Find literal to run on arrival (`find`), the side pane
+ * (`pane`), the selected passage (`passage`) and the exact matched bytes of a Search landing in the `at` message (`span`,
+ * UTF-8 byte offsets `start-end`, end exclusive). The pin is the complete source view: `rev`, and `gen` for a published
+ * (annotated) view; a link without `gen` names the archive-only view of that revision. A malformed pin is an error, never a
+ * default view, and so is a malformed span or a span without `at`; other absent or malformed values are null.
+ */
+export const SESSION_PANES = ['outline', 'find', 'related', 'info', 'closed'] as const;
+export type SessionPane = (typeof SESSION_PANES)[number];
+export interface SessionPin { readonly revision: number; readonly generationId: string | null }
+export interface SessionSpan { readonly start: number; readonly end: number }
+export interface SessionPlace { readonly pin: SessionPin | null; readonly at: string | null; readonly find: string | null; readonly pane: SessionPane | null; readonly passage: string | null; readonly span: SessionSpan | null }
+const SESSION_PARAM = { revision: 'rev', generation: 'gen', at: 'at', find: 'find', pane: 'pane', passage: 'passage', span: 'span' } as const;
+const SOURCE_REVISION = /^[1-9][0-9]*$/, BYTE_SPAN = /^(0|[1-9][0-9]*)-(0|[1-9][0-9]*)$/;
+/** A session address whose source pin is malformed. */
+export class InvalidSessionAddress extends Error {}
+export function sessionPlaceRoute(sessionId: string, place: SessionPlace): Route {
+  const entries: [string, string][] = [];
+  if (place.pin !== null) {
+    if (!Number.isSafeInteger(place.pin.revision) || place.pin.revision < 1) throw new Error('A session pin needs a source revision');
+    if (place.pin.generationId === '') throw new Error('A session pin names an empty generation');
+    entries.push([SESSION_PARAM.revision, String(place.pin.revision)]);
+    if (place.pin.generationId !== null) entries.push([SESSION_PARAM.generation, place.pin.generationId]);
+  }
+  for (const [name, value] of [[SESSION_PARAM.at, place.at], [SESSION_PARAM.find, place.find], [SESSION_PARAM.pane, place.pane], [SESSION_PARAM.passage, place.passage]] as const) if (value !== null) entries.push([name, value]);
+  if (place.span !== null) {
+    if (place.at === null || !Number.isSafeInteger(place.span.start) || !Number.isSafeInteger(place.span.end) || place.span.start < 0 || place.span.end <= place.span.start) throw new Error('A session span needs its message and a non-empty byte range');
+    entries.push([SESSION_PARAM.span, `${place.span.start}-${place.span.end}`]);
+  }
+  return { ...sessionRoute(sessionId), params: new RouteParams(entries) };
+}
+function sessionPinOf(params: RouteParams): SessionPin | null {
+  const revision = params.get(SESSION_PARAM.revision), generation = params.get(SESSION_PARAM.generation);
+  if (revision === null) {
+    if (generation !== null) throw new InvalidSessionAddress('The session address names a generation without a source revision');
+    return null;
+  }
+  if (!SOURCE_REVISION.test(revision) || !Number.isSafeInteger(Number(revision))) throw new InvalidSessionAddress('The session address names an invalid source revision');
+  if (generation === '') throw new InvalidSessionAddress('The session address names an empty generation');
+  return { revision: Number(revision), generationId: generation };
+}
+function sessionSpanOf(params: RouteParams): SessionSpan | null {
+  const span = params.get(SESSION_PARAM.span);
+  if (span === null) return null;
+  const match = BYTE_SPAN.exec(span), at = params.get(SESSION_PARAM.at);
+  if (match === null || at === null || at.length === 0) throw new InvalidSessionAddress('The session address names an invalid matched byte range');
+  const start = Number(match[1]), end = Number(match[2]);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start) throw new InvalidSessionAddress('The session address names an invalid matched byte range');
+  return { start, end };
+}
+/** The reading place of a session route; throws InvalidSessionAddress for a malformed pin or span. */
+export function sessionPlaceOf(route: Route): SessionPlace {
+  const text = (name: string) => { const value = route.params.get(name); return value === null || value.length === 0 ? null : value; };
+  const pane = text(SESSION_PARAM.pane);
+  return {
+    pin: sessionPinOf(route.params), span: sessionSpanOf(route.params),
+    at: text(SESSION_PARAM.at), find: text(SESSION_PARAM.find), passage: text(SESSION_PARAM.passage),
+    pane: SESSION_PANES.find(value => value === pane) ?? null,
+  };
+}
 export const DEFAULT_ROUTE = viewRoute('search');
 
 export type Fragment = { readonly kind: 'route'; readonly route: Route } | { readonly kind: 'account' } | { readonly kind: 'empty' } | { readonly kind: 'invalid' };
@@ -72,7 +133,7 @@ function historyIndex(state: unknown): number | null {
 
 export type NavigationMode = 'push' | 'replace';
 type Arrival = NavigationMode | 'traversal';
-/** The scroll identity of a route: its view (and Activity section); null for a session, which overlays its list. */
+/** The scroll identity of a route: its view (and Activity section); null for a session page, whose panes scroll instead of the document. */
 function scrollKey(route: Route): string | null { return route.view === 'session' ? null : [route.view, ...route.segments].join('/'); }
 export interface RouterSnapshot { readonly route: Route; readonly account: boolean }
 const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'keydown', 'mousedown'] as const;

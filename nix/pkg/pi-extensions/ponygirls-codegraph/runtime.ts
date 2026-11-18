@@ -4,6 +4,12 @@ import { join } from "node:path";
 
 const OUTPUT_LIMIT = 32_768;
 const KILL_GRACE_MS = 700;
+/**
+ * The CLI's refusal while another process holds the index lock. Its other
+ * "could not acquire the file lock" refusal, an unrecognized ownership record,
+ * needs the operator and remains a failure.
+ */
+const LOCKED_ELSEWHERE = /locked by another process/;
 export type Action = "status" | "sync" | "reindex";
 export interface State {
   /** `empty`: a consistent, complete index of a checkout with no indexable files. */
@@ -64,6 +70,8 @@ function readyDetail(root: string, status: Status): string {
 
 export class CodegraphSession {
   state: State = { phase: "idle", detail: "not started" };
+  /** The CLI's refusal when the last attempt found the index locked by another process; null once an attempt starts. */
+  busyElsewhere: string | null = null;
   private active: { controller: AbortController; done: Promise<void> } | undefined;
   private closed = false;
   private boundary: Boundary;
@@ -84,9 +92,17 @@ export class CodegraphSession {
     if (this.closed) return Promise.resolve();
     if (this.active) return this.active.done;
     const controller = new AbortController();
+    const previous = this.state;
+    this.busyElsewhere = null;
     this.publish("working", "checking checkout");
     const done = this.prepare(action, controller.signal).catch((error: unknown) => {
-      this.publish(controller.signal.aborted ? "cancelled" : "error", String(error));
+      const detail = String(error);
+      if (controller.signal.aborted) this.publish("cancelled", detail);
+      else if (LOCKED_ELSEWHERE.test(detail)) {
+        // Nothing failed in this checkout: what was known before the attempt still holds.
+        this.busyElsewhere = detail.slice(-OUTPUT_LIMIT);
+        this.publish(previous.phase, previous.detail);
+      } else this.publish("error", detail);
     }).finally(() => { this.active = undefined; });
     this.active = { controller, done };
     return done;

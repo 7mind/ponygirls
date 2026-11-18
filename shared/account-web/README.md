@@ -34,6 +34,9 @@ its own. Both files and `account-client.js` are served next to each other
   read) the module drops the value, tears the account page down and dispatches
   `account:changed`; the host then revalidates its identity and shows its login
   view. A failed sign-out changes nothing and says so (in the dialog or a toast).
+  The answer to `/logout` clears the session cookie, so until every sign-out sent
+  has its answer the signed-out views send no request: a sign-in on a login view
+  the host shows earlier waits for it and keeps its new session cookie.
 - **Events.** In: `account:invalidate` means "authority may have changed" (a
   reconnect is enough). The module re-reads the account and tears nothing down
   meanwhile (see "Authority"). A host that signed out by itself dispatches
@@ -132,9 +135,11 @@ so there is no authority to lose while it is shown.
 
 Outcome of each pair of concurrent flows (W section write, N navigation,
 V `account:invalidate` → verify, S sign-out, O an owner-changed or 401 response
-of an authority read, D dispose/forced teardown). Rows marked † are rows of the
+of an authority read, D dispose/forced teardown, P the area's first profile read,
+L a sign-in on the signed-out view). Rows marked † are rows of the
 table-driven browser case "sequencer interleavings"; ‡ are covered by the
-"section ownership" and invalidation cases.
+"section ownership" and invalidation cases; § by the case "the profile fallback
+replaces only the routed fragment, never a navigation still being delivered".
 
 | Pair | Outcome |
 |---|---|
@@ -146,6 +151,7 @@ table-driven browser case "sequencer interleavings"; ‡ are covered by the
 | W × O | owner change or 401 from the newest read → forced teardown; the write's late completion is bound to the dead area and does nothing; a possibly created value is listed as lost |
 | W × D | requests aborted, slot released; late completions do nothing; possibly created values recorded as lost |
 | N × V | navigation is allowed (a read is not a write); the verdict applies to the area whatever section is shown |
+| N × P | a section the profile does not offer falls back (`#account/profile`, else `#account/tokens`) only while the location is still the fragment the module routed; a navigation whose `hashchange` is not delivered yet keeps its fragment and is routed as usual § |
 | V × V | the newest read decides: a stale 401 after a newer success is discarded †, a stale success after a newer 401 cannot revive the area † |
 | V fails (transport) | `unverified`: masked, Reveal/Copy/writes disabled; `online` re-verifies and re-enables † |
 | V with `reason: 'signed-out'` | `lost` at once, no read † |
@@ -154,6 +160,7 @@ table-driven browser case "sequencer interleavings"; ‡ are covered by the
 | S fails | nothing changes; with a shown secret the dialog reports the failure and "Keep it visible" keeps it † |
 | S × O | the sign-out preflight read must return the area's own owner: another owner (or 401) → no `POST /logout` for anyone; another owner → the area is lost with the notice † |
 | S × D | dispose aborts the sign-out preflight (area signal): no POST; a POST already sent is not aborted (its response clears the session cookie); the completion is bound to the area that started it and a replacement area is not touched |
+| S × L | the host shows its login view before the `/logout` answer: the sign-in request is sent only after that answer, so the answer cannot clear the new session cookie † |
 | background read × W | a read that returns while a write holds the slot (or a form/dialog/card is open) applies its data but does not rebuild the section; the re-render waits until the slot is free and the prompt closed † |
 | overlapping refreshes | per-resource generations: the newest list wins, an older snapshot arriving later is discarded † |
 | W preflight fails (transport) | the write stops with "connection lost", authority becomes `unverified` (Reveal/Copy/writes disabled) and recovers on re-verification † |
@@ -220,8 +227,18 @@ nix develop .#chronicle --command node shared/account-web/dev/serve.mjs 8123
 `?steps=0` loads a scenario's fixture without driving the views into the state.
 `/ui/*` is served from `shared/ui-web/` when it exists, otherwise from the
 reference copies in `docs/drafts/20261117-2130-dashboard-redesign/`.
-`dev/capture.mjs` renders every scenario (1440×900; 1024×700 and dark for the
-main ones) named like the mockup shots.
+`dev/capture.mjs` renders every scenario (1440×900; 1024×700, 390×844 and dark
+for the main ones) named like the mockup shots.
+
+Below 720 px (the shared `sm` breakpoint) the Access tokens and Users tables stack
+their rows in document order, which is also the Tab order: the first cell on its
+own line, the other cells two to a line under a caption with their column
+header, the row actions last; nothing is hidden and the document does not scroll
+sideways (spec §1, §8 item 9). Every surface the module renders into breaks
+user-supplied strings anywhere (`overflow-wrap: anywhere`), so a token name,
+login or e-mail without a break opportunity never widens the page; table cells
+in table form keep truncating with an ellipsis. The harness scenarios
+`settings-tokens-long-strings` and `users-long-strings` hold such strings.
 
 ## Verification
 

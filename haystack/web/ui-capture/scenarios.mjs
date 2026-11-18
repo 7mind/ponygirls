@@ -885,6 +885,37 @@ export const scenarios = [
       await ctx.close();
     },
   },
+  {
+    name: "browse-fin", title: "Browse after FIN-H: filter toggles applied (Needs review, Modified by me) and the offline inline warning",
+    async run(env) {
+      const { rec } = env;
+      const rows = "section.browse:not([hidden] *) tbody tr[data-row-id]";
+      const shown = (page) => page.locator("section.browse").filter({ visible: true });
+      let { ctx, page } = await open(env);
+      await gotoBrowse(page, env);
+      await shown(page).getByRole("button", { name: "Needs review", exact: true }).click();
+      await shown(page).getByRole("button", { name: "Modified by me", exact: true }).click();
+      await shown(page).getByRole("button", { name: "Search", exact: true }).click();
+      await settle(page);
+      await shown(page).getByRole("button", { name: "Needs review", exact: true }).and(page.locator("[aria-pressed=true]")).waitFor();
+      await rec.shot(page, "h2-filtered", { file: "haystack-browse-filtered-1440.png", desc: "Browse with the Needs review and Modified by me toggles pressed and applied", how: "click both toggles in the filter row, Search", expect: ["section.browse .query-draft, section.browse [aria-pressed=true]"] });
+      await ctx.close();
+      ({ ctx, page } = await open(env));
+      let first = null;
+      const reason = "Injected invalid payload";
+      await page.routeWebSocket(/\/api\/v1\/live$/, (socket) => {
+        if (first !== null) { void socket.close({ code: 1007, reason }); return; }
+        first = socket; socket.connectToServer();
+      });
+      await gotoBrowse(page, env);
+      await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
+      await first.close({ code: 1007, reason });
+      await page.getByRole("button", { name: "Connection: Offline", exact: true }).waitFor({ timeout: 15000 });
+      await shown(page).getByRole("status").filter({ hasText: "Offline — showing the last loaded data." }).waitFor();
+      await rec.shot(page, "h2-offline", { file: "haystack-browse-offline-1440.png", desc: "Browse while the live connection is offline: rows stay under one inline warning with Reconnect now", how: "route /api/v1/live, close the socket and every later one with 1007", expect: [rows] });
+      await ctx.close();
+    },
+  },
 ];
 
 

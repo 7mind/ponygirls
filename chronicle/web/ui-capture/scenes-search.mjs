@@ -58,7 +58,7 @@ export function registerSearch(scenario) {
         await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
         await page.waitForFunction(count => document.querySelectorAll('[data-row-id]').length > count || document.querySelector('[data-list-foot="end"]') !== null, loaded);
       }
-      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight)); await settle(page, 300);
+      await page.locator('[data-list-foot="end"]').scrollIntoViewIfNeeded(); await settle(page, 300);
       await shot('chronicle-search', 'results-end', 'Bottom of the list: the end marker after the last batch', 'scroll to the bottom', { file: 'chronicle-search-results-end-1440.png' });
       const state = { cards: await page.locator('article.result').count(), draft: await input(page).inputValue(), scrollY: await page.evaluate(() => scrollY) };
       await gotoTab(page, 'archive'); await page.getByRole('main', { name: 'Archive', exact: true }).waitFor(); await gotoTab(page, 'search'); await page.getByRole('main', { name: 'Search', exact: true }).waitFor(); await settle(page, 600);

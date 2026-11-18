@@ -1,12 +1,15 @@
 package chronicle
 
 import chronicle.api.*
-import cats.effect.IO
+import cats.effect.{Deferred,IO,OutcomeIO}
 import cats.effect.unsafe.implicits.global
 import io.circe.Json
+import izumi.logstage.api.Log
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedQueue
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.*
+import scala.jdk.CollectionConverters.*
 
 final case class WorkerEvidence(claims: Int,reservations: Int,rejections: Int)
 trait ContextWorkerFixture {
@@ -14,19 +17,30 @@ trait ContextWorkerFixture {
   def config: Config
   def archive(): SessionArchive
   def stage(id: UUID): Option[IndexingStage]
+  def acceptedParts(id: UUID,stage: IndexingStage): Int
+}
+/** Worker log lines as the code interpolated them. */
+final class WorkerLog {
+  private val entries=new ConcurrentLinkedQueue[String]()
+  private def render(entry: Log.Entry): String =
+    entry.message.template.parts.zipAll(entry.message.args.map(arg => String.valueOf(arg.value)),"","").map(_+_).mkString
+  val logger: logstage.IzLogger = logstage.IzLogger(Log.Level.Info,List(new izumi.logstage.api.logger.LogSink { def flush(entry: Log.Entry): Unit = { entries.add(render(entry)); () } }))
+  def lines: List[String] = entries.asScala.toList
 }
 abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   def withFixture(run: ContextWorkerFixture => Unit): Unit
-  private def request(values: List[(String,String)]): IngestRequest = {
+  protected def request(values: List[(String,String)]): IngestRequest = {
     val original=Fixtures.snapshot(); val messages=values.zipWithIndex.map { case ((role,text),i) => Message(s"m$i",None,role,text,None,i) }
     val content=messages.map(message => Json.obj("id"->Json.fromString(message.id),"text"->Json.fromString(message.text)).noSpaces+"\n").mkString
     val raw=if(content.isEmpty) "{}\n" else content
     original.copy(messages=messages,files=List(RawFile("source.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
   }
   private def worker(f: ContextWorkerFixture,model: ProblemPassageAnnotator,embedding: Embedder): Worker = worker(f.archive(),f.config,model,embedding)
-  private def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder): Worker = worker(archive,config,model,embedding,ModelFixtures.failureBackoff)
+  protected def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder): Worker = worker(archive,config,model,embedding,ModelFixtures.failureBackoff)
   private def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder,backoff: Worker.FailureBackoff): Worker =
-    new Worker(archive,model,embedding,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger(),backoff)
+    worker(archive,config,model,embedding,backoff,logstage.IzLogger())
+  private def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder,backoff: Worker.FailureBackoff,logger: logstage.IzLogger): Worker =
+    new Worker(archive,model,embedding,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),logger,backoff)
   private class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
     def checkpointNamespace(c: Claim,space: String): CheckpointNamespace=delegate.checkpointNamespace(c,space)
     def knownProfiles: Set[String]=delegate.knownProfiles
@@ -41,10 +55,11 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
     def fail(c: Claim,code: String,stage: IndexingStage): Unit=delegate.fail(c,code,stage)
     def checkpoint(c: Claim,key: CheckpointKey): Option[Json]=delegate.checkpoint(c,key)
     def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit=delegate.checkpoint(c,key,value)
+    def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int=delegate.discardCheckpoints(c,stage,window)
     def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation=delegate.reserveAnnotation(c,key)
     def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int=delegate.rejectAnnotation(c,key,attempt,reason)
   }
-  private def one(window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): ProblemPassages.Decision =
+  protected def one(window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): ProblemPassages.Decision =
     ProblemPassages.Decision(Vector(ProblemPassages.Part(ProblemPassages.Point(0,0),window.terminal,previous.nonEmpty,"synthetic goal",Nil)))
   test("BG/GoodCommunication: a worker lane stays idle for the failure back-off after the failed job is recorded, and not shorter") { withFixture { f =>
     val backoff=Worker.FailureBackoff(300.millis)
@@ -98,6 +113,75 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
       assertEquals(f.evidence(receipt.jobId),WorkerEvidence(2,if(failureStage==IndexingStage.Annotation) 4 else 3,0))
     }}
   }
+  List(16->4,4->16).foreach { (stored,current) =>
+    test(s"BG/GoodCommunication regression: embedding parts accepted under batch size $stored are discarded and the window is embedded again under $current") { withFixture { f =>
+      val texts=(0 until 40).map(i => s"source-$i").toList; val failedText="source-32"
+      def configured(batchSize: Int): Config = f.config.copy(indexing=f.config.indexing.copy(embeddingBatchSize=batchSize))
+      val published=ListBuffer.empty[ProblemsPublication]
+      val archive=new ForwardingArchive(f.archive()) {
+        override def publishProblems(c: Claim,p: ProblemsPublication): Boolean = { published+=p; super.publishProblems(c,p) }
+      }
+      var annotations=0; var failed=false; val batches=ListBuffer.empty[List[String]]
+      val model=new ProblemPassageAnnotator {
+        def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO { annotations+=1; one(window,previous) }
+      }
+      val embedding=new Embedder {
+        def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("no query embedding"))
+        def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO {
+          batches+=text
+          if(text.head==failedText && !failed) { failed=true; throw DomainError("model-timeout","model deadline exceeded") }
+          text.map(value => List(1.0,value.stripPrefix("source-").toDouble,0.0))
+        }
+      }
+      val receipt=archive.ingest("a",request(texts.map("assistant"->_)))
+      assert(worker(archive,configured(stored),model,embedding).once.unsafeRunSync()); assert(failed)
+      assertEquals(f.acceptedParts(receipt.jobId,IndexingStage.Embedding),texts.indexOf(failedText)/stored)
+      batches.clear(); val log=new WorkerLog
+      assert(worker(archive,configured(current),model,embedding,ModelFixtures.failureBackoff,log.logger).once.unsafeRunSync())
+      assertEquals(batches.toList,texts.grouped(current).toList,"the window is embedded again, under the current batch size")
+      assertEquals(f.acceptedParts(receipt.jobId,IndexingStage.Embedding),texts.grouped(current).size,"no part of the other grouping remains")
+      assertEquals(archive.session("a",receipt.sessionId).indexedRevision,Some(1)); assertEquals(annotations,1)
+      val audit=log.lines.filter(_.startsWith("accepted work discarded")); assertEquals(audit.size,1)
+      assert(audit.head.matches(s"accepted work discarded jobId=${receipt.jobId} fence=[0-9]+ windowOrdinal=0 totalWindows=1 stage=embedding discardedParts=${texts.indexOf(failedText)/stored} currentParts=${texts.grouped(current).size} embeddingBatchSize=$current"),audit.head)
+      archive.ingest("b",request(texts.map("assistant"->_)))
+      assert(worker(archive,configured(current),model,embedding).once.unsafeRunSync())
+      assertEquals(published.size,2)
+      assertEquals(published(0).chunks.map(c => (c.chunk.text,c.vector)),published(1).chunks.map(c => (c.chunk.text,c.vector)),"the clean run under the current batch size publishes the same vectors")
+    }}
+  }
+  test("BG/GoodCommunication regression: a failed claim is logged and the lane claims again after the failure back-off instead of ending the worker") { withFixture { f =>
+    val config=f.config.copy(indexing=f.config.indexing.copy(annotationSessions=1)); val log=new WorkerLog
+    val receipt=f.archive().ingest("a",request(List("user"->"synthetic task")))
+    @volatile var claims=0
+    val model=new ProblemPassageAnnotator {
+      def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO(one(window,previous))
+    }
+    val embedding=new Embedder {
+      def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("no query embedding"))
+      def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.pure(text.map(_ => List(1.0,0.0,0.0)))
+    }
+    val outcome=(for {
+      published <- Deferred[IO,Unit]
+      terminated <- Deferred[IO,OutcomeIO[Nothing]]
+      archive=new ForwardingArchive(f.archive()) {
+        override def claim(profiles: Set[String],scope: ClaimScope,lease: Int): Option[Claim] = {
+          claims+=1
+          if(claims==1) throw new java.sql.SQLException("canceling statement due to statement timeout","57014")
+          super.claim(profiles,scope,lease)
+        }
+        override def publishProblems(c: Claim,p: ProblemsPublication): Boolean = { val result=super.publishProblems(c,p); published.complete(()).unsafeRunSync(); result }
+      }
+      fiber <- worker(archive,config,model,embedding,ModelFixtures.failureBackoff,log.logger).run.guaranteeCase(outcome => terminated.complete(outcome).void).start
+      first <- IO.race(terminated.get,published.get).timeout(10.seconds)
+      _ <- IO(first.left.foreach(outcome => fail(s"the worker run ended: $outcome")))
+      _ <- fiber.cancel.timeout(5.seconds)
+      outcome <- terminated.get
+    } yield outcome).unsafeRunSync()
+    assert(outcome.isCanceled,s"cancellation stops the lane: $outcome")
+    assert(claims>=2); assertEquals(f.archive().session("a",receipt.sessionId).indexedRevision,Some(1))
+    val failures=log.lines.filter(_.startsWith("job claim failed")); assertEquals(failures.size,1)
+    assert(failures.head.matches("job claim failed code=worker-fault exceptionClass=java\\.sql\\.SQLException sqlState=57014 origin=\\S+"),failures.head)
+  }}
   test("BG/GoodCommunication: partial embedding batches commit individually and only the failed batch is recomputed") { withFixture { f =>
     val archive=f.archive(); val receipt=archive.ingest("a",request((0 until 40).map(i => "assistant"->s"source-$i").toList))
     var annotations=0; var failed=false; val embedded=ListBuffer.empty[String]
@@ -283,6 +367,7 @@ final class DummyContextWorkerRecoveryTest extends ContextWorkerRecoveryContract
       val config: Config=c
       def archive(): SessionArchive=value
       def stage(id: UUID): Option[IndexingStage]=value.failureStage(id)
+      def acceptedParts(id: UUID,stage: IndexingStage): Int=value.acceptedParts(id,stage)
       def evidence(id: UUID): WorkerEvidence=value.workerEvidence(id)
     })
   }
@@ -293,10 +378,35 @@ final class PostgresContextWorkerRecoveryTest extends ContextWorkerRecoveryContr
       val config: Config=c
       def archive(): SessionArchive=new PostgresArchive(db,c)
       def stage(id: UUID): Option[IndexingStage]=db.transaction(connection => Sql.one(connection,"SELECT failure_stage FROM ch_jobs WHERE id=?",id)(row => Option(row.getString(1)).map(IndexingStage.valueOf)).flatten)
+      def acceptedParts(id: UUID,stage: IndexingStage): Int=db.transaction(connection => Sql.one(connection,"SELECT count(*) FROM ch_index_checkpoints WHERE job_id=? AND stage=?",id,stage.toString)(_.getInt(1)).get)
       def evidence(id: UUID): WorkerEvidence=db.transaction { connection =>
         val claims=Sql.one(connection,"SELECT attempts FROM ch_jobs WHERE id=?",id)(_.getInt(1)).get
         Sql.one(connection,"SELECT count(*),count(rejection_reason) FROM ch_annotation_attempts WHERE job_id=?",id)(r => WorkerEvidence(claims,r.getInt(1),r.getInt(2))).get
       }
     })
   }
+  test("BG/GoodCommunication regression: a corrupt accepted embedding part stays an internal fault that ends the worker run and is never discarded with its window") { CurrentIndexDatabase.withDatabase { (config,db,archive) =>
+    val texts=(0 until 40).map(i => s"source-$i").toList; var failed=false; var calls=0
+    val model=new ProblemPassageAnnotator {
+      def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO(one(window,previous))
+    }
+    val embedding=new Embedder {
+      def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("no query embedding"))
+      def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO {
+        calls+=1
+        if(text.head=="source-32" && !failed) { failed=true; throw DomainError("model-timeout","model deadline exceeded") }
+        text.map(_ => List(1.0,0.0,0.0))
+      }
+    }
+    val receipt=archive.ingest("a",request(texts.map("assistant"->_)))
+    assert(worker(archive,config,model,embedding).once.unsafeRunSync()); assert(failed)
+    def parts: Int = db.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_index_checkpoints WHERE job_id=? AND stage='Embedding'",receipt.jobId)(_.getInt(1)).get)
+    assertEquals(parts,32/config.indexing.embeddingBatchSize)
+    db.transaction(c => Sql.exec(c,"UPDATE ch_index_checkpoints SET value='[[1.0,2.0,3.0]]' WHERE job_id=? AND stage='Embedding' AND part=1",receipt.jobId)); calls=0
+    val regrouped=config.copy(indexing=config.indexing.copy(embeddingBatchSize=4))
+    val ended=worker(archive,regrouped,model,embedding).run.attempt.timeout(10.seconds).unsafeRunSync()
+    assertEquals(ended.left.map { case error: DomainError => error.code; case error => error.toString },Left("internal"))
+    assertEquals(parts,32/config.indexing.embeddingBatchSize,"the corrupt part and its window are kept for inspection"); assertEquals(calls,0)
+    assertEquals(db.transaction(c => Sql.one(c,"SELECT state FROM ch_jobs WHERE id=?",receipt.jobId)(_.getString(1))),Some("Running"),"the job keeps its lease until it expires")
+  }}
 }

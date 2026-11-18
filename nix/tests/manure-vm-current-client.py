@@ -31,6 +31,15 @@ from manure.client import ManureClient, read_token_file
 API = "https://api.example.test"
 TOKEN_FILE = "/srv/manure-test/token.raw"
 HUMAN_TOKEN_FILE = "/srv/manure-test/human-token.raw"
+HUMAN_PASSWORD_FILE = "/srv/manure-test/human-password.raw"
+HUMAN_LOGIN = "human-login"
+ACCOUNT_LOGIN_URL = API + "/api/account/v1/login"
+# Content origin: the unlock page's own files are served from the root, the shared content shell under its reserved
+# prefix; both come from the installed unlock_shell_dir (manure/web/unlock).
+CONTENT_SHELL_PREFIX = "/__manure/shell/"
+UNLOCK_RESOURCES = {CONTENT_SHELL_PREFIX + "ui/theme-init.js", CONTENT_SHELL_PREFIX + "ui/tokens.css",
+                    CONTENT_SHELL_PREFIX + "ui/components.css", CONTENT_SHELL_PREFIX + "chrome.js",
+                    "/styles.css", "/unlock.js"}
 ZERO = UUID(int=0)
 
 
@@ -113,22 +122,39 @@ def cookie(headers, name, same_site):
     return name + "=" + value.value
 
 
+def account_login(login, password, headers, status, error=None):
+    """Browser password login of manure/docs/account-auth.md (a plain JSON protocol, not a Baboon envelope)."""
+    body = json.dumps({"login": login, "password": password}).encode()
+    code, response_headers, payload = GuestTransport().request("POST", ACCOUNT_LOGIN_URL, {"Content-Type": "application/json", **headers}, body)
+    assert code == status, f"unexpected account login status: expected={status} actual={code}"
+    result = json.loads(payload)
+    if error is not None:
+        assert set(result) == {"error"} and result["error"]["code"] == error, "wrong account login error"
+        assert "set-cookie" not in {k.lower() for k in response_headers}, "rejected login sets cookie"
+    return result, response_headers
+
+
 def auth_probe():
     wire = Wire()
     agent_token = read_token_file(TOKEN_FILE)
     human_token = read_token_file(HUMAN_TOKEN_FILE)
+    password = Path(HUMAN_PASSWORD_FILE).read_text()
     result, _ = wire.command(cp.Command_Whoami(), cp.Result_Identity, bearer=True)
     assert (result.principal.userId, result.principal.tokenId, result.principal.principalType) == ("w-agent", "default", cp.PrincipalType.Agent)
-    result, headers = wire.command(cp.Command_Login(human_token), cp.Result_Identity, headers={"Origin": API})
-    assert (result.principal.userId, result.principal.tokenId, result.principal.principalType) == ("w-human", "default", cp.PrincipalType.Human)
-    session = cookie(headers, "__Host-manure", "Strict")
-    result, _ = wire.command(cp.Command_Whoami(), cp.Result_Identity, headers={"Cookie": session})
-    assert (result.principal.userId, result.principal.tokenId, result.principal.principalType) == ("w-human", "default", cp.PrincipalType.Human)
-    for command, h, status, error in ((cp.Command_Login(agent_token), {"Origin": API}, 403, "Forbidden"),
-                                    (cp.Command_Login(human_token), {}, 403, "Forbidden"),
-                                    (cp.Command_Login("x"), {"Origin": API}, 401, "Unauthorized")):
+    # Token login is retired (manure/docs/current-api.md): rejected without a cookie, the Origin guard still comes first.
+    for command, h, status, error in ((cp.Command_Login(human_token), {"Origin": API}, 400, "BadEnvelope"),
+                                    (cp.Command_Login(agent_token), {"Origin": API}, 400, "BadEnvelope"),
+                                    (cp.Command_Login(human_token), {}, 403, "Forbidden")):
         _, rejected = wire.command(command, cp.Result_Identity, headers=h, status=status, error=error)
         assert "set-cookie" not in {k.lower(): v for k, v in rejected.items()}, "rejected login sets cookie"
+    result, headers = account_login(HUMAN_LOGIN, password, {"Origin": API}, 200)
+    assert result["user"]["id"] == "w-human" and result["user"]["login"] == HUMAN_LOGIN, "wrong account login user"
+    session = cookie(headers, "__Host-manure", "Strict")
+    result, _ = wire.command(cp.Command_Whoami(), cp.Result_Identity, headers={"Cookie": session})
+    assert (result.principal.userId, result.principal.principalType) == ("w-human", cp.PrincipalType.Human), "session is not the human"
+    assert result.principal.tokenId != "default", "browser session carries the configured token identity"
+    account_login(HUMAN_LOGIN, human_token, {"Origin": API}, 401, "unauthorized")
+    account_login(HUMAN_LOGIN, password, {}, 403, "forbidden")
     print("CURRENT_LOGIN_COOKIE_ORIGIN_OK")
 
 
@@ -171,7 +197,7 @@ def body_bounds():
     for count, expected in ((2000, 200), (6000, 413)):
         request_id = uuid4()
         files = [cp.ManifestEntry_File("f%06d" % i + "x" * 790, 1, hashlib.sha256(b"").hexdigest()) for i in range(count)]
-        command = cp.Command_InitUpload("body-bound", cp.ArtifactKind.Directory, cp.Visibility.Internal, None, files)
+        command = cp.Command_InitUpload("body-bound", cp.ArtifactKind.Directory, cp.Visibility.Internal, None, files, [], None, None)
         payload = cp.dumps(cp.ClientEnvelope(request_id, cp.API_VERSION, command))
         assert (1048576 < len(payload) < 4194304) if count == 2000 else len(payload) > 4194304, "body-bound fixture ineffective"
         code, _, raw = GuestTransport().request("POST", API + "/api/current", {"Content-Type": "application/json", "Authorization": "Bearer " + read_token_file(TOKEN_FILE)}, payload)
@@ -220,12 +246,13 @@ def installed_shells():
     assert html == (web / "unlock/index.html").read_bytes(), "installed unlock HTML mismatch"
     resources = Resources()
     resources.feed(html.decode("utf-8"))
-    assert len(resources.urls) == 2, "unlock resource inventory"
-    for relative in resources.urls:
-        resource = urljoin(content, relative)
+    served = {urlsplit(urljoin(content, relative)).path: urljoin(content, relative) for relative in resources.urls}
+    assert len(served) == len(resources.urls) and set(served) == UNLOCK_RESOURCES, "unlock resource inventory"
+    for path, resource in served.items():
         assert urlsplit(resource).netloc == urlsplit(content).netloc
         status, _, body = GuestTransport().request("GET", resource, {}, None)
-        assert status == 200 and body == (web / "unlock" / Path(urlsplit(resource).path).name).read_bytes(), "installed unlock resource mismatch"
+        installed = web / "unlock" / path.removeprefix(CONTENT_SHELL_PREFIX).removeprefix("/")
+        assert status == 200 and body == installed.read_bytes(), "installed unlock resource mismatch"
     print("CURRENT_INSTALLED_NATIVE_AND_SHELL_BYTES_OK")
 
 

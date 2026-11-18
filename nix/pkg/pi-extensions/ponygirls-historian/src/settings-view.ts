@@ -222,24 +222,15 @@ export function createHistorianSettingsController(
     fields,
     order: HISTORIAN_SETTINGS_ORDER,
 
-    inactive(_key, effective): string {
-      if (!effective.enabled) {
-        return 'Preview OFF: no new capture requested.';
+    // What the switch still needs before capture runs; empty when it is off
+    // or already running. Switching it on here is not disclosure approval.
+    inactive(key, effective): string {
+      if (key !== 'enabled' || !effective.enabled) return '';
+      if (effective.model === null) return 'needs a model';
+      if (!latest.runtimeRequested) {
+        return `not running yet (runtime off by ${latest.runtimeSource} setting)`;
       }
-      if (effective.model === null) {
-        return 'Preview ON is inactive until a model is configured.';
-      }
-
-      const runtime = !latest.runtimeRequested
-        ? 'OFF'
-        : latest.runtimeApproved
-          ? 'approved'
-          : 'approval required';
-
-      return [
-        'Preview is configuration intent, not authorization.',
-        `Current runtime: ${runtime} (${latest.runtimeSource}).`,
-      ].join(' ');
+      return latest.runtimeApproved ? '' : 'needs disclosure approval';
     },
 
     adapter: {

@@ -53,12 +53,14 @@ try {
   await writePasswordHash(path.join(dir, "human.password"), password);
   const agentToken = randomBytes(32).toString("base64url");
   await writeFile(path.join(dir, "agent.sha"), createHash("sha256").update(agentToken, "ascii").digest("hex") + "\n");
+  const opToken = randomBytes(32).toString("base64url");
+  await writeFile(path.join(dir, "op.sha"), createHash("sha256").update(opToken, "ascii").digest("hex") + "\n");
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const auth = {
     activityProjectId: "agent-activity",
     users: [
-      { id: "op", type: "human", displayName: "Op", enabled: true, login: "op", passwordHashFile: path.join(dir, "human.password"), tokens: [] },
+      { id: "op", type: "human", displayName: "Op", enabled: true, login: "op", passwordHashFile: path.join(dir, "human.password"), tokens: [{ id: "seed", hashFile: path.join(dir, "op.sha") }] },
       { id: "agent", type: "agent", displayName: "Agent", tokens: [{ id: "default", hashFile: path.join(dir, "agent.sha") }] },
     ],
     cookieSecure: true, allowedHosts: ["127.0.0.1"], allowedOrigins: [base], insecureHttpOrigins: [base], rateLimit: { windowMs: 60000, max: 6000 },
@@ -76,6 +78,8 @@ try {
   await put("ui:note", { title: "hello memory" });
   await put("ui:old", { title: "buried memory", status: "archived" });
   await put("ui:todo", { title: "needs attention", type: "todo", "human-attention": "required" });
+  // The one record the signed-in user wrote.
+  await publicClient(base, opToken).put({ key: "mine:note", documentJson: docOf({ title: "written by op" }), expectedRevision: 0, requestId: rid() });
 
   browser = await chromium.launch({ executablePath: process.env.HAYSTACK_CHROMIUM, args: ["--no-sandbox", "--no-proxy-server"] });
   const nav = (page) => page.getByRole("navigation", { name: "Main navigation" });
@@ -93,7 +97,7 @@ try {
   const toEnd = (page) => page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   const frames = (page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   /** A signed-in page; native dialogs and page errors are recorded and asserted absent by `done` (spec §8 item 7). */
-  async function open({ viewport = DESKTOP, hash = "#/browse", clock = false } = {}) {
+  async function open({ viewport = DESKTOP, hash = "#/browse", clock = false, routeLive = false } = {}) {
     const context = await browser.newContext({ viewport });
     await context.addInitScript(() => {
       window.nativeDialogs = [];
@@ -108,6 +112,9 @@ try {
     });
     const page = await context.newPage();
     if (clock) await page.clock.install();
+    /** With `routeLive`, the page's live sockets, passed through to the server. */
+    const sockets = [];
+    if (routeLive) await page.routeWebSocket("**/api/v1/live", (socket) => { sockets.push(socket); socket.connectToServer(); });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("dialog", (dialog) => { errors.push(`native dialog: ${dialog.message()}`); void dialog.dismiss(); });
@@ -121,7 +128,7 @@ try {
       assert.deepEqual(await page.evaluate(() => window.nativeDialogs), [], "window.alert/confirm/prompt are never called");
       await context.close();
     };
-    return { context, page, done };
+    return { context, page, done, sockets };
   }
   const scrollList = `#/browse?${new URLSearchParams({ q: "project:scroll" })}`;
 
@@ -430,6 +437,40 @@ try {
     await done();
   });
 
+  await check("Modified by me conjoins the signed-in user's modified-by term: the list shows only that user's records", async () => {
+    const { page, done } = await open();
+    const input = query(page);
+    const mine = list(page).getByRole("button", { name: "Modified by me", exact: true });
+    assert.equal(await mine.getAttribute("title"), "modified-by:op");
+    assert.equal(await mine.getAttribute("aria-pressed"), "false");
+    await input.fill("memory OR op");
+    await mine.click();
+    assert.equal(await input.inputValue(), "(memory OR op) modified-by:op");
+    assert.equal(await mine.getAttribute("aria-pressed"), "true");
+    await searchButton(page).click();
+    await counter(page).getByText("All 1 record loaded", { exact: true }).waitFor();
+    assert.deepEqual(await rowKeys(page), ["mine:note"]);
+    await mine.click();
+    assert.equal(await input.inputValue(), "(memory OR op)");
+    assert.equal(await mine.getAttribute("aria-pressed"), "false");
+    await done();
+  });
+
+  await check("Upstream and Skill drafts name the activity namespace their records are written to; other lists do not", async () => {
+    const { page, done } = await open();
+    const chip = list(page).getByText("namespace agent-activity", { exact: true });
+    assert.equal(await chip.count(), 0, "Browse names no namespace");
+    for (const name of ["Upstream", "Skill drafts"]) {
+      await nav(page).getByRole("link", { name, exact: true }).click();
+      await list(page).getByRole("heading", { name, exact: true }).waitFor();
+      assert.equal(await chip.getAttribute("title"), "Upstream activity and skill drafts are written to this project", name);
+    }
+    await nav(page).getByRole("link", { name: "Inbox", exact: true }).click();
+    await list(page).getByRole("heading", { name: "Inbox", exact: true }).waitFor();
+    assert.equal(await chip.count(), 0, "Inbox names no namespace");
+    await done();
+  });
+
   await check("query typing retains focus", async () => {
     const { page, done } = await open();
     await query(page).pressSequentially("hello", { delay: 100 });
@@ -647,14 +688,37 @@ try {
     await done();
   });
 
-  await check("inaccessible server keeps the list and reports a connection failure", async () => {
+  await check("inaccessible server keeps the list, reports a connection failure and opens the connection details", async () => {
     const { page, done } = await open();
     await list(page).getByRole("button", { name: "ui:note", exact: true }).waitFor();
     await page.route("**/api/**", (route) => route.abort());
     await query(page).fill("hello");
     await searchButton(page).click();
-    await list(page).getByRole("alert").filter({ hasText: "Server unreachable" }).waitFor();
-    await list(page).getByRole("button", { name: "Retry", exact: true }).waitFor();
+    const failure = list(page).getByRole("alert").filter({ hasText: "Server unreachable" });
+    await failure.waitFor();
+    await failure.getByRole("button", { name: "Retry", exact: true }).waitFor();
+    await failure.getByRole("button", { name: "Connection details", exact: true }).click();
+    await page.getByRole("region", { name: "Connection details", exact: true }).waitFor();
+    const indicator = page.getByRole("button", { name: "Connection: Live", exact: true });
+    assert.equal(await indicator.getAttribute("aria-expanded"), "true");
+    assert.equal(await indicator.evaluate((element) => element === document.activeElement), true, "focus moves to the indicator that owns the details");
+    await page.keyboard.press("Escape");
+    await page.getByRole("region", { name: "Connection details", exact: true }).waitFor({ state: "detached" });
+    await done();
+  });
+
+  await check("an offline connection keeps the rows under one inline warning, whose Reconnect now goes live again", async () => {
+    const { page, done, sockets } = await open({ hash: scrollList, routeLive: true });
+    await waitRows(page, PAGE);
+    const warning = list(page).getByRole("status").filter({ hasText: "Offline — showing the last loaded data." });
+    assert.equal(await warning.count(), 0, "a live connection shows no warning");
+    await sockets.at(-1).close({ code: 1007, reason: "Injected invalid payload" });
+    await page.getByRole("button", { name: "Connection: Offline", exact: true }).waitFor();
+    await warning.waitFor();
+    assert.equal((await rowKeys(page)).length, PAGE, "the rows stay");
+    await warning.getByRole("button", { name: "Reconnect now", exact: true }).click();
+    await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
+    await warning.waitFor({ state: "detached" });
     await done();
   });
 } finally { await cleanup(); }

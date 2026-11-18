@@ -39,6 +39,19 @@ import type { DeterministicEntryObserver, InvocationScope } from "./deterministi
 import { adaptStream, isFacadeLocalCompletion } from "./stream-facade.ts";
 import { parentModelProvider, parseParentModel, parseProviderRequestAuth, type ParentModelProvider } from "./parent-models.ts";
 
+import type { BackendWorkerAdapter } from "./backend-contract.ts";
+
+interface PendingBackend { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; }
+
+function requestBackendFrame(frame: unknown, gen: GenerationState): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const requestId = randomUUID();
+    const timer = setTimeout(() => { state.pendingBackend.delete(requestId); reject(new Error("TIMEOUT: backend transport")); }, TOOL_REQUEST_TIMEOUT_MS);
+    state.pendingBackend.set(requestId, { resolve, reject, timer });
+    send({ type: "request", operation: "provider.backend", requestId, taskRunId: gen.taskRunId, executionGeneration: gen.generation, payload: frame });
+  });
+}
+
 const PI_VERSION = "1.0.0";
 const CAPABILITIES = ["proxy-tools", "sequential", "checkpoint", "gate-decision", "control-tools"];
 const TOOL_REQUEST_TIMEOUT_MS = 15 * 60_000;
@@ -181,6 +194,7 @@ const state: {
   pendingTools: Map<string, PendingToolCall>;
   pendingPreps: Map<string, PendingPreparation>;
   pendingAdmission: Map<string, PendingAdmission>;
+  pendingBackend: Map<string, PendingBackend>;
   /** Single-flight preparation lease (the worker runs sequentially). */
   prepLease: PreparationLease | null;
   /** Prepared ticket of the in-flight call (sent with tool.execute). */
@@ -212,6 +226,7 @@ const state: {
   pendingTools: new Map(),
   pendingPreps: new Map(),
   pendingAdmission: new Map(),
+  pendingBackend: new Map(),
   prepLease: null,
   openTicket: null,
   unreleasedTickets: [],
@@ -1534,9 +1549,11 @@ async function resolveModel(sdk: SdkModules, init: InitializePayload, agentDir: 
   if (!hostAgentDir) throw new Error("MODEL_UNAVAILABLE: no approved credential store (PI_SUBAGENTS_HOST_AGENT_DIR unset)");
   const modelsPath = join(hostAgentDir, "models.json");
   let parentProvider: ParentModelProvider | null = null;
-  const parentCredentials = init.providerModel === undefined ? null : new (await loadCompat()).InMemoryCredentialStore();
+  const parentCredentials = init.providerModel === undefined && init.providerBackend === undefined ? null : new (await loadCompat()).InMemoryCredentialStore();
+  // Even without models.json, Pi uses its directory to restore the saved
+  // models-store.json overlay. A null path disables both.
   const modelRuntime = await sdk.ModelRuntime.create(parentCredentials === null
-    ? { authPath: join(hostAgentDir, "auth.json"), modelsPath: existsSync(modelsPath) ? modelsPath : null }
+    ? { authPath: join(hostAgentDir, "auth.json"), modelsPath, allowModelNetwork: false }
     : { credentials: parentCredentials, modelsPath: null });
   if (init.providerModel !== undefined) {
     const descriptor = parseParentModel(init.providerModel, init.model);
@@ -1549,6 +1566,20 @@ async function resolveModel(sdk: SdkModules, init: InitializePayload, agentDir: 
       if (admission.auth === undefined) throw new Error("MODEL_UNAVAILABLE: parent provider authentication was not supplied");
       return admission.auth;
     });
+    modelRuntime.registerNativeProvider(parentProvider);
+  }
+  if (init.providerBackend !== undefined) {
+    const adapter = await import(init.providerBackend.moduleUrl) as BackendWorkerAdapter;
+    if (typeof adapter.createBackendProvider !== "function") throw new Error("MODEL_UNAVAILABLE: backend worker adapter is incompatible");
+    parentProvider = await adapter.createBackendProvider({
+      model: init.model, initialization: init.providerBackend.initialization,
+      sdk: await import(`file://${sdkRoot()}/node_modules/@earendil-works/pi-ai/dist/index.js`) as typeof import("@earendil-works/pi-ai"),
+      createRoundTrip: () => {
+        const gen = state.gen;
+        return (payload) => requestBackendFrame(payload, gen);
+      },
+    });
+    if (parentProvider.id !== init.model.provider) throw new Error("POLICY_DENIED: backend provider does not match admitted model");
     modelRuntime.registerNativeProvider(parentProvider);
   }
   const model = modelRuntime.getModel(init.model.provider, init.model.id);
@@ -2101,6 +2132,18 @@ async function onMessage(raw: unknown): Promise<void> {
       if (pending) {
         pending.resolve({ ok: false, code: checked.code, error: `${checked.code}: ${checked.message}` });
       }
+    }
+    return;
+  }
+  if (asRecord["type"] === "response" && asRecord["operation"] === "provider.backend") {
+    const checked = validateEnvelope(raw, state.binding, "to-worker");
+    const requestId = asRecord["requestId"];
+    const pending = typeof requestId === "string" ? state.pendingBackend.get(requestId) : undefined;
+    if (pending !== undefined) {
+      state.pendingBackend.delete(requestId as string);
+      clearTimeout(pending.timer);
+      if (checked.ok) pending.resolve(checked.envelope.payload);
+      else pending.reject(new Error(`${checked.code}: ${checked.message}`));
     }
     return;
   }

@@ -5,6 +5,8 @@ export interface Overlay {
   readonly anchor: RefObject<HTMLDivElement | null>;
   readonly trigger: RefObject<HTMLButtonElement | null>;
   toggle(): void;
+  /** Opens from elsewhere on the page and moves focus to the trigger, so that Escape and Tab work as after a click on it. */
+  show(): void;
   /** Closes; `restoreFocus` returns focus to the trigger (Escape, an activated item). */
   close(restoreFocus: boolean): void;
 }
@@ -36,7 +38,12 @@ export function useOverlay(): Overlay {
       document.removeEventListener("keydown", key);
     };
   }, [open, close]);
-  return { open, anchor, trigger, toggle: () => setOpen((value) => !value), close };
+  const show = useCallback(() => {
+    if (trigger.current === null) throw new Error("Overlay.show requires its trigger in the document");
+    setOpen(true);
+    trigger.current.focus();
+  }, []);
+  return { open, anchor, trigger, toggle: () => setOpen((value) => !value), show, close };
 }
 
 const MENU_ITEMS = '[role="menuitem"], [role="menuitemradio"]';

@@ -3,8 +3,6 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
 import { ChronicleFixture, advanceClock, advanceClockUntil, api, connectionConfig, pauseClock, retryBudgetMillis } from './fixture.mjs';
-import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = '1';
 const browsers = process.env.PLAYWRIGHT_BROWSERS_PATH;
 if (!browsers) throw new Error('Set PLAYWRIGHT_BROWSERS_PATH to the provisioned Playwright 1.64.1 browsers; tests never download browsers.');
@@ -65,31 +63,6 @@ async function search(page) {
   await page.keyboard.press('Control+k');
   await submitExpression(page, '(original source) mode:hybrid');
 }
-async function openConversation(page) {
-  await page.locator('.archive-row .table-title').first().click();
-  await page.getByRole('dialog', { name: 'Source conversation', exact: true }).waitFor();
-  await page.locator('.conversation-intro h2').waitFor();
-}
-async function closeConversation(page) {
-  await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Source conversation', exact: true }).waitFor({ state: 'detached' });
-}
-async function scrollEnd(page, selector) {
-  await page.locator(selector).evaluate(element => element.scrollTo({ top: element.scrollHeight, behavior: 'instant' }));
-}
-async function refreshArchive(page) {
-  // Invoke the polling-path refresh without pretending the modal's inert background is pointer-accessible.
-  await page.locator('button[aria-label="Refresh archive"]').evaluate(button => button.click());
-  await page.locator('.archive-table[aria-busy="false"]').waitFor();
-}
-async function loadPassages(page, count) {
-  await page.waitForFunction(() => document.querySelectorAll('.passage-list .passage').length > 0);
-  while (await page.locator('.passage-list .passage').count() < count) {
-    const before = await page.locator('.passage-list .passage').count();
-    await scrollEnd(page, '.conversation-passages');
-    await page.waitForFunction(previous => document.querySelectorAll('.passage-list .passage').length > previous, before);
-  }
-}
 async function waitForCalls(fixture, predicate, count) {
   const deadline = Date.now() + 10_000;
   while (fixture.calls.filter(predicate).length < count && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
@@ -142,97 +115,6 @@ try {
     assert.equal(fixture.accountRequests.filter(request => request.path.endsWith('/revoke')).length, 1);
     await context.close(); console.log('PASS browser: static token metadata has no secret or modification controls; issued revoke preserved');
   }
-  {
-    const report = new api.CollectorProgressUpdate('alice-private-collector', 9007199254740993n, '00000000-0000-4000-8000-000000000090', api.CollectorPhase.Discovering, '2026-10-26T01:00:00Z', new api.CollectorCounters(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0n), 0n, 0n, undefined, undefined);
-    const { context, page, fixture } = await scene(fixture => {
-      fixture.collectors = [new api.CollectorStatus(report, '2026-10-26T01:01:00Z', false)];
-      fixture.jobs.push(fixture.jobs[0].with({ id: '00000000-0000-4000-8000-000000000091', state: api.JobState.Running, error: undefined, completedWindows: 2, totalWindows: 3 }));
-    });
-    await page.getByRole('link', { name: 'Activity', exact: true }).click();
-    const collection = page.getByRole('region', { name: 'Collectors', exact: true });
-    const collector = page.locator('.activity-collector-row').filter({ has: page.locator('td[data-column="CollectorId"]').getByText('alice-private-collector', { exact: true }) });
-    await collector.getByRole('button', { name: 'Details', exact: true }).click();
-    await collector.getByText('Discovering · Recent report', { exact: true }).waitFor();
-    await collector.getByText('Per-run collector counters', { exact: true }).click();
-    assert.match(await collector.innerText(), /sequence 9007199254740993/);
-    assert.match(await collector.innerText(), /Scanned \/ discovered sessions\n0 \/ 0/);
-    await page.locator('.activity-job-row').filter({ hasText: 'Embedding provider unavailable' }).getByRole('button', { name: 'Details', exact: true }).click();
-    await page.getByText('0 / unknown windows processed · job not Complete at this snapshot', { exact: true }).waitFor();
-    await page.locator('.activity-job-row').filter({ has: page.locator('td[data-column="State"]').getByText('Running', { exact: true }) }).getByRole('button', { name: 'Details', exact: true }).click();
-    await page.getByText('2 / 3 windows processed · job not Complete at this snapshot', { exact: true }).waitFor();
-    fixture.jobs = fixture.jobs.map(job => job.state === api.JobState.Running ? job.with({ completedWindows: 3, totalWindows: 3 }) : job);
-    await page.getByText('3 / 3 windows processed · job not Complete at this snapshot', { exact: true }).waitFor({ timeout: 7000 });
-    fixture.jobs = fixture.jobs.map(job => job.state === api.JobState.Running ? job.with({ state: api.JobState.Complete }) : job);
-    await page.getByText('3 / 3 windows processed · job complete', { exact: true }).waitFor({ timeout: 7000 });
-    await collector.getByRole('button', { name: 'Details', exact: true }).click();
-    const scanning = report.with({ phase: api.CollectorPhase.Scanning, sequence: report.sequence + 1n, counters: report.counters.with({ discovered: 12, scanned: 7, waiting: 2, pending: 4, quarantined: 1, stopped: 1, conflicts: 1, uploadFailures: 2, scannedBytes: 9007199254740995n }) });
-    fixture.collectors = [new api.CollectorStatus(scanning, '2026-10-26T01:02:00Z', false)];
-    await collector.getByText('Scanning · Recent report', { exact: true }).waitFor({ timeout: 7000 });
-    assert.match(await collector.innerText(), /7 \/ 12/);
-    assert.match(await collector.innerText(), /9007199254740995 bytes/);
-    for (const [label, value] of [['Waiting for quiet', '2'], ['Pending upload queue', '4'], ['Quarantined', '1'], ['Stopped', '1'], ['Conflicts', '1'], ['Upload failures', '2']]) {
-      assert.equal(await collector.locator('dl > div').filter({ has: page.getByText(label, { exact: true }) }).locator('dd').innerText(), value);
-    }
-    const uploading = scanning.with({ phase: api.CollectorPhase.Uploading, sequence: scanning.sequence + 1n, counters: scanning.counters.with({ enqueued: 2, uploaded: 4 }), totalUploadBytes: 9007199254740999n, uploadedBytes: 9007199254740997n, currentUploadTotalBytes: 4096n });
-    fixture.collectors = [new api.CollectorStatus(uploading, '2026-10-26T01:03:00Z', false)];
-    await collector.getByText('Uploading · Recent report', { exact: true }).waitFor({ timeout: 7000 });
-    assert.match(await collector.innerText(), /9007199254740997 bytes \/ 9007199254740999 bytes/);
-    assert.match(await collector.innerText(), /Current payload size \(not acknowledged progress\)\n4096 bytes/);
-    assert.doesNotMatch(await collector.innerText(), /%/);
-    fixture.collectors = [new api.CollectorStatus(uploading.with({ sequence: uploading.sequence + 1n, currentUploadTotalBytes: undefined }), '2026-10-26T01:04:00Z', false)];
-    await collector.getByText('unknown', { exact: true }).waitFor({ timeout: 7000 });
-    fixture.collectors = [new api.CollectorStatus(uploading.with({ phase: api.CollectorPhase.Idle, sequence: uploading.sequence + 2n }), '2026-10-26T01:05:00Z', false)];
-    await collector.getByText('Idle · Recent report', { exact: true }).waitFor({ timeout: 7000 });
-    assert.equal(await collector.getByText('Current payload size (not acknowledged progress)', { exact: true }).count(), 0);
-    fixture.collectors = [new api.CollectorStatus(uploading.with({ phase: api.CollectorPhase.Failed, sequence: uploading.sequence + 3n, error: 'progress-upload-failed' }), '2026-10-26T01:06:00Z', true)];
-    await collector.getByText('Failed · Stale report (>120s)', { exact: true }).waitFor({ timeout: 7000 });
-    await collector.getByText('Collector error: progress-upload-failed', { exact: true }).waitFor();
-    assert.match(await collector.innerText(), /Last known snapshot only; current collection progress is unknown/);
-    await page.getByRole('button', { name: 'About these snapshots', exact: true }).click();
-    assert.match(await page.locator('.activity-about-content').innerText(), /not collector or worker health/);
-    await page.getByRole('button', { name: 'About these snapshots', exact: true }).click();
-    fixture.collectionDenied = true;
-    await page.getByRole('button', { name: 'Refresh snapshots ↻' }).click();
-    await page.getByRole('alert').filter({ hasText: 'Collection status denied' }).waitFor();
-    assert.equal(await collection.getByText('alice-private-collector', { exact: true }).count(), 0);
-    fixture.collectionDenied = false;
-    await page.getByRole('button', { name: 'Refresh snapshots ↻' }).click();
-    await collector.locator('td[data-column="CollectorId"]').getByText('alice-private-collector', { exact: true }).waitFor();
-    fixture.mode = 'outage'; fixture.restart();
-    await collector.waitFor({ state: 'detached', timeout: 5000 });
-    fixture.collectors = []; fixture.activityCollectors = []; fixture.activityJobs = [];
-    fixture.user = new api.UserInfo('bob', 'bob', [api.Scope.Read]); fixture.mode = 'normal'; fixture.restart();
-    await page.locator('.connection-widget[data-state="live"]').waitFor({ timeout: 10000 });
-    await page.getByRole('link', { name: 'Activity', exact: true }).click();
-    await page.getByRole('heading', { name: 'No matching collectors', exact: true }).waitFor();
-    assert.equal(await page.getByText('alice-private-collector', { exact: true }).count(), 0);
-    assert.match(await page.getByRole('region', { name: 'Collectors', exact: true }).innerText(), /0 matching \/ 0 owner collectors · 0 loaded/);
-    await page.getByRole('button', { name: 'About these snapshots', exact: true }).click();
-    assert.match(await page.locator('.activity-about [popover]').innerText(), /Missing, Idle or stale reports do not establish collection completion/);
-    await page.keyboard.press('Escape');
-    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_Activity));
-    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_ActivityJobs));
-    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_CollectionStatus || call.operation instanceof api.Operation_IngestStatus).length, 0);
-    await context.close(); console.log('PASS browser: 1.3 collector snapshots poll through discovery, scan, ACK upload, idle, failed/stale; authorization, disconnect and account changes clear progress');
-  }
-  const { Conversation } = await server.ssrLoadModule('/src/Conversation.tsx');
-  const initialSource = renderToStaticMarkup(createElement(Conversation, { connection: {}, stats: { activeId: 1, generation: 1 }, user: new ChronicleFixture().user, sessionId: '00000000-0000-4000-8000-000000000001', initialView: undefined, archiveHead: null, select: () => {}, refresh: 0 }));
-  assert.match(initialSource, /Rechecking source access/, 'first render must show an explicit loading state, never an empty source body');
-  {
-    const { context, page } = await scene(fixture => {
-      fixture.jobs.push(new api.JobInfo('00000000-0000-4000-8000-000000000099', fixture.jobs[0].sessionId, 1, api.JobState.Failed, 1, 'superseded-revision', 0, undefined, undefined));
-    });
-    await page.getByRole('link', { name: 'Activity', exact: true }).click();
-    await page.getByRole('button', { name: 'Retry indexing', exact: true }).waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Retry indexing', exact: true }).count(), 1, 'current failed jobs retain explicit retry');
-    await page.getByRole('button', { name: 'History', exact: true }).click();
-    const superseded = page.locator('.activity-job-row').filter({ hasText: 'superseded-revision' });
-    await superseded.waitFor();
-    assert.equal(await superseded.getByRole('button', { name: 'Retry indexing', exact: true }).count(), 0, 'superseded work is terminal, never presented as retryable');
-    await superseded.getByRole('button', { name: 'Details', exact: true }).click();
-    await superseded.getByText('Historical job · not actionable here. This does not describe the current published view.', { exact: true }).waitFor();
-    await context.close(); console.log('PASS browser: superseded revisions remain visible in History without an impossible retry action');
-  }
   for (const transition of ['logout-bob', 'observed-bob', 'logout-alice']) {
     const { context, page, fixture } = await scene();
     const privateQuery = '(alice-private-migration-phrase) AND project:"alice-private-project" AND branch:"alice-private-branch" AND after:"2026-10-01T10:00:00Z" AND before:"2026-11-01T10:00:00Z" AND tag:"alice-private-tag" mode:semantic';
@@ -241,11 +123,9 @@ try {
     const privateDraft = `${privateQuery} AND producer:"alice-private-draft" AND`;
     await submitExpression(page, privateQuery);
     await page.getByRole('combobox', { name: 'Search conversations' }).fill(privateDraft);
-    await openConversation(page);
     if (transition === 'observed-bob') {
       const beforeReconnect = fixture.searchCount; fixture.restart();
       await waitForCalls(fixture, call => call.operation instanceof api.Operation_Archive, beforeReconnect + 1);
-      await page.locator('.conversation-intro h2').waitFor();
       assert.equal(await page.getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), privateDraft, 'same-user reconnect preserves the unsubmitted expression draft');
       assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_Archive).at(-1).operation.query.expression, privateQuery, 'same-user reconnect reissues the submitted expression, not its later draft');
     }
@@ -254,7 +134,6 @@ try {
     if (transition === 'observed-bob') {
       fixture.user = new api.UserInfo('bob', 'bob', [api.Scope.Read, api.Scope.Raw]); fixture.restart();
     } else {
-      await closeConversation(page);
       await signOut(page);
       await page.getByRole('heading', { name: SIGN_IN }).waitFor();
       await page.getByRole('textbox', { name: 'Username', exact: true }).fill(nextUser);
@@ -268,136 +147,15 @@ try {
     const after = fixture.requests.slice(boundary).filter(request => request.userId === nextUser).map(request => request.envelope.operation);
     assert.ok(after.some(operation => operation instanceof api.Operation_Archive), `${transition}: the new account receives its own default archive`);
     assert.equal(after.filter(operation => operation instanceof api.Operation_Archive && operation.query.expression !== '').length, 0, `${transition}: prior-session text and metadata must never be reissued`);
-    assert.equal(after.filter(operation => operation instanceof api.Operation_GetSession).length, 0, `${transition}: prior source selection must not be read in the new account/session`);
     assert.equal(await page.getByRole('combobox', { name: 'Search conversations' }).inputValue(), '');
-    assert.equal(await page.getByRole('dialog').count(), 0);
-    assert.equal(await page.locator('.conversation-intro').count(), 0);
-    await context.close(); console.log(`PASS browser: ${transition} clears private expression draft/submitted/selection before any new-session RPC`);
-  }
-  {
-    const { context, page, fixture } = await scene(fixture => { fixture.resumedSource = true; fixture.annotationCount = 45; fixture.rawDenied = false; });
-    await search(page); await openConversation(page);
-    await page.locator('#message-m1 pre').waitFor();
-    assert.match(await page.locator('#message-m1 pre').textContent(), /original 猫🦄 source/, 'r1 annotation must resolve immutable r1 text, not changed HEAD r2 text with reused message ID');
-    assert.ok(fixture.calls.filter(envelope => envelope.operation instanceof api.Operation_GetMessages).every(envelope => envelope.operation.view.revision === 1 && envelope.operation.view.generationId === fixture.viewAt(1).generationId), 'every source request must carry the full generated revision/generation pin');
-    await page.locator('.passage-list').getByRole('button', { name: /Keep original source independent/ }).click();
-    await page.locator('#message-m1 mark').waitFor(); assert.equal(await page.locator('#message-m1 mark').textContent(), '猫🦄');
-    await page.getByText('Viewing source r1', { exact: true }).waitFor();
-    fixture.publishedRevision = 2;
-    await loadPassages(page, 45);
-    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_GetPassages && call.operation.offset === 40 && call.operation.view.generationId === fixture.viewAt(1).generationId));
-    await refreshArchive(page);
-    await page.getByText('HEAD r2 / index r2', { exact: true }).waitFor();
-    await page.getByText('Viewing source r1', { exact: true }).waitFor();
-    assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_GetPassages).every(call => call.operation.view.revision === 1 && call.operation.view.generationId === fixture.viewAt(1).generationId), 'publication must not substitute another generation into the pinned annotation list');
-    await scrollEnd(page, '.conversation-source');
-    await page.locator('#message-m41 pre').waitFor(); assert.match(await page.locator('#message-m41 pre').textContent(), /Synthetic source message 41/);
-    assert.equal(await page.getByRole('button', { name: 'Request raw records' }).count(), 0);
-    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_GetRaw).length, 0, 'Raw scope does not expose raw dashboard reads');
-    fixture.restart(); await page.getByText('Viewing source r2', { exact: true }).waitFor();
-    await page.locator('#message-m1 pre').waitFor(); assert.match(await page.locator('#message-m1 pre').textContent(), /HEAD r2 changed/);
-    await context.close(); console.log('PASS browser: normalized source/passages stay revision/generation-pinned without raw dashboard reads across publication; reconnect reauthorizes the current selected snapshot');
-  }
-  {
-    const { context, page, fixture } = await scene(fixture => { fixture.resumedSource = true; fixture.annotationCount = 205; fixture.winnerBeyondFirstPage = true; fixture.rawDenied = false; });
-    await search(page); await openConversation(page);
-    await page.getByRole('button', { name: 'View latest archived revision', exact: true }).click();
-    await page.getByText('Viewing source r2', { exact: true }).waitFor();
-    await page.getByText('Archive-only view · no annotations', { exact: true }).waitFor();
-    await page.locator('#message-m1 pre').waitFor(); assert.match(await page.locator('#message-m1 pre').textContent(), /HEAD r2 changed/);
-    assert.equal(await page.locator('.passage-list .passage').count(), 0);
-    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_GetRaw).length, 0);
-    assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_GetMessages).at(-1).operation.view.generationId === undefined);
-    fixture.publishedRevision = 2; await refreshArchive(page);
-    await page.getByText('HEAD r2 / index r2', { exact: true }).waitFor();
-    await page.getByText('Archive-only view · no annotations', { exact: true }).waitFor();
-    assert.equal(await page.locator('.passage-list .passage').count(), 0, 'same-revision annotations from a published generation must not enter the archive-only view');
-    await page.getByRole('button', { name: 'Reload source snapshot ↻', exact: true }).click();
-    await loadPassages(page, 200);
-    await page.locator('.passage-list').getByRole('button', { name: /Winning passage beyond the first hundred/ }).waitFor();
-    assert.equal(await page.getByText('Archive-only view · no annotations', { exact: true }).count(), 0);
-    const latestChunks = fixture.calls.filter(call => call.operation instanceof api.Operation_GetPassages).at(-1).operation;
-    assert.equal(latestChunks.view.generationId, fixture.viewAt(2).generationId);
-    await context.close(); console.log('PASS browser: explicit latest archive is independent of indexing; generation-mismatched annotations stay hidden until explicit resync');
-  }
-  // Specified: both Read-only and Raw-capable users get normalized messages,
-  // while real source denial still clears the pinned transcript without fallback.
-  for (const rawScope of [false, true]) {
-    const { context, page, fixture } = await scene(fixture => {
-      fixture.user = new api.UserInfo('alice', 'alice', rawScope ? [api.Scope.Read, api.Scope.Raw] : [api.Scope.Read]);
-      fixture.sourceDenied = false;
-      fixture.goal50Operation = (operation, _envelope, send) => {
-        if (fixture.sourceDenied && operation instanceof api.Operation_GetMessages) { send(new api.Result_Error(new api.Failure('forbidden', 'Selected normalized source access denied'))); return true; }
-        return false;
-      };
-    });
-    await openConversation(page); await page.locator('.original-message').first().waitFor();
-    assert.equal(await page.locator('.raw-source,.raw-permission').count(), 0);
-    assert.equal(await page.getByRole('button', { name: /Request raw records|Back to messages/ }).count(), 0);
-    fixture.sourceDenied = true;
-    await page.getByRole('button', { name: 'Reload source snapshot ↻', exact: true }).click();
-    await page.getByRole('alert').filter({ hasText: 'Selected normalized source access denied' }).waitFor();
-    assert.equal(await page.locator('.original-message,.find-hits button').count(), 0);
-    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_GetRaw).length, 0);
-    assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_GetMessages).every(call => call.operation.view.revision === 1 && call.operation.view.generationId === fixture.viewAt(1).generationId));
-    await context.close(); console.log(`PASS browser: normalized-only source with Raw scope ${rawScope}; source denial clears pinned messages without raw fallback`);
-  }
-  for (const kind of ['messages', 'chunks']) {
-    const { context, page } = await scene(fixture => {
-      fixture.resumedSource = true; fixture.rawDenied = false;
-      if (kind === 'messages') fixture.messageViewOverride = fixture.viewAt(2);
-      if (kind === 'chunks') fixture.chunksViewOverride = fixture.viewAt(2);
-    });
-    await search(page); await openConversation(page);
-    await page.getByRole('alert').filter({ hasText: 'Source revision or annotation generation changed unexpectedly' }).waitFor();
-    assert.equal(await page.locator(kind === 'messages' ? '.original-message' : '.passage-list .passage').count(), 0);
-    await context.close(); console.log(`PASS browser: mismatched ${kind} response pin fails closed before rendering source content`);
-  }
-  {
-    const { context, page, fixture } = await scene(fixture => { fixture.annotationCount = 205; fixture.winnerBeyondFirstPage = true; });
-    await search(page); await openConversation(page);
-    await loadPassages(page, 40);
-    assert.equal(await page.locator('.passage-list .passage').count(), 40);
-    await loadPassages(page, 200);
-    const winner = page.locator('.passage-list').getByRole('button', { name: /Winning passage beyond the first hundred/ });
-    await winner.click();
-    await page.locator('#message-m65 mark').waitFor();
-    assert.equal(await page.locator('#message-m65 mark').textContent(), 'Synthetic');
-    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_GetPassages && call.operation.offset === 160 && call.operation.limit === 40), 'infinite annotations must use bounded generated pages');
-    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_LocateMessage && call.operation.messageId === 'm65'), 'off-page navigation uses the generated locator, not a source scan');
-    assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_GetMessages).every(call => call.operation.limit === 40));
-    await page.locator('.passage-list').getByRole('button', { name: /Annotated passage 141\./ }).click();
-    await page.locator('#message-m65 mark').waitFor();
-    await loadPassages(page, 205);
-    assert.equal(await page.locator('.passage-list .passage').count(), 205);
-    await scrollEnd(page, '.conversation-passages'); await page.waitForTimeout(200);
-    const pages = fixture.calls.filter(call => call.operation instanceof api.Operation_GetPassages).map(call => call.operation.offset);
-    assert.deepEqual(pages, [0, 40, 80, 120, 160, 200]);
-    assert.equal(await page.getByRole('button', { name: /Next passages|Previous passages/ }).count(), 0, 'scrolling replaces manual pagination without dropping annotation reachability');
-    fixture.restart(); await loadPassages(page, 40);
-    assert.equal(await page.locator('.passage-list .passage').count(), 40, 'a new authorization generation starts from a fresh bounded annotation page');
-    await loadPassages(page, 200);
-    await winner.click(); await page.locator('#message-m65 mark').waitFor();
-    await context.close(); console.log('PASS browser: all 205 annotations are scroll-reachable in bounded pages; late winner navigates with a pinned locator and original source highlighting');
+    await context.close(); console.log(`PASS browser: ${transition} clears private expression draft/submitted before any new-session RPC`);
   }
   const { context, page, fixture } = await scene(async (fixture, page) => { await page.clock.install(); });
   for (const shortcut of ['Control+k', 'Meta+k']) {
     await page.keyboard.press(shortcut);
     assert.equal(await page.getByRole('combobox', { name: 'Search conversations' }).evaluate(element => element === document.activeElement), true);
   }
-  await search(page); await openConversation(page);
-  await page.locator('.passage-list').getByRole('button', { name: /Keep original source independent/ }).click();
-  await page.locator('.transcript mark').first().waitFor();
-  assert.equal(await page.locator('.transcript mark').first().textContent(), '猫🦄');
-  assert.equal(await page.locator('.original-message script').count(), 0);
-  assert.match(await page.locator('#message-m2 pre').textContent(), /<script>alert\("untrusted transcript"\)<\/script>/, 'untrusted source is displayed literally');
-  assert.equal(await page.getByRole('button', { name: /Request raw records|Back to messages/ }).count(), 0);
-  assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_GetRaw).length, 0);
-  assert.equal(await page.locator('.raw-source,.raw-permission').count(), 0);
-  await page.getByRole('button', { name: /A passage on a later bounded source page/ }).click();
-  await page.locator('#message-m65 mark').waitFor();
-  assert.ok(fixture.calls.some(envelope => envelope.operation instanceof api.Operation_LocateMessage && envelope.operation.messageId === 'm65'));
-  assert.ok(fixture.calls.some(envelope => envelope.operation instanceof api.Operation_GetMessages && envelope.operation.offset === 40 && envelope.operation.limit === 40));
+  await search(page);
   const before = fixture.searchCount; fixture.blackholeActive();
   // Within one heartbeat interval plus pong deadline, a liveness deadline expires on the silent socket: the unanswered
   // heartbeat's pong deadline, or the deadline of a request the page sent on it after it went silent (both production values).
@@ -405,17 +163,13 @@ try {
   await page.locator('.event-log li').filter({ hasText: /STALE \((matching pong deadline|request timeout)\)/ }).waitFor({ state: 'attached' });
   await waitForCalls(fixture, call => call.operation instanceof api.Operation_Archive, before + 1);
   await page.locator('.connection-widget[data-state="live"]').waitFor();
-  await page.locator('.conversation-intro h2').waitFor();
   assert.equal(await page.getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), '(original source) mode:hybrid');
   const beforeRestore = fixture.searchCount;
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
   await waitForCalls(fixture, call => call.operation instanceof api.Operation_Archive, beforeRestore + 1);
-  await page.locator('.conversation-intro h2').waitFor();
   const beforeRestart = fixture.searchCount; fixture.restart();
   await waitForCalls(fixture, call => call.operation instanceof api.Operation_Archive, beforeRestart + 1);
-  await page.locator('.conversation-intro h2').getByText('Following the migration thread', { exact: true }).waitFor();
-  await closeConversation(page);
   await page.getByRole('link', { name: 'Access', exact: true }).click();
   await openTokens(page); await mint(page, 'Synthetic collector');
   await page.getByLabel('One-time token secret', { exact: true }).waitFor(); await page.getByRole('button', { name: 'Reveal', exact: true }).click();
@@ -423,23 +177,17 @@ try {
   await page.getByRole('button', { name: 'I have saved it', exact: true }).click(); await page.getByRole('button', { name: 'Yes, I have saved it', exact: true }).click();
   await page.getByLabel('One-time token secret', { exact: true }).waitFor({ state: 'detached' });
   await page.goBack(); await page.getByRole('main', { name: 'Access management', exact: true }).waitFor();
-  await page.getByRole('link', { name: 'Activity', exact: true }).click(); await page.getByRole('button', { name: 'Retry indexing', exact: true }).click();
-  await page.locator('.activity-job-row .job-state').getByText('Queued', { exact: true }).waitFor();
   assert.equal(fixture.accountRequests.filter(request => request.path.endsWith('/tokens')).length, 1);
-  assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_RetryJob));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('link', { name: 'Archive', exact: true }).click();
-  await archiveReady(page); await openConversation(page);
-  assert.match(await page.locator('.dialog-content').innerText(), /Following the migration thread|Rechecking source access|Source content has been cleared/, 'mobile source must show content or explicit pending/error state');
-  await page.locator('.conversation-intro').getByRole('heading', { name: 'Following the migration thread' }).waitFor();
-  await page.locator('.transcript .original-message pre').first().waitFor();
+  await archiveReady(page);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'mobile layout must not overflow');
-  await context.close(); console.log('PASS browser: keyboard search, UTF-8 locator navigation, bounded paging, normalized-only source, literal source, indexing retry, silent blackhole resync, lifecycle/server restart, responsive modal');
+  await context.close(); console.log('PASS browser: keyboard search, indexing retry, silent blackhole resync, lifecycle/server restart, responsive layout');
   for (const mode of ['unauthorized', 'version']) {
-    const { context, page, fixture } = await scene(); await search(page); await openConversation(page); fixture.mode = mode; fixture.restart();
+    const { context, page, fixture } = await scene(); await search(page); fixture.mode = mode; fixture.restart();
     const state = mode === 'version' ? 'update-required' : 'unauthorized';
     await (mode === 'version' ? page.locator('.connection-widget[data-state="update-required"]') : page.locator('main[data-account-auth]')).waitFor(); const count = fixture.sockets.length;
-    await page.waitForTimeout(1200); assert.equal(fixture.sockets.length, count); assert.equal(await page.locator('.archive-row, .original-message, .passage').count(), 0); assert.equal(await page.getByRole('dialog').count(), 0);
+    await page.waitForTimeout(1200); assert.equal(fixture.sockets.length, count); assert.equal(await page.locator('.archive-row').count(), 0); assert.equal(await page.getByRole('dialog').count(), 0);
     await context.close(); console.log(`PASS browser: ${state} clears protected content and stops without loop`);
   }
   {

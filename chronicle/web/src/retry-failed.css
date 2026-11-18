@@ -1,18 +1,9 @@
-.retry-failed-action{display:contents}
-.retry-failed-toolbar{grid-column:2;grid-row:1;justify-self:end;display:flex;align-items:center;gap:9px;min-width:0}
-.retry-failed-trigger{padding:6px 10px;font-size:11px;white-space:nowrap}
-.retry-failed-help{position:relative;margin-left:auto;font-size:11px}
-.retry-failed-help>button{padding:0;border:1px solid var(--control-border);border-radius:50%;width:23px;height:23px;text-align:center;line-height:21px;color:var(--muted)}
-.retry-failed-scope{grid-column:1/-1;grid-row:2;margin:0}
-.retry-failed-preview{grid-column:1/-1;grid-row:4;width:100%;max-width:100%;min-width:0;margin:0}
-.retry-failed-preview>p,.retry-failed-preview form{max-width:80ch}
-.retry-failed-preview h3:focus{outline:2px solid var(--accent);outline-offset:4px}
-.retry-failed-preview code,.retry-failed-result code{overflow-wrap:anywhere}
-.retry-failed-counts{width:100%;border-collapse:collapse;margin:12px 0;font-size:12px}
-.retry-failed-counts caption{text-align:left;font-weight:600;padding-bottom:6px}
-.retry-failed-counts th,.retry-failed-counts td{padding:5px 6px;border-bottom:1px solid var(--rule);vertical-align:top;overflow-wrap:anywhere}
-.retry-failed-counts th{text-align:left;font-weight:400}
-.retry-failed-counts thead th{font-size:10px;color:var(--muted)}
+/* Population counts of an owner-wide indexing retry: the preview dialog (RetryFailedIndexing) and the applied result (MutationNotice). */
+.retry-failed-counts{width:100%;border-collapse:collapse;font-size:var(--text-sm);color:var(--text)}
+.retry-failed-counts caption{text-align:left;font-weight:var(--weight-semibold);padding-bottom:var(--space-2)}
+.retry-failed-counts th,.retry-failed-counts td{padding:var(--space-1) var(--space-2);border-bottom:1px solid var(--border);vertical-align:top;overflow-wrap:anywhere}
+.retry-failed-counts th{text-align:left;font-weight:var(--weight-regular)}
+.retry-failed-counts thead th{font-size:var(--text-xs);color:var(--text-muted)}
 .retry-failed-counts td,.retry-failed-counts thead th:last-child{text-align:right}
-.retry-failed-counts td{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-variant-numeric:tabular-nums}
-.retry-failed-preview .retry-failed-cancel{margin:12px 0 0}
+.retry-failed-counts td{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.retry-failed-result code{overflow-wrap:anywhere}

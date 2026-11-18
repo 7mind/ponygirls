@@ -1,6 +1,8 @@
 // Conservative UI edits for the documented Haystack Boolean/JSON-string dialect.
 const FIELDS = new Set(["project", "id", "type", "status", "importance", "human-attention", "tag", "created-by", "modified-by", "archived"]);
 const MAX_QUERY = 4096;
+/** Values written without quotes, as the server spells them in completions. */
+const BARE_VALUE = /^[A-Za-z0-9._~-]+$/;
 
 function completeBody(query: string): boolean {
   let quoted = false, escaped = false, depth = 0, brackets = 0;
@@ -35,6 +37,11 @@ export function appendFilter(query: string, field: string, value: string): strin
   const body = query.trim();
   const next = `${body ? `(${body}) ` : ""}${field}:${JSON.stringify(value)}`;
   return next.length <= MAX_QUERY ? next : null;
+}
+
+/** `field:value` as one term; the value is quoted only when it has to be. */
+export function filterTerm(field: string, value: string): string {
+  return `${field}:${BARE_VALUE.test(value) ? value : JSON.stringify(value)}`;
 }
 
 /** Top-level terms of an expression: whitespace outside JSON strings, parentheses and brackets separates them. */

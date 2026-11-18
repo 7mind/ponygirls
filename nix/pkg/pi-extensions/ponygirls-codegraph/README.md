@@ -44,6 +44,7 @@ guard, not the MCP server itself.
 ## Commands
 
 ```text
+/cg
 /cg help
 /cg discover [PATH]
 /cg use PATH
@@ -57,9 +58,10 @@ guard, not the MCP server itself.
 
 Type `/cg ` to see subcommands with argument syntax and descriptions; type a
 prefix (such as `/cg sy`) to filter, then Tab to complete. Flag suggestions include
-`--all` where supported and the required `init --workspace` opt-in. `/cg help`
-prints the full reference. The former `/cg-*` aliases have been removed; use
-`/cg status`, `/cg sync`, `/cg reindex`, and `/cg cancel` instead.
+`--all` where supported and the required `init --workspace` opt-in. `/cg` alone
+does what `/cg status` does; `/cg help` prints the full reference. The former
+`/cg-*` aliases have been removed; use `/cg status`, `/cg sync`, `/cg reindex`,
+and `/cg cancel` instead.
 
 Every path-taking command accepts absolute paths or paths relative
 to Pi's cwd: with Pi started in `/work/projects`, `/cg use example-app` and
@@ -82,6 +84,7 @@ fail rather than being ignored.
   are logical file sizes, not allocated blocks. Canonical roots are deduplicated;
   symlinks are not followed and incomplete measurements are explicitly partial.
   A targeted report shows that scope; otherwise the inventory and total are shown.
+  In the TUI the report is a pane (below); other clients receive it as text.
 - `sync --all` processes the current inventory sequentially, reports individual
   failures/busy skips, and continues other roots. One operation per project; no
   implicit queue of another write behind an already busy project.
@@ -90,6 +93,36 @@ fail rather than being ignored.
   and prevents later members of a batch from starting. Cancellation/shutdown stop
   extension-owned process groups, **not** independently managed MCP watchers.
 - Errors and non-UI command reports go to stderr, never JSON/RPC protocol stdout.
+
+### Status pane
+
+`/cg`, `/cg status [PATH | --all]` and a click on the badge open one pane (the
+badge shows the last checks without probing or enabling anything):
+
+```text
+── Codegraph ──────────────────────────────────────────────────────── 1 index ──
+  CHECKOUT                 STATE  FILES  SYMBOLS     SIZE  CHECKED
+▌ ~/work/flakes/ponygirls  ready  2,808  106,105  307 MiB  2m ago
+────────────────────────────────────────────────────────────────────────────────
+last check ready · 2026-11-17 20:58 UTC · database 307 MiB, total 307 MiB
+common dir ~/work/flakes/ponygirls/.git
+────────────────────────────────────────────────────────────────────────────────
+↑↓ select  d details  esc close
+```
+
+- One row per scope; the default query scope is selected first and, among several
+  scopes, tagged `default`. States: `ready`, `indexing`, `error`, `cancelled`,
+  `busy elsewhere`, `empty`, `skipped`, `idle`. The title counts the indexes, or
+  names what is not ready (`1 indexing`, `1 error`).
+- A narrow terminal first shortens an over-long path in its middle, then hides
+  Symbols, Files, Size and Checked, in that order, and names what it hid. Checkout
+  and state always stay. `—` is a value the last check did not establish, `·` zero.
+- Under the list, for the selected row: the last check's outcome, time (UTC) and
+  sizes, the Git common directory, and the complete text of the last failure.
+  PgUp/PgDn, Home/End and the wheel scroll it when it does not fit.
+- `d` shows the complete text report for the same scopes, with the caveat that it
+  is the last check, not live watcher health, and exact byte counts; `d` returns.
+  The pane is a snapshot taken when it opens.
 
 The padded `🕸️` badge uses the theme's `selectedBg` background, evaluated during
 rendering. It shows setup/sync state and parallel query count. `ready` is the last
@@ -135,6 +168,19 @@ still owns its `codegraph.lock`, MCP `writer.pid`, and rebuild coordination; thi
 extension never deletes them. Third-party CLI calls do not participate in our
 flock. There is no lock-wait timeout; `/cg cancel` remains available. Independent
 watchers may contend with commands; failures remain visible, without silent retry.
+
+A sync that the CLI refuses because another process holds its index lock (`…
+locked by another process`: a syncing MCP server, or a second Pi's CLI child) is
+not a failure of the checkout. The scope keeps the state it had before the
+attempt: no notice is shown and the badge does not turn to `error`. Until the
+next attempt, status carries the CLI's text on a `busy elsewhere` line; a scope
+that was not prepared yet (`idle`, as at startup) is also listed in the state
+`busy elsewhere`, while a verified index stays `ready` and an earlier failure
+stays `error`. Nothing is retried on a timer: the next query that targets an
+unprepared checkout prepares it again, and is blocked with "index busy … retry
+shortly" while the lock is still held; `/cg sync` retries at any time. The CLI's
+other lock refusal, an unrecognized ownership record, needs the operator and
+stays an error.
 
 ## Erasure: deliberately offline
 

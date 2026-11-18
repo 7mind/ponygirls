@@ -8,8 +8,9 @@ CLI/MCP client portability beyond Linux is unverified.
 Normative spec: `CONTRACT.md` (v0.2.0 plus explicit path-mode amendment); this README is a handoff
 summary, not a second contract. Where they disagree, `CONTRACT.md` wins.
 
-> Docs state: commands/JSON ran against the server+UI and client/CLI/MCP
-> snapshots on 2026-10-08. Nix modules were still under repair —
+> Docs state: commands/JSON ran against the Python-era server+UI and client/CLI/MCP
+> snapshots on 2026-10-08; the server is now the Scala/native backend
+> ([backend/README.md](backend/README.md)). Nix modules were still under repair —
 > re-validate Nix examples if they change. Not acceptance until the
 > parent F/B/N gates (`CONTRACT.md` §13).
 
@@ -439,14 +440,14 @@ Unicode case-insensitive substring of name or artifact ID (`%` / `_` are
 not wildcards). Sort fields: `name`, `created_at`,
 `expires_at`, `total_bytes`, `file_count`, `visibility`, `state`, `kind`,
 `created_by_user`; direction: `asc` / `desc`. Never-expiring artifacts sort
-last either way; text uses SQLite binary ordering. Existing visibility,
+last either way; text sorts by UTF-8 bytes (the metadata columns are `bytea`), independent of the database locale. Existing visibility,
 state, and expiry filters combine with search.
 
 The presence of `q`, `sort_by`, or `direction` selects catalogue mode
 (default `created_at desc`). Continue with `next_cursor` and the same
 filters, search, sort, direction, and limit; restart on changes. Keyset pages
-materialize at most `limit + 1` rows in Python; search/sort may scan or order
-more data inside SQLite. This is not a snapshot. Requests omitting all three
+fetch at most `limit + 1` rows per page; search/sort may scan or order
+more data inside PostgreSQL. This is not a snapshot. Requests omitting all three
 new arguments, including existing CLI/Python/MCP calls, retain their
 oldest-first order and legacy cursors. See `CONTRACT.md` §7 for details.
 
@@ -474,8 +475,8 @@ file-backed credentials only — never `MANURE_TOKEN` beside
 
 ## Nix
 
-Package `.#manure` = stdlib wheel **plus the web shells**,
-`bin/manure{,-server,-mcp}`. `mainProgram` is **`manure-server`**:
+Package `.#manure` = the native server, the Python CLI/MCP clients **and the
+web shells** (`share/manure/web/{dashboard,unlock,viewer}`), `bin/manure{,-server,-mcp}`. `mainProgram` is **`manure-server`**:
 
 - `nix run .#manure -- --config /run/manure.json` → the **server**.
 - CLI/MCP need the other wrappers: `nix shell .#manure -c manure
@@ -515,14 +516,23 @@ session defaults, wires `programs.mcp.servers.manure` →
 `…/bin/manure-mcp`, and ships the CLI. Other tunables mirror the
 §3.1 closed set — nothing outside it without amendment.
 
-**Asset staging rule (release-critical):** UI sources live at
-`manure/web/{dashboard,unlock}/`; the package `preBuild` copies them
-into `manure/manure/web/` and *fails the build* if they are absent.
-`pyproject.toml` `package-data` ships only staged files, no copy —
-so a **standalone wheel/sdist must copy `web/*` into
-`manure/manure/web/` before building**, else the server silently
-falls back to `null` semantics (API-only dashboard, minimal unlock
-form). No automatic staging outside the Nix build.
+**Asset layout (release-critical):** UI sources live at `manure/web/{dashboard,unlock}/`
+and the viewer at `manure/web/viewer/`; the package copies them into
+`share/manure/web/{dashboard,unlock,viewer}` and fails the build if `dashboard` or
+`unlock` is absent. The NixOS and Home Manager modules set `dashboard_dir`,
+`unlock_shell_dir` and `viewer_dir` to those paths; a configured directory that does
+not exist makes `serve` refuse to start, and only an explicit `null` disables a shell
+(API-only dashboard, built-in minimal unlock form, no viewers). In the OCI image (`.#oci-manure`) the
+directories are `/share/manure/web/{dashboard,unlock,viewer}`.
+
+**Upgrade requirement (startup-breaking for OCI configurations):** an image configuration written against the
+earlier contract names only `dashboard_dir` and `unlock_shell_dir`. Its `viewer_dir` defaulted to the relative
+`manure/web/viewer/dist`, i.e. `/data/manure/web/viewer/dist`, which the image does not contain, so formatted
+viewers answered 404. A server of this tree exits at startup with `stage=assets code=viewer-dir-missing` instead.
+Before rolling it out, add `"viewer_dir": "/share/manure/web/viewer"` (or `"viewer_dir": null` to disable formatted
+viewers on purpose; raw bytes are still served) to the mounted configuration. `check-config` does not look at the
+directories, so only a started `serve` shows the problem. A complete image configuration is in
+[backend/README.md](backend/README.md#oci-image-configuration-and-upgrade-requirement).
 
 ## Tests (what runs where — and what does not count)
 
@@ -618,5 +628,5 @@ No host/DNS/deployment change is implied here — operator configuration only.
 - Bounds: 512 MiB/file, 2 GiB/artifact, 10000 entries, 20 GiB quota
   (atomic reservation), 128 connections, 10 sessions/user (1000
   global), grant TTL 24 h capped by artifact TTL. One process owns
-  `data_dir` (sqlite + staging + live); back up quiesced. Full table:
+  `data_dir` (payload staging + live; metadata is in PostgreSQL); back up quiesced. Full table:
   `CONTRACT.md` §§6/12.

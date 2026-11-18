@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerDecisions } from "../index.ts";
 import { SqliteDecisionStore } from "../src/store.ts";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth } from "@earendil-works/pi-tui";
 
 function fixture(t) {
   const preferences = { path: "memory:decisions", value: { enabled: true }, failure: null, inherited: false,
@@ -203,29 +203,30 @@ test("nonblocking ask creates project questions and a bottom-left badge, list/ge
   assert.equal(key, "decisions");
   assert.equal(options.placement, "borderBottomLeft");
   const theme = { bg: (_color, s) => s, fg: (_color, s) => s };
-  assert.equal(factory({ requestRender() {} }, theme).render(80)[0], " 📥 1+0 · ⌃⌥D ");
+  assert.equal(factory({ requestRender() {} }, theme).render(80)[0], " 📥 1 ");
   assert.equal(f.shortcuts.get("ctrl+alt+d").description, "Open decisions inbox");
   assert.equal(f.shortcuts.has("ctrl+shift+d"), false, "Pi reserves Ctrl+Shift+D for its global debug handler");
   const tagged = { bg: (color, s) => `[${color}]${s}[/${color}]`, fg: (color, s) => `<${color}>${s}</${color}>` };
-  assert.equal(factory({ requestRender() {} }, tagged).renderCompact(200), "[toolPendingBg] <warning>📥</warning><text>1+0</text> [/toolPendingBg]");
+  assert.equal(factory({ requestRender() {} }, tagged).render(200)[0], " 📥 <warning>1</warning> ", "this session waits: warning");
+  assert.equal(factory({ requestRender() {} }, tagged).renderCompact(200), "📥<warning>1</warning>");
   const compact = factory({ requestRender() {} }, theme);
-  assert.equal(truncateToWidth(compact.renderCompact(5), 5, ""), "📥1+0");
   for (const width of [0, 1, 2, 3, 4, 5, 6, 12]) assert.ok(visibleWidth(compact.renderCompact(width)) <= width);
-  assert.equal(compact.renderCompact(4), "📥…");
+  for (const width of [0, 1, 2, 3, 4, 5, 6, 12]) assert.ok(visibleWidth(compact.render(width)[0]) <= width);
   assert.equal((await f.call({ action: "list" }, "list")).details.total, 1);
   assert.equal((await f.call({ action: "get", id: "q1" }, "get")).details.context, "Concurrent sessions");
   assert.equal(f.messages.length, 0);
   assert.equal((await f.call({ action: "ask", question: "Which storage?", options: ["SQLite", "JSONL"], context: "Concurrent sessions", recommendation: "SQLite" }, "call-1")).details.id, "Q1");
 });
 
-test("badge partitions only pending project questions by originating session and refreshes on changes", async (t) => {
+test("badge counts the project's pending questions, coloured by whether this session waits, and refreshes on changes", async (t) => {
   const f = fixture(t); f.start();
   assert.equal(f.widgets.at(-1)[1], undefined);
-  const theme = { bg: (_color, s) => s, fg: (_color, s) => s };
+  const theme = { bg: (_color, s) => s, fg: (color, s) => `<${color}>${s}</${color}>` };
   const badge = (here, other) => {
     const widget = f.widgets.at(-1)[1]({ requestRender() {} }, theme);
-    assert.equal(widget.render(100)[0], ` 📥 ${here}+${other} · ⌃⌥D `);
-    assert.equal(widget.renderCompact(20), ` 📥${here}+${other} `);
+    const colour = here > 0 ? "warning" : "muted";
+    assert.equal(widget.render(100)[0], ` 📥 <${colour}>${here + other}</${colour}> `);
+    assert.equal(widget.renderCompact(80), `📥<${colour}>${here + other}</${colour}>`);
   };
   const external = new SqliteDecisionStore(f.path);
   t.after(() => external.close());
@@ -728,8 +729,8 @@ test("same-owner polling preserves registration while counts, external revisions
   external.ask("project-a", { question: "Other", context: "", options: [], recommendation: "", sessionId: "other", toolCallId: "other" });
   f.tick();
   assert.equal(mounted.current(), badge);
-  assert.match(badge.render(100)[0], /1\+1/);
-  assert.match(badge.renderCompact(20), /1\+1/);
+  assert.match(badge.render(100)[0], /📥 2/);
+  assert.match(badge.renderCompact(20), /📥2/);
   assert.ok(mounted.renders() > 0);
   badge.handleMouse({ type: "click", button: "left" });
   t.mock.timers.tick(60_000);
@@ -738,7 +739,7 @@ test("same-owner polling preserves registration while counts, external revisions
   external.resolve("project-a", "Q1", 1, "answered", "External answer");
   f.tick();
   assert.equal(mounted.current(), badge);
-  assert.match(badge.render(100)[0], /0\+1/);
+  assert.match(badge.render(100)[0], /📥 1/);
   assert.equal(f.messages.length, 1);
   assert.match(f.messages[0].message.content, /External answer/);
 });

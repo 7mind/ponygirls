@@ -1,25 +1,19 @@
-.original-message[data-role]{border-left:3px solid var(--rule);background:var(--paper)}
-.original-message[data-role=user]{border-left-color:var(--notice-accent)}
-.original-message[data-role=assistant]{border-left-color:var(--success)}
-.original-message[data-role=tool],.original-message[data-role=toolresult]{border-left-color:var(--warning-accent)}
-.original-message[data-role=system],.original-message[data-role=developer]{border-left-color:var(--muted)}
-.original-message[data-role=user] header>strong{color:var(--notice-accent)}
-.original-message[data-role=assistant] header>strong{color:var(--success)}
-.original-message[data-role=tool] header>strong,.original-message[data-role=toolresult] header>strong{color:var(--warning-ink)}
-.message-content{font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-size:12px;line-height:1.65;min-width:0;overflow-wrap:anywhere}
-.original-message .message-content pre{font-family:inherit;font-size:inherit;line-height:inherit;white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
-.message-content-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;margin:0 0 6px;font-size:10px;color:var(--muted)}
-.message-content .small-button{font-family:inherit;font-size:10px;padding:3px 7px}
-.message-copy{display:inline-flex;align-items:center;gap:7px;flex-wrap:wrap}
-.copy-error{font-size:11px;color:var(--error-ink)}
-.message-highlight-label{font-size:10px}
-.message-code{border:1px solid var(--rule);border-radius:4px;margin:8px 0;overflow:hidden;background:var(--table-heading)}
-.message-code-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 9px;border-bottom:1px solid var(--rule);color:var(--muted);font-size:10px;overflow-wrap:anywhere}
-.message-code-bar>span:first-child{min-width:0}
-.original-message .message-code pre{padding:10px 12px;white-space:pre;overflow-x:auto;max-width:100%;tab-size:2}
-.message-formatted-text{white-space:pre-wrap}
-.message-formatted-text code{font-family:inherit;font-size:inherit;border:1px solid var(--rule);background:var(--table-heading);padding:0 3px;border-radius:3px}
-.message-markdown-heading{font-weight:700;margin:8px 0 4px}
-.message-markdown-quote{border-left:2px solid var(--muted);padding-left:12px;color:var(--muted)}
-.message-formatted-text ul,.message-formatted-text ol{margin:4px 0;padding-left:28px}
-@media(max-width:640px){.message-content{font-size:11px}.message-code-bar{flex-wrap:wrap;gap:5px}}
+/* One message body: prose in the sans family (14 px, 720 px measure), code blocks and source text full width. */
+.message-content { min-width: 0; overflow-wrap: anywhere; }
+.message-formatted-text, .message-plain-text { white-space: pre-wrap; max-width: var(--measure); }
+.message-plain-text { margin: 0; font-family: inherit; font-size: inherit; line-height: inherit; overflow-wrap: anywhere; }
+.message-formatted-text code { font-size: var(--text-sm); background: var(--bg-sunken); border-radius: var(--radius-sm); padding: 1px var(--space-1); }
+.msg[data-role="user"] .message-formatted-text code { background: var(--bg-surface); }
+.message-markdown-heading { font-weight: var(--weight-semibold); margin: var(--space-2) 0 var(--space-1); }
+.message-markdown-quote { border-left: 2px solid var(--border-strong); padding-left: var(--space-3); color: var(--text-muted); }
+.message-formatted-text ul, .message-formatted-text ol { margin: var(--space-1) 0; padding-left: var(--space-5); }
+.message-formatted-text ul { list-style: disc; }
+.message-formatted-text ol { list-style: decimal; }
+.message-source-text { margin: 0; font-family: var(--font-mono); font-size: var(--text-sm); line-height: var(--leading-normal); white-space: pre-wrap; overflow-wrap: anywhere; }
+.message-code { margin: var(--space-2) 0; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-sunken); overflow: hidden; }
+.message-code-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 0 var(--space-1) 0 var(--space-3); border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.message-code pre { margin: 0; padding: var(--space-3); font-size: var(--text-sm); line-height: var(--leading-normal); white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; }
+.message-copy { display: inline-flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.copy-error { font-size: var(--text-xs); color: var(--danger-fg); }
+.diff-add { color: var(--ok-fg); }
+.diff-del { color: var(--danger-fg); }

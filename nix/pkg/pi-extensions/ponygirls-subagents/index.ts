@@ -10,7 +10,7 @@
 import { Type, type TSchema } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { defineTool } from "@earendil-works/pi-coding-agent";
-import { CustomViewToggle } from "@ponygirls/pi-ui";
+import { BORDER_ORDER, CustomViewToggle, borderBadge, borderBadgeCompact } from "@ponygirls/pi-ui";
 import { FileRunStore } from "./src/store.ts";
 import { HISTORY_CHANNEL, type HistoryRequest } from "./src/history.ts";
 import { CUSTOM_NOTICE, NoticeDelivery, type NoticeSink } from "./src/notice-delivery.ts";
@@ -20,12 +20,13 @@ import type { GateSpecInput, ReviewSpecInput } from "./src/gate.ts";
 import { instructionsFromPromptOptions, parseSelection } from "./src/instructions.ts";
 import { defaultSupervisorPolicy, validateAllowedTools, validateSchedulerLimits, validateWorktreeRoot, type SupervisorPolicy } from "./src/policy.ts";
 import { DEFAULT_LIMITS, type SchedulerLimits } from "./src/scheduler.ts";
+import { BackendRegistry, registerBackendHost } from "./src/backends.ts";
 import { GoverningModels } from "./src/parent-models.ts";
 import { snapshotGoverningHandles, type PinnedGoverningHandle } from "./src/governing-runtime.ts";
 import { prepareThroughEventBus } from "./src/delegated-call.ts";
 import { DELEGATION_GUIDELINES, gateParameters, readParameters, reviewParameters, spawnParameters, waitParameters } from "./src/tools.ts";
 import type { InstructionSet, Isolation, ResolvedModel } from "./src/types.ts";
-import { AgentsScreen, badgeLine, compactBadge, fileSessionReader, renderHeadless, sanitizeDisplay, widgetLine, type InspectorAction } from "./src/ui.ts";
+import { AgentsScreen, agentsBadge, fileSessionReader, renderHeadless, sanitizeDisplay, widgetLine, type InspectorAction } from "./src/ui.ts";
 import { themeStyle } from "./src/display.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -33,7 +34,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Footer statuses sort by key; this one sorts ahead of long ones such as "search". */
+/** Widget key of the border badge; its place on the border is BORDER_ORDER.agents. */
 const STATUS_KEY = "agents";
 /** How often an open /agents screen re-reads state and transcripts. */
 const SCREEN_POLL_MS = 500;
@@ -97,6 +98,10 @@ export function loadPolicy(): LoadedPolicy {
   else if (Array.isArray(raw.allowedModels)) {
     policy.allowedModels = raw.allowedModels.filter((m) => typeof m?.provider === "string" && typeof m?.id === "string");
   }
+  if (raw.latestModelsOnly !== undefined) {
+    if (typeof raw.latestModelsOnly !== "boolean") throw new Error(`POLICY_DENIED: ${path}: latestModelsOnly must be a boolean`);
+    policy.latestModelsOnly = raw.latestModelsOnly;
+  }
   // Generic external allowlist: malformed lists/patterns fail visibly, never
   // silently discarded (empty default = no external delegation).
   if (raw.allowedTools === undefined) {
@@ -127,6 +132,7 @@ interface SessionBinding {
   /** The governing session's model at its latest tool call (what children inherit). */
   model: ResolvedModel | null;
   modelRegistry: ExtensionContext["modelRegistry"];
+  backends: BackendRegistry;
   /** The governing session's working directory (host-isolated children start here). */
   cwd: string;
   /** Skills and context files pi loaded for the current run (what children can receive). */
@@ -174,13 +180,13 @@ function publishBadge(ui: ExtensionContext["ui"] | null, views: AgentView[] | nu
     ui.setWidget(STATUS_KEY, undefined);
     return;
   }
-  const label = ui.theme.bg("toolSuccessBg", ` ${badgeLine(views)} `);
-  const compact = compactBadge(ui.theme, views);
+  const badge = agentsBadge(views);
   ui.setWidget(
     STATUS_KEY,
-    () => ({
-      render: () => [label],
-      renderCompact: () => compact,
+    // Styled with the theme at each render, so a theme switch restyles the badge.
+    (_tui, theme) => ({
+      render: (width) => [borderBadge(theme, badge, width)],
+      renderCompact: (width) => borderBadgeCompact(theme, badge, width),
       invalidate: () => {},
       handleMouse: (event) => {
         if (event.type !== "click" || event.button !== "left") return undefined;
@@ -188,12 +194,14 @@ function publishBadge(ui: ExtensionContext["ui"] | null, views: AgentView[] | nu
         return { handled: true };
       },
     }),
-    { placement: "borderBottomLeft" },
+    { placement: "borderBottomLeft", order: BORDER_ORDER.agents },
   );
 }
 
 export default function (pi: ExtensionAPI): void {
   if (typeof pi.enqueueMessage !== "function") throw new Error("UNSUPPORTED_SDK: subagent notices require this flake's retained-ingress Pi patch");
+  const backends = new BackendRegistry();
+  const stopBackendHost = registerBackendHost(pi.events, backends);
   const bindings = new Map<string, SessionBinding>();
   const durableBindings = processRuntime().bindings;
   let currentBinding: SessionBinding | null = null;
@@ -236,6 +244,8 @@ export default function (pi: ExtensionAPI): void {
     binding.handoffTimer = null;
     const finishHandoff = binding.finishHandoff;
     binding.finishHandoff = null;
+    binding.supervisor.refreshBackendAuthority();
+    binding.backends = backends;
     binding.modelRegistry = ctx.modelRegistry;
     binding.cwd = ctx.cwd;
     binding.ui = ctx.ui;
@@ -316,7 +326,7 @@ export default function (pi: ExtensionAPI): void {
     if (!sdkRoot) throw new Error("SANDBOX_UNAVAILABLE: PI_SUBAGENTS_SDK_ROOT is not set; workers cannot load the pi SDK");
     const store = new FileRunStore(rootDir, sessionId);
     const binding: SessionBinding = {
-      sessionId, rootDir, supervisor: null as unknown as Supervisor, model: null, modelRegistry: ctx.modelRegistry, cwd: ctx.cwd, instructions: null,
+      sessionId, rootDir, supervisor: null as unknown as Supervisor, model: null, modelRegistry: ctx.modelRegistry, backends, cwd: ctx.cwd, instructions: null,
       ui: ctx.ui, statusTimer: null, currentCtx: ctx, pane: new CustomViewToggle(), governingBaseCtx: null, governingActive: true, providerActive: true,
       prepareDelegatedCall: (call) => prepareThroughEventBus(pi.events, call),
       onSupervisorChange: () => {}, handoffTimer: null, finishHandoff: null,
@@ -337,6 +347,8 @@ export default function (pi: ExtensionAPI): void {
       policy,
       schedulerLimits,
       governor: () => ({ model: binding.model, cwd: binding.cwd, instructions: binding.instructions }),
+      backends: () => binding.backends,
+      availableModels: () => binding.modelRegistry.getAvailable(),
       parentModels: new GoverningModels(() => {
         if (!binding.providerActive) throw new Error("STALE_GENERATION: governing model registry is no longer active");
         return binding.modelRegistry;
@@ -392,6 +404,8 @@ export default function (pi: ExtensionAPI): void {
   function governing(ctx: ExtensionContext): SessionBinding {
     const binding = bindingFor(ctx);
     binding.model = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id, thinkingLevel: pi.getThinkingLevel() } : null;
+    if (binding.modelRegistry !== ctx.modelRegistry) binding.supervisor.refreshBackendAuthority();
+    binding.backends = backends;
     binding.modelRegistry = ctx.modelRegistry;
     // Capture the live tool context for external delegation (prototype-
     // preserved scoped contexts keep getters/revocation; spawn return is NOT
@@ -410,12 +424,15 @@ export default function (pi: ExtensionAPI): void {
       name: "spawn_agent",
       label: "Spawn subagent",
       description:
-        "Start a subagent on a task and return immediately with its agent id, path, task-run id, generation, and workdir (it does not wait for completion; use wait_agent). By default (isolation worktree) a writer edits its own git worktree of your checkout; its changes stay in workdir until you bring them over (e.g. git -C <workdir> diff). workspace_path instead puts the child in a git work tree you prepared and keep (policy workspaceRoots must contain it). isolation none edits your working directory in place. The child sees only its task text plus the skills and context files you pass. It inherits your model unless `model` names an allowlisted one. The default 32-agent cap counts open identities, including nested agents and reviewers; close_agent frees their slots without deleting history. Optional gate requires unanimous reviewer validation (single model or panel), with deterministic checks for writers. Alternatively review runs one-shot advisory reviewers without gating or automatic repairs. Both return all feedback through read_agent view=reviews.",
+        "Start a subagent on a task and return immediately with its agent id, path, task-run id, generation, and workdir (it does not wait for completion; use wait_agent). By default (isolation worktree) a writer edits its own git worktree of your checkout; its changes stay in workdir until you bring them over (e.g. git -C <workdir> diff). repo_path selects a committed Git top-level at or below your working directory as the source for a managed worktree writer; it never edits that source in place. workspace_path instead puts the child in a git work tree you prepared and keep (policy workspaceRoots must contain it). isolation none edits your working directory in place. The child sees only its task text plus the skills and context files you pass. It inherits your model unless `model` names an allowlisted one. The default 32-agent cap counts open identities, including nested agents and reviewers; close_agent frees their slots without deleting history. Optional gate requires unanimous reviewer validation (single model or panel), with deterministic checks for writers. Alternatively review runs one-shot advisory reviewers without gating or automatic repairs. Both return all feedback through read_agent view=reviews.",
       promptGuidelines: [...DELEGATION_GUIDELINES.spawn_agent],
       parameters: spawnParameters<TSchema>(Type, {
         model: Type.Optional(Type.Object({ provider: Type.String(), id: Type.String(), thinkingLevel: Type.Optional(Type.String()) })),
         gate: Type.Optional(gateParameters<TSchema>(Type)),
         review: Type.Optional(reviewParameters<TSchema>(Type)),
+        repo_path: Type.Optional(Type.String({
+          description: "Absolute path of a committed Git top-level equal to or beneath your working directory, compared after resolving symlinks. Governing session and worktree writers only: selects the source of a fresh managed worktree, not an in-place workspace. Cannot combine with repo_id or workspace_path",
+        })),
         workspace_path: Type.Optional(Type.String({
           description: "Absolute path of a git work tree you prepared for this child (its top-level directory, with a commit), used instead of a worktree made for it; isolation worktree only, without base_commit. Accepted only inside a policy workspaceRoots entry. It stays yours: nothing creates, resets, or removes it",
         })),
@@ -425,13 +442,14 @@ export default function (pi: ExtensionAPI): void {
       renderResult: (result, options, theme, context) => renderSpawnResult(result, options, theme, context),
       async execute(toolCallId, params, _signal, _onUpdate, ctx) {
         try {
-          const p = params as { task_name: string; message: string; profile: "reader" | "writer"; isolation?: Isolation; repo_id?: string; base_commit?: string; workspace_path?: string; result_limit?: number; model?: { provider: string; id: string; thinkingLevel?: string }; gate?: GateSpecInput; review?: ReviewSpecInput };
+          const p = params as { task_name: string; message: string; profile: "reader" | "writer"; isolation?: Isolation; repo_id?: string; repo_path?: string; base_commit?: string; workspace_path?: string; result_limit?: number; model?: { provider: string; id: string; thinkingLevel?: string }; gate?: GateSpecInput; review?: ReviewSpecInput };
           return ok(await governing(ctx).supervisor.spawn(caller, {
             taskName: p.task_name,
             message: p.message,
             profile: p.profile,
             isolation: p.isolation,
             repoId: p.repo_id ?? null,
+            repoPath: p.repo_path ?? null,
             baseCommit: p.base_commit ?? null,
             workspacePath: p.workspace_path ?? null,
             resultLimit: p.result_limit ?? null,
@@ -759,7 +777,7 @@ export default function (pi: ExtensionAPI): void {
   };
 
   pi.registerCommand("agents", {
-    description: "Subagents: tree, details, transcripts with chat, and controls",
+    description: "Subagents: tree, transcripts, messages, controls",
     handler: (args, ctx) => openAgents(args, ctx, "open"),
   });
 
@@ -794,6 +812,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async (event, ctx) => {
+    stopBackendHost();
     const sessionId = ctx.sessionManager.getSessionId();
     const binding = bindings.get(sessionId);
     if (!binding) return;

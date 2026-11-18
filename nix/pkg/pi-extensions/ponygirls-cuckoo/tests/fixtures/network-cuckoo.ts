@@ -3,6 +3,7 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { registerCuckoo } from '../../index.ts';
 import { FilePreferenceStore } from '../../src/preferences.ts';
+import { FileQuestionStore, QUESTIONS_FILE } from '../../src/questions.ts';
 import { nativeNetworkServices, type EncoderProfile } from '../../src/network-services.ts';
 
 export default function (pi: ExtensionAPI): void {
@@ -15,7 +16,7 @@ export default function (pi: ExtensionAPI): void {
     model: 'owned-http-embeddings', version: '1', dimensions: 2, normalization: 'unit', credentialEnv: 'FIXTURE_ONLY' });
   const agentDir = getAgentDir();
   const services = nativeNetworkServices(agentDir);
-  registerCuckoo(pi, new FilePreferenceStore(join(agentDir, 'cuckoo.json')), {
+  registerCuckoo(pi, new FilePreferenceStore(join(agentDir, 'cuckoo.json')), new FileQuestionStore(join(agentDir, QUESTIONS_FILE)), {
     ...services,
     embeddingTransportPolicy: 'owned-loopback-http',
     encoderProfiles: { path: 'injected:owned-fixture', read: () => [profile] },

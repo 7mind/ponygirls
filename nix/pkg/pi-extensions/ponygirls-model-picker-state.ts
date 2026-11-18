@@ -159,19 +159,16 @@ export function windowStart(selected: number, count: number, size: number): numb
 
 /** Fallback list rows when the terminal size is unknown (a stub TUI, no tty). */
 export const PICKER_FALLBACK_ROWS = 10;
-export const PICKER_MIN_ROWS = 5;
-export const PICKER_MAX_ROWS = 30;
-/**
- * Dialog chrome around the list: overlay margin (2) + border with the tabs (2)
- * + filter (1) + hints (2) + one spare row for a hint line wrapped on narrow
- * terminals.
- */
-const PICKER_CHROME_ROWS = 8;
+const PICKER_MAX_ROWS = 30;
+export const PICKER_HEIGHT_PERCENT = 66;
+/** Frame top, frame bottom and filter; hints are measured at render time. */
+const PICKER_CHROME_ROWS = 3;
 
-/** Model-picker list rows for a terminal height: two thirds for the dialog, less chrome. */
-export function pickerVisibleRows(termRows: number | undefined): number {
+/** Budget the list after reserving room for every rendered hint, even after a resize or wrap. */
+export function pickerVisibleRows(termRows: number | undefined, hintRows: number): number {
 	if (typeof termRows !== "number" || !Number.isFinite(termRows)) return PICKER_FALLBACK_ROWS;
-	return Math.max(PICKER_MIN_ROWS, Math.min(PICKER_MAX_ROWS, Math.floor((termRows * 2) / 3) - PICKER_CHROME_ROWS));
+	const overlayRows = Math.floor(termRows * PICKER_HEIGHT_PERCENT / 100);
+	return Math.max(1, Math.min(PICKER_MAX_ROWS, overlayRows - PICKER_CHROME_ROWS - hintRows));
 }
 
 export function allModels(models: readonly ModelRef[]): ModelRef[] {

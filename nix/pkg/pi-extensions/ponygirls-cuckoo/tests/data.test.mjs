@@ -11,7 +11,7 @@ import { REPORT_TYPE, MAX_FIELD_CHARS, MAX_REPORT_CHARS, parseReport, checkpoint
 
 // Specified: Behavioral-Active, Blackbox-Atomic/Group; filesystem preferences exercise the real adapter.
 test('strict JSON reports include zero objectives and reject malformed or unbounded output', () => {
-  assert.deepEqual(parseReport('{"objectives":[],"rules":[]}'), { objectives: [], rules: [] });
+  assert.deepEqual(parseReport('{"objectives":[],"rules":[]}'), { objectives: [], rules: [], answers: null });
   const raw = JSON.stringify({ objectives: [{ objective: 'Ship Cuckoo', progress: 'Tests pending', issues: ['Serial runtime tests'], eta: 'Unknown: runtime validation has not started' }], rules: [] });
   assert.equal(parseReport(raw).objectives[0].progress, 'Tests pending');
   for (const value of ['null', '[]', '{}', '```json\n' + raw + '\n```', '{"objectives":[],"extra":true}', '{"objectives":[{"objective":"x"}]}', JSON.stringify({ objectives: [{ objective: 'x', progress: '' }] }), JSON.stringify({ objectives: [{ objective: 'x'.repeat(MAX_FIELD_CHARS + 1), progress: 'x' }] }), ' '.repeat(MAX_REPORT_CHARS + 1)]) {
@@ -31,11 +31,11 @@ test('inquiry requests the current schema and evidence-qualified estimates', () 
 test('checkpoint details survive persistence and appear in reports and history', () => {
   const item = { objective: 'Ship', progress: 'Tests running', issues: ['Waiting for access', 'One failing case', 'Serial tests'], eta: 'Unknown: access pending' };
   const raw = JSON.stringify({ objectives: [item], rules: [] });
-  assert.deepEqual(parseReport(raw), { objectives: [item], rules: [] });
+  assert.deepEqual(parseReport(raw), { objectives: [item], rules: [], answers: null });
   const manager = SessionManager.inMemory();
   manager.appendCustomEntry(REPORT_TYPE, checkpoint('details', raw));
   assert.equal(checkpoints(manager.getBranch())[0].version, 4);
-  for (const text of [reportText(checkpoints(manager.getBranch())), historyText(manager.getEntries(), manager.getBranch())]) {
+  for (const text of [reportText(checkpoints(manager.getBranch()), []), historyText(manager.getEntries(), manager.getBranch())]) {
     for (const issue of item.issues) assert.ok(text.includes(`- ${issue}`));
     assert.ok(text.includes(`ETA: ${item.eta}`));
     assert.doesNotMatch(text, /Obstacles:|Bottlenecks:/);
@@ -57,7 +57,7 @@ test('legacy saved reports remain readable without inventing checkpoint details'
   assert.equal(saved[0].version, 1);
   assert.equal(saved[0].raw, raw);
   assert.equal(saved[0].report.objectives[0].progress, 'Testing');
-  assert.match(reportText(saved), /ETA: Not recorded \(legacy report\)/);
+  assert.match(reportText(saved, []), /ETA: Not recorded \(legacy report\)/);
   manager.appendCustomEntry(REPORT_TYPE, { version: 2, requestId: 'missing-details', raw, error: null });
   assert.equal(checkpoints(manager.getBranch())[1].report, null);
 });
@@ -68,10 +68,10 @@ test('reports restore only the active branch and preserve invalid raw output', (
   manager.appendCustomEntry(REPORT_TYPE, checkpoint('req-1', '{"objectives":[],"rules":[]}'));
   manager.appendCustomEntry(REPORT_TYPE, checkpoint('req-2', 'not JSON'));
   assert.equal(checkpoints(manager.getBranch()).length, 2);
-  assert.match(reportText(checkpoints(manager.getBranch())), /Invalid report.*\nRaw output:\nnot JSON/);
+  assert.match(reportText(checkpoints(manager.getBranch()), []), /Invalid report.*\nRaw output:\nnot JSON/);
   manager.branch(anchor);
   assert.equal(checkpoints(manager.getBranch()).length, 0);
-  assert.match(reportText([]), /No Cuckoo reports/);
+  assert.match(reportText([], []), /No Cuckoo reports/);
   manager.appendCustomEntry(REPORT_TYPE, { version: 9 });
   assert.throws(() => checkpoints(manager.getBranch()), /Invalid saved/);
 });

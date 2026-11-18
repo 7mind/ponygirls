@@ -1,4 +1,4 @@
-import { Anchored, Popover } from './Popover.tsx';
+import { Anchored } from './Popover.tsx';
 import { Icon } from './Icon.tsx';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
@@ -52,13 +52,12 @@ export function browserColumnChoices(storage: Storage, key: string): ColumnChoic
     write(ids) { storage.setItem(key, JSON.stringify(ids)); },
   };
 }
-export function useTableColumns(specs: readonly TableColumnSpec[], rowCount: number, enabled: boolean): TableLayout { return useStoredTableColumns(null, specs, rowCount, enabled); }
-/** As `useTableColumns`; the chosen columns are read from and written to `choices`. */
-export function useStoredTableColumns(choices: ColumnChoiceStore | null, specs: readonly TableColumnSpec[], rowCount: number, enabled: boolean): TableLayout {
+/** The chosen columns are read from and written to `choices`. */
+export function useStoredTableColumns(choices: ColumnChoiceStore, specs: readonly TableColumnSpec[], rowCount: number, enabled: boolean): TableLayout {
   const container = useRef<HTMLDivElement>(null), table = useRef<HTMLTableElement>(null), automatic = useRef(true), measured = useRef(false);
   const [available, setAvailable] = useState(0), [state, setState] = useState<ColumnState[]>(() => {
     if (new Set(specs.map(spec => spec.id)).size !== specs.length || !specs.some(spec => spec.required)) throw new Error('Table requires unique column IDs and a required column.');
-    const stored = choices === null ? null : choices.read();
+    const stored = choices.read();
     return specs.map(spec => ({ spec, width: clampColumn(spec, spec.ideal), visible: spec.required || (stored === null ? spec.compact : stored.includes(spec.id)) }));
   });
   function viewport() { return container.current === null ? available : container.current.clientWidth; }
@@ -87,7 +86,7 @@ export function useStoredTableColumns(choices: ColumnChoiceStore | null, specs: 
   useLayoutEffect(() => { if (enabled && !measured.current && rowCount > 0 && available > 0) { measured.current = true; if (automatic.current) setState(fit(natural(state), available)); } }, [rowCount, available, enabled]);
   function updateVisibility(test: (column: ColumnState) => boolean) {
     automatic.current = true; const width = viewport(), next = state.map(column => ({ ...column, visible: column.spec.required || test(column) }));
-    if (choices !== null) choices.write(next.filter(column => column.visible).map(column => column.spec.id));
+    choices.write(next.filter(column => column.visible).map(column => column.spec.id));
     setState(fit(next, width));
   }
   const columns = useMemo(() => state.filter(column => column.visible), [state]);
@@ -107,21 +106,6 @@ export function ColumnResize({ column, layout }: { column: SizedColumn; layout: 
     const delta = event.shiftKey ? RESIZE_STEP * 4 : RESIZE_STEP;
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End') { event.preventDefault(); event.stopPropagation(); layout.resize(column.spec.id, event.key === 'Home' ? column.spec.min : event.key === 'End' ? column.spec.max : column.width + (event.key === 'ArrowRight' ? delta : -delta)); }
   }}/>;
-}
-export function TableControls({ name, layout }: { name: string; layout: TableLayout }) {
-  return <div className="table-controls" role="region" aria-label={`${name} table controls`}>
-    <Popover className="table-options" label={<span aria-hidden="true">⋮</span>} ariaLabel={`${name} table options`} panelClassName="table-options-panel">
-      <div role="group" aria-label={`${name} table options`}>
-        <button type="button" onClick={layout.fitWidth}>Fit to width</button>
-        <button type="button" onClick={layout.fitContent}>Fit to content</button>
-        <details className="table-column-options"><summary>Columns</summary>
-          <button type="button" onClick={layout.showAll}>Show all columns</button>
-          <button type="button" onClick={layout.compact}>Compact columns</button>
-          {layout.specs.map(spec => <label key={spec.id}><input type="checkbox" checked={layout.columns.some(column => column.spec.id === spec.id)} disabled={spec.required} onChange={event => layout.toggle(spec.id, event.target.checked)}/>{spec.label}</label>)}
-        </details>
-      </div>
-    </Popover>
-  </div>;
 }
 /** The table-options menu of a view bar (spec §3.1 Archive): column choice and fit modes. Choosing a column keeps the menu open. */
 export function ColumnMenu({ name, layout }: { name: string; layout: TableLayout }) {

@@ -19,7 +19,7 @@ nix develop .#chronicle --command bash -c 'cd chronicle/web && npm ci --offline 
 * `npm ci` is only needed on a fresh checkout. The dev shell exports `PLAYWRIGHT_BROWSERS_PATH` (pinned Playwright 1.64.1 / Chromium 1248); nothing is downloaded.
 * Vite listens on `127.0.0.1:<ephemeral>`; Chromium is headless; everything is stopped on exit. Wall time ≈ 5–8 min under heavy host load.
 * On a host with an exhausted inotify limit Vite prints many `file watcher error: EMFILE` lines; they are harmless here (no watching is needed).
-* Optional second argument: regex over scenario names (`archive-deep`, `session-kinds`, `account-flows`, …) to re-shoot a subset. Numbering restarts per run, so use a fresh output directory.
+* Optional second argument: regex over scenario names (`archive-states`, `session-states`, `account-flows`, …) to re-shoot a subset. Numbering restarts per run, so use a fresh output directory.
 
 Output: `NN-page-state-viewport.png` (suffix `-dark` = OS dark scheme, `-full` = full-page capture; viewports 1440x900 primary, 1024x700 secondary, 390x844 for a few responsive checks),
 `index.md` (one line per file: what it shows, how it was reached, blank-capture check), `inventory/*.json` (DOM inspection: scroll containers,

@@ -1,0 +1,12 @@
+{
+  "name": "pi-claude-code-subagents",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Additive Claude Code execution backend for ponygirls-subagents",
+  "pi": { "extensions": ["./index.ts"] },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "ponygirls-subagents": "*"
+  }
+}

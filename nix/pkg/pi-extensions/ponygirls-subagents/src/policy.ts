@@ -63,6 +63,8 @@ export interface SupervisorPolicy {
   repos: RegisteredRepo[];
   /** Models a child may be assigned by explicit override (children inherit their owner's otherwise). Null allows every model (no allowlist check). */
   allowedModels: Array<{ provider: string; id: string }> | null;
+  /** Reject a model when a newer generation of the same family is available on that provider. */
+  latestModelsOnly: boolean;
   /** Whether gate bypass is permitted by the governor. */
   gateBypassAllowed: boolean;
   /** Round ceiling; null permits unlimited agreement rounds. */
@@ -124,6 +126,7 @@ export function defaultSupervisorPolicy(): SupervisorPolicy {
     nesting: false,
     repos: [],
     allowedModels: [],
+    latestModelsOnly: true,
     gateBypassAllowed: false,
     gateMaxRoundsCeiling: 3,
     toolNetwork: false,

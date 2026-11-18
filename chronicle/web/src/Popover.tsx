@@ -54,8 +54,8 @@ export function Anchored({ className, buttonClassName, buttonState, label, ariaL
   </div>;
 }
 
-export function Popover({ label, children, className, panelClassName, ariaLabel, describedBy, dataState }: {
-  label: ReactNode; children: ReactNode; className?: string; panelClassName?: string; ariaLabel?: string; describedBy?: string | undefined; dataState?: string;
+export function Popover({ label, children, className, panelClassName }: {
+  label: ReactNode; children: ReactNode; className?: string; panelClassName?: string;
 }) {
   const id = useId(), trigger = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null), [open, setOpen] = useState(false);
   useLayoutEffect(() => {
@@ -95,5 +95,5 @@ export function Popover({ label, children, className, panelClassName, ariaLabel,
     place();
     return () => { cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('scroll', schedule, true); window.removeEventListener('resize', schedule); };
   }, [open]);
-  return <div className={className} data-state={dataState}><button type="button" ref={trigger} popoverTarget={id} aria-expanded={open} aria-controls={id} aria-label={ariaLabel} aria-describedby={describedBy}>{label}</button><div id={id} ref={panel} popover="auto" className={panelClassName === undefined ? 'transient-popover' : `transient-popover ${panelClassName}`} onToggle={event => setOpen(event.newState === 'open')}><button type="button" className="popover-close" popoverTarget={id} popoverTargetAction="hide">Close</button>{children}</div></div>;
+  return <div className={className}><button type="button" ref={trigger} popoverTarget={id} aria-expanded={open} aria-controls={id}>{label}</button><div id={id} ref={panel} popover="auto" className={panelClassName === undefined ? 'transient-popover' : `transient-popover ${panelClassName}`} onToggle={event => setOpen(event.newState === 'open')}><button type="button" className="popover-close" popoverTarget={id} popoverTargetAction="hide">Close</button>{children}</div></div>;
 }

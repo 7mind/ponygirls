@@ -114,7 +114,7 @@ Tests classify cheap blackbox contracts and controlled local communication separ
 ## Dashboard navigation
 
 Authenticated sessions open on Search, including after sign-in or account changes.
-Archive and Activity table headers contain vertical three-dot options for fitting
+The Archive and Activity view bars hold a table options menu for fitting
 width/content and selecting columns; resizing remains available on each header.
 Search results load cursor by cursor as the page scrolls and end with an explicit
 marker; there are no numbered pages. A result expands in place to show its source

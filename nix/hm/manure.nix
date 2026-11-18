@@ -178,6 +178,17 @@ in
               or publication is not authorized, provide the artifact locally
               and state that it was not published.
 
+              When Manure is available and publication is authorized, use it
+              to show the user UI/TUI mockups before implementing interface
+              changes. Publish a viewable mockup, return its link, and ask
+              for explicit confirmation of the proposed design. Wait for
+              that confirmation before implementing the design; silence or
+              an unanswered decision is not approval. Continue only work
+              independent of that decision. If Manure is unavailable or
+              publication is not authorized, show the mockup locally and
+              still ask for confirmation. Respect an explicit user waiver
+              of the mockup or confirmation step.
+
               `manure` CLI + `manure-mcp` stdio tools publish files and
               directories as artifacts (`internal` | `external(password)` |
               `public`, optional TTL). Connection: `MANURE_URL` plus the

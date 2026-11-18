@@ -56,8 +56,8 @@ def _refresh_note(last_refresh: datetime, next_refresh: datetime, now: datetime,
     remaining = max(0, int((next_refresh - now).total_seconds()))
     minutes, seconds = divmod(remaining, 60)
     return (
-        f"updated {last_refresh.astimezone().strftime('%H:%M:%S')}"
-        f" · next refresh in {minutes}:{seconds:02d}"
+        f"updated {last_refresh.astimezone().strftime('%H:%M')}"
+        f" · refresh in {minutes}:{seconds:02d}"
         f" · r refresh · i {'hide' if show_invalid else 'show'} invalid · q quit"
     )
 
@@ -97,7 +97,7 @@ def run_tui(
                             show_invalid,
                             mask_logins,
                             mask_profiles,
-                            console.width if console.is_terminal else None,
+                            console.width,
                         ),
                         refresh=True,
                     )

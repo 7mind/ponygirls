@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { startDevServer } from '../dev/serve.mjs';
 import { FAKE_PASSWORD, FAKE_TOKEN_SECRET, FAKE_WRONG_CODE } from '../dev/fake-server.js';
+import { LONG_TOKEN_NAME, longLogin } from '../dev/scenarios.js';
 
 const require = createRequire(new URL('../../../chronicle/web/package.json', import.meta.url));
 const { chromium } = require('playwright-core');
@@ -461,6 +462,29 @@ try {
       await button(page, 'Keep it visible').click();
       assert.equal(await secretValue(page).inputValue(), FAKE_TOKEN_SECRET);
       assert.equal(logoutPosts(calls), 1);
+    } },
+    { pair: "sign-out answer pending × sign-in on the host's login page: the sign-in request waits for it", run: async (page, calls) => {
+      // The answer to /logout clears the session cookie; a sign-in answered before it would lose its new cookie. The
+      // login asks for a second factor here, so that the page stays (no reload) after the answers.
+      await page.evaluate(() => { window.__accountFake.state.login = 'totp'; });
+      await hold(page, 'POST /logout');
+      await button(page, 'Sign out').click();
+      await pendingCount(page, 1);
+      // The host shows its login page before that answer (Haystack: the server closes the live socket as it ends the session).
+      await page.evaluate(() => {
+        const mount = document.createElement('main');
+        mount.setAttribute('data-account-auth', '');
+        document.querySelector('[data-host-main]').remove();
+        document.querySelector('[data-account-outlet]').replaceWith(mount);
+      });
+      await page.getByLabel('Username', { exact: true }).fill('alice');
+      await page.getByLabel('Password', { exact: true }).fill(FAKE_PASSWORD);
+      await button(page, 'Sign in').click();
+      await page.getByText('Signing in…').or(page.getByText('Signing in as')).first().waitFor();
+      assert.equal(await page.evaluate(() => window.__accountFake.calls.filter(call => call.path === '/login').length), 0, 'no sign-in request before the sign-out has its answer');
+      await page.evaluate(() => window.__accountFake.state.release());
+      await page.getByText('Signing in as').waitFor();
+      assert.deepEqual(calls.filter(call => call.method === 'POST').map(call => call.path), ['/logout', '/login']);
     } }
   ];
   // Each row gets its own page: a row may end with a one-time value shown, whose beforeunload guard would hold a reload.
@@ -601,6 +625,32 @@ try {
     await page.getByLabel('One-time token secret', { exact: true }).waitFor();
   });
 
+  // README "Interleavings", N × P: the fragment is set, the first profile read's answer is applied, and only then is the
+  // hashchange delivered. Window listeners run in registration order (capture or not), so the holding listener is
+  // installed before the module's own.
+  await run('the profile fallback replaces only the routed fragment, never a navigation still being delivered', async ({ page, open }) => {
+    await page.addInitScript(() => {
+      let held = 0;
+      window.__holdRoutes = false;
+      window.__heldRoutes = () => held;
+      window.addEventListener('hashchange', event => { if (window.__holdRoutes) { event.stopImmediatePropagation(); held++; } });
+      window.__deliverRoutes = () => { window.__holdRoutes = false; for (; held > 0; held--) window.dispatchEvent(new HashChangeEvent('hashchange')); };
+    });
+    await open('settings-legacy', '#/archive');
+    await page.evaluate(() => { window.__accountFake.state.hold = 'GET /profile'; location.hash = '#account/profile'; });
+    await page.locator('[data-account-outlet] [data-view="loading"]').waitFor();
+    // The account read has been applied: no other answer changes the DOM (whose observer routes too) in between.
+    await page.locator('[data-account-outlet] a[data-section="tokens"] .count').waitFor();
+    await page.evaluate(() => { window.__holdRoutes = true; location.hash = '#/archive'; window.__accountFake.state.release(); });
+    await page.locator('[data-account-outlet] a[data-section="profile"]').waitFor({ state: 'detached' });
+    assert.equal(await page.evaluate(() => window.__heldRoutes()), 1, 'the hashchange is still undelivered');
+    assert.equal(await page.evaluate(() => location.hash), '#/archive', 'the pending navigation keeps its fragment');
+    await page.evaluate(() => window.__deliverRoutes());
+    await page.getByRole('heading', { name: 'Host view' }).waitFor();
+    assert.equal(await page.locator('[data-account-outlet]').isHidden(), true);
+    assert.equal(await page.evaluate(() => location.hash), '#/archive');
+  });
+
   await run('long token list: the document is the only scroller and the list head sticks; markup is app-independent', async ({ page, open }) => {
     await open('settings-tokens-long');
     const scrollers = () => page.evaluate(() => [...document.querySelectorAll('body *')].filter(element => {
@@ -617,6 +667,101 @@ try {
       return page.locator('[data-account-outlet]').evaluate(node => node.innerHTML.replace(/account-[a-z-]+-\d+/g, 'id'));
     };
     assert.equal(await profileMarkup('manure'), await profileMarkup('chronicle'));
+  });
+
+  // Spec §8 item 9 at a phone width: no view scrolls sideways, every text (also user-supplied strings without a break
+  // opportunity) is drawn inside the viewport and its clipping boxes, and the list tables keep every cell and row action
+  // inside the viewport (no column is dropped and there is no inner scroller, spec §1). Tab follows the reading order.
+  await run('390 px: no account view scrolls sideways or clips text; table cells, row actions and dialogs stay within the viewport; Tab follows the reading order', async ({ page, errors }) => {
+    const PHONE = { width: 390, height: 844 }, WIDE = { width: 1440, height: 900 };
+    // Each scenario is driven into its state by the harness (with ?steps), on its own page: the states with a shown-once
+    // value hold navigation away (beforeunload). The last one stays open for the 1440 checks.
+    const VIEWS = ['login-default', 'login-totp', 'login-pending', 'signup-default', 'signup-pending', 'signup-enroll', 'recover-default',
+      'settings-profile', 'settings-password', 'settings-totp-replace', 'users-menu', 'settings-tokens-long-strings', 'users-long-strings',
+      'settings-tokens-secret', 'users-enroll-link'];
+    const outside = view => view.evaluate(() => {
+      const width = document.scrollingElement.clientWidth;
+      const out = node => { const box = node.getBoundingClientRect(); return box.width === 0 || box.left < 0 || box.right > width; };
+      const cells = [...document.querySelectorAll('table[data-list] tbody tr')].flatMap(row => [...row.cells]
+        .filter(cell => !cell.checkVisibility() || out(cell) || cell.scrollWidth > cell.clientWidth).map(cell => `${row.dataset.rowId} cell ${cell.cellIndex}`));
+      const actions = [...document.querySelectorAll('table[data-list] tbody button, dialog[open] button')].filter(button => button.closest('[role="menu"]') === null)
+        .filter(button => !button.checkVisibility({ opacityProperty: true, visibilityProperty: true }) || out(button)).map(button => button.getAttribute('aria-label') ?? button.textContent);
+      const overlays = [...document.querySelectorAll('[role="menu"], dialog[open]')].filter(overlay => overlay.checkVisibility() && out(overlay)).map(overlay => overlay.tagName);
+      return [...cells, ...actions, ...overlays];
+    });
+    // Text of the account surfaces that is drawn outside the viewport or cut by a box that clips its overflow.
+    const clippedText = view => view.evaluate(() => {
+      const width = document.scrollingElement.clientWidth, cut = [];
+      for (const root of document.querySelectorAll('[data-account-outlet]:not([hidden]), [data-account-auth], dialog[open], [data-account-toasts]')) {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+          if (node.textContent.trim() === '' || !node.parentElement.checkVisibility() || node.parentElement.closest('thead, .sr-only') !== null) continue;
+          const range = document.createRange(); range.selectNodeContents(node);
+          const box = range.getBoundingClientRect();
+          let inside = box.left >= 0 && box.right <= width;
+          for (let box2 = node.parentElement; inside && box2 !== root.parentElement; box2 = box2.parentElement) {
+            if (getComputedStyle(box2).overflowX === 'visible') continue;
+            const clip = box2.getBoundingClientRect();
+            inside = box.left >= clip.left - 0.5 && box.right <= clip.right + 0.5;
+          }
+          if (!inside) cut.push(node.textContent.trim().slice(0, 24));
+        }
+      }
+      return cut;
+    });
+    // The focus stops reached with Tab from the first label, in reading order (a later stop is lower, or on the same line
+    // further right).
+    const focusOrder = async (view, labels) => {
+      await view.getByRole('button', { name: labels[0], exact: true }).focus();
+      const stops = [];
+      for (const [index] of labels.entries()) {
+        if (index > 0) await view.keyboard.press('Tab');
+        stops.push(await view.evaluate(() => { const box = document.activeElement.getBoundingClientRect(); return { label: document.activeElement.getAttribute('aria-label'), x: box.left + box.width / 2, y: box.top + box.height / 2, h: box.height }; }));
+      }
+      assert.deepEqual(stops.map(stop => stop.label), labels);
+      for (const [index, stop] of stops.entries()) {
+        if (index === 0) continue;
+        const before = stops[index - 1], sameLine = Math.abs(stop.y - before.y) < Math.min(stop.h, before.h) / 2;
+        assert.ok(sameLine ? stop.x > before.x : stop.y > before.y, `${stop.label} comes after ${before.label} in reading order`);
+      }
+    };
+    const TOKEN_STOPS = ['Copy token ID of devbox-collector', 'Revoke devbox-collector', 'Copy token ID of ci-collector-02'];
+    const USER_STOPS = ['Revoke the invitation for carol', 'Actions for erin', 'Actions for grace'];
+    let view = null;
+    for (const name of VIEWS) {
+      if (view !== null) await view.close({ runBeforeUnload: false });
+      view = await page.context().newPage();
+      view.on('pageerror', error => errors.push(error.message));
+      await view.setViewportSize(PHONE);
+      await view.goto(`${server.origin}/?scenario=${name}`);
+      await view.waitForFunction(() => document.documentElement.dataset.harnessReady === 'true');
+      assert.deepEqual(await view.evaluate(() => [document.scrollingElement.scrollWidth, document.scrollingElement.clientWidth]), [PHONE.width, PHONE.width], `${name}: no sideways scroll`);
+      assert.deepEqual(await outside(view), [], `${name}: every cell, row action and dialog is within the viewport`);
+      assert.deepEqual(await clippedText(view), [], `${name}: no text is drawn outside the viewport or clipped`);
+      if (name === 'settings-tokens-long-strings') {
+        await view.getByText(`Copy the secret for “${LONG_TOKEN_NAME}” now`).waitFor();
+        assert.equal(await view.locator('tr.is-revoked').count(), 1, 'the revoked token is shown');
+      }
+      if (name === 'users-long-strings') {
+        const application = view.getByRole('dialog', { name: `Application of “${longLogin('bob')}”`, exact: true });
+        for (const action of ['Approve', 'Reject application…', 'Cancel']) assert.equal(await application.getByRole('button', { name: action, exact: true }).isVisible(), true, action);
+      }
+      if (name === 'settings-tokens-secret') {
+        assert.ok(await view.locator('table[data-list="tokens"] tbody tr').count() >= 2);
+        await focusOrder(view, TOKEN_STOPS);
+        await view.setViewportSize(WIDE);
+        await focusOrder(view, TOKEN_STOPS);
+      }
+    }
+    for (const row of ['bob', 'erin']) assert.equal(await view.locator(`tr[data-row-id="${row}"]`).count(), 1, `${row}: a pending applicant and an ordinary user are listed`);
+    await focusOrder(view, USER_STOPS);
+    // 1440 keeps the table form: one header row with every column side by side.
+    await view.setViewportSize(WIDE);
+    const heads = await view.locator('table[data-list="users"] thead th').evaluateAll(cells => cells.map(cell => [cell.getBoundingClientRect().top, cell.getBoundingClientRect().width > 0]));
+    assert.equal(heads.length, 6);
+    assert.deepEqual(heads, heads.map(() => [heads[0][0], true]));
+    await focusOrder(view, USER_STOPS);
+    await view.close({ runBeforeUnload: false });
   });
 
   console.log(`PASS ${cases} account view browser cases`);

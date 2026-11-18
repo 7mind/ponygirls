@@ -1,13 +1,14 @@
 /* One sticky query bar: the shared editor's query form and the counter share the first flex line of the page, both
  * sticky under the masthead; the shortcut row and the results follow. The editor's wrappers are transparent to layout so
- * that its form is a flex item of the page (a sticky box is confined to its parent). */
+ * that its query bar (`.querybar`) and shortcut row (`.filterbar`, ExpressionEditor) are flex items of the page (a sticky box
+ * is confined to its parent). */
 .search-page{display:flex;flex-wrap:wrap;align-items:flex-start;column-gap:var(--space-3);padding:0 var(--gutter)}
 .search-editor,.search-editor>.expression-editor{display:contents}
-.search-editor .search-form,.search-bar{position:sticky;top:calc(var(--masthead-h) + var(--space-2));z-index:var(--z-sticky);margin-top:var(--space-3);margin-bottom:var(--space-2);outline:var(--space-3) solid var(--bg-surface)}
-.search-editor .search-form{order:1;flex:1 1 0;min-width:0}
+.search-editor .querybar,.search-bar{position:sticky;top:calc(var(--masthead-h) + var(--space-2));z-index:var(--z-sticky);margin-top:var(--space-3);margin-bottom:var(--space-2);outline:var(--space-3) solid var(--bg-surface)}
+.search-editor .querybar{order:1;flex:1 1 0;min-width:0}
 .search-bar{order:2;flex:none;align-self:stretch;background:var(--bg-surface);display:flex;align-items:center;gap:var(--space-2)}
 .search-bar .viewbar-meta{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.search-editor .expression-tools{order:3;flex:0 0 100%}
+.search-editor .filterbar{order:3;flex:0 0 100%}
 .search-page>:not(.search-editor):not(.search-bar){order:4;flex:0 0 100%;min-width:0}
 .stale-hint{color:var(--warn-fg);font-weight:var(--weight-medium)}
 .search-info .popover{width:360px}
@@ -45,7 +46,7 @@ a.hit:hover{background:var(--accent-soft);border-left-color:var(--accent-solid);
 @media(max-width:720px){
   .search-bar{order:3;position:static;flex:0 0 100%;margin-top:0}
   .search-bar::before{display:none}
-  .search-editor .expression-tools{order:4}
+  .search-editor .filterbar{order:4}
   .search-page>:not(.search-editor):not(.search-bar){order:5}
   .hit{grid-template-columns:64px minmax(0,1fr)}
   .hit-at{grid-column:2;text-align:left}

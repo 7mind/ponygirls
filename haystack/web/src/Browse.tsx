@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { api, ApiError, AuthError, NetworkError, summaryKey, type SearchSort, type SearchSortField, type Summary } from "./api";
 import { browseHash, PRESETS, sameBrowseState, type BrowseState, type Preset } from "./browse-state";
-import { useLiveUpdates } from "./Live";
+import { useConnection, useLiveUpdates } from "./Live";
+import { connectionLabel } from "./connection";
 import { UiIcon } from "./Masthead";
 import { QueryInput } from "./QueryInput";
-import { appendField, appendFilter, hasConjunct, toggleConjunct } from "./query-edit";
+import { appendField, appendFilter, filterTerm, hasConjunct, toggleConjunct } from "./query-edit";
 
 const PAGE_SIZE = 20;
 /** The next page is requested when the end of the list comes this close to the viewport (the document scrolls). */
@@ -53,11 +54,14 @@ const COLUMNS: readonly Column[] = [
   { label: "Modified", sort: { field: "modified-at", name: "Modified" }, col: "col-mod", hide: "", skeleton: "two-line" },
   { label: "Rev", sort: { field: "revision", name: "Revision" }, col: "col-rev", hide: "hide-md", skeleton: "none" },
 ];
-/** Filter toggles: on while their term is a conjunct of the draft (query-edit `hasConjunct`). */
-const TOGGLES: ReadonlyArray<{ label: string; term: string }> = [
+/** Filter toggles of `userId`: on while their term is a conjunct of the draft (query-edit `hasConjunct`). */
+const toggles = (userId: string): ReadonlyArray<{ label: string; term: string }> => [
   { label: "Needs review", term: PRESETS.inbox.query },
+  { label: "Modified by me", term: filterTerm("modified-by", userId) },
   { label: "Archived", term: PRESETS.archive.query },
 ];
+/** Lists of the records agents write to the activity namespace: they name it. */
+const ACTIVITY_PRESETS: ReadonlySet<Preset> = new Set(["upstream", "skills"]);
 const FIELD_INSERTERS: ReadonlyArray<{ field: string; hide: "" | "hide-md" }> = [
   { field: "type", hide: "" }, { field: "project", hide: "" }, { field: "tag", hide: "" }, { field: "status", hide: "" },
   { field: "importance", hide: "" }, { field: "modified-by", hide: "hide-md" }, { field: "created-by", hide: "hide-md" },
@@ -117,6 +121,24 @@ function Importance({ value }: { value: string }) {
   return value === "critical" ? <span className="status status-danger">critical</span> : <span className={`importance importance-${value}`}>{value}</span>;
 }
 
+/** The list's notice while the live connection is stale or offline (masthead tones; mockup "offline"): the rows stay. */
+function ConnectionNotice() {
+  const { stats, retry } = useConnection();
+  const view = connectionLabel(stats, Date.now());
+  if (view.tone !== "stale" && view.tone !== "offline") return null;
+  return <div className="inline-notice">
+    <div className="notice notice-warn notice-row" role="status"><UiIcon name="alert" /><div className="grow">
+      <span className="notice-title">{view.label} — showing the last loaded data.</span> New changes will be announced, the list is not reset.</div>
+      <button type="button" className="btn btn-sm" onClick={retry}>Reconnect now</button></div>
+  </div>;
+}
+
+/** Opens the masthead indicator's connection details. */
+function ConnectionDetailsButton() {
+  const { details } = useConnection();
+  return <button type="button" className="btn btn-sm btn-ghost" onClick={details.show}>Connection details</button>;
+}
+
 function RecordRow({ item, onOpen }: { item: Summary; onOpen: (key: string) => void }) {
   const key = summaryKey(item);
   const archived = item.status === "archived";
@@ -149,9 +171,13 @@ function RecordRow({ item, onOpen }: { item: Summary; onOpen: (key: string) => v
   </tr>;
 }
 
-export function Browse({ initial, preset, onOpen, onAuthLost }: {
+export function Browse({ initial, preset, userId, activityProjectId, onOpen, onAuthLost }: {
   initial: BrowseState;
   preset: Preset;
+  /** The signed-in user: "Modified by me". */
+  userId: string;
+  /** Where agents write upstream activity and skill drafts. */
+  activityProjectId: string;
   onOpen: (key: string) => void;
   onAuthLost: () => void;
 }) {
@@ -462,12 +488,13 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
       <div className="viewbar-meta" role="status" aria-live="polite">{counter}</div>
     </form>
     <div className="filterbar" role="group" aria-label="Filter shortcuts">
-      {TOGGLES.map(({ label, term }) => <button key={term} type="button" className="filter" aria-pressed={hasConjunct(query, term)} title={term}
+      {toggles(userId).map(({ label, term }) => <button key={term} type="button" className="filter" aria-pressed={hasConjunct(query, term)} title={term}
         disabled={migration} onClick={() => editDraft(toggleConjunct(query, term))}>{label}</button>)}
-      <span className="filter-divider" aria-hidden="true" />
+      <span className="filter-divider hide-sm" aria-hidden="true" />
       {FIELD_INSERTERS.map(({ field, hide }) => <button key={field} type="button" className={`filter filter-field ${hide}`} aria-label={`Add ${field} filter`}
         disabled={migration} onClick={() => editDraft(appendField(query, field))}>{field}:</button>)}
       <div className="sortline">
+        {ACTIVITY_PRESETS.has(preset) && <span className="chip" title="Upstream activity and skill drafts are written to this project">namespace {activityProjectId}</span>}
         <button type="button" className="link-button" aria-haspopup="dialog" aria-controls={syntaxOpen ? syntaxId : undefined} onClick={() => setSyntaxOpen(true)}>Query syntax</button>
       </div>
     </div>
@@ -486,11 +513,12 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
         </>}
       </div></div>
     </div>}
+    <ConnectionNotice />
     {firstFailure !== null && !migration && diagnostics.length === 0 && <div className="page">
       <div className="notice notice-danger" role="alert"><UiIcon name="alert" /><div className="grow">
         <div className="notice-title">Records could not be loaded</div>
         {firstFailure.message} Your query is unchanged and nothing was modified.
-        <div className="notice-actions"><button type="button" className="btn btn-sm" onClick={() => retry("first")}>Retry</button></div>
+        <div className="notice-actions"><button type="button" className="btn btn-sm" onClick={() => retry("first")}>Retry</button><ConnectionDetailsButton /></div>
       </div></div>
     </div>}
     {changed && <div className="update-pill" role="status"><button type="button" onClick={() => void refresh()}><UiIcon name="arrow-up" />Records changed · Show</button></div>}

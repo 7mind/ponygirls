@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdtemp, readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +23,8 @@ class MemoryBoundary implements Boundary {
   health = healthy("/checkout");
   initialized = false;
   fail = false;
+  /** The failure text of `sync`, when the CLI refuses it. */
+  syncRefusal: string | null = null;
   hold: Promise<void> = Promise.resolve();
   async root() { return this.checkout; }
   async localIndex() { return this.initialized; }
@@ -32,6 +34,7 @@ class MemoryBoundary implements Boundary {
     })]);
     signal.throwIfAborted();
     if (this.fail) throw new Error("intentional CLI failure");
+    if (args[0] === "sync" && this.syncRefusal !== null) throw new Error(this.syncRefusal);
     if (args[0] !== "status") {
       this.initialized = true;
       this.health = healthy("/checkout");
@@ -331,4 +334,110 @@ test("CLI: concurrent fresh sessions serialize and explicit rebuild recovers sch
   await first.start("reindex");
   assert.equal(first.state.phase, "error");
   assert.equal(await readFile(database, "utf8"), "not a SQLite database", "foreign data must not be replaced");
+});
+
+// codegraph 1.6.2 stderr, captured from the pinned CLI (see the CLI test below).
+const SYNC_REFUSED = "codegraph sync exited 1: ✗ Failed to sync: Sync could not acquire the file lock; retry when the index is available.";
+const LOCKED_ELSEWHERE = `${SYNC_REFUSED} CodeGraph database is locked by another process (kernel flock)\n`;
+const OWNERSHIP_RECORD = `${SYNC_REFUSED} CodeGraph legacy/unrecognized ownership record at /checkout/.codegraph/codegraph.lock. ` +
+  "Refusing automatic PID-based recovery across namespaces.\n";
+
+// Regression: a second Pi starting while another process syncs the index reported a red error.
+test("a sync refused because another process holds the index lock keeps the last known state", async () => {
+  const boundary = new MemoryBoundary();
+  boundary.initialized = true;
+  boundary.syncRefusal = LOCKED_ELSEWHERE;
+  const states: State[] = [];
+  const session = new CodegraphSession(boundary, "/checkout", (state) => states.push(state));
+  await session.start("sync");
+  assert.deepEqual(session.state, { phase: "idle", detail: "not started" }, "the first sync changes nothing it knew");
+  assert.match(session.busyElsewhere ?? "", /locked by another process/);
+  assert.deepEqual(states.filter((state) => state.phase === "error" || state.phase === "cancelled"), []);
+  assert.equal(states.at(-1)!.phase, "idle", "the work-in-progress state must end");
+
+  boundary.syncRefusal = null;
+  await session.start("sync");
+  assert.equal(session.state.phase, "ready", session.state.detail);
+  assert.equal(session.busyElsewhere, null, "a later attempt that ran clears the refusal");
+  const ready = session.state;
+
+  boundary.syncRefusal = LOCKED_ELSEWHERE;
+  const retry = session.start("sync");
+  assert.equal(session.busyElsewhere, null, "an attempt in progress is not yet refused");
+  await retry;
+  assert.deepEqual(session.state, ready, "a verified index stays ready while another process updates it");
+  assert.match(session.busyElsewhere ?? "", /locked by another process/);
+});
+
+test("other lock refusals and CLI failures remain errors", async () => {
+  for (const refusal of [OWNERSHIP_RECORD, "codegraph sync exited 3: database is locked\nsecond line", "codegraph sync exited 1: \n"]) {
+    const boundary = new MemoryBoundary();
+    boundary.initialized = true;
+    boundary.syncRefusal = refusal;
+    const session = new CodegraphSession(boundary, "/checkout", () => {});
+    await session.start("sync");
+    assert.equal(session.state.phase, "error", refusal);
+    assert.equal(session.state.detail, `Error: ${refusal}`);
+    assert.equal(session.busyElsewhere, null, refusal);
+  }
+});
+
+test("cancelling a sync that another process then refuses is still a cancellation", async () => {
+  const boundary = new MemoryBoundary();
+  boundary.initialized = true;
+  let release!: () => void;
+  boundary.hold = new Promise((resolve) => { release = resolve; });
+  const run = boundary.run.bind(boundary);
+  boundary.run = async (root, args, signal) => {
+    try { return await run(root, args, signal); }
+    catch { throw new Error(LOCKED_ELSEWHERE); }
+  };
+  const session = new CodegraphSession(boundary, "/checkout", () => {});
+  const work = session.start("sync");
+  await new Promise((done) => setImmediate(done));
+  const cancelled = session.cancel();
+  release();
+  await cancelled;
+  await work;
+  assert.equal(session.state.phase, "cancelled");
+  assert.equal(session.busyElsewhere, null);
+});
+
+test("CLI: the pinned CLI's lock refusals are told apart by their own text", {
+  skip: !process.env.PONYGIRLS_CODEGRAPH_BIN ? "set PONYGIRLS_CODEGRAPH_BIN for pinned local CLI tests" : false,
+}, async (t) => {
+  const f = await cliFixture();
+  t.after(f.cleanup);
+  const session = new CodegraphSession(f.boundary, f.root, () => {});
+  await session.start("sync");
+  assert.equal(session.state.phase, "ready", session.state.detail);
+  const ready = session.state;
+
+  // Another process holds the CLI's own index lock, as a syncing MCP server or second Pi does.
+  const flock = process.env.PONYGIRLS_CODEGRAPH_FLOCK_BIN ?? "flock";
+  const holder = spawn(flock, ["-x", join(f.root, ".codegraph", "codegraph.lock.flock"), process.execPath, "-e",
+    "process.stdout.write('held');setInterval(()=>{},1000)"], { detached: true, stdio: ["ignore", "pipe", "inherit"] });
+  const released = new Promise<void>((done) => holder.once("close", () => done()));
+  // flock keeps the lock in a child of its own: release it by stopping the whole group.
+  const release = async () => {
+    try { process.kill(-holder.pid!, "SIGKILL"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    await released;
+  };
+  t.after(release);
+  await new Promise<void>((held, failed) => { holder.stdout.once("data", () => held()); holder.once("error", failed); });
+  await session.start("sync");
+  assert.deepEqual(session.state, ready, "contention is not a failure of this checkout");
+  assert.match(session.busyElsewhere ?? "", /exited 1: . Failed to sync: Sync could not acquire the file lock.*locked by another process \(kernel flock\)/s);
+  await release();
+  await session.start("sync");
+  assert.equal(session.state.phase, "ready", session.state.detail);
+  assert.equal(session.busyElsewhere, null);
+
+  // The same "could not acquire the file lock" prefix, but nobody holds the lock: the operator must act.
+  await writeFile(join(f.root, ".codegraph", "codegraph.lock"), JSON.stringify({ pid: 1 }));
+  await session.start("sync");
+  assert.equal(session.state.phase, "error");
+  assert.match(session.state.detail, /Sync could not acquire the file lock.*legacy\/unrecognized ownership record/s);
+  assert.equal(session.busyElsewhere, null);
 });

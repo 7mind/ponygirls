@@ -1,14 +1,15 @@
 import { readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { CustomViewToggle, StatusView } from "@ponygirls/pi-ui";
+import { BORDER_ORDER, CustomViewToggle, borderBadge, borderBadgeCompact, type CustomViewFactory, type UiTheme } from "@ponygirls/pi-ui";
 import { localBoundary } from "./runtime.ts";
 import type { State } from "./runtime.ts";
 import { localCatalog } from "./projects.ts";
-import { CodegraphWorkspace } from "./workspace.ts";
+import { CodegraphWorkspace, reportText, type StatusSnapshot } from "./workspace.ts";
 import { CG_HELP, completeCommand, parseCommand, type DirectoryLister } from "./commands.ts";
 import type { CgCommand } from "./commands.ts";
-import { BADGE_GLYPH, renderCompactBadge, stateNotice } from "./presentation.ts";
+import { CodegraphStatusPane, codegraphBadge, stateNotice, type StatusPaneOptions } from "./presentation.ts";
 
 const WIDGET = "ponygirls-codegraph";
 /**
@@ -24,6 +25,16 @@ interface DelegatedCallEvent {
   waitUntil(work: Promise<void>): void;
 }
 const NOTICE_LIMIT = 16_384;
+/** What a `/cg` command has to show: a line of text, or the status of the scopes it named. */
+type CommandOutcome = { text: string } | { status: StatusSnapshot };
+
+/** The status pane over one snapshot; it shows that snapshot until it closes. */
+function statusPane(status: StatusSnapshot): CustomViewFactory<UiTheme, StatusPaneOptions["keys"]> {
+  return (tui, theme, keys, done) => new CodegraphStatusPane({
+    status, home: homedir(), theme, keys, now: () => Date.now(),
+    rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done,
+  });
+}
 
 function isDirectory(path: string): boolean {
   try {
@@ -48,24 +59,20 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
   const render = (state: State) => {
     const ctx = currentContext;
     if (ctx === undefined || ctx.mode !== "tui") return;
-    const label = toolCalls.size > 0 ? `querying (${toolCalls.size}) / ${state.phase}` : state.phase;
-    const detail = state.phase === "working" ? ` ${state.detail.split(":")[0]}` : "";
-    const querying = toolCalls.size > 0;
+    const badge = codegraphBadge(state.phase, toolCalls.size);
     const controller = statusView;
     const runtime = workspace;
     ctx.ui.setWidget(WIDGET, (_tui, theme) => ({
-      render: () => [theme.bg("selectedBg", ` ${BADGE_GLYPH} ${label}${detail} `)],
-      renderCompact: () => renderCompactBadge(theme, state.phase, querying),
+      render: (width) => [borderBadge(theme, badge, width)],
+      renderCompact: (width) => borderBadgeCompact(theme, badge, width),
       invalidate: () => {},
       handleMouse: (event) => {
         if (event.type !== "click" || event.button !== "left" || runtime === undefined || !ctx.hasUI) return undefined;
-        void controller.toggle(ctx.ui, async (tui, theme, keys, done) => new StatusView({
-          title: "Codegraph status", text: await runtime.report(null), theme, keys,
-          rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done,
-        })).catch((error: unknown) => { if (workspace === runtime) notify(ctx, String(error), true); });
+        void controller.toggle(ctx.ui, async (tui, theme, keys, done) => statusPane(await runtime.snapshot(null))(tui, theme, keys, done))
+          .catch((error: unknown) => { if (workspace === runtime) notify(ctx, String(error), true); });
         return { handled: true };
       },
-    }), { placement: "borderBottomLeft" });
+    }), { placement: "borderBottomLeft", order: BORDER_ORDER.codegraph });
   };
   const create = (ctx: ExtensionContext): CodegraphWorkspace => {
     currentContext = ctx;
@@ -150,28 +157,37 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
     if (workspace !== undefined) render(workspace.state);
   });
 
-  const execute = async (command: CgCommand, runtime: CodegraphWorkspace): Promise<string> => {
+  const execute = async (command: CgCommand, runtime: CodegraphWorkspace): Promise<CommandOutcome> => {
     switch (command.name) {
-      case "help": return CG_HELP;
-      case "discover": await runtime.discover(command.target); return runtime.report(null);
-      case "use": await runtime.use(command.target); return runtime.report(command.target);
-      case "init": await runtime.initWorkspace(command.target); return runtime.report(command.target);
+      case "help": return { text: CG_HELP };
+      case "discover": await runtime.discover(command.target); return { text: await runtime.report(null) };
+      case "use": await runtime.use(command.target); return { text: await runtime.report(command.target) };
+      case "init": await runtime.initWorkspace(command.target); return { text: await runtime.report(command.target) };
       case "erase": return runtime.erase(command.target);
       case "cancel":
         await runtime.cancel(command.target, command.all);
-        return "Codegraph extension work stopped; MCP watcher unchanged";
+        return { text: "Codegraph extension work stopped; MCP watcher unchanged" };
+      case "status":
+        await runtime.perform(command.name, command.target, command.all);
+        return { status: await runtime.snapshot(command.target) };
       default:
         await runtime.perform(command.name, command.target, command.all);
-        return runtime.report(command.target);
+        return { text: await runtime.report(command.target) };
     }
+  };
+  /** Status is a pane in the TUI; every other client reads the text report. */
+  const show = async (outcome: CommandOutcome, ctx: ExtensionContext): Promise<void> => {
+    if ("text" in outcome) notify(ctx, outcome.text, false);
+    else if (ctx.mode === "tui" && ctx.hasUI) await statusView.open(ctx.ui, statusPane(outcome.status));
+    else notify(ctx, reportText(outcome.status), false);
   };
   const handle = async (args: string, ctx: ExtensionContext) => {
     const runtime = workspace ?? create(ctx);
     let command: CgCommand;
     try { command = parseCommand(args); }
     catch (error) { notify(ctx, String(error), true); return; }
-    const work = execute(command, runtime).then((text) => {
-      if (workspace === runtime) notify(ctx, text, false);
+    const work = execute(command, runtime).then(async (outcome) => {
+      if (workspace === runtime) await show(outcome, ctx);
     }).catch((error: unknown) => {
       if (workspace === runtime) notify(ctx, String(error), true);
     });
@@ -190,7 +206,7 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
     }
   };
   pi.registerCommand("cg", {
-    description: "Codegraph: status, discover, use, sync, reindex, cancel, init, erase, help",
+    description: "Code index: status, sync, reindex, choose project",
     getArgumentCompletions: (prefix) => completeCommand(prefix, listDirectories),
     handler: handle,
   });

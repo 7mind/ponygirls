@@ -59,7 +59,7 @@ try {
   await run('renewal HTTP 401 clears private content and really requires sign-in', async ({ page, fixture }) => {
     fixture.refreshStatus = 401;
     await page.goto(`${origin}/tests-browser/harness.html`); await page.getByRole('heading', { name: SIGN_IN }).waitFor();
-    assert.equal(await page.locator('.archive-row, .original-message, [data-account-outlet]').count(), 0);
+    assert.equal(await page.locator('.archive-row, [data-message-id], [data-account-outlet]').count(), 0);
     assert.equal(fixture.refreshRequests.length, 1);
     assert.equal(fixture.calls.some(call => /Apply/.test(call.operation.$type)), false);
   });

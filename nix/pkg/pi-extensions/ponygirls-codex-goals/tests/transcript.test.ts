@@ -15,8 +15,9 @@ import {
 } from "../src/prompts.ts";
 import {
   BannerLine,
-  commitSummary,
+  clearedSummary,
   instructionSummary,
+  isClearedNotice,
   isCommitMeta,
   isPauseNotice,
   messageText,
@@ -88,19 +89,21 @@ test("messageText joins text parts as pi's default renderer does", () => {
   assert.equal(messageText([{ type: "text", text: "a" }, { type: "image" }, { type: "text", text: "b" }]), "a\nb");
 });
 
-test("pause notices and commit entries have one-line forms; other data does not qualify", () => {
+test("pause notices and a clear have one-line forms; other data does not qualify", () => {
   const pause = { text: "Goal paused (g).", at: "t", event: "paused" as const, goalId: "g", revision: 474, timeUsedSeconds: 6 };
   assert.ok(isPauseNotice(pause));
   assert.ok(!isPauseNotice({ text: "Goal paused (g).", at: "t" }));
   assert.equal(
     pauseNoticeSummary(TAGS, pause),
-    "<warning>◉ goal paused</warning><customMessageText> · rev 474 · 6s · /goal resume</customMessageText>",
+    "<warning>◉ goal paused</warning><customMessageText> · 6s · /goal resume</customMessageText>",
   );
   assert.ok(isCommitMeta({ sessionId: "s", goalId: "g", revision: 2 }));
   assert.ok(!isCommitMeta({ sessionId: "s" }));
   assert.ok(!isCommitMeta(null));
-  assert.equal(commitSummary(TAGS, { sessionId: "s", goalId: "g", revision: 2 }), "<dim>  · goal rev 2 committed</dim>");
-  assert.equal(commitSummary(PLAIN, { sessionId: "s", goalId: null, revision: 3, tombstone: true }), "  · goal rev 3 committed · cleared");
+  assert.equal(clearedSummary(TAGS), "<muted>🎯 goal cleared</muted>");
+  assert.ok(isClearedNotice({ text: "Goal cleared. Transcript entries retained.", at: "t" }));
+  assert.ok(!isClearedNotice({ text: "Goal cleared.", at: "t" }));
+  assert.ok(!isClearedNotice(pause));
 });
 
 test("a banner line fills exactly the width on the custom-message background", () => {

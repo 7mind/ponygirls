@@ -11,6 +11,7 @@ export function completeCuckooArguments(prefix: string): CompletionItem[] | null
     if (previous.length === 0) return [...toggles, choice('inquire', 'Request a checkpoint now', true),
       choice('inherit', 'Inherit enablement', false), choice('default', 'Change global defaults', true),
       choice('project', 'Change trusted project overrides', true), choice('feature', 'Configure a feature switch', true),
+      choice('questions', 'List, add or remove standing questions asked at every checkpoint', true),
       choice('transfer', 'Manage operator-approved historical packets', true),
       choice('vectors', 'Approve, revoke or inspect task encoder consent', true),
       choice('critic', 'Approve, revoke, inspect or reconcile the task critic', true),
@@ -20,13 +21,19 @@ export function completeCuckooArguments(prefix: string): CompletionItem[] | null
     if (previous.length === 1 && (previous[0] === 'vectors' || previous[0] === 'critic')) return [
       ...['approve', 'revoke', 'status'].map(token => choice(token, 'Operator task disclosure workflow', false)),
       ...(previous[0] === 'critic' ? [choice('reconcile', 'Explicitly reconcile one uncertain admission', false)] : [])];
+    const questionWords = previous[0] === 'default' || previous[0] === 'project' ? previous.slice(1) : previous;
+    if (questionWords[0] === 'questions') return questionWords.length !== 1 ? null : [
+      choice('list', 'Show standing questions and their stores', false),
+      choice('add', 'Add a standing question; enter TEXT next', true),
+      choice('remove', 'Remove a standing question; enter its ID next', true)];
     if (previous.length === 1 && previous[0] === 'inquire') return [choice('now', 'Request a checkpoint now, even when automatic mode is off', false)];
     if (previous.length === 1 && previous[0]!.toLowerCase() === 'default') return [...toggles,
-      ...(previous[0] === 'default' ? [choice('policy', 'Set global growth policy', true), choice('threshold', 'Set global relative growth percentage', true), choice('feature', 'Configure a global feature default', true)] : [])];
+      ...(previous[0] === 'default' ? [choice('policy', 'Set global growth policy', true), choice('threshold', 'Set global relative growth percentage', true), choice('feature', 'Configure a global feature default', true), choice('questions', 'Manage global standing questions', true)] : [])];
     const global = previous[0] === 'default';
     const project = previous[0] === 'project';
     if (project && previous.length === 1) return [...toggles, choice('inherit', 'Remove project enablement override', false),
-      choice('feature', 'Configure a project feature override', true), choice('policy', 'Configure project growth policy', true)];
+      choice('feature', 'Configure a project feature override', true), choice('policy', 'Configure project growth policy', true),
+      choice('questions', 'Manage trusted-project standing questions', true)];
     const words = global || project ? previous.slice(1) : previous;
     if (words[0] === 'feature') {
       if (words.length === 1) return FEATURES.map(feature => choice(feature.id, feature.label, true));

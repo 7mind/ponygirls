@@ -456,7 +456,7 @@ await check("permanent close stops and manual retry resynchronizes missed writes
     await seed.put({ key: "live:missed", documentJson: docOf({ title: "Created while disconnected" }), expectedRevision: 0, requestId: rid() });
     assert.equal(await page.getByText("Created while disconnected", { exact: true }).count(), 0);
     await page.getByRole("button", { name: "Connection: Offline", exact: true }).click();
-    await page.getByRole("button", { name: "Reconnect now", exact: true }).click();
+    await page.getByRole("region", { name: "Connection details", exact: true }).getByRole("button", { name: "Reconnect now", exact: true }).click();
     await page.getByText("Created while disconnected", { exact: true }).waitFor();
     await page.waitForFunction(() => document.title === "Haystack · Live"); // the list resynchronizes before the reconnect reaches Live
   } finally { await ctx.close(); }

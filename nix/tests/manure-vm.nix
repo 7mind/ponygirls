@@ -25,6 +25,12 @@ let
   testDigest = builtins.hashString "sha256" testToken;
   testHumanToken = "B" + lib.concatStrings (lib.genList (_: "A") 42);
   testHumanDigest = builtins.hashString "sha256" testHumanToken;
+  # Browser password login (manure/docs/account-auth.md) of the human user. The
+  # record is pbkdf2-sha256 (600000 rounds, the server's minimum) of the fake
+  # password below with the fixed salt 0x000102..0f, so it is a constant:
+  #   python3 -c 'import base64,hashlib;s=bytes(range(16));print("$".join(("pbkdf2-sha256","600000",base64.b64encode(s).decode(),base64.b64encode(hashlib.pbkdf2_hmac("sha256",b"vm-human-password-not-a-secret",s,600000,dklen=32)).decode())))'
+  testHumanPassword = "vm-human-password-not-a-secret";
+  testHumanPasswordRecord = "pbkdf2-sha256$600000$AAECAwQFBgcICQoLDA0ODw==$0KPMn3RUWf+DFLBUs5HHDkshGEYiB1R6H1pGkquDQfw=";
 
   mkUser = {
     w-agent = {
@@ -33,6 +39,8 @@ let
     };
     w-human = {
       type = "human";
+      login = "human-login";
+      passwordHashFile = "/etc/manure-test/human-password.pbkdf2";
       tokens.default.tokenHashFile = "/etc/manure-test/human-token.sha256";
     };
   };
@@ -92,6 +100,7 @@ let
     ];
     environment.etc."manure-test/token.sha256".text = testDigest + "\n";
     environment.etc."manure-test/human-token.sha256".text = testHumanDigest + "\n";
+    environment.etc."manure-test/human-password.pbkdf2".text = testHumanPasswordRecord + "\n";
     # Harness inputs consumed INSIDE sandboxes (token bind, ad-hoc guard
     # bind) live OUTSIDE /etc as regular files: bwrap refuses symlink
     # destinations (all of /etc on NixOS). Pure reads (guardlib, probe,
@@ -106,6 +115,8 @@ let
       chmod 600 /srv/manure-test/token.raw
       printf '%s' '${testHumanToken}' > /srv/manure-test/human-token.raw
       chmod 600 /srv/manure-test/human-token.raw
+      printf '%s' '${testHumanPassword}' > /srv/manure-test/human-password.raw
+      chmod 600 /srv/manure-test/human-password.raw
       cat > /srv/manure-test/hm-guard.sh <<'GUARDEOF'
 ${hmGuard.command}
 GUARDEOF
@@ -319,7 +330,8 @@ assert hmSrc.rev == "7834e82588860aaf780cec1366524456a70898d7";
     strict.succeed(probe + "version --base http://127.0.0.1:47329 --host strict.example.test --xfp https --expect-status 403 --expect-error TlsRequired")
     strict.fail(probe + "version --base http://127.0.0.1:47329 --host strict.example.test --xfp https")
 
-    # Agent bearer identity; human Login/Whoami + secure cookie; rejected logins.
+    # Agent bearer identity; retired token Login rejected without a cookie; human
+    # password login + secure cookie session; rejected password logins.
     edge.succeed(probe + "auth")
     # Real portable client init/raw-chunk/publish/grant + typed content redemption.
     edge.succeed(probe + "handoff")

@@ -129,6 +129,33 @@ isolated than its owner (`none` < `worktree` < `sandbox`). Omitted, it is
 - **`sandbox`:** the bubblewrap view below over a registered repository
   (`repo_id`); a writer gets its own worktree.
 
+### Selecting a source repository (`repo_path`)
+
+The governing session can pass an absolute `repo_path` when spawning a
+managed `worktree` writer. It must resolve to a committed Git work tree's
+top-level directory equal to or beneath the canonical governing cwd. This
+allows a session started in a non-Git parent directory to allocate a fresh
+worktree from a descendant repository, without assigning that source as an
+in-place workspace or changing policy grants.
+
+Validation precedes admission and allocation. Relative/NUL-bearing paths,
+readers, other isolation modes, and combinations with `repo_id` or
+`workspace_path` are `INVALID`; nested callers are `FORBIDDEN`. Canonical
+outside/ancestor targets, symlink escapes, and overlap with supervisor
+storage or current/retained managed worktree pools are `POLICY_DENIED`.
+Missing directories, non-Git/bare/unborn repositories, and directories
+below a Git top-level are `WORKSPACE_UNAVAILABLE`.
+
+The selected source owns `base_commit` resolution and the existing dirty
+checkout precondition. The writer starts at the new worktree's root, with
+its allocation-owned Git directory and base commit used for fingerprinting,
+checks and reviewers. Source aliases are resolved at selection; later task
+reloads keep the recorded allocation rather than following the selector
+again. Skills, context files, tool/repository grants and pool provenance
+keep their existing contracts. With no selector, the existing owner cwd
+and project-relative worktree directory behavior is unchanged. Readers
+continue to use the owner's directory and cannot select `repo_path`.
+
 ### A workspace the caller prepared (`workspace_path`)
 
 A governing session that prepares its own git work tree per child (and
@@ -301,7 +328,7 @@ An explicit abort cancels the existing wake intent, not accepted context; it doe
 not immediately restart the canceled run. `clearQueue()` (for example dequeuing
 user input for editing) only clears user input and keeps the wake intent.
 Genuinely new child activity can request another turn. Shutdown revokes scheduled delivery and retries;
-the footer status independently shows tree counts.
+the border badge independently shows tree counts.
 
 The attachment's journal cursor suppresses repeat submissions, not a durable
 session receipt. A successful synchronous `enqueueMessage` return transfers message ownership to

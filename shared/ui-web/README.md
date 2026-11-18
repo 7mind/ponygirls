@@ -27,9 +27,9 @@ What may **not** be added: colour literals outside `tokens.css`; font sizes, spa
 
 Both stylesheets put their rules in the cascade layer `ui`. Unlayered host stylesheets (the app view CSS,
 `account.css`) therefore always win over the shared rules, independent of selector specificity — the
-old app CSS keeps winning while the views are migrated, and app view CSS can override a component
-without specificity tricks. Measured against the reference mockups (all 231 renders of
-`.local/overhaul-20261117/ux/mockups`, original files vs. the same files in `@layer ui`), layering
+app view CSS can override a component
+without specificity tricks. Measured against the reference mockups (all 231 renders of the
+redesign's reference mockups, which are not kept in the repository, original files vs. the same files in `@layer ui`), layering
 changes exactly two declarations, both towards the value the per-app stylesheet states:
 Haystack `.field-name` inside a card head (14 → 13 px) and Manure `.detail-progress` margin (12 → 8 px).
 
@@ -50,12 +50,8 @@ Order in every host: `tokens.css`, `components.css`, app view CSS, `account.css`
 
 ### Activation state
 
-The hosts link `components.css` with `media="not all"`: it is downloaded but not applied, because its
-base rules (box sizing, margin resets, body background, `.masthead`, `.brand`, `.eyebrow`, …) would
-restyle the current views. The shell units (UX-C1, UX-H1, UX-M1) activate it by removing that attribute
-when they replace the shell. `tokens.css` is active and inert for the current views: their own
-unlayered custom properties win, and they already name `Inter` first in their font stacks, so the only
-visible effect is that Inter is now actually available. All three hosts run `/ui/theme-init.js`.
+The hosts link `tokens.css` and `components.css` as ordinary stylesheets; the shells and views of all three
+apps are built on them. All three hosts run `/ui/theme-init.js`.
 In Chronicle it is the only writer of the theme attributes: `src/theme.ts` keeps the existing control
 and storage key (`chronicle.theme.preference`), changes the choice through the `ui:theme-choice` event
 and fails fast if the attributes disagree with its state; `public/theme-init.js` only adds Chronicle's

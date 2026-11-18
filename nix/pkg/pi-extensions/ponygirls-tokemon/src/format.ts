@@ -26,11 +26,23 @@ export function windowState(window: QuotaWindow): WindowState {
   return fraction !== null && fraction >= LOW_WATER_FRACTION ? "low" : "ok";
 }
 
+/** Whole percent of the limit used, or null without a known used and limit. Rounded as a percentage window's Used / limit cell is, so the two agree. */
+export function usedPercent(window: QuotaWindow): number | null {
+  if (window.unlimited || window.used === null || window.limit === null || window.limit <= 0) return null;
+  return Math.max(0, Math.round((window.used * 100) / window.limit));
+}
+
+/** Two decimals with thousands separators: 1204.5 → `1,204.50`. */
+function grouped(value: number): string {
+  const [whole, cents] = value.toFixed(2).split(".");
+  return `${whole!.replace(/\B(?=(\d{3})+$)/g, ",")}.${cents}`;
+}
+
 export function formatAmount(value: number | null, unit: string): string {
   if (value === null) return "—";
   if (unit === "%") return `${value.toFixed(1)}%`;
   const symbol = CURRENCY_SYMBOLS.get(unit);
-  if (symbol !== undefined) return `${symbol}${value.toFixed(2)}`;
+  if (symbol !== undefined) return `${symbol}${grouped(value)}`;
   if (unit === "requests") return String(Math.trunc(value));
   if (unit === "credits") return String(Math.round(value));
   for (const [threshold, suffix] of MAGNITUDES) {
@@ -70,6 +82,17 @@ export function rateLimitedStatus(retryAt: Date | null, now: Date): string {
   const seconds = Math.trunc((retryAt.getTime() - now.getTime()) / 1000);
   if (seconds <= 0) return "rate limited (429) · retry due";
   return `rate limited (429) · retry in ${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
+/** The retry time as a status qualifier ("retry 55m", "retry 1h05m", "retry 28s", "retry due"); null when the endpoint named no time. */
+export function retryQualifier(retryAt: Date | null, now: Date): string | null {
+  if (retryAt === null) return null;
+  const seconds = Math.trunc((retryAt.getTime() - now.getTime()) / 1000);
+  if (seconds <= 0) return "retry due";
+  if (seconds < 60) return `retry ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `retry ${minutes}m`;
+  return `retry ${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`;
 }
 
 /** Rows with quota windows, and rate-limited rows (whose retry countdown matters), are shown by default. */

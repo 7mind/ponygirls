@@ -47,6 +47,17 @@ abstract class IndexCheckpointsContract extends munit.FunSuite {
     assertEquals(intercept[DomainError](f.archive.checkpoint(next,selected,Json.Null)).code,"internal")
     assertEquals(f.archive.checkpoint(next,selected),Some(value))
   }}
+  test("BG/GoodCommunication: only the current fence discards one window's accepted work of one stage, idempotently") { withFixture { f =>
+    f.archive.ingest("a",Fixtures.snapshot()); val first=claim(f)
+    def part(window: Int,part: Int): CheckpointKey = IndexCheckpoints.key(first,IndexingStage.Embedding,window,part,"synthetic-embedding",Json.fromString(s"slice $window $part"))
+    val stored=List(key(first),part(0,0),part(0,1),part(1,0)); stored.foreach(f.archive.checkpoint(first,_,value))
+    f.expire(first); val next=claim(f); assertEquals(next.runId,first.runId)
+    assertEquals(intercept[DomainError](f.archive.discardCheckpoints(first,IndexingStage.Embedding,0)).code,"stale-claim")
+    assertEquals(stored.map(f.archive.checkpoint(next,_)),List.fill(4)(Some(value)),"a stale worker changes nothing")
+    assertEquals(f.archive.discardCheckpoints(next,IndexingStage.Embedding,0),2)
+    assertEquals(f.archive.discardCheckpoints(next,IndexingStage.Embedding,0),0)
+    assertEquals(stored.map(f.archive.checkpoint(next,_)),List(Some(value),None,None,Some(value)))
+  }}
   test("BG/GoodCommunication: expired lease is denial, later reclaim reuses accepted work without extending old authority") { withFixture { f =>
     f.archive.ingest("a",Fixtures.snapshot()); val first=claim(f); f.archive.checkpoint(first,key(first),value)
     f.expire(first)

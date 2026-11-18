@@ -1,6 +1,7 @@
 import { Key, matchesKey, truncateToWidth, type Component, type TUI } from '@earendil-works/pi-tui';
 import { PanelLayout, type PanelParts } from './panel-layout.ts';
 import { frameTitle, keyHints } from './frame.ts';
+import { HINT, KEY } from './keys.ts';
 import type { UiTheme } from './theme.ts';
 
 function live(signal: AbortSignal): void { if (signal.aborted) throw new Error('Operator review cancelled'); }
@@ -59,9 +60,9 @@ class TransferTextPanel extends PanelLayout {
       for (let start = 0; start < this.display.length; start += w) this.lines.push(this.display.slice(start, start + w));
     }
     const hints = keyHints(this.theme, w, [
-      { key: 'j/k ↑↓', action: 'scroll' }, { key: 'Ctrl-U/D', action: 'page' }, { key: 'Home/End', action: 'bounds' },
-      ...(this.purpose === 'approval' ? [{ key: '←/→', action: 'choose' }] : []),
-      { key: 'Enter', action: this.purpose === 'approval' ? 'confirm choice' : 'close preview' }, { key: 'Esc', action: 'cancel' },
+      HINT.scroll, HINT.page,
+      ...(this.purpose === 'approval' ? [{ key: KEY.leftRight, action: 'choose' }] : []),
+      { key: KEY.enter, action: this.purpose === 'approval' ? 'confirm choice' : 'close preview' }, { key: KEY.esc, action: 'cancel' },
     ]);
     const top = this.bodyScroll.scrollTop;
     const bottom = Math.min(this.lines.length, top + this.bodyHeight(this.lines.length));

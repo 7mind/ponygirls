@@ -1,7 +1,7 @@
 // The accounts feature end to end through a service's REAL dashboard and REAL server (accounts design §4, §12;
 // shared/account-web/README.md): self-signup with authenticator set-up → pending → admin approval → sign-in without a
 // code → opt-in TOTP at login → recovery → admin enrollment by one-time link → admin flag rules → credential reset →
-// disable. One browser, one context per person and device. Only the pages are driven; the one direct request checks
+// disable → no sideways scrolling at a phone width. One browser, one context per person and device. Only the pages are driven; the one direct request checks
 // that an API token survives recovery, which no page shows. Each service has a thin harness that starts its server.
 //
 // Time steps: every TOTP time step is usable once per account (design §4.2.3) and the server accepts {T-1, T, T+1}.
@@ -23,6 +23,7 @@ const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const PREVIOUS_STEP_MARGIN_SECONDS = 8;
 const UI_TIMEOUT_MS = 30_000;
 const VIEWPORT = { width: 1440, height: 900 };
+const PHONE = { width: 390, height: 844 };
 const PAGE_TEXT_LIMIT = 1500;
 const FAILED_REQUEST_LIMIT = 12;
 const SECRET_MIN_LENGTH = 6;
@@ -503,6 +504,19 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
       await loginCard(bobLaptop).waitFor();
       await rejectedLogin(bobLaptop, BOB, passwords.bob);
       await shot(bobLaptop, 'disabled-sign-in-refused');
+    });
+
+    // Spec §8 item 9 through the service's own shell: its masthead and outlet must not reintroduce sideways scrolling.
+    await step('i. at a phone width neither the service shell nor the account views scroll sideways', async () => {
+      const bobLaptop = pages.find(record => record.name === BOB).page;
+      const widths = page => page.evaluate(() => [document.scrollingElement.scrollWidth, document.scrollingElement.clientWidth]);
+      for (const page of [adminPage, bobLaptop]) await page.setViewportSize(PHONE);
+      assert.deepEqual(await widths(adminPage), [PHONE.width, PHONE.width], 'Users');
+      await shot(adminPage, 'phone-users');
+      await accountNav(adminPage, 'Access tokens', 'tokens');
+      assert.deepEqual(await widths(adminPage), [PHONE.width, PHONE.width], 'Access tokens');
+      await shot(adminPage, 'phone-access-tokens');
+      assert.deepEqual(await widths(bobLaptop), [PHONE.width, PHONE.width], 'sign-in');
     });
 
     await step('no page errors or native dialogs', async () => {

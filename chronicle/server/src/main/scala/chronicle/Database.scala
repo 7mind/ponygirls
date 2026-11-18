@@ -289,6 +289,12 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     IndexCheckpoints.write(c,claim,key,value)
     checkpointAuthority(c,claim)
   }
+  def discardCheckpoints(claim: Claim,stage: IndexingStage,window: Int): Int = db.transaction { c =>
+    checkpointAuthority(c,claim)
+    val discarded=IndexCheckpoints.discard(c,claim,stage,window)
+    checkpointAuthority(c,claim)
+    discarded
+  }
   def progress(claim: Claim,completedWindows: Int,totalWindows: Int): Boolean = {
     Check(completedWindows>=0 && totalWindows>=completedWindows,"invalid","invalid indexing progress")
     db.transaction { c =>

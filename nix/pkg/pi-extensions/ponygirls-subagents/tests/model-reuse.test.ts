@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import type { ModelIdentity } from "../../model-generations.ts";
 import { Supervisor } from "../src/supervisor.ts";
 import { InMemoryRunStore, checkpointSha256 } from "../src/store.ts";
 import { DummyToolExecutor } from "../src/sandbox.ts";
@@ -23,6 +24,7 @@ function setup(script: "settle-text" | "hang" = "settle-text", limits = {}) {
   const initialized: Array<Record<string, unknown>> = [];
   const options = {
     rootId: "reuse", rootDir: dir, store, policy, governor: testGovernor,
+    availableModels: (): readonly ModelIdentity[] => [],
     schedulerLimits: { maxOpenAgents: 1, ...limits },
     executors: bothExecutors(new DummyToolExecutor()), workspace: new DummyWorkspaceManager(),
     workerFactory: () => {
@@ -96,6 +98,24 @@ test("explicit settled model reuse at open-agent cap reloads history and survive
       assert.equal(restored.list("governor")[0]?.model, "codex/replacement");
       await assert.rejects(() => restored.spawn("governor", { taskName: "excess", message: "no", profile: "reader" }, "excess"), /CAPACITY_EXCEEDED/);
     } finally { await restored.shutdown(); }
+  } finally { await f.cleanup(); }
+});
+
+test("settled model reuse cannot switch to an older generation even with allowlist approval", async () => {
+  const f = setup();
+  const older = { provider: "openai-codex", id: "gpt-6.1-sol", thinkingLevel: "off" };
+  const latest = { ...older, id: "gpt-6.2-sol" };
+  f.options.policy.allowedModels = [older, latest];
+  f.options.availableModels = () => [older, latest];
+  try {
+    const a = await f.spawn();
+    await until(() => f.sup.list("governor")[0]?.taskOutcome === "succeeded");
+    f.checkpoint(a.agentId, a.taskRunId);
+    await assert.rejects(() => f.sup.sendMessage("governor", a.agentId, "task", "next", { model: older }, "older"), /POLICY_DENIED.*gpt-6\.1-sol.*older generation.*gpt-6\.2-sol/);
+    assert.equal(f.sup.list("governor")[0]?.model, "test/model");
+    assert.equal(f.workers[0]!.killed, false);
+    await f.sup.sendMessage("governor", a.agentId, "task", "next", { model: latest }, "latest");
+    assert.equal(f.sup.list("governor")[0]?.model, "openai-codex/gpt-6.2-sol");
   } finally { await f.cleanup(); }
 });
 

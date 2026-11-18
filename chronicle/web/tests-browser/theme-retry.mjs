@@ -5,8 +5,7 @@ import { createServer as httpServer } from 'node:http';
 import { resolve, extname } from 'node:path';
 import { build, createServer } from 'vite';
 import { chromium } from 'playwright-core';
-import { ChronicleFixture, advanceClock, api, connectionConfig, connectionTiming, pauseClock } from './fixture.mjs';
-import { ACTIVITY_POLL_INTERVAL_MS } from '../src/progress.ts';
+import { ChronicleFixture, advanceClock, api, connectionConfig } from './fixture.mjs';
 import { themeBehaviorContract } from '../tests/theme-contract.ts';
 
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Set PLAYWRIGHT_BROWSERS_PATH; tests never download browsers.');
@@ -19,7 +18,7 @@ const origin = `http://127.0.0.1:${address.port}`, browser = await chromium.laun
 // The document ground is the shared --bg-surface token of each theme (shared/ui-web/tokens.css).
 const THEME_SURFACE_RGB = { light: 'rgb(255, 255, 255)', dark: 'rgb(21, 25, 32)' };
 const SIGN_IN = /^Sign in/, CHOICE_LABELS = { system: 'System', light: 'Light', dark: 'Dark' };
-const MAX_COMPACT_RETRY_WIDTH = 280, MIN_SUMMARY_TABLE_FRACTION = .9, DESKTOP = { width: 1440, height: 900 }, MOBILE = { width: 390, height: 844 }, THEME_KEY = 'chronicle.theme.preference';
+const DESKTOP = { width: 1440, height: 900 }, MOBILE = { width: 390, height: 844 }, THEME_KEY = 'chronicle.theme.preference';
 async function scene(viewport, configure) { return sceneWith(viewport, '', configure); }
 // `connection`: query string of the page load (connectionTiming), '' for production connection settings.
 async function sceneWith(viewport, connection, configure) {
@@ -29,21 +28,6 @@ async function sceneWith(viewport, connection, configure) {
 }
 async function run(name, body) { if (process.env.CHRONICLE_THEME_CASE !== undefined && !name.includes(process.env.CHRONICLE_THEME_CASE)) return; await body(); console.log(`PASS browser theme/retry: ${name}`); }
 try {
-  await run('compact retry uses the owner-summary toolbar instead of reserving half the totals pane', async () => {
-    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
-      const { context, page, fixture } = await scene(viewport, async () => {}); await page.getByRole('link', { name: 'Activity', exact: true }).click(); await page.locator('.activity-overview .section-heading time').waitFor();
-      const metrics = await page.evaluate(() => {
-        const summary = document.querySelector('.activity-overview'), table = summary.querySelector('.activity-counts'), trigger = summary.querySelector('.retry-failed-action > button, .retry-failed-trigger'), style = getComputedStyle(summary);
-        return { available: summary.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), totals: table.getBoundingClientRect().width, button: trigger.getBoundingClientRect().width, document: document.documentElement.scrollWidth, viewport: innerWidth };
-      });
-      assert.ok(metrics.totals >= metrics.available * MIN_SUMMARY_TABLE_FRACTION, `owner totals lose width to the retry/help column: ${JSON.stringify(metrics)}`);
-      assert.ok(metrics.button <= MAX_COMPACT_RETRY_WIDTH, `retry action is not compact: ${JSON.stringify(metrics)}`); assert.ok(metrics.document <= metrics.viewport);
-      const trigger = page.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }); await trigger.click(); const preview = page.getByRole('region', { name: 'Retry failed indexing preview', exact: true }); await preview.getByRole('checkbox').waitFor();
-      assert.equal(await preview.getByRole('checkbox').isChecked(), false); assert.equal(await preview.getByRole('button', { name: 'Confirm retry indexing jobs', exact: true }).isDisabled(), true);
-      await preview.getByRole('button', { name: 'Cancel retry preview', exact: true }).click(); assert.equal(await trigger.evaluate(element => element === document.activeElement), true); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyRetryFailed).length, 0);
-      await context.close();
-    }
-  });
   await themeCases();
   assert.deepEqual(errors, []);
 } finally { await browser.close(); await server.close(); }
@@ -54,8 +38,6 @@ async function settledFrame(page) { await page.evaluate(() => new Promise(resolv
 async function storeInTab(page, value) { await page.evaluate(({ key, value }) => { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); }, { key: THEME_KEY, value }); }
 async function waitStoredTheme(page, value) { await page.waitForFunction(value => { const data = document.documentElement.dataset; return data.themeChoice === (value === 'light' || value === 'dark' ? value : 'system') && data.themePersistence === (value === null || ['system', 'light', 'dark'].includes(value) ? 'available' : 'invalid'); }, value); }
 async function configureTheme(context, page, colorScheme, preference) { await page.emulateMedia({ colorScheme }); if (preference !== null) await context.addInitScript(({ key, value }) => localStorage.setItem(key, value), { key: THEME_KEY, value: preference }); }
-async function activity(page) { await page.getByRole('link', { name: 'Activity', exact: true }).click(); await page.locator('.activity-overview .section-heading time').waitFor(); }
-async function source(page) { await page.locator('.archive-row .table-title').first().click(); await page.getByRole('dialog', { name: 'Source conversation', exact: true }).waitFor(); await page.locator('.original-message').first().waitFor(); }
 async function themeCases() {
   await run('explicit Dark and Light override either device scheme for the page and its native controls', async () => {
     for (const system of ['light', 'dark']) {
@@ -98,7 +80,7 @@ async function themeCases() {
       await choose(page, 'dark'); assert.equal((await snapshot(page)).persistence, 'available'); assert.equal(await page.getByText('Invalid saved setting', { exact: true }).count(), 0); await context.close();
     }
   });
-  await run('theme changes retain Archive draft, loaded rows, scroll, DOM identity and source pins without submitting requests', async () => {
+  await run('theme changes retain Archive draft, loaded rows, scroll and DOM identity without submitting requests', async () => {
     const { context, page, fixture } = await scene(DESKTOP, async ({ fixture, page }) => {
       fixture.archiveRowCount = 85; await page.emulateMedia({ colorScheme: 'light' });
       await page.clock.install({ time: new Date('2030-01-01T00:00:00Z') });
@@ -106,43 +88,13 @@ async function themeCases() {
     });
     const editor = page.getByRole('combobox', { name: 'Search conversations', exact: true }); await editor.fill('project:"unsent synthetic draft" AND'); const row = await page.locator('.archive-row').first().elementHandle(), scroll = () => page.evaluate(() => [window.scrollY, window.scrollX]); await page.evaluate(() => window.scrollTo(0, 240)); const before = await scroll(), calls = fixture.calls.length;
     await choose(page, 'dark'); await choose(page, 'light'); assert.deepEqual(await scroll(), before); assert.equal(await row.evaluate(element => element.isConnected && element === document.querySelector('.archive-row')), true); assert.equal(await editor.inputValue(), 'project:"unsent synthetic draft" AND'); assert.equal(fixture.calls.length, calls);
-    await page.getByRole('button', { name: 'Theme settings', exact: true }).click(); await page.evaluate(() => window.scrollTo(0, 0)); await source(page);
-    await page.locator('.conversation-source').evaluate(element => { element.scrollTop = 320; }); const message = await page.locator('.original-message').first().elementHandle(), pin = await page.locator('.provenance').innerText(), sourceCalls = fixture.calls.length;
-    const focused = page.getByRole('button', { name: 'Close conversation', exact: true }); await focused.focus(); const sourceScroll = await page.locator('.conversation-source').evaluate(element => element.scrollTop); const other = await context.newPage(); await other.goto(`${origin}/theme-init.js`); await storeInTab(other, 'dark'); await waitStoredTheme(page, 'dark');
-    assert.equal(await focused.evaluate(element => element === document.activeElement), true); assert.equal(await page.locator('.conversation-source').evaluate(element => element.scrollTop), sourceScroll); assert.equal(await message.evaluate(element => element.isConnected && element === document.querySelector('.original-message')), true); assert.equal(await page.locator('.provenance').innerText(), pin); assert.equal(fixture.calls.length, sourceCalls);
+    const sourceCalls = fixture.calls.length;
     await advanceClock(page, connectionConfig.heartbeatInterval - 1); assert.equal(fixture.calls.length, sourceCalls, 'no heartbeat before its interval');
     await advanceClock(page, 1); await fixture.waitUntil(() => fixture.calls.length > sourceCalls, 'no heartbeat after its interval');
     const afterTheme = fixture.calls.slice(sourceCalls);
     assert.equal(afterTheme.length, 1, 'one real heartbeat runs after the paused source-theme assertions');
     assert.equal(afterTheme[0].operation instanceof api.Operation_Ping, true, 'theme does not queue an application or mutation request');
     await context.close();
-  });
-  await run('owner-wide preview stays confirmed through theme changes, independent of History and filters; no Apply is implied', async () => {
-    // Activity polls every ACTIVITY_POLL_INTERVAL_MS: a heartbeat inside one poll interval keeps the transport's Ping the only envelope the clock step may add.
-    const heartbeatInterval = ACTIVITY_POLL_INTERVAL_MS / 2;
-    const { context, page, fixture } = await sceneWith(DESKTOP, connectionTiming({ heartbeatInterval }), async ({ page }) => {
-      // Isolate theme's request invariant from the real transport's heartbeat.
-      await page.clock.install({ time: new Date('2030-01-01T00:00:00Z') });
-      await page.clock.pauseAt(new Date('2030-01-01T00:01:00Z'));
-    }); await activity(page); await page.getByRole('button', { name: 'History', exact: true }).click(); await page.getByRole('combobox', { name: 'Search indexing job metadata', exact: true }).fill('status:Failed'); await page.locator('.activity-jobs').getByRole('button', { name: 'Filter', exact: true }).click(); await page.locator('.activity-job-table[aria-busy="false"]').waitFor();
-    const trigger = page.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }); await trigger.click(); const preview = page.getByRole('region', { name: 'Retry failed indexing preview', exact: true }), checkbox = preview.getByRole('checkbox'); await checkbox.check(); const node = await preview.elementHandle(), counts = await preview.locator('table').innerText(), calls = fixture.calls.length;
-    await choose(page, 'dark'); assert.equal(await checkbox.isChecked(), true); assert.equal(await node.evaluate(element => element.isConnected && element === document.querySelector('.retry-failed-preview')), true); assert.equal(await preview.locator('table').innerText(), counts); assert.equal(await preview.getByRole('button', { name: 'Confirm retry indexing jobs', exact: true }).isEnabled(), true); if (fixture.calls.length !== calls) console.log('Owner-theme request count diagnostics:', JSON.stringify(fixture.calls.slice(calls).map(call => call.operation.toJSON()))); assert.equal(fixture.calls.length, calls); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyRetryFailed).length, 0);
-    const callsBeforeHeartbeat = fixture.calls.length;
-    await advanceClock(page, heartbeatInterval - 1); assert.equal(fixture.calls.length, callsBeforeHeartbeat, 'no heartbeat before its interval');
-    await advanceClock(page, 1); await fixture.waitUntil(() => fixture.calls.length > callsBeforeHeartbeat, 'no heartbeat after its interval');
-    const afterTheme = fixture.calls.slice(callsBeforeHeartbeat);
-    assert.equal(afterTheme.length, 1, 'one real heartbeat runs after the paused theme assertions');
-    assert.equal(afterTheme[0].operation instanceof api.Operation_Ping, true, 'the added envelope is the actual transport Ping');
-    assert.equal(afterTheme.filter(call => !(call.operation instanceof api.Operation_Ping)).length, 0, 'theme must not queue delayed application or mutation requests');
-    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyRetryFailed).length, 0);
-    await preview.getByRole('button', { name: 'Cancel retry preview', exact: true }).click(); assert.equal(await trigger.evaluate(element => element === document.activeElement), true); await context.close();
-  });
-  await run('theme changes cannot clear delivered retry uncertainty or resend Apply', async () => {
-    const { context, page, fixture } = await scene(DESKTOP, async ({ fixture, page }) => { fixture.bulkDropReply = true; await pauseClock(page); }); await activity(page); await page.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }).click(); const preview = page.getByRole('region', { name: 'Retry failed indexing preview', exact: true }); await preview.getByRole('checkbox').check(); await preview.getByRole('button', { name: 'Confirm retry indexing jobs', exact: true }).click();
-    await fixture.waitUntil(() => fixture.calls.some(call => call.operation instanceof api.Operation_ApplyRetryFailed), 'retry apply was not sent');
-    await advanceClock(page, connectionConfig.requestTimeout - 1); assert.equal(await page.getByRole('region', { name: 'Uncertain mutation', exact: true }).count(), 0, 'a lost reply is not uncertain before the request deadline');
-    await advanceClock(page, 1); await page.getByRole('region', { name: 'Uncertain mutation', exact: true }).waitFor(); await page.locator('.connection-widget[data-state="live"]').waitFor();
-    const uncertain = await page.locator('.notice.uncertain').innerText(), applies = fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyRetryFailed).map(call => call.requestId); await choose(page, 'dark'); await choose(page, 'light'); assert.equal(await page.locator('.notice.uncertain').innerText(), uncertain); assert.equal(await page.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }).isDisabled(), true); assert.deepEqual(fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyRetryFailed).map(call => call.requestId), applies); await context.close();
   });
   await productionPrepaint();
 }

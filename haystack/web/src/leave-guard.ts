@@ -11,6 +11,8 @@ export interface LeaveGuard {
    * never existed. Resolves when that is done.
    */
   release(): Promise<void>;
+  /** Puts the guard entry back after a release that did not lead out after all (unsaved changes appeared meanwhile). */
+  rearm(): void;
 }
 
 /**
@@ -92,5 +94,6 @@ export function useLeaveGuard(unsaved: boolean, unconfirmed: boolean, onNavigate
     released.current = resolve;
     history.back();
   }), []);
-  return { release };
+  const rearm = useCallback(() => { if (isUnsaved.current && !armed.current) arm(); }, [arm]);
+  return { release, rearm };
 }

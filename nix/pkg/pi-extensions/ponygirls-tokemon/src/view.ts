@@ -6,13 +6,15 @@
  * models below the table.
  *
  * The panel is only as tall as its content (up to the terminal budget),
- * so short tables leave the transcript visible above it.
+ * so short tables leave the transcript visible above it. Under the table
+ * sit its notes (hidden rows and columns, the scroll position): on one
+ * line, or one per line when that line would not fit.
  */
 
-import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi, ScrollView, type TuiMouseEvent } from "@earendil-works/pi-tui";
-import { frameRule, frameTitle, keyHints, PanelLayout, type PanelParts, type UiTheme } from "@ponygirls/pi-ui";
+import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, ScrollView, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { frameRule, frameTitle, HINT, keyHints, PanelLayout, type PanelParts, type UiTheme } from "@ponygirls/pi-ui";
 import type { QuotaReport } from "./service.ts";
-import { buildTable, type TableStyle } from "./table.ts";
+import { buildTable, NOTE_SEPARATOR, type TableStyle } from "./table.ts";
 import type { ModelReport } from "./report.ts";
 
 export interface TokemonViewDeps {
@@ -30,13 +32,15 @@ export interface TokemonViewDeps {
   refreshEveryMs: number;
 }
 
-/** Title, caption, and rule lines around the scrolled content and the key hints. */
-const CHROME_LINES = 3;
-const TITLE = "tokemon — token quotas";
+const TITLE = "tokemon";
 const TICK_MS = 1000;
+/** The scrolled content keeps this many lines however short the terminal. */
+const MIN_BODY_LINES = 3;
+/** Laying out sets the scroll position, which is itself a note and can add a line under the table; the layout settles within this many passes. */
+const LAYOUT_PASSES = 3;
 
 function clock(date: Date): string {
-  return date.toLocaleTimeString("en-GB", { hour12: false });
+  return date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 function countdown(ms: number): string {
@@ -53,8 +57,6 @@ export class TokemonView extends PanelLayout {
   private showModels = false;
   private readonly regularScroll: ScrollView;
   private lastWidth: number | null = null;
-  /** Key hint lines at the last rendered width (they wrap on narrow terminals). */
-  private hintLines = 1;
   private nextRefreshAt: Date;
   private readonly timer: ReturnType<typeof setInterval>;
 
@@ -98,15 +100,11 @@ export class TokemonView extends PanelLayout {
     this.deps.requestRender();
   }
 
-  private viewportHeight(): number {
-    return Math.max(3, this.deps.rows() - CHROME_LINES - this.hintLines);
-  }
-
-  private content(width: number): { lines: string[]; caption: string | null } {
+  private content(width: number): { lines: string[]; notes: string[] } {
     const s = this.deps.style;
-    if (this.error !== null) return { lines: [s.error(`quota refresh failed: ${this.error}`)], caption: null };
-    if (this.report === null) return { lines: [s.dim("querying providers…")], caption: null };
-    if (this.report.results.length === 0) return { lines: [s.dim("No configured providers found (pi auth.json, API-key environment variables, models.json).")], caption: null };
+    if (this.error !== null) return { lines: [s.error(`quota refresh failed: ${this.error}`)], notes: [] };
+    if (this.report === null) return { lines: [s.dim("querying providers…")], notes: [] };
+    if (this.report.results.length === 0) return { lines: [s.dim("No configured providers found (pi auth.json, API-key environment variables, models.json).")], notes: [] };
     const table = buildTable(this.report.results, this.deps.now(), { showInvalid: this.showInvalid, width }, s);
     const lines = [...table.lines];
     if (this.showModels) {
@@ -119,42 +117,53 @@ export class TokemonView extends PanelLayout {
         lines.push(...wrapTextWithAnsi(`${s.provider(provider, provider)} ${s.dim(`(${entries.length})`)}  ${ids.join(", ")}`, width - 2).map((l, i) => (i === 0 ? `  ${l}` : `    ${l}`)));
       }
     }
-    return { lines, caption: table.caption };
+    return { lines, notes: table.notes };
   }
 
   private renderParts(width: number): PanelParts {
     this.lastWidth = width;
     const s = this.deps.style;
     const w = Math.max(40, width);
-    const status = this.loading ? "querying…" : this.report ? `updated ${clock(this.report.refreshedAt)} · next refresh in ${countdown(this.nextRefreshAt.getTime() - this.deps.now().getTime())}` : "";
+    const status = this.loading ? "querying…" : this.report ? `updated ${clock(this.report.refreshedAt)} · refresh in ${countdown(this.nextRefreshAt.getTime() - this.deps.now().getTime())}` : "";
     const t = this.deps.theme;
     const hints = keyHints(t, w, [
       { key: "r", action: "refresh" },
       { key: "i", action: `${this.showInvalid ? "hide" : "show"} invalid` },
       { key: "m", action: `${this.showModels ? "hide" : "show"} models` },
-      { key: "↑↓ PgUp PgDn", action: "scroll" },
-      { key: "esc", action: "close" },
+      HINT.scroll,
+      HINT.close,
     ]);
-    this.hintLines = hints.lines.length;
-    const { lines, caption } = this.content(w);
+    const content = this.content(w);
+    const lines = content.lines;
     const scroll = this.scroll;
     const end = Math.min(lines.length, scroll.scrollTop + scroll.viewportHeight);
-    const position = scroll.scrollTop > 0 || end < lines.length ? ` · lines ${scroll.scrollTop + 1}-${end} of ${lines.length}` : "";
+    const notes = scroll.scrollTop > 0 || end < lines.length ? [...content.notes, `lines ${scroll.scrollTop + 1}-${end} of ${lines.length}`] : content.notes;
+    const oneLine = notes.join(NOTE_SEPARATOR);
+    const noteLines = visibleWidth(oneLine) <= w ? [oneLine] : notes.flatMap((note) => wrapTextWithAnsi(note, w));
     return {
       header: [frameTitle(t, w, { title: TITLE, right: status === "" ? undefined : t.fg("dim", status) }, "none").line],
       body: lines.map((line) => truncateToWidth(line, w, "…")),
-      footer: [truncateToWidth(s.dim(`${caption ?? ""}${position}`), w, "…"), frameRule(t, w), ...hints.lines],
+      footer: [...noteLines.map((line) => s.dim(line)), frameRule(t, w), ...hints.lines],
     };
   }
 
+  /** Body lines the terminal has room for around the title, notes, rule, and key hints. */
+  private bodyBudget(parts: PanelParts): number {
+    return Math.min(Math.max(MIN_BODY_LINES, this.deps.rows() - parts.header.length - parts.footer.length), parts.body.length);
+  }
+
   override render(width: number): string[] {
-    const { body } = this.renderParts(width);
-    const height = Math.min(this.viewportHeight(), body.length);
-    // Keep regular-mode paging separate: intrinsic measurement must not clamp the allocated viewport's scroll position.
-    this.regularScroll.updateLayout(body.length, height, this.deps.requestRender);
-    const start = Math.min(this.scroll.scrollTop, Math.max(0, body.length - height));
-    const { header, footer } = this.renderParts(width);
-    return [...header, ...body.slice(start, start + height), ...footer];
+    let parts = this.renderParts(width);
+    for (let pass = 0; pass < LAYOUT_PASSES; pass++) {
+      const footerLines = parts.footer.length;
+      // Keep regular-mode paging separate: intrinsic measurement must not clamp the allocated viewport's scroll position.
+      this.regularScroll.updateLayout(parts.body.length, this.bodyBudget(parts), this.deps.requestRender);
+      parts = this.renderParts(width);
+      if (parts.footer.length === footerLines) break;
+    }
+    const height = this.bodyBudget(parts);
+    const start = Math.min(this.scroll.scrollTop, Math.max(0, parts.body.length - height));
+    return [...parts.header, ...parts.body.slice(start, start + height), ...parts.footer];
   }
 
   handleInput(data: string): void {

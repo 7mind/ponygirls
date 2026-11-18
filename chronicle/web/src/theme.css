@@ -1,16 +1,11 @@
-/* Legacy view palette names, mapped onto the shared design tokens (shared/ui-web/tokens.css). Legacy control
- * outlines keep their 3:1 contrast (faint text token) until the views move to the shared components.
- * The shared tokens switch with <html data-theme>, so no dark block is needed here. View units replace these
- * names with the shared tokens as they restyle their views; nothing new may use them. */
+/* Legacy palette names, mapped onto the shared design tokens (shared/ui-web/tokens.css). Their control
+ * outlines keep their 3:1 contrast (faint text token). The shared tokens switch with <html data-theme>, so no
+ * dark block is needed here. Nothing new may use these names. */
 :root{
-  --canvas:var(--bg-canvas);--paper:var(--bg-surface);--ink:var(--text);--muted:var(--text-muted);--rule:var(--border);--soft:var(--accent-soft);--rust:var(--accent);--error:var(--danger-fg);
-  --on-accent:var(--bg-surface);--accent-hover:var(--info-fg);--control-border:var(--text-faint);--control-hover:var(--bg-hover);--control-hover-border:var(--text-muted);--selection:var(--accent-soft-border);--selection-ink:var(--text);
-  --mark:var(--mark-bg);--mark-ink:var(--mark-fg);--tag-ink:var(--text-muted);--tag-border:var(--border);--tag-surface:var(--bg-sunken);--link-rule:var(--border-strong);
+  --paper:var(--bg-surface);--ink:var(--text);--muted:var(--text-muted);--rule:var(--border);--error:var(--danger-fg);
+  --control-border:var(--text-faint);--control-hover:var(--bg-hover);--control-hover-border:var(--text-muted);--selection:var(--accent-soft-border);--selection-ink:var(--text);
+  --mark:var(--mark-bg);--mark-ink:var(--mark-fg);
   --notice-surface:var(--info-bg);--notice-border:var(--info-bd);--notice-accent:var(--info-fg);--error-surface:var(--danger-bg);--error-border:var(--danger-bd);--error-ink:var(--danger-fg);
-  --warning-surface:var(--warn-bg);--warning-border:var(--warn-bd);--warning-accent:var(--warn-fg);--warning-ink:var(--warn-fg);--ornament:var(--text-faint);--placeholder:var(--text-faint);
-  --row-hover:var(--bg-hover);--row-selected:var(--accent-soft);--table-heading:var(--bg-sunken);--table-sorted:var(--accent-soft);--table-heading-border:var(--border);
-  --passage-surface:var(--bg-sunken);--passage-item:var(--bg-surface);--passage-number:var(--text-muted);--passage-selected:var(--accent-soft);--passage-selected-border:var(--accent-soft-border);--role-ink:var(--accent);--message-rule:var(--border);
-  --message-highlight:var(--warn-bg);--message-highlight-border:var(--warn-fg);--raw-surface:var(--bg-sunken);--secret-surface:var(--ok-bg);--secret-border:var(--ok-bd);--success:var(--ok-fg);
+  --warning-surface:var(--warn-bg);--warning-border:var(--warn-bd);--warning-accent:var(--warn-fg);--placeholder:var(--text-faint);
   --disabled-ink:var(--text-faint);--disabled-surface:var(--bg-sunken);--disabled-border:var(--border);
-  --shadow-soft:var(--border);--shadow-dialog:var(--bg-scrim);--backdrop:var(--bg-scrim);
 }

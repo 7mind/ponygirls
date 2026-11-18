@@ -1,5 +1,5 @@
 /* Conversation expressions: the query bar and shortcut row of the view bars (ExpressionEditor, FilterShortcuts) on the
- * shared .querybar / .filterbar, completion suggestions (ExpressionInput), and the legacy metadata editor of Activity. */
+ * shared .querybar / .filterbar and completion suggestions (ExpressionInput). */
 .querybar>.icon{flex:none;color:var(--text-muted)}
 .querybar .expression-composer{flex:1;min-width:0;height:100%;display:flex;align-items:center;gap:var(--space-1)}
 .querybar .expression-composer input{flex:1;min-width:0;height:100%;padding:0;border:0;border-radius:0;outline:0;background:none;box-shadow:none;font-family:var(--font-mono);font-size:var(--text-sm);color:var(--text)}
@@ -23,17 +23,6 @@
 .sortline .expression-help>button{height:auto;padding:0;border:0;border-radius:0;background:none;color:var(--accent);font-size:var(--text-xs);cursor:pointer}
 .sortline .expression-help>button:hover{text-decoration:underline}
 .expression-help-content p+p{margin-top:var(--space-2)}
-/* The query bar and shortcut row as one block (Search). Inside a legacy view (.dashboard-page, until it is rebuilt) the
- * legacy element rules for buttons and inputs are reverted to the shared components; the rules above, more specific, still apply. */
-:where(.dashboard-page) .expression-editor:where(:not(.metadata-editor)) :is(button,input){all:revert-layer}
+/* The query bar and shortcut row as one block (Search). */
 .expression-editor{display:flex;flex-direction:column;gap:var(--space-3);margin-bottom:var(--space-3)}
 .expression-editor .filterbar{padding:0}
-/* Activity's metadata editors (MetadataEditor.tsx) keep the legacy search line until their view is rebuilt (UX-C5). */
-.metadata-editor .search-line{padding:var(--space-1) var(--space-2) var(--space-1) var(--space-3);gap:var(--space-2);border:0}
-.metadata-editor .search-line input{font-size:var(--text-sm);padding:var(--space-2) 0}
-.metadata-editor .search-line button{padding:var(--space-2) var(--space-4);font-size:var(--text-xs)}
-.metadata-editor .expression-composer{position:relative;flex:1;min-width:0}
-.metadata-editor .expression-composer input{width:100%;min-width:0;padding-right:var(--space-6)}
-.metadata-editor .expression-composer>.expression-clear{position:absolute;right:0;top:50%;transform:translateY(-50%);padding:0}
-.expression-tools{display:flex;align-items:center;gap:var(--space-2) var(--space-4);flex-wrap:wrap;min-height:var(--control-h);font-size:var(--text-xs);color:var(--text-muted)}
-.expression-tools .filterbar{padding:0}

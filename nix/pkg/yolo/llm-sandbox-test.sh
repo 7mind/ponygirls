@@ -159,6 +159,53 @@ assert_eq \
   "$ORDER_DIR/a $ORDER_DIR/a $ORDER_DIR/b $ORDER_DIR/b $ORDER_DIR/c $ORDER_DIR/c $ORDER_DIR/d $ORDER_DIR/d $ORDER_DIR/a $ORDER_DIR/a " \
   "$ORDER_SEEN"
 
+# Launch trace: nothing by default; --trace prints the timestamped exec line(s)
+# to stderr without changing what bwrap receives.
+stderr_of() { PATH="$FAKE_BIN:$PATH" bash "$SCRIPT" "$@" 2>&1 >/dev/null; }
+stdout_of() { PATH="$FAKE_BIN:$PATH" bash "$SCRIPT" "$@" 2>/dev/null; }
+# A trace with every timestamp replaced by T, so its shape can be compared.
+trace_shape() { sed -E 's/^(\++) [0-9]+[.,][0-9]+ /\1 T /'; }
+
+assert_eq "default launch prints nothing of its own" "" "$(stderr_of --env TRACE_PROBE=1 -- true arg)"
+TRACE_ERR="$(stderr_of --trace --env TRACE_PROBE=1 -- true arg)"
+assert_eq "--trace prints exactly the exec line" "1" "$(grep -c '' <<< "$TRACE_ERR")"
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ ! "$TRACE_ERR" =~ ^\+\ [0-9]+[.,][0-9]+\ exec\ bwrap\ --unshare-all\ --share-net\ --die-with-parent\ --clearenv\ .*\ --setenv\ TRACE_PROBE\ 1\ --setenv\ SMIND_EXCHANGE_DIR\ [^\ ]+\ true\ arg$ ]]; then
+  echo "FAIL: --trace line is the timestamped exec of bwrap -- got [$TRACE_ERR]"
+  FAILURES=$((FAILURES + 1))
+fi
+assert_eq "--trace does not change what bwrap receives" \
+  "$(stdout_of --env TRACE_PROBE=1 -- true arg)" "$(stdout_of --trace --env TRACE_PROBE=1 -- true arg)"
+assert_contains "--help documents --trace" "$(bash "$SCRIPT" --help)" "--trace"
+
+assert_eq "--cowboy-ride prints nothing of its own by default" "" "$(stderr_of --cowboy-ride -- true arg)"
+assert_eq "--cowboy-ride --trace prints the exec line" \
+  "+ T exec bwrap --dev-bind / / -- true arg" "$(stderr_of --cowboy-ride --trace -- true arg | trace_shape)"
+
+# A network namespace of its own (LLM_SANDBOX_NET_HELPER): this bwrap stand-in
+# reports a child pid on --info-fd and waits for the release on --block-fd.
+NET_BIN="$WORKDIR/net-bin"
+mkdir -p "$NET_BIN"
+printf '%s\n' \
+  "#!$_bash_path" \
+  'printf "%s\n" "$@"' \
+  'printf "{\n    \"child-pid\": %s\n}\n" "$$" >&3' \
+  'IFS= read -r -n 1 _ <&4 || true' \
+  > "$NET_BIN/bwrap"
+chmod +x "$NET_BIN/bwrap"
+net_stderr_of() {
+  PATH="$NET_BIN:$PATH" LLM_SANDBOX_NET_HELPER="$(command -v true)" bash "$SCRIPT" "$@" 2>&1 >/dev/null
+}
+assert_eq "network-helper launch prints nothing of its own by default" "" "$(net_stderr_of -- true arg)"
+NET_TRACE="$(net_stderr_of --trace -- true arg | trace_shape)"
+assert_eq "network-helper --trace prints the two launch steps" "2" "$(grep -c '' <<< "$NET_TRACE")"
+assert_eq "network-helper --trace starts with the signal reset" "+ T trap - INT QUIT" "$(head -n 1 <<< "$NET_TRACE")"
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ ! "$(tail -n 1 <<< "$NET_TRACE")" =~ ^\+\ T\ exec\ bwrap\ --unshare-all\ .*\ --unshare-net\ --info-fd\ 3\ --block-fd\ 4\ true\ arg$ ]]; then
+  echo "FAIL: network-helper --trace ends with the exec of bwrap -- got [$NET_TRACE]"
+  FAILURES=$((FAILURES + 1))
+fi
+
 if [[ $FAILURES -ne 0 ]]; then
   echo "$FAILURES of $TESTS_RUN tests failed"
   echo "$OUT"

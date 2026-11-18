@@ -158,6 +158,8 @@ test("tui: /bg shows live task output without replaying control sequences, and q
     { send: spawnPrompt({ label: "tui-progress", command, notify: false }) },
     { send: "\r" },
     { wait: "spawned", timeout: 30 },
+    // The border badge: the glyph, then the running count in its own foreground colour (no chip around both).
+    { wait: " 🛠️ (?:\\x1b\\[[0-9;]*m)+1", timeout: 15 },
     { sleep: 1.5 },
     { send: "/bg" },
     { sleep: 0.5 },
@@ -196,3 +198,27 @@ test("tui: /bg shows live task output without replaying control sequences, and q
   assert.ok(lockReleased(sessionFile, PYTHON));
 });
 
+
+// Defects A and B as observed: `pi --no-session`, no input, 120 columns.
+test("tui: --no-session says once that background tasks are off, in one whole line, and calls no model", async (t) => {
+  const dir = tempDir(t, "bg-pkg-no-session-");
+  const provider = await fakeProvider(t, dir);
+  const steps = [
+    { wait: "scripted", timeout: 30 },
+    { wait: "background tasks are off: this session is not saved \\(--no-session\\)", timeout: 15 },
+    // Long enough for a turn started by the notice to reach the provider.
+    { sleep: 3 },
+    { send: "/quit" },
+    { sleep: 0.5 },
+    { send: "\r" },
+    { exit: 30 },
+  ];
+  const script = join(dir, "steps.json");
+  const transcript = join(dir, "transcript.bin");
+  writeFileSync(script, JSON.stringify(steps));
+  const r = spawnSync(PYTHON, [join(HERE, "pty_drive.py"), script, transcript, "--", PI, ...baseArgs(join(dir, "sessions")), "--no-session"], { env: environment(dir, provider.port), encoding: "utf8", timeout: 120000 });
+  const screen = existsSync(transcript) ? readFileSync(transcript, "latin1") : "";
+  assert.equal(r.status, 0, `${r.stderr}\n--- transcript tail ---\n${screen.slice(-3000)}`);
+  assert.deepEqual(provider.requests(), [], "the notice started no model turn");
+  assert.doesNotMatch(screen, /status backend unreachable|--no-se(?!ssion)/, "collapsed, the notice is not the cut raw text");
+});

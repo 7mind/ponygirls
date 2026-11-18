@@ -60,7 +60,7 @@ test("badge initializes, ages while idle without polling, and stops on shutdown"
     assert.equal(badge().handleMouse(click)?.handled, true);
     await flush();
     assert.equal(views.length, 1);
-    assert.match(untag(views[0]!.component.render(120).join("\n")), /token quotas/);
+    assert.match(untag(views[0]!.component.render(120).join("\n")), /── tokemon ─/);
     badge().handleMouse(click); await flush();
     assert.equal(views[0]!.closed, true);
     badge().handleMouse(click); await flush();

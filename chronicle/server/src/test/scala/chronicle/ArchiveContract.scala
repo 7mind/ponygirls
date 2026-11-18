@@ -49,6 +49,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
   private val annotationAttempts=mutable.Map.empty[(UUID,UUID,Long,Int,Int),Attempt]
   private val failedStages=mutable.Map.empty[UUID,IndexingStage]
   def failureStage(jobId: UUID): Option[IndexingStage] = synchronized(failedStages.get(jobId))
+  def acceptedParts(jobId: UUID,stage: IndexingStage): Int = synchronized(acceptedWork.keys.count(slot => slot._1==jobId && slot._3==stage))
   def workerEvidence(jobId: UUID): WorkerEvidence = synchronized {
     val rows=annotationAttempts.iterator.collect { case ((id,_,_,_,_),value) if id==jobId => value }.toList
     WorkerEvidence(jobs(jobId).attempts,rows.size,rows.count(_.reason.nonEmpty))
@@ -97,8 +98,15 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
   def checkpoint(claim: Claim,key: CheckpointKey): Option[io.circe.Json] = synchronized {
     Check(valid(claim),"stale-claim","indexing claim is no longer current")
     acceptedWork.get((claim.jobId,claim.runId,key.stage,key.window,key.part)).map { (input,value) =>
-      Check(input==key.inputHash,"internal","checkpoint identity mismatch"); value
+      if(input!=key.inputHash) throw new CheckpointInputMismatch
+      value
     }
+  }
+  def discardCheckpoints(claim: Claim,stage: IndexingStage,window: Int): Int = synchronized {
+    Check(valid(claim),"stale-claim","indexing claim is no longer current")
+    val slots=acceptedWork.keys.filter(slot => slot._1==claim.jobId && slot._2==claim.runId && slot._3==stage && slot._4==window).toList
+    acceptedWork--=slots
+    slots.size
   }
   def checkpoint(claim: Claim,key: CheckpointKey,value: io.circe.Json): Unit = synchronized {
     Check(valid(claim),"stale-claim","indexing claim is no longer current")

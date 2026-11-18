@@ -37,7 +37,10 @@ are `manure/web/dashboard`, `manure/web/unlock` relative to launch cwd.
 `viewer_dir` likewise selects the bundled viewer tree; installed packages set
 `/opt/manure/share/manure/web/viewer`, source development defaults to
 `manure/web/viewer/dist` (build first, see that directory's README). Explicit
-`null` disables formatted viewers without disabling raw content. Renderer assets
+`null` disables formatted viewers without disabling raw content. `serve` refuses to start when a
+configured directory, default or explicit, does not exist (`manure failure stage=assets
+code=dashboard-dir-missing`, `unlock-shell-dir-missing` or `viewer-dir-missing`); `check-config` does not look.
+Renderer assets
 and raw bytes use the same artifact authorization checks; no render service is
 contacted. The generic Manure icon at `/__manure/viewer/favicon.svg` (prefixed by
 the artifact mount in path mode) is served without artifact credentials, including
@@ -66,6 +69,50 @@ Example minimal synthetic server configuration:
   }
 }
 ```
+
+### OCI image configuration and upgrade requirement
+
+The image (`.#oci-manure`, spec in `nix/pkg/oci/default.nix`) runs `/bin/manure-server serve /config/server.json`
+as uid/gid 10001 with working directory `/data`, carries no configuration, and contains the package's web assets at
+`/share/manure/web/{dashboard,unlock,viewer}` (observed in the built image: `/share/manure/web/viewer/index.html`,
+`viewer.js`, … as links into the package). The mounted configuration must therefore name all three directories.
+A complete synthetic example (paths of secrets, database and payload root are the deployment's choice; the payload
+root must already exist on the mounted `/data` and, as everywhere, have no symlink components):
+
+```json
+{
+  "data_dir": "/data/payload", "api_origin": "https://manure.example.test",
+  "listen_address": "0.0.0.0", "port": 47329,
+  "content_mode": "subdomain", "content_suffix": "artifacts.example.test",
+  "users": [{"id":"operator","type":"human","enabled":true,"login":"operator",
+    "passwordHashFile":"/run/secrets/manure/operator-password-pbkdf2","tokens":[
+    {"id":"primary","hashFile":"/run/secrets/manure/operator-token-sha256"}
+  ]}],
+  "dashboard_dir": "/share/manure/web/dashboard",
+  "unlock_shell_dir": "/share/manure/web/unlock",
+  "viewer_dir": "/share/manure/web/viewer",
+  "database": {
+    "jdbcUrl":"jdbc:postgresql://postgres.example.test:5432/manure", "user":"manure",
+    "passwordFile":"/run/secrets/manure/database-password",
+    "limits":{"maxConnections":4,"maxQueued":16,"queueTimeoutMs":5000,
+      "connectTimeoutMs":5000,"statementTimeoutMs":30000,"lockTimeoutMs":5000,
+      "idleTransactionTimeoutMs":30000,"socketTimeoutMs":30000}
+  }
+}
+```
+
+`"viewer_dir": null` disables formatted viewers on purpose (raw bytes are still served); `dashboard_dir` and
+`unlock_shell_dir` accept `null` as described above.
+
+**Startup-breaking upgrade requirement.** An image configuration written against the earlier OCI contract names only
+`dashboard_dir` and `unlock_shell_dir`. Its `viewer_dir` was unset, so it defaulted to the relative
+`manure/web/viewer/dist` (`/data/manure/web/viewer/dist` in the image), which does not exist; the service started and
+every viewable file opened in a browser answered 404 `not-found`. `serve` now checks the configured directories
+before it acquires any resource and exits with `manure failure stage=assets code=viewer-dir-missing` (likewise
+`dashboard-dir-missing`, `unlock-shell-dir-missing`). Such a configuration must gain the `viewer_dir` line above (or
+`null`) **before** a server built from this tree replaces the old one. `check-config` (and therefore a deployment's
+configuration check) does not look at the directories; start `serve` once against the mounted configuration to see
+the result.
 
 Browser accounts use the independently versioned `/api/account/v1` protocol in
 [`../docs/account-auth.md`](../docs/account-auth.md): human password login,

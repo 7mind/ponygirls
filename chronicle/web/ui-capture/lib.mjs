@@ -85,10 +85,11 @@ export async function activityReady(page) {
   await page.locator('.activity-job-row').first().waitFor();
   await page.locator('.activity-table[aria-busy="false"]').first().waitFor();
 }
+/** Waits for the routed session page opened from a list (a title link or row) to show its transcript. */
 export async function openSession(page) {
-  await page.getByRole('dialog', { name: 'Source conversation', exact: true }).waitFor();
-  await page.locator('.conversation-intro h2').waitFor();
-  await page.locator('.original-message').first().waitFor();
+  const session = page.getByRole('main', { name: 'Session', exact: true });
+  await session.locator('h1.session-title').waitFor();
+  await session.locator('[data-pane="transcript"] [data-message-id]').first().waitFor();
 }
 export const settle = (page, ms = 250) => page.waitForTimeout(ms);
 
@@ -166,8 +167,6 @@ export async function withScene({ rig, recorder, errors }, variant, { fixture, i
   try { return await body({ page, fixture, shot, variant, context }); } finally { await context.close(); }
 }
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-export async function scrollTo(page, selector, top) { await page.locator(selector).evaluate((element, value) => { element.scrollTop = value; }, top); await page.waitForTimeout(300); }
-export async function scrollEnd(page, selector) { await page.locator(selector).evaluate(element => { element.scrollTop = element.scrollHeight; }); await page.waitForTimeout(400); }
 export async function rowCount(page, selector) { return page.locator(selector).count(); }
 
 export async function inspect(page, recorder, name) { const data = { ...await page.evaluate(inspectDom), audit: await page.evaluate(auditDom) }; await recorder.dump(name, data); return data; }

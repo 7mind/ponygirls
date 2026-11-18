@@ -810,6 +810,44 @@ test("real worker: ORIGINAL end(message) completes the Agent loop with identical
   }
 });
 
+// Regression: the absence of a models.json override must not disable Pi's saved builtin catalogue.
+test("stock worker resolves a cached model without a models.json file or network refresh", async (t) => {
+  if (!SDK_ROOT) { t.skip("PI_SUBAGENTS_SDK_ROOT unset"); return; }
+  const { mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { bindChannel } = await import("../src/protocol.ts");
+  const dir = mkdtempSync(join(tmpdir(), "subagents-cached-model-"));
+  const hostAgentDir = join(dir, "host-agent");
+  mkdirSync(hostAgentDir);
+  writeFileSync(join(hostAgentDir, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "inert-fixture" } }));
+  const model = { provider: "openai", id: "gpt-fixture-from-cache", thinkingLevel: "off" };
+  const cache = JSON.stringify({ openai: { lastModified: Date.UTC(2099, 0, 1), models: [{
+    provider: model.provider, id: model.id, name: "Fixture from cache", api: "openai-responses", baseUrl: "http://127.0.0.1:9/v1",
+    reasoning: false, input: ["text"], contextWindow: 100_000, maxTokens: 10_000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  }] } });
+  const cachePath = join(hostAgentDir, "models-store.json");
+  writeFileSync(cachePath, cache);
+  const handle = new WorkerHandle({
+    workerPath: WORKER_PATH, rootEpoch: "epoch", agentId: "agent", sdkRoot: SDK_ROOT,
+    deterministic: false, agentDir: join(dir, "worker-home"), sessionsDir: join(dir, "sessions"), hostAgentDir,
+    extraEnv: { PI_OFFLINE: "1", PI_TELEMETRY: "0" },
+  }, bindChannel("epoch", "agent", "instance"));
+  let inference = false;
+  handle.setProviderAdmissionRequestHandler(async () => {
+    inference = true;
+    return { ok: false, code: "POLICY_DENIED", error: "the fixture must not start inference" };
+  });
+  try {
+    await handle.launch();
+    const ack = await handle.request("initialize", {
+      taskText: null, profile: "reader", instructionHash: "", instructions: { contextFiles: [], skills: [] },
+      model, taskRunId: "task", executionGeneration: 1, workdir: dir, readRoots: [dir], writable: false, tools: [],
+    }, { timeoutMs: 60_000 }) as { ok: boolean; message?: string };
+    assert.equal(ack.ok, true, ack.message);
+    assert.equal(inference, false);
+    assert.equal(readFileSync(cachePath, "utf8"), cache);
+  } finally { handle.kill(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("restored worker records the explicitly admitted replacement model without rewriting native history", async (t) => {
   if (!SDK_ROOT) { t.skip("PI_SUBAGENTS_SDK_ROOT unset"); return; }
   const { mkdirSync, writeFileSync, readFileSync } = await import("node:fs");

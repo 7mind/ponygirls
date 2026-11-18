@@ -148,17 +148,18 @@ try {
     await context.close();
   });
 
-  await run('loaded rows, scroll and the originating row focus survive opening and closing a conversation, a tab round trip and an address without the query', async () => {
+  await run('loaded rows, scroll and the originating row focus survive opening a session page and Back, a tab round trip and an address without the query', async () => {
     const { context, page, fixture } = await scene(fixture => { fixture.archiveRowCount = 180; });
     await appendUntil(page, 3 * PAGE_SIZE);
     await page.evaluate(() => window.scrollTo(0, 2000)); await quiesce(page);
     const scrollY = await page.evaluate(() => window.scrollY), reads = archiveQueries(fixture).length;
     const opened = await rows(page).evaluateAll(items => items.find(item => item.getBoundingClientRect().top > 300).dataset.rowId), link = table(page).locator(`tr[data-row-id="${opened}"]`).getByRole('link');
-    const dialog = page.getByRole('dialog', { name: 'Source conversation', exact: true });
-    await link.click(); await dialog.waitFor(); assert.equal(await page.evaluate(() => location.hash), '#/archive', 'the source dialog keeps the list route');
-    await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' }); await quiesce(page);
-    assert.equal(await rows(page).count(), 3 * PAGE_SIZE, 'closing keeps the loaded rows');
-    assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - scrollY) <= SCROLL_TOLERANCE, 'closing restores the document scroll');
+    const session = page.getByRole('main', { name: 'Session', exact: true }), row = fixture.authorizedRows.find(item => item.head.id === opened), view = row.matchedView ?? row.publishedView ?? row.head.view;
+    await link.click(); await session.locator('[data-message-id]').first().waitFor(); await main(page).waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => location.hash), `#/session/${opened}?${view.generationId === undefined ? '' : `gen=${view.generationId}&`}rev=${view.revision}`, 'the row opens its session page pinned to the view it shows');
+    await session.getByRole('button', { name: 'Back', exact: true }).click(); await main(page).waitFor(); await quiesce(page);
+    assert.equal(await rows(page).count(), 3 * PAGE_SIZE, 'Back keeps the loaded rows');
+    assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - scrollY) <= SCROLL_TOLERANCE, 'Back restores the document scroll');
     assert.equal(await link.evaluate(element => element === document.activeElement), true, 'focus returns to the originating row');
     await navLink(page, 'Search').click(); await page.getByRole('main', { name: 'Search', exact: true }).waitFor();
     await navLink(page, 'Archive').click(); await main(page).waitFor(); await quiesce(page);
@@ -199,15 +200,6 @@ try {
     fixture.archiveExcluded.add(arrival.head.id); await refresh();
     if (await pill(page).count() > 0) await pill(page).click();
     await table(page).locator(`tr[data-row-id="${arrival.head.id}"]`).waitFor({ state: 'detached' });
-    await context.close();
-  });
-
-  await run('a conversation opened from the list closes when an authorized refresh stops listing it', async () => {
-    const { context, page, fixture } = await scene(fixture => { fixture.archiveRowCount = 3; });
-    const dialog = page.getByRole('dialog', { name: 'Source conversation', exact: true });
-    const [opened] = await rowIds(page); await table(page).locator(`tr[data-row-id="${opened}"]`).getByRole('link').click(); await dialog.waitFor();
-    fixture.archiveExcluded.add(opened); await button(page, 'Refresh archive').evaluate(element => element.click());
-    await dialog.waitFor({ state: 'detached' }); await table(page).locator(`tr[data-row-id="${opened}"]`).waitFor({ state: 'detached' });
     await context.close();
   });
 
@@ -371,7 +363,8 @@ try {
     assert.deepEqual(errors, [], 'no page error in the error state');
     fixture.archiveFailure = null; fixture.archiveRows = undefined; fixture.archiveRowCount = 3;
     await notice.getByRole('button', { name: 'Retry', exact: true }).click(); await rows(page).first().waitFor(); await idle(page);
-    for (const viewport of [LAPTOP, PHONE]) { await page.setViewportSize(viewport); await main(page).waitFor(); assert.equal(await horizontalOverflow(page), false, `${viewport.width}px: the table follows the viewport after Retry`); }
+    // The column layout follows its container through a ResizeObserver, one rendering step after the viewport changes.
+    for (const viewport of [LAPTOP, PHONE]) { await page.setViewportSize(viewport); await main(page).waitFor(); await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth); assert.equal(await horizontalOverflow(page), false, `${viewport.width}px: the table follows the viewport after Retry`); }
     assert.equal(await table(page).locator('thead th').count(), 2);
     await context.close();
   });

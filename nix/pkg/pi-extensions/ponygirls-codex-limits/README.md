@@ -4,7 +4,15 @@ Loaded by `nix/hm/pi.nix`. Overlays only `openai-codex` model metadata, retainin
 
 Requires this repository's Pi `model-metadata-overlay.patch`. The configuration-form `modelMetadata` hook preserves provider transport classification, so subagents receive the discovered limits through their existing bounded public model descriptor. Native/custom-stream providers remain rejected; worker catalog defaults do not replace discovered limits.
 
-At session startup and subsequent Pi model-catalog refreshes, query Codex's authenticated model catalog. Match exact model slugs already known to Pi; select `max_context_window` when present, otherwise `context_window`. Missing metadata leaves Pi's catalog value unchanged. New model IDs are not fabricated: they require Pi's remaining model/transport metadata. Configured models and unrelated fields are preserved; explicit user `models.json` `modelOverrides` take precedence.
+At session startup and subsequent Pi model-catalog refreshes, query Codex's authenticated model catalog. Match exact model slugs already known to Pi; select `max_context_window` when present, otherwise `context_window`. Missing metadata leaves Pi's catalog value unchanged except for the two pinned rollout fallbacks below. New model IDs are not fabricated: they require Pi's remaining model/transport metadata. Configured models and unrelated fields are preserved; explicit user `models.json` `modelOverrides` take precedence.
+
+### GPT-6.2 rollout fallback
+
+After a successful authenticated discovery against the official endpoint, missing limits for exact IDs `gpt-6.2-astra` and `gpt-6.2-sol` use **872,000 tokens**, from OpenAI's [bundled Codex catalog at `6c0cee502d215e5df2dd9a303cf2e252229c9e12`](https://github.com/openai/codex/blob/6c0cee502d215e5df2dd9a303cf2e252229c9e12/codex-rs/models-manager/models.json). Any defined live limit takes precedence, including a smaller value. `/codex-limits` identifies loaded bundled fallbacks separately from live limits. No other family members, aliases, or future versions inherit them.
+
+The fallbacks follow the existing account/endpoint invalidation and publication rules. They do not activate before discovery or after an initial discovery failure. A same-scope failure retains previously published values. Pi must independently know the model definition (its public catalog refresh already supplies GPT-6.2); these overrides do not create models or establish account availability. This is a bounded mitigation for an authenticated catalog rollout gap, not live per-account evidence of maximum-window acceptance.
+
+Metadata-only live reproduction: Pi's refreshed catalog supplied both GPT-6.2 IDs, but authenticated Codex discovery omitted them with client versions `0.165.0`, `0.167.1`, and `0.169.1`. Before the fallback their effective context limits remained 272,000 (Astra) and 500,000 (Sol). The live-check script now reports `catalogContext: null` when a model appeared only during refresh, instead of dereferencing a missing startup entry.
 
 **Output limits remain Pi's catalog values.** The inspected Codex discovery contract has no output-token maximum; neither its context window nor its truncation policy is an output limit.
 
