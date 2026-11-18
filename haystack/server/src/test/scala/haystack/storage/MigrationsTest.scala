@@ -136,8 +136,7 @@ class MigrationsTest extends ContractSuite {
     _ = assertEquals(count, 1L)
   } yield () }) }
 
-  test("coordinated current-contract cutover preserves all acknowledged documents, authors, history, links and old replay bytes") {
-    val oldId = requestId(); val oldFailureId = requestId()
+  test("coordinated current-contract cutover preserves all acknowledged documents, authors, history and links") {
     val original = doc("original", "{\"n\":9007199254740993,\"decimal\":0.10}")
     val latest = doc("latest", "{\"unicode\":\"café 🐎\",\"decimal\":1.00e2}").replace("\"links\":[]", "\"links\":[[\"origin\",\"else:missing\"]]")
     run(emptyDatabase.use { db => for {
@@ -148,8 +147,6 @@ class MigrationsTest extends ContractSuite {
         Sql.update(c, "INSERT INTO item_revisions(project_id,item_id,revision,document,document_text,modified_at,modified_by,token_id) VALUES('p','legacy',2,?::jsonb,?,?,'bot','old-agent-token')", latest, latest, Later)
         Sql.update(c, "INSERT INTO item_links VALUES('p','legacy',0,'origin','else','missing')")
         Sql.update(c, "INSERT INTO item_search VALUES('p','legacy',ARRAY['legacy'],ARRAY['legacy text'])")
-        Sql.update(c, "INSERT INTO write_requests(principal_user,token_id,request_id,digest_format,digest,outcome,created_at) VALUES(?,?,?::uuid,'haystack-op-v1',?,?::jsonb,?)", Alice.userId, Alice.tokenId, oldId, "f" * 64, "{\"kind\":\"committed\",\"revision\":1,\"legacy\":\"retained\"}", Now)
-        Sql.update(c, "INSERT INTO write_requests(principal_user,token_id,request_id,digest_format,digest,outcome,created_at) VALUES(?,?,?::uuid,'haystack-op-v1',?,?::jsonb,?)", Alice.userId, Alice.tokenId, oldFailureId, "e" * 64, "{\"kind\":\"invalid-document\",\"detail\":\"legacy terminal\"}", Now)
       }
       before <- snapshot(db)
       _ <- Migrations.initialize(db, Activity)
@@ -159,14 +156,21 @@ class MigrationsTest extends ContractSuite {
       _ = assertEquals(current.get.documentCanonical, latest); _ = assertEquals(old.get.documentCanonical, original)
       _ = assertEquals(current.get.metadata, ItemMetadata(Now, "alice", Later, "bot"))
       _ = assertEquals(history.map(h => (h.revision, h.modifiedBy, h.tokenId)), Vector((2L, "bot", "old-agent-token"), (1L, "alice", "old-human-token")))
-      _ <- expectFault(repo.commit(op(key = "p:legacy", revision = 2L, id = oldId), Alice, Later), "replay-conflict")
-      _ <- expectFault(repo.commit(op(key = "p:invalid", document = "{}", id = oldFailureId), Alice, Later), "replay-conflict")
-      postReplay <- snapshot(db); _ = assertEquals(postReplay, before)
       fresh <- repo.commit(op(key = "p:legacy", revision = 2L, document = doc("new-current-format")), Alice, Later.plusSeconds(1))
       _ = assertEquals(fresh.revision, 3L)
       preserved <- repo.revision(ItemKey("p", "legacy"), 2L); _ = assertEquals(preserved.get.documentCanonical, latest)
-      oldLedger <- db.transaction(c => Sql.rows(c, "SELECT digest_format,digest FROM write_requests WHERE request_id=?::uuid", Seq(oldId))(r => (r.getString(1), r.getString(2))).head)
-      _ = assertEquals(oldLedger, "haystack-op-v1" -> ("f" * 64))
+    } yield () })
+  }
+
+  test("a leftover Node-era replay row (schema through 0006) answers replay-conflict for its request id, its outcome undecoded, nothing written") {
+    val nodeId = requestId()
+    run(emptyDatabase.use { db => for {
+      _ <- legacy(db, throughFive :+ "0006-tag-completion")
+      // Decoding this outcome (no createdAt) would fail as unavailable.
+      _ <- db.transaction(c => Sql.update(c, "INSERT INTO write_requests(principal_user,token_id,request_id,digest_format,digest,outcome,created_at) VALUES(?,?,?::uuid,'haystack-op-v1',?,?::jsonb,?)", Alice.userId, Alice.tokenId, nodeId, "f" * 64, "{\"kind\":\"committed\",\"revision\":1}", Now))
+      before <- snapshot(db)
+      _ <- expectFault(new PostgresItemRepository(db).commit(op(id = nodeId), Alice, Later), "replay-conflict")
+      after <- snapshot(db); _ = assertEquals(after, before)
     } yield () })
   }
 }

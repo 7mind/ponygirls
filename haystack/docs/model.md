@@ -111,10 +111,9 @@ Examples: `example-project:fact-mcp-auth`, `["a:b","i%d"]` → `a%3Ab:i%25d`.
    keys sort by UTF16, arrays and numeric tokens retain their spelling; SHA256
    of those bytes is stored with the explicit format. This deliberately does
    not reproduce historical JavaScript serialization. Migration0004 records
-   the cutover policy without deleting/re-hashing historical replays or history.
-   Cross-format request identities are refused, never reinterpreted. Reconcile
-   an uncertain pre-cutover write through its retained recorded outcome/history;
-   a fresh ID is not automatic recovery.
+   the cutover policy without re-hashing history. The historical JavaScript
+   replay rows were deleted by the legacy data retirement; a replay matches on
+   the digest alone.
 7. Client rule: never retry with a fresh ID after an uncertain outcome —
    read or replay the original ID. Conflicts resolve by explicit re-read +
    deliberate edit.

@@ -29,7 +29,6 @@ class OperationEnvelopeTest extends munit.FunSuite {
     assertNotEquals(original.digest, accept(document("[1,2]")).digest)
     assertNotEquals(accept(document("[1,2]")).digest, accept(document("[2,1]")).digest)
     assertEquals(original.digest, accept(id = RequestId.dropRight(1) + "c").digest)
-    assertNotEquals(OperationDigest.Format, "haystack-op-v1")
   }
   test("UUIDv7 all variant nibbles accepted and case canonicalized") {
     Vector('8', '9', 'a', 'b').foreach { variant =>

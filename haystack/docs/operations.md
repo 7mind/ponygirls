@@ -118,10 +118,9 @@ a namespace change needs a reviewed migration, never a fresh database.
 
 ## Upgrades
 
-- Item revisions are immutable. Current `haystack-op-scala-v1` is deliberate;
-  historical JS replay rows remain, but cross-format identities are refused.
-  Reconcile retained acknowledged outcomes/history before a deliberate new write;
-  never automatically replace an uncertain old request ID. See model.md cutover.
+- Item revisions are immutable. `haystack-op-scala-v1` is the only replay digest
+  format; the historical JS replay rows were deleted by the legacy data retirement.
+  See model.md cutover.
 - Schema changes ship as ordered `migrations/*.sql` with ledger +
   advisory lock; a failed migration fails startup without partial apply.
   Never auto-upgrade the PostgreSQL major version; never recreate data.

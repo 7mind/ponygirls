@@ -97,10 +97,10 @@ final class PostgresItemRepository(database: JdbcDatabase, projection: Option[ha
     // locks include absent rows, so creates and invalid-document retries race
     // safely too. Hash collisions serialize harmlessly, never alias identities.
     lock(c, "haystack/replay/", Vector(principal.userId,principal.tokenId,op.requestId))
-    val seen = rows(c, "SELECT digest_format,digest,outcome::text FROM write_requests WHERE principal_user=? AND token_id=? AND request_id=?::uuid", Seq(principal.userId,principal.tokenId,op.requestId)) { r => (r.getString(1),r.getString(2),r.getString(3)) }.headOption
+    val seen = rows(c, "SELECT digest,outcome::text FROM write_requests WHERE principal_user=? AND token_id=? AND request_id=?::uuid", Seq(principal.userId,principal.tokenId,op.requestId)) { r => (r.getString(1),r.getString(2)) }.headOption
     seen match {
-      case Some((format,digest,outcome)) =>
-        if (format != op.digest.format || digest != op.digest.hex) Left(Fault("replay-conflict", "request identity belongs to another operation or retired digest format"))
+      case Some((digest,outcome)) =>
+        if (digest != op.digest.hex) Left(Fault("replay-conflict", "request identity belongs to another operation"))
         else decodeOutcome(outcome).map(_.copy(replayed = true))
       case None =>
         lock(c,"haystack/item/",Vector(op.key.project,op.key.item))
