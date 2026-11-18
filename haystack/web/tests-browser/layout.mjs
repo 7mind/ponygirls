@@ -31,7 +31,7 @@ const vite = await createServer({ root, optimizeDeps: { include: ["react", "reac
     if (id !== "\0layout-entry") return;
     return `import React from 'react';
         import { createRoot } from 'react-dom/client';
-        import { App } from '/src/App.tsx'; import { api } from '/src/api.ts'; import '/src/styles.css';
+        import { App } from '/src/App.tsx'; import { api } from '/src/api.ts'; import '/src/styles.css'; import '/src/browse.css'; import '/src/record.css'; import '/src/edit.css';
         window.layoutUser = 'operator'; window.accountInvalidations = 0;
         document.addEventListener('account:invalidate', () => window.accountInvalidations++);
         api.whoami = async () => {

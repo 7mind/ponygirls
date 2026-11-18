@@ -1,5 +1,5 @@
 // Static design-token census of the dashboard stylesheet(s). Usage:
-//   node census.mjs [css files…]   (default: ../src/styles.css and shared/account-web/account.css)
+//   node census.mjs [css files…]   (default: ../src/{styles,browse,record,edit}.css and shared/account-web/account.css)
 // Prints Markdown; pass --json for machine output. Regex-based: counts literal
 // declarations, not computed styles.
 import { readFileSync } from "node:fs";
@@ -8,7 +8,7 @@ import path from "node:path";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2).filter((a) => a !== "--json");
-const files = args.length ? args : [path.join(here, "../src/styles.css"), path.join(here, "../../../shared/account-web/account.css")];
+const files = args.length ? args : [...["styles", "browse", "record", "edit"].map((name) => path.join(here, `../src/${name}.css`)), path.join(here, "../../../shared/account-web/account.css")];
 const json = process.argv.includes("--json");
 
 function census(file) {
