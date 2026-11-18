@@ -167,6 +167,6 @@ nix develop .#backend --command bash shared/service-auth/scripts/test-postgres.s
 ```
 
 The same behavioral account contracts run against a handwritten memory repository
-and real owned PostgreSQL; the script verifies the complete discovered XML
-inventory without skips. Service-specific transport, scopes, live-delivery and
-content-grant checks remain in their respective full suites.
+and real owned PostgreSQL; the script fails on any failure, error or skip and on
+an empty run (`scripts/junit-gate.py`). Service-specific transport, scopes,
+live-delivery and content-grant checks remain in their respective full suites.

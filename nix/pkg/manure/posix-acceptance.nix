@@ -3,7 +3,7 @@ let
   source = (callPackage ../chronicle/source.nix { }).manureAcceptance;
   environment = callPackage ../chronicle/sbt-environment.nix { inherit squishLib; };
   bridge = callPackage ./posix.nix { };
-in runCommand "manure-posix-jvm-static-musl-acceptance" {
+in runCommand "manure-posix-static-musl-acceptance" {
   nativeBuildInputs = [ environment.tools.graal python3 binutils coreutils ];
   LANG = "C.UTF-8";
   LC_ALL = "C.UTF-8";
