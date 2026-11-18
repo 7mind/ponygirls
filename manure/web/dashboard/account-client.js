@@ -1,0 +1,1 @@
+../../../shared/account-web/account-client.js
