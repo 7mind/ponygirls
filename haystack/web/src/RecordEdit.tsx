@@ -1,20 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, AuthError, buildDocumentJson, parseTagsInput, uuidv7, type Item } from "./api";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { api, ApiError, AuthError, NetworkError, uuidv7, type Item, type RevisionMeta } from "./api";
 import { useLiveUpdates } from "./Live";
+import { UiIcon } from "./Masthead";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { FieldsEditor } from "./FieldsEditor";
-import { inspectFields } from "./fields";
-
-interface Draft {
-  title: string;
-  description: string;
-  type: string;
-  status: string;
-  importance: string;
-  attention: string;
-  fieldsJson: string;
-  linksText: string;
-  tagsText: string;
-}
+import { LinksEditor } from "./LinksEditor";
+import { HistoryCard, MetadataCard } from "./RecordEditRail";
+import { PRESETS, type Preset } from "./browse-state";
+import { changedParts, documentJsonOf, draftOf, isRemoteChange, problemsOf, type Draft } from "./edit-draft";
+import { useLeaveGuard } from "./leave-guard";
+import { itemHash } from "./router";
 
 interface Conflict {
   currentRevision: number;
@@ -23,220 +18,190 @@ interface Conflict {
   currentModifiedAt: string;
 }
 
-export function RecordEdit({ itemKey, item, onItem, onStatus, onSaved, onCancel, onDiscard, onAuthLost }: {
+const WHEN: Intl.DateTimeFormatOptions = { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+const projectOf = (key: string): string => decodeURIComponent(key.slice(0, key.indexOf(":")));
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+const listOf = (parts: readonly string[]): string => parts.length < 2 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+function failureText(error: unknown): string {
+  if (error instanceof NetworkError) return "server unreachable — the service may be down";
+  return error instanceof Error ? error.message : "unknown";
+}
+
+export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, onBack, onCancel, onViewRevision, onDiscard, onAuthLost }: {
   /** The route's key; live change announcements name records by it. */
   itemKey: string;
-  /** The record being edited; replaced through `onItem` when a conflicting save reads the latest revision. */
+  /** The latest revision known; replaced through `onItem` when a conflicting save reads the winner. */
   item: Item;
+  /** The record's history, for context; null when it could not be read. */
+  revisions: readonly RevisionMeta[] | null;
+  /** The list the record was opened from. */
+  origin: Preset;
   onItem: (item: Item) => void;
-  onStatus: (status: string) => void;
   /** A save succeeded as `revision`. */
   onSaved: (revision: number) => Promise<void>;
+  /** Leaves for the originating list. */
+  onBack: () => void;
+  /** Closes the editor for the record page. */
   onCancel: () => void;
+  /** Closes the editor and shows an earlier revision of the record page, compared with the latest. */
+  onViewRevision: (revision: number) => void;
+  /** Drops the draft and reloads the record. */
   onDiscard: () => void;
   onAuthLost: () => void;
 }) {
-  const [draft, setDraft] = useState<Draft>(() => ({
-    title: item.document.title,
-    description: item.document.description,
-    type: item.document.type,
-    status: item.document.status,
-    importance: item.document.importance,
-    attention: item.document.humanAttention,
-    fieldsJson: item.document.fieldsJson,
-    linksText: item.document.links.map(([t, target]) => `${t} ${target}`).join("\n"),
-    tagsText: item.document.tags.join(", "),
-  }));
-  const fieldsInspection = useMemo(() => inspectFields(draft.fieldsJson), [draft.fieldsJson]);
+  const lastId = useRef(0);
+  const nextId = useCallback(() => ++lastId.current, []);
+  const [base] = useState<Draft>(() => draftOf(item, nextId));
+  const [draft, setDraft] = useState<Draft>(() => draftOf(item, nextId));
+  const [baseRevision, setBaseRevision] = useState(item.revision);
   const [conflict, setConflict] = useState<Conflict | null>(null);
-  const [remoteUpdate, setRemoteUpdate] = useState(false);
-  const editRevision = useRef<number>(item.revision);
+  const [remote, setRemote] = useState<{ revision: number | null } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [reconciled, setReconciled] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [leaving, setLeaving] = useState<{ run: () => void } | null>(null);
+  const [discarding, setDiscarding] = useState(false);
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const pending = useSyncExternalStore(api.subscribePendingWrite, api.pendingWrite);
   const live = useLiveUpdates();
   // Only changes announced after the editor opened can concern this draft.
   const openedAt = useRef(live.version);
+  const formId = useId();
+
+  const parts = useMemo(() => changedParts(base, draft), [base, draft]);
+  const problems = useMemo(() => problemsOf(draft), [draft]);
+  const dirty = parts.length > 0;
+  const canSave = dirty && problems.length === 0 && conflict === null && pending === undefined && !saving;
 
   useEffect(() => {
     if (live.version === openedAt.current) return;
-    if (live.key === null || (live.key === itemKey && live.revision !== null && live.revision > item.revision)) setRemoteUpdate(true);
+    if (isRemoteChange(live, { key: itemKey, revision: item.revision }, pending)) setRemote({ revision: live.revision });
   }, [live.version]);
 
-  function parseLinks(text: string): Array<[string, string]> {
-    const out: Array<[string, string]> = [];
-    for (const line of text.split("\n")) {
-      const trimmed = line.trim();
-      if (trimmed === "") continue;
-      const space = trimmed.search(/\s/);
-      if (space < 0) throw new Error(`link line needs "type target": ${trimmed}`);
-      out.push([trimmed.slice(0, space), trimmed.slice(space).trim()]);
-    }
-    return out;
-  }
+  useEffect(() => {
+    if (focusId === null) return;
+    const control = document.getElementById(focusId);
+    if (control === null) throw new Error(`No control ${focusId} to focus`);
+    control.focus();
+    setFocusId(null);
+  }, [focusId]);
 
-  async function save() {
-    onStatus("Saving…");
-    let links: Array<[string, string]>;
+  const leave = (action: () => void) => { if (dirty) setLeaving({ run: action }); else action(); };
+  useLeaveGuard(dirty, pending !== undefined, (hash) => leave(() => { location.hash = hash; }));
+
+  async function submit(revision: number) {
+    setSaving(true); setFailure(null); setReconciled(null);
     try {
-      links = parseLinks(draft.linksText);
-    } catch (err) {
-      onStatus(err instanceof Error ? err.message : "Bad links.");
-      return;
-    }
-    let documentJson: string;
-    try {
-      // fieldsJson spliced raw: edited big integers never round-trip.
-      documentJson = buildDocumentJson({
-        title: draft.title,
-        description: draft.description,
-        fieldsRaw: draft.fieldsJson,
-        type: draft.type,
-        status: draft.status,
-        importance: draft.importance,
-        attention: draft.attention,
-        links,
-        tags: parseTagsInput(draft.tagsText),
-      });
-    } catch {
-      onStatus("fields is not valid JSON.");
-      return;
-    }
-    try {
-      const out = await api.put(item.key, documentJson, editRevision.current, uuidv7());
-      setConflict(null);
-      setRemoteUpdate(false);
+      // The fields text is spliced raw into the document: edited big integers never round-trip.
+      const out = await api.put(item.key, documentJsonOf(draft), revision, uuidv7());
       await onSaved(out.revision);
-    } catch (err) {
-      if (err instanceof AuthError) {
-        onAuthLost();
-        return;
-      }
-      if (err instanceof ApiError && err.code === "conflict") {
+    } catch (error) {
+      if (error instanceof AuthError) { onAuthLost(); return; }
+      if (error instanceof ApiError && error.code === "conflict") {
         // Stale save: keep the draft, show the winner.
         try {
           const latest = await api.get(item.key);
-          setConflict({
-            currentRevision: latest.revision,
-            currentTitle: latest.document.title,
-            currentModifiedBy: latest.metadata.modifiedBy,
-            currentModifiedAt: latest.metadata.modifiedAt,
-          });
+          setConflict({ currentRevision: latest.revision, currentTitle: latest.document.title, currentModifiedBy: latest.metadata.modifiedBy, currentModifiedAt: latest.metadata.modifiedAt });
           onItem(latest);
-          onStatus("Someone else saved first — your draft is preserved below.");
-        } catch {
-          onStatus("Save conflicted and the latest revision is unreadable.");
+        } catch (readError) {
+          if (readError instanceof AuthError) { onAuthLost(); return; }
+          setFailure("Save conflicted and the latest revision is unreadable.");
         }
         return;
       }
-      onStatus(`Save failed: ${err instanceof Error ? err.message : "unknown"}`);
-    }
+      setFailure(`Save failed: ${failureText(error)}`);
+    } finally { setSaving(false); }
   }
 
-  async function retryOnLatest() {
-    // Certain-conflict retry is a NEW operation (fresh id) on the latest rev.
-    setConflict(null);
-    onStatus("Saving…");
-    editRevision.current = item.revision;
-    await saveWithRevision(item.revision);
+  /** Certain conflict: saving on top of the winner is a NEW operation (fresh id) based on the latest revision. */
+  function overwrite() {
+    setConflict(null); setBaseRevision(item.revision);
+    void submit(item.revision);
   }
 
-  async function saveWithRevision(revision: number) {
-    let links: Array<[string, string]>;
+  async function retryOriginal() {
+    setRetrying(true); setFailure(null); setReconciled(null);
     try {
-      links = parseLinks(draft.linksText);
-    } catch (err) {
-      onStatus(err instanceof Error ? err.message : "Bad links.");
-      return;
-    }
-    let documentJson: string;
-    try {
-      // fieldsJson spliced raw: edited big integers never round-trip.
-      documentJson = buildDocumentJson({
-        title: draft.title,
-        description: draft.description,
-        fieldsRaw: draft.fieldsJson,
-        type: draft.type,
-        status: draft.status,
-        importance: draft.importance,
-        attention: draft.attention,
-        links,
-        tags: parseTagsInput(draft.tagsText),
-      });
-    } catch {
-      onStatus("fields is not valid JSON.");
-      return;
-    }
-    try {
-      const out = await api.put(item.key, documentJson, revision, uuidv7());
-      setConflict(null);
-      setRemoteUpdate(false);
-      await onSaved(out.revision);
-    } catch (err) {
-      if (err instanceof AuthError) { onAuthLost(); return; }
-      if (err instanceof ApiError && err.code === "conflict") {
-        onStatus("Conflicted again — reload and reconcile manually.");
-        return;
-      }
-      onStatus(`Save failed: ${err instanceof Error ? err.message : "unknown"}`);
-    }
+      const result = await api.retryPendingWrite();
+      setReconciled(`Original write confirmed as revision ${result.revision}. Any newer draft is preserved; review it before saving.`);
+    } catch (error) {
+      if (error instanceof AuthError) { onAuthLost(); return; }
+      setFailure(`Replay did not complete: ${failureText(error)}`);
+    } finally { setRetrying(false); }
   }
 
-  return (
-    <>
-      {remoteUpdate && <p className="notice" role="status">This record may have changed elsewhere. Your draft is preserved; saving will check its original revision.</p>}
-      {conflict !== null && (
-        <div role="alert">
-          <p>
-            Conflict: revision {conflict.currentRevision} by {conflict.currentModifiedBy} at {conflict.currentModifiedAt} —
-            “{conflict.currentTitle}”. Your draft text is preserved.
-          </p>
-          <button type="button" disabled={fieldsInspection.error !== null} onClick={() => void retryOnLatest()}>
-            Save my draft on top of revision {conflict.currentRevision}
-          </button>
-          <button type="button" onClick={() => { setConflict(null); onDiscard(); }}>
-            Discard draft and reload
-          </button>
+  const modifiedAt = (value: string) => { const at = new Date(value); return Number.isNaN(at.getTime()) ? value : new Intl.DateTimeFormat(undefined, WHEN).format(at); };
+  const status = pending !== undefined ? <span className="chip"><span className="status status-warn">Save not confirmed</span></span> :
+    conflict !== null ? <span className="chip chip-danger">Conflict with revision {conflict.currentRevision}</span> :
+    problems.length > 0 ? <span className="chip chip-danger">{plural(problems.length, "problem")}</span> :
+    dirty ? <span className="chip"><span className="status">Unsaved changes</span></span> : <span>No changes yet</span>;
+  const backLabel = `Back to ${PRESETS[origin].label}`;
+
+  return <div className="edit-page" data-record="editing">
+    <div className="viewbar record-bar edit-bar" role="toolbar" aria-label="Edit record">
+      <button type="button" className="btn btn-ghost btn-icon record-back" aria-label={backLabel} title={`${backLabel} — asks before discarding unsaved changes`}
+        onClick={() => leave(onBack)}><UiIcon name="arrow-left" /></button>
+      <span className="bar-divider" />
+      <span className="record-type" data-family="work" aria-hidden="true"><UiIcon name="edit" /></span>
+      <div className="record-head"><h1 className="record-title" title={base.title}>{base.title}</h1>
+        <div className="record-sub"><span className="chip chip-accent">Editing</span><span className="mono">{itemKey}</span><span className="sep">based on revision {baseRevision}</span></div></div>
+      <div className="bar-status" role="status">{status}</div>
+      <button type="button" className="btn" onClick={() => leave(onCancel)}>Cancel</button>
+      <button type="submit" form={formId} className="btn btn-primary" disabled={!canSave}>
+        {saving ? <span className="spinner" aria-hidden="true" /> : <UiIcon name="check" />}<span>Save<span className="edit-save-rest"> as new revision</span></span></button>
+    </div>
+    <div className="page"><div className="page-narrow with-rail">
+      <form id={formId} className="record-main" aria-label="Record" onSubmit={(event) => { event.preventDefault(); if (canSave) void submit(baseRevision); }}>
+        {problems.length > 0 && <div className="notice notice-danger" role="alert"><UiIcon name="alert" /><div className="grow">
+          <div className="notice-title">{plural(problems.length, "problem")} prevent{problems.length === 1 ? "s" : ""} saving</div>
+          Nothing was sent to the server. Fix {problems.length === 1 ? "it" : "these"} and save again:
+          <ul className="error-list">{problems.map((problem, index) => <li key={index}>
+            <button type="button" className="link-button" onClick={() => setFocusId(problem.anchor)}>{problem.where}: {problem.message}</button></li>)}</ul></div></div>}
+        {failure !== null && pending === undefined && <div className="notice notice-danger" role="alert"><UiIcon name="alert" /><div className="grow">{failure}</div></div>}
+        {remote !== null && conflict === null && <div className="notice" role="status"><UiIcon name="info" /><div className="grow">
+          <span className="notice-title">{remote.revision === null ? "This record may have changed elsewhere." : `Revision ${remote.revision} was saved elsewhere.`}</span>{" "}
+          Your draft is kept and is still based on revision {baseRevision}; saving checks that revision and asks how to combine the two if the record has moved on.
+          <div className="notice-actions"><a className="btn btn-sm" href={itemHash(itemKey, false)} target="_blank" rel="noopener noreferrer"><UiIcon name="external" small />Review their changes</a></div></div></div>}
+        {conflict !== null && <div className="notice notice-warn" role="alert"><UiIcon name="alert" /><div className="grow">
+          <div className="notice-title">Revision {conflict.currentRevision} was saved by {conflict.currentModifiedBy} while you were editing</div>
+          {modifiedAt(conflict.currentModifiedAt)} · title now “{conflict.currentTitle}”. Your draft was <strong>not</strong> saved; it is kept below and is still based on revision {baseRevision}.
+          <div className="notice-actions">
+            <a className="btn btn-sm btn-primary" href={itemHash(itemKey, false)} target="_blank" rel="noopener noreferrer"><UiIcon name="external" small />Review their changes</a>
+            <button type="button" className="btn btn-sm" disabled={saving || problems.length > 0} onClick={overwrite}>Overwrite as revision {conflict.currentRevision + 1}</button>
+            <button type="button" className="btn btn-sm btn-danger-quiet" onClick={() => setDiscarding(true)}>Discard mine</button></div></div></div>}
+        {pending !== undefined && <div className="notice notice-warn" role="alert"><UiIcon name="alert" /><div className="grow">
+          <div className="notice-title">The outcome of your save is unknown</div>
+          The write to <span className="mono">{pending.key}</span> was sent but no answer arrived, so it may or may not be stored as revision {pending.expectedRevision + 1}.
+          Other writes are blocked until this is settled; your draft is kept. Retrying sends exactly the same payload and request id, so it cannot save twice.
+          {failure !== null && <p className="notice-detail">{failure}</p>}
+          <div className="notice-actions"><button type="button" className="btn btn-sm btn-primary" disabled={retrying} onClick={() => void retryOriginal()}>
+            <UiIcon name="refresh" small />Retry original write</button></div></div></div>}
+        {reconciled !== null && pending === undefined && <div className="notice notice-ok" role="status"><UiIcon name="check-circle" /><div className="grow">{reconciled}</div></div>}
+
+        <div className="form-stack">
+          <div className="field"><label className="label" htmlFor={`${formId}-title`}>Title</label>
+            <input className="input input-title" id={`${formId}-title`} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></div>
+          <div className="field"><label className="label" htmlFor={`${formId}-description`}>Description</label>
+            <textarea className="textarea textarea-auto" id={`${formId}-description`} value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
+            <span className="hint">Plain text. Shown in full on the record page and searched.</span></div>
         </div>
-      )}
-      <form
-        className="editor-panel"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void save();
-        }}
-      >
-        <label>Title<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label>
-        <label>Description<textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
-        <label>Type<input value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })} list="haystack-types" /></label>
-        <label>Status<input value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })} list="haystack-statuses" /></label>
-        <label>Importance<input value={draft.importance} onChange={(e) => setDraft({ ...draft, importance: e.target.value })} list="haystack-importances" /></label>
-        <label>
-          Attention
-          <select value={draft.attention} onChange={(e) => setDraft({ ...draft, attention: e.target.value })}>
-            <option value="required">required</option>
-            <option value="cleared">cleared</option>
-          </select>
-        </label>
-        <FieldsEditor raw={draft.fieldsJson} inspection={fieldsInspection} onChange={(fieldsJson) => setDraft({ ...draft, fieldsJson })} />
-        <label>
-          Tags (comma-separated)
-          <input value={draft.tagsText} onChange={(e) => setDraft({ ...draft, tagsText: e.target.value })} placeholder="mcp, urgent" autoComplete="off" />
-        </label>
-        <label>
-          Links (one per line: “type project:item”)
-          <textarea value={draft.linksText} onChange={(e) => setDraft({ ...draft, linksText: e.target.value })} rows={4} cols={60} aria-label="Links" />
-        </label>
-        <datalist id="haystack-types">
-          <option value="todo" /><option value="fact" /><option value="github-issue" />
-          <option value="github-pr" /><option value="skill-draft" /><option value="actual" />
-        </datalist>
-        <datalist id="haystack-statuses">
-          <option value="actual" /><option value="archived" />
-        </datalist>
-        <datalist id="haystack-importances">
-          <option value="high" /><option value="low" />
-        </datalist>
-        <button className="primary" type="submit" disabled={fieldsInspection.error !== null}>Save as new revision</button>
-        <button type="button" onClick={onCancel}>Cancel</button>
+
+        <FieldsEditor fields={draft.fields} nextId={nextId} problems={problems} onChange={(fields) => setDraft({ ...draft, fields })} onFocusRequest={setFocusId} />
+        <LinksEditor links={draft.links} nextId={nextId} problems={problems} onChange={(links) => setDraft({ ...draft, links })} onFocusRequest={setFocusId} onAuthLost={onAuthLost} />
       </form>
-    </>
-  );
+      <aside className="rail rail-sticky" aria-label="Metadata and history">
+        <MetadataCard project={projectOf(itemKey)} metadata={draft} onChange={(patch) => setDraft({ ...draft, ...patch })} />
+        <HistoryCard revisions={revisions} onView={(revision) => leave(() => onViewRevision(revision))} />
+      </aside>
+    </div></div>
+    {leaving !== null && <ConfirmDialog title="Discard unsaved changes?" confirmLabel="Discard changes" danger busy={false}
+      onConfirm={() => { const { run } = leaving; setLeaving(null); run(); }} onCancel={() => setLeaving(null)}>
+      <p>You changed <strong>{listOf(parts)}</strong> of <span className="mono nowrap">{itemKey}</span>. Leaving now loses these changes; nothing has been saved. Cancel returns to the editor.</p>
+    </ConfirmDialog>}
+    {discarding && <ConfirmDialog title="Discard your draft?" confirmLabel="Discard draft and reload" danger busy={false}
+      onConfirm={() => { setDiscarding(false); onDiscard(); }} onCancel={() => setDiscarding(false)}>
+      <p>Your changes to <span className="mono nowrap">{itemKey}</span> are dropped and revision {item.revision} is loaded. Nothing of your draft was saved.</p>
+    </ConfirmDialog>}
+  </div>;
 }

@@ -1,36 +1,93 @@
-.editor-panel { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.editor-panel > label:nth-of-type(1), .editor-panel > label:nth-of-type(2), .editor-panel > label:nth-of-type(7) { grid-column: 1 / -1; }
-.editor-panel > label:nth-of-type(6) { grid-column: 1 / -1; max-width: 250px; }
-.editor-panel textarea { font: 13px/1.65 ui-monospace, monospace; }
-.editor-panel button { width: fit-content; }
-.fields-editor { grid-column: 1 / -1; min-width: 0; border: 1px solid var(--line); padding: 12px; }
-.fields-editor-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
-.fields-editor-toolbar h3 { margin: 0; font-size: 14px; }
-.editor-modes { display: flex; gap: 0; }
-.editor-modes button { padding: 5px 9px; font-size: 12px; }
-.editor-modes button[aria-pressed=true] { background: var(--selected); color: var(--selected-ink); border-color: var(--line-strong); }
-.fields-editor-toolbar .preview-toggle { display: flex; flex-direction: row; align-items: center; gap: 5px; margin: 0 0 0 auto; }
-.preview-toggle input { width: auto; }
-.typed-field-editor { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; min-width: 0; }
-.typed-field-editor .field-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
-.typed-field-editor .field-heading h4 { margin-bottom: 0; }
-.typed-field-editor .field-heading label { display: flex; flex-direction: row; align-items: center; gap: 6px; margin: 0 0 0 auto; }
-.typed-field-editor select { width: auto; padding: 4px 7px; }
-.typed-editor-panes { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-.typed-editor-panes.with-preview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.typed-editor-panes > label { margin: 0; min-width: 0; }
-.typed-editor-panes textarea { min-height: 96px; tab-size: 2; }
-.typed-editor-preview { min-width: 0; border: 1px solid var(--line); background: var(--surface); padding: 10px; max-height: 500px; overflow: auto; }
-.typed-editor-preview h5 { margin: 0 0 9px; color: var(--muted); font-size: 11px; font-weight: 400; }
-.fields-editor textarea[aria-invalid=true] { border-color: var(--danger); }
-.fields-json-error { color: var(--danger); margin: 8px 0 0; overflow-wrap: anywhere; }
-@media (max-width: 800px) { .typed-editor-panes.with-preview { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 800px) {
-  .editor-panel { grid-template-columns: 1fr; padding: 12px; }
-  .editor-panel label { grid-column: 1 / -1; }
+/* Record edit page (spec §3.2 Edit; mockup haystack-edit.html): the edit bar in the place of the record header,
+ * typed field editors, links, the metadata rail. The header, section and rail rules it shares are in record.css.
+ * Tokens only (spec §8 item 6); the document is the only scroller: textareas grow with their content. */
+
+/* The edit page is document-like, like the record page: full-bleed bar over a centred page on the canvas. */
+.workspace[data-view="edit"] { padding: 0; }
+/* The edit page shows the unconfirmed write itself (next to the Save it blocks): the shell's generic notice is redundant here. */
+.workspace[data-view="edit"] > .notice-warn { display: none; }
+
+/* ── Edit bar ───────────────────────────────────────────────────────────── */
+.bar-status { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-xs); color: var(--text-muted); white-space: nowrap; }
+.chip .status { font-size: inherit; color: inherit; gap: var(--space-1); }
+.edit-page :is(input, textarea, select) { scroll-margin-top: calc(var(--masthead-h) + var(--viewbar-h) + var(--space-4)); }
+
+/* ── Form ───────────────────────────────────────────────────────────────── */
+.form-stack { display: flex; flex-direction: column; gap: var(--space-4); }
+.input-title { font-size: var(--text-md); font-weight: var(--weight-medium); }
+.textarea-auto { resize: none; overflow: hidden; field-sizing: content; font-size: var(--text-md); }
+@supports not (field-sizing: content) { .textarea-auto { resize: vertical; overflow: auto; } }
+.textarea[aria-invalid="true"], .select[aria-invalid="true"] { border-color: var(--danger-fg); }
+.error-list { list-style: disc; padding-left: var(--space-4); margin-top: var(--space-1); }
+.error-list .link-button { color: var(--text); text-decoration: underline; text-align: left; }
+.notice-detail { margin-top: var(--space-1); overflow-wrap: anywhere; }
+.rail-form { display: flex; flex-direction: column; gap: var(--space-4); }
+
+/* Fields */
+.field-edit .card-head { gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); flex-wrap: wrap; }
+.field-edit .card-head .input { width: 200px; }
+.field-edit .card-head .select { width: 148px; }
+.field-edit .card-head .select-sm { width: 116px; }
+.field-edit .card-head .field-name { font-size: var(--text-sm); }
+.field-edit > .field-error, .field-card > .field-error { padding: var(--space-2) var(--space-4) var(--space-3); }
+.field-edit-row { display: grid; grid-template-columns: 200px 148px minmax(0, 1fr) var(--control-h); align-items: start; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); }
+.field-edit-row + .field-edit-row { border-top: 1px solid var(--border); }
+.field-edit-row .field-error { grid-column: 3 / 4; }
+.field-edit-row .textarea { min-height: var(--control-h); padding-top: var(--space-1); padding-bottom: var(--space-1); }
+.field-null { display: flex; align-items: center; min-height: var(--control-h); font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-muted); }
+.field-edit-cols { display: grid; grid-template-columns: 200px 148px minmax(0, 1fr) var(--control-h); gap: var(--space-2); padding: 0 var(--space-2) 0 var(--space-3); }
+.md-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: stretch; }
+.md-single { display: block; }
+.md-pane { min-width: 0; display: flex; flex-direction: column; }
+.md-pane + .md-pane { border-left: 1px solid var(--border); }
+.md-pane-label { padding: var(--space-2) var(--space-4) 0; }
+.md-pane .textarea { flex: 1; border: 0; border-radius: 0 0 0 var(--radius-md); padding: var(--space-2) var(--space-4) var(--space-4); font-family: var(--font-mono); line-height: var(--leading-prose); }
+.md-single .md-pane .textarea { border-radius: 0 0 var(--radius-md) var(--radius-md); padding-top: var(--space-3); }
+.md-pane .textarea:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+.md-preview { padding: var(--space-2) var(--space-4) var(--space-4); min-width: 0; }
+.code-edit { border: 0; border-radius: 0 0 var(--radius-md) var(--radius-md); background: var(--bg-surface); padding: var(--space-3) var(--space-4); font-family: var(--font-mono); line-height: var(--leading-prose); }
+.code-edit:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); border-radius: 0 0 var(--radius-md) var(--radius-md); }
+.field-card > .code-edit { width: 100%; }
+
+/* Metadata */
+.combo { position: relative; }
+.combo .input { padding-right: var(--space-6); }
+.combo-toggle { position: absolute; right: var(--space-0); top: var(--space-0); width: var(--control-h-sm); height: var(--control-h-sm); display: grid; place-items: center; border: 0; background: none; color: var(--text-muted); cursor: pointer; border-radius: var(--radius-sm); }
+
+/* Tags */
+.tag-input { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); min-height: var(--control-h); padding: var(--space-0) var(--space-1); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg-surface); }
+.tag-input:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px var(--accent-soft-border); }
+.tag-input input { flex: 1; min-width: 80px; height: var(--control-h-sm); border: 0; outline: 0; background: none; font-size: var(--text-sm); padding: 0 var(--space-1); box-shadow: none; }
+.chip-removable { height: var(--control-h-sm); padding-right: 0; gap: 0; }
+.chip-removable button { width: var(--control-h-sm); height: var(--control-h-sm); display: grid; place-items: center; border: 0; background: none; color: inherit; cursor: pointer; border-radius: var(--radius-sm); }
+.chip-removable button:hover { background: var(--neutral-bd); }
+
+/* Links */
+.link-edit { display: flex; flex-direction: column; gap: var(--space-2); }
+.link-edit-row { display: grid; grid-template-columns: 200px minmax(0, 320px) minmax(0, 1fr) var(--control-h); align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); }
+.link-edit-row + .link-edit-row { border-top: 1px solid var(--border); }
+.link-edit-row .field-error { grid-column: 2 / 4; }
+.link-edit .field-edit-cols { grid-template-columns: 200px minmax(0, 320px) minmax(0, 1fr) var(--control-h); padding: 0 var(--space-2) 0 var(--space-3); margin: 0 1px; }
+.link-resolved { padding-left: var(--space-1); min-width: 0; display: flex; align-items: center; gap: var(--space-1); font-size: var(--text-sm); color: var(--text-muted); }
+.link-resolved .icon { color: var(--ok-fg); }
+.link-resolved.is-missing, .link-resolved.is-missing .icon { color: var(--danger-fg); }
+
+/* ── Narrow widths ──────────────────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  .md-split { grid-template-columns: minmax(0, 1fr); }
+  .md-pane + .md-pane { border-left: 0; border-top: 1px solid var(--border); }
 }
-/* Legacy rules of the edit page moved from record.css when the record view was rebuilt (UX-H3); UX-H4 replaces them. */
-.back-button { display: flex; align-items: center; gap: 6px; margin: 0 0 12px; border: 0; padding-left: 0; color: var(--muted); }
-.editor-panel { padding: 12px 14px; border: 1px solid var(--line); border-radius: 0; background: var(--surface); margin-bottom: 14px; }
-.field-heading h4 { margin: 0 0 4px; font: 600 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
-.field-heading > span { color: var(--muted); font-size: 10px; }
+@media (max-width: 720px) {
+  /* The state chip and the rest of the Save label stay in the accessibility tree: the bar keeps room for the title and both buttons. */
+  .edit-bar .bar-status, .edit-save-rest { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .edit-bar { gap: var(--space-2); }
+  .field-edit .card-head .input { width: auto; flex: 1 1 100%; min-width: 0; }
+  .field-edit .card-head .select { width: auto; flex: 0 1 148px; min-width: 0; }
+  .field-edit .card-head .select-sm { width: auto; flex: 0 1 116px; min-width: 0; }
+  .field-edit-cols, .link-edit .field-edit-cols { display: none; }
+  .field-edit-row, .link-edit-row { grid-template-columns: minmax(0, 1fr) var(--control-h); }
+  .field-edit-row > :nth-child(1), .link-edit-row > :nth-child(1) { grid-column: 1; grid-row: 1; }
+  .field-edit-row > :nth-child(4), .link-edit-row > :nth-child(4) { grid-column: 2; grid-row: 1; }
+  .field-edit-row > :nth-child(2), .field-edit-row > :nth-child(3), .link-edit-row > :nth-child(2), .link-edit-row > :nth-child(3) { grid-column: 1 / -1; }
+  .field-edit-row .field-error, .link-edit-row .field-error { grid-column: 1 / -1; }
+}

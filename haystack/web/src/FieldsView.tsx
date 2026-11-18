@@ -40,16 +40,6 @@ function HighlightedText({ content, language, highlighter }: {
   </code>;
 }
 
-function SourceDisclosure({ label, content, language, highlighter }: {
-  label: string; content: string; language: string; highlighter: SyntaxHighlighter;
-}) {
-  const [open, setOpen] = useState(false);
-  return <details className="field-source" onToggle={(event) => setOpen(event.currentTarget.open)}>
-    <summary>{label}</summary>
-    {open && <pre className="code-block"><HighlightedText content={content} language={language} highlighter={highlighter} /></pre>}
-  </details>;
-}
-
 // Markdown headings stay below the page title and the field names (h1–h3): "#" becomes h4, "##" h5, deeper h6.
 const DEMOTED_HEADINGS = {
   h1: ({ children }: { children?: ReactNode }) => <h4 className="md-h1">{children}</h4>,
@@ -118,10 +108,7 @@ function ScalarValue({ value, highlighter }: { value: FieldValue; highlighter: S
 export function FieldPreview({ value }: { value: FieldValue }) {
   const highlighter = useHighlighter();
   return <div className="field-content">
-    {value.kind === "md" ? <>
-      <MarkdownContent content={value.content} highlighter={highlighter} />
-      <SourceDisclosure label="Markdown source" content={value.content} language="markdown" highlighter={highlighter} />
-    </> : isScalar(value) ?
+    {value.kind === "md" ? <MarkdownContent content={value.content} highlighter={highlighter} /> : isScalar(value) ?
       <div className="field-value"><ScalarValue value={value} highlighter={highlighter} /></div> :
       <><UnsupportedNotice value={value} highlighter={highlighter} /><BlockContent value={value} source={false} highlighter={highlighter} /></>}
   </div>;

@@ -4,7 +4,6 @@ import { useLiveUpdates } from "./Live";
 import { FieldsJson, FieldsView, type CopyText } from "./FieldsView";
 import { RecordEdit } from "./RecordEdit";
 import { UiIcon } from "./Masthead";
-import { Icon } from "./Icon";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { browseHash, DEFAULT_SORT, PRESETS, type Preset } from "./browse-state";
 import { appendFilter } from "./query-edit";
@@ -107,7 +106,6 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
   const [restoring, setRestoring] = useState(false);
   const [rawFields, setRawFields] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [editStatus, setEditStatus] = useState("");
   const live = useLiveUpdates();
   const openedAt = useRef(live.version);
   const links = useRef<HTMLElement>(null);
@@ -150,7 +148,6 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
     if (!edit) { setEditing(false); return; }
     if (!ready) return;
     showLatest();
-    setEditStatus("");
     setEditing(true);
   }, [edit, ready]);
 
@@ -253,22 +250,19 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
 
   const latest = load.item;
   latestItem.current = latest;
-  if (editing) return <section className="detail-view" aria-label="Item">
-    <button className="back-button quiet" type="button" onClick={onBack}><Icon name="arrow" />Back</button>
-    <div className="page-heading"><div><p className="eyebrow">{latest.key}</p><h1>{latest.document.title}</h1></div></div>
-    {editStatus !== "" && <p role="status">{editStatus}</p>}
-    <RecordEdit itemKey={itemKey} item={latest} onItem={(item) => setLoad({ kind: "ready", item })} onStatus={setEditStatus} onAuthLost={onAuthLost}
-      onSaved={async (revision) => {
-        setEditing(false); onEditDone();
-        setToast({ text: `Saved as revision ${revision}`, action: revision > 1 ? { label: "View changes", run: () => {
-          const current = latestItem.current!;
-          void openSnapshot(current, revision - 1, current.revision);
-        } } : null });
-        await reload(true);
-      }}
-      onCancel={() => { setEditing(false); onEditDone(); }}
-      onDiscard={() => { setEditing(false); onEditDone(); void reload(true); }} />
-  </section>;
+  if (editing) return <RecordEdit itemKey={itemKey} item={latest} revisions={history.kind === "loaded" ? history.revisions : null} origin={origin}
+    onItem={(item) => setLoad({ kind: "ready", item })} onAuthLost={onAuthLost} onBack={onBack}
+    onSaved={async (revision) => {
+      setEditing(false); onEditDone();
+      setToast({ text: `Saved as revision ${revision}`, action: revision > 1 ? { label: "View changes", run: () => {
+        const current = latestItem.current!;
+        void openSnapshot(current, revision - 1, current.revision);
+      } } : null });
+      await reload(true);
+    }}
+    onCancel={() => { setEditing(false); onEditDone(); }}
+    onViewRevision={(revision) => { setEditing(false); onEditDone(); void openSnapshot(latestItem.current!, revision, latestItem.current!.revision); }}
+    onDiscard={() => { setEditing(false); onEditDone(); void reload(true); }} />;
 
   const viewed = snapshot === null ? latest : snapshot.item;
   const attention = snapshot === null && latest.document.humanAttention === "required";
