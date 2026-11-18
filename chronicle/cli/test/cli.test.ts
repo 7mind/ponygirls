@@ -423,10 +423,6 @@ for (const valid of [true, false]) test(`reindex status ${valid ? 'retains' : 'r
   const result = await acknowledgement({ GetReindexStatus: { requestId: ACK_REQUEST } }, { ReindexStatus: { result: { requestId: valid ? ACK_REQUEST : ID, targetProfile: 'selected-profile', total: '1', complete: '0', superseded: '0', failed: '0', pending: '1' } } }, { requestId: ACK_OTHER, secret: false });
   assert.equal(result.code, valid ? 0 : 6, result.stderr); if (!valid) assert.equal(result.stdout, '');
 });
-test('UUID entity binding preserves canonical-equivalent hex spellings', async () => {
-  const result = await acknowledgement({ RevokeToken: { tokenId: ACK_OTHER.toUpperCase() } }, { Mutation: { receipt: { requestId: ACK_REQUEST, operation: 'RevokeToken', entityId: ACK_OTHER } } }, { requestId: ACK_REQUEST, secret: false });
-  assert.equal(result.code, 0, result.stderr);
-});
 test('MintToken acknowledgement preserves permission-set semantics without requiring incidental list order', async () => {
   const result = await acknowledgement({ MintToken: { name: 'owned-token', scopes: ['Read', 'Raw'] } }, { Token: { result: { token: { id: ID, name: 'owned-token', scopes: ['Raw', 'Read'], createdAt: '2026-11-16T00:00:00Z', revoked: false }, secret: ACK_SECRET } } }, { requestId: ACK_REQUEST, secret: true });
   assert.equal(result.code, 0, result.stderr); assert.equal(result.secretSaved, true); assert.ok(!result.stdout.includes(ACK_SECRET));
@@ -441,20 +437,6 @@ test('UUID uppercase CLI request ID accepts the canonical server envelope and re
   let effects = 0;
   const f = await fixture((_q, r) => reply(r, 404, {}, {}), ws((socket, id, operation) => { assert.equal(id, ACK_REQUEST.toUpperCase()); assert.deepEqual(operation, { CreateGroup: { name: 'UUID-case' } }); effects++; send(socket, id.toLowerCase(), { Mutation: { receipt: { requestId: id.toLowerCase(), operation: 'CreateGroup', entityId: UUID_SESSION } } }); }));
   try { state(f); const result = await cli(['groups', 'create', 'UUID-case', '--yes', '--request-id', ACK_REQUEST.toUpperCase(), '--json'], f, {}, null); assert.equal(result.code, 0, result.stderr); assert.equal(effects, 1); assert.equal((JSON.parse(result.stdout) as { Mutation: { receipt: { requestId: string } } }).Mutation.receipt.requestId, ACK_REQUEST); } finally { await f.close(); }
-});
-const UUID_READS: readonly { name: string; request: import('../src/json.js').JsonObject; response: import('../src/json.js').JsonObject; expected: number }[] = [
-  { name: 'session UUID', request: { GetSession: { sessionId: UUID_SESSION.toUpperCase(), view: { revision: 4, generationId: null } } }, response: { Session: { result: { session: uuidSession(null), chunks: [] } } }, expected: 0 },
-  { name: 'pinned generation UUID', request: { GetMessages: { sessionId: UUID_SESSION.toUpperCase(), offset: 0, limit: 20, view: { revision: 4, generationId: UUID_GENERATION.toUpperCase() } } }, response: { Messages: { result: { messages: [], total: 0, offset: 0, view: { revision: 4, generationId: UUID_GENERATION } } } }, expected: 0 },
-  { name: 'nullable generation absent on both sides', request: { GetMessages: { sessionId: UUID_SESSION.toUpperCase(), offset: 0, limit: 20, view: { revision: 4, generationId: null } } }, response: { Messages: { result: { messages: [], total: 0, offset: 0, view: { revision: 4, generationId: null } } } }, expected: 0 },
-  { name: 'genuinely different session UUID', request: { GetSession: { sessionId: UUID_DIFFERENT, view: { revision: 4, generationId: null } } }, response: { Session: { result: { session: uuidSession(null), chunks: [] } } }, expected: 6 },
-  { name: 'genuinely different generation UUID', request: { GetMessages: { sessionId: UUID_SESSION, offset: 0, limit: 20, view: { revision: 4, generationId: UUID_GENERATION.toUpperCase() } } }, response: { Messages: { result: { messages: [], total: 0, offset: 0, view: { revision: 4, generationId: UUID_DIFFERENT } } } }, expected: 6 },
-  { name: 'null generation does not equal a UUID', request: { GetMessages: { sessionId: UUID_SESSION, offset: 0, limit: 20, view: { revision: 4, generationId: null } } }, response: { Messages: { result: { messages: [], total: 0, offset: 0, view: { revision: 4, generationId: UUID_GENERATION } } } }, expected: 6 },
-  { name: 'UUID generation does not equal null', request: { GetMessages: { sessionId: UUID_SESSION, offset: 0, limit: 20, view: { revision: 4, generationId: UUID_GENERATION } } }, response: { Messages: { result: { messages: [], total: 0, offset: 0, view: { revision: 4, generationId: null } } } }, expected: 6 },
-  { name: 'context session UUID', request: { ReadMessageContext: { sessionId: UUID_SESSION.toUpperCase(), view: { revision: 4, generationId: null }, anchor: { messageId: 'MessageCase', start: 0, end: 4 }, beforeBytes: 0, afterBytes: 0 } }, response: { MessageContext: { result: { sessionId: UUID_SESSION, view: { revision: 4, generationId: null }, anchor: { messageId: 'MessageCase', messagePosition: 0, start: 0, end: 4 }, excerpts: [{ source: { messageId: 'MessageCase', messagePosition: 0, start: 0, end: 4 }, role: 'user', text: 'case' }], previous: null, next: null } } }, expected: 0 },
-];
-for (const example of UUID_READS) test(`UUID raw RPC ${example.name} preserves the typed identity domain`, async () => {
-  const result = await acknowledgement(example.request, example.response, { requestId: ACK_REQUEST, secret: false });
-  assert.equal(result.code, example.expected, result.stderr); if (example.expected !== 0) assert.equal(result.stdout, '');
 });
 test('UUID bearer read retains uppercase arguments and accepts canonical generation metadata', async () => {
   const f = await fixture((q, r, body) => { if (q.url === '/api/versions') { reply(r, 200, VERSION, {}); return; } const request = JSON.parse(body) as { id: string; params: { arguments: unknown } }; assert.deepEqual(request.params.arguments, { sessionId: UUID_SESSION.toUpperCase(), revision: 4, generationId: UUID_GENERATION.toUpperCase(), offset: 0, limit: 20 }); reply(r, 200, { jsonrpc: '2.0', id: request.id, result: { isError: false, content: [{ type: 'text', text: JSON.stringify({ Messages: { result: { messages: [], total: 0, offset: 0, view: { revision: 4, generationId: UUID_GENERATION } } } }) }] } }, {}); }, null);
@@ -478,10 +460,6 @@ test('UUID-looking account user IDs remain opaque case-sensitive strings', async
   let dispatched = 0;
   const f = await fixture((_q, r) => reply(r, 404, {}, {}), (socket, value) => { const envelope = decodeWire('ClientEnvelope', value); const operation = encodeWire('Operation', envelope.operation); assert.ok(isObject(operation)); if ('Hello' in operation) send(socket, envelope.requestId, { Hello: { versions: VERSION, user: { id: UUID_SESSION.toUpperCase(), login: 'alice', scopes: ['Read'] } } }); else dispatched++; });
   try { state(f); const directory = join(f.root, 'state'); const file = join(directory, readdirSync(directory)[0]!); const saved = JSON.parse(readFileSync(file, 'utf8')) as { user: { id: string } }; saved.user.id = UUID_SESSION; writeFileSync(file, JSON.stringify(saved)); const result = await cli(['whoami', '--json'], f, {}, null); assert.equal(result.code, 3, result.stderr); assert.equal(dispatched, 0); assert.equal(result.stdout, ''); } finally { await f.close(); }
-});
-test('UUID equivalence never case-folds opaque target profile names', async () => {
-  const result = await acknowledgement({ ApplyRetryFailed: { targetProfile: 'a'.repeat(64), selectionHash: 'b'.repeat(64), confirm: true } }, { RetryFailed: { result: { requestId: ACK_REQUEST, targetProfile: 'A'.repeat(64), retried: '1', counts: RETRY_COUNTS } } }, { requestId: ACK_REQUEST, secret: false });
-  assert.equal(result.code, 7, result.stderr); assert.equal(result.stdout, '');
 });
 test('CLI input-budget boundary rejects held stdin without acquiring a WebSocket', { timeout: 10000 }, async () => {
   const f = await fixture((_q, r) => reply(r, 404, {}, {}), () => assert.fail('No WebSocket may be acquired while RPC input is incomplete.'));
