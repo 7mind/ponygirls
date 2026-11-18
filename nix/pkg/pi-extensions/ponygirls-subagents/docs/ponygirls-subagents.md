@@ -350,6 +350,23 @@ Ownership acceptance is neither model-run completion nor fsync. The pending SDK
 queue is in-process; reattaching starts at the current journal end, so old history
 is not replayed. There is no crash-durable exactly-once governing-notice receipt.
 
+## Model and thinking level
+
+`spawn_agent`, `list_agents`, and `read_agent view=status` expose three fields:
+
+- `model` stays `provider/id`, or `"unresolved"` if there is no selection.
+- `requestedThinkingLevel` is the supervisor's selected level, whether explicit
+  or inherited. A model switch via `send_message` updates it on acceptance.
+- `thinkingLevel` is the effective Pi session level reported by the worker at
+  initialization. For example, `high` can become `off` on a non-reasoning model.
+  This is a Pi level, not a provider's wire-format effort. It is `"unresolved"`
+  until confirmed, including for queued spawns, pending model switches, and
+  agents restored from the journal but not yet initialized. A settled agent
+  keeps its last confirmed level until it switches selection or starts a reload.
+
+If there is no known selected level, `requestedThinkingLevel` is also
+`"unresolved"`. Managed reviewer status uses the same fields.
+
 ## Usage accounting
 
 `usage` in `list_agents` / `read_agent` (per agent) carries `inputTokens`,

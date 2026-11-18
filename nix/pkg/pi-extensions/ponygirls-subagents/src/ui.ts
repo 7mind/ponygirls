@@ -16,6 +16,7 @@ import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { VStack, Input, Key, matchesKey, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { HINT, KEY, MARKER_WIDTH, PLAIN_THEME, PanelLayout, type PanelParts, columnCells, columnHeader, formatCompact, formatCount, frameRule, frameTitle, keyHints, listRow, stateColor, type BorderBadge, type Column, type KeyHint, type UiFg, type UiTheme } from "@ponygirls/pi-ui";
+import { thinkingColor } from "../../ponygirls-model-picker-view.ts";
 import { AGENT_GLYPH, OUTCOME_GLYPH, PHASE_GLYPH, PLAIN_STYLE, homeRelative, outcomeTone, sanitizeDisplay, type AgentPhase, type UiStyle } from "./display.ts";
 import type { AgentView, TranscriptSource } from "./supervisor.ts";
 import { parseTranscript, renderConversation, type ReviewBlock, type TranscriptItem } from "./transcript.ts";
@@ -217,6 +218,14 @@ function tokensCell(theme: UiTheme, v: AgentView, selected: boolean): string {
   return tokens === null ? theme.fg(selected ? "muted" : "dim", NO_VALUE) : theme.fg("muted", tokens);
 }
 
+function modelLabel(theme: UiTheme, v: AgentView): string {
+  const model = `${sanitizeDisplay(v.model)}:`;
+  const level = v.thinkingLevel;
+  return level === "unresolved"
+    ? theme.fg("muted", `${model}${level}`)
+    : theme.fg("muted", model) + theme.fg(thinkingColor(level), level);
+}
+
 /** `text` cut to `width` columns by replacing its middle with `…`; head and tail stay. */
 function shortenMiddle(text: string, width: number): string {
   const total = visibleWidth(text);
@@ -252,7 +261,7 @@ const COLUMNS: readonly ColumnSpec[] = [
   { id: "agent", header: "AGENT", cell: (_theme, v, width) => agentCell(v, width) },
   { id: "kind", header: "KIND", cell: (theme, v) => theme.fg("muted", kindText(v)) },
   { id: "state", header: "STATE", cell: (theme, v) => stateCell(theme, v) },
-  { id: "model", header: "MODEL", cell: (theme, v) => theme.fg("muted", sanitizeDisplay(v.model)) },
+  { id: "model", header: "MODEL", cell: modelLabel },
   { id: "tokens", header: "TOKENS", cell: (theme, v, _width, selected) => tokensCell(theme, v, selected) },
 ];
 /** Secondary columns in the order narrowing drops them; AGENT and STATE always stay. */
@@ -396,15 +405,16 @@ export class AgentInspector extends PanelLayout {
       }
     }
     const current = this.views[this.selected];
-    if (current) {
-      lines.push(frameRule(t, w));
-      lines.push(...this.detailLines(current, layout, w));
-    }
     // Fixed chrome stays outside the allocated scrolling body.
     const footer = [fit(this.statusLine ? t.fg("warning", this.statusLine) : "", w), frameRule(t, w), ...keyHints(t, w, this.hints(current)).lines];
     const rows = this.height(this.deps.rows());
+    const bodyEnd = Math.max(1, rows - footer.length);
+    if (current) {
+      lines.push(frameRule(t, w));
+      lines.push(...this.detailLines(current, layout, w, bodyEnd - lines.length));
+    }
     while (lines.length + footer.length < rows) lines.push("");
-    return { header: lines.slice(0, 1), body: lines.slice(1, Math.max(1, rows - footer.length)), footer };
+    return { header: lines.slice(0, 1), body: lines.slice(1, bodyEnd), footer };
   }
 
   /**
@@ -506,7 +516,7 @@ export class AgentInspector extends PanelLayout {
     if (showsOutcome(v) ? state !== SETTLED : state !== briefState(v)) fields.push({ ...detail("state", state), tone: phase === "settled" ? null : PHASE_TONE[phase] });
     if (v.taskOutcome && !showsOutcome(v)) fields.push({ ...detail("outcome", `${OUTCOME_GLYPH[outcomeTone(v.taskOutcome)]} ${sanitizeDisplay(v.taskOutcome)}`), tone: outcomeTone(v.taskOutcome) });
     if (hidden("kind")) fields.push(detail("kind", kindText(v)));
-    if (hidden("model")) fields.push(detail("model", sanitizeDisplay(v.model)));
+    if (hidden("model")) fields.push(detail("model", modelLabel(this.deps.theme, v)));
     const tokens = tokensText(v);
     if (hidden("tokens") && tokens !== null) fields.push(detail("tokens", tokens));
     if (v.usage.cost !== null) fields.push(detail("cost", `$${v.usage.cost.toFixed(4)}`));
@@ -519,7 +529,7 @@ export class AgentInspector extends PanelLayout {
   }
 
   /** Aligned key/value lines; values wrap to the width instead of being cut. */
-  private detailLines(v: AgentView, layout: ListLayout, width: number): string[] {
+  private detailLines(v: AgentView, layout: ListLayout, width: number, rowBudget: number): string[] {
     const t = this.deps.theme;
     const fields = this.detailFields(v, layout);
     const keyWidth = Math.max(...fields.map((field) => visibleWidth(field.key)));
@@ -529,7 +539,9 @@ export class AgentInspector extends PanelLayout {
     const wrap = (text: string): string[] => text.split("\n").flatMap((l) => (l === "" ? [""] : wrapTextWithAnsi(l, valueWidth)));
     const lines: string[] = [];
     for (const field of fields) {
-      const wrapped = wrap(field.text);
+      const full = wrap(field.text);
+      const remaining = rowBudget - lines.length;
+      const wrapped = field.key === "model" && remaining > 0 && full.length > remaining ? [shortenMiddle(field.text, valueWidth)] : full;
       const shown = field.maxLines !== null && wrapped.length > field.maxLines ? wrapped.slice(0, field.maxLines) : wrapped;
       const more = wrapped.length - shown.length;
       const values = [...shown.map((l) => (field.tone ? t.fg(field.tone, l) : l)), ...(more > 0 ? wrap(`… ${more} more lines (⏎ transcript)`).map((l) => t.fg("muted", l)) : [])];

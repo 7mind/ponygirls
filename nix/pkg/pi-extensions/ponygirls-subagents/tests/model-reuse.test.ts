@@ -12,7 +12,7 @@ import { DummyWorkspaceManager } from "../src/workspace.ts";
 import { defaultSupervisorPolicy } from "../src/policy.ts";
 import { FakeWorker, until, testGovernor, bothExecutors } from "./fake-worker.ts";
 
-const replacement = { provider: "codex", id: "replacement", thinkingLevel: "off" };
+const replacement = { provider: "codex", id: "replacement", thinkingLevel: "high" };
 
 function setup(script: "settle-text" | "hang" = "settle-text", limits = {}) {
   const dir = mkdtempSync(join(tmpdir(), "subagents-model-reuse-"));
@@ -41,7 +41,7 @@ function setup(script: "settle-text" | "hang" = "settle-text", limits = {}) {
           const restore = (payload as { restore: { sessionFile: string } | null }).restore;
           if (restore !== null) {
             const session = SessionManager.open(restore.sessionFile, dirname(restore.sessionFile));
-            return { ok: true, sessionId: session.getSessionId(), sessionFile: session.getSessionFile() };
+            return { ...(result as object), sessionId: session.getSessionId(), sessionFile: session.getSessionFile() };
           }
         }
         return result;
@@ -83,7 +83,12 @@ test("explicit settled model reuse at open-agent cap reloads history and survive
     assert.equal(f.sup.list("governor")[0]?.model, "test/model", "root selection changes do not switch retained children");
     const opts = { model: replacement };
     const next = await f.sup.sendMessage("governor", a.agentId, "task", "next", opts, "reuse-model");
-    assert.equal(f.sup.list("governor")[0]?.model, "codex/replacement");
+    const { status } = f.sup.read("governor", a.agentId, "status", 0, 10, null);
+    for (const view of [status, f.sup.list("governor")[0]!]) {
+      assert.equal(view.model, "codex/replacement");
+      assert.equal(view.requestedThinkingLevel, "high");
+      assert.equal(view.thinkingLevel, "high");
+    }
     assert.equal(f.workers[0]!.killed, true);
     assert.equal(f.workers.length, 2);
     assert.deepEqual(f.initialized[1]!["model"], replacement);
@@ -96,6 +101,8 @@ test("explicit settled model reuse at open-agent cap reloads history and survive
     const restored = new Supervisor(f.options);
     try {
       assert.equal(restored.list("governor")[0]?.model, "codex/replacement");
+      assert.equal(restored.list("governor")[0]?.requestedThinkingLevel, "high");
+      assert.equal(restored.list("governor")[0]?.thinkingLevel, "unresolved");
       await assert.rejects(() => restored.spawn("governor", { taskName: "excess", message: "no", profile: "reader" }, "excess"), /CAPACITY_EXCEEDED/);
     } finally { await restored.shutdown(); }
   } finally { await f.cleanup(); }

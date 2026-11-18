@@ -24,6 +24,8 @@ function view(overrides: Partial<AgentView> = {}): AgentView {
     workdir: "/proj",
     externalTools: [],
     model: "p/m",
+    requestedThinkingLevel: "off",
+    thinkingLevel: "off",
     observed: "running",
     desiredLifecycle: "open",
     pendingIntent: "running",
@@ -329,7 +331,7 @@ test("a gated agent's transcript shows each review in a gate frame where it happ
   const { ui } = transcriptView({
     view: () => view({ observed: "settled", pendingIntent: "settled" }),
     rows: () => 60,
-    source: () => ({ sessionFile: "/main.jsonl", streaming: null, messages: new Map(), reviews: [{ reviewId: "review-1", taskRunId: "t1", candidateId: "candidate-1", model: "zai/glm", sessionFile: "/review-1.jsonl", at: "2026-10-06T10:00:30.000Z", active: false, streaming: null }] }),
+    source: () => ({ sessionFile: "/main.jsonl", streaming: null, messages: new Map(), reviews: [{ reviewId: "review-1", taskRunId: "t1", candidateId: "candidate-1", model: "zai/glm", requestedThinkingLevel: "off", thinkingLevel: "off", sessionFile: "/review-1.jsonl", at: "2026-10-06T10:00:30.000Z", active: false, streaming: null }] }),
     reader: { version: (p) => (files.has(p) ? "1" : null), read: (p) => files.get(p)! },
   });
   const lines = ui.render(90);
@@ -389,6 +391,31 @@ test("the inspector is framed: title with counts, dim column header, aligned cel
   assert.match(tags(lines[6]!), /^ {2}<muted>id {5}<\/> {2}a-1/, "detail keys are muted");
   assert.match(plain[28]!, /^─+$/);
   assert.equal(plain[29], "↑↓ select  ⏎ transcript  t new task  m note  c close agent  f show closed  esc close");
+});
+
+test("the model cell appends the effective effort in the picker colour without adding a column", () => {
+  const { ui } = inspector([
+    view({ model: "claude-code/claude-sonnet-5-5", thinkingLevel: "xhigh", requestedThinkingLevel: "max" }),
+    view({ id: "off", path: "/root/off", model: "test/plain", thinkingLevel: "off", requestedThinkingLevel: "high" }),
+    view({ id: "pending", path: "/root/pending", model: "test/next", observed: "queued", pendingIntent: "queued", thinkingLevel: "unresolved", requestedThinkingLevel: "high" }),
+  ], { theme: TAG_THEME });
+  const lines = ui.render(140).map(tags);
+  assert.match(lines[1]!, /STATE +MODEL +TOKENS/);
+  assert.match(lines[2]!, /claude-code\/claude-sonnet-5-5:<\/><thinkingXhigh>xhigh<\/>/);
+  assert.match(lines[3]!, /test\/plain:<\/><thinkingOff>off<\/>/);
+  assert.match(lines[4]!, /test\/next:unresolved/);
+});
+
+test("a short narrow inspector still shows the selected model's wrapped effort", () => {
+  const { ui } = inspector([
+    view({ model: "claude-code/claude-sonnet-5-5", thinkingLevel: "xhigh" }),
+    view({ id: "queued", path: "/root/queued", observed: "queued", pendingIntent: "queued", thinkingLevel: "unresolved" }),
+    view({ id: "review", path: "/root/review", managedGateFor: "test" }),
+  ], { rows: 13 });
+  const lines = text(ui.render(40));
+  assert.equal(lines.length, 13);
+  assert.match(lines.join("\n"), /hidden at this width/);
+  assert.ok(lines.some((line) => /^  model +claude-code\/.*….*:xhigh$/.test(line)), lines.join("\n"));
 });
 
 test("the selected row spans the width, keeps state and outcome colours, and uses muted rather than dim", () => {
@@ -502,7 +529,7 @@ const hintLine = (lines: string[]): string => text(lines).slice(lines.findLastIn
 /** The agent of the specification's capture: settled, succeeded, 8.8k tokens in. */
 const demo = view({
   id: "7c1d4e9a-2b6f-4a35-8e0c-1f9b3d5a7e24", path: "/root/demo-reader", isolation: "worktree", workdir: `${HOME}/work/flakes/ponygirls`,
-  model: "openai-codex/gpt-6.1-sol", observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded", usage: usage(8800, 5),
+  model: "openai-codex/gpt-6.1-sol", thinkingLevel: "high", requestedThinkingLevel: "high", observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded", usage: usage(8800, 5),
 });
 
 const question = "Which of the two candidate files should I change: the legacy adapter under compat/, which every caller still imports, or the new facade, which only the tests use so far? I would rather not touch both.";
@@ -532,8 +559,8 @@ test("target screen at 120 columns: one settled agent", () => {
   assert.equal(visibleWidth(lines[0]!), 120);
   assert.match(lines[0]!, /^── Subagents · 1 ─+ 1 settled ──$/);
   assert.deepEqual(text(lines).slice(1), [
-    "  AGENT              KIND               STATE        MODEL                     TOKENS",
-    "▌ /root/demo-reader  reader · worktree  ✓ succeeded  openai-codex/gpt-6.1-sol  8.8k in · 5 out",
+    "  AGENT              KIND               STATE        MODEL                          TOKENS",
+    "▌ /root/demo-reader  reader · worktree  ✓ succeeded  openai-codex/gpt-6.1-sol:high  8.8k in · 5 out",
     "─".repeat(120),
     "  id       7c1d4e9a-2b6f-4a35-8e0c-1f9b3d5a7e24 · generation 1",
     "  workdir  ~/work/flakes/ponygirls",
@@ -566,6 +593,7 @@ test("the selected agent's facts survive every width: id, generation, tokens, co
     for (const needle of ["11111111-1111-4111-8111-111111111111 · generation 1", "writer · worktree", "anthropic/claude-opus-4-20250514", "115k in · 4.21k out", "cost $1.2345", "tool bash running"]) {
       assert.ok(running.includes(needle), `${width} columns: missing ${needle}:\n${crowdAt(0, width).lines.join("\n")}`);
     }
+    assert.ok(running.replace(/ /g, "").includes("anthropic/claude-opus-4-20250514:off"), `${width} columns: the model and effort are visible together`);
     assert.ok(running.replace(/ /g, "").includes("~/work/flakes/ponygirls/.worktrees/wt-ponygirls-orchestrator"), `${width} columns: workdir relative to home`);
     const asking = flat(crowdAt(1, width).lines);
     assert.ok(asking.includes(`question ${question}`), `${width} columns: the whole question, wrapped:\n${crowdAt(1, width).lines.join("\n")}`);

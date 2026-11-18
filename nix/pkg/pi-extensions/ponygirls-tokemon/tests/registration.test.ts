@@ -14,9 +14,9 @@ type Factory = (tui: { requestRender(): void; terminal: { rows: number } }, them
 type PanelFactory = (tui: { requestRender(): void; terminal: { rows: number } }, theme: typeof TAG_THEME & { bg(color: string, text: string): string }, keys: object, done: () => void) => Badge;
 const click = { type: "click", button: "left", x: 0, y: 0 } as TuiMouseEvent;
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, provider: "anthropic" | "claude-code" = "anthropic") {
   const dir = mkdtempSync(join(tmpdir(), "tokemon-registration-"));
-  const names = [...ENV_PROVIDER_KEYS.map(([name]) => name), "PI_CODING_AGENT_DIR", "XDG_CACHE_HOME"];
+  const names = [...ENV_PROVIDER_KEYS.map(([name]) => name), "PI_CODING_AGENT_DIR", "XDG_CACHE_HOME", "PI_CLAUDE_CODE_CONFIG_DIR", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"];
   const saved = new Map(names.map(name => [name, process.env[name]]));
   const originalFetch = globalThis.fetch;
   const now = Date.parse("2026-11-06T15:00:30Z");
@@ -24,23 +24,34 @@ async function fixture(t: TestContext) {
   for (const name of names) delete process.env[name];
   process.env.PI_CODING_AGENT_DIR = dir;
   process.env.XDG_CACHE_HOME = dir;
-  writeFileSync(join(dir, "auth.json"), JSON.stringify({ anthropic: { type: "oauth", access: "fixture", refresh: "fixture", expires: now + 3600000 } }));
+  if (provider === "claude-code") {
+    process.env.CLAUDE_CONFIG_DIR = join(dir, "unused");
+    writeFileSync(join(dir, ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "fixture" } }));
+  } else {
+    writeFileSync(join(dir, "auth.json"), JSON.stringify({ anthropic: { type: "oauth", access: "fixture", refresh: "fixture", expires: now + 3600000 } }));
+  }
   let requests = 0, renders = 0, publications = 0, opens = 0, closes = 0;
   let current: Badge | undefined;
   let stale = false;
-  globalThis.fetch = async (input) => {
+  globalThis.fetch = async (input, init) => {
     requests++;
     const url = input instanceof Request ? input.url : String(input);
     assert.ok(url.startsWith("https://api.anthropic.com/api/oauth/"));
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer fixture");
     return Response.json(url.endsWith("/usage") ? { five_hour: { utilization: 42, resets_at: "2026-11-06T16:00:00Z" } } : { account: { email: "fixture@example.test" } });
   };
   const handlers = new Map<string, (event: object, ctx: unknown) => void>();
   const tui = { terminal: { rows: 24 }, requestRender() { renders++; } };
   const theme = { ...TAG_THEME, bg: (_color: string, text: string) => text };
-  const model = { provider: "anthropic" };
+  const model: { provider: string } = { provider };
   const ctx = { get mode() { if (stale) throw new Error("This extension ctx is stale after reload"); return "tui"; }, hasUI: true,
     get model() { if (stale) throw new Error("This extension ctx is stale after reload"); return model; },
-    modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: "fixture" } }), getAvailable: () => [] },
+    modelRegistry: {
+      getProviderAuth: async (id: string) => id === "claude-code"
+        ? { auth: { apiKey: "external-process" }, env: { PI_CLAUDE_CODE_CONFIG_DIR: dir } }
+        : { auth: { apiKey: "fixture" } },
+      getAvailable: () => provider === "claude-code" ? [model] : [],
+    },
     ui: {
       notify() {},
       setWidget(_key: string, factory: Factory | undefined) {
@@ -70,6 +81,12 @@ async function fixture(t: TestContext) {
   return { ctx, handlers, flush, model, current: () => current, renders: () => renders, publications: () => publications,
     requests: () => requests, opens: () => opens, closes: () => closes, invalidate: () => { stale = true; } };
 }
+
+test("Claude Code subscription quotas use the CLI profile, without a Pi login", async (t) => {
+  const f = await fixture(t, "claude-code");
+  assert.equal(f.requests(), 2, "expected Claude Code OAuth usage and profile requests");
+  assert.match(untag(f.current()!.render(120)[0]), /42%/);
+});
 
 test("idle redraw updates same-width countdown and stale age without replacing the owned registration", async (t) => {
   const f = await fixture(t);

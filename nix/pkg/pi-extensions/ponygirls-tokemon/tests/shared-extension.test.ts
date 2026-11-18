@@ -26,7 +26,7 @@ test("independent pi extensions share Anthropic requests, including forced pane 
       const url = input instanceof Request ? input.url : String(input);
       return Response.json(url.endsWith("/usage") ? { five_hour: { utilization: 42, resets_at: null } } : { account: { email: "test@example.test" }, organization: { organization_type: "max" } });
     };
-    const ctx = { mode: "print", hasUI: false, modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: "test-token" } }) }, getContextUsage: () => null, ui: { notify: () => {} } };
+    const ctx = { mode: "print", hasUI: false, modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: "test-token" } }), getAvailable: () => [] }, getContextUsage: () => null, ui: { notify: () => {} } };
     const instance = () => {
       let execute: Execute;
       let command: (args: string, ctx: unknown) => Promise<void>;

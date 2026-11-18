@@ -148,8 +148,15 @@ for (const paths of [originalPaths, [...originalPaths].reverse()]) {
     assert.equal(ordinary.usage.input, 7);
     assert.equal(ordinary.usage.output, 3);
     assert.equal((await lines(join(f.config, "launch.jsonl")))[0].cwd, process.cwd());
-    const child = await f.spawn(CLAUDE, { model: SONNET, prompt: "Require Opus", thinkingLevel: "off", maxRounds: 1 });
+    const child = await f.spawn({ ...CLAUDE, thinkingLevel: "high" }, { model: SONNET, prompt: "Require Opus", thinkingLevel: "off", maxRounds: 1 });
     assert.equal((await f.terminal(child)).outcome, "passed");
+    const listed = (await f.call("list_agents", {})).agents.find((agent) => agent.id === child.agentId);
+    const { status } = await f.call("read_agent", { target: child.agentId, view: "status" });
+    for (const view of [child, listed, status]) {
+      assert.equal(view.model, "claude-code/claude-opus-5-5");
+      assert.equal(view.requestedThinkingLevel, "high");
+      assert.equal(view.thinkingLevel, "high");
+    }
     await f.session.reload();
     const continued = await f.call("send_message", { target: child.agentId, mode: "task", message: "Continue retained conversation." });
     assert.equal((await f.terminal({ ...child, taskRunId: continued.taskRunId })).outcome, "succeeded");
@@ -165,11 +172,41 @@ for (const paths of [originalPaths, [...originalPaths].reverse()]) {
     assert.equal(f.loader.getExtensions().extensions.length, 2);
     assert.deepEqual(f.errors, []);
     const records = await lines(join(f.config, "launch.jsonl"));
-    assert.ok(records.some((record) => record.model === "fixture-opus-route"));
+    const opusLaunches = records.filter((record) => record.model === "fixture-opus-route");
+    assert.ok(opusLaunches.length > 0);
+    assert.deepEqual([...new Set(opusLaunches.map((record) => record.effort))], [child.thinkingLevel]);
     assert.ok(records.some((record) => record.model === "fixture-sonnet-route"));
     assert.ok(records.slice(1).every((record) => record.cwd === f.root && record.config === f.config));
   });
 }
+
+test("BG Claude Code worker completes a CLI thinking burst without dropping content or duplicating usage", { timeout: 60_000 }, async (t) => {
+  const f = await fixture(t, originalPaths, null);
+  const thinkingDeltas = 2048;
+  const answer = "Claude thinking burst complete.";
+  await writeFile(join(f.config, "fixture.json"), JSON.stringify({ answer, thinkingDeltas }));
+  assert.deepEqual([...(await f.registry.refresh({ providers: ["claude-code"], allowNetwork: true, force: true })).errors], []);
+  const child = await f.call("spawn_agent", { task_name: "thinking-burst", message: "Think and give a short answer.", profile: "reader", isolation: "none", model: { ...CLAUDE, thinkingLevel: "high" } });
+  const result = await f.terminal(child);
+  assert.equal(result.outcome, "succeeded", result.detail);
+  assert.equal(result.text, answer);
+  const sessionsDirectory = join(f.agentDir, "subagents", f.session.sessionManager.getSessionId(), "sessions", child.agentId);
+  const files = (await readdir(sessionsDirectory)).filter((name) => name.endsWith(".jsonl"));
+  assert.equal(files.length, 1);
+  const assistants = (await lines(join(sessionsDirectory, files[0]))).filter((entry) => entry.type === "message" && entry.message.role === "assistant");
+  assert.equal(assistants.length, 1);
+  const { message } = assistants[0];
+  assert.equal(message.stopReason, "stop");
+  const thinking = Array.from({ length: thinkingDeltas }, (_, i) => i.toString(16).padStart(4, "0")).join("");
+  assert.deepEqual(message.content, [{ type: "thinking", thinking, thinkingSignature: "fixture-signature" }, { type: "text", text: answer }]);
+  const { status } = await f.call("read_agent", { target: child.agentId, view: "status" });
+  assert.equal(status.taskOutcome, "succeeded");
+  assert.ok(message.usage.cost.total > 0);
+  assert.deepEqual(status.usage, { inputTokens: 10, outputTokens: 1237, cacheReadTokens: 2, cacheWriteTokens: 1, reasoningTokens: 1234, cost: message.usage.cost.total, unknown: false });
+  const launches = await lines(join(f.config, "launch.jsonl"));
+  assert.deepEqual(launches.map(({ cwd, model, effort }) => ({ cwd, model, effort })), [{ cwd: f.root, model: "fixture-opus-route", effort: "high" }]);
+  assert.deepEqual(f.errors, []);
+});
 
 for (const missing of ["core", "provider"]) {
   test(`BG actual loader reports missing ${missing} without unsolicited CLI work`, async (t) => {

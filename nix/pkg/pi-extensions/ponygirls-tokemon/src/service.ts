@@ -3,9 +3,7 @@
  * agent tool and the /tokemon pane.
  *
  * Each target is queried in isolation (one failing provider never hides the
- * rest). Access tokens come from pi itself, which refreshes an expired OAuth
- * login under its own auth.json lock, so this extension never rotates a
- * token behind pi's back. A target still inside the Retry-After window of
+ * rest). A target still inside the Retry-After window of
  * its last HTTP 429 keeps that result instead of being queried again, and a
  * refresh within `maxAgeMs` of the last one returns it unchanged.
  */
@@ -20,6 +18,7 @@ const MAX_CONCURRENT_QUERIES = 8;
 /** pi's credential resolution for a provider (refreshing an expired OAuth login). */
 export interface ProviderAuth {
   apiKey(provider: string): Promise<string | null>;
+  claudeCodeTarget?(): Promise<Target | null>;
 }
 
 export interface QueryResult {
@@ -110,9 +109,12 @@ export class QuotaService {
     const now = this.deps.now();
     const due: Target[] = [];
     const held: QueryResult[] = [];
-    for (const target of this.deps.discover()) {
+    const targets = this.deps.discover().filter((target) => target.provider !== "claude-code");
+    const claudeCode = await auth.claudeCodeTarget?.();
+    if (claudeCode) targets.push(claudeCode);
+    for (const target of targets) {
       const previous = this.previous.get(targetKey(target));
-      if (target.provider !== "anthropic" && previous?.rateLimited && previous.retryAt && previous.retryAt > now) held.push(previous);
+      if (target.provider !== "anthropic" && target.provider !== "claude-code" && previous?.rateLimited && previous.retryAt && previous.retryAt > now) held.push(previous);
       else due.push(target);
     }
     const results = [...(await inPool(due, MAX_CONCURRENT_QUERIES, (target) => this.query(target, auth))), ...held];
