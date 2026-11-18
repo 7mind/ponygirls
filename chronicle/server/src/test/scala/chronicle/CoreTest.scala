@@ -57,4 +57,10 @@ class CoreTest extends munit.FunSuite {
     assertEquals(intercept[DomainError](c.copy(maxBodyBytes=512*1024*1024+1).validate()).code,"config")
     c.copy(maxBodyBytes=256*1024*1024,maxFileBytes=256*1024*1024,maxMessages=100000).validate()
   }
+  test("Whitebox Atomic regression: standby does not even construct a background worker action") {
+    Main.background(false,throw new AssertionError("standby constructed indexing workers"))
+    var constructed=false
+    Main.background(true,{ constructed=true; cats.effect.IO.unit })
+    assert(constructed)
+  }
 }
