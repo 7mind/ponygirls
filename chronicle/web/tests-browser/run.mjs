@@ -419,9 +419,10 @@ try {
   assert.ok(fixture.calls.some(envelope => envelope.operation instanceof api.Operation_LocateMessage && envelope.operation.messageId === 'm65'));
   assert.ok(fixture.calls.some(envelope => envelope.operation instanceof api.Operation_GetMessages && envelope.operation.offset === 40 && envelope.operation.limit === 40));
   const before = fixture.searchCount; fixture.blackholeActive();
-  // The next heartbeat goes unanswered; its pong deadline marks the silent socket stale.
+  // Within one heartbeat interval plus pong deadline, a liveness deadline expires on the silent socket: the unanswered
+  // heartbeat's pong deadline, or the deadline of a request the page sent on it after it went silent (both production values).
   await advanceClock(page, connectionConfig.heartbeatInterval + connectionConfig.pongTimeout);
-  await page.locator('.event-log li').filter({ hasText: 'STALE (matching pong deadline)' }).waitFor({ state: 'attached' });
+  await page.locator('.event-log li').filter({ hasText: /STALE \((matching pong deadline|request timeout)\)/ }).waitFor({ state: 'attached' });
   await waitForCalls(fixture, call => call.operation instanceof api.Operation_Archive, before + 1);
   await page.locator('.connection-widget[data-state="live"]').waitFor();
   await page.locator('.conversation-intro h2').waitFor();
