@@ -522,11 +522,12 @@ try {
     assert.ok(calls(fixture, api.Operation_LocateMessage).some(call => call.operation.messageId === 'm65'), 'off-page navigation uses the locator, not a source scan');
     await loadUntil(page, railPane(page), passageRows, 205); await page.getByText('End of outline · 205 passages', { exact: true }).waitFor();
     assert.deepEqual(calls(fixture, api.Operation_GetPassages).map(call => call.operation.offset), [0, 40, 80, 120, 160, 200]);
-    // The outline restarts at its first page after the reconnect; left scrolled to its end, the side pane would show that
-    // page's end and load the next pages by itself, racing the scroll-driven loading below by one page.
-    await railPane(page).evaluate(pane => pane.scrollTo({ top: 0, behavior: 'instant' }));
-    fixture.restart(); await page.waitForFunction(count => document.querySelectorAll('[data-passage-id]').length === count, PASSAGE_PAGE);
-    await loadUntil(page, railPane(page), passageRows, 200); await outlineRow(page, /Winning passage beyond the first hundred/).click(); await message(page, 'm65').locator('mark').waitFor();
+    // The reconnect remounts the page (the shell shows "Reconnecting" meanwhile): its outline starts from a fresh first page
+    // and the passage selected in the address is restored through further bounded pages, without scrolling.
+    const reconnect = fixture.calls.length; fixture.restart();
+    await outlineRow(page, /Winning passage beyond the first hundred/).and(page.locator('[aria-current="true"]')).waitFor();
+    assert.deepEqual(fixture.calls.slice(reconnect).filter(call => call.operation instanceof api.Operation_GetPassages).map(call => [call.operation.offset, call.operation.limit]), [0, 40, 80, 120, 160].map(offset => [offset, PASSAGE_PAGE]));
+    await outlineRow(page, /Winning passage beyond the first hundred/).click(); await message(page, 'm65').locator('mark').waitFor();
   });
   const goal50 = (options = {}) => ({ Fixture: Goal50Fixture, page: 'goal50.html', ...options });
   await run('A to B to A are three logical passages with intramessage UTF-8 boundaries over unchanged source', goal50({ configure: fixture => { fixture.passageMode = 'logical'; } }), async ({ page, fixture }) => {
