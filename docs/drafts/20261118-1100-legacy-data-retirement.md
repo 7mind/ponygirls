@@ -570,7 +570,7 @@ What is proved, and what builds the fixtures:
 | Claim | Chronicle | Haystack |
 |---|---|---|
 | Fixture built by existing code | `Fixtures`, the v1 identities of `ModelIdentityMigrationTest`, `ModelIdentityMigration.apply` itself (relocation, namespaces, two retained approvals), `StoredPublicationFixtures` (LegacyV4 / LegacyAnnotations), a `ContiguousProblems` label on a v1-space profile, a pre-020 session row | the cut-over rows of `MigrationsTest` (two Node-era revisions, two `haystack-op-v1` rows, one through the column default), a Node-validator oversize document from `historical/` |
-| Preflight reports the seeded legacy rows | yes (13 counters, both worklists) | yes |
+| Preflight reports the seeded legacy rows | yes (12 counters, both worklists) | yes |
 | Dry-run changes nothing | yes (hash of every row of every `ch_*` table) | yes |
 | Apply refuses on a failed precondition | published retired format; missing flag; wrong database name; stale plan; another connection; live lease | missing flag; wrong name; stale plan; another connection; Node-format row after the cut-over |
 | Product action exercised | "Rebuild archive index" for one owner through `PostgresOwnerReindex`, claim and publication through `PostgresArchive`; **scripted**: the annotator and embedder (publication built by `TestPublications`) | none needed |
