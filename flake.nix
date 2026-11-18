@@ -1380,7 +1380,6 @@
               };
               manure-portable-root = import ./nix/tests/manure-portable-root.nix { inherit pkgs; manurePackage = packages.manure; };
               backend-coassembly = pkgs.callPackage ./nix/tests/backend-coassembly.nix { squishLib = inputs.squish.lib; };
-              legacy-retirement-scripts = pkgs.callPackage ./nix/tests/legacy-retirement-scripts.nix { squishLib = inputs.squish.lib; };
             };
           });
       })) // {

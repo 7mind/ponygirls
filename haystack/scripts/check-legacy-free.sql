@@ -3,6 +3,8 @@
 -- Prints `LF.<key>|<count>` lines and `LF.result|legacy-free`; any other outcome fails the session (exit 3).
 -- Stored documents are not judged here: once the wide stored-read tolerance is removed, the service itself answers
 -- `unavailable` for a document outside the current envelope (that was verified with the real codec beforehand).
+-- Tested by haystack/server/src/test/scala/haystack/storage/LegacyFreeCheckTest.scala: a clean database, one seeded
+-- legacy row per counter.
 \set ON_ERROR_STOP on
 \pset pager off
 \pset format unaligned
@@ -14,13 +16,8 @@ SET lock_timeout = '5s';
 BEGIN TRANSACTION READ ONLY ISOLATION LEVEL REPEATABLE READ;
 SELECT 'LF.database', current_database();
 SELECT 'LF.schema_migrations', coalesce(string_agg(version, ',' ORDER BY version), '') FROM schema_migrations;
--- The blocks "shared:haystack-replay" and "shared:retrieval" are the ONLY definition of these predicates: the one-off
--- `run.sh haystack|manure preflight|verify` include them verbatim, so the checks cannot diverge.
--- BEGIN shared:haystack-replay
 SELECT count(*) AS lp_replay FROM write_requests WHERE digest_format IS DISTINCT FROM 'haystack-op-scala-v1' \gset
 \echo LP.replay.other_digest_format|:lp_replay
--- END shared:haystack-replay
--- BEGIN shared:retrieval
 -- Shared retrieval registry (Haystack, Manure): every descriptor must be a proven embedding-space-v2 8-tuple
 -- ["embedding-space-v2", model, revision, dimensions 1..4000, sendDimensions, queryPrefix, documentPrefix, "cosine"]
 -- (what EmbeddingSpace.verified checks structurally); invalid JSON or any NULL/failed test counts as not proven.
@@ -44,7 +41,6 @@ FROM pony_retrieval_profiles \gset
 \endif
 \echo LP.retrieval.profiles|:lp_retrieval_profiles
 \echo LP.retrieval.not_proven_v2|:lp_retrieval_not_v2
--- END shared:retrieval
 SELECT count(*) AS lf_default FROM information_schema.columns
 WHERE table_schema = current_schema() AND table_name = 'write_requests' AND column_name = 'digest_format' AND column_default IS NOT NULL \gset
 SELECT count(*) AS lf_constraint FROM pg_constraint WHERE conrelid = 'write_requests'::regclass AND conname = 'write_requests_current_digest_format_check' \gset

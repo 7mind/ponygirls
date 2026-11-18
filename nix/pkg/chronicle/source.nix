@@ -35,8 +35,8 @@ let
   # The scripts the fast gate and chronicle-backend-full run; not the inner-loop dispatcher chronicle/scripts/test.sh.
   tests = [ "chronicle/server/src/test" "chronicle/tests" "chronicle/models" "chronicle/config.example.json"
     "chronicle/scripts/test-postgres.sh" "chronicle/scripts/test-fast.sh" "chronicle/scripts/fast-suites.txt" "chronicle/scripts/sbt.sh"
-    # LegacyRetirementScriptsTest runs the one-off scripts and the retained post-deployment check.
-    "scripts/one-off/legacy-retirement" "chronicle/scripts/check-legacy-free.sql" ];
+    # LegacyFreeCheckTest runs the retained post-deployment check.
+    "chronicle/scripts/check-legacy-free.sql" ];
   sharedModuleTests = [ "shared/lossless-json/src/test"
     "shared/service-runtime/src/test" "shared/service-auth/src/test" "shared/model-http/src/test"
     "shared/retrieval-core/src/test" "shared/retrieval-postgres/src/test" ];
@@ -70,8 +70,8 @@ in {
     "haystack/docs/scala-config.example.json" "haystack/generated/typescript" "haystack/package.json" "haystack/package-lock.json" "haystack/web/package.json" "haystack/server/package.json" ]);
   haystackJvmTests = backendSource "haystack-jvm-tests-source" (common ++ shared ++ [ "haystack/generated/scala"
     "haystack/models" "haystack/server/src" "haystack/migrations" "haystack/scripts/test-postgres-scala.sh" "scripts/junit-gate.py"
-    # LegacyRetirementScriptsTest runs the one-off scripts and the retained post-deployment check.
-    "scripts/one-off/legacy-retirement" "haystack/scripts/check-legacy-free.sql" ]);
+    # LegacyFreeCheckTest runs the retained post-deployment check.
+    "haystack/scripts/check-legacy-free.sql" ]);
   haystackBrowserTests = backendSource "haystack-browser-tests-source" (common ++ shared ++ [ "haystack" "shared/account-web" "shared/ui-web" ]);
   manureTargetTests = backendSource "manure-target-tests-source" (common ++ shared ++ [
     "manure/tests" "manure/manure" "manure/web" "manure/models" "manure/generated/typescript"
@@ -82,11 +82,6 @@ in {
     "manure/generated/scala" "manure/backend/src" "manure/server/src" "manure/migration/schema.sql" "manure/models/fixtures" ]);
   manureTests = backendSource "manure-native-tests-source" (common ++ shared ++ manureSharedTestFixtures ++ [ "manure/generated/scala" "manure/backend/src" "manure/migrations" "manure/server/src" "manure/server/native-image" "manure/tests" ]);
   backendTests = backendSource "chronicle-backend-tests-source" (runtime ++ tests);
-  # The one-off legacy-retirement scripts with the retained checks they include (onDemand.legacy-retirement-scripts).
-  legacyRetirementScripts = backendSource "legacy-retirement-scripts-source" [ "scripts/one-off/legacy-retirement"
-    "chronicle/scripts/check-legacy-free.sql" "haystack/scripts/check-legacy-free.sql"
-    # test-scripts.sh builds its fixture databases from the services' schema migrations.
-    "chronicle/migrations" "haystack/migrations" ];
   sharedJvmTests = backendSource "shared-jvm-tests-source" (common ++ shared ++ sharedModuleTests ++ [ "scripts/junit-gate.py" ]);
   # The account browser test loads playwright-core from the Chronicle dashboard's locked dependencies.
   accountWebBrowserTests = backendSource "account-web-browser-tests-source" [ "shared/account-web" "shared/ui-web"

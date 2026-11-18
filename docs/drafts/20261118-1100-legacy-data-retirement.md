@@ -1,5 +1,7 @@
 # Retiring legacy data: migration plan, one-off scripts, deletion inventory
 
+The tooling described here was removed from the tree in commit "Remove the one-off legacy-retirement tooling; test the retained legacy-free checks directly"; it is reachable from the tag created in §7 step 0.
+
 Status: **preparation only**. Nothing here was run against a deployed database. The scripts were run only against
 fixture databases on an owned throwaway PostgreSQL 18.6 (section 9). Revision 2 (after the advisory review, findings
 R1–R5, and owner decisions Q96 and Q98).

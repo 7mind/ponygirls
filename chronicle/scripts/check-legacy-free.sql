@@ -2,9 +2,9 @@
 --   psql -X -q -v ON_ERROR_STOP=1 -f chronicle/scripts/check-legacy-free.sql      (or the same file on standard input)
 -- Optional: -v require_formats=f when the two old publication formats were deliberately kept (prints LF.formats|kept).
 -- Prints `LF.<key>|<count>` lines and, as the last line, `LF.result|legacy-free`; any other outcome fails (exit 3).
--- It references no table the clean-up drops, so it keeps working after the one-off retirement scripts are gone.
--- The block between "BEGIN shared:chronicle" and "END shared:chronicle" is the ONLY definition of these predicates:
--- the one-off `run.sh chronicle verify` includes it verbatim, so the two checks cannot diverge.
+-- It needs nothing but psql and references no table the clean-up drops (it only looks their names up).
+-- Tested by chronicle/server/src/test/scala/chronicle/LegacyFreeCheckTest.scala: a clean database, one seeded legacy
+-- row per counter.
 \set ON_ERROR_STOP on
 \pset pager off
 \pset format unaligned
@@ -20,7 +20,6 @@ SET lock_timeout = '5s';
 BEGIN TRANSACTION READ ONLY ISOLATION LEVEL REPEATABLE READ;
 SELECT 'LF.database', current_database();
 SELECT 'LF.schema_migrations', coalesce(string_agg(version::text, ',' ORDER BY version), '') FROM ch_schema_migrations;
--- BEGIN shared:chronicle
 -- "Proven current" means the full shape the product's structural checks require (a NULL or failed test counts as not
 -- proven: IS NOT TRUE). Embedding space v2: ["embedding-space-v2", model, revision, dimensions 1..4000,
 -- sendDimensions, queryPrefix, documentPrefix, "cosine"]. Index profile v2 (current policy): ["index-profile-
@@ -61,7 +60,6 @@ SELECT
 \echo LP.generations.not_retired_old_format|:lp_formats
 SELECT (:lp_spaces + :lp_profiles + :lp_profiles_unbound + :lp_targets + :lp_published + :lp_unregistered + :lp_sessions) = 0 AS lp_identity_clean,
        :lp_formats = 0 AS lp_formats_clean \gset
--- END shared:chronicle
 SELECT count(*) AS lf_tables FROM (VALUES ('ch_retained_profile_reads'), ('ch_checkpoint_namespaces'), ('ch_model_identity_migrations'), ('ch_profile')) t(name)
 WHERE to_regclass(t.name) IS NOT NULL \gset
 SELECT count(*) AS lf_constraint FROM pg_constraint WHERE conrelid = 'ch_generations'::regclass AND conname = 'ch_generations_current_format_check' \gset
