@@ -22,7 +22,7 @@ if (result.errors.size) {
   process.exitCode = 1;
 } else {
   console.log(JSON.stringify({ discovery: "passed", models: runtime.getModels("openai-codex").map((m) => ({
-    id: m.id, catalogContext: baseline.get(m.id).contextWindow, effectiveContext: m.contextWindow, output: m.maxTokens,
+    id: m.id, catalogContext: baseline.has(m.id) ? baseline.get(m.id).contextWindow : null, effectiveContext: m.contextWindow, output: m.maxTokens,
   })) }, null, 2));
   await commands.get("codex-limits").handler("", { model: undefined, ui: { notify: (message) => {
     console.log(message);

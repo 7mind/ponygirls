@@ -61,6 +61,38 @@ test("maximum override wins, default is fallback, absent metadata remains unknow
   ]);
 });
 
+test("GPT-6.2 Astra/Sol use bundled Codex maxima when authenticated discovery omits their limits", async () => {
+  const builtin = base();
+  const models = ["gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.3-sol"].map((id) => ({ ...builtin.getModels()[0], id }));
+  const provider = { ...builtin, getModels: () => models, getAllModels: () => models };
+  const source = new MemoryCatalog();
+  const decorated = maximumContextProvider(provider, source);
+  assert.deepEqual(decorated.provider.getModels(), models);
+  await decorated.provider.refreshModels(refreshContext({ allowNetwork: false }));
+  assert.deepEqual(decorated.provider.getModels(), models);
+  await decorated.provider.refreshModels(refreshContext({}));
+  assert.deepEqual(decorated.provider.getModels(), models.map((model, index) => index < 2 ? { ...model, contextWindow: 872000 } : model));
+  assert.match(decorated.status(), /Bundled Codex fallback limits loaded for gpt-6\.2-astra, gpt-6\.2-sol/);
+  source.rows = parseCatalog({ models: [{ slug: models[0].id, context_window: 600000 }, { slug: models[1].id }] });
+  await decorated.provider.refreshModels(refreshContext({}));
+  assert.equal(decorated.provider.getModels()[0].contextWindow, 600000, "live values win even when lower than the bundled maximum");
+  assert.equal(decorated.provider.getModels()[1].contextWindow, 872000);
+  assert.match(decorated.status(), /Bundled Codex fallback limits loaded for gpt-6\.2-sol\./);
+  await decorated.provider.refreshModels(refreshContext({ credential: { ...credential, accountId: "another-account" }, allowNetwork: false }));
+  assert.deepEqual(decorated.provider.getModels(), models, "offline account changes invalidate bundled publication too");
+});
+
+test("bundled GPT-6.2 limits do not activate on discovery failure or nonstandard endpoints", async () => {
+  for (const extra of [{}, { baseUrl: "https://other.invalid" }]) {
+    const source = new MemoryCatalog();
+    source.failure = true;
+    const decorated = maximumContextProvider(base(), source);
+    await assert.rejects(decorated.provider.refreshModels(refreshContext(extra)));
+    assert.equal(decorated.hasLimit("gpt-6.2-astra"), false);
+    assert.equal(decorated.hasLimit("gpt-6.2-sol"), false);
+  }
+});
+
 test("reject invalid identifiers, limits, contradictory defaults, and malformed catalogs", () => {
   for (const value of [null, [], {}, { models: [] }, { models: [row, row] }, { models: [{}] }, { models: [{ slug: "" }] }]) assert.throws(() => parseCatalog(value), /Codex discovery/);
   for (const value of [0, -1, "1000000", 1.5, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1]) {
@@ -230,7 +262,7 @@ test("lifecycle updates the active model before use, warns on failure, and expos
   assert.equal(model.maxTokens, 128000);
   assert.equal(notifications.length, 0);
   assert.deepEqual(await limits(""), { type: "info", message: "Codex limits for test-model: context 1M, output 128k\n" +
-    "Live context limits applied to 1 catalog models. Output limits retained from Pi's catalog (Codex discovery exposes no output maximum)." });
+    "Live context limits applied to 1 catalog models. Bundled Codex fallback limits loaded for gpt-6.2-astra, gpt-6.2-sol. Output limits retained from Pi's catalog (Codex discovery exposes no output maximum)." });
   model = { ...model, contextWindow: 272000 };
   await handlers.get("input")({}, ctx);
   assert.equal(model.contextWindow, 1000000, "background catalog refresh must synchronize before the next prompt");
