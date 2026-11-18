@@ -8,7 +8,8 @@
 // - A change announced while the editor is open is remembered and read once when the editor closes, however it closes.
 // - Every answer carries the key and request it belongs to; one for a record the page has left, or for a read the lane
 //   gave up, is discarded. Leaving gives the read in flight up (aborts it and stops its timer: `Flights`).
-// - A record older than the one shown (an answer read before the editor's conflict result, say) is never applied.
+// - A record older than the one shown (an answer read before the editor's conflict result, say) is never applied: it is
+//   dropped while the record shown is at its floor, and read past (the floor rule) while the record shown is below it.
 //
 // State: lane idle | reading(request, queued, below); key (null: left); shown revision (null: none yet); editing;
 // invalidated. "read" below means: idle → reading(next request, not queued, below 0) with effect get; reading → queued.
@@ -26,7 +27,7 @@
 // | editor-closed(f)    | editing                                         | not editing, not invalidated; read if it  | get or none        |
 // |                     |                                                 | was invalidated or shown < f              |                    |
 // | answered(r, item)   | not the lane's request r at the key             | unchanged                                 | —                  |
-// | answered(r, item)   | revision < shown                                | queued ? read : idle                      | get if queued      |
+// | answered(r, item)   | revision < shown, shown ≥ floor                 | queued ? read : idle                      | get if queued      |
 // | answered(r, item)   | revision < floor, below + 1 < FLOOR_READS       | reading(next request, below + 1)          | get                |
 // | answered(r, item)   | revision < floor, otherwise                     | idle                                      | fail(below-floor)  |
 // | answered(r, item)   | revision ≥ floor                                | shown = revision; queued ? read : idle    | apply, ancillary,  |
@@ -149,7 +150,8 @@ export function step(state: Reads, event: ReadEvent): Step {
     case "answered": {
       if (!current(state, event.key, event.request)) return unchanged(state);
       const { lane } = state;
-      if (older(state, event.item)) return lane.queued ? next({ ...state, lane: IDLE }, 0, []) : unchanged({ ...state, lane: IDLE });
+      // An older answer is dropped only while the record shown satisfies the floor; below it the floor recovery runs.
+      if (older(state, event.item) && state.shown !== null && state.shown >= event.floor) return lane.queued ? next({ ...state, lane: IDLE }, 0, []) : unchanged({ ...state, lane: IDLE });
       if (event.item.revision < event.floor) {
         if (lane.below + 1 < FLOOR_READS) return next(state, lane.below + 1, []);
         return { state: { ...state, lane: IDLE }, effects: [{ kind: "fail", failure: { kind: "below-floor", floor: event.floor }, initial: state.shown === null }] };
