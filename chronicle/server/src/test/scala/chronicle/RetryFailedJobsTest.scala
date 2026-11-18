@@ -34,7 +34,6 @@ final class RetryFailedJobsTest extends munit.FunSuite {
         val ddl="""CREATE TABLE ch_users(id text PRIMARY KEY,login text UNIQUE NOT NULL,enabled boolean NOT NULL,credential text NOT NULL);
           CREATE TABLE ch_sources(id uuid PRIMARY KEY,owner text REFERENCES ch_users(id),source_key text NOT NULL,revision integer NOT NULL,published uuid,tombstone boolean NOT NULL,UNIQUE(owner,source_key));
           CREATE TABLE ch_jobs(id uuid PRIMARY KEY,session_id uuid REFERENCES ch_sources(id),revision integer NOT NULL,profile text NOT NULL,state text NOT NULL,attempts integer NOT NULL,fence bigint NOT NULL,lease_until timestamptz,error text,completed_windows integer NOT NULL,total_windows integer,run_id uuid NOT NULL DEFAULT gen_random_uuid(),failure_stage text,annotation_retry_epoch bigint NOT NULL DEFAULT 0,UNIQUE(session_id,revision,profile),CHECK(completed_windows>=0 AND (total_windows IS NULL AND completed_windows=0 OR total_windows>=completed_windows)));
-          CREATE TABLE ch_profile(singleton boolean PRIMARY KEY CHECK(singleton),active text NOT NULL,target text NOT NULL,maintenance boolean NOT NULL);
           CREATE TABLE ch_groups(id uuid PRIMARY KEY,owner text REFERENCES ch_users(id),name text NOT NULL);
           CREATE TABLE ch_members(group_id uuid REFERENCES ch_groups(id),user_id text REFERENCES ch_users(id),PRIMARY KEY(group_id,user_id));
           CREATE TABLE ch_revisions(session_id uuid REFERENCES ch_sources(id),revision integer,snapshot jsonb NOT NULL,PRIMARY KEY(session_id,revision));
@@ -52,7 +51,6 @@ final class RetryFailedJobsTest extends munit.FunSuite {
         db.profiles.register(c); nextCatalog.register(c)
         List("a","b","c").foreach(owner => Sql.exec(c,"INSERT INTO ch_users VALUES(?,?,true,'synthetic')",owner,owner))
         Sql.exec(c,"INSERT INTO ch_users VALUES('disabled','disabled',false,'synthetic')")
-        Sql.exec(c,"INSERT INTO ch_profile VALUES(true,?,?,false)",old,target)
         Sql.exec(c,"INSERT INTO ch_owner_targets(owner,profile) SELECT id,? FROM ch_users",target)
         Sql.exec(c,"INSERT INTO ch_groups VALUES(?,'a','shared')",id(5000))
         List("a","b").foreach(owner => Sql.exec(c,"INSERT INTO ch_members VALUES(?,?)",id(5000),owner))
@@ -98,7 +96,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
     Sql.rows(c,s"SELECT to_jsonb(t)::text FROM $table t ORDER BY to_jsonb(t)::text")(_.getString(1))
   private def jobs(db: Database): List[String] = db.transaction(c => rows(c,"ch_jobs"))
   private def retained(db: Database): List[(String,List[String])] = db.transaction { c =>
-    List("ch_users","ch_profile","ch_owner_targets","ch_index_profiles","ch_embedding_spaces","ch_sources","ch_revisions","ch_revision_info","ch_messages","ch_generations","ch_chunks","ch_ingest_receipts","ch_mutations","ch_groups","ch_members").map(table => table->rows(c,table))
+    List("ch_users","ch_owner_targets","ch_index_profiles","ch_embedding_spaces","ch_sources","ch_revisions","ch_revision_info","ch_messages","ch_generations","ch_chunks","ch_ingest_receipts","ch_mutations","ch_groups","ch_members").map(table => table->rows(c,table))
   }
   private def invalid(f: => Any): Unit = assertEquals(intercept[DomainError](f).code,"invalid")
   private def conflict(f: => Any): Unit = assertEquals(intercept[DomainError](f).code,"conflict")

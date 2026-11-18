@@ -16,7 +16,7 @@ private[chronicle] object ApplicationFixture extends munit.Assertions {
     val config=Fixtures.config(); val db=Fixtures.database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations,ch_collector_progress CASCADE")
-      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
+      Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
       Sql.exec(c,"UPDATE ch_users SET enabled=true")
     }
     val archive=new PostgresArchive(db,config); val auth=new Auth(db,config)
@@ -257,7 +257,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     c.db.transaction { connection =>
       Sql.exec(connection,s"CREATE ROLE $role LOGIN PASSWORD '${Fixtures.databasePassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE")
       Sql.exec(connection,s"GRANT USAGE ON SCHEMA public TO $role")
-      Sql.exec(connection,s"GRANT SELECT,INSERT,UPDATE ON ch_users,ch_profile,ch_sources,ch_jobs,ch_mutations,ch_owner_targets TO $role")
+      Sql.exec(connection,s"GRANT SELECT,INSERT,UPDATE ON ch_users,ch_sources,ch_jobs,ch_mutations,ch_owner_targets TO $role")
       Sql.exec(connection,s"GRANT SELECT ON ch_index_profiles,ch_embedding_spaces TO $role")
       Sql.exec(connection,s"REVOKE TEMP ON DATABASE ${quote(database)} FROM PUBLIC")
     }

@@ -16,16 +16,25 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     val sql=Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)
     Using.resource(c.createStatement())(_.execute(sql))
   }
+  /** Model identity v1 is retired: rows that migration 021 would discard refuse the start instead. */
+  private def requireRetiredModelIdentityMigrated(c: Connection): Unit = {
+    List("ch_retained_profile_reads","ch_checkpoint_namespaces","ch_model_identity_migrations").foreach { table =>
+      val remaining=Sql.one(c,"SELECT to_regclass(?) IS NOT NULL",table)(_.getBoolean(1)).contains(true) && Sql.one(c,s"SELECT 1 FROM $table LIMIT 1")(_ => true).nonEmpty
+      Check(!remaining,"migration-required",s"model identity v1 rows remain in $table; migrate them with the legacy-retirement procedure before starting this release")
+    }
+    // The singleton only seeded the owner targets of users that had none (an archive from before owner targets).
+    val unseeded=Sql.one(c,"SELECT to_regclass('ch_profile') IS NOT NULL AND EXISTS(SELECT 1 FROM ch_users u WHERE NOT EXISTS(SELECT 1 FROM ch_owner_targets t WHERE t.owner=u.id))")(_.getBoolean(1)).contains(true)
+    Check(!unseeded,"migration-required","users without an owner target in an archive from before owner targets; start the previous release once to seed them, then migrate with the legacy-retirement procedure")
+  }
   def initialize(): Unit = {
     transaction { c =>
     Sql.exec(c,"SELECT pg_advisory_xact_lock(71393721)")
-    List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql","006_archive_projection.sql","007_owner_profiles.sql","008_problem_passages.sql","009_transient_security_epoch.sql","010_index_checkpoints.sql","011_context_coverage.sql","012_reindex_cohorts.sql","013_revision_bindings.sql","014_renewable_sessions.sql","015_annotation_attempts.sql","018_model_identity.sql","019_retained_profile_reads.sql","020_persistent_sessions.sql").foreach(migrate(c,_))
+    List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql","006_archive_projection.sql","007_owner_profiles.sql","008_problem_passages.sql","009_transient_security_epoch.sql","010_index_checkpoints.sql","011_context_coverage.sql","012_reindex_cohorts.sql","013_revision_bindings.sql","014_renewable_sessions.sql","015_annotation_attempts.sql","020_persistent_sessions.sql").foreach(migrate(c,_))
+    requireRetiredModelIdentityMigrated(c)
+    migrate(c,"021_model_identity_retired.sql")
     val dimensions=SearchPolicy.dimensions(config)
     Sql.exec(c,s"CREATE INDEX IF NOT EXISTS ch_search_hnsw_d$dimensions ON ch_search_chunks USING hnsw ((l2_normalize(embedding)::halfvec($dimensions)) halfvec_cosine_ops) WHERE vector_dims(embedding)=$dimensions")
-    Sql.exec(c,"INSERT INTO ch_profile(singleton,active,target,maintenance) VALUES(true,?,?,false) ON CONFLICT DO NOTHING",profiles.preferred.profile,profiles.preferred.profile)
     profiles.register(c)
-    // Pre-owner-target archives retain their historical opaque target; only genuinely new configured users seed current.
-    Sql.exec(c,"INSERT INTO ch_owner_targets(owner,profile) SELECT u.id,p.target FROM ch_users u CROSS JOIN ch_profile p WHERE p.singleton ON CONFLICT DO NOTHING")
     val configured=DeclaredUsers.load(config)
     try {
       ImperativeAccountSql.initialize(c)

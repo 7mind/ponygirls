@@ -163,9 +163,9 @@ class TagSearchTest extends munit.FunSuite {
     assertEquals(search.tags("a",query("",None,100)),Nil)
   }}
 
-  test("BG GoodCommunication: catalog reads do not depend on embedding profile availability or maintenance state") { fixture { f =>
+  test("BG GoodCommunication: catalog reads do not depend on embedding profile availability") { fixture { f =>
     publish(f,"a",request(List("available")),List(Nil))
-    f.db.transaction { c => Sql.exec(c,"UPDATE ch_owner_targets SET profile='unresolvable' WHERE owner='a'"); Sql.exec(c,"UPDATE ch_profile SET maintenance=true") }
+    f.db.transaction(c => Sql.exec(c,"UPDATE ch_owner_targets SET profile='unresolvable' WHERE owner='a'"))
     assertEquals(index(f).tags("a",query("",None,100)),List(Facet("available",1)))
   }}
 

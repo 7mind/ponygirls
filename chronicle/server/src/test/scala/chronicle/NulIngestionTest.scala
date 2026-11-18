@@ -22,7 +22,7 @@ class NulIngestionTest extends munit.FunSuite {
       ChronicleInjector().produceGet[RuntimeServices](module).use { s =>
         IO.blocking {
           s.database.initialize()
-          s.database.transaction(x => { Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(x,"UPDATE ch_profile SET active=?,target=?,maintenance=false",c.profile,c.profile); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) })
+          s.database.transaction(x => { Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) })
         } *> Semaphore[IO](2).flatMap { gate =>
           EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => s.http.routes(ws,gate).orNotFound).build.use { server =>
             val base=Fixtures.snapshot()

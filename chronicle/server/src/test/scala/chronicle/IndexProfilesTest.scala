@@ -37,27 +37,35 @@ final class IndexProfilesTest extends munit.FunSuite {
     }
     assertEquals(intercept[DomainError](IndexProfiles.verifiedSpace("0"*64,verified.json)).code,"unavailable")
   }
-  test("Effectual GoodCommunication: migration seeds retained opaque targets once without fabricating embedding compatibility") {
+  test("Effectual GoodCommunication: start-up refuses retired model identity rows instead of discarding them and drops the emptied tables again after a rollback") {
     OwnerProfilePostgres.withDatabase { (c,admin,a,catalog) =>
-      val schema="owner_profile_migration_"+java.util.UUID.randomUUID().toString.replace("-","")
+      val schema="model_identity_retired_"+java.util.UUID.randomUUID().toString.replace("-","")
       admin.transaction(x => Sql.exec(x,s"CREATE SCHEMA $schema"))
       try {
         val separator=if(c.jdbcUrl.contains("?")) "&" else "?"
-        val isolated=c.copy(jdbcUrl=c.jdbcUrl+separator+"currentSchema="+schema+",public")
-        val db=Fixtures.database(isolated,catalog)
-        db.transaction { x =>
-          Sql.exec(x,"CREATE TABLE ch_users(id text PRIMARY KEY,login text UNIQUE NOT NULL,enabled boolean NOT NULL,credential text NOT NULL)")
-          Sql.exec(x,"CREATE TABLE ch_profile(singleton boolean PRIMARY KEY CHECK(singleton),active text NOT NULL,target text NOT NULL,maintenance boolean NOT NULL)")
-          Sql.exec(x,"INSERT INTO ch_users VALUES('a','a',true,'synthetic')")
-          Sql.exec(x,"INSERT INTO ch_profile VALUES(true,'opaque-retained','opaque-retained',false)")
-        }
-        db.initialize()
-        def targets: List[(String,String)] = db.transaction(x => Sql.rows(x,"SELECT owner,profile FROM ch_owner_targets ORDER BY owner")(r => (r.getString(1),r.getString(2))))
-        assertEquals(targets,List("a"->"opaque-retained","b"->catalog.preferred.profile,"c"->catalog.preferred.profile))
-        db.initialize(); assertEquals(targets.head,"a"->"opaque-retained")
-        assertEquals(db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_index_profiles WHERE profile='opaque-retained'")(_.getLong(1)).get),0L)
-        assertEquals(new PostgresOwnerReindex(db).preview("a").targetProfile,catalog.preferred.profile)
-        assertEquals(intercept[DomainError](new PostgresArchive(db,isolated).ingest("a",Fixtures.snapshot())).code,"unavailable")
+        val db=Fixtures.database(c.copy(jdbcUrl=c.jdbcUrl+separator+"currentSchema="+schema+",public"),catalog)
+        try {
+          val retired=List("ch_retained_profile_reads","ch_checkpoint_namespaces","ch_model_identity_migrations","ch_profile")
+          def present: List[String] = db.transaction(x => retired.filter(table => Sql.one(x,"SELECT to_regclass(?) IS NOT NULL",table)(_.getBoolean(1)).contains(true)))
+          // A previous release started on this database (deployment rollback) re-creates the four tables and seeds the singleton; their shape is irrelevant here.
+          def rollback(): Unit = db.transaction { x => retired.foreach(table => Sql.exec(x,s"CREATE TABLE $table()")); Sql.exec(x,"INSERT INTO ch_profile DEFAULT VALUES") }
+          def refused(): String = { val error=intercept[DomainError](db.initialize()); assertEquals(error.code,"migration-required"); error.detail }
+          db.initialize(); assertEquals(present,Nil)
+          rollback(); db.initialize(); assertEquals(present,Nil)
+          assertEquals(db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_schema_migrations WHERE version=21")(_.getInt(1))),Some(1))
+          retired.init.foreach { table =>
+            rollback(); db.transaction(x => Sql.exec(x,s"INSERT INTO $table DEFAULT VALUES"))
+            val refusal=refused(); assert(refusal.contains(s"model identity v1 rows remain in $table"),refusal)
+            assertEquals(present,retired,"a refused start changes nothing")
+            db.transaction(x => Sql.exec(x,s"DELETE FROM $table"))
+            db.initialize(); assertEquals(present,Nil)
+          }
+          // An archive from before owner targets: the singleton would have seeded them; this release refuses to guess.
+          rollback(); db.transaction(x => Sql.exec(x,"DELETE FROM ch_owner_targets WHERE owner='a'"))
+          val refusal=refused(); assert(refusal.contains("users without an owner target"),refusal)
+          db.transaction(x => Sql.exec(x,"INSERT INTO ch_owner_targets(owner,profile) VALUES('a',?)",catalog.preferred.profile))
+          db.initialize(); assertEquals(present,Nil)
+        } finally db.close()
       } finally admin.transaction(x => Sql.exec(x,s"DROP SCHEMA $schema CASCADE"))
     }
   }

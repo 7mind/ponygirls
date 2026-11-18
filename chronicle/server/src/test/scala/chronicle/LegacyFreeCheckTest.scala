@@ -9,18 +9,18 @@ import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
 /** The retained post-deployment check scripts/check-legacy-free.sql, run exactly as the operator runs it (psql -f),
-  * on copies of one fresh database of the current binary. Every copy first receives the schema clean-up of the legacy
-  * data retirement plan (docs/drafts/20261118-1100-legacy-data-retirement.md §6.6), written here as idempotent SQL
-  * until the binary applies it as start-up migrations; then one legacy shape, seeded with plain SQL.
+  * on copies of one fresh database of the current binary. The binary's start-up drops the four model identity tables
+  * (migration 21); every copy first receives the rest of the schema clean-up of the legacy data retirement plan
+  * (docs/drafts/20261118-1100-legacy-data-retirement.md §6.6), the current-format constraint, written here as
+  * idempotent SQL until the binary applies it as a start-up migration; then one legacy shape, seeded with plain SQL.
   */
 final class LegacyFreeCheckTest extends munit.FunSuite {
   private val check=Path.of("scripts","check-legacy-free.sql")
   private val original=Fixtures.config()
   private def url(database: String): String = original.jdbcUrl.take(original.jdbcUrl.lastIndexOf('/')+1)+database
   private val formatConstraint="ch_generations_current_format_check CHECK(retired OR (passage_format IS NOT NULL AND passage_format='ContextAwareProblems'))"
-  /** §6.6: the four legacy tables dropped, the current-format constraint added (unless the binary already did both). */
+  /** §6.6: the current-format constraint added (unless the binary already did it). */
   private val cleanup=List(
-    "DROP TABLE IF EXISTS ch_retained_profile_reads,ch_checkpoint_namespaces,ch_model_identity_migrations,ch_profile",
     "DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='ch_generations'::regclass AND conname='ch_generations_current_format_check') THEN "+
       s"ALTER TABLE ch_generations ADD CONSTRAINT $formatConstraint; END IF; END $$$$")
   /** Every counter line of a passing run (the database name, the migration list and the verdict are asserted apart). */
@@ -135,7 +135,7 @@ final class LegacyFreeCheckTest extends munit.FunSuite {
     Seed("a published old-format generation",List("ALTER TABLE ch_generations DROP CONSTRAINT ch_generations_current_format_check")++
       publishedSource("profile,passage_format",s"$currentProfile,'LegacyAnnotations'")++List(s"ALTER TABLE ch_generations ADD CONSTRAINT $formatConstraint NOT VALID"),
       Map("LP.generations.not_retired_old_format"->"1")),
-    // Presence is all the check reads of the four tables the clean-up drops.
+    // Presence is all the check reads of the four tables the start-up drops (a previous release re-creates them).
     Seed("the legacy tables",List("ch_retained_profile_reads","ch_checkpoint_namespaces","ch_model_identity_migrations","ch_profile").map(table=>s"CREATE TABLE $table()"),
       Map("LF.legacy_tables_present"->"4")),
     Seed("no current-format constraint",List("ALTER TABLE ch_generations DROP CONSTRAINT ch_generations_current_format_check"),Map("LF.generations.current_format_constraint"->"0")))

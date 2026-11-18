@@ -131,7 +131,6 @@ final class PostgresRunAuthorizationTest extends RunAuthorizationContract {
     db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_groups,ch_sessions CASCADE")
-      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
       config.users.foreach(user => Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0 WHERE owner=?",config.profile,user.id))
     }
     val auth=new Auth(db,config)

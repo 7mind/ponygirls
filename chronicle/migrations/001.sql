@@ -13,7 +13,6 @@ CREATE TABLE IF NOT EXISTS ch_jobs(id uuid PRIMARY KEY, session_id uuid REFERENC
 CREATE TABLE IF NOT EXISTS ch_generations(id uuid PRIMARY KEY, session_id uuid REFERENCES ch_sources(id), revision integer NOT NULL, profile text NOT NULL);
 CREATE TABLE IF NOT EXISTS ch_chunks(id uuid PRIMARY KEY, generation uuid REFERENCES ch_generations(id) ON DELETE CASCADE, value jsonb NOT NULL, document tsvector NOT NULL, embedding vector NOT NULL, ordinal integer NOT NULL);
 CREATE INDEX IF NOT EXISTS ch_jobs_claim ON ch_jobs(state,lease_until);
-CREATE TABLE IF NOT EXISTS ch_profile(singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton), active text NOT NULL, target text NOT NULL, maintenance boolean NOT NULL);
 
 ALTER TABLE ch_chunks ADD COLUMN IF NOT EXISTS ordinal integer NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS ch_chunks_order ON ch_chunks(generation,ordinal);

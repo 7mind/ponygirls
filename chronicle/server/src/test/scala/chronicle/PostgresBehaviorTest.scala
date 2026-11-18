@@ -7,7 +7,7 @@ class PostgresBehaviorTest extends munit.FunSuite {
   def database(f: (Config,Database,PostgresArchive,Auth) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val c=Fixtures.config(); val db=new Database(c,IndexProfileCatalog.legacyOnly(c)); db.initialize()
-    db.transaction(x => { Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations CASCADE"); Sql.exec(x,"UPDATE ch_profile SET active=?,target=?,maintenance=false",c.profile,c.profile); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) })
+    db.transaction(x => { Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations CASCADE"); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) })
     f(c,db,new PostgresArchive(db,c),new Auth(db,c))
   }
   def browser(auth: Auth,login: String): Identity = { val (_,cookie)=auth.login(LoginRequest(login,"synthetic")); auth.browser(cookie) }

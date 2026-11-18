@@ -36,7 +36,7 @@ class ArchiveProjectionTest extends munit.FunSuite {
   private def database(f: (Config,Database,PostgresArchive) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val config=Fixtures.config(); val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
-    db.transaction { c => Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_members CASCADE"); Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile) }
+    db.transaction { c => Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_members CASCADE"); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile) }
     f(config,db,new PostgresArchive(db,config))
   }
   test("BG GoodCommunication specified: metadata/message pages and locator use pinned projection independent of raw files") { database { (config,db,archive) =>

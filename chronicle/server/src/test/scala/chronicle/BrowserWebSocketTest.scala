@@ -80,7 +80,6 @@ class BrowserWebSocketTest extends munit.FunSuite {
           Using.resource(c.createStatement())(_.execute(Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)))
         }
         Sql.exec(c,"TRUNCATE ch_sources,ch_sessions,ch_groups,ch_tokens,ch_mutations,ch_collector_progress CASCADE")
-        Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
         Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
       }
       db

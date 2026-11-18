@@ -25,7 +25,6 @@ class ArchiveRelevanceTest extends munit.FunSuite {
     val config=Fixtures.config(); val db=new Database(config,IndexProfileCatalog.current(config)); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members CASCADE")
-      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
     val archive=new PostgresArchive(db,config); val embedder=new QueryEmbedder

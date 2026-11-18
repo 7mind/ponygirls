@@ -11,7 +11,6 @@ object CurrentIndexDatabase extends munit.Assertions {
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_reindex_members,ch_reindex_requests,ch_sources,ch_mutations,ch_sessions,ch_groups CASCADE")
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
-      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
     }
     run(config,db,new PostgresArchive(db,config))
   }
@@ -125,13 +124,6 @@ class ReindexCohortTest extends munit.FunSuite {
     auth.mutate(owner,ClientEnvelope(UUID.randomUUID(),Operation.Purge(receipt.sessionId)))
     assertEquals(status(db,next).total,1L); assertEquals(status(db,next).superseded,1L)
     assertEquals(status(db,id).complete,1L)
-  }}
-  test("GoodCommunication regression: obsolete global transition flag cannot disable compatible current-policy semantic publications") { withDatabase { (config,db,archive) =>
-    archive.ingest("a",Fixtures.snapshot()); val claim=archive.claim(archive.knownProfiles,ClaimScope.Owner("a"),300).get
-    assert(archive.publishProblems(claim,publication(claim,false)))
-    db.transaction(c => Sql.exec(c,"UPDATE ch_profile SET maintenance=true"))
-    val query=SearchQuery("archive",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),20,0)
-    assertEquals(new PostgresSearch(db,archive,config).search("a",query,Some(List(1.0,0.0,0.0))).total,1)
   }}
   // Regression-origin: nonempty status rows must project the new optional stage, not read an absent JDBC column.
   test("GoodCommunication regression: nonempty IngestStatus reports an unknown historical stage as None") { withDatabase { (_,_,archive) =>

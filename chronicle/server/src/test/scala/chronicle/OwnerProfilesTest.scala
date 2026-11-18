@@ -97,7 +97,6 @@ private[chronicle] object OwnerProfilePostgres extends munit.Assertions {
     val c=Fixtures.config(); val legacy=new Database(c,IndexProfileCatalog.legacyOnly(c)); legacy.initialize()
     legacy.transaction { x =>
       Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_members CASCADE")
-      Sql.exec(x,"UPDATE ch_profile SET active=?,target=?,maintenance=false",c.profile,c.profile)
       Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile)
     }
     val catalog=IndexProfileCatalog.passages(c,PassagePolicyIdentity("synthetic:contiguous-v1"))

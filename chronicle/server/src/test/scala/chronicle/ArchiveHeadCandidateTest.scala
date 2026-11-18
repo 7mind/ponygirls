@@ -23,7 +23,6 @@ class ArchiveHeadCandidateTest extends munit.FunSuite {
       val present=Sql.one(c,"SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='ch_archive_fragments'::regclass AND attname='head_candidate' AND NOT attisdropped)")(_.getBoolean(1)).get
       assert(present,"head-candidate schema contract: ch_archive_fragments.head_candidate is missing after initialize; migration must install the completeness mask before flag/query assertions")
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_members CASCADE")
-      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
     val archive=new PostgresArchive(db,config)

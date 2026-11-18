@@ -111,7 +111,6 @@ private[chronicle] object ReadSourceFixture extends munit.Assertions {
     val config=Fixtures.config(); val catalog=IndexProfileCatalog.legacyOnly(config); val db=Fixtures.database(config,catalog); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_members,ch_sessions CASCADE")
-      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
     val probe=new SourceProbe

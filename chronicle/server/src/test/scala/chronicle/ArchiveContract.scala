@@ -451,7 +451,7 @@ final class ArchivePostgresTest extends ArchiveContract {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped; run scripts/test-postgres.sh for full verification") }
     val c=Fixtures.config()
     val db=new Database(c,IndexProfileCatalog.legacyOnly(c)); db.initialize()
-    db.transaction(x => { Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(x,"UPDATE ch_profile SET active=?,target=?,maintenance=false",c.profile,c.profile); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) })
+    db.transaction(x => { Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) })
     Injector().produceGet[SessionArchive](new ModuleDef { tag(StandardAxis.Repo.Prod); make[Config].fromValue(c); make[Database].fromValue(db); make[SessionArchive].from[PostgresArchive] }).use(a => f(a,c))
   }
 }

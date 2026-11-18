@@ -443,7 +443,6 @@ final class ActivityPostgresTest extends ActivityContract {
           CREATE TABLE ch_revision_info(session_id uuid,revision integer,metadata jsonb NOT NULL,source jsonb NOT NULL,completion text NOT NULL,redacted boolean NOT NULL,last_timestamp text,last_timestamp_order numeric,message_count integer NOT NULL,PRIMARY KEY(session_id,revision),FOREIGN KEY(session_id,revision) REFERENCES ch_revisions(session_id,revision) ON DELETE CASCADE);
           CREATE TABLE ch_generations(id uuid PRIMARY KEY,session_id uuid,revision integer,profile text);
           CREATE TABLE ch_jobs(id uuid PRIMARY KEY,session_id uuid REFERENCES ch_sources(id),revision integer NOT NULL,profile text NOT NULL,state text NOT NULL,attempts integer NOT NULL,fence bigint NOT NULL,lease_until timestamptz,error text,completed_windows integer NOT NULL,total_windows integer,failure_stage text,UNIQUE(session_id,revision,profile));
-          CREATE TABLE ch_profile(singleton boolean PRIMARY KEY CHECK(singleton),active text NOT NULL,target text NOT NULL,maintenance boolean NOT NULL);
           CREATE TABLE ch_collector_progress(owner text REFERENCES ch_users(id),collector_id text,sequence bigint NOT NULL CHECK(sequence>0),report jsonb NOT NULL,received_at timestamptz NOT NULL,PRIMARY KEY(owner,collector_id));
           CREATE TABLE ch_groups(id uuid PRIMARY KEY,owner text REFERENCES ch_users(id),name text NOT NULL);
           CREATE TABLE ch_members(group_id uuid REFERENCES ch_groups(id),user_id text REFERENCES ch_users(id),PRIMARY KEY(group_id,user_id));"""
@@ -454,7 +453,6 @@ final class ActivityPostgresTest extends ActivityContract {
         }
         db.profiles.register(c)
         List("a","b","c").foreach(owner => Sql.exec(c,"INSERT INTO ch_users VALUES(?,?,?,'synthetic')",owner,owner,!seed.disabled.contains(owner)))
-        Sql.exec(c,"INSERT INTO ch_profile VALUES(true,?,?,false)",old,target)
         Sql.exec(c,"INSERT INTO ch_owner_targets(owner,profile) SELECT id,? FROM ch_users",target)
         Sql.exec(c,"INSERT INTO ch_groups VALUES(?,'a','shared')",id(1000))
         List("a","b").foreach(owner => Sql.exec(c,"INSERT INTO ch_members VALUES(?,?)",id(1000),owner))

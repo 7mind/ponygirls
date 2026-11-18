@@ -18,7 +18,6 @@ final class OwnerReindexActionsTest extends munit.FunSuite {
     legacy.transaction { x =>
       Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_sessions,ch_mutations,ch_tokens,ch_collector_progress CASCADE")
       Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile)
-      Sql.exec(x,"UPDATE ch_profile SET active=?,target=?,maintenance=false",c.profile,c.profile)
     }
     val catalog=IndexProfileCatalog.passages(c,PassagePolicyIdentity(ProblemPassages.identity))
     val db=Fixtures.database(c,catalog); db.initialize()

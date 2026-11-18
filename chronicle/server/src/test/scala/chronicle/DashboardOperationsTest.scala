@@ -18,7 +18,6 @@ final class DashboardOperationsTest extends munit.FunSuite {
     val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_groups,ch_sessions,ch_mutations CASCADE")
-      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
     val auth=new Auth(db,config); val archive=new PostgresArchive(db,config)

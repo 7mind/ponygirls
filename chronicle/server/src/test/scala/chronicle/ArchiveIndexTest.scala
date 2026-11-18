@@ -11,7 +11,7 @@ class ArchiveIndexTest extends munit.FunSuite {
     val config=Fixtures.config(); val db=Fixtures.database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members CASCADE")
-      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
+      Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
     val archive=new PostgresArchive(db,config)
     f(config,db,archive,new PostgresArchiveIndex(db,archive,config))
@@ -42,7 +42,6 @@ class ArchiveIndexTest extends munit.FunSuite {
     val first=snapshot(List("older conversation")); val older=first.copy(messages=first.messages.map(_.copy(timestamp=Some("2026-01-01T00:00:00Z"))),metadata=first.metadata.copy(endedAt=Some("2026-10-26T00:00:00Z")))
     val newer=snapshot(List("newer conversation")).copy(messages=List(Message("m0",None,"user","newer conversation",Some("2026-02-01T00:00:00Z"),0)))
     val newest=archive.ingest("a",newer); val oldest=archive.ingest("a",older)
-    db.transaction(c => Sql.exec(c,"UPDATE ch_profile SET maintenance=true,active='unavailable'"))
     val page=browse(index,"a",query("",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100))
     assertEquals(page.total,2L); assertEquals(page.rows.map(_.head.id),List(newest.sessionId,oldest.sessionId))
     assertEquals(page.rows.map(_.publishedView),List(None,None)); assert(page.rows.forall(_.head.view.generationId.isEmpty))
