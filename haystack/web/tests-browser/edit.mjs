@@ -81,7 +81,8 @@ try {
   await put("ui:uncertain", docOf({ title: "Uncertain fixture" }), 0);
   await put("ui:conflict", docOf({ title: "Conflict fixture" }), 0);
   await put("ui:discard", docOf({ title: "Discard fixture" }), 0);
-  for (const key of ["ui:draft-typed", "ui:draft-raw", "ui:draft-moved", "ui:draft-user", "ui:draft-generation", "ui:floor-0", "ui:floor-1", "ui:floor-2", "ui:floor-3", "ui:floor-4"])
+  for (const key of ["ui:draft-typed", "ui:draft-raw", "ui:draft-moved", "ui:draft-user", "ui:draft-generation", "ui:floor-0", "ui:floor-1", "ui:floor-2", "ui:floor-3", "ui:floor-4",
+    "ui:announced", "ui:held-history"])
     await put(key, withFields({ title: `Draft fixture ${key}` }, '{"n":1,"note":{"type":"md","content":"# Note"}}'), 0);
   await put("ui:histnav", docOf({ title: "History navigation fixture" }), 0);
   await put("ui:guard", docOf({ title: "Guard fixture" }), 0);
@@ -658,7 +659,7 @@ try {
     { name: "loaded before the confirmation, the refresh held while Edit is tried at once", mount: "before", read: "held" },
     { name: "mounted during the write, first read answered before the confirmation", mount: "during", read: "free" },
     { name: "mounted during the write, first read (revision 1) answered after the confirmation", mount: "during", read: "held" },
-    { name: "mounted after the confirmation", mount: "after", read: "free" },
+    { name: "mounted after the confirmation, first read answered with revision 1 captured before it", mount: "after", read: "captured" },
   ];
   await check("the user's confirmed write is a floor: whatever the order of reads, confirmation and mounting, no editor starts below it and the next save does not conflict with it", async () => {
     const failed = [];
@@ -674,6 +675,13 @@ try {
           const upstream = socket.connectToServer();
           upstream.onMessage((message) => { if (JSON.parse(String(message)).kind === "changed") withheld++; else socket.send(message); });
         });
+        // A read of revision 1, answered later to a page mounted after the confirmation: a floor set while no page was there rejects it.
+        let captured;
+        if (row.read === "captured") await page.route("**/api/v1/get", async (route) => {
+          const response = await route.fetch();
+          captured = { status: response.status(), headers: response.headers(), body: await response.body() };
+          await route.fulfill({ response });
+        }, { times: 1 });
         await page.goto(`${base}/${recordHash(key)}`);
         await page.getByRole("button", { name: "Edit", exact: true }).click();
         await page.locator('[data-record="editing"]').waitFor();
@@ -710,7 +718,12 @@ try {
         const notice = page.locator("main > .notice").filter({ hasText: "is pending or uncertain" });
         await notice.getByRole("button", { name: "Retry original write", exact: true }).click();
         await page.getByText(/Original write confirmed as revision 2/).waitFor();
-        if (row.mount === "after") await page.evaluate((hash) => { location.hash = hash; }, recordHash(key));
+        const reads = [];
+        if (row.mount === "after") {
+          await page.route("**/api/v1/get", (route) => route.fulfill(captured), { times: 1 });
+          page.on("request", (request) => { if (request.url().endsWith("/api/v1/get")) reads.push(request.postDataJSON().key); });
+          await page.evaluate((hash) => { location.hash = hash; }, recordHash(key));
+        }
         if (row.mount === "before" && row.read === "held") {
           await within(fetched.promise, "the read after the confirmation");
           await page.getByRole("button", { name: "Edit", exact: true }).click();
@@ -724,6 +737,7 @@ try {
         await page.locator('[data-record="editing"]').waitFor();
         assert.equal(await basedOn(page, 2).count(), 1, `${row.name}: the editor starts from the confirmed revision`);
         assert.equal(await title.inputValue(), saved, row.name);
+        if (row.mount === "after") assert.ok(reads.length >= 2 && reads.every((read) => read === key), `${row.name}: the captured revision 1 is read past`);
         await title.fill(`Edited after ordering ${index}`);
         await save(page).click();
         await page.getByText("Saved as revision 3", { exact: true }).waitFor();
@@ -741,6 +755,70 @@ try {
       }
     }
     assert.deepEqual(failed, [], "orderings that failed");
+  });
+
+  /** Withholds the server's change announcements from `page`; returns how many were withheld. */
+  const withholdAnnouncements = async (page) => {
+    const withheld = { count: 0 };
+    await page.routeWebSocket("**/api/v1/live", (socket) => {
+      const upstream = socket.connectToServer();
+      upstream.onMessage((message) => { if (JSON.parse(String(message)).kind === "changed") withheld.count++; else socket.send(message); });
+    });
+    return withheld;
+  };
+  const revisionShown = (page, revision) => page.locator('[data-record="ready"] .record-sub').getByText(`Revision ${revision}`, { exact: true });
+
+  await check("a change announced while a pristine editor is open is read when the editor closes: Cancel shows it, and a fresh editor starts from it", async () => {
+    const { context, page } = await open();
+    try {
+      const key = "ui:announced";
+      await page.goto(`${base}/${recordHash(key)}`);
+      // The connection's own first resynchronisation is behind us: the only announcement while the editor is open is the change.
+      await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      await put(key, docOf({ title: "Announced change" }), 1);
+      // The editor's own presentation, which also shows that the announcement arrived.
+      await page.getByRole("status").filter({ hasText: "Revision 2 was saved elsewhere." }).waitFor();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.getByRole("heading", { name: "Announced change", exact: true }).waitFor();
+      await revisionShown(page, 2).waitFor();
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      assert.equal(await basedOn(page, 2).count(), 1, "the fresh editor starts from the announced revision");
+      assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), "Announced change");
+      assert.equal(page.puts.length, 0);
+      await page.quiet();
+    } finally { await context.close(); }
+  });
+
+  await check("a history read that never answers holds nothing: after a confirmed save the page reads the saved revision and Edit opens", async () => {
+    const { context, page } = await open();
+    try {
+      const key = "ui:held-history";
+      const withheld = await withholdAnnouncements(page);
+      const reads = [];
+      page.on("request", (request) => { if (request.url().endsWith("/api/v1/get")) reads.push(request.postDataJSON().key); });
+      const histories = [];
+      await page.route("**/api/v1/history", (route) => { histories.push(route); });
+      await page.goto(`${base}/${recordHash(key)}`);
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      await page.getByLabel("Title", { exact: true }).fill("Saved past a held history read");
+      await save(page).click();
+      await page.getByText("Saved as revision 2", { exact: true }).waitFor();
+      await revisionShown(page, 2).waitFor();
+      assert.ok(reads.length >= 2 && reads.every((read) => read === key), "a second record read was issued");
+      assert.ok(histories.length >= 1, "every history read is still unanswered");
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      assert.equal(await basedOn(page, 2).count(), 1);
+      assert.ok(withheld.count > 0, "the fault injection withheld a real announcement");
+      await page.quiet();
+    } finally {
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+      await context.close();
+    }
   });
 
   await check("a draft survives a routine account invalidation and does not outlive the signed-in identity: signing out, a forced teardown the shell cannot follow up, or the account changing under an open page, leaves no draft", async () => {
@@ -854,5 +932,5 @@ try {
   });
 } finally { await cleanup(); }
 console.log(`# ${results.length} checks; ${results.filter((line) => line.startsWith("FAIL")).length} failures; 0 skipped`);
-assert.equal(results.length, 14);
+assert.equal(results.length, 16);
 process.exit(process.exitCode ?? 0);

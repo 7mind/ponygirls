@@ -20,6 +20,10 @@ const MASTHEAD_PX = 48;
 const VIEWBAR_PX = 56;
 const DESKTOP = { width: 1440, height: 900 };
 const PHONE = { width: 390, height: 844 };
+/** Playwright's default wait, for the case's own held requests. */
+const WAIT_MS = 30_000;
+/** The record page's bound on one record read (record-reads.ts). */
+const RECORD_READ_TIMEOUT_MS = 15_000;
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 await prerequisites("main");
@@ -100,6 +104,10 @@ try {
   await seed.put({ key: "ui:history", documentJson: withFields({ title: "History one", importance: "low" }, '{"due":"2026-11-24","n":9007199254740993}'), expectedRevision: 0, requestId: rid() });
   await seed.put({ key: "ui:history", documentJson: withFields({ title: "History two", importance: "high" }, '{"due":"2026-12-01","n":9007199254740993}'), expectedRevision: 1, requestId: rid() });
   await seed.put({ key: "ui:history", documentJson: withFields({ title: "History three", importance: "high", "human-attention": "required" }, '{"due":"2026-12-01","n":9007199254740993}'), expectedRevision: 2, requestId: rid() });
+  await seed.put({ key: "ui:late-a", documentJson: docOf({ title: "Left behind" }), expectedRevision: 0, requestId: rid() });
+  await seed.put({ key: "ui:late-a", documentJson: docOf({ title: "Left behind, revised" }), expectedRevision: 1, requestId: rid() });
+  await seed.put({ key: "ui:late-link", documentJson: docOf({ title: "Links to the record left behind", links: [["relates-to", "ui:late-a"]] }), expectedRevision: 0, requestId: rid() });
+  await seed.put({ key: "ui:late-b", documentJson: docOf({ title: "Arrived at" }), expectedRevision: 0, requestId: rid() });
 
   browser = await chromium.launch({ executablePath: process.env.HAYSTACK_CHROMIUM, args: ["--no-sandbox", "--no-proxy-server"] });
   const signIn = await browser.newContext();
@@ -324,6 +332,96 @@ try {
     } finally { await context.close(); }
   });
 
+  await check("a record read that never answers ends after the page's timeout with Retry, and Retry loads the record", async () => {
+    const { context, page } = await open();
+    try {
+      // No live connection: nothing but the held read and Retry reads the record.
+      await page.routeWebSocket("**/api/v1/live", () => {});
+      await page.clock.install();
+      await page.route("**/api/v1/get", () => {}, { times: 1 });
+      const sent = page.waitForRequest("**/api/v1/get");
+      await page.goto(`${base}/#/item/${encodeURIComponent("ui:late-b")}`);
+      await sent;
+      await page.clock.runFor(RECORD_READ_TIMEOUT_MS);
+      const failed = page.locator('[data-record="failed"]');
+      await failed.getByRole("button", { name: "Retry", exact: true }).click();
+      await page.getByRole("heading", { name: "Arrived at", exact: true }).waitFor();
+      await page.quiet();
+    } finally {
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+      await context.close();
+    }
+  });
+
+  await check("late answers for a record that was left change nothing on the record opened next", async () => {
+    const { context, page } = await open();
+    try {
+      const left = "ui:late-a";
+      const held = [];
+      let heldChanged = () => {};
+      /** Holds the answers of requests about `left` until `release`. */
+      const hold = (about) => async (route) => {
+        if (!about(route.request().postDataJSON())) { await route.fallback(); return; }
+        const gate = new Promise((resolve) => { held.push(resolve); });
+        heldChanged();
+        const response = await route.fetch();
+        await gate;
+        await route.fulfill({ response });
+      };
+      /** Resolves once `count` requests are held; fails after the same bound as a locator wait. */
+      const holding = (count) => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${count} held requests did not happen`)), WAIT_MS);
+        heldChanged = () => { if (held.length >= count) { clearTimeout(timer); resolve(); } };
+        heldChanged();
+      });
+      const release = async () => {
+        const finished = new Promise((resolve, reject) => {
+          let pending = held.length;
+          const timer = setTimeout(() => reject(new Error("the held answers did not arrive")), WAIT_MS);
+          const finish = (request) => {
+            if (!/\/api\/v1\/(get|history|search)$/.test(request.url()) || !JSON.stringify(request.postDataJSON()).includes(left) || --pending > 0) return;
+            clearTimeout(timer); page.off("requestfinished", finish); resolve();
+          };
+          page.on("requestfinished", finish);
+        });
+        for (const resolve of held.splice(0)) resolve();
+        await finished;
+        // The answers are in the page: let it apply whatever it would.
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      };
+      const arrived = async () => {
+        assert.equal(await page.getByRole("heading", { level: 1 }).textContent(), "Arrived at");
+        assert.equal(await page.locator(".record-sub").getByText("Revision 1", { exact: true }).count(), 1);
+        assert.equal(await page.getByRole("region", { name: "History", exact: true }).getByText("1 revision", { exact: true }).count(), 1);
+        assert.equal(await page.locator('[aria-label="Incoming links"]').getByText("No record links here.", { exact: true }).count(), 1);
+      };
+      // Its history and incoming links answer after the next record is shown.
+      await page.route("**/api/v1/history", hold((body) => body.key === left));
+      await page.route("**/api/v1/search", hold((body) => body.query.includes(left)));
+      await record(page, left);
+      await page.evaluate((key) => { location.hash = `#/item/${encodeURIComponent(key)}`; }, "ui:late-b");
+      await page.getByRole("region", { name: "History", exact: true }).getByText("1 revision", { exact: true }).waitFor();
+      await page.locator('[aria-label="Incoming links"]').getByText("No record links here.", { exact: true }).waitFor();
+      await holding(2);
+      await release();
+      await arrived();
+      // Its record answers after the next record is shown.
+      await page.route("**/api/v1/get", hold((body) => body.key === left));
+      await page.evaluate((key) => { location.hash = `#/item/${encodeURIComponent(key)}`; }, left);
+      await page.locator('[data-record="loading"]').waitFor();
+      await page.evaluate((key) => { location.hash = `#/item/${encodeURIComponent(key)}`; }, "ui:late-b");
+      await page.getByRole("heading", { name: "Arrived at", exact: true }).waitFor();
+      await page.getByRole("region", { name: "History", exact: true }).getByText("1 revision", { exact: true }).waitFor();
+      await holding(1);
+      await release();
+      await arrived();
+      await page.quiet();
+    } finally {
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+      await context.close();
+    }
+  });
+
   await check("record page: the document is the only scroller; the header bar and the snapshot banner stick", async () => {
     const { context, page } = await open();
     try {
@@ -349,5 +447,5 @@ try {
   });
 } finally { await cleanup(); }
 console.log(`# ${results.length} checks; ${results.filter((line) => line.startsWith("FAIL")).length} failures; 0 skipped`);
-assert.equal(results.length, 7);
+assert.equal(results.length, 9);
 process.exit(process.exitCode ?? 0);
