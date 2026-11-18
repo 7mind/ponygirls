@@ -1,165 +1,79 @@
-import { VARIANTS, withScene, gotoTab, archiveReady, settle, inspect, scrollTo, scrollEnd, openSession } from './lib.mjs';
-import { seededFixture, api } from './seed.mjs';
+// Session page (spec §3.1 Session, UX-C3): the routed transcript with its side pane, named like the mockup shots
+// (`chronicle-session-<state>[-dark]-<width>.png`, spec §8 item 10) so that each pairs with its mockup for `look`.
+import { PRIMARY, SECONDARY, PHONE, withScene, settle, inspect } from './lib.mjs';
+import { seededFixture } from './seed.mjs';
 import { templateFor } from './transcripts.mjs';
 
-const SOURCE = '.conversation-source', PASSAGES = '.conversation-passages';
-// Rows among the first archive page (indexes < 50) with the wanted template, owner alice.
-function pick(fixture, template, { published }) {
-  const row = fixture.archiveRows.slice(0, 50).find(row => row.head.ownerId === 'alice' && templateFor(row.head.revision).name === template && (row.publishedView !== undefined) === published);
-  if (row === undefined) throw new Error(`No ${published ? 'published' : 'unindexed'} ${template} row in the first page`);
+const LIGHT = { viewport: PRIMARY, scheme: 'light', suffix: '', deep: true };
+const DARK = { viewport: PRIMARY, scheme: 'dark', suffix: '-dark', deep: false };
+const LAPTOP = { viewport: SECONDARY, scheme: 'light', suffix: '', deep: false };
+const PHONE_LIGHT = { viewport: PHONE, scheme: 'light', suffix: '', deep: false };
+const named = (state, variant) => `chronicle-session-${state}${variant.suffix}-${variant.viewport.tag}.png`;
+// The long published template (260 messages, 52 passages) among the first archive rows of alice.
+function longSession(fixture) {
+  const row = fixture.archiveRows.slice(0, 50).find(item => item.head.ownerId === 'alice' && templateFor(item.head.revision).name === 'long' && item.publishedView !== undefined);
+  if (row === undefined) throw new Error('No published long session in the first archive page');
   return row;
 }
-async function openRow(page, row) {
-  await page.locator(`.archive-row[data-session-id="${row.head.id}"] .table-title`).click();
-  await openSession(page); await settle(page, 600);
+function address(row, extra) {
+  const view = row.publishedView ?? row.head.view;
+  return `#/session/${row.head.id}?rev=${view.revision}${view.generationId === undefined ? '' : `&gen=${view.generationId}`}${extra}`;
 }
-
-// A row that is currently inside the table viewport (so Playwright's click does not scroll the table), preferring long published sessions.
-async function visibleRow(page, fixture) {
-  const ids = await page.evaluate(() => { const box = document.querySelector('.archive-table-scroll').getBoundingClientRect(); return [...document.querySelectorAll('.archive-row')].filter(row => { const r = row.getBoundingClientRect(); return r.top >= box.top + 40 && r.bottom <= box.bottom; }).map(row => row.dataset.sessionId); });
-  const rows = new Map(fixture.archiveRows.map(row => [row.head.id, row]));
-  const preferred = ids.find(id => { const row = rows.get(id); return templateFor(row.head.revision).name === 'long' && row.publishedView !== undefined; }) ?? ids[2];
-  return page.locator(`.archive-row[data-session-id="${preferred}"]`);
+async function open(page, row, extra) {
+  await page.evaluate(target => { location.hash = target; }, address(row, extra));
+  await page.getByRole('main', { name: 'Session', exact: true }).waitFor();
 }
-// Geometry of the dialog regions and what the find overlay covers (runs in the page).
-async function layoutMetrics(page) {
-  return page.evaluate(() => {
-    const box = selector => { const el = document.querySelector(selector); if (el === null) return null; const r = el.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; };
-    const source = document.querySelector('.conversation-source').getBoundingClientRect(), overlay = document.querySelector('.source-find-overlay').getBoundingClientRect();
-    const messages = [...document.querySelectorAll('.original-message')].map(el => el.getBoundingClientRect());
-    const fully = messages.filter(r => r.top >= source.top && r.bottom <= source.bottom).length, partly = messages.filter(r => r.bottom > source.top && r.top < source.bottom).length;
-    const covered = messages.filter(r => r.bottom > overlay.top && r.top < overlay.bottom && r.right > overlay.left && r.left < overlay.right).length;
-    const passages = [...document.querySelectorAll('.passage')].map(el => el.getBoundingClientRect()), pane = document.querySelector('.conversation-passages').getBoundingClientRect();
-    const message = document.querySelector('.original-message pre, .original-message .message-content');
-    return { viewport: [innerWidth, innerHeight], dialog: box('dialog.conversation-dialog'), headingBar: box('.dialog-heading'), intro: box('.conversation-intro'), panes: box('.conversation-panes'), passagePane: box('.conversation-passages'), sourcePane: box('.conversation-source'), findOverlay: box('.source-find-overlay'), findOverlayCoversMessages: covered, messagesFullyVisible: fully, messagesPartlyVisible: partly, passageItemsPartlyVisible: passages.filter(r => r.bottom > pane.top && r.top < pane.bottom).length, passageItemHeightPx: passages.length ? Math.round(passages[0].height) : null, messageTextFont: message ? getComputedStyle(message).font : null, transcriptLineLengthChars: message ? Math.round(message.getBoundingClientRect().width / (parseFloat(getComputedStyle(message).fontSize) * .6)) : null, sourceVisibleShareOfViewportHeight: +(source.height / innerHeight).toFixed(2) };
-  });
-}
-async function closeDialog(page) { await page.getByRole('button', { name: 'Close conversation', exact: true }).click(); await page.getByRole('dialog', { name: 'Source conversation' }).waitFor({ state: 'detached' }); await settle(page); }
+async function transcriptReady(page) { await page.locator('[data-pane="transcript"] [data-message-id]').first().waitFor(); await settle(page, 400); }
 
 export function registerSession(scenario) {
-  for (const [key, variant] of Object.entries(VARIANTS)) {
-    scenario(`session-${key}`, async ctx => {
+  for (const variant of [LIGHT, DARK, LAPTOP, PHONE_LIGHT]) {
+    scenario(`session-${variant.scheme}-${variant.viewport.tag}`, async ctx => {
       await withScene(ctx, variant, { fixture: seededFixture() }, async ({ page, fixture, shot }) => {
-        const long = pick(fixture, 'long', { published: true });
-        await gotoTab(page, 'archive'); await archiveReady(page);
-        await openRow(page, long);
-        await shot('session', 'open-default', `Session dialog for a 260-message published conversation, as opened from the Archive row: header bar, title, provenance, passage list (left), transcript (right), find overlay`, 'Archive > click the conversation title');
-        await inspect(page, ctx.recorder, `session-${key}`);
-        await ctx.recorder.dump(`session-layout-${key}`, await layoutMetrics(page));
+        const capture = (state, shows, reached) => shot('session', state, shows, reached, { file: named(state, variant) });
+        const row = longSession(fixture);
+        // The mockups show the side pane open; below 1280 px it is closed by default (spec §9 decision 6) and opened here.
+        await open(page, row, variant.viewport === PRIMARY ? '' : '&pane=outline'); await transcriptReady(page);
+        await capture('default', 'Session page: header, transcript with folded tool rows, side pane Outline, position bar', 'deep link to a 260-message published session');
+        if (variant.deep) await inspect(page, ctx.recorder, 'session-default');
+        if (variant.viewport === PHONE) {
+          await page.getByRole('button', { name: 'Side pane', exact: true }).click(); await settle(page, 300);
+          await capture('closed', 'Phone: side pane closed, transcript only', 'Side pane toggle');
+          return;
+        }
         if (!variant.deep) return;
-        // ---- scrolling the transcript
-        await scrollTo(page, SOURCE, 1800);
-        await shot('session', 'source-scrolled', 'Transcript pane scrolled 1800 px; passage list and header unchanged; message count overlay bottom-right', 'scrollTop=1800 on .conversation-source');
-        for (let i = 0; i < 5; i++) await scrollEnd(page, SOURCE);
-        await shot('session', 'source-scrolled-to-end', `Transcript scrolled to the end repeatedly; ${await page.locator('.original-message').count()} messages loaded by infinite trigger`, 'scrollTop=scrollHeight x5 on .conversation-source');
-        await scrollTo(page, SOURCE, 0);
-        // ---- passage navigation
-        await page.locator('.passage').nth(8).scrollIntoViewIfNeeded();
-        await shot('session', 'passages-pane-scrolled', 'Passage list scrolled inside its own pane (second independent scroll region)', 'scroll .conversation-passages');
-        await page.locator('.passage').nth(8).click(); await settle(page, 900);
-        await shot('session', 'passage-selected', 'Passage #9 selected: transcript jumped to its message and the span is highlighted; span list appears under the passages', 'click passage 9');
-        await scrollEnd(page, PASSAGES); await settle(page, 600);
-        await shot('session', 'passages-loaded-more', 'Passage pane scrolled to its end: second page of passages loaded (40 per page)', 'scrollTop=scrollHeight on .conversation-passages');
-        // ---- find
-        const find = page.locator('.session-find input');
-        await find.fill('timeout'); await find.press('Enter'); await page.locator('.find-hits li').first().waitFor(); await settle(page);
-        await ctx.recorder.dump('session-layout-find-open-deep', await layoutMetrics(page));
-        await shot('session', 'find-hits', 'Find in session: hit list overlay at the top right of the transcript, over message text', 'type "timeout" + Enter in the Find box');
-        await page.locator('.find-hits button').nth(2).click(); await settle(page, 900);
-        await shot('session', 'find-landed', 'After clicking hit 3: transcript scrolled to the message, "Back to Find results" button appears bottom-left', 'click a Find hit');
-        // ---- provenance popover, related
-        await page.getByRole('button', { name: 'Provenance & metadata' }).click(); await page.waitForTimeout(400);
-        await shot('session', 'provenance-popover', 'Provenance & metadata popover opened from "Info" in the header bar', 'click Info');
-        await page.keyboard.press('Escape');
-        await page.locator('.related > summary').click(); await scrollTo(page, SOURCE, 0); await settle(page, 600);
-        await shot('session', 'related-open', 'Related sessions disclosure expanded at the top of the transcript', 'click "Related sessions"');
-        await page.locator('.related > summary').click();
-        // ---- huge messages
-        await find.fill('BACKFILL'); await find.press('Enter'); await page.locator('.find-hits li').first().waitFor(); await page.locator('.find-hits button').first().click(); await settle(page, 1000);
-        await shot('session', 'long-message-folded', 'Message over 20,000 characters: collapsed behind "Read full message"', 'Find "BACKFILL" > hit 1');
-        const summary = page.locator('summary', { hasText: 'Read full message' }).first();
-        if (await summary.count() > 0) { await summary.click(); await settle(page, 800); }
-        await shot('session', 'long-message-expanded', 'Same message expanded: tall single message in the transcript pane', 'expand "Read full message"');
-        // ---- keyboard focus
-        await scrollTo(page, SOURCE, 0); await page.locator('.dialog-close').focus(); await page.keyboard.press('Tab'); await page.keyboard.press('Tab'); await page.keyboard.press('Tab');
-        await shot('session', 'keyboard-focus', 'Keyboard focus ring after three Tab presses from the close button', 'focus ×, press Tab x3');
-        await closeDialog(page);
+        await page.getByRole('button', { name: 'Side pane', exact: true }).click(); await settle(page, 300);
+        await capture('outline-closed', 'Side pane closed: the transcript is the only scroller', 'Side pane toggle');
+        await page.getByRole('button', { name: 'Side pane', exact: true }).click(); await settle(page, 300);
+        await page.getByRole('list', { name: 'Passages', exact: true }).getByRole('button').nth(2).click(); await page.locator('[data-pane="transcript"] mark').first().waitFor(); await settle(page, 400);
+        await capture('passage', 'Passage 3 selected: outline row current, its span details, highlighted span in the transcript', 'click outline row 3');
+        const tool = page.locator('.tool-toggle').first(); await tool.scrollIntoViewIfNeeded(); await tool.click(); await settle(page, 300);
+        await capture('tool', 'A tool row expanded to its output', 'click the first tool row');
+        const more = page.getByRole('button', { name: 'Show full message', exact: true }).first(); await more.scrollIntoViewIfNeeded(); await settle(page, 300);
+        await capture('folded', 'A long message folded with "Show full message"', 'scroll to the first folded message');
+        await more.click(); await settle(page, 300);
+        await capture('expanded', 'The long message expanded with "Fold message"', 'Show full message');
+        await page.getByRole('tab', { name: /^Related/ }).click(); await page.getByRole('list', { name: 'Related conversations', exact: true }).waitFor(); await settle(page, 300);
+        await capture('related', 'Side pane Related: sessions as links (normal navigation, Back returns)', 'Related tab');
+        await page.getByRole('tab', { name: /^Info/ }).click(); await settle(page, 300);
+        await capture('info', 'Side pane Info: source, recorded provenance, index, identifiers', 'Info tab');
+        await page.getByRole('tab', { name: /^Find/ }).click(); await page.getByRole('textbox', { name: 'Literal message text', exact: true }).fill('timeout'); await page.getByRole('textbox', { name: 'Literal message text', exact: true }).press('Enter');
+        const hits = page.getByRole('list', { name: 'Matching messages', exact: true }).getByRole('button'); await hits.first().waitFor(); await hits.nth(2).click(); await settle(page, 600);
+        await capture('find', 'Find: docked bar with the match position, hit list in the side pane, landed message current', 'Find tab, "timeout", Enter, hit 3');
+        await page.getByRole('button', { name: 'Done', exact: true }).click();
+        await page.locator('[data-pane="transcript"]').evaluate(pane => pane.scrollTo({ top: pane.scrollHeight / 2, behavior: 'instant' })); await settle(page, 600);
+        await capture('scrolled', 'Transcript scrolled to the middle: position bar shows the visible range', 'scroll the transcript pane');
       });
     });
   }
-  // Other transcript kinds
-  const KINDS = [['markdown', true, 'Markdown-heavy 45-message session (lists, code blocks, tables)'], ['short', true, 'Short 14-message session with 3 passages'], ['tiny', true, '4-message session with no classified passages'], ['unicode-wide', true, 'Session with CJK text, emoji and very long unbroken URLs/tokens'], ['medium', false, 'Unindexed session (no published generation): passage pane says Unindexed']];
-  scenario('session-kinds', async ctx => {
-    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture() }, async ({ page, fixture, shot }) => {
-      await gotoTab(page, 'archive'); await archiveReady(page);
-      for (const [template, published, shows] of KINDS) {
-        const row = pick(fixture, template, { published });
-        await openRow(page, row);
-        await shot('session', `kind-${template}${published ? '' : '-unindexed'}`, shows, 'Archive > open row');
-        if (template === 'markdown') { await scrollTo(page, SOURCE, 900); await shot('session', 'markdown-scrolled', 'Markdown session scrolled: formatted tables, quotes, code blocks with per-block copy buttons', 'scroll transcript'); }
-        await closeDialog(page);
-      }
+  scenario('session-states', async ctx => {
+    await withScene(ctx, LIGHT, { fixture: seededFixture(fixture => { fixture.holdSessions = true; }) }, async ({ page, fixture, shot }) => {
+      await open(page, longSession(fixture), ''); await page.getByRole('status').filter({ hasText: 'Rechecking source access…' }).waitFor({ state: 'attached' }); await settle(page, 300);
+      await shot('session', 'loading', 'Loading: skeleton transcript under the session header', 'server holds GetSession', { file: named('loading', LIGHT) });
+      fixture.releaseSessions();
     });
-  });
-  scenario('session-errors', async ctx => {
-    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture() }, async ({ page, fixture, shot }) => {
-      await gotoTab(page, 'archive'); await archiveReady(page);
-      const row = pick(fixture, 'short', { published: true });
-      fixture.conversationFailure = 'forbidden';
-      await page.locator(`.archive-row[data-session-id="${row.head.id}"] .table-title`).click();
-      await page.getByRole('dialog', { name: 'Source conversation' }).waitFor(); await page.locator('.notice.error').first().waitFor(); await settle(page, 500);
-      await shot('session', 'error-access-removed', 'Session dialog when the pinned source read fails (forbidden): error notice and an otherwise empty dialog', 'fixture rejects GetSession');
-      fixture.conversationFailure = null;
-    });
-    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture(f => { f.holdSessions = true; }) }, async ({ page, fixture, shot }) => {
-      await gotoTab(page, 'archive'); await archiveReady(page);
-      await page.locator('.archive-row .table-title').first().click(); await page.getByRole('dialog', { name: 'Source conversation' }).waitFor(); await page.getByText('Rechecking source access…').waitFor(); await settle(page, 400);
-      await shot('session', 'loading', 'Session dialog while GetSession is in flight: only "Rechecking source access…"', 'server holds GetSession');
-      fixture.holdSessions = false; fixture.releaseSessions();
-    });
-  });
-  // Back-navigation / state survival measurements (also screenshots the end state).
-  scenario('session-return-state', async ctx => {
-    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture() }, async ({ page, fixture, shot }) => {
-      const long = pick(fixture, 'long', { published: true });
-      await gotoTab(page, 'archive'); await archiveReady(page);
-      for (let i = 0; i < 3; i++) await scrollEnd(page, '.archive-table-scroll');
-      await scrollTo(page, '.archive-table-scroll', 2600); await settle(page, 500);
-      const row = await visibleRow(page, fixture);
-      const rowId = await row.getAttribute('data-session-id');
-      const metrics = { urlBefore: page.url(), historyLengthBefore: await page.evaluate(() => history.length), tableScrollBefore: await page.evaluate(() => document.querySelector('.archive-table-scroll').scrollTop), rowsBefore: await page.locator('.archive-row').count(), pageScrollBefore: await page.evaluate(() => scrollY) };
-      await shot('flow', 'archive-before-open', 'Archive scrolled 2600 px after three infinite loads, before opening a session', 'scroll table');
-      await row.locator('.table-title').click(); await openSession(page); await settle(page, 500);
-      metrics.urlWithDialog = page.url(); metrics.historyLengthWithDialog = await page.evaluate(() => history.length);
-      metrics.bodyWhileOpen = await page.evaluate(() => ({ position: document.body.style.position, top: document.body.style.top }));
-      await scrollTo(page, SOURCE, 1500);
-      await page.goBack().catch(() => null); await settle(page, 600);
-      metrics.afterBrowserBack = { url: page.url(), dialogStillOpen: await page.getByRole('dialog', { name: 'Source conversation' }).count() === 1 };
-      if (!metrics.afterBrowserBack.dialogStillOpen) { await page.waitForTimeout(1000); metrics.afterBrowserBack.note = 'browser Back left the app; the dialog and its state are gone'; }
-      await ctx.recorder.dump('session-return-state', metrics);
-    });
-    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture() }, async ({ page, fixture, shot }) => {
-      await gotoTab(page, 'archive'); await archiveReady(page);
-      for (let i = 0; i < 3; i++) await scrollEnd(page, '.archive-table-scroll');
-      await scrollTo(page, '.archive-table-scroll', 2600); await settle(page, 500);
-      const before = await page.evaluate(() => ({ tableScroll: document.querySelector('.archive-table-scroll').scrollTop, rows: document.querySelectorAll('.archive-row').length, pageScroll: scrollY }));
-      const row = await visibleRow(page, fixture), rowId = await row.getAttribute('data-session-id');
-      await row.locator('.table-title').click(); await openSession(page);
-      await scrollTo(page, SOURCE, 1500); await page.locator('.passage').nth(1).click().catch(() => null); await settle(page, 500);
-      const sourceScrollBeforeClose = await page.evaluate(() => document.querySelector('.conversation-source').scrollTop);
-      await page.keyboard.press('Escape'); await page.getByRole('dialog', { name: 'Source conversation' }).waitFor({ state: 'detached' }); await settle(page, 500);
-      const after = await page.evaluate(id => ({ tableScroll: document.querySelector('.archive-table-scroll').scrollTop, rows: document.querySelectorAll('.archive-row').length, pageScroll: scrollY, focusedIs: document.activeElement === null ? null : `${document.activeElement.tagName}.${document.activeElement.className}`, rowInView: (() => { const element = document.querySelector(`.archive-row[data-session-id="${id}"]`); if (element === null) return null; const rect = element.getBoundingClientRect(), table = document.querySelector('.archive-table-scroll').getBoundingClientRect(); return rect.top >= table.top && rect.bottom <= table.bottom; })() }), rowId);
-      await shot('flow', 'archive-after-close', 'Archive after closing the session with Escape: scroll position and loaded rows (compare with archive-before-open)', 'Escape in dialog');
-      // reopen the same row: transcript state?
-      await page.locator(`.archive-row[data-session-id="${rowId}"] .table-title`).click(); await openSession(page); await settle(page, 600);
-      const reopened = await page.evaluate(() => ({ sourceScroll: document.querySelector('.conversation-source').scrollTop, selectedPassages: document.querySelectorAll('.selected-passage').length }));
-      await ctx.recorder.dump('session-escape-return-state', { before, sourceScrollBeforeClose, afterEscape: after, reopened });
-      await closeDialog(page);
-      // tab switch round trip
-      await gotoTab(page, 'activity'); await page.locator('.activity-overview').waitFor(); await gotoTab(page, 'archive'); await archiveReady(page); await settle(page, 600);
-      const afterTabs = await page.evaluate(() => ({ tableScroll: document.querySelector('.archive-table-scroll').scrollTop, rows: document.querySelectorAll('.archive-row').length }));
-      await shot('flow', 'archive-after-tab-roundtrip', 'Archive after visiting Activity and coming back: table remounted, loaded pages and scroll position reset to the first 50 rows', 'nav archive > activity > archive');
-      await ctx.recorder.dump('archive-tab-roundtrip', { before, afterTabs, note: 'search expression/sort live in App state; loaded pages and scroll live in the unmounted component' });
+    await withScene(ctx, LIGHT, { fixture: seededFixture(fixture => { fixture.conversationFailure = 'forbidden'; }) }, async ({ page, fixture, shot }) => {
+      await open(page, longSession(fixture), ''); await page.getByRole('alert').filter({ hasText: 'This session can no longer be read' }).waitFor(); await settle(page, 300);
+      await shot('session', 'error', 'Access error: notice with Back to Archive and Retry inside the page', 'server rejects GetSession (forbidden)', { file: named('error', LIGHT) });
     });
   });
 }
