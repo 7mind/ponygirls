@@ -39,7 +39,11 @@ protocol (chunk requests are held or aborted at the network layer for progress, 
 `manure-upload-<state>-<width>[-dark].png`, plus the drop overlay and the hand-off (`manure-catalogue-drop-1440.png`,
 `manure-upload-handoff-1440.png`).
 
-The default run is `auth`, `m1`, `unlock`, `viewer`. The scenes `login`, `catalogue`, `upload`, `detail`,
+`--scenes m3` captures the artifact page (unit UX-M3) under the mockup names `manure-detail-<state>-<width>[-dark].png`
+(default, dark, 1024, 390, password, rotate-confirm, access-changed, access-confirm, edit-name, edit-expiry, delete-confirm,
+big, big-scrolled, big-end, subdir, uploading, expired, not-found, loading).
+
+The default run is `auth`, `m1`, `m3`, `unlock`, `viewer`. The scenes `login`, `catalogue`, `upload`, `detail`,
 `account`, `keyboard` and `dark` drive the pre-redesign dashboard (its ids, the account dialog and native
 confirms) and only record how the "before" captures were made; they no longer run against this dashboard.
 

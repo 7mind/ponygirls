@@ -919,11 +919,82 @@ SCENES.m2 = async () => {
   await drop.context().close();
 };
 
+// ---------------------------------------------------------------- artifact page (UX-M3)
+async function artifact(vp, scheme, role, expectState = "loaded") {
+  const page = await newPage({ vp, scheme, storageState: AUTH, clipboard: true });
+  await page.goto(BASE + "/#/artifact/" + ROLES[role].artifact_id, { waitUntil: "load" });
+  await page.waitForFunction((state) => document.querySelector('[data-view="artifact"]')?.dataset.state === state, expectState, { timeout: 20000 });
+  await themed(page, scheme);
+  if (expectState === "loaded") await page.waitForFunction(() => document.querySelector("#manifest-foot").dataset.state !== "loading", null, { timeout: 20000 });
+  return page;
+}
+SCENES.m3 = async () => {
+  for (const [vp, scheme, suffix] of [[VP.d, "light", "1440"], [VP.s, "light", "1024"], [VP.m, "light", "390"], [VP.d, "dark", "dark-1440"]]) {
+    const page = await artifact(vp, scheme, "external_site");
+    await snap(page, `manure-detail-${suffix}`, "Artifact page, external directory, tree at its root");
+    await page.context().close();
+  }
+  const page = await artifact(VP.d, "light", "external_site");
+  await page.getByRole("button", { name: "Reveal password", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[data-secret="external-password"]').textContent.length === 43);
+  await snap(page, "manure-detail-password-1440", "External password revealed (Hide, Copy, Rotate…)");
+  await page.getByRole("button", { name: "Hide password", exact: true }).click();
+  await page.getByRole("button", { name: "Rotate password…", exact: true }).click(); await page.waitForSelector("dialog[open]");
+  await snap(page, "manure-detail-rotate-confirm-1440", "Rotation confirmation, Cancel focused");
+  await page.keyboard.press("Escape"); await sleep(200);
+  await page.getByRole("group", { name: "Access mode" }).getByRole("button", { name: "Public", exact: true }).click();
+  await snap(page, "manure-detail-access-changed-1440", "Unsaved access change: chip, consequence notice, primary Save");
+  await page.getByRole("button", { name: "Save access mode", exact: true }).click(); await page.waitForSelector("dialog[open]");
+  await snap(page, "manure-detail-access-confirm-1440", "Make-public confirmation (nothing sent before it)");
+  await page.keyboard.press("Escape"); await sleep(200);
+  await page.getByRole("button", { name: "Discard", exact: true }).click();
+  await page.getByRole("button", { name: "Rename", exact: true }).click();
+  await snap(page, "manure-detail-edit-name-1440", "Inline rename in the artifact header");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Change expiry", exact: true }).click();
+  await page.getByRole("combobox", { name: "Expires", exact: true }).selectOption("604800");
+  await snap(page, "manure-detail-edit-expiry-1440", "Expiry editor with the resulting time");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Delete artifact…", exact: true }).click(); await page.waitForSelector("dialog[open]");
+  await snap(page, "manure-detail-delete-confirm-1440", "Delete confirmation naming the artifact");
+  await page.keyboard.press("Escape");
+  await page.context().close();
+  const big = await artifact(VP.d, "light", "big_dir");
+  await big.getByRole("group", { name: "Manifest layout" }).getByRole("button", { name: "Flat list", exact: true }).click();
+  await snap(big, "manure-detail-big-1440", "161-path manifest as a flat list in the document");
+  await big.evaluate(() => window.scrollTo(0, 1500)); await sleep(300);
+  await snap(big, "manure-detail-big-scrolled-1440", "Scrolled: artifact header, table header and rail stick");
+  await big.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight)); await sleep(300);
+  await snap(big, "manure-detail-big-end-1440", "End of the manifest marker");
+  await big.evaluate(() => window.scrollTo(0, 0));
+  await big.getByRole("group", { name: "Manifest layout" }).getByRole("button", { name: "Tree", exact: true }).click();
+  await big.getByRole("link", { name: "shard-00/", exact: true }).click();
+  await snap(big, "manure-detail-subdir-1440", "Tree drilled into a folder: breadcrumb, parent row, folder summary");
+  await big.context().close();
+  const uploading = await artifact(VP.d, "light", "uploading");
+  await snap(uploading, "manure-detail-uploading-1440", "Unfinished upload: access locked, declared manifest without downloads");
+  await uploading.context().close();
+  const expiredPage = await artifact(VP.d, "light", "expired_0", "expired");
+  await snap(expiredPage, "manure-detail-expired-1440", "Expired artifact: a state of the page");
+  await expiredPage.context().close();
+  const missing = await newPage({ storageState: AUTH });
+  await missing.goto(BASE + "/#/artifact/" + "0".repeat(32), { waitUntil: "load" });
+  await missing.waitForFunction(() => document.querySelector('[data-view="artifact"]')?.dataset.state === "not-found", null, { timeout: 20000 });
+  await snap(missing, "manure-detail-not-found-1440", "Unknown artifact: a state of the page");
+  await missing.context().close();
+  const loading = await newPage({ storageState: AUTH });
+  await loading.route("**/api/current", async (route) => { if ((route.request().postData() || "").includes('"GetArtifact"')) await sleep(5000); await route.continue().catch(() => {}); });
+  await loading.goto(BASE + "/#/artifact/" + ROLES.external_site.artifact_id, { waitUntil: "load" });
+  await loading.waitForSelector("#detail-section:not([hidden])"); await sleep(800);
+  await snap(loading, "manure-detail-loading-1440", "Metadata pending: skeletons in place of the cards");
+  await loading.context().close();
+};
+
 // ---------------------------------------------------------------- main
-// The scenes after "m1" capture the pre-redesign dashboard (ids and dialogs that UX-M1 replaced); they are
+// The scenes after "m3" capture the pre-redesign dashboard (ids and dialogs that UX-M1 replaced); they are
 // kept as the record of the "before" captures and are not run by default.
-const ORDER = ["auth", "m1", "m2", "login", "catalogue", "upload", "detail", "account", "unlock", "viewer", "keyboard", "dark"];
-const DEFAULT_SCENES = ["auth", "m1", "unlock", "viewer"];
+const ORDER = ["auth", "m1", "m2", "m3", "login", "catalogue", "upload", "detail", "account", "unlock", "viewer", "keyboard", "dark"];
+const DEFAULT_SCENES = ["auth", "m1", "m3", "unlock", "viewer"];
 const only = new Set(input.scenes && input.scenes.length ? ["auth", ...input.scenes] : DEFAULT_SCENES);
 for (const name of ORDER) {
   if (!only.has(name)) continue;
