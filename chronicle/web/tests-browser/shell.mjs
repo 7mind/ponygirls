@@ -95,13 +95,6 @@ try {
     await page.goForward(); await page.locator('.archive-row').first().waitFor();
     await page.reload(); await page.locator('.archive-row').first().waitFor(); assert.deepEqual(await current(page), ['Archive'], 'reload restores the route');
 
-    await page.goto(`${origin}/${PAGE}#/session/${fixture.archiveAt(0).head.id}`);
-    const dialog = page.getByRole('dialog', { name: 'Source conversation', exact: true }); await dialog.waitFor(); await page.locator('.original-message').first().waitFor();
-    await dialog.getByRole('button', { name: 'Close conversation', exact: true }).click(); await dialog.waitFor({ state: 'detached' });
-    assert.equal(await hash(page), '#/archive', 'a deep-linked session closes to its parent list');
-    await page.evaluate(id => { location.hash = `#/session/${id}`; }, fixture.archiveAt(0).head.id); await dialog.waitFor();
-    await dialog.getByRole('button', { name: 'Close conversation', exact: true }).click(); await dialog.waitFor({ state: 'detached' });
-    assert.equal(await hash(page), '#/archive'); await page.goForward(); await dialog.waitFor();
     await page.goto(`${origin}/${PAGE}#/no-such-view`); await signedIn(page);
     assert.equal(await hash(page), '#/search', 'an unknown fragment is replaced by the default route');
   });

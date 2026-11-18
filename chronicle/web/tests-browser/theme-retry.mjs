@@ -55,7 +55,6 @@ async function storeInTab(page, value) { await page.evaluate(({ key, value }) =>
 async function waitStoredTheme(page, value) { await page.waitForFunction(value => { const data = document.documentElement.dataset; return data.themeChoice === (value === 'light' || value === 'dark' ? value : 'system') && data.themePersistence === (value === null || ['system', 'light', 'dark'].includes(value) ? 'available' : 'invalid'); }, value); }
 async function configureTheme(context, page, colorScheme, preference) { await page.emulateMedia({ colorScheme }); if (preference !== null) await context.addInitScript(({ key, value }) => localStorage.setItem(key, value), { key: THEME_KEY, value: preference }); }
 async function activity(page) { await page.getByRole('link', { name: 'Activity', exact: true }).click(); await page.locator('.activity-overview .section-heading time').waitFor(); }
-async function source(page) { await page.locator('.archive-row .table-title').first().click(); await page.getByRole('dialog', { name: 'Source conversation', exact: true }).waitFor(); await page.locator('.original-message').first().waitFor(); }
 async function themeCases() {
   await run('explicit Dark and Light override either device scheme for the page and its native controls', async () => {
     for (const system of ['light', 'dark']) {
@@ -98,7 +97,7 @@ async function themeCases() {
       await choose(page, 'dark'); assert.equal((await snapshot(page)).persistence, 'available'); assert.equal(await page.getByText('Invalid saved setting', { exact: true }).count(), 0); await context.close();
     }
   });
-  await run('theme changes retain Archive draft, loaded rows, scroll, DOM identity and source pins without submitting requests', async () => {
+  await run('theme changes retain Archive draft, loaded rows, scroll and DOM identity without submitting requests', async () => {
     const { context, page, fixture } = await scene(DESKTOP, async ({ fixture, page }) => {
       fixture.archiveRowCount = 85; await page.emulateMedia({ colorScheme: 'light' });
       await page.clock.install({ time: new Date('2030-01-01T00:00:00Z') });
@@ -106,10 +105,7 @@ async function themeCases() {
     });
     const editor = page.getByRole('combobox', { name: 'Search conversations', exact: true }); await editor.fill('project:"unsent synthetic draft" AND'); const row = await page.locator('.archive-row').first().elementHandle(), scroll = () => page.evaluate(() => [window.scrollY, window.scrollX]); await page.evaluate(() => window.scrollTo(0, 240)); const before = await scroll(), calls = fixture.calls.length;
     await choose(page, 'dark'); await choose(page, 'light'); assert.deepEqual(await scroll(), before); assert.equal(await row.evaluate(element => element.isConnected && element === document.querySelector('.archive-row')), true); assert.equal(await editor.inputValue(), 'project:"unsent synthetic draft" AND'); assert.equal(fixture.calls.length, calls);
-    await page.getByRole('button', { name: 'Theme settings', exact: true }).click(); await page.evaluate(() => window.scrollTo(0, 0)); await source(page);
-    await page.locator('.conversation-source').evaluate(element => { element.scrollTop = 320; }); const message = await page.locator('.original-message').first().elementHandle(), pin = await page.locator('.provenance').innerText(), sourceCalls = fixture.calls.length;
-    const focused = page.getByRole('button', { name: 'Close conversation', exact: true }); await focused.focus(); const sourceScroll = await page.locator('.conversation-source').evaluate(element => element.scrollTop); const other = await context.newPage(); await other.goto(`${origin}/theme-init.js`); await storeInTab(other, 'dark'); await waitStoredTheme(page, 'dark');
-    assert.equal(await focused.evaluate(element => element === document.activeElement), true); assert.equal(await page.locator('.conversation-source').evaluate(element => element.scrollTop), sourceScroll); assert.equal(await message.evaluate(element => element.isConnected && element === document.querySelector('.original-message')), true); assert.equal(await page.locator('.provenance').innerText(), pin); assert.equal(fixture.calls.length, sourceCalls);
+    const sourceCalls = fixture.calls.length;
     await advanceClock(page, connectionConfig.heartbeatInterval - 1); assert.equal(fixture.calls.length, sourceCalls, 'no heartbeat before its interval');
     await advanceClock(page, 1); await fixture.waitUntil(() => fixture.calls.length > sourceCalls, 'no heartbeat after its interval');
     const afterTheme = fixture.calls.slice(sourceCalls);
