@@ -222,15 +222,20 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
           val code=failureCode(error)
           val exceptionClass=error.getClass.getName
           val origin=failureOrigin(error); val details=failureDetails(error); val reason=details.reason; val httpStatus=details.httpStatus
-          IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code exceptionClass=$exceptionClass origin=$origin reason=$reason httpStatus=$httpStatus")) *> IO.blocking {
+          val sqlState=Worker.sqlState(error)
+          IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code exceptionClass=$exceptionClass sqlState=$sqlState origin=$origin reason=$reason httpStatus=$httpStatus")) *> IO.blocking {
             stage match { case Some(value) => archive.fail(claim,code,value); case None => archive.fail(claim,code) }
-          } *> IO.sleep(failureBackoff.delay)
+          }.handleErrorWith(failureNotRecorded(claim,code,_)) *> IO.sleep(failureBackoff.delay)
       }
     }
   }
+  /** The job keeps its lease: it is claimed again once the lease expires, or ends lease-exhausted. */
+  private def failureNotRecorded(claim: Claim,failureCode: String,error: Throwable): IO[Unit] = {
+    val code=this.failureCode(error); val exceptionClass=error.getClass.getName; val origin=failureOrigin(error); val sqlState=Worker.sqlState(error)
+    IO(logger.warn(s"job failure not recorded jobId=${claim.jobId} failureCode=$failureCode code=$code exceptionClass=$exceptionClass sqlState=$sqlState origin=$origin"))
+  }
   private def claimFailed(error: Throwable): IO[Worker.Iteration] = {
-    val code=failureCode(error); val exceptionClass=error.getClass.getName; val origin=failureOrigin(error)
-    val sqlState=error match { case sql: java.sql.SQLException => Option(sql.getSQLState).getOrElse("unavailable"); case _ => "unavailable" }
+    val code=failureCode(error); val exceptionClass=error.getClass.getName; val origin=failureOrigin(error); val sqlState=Worker.sqlState(error)
     IO(logger.warn(s"job claim failed code=$code exceptionClass=$exceptionClass sqlState=$sqlState origin=$origin")).as(Worker.Iteration.ClaimFailed)
   }
   private def iteration: IO[Worker.Iteration] = admission.annotationSession.use { _ =>
@@ -251,6 +256,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
 }
 object Worker {
   private enum Iteration { case Processed,Idle,ClaimFailed }
+  private def sqlState(error: Throwable): String = error match { case sql: java.sql.SQLException => Option(sql.getSQLState).getOrElse("unavailable"); case _ => "unavailable" }
   /** How long a worker lane stays idle after recording a failed job. */
   final case class FailureBackoff(delay: FiniteDuration)
   object FailureBackoff {

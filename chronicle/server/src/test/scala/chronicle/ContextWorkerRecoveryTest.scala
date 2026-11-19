@@ -27,6 +27,24 @@ final class WorkerLog {
   val logger: logstage.IzLogger = logstage.IzLogger(Log.Level.Info,List(new izumi.logstage.api.logger.LogSink { def flush(entry: Log.Entry): Unit = { entries.add(render(entry)); () } }))
   def lines: List[String] = entries.asScala.toList
 }
+/** Delegates every archive call; tests override the calls they observe or fail. */
+class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
+  def knownProfiles: Set[String]=delegate.knownProfiles
+  def ingest(owner: String,r: IngestRequest): IngestReceipt=delegate.ingest(owner,r)
+  def session(reader: String,id: UUID): SessionInfo=delegate.session(reader,id)
+  def headSnapshot(reader: String,id: UUID): IngestRequest=delegate.headSnapshot(reader,id)
+  def claim(profiles: Set[String],scope: ClaimScope,lease: Int): Option[Claim]=delegate.claim(profiles,scope,lease)
+  def renew(c: Claim,lease: Int): Boolean=delegate.renew(c,lease)
+  def progress(c: Claim,done: Int,total: Int): Boolean=delegate.progress(c,done,total)
+  def publishProblems(c: Claim,p: ProblemsPublication): Boolean=delegate.publishProblems(c,p)
+  def fail(c: Claim,code: String): Unit=delegate.fail(c,code)
+  def fail(c: Claim,code: String,stage: IndexingStage): Unit=delegate.fail(c,code,stage)
+  def checkpoint(c: Claim,key: CheckpointKey): Option[Json]=delegate.checkpoint(c,key)
+  def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit=delegate.checkpoint(c,key,value)
+  def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int=delegate.discardCheckpoints(c,stage,window)
+  def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation=delegate.reserveAnnotation(c,key)
+  def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int=delegate.rejectAnnotation(c,key,attempt,reason)
+}
 abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   def withFixture(run: ContextWorkerFixture => Unit): Unit
   protected def request(values: List[(String,String)]): IngestRequest = {
@@ -41,23 +59,6 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
     worker(archive,config,model,embedding,backoff,logstage.IzLogger())
   private def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder,backoff: Worker.FailureBackoff,logger: logstage.IzLogger): Worker =
     new Worker(archive,model,embedding,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),logger,backoff)
-  private class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
-    def knownProfiles: Set[String]=delegate.knownProfiles
-    def ingest(owner: String,r: IngestRequest): IngestReceipt=delegate.ingest(owner,r)
-    def session(reader: String,id: UUID): SessionInfo=delegate.session(reader,id)
-    def headSnapshot(reader: String,id: UUID): IngestRequest=delegate.headSnapshot(reader,id)
-    def claim(profiles: Set[String],scope: ClaimScope,lease: Int): Option[Claim]=delegate.claim(profiles,scope,lease)
-    def renew(c: Claim,lease: Int): Boolean=delegate.renew(c,lease)
-    def progress(c: Claim,done: Int,total: Int): Boolean=delegate.progress(c,done,total)
-    def publishProblems(c: Claim,p: ProblemsPublication): Boolean=delegate.publishProblems(c,p)
-    def fail(c: Claim,code: String): Unit=delegate.fail(c,code)
-    def fail(c: Claim,code: String,stage: IndexingStage): Unit=delegate.fail(c,code,stage)
-    def checkpoint(c: Claim,key: CheckpointKey): Option[Json]=delegate.checkpoint(c,key)
-    def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit=delegate.checkpoint(c,key,value)
-    def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int=delegate.discardCheckpoints(c,stage,window)
-    def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation=delegate.reserveAnnotation(c,key)
-    def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int=delegate.rejectAnnotation(c,key,attempt,reason)
-  }
   protected def one(window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): ProblemPassages.Decision =
     ProblemPassages.Decision(Vector(ProblemPassages.Part(ProblemPassages.Point(0,0),window.terminal,previous.nonEmpty,"synthetic goal",Nil)))
   test("BG/GoodCommunication: a worker lane stays idle for the failure back-off after the failed job is recorded, and not shorter") { withFixture { f =>
@@ -180,6 +181,38 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
     assert(claims>=2); assertEquals(f.archive().session("a",receipt.sessionId).indexedRevision,Some(1))
     val failures=log.lines.filter(_.startsWith("job claim failed")); assertEquals(failures.size,1)
     assert(failures.head.matches("job claim failed code=worker-fault exceptionClass=java\\.sql\\.SQLException sqlState=57014 origin=\\S+"),failures.head)
+  }}
+  test("BG/GoodCommunication regression: a job failure that cannot be recorded is logged and the lane keeps indexing instead of ending the worker") { withFixture { f =>
+    val config=f.config.copy(indexing=f.config.indexing.copy(annotationSessions=1)); val log=new WorkerLog
+    val failing=f.archive().ingest("a",request(List("user"->"synthetic failing task")))
+    val healthy=f.archive().ingest("b",request(List("user"->"synthetic task")))
+    @volatile var records=0
+    val model=new ProblemPassageAnnotator {
+      def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] =
+        if(owner=="a") IO.raiseError(DomainError("model-timeout","model deadline exceeded")) else IO(one(window,previous))
+    }
+    val embedding=new Embedder {
+      def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("no query embedding"))
+      def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.pure(text.map(_ => List(1.0,0.0,0.0)))
+    }
+    val outcome=(for {
+      published <- Deferred[IO,Unit]
+      terminated <- Deferred[IO,OutcomeIO[Nothing]]
+      archive=new ForwardingArchive(f.archive()) {
+        override def fail(c: Claim,code: String,stage: IndexingStage): Unit = { records+=1; throw new java.sql.SQLException("canceling statement due to statement timeout","57014") }
+        override def publishProblems(c: Claim,p: ProblemsPublication): Boolean = { val result=super.publishProblems(c,p); published.complete(()).unsafeRunSync(); result }
+      }
+      fiber <- worker(archive,config,model,embedding,ModelFixtures.failureBackoff,log.logger).run.guaranteeCase(outcome => terminated.complete(outcome).void).start
+      first <- IO.race(terminated.get,published.get).timeout(10.seconds)
+      _ <- IO(first.left.foreach(outcome => fail(s"the worker run ended: $outcome")))
+      _ <- fiber.cancel.timeout(5.seconds)
+      outcome <- terminated.get
+    } yield outcome).unsafeRunSync()
+    assert(outcome.isCanceled,s"cancellation stops the lane: $outcome")
+    assertEquals(records,1); assertEquals(f.archive().session("b",healthy.sessionId).indexedRevision,Some(1))
+    assertEquals(f.stage(failing.jobId),None,"nothing was recorded for the failed job: it keeps its lease until it expires")
+    val unrecorded=log.lines.filter(_.startsWith("job failure not recorded")); assertEquals(unrecorded.size,1)
+    assert(unrecorded.head.matches(s"job failure not recorded jobId=${failing.jobId} failureCode=model-timeout code=worker-fault exceptionClass=java\\.sql\\.SQLException sqlState=57014 origin=\\S+"),unrecorded.head)
   }}
   test("BG/GoodCommunication: partial embedding batches commit individually and only the failed batch is recomputed") { withFixture { f =>
     val archive=f.archive(); val receipt=archive.ingest("a",request((0 until 40).map(i => "assistant"->s"source-$i").toList))

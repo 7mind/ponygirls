@@ -48,7 +48,7 @@ object Main extends IOApp {
       IO(if(sealedByAnotherKey>0) s.logger.warn(s"imperative accounts whose TOTP secret another key sealed need an administrator reset; $sealedByAnotherKey"))
     }
   }
-  private def serve(config: Config,s: RuntimeServices,workersEnabled: Boolean): IO[Nothing] = s.http.accountPlane.use { accounts => for {
+  private[chronicle] def serve(config: Config,s: RuntimeServices,workersEnabled: Boolean): IO[Nothing] = s.http.accountPlane.use { accounts => for {
     _ <- reportAccounts(s,accounts)
     gate <- Semaphore[IO](2)
     _ <- EmberServerBuilder.default[IO].withHost(Host.fromString(config.listenHost).getOrElse(throw DomainError("config","invalid listenHost"))).withPort(Port.fromInt(config.listenPort).getOrElse(throw DomainError("config","invalid port"))).withMaxConnections(128).withMaxHeaderSize(16384).withHttpWebSocketApp(ws => s.http.routes(ws,gate,accounts).orNotFound).build.use { server =>

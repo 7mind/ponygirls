@@ -130,13 +130,20 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
           val target=OwnerTargets.read(c,owner,true)
           db.profiles.resolve(target.profile)
           Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key) VALUES(?,?,?) ON CONFLICT(owner,source_key) DO NOTHING",UUID.randomUUID(),owner,key)
-          val (id,head,deleted) = Sql.one(c,"SELECT id,revision,tombstone FROM ch_sources WHERE owner=? AND source_key=? FOR UPDATE",owner,key)(x => (x.getObject("id",classOf[UUID]),x.getInt("revision"),x.getBoolean("tombstone"))).get
-          Check(!deleted,"gone","source purged; use a new collector namespace to restore")
-          Check(head == r.expectedRevision,"conflict",s"expected revision mismatch; current=$head")
+          def source(lock: String): (UUID,Int) = Sql.one(c,s"SELECT id,revision,tombstone FROM ch_sources WHERE owner=? AND source_key=?$lock",owner,key) { x =>
+            Check(!x.getBoolean("tombstone"),"gone","source purged; use a new collector namespace to restore")
+            val revision=x.getInt("revision")
+            Check(revision == r.expectedRevision,"conflict",s"expected revision mismatch; current=$revision")
+            (x.getObject("id",classOf[UUID]),revision)
+          }.get
+          // The advisory lock above serializes the ingests of this source; the source row is locked only for the switch
+          // to the new revision, not while a large snapshot is projected (indexing claims lock that row on every write).
+          val (id,head) = source("")
           val next = head+1; val job = UUID.randomUUID(); val receipt = IngestReceipt(r.requestId,id,next,job)
           val snapshot=SnapshotProjection(r)
           Sql.exec(c,"INSERT INTO ch_revisions(session_id,revision,snapshot) VALUES(?,?,?::jsonb)",id,next,Wire.encode(IngestRequest.codecJson,snapshot).noSpaces)
           ArchiveProjection.persist(c,id,next,snapshot)
+          source(" FOR UPDATE")
           Sql.exec(c,"UPDATE ch_sources SET revision=? WHERE id=?",next,id)
           Sql.exec(c,"UPDATE ch_jobs SET state='Failed',error=?,failure_stage=NULL,fence=fence+1,lease_until=NULL WHERE session_id=? AND revision<? AND state<>'Complete'",Jobs.supersededRevision,id,next)
           Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile) VALUES(?,?,?,?)",job,id,next,target.profile)
@@ -257,7 +264,8 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
   private def current(c: Connection,claim: Claim): Boolean = {
     OwnerTargets.eligible(c,claim.owner).exists { target =>
       target.profile==claim.profile && target.epoch==claim.targetEpoch && knownProfiles.contains(claim.profile) &&
-        Sql.one(c,"SELECT id FROM ch_sources WHERE id=? AND owner=? AND revision=? AND NOT tombstone FOR UPDATE",claim.sessionId,claim.owner,claim.revision)(_ => true).contains(true)
+        // NO KEY UPDATE: serialized with the revision switch and purge, not with the key-share locks an ingest's projection takes.
+        Sql.one(c,"SELECT id FROM ch_sources WHERE id=? AND owner=? AND revision=? AND NOT tombstone FOR NO KEY UPDATE",claim.sessionId,claim.owner,claim.revision)(_ => true).contains(true)
     }
   }
   private val claimedJob="id=? AND session_id=? AND revision=? AND profile=? AND fence=? AND run_id=? AND state='Running'"
