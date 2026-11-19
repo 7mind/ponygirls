@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
 import { CliError, embeddingFailure, uncertain } from './errors.js';
-import { ArgumentError, flag, integer, makeOperation, option, parseArgs, validateInvocation, type Arguments } from './commands.js';
+import { ArgumentError, flag, searchMode, integer, makeOperation, option, parseArgs, validateInvocation, type Arguments } from './commands.js';
 import { help, helpHint } from './help.js';
 import { bearer, checkSecretDestination, exclusiveSecret, MAX_BYTES, readBounded, readStdin, SessionStore, type Environment } from './files.js';
 import { Presentation, useColor } from './output.js';
@@ -68,15 +68,18 @@ function withoutSecret(value: unknown, args: Arguments): unknown {
   if (isObject(value) && Object.hasOwn(value, 'secret')) { if (typeof value['secret'] !== 'string' || secretOut === null) throw new CliError('protocol-error', 'Invalid issued account secret.'); exclusiveSecret(secretOut, `${value['secret']}\n`); return { token: value['token'], secretSaved: true }; }
   return value;
 }
-export interface RunResult { value: unknown; text: boolean; notice?: string }
+export interface RunResult { value: unknown; text: boolean; mode?: string }
 // Only a defaulted hybrid search falls back (to exactly `--mode lexical`); the retry gets its own --timeout-ms budget. Explicit modes and every other failure propagate.
-export async function run(args: Arguments, env: Environment): Promise<RunResult> {
-  try { return await runOnce(args, env); }
+// The fallback notice is emitted before the retry runs, so it is shown whether the retry succeeds or fails. A search result carries its effective mode.
+export async function run(args: Arguments, env: Environment, notify: (line: string) => Promise<void> = async () => {}): Promise<RunResult> {
+  const isSearch = args.words[0] === 'search' && args.words.length === 2 && !flag(args, 'help');
+  try { const result = await runOnce(args, env); return isSearch ? { ...result, mode: searchMode(args) } : result; }
   catch (error) {
-    const reason = args.words[0] === 'search' && args.words.length === 2 && option(args, 'mode') === null ? embeddingFailure(error) : null;
+    const reason = isSearch && option(args, 'mode') === null ? embeddingFailure(error) : null;
     if (reason === null) throw error;
     const lexical: Arguments = { ...args, options: new Map(args.options).set('mode', ['lexical']) };
-    return { ...await runOnce(lexical, env), notice: `chronicle: hybrid search unavailable (${reason}); showing lexical results\n` };
+    await notify(`chronicle: hybrid search unavailable (${reason}); showing lexical results\n`);
+    return { ...await runOnce(lexical, env), mode: 'lexical' };
   }
 }
 async function runOnce(args: Arguments, env: Environment): Promise<RunResult> {
@@ -159,7 +162,7 @@ async function runOnce(args: Arguments, env: Environment): Promise<RunResult> {
 async function write(stream: NodeJS.WriteStream, text: string): Promise<void> { await new Promise<void>((resolve, reject) => { stream.write(text, error => error === null || error === undefined ? resolve() : reject(error)); }); }
 async function main(): Promise<number> {
   let args: Arguments | null = null;
-  try { args = parseArgs(process.argv.slice(2)); const result = await run(args, process.env); if (result.notice !== undefined) await write(process.stderr, result.notice); const presentation = new Presentation(useColor(args.color, args.json, process.stdout.isTTY === true, process.env)); await write(process.stdout, result.text ? presentation.help(String(result.value)) : presentation.output(result.value, args.json)); return 0; }
+  try { args = parseArgs(process.argv.slice(2)); const result = await run(args, process.env, line => write(process.stderr, line)); const presentation = new Presentation(useColor(args.color, args.json, process.stdout.isTTY === true, process.env)); const modeLine = result.mode === undefined || args.json ? '' : `${presentation.style('muted', `mode: ${result.mode}`)}\n`; await write(process.stdout, modeLine + (result.text ? presentation.help(String(result.value)) : presentation.output(result.value, args.json))); return 0; }
   catch (error) {
     const failure = error instanceof CliError ? error : new CliError('unavailable', 'Operation failed; no credential or remote diagnostic was printed.');
     if (error instanceof ArgumentError) args = error.arguments_;

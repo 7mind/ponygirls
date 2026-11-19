@@ -170,8 +170,11 @@ mode was defaulted and the server fails the query embedding (error code
 `model-transport`, `model-timeout` or `model-http`), the CLI re-runs the query
 once with `--mode lexical` (a fresh `--timeout-ms` budget), writes one line to
 stderr, `chronicle: hybrid search unavailable (REASON); showing lexical
-results`, in human and `--json` modes, and prints the lexical result on stdout
-with its exit status. Any other failure is reported unchanged.
+results`, in human and `--json` modes (also when the lexical retry itself then
+fails; the notice precedes that error), and prints the lexical result on stdout
+with its exit status. Any other failure is reported unchanged. Human output of a
+search starts with `mode: EFFECTIVE_MODE`; `--json` stdout is exactly the server
+result, with stderr silent unless a fallback happened.
 
 ### Mutations, secrets and uncertainty
 

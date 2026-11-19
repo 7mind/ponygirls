@@ -102,17 +102,24 @@ test('literal option-like search text survives -- without rewriting or dropping 
 });
 // Specified: a defaulted hybrid search falls back visibly to lexical when the embedding provider fails (model-transport/-timeout/-http); explicit modes never do.
 test('defaulted hybrid search retries lexically with one stderr notice; explicit and unrelated failures are not substituted', async () => {
-  const seen: string[] = []; let hybridFailure = 'model-transport';
+  const seen: string[] = []; let hybridFailure: string | null = 'model-transport'; let lexicalFailure: string | null = null;
   const page = { Search: { result: { hits: [], total: 0, countScope: 'ExactMatches', rankingLimit: null } } };
-  const f = await fixture((_q, r) => reply(r, 404, {}, {}), ws((socket, id, op) => { const mode = (op['Search'] as { query: { mode: string } }).query.mode; seen.push(mode); send(socket, id, mode === 'Lexical' ? page : { Error: { failure: { code: hybridFailure, message: 'secret\u001b remote private body' } } }); }));
+  const f = await fixture((_q, r) => reply(r, 404, {}, {}), ws((socket, id, op) => { const mode = (op['Search'] as { query: { mode: string } }).query.mode; seen.push(mode); const failure = mode === 'Lexical' ? lexicalFailure : hybridFailure; send(socket, id, failure === null ? page : { Error: { failure: { code: failure, message: 'secret\u001b remote private body' } } }); }));
   try {
     state(f);
     for (const json of [false, true]) {
       seen.length = 0; const result = await cli(['search', 'x', ...(json ? ['--json'] : [])], f, {}, null);
       assert.equal(result.code, 0, result.stderr); assert.deepEqual(seen, ['Hybrid', 'Lexical']);
       assert.equal(result.stderr, 'chronicle: hybrid search unavailable (embedding service unreachable [model-transport]); showing lexical results\n');
-      if (json) assert.deepEqual(JSON.parse(result.stdout), page); else assert.ok(!result.stdout.includes('model-transport'));
+      if (json) assert.deepEqual(JSON.parse(result.stdout), page); else { assert.ok(result.stdout.startsWith('mode: lexical\n')); assert.ok(!result.stdout.includes('model-transport')); }
     }
+    seen.length = 0; lexicalFailure = 'forbidden'; const both = await cli(['search', 'x'], f, {}, null);
+    assert.equal(both.code, 3); assert.deepEqual(seen, ['Hybrid', 'Lexical']); assert.equal(both.stdout, '');
+    assert.match(both.stderr, /^chronicle: hybrid search unavailable \(embedding service unreachable \[model-transport\]\); showing lexical results\n.*forbidden/s);
+    lexicalFailure = null; hybridFailure = null;
+    seen.length = 0; const ok = await cli(['search', 'x'], f, {}, null);
+    assert.equal(ok.code, 0, ok.stderr); assert.deepEqual(seen, ['Hybrid']); assert.ok(ok.stdout.startsWith('mode: hybrid\n')); assert.equal(ok.stderr, '');
+    const okJson = await cli(['search', 'x', '--json'], f, {}, null); assert.deepEqual(JSON.parse(okJson.stdout), page); assert.equal(okJson.stderr, ''); hybridFailure = 'model-transport';
     for (const args of [['search', 'x', '--mode', 'hybrid'], ['search', 'x', '--mode', 'semantic']]) {
       seen.length = 0; const result = await cli(args, f, {}, null);
       assert.equal(result.code, 6); assert.deepEqual(seen, [args[3]![0]!.toUpperCase() + args[3]!.slice(1)]); assert.equal(result.stdout, ''); assert.ok(!result.stderr.includes('lexical results'));
