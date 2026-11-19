@@ -21,13 +21,15 @@ final class Mcp(service:ItemService,retrieval:HaystackRetrieval) {
   private val string=obj("type"->str("string"))
   private val flag=obj("type"->str("boolean"))
   private def integer(min:Int,max:Int):Json=obj("type"->str("integer"),"minimum"->Json.fromInt(min),"maximum"->Json.fromInt(max))
+  private val retrieveArguments=List("query"->obj("type"->str("string"),"minLength"->Json.fromInt(1)),"mode"->obj("type"->str("string"),"enum"->Json.arr(Mcp.Modes.keys.toList.map(str)*)),
+    "project"->string,"include_archived"->flag,"limit"->integer(1,Mcp.MaxRetrieveLimit),"offset"->integer(0,Int.MaxValue))
   private def tool(name:String,description:String,input:Json,readOnly:Boolean):Json=obj("name"->str(name),"description"->str(description),"inputSchema"->input,"annotations"->obj("readOnlyHint"->bool(readOnly),"idempotentHint"->bool(true),"destructiveHint"->bool(false),"openWorldHint"->bool(false)))
   val tools:Json=Json.arr(
     tool("get","Read current or an exact revision, including archived documents.",schema("key"->string,"revision"->integer(1,Int.MaxValue))("key"),true),
     tool("put","Whole-document CAS. Retain request_id after uncertain outcome. document_json is a JSON string, request_id a UUIDv7.",schema("key"->string,"document_json"->string,"expected_revision"->integer(0,Int.MaxValue),"request_id"->obj("type"->str("string"),"pattern"->str("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")))("key","document_json","expected_revision","request_id"),false),
     tool("search","Boolean text, exact metadata, tags, links, RFC6901 fields. Bounded summaries, archived hidden by default.",schema("query"->string,"project"->string,"limit"->integer(1,100),"cursor"->string)("query"),true),
     tool("retrieve","Ranked retrieval over item title, description and tags (fields are not embedded); search remains the exact Boolean browse. mode lexical|semantic|hybrid; without mode hybrid when offered, else lexical with a notice. project is an exact project, include_archived defaults to false. One line per hit: key, revision, field, pointer, score, snippet.",
-      schema("query"->obj("type"->str("string"),"minLength"->Json.fromInt(1)),"mode"->obj("type"->str("string"),"enum"->Json.arr(Mcp.Modes.keys.toList.map(str)*)),"project"->string,"include_archived"->flag,"limit"->integer(1,Mcp.MaxRetrieveLimit),"offset"->integer(0,Int.MaxValue))("query"),true)
+      schema(retrieveArguments*)("query"),true)
   )
   def handle(principal:Principal,request:Json):IO[Option[Json]]=IO.defer {
     val cursor=request.hcursor;val id=cursor.downField("id").focus.getOrElse(Json.Null)
@@ -85,9 +87,11 @@ final class Mcp(service:ItemService,retrieval:HaystackRetrieval) {
         if(limit<1||limit>100) throw Fault("bad-envelope","invalid limit")
         service.search(SearchInput(text("query"),optionalText("project"),limit.toInt,optionalText("cursor"))).map { page=>
           val summaries=page.items.map(Wire.summary)
-          content(summaries.map(s=>s"${s.key} r${s.revision} [${s.docType}/${s.status}] ${s.title.take(120)}").mkString("\n").take(Mcp.MaxText),Wire.encode(haystack.api.SearchResult.codecJson,haystack.api.SearchResult(summaries.toList,page.cursor)))
+          content(summaries.map(s=>s"${s.key} r${s.revision} [${s.docType}/${s.status}] ${s.title.take(120)}").mkString("\n").take(8000),Wire.encode(haystack.api.SearchResult.codecJson,haystack.api.SearchResult(summaries.toList,page.cursor)))
         }
       case "retrieve"=>
+        // A misspelled key would otherwise silently widen the query.
+        if(!args.asObject.exists(_.keys.forall(retrieveArguments.map(_._1).contains))) throw Fault("bad-envelope","invalid tool arguments")
         val query=text("query")
         if(query.isEmpty) throw Fault("bad-envelope","invalid query")
         val requested=optionalText("mode").map(name=>Mcp.Modes.getOrElse(name,throw Fault("bad-envelope","invalid mode")))
@@ -110,7 +114,8 @@ final class Mcp(service:ItemService,retrieval:HaystackRetrieval) {
           val lines=List(s"mode: ${Mcp.name(mode)}"+(if(requested.isEmpty)" (default)" else ""))++notice.map("notice: "+_)++
             Option.when(found.pending>0)(Mcp.pendingNote(found.pending))++List(s"${result.countScope}: ${result.total}; ${result.sources.size} shown from offset $offset")++
             result.sources.map(s=>s"${s.key} r${s.revision} ${s.field} ${s.pointer} score ${s.score} ${s.text.replaceAll("\\s+"," ").take(Mcp.SnippetChars)}")
-          content(lines.mkString("\n").take(Mcp.MaxText),Wire.encode(haystack.api.RetrieveResult.codecJson,result).deepMerge(obj(
+          // Every hit keeps its line: the page is bounded by limit and the snippets, never cut mid-page.
+          content(lines.mkString("\n"),Wire.encode(haystack.api.RetrieveResult.codecJson,result).deepMerge(obj(
             "requested_mode"->requested.fold(Json.Null)(mode=>str(Mcp.name(mode))),"effective_mode"->str(Mcp.name(mode)),"notice"->notice.fold(Json.Null)(str))))
         }
     }
@@ -124,7 +129,6 @@ object Mcp {
   val DefaultRetrieveLimit=10
   val MaxRetrieveLimit=50
   val SnippetChars=200
-  val MaxText=8000
   def lexicalNotice(reason:String):String=s"Hybrid search is not available on this server: $reason; showing lexical results"
   def pendingNote(pending:Long):String=s"$pending items are not yet indexed for semantic search; results may be incomplete"
 }

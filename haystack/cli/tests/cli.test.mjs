@@ -53,7 +53,7 @@ before(async()=>{
  if(mode==='slow-pages'&&req.url==='/api/v1/search'){if(!body.cursor&&swapTokenFile!==undefined)await writeFile(swapTokenFile,secret+'\n',{mode:0o600});res.on('close',()=>slowPages.push({cursor:body.cursor,finished:res.writableEnded}));setTimeout(()=>send({items:[],cursor:body.cursor?null:'slow-cursor'}),400);return;}
  if(req.url==='/api/v1/search')return send({items:[...items.values()].map(v=>({key:v.key,project:'p',item:'i',revision:v.revision,title:'horse\u001b[31m',docType:'fact',status:'actual',importance:'low',humanAttention:'cleared',tags:[],modifiedAt:metadata.modifiedAt,modifiedBy:'bot'})),cursor:body.cursor?null:'opaque-cursor'});
  if(req.url==='/api/v1/capabilities'&&req.method==='GET')return send({modes:retrievalModes});
- if(req.url==='/api/v1/retrieve'){if(refusedModes.has(body.mode))return send({code:'unavailable',message:refusedModes.get(body.mode),spans:[],currentRevision:null},503);return send(`{"sources":[],"mode":"${body.mode}","countScope":"ExactMatches","total":9223372036854775807,"rankingLimit":null,"pending":"${retrievalPending}"}`);}
+ if(req.url==='/api/v1/retrieve'){if(refusedModes.has(body.mode)){const [code,status,message]=refusedModes.get(body.mode);return send({code,message,spans:[],currentRevision:null},status);}return send(`{"sources":[],"mode":"${body.mode}","countScope":"ExactMatches","total":9223372036854775807,"rankingLimit":null,"pending":"${retrievalPending}"}`);}
  if(req.url==='/api/v1/query/analyze'){if(mode==='error-spans')return send({code:'invalid-query',message:'CANARY-UNTRUSTED',currentRevision:null,spans:[{start:2,end:5,message:'CANARY-UNTRUSTED'}]},400);return send({valid:true,spans:[]});}
  if(req.url==='/api/v1/complete')return send({suggestions:mode==='empty-completions'?[]:['type:fact']});
  if(req.url==='/api/v1/values')return send({values:mode==='empty-values'?[]:['fact']});
@@ -118,9 +118,14 @@ test('retrieve without --mode is hybrid when offered, otherwise lexical with a n
   assert.equal(hybrid.result.stderr,'Notice: 3 items are not yet indexed for semantic search; results may be incomplete\n');
   retrievalPending='0';retrievalModes=['Lexical'];const lexical=await calls([]);
   assert.deepEqual(lexical.requests,['GET /api/v1/capabilities','Lexical']);assert.equal(ok(lexical.result).result.mode,'Lexical');assert.equal(lexical.result.stderr,lexicalNotice(notConfigured));
-  retrievalModes=allModes;refusedModes.set('Hybrid',embeddingFailed);const retried=await calls([]);
+  retrievalModes=allModes;refusedModes.set('Hybrid',['unavailable',503,embeddingFailed]);const retried=await calls([]);
   assert.deepEqual(retried.requests,['GET /api/v1/capabilities','Hybrid','Lexical']);assert.equal(ok(retried.result).result.mode,'Lexical');assert.equal(retried.result.stderr,lexicalNotice(embeddingFailed));
-  refusedModes.set('Semantic',notConfigured);const explicit=await calls(['--mode','semantic']);
+  // The downgrade stays visible when the lexical re-run fails too; the lexical failure keeps its own exit status.
+  refusedModes.set('Lexical',['invalid-query',400,'CANARY-SECRET-PASSWORD']);const failedRetry=await calls([]);refusedModes.delete('Lexical');
+  assert.deepEqual(failedRetry.requests,['GET /api/v1/capabilities','Hybrid','Lexical']);assert.deepEqual([failedRetry.result.code,failedRetry.result.stdout],[2,'']);
+  const [notice,failure,...rest]=failedRetry.result.stderr.split('\n');assert.deepEqual([notice+'\n',rest],[lexicalNotice(embeddingFailed),['']]);
+  assert.deepEqual([JSON.parse(failure).error.code,JSON.parse(failure).error.reason],['invalid-query',undefined]);assert.ok(!failedRetry.result.stderr.includes('CANARY'));
+  refusedModes.set('Semantic',['unavailable',503,notConfigured]);const explicit=await calls(['--mode','semantic']);
   assert.deepEqual(explicit.requests,['Semantic']);fault(explicit.result,6,'unavailable');const error=JSON.parse(explicit.result.stderr).error;assert.deepEqual([error.message,error.reason,error.status],[notConfigured,'not-configured',503]);
  }finally{retrievalModes=allModes;retrievalPending='0';refusedModes.clear();}
 });

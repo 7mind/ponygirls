@@ -1,6 +1,7 @@
 package haystack.http
 
 import cats.effect.{IO,Resource}
+import cats.syntax.all.*
 import haystack.api
 import haystack.application.ItemService
 import haystack.auth.{AccountService,Auth}
@@ -16,8 +17,9 @@ import ponygirls.retrieval.postgres.PostgresRetrieval
 import scala.jdk.CollectionConverters.*
 
 /** Blackbox-GoodCommunication: the capability read, `/api/v1/retrieve` and the MCP `retrieve` tool through the production
-  * routes of three servers over one database holding one unpublished item: lexical-only, configured, and configured with a
-  * failing query embedding. Controlled embedding clients; no model or network. */
+  * routes of three servers over one database holding one unpublished item in project `p` (and long-titled items in another
+  * project): lexical-only, configured, and configured with a failing query embedding. Controlled embedding clients; no model
+  * or network. */
 class RetrievalSurfaceTest extends ContractSuite {
   import haystack.auth.AuthFixtures.*
   private val space=EmbeddingSpace("synthetic-fixture","v1",3,false,"","","cosine")
@@ -32,6 +34,9 @@ class RetrievalSurfaceTest extends ContractSuite {
   private val EmbeddingFailed="query embedding failed"
   private def lexicalNotice(reason:String)=s"Hybrid search is not available on this server: $reason; showing lexical results"
   private val PendingLine="1 items are not yet indexed for semantic search; results may be incomplete"
+  private val LongProject="long"
+  private val LongItems=40
+  private val LongTitle="harbour "+"long title words "*20
 
   private final case class Servers(lexical:Http,configured:Http,failing:Http)
   private def temporary:Resource[IO,Path]=Resource.make(IO.blocking(Files.createTempDirectory("haystack-retrieval-surface-"))) { dir=>IO.blocking {
@@ -53,6 +58,7 @@ class RetrievalSurfaceTest extends ContractSuite {
       _<-repository.initializeProjection()
       // Committed and queued, never published: no worker runs in this suite.
       _<-repository.commit(TestSupport.op("p:a",document=TestSupport.doc("harbour notes")),TestSupport.Bot,TestSupport.Now)
+      _<-(1 to LongItems).toList.traverse_(i=>repository.commit(TestSupport.op(f"$LongProject:i$i%02d",document=TestSupport.doc(LongTitle)),TestSupport.Bot,TestSupport.Now))
       service=new ItemService(repository,(_,_)=>IO.unit)
       http=(retrieval:HaystackRetrieval)=>new Http(()=>auth,service,hub,None,retrieval,accounts)
     } yield Servers(http(lexical),http(configured),http(failing)))
@@ -100,7 +106,8 @@ class RetrievalSurfaceTest extends ContractSuite {
     def keys:List[String]=structured.hcursor.downField("sources").as[List[Json]].fold(throw _,identity).flatMap(_.hcursor.get[String]("key").toOption)
   }
   private def retrieveTool(http:Http,arguments:(String,Json)*):Tool={
-    val result=mcp(http,"tools/call",Json.obj("name"->Json.fromString("retrieve"),"arguments"->Json.obj(("query"->Json.fromString("harbour"))+:("project"->Json.fromString("p"))+:arguments*)))
+    val defaults=Map("query"->Json.fromString("harbour"),"project"->Json.fromString("p"))
+    val result=mcp(http,"tools/call",Json.obj("name"->Json.fromString("retrieve"),"arguments"->Json.fromFields((defaults++arguments).toList)))
     val text=result.hcursor.downField("content").downArray.get[String]("text").fold(throw _,identity)
     Tool(result.hcursor.get[Boolean]("isError").getOrElse(false),text,result.hcursor.downField("structuredContent").focus.getOrElse(Json.Null))
   }
@@ -147,5 +154,18 @@ class RetrievalSurfaceTest extends ContractSuite {
       assertEquals(refused.text,"error unavailable: "+reason)
     }
     assertEquals(retrieveTool(surface().lexical,"mode"->Json.fromString("lexical")).field("notice"),Json.Null)
+  }
+
+  test("MCP: retrieve keeps every hit line when its text exceeds 8000 characters") {
+    val page=retrieveTool(surface().lexical,"project"->Json.fromString(LongProject),"mode"->Json.fromString("lexical"),"limit"->Json.fromInt(50))
+    val hits=page.text.linesIterator.filter(_.startsWith(LongProject+":")).toList
+    assert(!page.error && page.text.length>8000,page.text.length)
+    assertEquals((page.keys.size,hits.map(_.takeWhile(_!=' ')),page.text.linesIterator.contains(s"ExactMatches: $LongItems; $LongItems shown from offset 0")),(LongItems,page.keys,true))
+    assert(hits.forall(line=>line.endsWith(LongTitle.trim.take(200))),hits.head)
+  }
+
+  test("MCP: retrieve refuses arguments outside its declared schema instead of ignoring them") {
+    val misspelled=retrieveTool(surface().lexical,"projectt"->Json.fromString(LongProject))
+    assertEquals((misspelled.error,misspelled.field("code")),(true,Json.fromString("bad-envelope")))
   }
 }

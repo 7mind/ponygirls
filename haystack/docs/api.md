@@ -95,9 +95,12 @@ publications of the active profile; `RetrieveResult.pending` (i64, a JSON decima
 string like `total`) counts the sources inside the query's
 authorization/project/archived/expiry scope whose current revision has no
 publication under the active profile: never published, published for an older
-revision, or published under another profile/policy/embedding space. They are
-not ranked until the worker publishes them. Lexical reads current revisions and
-always reports `"0"`.
+revision, or published under another profile/policy/embedding space. A pending
+source with an older revision published under the active profile is still
+ranked through that publication (its hits carry the older revision) until the
+current revision's publication replaces it; a source never published, or
+published only under another profile, is not ranked until the worker publishes
+it. Lexical reads current revisions and always reports `"0"`.
 
 `GET /api/v1/capabilities` is an authenticated read like `whoami` (401
 `unauthorized` without credentials) returning `RetrievalCapabilities(modes)`:
@@ -190,7 +193,10 @@ MCP tool arguments retain their externally declared schemas:
   `mode: <effective>[ (default)]`, the `notice: …` line if any, the pending line
   when `pending > 0`, `<countScope>: <total>; <n> shown from offset <offset>`, then
   one line per hit `<key> r<revision> <field> <pointer> score <score> <snippet>`
-  (snippet: whitespace collapsed, at most 200 characters; whole text at most 8000).
+  (snippet: whitespace collapsed, at most 200 characters). Every hit keeps its
+  line: the text is bounded by `limit` ≤ 50 and the snippets, never cut by an
+  aggregate length limit. Argument keys outside the declared schema are refused
+  with `bad-envelope` (a misspelled key never widens the query).
 
   ```text
   mode: hybrid (default)

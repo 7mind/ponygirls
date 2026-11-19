@@ -31,7 +31,7 @@ async function run(args:Arguments,env:NodeJS.ProcessEnv,presentation:Presentatio
   if(args.flags.has('help')||args.words.length===0||args.words[0]==='help'){const text=help(args);await output(process.stdout,args.json?exact({ok:true,command:'help',result:{text}},false)+'\n':presentation.help(text));return;}
   const command=validate(args);const session=['login','logout','status','account','token','watch'].includes(command);
   const config=settings(args,env,session,command==='health'||command==='versions'||command==='pending');const state=new State(stateDirectory(env,text(args,'state-dir')),config.origin);const client=new Client(config,state);
-  const word=args.words[1];let result:unknown;let operationId:string|undefined;let notices:readonly string[]=[];
+  const word=args.words[1];let result:unknown;let operationId:string|undefined;
   if(command==='watch'){
     const duration=number(args,'duration-ms',60_000,1,86_400_000);const max=number(args,'max-events',1000,1,1_000_000);const destination=new LiveOutput(process.stdout);
     const emit=async(frame:unknown,signal:AbortSignal)=>destination.write(args.json?exact({ok:true,command:'watch',event:frame},false)+'\n':humanWatch(frame,presentation),signal);
@@ -47,7 +47,8 @@ async function run(args:Arguments,env:NodeJS.ProcessEnv,presentation:Presentatio
   else if(command==='retrieve'){
     const raw=text(args,'mode');const explicit=raw===undefined?undefined:raw==='lexical'?api.RetrievalMode.Lexical:raw==='semantic'?api.RetrievalMode.Semantic:raw==='hybrid'?api.RetrievalMode.Hybrid:usage('mode must be lexical, semantic or hybrid');
     const project=text(args,'project');const includeArchived=args.flags.has('include-archived');const offset=number(args,'offset',0,0,2147483647);const limit=number(args,'limit',20,1,100);
-    const retrieved=await retrieve(client,explicit,mode=>encode(api.RetrieveRequest.jsonCodec(),new api.RetrieveRequest(word!,mode,project,includeArchived,offset,limit)));result=retrieved.result;notices=retrieved.notices;
+    const notify=(notice:string)=>output(process.stderr,'Notice: '+safe(notice)+'\n');
+    result=await retrieve(client,explicit,mode=>encode(api.RetrieveRequest.jsonCodec(),new api.RetrieveRequest(word!,mode,project,includeArchived,offset,limit)),notify);
   } else if(command==='search'){
     const query=word??'';const limit=number(args,'limit',20,1,100);const sort=new api.SearchSort(text(args,'sort')??'modified-at',text(args,'direction')??'desc');let cursor=text(args,'cursor');
     const seen=new Set<string>();const items:unknown[]=[];const deadline=performance.now()+config.timeout;let pages=0;let totalBytes=0;
@@ -105,7 +106,6 @@ async function run(args:Arguments,env:NodeJS.ProcessEnv,presentation:Presentatio
     else if(word==='issue'&&args.words.length===2){const name=required(args,'name');const file=required(args,'secret-file');if(name.length===0||name.length>128||name!==name.trim()||/[\p{Cc}]/u.test(name))usage('token name must be 1..128 characters without surrounding whitespace or control characters');result=await state.locked(()=>accounts.issue(client,name,file));}
     else usage('use token list, issue, revoke ID or acknowledge');
   } else usage('unimplemented command');
-  for(const notice of notices)await output(process.stderr,'Notice: '+safe(notice)+'\n');
   await output(process.stdout,args.json?exact({ok:true,command,...(operationId===undefined?{}:{requestId:operationId}),result},false)+'\n':human({command,arguments:args.words.slice(1),requestId:operationId},result,presentation));
 }
 async function main(argv:string[],env:NodeJS.ProcessEnv):Promise<void> {

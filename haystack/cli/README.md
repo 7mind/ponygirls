@@ -119,7 +119,11 @@ unavailable explicit mode fails with exit6, code `unavailable`, the server's
 fixed reason as `message` and `reason` `not-configured`|`embedding-failed`; no
 other server message text is ever shown. `pending > 0` adds the stderr note
 `Notice: N items are not yet indexed for semantic search; results may be incomplete`.
-Notices go to stderr only after a successful answer; stdout stays the result.
+Notices go to stderr when they are known: a downgrade notice before the lexical
+request, the pending note after the answer; stdout stays the result. If the
+lexical re-run fails too, stderr holds the notice line followed by the usual
+error output (one JSON line with `--json`), and the exit status is the lexical
+failure's.
 `call retrieve` sends exactly the given mode. This CLI requires the current
 server: an older server without `pending` or the capability read is rejected.
 
