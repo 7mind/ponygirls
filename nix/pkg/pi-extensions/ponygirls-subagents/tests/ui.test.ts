@@ -628,6 +628,44 @@ test("narrowing drops TOKENS, then MODEL, then KIND, names them, and never drops
   }
 });
 
+test("a long path trades spare width for metadata before dropping columns on resize", () => {
+  const parent = view({
+    id: "resize-parent", path: "/root/terminal-layout-review", profile: "writer", isolation: "worktree",
+    model: "anthropic/claude-opus-4-20250514", thinkingLevel: "high", usage: usage(12340, 820),
+  });
+  const child = view({
+    ...parent, id: "resize-child", parentId: parent.id, depth: 2,
+    path: `${parent.path}/背景作業/terminal-layout-checks`,
+    observed: "awaiting_parent", pendingIntent: "awaiting parent reply",
+  });
+  const { ui, actions } = inspector([parent, child]);
+  ui.handleInput(DOWN);
+  for (const width of [132, 76, 180, 132]) {
+    const rendered = ui.render(width);
+    assert.ok(rendered.every((line) => visibleWidth(line) <= width), `every line fits at ${width}`);
+    const lines = text(rendered);
+    assert.match(lines[3]!, /^▌ /, `the child stays selected at ${width}`);
+    assert.ok(lines[3]!.includes("? awaiting parent reply"), lines[3]);
+    if (width === 76) {
+      assert.deepEqual(lines[1]!.trim().split(/ {2,}/), ["AGENT", "KIND", "STATE"]);
+      assert.ok(lines.includes("  hidden at this width: MODEL, TOKENS"));
+    } else {
+      assert.deepEqual(lines[1]!.trim().split(/ {2,}/), ["AGENT", "KIND", "STATE", "MODEL", "TOKENS"]);
+      assert.ok(lines[3]!.endsWith("anthropic/claude-opus-4-20250514:high  12.3k in · 820 out"), lines[3]);
+      assert.ok(!lines.some((line) => line.includes("hidden at this width")));
+    }
+    if (width === 180) {
+      assert.ok(lines[3]!.startsWith(`▌   ${child.path}  `), lines[3]);
+    } else {
+      assert.match(lines[3]!, /^▌ +\/root\/\S*…\S*checks {2}/);
+      const detail = lines.slice(4).join("").replace(/ /g, "");
+      assert.ok(detail.includes(`path${child.path}`), `the detail keeps the whole path at ${width}`);
+    }
+  }
+  ui.handleInput(ENTER);
+  assert.deepEqual(actions, [{ kind: "transcript", agentId: child.id }]);
+});
+
 test("an over-long agent path is shortened in the middle and spelled out in the details", () => {
   const long = crowd[1]!.path;
   for (const width of WIDTHS) {
