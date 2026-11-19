@@ -19,6 +19,7 @@ const PAGE = 20;
 const TOTAL = 45;
 const DESKTOP = { width: 1440, height: 900 };
 const SMALL = { width: 1024, height: 700 };
+const PHONE = { width: 390, height: 844 };
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 await prerequisites("main");
@@ -724,7 +725,7 @@ try {
     await done();
   });
 
-  await check("browse: Search with the applied query searches it again, also at the address without a fragment, and says when nothing changed; a sort back to it before the previous sort is shown is applied", async () => {
+  await check("browse: Search with the applied query searches it again, also at the address without a fragment, and says when nothing changed, also at 390 px; a sort back to it before the previous sort is shown is applied", async () => {
     // The address the dashboard is opened at, and stays at after sign-in, has no fragment; it shows Browse.
     const { page, done } = await open({ hash: "", holdRoutes: true });
     await waitRows(page, PAGE);
@@ -738,9 +739,22 @@ try {
     await waitRows(page, PAGE);
     const searches = await page.evaluate(() => window.listSearches.length);
     await searchButton(page).click();
-    await counter(page).getByText(`No changes · ${PAGE} loaded · more available`, { exact: true }).waitFor();
+    const confirmation = list(page).getByRole("status").filter({ hasText: "No changes" });
+    await confirmation.waitFor();
     assert.equal(await page.evaluate(() => window.listSearches.length), searches + 1, "the unchanged list was searched again");
     assert.equal((await titles(page))[0], title);
+    await confirmation.getByRole("button", { name: "Dismiss", exact: true }).click();
+    await confirmation.waitFor({ state: "detached" });
+    // Phones hide the counter: the confirmation is visible there too, inside the viewport, and the toolbar fits.
+    await page.setViewportSize(PHONE);
+    await searchButton(page).click();
+    await confirmation.waitFor();
+    for (const part of [confirmation.getByText("No changes", { exact: true }), confirmation.getByRole("button", { name: "Dismiss", exact: true })]) {
+      const box = await part.boundingBox();
+      assert.ok(box.x >= 0 && box.x + box.width <= PHONE.width && box.y + box.height <= PHONE.height, `${await part.textContent()} is inside the 390 px viewport`);
+    }
+    assert.equal(await list(page).getByRole("search", { name: "Search records" }).evaluate((bar) => bar.scrollWidth <= bar.clientWidth), true, "the toolbar does not overflow");
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "no horizontal document overflow");
     // A sort back to the route shown before the previous sort's route is shown (a busy page delivers it late).
     await page.evaluate(() => window.holdRoutes());
     await list(page).getByRole("button", { name: "Sort by Record", exact: true }).click();

@@ -206,7 +206,7 @@ export function Browse({ initial, preset, userId, activityProjectId, onOpen, onA
   // The syntax dialog is rendered only while open: a closed one would still be found by its label ("Query syntax").
   const [syntaxOpen, setSyntaxOpen] = useState(false);
   const [changed, setChanged] = useState(false);
-  // The last Search of the route shown answered its first page exactly as the reader saw it.
+  // The last Search of the route shown answered its first page exactly as the reader saw it (a toast says so).
   const [unchanged, setUnchanged] = useState(false);
   // A submitted query the server's analyzer rejected: it is not applied, the list keeps the applied query's rows.
   const [rejected, setRejected] = useState<{ query: string; diagnostics: Diagnostic[] } | null>(null);
@@ -482,13 +482,12 @@ export function Browse({ initial, preset, userId, activityProjectId, onOpen, onA
   const loadingFirst = busy && items.length === 0 && failure === null;
   const empty = !busy && failure === null && items.length === 0;
   const inboxEmpty = empty && preset === "inbox" && appliedQuery === PRESETS.inbox.query;
-  const listed = empty ? inboxEmpty ? "Nothing to review" : "No matches"
-    : cursor === undefined ? `All ${records(items.length)} loaded` : `${items.length} loaded · more available`;
   const counter = rejected !== null ? `Query not applied · ${items.length} loaded`
     : migration || (firstFailure !== null && diagnostics.length === 0) ? "Not loaded"
     : firstFailure !== null ? "Query not applied"
     : loadingFirst ? "Loading records…"
-    : unchanged ? `No changes · ${listed}` : listed;
+    : empty ? inboxEmpty ? "Nothing to review" : "No matches"
+    : cursor === undefined ? `All ${records(items.length)} loaded` : `${items.length} loaded · more available`;
   const includeArchived = appendFilter(appliedQuery, "archived", "all");
 
   return (<section ref={section} className="browse" aria-labelledby={headingId} aria-busy={busy}>
@@ -540,6 +539,11 @@ export function Browse({ initial, preset, userId, activityProjectId, onOpen, onA
       </div></div>
     </div>}
     {changed && <div className="update-pill" role="status"><button type="button" onClick={() => void refresh()}><UiIcon name="arrow-up" />Records changed · Show</button></div>}
+    {/* Success is a toast (spec §1.8), as on the record page: the counter is not shown on phones. */}
+    <div className="toasts" role="status" aria-live="polite">
+      {unchanged && <div className="toast"><UiIcon name="check" /><span>No changes</span>
+        <button type="button" className="btn btn-sm btn-icon" aria-label="Dismiss" onClick={() => setUnchanged(false)}><UiIcon name="x" /></button></div>}
+    </div>
     <div className="records" role="region" aria-label="Record results">
       {(items.length > 0 || loadingFirst) && <table ref={table} className="table table-2line" aria-label="Records">
         <colgroup>{COLUMNS.map((column) => <col key={column.label} className={`${column.col} ${column.hide}`} />)}</colgroup>
