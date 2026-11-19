@@ -6,6 +6,7 @@ import { commandSpec, usage, type CommandSpec } from './help.js';
 import type { ColorMode } from './output.js';
 const SWITCHES = new Set(['json', 'help', 'yes', 'allow-insecure-http', 'password-stdin', 'confirm-sharing', 'ascending', 'no-relevance']);
 const VALUES = new Set(['color', 'url', 'timeout-ms', 'token-file', 'auth', 'request-id', 'secret-out', 'file', 'login', 'password-file', 'mode', 'project', 'branch', 'after', 'before', 'tag', 'limit', 'offset', 'revision', 'generation', 'cursor', 'sort', 'scope', 'collector', 'message', 'start', 'end', 'before-bytes', 'after-bytes', 'target-profile', 'selection-hash', 'name', 'scopes']);
+const DEFAULT_SEARCH_MODE = 'hybrid';
 export interface Arguments { readonly words: string[]; readonly options: ReadonlyMap<string, readonly string[]>; readonly json: boolean; readonly color: ColorMode }
 export class ArgumentError extends CliError { constructor(message: string, readonly arguments_: Arguments) { super('usage', message); } }
 export function parseArgs(argv: readonly string[]): Arguments {
@@ -65,7 +66,7 @@ export function makeOperation(args: Arguments): Operation {
   const filter: JsonObject = { project: option(args, 'project'), gitBranch: option(args, 'branch'), after: option(args, 'after'), before: option(args, 'before'), tags: [...(args.options.get('tag') ?? [])] };
   function op(name: string, body: JsonObject): Operation { return decodeOperation({ [name]: body }); }
   if (command === 'whoami') { allow(args, [], 1); return op('Whoami', {}); }
-  if (command === 'search') { allow(args, ['mode', ...FILTER, ...PAGE], 2); const mode = option(args, 'mode') ?? 'lexical'; const modes: Record<string, string> = { lexical: 'Lexical', semantic: 'Semantic', hybrid: 'Hybrid' }; if (!Object.hasOwn(modes, mode)) throw new CliError('usage', '--mode is lexical, semantic or hybrid.'); return op('Search', { query: { query: id!, mode: modes[mode]!, filter, limit, offset } }); }
+  if (command === 'search') { allow(args, ['mode', ...FILTER, ...PAGE], 2); const mode = option(args, 'mode') ?? DEFAULT_SEARCH_MODE; const modes: Record<string, string> = { lexical: 'Lexical', semantic: 'Semantic', hybrid: 'Hybrid' }; if (!Object.hasOwn(modes, mode)) throw new CliError('usage', '--mode is lexical, semantic or hybrid.'); return op('Search', { query: { query: id!, mode: modes[mode]!, filter, limit, offset } }); }
   if (command === 'archive') { allow(args, [...CURSOR, 'sort', 'ascending', 'no-relevance'], id === undefined ? 1 : 2); return op('ArchiveSearch', { query: { expression: id ?? '', sort: option(args, 'sort') ?? 'LastTimestamp', direction: flag(args, 'ascending') ? 'Asc' : 'Desc', cursor, limit, preferRelevance: !flag(args, 'no-relevance') } }); }
   if (command === 'session') { allow(args, VIEW, 2); return op('GetSession', { sessionId: id!, view: view() }); }
   if (command === 'messages' || command === 'chunks') { allow(args, [...VIEW, ...PAGE], 2); return op(command === 'messages' ? 'GetMessages' : 'GetChunks', { sessionId: id!, offset, limit, view: view() }); }

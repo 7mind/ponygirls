@@ -100,6 +100,27 @@ test('literal option-like search text survives -- without rewriting or dropping 
     assert.deepEqual(seen, ['--', '-h', '--help']);
   } finally { await f.close(); }
 });
+// Specified: a defaulted hybrid search falls back visibly to lexical when the embedding provider fails (model-transport/-timeout/-http); explicit modes never do.
+test('defaulted hybrid search retries lexically with one stderr notice; explicit and unrelated failures are not substituted', async () => {
+  const seen: string[] = []; let hybridFailure = 'model-transport';
+  const page = { Search: { result: { hits: [], total: 0, countScope: 'ExactMatches', rankingLimit: null } } };
+  const f = await fixture((_q, r) => reply(r, 404, {}, {}), ws((socket, id, op) => { const mode = (op['Search'] as { query: { mode: string } }).query.mode; seen.push(mode); send(socket, id, mode === 'Lexical' ? page : { Error: { failure: { code: hybridFailure, message: 'secret\u001b remote private body' } } }); }));
+  try {
+    state(f);
+    for (const json of [false, true]) {
+      seen.length = 0; const result = await cli(['search', 'x', ...(json ? ['--json'] : [])], f, {}, null);
+      assert.equal(result.code, 0, result.stderr); assert.deepEqual(seen, ['Hybrid', 'Lexical']);
+      assert.equal(result.stderr, 'chronicle: hybrid search unavailable (embedding service unreachable [model-transport]); showing lexical results\n');
+      if (json) assert.deepEqual(JSON.parse(result.stdout), page); else assert.ok(!result.stdout.includes('model-transport'));
+    }
+    for (const args of [['search', 'x', '--mode', 'hybrid'], ['search', 'x', '--mode', 'semantic']]) {
+      seen.length = 0; const result = await cli(args, f, {}, null);
+      assert.equal(result.code, 6); assert.deepEqual(seen, [args[3]![0]!.toUpperCase() + args[3]!.slice(1)]); assert.equal(result.stdout, ''); assert.ok(!result.stderr.includes('lexical results'));
+    }
+    seen.length = 0; hybridFailure = 'unavailable'; const other = await cli(['search', 'x'], f, {}, null);
+    assert.equal(other.code, 6); assert.deepEqual(seen, ['Hybrid']); assert.equal(other.stdout, ''); assert.ok(!other.stderr.includes('lexical results'));
+  } finally { await f.close(); }
+});
 // Specified: automatic selection uses configured bearer authority only on supported read tools.
 test('configured token file selects bearer for supported commands without a human session or fallback', async () => {
   const token = 'synthetic-token-0123456789-abcdefghijklmnopqrstuvwxyz-ABCDEF'; let calls = 0;

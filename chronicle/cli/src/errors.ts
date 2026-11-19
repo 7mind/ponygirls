@@ -10,7 +10,13 @@ export class CliError extends Error {
     return 6;
   }
 }
-export class RemoteError extends CliError {}
+export class RemoteError extends CliError { constructor(code: ErrorCode, message: string, readonly remoteCode: string | null = null) { super(code, message); } }
+// Server codes for a failed query embedding on a semantic/hybrid search (ModelHttp/Models.scala), with CLI-owned texts: server text is never printed.
+const EMBEDDING_FAILURES: Record<string, string> = { 'model-transport': 'embedding service unreachable', 'model-timeout': 'embedding service timed out', 'model-http': 'embedding service returned an HTTP error' };
+export function embeddingFailure(error: unknown): string | null {
+  if (!(error instanceof RemoteError) || error.remoteCode === null || !Object.hasOwn(EMBEDDING_FAILURES, error.remoteCode)) return null;
+  return `${EMBEDDING_FAILURES[error.remoteCode]} [${error.remoteCode}]`;
+}
 const failures: Record<string, string> = {
   unauthorized: 'Authentication rejected; login again or check the selected bearer credential.',
   forbidden: 'The selected credential is not authorized for this operation.',
@@ -25,8 +31,9 @@ const failures: Record<string, string> = {
   unavailable: 'Service temporarily unavailable; no automatic mutation retry was attempted.',
 };
 export function remoteFailure(code: unknown): CliError {
-  if (typeof code === 'string' && Object.hasOwn(failures, code)) return new RemoteError(code as ErrorCode, failures[code]!);
-  return new RemoteError('unavailable', 'The service returned an unrecognized error.');
+  const remoteCode = typeof code === 'string' ? code : null;
+  if (typeof code === 'string' && Object.hasOwn(failures, code)) return new RemoteError(code as ErrorCode, failures[code]!, remoteCode);
+  return new RemoteError('unavailable', 'The service returned an unrecognized error.', remoteCode);
 }
 export function uncertain(requestId: string | null): CliError {
   return new CliError('uncertain', requestId === null

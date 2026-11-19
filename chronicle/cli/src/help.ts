@@ -26,7 +26,7 @@ const COMMANDS: readonly CommandSpec[] = [
   command('tokens mint', '--name NAME --scopes Read,Raw --secret-out NEW_PATH --yes', 'Issue a token, saving its one-time secret only to a new private file.', ['name', 'scopes'], 2, 2, 'direct', `${SESSION} Distinct Ingest,Read,Raw scopes; Raw requires Read.`, 'chronicle tokens mint --name reader --scopes Read --secret-out /private/new-token --yes'),
   command('tokens revoke', 'TOKEN_UUID --yes', 'Revoke an issued account token.', [], 3, 3, 'direct', SESSION, `chronicle tokens revoke ${ID} --yes`),
   command('whoami', '', 'Show the identity of the selected credential.', [], 1, 1, 'operation', 'Auto uses a configured bearer token, otherwise the independent human session.', 'chronicle whoami'),
-  command('search', "'TEXT'", 'Search indexed sessions; lexical is the default.', ['mode', ...FILTER, ...PAGE], 2, 2, 'operation', 'No semantic fallback. Counts retain ExactMatches/CandidateWindow and ranking limits.', "chronicle search 'deployment failure' --limit 20 --json"),
+  command('search', "'TEXT'", 'Search indexed sessions; hybrid is the default mode.', ['mode', ...FILTER, ...PAGE], 2, 2, 'operation', 'Without --mode, hybrid is sent; if the embedding service fails, one lexical retry runs with a stderr notice. An explicit --mode is never substituted. Counts retain ExactMatches/CandidateWindow and ranking limits.', "chronicle search 'deployment failure' --limit 20 --json"),
   command('archive', "['EXPRESSION']", 'Search archived source evidence using the expression language.', [...CURSOR, 'sort', 'ascending', 'no-relevance'], 1, 2, 'operation', `${SESSION} Page limit 1..10 (default 10). Sorting defaults to LastTimestamp.`, "chronicle archive '' --limit 10"),
   command('session', 'UUID', 'Show full session metadata, source provenance and ContentView.', VIEW, 2, 2, 'operation', PIN, `chronicle session ${ID}`),
   ...['messages', 'chunks'].map(path => command(path, 'UUID', `Read a page of ${path} without truncating source text.`, [...VIEW, ...PAGE], 2, 2, 'operation', PIN, `chronicle ${path} ${ID} --revision 3 --offset 20`)),
@@ -77,7 +77,7 @@ export function help(words: readonly string[], exact: boolean): string {
   const options = spec.options.length === 0 ? '' : `\nOptions: ${spec.options.map(key => `--${key}`).join(', ')}\n`;
   const nested = spec.kind === 'group' || spec.path === 'groups' ? `\n${COMMANDS.filter(child => child.path.startsWith(`${spec.path} `)).map(child => `  ${child.usage}`).join('\n')}\n` : '';
   const paging = spec.options.includes('offset') ? '\n--offset N >= 0; --limit 1..100 (default 20). Pages are explicit.\n' : '';
-  const modes = spec.path === 'search' ? '\n--mode lexical|semantic|hybrid (default lexical). Repeat --tag for filters.\n' : '';
+  const modes = spec.path === 'search' ? '\n--mode lexical|semantic|hybrid (default hybrid). Repeat --tag for filters.\n' : '';
   return `${usage(words)}\n${spec.description}\n${options}${nested}${paging}${modes}\n${spec.notes}\n\nExamples:\n  ${spec.example}\n\nGlobal: --url ORIGIN, --auth auto|session|bearer, --timeout-ms N,\n        --color auto|always|never, --json, --help. See chronicle --help.\n`;
 }
 export function helpHint(words: readonly string[]): string { const spec = commandSpec(words); return spec === null ? 'Run chronicle --help for commands.' : `Run chronicle ${spec.path} --help for options and examples.`; }

@@ -61,6 +61,11 @@ test('current MCP run read event pages permit all 256 events, and tag cursor pre
   decodeOperation({ ReadMcpTest: { instanceId: ID, runId: ID, afterSequence: '0', limit: 256 } });
   assert.equal(parseArgs(['tags', '', '--cursor', '']).options.get('cursor')![0], '');
 });
+test('search without --mode is hybrid; an explicit --mode is encoded exactly', () => {
+  const mode = (args: string[]): unknown => (encodeWire('Operation', makeOperation(parseArgs(args))) as { Search: { query: { mode: string } } }).Search.query.mode;
+  assert.equal(mode(['search', 'x']), 'Hybrid');
+  for (const [flag, expected] of [['lexical', 'Lexical'], ['semantic', 'Semantic'], ['hybrid', 'Hybrid']]) assert.equal(mode(['search', 'x', '--mode', flag!]), expected);
+});
 test('archive defaults and maximum match current source-evidence ArchiveSearch page bound10', () => {
   assert.deepEqual(encodeWire('Operation', makeOperation(parseArgs(['archive']))), { ArchiveSearch: { query: { expression: '', sort: 'LastTimestamp', direction: 'Desc', cursor: null, limit: 10, preferRelevance: true } } });
   assert.throws(() => makeOperation(parseArgs(['archive', '--limit', '11'])));

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
-import { CliError, uncertain } from './errors.js';
+import { CliError, embeddingFailure, uncertain } from './errors.js';
 import { ArgumentError, flag, integer, makeOperation, option, parseArgs, validateInvocation, type Arguments } from './commands.js';
 import { help, helpHint } from './help.js';
 import { bearer, checkSecretDestination, exclusiveSecret, MAX_BYTES, readBounded, readStdin, SessionStore, type Environment } from './files.js';
@@ -68,7 +68,18 @@ function withoutSecret(value: unknown, args: Arguments): unknown {
   if (isObject(value) && Object.hasOwn(value, 'secret')) { if (typeof value['secret'] !== 'string' || secretOut === null) throw new CliError('protocol-error', 'Invalid issued account secret.'); exclusiveSecret(secretOut, `${value['secret']}\n`); return { token: value['token'], secretSaved: true }; }
   return value;
 }
-export async function run(args: Arguments, env: Environment): Promise<{ value: unknown; text: boolean }> {
+export interface RunResult { value: unknown; text: boolean; notice?: string }
+// Only a defaulted hybrid search falls back (to exactly `--mode lexical`); the retry gets its own --timeout-ms budget. Explicit modes and every other failure propagate.
+export async function run(args: Arguments, env: Environment): Promise<RunResult> {
+  try { return await runOnce(args, env); }
+  catch (error) {
+    const reason = args.words[0] === 'search' && args.words.length === 2 && option(args, 'mode') === null ? embeddingFailure(error) : null;
+    if (reason === null) throw error;
+    const lexical: Arguments = { ...args, options: new Map(args.options).set('mode', ['lexical']) };
+    return { ...await runOnce(lexical, env), notice: `chronicle: hybrid search unavailable (${reason}); showing lexical results\n` };
+  }
+}
+async function runOnce(args: Arguments, env: Environment): Promise<RunResult> {
   const [command, subcommand] = args.words;
   if (flag(args, 'help') || command === undefined || command === 'help') {
     const text = help(command === 'help' ? args.words.slice(1) : args.words, command === 'help'); if (text === '') throw new CliError('usage', 'Unknown help command. Run chronicle --help.');
@@ -148,7 +159,7 @@ export async function run(args: Arguments, env: Environment): Promise<{ value: u
 async function write(stream: NodeJS.WriteStream, text: string): Promise<void> { await new Promise<void>((resolve, reject) => { stream.write(text, error => error === null || error === undefined ? resolve() : reject(error)); }); }
 async function main(): Promise<number> {
   let args: Arguments | null = null;
-  try { args = parseArgs(process.argv.slice(2)); const result = await run(args, process.env); const presentation = new Presentation(useColor(args.color, args.json, process.stdout.isTTY === true, process.env)); await write(process.stdout, result.text ? presentation.help(String(result.value)) : presentation.output(result.value, args.json)); return 0; }
+  try { args = parseArgs(process.argv.slice(2)); const result = await run(args, process.env); if (result.notice !== undefined) await write(process.stderr, result.notice); const presentation = new Presentation(useColor(args.color, args.json, process.stdout.isTTY === true, process.env)); await write(process.stdout, result.text ? presentation.help(String(result.value)) : presentation.output(result.value, args.json)); return 0; }
   catch (error) {
     const failure = error instanceof CliError ? error : new CliError('unavailable', 'Operation failed; no credential or remote diagnostic was printed.');
     if (error instanceof ArgumentError) args = error.arguments_;

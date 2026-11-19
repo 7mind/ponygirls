@@ -164,6 +164,15 @@ retains ExactMatches/CandidateWindow and ranking limits rather than presenting
 candidate counts as global counts. Archive uses generated expressions and
 cursor/relevance/sort metadata without treating MCP filters as expressions.
 
+`chronicle search 'TEXT'` without `--mode` sends **hybrid**; `--mode lexical`,
+`semantic` or `hybrid` is honoured exactly and never substituted. Only when the
+mode was defaulted and the server fails the query embedding (error code
+`model-transport`, `model-timeout` or `model-http`), the CLI re-runs the query
+once with `--mode lexical` (a fresh `--timeout-ms` budget), writes one line to
+stderr, `chronicle: hybrid search unavailable (REASON); showing lexical
+results`, in human and `--json` modes, and prints the lexical result on stdout
+with its exit status. Any other failure is reported unchanged.
+
 ### Mutations, secrets and uncertainty
 
 Every mutation requires `--yes`. Read commands reject unused `--yes` rather than
