@@ -4,11 +4,14 @@ import ponygirls.retrieval.*
 import io.circe.Json
 import java.nio.charset.StandardCharsets.UTF_8
 import java.sql.{Connection,PreparedStatement,ResultSet}
+import java.time.{Instant,OffsetDateTime,ZoneOffset}
+import java.time.temporal.ChronoUnit
 import java.util.{Base64,UUID}
+import scala.concurrent.duration.*
 import scala.util.Using
 
 private[postgres] object Jdbc {
-  type Value = String | Int | Long | Boolean | Array[Byte] | BigDecimal
+  type Value = String | Int | Long | Boolean | Array[Byte] | BigDecimal | Instant
   def bind(p: PreparedStatement,args: Seq[Value]): Unit = args.zipWithIndex.foreach { (value,i) => value match {
     case x: String => p.setString(i+1,x)
     case x: Int => p.setInt(i+1,x)
@@ -16,6 +19,7 @@ private[postgres] object Jdbc {
     case x: Boolean => p.setBoolean(i+1,x)
     case x: Array[Byte] => p.setBytes(i+1,x)
     case x: BigDecimal => p.setBigDecimal(i+1,x.bigDecimal)
+    case x: Instant => p.setObject(i+1,OffsetDateTime.ofInstant(x,ZoneOffset.UTC))
   } }
   def exec(c: Connection,sql: String,args: Value*): Int = Using.resource(c.prepareStatement(sql)) { p => bind(p,args); if(sql.startsWith("SELECT") || sql.startsWith("SET")) { p.execute(); 0 } else p.executeUpdate() }
   def rows[A](c: Connection,sql: String,args: Value*)(read: ResultSet => A): List[A] = Using.resource(c.prepareStatement(sql)) { p => bind(p,args); Using.resource(p.executeQuery()) { r => val out=List.newBuilder[A]; while(r.next()) out+=read(r); out.result() } }
@@ -25,10 +29,18 @@ private[postgres] object Jdbc {
   def bytes(value: String): Array[Byte] = { RetrievalChecks(UTF_8.newEncoder().canEncode(value),"invalid","invalid Unicode retrieval value"); value.getBytes(UTF_8) }
 }
 private[postgres] final case class RetrievalPlan(sql: String,args: List[Jdbc.Value])
-final case class WorkClaim(jobId: String,sourceId: String,version: String,epoch: Long,fence: Long,run: String,profile: String,chunks: List[InputChunk])
+final case class WorkClaim(jobId: String,sourceId: String,version: String,epoch: Long,fence: Long,run: String,profile: String,chunks: List[InputChunk],attempt: Int)
 
 object PostgresRetrieval {
   val MaxFilters = 64
+  /** A failed attempt n is retried no earlier than min(RetryBase*2^(n-1), RetryCap) later; no attempt count is terminal. */
+  val RetryBase: FiniteDuration = 2.seconds
+  val RetryCap: FiniteDuration = 5.minutes
+  private val retryDoublings = Iterator.iterate(RetryBase)(_*2).indexWhere(_>=RetryCap)
+  def retryDelay(attempt: Int): FiniteDuration = {
+    RetrievalChecks(attempt>=1,"invalid","retry attempt must be positive")
+    if(attempt-1>=retryDoublings) RetryCap else RetryBase*(1L<<(attempt-1))
+  }
 }
 
 /** All operations run on the caller's Connection: projection/outbox/publication can
@@ -51,12 +63,12 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
     exec(c,"SELECT pg_advisory_xact_lock(71393722)")
     exec(c,"CREATE EXTENSION IF NOT EXISTS vector")
     exec(c,"CREATE TABLE IF NOT EXISTS pony_retrieval_migrations(version integer PRIMARY KEY,digest text NOT NULL)")
-    val ddl=Schema.v1
-    val digest=RetrievalChecks.hash(ddl)
-    val previous=one(c,"SELECT digest FROM pony_retrieval_migrations WHERE version=1")(_.getString(1))
-    previous match {
-      case Some(value) => RetrievalChecks(value==digest,"config","retrieval migration checksum mismatch")
-      case None => Using.resource(c.createStatement())(_.execute(ddl)); exec(c,"INSERT INTO pony_retrieval_migrations VALUES(1,?)",digest)
+    Schema.migrations.foreach { (version,ddl) =>
+      val digest=RetrievalChecks.hash(ddl)
+      one(c,"SELECT digest FROM pony_retrieval_migrations WHERE version=?",version)(_.getString(1)) match {
+        case Some(value) => RetrievalChecks(value==digest,"config","retrieval migration checksum mismatch")
+        case None => Using.resource(c.createStatement())(_.execute(ddl)); exec(c,"INSERT INTO pony_retrieval_migrations VALUES(?,?)",version,digest)
+      }
     }
     profile.foreach { p =>
       exec(c,"INSERT INTO pony_retrieval_profiles(namespace,id,space,descriptor,policy) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING",ns,p.id,p.space.id,p.space.json.noSpaces,bytes(p.policy))
@@ -109,21 +121,19 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
       exec(c,"DELETE FROM pony_retrieval_head_chunks WHERE namespace=? AND source_id=?",ns,encoded)
     }
   }
-  def claim(c: Connection,leaseSeconds: Int): Option[WorkClaim] = {
+  /** `now` (caller's retry clock) decides back-off and expiry; leases use the database clock.
+    * Due: Queued past its back-off, or Running past its lease (an expired lease is its own back-off). */
+  def claim(c: Connection,leaseSeconds: Int,now: Instant): Option[WorkClaim] = {
     transaction(c); RetrievalChecks(leaseSeconds>0 && leaseSeconds<=86400,"invalid","invalid retrieval lease")
     profile.flatMap { p =>
-      // Keep terminal crash recovery observable; never strand the last lease as Running.
+      val due="((j.state='Queued' AND (j.not_before IS NULL OR j.not_before<=?)) OR (j.state='Running' AND j.lease_until<clock_timestamp()))"
       // Lock source before jobs, matching put/remove/publication lock order.
-      val exhausted=rows(c,"""SELECT s.id FROM pony_retrieval_sources s WHERE s.namespace=? AND s.target_profile=? AND EXISTS(
-        SELECT 1 FROM pony_retrieval_jobs j WHERE j.namespace=s.namespace AND j.source_id=s.id AND j.epoch=s.epoch AND j.profile=s.target_profile AND j.state='Running' AND j.attempts>=5 AND j.lease_until<clock_timestamp())
-        ORDER BY s.id FOR UPDATE OF s SKIP LOCKED""",ns,p.id)(_.getString(1))
-      exhausted.foreach(id => exec(c,"UPDATE pony_retrieval_jobs SET state='Failed',fence=fence+1,lease_until=NULL WHERE namespace=? AND source_id=? AND profile=? AND state='Running' AND attempts>=5 AND lease_until<clock_timestamp()",ns,id,p.id))
-      val source=one(c,"""SELECT s.id FROM pony_retrieval_sources s WHERE s.namespace=? AND s.target_profile=? AND s.eligible AND (s.expires_at IS NULL OR s.expires_at>?) AND EXISTS(
-        SELECT 1 FROM pony_retrieval_jobs j WHERE j.namespace=s.namespace AND j.source_id=s.id AND j.epoch=s.epoch AND j.profile=s.target_profile AND j.attempts<5 AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp()))) ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",ns,p.id,EpochSeconds.fromInstant(java.time.Instant.now()).value)(_.getString(1))
-      source.flatMap { id => one(c,"""UPDATE pony_retrieval_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?) WHERE namespace=? AND id=(
-        SELECT j.id FROM pony_retrieval_jobs j JOIN pony_retrieval_sources s ON s.namespace=j.namespace AND s.id=j.source_id WHERE j.namespace=? AND j.source_id=? AND j.epoch=s.epoch AND j.profile=s.target_profile AND j.attempts<5 AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp())) FOR UPDATE OF j SKIP LOCKED LIMIT 1) RETURNING id,epoch,fence,run_id,profile""",leaseSeconds,ns,ns,id) { r =>
+      val source=one(c,s"""SELECT s.id FROM pony_retrieval_sources s WHERE s.namespace=? AND s.target_profile=? AND s.eligible AND (s.expires_at IS NULL OR s.expires_at>?) AND EXISTS(
+        SELECT 1 FROM pony_retrieval_jobs j WHERE j.namespace=s.namespace AND j.source_id=s.id AND j.epoch=s.epoch AND j.profile=s.target_profile AND $due) ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",ns,p.id,EpochSeconds.fromInstant(now).value,now)(_.getString(1))
+      source.flatMap { id => one(c,s"""UPDATE pony_retrieval_jobs SET state='Running',attempts=attempts+1,fence=fence+1,not_before=NULL,lease_until=clock_timestamp()+make_interval(secs=>?) WHERE namespace=? AND id=(
+        SELECT j.id FROM pony_retrieval_jobs j JOIN pony_retrieval_sources s ON s.namespace=j.namespace AND s.id=j.source_id WHERE j.namespace=? AND j.source_id=? AND j.epoch=s.epoch AND j.profile=s.target_profile AND $due FOR UPDATE OF j SKIP LOCKED LIMIT 1) RETURNING id,epoch,fence,run_id,profile,attempts""",leaseSeconds,ns,ns,id,now) { r =>
           val version=one(c,"SELECT version FROM pony_retrieval_sources WHERE namespace=? AND id=?",ns,id)(_.getString(1)).get
-          WorkClaim(r.getString("id"),unkey(id),unkey(version),r.getLong("epoch"),r.getLong("fence"),r.getString("run_id"),r.getString("profile"),heads(c,id))
+          WorkClaim(r.getString("id"),unkey(id),unkey(version),r.getLong("epoch"),r.getLong("fence"),r.getString("run_id"),r.getString("profile"),heads(c,id),r.getInt("attempts"))
         } }
     }
   }
@@ -183,8 +193,12 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
       }
     }
   }
-  def fail(c: Connection,claim: WorkClaim): Unit = {
-    if(current(c,claim)) exec(c,"UPDATE pony_retrieval_jobs SET state=CASE WHEN attempts>=5 THEN 'Failed' ELSE 'Queued' END,lease_until=NULL WHERE namespace=? AND id=?",ns,claim.jobId)
+  /** Requeues a current claim with back-off from `now` and returns its earliest retry time;
+    * None when the claim is no longer current (superseded, removed or its lease lost). */
+  def fail(c: Connection,claim: WorkClaim,now: Instant): Option[Instant] = Option.when(current(c,claim)) {
+    val retryAt=now.plusNanos(PostgresRetrieval.retryDelay(claim.attempt).toNanos).truncatedTo(ChronoUnit.MICROS)
+    exec(c,"UPDATE pony_retrieval_jobs SET state='Queued',lease_until=NULL,not_before=? WHERE namespace=? AND id=?",retryAt,ns,claim.jobId)
+    retryAt
   }
   private def authorization(query: RetrievalQuery): (String,List[Value]) = {
     val attributes=query.filters.map {
@@ -199,17 +213,16 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
     val semantic=query.mode!=RetrievalMode.Lexical
     RetrievalChecks(!semantic || query.offset<rankingLimit(query.mode),"invalid","offset exceeds candidate ranking window")
     val (scope,scopeArgs)=authorization(query)
-    val (sql,args)=if(!semantic) {
+    val (sql,args,pending)=if(!semantic) {
       val matches=if(query.text.nonEmpty) " AND ch.document @@ websearch_to_tsquery('english',?)" else ""
       val fields="ch.source_id||':'||ch.chunk_id AS id,ch.chunk_id,ch.source_id,s.version,s.head_generation AS generation,NULL::text AS profile,NULL::text AS space,ch.body,ch.provenance"
-      (s"WITH scored AS(SELECT $fields,ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) AS score FROM pony_retrieval_head_chunks ch JOIN pony_retrieval_sources s ON s.namespace=ch.namespace AND s.id=ch.source_id WHERE $scope$matches),sessions AS(SELECT DISTINCT ON(source_id) * FROM scored ORDER BY source_id,score DESC,id)",List[Value](query.text)++scopeArgs++(if(query.text.nonEmpty) List[Value](query.text) else Nil))
+      (s"WITH scored AS(SELECT $fields,ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) AS score FROM pony_retrieval_head_chunks ch JOIN pony_retrieval_sources s ON s.namespace=ch.namespace AND s.id=ch.source_id WHERE $scope$matches),sessions AS(SELECT DISTINCT ON(source_id) * FROM scored ORDER BY source_id,score DESC,id)",List[Value](query.text)++scopeArgs++(if(query.text.nonEmpty) List[Value](query.text) else Nil),
+        RetrievalPlan("SELECT 0::bigint AS n",Nil))
     } else {
-      val p=profile.getOrElse(throw RetrievalError("unavailable","semantic retrieval is not configured; lexical-only capability"))
-      val v=Vectors.sql(vector.getOrElse(throw RetrievalError("unavailable","query embedding unavailable")),p.space.dimensions)
-      val notReady=one(c,s"SELECT 1 FROM pony_retrieval_sources s WHERE $scope AND s.published IS NULL LIMIT 1",scopeArgs*)(_ => true).contains(true)
-      RetrievalChecks(!notReady,"unavailable","visible retrieval publication not ready")
-      val incompatible=one(c,s"SELECT 1 FROM pony_retrieval_sources s JOIN pony_retrieval_generations g ON g.namespace=s.namespace AND g.id=s.published WHERE $scope AND (g.space<>? OR g.profile<>?) LIMIT 1",(scopeArgs++List[Value](p.space.id,p.id))*)(_ => true).contains(true)
-      RetrievalChecks(!incompatible,"unavailable","visible publication has incompatible embedding space or corpus policy; explicit rebuild required")
+      val p=profile.getOrElse(throw RetrievalError.unavailable(UnavailableReason.NotConfigured))
+      val v=Vectors.sql(vector.getOrElse(throw RetrievalError.unavailable(UnavailableReason.EmbeddingFailed)),p.space.dimensions)
+      // Declared partial readiness: in-scope sources whose current head has no publication under the active profile.
+      val pending=RetrievalPlan(s"SELECT count(*) AS n FROM pony_retrieval_sources s WHERE $scope AND NOT EXISTS(SELECT 1 FROM pony_retrieval_generations g WHERE g.namespace=s.namespace AND g.id=s.published AND g.version=s.version AND g.profile=?)",scopeArgs:+p.id)
       CandidateSql.configureStatements.foreach(exec(c,_))
       val fields="ch.id,ch.chunk_id,ch.source_id,g.version,ch.generation,ch.profile,g.space,ch.body,ch.provenance,ch.document,ch.embedding"
       // OFFSET 0 keeps live visibility/filter checks inside the ordered index scan before LIMIT.
@@ -220,19 +233,20 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
       val (legs,legArgs)=if(query.mode==RetrievalMode.Hybrid && query.text.nonEmpty) {
         (s",lexical AS MATERIALIZED(SELECT $fields FROM pony_retrieval_chunks ch JOIN pony_retrieval_generations g ON g.namespace=ch.namespace AND g.id=ch.generation WHERE $base AND ch.document @@ websearch_to_tsquery('english',?) ORDER BY ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) DESC,ch.id LIMIT $candidatesPerLeg),candidates AS(SELECT * FROM ann UNION SELECT * FROM lexical)",baseArgs++List[Value](query.text,query.text))
       } else (",candidates AS(SELECT * FROM ann)",Nil)
-      (s"WITH $ann$legs,"+CandidateSql.rerankCtes(query.mode,"source_id"),baseArgs++List[Value](v)++legArgs++List[Value](query.text,query.text,v))
+      (s"WITH $ann$legs,"+CandidateSql.rerankCtes(query.mode,"source_id"),baseArgs++List[Value](v)++legArgs++List[Value](query.text,query.text,v),pending)
     }
-    val page=sql+",result_entities AS MATERIALIZED(SELECT * FROM sessions) SELECT counted.total,page.* FROM (SELECT count(*) AS total FROM result_entities) counted LEFT JOIN LATERAL(SELECT * FROM result_entities ORDER BY score DESC,source_id LIMIT ? OFFSET ?) page ON true ORDER BY page.score DESC,page.source_id"
-    RetrievalPlan(page,args++List[Value](query.limit,query.offset))
+    // One statement: the pending count shares the snapshot of the ranked page.
+    val page=sql+s",result_entities AS MATERIALIZED(SELECT * FROM sessions),pending AS(${pending.sql}) SELECT counted.total,pending.n AS pending,page.* FROM pending,(SELECT count(*) AS total FROM result_entities) counted LEFT JOIN LATERAL(SELECT * FROM result_entities ORDER BY score DESC,source_id LIMIT ? OFFSET ?) page ON true ORDER BY page.score DESC,page.source_id"
+    RetrievalPlan(page,args++pending.args++List[Value](query.limit,query.offset))
   }
   def search(c: Connection,query: RetrievalQuery,vector: Option[List[Double]]): RetrievalPage = {
     val compiled=plan(c,query,vector)
     val semantic=query.mode!=RetrievalMode.Lexical
     val result=rows(c,compiled.sql,compiled.args*) { r =>
       val hit=Option(r.getString("source_id")).map { id => RetrievalHit(unkey(id),unkey(r.getString("version")),r.getString("generation"),Option(r.getString("profile")),Option(r.getString("space")),readChunk(r),r.getDouble("score")) }
-      (r.getLong("total"),hit)
+      (r.getLong("total"),r.getLong("pending"),hit)
     }
-    RetrievalPage(result.flatMap(_._2),result.head._1,if(semantic) CountScope.CandidateWindow else CountScope.ExactMatches,if(semantic) Some(rankingLimit(query.mode)) else None)
+    RetrievalPage(result.flatMap(_._3),result.head._1,if(semantic) CountScope.CandidateWindow else CountScope.ExactMatches,if(semantic) Some(rankingLimit(query.mode)) else None,result.head._2)
   }
   /** Delivery-time reauthorization on a fresh transaction; never relabel a pinned old hit. */
   def visible(c: Connection,query: RetrievalQuery,id: String): Boolean = {
@@ -256,4 +270,10 @@ CREATE TABLE pony_retrieval_generations(namespace text NOT NULL,id text NOT NULL
 CREATE TABLE pony_retrieval_chunks(namespace text NOT NULL,generation text NOT NULL,source_id text NOT NULL,id text NOT NULL,chunk_id text NOT NULL,ordinal integer NOT NULL,body bytea NOT NULL,provenance bytea NOT NULL,document tsvector NOT NULL,embedding vector NOT NULL,profile text NOT NULL,PRIMARY KEY(namespace,id),FOREIGN KEY(namespace,generation) REFERENCES pony_retrieval_generations(namespace,id));
 CREATE INDEX pony_retrieval_fts ON pony_retrieval_chunks USING gin(document);
 """
+  /** Back-off instead of a terminal state: earliest retry per job; formerly Failed jobs are queued again. */
+  val v2 = """
+ALTER TABLE pony_retrieval_jobs ADD COLUMN not_before timestamptz;
+UPDATE pony_retrieval_jobs SET state='Queued',fence=fence+1,lease_until=NULL WHERE state='Failed';
+"""
+  val migrations: List[(Int,String)] = List(1 -> v1,2 -> v2)
 }

@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import java.sql.Connection
 import ponygirls.retrieval.*
-import ponygirls.retrieval.postgres.{PostgresRetrieval,IndexingWorker,RetrievalTransactions}
+import ponygirls.retrieval.postgres.{PostgresRetrieval,IndexingWorker,QueryVector,RetrievalTransactions}
 import manure.{api => wire}
 import io.circe.Json
 
@@ -92,8 +92,7 @@ final class Search(database: JdbcTransactions, root: manure.storage.RootLease, c
       q.filter.tags.map(tag => filter(projection.tagKey(tag),tag)) ++ q.filter.hostname.map(filter("hostname",_)) ++ q.filter.projectPath.map(filter("projectPath",_))
     (mode,filters)
   }.flatMap { (mode,filters) =>
-    val vector = if mode == RetrievalMode.Lexical then IO.pure(None) else embedding.get.query(q.query).map(Some(_))
-    vector.flatMap { values => database.transaction { c => root.run {
+    QueryVector(embedding,mode,q.query).flatMap { values => database.transaction { c => root.run {
       Require(auth.live(new PostgresAuthTxn(c),identity), "unauthorized")
       val query = RetrievalQuery(ManagementSearchPrincipal.all.value,q.query,mode,filters,false,0,q.limit,EpochSeconds.fromDouble(clock.now))
       val page = engine.search(c,query,values)
@@ -130,5 +129,7 @@ final class SearchWorker(database: JdbcTransactions,root: manure.storage.RootLea
   private val worker = for
     model <- client
     config <- settings
-  yield new IndexingWorker(engine,transactions,model,config.batchSize,config.leaseSeconds,config.pollInterval)
+  yield new IndexingWorker(engine,transactions,model,config.batchSize,config.leaseSeconds,config.pollInterval,IO.realTimeInstant,
+    event => IO(System.err.println("manure " + event.line)))
   def once(): IO[Boolean] = worker.fold(IO.pure(false))(_.once)
+  def run: IO[Nothing] = worker.fold(IO.never)(_.run)

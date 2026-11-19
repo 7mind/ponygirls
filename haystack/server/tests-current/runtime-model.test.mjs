@@ -30,11 +30,11 @@ it('controlled provider uses approved corpus only, durable worker publication an
   const serialized=JSON.stringify(calls);assert.ok(serialized.includes('harbour'));assert.ok(!serialized.includes(canary));assert.ok(!serialized.includes('9001'));
   const semantic=()=>f.call('/api/v1/retrieve',encode(api.RetrieveRequest,new api.RetrieveRequest('harbour',api.RetrievalMode.Semantic,'model',false,0,10)),{token:f.tokens.alice});
   // Query embeddings are available while the document batch is deliberately
-  // blocked: this proves the current typed publication-not-ready response,
-  // rather than mistaking a provider outage or an empty fallback for readiness.
-  const notReady=await semantic();assert.equal(notReady.status,503);assert.equal(decode(api.Failure,await notReady.json()).code,'unavailable');
+  // blocked: partial readiness is declared, not refused; the unpublished
+  // source is not ranked until its publication (no lexical fallback).
+  const notReady=await semantic();assert.equal(notReady.status,200);assert.deepEqual(decode(api.RetrieveResult,await notReady.json()).sources,[]);
   blocked=false;release();
-  let page;const deadline=Date.now()+5000;while(Date.now()<deadline){const response=await semantic();if(response.status===503){assert.equal(decode(api.Failure,await response.json()).code,'unavailable');await sleep(50);continue;}assert.equal(response.status,200);page=decode(api.RetrieveResult,await response.json());if(page.sources.length)break;await sleep(50);}
+  let page;const deadline=Date.now()+5000;while(Date.now()<deadline){const response=await semantic();assert.equal(response.status,200);page=decode(api.RetrieveResult,await response.json());if(page.sources.length)break;await sleep(50);}
   assert.ok(page,'complete generation must become ready within the original5second deadline');assert.equal(page.sources.length,1);assert.equal(page.sources[0].key,'model:one');assert.equal(page.sources[0].revision,1);assert.equal(page.countScope,'CandidateWindow');for(const identity of [page.sources[0].profile,page.sources[0].embeddingSpace,page.sources[0].policy])assert.match(identity,/^[0-9a-f]{64}$/);assert.ok(page.sources[0].field);assert.ok(Number.isInteger(page.sources[0].start));assert.ok(page.sources[0].end>page.sources[0].start);assert.ok(page.rankingLimit>0);assert.ok(calls.some(c=>c.input.some(text=>text.startsWith('QUERY:'))));
   outage=true;const unavailable=await semantic();assert.equal(unavailable.status,503);assert.equal(decode(api.Failure,await unavailable.json()).code,'unavailable');
   const update=await f.put('model:one',document({title:'harbour updated',fields:{public:'harbour next',private:canary}}),1);assert.equal(update.status,200);

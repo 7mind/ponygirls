@@ -182,8 +182,7 @@ object Main extends IOApp:
   }
   def runServer(path: Path): IO[Unit] = IO.blocking(Config.load(path)).flatMap { config => stage("assets",requireAssetDirectories(config)) *> resources(config).use { services =>
     val sweeper = (IO.sleep(config.sweepInterval) *> services.artifacts.sweep().void.handleErrorWith(_ => IO.unit)).foreverM
-    val poll = config.embedding.map(_.pollInterval).getOrElse(1.second)
-    val indexer = (services.worker.once().handleErrorWith(_ => IO.pure(false)).flatMap(worked => if worked then IO.cede else IO.sleep(poll))).foreverM
+    val indexer = services.worker.run
     // Count admitted requests THROUGH response-stream finalization using the
     // standard http4s cancellation-safe middleware, not just response creation.
     // One additional transport slot is reserved for immediate bounded rejection.

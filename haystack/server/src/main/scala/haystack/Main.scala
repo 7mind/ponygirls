@@ -73,7 +73,7 @@ object Main extends IOApp {
         EmberServerBuilder.default[IO].withHost(Host.fromString(config.listenHost).getOrElse(throw haystack.domain.Fault("config","invalid listen host")))
           .withPort(Port.fromInt(config.listenPort).getOrElse(throw haystack.domain.Fault("config","invalid port")))
           .withShutdownTimeout(2.seconds).withMaxConnections(128).withMaxHeaderSize(16384).withMaxWebSocketMessageSize(1024*1024).withHttpWebSocketApp(ws=>services.http.routes(ws).orNotFound).build.use { _=>
-            IO.println("haystack: ready") *> (reload,services.retrieval.run).parTupled.void
+            IO.println("haystack: ready") *> (reload,services.retrieval.run(event=>IO.println("haystack: "+event.line))).parTupled.void
           }
       }
     }yield()}

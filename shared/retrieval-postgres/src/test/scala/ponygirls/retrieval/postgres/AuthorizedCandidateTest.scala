@@ -1,6 +1,7 @@
 package ponygirls.retrieval.postgres
 
 import ponygirls.retrieval.*
+import java.time.Instant
 
 class AuthorizedCandidateTest extends munit.FunSuite {
   import ControlledFixtures.*
@@ -29,12 +30,12 @@ class AuthorizedCandidateTest extends munit.FunSuite {
       // A second full window is authorized but fails the structured filter.
       (0 until FilteredSources).foreach(i => f.index.put(c,source(s"filtered-$i",ExcludedText,Set("reader")).copy(attributes=Vector(ProjectionAttribute(field,AttributeValue("excluded"))))))
       (0 until AuthorizedSources).foreach(i => f.index.put(c,source(s"authorized-$i",if(i<NearAuthorizedSources) NearText else LexicalOnlyText,Set("reader"))))
-      var claim=f.index.claim(c,60)
+      var claim=f.index.claim(c,60,Instant.now())
       while(claim.nonEmpty) {
         val work=claim.get
         val vector=if(work.sourceId.startsWith("authorized-")) List(1.0,0.2+work.sourceId.stripPrefix("authorized-").toInt*0.01,0.0) else List(1.0,0.0,0.0)
         f.index.accept(c,work,0,List(vector)); f.index.publish(c,work)
-        claim=f.index.claim(c,60)
+        claim=f.index.claim(c,60,Instant.now())
       }
     }
     val q=query(RetrievalMode.Semantic).copy(filters=Vector(AttributeFilter.Equal(field,AttributeValue("controlled"))))

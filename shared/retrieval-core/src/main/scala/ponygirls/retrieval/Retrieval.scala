@@ -5,8 +5,16 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.security.MessageDigest
 import java.time.Instant
 
+/** Closed set of query-time `unavailable` reasons; `text` is the fixed client-safe message. */
+enum UnavailableReason(val id: String, val text: String) {
+  case NotConfigured extends UnavailableReason("not-configured","semantic retrieval is not configured; lexical-only capability")
+  case EmbeddingFailed extends UnavailableReason("embedding-failed","query embedding failed")
+}
 /** Safe codes/messages only: never include provider bodies, credentials or indexed content. */
-final case class RetrievalError(code: String, detail: String) extends RuntimeException(detail)
+final case class RetrievalError(code: String, detail: String, reason: Option[UnavailableReason] = None) extends RuntimeException(detail)
+object RetrievalError {
+  def unavailable(reason: UnavailableReason): RetrievalError = RetrievalError("unavailable",reason.text,Some(reason))
+}
 object RetrievalChecks {
   def apply(ok: Boolean, code: String, detail: String): Unit = if(!ok) throw RetrievalError(code,detail)
   def hash(text: String): String = MessageDigest.getInstance("SHA-256").digest(text.getBytes(UTF_8)).map(b => f"${b & 255}%02x").mkString
@@ -92,7 +100,8 @@ final case class InputChunk(id: String,text: String,provenance: ChunkProvenance)
 final case class SourceProjection(id: String,version: String,chunks: List[InputChunk],attributes: Vector[ProjectionAttribute],audience: Set[String],eligible: Boolean,archived: Boolean,expiresAt: Option[EpochSeconds])
 final case class RetrievalQuery(principal: String,text: String,mode: RetrievalMode,filters: Vector[AttributeFilter],includeArchived: Boolean,offset: Int,limit: Int,now: EpochSeconds)
 final case class RetrievalHit(id: String,version: String,generation: String,profile: Option[String],embeddingSpace: Option[String],chunk: InputChunk,score: Double)
-final case class RetrievalPage(hits: List[RetrievalHit],total: Long,countScope: CountScope,rankingLimit: Option[Int])
+/** `pending`: sources in the query's scope whose current head has no publication under the active profile; 0 for lexical. */
+final case class RetrievalPage(hits: List[RetrievalHit],total: Long,countScope: CountScope,rankingLimit: Option[Int],pending: Long)
 
 /** Deterministic original-vector reranking, RRF and best chunk grouping; diagnostic/in-memory reference. */
 object Fusion {

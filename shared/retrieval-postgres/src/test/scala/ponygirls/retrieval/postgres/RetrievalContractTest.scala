@@ -2,6 +2,7 @@ package ponygirls.retrieval.postgres
 
 import ponygirls.retrieval.*
 import java.sql.{Connection,DriverManager}
+import java.time.Instant
 import java.util.UUID
 import scala.util.Using
 
@@ -37,14 +38,16 @@ private[postgres] final class MemoryStore extends RetrievalContractStore {
     }
   }
   def search(q: RetrievalQuery): RetrievalPage = {
-    val selected=sources.values.toList.filter(s => visible(q,s.id)).flatMap { current =>
-      val (s,generation)=if(q.mode==RetrievalMode.Lexical) (current,"head") else published.getOrElse(current.id,throw RetrievalError("unavailable","not ready"))
-      s.chunks.filter(ch => q.mode!=RetrievalMode.Lexical || ch.text.contains(q.text)).sortBy(_.id).headOption.map { ch =>
-        RetrievalHit(s.id,s.version,generation,if(q.mode==RetrievalMode.Lexical) None else Some(profile.id),if(q.mode==RetrievalMode.Lexical) None else Some(profile.space.id),ch,1.0)
-      }
-    }.sortBy(_.id)
     val semantic=q.mode!=RetrievalMode.Lexical
-    RetrievalPage(selected.drop(q.offset).take(q.limit),selected.size.toLong,if(semantic) CountScope.CandidateWindow else CountScope.ExactMatches,if(semantic) Some(CandidatePolicy.rankingLimit(q.mode)) else None)
+    val scoped=sources.values.toList.filter(s => visible(q,s.id))
+    val selected=scoped.flatMap { current =>
+      val served=if(!semantic) Some((current,"head")) else published.get(current.id)
+      served.flatMap { (s,generation) => s.chunks.filter(ch => semantic || ch.text.contains(q.text)).sortBy(_.id).headOption.map { ch =>
+        RetrievalHit(s.id,s.version,generation,if(semantic) Some(profile.id) else None,if(semantic) Some(profile.space.id) else None,ch,1.0)
+      } }
+    }.sortBy(_.id)
+    val pending=if(semantic) scoped.count(s => !published.get(s.id).exists(_._1.version==s.version)).toLong else 0L
+    RetrievalPage(selected.drop(q.offset).take(q.limit),selected.size.toLong,if(semantic) CountScope.CandidateWindow else CountScope.ExactMatches,if(semantic) Some(CandidatePolicy.rankingLimit(q.mode)) else None,pending)
   }
 }
 private[postgres] final class PgFixture(val profile: Option[RetrievalProfile],candidatesPerLeg: Int) {
@@ -60,12 +63,12 @@ private[postgres] final class PgFixture(val profile: Option[RetrievalProfile],ca
     def put(source: SourceProjection): Unit = tx(c => index.put(c,source))
     def remove(id: String): Unit = tx(c => index.remove(c,id))
     def publishAll(): Unit = {
-      var claim=tx(c => index.claim(c,30))
+      var claim=tx(c => index.claim(c,30,Instant.now()))
       while(claim.nonEmpty) {
         val work=claim.get
         if(work.chunks.nonEmpty) tx(c => index.accept(c,work,0,List.fill(work.chunks.size)(List(1.0,0.0,0.0))))
         tx(c => index.publish(c,work))
-        claim=tx(c => index.claim(c,30))
+        claim=tx(c => index.claim(c,30,Instant.now()))
       }
     }
     def search(query: RetrievalQuery): RetrievalPage = tx(c => index.search(c,query,if(query.mode==RetrievalMode.Lexical) None else Some(List(1.0,0.0,0.0))))
@@ -120,9 +123,9 @@ abstract class RetrievalContractTest extends munit.FunSuite {
   test("Blackbox: old immutable publication remains served until complete source replacement") {
     val store=fresh(); val old=source("one","alpha old",Set("reader")); store.put(old); store.publishAll()
     store.put(old.copy(version="version-2",chunks=List(InputChunk("second","alpha new",provenance))))
-    assertEquals(store.search(query(RetrievalMode.Semantic)).hits.head.version,"version-1")
+    val served=store.search(query(RetrievalMode.Semantic)); assertEquals((served.hits.head.version,served.pending),("version-1",1L))
     assertEquals(store.search(query(RetrievalMode.Lexical)).hits.head.version,"version-2")
-    store.publishAll(); assertEquals(store.search(query(RetrievalMode.Semantic)).hits.head.version,"version-2")
+    store.publishAll(); val replaced=store.search(query(RetrievalMode.Semantic)); assertEquals((replaced.hits.head.version,replaced.pending),("version-2",0L))
   }
   test("Blackbox: exact lexical vs bounded semantic/hybrid count scope is explicit even empty pages") {
     val store=fresh(); store.put(source("one","alpha",Set("reader"))); store.publishAll()
@@ -161,7 +164,7 @@ class PostgresRetrievalContractTest extends RetrievalContractTest {
       }
     }
   }
-  test("BG: a publication under a retired v1 registry row is unavailable to semantic search until the source is projected again and re-embedded") {
+  test("BG: a publication under a retired v1 registry row is never served and is declared pending until the source is projected again and re-embedded") {
     import ControlledFixtures.*
     import Jdbc.*
     import io.circe.Json
@@ -178,9 +181,9 @@ class PostgresRetrievalContractTest extends RetrievalContractTest {
       exec(c,"UPDATE pony_retrieval_chunks SET profile=? WHERE namespace=?",legacyProfile,ns)
     }
     fixture.tx(fixture.index.initialize)
-    assertEquals(intercept[RetrievalError](fixture.store.search(query(RetrievalMode.Semantic))).code,"unavailable")
+    val retired=fixture.store.search(query(RetrievalMode.Semantic)); assertEquals((retired.hits,retired.pending),(Nil,1L))
     assertEquals(fixture.store.search(query(RetrievalMode.Lexical)).hits.map(_.id),List("preserved"))
-    assertEquals(fixture.tx(c=>fixture.index.claim(c,30)),None)
+    assertEquals(fixture.tx(c=>fixture.index.claim(c,30,Instant.now())),None)
     // Haystack and Manure project every source again at start-up: the source moves to the configured profile.
     fixture.store.put(source("preserved","alpha",Set("reader"))); fixture.store.publishAll()
     assertEquals(fixture.store.search(query(RetrievalMode.Semantic)).hits.map(hit=>(hit.id,hit.profile)),List(("preserved",Some(profile.id))))

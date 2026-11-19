@@ -11,6 +11,7 @@ Namespace `ponygirls.retrieval`; all public arguments are explicit.
 - Filters: `Vector[AttributeFilter]`, currently `AttributeFilter.Equal(key,value)`.
 - `EpochSeconds.fromDouble` preserves the exact binary64 value (not a microsecond timestamp). Query time is caller-bound, explicitly `EpochSeconds`.
 - `RetrievalQuery(principal,text,mode,filters,includeArchived,offset,limit,now)`.
-- `RetrievalPage(hits,total,countScope,rankingLimit)`; hit carries immutable version/generation/profile/space/provenance.
+- `RetrievalPage(hits,total,countScope,rankingLimit,pending)`; hit carries immutable version/generation/profile/space/provenance. `pending` counts the sources inside the query's scope (audience, filters, archived, expiry) whose current head has no publication under the active profile; lexical reports 0.
+- `RetrievalError(code,detail,reason)`: query-time unavailability is `code = "unavailable"` with `reason = Some(UnavailableReason)` from the closed set `NotConfigured` (`not-configured`, "semantic retrieval is not configured; lexical-only capability") and `EmbeddingFailed` (`embedding-failed`, "query embedding failed"); build it with `RetrievalError.unavailable(reason)`. `reason.text` is the fixed client-safe message.
 
 `CandidateSql` is the shared ANN/original cosine/RRF ranking implementation. It accepts validated column identifiers, never caller/user SQL predicates. Service authorization stays in the candidate SQL relation before each limit. `Fusion` is a deterministic in-memory reference, not a claim that ANN is exact.

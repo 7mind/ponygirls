@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import haystack.domain.*
 import ponygirls.losslessjson.LosslessJson
 import ponygirls.retrieval.*
-import ponygirls.retrieval.postgres.{PostgresRetrieval,IndexingWorker,RetrievalTransactions}
+import ponygirls.retrieval.postgres.{PostgresRetrieval,IndexingEvent,IndexingWorker,QueryVector,RetrievalTransactions}
 import ponygirls.runtime.JdbcDatabase
 import java.sql.Connection
 import java.time.Instant
@@ -60,15 +60,13 @@ final class HaystackRetrieval(val database:JdbcDatabase,val policy:ProjectionPol
   def search(text:String,mode:RetrievalMode,project:Option[String],includeArchived:Boolean,offset:Int,limit:Int):IO[RetrievalPage]=for{
     now<-IO.realTimeInstant
     query=RetrievalQuery("authenticated",text,mode,project.toVector.map(p=>AttributeFilter.Equal(AttributeKey.parse("project"),AttributeValue(p))),includeArchived,offset,limit,EpochSeconds.fromInstant(now))
-    vector<-if(mode==RetrievalMode.Lexical) IO.pure(None) else embedding.fold(IO.raiseError[Option[List[Double]]](Fault("unavailable","semantic retrieval is not configured; lexical-only capability")))(_.query(text).map(Some(_)))
+    vector<-QueryVector(embedding,mode,text)
     page<-database.transaction(c=>store.search(c,query,vector))
     // Fresh delivery-time eligibility/ACL check, preserving immutable hit version.
     visible<-database.transaction(c=>page.hits.filter(hit=>store.visible(c,query,hit.id)))
   }yield page.copy(hits=visible)
-  def run:IO[Nothing]=embedding match{
-    case None=>IO.never
-    case Some(client)=>new IndexingWorker(store,new RetrievalTransactions{
-      def transaction[A](run:Connection=>A):IO[A]=database.transaction(run)
-    },client,batchSize,120,500.millis).run
-  }
+  def worker(events:IndexingEvent=>IO[Unit]):Option[IndexingWorker]=embedding.map(client=>new IndexingWorker(store,new RetrievalTransactions{
+    def transaction[A](run:Connection=>A):IO[A]=database.transaction(run)
+  },client,batchSize,120,500.millis,IO.realTimeInstant,events))
+  def run(events:IndexingEvent=>IO[Unit]):IO[Nothing]=worker(events).fold(IO.never)(_.run)
 }

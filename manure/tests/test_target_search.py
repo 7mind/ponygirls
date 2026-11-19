@@ -89,16 +89,13 @@ class TargetSearchTests(unittest.TestCase):
                 'dashboard_dir':None,'unlock_shell_dir':None,'embedding':endpoint,
                 'users':[{'id':'search-manager','type':'human','tokens':[{'id':'primary','hashFile':str(hashfile)}]}]}
             def eventually(client,mode):
-                deadline=time.monotonic()+25;last=None
+                # Partial readiness is declared, not refused: an unpublished artifact is not ranked yet.
+                deadline=time.monotonic()+25
                 while time.monotonic()<deadline:
-                    try:
-                        page=client.search('hayneedle',mode,visibility='external',kind='dir',created_by_user='search-manager')
-                        if page['hits']:return page
-                        self.fail('semantic ready query silently returned an empty complete page')
-                    except ManureError as error:
-                        self.assertEqual(error.code,'search-unavailable');last=error.code
+                    page=client.search('hayneedle',mode,visibility='external',kind='dir',created_by_user='search-manager')
+                    if page['hits']:return page
                     time.sleep(.1)
-                self.fail('publication did not complete before bounded deadline: '+str(last))
+                self.fail('publication did not complete before bounded deadline')
             server=None
             try:
                 server=TargetServer(config,tmp,owned_database=database,close_database=False)
@@ -117,9 +114,8 @@ class TargetSearchTests(unittest.TestCase):
                 self.assertLess(time.monotonic()-start,2,'publish waited for external model IO')
                 self.assertTrue(model.document_started.wait(timeout=5))
                 # Query embedding is available while document work is incomplete:
-                # explicit not-ready/unavailable, never lexical-mode fallback.
-                with self.assertRaises(ManureError) as waiting:client.search('hayneedle','semantic')
-                self.assertEqual(waiting.exception.code,'search-unavailable')
+                # the unpublished artifact is not ranked yet, never a lexical-mode fallback.
+                self.assertEqual(client.search('hayneedle','semantic')['hits'],[])
                 start=time.monotonic();self.assertEqual(client.get_artifact(aid)['state'],'ready')
                 self.assertLess(time.monotonic()-start,2,'model call held the authoritative transaction/root monitor')
                 info=client.get_artifact(aid)
@@ -212,8 +208,7 @@ class TargetSearchTests(unittest.TestCase):
                 config['embedding']=dict(endpoint,revision='immutable-v2')
                 server=TargetServer(config,tmp,owned_database=database,close_database=False)
                 client=ManureClient(server.api_url,token=token,cache_dir=str(root/'cache2'))
-                with self.assertRaises(ManureError) as incompatible:client.search('hayneedle','semantic')
-                self.assertEqual(incompatible.exception.code,'search-unavailable')
+                self.assertEqual(client.search('hayneedle','semantic')['hits'],[],'publication of another profile was served')
                 model.fail_documents=False
                 replacement=eventually(client,'semantic')['hits'][0]
                 self.assertNotEqual(replacement['embedding_profile'],hit['embedding_profile'])
