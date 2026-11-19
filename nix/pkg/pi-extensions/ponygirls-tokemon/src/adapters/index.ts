@@ -17,8 +17,8 @@ import { ZaiQuota } from "./zai.ts";
 const NO_QUOTA = new NoQuotaEndpoint();
 
 const ADAPTERS = new Map<string, QuotaAdapter>([
-  ["anthropic", new ClaudeQuota()],
-  ["claude-code", new ClaudeQuota()],
+  ["anthropic", new ClaudeQuota("plain")],
+  ["claude-code", new ClaudeQuota("cli")],
   ["github-copilot", new CopilotQuota()],
   ["kimi-coding", new KimiQuota()],
   ["meta", new MetaQuota()],

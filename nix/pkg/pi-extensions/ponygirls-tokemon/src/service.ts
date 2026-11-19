@@ -8,6 +8,7 @@
  * refresh within `maxAgeMs` of the last one returns it unchanged.
  */
 
+import { canonicalClaudeUsageUrl } from "./adapters/claude.ts";
 import { adapterFor, hasQuotaAdapter } from "./adapters/index.ts";
 import type { Target } from "./discovery.ts";
 import { parseRetryAfter, type Http, type QuotaCache } from "./http.ts";
@@ -111,7 +112,7 @@ export class QuotaService {
     const held: QueryResult[] = [];
     const targets = this.deps.discover().filter((target) => target.provider !== "claude-code");
     const claudeCode = await auth.claudeCodeTarget?.();
-    if (claudeCode) targets.push(claudeCode);
+    if (claudeCode) targets.unshift(claudeCode);
     for (const target of targets) {
       const previous = this.previous.get(targetKey(target));
       if (target.provider !== "anthropic" && target.provider !== "claude-code" && previous?.rateLimited && previous.retryAt && previous.retryAt > now) held.push(previous);
@@ -129,7 +130,7 @@ export class QuotaService {
     const http: Http = {
       request: async (method, url, headers, body) => {
         const response = await this.deps.http.request(method, url, headers, body);
-        if (url === "https://api.anthropic.com/api/oauth/usage") quotaCache = response.quotaCache;
+        if (canonicalClaudeUsageUrl(url) !== null) quotaCache = response.quotaCache;
         return response;
       },
     };
@@ -151,7 +152,7 @@ export class QuotaService {
       } else {
         credential = { ...target.credential };
       }
-      return done(await adapter.fetch(credential, http), null);
+      return done(await adapter.fetch(credential, http, fetchedAt), null);
     } catch (e) {
       if (e instanceof RateLimitedError) return { target, snapshot: null, error: e.message, fetchedAt, rateLimited: true, retryAt: parseRetryAfter(e.retryAfter, fetchedAt) };
       return done(null, `${(e as Error).name}: ${(e as Error).message}`);

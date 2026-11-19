@@ -51,6 +51,16 @@ login. `claude-code` reads the selected CLI profile's `.credentials.json` and
 leaves token refresh to Claude Code. Keychain-only logins are not read.
 API-key usage cannot reveal enterprise subscription spend.
 
+Only the `claude-code` login requests the manual reset inventory via OAuth usage;
+`anthropic` keeps the plain Pi OAuth request and does not display manual resets.
+This is version-sensitive and best-effort: the request format is based on
+[ClaudeBar #720](https://github.com/tddworks/ClaudeBar/pull/720), using the
+User-Agent version pinned in `nix/pkg/claude-code/package.nix`. Missing,
+ineligible, or unreadable inventories are omitted. `resets: 3` in Status means three granted
+manual resets, not the scheduled reset in the Resets column. Counts are shown
+on the existing general weekly and Fable weekly rows only, for their respective
+weekly grants. Five-hour-only grants do not count. Nothing is redeemed.
+
 Each target fails independently. Except for shared Anthropic responses below,
 an HTTP 429 holds that target's last result until `Retry-After` passes.
 Targets that resolve to the same account are merged into one row.
@@ -64,6 +74,15 @@ SQLite file: `$XDG_CACHE_HOME/tokemon/state.sqlite`, or
 0700/0600. It contains endpoint URLs, SHA-256 hashes of Authorization values,
 last successful response bodies (including account metadata), and timestamps;
 it never stores the credentials themselves. Different credentials are isolated.
+The plain and reset-enriched usage requests use the same reservation and body.
+A plain usage client, including the standalone dashboard, can win the next
+shared reservation and write a body without reset counts. Claude Code counts
+then remain unavailable until an enriched refresh wins; Tokemon does not make
+an extra request or reuse older inventory as if it were current. The shared
+cache stores only per-scope counts grouped by availability period (upcoming
+start, if any, and expiry, if any), not grant identifiers, labels, or redemption
+data. Counts adjust when known grants start or expire, even while reusing
+cached data. Grants without expiry do not time out locally.
 
 `BEGIN IMMEDIATE` reserves each endpoint/credential's next request before
 network access. Only the reservation owner records its response; a timestamp
@@ -114,7 +133,9 @@ the calling session's context size and usage; it is present unless
 minute. Top-level `fetchedAt` is report assembly time; each provider exposes
 `fetchedAt`, `ageSeconds`, `stale`, and `nextRefreshAt`. Anthropic values may
 be older during backoff/failures. An unknown legacy success timestamp is null,
-not the current time.
+not the current time. Applicable Claude quota windows also expose the optional
+number `resetsAvailable`; zero means the disclosed inventory has no applicable
+active resets. An absent field does not mean zero.
 
 ## Command
 
@@ -141,12 +162,12 @@ theme's appearance (dark `#2E3440`, light `#FBF1C7`).
 
 Status is one line per row: the state (`ok`, `low`, `EXHAUSTED`, `unlimited`,
 `rate limited`) with the used percentage when used and limit are known
-(`low 98%`), then at most one qualifier that fits: the retry
-time (`retry 55m`) or the stale marker, for which a column is hidden if need
-be, else a provider's note where spare width allows. A qualifier that does
-not fit is dropped, never wrapped; a dropped stale marker is counted under
-the table (`⚠ 1 stale quota row(s)`). Where the row is wide enough the full
-text is shown (`rate limited (429) · retry in 55m 28s`).
+(`low 98%`), plus any qualifiers that fit. Retry time (`retry 55m`) and the
+stale marker take priority, followed by the manual reset count. Columns may
+be hidden to make room. A provider note uses spare width. A qualifier that does not
+fit is dropped, never wrapped; a dropped stale marker is counted under the
+table (`⚠ 1 stale quota row(s)`). Where the row is wide enough the full text
+is shown (`ok 60% · resets: 3 · stale 5m`).
 
 On a narrow terminal the provider locations are hidden first, then Status
 shortens, then columns are hidden in this order: Src, Plan, Login, Resets,

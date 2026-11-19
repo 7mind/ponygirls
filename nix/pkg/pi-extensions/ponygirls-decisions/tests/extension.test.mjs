@@ -709,6 +709,43 @@ function mountedBadges(f) {
   return { theme, current: () => component, renders: () => renders };
 }
 
+test("answer drafts survive reopening the pane but not a session restart or successful save", async (t) => {
+  const f = fixture(t);
+  f.ctx.mode = "tui";
+  const mounted = mountedBadges(f);
+  let pane;
+  f.ctx.ui.custom = (factory) => new Promise((resolve) => {
+    pane = factory({ terminal: { rows: 24 }, requestRender() {} }, mounted.theme, {}, resolve);
+  });
+  const press = (...keys) => { for (const key of keys) pane.handleInput(key); };
+  const screen = () => pane.render(100).join("\n");
+  const click = () => mounted.current().handleMouse({ type: "click", button: "left" });
+  const esc = "\x1b", save = "\x13";
+  f.start();
+  await f.call({ action: "ask", question: "Which approach?" }, "draft-question");
+  let command = f.command("Q1");
+  press("a", "local draft");
+  click();
+  await command;
+  command = f.command("Q1");
+  press("a");
+  assert.match(screen(), /local draft/);
+  press(esc, esc, esc, esc);
+  await command;
+  f.ctx.sessionManager.getSessionId = () => "another-session";
+  f.start();
+  command = f.command("Q1");
+  press("a");
+  assert.doesNotMatch(screen(), /local draft/);
+  press("submitted answer", esc, esc, "a", "!", save);
+  await command;
+  command = f.command("Q1");
+  press("e");
+  assert.match(screen(), /submitted answer!/);
+  press(esc, esc, esc);
+  await command;
+});
+
 // Regression: periodic publication replaced the pressed registration even when its owner was unchanged.
 test("same-owner polling preserves registration while counts, external revisions and pane ages advance", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-11-06T15:00:00Z") });

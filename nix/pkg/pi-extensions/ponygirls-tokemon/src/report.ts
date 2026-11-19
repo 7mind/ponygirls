@@ -7,6 +7,7 @@
 import type { TargetOrigin } from "./discovery.ts";
 import { freshness, type Freshness } from "./freshness.ts";
 import { formatResets, rateLimitedStatus, sortResults, windowState, type WindowState } from "./format.ts";
+import { resetsAvailable } from "./quota.ts";
 import type { QuotaReport } from "./service.ts";
 
 export interface WindowReport {
@@ -19,6 +20,7 @@ export interface WindowReport {
   resetsAt: string | null;
   /** Countdown to the reset ("2h 05m", "3d 4h"), or null. */
   resetsIn: string | null;
+  resetsAvailable?: number;
 }
 
 export interface ProviderReport extends Freshness {
@@ -73,16 +75,20 @@ export function toolReport(report: QuotaReport, now: Date, options: ReportOption
     location: r.target.label,
     login: r.snapshot?.identity ?? null,
     plan: r.snapshot?.plan ?? null,
-    windows: options.quotas ? (r.snapshot?.windows ?? []).map((w) => ({
-      name: w.name,
-      used: w.used,
-      limit: w.limit,
-      unit: w.unit,
-      unlimited: w.unlimited,
-      state: windowState(w),
-      resetsAt: w.resetsAt?.toISOString() ?? null,
-      resetsIn: w.resetsAt ? formatResets(w, now) : null,
-    })) : [],
+    windows: options.quotas ? (r.snapshot?.windows ?? []).map((w) => {
+      const available = resetsAvailable(w, now);
+      return {
+        name: w.name,
+        used: w.used,
+        limit: w.limit,
+        unit: w.unit,
+        unlimited: w.unlimited,
+        state: windowState(w),
+        resetsAt: w.resetsAt?.toISOString() ?? null,
+        resetsIn: w.resetsAt ? formatResets(w, now) : null,
+        ...(available === undefined ? {} : { resetsAvailable: available }),
+      };
+    }) : [],
     note: r.snapshot?.note ?? null,
     error: r.rateLimited ? rateLimitedStatus(r.retryAt, now) : r.error,
     rateLimited: r.rateLimited,

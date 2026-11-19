@@ -40,6 +40,7 @@ function open(items = [decision(1)], initialId: string | null = null, projectNam
   const tui = { terminal: { get rows() { return height; } }, requestRender: () => { renders++; } } as unknown as TUI;
   const pane = new DecisionsPane(theme, {
     tui,
+    retainedAnswers: new Map(),
     load: () => { if (loadError) throw loadError; return structuredClone(records); },
     resolve: (base, status, answer) => {
       writes.push({ base, status, answer });
@@ -279,8 +280,56 @@ test("save/load failures retain draft; cancellation never writes or closes the i
   h.press(ESC);
   assert.equal(h.closed(), false);
   assert.equal(h.writes.length, 1);
+  assert.match(h.screen(), /Press esc again/);
+  assert.match(h.screen(), /keep-me/);
+  h.press(ESC);
+  assert.equal(h.closed(), false);
   h.press(ESC);
   assert.equal(h.closed(), true);
+});
+
+test("dirty multiline answers require consecutive Esc presses and restore only for the same question and revision", () => {
+  const h = open([decision(1), decision(2)]);
+  h.press("a", "draft-one", ENTER, "second line", ESC);
+  assert.match(h.screen(), /Press esc again/);
+  assert.match(h.screen(), /draft-one[\s\S]*second line/);
+  h.press("\x1b[27;1:2u", "\x1b[27;1:3u");
+  assert.match(h.screen(), /Press esc again/);
+  h.press(UP);
+  assert.doesNotMatch(h.screen(), /Press esc again/);
+  h.press(ESC);
+  assert.match(h.screen(), /Press esc again/);
+  h.press(ESC);
+  assert.doesNotMatch(h.screen(), /draft-one/);
+  assert.equal(h.writes.length, 0);
+  h.press(DOWN, "e", "draft-two", ESC, ESC);
+  h.press(UP, "e");
+  assert.match(h.screen(), /draft-one[\s\S]*second line/);
+  assert.doesNotMatch(h.screen(), /draft-two|Press esc again/);
+  h.press(ESC, ESC, DOWN, "e");
+  assert.match(h.screen(), /draft-two/);
+  h.press(ESC, ESC);
+  h.setRecords([decision(1, { revision: 2 }), decision(2)]);
+  h.press(UP, "a");
+  assert.doesNotMatch(h.screen(), /draft-one|draft-two/);
+  h.press(ESC);
+  assert.match(h.screen(), /esc close/);
+});
+
+test("an untouched option-seeded editor does not replace a retained free-form draft", () => {
+  const h = open();
+  h.press("a", "free-form draft", ESC, ESC, "o", "e");
+  assert.match(h.screen(), /First option/);
+  assert.doesNotMatch(h.screen(), /free-form draft/);
+  h.press(ESC);
+  assert.match(h.screen(), /esc close/);
+  h.press("a");
+  assert.match(h.screen(), /free-form draft/);
+  h.press(ESC, ESC, "2", "e", "!", ESC);
+  assert.match(h.screen(), /Press esc again/);
+  h.press(ESC, "a");
+  assert.match(h.screen(), /Second option!/);
+  assert.equal(h.writes.length, 0);
 });
 
 test("dismiss/reopen require explicit confirmation; existing answers can be edited in history", () => {

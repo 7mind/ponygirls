@@ -183,3 +183,214 @@ test("the real Python ledger and Node ledger share reservations, bodies and time
   ledger.record(URL_USAGE, KEY, later, ok({ node: true }), new Date(later.getTime() + CLAUDE_MIN_QUERY_MS));
   assert.equal(runPython(`claim = ledger.try_claim(${JSON.stringify(URL_USAGE)}, ${JSON.stringify(KEY)}, now + timedelta(minutes=5))\nprint(claim.body.decode())`), '{"node":true}');
 });
+
+const URL_ENRICHED = `${URL_USAGE}?cedar_ember=1`;
+const URL_PROFILE = "https://api.anthropic.com/api/oauth/profile";
+const resetAt = "2026-11-01T00:00:00Z";
+const limits = [
+  { kind: "session", percent: 28, resets_at: resetAt },
+  { kind: "weekly_all", percent: 60, resets_at: resetAt, scope: null },
+  { kind: "weekly_scoped", percent: 24, resets_at: resetAt, scope: { model: { id: null, display_name: "Fable" }, surface: null } },
+  { kind: "weekly_scoped", percent: 43, resets_at: resetAt, scope: { model: { display_name: "Opus" } } },
+  { kind: "weekly_scoped", percent: 17, resets_at: resetAt, scope: { surface: "Fable" } },
+];
+const grant = (props: Record<string, unknown> = {}) => ({
+  id: "private-grant-id", label: "private-grant-label", token: "private-redemption-token", type: "full",
+  resets_left: 2, gives_back_weekly: false, clears: ["five_hour", "seven_day", "seven_day_overage_included"], paused: false,
+  starts_at: "2026-10-25T10:00:00Z", ends_at: "2026-10-27T00:00:00Z", ...props,
+});
+const inventory = (...grants: unknown[]) => ({ eligible: true, grants });
+const reportOptions = { models: null, context: null, quotas: true };
+const auth = { apiKey: async () => "test-token" };
+const claudeTarget = {
+  credential: { kind: "oauth" as const, secret: "test-token", refreshToken: null, accountId: null }, note: null,
+};
+const piTarget = { ...claudeTarget, provider: "anthropic", label: "auth", origin: "auth.json" as const };
+const cliTarget = { ...claudeTarget, provider: "claude-code", label: "CLI", origin: "Claude Code" as const };
+const cliAuth = { ...auth, claudeCodeTarget: async () => cliTarget };
+
+const grantSample = inventory(
+  grant(), grant({ resets_left: 1, ends_at: "2026-10-26T12:02:00Z" }),
+  grant({ resets_left: 4, gives_back_weekly: true, clears: ["five_hour", "seven_day_overage_included"] }),
+  grant({ resets_left: 20, clears: ["five_hour"] }),
+  grant({ resets_left: 30, paused: true }),
+  grant({ resets_left: 40, ends_at: NOW.toISOString() }),
+  grant({ resets_left: 50, starts_at: "2026-10-26T13:00:00Z" }),
+);
+
+test("only the Claude Code OAuth GET requests grants and shows their counts in existing rows", async (t) => {
+  const calls: Array<[string, string, Record<string, string>, string | null]> = [];
+  const requests = { request: async (method: string, url: string, headers: Record<string, string>, body: string | null) => {
+    calls.push([method, url, headers, body]);
+    if (url === URL_ENRICHED || url === URL_USAGE) return ok({ limits, cedar_ember: grantSample });
+    assert.equal(url, URL_PROFILE);
+    return ok({ account: { email: "test@example.test" } });
+  } };
+  const check = async (cli: boolean) => {
+    const path = temp(t);
+    const service = new QuotaService({ discover: () => cli ? [] : [{ ...piTarget, credential: { ...piTarget.credential, secret: "old-token" } }], http: new PacedHttp(requests, path, () => NOW), now: () => NOW });
+    const report = await service.report({ ...auth, claudeCodeTarget: async () => cli ? cliTarget : null }, 0);
+    const output = toolReport(report, NOW, reportOptions).providers[0]!;
+    assert.equal(output.provider, cli ? "claude-code" : "anthropic");
+    assert.deepEqual(output.windows.map((w) => [w.name, w.resetsAvailable, w.resetsAt]), [
+      ["session (5h)", undefined, "2026-11-01T00:00:00.000Z"],
+      ["weekly (7d)", cli ? 3 : undefined, "2026-11-01T00:00:00.000Z"],
+      ["weekly (7d) Fable", cli ? 4 : undefined, "2026-11-01T00:00:00.000Z"],
+      ["weekly (7d) Opus", undefined, "2026-11-01T00:00:00.000Z"],
+      ["weekly (7d) Fable", undefined, "2026-11-01T00:00:00.000Z"],
+    ]);
+    for (const width of [null, 138, 80]) {
+      const table = buildTable(report.results, NOW, { showInvalid: false, width }, PLAIN_TABLE_STYLE);
+      assert.equal(table.lines.length, limits.length + 1);
+      if (width !== 80) assert.match(table.lines[0]!, /Resets +Status/);
+      assert.deepEqual(table.lines.filter((line) => line.includes("resets:")).map((line) => line.trim().split(/ {2,}/).at(-1)), cli ? ["ok 60% · resets: 3", "ok 24% · resets: 4"] : []);
+      assert.doesNotMatch(table.lines.join("\n"), /private-|cedar_ember|seven_day_overage_included/);
+    }
+    assert.doesNotMatch(JSON.stringify(output), /private-|cedar_ember|seven_day_overage_included/);
+    assert.doesNotMatch(quotaLine(output.provider, report.results, NOW)!(PLAIN_TABLE_STYLE), /resets:/);
+    const db = new DatabaseSync(path, { readOnly: true });
+    const rows = db.prepare("SELECT endpoint, body FROM endpoint_queries ORDER BY endpoint").all();
+    db.close();
+    assert.deepEqual(rows.map((row) => row.endpoint), [URL_PROFILE, URL_USAGE]);
+    const cached = Buffer.from(rows[1]!.body as Uint8Array).toString();
+    assert.doesNotMatch(cached, /private-|cedar_ember|seven_day_overage_included|gives_back_weekly|starts_at|paused|ends_at/);
+  };
+  await check(false);
+  await check(true);
+  assert.deepEqual(calls.map(([method, url, headers, body]) => [method, url, headers.Authorization, body]), [
+    ["GET", URL_USAGE, HEADERS.Authorization, null], ["GET", URL_PROFILE, HEADERS.Authorization, null],
+    ["GET", URL_ENRICHED, HEADERS.Authorization, null], ["GET", URL_PROFILE, HEADERS.Authorization, null],
+  ]);
+  assert.deepEqual(calls[0]![2], HEADERS);
+  assert.deepEqual(calls[2]![2], {
+    ...HEADERS, "User-Agent": "claude-cli/2.1.322 (external, cli)", "anthropic-beta": "oauth-2025-04-20",
+    Accept: "application/json", "Content-Type": "application/json",
+  });
+});
+
+test("unknown or malformed inventory does not look like zero; a disclosed empty inventory does", async () => {
+  const cases: Array<[unknown, number | undefined]> = [
+    [undefined, undefined], [null, undefined], [{ eligible: false, grants: [] }, undefined],
+    [{ eligible: "true", grants: [] }, undefined], [{ eligible: true }, undefined],
+    [inventory(grant(), grant({ resets_left: -1 })), undefined],
+    [inventory(grant({ resets_left: "3" })), undefined], [inventory(grant({ resets_left: 1.5 })), undefined],
+    [inventory(grant({ gives_back_weekly: "true" })), undefined], [inventory(grant({ clears: "seven_day" })), undefined],
+    [inventory(grant({ clears: ["future_bucket"] })), undefined],
+    [inventory(grant({ clears: ["five_hour", "seven_day_overage_included"] })), undefined],
+    [inventory(grant({ gives_back_weekly: true, clears: ["five_hour", "seven_day"] })), undefined],
+    [inventory(grant({ ends_at: "0" })), undefined], [inventory(grant({ starts_at: "", ends_at: null })), undefined],
+    [inventory(grant({ ends_at: "2026-02-30T00:00:00Z" })), undefined], [inventory(grant({ paused: null })), undefined],
+    [inventory(), 0], [inventory(grant({ resets_left: 0 })), 0],
+    [inventory(grant({ paused: true }), grant({ ends_at: NOW.toISOString() })), 0],
+  ];
+  for (const [cedar_ember, expected] of cases) {
+    const service = new QuotaService({ discover: () => [], now: () => NOW, http: { request: async (_method, url) => {
+      if (url === URL_ENRICHED) return ok({ limits, cedar_ember });
+      assert.equal(url, URL_PROFILE);
+      return ok({});
+    } } });
+    const report = await service.report(cliAuth, 0);
+    const output = toolReport(report, NOW, reportOptions).providers[0]!;
+    assert.deepEqual(output.windows.map((w) => w.resetsAvailable), [undefined, expected, expected, undefined, undefined], JSON.stringify(cedar_ember));
+    const table = buildTable(report.results, NOW, { showInvalid: false, width: null }, PLAIN_TABLE_STYLE).lines.join("\n");
+    if (expected === 0) assert.match(table, /ok 60% · resets: 0/);
+    else assert.doesNotMatch(table, /resets:/);
+  }
+});
+
+test("plain and enriched usage share a ledger; cached grants start and expire on time", async (t) => {
+  const path = temp(t);
+  let now = NOW;
+  const calls: string[] = [];
+  const inner = { request: async (_method: string, url: string) => {
+    calls.push(url);
+    if (url === URL_PROFILE) return ok({});
+    if (url === URL_USAGE && now === NOW) return ok({ seven_day: { utilization: 62 } });
+    if (url === URL_ENRICHED && now.getTime() - NOW.getTime() === CLAUDE_MIN_QUERY_MS) {
+      return ok({ seven_day: { utilization: 60 }, cedar_ember: inventory(
+        grant({ resets_left: 1, ends_at: "2026-10-26T12:07:00Z" }),
+        grant({ ends_at: "2026-10-26T12:13:00Z" }),
+        grant({ starts_at: undefined, ends_at: null, resets_left: 1 }),
+        grant({ starts_at: "2026-10-26T12:08:00Z", ends_at: "2026-10-26T12:12:00Z", resets_left: 5 }),
+      ) });
+    }
+    return { status: 429, body: "", retryAfter: "0" };
+  } };
+  const http = () => new PacedHttp(inner, path, () => now);
+  const service = () => new QuotaService({ discover: () => [], http: http(), now: () => now });
+  await http().request("GET", URL_USAGE, HEADERS, null);
+  const plain = toolReport(await service().report(cliAuth, 0), now, reportOptions).providers[0]!;
+  assert.deepEqual(plain.windows.map((w) => [w.used, w.resetsAvailable]), [[62, undefined]]);
+  assert.deepEqual(calls, [URL_USAGE, URL_PROFILE]);
+
+  const longLived = service();
+  const then = (minutes: number) => { now = new Date(NOW.getTime() + minutes * 60_000); };
+  then(5);
+  const fresh = await longLived.report(cliAuth, 0);
+  const result = (report: typeof fresh) => toolReport(report, now, reportOptions).providers[0]!;
+  assert.equal(result(fresh).windows[0]!.resetsAvailable, 4);
+  assert.equal(result(fresh).stale, false);
+  assert.deepEqual(calls, [URL_USAGE, URL_PROFILE, URL_ENRICHED, URL_PROFILE]);
+  const plainReader = await http().request("GET", URL_USAGE, HEADERS, null);
+  assert.equal(plainReader.quotaCache?.fetchedAt?.toISOString(), now.toISOString());
+  assert.equal(JSON.parse(plainReader.body).seven_day.utilization, 60);
+  assert.equal(calls.length, 4);
+
+  then(7);
+  assert.equal(result(await longLived.report(cliAuth, 300_000)).windows[0]!.resetsAvailable, 3);
+  assert.equal(result(await service().report(cliAuth, 0)).windows[0]!.resetsAvailable, 3);
+  assert.equal(calls.length, 4);
+
+  then(8);
+  assert.equal(result(await longLived.report(cliAuth, 300_000)).windows[0]!.resetsAvailable, 8);
+  assert.equal(result(await service().report(cliAuth, 0)).windows[0]!.resetsAvailable, 8);
+  assert.equal(calls.length, 4);
+
+  then(10);
+  const stale = await service().report(cliAuth, 0);
+  assert.deepEqual([result(stale).windows[0]!.resetsAvailable, result(stale).ageSeconds, result(stale).stale], [8, 300, true]);
+  assert.match(buildTable(stale.results, now, { showInvalid: false, width: null }, PLAIN_TABLE_STYLE).lines[1]!, /ok 60% · resets: 8 · stale 5m/);
+  const narrow = buildTable(stale.results, now, { showInvalid: false, width: 60 }, PLAIN_TABLE_STYLE).lines[1]!;
+  assert.match(narrow, /stale 5m/);
+  assert.doesNotMatch(narrow, /resets:/);
+  assert.match(buildTable(stale.results, now, { showInvalid: false, width: 52 }, PLAIN_TABLE_STYLE).caption!, /1 stale quota row/);
+
+  then(13);
+  const expired = await service().report(cliAuth, 0);
+  assert.deepEqual([result(expired).windows[0]!.resetsAvailable, result(expired).ageSeconds, result(expired).stale], [1, 480, true]);
+  assert.equal(calls.length, 6);
+});
+
+test("when both logins use the same credential, Claude Code owns usage refresh and Pi ignores cached counts", async (t) => {
+  const calls: string[] = [];
+  const inner = { request: async (_method: string, url: string) => {
+    calls.push(url);
+    if (url === URL_ENRICHED) return ok({ seven_day: { utilization: 60 }, cedar_ember: grantSample });
+    if (url === URL_USAGE) return ok({ seven_day: { utilization: 30 } });
+    assert.equal(url, URL_PROFILE);
+    return ok({});
+  } };
+  const http = new PacedHttp(inner, temp(t), () => NOW);
+  const queued = Array.from({ length: 7 }, (_, i) => ({ ...piTarget, label: `other-${i}` }));
+  const service = new QuotaService({ discover: () => [piTarget, ...queued], http, now: () => NOW });
+  const results = (await service.report(cliAuth, 0)).results;
+  assert.equal(results.length, 9);
+  const cli = results.find((r) => r.target.provider === "claude-code")!;
+  assert.equal(cli.snapshot?.windows[0]?.used, 60);
+  const report = await service.report(cliAuth, 0);
+  const output = toolReport(report, NOW, reportOptions).providers.filter((p) => !p.location.startsWith("other-"));
+  assert.deepEqual(output.map((p) => [p.provider, p.windows[0]!.used, p.windows[0]!.resetsAvailable]), [
+    ["anthropic", 60, undefined], ["claude-code", 60, 3],
+  ]);
+  assert.deepEqual(calls, [URL_ENRICHED, URL_PROFILE]);
+});
+
+test("grants never create quota windows; both null and omitted time bounds are open", async (t) => {
+  const http = new PacedHttp({ request: async (_method, url) => url === URL_ENRICHED ? ok({
+    limits: [limits[0], limits[2]],
+    cedar_ember: inventory(grant(), grant({ resets_left: 5, gives_back_weekly: true, clears: ["five_hour", "seven_day_overage_included"], starts_at: null, ends_at: undefined })),
+  }) : ok({}), }, temp(t), () => NOW);
+  const service = new QuotaService({ discover: () => [], http, now: () => NOW });
+  const output = toolReport(await service.report(cliAuth, 0), NOW, reportOptions).providers[0]!;
+  assert.deepEqual(output.windows.map((w) => [w.name, w.resetsAvailable]), [["session (5h)", undefined], ["weekly (7d) Fable", 5]]);
+});

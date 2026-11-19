@@ -38,7 +38,8 @@ async function fixture(t: TestContext, provider: "anthropic" | "claude-code" = "
     const url = input instanceof Request ? input.url : String(input);
     assert.ok(url.startsWith("https://api.anthropic.com/api/oauth/"));
     assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer fixture");
-    return Response.json(url.endsWith("/usage") ? { five_hour: { utilization: 42, resets_at: "2026-11-06T16:00:00Z" } } : { account: { email: "fixture@example.test" } });
+    const usagePath = provider === "claude-code" ? "/usage?cedar_ember=1" : "/usage";
+    return Response.json(url.endsWith(usagePath) ? { five_hour: { utilization: 42, resets_at: "2026-11-06T16:00:00Z" } } : { account: { email: "fixture@example.test" } });
   };
   const handlers = new Map<string, (event: object, ctx: unknown) => void>();
   const tui = { terminal: { rows: 24 }, requestRender() { renders++; } };
