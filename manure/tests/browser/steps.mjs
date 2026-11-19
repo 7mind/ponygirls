@@ -13,8 +13,9 @@
  *   goto {url}                              -> {url, status}
  *   fill {selector, value}                  -> {ok}
  *   click {selector, waitForUrl?}           -> {ok, url}
- *   clickPopup {selector}                   -> {pages} (waits for the tab the click
- *                                              opens; later steps run in it, usePage
+ *   clickPopup {selector, button?}          -> {pages} (waits for the tab the click
+ *                                              opens, button "middle" for a middle-
+ *                                              click; later steps run in it, usePage
  *                                              returns to an earlier page)
  *   text {selector}                         -> {text}
  *   count {selector}                        -> {count}
@@ -121,7 +122,7 @@ async function runStep(ctx, step) {
     case "clickPopup": {
       const [popup] = await Promise.all([
         ctx.context.waitForEvent("page", { timeout: 15000 }),
-        page.locator(step.selector).click({ timeout: 10000 }),
+        page.locator(step.selector).click({ timeout: 10000, ...(step.button ? { button: step.button } : {}) }),
       ]);
       ctx.pages.push(popup);
       ctx.current = ctx.pages.length - 1;

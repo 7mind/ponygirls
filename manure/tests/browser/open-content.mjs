@@ -1,5 +1,6 @@
-// Controls that open artifact content: the catalogue row's Open and the artifact page's Open artifact open the
-// content in a new tab without an opener, by click and by keyboard; the dashboard tab keeps its URL and state.
+// Controls that open artifact content: the catalogue row's Open and the artifact page's Open artifact are links that
+// open the content in a new tab without an opener, by click, Enter, middle-click and by their link address; the
+// dashboard tab keeps its URL and state and never scripts a window.
 // Runnable alone: `node open-content.mjs < payload.json` (payload from test_browser_open_content.py).
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -13,24 +14,40 @@ const browser = await chromium.launch({ executablePath: input.browser, args: ["-
 const secrets = [input.token, input.loginPassword];
 const results = [];
 const VISIBILITIES = ["internal", "external", "public"];
+// "address": following the link's address in a tab of its own, as "Open link in new tab" or a copied link does.
+const ACTIVATIONS = ["click", "Enter", "middle-click", "address"];
 const SORTED = "#/artifacts?query=" + encodeURIComponent("sort:name direction:asc");
 
-const check = async (name, run) => {
+const signIn = async (page) => {
+  await page.locator("[data-account-login] input[name=login]").fill(input.login);
+  await page.locator("[data-account-login] input[name=password]").fill(input.loginPassword);
+  await page.locator("[data-account-login] button[type=submit]").click();
+};
+const newContext = async (problems) => {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   context.setDefaultTimeout(15000);
-  const problems = [];
+  // Counts the windows a page opens by script: the dashboard must hold no handle on the tabs it opens.
+  await context.addInitScript(() => {
+    const open = window.open;
+    window.__windowOpens = 0;
+    window.open = function (...args) { window.__windowOpens++; return open.apply(this, args); };
+  });
   context.on("page", (tab) => {
     tab.on("pageerror", (error) => problems.push("pageerror: " + error.message));
     tab.on("dialog", (dialog) => { problems.push("native dialog: " + dialog.type()); dialog.dismiss().catch(() => {}); });
   });
+  return context;
+};
+const check = async (name, run) => {
+  const problems = [];
+  const context = await newContext(problems);
   try {
     const page = await context.newPage();
     await page.goto(input.base + "/", { waitUntil: "domcontentloaded" });
-    await page.locator("[data-account-login] input[name=login]").fill(input.login);
-    await page.locator("[data-account-login] input[name=password]").fill(input.loginPassword);
-    await page.locator("[data-account-login] button[type=submit]").click();
+    await signIn(page);
     await page.getByRole("button", { name: input.userId }).waitFor();
-    await run(page, context);
+    await run(page, context, problems);
+    assert.equal(await page.evaluate(() => window.__windowOpens), 0, "the dashboard opened no window by script");
     assert.deepEqual(problems, []);
     results.push({ name, ok: true });
   } catch (error) {
@@ -64,17 +81,26 @@ const shows = {
   external: (tab) => tab.getByRole("heading", { name: "Protected artifact", exact: true }).waitFor(),
   public: (tab) => tab.getByRole("heading", { name: "Public content", exact: true }).waitFor(),
 };
+const grantPosts = (requests) => requests.filter((request) => request.method() === "POST" && request.url().endsWith("/__manure/grant"))
+  .map((request) => new URLSearchParams(request.postData() || "").get("grant"));
 
-// Activates the control (click or Enter) and checks the one new tab it opens; the tab is closed afterwards.
+// Activates the control and checks the one new tab it leads to; the tab is closed afterwards.
 async function opensInNewTab(page, context, control, visibility, activation) {
   await control.focus();
   const before = await dashboardState(page);
+  const href = await control.evaluate((link) => link.href);
   const content = input.artifacts[visibility].url.replace(/\/$/, "");
-  const navigations = [];
-  const record = (request) => { if (request.isNavigationRequest() && request.url().startsWith(content)) navigations.push(request); };
+  const requests = [];
+  const record = (request) => requests.push(request);
   context.on("request", record);
-  const [tab] = await Promise.all([context.waitForEvent("page"),
-    activation === "click" ? control.click() : page.keyboard.press("Enter")]);
+  let tab;
+  if (activation === "address") {
+    tab = await context.newPage();
+    await tab.goto(href, { waitUntil: "commit" });
+  } else {
+    [tab] = await Promise.all([context.waitForEvent("page"), activation === "click" ? control.click()
+      : activation === "middle-click" ? control.click({ button: "middle" }) : page.keyboard.press("Enter")]);
+  }
   await shows[visibility](tab);
   context.off("request", record);
   const what = `${visibility} by ${activation}`;
@@ -82,9 +108,14 @@ async function opensInNewTab(page, context, control, visibility, activation) {
   assert.equal(await tab.evaluate(() => window.opener === null), true, what + ": the content tab has no opener");
   assert.equal(context.pages().length, 2, what + ": exactly one new tab");
   assert.deepEqual(await dashboardState(page), before, what + ": the dashboard tab stays where it was");
-  if (visibility !== "internal") {
-    assert.notEqual(navigations.length, 0, what + ": the content navigation was observed");
-    assert.equal(await navigations[0].headerValue("referer"), null, what + ": the content request carries no Referer");
+  const grants = grantPosts(requests);
+  assert.equal(grants.length, visibility === "internal" ? 1 : 0, what + ": one single-use grant for internal content, none otherwise");
+  assert.equal(requests.some((request) => grants.some((grant) => request.url().includes(grant))), false, what + ": the grant travels in a POST body only");
+  // A middle-clicked tab starts loading before the driver attaches to it, so its first request is not observable.
+  if (activation === "click" || activation === "Enter") {
+    const first = requests.find((request) => request.isNavigationRequest());
+    assert.equal(first.url(), href.split("#")[0], what + ": the tab follows the link");
+    assert.equal(await first.headerValue("referer"), null, what + ": the link sends no Referer");
   }
   await tab.close();
 }
@@ -93,7 +124,7 @@ await check("catalogue Open opens each artifact's content in a new tab; the list
   await showCatalogue(page);
   for (const visibility of VISIBILITIES) {
     const control = rowOpen(page, visibility);
-    for (const activation of ["click", "keyboard"]) await opensInNewTab(page, context, control, visibility, activation);
+    for (const activation of ACTIVATIONS) await opensInNewTab(page, context, control, visibility, activation);
     assert.equal(await page.locator(`#artifact-list > tr[data-artifact-id="${input.artifacts[visibility].id}"]`)
       .getByRole("link", { name: "Open (opens in a new tab)", exact: true }).count(), 1, "the row control is a link that says it opens a new tab");
   }
@@ -103,43 +134,38 @@ await check("artifact page Open artifact opens the content in a new tab; the pag
   for (const visibility of VISIBILITIES) {
     await showArtifact(page, visibility);
     const control = page.locator("#open-button");
-    for (const activation of ["click", "keyboard"]) await opensInNewTab(page, context, control, visibility, activation);
+    for (const activation of ACTIVATIONS) await opensInNewTab(page, context, control, visibility, activation);
     assert.equal(await page.getByRole("link", { name: "Open artifact (opens in a new tab)", exact: true }).count(), 1,
       "the page control is a link that says it opens a new tab");
   }
 });
 
-await check("the internal grant hand-off opens its tab before the grant arrives and closes it when the grant fails", async (page, context) => {
+await check("an internal Open reports a refused grant in its tab; a signed-out tab signs in before the hand-off", async (page, context, problems) => {
   await showCatalogue(page);
   const control = rowOpen(page, "internal");
-  let held = null, failNext = false;
-  const grantHeld = new Promise((resolve) => { held = resolve; });
-  let release = null;
-  const released = new Promise((resolve) => { release = resolve; });
-  await page.route("**/api/current", async (route) => {
+  const href = await control.evaluate((link) => link.href);
+  await context.route("**/api/current", (route) => {
     const body = route.request().postData() || "";
     if (!body.includes('"CreateGrant"')) return route.continue();
-    if (failNext) {
-      return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ requestId: JSON.parse(body).requestId,
-        result: { Error: { failure: { code: "Unavailable", message: "controlled fixture", retryAfterSeconds: 1 } } } }) });
-    }
-    held();
-    await released;
-    return route.continue();
+    return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ requestId: JSON.parse(body).requestId,
+      result: { Error: { failure: { code: "Unavailable", message: "controlled fixture", retryAfterSeconds: 1 } } } }) });
   });
-  const [tab] = await Promise.all([context.waitForEvent("page"), control.click()]);
-  await grantHeld;
-  assert.equal(context.pages().length, 2, "the tab is open while the grant request is still unanswered");
-  release();
-  await shows.internal(tab);
-  await tab.close();
-  failNext = true;
+  await control.focus();
   const before = await dashboardState(page);
-  const [failed] = await Promise.all([context.waitForEvent("page"), control.click()]);
-  if (!failed.isClosed()) await failed.waitForEvent("close");
-  await page.getByRole("alert").filter({ hasText: "Open failed (" }).waitFor();
-  assert.equal(context.pages().length, 1, "the failed hand-off leaves no blank tab behind");
-  assert.equal((await dashboardState(page)).url, before.url);
+  const [tab] = await Promise.all([context.waitForEvent("page"), control.click()]);
+  await tab.getByRole("alert").filter({ hasText: "Open failed (" }).waitFor();
+  assert.equal(new URL(tab.url()).hash, "#/artifact/" + input.artifacts.internal.id, "the tab stays on the artifact page; Reload does not retry");
+  assert.equal(context.pages().length, 2);
+  assert.deepEqual(await dashboardState(page), before);
+  await context.unroute("**/api/current");
+  const signedOut = await newContext(problems);
+  try {
+    const fresh = await signedOut.newPage();
+    await fresh.goto(href, { waitUntil: "domcontentloaded" });
+    await signIn(fresh);
+    await shows.internal(fresh);
+    assert.equal(fresh.url().startsWith(input.artifacts.internal.url.replace(/\/$/, "")), true);
+  } finally { await signedOut.close(); }
 });
 
 await browser.close();

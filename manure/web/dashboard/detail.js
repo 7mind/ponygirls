@@ -27,6 +27,8 @@ var REVEALED_HINT = "Visible until you hide it or leave this page. Rotating repl
 var HASH_ONLY = "This older password was stored as a hash only. Rotate once to make the new password available.";
 var PASSWORD_PATTERN = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
 var PASSWORD_LENGTH = 43;
+// #/artifact/<id>?open: the page an internal artifact's Open link opens in a new tab; it hands the content off itself.
+var OPEN_PARAM = "open";
 // The server's expiry bounds (UploadRules.ttl): one minute to 365 days from now.
 var MIN_TTL_S = 60, MAX_TTL_S = 31536000;
 var MINUTE_MS = 60 * 1000, HOUR_MS = 60 * MINUTE_MS, DAY_MS = 24 * HOUR_MS;
@@ -218,10 +220,11 @@ export function createDetail(ctx, catalogue) {
   }
 
   // ── Loading ────────────────────────────────────────────────────────────
-  function routeFolder() {
+  function routeParams() {
     var hash = window.location.hash, at = hash.indexOf("?");
-    return new URLSearchParams(at === -1 ? "" : hash.slice(at + 1)).get("path") || "";
+    return new URLSearchParams(at === -1 ? "" : hash.slice(at + 1));
   }
+  function routeFolder() { return routeParams().get("path") || ""; }
   function resetView() {
     currentDetailId = null; currentDetailInfo = null; accessDraft = null; manifest = null;
     stopRename(false); stopExpiry(false); editTarget = null;
@@ -240,6 +243,9 @@ export function createDetail(ctx, catalogue) {
     openGeneration++; hidePassword();
     resetView();
     folder = routeFolder();
+    // Opened by an Open link: the request leaves the address at once, so neither Reload nor Back repeats it.
+    var opening = routeParams().has(OPEN_PARAM);
+    if (opening) { window.history.replaceState(null, "", routeHash(id)); }
     setText("detail-name", "Loading artifact…");
     $("detail-back-button").href = routeHash(null);
     $("detail-missing-back").href = routeHash(null);
@@ -250,6 +256,7 @@ export function createDetail(ctx, catalogue) {
       if (epoch !== ctx.sessionEpoch || generation !== detailGeneration) { return; }
       renderDetail(info, id);
       if (accessMutations.has(id)) { accessNotice("info", "An access or password update is still in progress. Wait for its status to be refreshed.", false); }
+      if (opening) { handOff(id, info); }
       loadFiles();
       if (info.state !== "ready") { loadProgress(id, generation, epoch); }
     }).catch(function (error) {
@@ -447,49 +454,42 @@ export function createDetail(ctx, catalogue) {
   }
 
   // ── Content handoff ────────────────────────────────────────────────────
-  // Content opens in a new tab without opener or referrer; the dashboard tab never navigates. The control is a link to
-  // the content URL, which serves public content and the external unlock page by itself.
+  // Content opens in a new tab without opener or referrer; the dashboard tab never navigates and holds no handle on it.
+  // Public content and the external unlock page are the content URL itself. Internal content needs a single-use grant,
+  // so its link opens this artifact's page in the new tab, which hands the content off (handOff): clicking, Enter,
+  // middle-click, the context menu and a copied address all take that same path.
   // link: an Open control of the catalogue or the page; available: the artifact may be opened now.
   function setOpenLink(link, info, available) {
     var url = info === null || !available ? null : contentUrl(info, window.location.origin);
     link.target = "_blank"; link.rel = "noopener noreferrer";
-    if (url === null) { link.removeAttribute("href"); link.setAttribute("aria-disabled", "true"); }
-    else { link.href = url; link.removeAttribute("aria-disabled"); }
+    if (url === null) { link.removeAttribute("href"); link.setAttribute("aria-disabled", "true"); return; }
+    link.href = info.visibility === "internal" ? new URL("#/artifact/" + info.artifact_id + "?" + OPEN_PARAM, window.location.href).href : url;
+    link.removeAttribute("aria-disabled");
   }
-  // Internal content needs a single-use grant that the dashboard mints and form-POSTs to the content endpoint. A
-  // noopener window would leave nothing to post into, so the tab is opened synchronously in the activation, disowned
-  // before anything loads in it and closed again when the grant cannot be had.
-  function openContent(event, id, info) {
-    var link = event.currentTarget;
-    if (info === null || !link.hasAttribute("href")) { event.preventDefault(); return; }
-    if (info.visibility !== "internal") { return; }
-    event.preventDefault();
-    if (!ID_RE.test(id) || accessMutations.has(id)) { return; }
-    var content = link.href;
+  // This tab was opened to show the artifact's content: internal content gets a single-use grant that this tab
+  // form-POSTs to the content endpoint; a failure stays visible on this artifact page.
+  function handOff(id, info) {
+    var url = contentUrl(info, window.location.origin);
+    if (url === null || info.state !== "ready") { fail(id, "Open failed (" + (url === null ? "content-unavailable" : "not-ready") + ")."); return; }
+    if (info.visibility !== "internal") { window.location.assign(url); return; }
     var epoch = ctx.sessionEpoch;
     var generation = ++openGeneration;
-    var tab = window.open("", "_blank");
-    if (tab === null) { fail(id, "Open failed (popup-blocked)."); return; }
-    tab.opener = null;
     apiFetch(current.grant(id)).then(function (body) {
-      if (epoch === ctx.sessionEpoch && generation === openGeneration) { postGrantHandoff(tab.document, content, body.grant); }
-      else { tab.close(); }
+      if (epoch === ctx.sessionEpoch && generation === openGeneration) { postGrantHandoff(url, body.grant); }
     }).catch(function (error) {
-      tab.close();
       if (epoch === ctx.sessionEpoch && generation === openGeneration) { fail(id, "Open failed (" + errorLabel(error) + ")."); }
     });
   }
-  // target: the document of the opened tab (same origin as the dashboard until the POST navigates it).
-  function postGrantHandoff(target, content, grant) {
-    var form = target.createElement("form");
+  function postGrantHandoff(content, grant) {
+    var form = document.createElement("form");
     form.method = "POST";
     form.action = content.replace(/\/$/, "") + "/__manure/grant";
     form.enctype = "application/x-www-form-urlencoded";
-    var field = target.createElement("input");
+    var field = document.createElement("input");
     field.type = "hidden";
     field.name = "grant";
     field.value = grant;
-    form.appendChild(field); target.body.appendChild(form);
+    form.appendChild(field); document.body.appendChild(form);
     form.submit(); form.remove();
   }
   // Failures of an action started on this page show on this page; actions started from the list report there.
@@ -897,7 +897,6 @@ export function createDetail(ctx, catalogue) {
   $("detail-reload-action").addEventListener("click", reload);
   $("access-refresh-button").addEventListener("click", reload);
   $("detail-notice-close").addEventListener("click", function () { detailNotice(null); });
-  $("open-button").addEventListener("click", function (event) { openContent(event, currentDetailId, currentDetailInfo); });
   $("delete-button").addEventListener("click", function () { if (currentDetailId !== null && currentDetailInfo !== null) { deleteArtifact(currentDetailId, currentDetailInfo); } });
   $("copy-link-button").addEventListener("click", copyLink);
   $("meta-copy-link-button").addEventListener("click", copyLink);
@@ -950,6 +949,6 @@ export function createDetail(ctx, catalogue) {
   }
   function cancelOpen() { openGeneration++; hidePassword(); }
 
-  return { showDetail: showDetail, setOpenLink: setOpenLink, openContent: openContent, deleteArtifact: deleteArtifact, copy: copy,
+  return { showDetail: showDetail, setOpenLink: setOpenLink, deleteArtifact: deleteArtifact, copy: copy,
     invalidate: invalidate, leave: leave, clear: clear, cancelOpen: cancelOpen };
 }

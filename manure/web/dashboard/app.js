@@ -609,7 +609,6 @@ function expressionInput(input, list, change, compositionChange) {
     open.setAttribute("aria-label", "Open" + NEW_TAB_NOTE);
     detail.setOpenLink(open, item, item.state === "ready" && !expired(item) && !ctx.accessMutations.has(id));
     open.title = contentUrl(item, window.location.origin) === null ? "Content hosting is not configured" : item.state !== "ready" ? "Upload is not ready" : expired(item) ? "Artifact expired" : "Open the content in a new tab";
-    open.addEventListener("click", function (event) { detail.openContent(event, id, item); });
     var hover = element("span", null, "row-actions");
     var copy = element("button", null, "btn btn-sm btn-ghost btn-icon");
     copy.type = "button"; copy.dataset.action = "copy-link"; copy.dataset.artifactId = id;

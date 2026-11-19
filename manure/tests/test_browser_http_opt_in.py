@@ -17,6 +17,7 @@ class HttpOptInBrowserCase(unittest.TestCase):
             return lookup('127.0.0.1' if host == 'manure-http.test' else host, port, *args, **kw)
         with patch('socket.getaddrinfo', local_dns):
             internal = bf.upload_fixture(fix,name='internal-http',kind='dir',visibility='internal',files={'index.html':b'<title>HTTP-INTERNAL</title>'})['artifact_id']
+            middle = bf.upload_fixture(fix,name='middle-http',kind='dir',visibility='internal',files={'index.html':b'<title>HTTP-MIDDLE</title>'})['artifact_id']
             public = bf.upload_fixture(fix,name='public-http',kind='dir',visibility='public',files={'index.html':b'<title>HTTP-PUBLIC</title>'})['artifact_id']
             external = bf.upload_fixture(fix, name='external-http', kind='dir', visibility='external',
                                          files={'index.html': b'<title>HTTP-EXTERNAL</title>'})
@@ -31,6 +32,10 @@ class HttpOptInBrowserCase(unittest.TestCase):
             {'op': 'clickPopup', 'selector': '[data-action=open][data-artifact-id="' + internal + '"]'},
             {'op': 'waitForEval', 'fn': '() => document.title === "HTTP-INTERNAL"'},
             {'op': 'cookies', 'urls': [fix.api_base + '/', fix.api_base + '/view/' + internal + '/']},
+            # Without Fetch Metadata (non-secure origin) a middle-clicked Open still gets its grant in the new tab.
+            {'op': 'usePage', 'index': 0},
+            {'op': 'clickPopup', 'selector': '[data-action=open][data-artifact-id="' + middle + '"]', 'button': 'middle'},
+            {'op': 'waitForEval', 'fn': '() => document.title === "HTTP-MIDDLE" && window.opener === null'},
             {'op': 'goto', 'url': external['content_url'] + '/'},
             {'op': 'fill', 'selector': 'input[name=password]', 'value': external['external_password']},
             {'op': 'click', 'selector': 'button[type=submit]'},

@@ -1,8 +1,8 @@
 """Dashboard controls that open artifact content, in real Chromium against the real server: the catalogue row's
-Open and the artifact page's Open artifact open the content in a new tab without an opener (click and keyboard;
-internal, external and public artifacts; path and separate-origin content modes) and the dashboard tab keeps its
-URL and state. The internal grant hand-off opens its tab before the grant arrives and closes it again when the
-grant fails."""
+Open and the artifact page's Open artifact are links that open the content in a new tab without an opener (click,
+Enter, middle-click and the link address; internal, external and public artifacts; path and separate-origin content
+modes), and the dashboard tab keeps its URL and state. Internal content gets its single-use grant in the new tab,
+which reports a refused grant itself; a signed-out tab signs in first."""
 import json
 from pathlib import Path
 import subprocess
