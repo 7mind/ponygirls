@@ -217,7 +217,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     IO.race(work,renew).void.handleErrorWith { failure =>
       val (stage,error)=failure match { case StagedFailure(stage,error) => (Some(stage),error); case error => (None,error) }
       error match {
-        case error: DomainError if Set("model-telemetry-invariant","internal","config").contains(error.code) => IO.raiseError(error)
+        case error: DomainError if Worker.fatal(error) => IO.raiseError(error)
         case _ =>
           val code=failureCode(error)
           val exceptionClass=error.getClass.getName
@@ -225,7 +225,10 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
           val sqlState=Worker.sqlState(error)
           IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code exceptionClass=$exceptionClass sqlState=$sqlState origin=$origin reason=$reason httpStatus=$httpStatus")) *> IO.blocking {
             stage match { case Some(value) => archive.fail(claim,code,value); case None => archive.fail(claim,code) }
-          }.handleErrorWith(failureNotRecorded(claim,code,_)) *> IO.sleep(failureBackoff.delay)
+          }.handleErrorWith {
+            case fatal: DomainError if Worker.fatal(fatal) => IO.raiseError(fatal)
+            case error => failureNotRecorded(claim,code,error)
+          } *> IO.sleep(failureBackoff.delay)
       }
     }
   }
@@ -251,27 +254,14 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       case Worker.Iteration.Idle => IO.sleep(idleDelay)
       case Worker.Iteration.ClaimFailed => IO.sleep(failureBackoff.delay)
     }.foreverM
-    List.fill(config.indexing.annotationSessions)(supervised(lane)).parSequence.map(_.head)
-  }
-  /** A lane that fails (a job's internal invariant, configuration) is restarted after a pause that doubles up to
-    * Worker.laneRestartLimit and starts over once the lane has run that long; the server keeps serving. */
-  private def supervised(lane: IO[Nothing]): IO[Nothing] = {
-    def attempt(pause: FiniteDuration): IO[Nothing] = IO.monotonic.flatMap { started =>
-      lane.handleErrorWith { error => IO.monotonic.flatMap { failed =>
-        val restartAfter=if(failed-started>=Worker.laneRestartLimit) failureBackoff.delay else pause
-        val code=failureCode(error); val exceptionClass=error.getClass.getName; val origin=failureOrigin(error)
-        IO(logger.error(s"worker lane failed code=$code exceptionClass=$exceptionClass origin=$origin restartAfterMs=${restartAfter.toMillis}")) *>
-          IO.sleep(restartAfter) *> attempt((restartAfter*2).min(Worker.laneRestartLimit))
-      }}
-    }
-    attempt(failureBackoff.delay)
+    List.fill(config.indexing.annotationSessions)(lane).parSequence.map(_.head)
   }
 }
 object Worker {
   private enum Iteration { case Processed,Idle,ClaimFailed }
   private def sqlState(error: Throwable): String = error match { case sql: java.sql.SQLException => Option(sql.getSQLState).getOrElse("unavailable"); case _ => "unavailable" }
-  /** The longest pause before a failed lane is restarted. */
-  val laneRestartLimit: FiniteDuration = 5.minutes
+  /** Invariant and configuration faults end the worker run (and with it the server), wherever they arise in a job. */
+  private def fatal(error: DomainError): Boolean = Set("model-telemetry-invariant","internal","config").contains(error.code)
   /** How long a worker lane stays idle after recording a failed job. */
   final case class FailureBackoff(delay: FiniteDuration)
   object FailureBackoff {
