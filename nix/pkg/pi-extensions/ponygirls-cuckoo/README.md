@@ -517,8 +517,18 @@ The main model receives “Restate me your objectives and brief me on your
 progress, obstacles, issues, bottlenecks, and ETA” with a JSON-only schema:
 
 ```json
-{"objectives":[{"objective":"Current objective","progress":"Brief factual progress","issues":["A decoder defect needs correction","Waiting for access approval","Serial runtime validation limits progress"],"eta":"Unknown: validation has not started"}],"rules":[{"rule":"Show mockups before implementation","source":"user","scope":"This UI change"}]}
+{"objectives":[{"objective":"Unfinished objective","progress":"Brief factual progress","issues":["A decoder defect needs correction","Waiting for access approval","Serial runtime validation limits progress"],"eta":"Unknown: validation has not started"}],"rules":[{"rule":"Show mockups before implementation","source":"user","scope":"This UI change"}]}
 ```
+
+Right after the schema the prompt states which objectives a report lists: only
+unfinished ones, meaning work is still left for the model, including work it
+must do once something it waits for arrives. Completed, cancelled and superseded
+objectives are omitted even when an earlier checkpoint listed them or they were
+finished since; they are not reported as done, and a finished objective is not
+kept because the user may still ask for changes. The session's system-prompt
+section says the same. Earlier reports and the transcript keep the history. This
+is a prose instruction, not validation: the decoder cannot tell a finished
+objective from an unfinished one.
 
 The prompt asks for brief, concise, human-friendly plain language in every field,
 preferably one short sentence or phrase. It discourages jargon, repetition, filler
@@ -570,7 +580,8 @@ unrecorded rather than implying there were none. New replies with missing fields
 a string-valued issues field, or obsolete category fields are invalid and retain
 their raw output.
 
-Only current objectives count; an empty list means zero. Reports are model
+Only unfinished objectives are requested, so the count is of those; an empty
+list means none remain. Reports are model
 self-reports, **not independently verified progress or new authorization**.
 
 The original assistant response remains in the transcript. Cuckoo stores its

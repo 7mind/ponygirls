@@ -7,6 +7,7 @@ import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { DEFAULT_PREFERENCES, ENABLED_TYPE, THRESHOLD_TYPE, POLICY_TYPE, FilePreferenceStore, effectivePreferences } from '../src/preferences.ts';
 import { validatePolicy } from '../src/policy.ts';
 import { INQUIRY } from '../src/state.ts';
+import { MODEL_GUIDANCE } from '../src/recall.ts';
 import { REPORT_TYPE, MAX_FIELD_CHARS, MAX_REPORT_CHARS, parseReport, checkpoint, checkpoints, reportText, historyText } from '../src/report.ts';
 
 // Specified: Behavioral-Active, Blackbox-Atomic/Group; filesystem preferences exercise the real adapter.
@@ -25,6 +26,16 @@ test('inquiry requests the current schema and evidence-qualified estimates', () 
   const example = INQUIRY.match(/JSON only: (\{"objectives":.*?\})\./)[1];
   assert.equal(parseReport(example).objectives.length, 1);
   for (const phrase of ['obstacles', 'issues', 'bottlenecks', 'ETA', 'Unknown', 'assumptions', 'Do not invent', 'Do not call tools', 'grants no new authority']) assert.ok(INQUIRY.includes(phrase), phrase);
+});
+
+// Specified Behavioral-Active / Blackbox-Atomic: prompt contract, not live-model compliance.
+test('inquiry and awareness ask for unfinished objectives only', () => {
+  const rule = INQUIRY.indexOf(' List only unfinished objectives');
+  assert.ok(rule > INQUIRY.indexOf('JSON only: ') && rule < INQUIRY.indexOf(' Each objective must contain only'), 'the rule follows the schema example and precedes the field rules');
+  for (const phrase of ['work still left for you to do', 'once something you are waiting for arrives', 'Omit every objective that is completed, cancelled or superseded', 'even when an earlier checkpoint listed it', 'never list an objective just to report it as done', 'not a record of accomplishments', 'may still ask for changes', 'empty objectives array when no unfinished objectives remain', 'remove every finished objective']) assert.ok(INQUIRY.includes(phrase), phrase);
+  assert.doesNotMatch(INQUIRY, /current objective/);
+  assert.equal(JSON.parse(INQUIRY.match(/JSON only: (\{"objectives":.*?\})\./)[1]).objectives[0].objective, 'unfinished objective');
+  for (const phrase of ['restate its unfinished objectives', 'completed, cancelled and superseded objectives are left out, not reported as done']) assert.ok(MODEL_GUIDANCE.includes(phrase), phrase);
 });
 
 // Specified: Behavioral-Active, Blackbox-Group.
