@@ -18,7 +18,7 @@ import { COMMENT_RESPONSE, COMMENT_RESPONSE_TYPE, COMMENT_TYPE, commentDelivery,
 import { FileQuestionStore, QUESTIONS_FILE, StandingQuestions, questionsText, type QuestionScope, type QuestionStore } from './src/questions.ts';
 import { RECALL_TOOL, RECALL_NOTICE, MODEL_GUIDANCE, DEFAULT_LIST_ITEMS, MAX_LIST_ITEMS, DEFAULT_READ_CHARS, MAX_READ_CHARS, MAX_RESPONSE_BYTES, recallRounds, type RecallRequest } from './src/recall.ts';
 import { INQUIRY_TYPE, RESUME, RESUME_TYPE, STATE_TYPE, inquiryDue, inquiryText, observe, stateOnBranch, type State } from './src/state.ts';
-import { CuckooView, type CommentHost } from './src/view.ts';
+import { CuckooView, REPORTS_SHORTCUT, type CommentHost } from './src/view.ts';
 import { CuckooSettingsView, bindSettingsCallbacks } from './src/settings-view.ts';
 import { reportContent, terminalText, type CuckooContent } from './src/presentation.ts';
 
@@ -287,7 +287,7 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
       } catch (error) { warn(ctx, error); }
     },
   });
-  pi.registerShortcut('ctrl+alt+c', { description: 'View Cuckoo objectives and progress', handler: async ctx => {
+  pi.registerShortcut(REPORTS_SHORTCUT.key, { description: 'View Cuckoo objectives and progress', handler: async ctx => {
     try {
       const reports = checkpoints(ctx.sessionManager.getBranch());
       await view.showReports(ctx, reports, statusIntro(ctx, reports));

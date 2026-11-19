@@ -17,7 +17,7 @@ const BADGE_GLYPH = "📥";
 const PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 50;
 const PANE_CHROME_ROWS = 4;
-const INBOX_SHORTCUT_KEY = "ctrl+alt+d";
+const INBOX_SHORTCUT = { key: "ctrl+alt+d", label: "⌃⌥D" } as const;
 export const SESSION_SETTING_TYPE = "ponygirls.decisions.setting";
 export const PREFERENCE_FILENAME = "decisions.json";
 
@@ -179,11 +179,13 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
           if (b.badge.requestRender !== null) b.badge.requestRender();
         } else {
           const badge: BadgeRegistration = { here, other, active: true, requestRender: null };
-          // One number: questions waiting in this project. Its colour says whether
-          // this session is among those waiting (warning) or only others are (muted).
           const look = (): BorderBadge => {
             const waiting = String(badge.here + badge.other);
-            return { glyph: BADGE_GLYPH, state: badge.here > 0 ? "attention" : "settled", label: waiting, compact: waiting };
+            return {
+              glyph: BADGE_GLYPH, state: badge.here > 0 ? "attention" : "settled",
+              label: waiting, compact: waiting,
+              wideLabel: `${badge.here}+${badge.other}`, wideShortcut: INBOX_SHORTCUT.label,
+            };
           };
           b.ctx.ui.setWidget(STATUS_KEY, (tui, theme) => {
             badge.requestRender = () => tui.requestRender();
@@ -496,7 +498,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
       }
     },
   });
-  pi.registerShortcut(INBOX_SHORTCUT_KEY, { description: "Open decisions inbox", handler: async (ctx) => { await openPane(active(ctx), null, "open"); } });
+  pi.registerShortcut(INBOX_SHORTCUT.key, { description: "Open decisions inbox", handler: async (ctx) => { await openPane(active(ctx), null, "open"); } });
 }
 
 export default function decisionsExtension(pi: ExtensionAPI): void {

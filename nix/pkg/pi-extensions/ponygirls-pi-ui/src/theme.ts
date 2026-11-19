@@ -23,7 +23,7 @@ export type UiFg =
   | "thinkingMax";
 
 /** Background tokens the kit uses. */
-export type UiBg = "selectedBg" | "toolPendingBg";
+export type UiBg = "selectedBg" | "customMessageBg" | "toolPendingBg" | "toolSuccessBg" | "toolErrorBg";
 
 export interface UiTheme {
   fg(color: UiFg, text: string): string;

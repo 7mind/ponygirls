@@ -7,6 +7,7 @@ import { checkpointBlocks, reportContent, historyContent, terminalText } from '.
 import { commentNodes, commentText, sameNode, type CommentDraft, type CommentNode, type SavedComment, type ShownComment } from './comments.ts';
 
 const BADGE_GLYPH = '🐦';
+export const REPORTS_SHORTCUT = { key: 'ctrl+alt+c', label: '⌃⌥C' } as const;
 const PI_CHROME = 2;
 const NODE_GUTTER = 2;
 const MAX_EDITOR_ROWS = 6;
@@ -580,6 +581,7 @@ export class CuckooView {
       state: warning ? 'attention' : 'settled',
       label: [count, warning ? '!' : '', enabled ? '' : 'off'].filter(part => part !== '').join(' '),
       compact,
+      wideShortcut: REPORTS_SHORTCUT.label,
     };
     ctx.ui.setWidget('cuckoo', (_tui, theme) => ({
       render: width => [borderBadge(theme, badge, width)],

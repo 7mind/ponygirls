@@ -48,6 +48,11 @@ implements the pane parts; use it instead of formatting by hand.
 ## Badges
 
 - One place per badge: `BORDER_ORDER`, passed as `setWidget`'s `order`.
+- Use `borderBadge` for the padded form. At 120 editor columns or more it
+  uses a theme background and can show extra detail and an existing shortcut.
+  Below that width it keeps the plain form. Provide `borderBadgeCompact` for
+  tight slots at any width; Pi can then drop wide details instead of clipping
+  a label or key hint.
 
 ## Transcript
 

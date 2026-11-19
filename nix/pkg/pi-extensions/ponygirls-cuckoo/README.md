@@ -30,7 +30,8 @@ Opt-in objective/progress and session-local rule checkpoints from the **main con
   answer and **`c`** comments on it; see [Commenting on a report](#commenting-on-a-report).
 - **Ctrl+Alt+C**: toggle the report view without submitting or losing the editor draft.
 - Click the **🐦 N** border badge to toggle reports (fullscreen, or regular
-  mode with Pi's `regularMouse` enabled). Escape or `q` closes the view.
+  mode with Pi's `regularMouse` enabled). At 120 columns or more, when the badge
+  fits, it also shows **⌃⌥C**. Escape or `q` closes the view.
 - `/cuckoo on|off|inherit`: session master override, or inherit project/global.
 - `/cuckoo default on|off`: global master default.
 - `/cuckoo project on|off|inherit`: trusted-project master override.
@@ -618,8 +619,8 @@ outstanding capture rather than capturing an unrelated future answer. Closed
 inquiries are neutralized in future provider context; original session evidence
 is retained. There is no automatic retry after cancellation.
 
-The badge shows the latest validated objective count. `?` means no validated
-report; `!` means the latest attempt/settings failed (the prior count is stale);
+The badge shows the latest validated objective count, if there is one.
+`!` means the latest attempt/settings failed (the prior count is stale);
 `off` means automatic scheduling is disabled. The report view shows report
 history newest first, with raw invalid output and errors. Terminal control bytes
 are removed for presentation, not from stored raw output.

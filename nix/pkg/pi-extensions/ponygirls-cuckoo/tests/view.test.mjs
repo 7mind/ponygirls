@@ -200,10 +200,12 @@ test('objective badge preserves zero/unknown/failure distinctions and bounds wid
   const f = fixture(theme); const view = new CuckooView(() => {}, noComments);
   view.publish(f.ctx, [], false, null); assert.equal(f.widgets.at(-1)?.[1], undefined);
   view.publish(f.ctx, [], true, null); assert.equal(f.badge().render(80)[0], ' 🐦 ', 'no report yet: the glyph alone');
+  assert.equal(f.badge().render(120)[0], ' 🐦 · ⌃⌥C ', 'wide: show the shortcut even before a report');
   const valid = checkpoint('one', '{"objectives":[],"rules":[]}');
   view.publish(f.ctx, [valid], true, null); assert.equal(f.badge().render(80)[0], ' 🐦 0 ');
   view.publish(f.ctx, [valid, checkpoint('two', 'bad')], false, null);
   assert.equal(f.badge().render(80)[0], ' 🐦 0 ! off ');
+  assert.equal(f.badge().render(120)[0], ' 🐦 0 ! off · ⌃⌥C ');
   assert.equal(f.badge().renderCompact(80), '🐦0!');
   for (const width of [0, 1, 2, 3, 4, 12]) {
     assert.ok(visibleWidth(f.badge().render(width)[0]) <= width);

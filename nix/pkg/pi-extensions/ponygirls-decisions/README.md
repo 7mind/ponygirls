@@ -16,11 +16,12 @@ pi -e ./nix/pkg/pi-extensions/ponygirls-decisions
 
 - `/decisions` or **⌃⌥D** opens the project's pending inbox (⌃ = Control, ⌥ = Alt).
 - `/decisions Q12` opens a particular question, including answered history.
-- The **📥 N** badge counts unanswered questions in the project, from this
-  session and all others. The number is in the warning colour when this session
-  is waiting for one of them and muted when only other sessions are. It lives on
-  the editor's bottom-left border; in fullscreen mode it is clickable. A narrow
-  border shows `📥N`. The badge disappears when nothing is pending.
+- The **📥 K+M · ⌃⌥D** badge separates unanswered questions from this session
+  (`K`) and the project's other sessions (`M`) at 120 columns or more, when
+  it fits. Narrower terminals show the project total (`📥 N`, or `📥N` in a
+  tight slot). The count warns when this session has pending questions and is
+  muted otherwise. The badge is clickable in fullscreen or regular mode with
+  `regularMouse` enabled, and disappears when nothing is pending.
 - The inbox frame shows `pending N` / `all` tabs and the repository name (the
   directory owning the Git common directory, so worktrees show the main repository).
   Questions originating in the active session carry a `[this session]` marker in

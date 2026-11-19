@@ -81,9 +81,9 @@ likewise keeps only the facts that fit whole. Closing the viewer never
 affects a task. The detail view holds at most 128 KiB of a log.
 
 While any task is unfinished the editor's bottom-left border shows the badge
-`🛠️ N`: the glyph, then the number of running tasks in the running colour,
-without a background, as every border badge looks (it sits next to the
-session goal and subagents badges when they are present). It disappears
+`🛠️ N`: the glyph, then the number of running tasks in the running colour.
+Like other border badges, it has a theme background when it fits at 120
+columns or more. It sits next to the goal and subagent badges and disappears
 when no running task remains. Clicking the badge opens the `/bg` inspector.
 The compact form is `🛠️N`. The badge is styled when it is drawn, so a theme
 switch restyles it at once.

@@ -207,7 +207,7 @@ test("nonblocking ask creates project questions and a bottom-left badge, list/ge
   assert.equal(f.shortcuts.get("ctrl+alt+d").description, "Open decisions inbox");
   assert.equal(f.shortcuts.has("ctrl+shift+d"), false, "Pi reserves Ctrl+Shift+D for its global debug handler");
   const tagged = { bg: (color, s) => `[${color}]${s}[/${color}]`, fg: (color, s) => `<${color}>${s}</${color}>` };
-  assert.equal(factory({ requestRender() {} }, tagged).render(200)[0], " 📥 <warning>1</warning> ", "this session waits: warning");
+  assert.equal(factory({ requestRender() {} }, tagged).render(119)[0], " 📥 <warning>1</warning> ", "this session waits: warning");
   assert.equal(factory({ requestRender() {} }, tagged).renderCompact(200), "📥<warning>1</warning>");
   const compact = factory({ requestRender() {} }, theme);
   for (const width of [0, 1, 2, 3, 4, 5, 6, 12]) assert.ok(visibleWidth(compact.renderCompact(width)) <= width);
@@ -218,14 +218,15 @@ test("nonblocking ask creates project questions and a bottom-left badge, list/ge
   assert.equal((await f.call({ action: "ask", question: "Which storage?", options: ["SQLite", "JSONL"], context: "Concurrent sessions", recommendation: "SQLite" }, "call-1")).details.id, "Q1");
 });
 
-test("badge counts the project's pending questions, coloured by whether this session waits, and refreshes on changes", async (t) => {
+test("the wide badge splits pending questions by session; the narrow badge still shows the project total", async (t) => {
   const f = fixture(t); f.start();
   assert.equal(f.widgets.at(-1)[1], undefined);
   const theme = { bg: (_color, s) => s, fg: (color, s) => `<${color}>${s}</${color}>` };
   const badge = (here, other) => {
     const widget = f.widgets.at(-1)[1]({ requestRender() {} }, theme);
     const colour = here > 0 ? "warning" : "muted";
-    assert.equal(widget.render(100)[0], ` 📥 <${colour}>${here + other}</${colour}> `);
+    assert.equal(widget.render(119)[0], ` 📥 <${colour}>${here + other}</${colour}> `);
+    assert.equal(widget.render(120)[0], ` 📥 <${colour}>${here}+${other}</${colour}><muted> · ⌃⌥D</muted> `);
     assert.equal(widget.renderCompact(80), `📥<${colour}>${here + other}</${colour}>`);
   };
   const external = new SqliteDecisionStore(f.path);
