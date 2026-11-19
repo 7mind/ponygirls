@@ -65,8 +65,9 @@
 main.auth-page > [role="status"] { color: var(--text-muted); }
 
 /* Narrower than the single-row masthead needs with its longest labels (connection "Reconnecting · 12/12", a user
- * name at its cap): two rows, the bar and the navigation below it; sticky offsets follow --masthead-h. */
-@media (max-width: 960px) {
+ * name at its cap; measured 1012 px with the six navigation entries): two rows, the bar and the navigation below it;
+ * sticky offsets follow --masthead-h. */
+@media (max-width: 1020px) {
   /* Only a masthead with navigation (signed in) needs the second row. */
   :root:has(.masthead > .nav) { --masthead-h: calc(var(--control-h-lg) + var(--space-2) + var(--subnav-h)); }
   .masthead:has(> .nav) { flex-wrap: wrap; align-content: flex-start; gap: 0 var(--space-3); }

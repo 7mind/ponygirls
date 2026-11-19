@@ -6,11 +6,10 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { FieldsEditor } from "./FieldsEditor";
 import { LinksEditor } from "./LinksEditor";
 import { HistoryCard, MetadataCard } from "./RecordEditRail";
-import { PRESETS, type Preset } from "./browse-state";
 import { drafts } from "./edit-drafts";
 import { changedParts, documentJsonOf, draftOf, isRemoteChange, problemsOf, type Draft } from "./edit-draft";
 import { useLeaveGuard } from "./leave-guard";
-import { itemHash } from "./router";
+import { itemHash, originLabel, type Origin } from "./router";
 
 interface Conflict {
   currentRevision: number;
@@ -36,7 +35,7 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
   /** The record's history, for context; null when it could not be read. */
   revisions: readonly RevisionMeta[] | null;
   /** The list the record was opened from. */
-  origin: Preset;
+  origin: Origin;
   onItem: (item: Item) => void;
   /** A save succeeded as `revision`. */
   onSaved: (revision: number) => Promise<void>;
@@ -182,7 +181,7 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
     conflict !== null ? <span className="chip chip-danger">Conflict with revision {conflict.currentRevision}</span> :
     problems.length > 0 ? <span className="chip chip-danger">{plural(problems.length, "problem")}</span> :
     dirty ? <span className="chip"><span className="status">Unsaved changes</span></span> : <span>No changes yet</span>;
-  const backLabel = `Back to ${PRESETS[origin].label}`;
+  const backLabel = `Back to ${originLabel(origin)}`;
 
   return <div className="edit-page" data-record="editing">
     <div className="viewbar record-bar edit-bar" role="toolbar" aria-label="Edit record">

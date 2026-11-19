@@ -42,7 +42,18 @@ export class ApiError extends Error {
   }
 }
 
+/** A semantic/hybrid search the server refused with one of its fixed reasons (HTTP 503 `unavailable`). */
+export class RetrievalUnavailable extends Error {
+  readonly reason: string;
+  constructor(reason: string) {
+    super(reason);
+    this.name = "RetrievalUnavailable";
+    this.reason = reason;
+  }
+}
+
 import { stringify } from "lossless-json";
+import { MODES, UNAVAILABLE_REASONS, type RetrievalModeName } from "./retrieve-state.ts";
 import { WriteCoordinator } from "./pending-write.ts";
 export { PendingWriteBlocked } from "./pending-write.ts";
 import { parseRaw as parse } from "./lossless-json.ts";
@@ -50,8 +61,8 @@ import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRunti
 import {
   Ack, AnalyzeResult, CompletionResult, DocumentPayload, Failure, GetRequest,
   HistoryRequest, HistoryResult, Identity, Item as WireItem,
-  PutRequest, PutResult, QueryRequest, SearchRequest, SearchResult, SearchSort as WireSearchSort,
-  ValuesRequest, ValuesResult,
+  PutRequest, PutResult, QueryRequest, RetrievalCapabilities, RetrievalMode, RetrievalMode_parse, RetrieveRequest, RetrieveResult,
+  SearchRequest, SearchResult, SearchSort as WireSearchSort, ValuesRequest, ValuesResult,
 } from "../../generated/typescript/haystack/api/index.ts";
 
 const context = BaboonCodecContext.Default;
@@ -60,21 +71,23 @@ interface Codec<T> {
   encode(context: BaboonCodecContext, value: T): unknown;
   decode(context: BaboonCodecContext, json: unknown): T;
 }
-async function request(path: string, init: RequestInit): Promise<Response> {
+/** `serviceUnavailable`: a 503 is decoded like other failures (retrieval reasons) instead of being a network error. */
+async function request(path: string, init: RequestInit, serviceUnavailable = false): Promise<Response> {
   let res: Response;
   try { res = await fetch(path, init); } catch { throw new NetworkError(); }
-  if (res.status === 502 || res.status === 503 || res.status === 504) throw new NetworkError();
+  if (res.status === 502 || (res.status === 503 && !serviceUnavailable) || res.status === 504) throw new NetworkError();
   return res;
 }
 async function call<T>(path: string, codec: Codec<T>, body?: unknown, method = "POST", signal?: AbortSignal): Promise<T> {
   const owner = sessionIdentity;
   return callCurrent(path, codec, body, method, () => sessionIdentity === owner, signal);
 }
-async function callCurrent<T>(path: string, codec: Codec<T>, body: unknown, method: string, isCurrent: () => boolean, signal?: AbortSignal): Promise<T> {
+async function callCurrent<T>(path: string, codec: Codec<T>, body: unknown, method: string, isCurrent: () => boolean, signal?: AbortSignal,
+  serviceUnavailable = false): Promise<T> {
   const res = await request(path, {
     method, headers: { "Content-Type": "application/json", "X-Haystack-Version": version },
     body: method === "GET" ? undefined : JSON.stringify(body ?? {}), signal,
-  });
+  }, serviceUnavailable);
   if (!isCurrent()) throw new SupersededRequestError();
   if (res.status === 401) {
     writes.clear(); sessionIdentity = { key: undefined };
@@ -160,6 +173,37 @@ export function summaryKey(summary: Pick<Summary, "project" | "item">): string {
   const encode = (value: string) => encodeURIComponent(value).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   return `${encode(summary.project)}:${encode(summary.item)}`;
 }
+
+/** One ranked hit: the record's best evidence chunk. */
+export interface RetrievedHit {
+  key: string;
+  revision: number;
+  field: string;
+  pointer: string;
+  text: string;
+  score: number;
+}
+
+/** One page of ranked search; counts as the server declares them (`countScope` ExactMatches or CandidateWindow). */
+export interface RetrievedPage {
+  hits: RetrievedHit[];
+  mode: RetrievalModeName;
+  countScope: string;
+  total: number;
+  rankingLimit: number | undefined;
+  pending: number;
+}
+
+const modeName = (mode: RetrievalMode): RetrievalModeName => {
+  const name = MODES.find((candidate) => candidate === mode);
+  if (name === undefined) throw new ApiError(200, { code: "unavailable", message: "bad response" });
+  return name;
+};
+/** Counts are i64 on the wire; the dashboard shows and pages them as safe integers. */
+const count = (value: bigint): number => {
+  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) throw new ApiError(200, { code: "unavailable", message: "bad response" });
+  return Number(value);
+};
 
 export interface RevisionMeta {
   revision: number;
@@ -302,4 +346,24 @@ export const api = {
   complete: (query: string, caret = query.length) => call("/api/v1/complete", CompletionResult.jsonCodec(),
     encode(QueryRequest.jsonCodec(), new QueryRequest(query, caret))),
   values: (field: string) => call("/api/v1/values", ValuesResult.jsonCodec(), encode(ValuesRequest.jsonCodec(), new ValuesRequest(field))),
+  /** The retrieval modes this server serves: Lexical always, Semantic and Hybrid only with a configured embedding. */
+  capabilities: async (): Promise<RetrievalModeName[]> =>
+    (await call("/api/v1/capabilities", RetrievalCapabilities.jsonCodec(), undefined, "GET")).modes.map(modeName),
+  /** Serves exactly `mode`; a refusal with a fixed reason is a RetrievalUnavailable, every other 503 a network error. */
+  retrieve: async (query: string, mode: RetrievalModeName, opts: { project: string | undefined; includeArchived: boolean; offset: number; limit: number }): Promise<RetrievedPage> => {
+    const owner = sessionIdentity;
+    let result: RetrieveResult;
+    try {
+      result = await callCurrent("/api/v1/retrieve", RetrieveResult.jsonCodec(), encode(RetrieveRequest.jsonCodec(),
+        new RetrieveRequest(query, RetrievalMode_parse(mode), opts.project, opts.includeArchived, opts.offset, opts.limit)), "POST", () => sessionIdentity === owner, undefined, true);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 503) throw error;
+      if (error.code === "unavailable" && UNAVAILABLE_REASONS.includes(error.message)) throw new RetrievalUnavailable(error.message);
+      throw new NetworkError();
+    }
+    return {
+      hits: result.sources.map((source) => ({ key: source.key, revision: source.revision, field: source.field, pointer: source.pointer, text: source.text, score: source.score })),
+      mode: modeName(result.mode), countScope: result.countScope, total: count(result.total), rankingLimit: result.rankingLimit, pending: count(result.pending),
+    };
+  },
 };

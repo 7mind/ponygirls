@@ -20,6 +20,8 @@ starts a private PostgreSQL cluster (`mktemp -d /tmp/haystack-ui-capture.*`, eph
 selected server on a free loopback port, seeds 640 synthetic records (962 revisions, 5 projects, 4 users,
 long Markdown/code fields, links, archived and `human-attention: required` items) through the public API,
 then drives pinned Chromium (headless) via `playwright-core`. Everything is removed on exit.
+Retrieval runs with the loopback stub embedding endpoint of `../tests-browser/embedding-stub.mjs` (deterministic
+vectors, no external network); the `retrieve` scenario (Search view) stops and holds it for its fallback and pending states.
 
 Output: `NN-page-state-viewport[-dark][-full].png` (the `shell` scenario names its shots like the mockup
 shots instead, e.g. `haystack-browse-dark-1440.png`, through `rec.shot(…, { file })`), `index.md` (one line per file: what + how reached,
@@ -36,7 +38,7 @@ named scenarios; note that `index.md`/`manifest.json` then list only those shots
 
 Observed at 0f0f00a7: the default run (every scenario) stalls in `browse` (it still drives the pre-redesign
 selectors; no shot after `07-boot-unreachable`). The scenarios written for the redesign are `shell`, `browse-h2`,
-`browse-fin` (filters applied, offline warning), `record` and `edit`; use
+`browse-fin` (filters applied, offline warning), `record`, `edit` and `retrieve` (Search); use
 
 ```sh
 HAYSTACK_UI_CAPTURE_SKIP_BUILD=1 HAYSTACK_CAPTURE_ONLY=shell,browse-h2,browse-fin,record,edit \

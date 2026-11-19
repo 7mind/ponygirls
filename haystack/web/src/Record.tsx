@@ -7,10 +7,10 @@ import { drafts } from "./edit-drafts";
 import { Flights, NOWHERE, RECORD_READ_TIMEOUT_MS, shows, step, type ReadEffect, type ReadEvent, type Reads } from "./record-reads";
 import { UiIcon } from "./Masthead";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { browseHash, DEFAULT_SORT, PRESETS, type Preset } from "./browse-state";
+import { browseHash, DEFAULT_SORT } from "./browse-state";
 import { appendFilter } from "./query-edit";
 import { focusMenu, menuKeys, useOverlay } from "./overlay";
-import { itemHash } from "./router";
+import { itemHash, originLabel, type Origin } from "./router";
 import { parseFields } from "./fields";
 import { changedParts, compareRevisions, type Comparison, type DiffLine, type TextDiff } from "./revision-diff";
 
@@ -91,7 +91,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
   /** The edit route (#/item/<key>/edit) is current: the editor opens once the record is loaded. */
   edit: boolean;
   /** The list the record was opened from: Back returns to it. */
-  origin: Preset;
+  origin: Origin;
   onBack: () => void;
   onEdit: () => void;
   onEditDone: () => void;
@@ -249,8 +249,8 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
     } finally { setBusy(false); }
   }
 
-  const back = <button type="button" className="btn btn-ghost record-back" onClick={onBack} aria-label={`Back to ${PRESETS[origin].label}`}
-    title={`Back to ${PRESETS[origin].label}`}><UiIcon name="arrow-left" /><span className="record-back-label">{PRESETS[origin].label}</span></button>;
+  const back = <button type="button" className="btn btn-ghost record-back" onClick={onBack} aria-label={`Back to ${originLabel(origin)}`}
+    title={`Back to ${originLabel(origin)}`}><UiIcon name="arrow-left" /><span className="record-back-label">{originLabel(origin)}</span></button>;
   const toasts = <div className="toasts" role="status" aria-live="polite">
     {toast !== null && <div className="toast"><UiIcon name="check" /><span>{toast.text}</span>
       {toast.action !== null && <button type="button" className="btn btn-sm" onClick={() => { const action = toast.action!; setToast(null); action.run(); }}>{toast.action.label}</button>}
@@ -281,7 +281,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
         <UiIcon name="search" />
         <h2>Record not found</h2>
         <p>There is no record with the key <code>{itemKey}</code>. It may have been renamed, or the link is mistyped. Archived records still open by key.</p>
-        <div className="row"><button type="button" className="btn btn-primary" onClick={onBack}>Back to {PRESETS[origin].label}</button>
+        <div className="row"><button type="button" className="btn btn-primary" onClick={onBack}>Back to {originLabel(origin)}</button>
           <a className="btn" href={browseQueryHash(item)}>Search for “{item}”</a></div>
       </div> : <div className="page"><div className="page-narrow">
         <div className="notice notice-danger" role="alert"><UiIcon name="alert" /><div className="grow"><span className="notice-title">Record unreadable.</span> {load.message}.</div>

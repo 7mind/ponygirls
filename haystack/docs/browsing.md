@@ -37,6 +37,47 @@ Automatic loading stops until **Retry loading records** is selected; failures
 never trigger an automatic retry loop. Responses from superseded searches or
 sort orders cannot replace or append to the active result set.
 
+## Search (ranked retrieval)
+
+**Search**, next to Browse in the navigation, is ranked retrieval over record
+titles, descriptions and tags (`POST /api/v1/retrieve`, [`api.md`](api.md)).
+Fields are not searched here, and the Browse query language does not apply:
+the text uses PostgreSQL web-search syntax (`"exact phrase"`, `-word`, `or`)
+for the lexical leg; semantic and hybrid also rank by meaning through the
+configured embedding. Browse remains the exact listing and filter view.
+
+The route is `#/search?q=&mode=&project=&archived=` (`mode` lexical, semantic or
+hybrid; omitted means the default). Controls:
+
+- **Mode**: Default, Lexical, Semantic, Hybrid. Modes the server does not offer
+  (`GET /api/v1/capabilities`) are disabled with the reason "Not configured on
+  this server". Choosing a mode searches at once.
+- **Project (exact)**: one exact project, applied with Enter or Search.
+- **Include archived**: archived records are excluded unless checked.
+
+Default (no mode in the route): hybrid when the server offers it, otherwise
+lexical with the notice "Hybrid search is not available on this server:
+<reason>; showing lexical results". A default hybrid search that the server
+refuses with its fixed reason (`query embedding failed`) is run once more
+lexically with the same notice. An explicitly chosen mode is never replaced:
+when the server refuses it, the view shows the reason and a **Search lexically
+instead** button. The line above the results always names the mode that
+answered and whether it was the default or chosen. A semantic or hybrid answer
+with records not yet indexed shows "N items are not yet indexed for semantic
+search; results may be incomplete". An empty query sends no request.
+
+Each result is one record: its key (opens the record; Back returns to the
+search with its query, mode, loaded results, scroll position and focus), the
+revision, field and pointer of the best matching text, a snippet of that text
+(at most 240 characters, shown as plain text) and the score. Counts are shown
+as the server declares them: exact matches for lexical, or the records found in
+the candidate window (with its ranking limit) for semantic and hybrid. Results
+load in batches of 20 as the end of the page approaches, up to the exact
+matches or the ranking window, and end with an explicit marker. A failed next
+batch keeps the loaded results and offers **Retry loading results**. Returning
+to an earlier search route restores its answer only if it had settled; a
+search that failed or was still loading runs again.
+
 ## Checks
 
 From `haystack/`:
@@ -56,3 +97,11 @@ selects a Firefox executable explicitly instead of `HAYSTACK_CHROMIUM`; there
 is no automatic browser fallback. Use a runtime compatible with Playwright.
 The local HTTP fixture injects delayed and failed search responses; production
 server code has no fault-injection hooks.
+
+`web/tests-browser/retrieve.mjs` checks Search against two real servers: one
+configured with a loopback stub embedding endpoint started by the script
+(`embedding-stub.mjs`, deterministic vectors, requests recorded, no external
+network) and one lexical-only. It covers the default hybrid, the lexical-only
+notice and disabled modes, the lexical re-run and the explicit-mode refusal
+with the stub stopped, the pending notice, the record round trip and the
+keyboard path to the mode control.

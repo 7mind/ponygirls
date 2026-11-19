@@ -1,10 +1,15 @@
-import { PRESET_ORDER, readBrowseState, type BrowseState, type Preset } from "./browse-state.ts";
+import { PRESET_ORDER, PRESETS, readBrowseState, type BrowseState, type Preset } from "./browse-state.ts";
+import { isSearchHash, readRetrieveState, SEARCH_LABEL, SEARCH_PATH, type RetrieveState } from "./retrieve-state.ts";
 
-// Fragment routes (spec §5): #/<preset>?q=&sort=&direction=, #/item/<key>, #/item/<key>/edit.
-// Fragments starting with #account belong to the shared account module and are never routes here.
+// Fragment routes (spec §5): #/<preset>?q=&sort=&direction=, #/search?q=&mode=&project=&archived=, #/item/<key>,
+// #/item/<key>/edit. Fragments starting with #account belong to the shared account module and are never routes here.
 export type Route =
   | { readonly name: "list"; readonly preset: Preset; readonly hash: string; readonly state: BrowseState }
+  | { readonly name: "search"; readonly hash: string; readonly state: RetrieveState }
   | { readonly name: "item"; readonly key: string; readonly edit: boolean; readonly origin: string; readonly known: boolean };
+
+/** The view a record is opened from: a Browse preset or Search. */
+export type Origin = Preset | typeof SEARCH_PATH;
 
 const ITEM_PREFIX = "#/item/";
 const EDIT_SUFFIX = "/edit";
@@ -41,6 +46,9 @@ export function presetOf(hash: string): Preset {
   return PRESET_ORDER.find((preset) => preset === path) ?? "browse";
 }
 
+export function originOf(hash: string): Origin { return isSearchHash(hash) ? SEARCH_PATH : presetOf(hash); }
+export function originLabel(origin: Origin): string { return origin === SEARCH_PATH ? SEARCH_LABEL : PRESETS[origin].label; }
+
 /** Parses a non-account fragment; `historyState` supplies the originating list of a record entry. */
 export function parseRoute(hash: string, historyState: unknown): Route {
   if (isAccountHash(hash)) throw new Error("Account fragments are owned by the account module, not the Haystack router.");
@@ -51,6 +59,7 @@ export function parseRoute(hash: string, historyState: unknown): Route {
     const state = entryState(historyState);
     return { name: "item", key, edit, origin: state === null ? DEFAULT_LIST_HASH : state.origin, known: state !== null };
   }
+  if (isSearchHash(hash)) return { name: "search", hash, state: readRetrieveState(hash) };
   const preset = presetOf(hash);
   return { name: "list", preset, hash: hash === "" ? DEFAULT_LIST_HASH : hash, state: readBrowseState(hash, preset) };
 }

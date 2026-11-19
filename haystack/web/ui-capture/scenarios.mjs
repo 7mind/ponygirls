@@ -916,7 +916,106 @@ export const scenarios = [
       await ctx.close();
     },
   },
+  {
+    name: "retrieve", title: "search-parity W4: Search (ranked retrieval) next to Browse — modes, notices, list states",
+    async run(env) {
+      const { rec, stub } = env;
+      const view = "section.retrieve";
+      const hit = `${view} li[data-hit-key]`;
+      const query = "token rotation";
+      const search = (params) => `#/search?${new URLSearchParams(params)}`;
+      const settled = (page) => page.waitForFunction(() => document.querySelector("section.retrieve")?.getAttribute("aria-busy") === "false");
+      const show = async (page, hash) => {
+        await page.goto(`${env.base}/${hash}`);
+        await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Search", exact: true }).waitFor();
+        await settled(page); await page.waitForTimeout(250);
+      };
+      await waitIndexed(env, undefined);
+      for (const [viewport, width] of [[DESKTOP, 1440], [SMALL, 1024], [MOBILE, 390]]) for (const dark of [false, true]) {
+        if (dark && width === 1024) continue;
+        const { ctx, page } = await open(env, { viewport, dark });
+        await show(page, search({ q: query }));
+        await rec.shot(page, "retrieve-results", { file: `haystack-search-results${dark ? "-dark" : ""}-${width}.png`, desc: "Default hybrid search: effective mode, candidate-window count, one block per record with key, revision, field, pointer, snippet and score",
+          how: `open #/search?q=${query} (server with the controlled stub embedding; no explicit mode)`, expect: [`${view} [data-effective-mode="Hybrid"]`, hit] });
+        await ctx.close();
+      }
+      {
+        const { ctx, page } = await open(env);
+        await show(page, "#/search");
+        await rec.shot(page, "retrieve-idle", { file: "haystack-search-default-1440.png", desc: "Empty query: no request, the hint (websearch syntax, Browse for exact filters)", how: "open #/search", expect: [`${view} [data-empty="idle"]`] });
+        await show(page, search({ q: "zzqx nothing matches", mode: "lexical" }));
+        await rec.shot(page, "retrieve-empty", { file: "haystack-search-empty-1440.png", desc: "No matches (explicit lexical)", how: "open #/search?q=zzqx nothing matches&mode=lexical", expect: [`${view} [data-empty="no-matches"]`] });
+        await show(page, search({ q: query }));
+        // Every visible record is a hybrid candidate (stub vectors): scroll until the end of the candidate window.
+        for (let page_ = 0; page_ < 60 && await page.locator(`${view} [data-list-end]`).count() === 0; page_++) {
+          const before = await page.locator(hit).count();
+          await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+          await page.waitForFunction(([selector, count]) => document.querySelectorAll(selector).length > count || document.querySelector("section.retrieve [data-list-end]") !== null, [hit, before]);
+        }
+        await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight)); await page.waitForTimeout(250);
+        await rec.shot(page, "retrieve-end", { file: "haystack-search-end-1440.png", desc: "End of the candidate window marker after infinite loading", how: "scroll the document to the end repeatedly until the end marker shows", expect: [`${view} [data-list-end]`] });
+        await ctx.close();
+      }
+      {
+        // The lexical-only server's capability answer (the browser leg checks a real lexical-only server).
+        const { ctx, page } = await open(env);
+        await page.route("**/api/v1/capabilities", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ modes: ["Lexical"] }) }));
+        await show(page, search({ q: query }));
+        await rec.shot(page, "retrieve-lexical-only", { file: "haystack-search-lexical-only-1440.png", desc: "Lexical-only server: lexical by default with the notice; Semantic and Hybrid disabled with the reason",
+          how: "route GET /api/v1/capabilities to {modes:[Lexical]} (as a server without embedding answers), open #/search?q=…", expect: [`${view} [data-notice="lexical"]`, hit] });
+        await ctx.close();
+      }
+      await stub.stop();
+      try {
+        const { ctx, page } = await open(env);
+        await show(page, search({ q: query }));
+        await rec.shot(page, "retrieve-fallback", { file: "haystack-search-fallback-1440.png", desc: "Defaulted hybrid answered 503 'query embedding failed': one lexical re-run with the server's reason",
+          how: "stop the stub embedding endpoint's listener, open #/search?q=…", expect: [`${view} [data-notice="lexical"]`, hit] });
+        await show(page, search({ q: query, mode: "semantic" }));
+        await rec.shot(page, "retrieve-unavailable", { file: "haystack-search-unavailable-1440.png", desc: "Explicit semantic refused with the server's reason and the one-click lexical way out",
+          how: "stub stopped, open #/search?q=…&mode=semantic", expect: [`${view} [data-notice="unavailable"]`] });
+        await ctx.close();
+      } finally { await stub.start(); }
+      {
+        const hold = stub.hold((input) => input.includes("capture-pending-marker"));
+        try {
+          await env.clients.alice.put({ key: "search-quality:fresh-note", documentJson: JSON.stringify({ title: "Token rotation drill capture-pending-marker", description: "Written just now", fields: {}, type: "note", status: "actual", importance: "low", "human-attention": "cleared", links: [], tags: [] }), expectedRevision: 0, requestId: env.uuidv7() });
+          const { ctx, page } = await open(env);
+          await show(page, search({ q: query }));
+          await rec.shot(page, "retrieve-pending", { file: "haystack-search-pending-1440.png", desc: "A just-written record is not yet indexed: the pending notice above the hits",
+            how: "hold the stub's answer for the new record's document embedding, put it, open #/search?q=…", expect: [`${view} [data-notice="pending"]`] });
+          await ctx.close();
+        } finally { hold.release(); }
+      }
+      {
+        const { ctx, page } = await open(env);
+        await page.route("**/api/v1/retrieve", () => {});
+        await page.goto(`${env.base}/${search({ q: query })}`);
+        await page.locator(`${view} [data-skeleton]`).waitFor(); await page.waitForTimeout(250);
+        await rec.shot(page, "retrieve-loading", { file: "haystack-search-loading-1440.png", desc: "First page in flight: skeleton blocks, 'Searching…'", how: "route POST /api/v1/retrieve without answering, open #/search?q=…", expect: [`${view} [data-skeleton]`] });
+        await page.unroute("**/api/v1/retrieve");
+        await page.route("**/api/v1/retrieve", (route) => route.abort());
+        await show(page, search({ q: `${query} again` }));
+        await rec.shot(page, "retrieve-error", { file: "haystack-search-error-1440.png", desc: "Search failed (server unreachable): the error notice with Retry, query kept", how: "route POST /api/v1/retrieve to abort, open #/search?q=…", expect: [`${view} [role=alert]`] });
+        await ctx.close();
+      }
+    },
+  },
 ];
+
+/** Polls the server until every record in scope is published for semantic search (the worker indexes after seeding). */
+async function waitIndexed(env, project) {
+  const deadline = Date.now() + 300000;
+  for (;;) {
+    const response = await fetch(`${env.base}/api/v1/retrieve`, { method: "POST", headers: { "Content-Type": "application/json", "X-Haystack-Version": "1.0.0", Authorization: `Bearer ${env.secrets["claude-agent"]}` },
+      body: JSON.stringify({ query: "x", mode: "Hybrid", project: project ?? null, includeArchived: true, offset: 0, limit: 1 }) });
+    const body = await response.json();
+    if (!response.ok) throw new Error(`retrieve failed: ${JSON.stringify(body).slice(0, 200)}`);
+    if (body.pending === "0") return;
+    if (Date.now() > deadline) throw new Error(`indexing did not finish: ${JSON.stringify(body).slice(0, 200)}`);
+    await sleep(500);
+  }
+}
 
 
 

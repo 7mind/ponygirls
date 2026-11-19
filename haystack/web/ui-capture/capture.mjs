@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { writePasswordHash } from "../tests-browser/credentials.mjs";
 import { ownedDatabase, configFor, atomicConfig, startServer, stopServer, publicClient, freePort } from "../tests-browser/native.mjs";
+import { startEmbeddingStub, stubEmbeddingConfig } from "../tests-browser/embedding-stub.mjs";
 import { Recorder } from "./lib.mjs";
 import { buildCorpus, ACTIVITY_PROJECT, AUTHORS } from "./seed.mjs";
 import { scenarios } from "./scenarios.mjs";
@@ -27,11 +28,12 @@ const uuidv7 = (() => { let n = 0; return () => {
 const rec = new Recorder(OUT);
 await rec.init();
 const started = Date.now();
-let database, backend, browser, dir;
+let database, backend, browser, dir, stub;
 const cleanup = async () => {
   if (browser) await browser.close().catch(() => {});
   if (backend) await stopServer(backend);
   if (database) await database.close();
+  if (stub) await stub.close();
   if (dir) await rm(dir, { recursive: true, force: true });
 };
 process.once("SIGTERM", () => { void cleanup().finally(() => process.exit(143)); });
@@ -63,7 +65,11 @@ try {
     rateLimit: { windowMs: 60000, max: 100000 },
   };
   const configFile = path.join(dir, "config.json");
-  await atomicConfig(configFile, await configFor({ database: database.runtime, port, webRoot: path.join(webRoot, "dist"), auth }));
+  // Retrieval runs with the controlled loopback stub embedding (the `retrieve` scenario stops and holds it).
+  stub = await startEmbeddingStub();
+  const config = await configFor({ database: database.runtime, port, webRoot: path.join(webRoot, "dist"), auth });
+  config.retrieval.embedding = await stubEmbeddingConfig(stub, dir);
+  await atomicConfig(configFile, config);
   backend = await startServer(configFile, port, path.join(dir, "server.log"));
   console.log(`# server ready on ${base}`);
 
@@ -84,7 +90,7 @@ try {
   console.log(`# seeded ${corpus.length} records / ${puts} puts in ${Date.now() - seedStart} ms`);
 
   browser = await chromium.launch({ executablePath: process.env.HAYSTACK_CHROMIUM, args: ["--no-sandbox", "--no-proxy-server"] });
-  const env = { base, port, rec, browser, corpus, clients, passwords, secrets, uuidv7, startedAt: started, dir };
+  const env = { base, port, rec, browser, corpus, clients, passwords, secrets, uuidv7, startedAt: started, dir, stub };
   for (const scenario of scenarios) {
     if (ONLY.length > 0 && !ONLY.includes(scenario.name)) continue;
     console.log(`# scenario ${scenario.name}`);

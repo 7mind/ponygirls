@@ -1,7 +1,7 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import { PRESET_ORDER, PRESETS, type Preset } from "./browse-state";
 import { ConnectionIndicator } from "./Live";
 import { focusMenu, menuKeys, useOverlay } from "./overlay";
+import { originLabel, type Origin } from "./router";
 
 // Shared design-system icons (shared/ui-web/icons.js), referenced from the emitted sprite.
 export function UiIcon({ name, small }: { name: string; small?: boolean }) {
@@ -78,16 +78,18 @@ function UserMenu({ identity }: { identity: Identity }) {
   </div>;
 }
 
-export interface NavState { active: Preset | null; inbox: { count: number; more: boolean } | null }
+export interface NavState { active: Origin | null; inbox: { count: number; more: boolean } | null }
+/** Browse, then ranked Search next to it, then the other presets. */
+const NAV_ORDER: readonly Origin[] = ["browse", "search", "inbox", "upstream", "skills", "archive"];
 
 export function Masthead({ identity, nav }: { identity: Identity; nav: NavState }) {
   return <header className="masthead">
     <Brand />
-    <nav className="nav" aria-label="Main navigation">{PRESET_ORDER.map((preset) => {
-      const count = preset === "inbox" && nav.inbox !== null && nav.inbox.count > 0 ? nav.inbox : null;
-      return <a key={preset} href={`#/${preset}`} aria-current={nav.active === preset ? "page" : undefined}
+    <nav className="nav" aria-label="Main navigation">{NAV_ORDER.map((origin) => {
+      const count = origin === "inbox" && nav.inbox !== null && nav.inbox.count > 0 ? nav.inbox : null;
+      return <a key={origin} href={`#/${origin}`} aria-current={nav.active === origin ? "page" : undefined}
         aria-describedby={count === null ? undefined : "inbox-count-description"}>
-        {PRESETS[preset].label}
+        {originLabel(origin)}
         {count !== null && <span className="count count-attn" aria-hidden="true">{count.count}{count.more && "+"}</span>}
       </a>;
     })}</nav>

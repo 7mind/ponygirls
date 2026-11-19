@@ -2,13 +2,15 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExter
 import { api, AuthError, type Principal } from "./api";
 import { Login } from "./Login";
 import { Browse } from "./Browse";
-import { browseHash, DEFAULT_SORT, PRESETS, type Preset } from "./browse-state";
+import { browseHash, DEFAULT_SORT, PRESETS } from "./browse-state";
 import { RecordPage } from "./Record";
+import { Retrieve } from "./Retrieve";
 import { LiveProvider, useLiveUpdates } from "./Live";
 import { Masthead, SignedOutMasthead, type Identity, type NavState } from "./Masthead";
-import { adoptItem, closeEdit, isAccountHash, leaveItem, parseRoute, presetOf, pushEdit, pushItem, type Route } from "./router";
+import { adoptItem, closeEdit, isAccountHash, leaveItem, originOf, parseRoute, pushEdit, pushItem, type Origin, type Route } from "./router";
 
 type ListRoute = Extract<Route, { name: "list" }>;
+type SearchRoute = Extract<Route, { name: "search" }>;
 /** Where the reader was in a list when it was hidden: restored when its route is shown again. */
 interface Position { scrollY: number; focus: Element | null }
 /**
@@ -17,7 +19,9 @@ interface Position { scrollY: number; focus: Element | null }
  * scroll and focus (spec §5 rule 2); routes of the same preset that the list showed before are kept by the list.
  */
 interface ListEntry { id: number; route: ListRoute; position: Position | null }
-interface View { route: Route; lists: readonly ListEntry[]; shown: number | null }
+/** The one Search view, retained like a list; it shows every search route itself. */
+interface SearchEntry { route: SearchRoute; position: Position | null }
+interface View { route: Route; lists: readonly ListEntry[]; shown: number | null; search: SearchEntry | null }
 /** What the next layout pass does with the document scroll. */
 type ScrollAction = { kind: "restore"; position: Position } | { kind: "top" } | null;
 
@@ -25,7 +29,7 @@ const INBOX_COUNT_LIMIT = 100;
 const ACCOUNT_PROFILE_PATH = "/api/account/v1/profile";
 
 function routeKey(route: Route): string {
-  return route.name === "list" ? `list:${route.hash}` : `item:${route.key}:${route.edit}:${route.origin}`;
+  return route.name === "item" ? `item:${route.key}:${route.edit}:${route.origin}` : `${route.name}:${route.hash}`;
 }
 
 /** Reads the current non-account route; legacy URL filters are rewritten to their canonical expression. */
@@ -44,14 +48,22 @@ const FIRST_LIST_ID = 0;
 function initialView(): View {
   // A first load on an account fragment shows the account page above the default list.
   const route = isAccountHash(location.hash) ? parseRoute("", null) : currentRoute();
-  return route.name === "list" ? { route, lists: [{ id: FIRST_LIST_ID, route, position: null }], shown: FIRST_LIST_ID } : { route, lists: [], shown: null };
+  if (route.name === "list") return { route, lists: [{ id: FIRST_LIST_ID, route, position: null }], shown: FIRST_LIST_ID, search: null };
+  return { route, lists: [], shown: null, search: route.name === "search" ? { route, position: null } : null };
 }
 
 /** The view after navigating to `route`, and what to do with the scroll; `position` is where the shown list was. */
 function navigate(previous: View, route: Route, position: Position, nextId: () => number): { view: View; scroll: ScrollAction } {
   const leaving = previous.route.name === "list" ? previous.lists.find((entry) => entry.id === previous.shown) : undefined;
   let lists = previous.lists.map((entry) => (leaving !== undefined && entry.id === leaving.id ? { ...entry, position } : entry));
-  if (route.name === "item") return { view: { route, lists, shown: previous.shown }, scroll: { kind: "top" } };
+  const search = previous.route.name === "search" && previous.search !== null ? { ...previous.search, position } : previous.search;
+  if (route.name === "item") return { view: { route, lists, shown: previous.shown, search }, scroll: { kind: "top" } };
+  if (route.name === "search") {
+    // Another search from the Search view starts at the top by itself; returning to the route it showed restores the reader's place.
+    const scroll: ScrollAction = previous.route.name === "search" ? null
+      : search !== null && search.route.hash === route.hash && search.position !== null ? { kind: "restore", position: search.position } : { kind: "top" };
+    return { view: { route, lists, shown: previous.shown, search: { route, position: null } }, scroll };
+  }
   // One list per preset. It keeps every route it showed (Browse's kept routes), so another query or sort of
   // the same preset is shown by that list, which restores the route if it showed it before.
   const same = lists.find((entry) => entry.route.preset === route.preset);
@@ -71,7 +83,7 @@ function navigate(previous: View, route: Route, position: Position, nextId: () =
     scroll = { kind: "top" };
   }
   lists = same === undefined ? [...lists, target] : lists.map((entry) => (entry.id === target.id ? target : entry));
-  return { view: { route, lists, shown: target.id }, scroll };
+  return { view: { route, lists, shown: target.id, search }, scroll };
 }
 
 // Users is offered to administrators only; servers without GET /profile (404) have no administrators to offer it to.
@@ -221,14 +233,15 @@ function Workspace({ identity, notice, onAuthLost }: { identity: Identity; notic
     const previous = current.current;
     let route = currentRoute();
     if (route.name === "item" && !route.known) {
-      const origin = previous.route.name === "list" ? previous.route.hash : previous.route.origin;
+      const origin = previous.route.name === "item" ? previous.route.origin : previous.route.hash;
       adoptItem(origin);
       route = { ...route, origin, known: true };
     }
     if (routeKey(route) === routeKey(previous.route)) return;
     const focus = document.activeElement;
-    const inShownList = focus !== null && previous.shown !== null && focus.closest(`[data-list-entry="${previous.shown}"]`) !== null;
-    const next = navigate(previous, route, { scrollY: window.scrollY, focus: inShownList ? focus : null }, () => ++lastId.current);
+    const shownView = previous.route.name === "search" ? "[data-search-entry]" : previous.shown === null ? null : `[data-list-entry="${previous.shown}"]`;
+    const inShownView = focus !== null && shownView !== null && focus.closest(shownView) !== null;
+    const next = navigate(previous, route, { scrollY: window.scrollY, focus: inShownView ? focus : null }, () => ++lastId.current);
     scroll.current = next.scroll;
     setView(next.view);
   }, []);
@@ -257,21 +270,24 @@ function Workspace({ identity, notice, onAuthLost }: { identity: Identity; notic
   }, [view]);
 
   const route = view.route;
-  const active: Preset | null = accountOpen ? null : route.name === "list" ? route.preset : presetOf(route.origin);
+  const active: Origin | null = accountOpen ? null : route.name === "list" ? route.preset : route.name === "search" ? "search" : originOf(route.origin);
   const openItem = useCallback((key: string) => { pushItem(key, location.hash); sync(); }, [sync]);
 
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main" onClick={(event) => { event.preventDefault(); main.current!.focus(); }}>Skip to main content</a>
       <Masthead identity={identity} nav={{ active, inbox }} />
-      <main ref={main} id="main" className="workspace" tabIndex={-1} data-view={route.name === "list" ? "list" : route.edit ? "edit" : "record"}>
+      <main ref={main} id="main" className="workspace" tabIndex={-1} data-view={route.name === "item" ? route.edit ? "edit" : "record" : route.name}>
         <PendingWriteNotice />
         {notice !== "" && <p role="status" className="notice">{notice}</p>}
         {view.lists.map((entry) => <div key={entry.id} hidden={route.name !== "list" || entry.id !== view.shown} data-list={entry.route.preset} data-list-entry={entry.id}>
           <Browse preset={entry.route.preset} initial={entry.route.state} userId={identity.userId} activityProjectId={identity.activityProjectId}
             onOpen={openItem} onAuthLost={onAuthLost} />
         </div>)}
-        {route.name === "item" && <RecordPage key={route.key} itemKey={route.key} edit={route.edit} origin={presetOf(route.origin)} onAuthLost={onAuthLost}
+        {view.search !== null && <div hidden={route.name !== "search"} data-search-entry="">
+          <Retrieve initial={view.search.route.state} onOpen={openItem} onAuthLost={onAuthLost} />
+        </div>}
+        {route.name === "item" && <RecordPage key={route.key} itemKey={route.key} edit={route.edit} origin={originOf(route.origin)} onAuthLost={onAuthLost}
           onBack={leaveItem}
           onEdit={() => { pushEdit(route.key); sync(); }}
           onEditDone={() => { if (closeEdit(route.key) === "replaced") sync(); }} />}
