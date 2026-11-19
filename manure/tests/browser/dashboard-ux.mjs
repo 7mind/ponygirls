@@ -89,7 +89,7 @@ const search = async (page, text) => {
     document.querySelector("#catalogue-table").getAttribute("aria-busy") === "false" && / loaded|No matches/.test(document.querySelector("#list-status").textContent), text);
 };
 const recordSearch = async (page) => {
-  await search(page, "ux-record-");
+  await search(page, "mode:catalogue ux-record-");
   await page.waitForFunction(() => document.querySelectorAll("#artifact-list > tr").length === 25 && [...document.querySelectorAll("#artifact-list .cell-title")].every((node) => node.textContent.startsWith("ux-record-")));
 };
 
@@ -122,7 +122,7 @@ await check("sortable table, global search and URL reload", async (page) => {
   assert.deepEqual(await titles(page), Array.from({ length: 25 }, (_, i) => `ux-record-${String(i).padStart(2, "0")}`));
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.querySelector("#artifact-list .cell-title")?.textContent === "ux-record-00");
-  assert.equal(await page.locator("#filter-text").inputValue(), "sort:name direction:asc ux-record-");
+  assert.equal(await page.locator("#filter-text").inputValue(), "mode:catalogue sort:name direction:asc ux-record-");
 });
 
 await check("expression length bound and delayed capabilities preserve draft", async (page) => {
@@ -175,11 +175,11 @@ await check("sort and access scope wait for a changed draft; the scope then appl
   await page.waitForFunction((n)=>window.__ux.readCommands.length === n+1,before);
   assert.deepEqual(await page.evaluate(()=>window.__ux.readCommands.at(-1)),{mode:"catalogue",query:"ux-record-"});
   assert.equal(await page.locator("#filter-text").inputValue(), "mode:lexical kind:dir owner:unsent-owner unsent draft");
-  await page.locator("#filter-text").fill("ux-record-");
+  await page.locator("#filter-text").fill("mode:catalogue ux-record-");
   await page.locator('[data-visibility-preset="external"]').click();
-  await page.waitForFunction(()=>new URLSearchParams(location.hash.split("?")[1]).get("query")==="access:external ux-record-" &&
+  await page.waitForFunction(()=>new URLSearchParams(location.hash.split("?")[1]).get("query")==="mode:catalogue access:external ux-record-" &&
     document.querySelector("#catalogue-table").getAttribute("aria-busy") === "false" && document.querySelector("#list-status").textContent.includes("loaded"));
-  assert.equal(await page.locator("#filter-text").inputValue(),"access:external ux-record-");
+  assert.equal(await page.locator("#filter-text").inputValue(),"mode:catalogue access:external ux-record-");
   assert.equal(await page.locator('[data-visibility-preset="external"]').getAttribute("aria-pressed"), "true");
   assert.equal(await rows(page).evaluateAll((nodes) => nodes.length > 0 && nodes.every((node) => node.dataset.visibility === "external")), true);
 });
@@ -263,7 +263,7 @@ await check("old pages cannot append after a sort change", async (page) => {
 });
 
 await check("expired artifacts remain deletable from the catalogue", async (page) => {
-  await search(page, "ux-expired");
+  await search(page, "mode:catalogue ux-expired");
   await search(page, "expired:true ux-expired");
   await count(page, 1);
   await page.getByRole("button", { name: "More actions for ux-expired" }).click();
@@ -349,7 +349,7 @@ await check("latest unsent catalogue expression replaces queued reads", async (p
   await bottom(page);
   await page.waitForFunction(()=>window.__ux.releaseList!==null).catch(error=>{throw new Error('held append: '+error.message);});
   const before=await page.evaluate(()=>window.__ux.readCommands.length);
-  for (const text of ['ux-protected','ux-public','ux-hostile']) {
+  for (const text of ['mode:catalogue ux-protected','mode:catalogue ux-public','mode:catalogue ux-hostile']) {
     await page.locator('#filter-text').fill(text); await page.locator('#search-submit').click();
     await page.waitForFunction(q=>new URLSearchParams(location.hash.split('?')[1]).get('query')===q,text).catch(error=>{throw new Error('submitted '+text+': '+error.message);});
   }

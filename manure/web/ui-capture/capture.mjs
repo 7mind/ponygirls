@@ -991,10 +991,54 @@ SCENES.m3 = async () => {
   await loading.context().close();
 };
 
+// ---------------------------------------------------------------- search text without mode: (search-parity MN-D)
+// Needs capture.py --embedding-stub: hybrid is offered, a query naming "outage" fails at the provider and one internal
+// artifact stays unindexed. A lexical-only server is shown by rewriting the GetCapabilities answer to Lexical alone.
+async function lexicalOnly(page) {
+  await page.route("**/api/current", async (route) => {
+    if (!route.request().postDataJSON()?.command?.GetCapabilities) { await route.continue().catch(() => {}); return; }
+    const response = await route.fetch();
+    const json = await response.json();
+    json.result.CapabilityInfo.capabilities.searchModes = ["Lexical"];
+    await route.fulfill({ response, json });
+  });
+}
+async function retrieval(vp, scheme, { lexical = false } = {}) {
+  const page = await newPage({ vp, scheme, storageState: AUTH });
+  if (lexical) await lexicalOnly(page);
+  await page.goto(BASE + "/#/artifacts", { waitUntil: "load" });
+  await page.waitForSelector("#main:not([hidden])"); await waitList(page);
+  await themed(page, scheme);
+  return page;
+}
+async function searchText(page, text) {
+  await page.fill("#filter-text", text); await page.click("#search-submit");
+  await page.waitForFunction(() => document.getElementById("catalogue-table").getAttribute("aria-busy") === "false" &&
+    /hits ·|Not loaded/.test(document.getElementById("list-status").textContent), null, { timeout: 30000 });
+}
+SCENES.mnd = async () => {
+  const suffix = (vp, scheme) => (scheme === "dark" ? "-dark" : "") + "-" + vp.width;
+  const shots = [
+    ["hybrid", "access:public capacity review", {}, "Search text without mode: hybrid results, effective mode in the status line", [[VP.d, "light"], [VP.s, "light"], [VP.m, "light"], [VP.d, "dark"]]],
+    ["pending", "capacity review", {}, "Hybrid answer with an unindexed item in scope: pending note", [[VP.d, "light"], [VP.m, "light"]]],
+    ["fallback", "capacity OR outage", {}, "Defaulted hybrid answered search-unavailable (query embedding failed): lexical re-run and notice", [[VP.d, "light"], [VP.m, "light"], [VP.d, "dark"]]],
+    ["lexical-only", "capacity review", { lexical: true }, "Server without hybrid: lexical results and notice", [[VP.d, "light"], [VP.s, "light"]]],
+    ["refusal", "mode:semantic capacity review", { lexical: true }, "Explicit mode the server does not offer: refused, nothing sent", [[VP.d, "light"], [VP.m, "light"]]],
+  ];
+  for (const [state, text, options, what, sizes] of shots) {
+    for (const [vp, scheme] of sizes) {
+      const page = await retrieval(vp, scheme, options);
+      await searchText(page, text);
+      await snap(page, `manure-search-${state}${suffix(vp, scheme)}`, what + " · " + text);
+      await page.context().close();
+    }
+  }
+};
+
 // ---------------------------------------------------------------- main
 // The scenes after "m3" capture the pre-redesign dashboard (ids and dialogs that UX-M1 replaced); they are
 // kept as the record of the "before" captures and are not run by default.
-const ORDER = ["auth", "m1", "m2", "m3", "login", "catalogue", "upload", "detail", "account", "unlock", "viewer", "keyboard", "dark"];
+const ORDER = ["auth", "m1", "m2", "m3", "mnd", "login", "catalogue", "upload", "detail", "account", "unlock", "viewer", "keyboard", "dark"];
 const DEFAULT_SCENES = ["auth", "m1", "m3", "unlock", "viewer"];
 const only = new Set(input.scenes && input.scenes.length ? ["auth", ...input.scenes] : DEFAULT_SCENES);
 for (const name of ORDER) {

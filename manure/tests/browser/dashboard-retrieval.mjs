@@ -38,17 +38,39 @@ try{
   await page.waitForFunction(()=>document.querySelector('#list-status').textContent.includes('loaded'),null,{timeout:15000});
   const query=page.locator('#filter-text');
   assert.equal(await query.inputValue(),'');
+  const retrievalModes=()=>page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode!=='Catalogue').map(c=>c.mode));
+  // Search text without mode: (C2); the status line names the mode that answered.
+  const searchText=async(text,mode)=>{
+    await query.fill(text);
+    assert.equal(await page.locator('#query-diagnostic').isHidden(),true,'search text without mode: is never refused');
+    await page.locator('#list-form button[type=submit]').click();
+    await page.waitForFunction(([wanted,applied])=>new URLSearchParams(location.hash.split('?')[1]).get('query')===applied &&
+      document.querySelector('#catalogue-table').getAttribute('aria-busy')==='false' &&
+      document.querySelector('#list-status').textContent.endsWith(' hits · '+wanted) &&
+      document.querySelector('#retrieval-results').textContent.includes('hayneedle'),[mode,text],{timeout:15000});
+  };
+  const noticeText=()=>page.locator('#list-notice').isVisible().then(visible=>visible ? page.locator('#list-notice-text').textContent() : null);
   if(input.stage==='outage'){
     await query.fill('mode:hybrid hayneedle');
     await page.locator('#list-form button[type=submit]').click();
     await page.waitForFunction(()=>document.querySelector('#list-notice').textContent.includes('search-unavailable'),null,{timeout:15000});
     assert.equal(await page.locator('#retrieval-results').textContent(),'');
+    assert.match(await page.locator('#list-notice-text').textContent(),/\(search-unavailable: query embedding failed\)/,'an explicit mode is refused with the server reason');
     assert.deepEqual(await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode!=='Catalogue').map(c=>c.mode)),['Hybrid'],
       'hybrid failure must not fall back to lexical');
     await query.fill('mode:lexical hayneedle');
     await page.locator('#list-form button[type=submit]').click();
     await page.waitForFunction(()=>document.querySelector('#retrieval-results').textContent.includes('hayneedle'),null,{timeout:15000});
-    assert.deepEqual(await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode!=='Catalogue').map(c=>c.mode)),['Hybrid','Lexical']);
+    assert.deepEqual(await retrievalModes(),['Hybrid','Lexical']);
+    await searchText('hayneedle','lexical');
+    assert.deepEqual(await retrievalModes(),['Hybrid','Lexical','Hybrid','Lexical'],'a defaulted hybrid is re-run once lexically');
+    assert.equal(await noticeText(),'Hybrid search is not available on this server: query embedding failed; showing lexical results');
+  } else if(input.stage==='pending'){
+    await searchText('access:external hayneedle','hybrid');
+    assert.equal(await noticeText(),null,'no unindexed item in the scope of access:external');
+    await searchText('hayneedle','hybrid');
+    assert.deepEqual(await retrievalModes(),['Hybrid','Hybrid']);
+    assert.equal(await noticeText(),'1 item is not yet indexed for semantic search; results may be incomplete');
   } else if(input.stage==='no-provider'){
     await page.goto(input.base+'/#/artifacts?mode=semantic&q=hayneedle',{waitUntil:'domcontentloaded'});
     await page.waitForFunction(()=>document.querySelector('#list-notice').textContent.includes('unavailable'),null,{timeout:15000});
@@ -60,6 +82,9 @@ try{
     await page.locator('#list-form button[type=submit]').click();
     await page.waitForFunction(()=>document.querySelector('#retrieval-results').textContent.includes('hayneedle'),null,{timeout:15000});
     assert.equal((await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode==='Lexical'))).length,1);
+    await searchText('hayneedle','lexical');
+    assert.deepEqual(await retrievalModes(),['Lexical','Lexical'],'capabilities without hybrid: lexical, never a hybrid request');
+    assert.equal(await noticeText(),'Hybrid search is not available on this server: semantic retrieval is not configured; showing lexical results');
   } else {
     await query.fill('mode:lexical access:external kind:dir owner:search-manager hayneedle');
     assert.equal(await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode!=='Catalogue').length),0,'draft never sends search');

@@ -7,12 +7,17 @@ the owned PostgreSQL cluster, server command and tool paths); see README.md.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import http.server
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import types
 import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -54,6 +59,73 @@ class Person:
         return entry
 
 
+# Retrieval scenes (--embedding-stub): a loopback embedding endpoint with deterministic word-hash vectors. A document
+# naming UNINDEXED_WORD is never embedded (it stays pending); a query naming OUTAGE_WORD fails (embedding outage).
+EMBEDDING_DIMENSIONS = 16
+DOCUMENT_PREFIX, QUERY_PREFIX = "doc: ", "query: "
+UNINDEXED_WORD, OUTAGE_WORD = "unindexed", "outage"
+INDEXING_DEADLINE_S = 180
+INDEXING_POLL_S = 0.5
+
+
+class EmbeddingStub:
+    def __init__(self):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                inputs = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))["input"]
+                failing = any(UNINDEXED_WORD in text.lower() if text.startswith(DOCUMENT_PREFIX) else OUTAGE_WORD in text.lower() for text in inputs)
+                payload = b'{"error":"controlled stub"}' if failing else json.dumps(
+                    {"data": [{"index": index, "embedding": vector(text)} for index, text in enumerate(inputs)]}).encode()
+                self.send_response(503 if failing else 200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        def vector(text):
+            values = [0.0] * EMBEDDING_DIMENSIONS
+            for word in re.findall(r"[a-z0-9]+", text.lower().split(": ", 1)[-1]):
+                values[hashlib.sha256(word.encode()).digest()[0] % EMBEDDING_DIMENSIONS] += 1.0
+            if not any(values):
+                values[0] = 1.0
+            return values
+
+        self.http = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.http.daemon_threads = True
+        self.thread = threading.Thread(target=self.http.serve_forever, daemon=True)
+        self.thread.start()
+
+    def config(self, credential_file: str) -> dict:
+        return {"operationUrl": f"http://127.0.0.1:{self.http.server_port}/v1/embeddings", "model": "capture-stub", "revision": "capture-v1",
+                "dimensions": EMBEDDING_DIMENSIONS, "sendDimensions": True, "documentPrefix": DOCUMENT_PREFIX, "queryPrefix": QUERY_PREFIX,
+                "normalization": "cosine", "credentialFile": credential_file, "deadlineMs": 10000, "maxResponseBytes": 1 << 20,
+                "maxBatch": 8, "maxInputBytes": 16384, "maxRequestBytes": 1 << 20, "maxConcurrent": 2, "maxQueued": 4,
+                "batchSize": 1, "leaseSeconds": 30, "pollIntervalMs": 200}
+
+    def close(self):
+        self.http.shutdown()
+        self.http.server_close()
+
+
+def await_indexing(fix, token: str) -> None:
+    """Waits until every public artifact is indexed (hybrid pending 0 in that scope), within a bounded deadline."""
+    auth = {"Authorization": f"Bearer {token}"}
+    command = bf.cp.Command_Search(bf.cp.SearchQuery("capacity", bf.cp.SearchMode.Hybrid,
+                                                     bf.cp.SearchFilter(bf.cp.Visibility.Public, None, None, [], None, None), 25, None))
+    deadline = time.monotonic() + INDEXING_DEADLINE_S
+    while time.monotonic() < deadline:
+        result = fix.http.current(fix.api_base, command, headers=auth).current_result
+        if isinstance(result, bf.cp.Result_SearchResults) and result.page.pending == 0 and result.page.hits:
+            return
+        time.sleep(INDEXING_POLL_S)
+    raise RuntimeError("public artifacts were not indexed before the deadline")
+
+
 def issue_account_tokens(fix, person: Person, names: list[str], revoke: list[str]) -> None:
     """Mint dashboard-issued tokens through the real account API (session cookie + actor header)."""
     origin = {"Origin": fix.api_base}
@@ -87,6 +159,7 @@ def main() -> int:
     parser.add_argument("--hold-payload", default="", help="developer option: seed, write the browser payload (contains throwaway credentials, mode 0600) to this path, "
                         "then keep the server up until PATH.stop exists, so capture.mjs can be re-run with `node capture.mjs < PATH`")
     parser.add_argument("--timeout", type=int, default=1500, help="browser phase deadline in seconds")
+    parser.add_argument("--embedding-stub", action="store_true", help="configure a loopback embedding stub (retrieval scenes: mnd)")
     args = parser.parse_args()
     out = os.path.abspath(args.out)
     os.makedirs(out, exist_ok=True)
@@ -111,6 +184,14 @@ def main() -> int:
             "rate_limit_per_min": 1_000_000, "login_rate_per_min_per_ip": 100_000, "unlock_rate_per_min": 100_000,
             "max_sessions_per_user": 500, "max_sessions_global": 5000,
         }
+        stub = None
+        if args.embedding_stub:
+            stub = EmbeddingStub()
+            credential = os.path.join(ident_dir, "embedding-credential")
+            with open(credential, "w", encoding="utf-8"):
+                pass
+            os.chmod(credential, 0o600)
+            overrides["embedding"] = stub.config(credential)
         log("starting isolated server (owned PostgreSQL + JVM jar)")
         fix = bf.start_server(suffix_mode="sibling", config_overrides=overrides)
         try:
@@ -119,6 +200,11 @@ def main() -> int:
             t0 = time.monotonic()
             roles = seedmod.seed(fix, users, args.count, log)
             log(f"seeding finished in {time.monotonic() - t0:.1f}s")
+            if stub is not None:
+                seedmod.upload(types.SimpleNamespace(http=fix.http, api_base=fix.api_base), users["alice"]["token"],
+                               name="unindexed capacity notes.md", kind="file", visibility="internal", files={"notes.md": b"# notes\n"})
+                await_indexing(fix, users["alice"]["token"])
+                log("public artifacts indexed; one internal artifact stays unindexed")
             alice = people[0]
             issue_account_tokens(fix, alice, [f"{n}" for n in [
                 "laptop-cli", "ci-pipeline-main", "gpu-node-1137 nightly export", "agent: capacity-review bot",
@@ -150,6 +236,8 @@ def main() -> int:
                 return proc.returncode
         finally:
             fix.close()
+            if stub is not None:
+                stub.close()
     return 0
 
 

@@ -43,6 +43,12 @@ protocol (chunk requests are held or aborted at the network layer for progress, 
 (default, dark, 1024, 390, password, rotate-confirm, access-changed, access-confirm, edit-name, edit-expiry, delete-confirm,
 big, big-scrolled, big-end, subdir, uploading, expired, not-found, loading).
 
+`--scenes mnd --embedding-stub` captures search text without `mode:` (search-parity unit MN-D) as
+`manure-search-<hybrid|pending|fallback|lexical-only|refusal>-<width>[-dark].png`. `--embedding-stub` configures the
+server with a loopback embedding stub (deterministic word-hash vectors): a query naming `outage` fails at the stub, and
+an internal artifact named `unindexed capacity notes.md` is seeded whose document is never embedded, so it stays
+pending. The lexical-only states rewrite the GetCapabilities answer to `Lexical` at the network layer.
+
 The default run is `auth`, `m1`, `m3`, `unlock`, `viewer`. The scenes `login`, `catalogue`, `upload`, `detail`,
 `account`, `keyboard` and `dark` drive the pre-redesign dashboard (its ids, the account dialog and native
 confirms) and only record how the "before" captures were made; they no longer run against this dashboard.
@@ -93,7 +99,7 @@ credentials, mode 0600) and keeps the server up until `payload.json.stop` exists
 
 * Dark theme = `prefers-color-scheme` only (the dashboard has no switch).
 * Native `window.confirm()` dialogs are recorded as text, not screenshotted.
-* Retrieval modes `semantic`/`hybrid` are unavailable (no embedding provider is configured); the
-  "unavailable" state is captured, ranked results are not.
+* Without `--embedding-stub`, retrieval modes `semantic`/`hybrid` are unavailable (no embedding provider is
+  configured); the stub's rankings are deterministic, not semantic.
 * All seeded artifacts are created within minutes, so Created/Expires columns do not show a spread of dates.
 * Hover tooltips (`title`) and HTML5 validation bubbles are not captured by Playwright screenshots.

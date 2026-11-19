@@ -12,6 +12,8 @@ const { chromium } = createRequire(path.join(input.core, "package.json"))("playw
 const browser = await chromium.launch({ executablePath: input.browser, args: ["--no-sandbox", "--no-proxy-server", `--host-resolver-rules=${input.resolver}`] });
 const RECORDS = input.records.length;
 const PAGE = 25;
+// The catalogue filtered by the fixture name prefix (search text without mode: runs retrieval).
+const LISTED = "mode:catalogue " + input.prefix;
 const results = [];
 
 const check = async (name, run) => {
@@ -85,7 +87,7 @@ const scrollers = (page) => page.evaluate(() => [...document.querySelectorAll("b
 }).map((el) => el.id || el.className || el.tagName));
 
 await check("one document scroller, sticky view bar and header, a table at every width", async (page) => {
-  await search(page, input.prefix);
+  await search(page, LISTED);
   await toEnd(page); await rowCount(page, 2 * PAGE);
   assert.deepEqual(await scrollers(page), []);
   assert.ok(await page.evaluate(() => document.scrollingElement.scrollHeight > innerHeight), "the document scrolls");
@@ -113,7 +115,7 @@ await check("one document scroller, sticky view bar and header, a table at every
     await stuck(`sticky chrome at ${width}px`);
   }
   // A changed draft adds its hint to the query bar; on a phone the wrapped view bar grows and the header follows it.
-  await page.getByRole("combobox", { name: "Search artifacts" }).fill(input.prefix + " changed draft");
+  await page.getByRole("combobox", { name: "Search artifacts" }).fill(LISTED + " changed draft");
   await page.getByText("Draft changed — press Enter to apply").waitFor();
   await stuck("sticky chrome at 390px with a changed draft");
   assert.ok(await page.evaluate(() => document.scrollingElement.scrollWidth <= innerWidth), "no horizontal overflow at 390px with a changed draft");
@@ -122,7 +124,7 @@ await check("one document scroller, sticky view bar and header, a table at every
 });
 
 await check("document scrolling appends without duplicates, labels progress, ends with a marker; a failed append keeps rows", async (page) => {
-  await search(page, input.prefix);
+  await search(page, LISTED);
   assert.equal(await rows(page).count(), PAGE);
   assert.match(await page.locator("#list-status").textContent(), new RegExp(`^${PAGE} loaded · more available$`));
   await page.locator("#artifact-list a[data-action=details]").first().focus();
@@ -143,7 +145,7 @@ await check("document scrolling appends without duplicates, labels progress, end
 });
 
 await check("Back from an artifact restores rows, scroll and focus; a view round trip and reload keep the query", async (page) => {
-  await search(page, input.prefix);
+  await search(page, LISTED);
   await loadAll(page);
   await page.evaluate(() => window.scrollTo(0, 1200));
   const before = await page.evaluate(() => scrollY);
@@ -170,7 +172,7 @@ await check("Back from an artifact restores rows, scroll and focus; a view round
   await counterLoaded(page);
   await page.reload({ waitUntil: "domcontentloaded" });
   await counterLoaded(page);
-  assert.equal(await page.getByRole("combobox", { name: "Search artifacts" }).inputValue(), "sort:name direction:asc " + input.prefix);
+  assert.equal(await page.getByRole("combobox", { name: "Search artifacts" }).inputValue(), "mode:catalogue sort:name direction:asc " + input.prefix);
   assert.equal(await page.locator('th:has([data-sort="name"])').getAttribute("aria-sort"), "ascending");
 });
 
@@ -178,12 +180,12 @@ await check("history Back to an earlier query restores its loaded rows, scroll a
   const calls = () => page.evaluate(() => ({ list: window.__shell.listCalls, search: window.__shell.searchCalls }));
   const onRoute = (query) => settled(page, "route " + query, page.waitForFunction((q) => new URLSearchParams(location.hash.split("?")[1]).get("query") === q &&
     document.querySelector("#catalogue-table").getAttribute("aria-busy") === "false", query));
-  await search(page, input.prefix);
+  await search(page, LISTED);
   await loadAll(page);
   await page.evaluate(() => window.scrollTo(0, 1200));
   const before = await page.evaluate(() => scrollY);
   await page.getByRole("button", { name: "Sort by Name" }).click();
-  await onRoute("sort:name direction:asc " + input.prefix);
+  await onRoute("mode:catalogue sort:name direction:asc " + input.prefix);
   await rowCount(page, PAGE);
   // Left at its top, the sorted list does not reach its end marker when it is shown again (no append).
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -192,14 +194,14 @@ await check("history Back to an earlier query restores its loaded rows, scroll a
   assert.match(hits, / hits · lexical$/);
   const sent = await calls();
   await page.goBack();
-  await onRoute("sort:name direction:asc " + input.prefix);
+  await onRoute("mode:catalogue sort:name direction:asc " + input.prefix);
   await rowCount(page, PAGE);
   await page.goBack();
-  await onRoute(input.prefix);
+  await onRoute(LISTED);
   await rowCount(page, RECORDS);
   assert.ok(Math.abs(await page.evaluate(() => scrollY) - before) <= 2, "scroll position of the earlier query restored");
   assert.equal(await page.locator("#list-status").textContent(), `All ${RECORDS} artifacts loaded`);
-  await page.goForward(); await onRoute("sort:name direction:asc " + input.prefix);
+  await page.goForward(); await onRoute("mode:catalogue sort:name direction:asc " + input.prefix);
   await rowCount(page, PAGE);
   await page.goForward(); await onRoute("mode:lexical " + input.prefix);
   assert.equal(await page.locator("#list-status").textContent(), hits, "retrieval results shown again");
@@ -207,13 +209,13 @@ await check("history Back to an earlier query restores its loaded rows, scroll a
 });
 
 await check("Back before a new query's first page arrives keeps the earlier list through a later artifact visit", async (page) => {
-  await search(page, input.prefix);
+  await search(page, LISTED);
   await loadAll(page);
   await page.evaluate(() => { window.__shell.holdFirstPage = true; });
   await page.getByRole("button", { name: "Sort by Name" }).click();
   await settled(page, "held first page", page.waitForFunction(() => window.__shell.releaseFirstPage !== null));
   await page.goBack();
-  await settled(page, "route back", page.waitForFunction((q) => new URLSearchParams(location.hash.split("?")[1]).get("query") === q, input.prefix));
+  await settled(page, "route back", page.waitForFunction((q) => new URLSearchParams(location.hash.split("?")[1]).get("query") === q, LISTED));
   await rowCount(page, RECORDS);
   await page.evaluate(() => window.__shell.releaseFirstPage());
   await page.evaluate(() => window.scrollTo(0, 1200));
@@ -235,7 +237,7 @@ await check("delete confirms in an in-app dialog with Cancel focused; Escape can
   await page.addInitScript(() => { window.confirm = () => { throw new Error("window.confirm used"); }; window.alert = () => { throw new Error("window.alert used"); }; });
   await page.reload({ waitUntil: "domcontentloaded" });
   await counterLoaded(page);
-  await search(page, input.victimName);
+  await search(page, "mode:catalogue " + input.victimName);
   await rowCount(page, 1);
   const more = page.getByRole("button", { name: "More actions for " + input.victimName });
   await more.click();

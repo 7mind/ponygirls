@@ -299,15 +299,25 @@ class TargetSearchTests(unittest.TestCase):
                 model.fail_all=True
                 previous=len(model.snapshot())
                 outage=browser('outage')
-                self.assertEqual(outage['requests'].count('Hybrid'),1)
-                self.assertEqual(outage['requests'].count('Lexical'),1)
-                self.assertEqual(len(model.snapshot()),previous+1,'outage fallback or lexical requested an embedding')
+                # Explicit hybrid (refused), explicit lexical, then search text: hybrid re-run once lexically.
+                self.assertEqual(outage['requests'].count('Hybrid'),2)
+                self.assertEqual(outage['requests'].count('Lexical'),2)
+                self.assertEqual(len(model.snapshot()),previous+2,'outage fallback or lexical requested an embedding')
                 model.fail_all=False
+                # An artifact whose document embedding keeps failing stays unindexed: pending for semantic search.
+                model.fail_documents=True
+                payload=b'unindexed'
+                pending=client.init_upload('unindexed-item','file','internal',
+                    [{'kind':'file','path':'unindexed.txt','size':len(payload),'sha256':hashlib.sha256(payload).hexdigest()}])
+                client.put_chunk(pending['artifact_id'],'unindexed.txt',0,payload);client.publish(pending['artifact_id'])
+                self.assertEqual(browser('pending')['requests'].count('Hybrid'),2)
                 server.close();server=None
+                model.fail_documents=False
+                previous=len(model.snapshot())
                 config['embedding']=None
                 server=TargetServer(config,tmp,owned_database=database,close_database=False)
-                self.assertEqual(browser('no-provider')['requests'].count('Lexical'),1)
-                self.assertEqual(len(model.snapshot()),previous+1,'no-provider browser caused model request')
+                self.assertEqual(browser('no-provider')['requests'].count('Lexical'),2)
+                self.assertEqual(len(model.snapshot()),previous,'no-provider browser caused model request')
             finally:
                 if server is not None:server.close()
                 database.close();model.close()

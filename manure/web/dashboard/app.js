@@ -171,9 +171,12 @@ function expressionInput(input, list, change, compositionChange) {
       if (ctx.authenticated && readRoute().view === "catalogue") { handleRoute(true); }
     });
   }
-  function supported(value) {
-    return capabilities !== null && capabilities.search_modes.includes(value) && capabilities.metadata_only_search;
+  // The retrieval modes this server offers (none until its capabilities are known).
+  function offeredModes() {
+    return capabilities !== null && capabilities.metadata_only_search ? capabilities.search_modes : [];
   }
+  // {mode, reason} of a retrieval query (current.retrievalRequest); mode null when it is refused.
+  function retrievalRequest(value) { return current.retrievalRequest(value, offeredModes()); }
 
   // ── Connection indicator ───────────────────────────────────────────────
   // The shared .conn pill with Chronicle's and Haystack's labels where the meaning is the same. There is no Stale or
@@ -284,7 +287,8 @@ function expressionInput(input, list, change, compositionChange) {
     var draft = null, diagnostic = null;
     try { draft = draftState(); } catch (error) { diagnostic = error; }
     var differs = draft === null || JSON.stringify(draft) !== JSON.stringify(state);
-    var unavailable = draft !== null && draft.mode !== "catalogue" && !supported(draft.mode);
+    // Only an explicit mode is refused; search text without mode: falls back to lexical, visibly, when it runs.
+    var unavailable = draft !== null && draft.mode !== "catalogue" && draft.modeExplicit && retrievalRequest(draft).mode === null;
     $("query-diagnostic").hidden = diagnostic === null && !unavailable;
     $("query-diagnostic").textContent = diagnostic !== null ? diagnostic.message : unavailable ? "Retrieval mode " + draft.mode + " unavailable; no fallback will be sent." : "";
     $("filter-text").setAttribute("aria-invalid", String(diagnostic !== null));
@@ -340,6 +344,8 @@ function expressionInput(input, list, change, compositionChange) {
     detail.invalidate();
   }
   function navigateList(next, submitted) {
+    // The state the route will hold: a defaulted mode that the changed fields no longer select is written explicitly.
+    next = parseExpression(serializeExpression(next));
     var query = stateParams(next).toString();
     var hash = "#/artifacts" + (query ? "?" + query : "");
     if (JSON.stringify(next) !== JSON.stringify(state)) { rememberList(null); }
@@ -447,9 +453,10 @@ function expressionInput(input, list, change, compositionChange) {
         setCounter(capabilitiesError ? "Not loaded" : "Loading artifacts…");
         if (capabilitiesError) { notice("danger", "Capabilities unavailable. Retry connection; no search was sent.", true); }
         else { notice("info", "Checking search capabilities…", false); }
-      } else if (state.mode !== "catalogue" && !supported(state.mode)) {
+      } else if (state.mode !== "catalogue" && retrievalRequest(state).mode === null) {
         setCounter("Not loaded");
-        notice("warn", "Retrieval mode " + state.mode + " unavailable on this server. No fallback was sent.", true);
+        notice("warn", state.modeExplicit ? "Retrieval mode " + state.mode + " unavailable on this server. No fallback was sent." :
+          "Retrieval is unavailable on this server. No search was sent.", true);
       } else if (state.mode !== "catalogue" && submittedKey !== JSON.stringify(state)) {
         setCounter("Not searched");
         notice("info", "Press Search to run retrieval. No model query has been sent.", false);
@@ -746,10 +753,17 @@ function expressionInput(input, list, change, compositionChange) {
     $("catalogue-table").hidden = listError && count === 0;
     renderFoot(retrieval, count, settled);
     if (settled) {
-      setCounter(retrieval ? count + " hits · " + state.mode : count === 0 ? "No matches" : nextCursor !== null ? count + " loaded · more available" : "All " + count + " artifacts loaded");
-      if (!listError) { clearNotice(); }
+      setCounter(retrieval ? count + " hits · " + searchPage.effective_mode : count === 0 ? "No matches" : nextCursor !== null ? count + " loaded · more available" : "All " + count + " artifacts loaded");
+      if (!listError) { retrievalNotice(retrieval); }
     }
     updateDraft();
+  }
+  // A settled retrieval page states a lexical substitution of the default hybrid and unindexed in-scope items.
+  function retrievalNotice(retrieval) {
+    var pending = retrieval && searchPage.effective_mode !== current.FALLBACK_RETRIEVAL_MODE ? current.pendingNote(searchPage.pending) : null;
+    if (retrieval && searchPage.fallback_reason !== null) { notice("warn", current.fallbackNotice(searchPage.fallback_reason), false); }
+    else if (pending !== null) { notice("info", pending, false); }
+    else { clearNotice(); }
   }
   function renderFoot(retrieval, count, settled) {
     var foot = $("list-foot");
@@ -774,12 +788,13 @@ function expressionInput(input, list, change, compositionChange) {
   }
   function loadPage(reset) {
     if (!ctx.authenticated || readRoute().view !== "catalogue" || readRoute().error !== null || capabilities === null ||
-        (state.mode !== "catalogue" && (!supported(state.mode) || submittedKey !== JSON.stringify(state))) ||
+        (state.mode !== "catalogue" && (retrievalRequest(state).mode === null || submittedKey !== JSON.stringify(state))) ||
         (!reset && (state.mode !== "catalogue" || nextCursor === null || listError || loadedKey !== JSON.stringify(state)))) { return; }
     // Capture the entire intent now. A superseding request replaces only an
     // unsent intent, never launches another physical list/Search request.
     var intent = { generation: ++listGeneration, epoch: ctx.sessionEpoch, cursor: reset ? null : nextCursor,
-      reset: reset, value: Object.assign({}, state), limit: Math.min(PAGE_LIMIT, capabilities.max_list_limit) };
+      reset: reset, value: Object.assign({}, state), limit: Math.min(PAGE_LIMIT, capabilities.max_list_limit),
+      retrieval: state.mode === "catalogue" ? null : retrievalRequest(state) };
     pendingPage = intent.generation; pendingReset = reset; listError = false;
     if (observer !== null) { observer.disconnect(); }
     clearNotice();
@@ -799,18 +814,27 @@ function expressionInput(input, list, change, compositionChange) {
     var intent = queuedRead;
     queuedRead = null; readBusy = true;
     var generation = intent.generation, epoch = intent.epoch, value = intent.value, cursor = intent.cursor;
-    var descriptor = value.mode === "catalogue" ? current.catalogue(cursor,value,intent.limit) : current.search(value,intent.limit);
-    apiFetch(descriptor).then(function (body) {
-      if (epoch !== ctx.sessionEpoch || generation !== listGeneration || readRoute().view !== "catalogue") { return; }
+    // The mode sent and the reason it replaces the default hybrid (null: no substitution).
+    var sent = value.mode === "catalogue" ? null : intent.retrieval.mode, reason = value.mode === "catalogue" ? null : intent.retrieval.reason;
+    function stale() { return epoch !== ctx.sessionEpoch || generation !== listGeneration || readRoute().view !== "catalogue"; }
+    function search(mode) { return apiFetch(current.search(Object.assign({}, value, { mode: mode }), intent.limit)); }
+    (value.mode === "catalogue" ? apiFetch(current.catalogue(cursor,value,intent.limit)) : search(sent).catch(function (error) {
+      // A defaulted hybrid the server cannot run is re-run once lexically (not for a superseded read).
+      if (!current.fallsBack(value, sent, error) || stale()) { throw error; }
+      sent = current.FALLBACK_RETRIEVAL_MODE; reason = error.reason;
+      return search(sent);
+    })).then(function (body) {
+      if (stale()) { return; }
       if (value.mode !== "catalogue") {
-        if (!Array.isArray(body.hits) || (body.next_cursor !== null && body.next_cursor !== undefined) ||
+        if (!Array.isArray(body.hits) || (body.next_cursor !== null && body.next_cursor !== undefined) || typeof body.pending !== "bigint" ||
             !["exactmatches", "candidatewindow"].includes(body.count_scope) ||
             (body.count_scope === "candidatewindow" && (!Number.isInteger(body.ranking_limit) || body.ranking_limit < 1)) ||
             body.hits.some(function (hit) { return !hit.artifact || !ID_RE.test(hit.artifact.artifact_id) || !Array.isArray(hit.evidence) ||
               hit.evidence.some(function (entry) { return entry.field === "manifestpath" && typeof entry.path !== "string" ||
                 entry.field !== "manifestpath" && entry.path !== null && entry.path !== undefined; }); })) { throw new Error("bad-response"); }
         body.hits.forEach(function (hit) { delete hit.artifact.external_password; });
-        searchPage = body;
+        // The page keeps the mode that answered it and the substitution reason for the status line, notice and history.
+        searchPage = Object.assign(body, { effective_mode: sent, fallback_reason: reason });
         nextCursor = null;
       } else {
         if (!Array.isArray(body.artifacts) || (body.next_cursor !== null && body.next_cursor !== undefined && typeof body.next_cursor !== "string")) { throw new Error("bad-response"); }
@@ -825,11 +849,14 @@ function expressionInput(input, list, change, compositionChange) {
         summaries = Array.from(merged.values()); nextCursor = next;
       }
     }).catch(function (error) {
-      if (epoch !== ctx.sessionEpoch || generation !== listGeneration || readRoute().view !== "catalogue") { return; }
+      if (stale()) { return; }
       listError = true;
       var rows = value.mode === "catalogue" ? summaries.length : 0;
+      // The server's reason travels only from its closed set (current-protocol.js); otherwise it is the code.
+      var label = errorLabel(error) + (typeof error.reason === "string" && error.reason !== error.message ? ": " + error.reason : "");
       if (rows === 0) { setCounter("Not loaded"); }
-      notice("danger", "The request failed (" + errorLabel(error) + "). " + (rows > 0 ? "The loaded rows are kept." : "No alternate search was sent; the applied query is unchanged.") + " Retry when ready.", true,
+      notice("danger", reason !== null ? current.hybridUnavailable(reason) + ". The lexical search failed too (" + label + "); the applied query is unchanged. Retry when ready." :
+        "The request failed (" + label + "). " + (rows > 0 ? "The loaded rows are kept." : "No alternate search was sent; the applied query is unchanged.") + " Retry when ready.", true,
         rows > 0 ? "More artifacts could not be loaded" : value.mode === "catalogue" ? "Artifacts could not be loaded" : "Retrieval failed");
     }).finally(function () {
       readBusy = false;
@@ -949,7 +976,7 @@ function expressionInput(input, list, change, compositionChange) {
   });
   $("refresh-button").addEventListener("click", function () { if (state.mode !== "catalogue") { submittedKey = JSON.stringify(state); } loadPage(true); });
   $("retry-list-button").addEventListener("click", function () {
-    if (capabilities === null || state.mode !== "catalogue" && !supported(state.mode)) { checkHostingMode(); return; }
+    if (capabilities === null || state.mode !== "catalogue" && retrievalRequest(state).mode === null) { checkHostingMode(); return; }
     var reset = nextCursor === null; listError = false;
     if (state.mode !== "catalogue") { submittedKey = JSON.stringify(state); }
     loadPage(reset);
@@ -992,7 +1019,7 @@ function expressionInput(input, list, change, compositionChange) {
   });
   function openSyntax() {
     overlays.inform("Query syntax", [
-      "Plain words match artifact names and IDs. Fields narrow the list and are combined with AND. Press Enter or Search to apply; typing and suggestions never send a request.",
+      "Plain words run a hybrid search, or a lexical one with a notice where the server offers no hybrid search. With no words, or with state:, expired:, sort: or direction:, the catalogue is listed and words match artifact names and IDs. Fields narrow the results and are combined with AND. Press Enter or Search to apply; typing and suggestions never send a request.",
       { definitions: [
         ["access:internal|external|public", "access mode"],
         ["tag:release tag:reviewed", "has every listed tag (exact, case-sensitive)"],
@@ -1001,7 +1028,7 @@ function expressionInput(input, list, change, compositionChange) {
         ["state:ready|uploading|publishing", "publication state (catalogue)"],
         ["expired:true", "also list expired artifacts (catalogue; hidden by default)"],
         ["sort:name direction:asc", "same as clicking a column header (catalogue; default created_at descending)"],
-        ["mode:lexical|semantic|hybrid", "ranked retrieval over names, tags, supplied provenance and manifest paths, never file bytes; adds kind:file|dir and owner:\"Exact User\""],
+        ["mode:catalogue|lexical|semantic|hybrid", "an explicit mode, never replaced; retrieval ranks names, tags, supplied provenance and manifest paths, never file bytes, and adds kind:file|dir and owner:\"Exact User\""],
         ["text:\"exact: text\"", "literal search text with colons, JSON escapes or retrieval syntax; not combined with bare terms"]
       ] },
       "Lexical uses English words/stems, quoted phrases, OR and -negation; semantic and hybrid call the model only on Search or Refresh. Field names ignore case; closed values are lowercase; metadata values keep their exact case and whitespace.",

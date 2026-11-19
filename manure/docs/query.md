@@ -12,8 +12,7 @@ wire protocol.
 
 ## Mode selection
 
-The CLI and MCP `search` choose the mode as follows (the dashboard still
-defaults to `catalogue` until it adopts the same rule):
+The dashboard, the CLI and MCP `search` choose the mode as follows:
 
 - An explicit `mode:` is never substituted. An unavailable explicit mode is an
   error (`search-unavailable`) with the server's reason.
@@ -36,7 +35,10 @@ The effective mode is always reported: CLI human output starts with
 re-run, and in `--json` mode too, whose stdout stays the page with its `pending`
 field). MCP `search` results add `mode`, `notice` and `pending_note` to the page
 JSON (text content and `structuredContent`); a failed lexical re-run returns the
-error with its `notice`.
+error with its `notice`. The dashboard's list status ends with the effective mode
+(`N hits · lexical`) and shows the notice or the pending note above the results;
+an unavailable explicit mode is refused before any request. As for every
+retrieval, a defaulted query opened from a URL waits for Search.
 
 | Expression | Capabilities / server answer | Effective mode |
 | --- | --- | --- |
@@ -132,9 +134,8 @@ each array entry contains `name`, `query`, and either an `expected` plan with
 `q`, `mode`, `visibility`, `itemState`, `includeExpired`, `kind`,
 `createdByUser`, `sort`, `direction`, `tags`, `hostname`, `projectPath`, or an
 `error` message. Cases without search text or with a catalogue-only field need
-no `mode:`; text cases state `mode:catalogue` explicitly, so the contract holds
-for both default rules while the dashboard keeps its catalogue default.
+no `mode:`; text cases state `mode:catalogue` explicitly.
 `tests/fixtures/query-defaults.json` specifies the default rule itself: each
-entry adds `modeExplicit` and an optional `continuation` (a cursor was given);
-Python checks it now. Parser fixtures do not establish browser interaction or
-real-provider semantic quality.
+entry adds `modeExplicit` and an optional `continuation` (a cursor was given).
+The Python and dashboard parsers check both fixtures. Parser fixtures do not
+establish browser interaction or real-provider semantic quality.

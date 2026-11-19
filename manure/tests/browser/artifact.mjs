@@ -404,7 +404,7 @@ await check("rename and expiry are PatchArtifact edits; Escape, an invalid date,
 await check("delete confirms in an in-app dialog naming the artifact; a hostile name stays inert text; a lost answer is reconciled", async (page) => {
   await page.addInitScript(() => { window.confirm = () => { throw new Error("window.confirm used"); }; window.alert = () => { throw new Error("window.alert used"); }; });
   const name = '<img src=x onerror=alert("xss")> artifact-hostile';
-  await page.getByRole("combobox", { name: "Search artifacts" }).fill("artifact-hostile");
+  await page.getByRole("combobox", { name: "Search artifacts" }).fill("mode:catalogue artifact-hostile");
   await page.getByRole("combobox", { name: "Search artifacts" }).press("Enter");
   await page.waitForFunction((id) => document.querySelector(`#artifact-list tr[data-artifact-id="${id}"]`) !== null, input.hostile);
   assert.equal(await page.locator('[data-view="catalogue"]').locator("img, script").count(), 0, "the list renders the name as text");
@@ -428,7 +428,7 @@ await check("delete confirms in an in-app dialog naming the artifact; a hostile 
   await page.getByText("Artifact deleted", { exact: true }).waitFor();
   assert.equal((await api(page, { GetArtifact: { artifactId: input.hostile } })).status, 404);
   // A delete applied by the server whose answer is lost: the page re-reads the artifact and shows it is gone.
-  await page.getByRole("combobox", { name: "Search artifacts" }).fill("artifact-doomed");
+  await page.getByRole("combobox", { name: "Search artifacts" }).fill("mode:catalogue artifact-doomed");
   await page.getByRole("combobox", { name: "Search artifacts" }).press("Enter");
   await page.getByRole("link", { name: "artifact-doomed", exact: true }).click();
   await pageState(page, "loaded");

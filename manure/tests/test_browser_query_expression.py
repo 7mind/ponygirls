@@ -45,24 +45,24 @@ class QueryExpressionBrowserTests(unittest.TestCase):
             {"op": "fill", "selector": "[data-account-login] input[name=password]", "value": fix.identity.password},
             {"op": "click", "selector": "[data-account-login] button[type=submit]"},
             {"op": "waitForEval", "fn": "() => / loaded|No matches/.test(document.querySelector('#list-status').textContent)"},
-            {"op": "fill", "selector": "#filter-text", "value": "a" * 4096},
+            {"op": "fill", "selector": "#filter-text", "value": "mode:catalogue " + "a" * 4096},
             {"op": "click", "selector": "#search-submit"},
-            {"op": "waitForEval", "fn": "() => new URLSearchParams(location.hash.split('?')[1]).get('query')?.length === 4096 && !document.querySelector('[data-sort=name]').disabled"},
+            {"op": "waitForEval", "fn": "() => new URLSearchParams(location.hash.split('?')[1]).get('query')?.length === 4111 && !document.querySelector('[data-sort=name]').disabled"},
             {"op": "eval", "fn": "() => { window.__beforeSort=location.hash; return true; }"},
             {"op": "click", "selector": "[data-sort=name]"},
-            {"op": "waitForEval", "fn": "() => new URLSearchParams(location.hash.split('?')[1]).get('query')?.startsWith('sort:name ') && !document.querySelector('[data-sort=name]').disabled"},
+            {"op": "waitForEval", "fn": "() => new URLSearchParams(location.hash.split('?')[1]).get('query')?.startsWith('mode:catalogue sort:name ') && !document.querySelector('[data-sort=name]').disabled"},
             {"op": "eval", "fn": "() => ({errors:window.__queryErrors,unchanged:location.hash===window.__beforeSort,query:document.querySelector('#filter-text').value,status:document.querySelector('#draft-status').textContent})"},
-            {"op": "fill", "selector": "#filter-text", "value": "after-sort"},
+            {"op": "fill", "selector": "#filter-text", "value": "mode:catalogue after-sort"},
             {"op": "click", "selector": "#search-submit"},
-            {"op": "waitForEval", "fn": "() => new URLSearchParams(location.hash.split('?')[1]).get('query') === 'after-sort'"},
+            {"op": "waitForEval", "fn": "() => new URLSearchParams(location.hash.split('?')[1]).get('query') === 'mode:catalogue after-sort'"},
             {"op": "eval", "fn": "() => ({errors:window.__queryErrors,query:document.querySelector('#filter-text').value,sort:document.querySelector('#sort-summary').textContent})"},
         ])
         self.assertTrue(all(row["ok"] for row in rows), [row for row in rows if not row["ok"]])
         values = [row["value"] for row in rows if row["op"] == "eval"]
         self.assertEqual(values[1]["errors"], [])
         self.assertFalse(values[1]["unchanged"])
-        self.assertEqual(values[1]["query"], "sort:name direction:asc " + "a" * 4096)
+        self.assertEqual(values[1]["query"], "mode:catalogue sort:name direction:asc " + "a" * 4096)
         self.assertIn("Draft matches applied", values[1]["status"])
         self.assertEqual(values[2]["errors"], [])
-        self.assertEqual(values[2]["query"], "after-sort")
+        self.assertEqual(values[2]["query"], "mode:catalogue after-sort")
         self.assertIn("Created", values[2]["sort"])

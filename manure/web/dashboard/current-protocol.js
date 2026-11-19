@@ -123,12 +123,42 @@ async function exchange(fetch, descriptor, init) {
   if (result.requestId !== id && !(result.requestId === '00000000-0000-0000-0000-000000000000' && result.result instanceof p.Result_Error && !res.ok)) { bad(); }
   if (result.result instanceof p.Result_Error) {
     const code=result.result.failure.code.replace(/[A-Z]/g,(letter,index)=>(index?'-':'')+letter.toLowerCase());
-    const error=new Error(code);error.status=res.status;throw error;
+    const error=new Error(code);error.status=res.status;
+    if (code === SEARCH_UNAVAILABLE) { error.reason=SEARCH_UNAVAILABLE_REASONS.get(result.result.failure.message) ?? code; }
+    throw error;
   }
   if (!res.ok || !(result.result instanceof expected)) { bad(); }
   return project(result.result);
 }
 export const request = (fetch, descriptor) => exchange(fetch, descriptor, {credentials:'same-origin'});
+
+// ── Retrieval mode selection (shared with the CLI and MCP: manure/manure/client.py, docs/query.md) ──
+const SEARCH_UNAVAILABLE = 'search-unavailable';
+export const DEFAULT_RETRIEVAL_MODE = 'hybrid';
+export const FALLBACK_RETRIEVAL_MODE = 'lexical';
+const NOT_CONFIGURED_REASON = 'semantic retrieval is not configured';
+// The server's fixed search-unavailable reasons (Failure.message, a closed set) and their client texts. Any other
+// message is untrusted and never shown: the reason is the code.
+const SEARCH_UNAVAILABLE_REASONS = new Map([
+  ['semantic retrieval is not configured; lexical-only capability', NOT_CONFIGURED_REASON],
+  ['query embedding failed', 'query embedding failed']]);
+export const hybridUnavailable = reason => 'Hybrid search is not available on this server: '+reason;
+export const fallbackNotice = reason => hybridUnavailable(reason)+'; showing lexical results';
+// The note for a semantic or hybrid page with unindexed in-scope items (pending, an Int64), or null.
+export function pendingNote(pending) {
+  if (!(pending > 0)) return null;
+  return (String(pending) === '1' ? '1 item is' : pending+' items are')+' not yet indexed for semantic search; results may be incomplete';
+}
+// The retrieval request for a parsed query, given the modes the server offers: {mode, reason}. An explicit mode is sent
+// as written (mode null when it is not offered: refused, never substituted); search text without mode: uses hybrid,
+// or lexical with the reason hybrid is not used.
+export function retrievalRequest(plan, offered) {
+  if (plan.modeExplicit) return {mode:offered.includes(plan.mode) ? plan.mode : null, reason:null};
+  if (offered.includes(DEFAULT_RETRIEVAL_MODE)) return {mode:DEFAULT_RETRIEVAL_MODE, reason:null};
+  return offered.includes(FALLBACK_RETRIEVAL_MODE) ? {mode:FALLBACK_RETRIEVAL_MODE, reason:NOT_CONFIGURED_REASON} : {mode:null, reason:null};
+}
+// A defaulted hybrid request answered search-unavailable is re-run once lexically.
+export const fallsBack = (plan, mode, error) => !plan.modeExplicit && mode === DEFAULT_RETRIEVAL_MODE && error.message === SEARCH_UNAVAILABLE;
 const versionCommand = () => [new p.Command_Version(),p.Result_Version,r=>({current:r.versions.current,supported:r.versions.supported})];
 // Whether a response with a gateway status (502, 503, 504) was produced by Manure rather than by a gateway in front of
 // it. Manure answers 503 only, as an error envelope for the request (its nil-id overload answer included) on the API
@@ -293,7 +323,9 @@ function valueOf(raw, start, end) {
   unicode(value,start,end);
   return value;
 }
-export function parseExpression(expression) {
+// Without mode:, nonblank search text selects hybrid unless a catalogue-only field (state, expired, sort, direction)
+// or a continuation cursor asks for the catalogue; modeExplicit reports whether mode: was given.
+export function parseExpression(expression, {continuation = false} = {}) {
   if (expression.length > QUERY_LIMIT) throw new ExpressionError('Query exceeds '+QUERY_LIMIT+' UTF-16 code units.', QUERY_LIMIT, expression.length);
   unicode(expression,0,expression.length);
   const values = new Map(), positions = new Map(), bare = [], tags = [];
@@ -315,7 +347,10 @@ export function parseExpression(expression) {
     if (field === 'owner' && !value.trim()) throw new ExpressionError('Owner must not be blank.',token.start+colon+1,token.end);
     values.set(field,value); positions.set(field,token);
   }
-  const mode = values.get('mode') || 'catalogue';
+  const explicit = values.get('mode') ?? null;
+  const nonblank = values.has('text') ? values.get('text').trim() !== '' : bare.some(token=>token.value.trim() !== '');
+  const catalogueOnly = [...positions.keys()].some(field=>FIELDS[field].scope === 'catalogue');
+  const mode = explicit ?? (nonblank && !continuation && !catalogueOnly ? DEFAULT_RETRIEVAL_MODE : 'catalogue');
   for (const [field,token] of positions) {
     const scope = FIELDS[field].scope;
     if (scope === 'catalogue' && mode !== 'catalogue') throw new ExpressionError('Catalogue-only fields cannot be used in retrieval mode.',token.start,token.end);
@@ -326,14 +361,15 @@ export function parseExpression(expression) {
   if (mode !== 'catalogue' && !decoded.trim()) throw new ExpressionError('Retrieval mode requires nonblank search text.',expression.length,expression.length);
   const q = values.has('text') || mode === 'catalogue' ? decoded : bare.map(token=>token.raw).join(' ');
   if (q.length > SEARCH_TEXT_LIMIT) throw new ExpressionError('Search text exceeds 4096 UTF-16 code units.',0,expression.length);
-  return {q, mode, visibility:values.get('access') ?? null, itemState:values.get('state') ?? null,
+  return {q, mode, modeExplicit:explicit !== null, visibility:values.get('access') ?? null, itemState:values.get('state') ?? null,
     includeExpired:values.get('expired') === 'true', kind:values.get('kind') ?? null,
     tags, hostname:values.get('hostname') ?? null, projectPath:values.get('project') ?? null,
     createdByUser:values.get('owner') ?? null, sort:values.get('sort') || 'created_at', direction:values.get('direction') || 'desc'};
 }
+// The shortest expression that parses back to the state. An explicit mode is written; a defaulted one only when the
+// default rule would resolve the fields differently, which makes it explicit.
 export function serializeExpression(state) {
   const parts = [];
-  if (state.mode !== 'catalogue') parts.push('mode:'+state.mode);
   if (state.visibility) parts.push('access:'+state.visibility);
   if (state.mode === 'catalogue') {
     if (state.itemState) parts.push('state:'+state.itemState);
@@ -350,9 +386,10 @@ export function serializeExpression(state) {
   if (state.projectPath !== null) parts.push('project:'+literal(state.projectPath));
   const candidates = state.q ? [state.q, JSON.stringify(state.q), 'text:'+JSON.stringify(state.q)].sort((a,b)=>a.length-b.length) : [''];
   const expected = {...state,visibility:state.visibility || null,itemState:state.itemState || null,kind:state.kind || null,createdByUser:state.createdByUser || null};
-  for (const text of candidates) {
-    const expression = [...parts,...(text ? [text] : [])].join(' ');
-    try { if (Object.entries(parseExpression(expression)).every(([field,value])=>field === 'tags' ? JSON.stringify(value) === JSON.stringify(expected[field]) : value === expected[field])) return expression; } catch (_) { /* Try the next lossless literal encoding. */ }
+  const modes = state.modeExplicit ? ['mode:'+state.mode] : ['','mode:'+state.mode];
+  for (const mode of modes) for (const text of candidates) {
+    const expression = [...(mode ? [mode] : []),...parts,...(text ? [text] : [])].join(' ');
+    try { if (Object.entries(parseExpression(expression)).every(([field,value])=>field === 'modeExplicit' || (field === 'tags' ? JSON.stringify(value) === JSON.stringify(expected[field]) : value === expected[field]))) return expression; } catch (_) { /* Try the next lossless literal encoding. */ }
   }
   throw new ExpressionError('Query cannot be represented within the expression limit.',0,0);
 }
@@ -373,8 +410,12 @@ export function completeExpression(expression, caret) {
   const start = token ? token.start : caret, end = token ? token.end : caret;
   const raw = token ? token.raw : '', colon = raw.indexOf(':');
   const modeToken = tokens.find(t=>/^mode:/i.test(t.raw));
-  const mode = modeToken ? modeToken.raw.slice(5).replace(/^"|"$/g,'') : 'catalogue';
+  const mode = modeToken ? modeToken.raw.slice(5).replace(/^"|"$/g,'') : null;
   const used = new Set(tokens.filter(t=>t!==token && t.raw.includes(':') && !t.raw.startsWith('"')).map(t=>t.raw.split(':')[0].toLowerCase()));
+  // Without mode:, a catalogue-only field selects the catalogue and a retrieval-only field the default retrieval:
+  // offer a scoped field unless a used field has the other scope.
+  const offers = scope => mode === null ? ![...used].some(field=>FIELDS[field]?.scope && FIELDS[field].scope !== scope) :
+    (scope === 'catalogue') === (mode === 'catalogue');
   const hints = [];
   const add = (label,detail,from,to,insertText) => {
     const hint = {label,detail,start:from,end:to,insertText,caret:insertText.length};
@@ -391,7 +432,7 @@ export function completeExpression(expression, caret) {
   } else {
     const prefix = expression.slice(start,caret).toLowerCase();
     for (const [field,spec] of Object.entries(FIELDS)) {
-      if (!field.startsWith(prefix) || used.has(field) && !spec.repeatable || spec.scope === 'catalogue' && mode !== 'catalogue' || spec.scope === 'retrieval' && mode === 'catalogue') continue;
+      if (!field.startsWith(prefix) || used.has(field) && !spec.repeatable || spec.scope && !offers(spec.scope)) continue;
       add(field+':',spec.detail,start,colon >= 0 ? start+colon+1 : end,field+':');
     }
   }

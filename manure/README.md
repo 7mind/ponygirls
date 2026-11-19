@@ -343,8 +343,10 @@ Manure did not produce (a gateway's page, JSON or not) is not.
 
 One query field holds search text, mode and filters, with caret-aware completion
 and an in-field clear button. The same expression is accepted by the MCP `search`
-tool. In the dashboard, catalogue (literal name/ID/tag/hostname/project substring, nine sorts, state/expiry filters and
-keyset pages) is the default; the CLI and MCP default search text to hybrid retrieval
+tool. As in the CLI and MCP, search text without `mode:` runs hybrid retrieval, or lexical
+with a visible notice where the server offers no hybrid search; no text or a catalogue-only
+field (`state`, `expired`, `sort`, `direction`) lists the catalogue (literal
+name/ID/tag/hostname/project substring, nine sorts, state/expiry filters and keyset pages)
 ([mode selection](docs/query.md#mode-selection)). `mode:lexical`, `mode:semantic` and `mode:hybrid`
 select retrieval through the current typed Search API over artifact metadata and
 manifest **paths only**, not uploaded file bytes. For example:

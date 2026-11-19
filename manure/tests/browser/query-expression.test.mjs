@@ -2,12 +2,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import { parseExpression, serializeExpression, completeExpression, acceptCompletion, QUERY_LIMIT } from '../../web/dashboard/current-protocol.js';
-const defaults = {q:'',mode:'catalogue',visibility:null,itemState:null,includeExpired:false,kind:null,createdByUser:null,sort:'created_at',direction:'desc',tags:[],hostname:null,projectPath:null};
+import { parseExpression, serializeExpression, completeExpression, acceptCompletion, QUERY_LIMIT, retrievalRequest, fallsBack, fallbackNotice, pendingNote } from '../../web/dashboard/current-protocol.js';
+const defaults = {q:'',mode:'catalogue',modeExplicit:false,visibility:null,itemState:null,includeExpired:false,kind:null,createdByUser:null,sort:'created_at',direction:'desc',tags:[],hostname:null,projectPath:null};
 test('expression defaults, metadata and raw retrieval phrases', () => {
   assert.deepEqual(parseExpression(''), defaults);
   assert.deepEqual(parseExpression('Access:public state:ready expired:true sort:name direction:asc "two  words"'), {...defaults,q:'two  words',visibility:'public',itemState:'ready',includeExpired:true,sort:'name',direction:'asc'});
-  assert.deepEqual(parseExpression('mode:lexical kind:dir owner:"A B" "two  words" OR -third'), {...defaults,mode:'lexical',kind:'dir',createdByUser:'A B',q:'"two  words" OR -third'});
+  assert.deepEqual(parseExpression('mode:lexical kind:dir owner:"A B" "two  words" OR -third'), {...defaults,mode:'lexical',modeExplicit:true,kind:'dir',createdByUser:'A B',q:'"two  words" OR -third'});
   assert.equal(parseExpression('text:"a:b \\"x\\""').q, 'a:b "x"');
 });
 test('invalid expressions never fall back to bare search', () => {
@@ -20,9 +20,9 @@ test('serializer round trips exact literal text including Unicode and escaping',
   assert.equal(serializeExpression(maximum),'sort:name direction:asc '+maximum.q);
   assert.deepEqual(parseExpression(serializeExpression(maximum)),maximum);
   const reordered = Object.fromEntries(Object.entries({...defaults,q:'literal'}).reverse());
-  assert.deepEqual(parseExpression(serializeExpression(reordered)),{...defaults,q:'literal'});
+  assert.deepEqual(parseExpression(serializeExpression(reordered)),{...defaults,q:'literal',modeExplicit:true},'a catalogue state with text keeps its mode explicitly');
   for (const mode of ['catalogue','lexical','semantic','hybrid']) for (const q of ['two  words','a:b "x"\\',' OR -not (word) ','🦄\nline']) {
-    const value = {...defaults,mode,q,visibility:'external',...(mode === 'catalogue' ? {itemState:'ready',sort:'name',direction:'asc',includeExpired:true} : {kind:'dir',createdByUser:'A:B "C"'})};
+    const value = {...defaults,mode,modeExplicit:mode !== 'catalogue',q,visibility:'external',...(mode === 'catalogue' ? {itemState:'ready',sort:'name',direction:'asc',includeExpired:true} : {kind:'dir',createdByUser:'A:B "C"'})};
     assert.deepEqual(parseExpression(serializeExpression(value)),value);
   }
 });
@@ -54,15 +54,53 @@ test('shared Python/browser expression contract fixtures', () => {
   const fixtures = JSON.parse(readFileSync(new URL('../fixtures/query-expressions.json',import.meta.url),'utf8'));
   for (const fixture of fixtures) {
     if (fixture.error) assert.throws(()=>parseExpression(fixture.query),undefined,fixture.name);
-    else assert.deepEqual(parseExpression(fixture.query),fixture.expected,fixture.name);
+    else { const {modeExplicit:_explicit,...plan}=parseExpression(fixture.query); assert.deepEqual(plan,fixture.expected,fixture.name); }
   }
+});
+
+test('shared Python/browser default mode rule fixtures', () => {
+  const fixtures = JSON.parse(readFileSync(new URL('../fixtures/query-defaults.json',import.meta.url),'utf8'));
+  for (const fixture of fixtures) {
+    const parse = () => parseExpression(fixture.query,{continuation:fixture.continuation === true});
+    if (fixture.error) { assert.throws(parse,error=>error.message === fixture.error,fixture.name); continue; }
+    const {modeExplicit,...plan}=parse();
+    assert.deepEqual(plan,fixture.expected,fixture.name);
+    assert.equal(modeExplicit,fixture.modeExplicit,fixture.name);
+  }
+});
+
+test('defaulted text uses hybrid when offered, else lexical with a notice; an explicit mode is never substituted', () => {
+  const all=['lexical','semantic','hybrid'], reason='semantic retrieval is not configured';
+  const text=parseExpression('quarterly report'), semantic=parseExpression('mode:semantic report'), hybrid=parseExpression('mode:hybrid report');
+  assert.deepEqual(retrievalRequest(text,all),{mode:'hybrid',reason:null});
+  assert.deepEqual(retrievalRequest(text,['lexical']),{mode:'lexical',reason});
+  assert.equal(fallbackNotice(reason),'Hybrid search is not available on this server: semantic retrieval is not configured; showing lexical results');
+  assert.deepEqual(retrievalRequest(text,[]),{mode:null,reason:null});
+  assert.deepEqual(retrievalRequest(semantic,all),{mode:'semantic',reason:null});
+  assert.deepEqual(retrievalRequest(semantic,['lexical']),{mode:null,reason:null});
+  const unavailable=new Error('search-unavailable');
+  assert.equal(fallsBack(text,'hybrid',unavailable),true);
+  assert.equal(fallsBack(text,'hybrid',new Error('unavailable')),false);
+  assert.equal(fallsBack(hybrid,'hybrid',unavailable),false,'an explicit hybrid is refused, not re-run');
+  assert.equal(fallsBack(text,'lexical',unavailable),false,'only one lexical run');
+  assert.equal(pendingNote(0n),null);
+  assert.equal(pendingNote(1n),'1 item is not yet indexed for semantic search; results may be incomplete');
+  assert.equal(pendingNote(3n),'3 items are not yet indexed for semantic search; results may be incomplete');
+});
+
+test('without mode:, hints offer the fields the default rule can take', () => {
+  const labels=(query)=>completeExpression(query,query.length).map(h=>h.label);
+  assert.ok(labels('report k').includes('kind:'),'text defaults to retrieval');
+  assert.ok(labels('report s').includes('state:'),'a catalogue-only field selects the catalogue');
+  assert.equal(labels('state:ready report k').includes('kind:'),false);
+  assert.equal(labels('kind:dir report s').some(label=>['state:','sort:'].includes(label)),false);
 });
 
 
 test('explicit metadata is exact, repeatable tags conjoin in all modes and round trip', () => {
   for (const mode of ['catalogue','lexical','semantic','hybrid']) {
     const expression = `mode:${mode} tag:Alpha tag:" alpha " hostname:"HOST.Example" project:" /work/A " text:needle`;
-    const state = {...defaults,mode,q:'needle',tags:['Alpha',' alpha '],hostname:'HOST.Example',projectPath:' /work/A '};
+    const state = {...defaults,mode,modeExplicit:true,q:'needle',tags:['Alpha',' alpha '],hostname:'HOST.Example',projectPath:' /work/A '};
     assert.deepEqual(parseExpression(expression),state);
     assert.deepEqual(parseExpression(serializeExpression(state)),state);
     for (const field of ['tag:','hostname:','project:']) assert(completeExpression(`mode:${mode} text:needle `,`mode:${mode} text:needle `.length).some(h=>h.label===field));
@@ -85,7 +123,7 @@ test('explicit metadata is exact, repeatable tags conjoin in all modes and round
 test('maximum metadata and text round trip independently without exhausting expression budget', () => {
   const tags=Array.from({length:32},(_,i)=>'🦄'.repeat(126)+String.fromCharCode(65+i)+' ');
   for(const mode of ['catalogue','lexical','semantic','hybrid']) {
-    const state={...defaults,mode,tags,hostname:'🦄'.repeat(252)+' ',projectPath:'🦄'.repeat(4095)+' ',q:'x'.repeat(4096)};
+    const state={...defaults,mode,modeExplicit:true,tags,hostname:'🦄'.repeat(252)+' ',projectPath:'🦄'.repeat(4095)+' ',q:'x'.repeat(4096)};
     const encoded=serializeExpression(state);
     assert.deepEqual(parseExpression(encoded),state);
     const draft='text:'+JSON.stringify(state.q)+' ';
@@ -95,7 +133,7 @@ test('maximum metadata and text round trip independently without exhausting expr
   }
   const escaped={...defaults,tags:Array.from({length:32},(_,i)=>'\0'.repeat(126)+String.fromCharCode(65+i)+' '),hostname:'\0'.repeat(252)+' ',projectPath:'\0'.repeat(4095)+' ',q:'\0'.repeat(4095)+' '};
   for(const mode of ['catalogue','lexical','semantic','hybrid']) {
-    const state={...escaped,mode};
+    const state={...escaped,mode,modeExplicit:true};
     assert.deepEqual(parseExpression(serializeExpression(state)),state,'escaped maximum metadata and text remain representable');
   }
   for(const mode of ['lexical','semantic','hybrid']) {
