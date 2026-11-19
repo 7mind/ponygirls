@@ -10,7 +10,7 @@ import unittest
 
 import browser_fixtures as bf
 
-CHECKS = 6
+CHECKS = 7
 
 
 class ConnectionIndicatorTests(unittest.TestCase):

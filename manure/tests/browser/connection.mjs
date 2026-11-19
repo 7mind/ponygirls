@@ -22,10 +22,13 @@ const refresh = (page) => page.getByRole("button", { name: "Refresh", exact: tru
 const announcements = (page) => page.evaluate(() => window.__announced);
 const commandOf = (body) => { try { return Object.keys(JSON.parse(body).command)[0]; } catch (_) { return null; } };
 
-async function signIn(page) {
+async function submitLogin(page) {
   await page.locator("[data-account-login] input[name=login]").fill(input.login);
   await page.locator("[data-account-login] input[name=password]").fill(input.loginPassword);
   await page.locator("[data-account-login] button[type=submit]").click();
+}
+async function signIn(page) {
+  await submitLogin(page);
   await page.getByRole("button", { name: input.userId }).waitFor();
 }
 // Reloads the catalogue (a real API request through the dashboard) and waits until it settled.
@@ -38,9 +41,10 @@ async function freeze(page) {
   await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 1000);
   await reload(page);
 }
-// A request of our own after everything the page sent so far: once it is logged, earlier requests are in the log too.
+// A request of our own (an image, which does not go through the page's fetch and so does not count as an answer) after
+// everything the page sent so far: once it is logged, earlier requests are in the log too.
 const flush = (page) => Promise.all([page.waitForRequest((request) => new URL(request.url()).pathname === SENTINEL_PATH),
-  page.evaluate((target) => fetch(target, { cache: "no-store" }), SENTINEL_PATH)]);
+  page.evaluate((target) => new Promise((resolve) => { const image = new Image(); image.onload = image.onerror = resolve; image.src = target + "?" + Math.random(); }), SENTINEL_PATH)]);
 const isHeartbeat = (request) => request.method() === "POST" && commandOf(request.postData()) === HEARTBEAT_COMMAND;
 // Resolves with the next heartbeat the page sends; start it before the action that causes it.
 const nextHeartbeat = (page) => page.waitForRequest(isHeartbeat);
@@ -97,7 +101,15 @@ await check("the pill is Live once the server has answered, also on the sign-in 
   assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), "Connection: Live", "Escape returns focus to the pill");
 });
 
-await check("a failing request turns the pill Offline at once; a gateway page counts, an application error does not; the next answer restores it; each change is announced once", async (page) => {
+await check("a failing request turns the pill Offline at once, also one that fails after its headers; a gateway page counts, an application error does not; the next answer restores it; each change is announced once", async (page) => {
+  // Test-only fault: while __bodyFault is set, answers on the API path keep their headers and lose their body.
+  await page.addInitScript(() => {
+    const original = window.fetch.bind(window);
+    window.__bodyFault = false;
+    window.fetch = (url, options) => original(url, options).then((response) => !window.__bodyFault || !String(url).endsWith("/api/current") ? response
+      : new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('{"requestId":')); controller.error(new TypeError("network error")); } }),
+        { status: 200, headers: response.headers }));
+  });
   await page.goto(input.base + "/", { waitUntil: "domcontentloaded" });
   await page.locator("[data-account-login]").waitFor();
   await signIn(page);
@@ -115,24 +127,38 @@ await check("a failing request turns the pill Offline at once; a gateway page co
   await page.getByText("The request failed (unavailable)").waitFor();
   assert.equal(await pill(page, "Live").count(), 1, "an application error is an answer");
   await page.unroute("**/api/current");
-  // A gateway error page is not.
-  await failWith((route) => route.fulfill({ status: 502, contentType: "text/html", body: "<h1>Bad Gateway</h1>" }));
-  await refresh(page).click();
+  // A gateway's error page is not, whatever its body: JSON included, the envelope-shaped answer of another request too.
+  const gateways = [[503, "application/json", () => '{"error":"upstream unavailable"}'], [504, "application/json", () => '{"message":"gateway timeout"}'],
+    [503, "application/json", () => JSON.stringify({ requestId: "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d", result: { Error: { failure: { code: "Unavailable", message: "x", retryAfterSeconds: 1 } } } })],
+    [502, "text/html", () => "<h1>Bad Gateway</h1>"]];
+  for (const [status, contentType, body] of gateways) {
+    await failWith((route) => route.fulfill({ status, contentType, body: body() }));
+    await reload(page);
+    await pill(page, "Offline").waitFor();
+    assert.equal(await pill(page, "Offline").getAttribute("data-state"), "offline");
+    await page.unroute("**/api/current");
+    await reload(page);
+    await pill(page, "Live").waitFor();
+  }
+  // So is an answer whose connection drops after the headers.
+  await page.evaluate(() => { window.__bodyFault = true; });
+  await reload(page);
   await pill(page, "Offline").waitFor();
-  assert.equal(await pill(page, "Offline").getAttribute("data-state"), "offline");
-  await page.unroute("**/api/current");
-  // Neither is a refused connection; staying offline is not announced again.
+  await page.evaluate(() => { window.__bodyFault = false; });
+  await reload(page);
+  await pill(page, "Live").waitFor();
+  // A refused connection is Offline too; staying offline is not announced again.
   await failWith((route) => route.abort("connectionrefused"));
-  await refresh(page).click();
-  await page.getByText("The request failed (network-error)").waitFor();
+  await reload(page);
+  await pill(page, "Offline").waitFor();
+  await reload(page);
   assert.equal(await pill(page, "Offline").count(), 1);
   await page.unroute("**/api/current");
   await reload(page);
   await pill(page, "Live").waitFor();
   const announced = await announcements(page);
-  assert.equal(announced.length, 2, JSON.stringify(announced));
-  assert.match(announced[0], /lost/i);
-  assert.match(announced[1], /restored/i);
+  assert.equal(announced.length, 2 * (gateways.length + 2), JSON.stringify(announced));
+  announced.forEach((text, index) => assert.match(text, index % 2 === 0 ? /lost/i : /restored/i));
 });
 
 await check("an idle tab notices an unanswered server within the idle interval plus the probe timeout, keeps probing, and recovers on the next answer", async (page, log) => {
@@ -186,6 +212,33 @@ await check("a hidden tab sends no heartbeat; showing it again, or the browser c
   await Promise.all([nextHeartbeat(page), page.evaluate(() => window.dispatchEvent(new Event("online")))]);
   assert.equal(heartbeats(log, mark).length, 2);
   await pill(page, "Live").waitFor();
+});
+
+await check("the account UI's requests feed the pill too: a refused sign-in and a failing sign-out turn it Offline before any heartbeat is due, the next answer restores it", async (page, log) => {
+  await page.goto(input.base + "/", { waitUntil: "domcontentloaded" });
+  await page.locator("[data-account-login]").waitFor();
+  await pill(page, "Live").waitFor();
+  // The clock stands still, so no heartbeat can be sent: what changes the pill is the account requests themselves.
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 1000);
+  const mark = log.length;
+  // Only the account route fails; the API path (and its Version command) would answer.
+  await page.route("**/api/account/v1/login", (route) => route.abort("connectionrefused"));
+  await submitLogin(page);
+  await pill(page, "Offline").waitFor();
+  await flush(page);
+  assert.equal(heartbeats(log, mark).length, 0, "the refused sign-in, not a heartbeat, turned the pill Offline");
+  await page.unroute("**/api/account/v1/login");
+  await signIn(page);
+  await pill(page, "Live").waitFor();
+  // Signed in: signing out reads the account first.
+  await page.route("**/api/account/v1", (route) => route.abort("connectionrefused"));
+  await page.getByRole("button", { name: input.userId }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  await pill(page, "Offline").waitFor();
+  await flush(page);
+  assert.equal(heartbeats(log, mark).length, 0, "the failing sign-out, not a heartbeat, turned the pill Offline");
+  await page.unroute("**/api/account/v1");
+  await page.getByRole("menuitem", { name: "Sign out" }).or(page.getByRole("button", { name: input.userId })).first().waitFor();
 });
 
 // The pill keeps its width (and so does everything beside it) whichever state it shows; the masthead fits the window.
