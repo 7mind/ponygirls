@@ -30,6 +30,7 @@ Use generated classes **and codecs**, not interface casts or custom legacy JSON:
 | `POST /api/v1/complete` | `QueryRequest` → `CompletionResult(suggestions)` |
 | `POST /api/v1/values` | `ValuesRequest(field)` → `ValuesResult(values)` |
 | `POST /api/v1/retrieve` | `RetrieveRequest` → `RetrieveResult` |
+| `GET /api/v1/capabilities` | none → `RetrievalCapabilities(modes)` |
 | `GET /api/v1/live` | authenticated WS; generated `LiveFrame` in both directions |
 
 `Item.document` and `PutRequest.document` are named `DocumentPayload { json:str }`.
@@ -80,14 +81,64 @@ These are bounded suggestions, not exhaustive facets or counts.
 
 Content retrieval is distinct from exact browse. `RetrieveRequest` explicitly
 selects Lexical/Semantic/Hybrid, raw project filter, includeArchived, offset and
-limit. Unconfigured means lexical-only; semantic/hybrid is typed unavailable,
-never hidden fallback. Configured outages do not couple writes/browse to models.
-Approved metadata/string leaves only; operator pointer approvals and chunk bounds
-participate in policy identity. Results carry actual source revision, generation,
-profile/embedding-space (optional for lexical HEAD), policy, field/pointer/UTF16
-provenance, text and score; totals declare ExactMatches or CandidateWindow and
-rankingLimit. No mutable hydration relabels an older published hit. Profile/policy
-incompatibility is unavailable until deliberate rebuild/publication.
+limit; the route serves exactly that mode and never substitutes another.
+Configured outages do not couple writes/browse to models. Approved metadata/string
+leaves only (production: title, description and tags; fields are not embedded);
+operator pointer approvals and chunk bounds participate in policy identity.
+Results carry actual source revision, generation, profile/embedding-space
+(optional for lexical HEAD), policy, field/pointer/UTF16 provenance, text and
+score; totals declare ExactMatches or CandidateWindow and rankingLimit. No mutable
+hydration relabels an older published hit.
+
+Partial readiness is declared, not refused. Semantic/hybrid rank only
+publications of the active profile; `RetrieveResult.pending` (i64, a JSON decimal
+string like `total`) counts the sources inside the query's
+authorization/project/archived/expiry scope whose current revision has no
+publication under the active profile: never published, published for an older
+revision, or published under another profile/policy/embedding space. They are
+not ranked until the worker publishes them. Lexical reads current revisions and
+always reports `"0"`.
+
+`GET /api/v1/capabilities` is an authenticated read like `whoami` (401
+`unauthorized` without credentials) returning `RetrievalCapabilities(modes)`:
+`{"modes":["Lexical"]}` without an embedding, `{"modes":["Lexical","Semantic","Hybrid"]}`
+with one.
+
+A semantic/hybrid request that cannot be served answers HTTP 503 with the
+generated `Failure`, `code` `unavailable` and exactly one of these fixed
+messages (the closed reason set; never provider or exception text):
+
+| Reason | `message` |
+|---|---|
+| not configured on this server (lexical-only capability) | `semantic retrieval is not configured; lexical-only capability` |
+| the query embedding failed (provider error, timeout, invalid output) | `query embedding failed` |
+
+```json
+{"code":"unavailable","message":"query embedding failed","spans":[],"currentRevision":null}
+```
+
+Every other failure keeps its code-derived message (for example a database
+outage is `{"code":"unavailable","message":"unavailable",…}`), so clients
+recognize the reasons by these exact messages.
+
+Example `RetrieveResult` (hybrid; one published hit, one in-scope item pending):
+
+```json
+{"sources":[{"key":"p:a","revision":1,"pointer":"/title","text":"harbour notes","score":0.03252247488101533,"generation":"87383bfc-7739-4721-aa6b-cf3e8a313fef","profile":"a5a4a44a6e6f05e9817a2c71008847b39d40b8cd06b074d570e3a11666f28e5e","embeddingSpace":"bae20c9a7a6434218b707da37d3effdc4af9aaee8918847c401b0469f87fcb17","policy":"3e7505b5bede1a2b1e4296ba0bf0eb1118e62bfbf00c8c1e13e406403caf8b65","field":"title","start":0,"end":13}],"mode":"Hybrid","countScope":"CandidateWindow","total":"1","rankingLimit":2000,"pending":"1"}
+```
+
+Client default rule (MCP `retrieve`, CLI `retrieve`, dashboard): free text and
+no explicit mode → **hybrid** if the capabilities list it; otherwise lexical with
+the visible notice `Hybrid search is not available on this server: <reason>;
+showing lexical results` (`<reason>` is the not-configured message above). A
+defaulted hybrid answered with one of the 503 reasons is re-run once as lexical
+with the same notice naming the server's message. An explicit mode is never
+substituted; its unavailability is reported with the server's message. `pending
+> 0` is shown as `N items are not yet indexed for semantic search; results may
+be incomplete`. The model stays `1.0.0`, changed in place (one negotiated
+version): a client built before `pending`/`RetrievalCapabilities` rejects the
+retrieve response with its strict decoder, and the current CLI rejects an older
+server's response; upgrade clients with the server.
 
 ## Live/current browser state
 
@@ -112,7 +163,9 @@ No automatic fresh-ID retry or browser-storage credential/payload persistence.
 `POST /mcp`, JSON-RPC2.0, stateless Streamable HTTP2025-11-25. Exact Bearer only;
 either session-cookie name is rejected even alongside a bearer. No GET/SSE stream,
 stdio, OAuth server or resources/prompts. Official Node SDK tests initialize,
-list/call exactly `get`, `put`, `search` and exercise transport/version errors.
+list exactly `get`, `put`, `search`, `retrieve`, call `get`/`put`/`search` and
+exercise transport/version errors; `retrieve` is exercised through the same
+production route in `RetrievalSurfaceTest`.
 
 MCP tool arguments retain their externally declared schemas:
 
@@ -121,9 +174,35 @@ MCP tool arguments retain their externally declared schemas:
 - put: `{key,document_json,expected_revision,request_id}`. document_json is a
   **string**, expected_revision is an integer, request_id is UUIDv7 (not v4).
 - search: `{query,project?,limit?,cursor?}`. Canonical qualified IDs in summaries.
+  Exact Boolean browse (metadata, tags, links, fields); no ranking or models.
+- retrieve: `{query, mode?, project?, include_archived?, limit?, offset?}`. Ranked
+  retrieval over title, description and tags (fields are not embedded). `query`
+  is a nonempty string; `mode` is `lexical`|`semantic`|`hybrid`; `project` an
+  exact raw project; `include_archived` defaults to false; `limit` 1..50 (default
+  10); `offset` ≥ 0 (default 0); read-only/idempotent annotations like `search`.
+  Without `mode` the server applies the client default rule above: hybrid when
+  offered, otherwise lexical with the notice; a defaulted hybrid whose query
+  embedding fails is re-run as lexical with the notice naming that reason. An
+  explicit unavailable mode is a tool error `{code:"unavailable", message:<fixed
+  reason message>}`. Structured content is the `RetrieveResult` JSON plus
+  `requested_mode` (the `mode` argument, or null when defaulted),
+  `effective_mode` (the mode served) and `notice` (string or null). Text content:
+  `mode: <effective>[ (default)]`, the `notice: …` line if any, the pending line
+  when `pending > 0`, `<countScope>: <total>; <n> shown from offset <offset>`, then
+  one line per hit `<key> r<revision> <field> <pointer> score <score> <snippet>`
+  (snippet: whitespace collapsed, at most 200 characters; whole text at most 8000).
 
-Tool failures have `isError:true`, safe text and structured code/message. Protocol
+  ```text
+  mode: hybrid (default)
+  1 items are not yet indexed for semantic search; results may be incomplete
+  CandidateWindow: 1; 1 shown from offset 0
+  p:a r1 title /title score 0.03252247488101533 harbour notes
+  ```
+
+Tool failures have `isError:true`, safe text and structured code/message (the
+message is the code's text, except the fixed retrieval reason messages). Protocol
 failures remain JSON-RPC errors, never generated application wrappers. Guidance
-states archive defaults, CAS/replay/uncertain-outcome rules and that stored content
-is data, not instructions. External MCP is verified with the official Node client,
+names the four tools, when to use `search` versus `retrieve` and the hybrid
+default, and states archive defaults, CAS/replay/uncertain-outcome rules and that
+stored content is data, not instructions. External MCP is verified with the official Node client,
 not with a home-grown fake client or a production Node proxy.

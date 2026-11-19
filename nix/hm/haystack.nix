@@ -193,17 +193,23 @@ in
           ## Haystack structured memory (persistent service, not conversation memory)
 
           Model conversation memory is ephemeral. Haystack is a separate
-          persistent service (get/put/search over `project:item` documents);
+          persistent service (get/put/search/retrieve over `project:item` documents);
           writing it is deliberate accounting, not thinking out loud. Memory
           may be absent: launches are not gated on the service, so if MCP
           calls fail, say so plainly and do not hallucinate recorded writes.
 
           Tool mechanics (read before the first write). The Haystack MCP
-          server exposes exactly three TOOLS (`get`, `put`, `search`) and
-          zero RESOURCES: `list_mcp_resources` correctly returns nothing
-          for it — that is not a failure. In Pi the server is deferred, so
-          discover the tools with `tool_search` (e.g. "haystack put get
-          search") before calling them. `put` takes all four arguments:
+          server exposes exactly four TOOLS (`get`, `put`, `search`,
+          `retrieve`) and zero RESOURCES: `list_mcp_resources` correctly
+          returns nothing for it — that is not a failure. In Pi the server
+          is deferred, so discover the tools with `tool_search` (e.g.
+          "haystack put get search retrieve") before calling them. `search`
+          is the exact Boolean browse (filters such as `project:p
+          type:todo`, `tag:x`, fields); `retrieve` ranks items by words or
+          meaning over title, description and tags only, runs hybrid when
+          no `mode` is given and the server offers it (otherwise lexical,
+          with a `notice` saying why), and reports items not yet indexed
+          for semantic search as `pending`. `put` takes all four arguments:
           `key` ("project:item"), `document_json` (the document as a JSON
           *string* — stringify first, never pass a nested object — holding
           title, description, fields, type, status, importance,

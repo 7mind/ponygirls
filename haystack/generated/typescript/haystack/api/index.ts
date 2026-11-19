@@ -18,6 +18,7 @@ export * from './Metadata.js';
 export * from './PutRequest.js';
 export * from './PutResult.js';
 export * from './QueryRequest.js';
+export * from './RetrievalCapabilities.js';
 export * from './RetrievalMode.js';
 export * from './RetrieveRequest.js';
 export * from './RetrieveResult.js';

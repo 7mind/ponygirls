@@ -8,8 +8,8 @@ test('lossless envelope numbers never coerce to string-typed identity fields',()
  assert.equal(check(identitySchema,{...value,userType:'agent',tokenId:'t',activityProjectId:'p'}),false);
 });
 test('generated codecs retain full i64 range and reject overflow or noninteger total',()=>{
- for(const raw of ['9223372036854775807','-9223372036854775808']){const value=envelope(`{"sources":[],"mode":"Lexical","countScope":"ExactMatches","total":${raw},"rankingLimit":null}`);assert.equal(check(routes.retrieve.output,value),true);const decoded=decode(api.RetrieveResult.jsonCodec(),materialize(routes.retrieve.output,value));assert.equal(decoded.total,BigInt(raw));assert.equal(encode(api.RetrieveResult.jsonCodec(),decoded).total,raw);}
- for(const raw of ['9223372036854775808','1.1']){assert.equal(check(routes.retrieve.output,envelope(`{"sources":[],"mode":"Lexical","countScope":"ExactMatches","total":${raw},"rankingLimit":null}`)),false);}
+ for(const raw of ['9223372036854775807','-9223372036854775808']){const value=envelope(`{"sources":[],"mode":"Lexical","countScope":"ExactMatches","total":${raw},"rankingLimit":null,"pending":0}`);assert.equal(check(routes.retrieve.output,value),true);const decoded=decode(api.RetrieveResult.jsonCodec(),materialize(routes.retrieve.output,value));assert.equal(decoded.total,BigInt(raw));assert.equal(encode(api.RetrieveResult.jsonCodec(),decoded).total,raw);}
+ for(const raw of ['9223372036854775808','1.1']){assert.equal(check(routes.retrieve.output,envelope(`{"sources":[],"mode":"Lexical","countScope":"ExactMatches","total":${raw},"rankingLimit":null,"pending":0}`)),false);}
 });
 test('version discovery requires exactly sole current, not removed or future coexistence',()=>{
  assert.equal(versions({current:'1.0.0',minimum:'1.0.0',supported:['1.0.0']}),true);

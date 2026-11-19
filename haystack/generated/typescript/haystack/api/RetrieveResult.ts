@@ -9,13 +9,15 @@ export class RetrieveResult implements BaboonGeneratedLatest {
     private readonly _countScope: string;
     private readonly _total: bigint;
     private readonly _rankingLimit: number | undefined;
+    private readonly _pending: bigint;
 
-    constructor(sources: Array<RetrievedSource>, mode: RetrievalMode, countScope: string, total: bigint, rankingLimit: number | undefined) {
+    constructor(sources: Array<RetrievedSource>, mode: RetrievalMode, countScope: string, total: bigint, rankingLimit: number | undefined, pending: bigint) {
         this._sources = sources
         this._mode = mode
         this._countScope = countScope
         this._total = total
         this._rankingLimit = rankingLimit
+        this._pending = pending
     }
 
     public get sources(): Array<RetrievedSource> {
@@ -33,6 +35,9 @@ export class RetrieveResult implements BaboonGeneratedLatest {
     public get rankingLimit(): number | undefined {
         return this._rankingLimit;
     }
+    public get pending(): bigint {
+        return this._pending;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -40,27 +45,30 @@ export class RetrieveResult implements BaboonGeneratedLatest {
             mode: this._mode,
             countScope: this._countScope,
             total: this._total,
-            rankingLimit: this._rankingLimit !== undefined ? this._rankingLimit : undefined
+            rankingLimit: this._rankingLimit !== undefined ? this._rankingLimit : undefined,
+            pending: this._pending
         };
     }
 
-    public with(overrides: {sources?: Array<RetrievedSource>; mode?: RetrievalMode; countScope?: string; total?: bigint; rankingLimit?: number | undefined}): RetrieveResult {
+    public with(overrides: {sources?: Array<RetrievedSource>; mode?: RetrievalMode; countScope?: string; total?: bigint; rankingLimit?: number | undefined; pending?: bigint}): RetrieveResult {
         return new RetrieveResult(
             'sources' in overrides ? overrides.sources! : this._sources,
             'mode' in overrides ? overrides.mode! : this._mode,
             'countScope' in overrides ? overrides.countScope! : this._countScope,
             'total' in overrides ? overrides.total! : this._total,
-            'rankingLimit' in overrides ? overrides.rankingLimit! : this._rankingLimit
+            'rankingLimit' in overrides ? overrides.rankingLimit! : this._rankingLimit,
+            'pending' in overrides ? overrides.pending! : this._pending
         );
     }
 
-    public static fromPlain(obj: {sources: Array<RetrievedSource>; mode: RetrievalMode; countScope: string; total: bigint; rankingLimit: number | undefined}): RetrieveResult {
+    public static fromPlain(obj: {sources: Array<RetrievedSource>; mode: RetrievalMode; countScope: string; total: bigint; rankingLimit: number | undefined; pending: bigint}): RetrieveResult {
         return new RetrieveResult(
             obj.sources,
             obj.mode,
             obj.countScope,
             obj.total,
-            obj.rankingLimit
+            obj.rankingLimit,
+            obj.pending
         );
     }
 
@@ -105,6 +113,7 @@ export class RetrieveResult_JsonCodec {
             "countScope": value.countScope,
             "total": value.total.toString(),
             "rankingLimit": value.rankingLimit === undefined ? null : value.rankingLimit,
+            "pending": value.pending.toString(),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): RetrieveResult {
@@ -119,6 +128,7 @@ export class RetrieveResult_JsonCodec {
             obj["countScope"] as string,
             BaboonInt64.read(obj["total"], "i64/u64"),
             obj["rankingLimit"] === undefined || obj["rankingLimit"] === null ? undefined : obj["rankingLimit"] === undefined || obj["rankingLimit"] === null ? undefined : obj["rankingLimit"] as number,
+            BaboonInt64.read(obj["pending"], "i64/u64"),
         )
     }
 

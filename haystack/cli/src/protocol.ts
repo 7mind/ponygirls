@@ -22,6 +22,7 @@ export const accountSchema=shape({user:accountUserSchema,tokens:list(token),scop
 export const issueSchema=shape({token,secret:'str'});
 export const loginSchema=shape({user:accountUserSchema});
 export const ackSchema=shape({ok:'bit'});
+export const capabilitiesSchema=shape({modes:list(mode)});
 function exactInteger(value: unknown): bigint|undefined {
   if (typeof value === 'number') return Number.isSafeInteger(value) ? BigInt(value) : undefined;
   if (!isLosslessNumber(value)) return undefined;
@@ -77,7 +78,7 @@ export const routes = {
   analyze:route('/api/v1/query/analyze',api.QueryRequest.jsonCodec(),shape({query:'str',caret:'i32'}),api.AnalyzeResult.jsonCodec(),shape({valid:'bit',spans:list(span)})),
   complete:route('/api/v1/complete',api.QueryRequest.jsonCodec(),shape({query:'str',caret:'i32'}),api.CompletionResult.jsonCodec(),shape({suggestions:list('str')})),
   values:route('/api/v1/values',api.ValuesRequest.jsonCodec(),shape({field:'str'}),api.ValuesResult.jsonCodec(),shape({values:list('str')})),
-  retrieve:route('/api/v1/retrieve',api.RetrieveRequest.jsonCodec(),shape({query:'str',mode,project:optional('str'),includeArchived:'bit',offset:'i32',limit:'i32'}),api.RetrieveResult.jsonCodec(),shape({sources:list(shape({key:'str',revision:'i32',pointer:'str',text:'str',score:'f64',generation:'str',profile:optional('str'),embeddingSpace:optional('str'),policy:'str',field:'str',start:optional('i32'),end:optional('i32')})),mode,countScope:{enum:['ExactMatches','CandidateWindow']},total:'i64',rankingLimit:optional('i32')})),
+  retrieve:route('/api/v1/retrieve',api.RetrieveRequest.jsonCodec(),shape({query:'str',mode,project:optional('str'),includeArchived:'bit',offset:'i32',limit:'i32'}),api.RetrieveResult.jsonCodec(),shape({sources:list(shape({key:'str',revision:'i32',pointer:'str',text:'str',score:'f64',generation:'str',profile:optional('str'),embeddingSpace:optional('str'),policy:'str',field:'str',start:optional('i32'),end:optional('i32')})),mode,countScope:{enum:['ExactMatches','CandidateWindow']},total:'i64',rankingLimit:optional('i32'),pending:'i64'})),
 };
 export type Operation=keyof typeof routes;
 export const context=BaboonCodecContext.Default;

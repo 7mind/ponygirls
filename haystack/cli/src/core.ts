@@ -78,7 +78,11 @@ export const serverMessages: Readonly<Record<string,string>> = {
   'too-large':'request or response exceeds a bound', 'rate-limited':'server rate limit reached',
   'version-mismatch':'server does not support the sole current API 1.0.0', 'unavailable':'service unavailable', 'invalid':'account request rejected',
 };
-export function serverFault(code: string, status: number, details: Record<string,unknown>): CliError {
+/** The server's fixed retrieval `unavailable` messages and their reasons; no other server message text is ever shown. */
+export const unavailableReasons: Readonly<Record<string,string>> = {
+  'semantic retrieval is not configured; lexical-only capability':'not-configured', 'query embedding failed':'embedding-failed',
+};
+export function serverFault(code: string, status: number, details: Record<string,unknown>, message?: string): CliError {
   const recognized = Object.hasOwn(serverMessages, code); const category = recognized ? code : 'remote-error';
-  return new CliError(category, recognized ? serverMessages[code]! : 'server rejected the operation', status === 401 || status === 403 ? 3 : status === 404 ? 4 : status === 409 ? 5 : status >= 500 ? 6 : 2, {status,...details});
+  return new CliError(category, message ?? (recognized ? serverMessages[code]! : 'server rejected the operation'), status === 401 || status === 403 ? 3 : status === 404 ? 4 : status === 409 ? 5 : status >= 500 ? 6 : 2, {status,...details});
 }

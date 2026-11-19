@@ -14,8 +14,9 @@ decision table for the user: **draft | promote or forget | why**.
 
 ## 1. Enumerate every draft
 
-1. Discover the Haystack tools (`get`, `put`, `search`); in harnesses that
-   defer MCP tools, find them with tool search first.
+1. Discover the Haystack tools (`get`, `put`, `search`, `retrieve`); in
+   harnesses that defer MCP tools, find them with tool search first. This
+   procedure uses the exact `search`, not the ranked `retrieve`.
 2. Search the activity namespace named in your Haystack context (the project
    where skill drafts live) with both `type:skill-draft` and `tag:skill-draft`
    (a draft may carry only one of them). Follow `cursor` until it is absent and

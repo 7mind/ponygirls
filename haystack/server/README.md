@@ -44,9 +44,12 @@ Legacy token login is rejected and both logout routes revoke the actual session.
 ## Retrieval policy
 
 Ordinary Boolean browse/search remains exact and never calls a model. Content
-retrieval is `POST /api/v1/retrieve` using generated `RetrieveRequest`. Unconfigured
-embedding means lexical-only; requesting semantic/hybrid is typed unavailable.
-No hidden fallback. `includeMetadata` explicitly approves title/description/tags.
+retrieval is `POST /api/v1/retrieve` using generated `RetrieveRequest`;
+`GET /api/v1/capabilities` lists the servable modes. Unconfigured embedding means
+lexical-only; requesting semantic/hybrid is typed unavailable (503, fixed reason
+message). The HTTP route never substitutes a mode; the MCP `retrieve` tool and the
+CLI default to hybrid when offered and fall back visibly (see `../docs/api.md`).
+`includeMetadata` explicitly approves title/description/tags.
 `approvedFieldPrefixes` are RFC6901 pointers rooted at fields; `[]` approves no
 field leaves, `[""]` deliberately approves all string leaves. Do not approve
 password/token/credential/sensitive paths. Arrays/objects are traversed only to

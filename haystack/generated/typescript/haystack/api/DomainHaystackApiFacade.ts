@@ -20,6 +20,7 @@ import { Metadata, Metadata_JsonCodec } from './Metadata.js';
 import { PutRequest, PutRequest_JsonCodec } from './PutRequest.js';
 import { PutResult, PutResult_JsonCodec } from './PutResult.js';
 import { QueryRequest, QueryRequest_JsonCodec } from './QueryRequest.js';
+import { RetrievalCapabilities, RetrievalCapabilities_JsonCodec } from './RetrievalCapabilities.js';
 import { RetrievalMode, RetrievalMode_JsonCodec } from './RetrievalMode.js';
 import { RetrieveRequest, RetrieveRequest_JsonCodec } from './RetrieveRequest.js';
 import { RetrieveResult, RetrieveResult_JsonCodec } from './RetrieveResult.js';
@@ -54,6 +55,7 @@ class DomainHaystackApiV1_0_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(PutRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => PutRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(PutResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => PutResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(QueryRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => QueryRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(RetrievalCapabilities_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RetrievalCapabilities_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(RetrievalMode_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RetrievalMode_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(RetrieveRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RetrieveRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(RetrieveResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RetrieveResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -101,6 +103,7 @@ class DomainHaystackApiV1_0_0Meta implements BaboonMeta {
         "haystack.api/:#PutRequest": ['1.0.0'],
         "haystack.api/:#PutResult": ['1.0.0'],
         "haystack.api/:#QueryRequest": ['1.0.0'],
+        "haystack.api/:#RetrievalCapabilities": ['1.0.0'],
         "haystack.api/:#RetrievalMode": ['1.0.0'],
         "haystack.api/:#RetrieveRequest": ['1.0.0'],
         "haystack.api/:#RetrieveResult": ['1.0.0'],
@@ -133,6 +136,7 @@ class DomainHaystackApiV1_0_0Meta implements BaboonMeta {
         "haystack.api/:#PutRequest": { '1.0.0': 'identical' },
         "haystack.api/:#PutResult": { '1.0.0': 'identical' },
         "haystack.api/:#QueryRequest": { '1.0.0': 'identical' },
+        "haystack.api/:#RetrievalCapabilities": { '1.0.0': 'identical' },
         "haystack.api/:#RetrievalMode": { '1.0.0': 'identical' },
         "haystack.api/:#RetrieveRequest": { '1.0.0': 'identical' },
         "haystack.api/:#RetrieveResult": { '1.0.0': 'identical' },

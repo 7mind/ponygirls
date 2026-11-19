@@ -82,6 +82,7 @@ haystack get my-project:fact --revision 1 --json
 haystack history my-project:fact
 haystack search 'type:fact and importance:high' --sort title --direction asc --limit 10
 haystack search 'type:fact' --limit 10 --cursor 'opaque cursor returned above'
+haystack retrieve 'protocol recovery' --limit 20
 haystack retrieve 'protocol recovery' --mode lexical --limit 20
 haystack analyze 'type:fact' --caret 9
 haystack complete 'type:'
@@ -105,7 +106,23 @@ losslessly and encoded as a **decimal string** in JSON output. Search reports
 returned summaries, **not** a claimed corpus total. Retrieval keeps the server's
 `ExactMatches` versus `CandidateWindow` label, `rankingLimit`, source revision,
 generation, profile/embedding space, policy, pointer/field, text, score and UTF16
-ranges. Semantic/hybrid unavailability is an error, never a lexical fallback.
+ranges, and `pending`: the number of in-scope items not yet indexed for semantic
+search (always `0` for lexical).
+
+Without `--mode`, `retrieve` first reads `GET /api/v1/capabilities`: it runs
+**hybrid** when the server offers it, otherwise lexical with one stderr notice
+`Notice: Hybrid search is not available on this server: <reason>; showing lexical results`.
+If a defaulted hybrid request is refused with a typed `unavailable` reason (for
+example `query embedding failed`), it is re-run once as lexical with the same
+kind of notice naming the server's reason. An explicit `--mode` is never substituted: an
+unavailable explicit mode fails with exit6, code `unavailable`, the server's
+fixed reason as `message` and `reason` `not-configured`|`embedding-failed`; no
+other server message text is ever shown. `pending > 0` adds the stderr note
+`Notice: N items are not yet indexed for semantic search; results may be incomplete`.
+Notices go to stderr only after a successful answer; stdout stays the result.
+`call retrieve` sends exactly the given mode. This CLI requires the current
+server: an older server without `pending` or the capability read is rejected.
+
 Values/completion are bounded suggestions, not exhaustive facets or counts.
 
 Search excludes archived items by default; use the query language's

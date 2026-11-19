@@ -27,6 +27,9 @@ final case class ProjectionPolicy(name:String,includeMetadata:Boolean,approvedFi
 }
 
 final class HaystackRetrieval(val database:JdbcDatabase,val policy:ProjectionPolicy,val store:PostgresRetrieval,val embedding:Option[EmbeddingClient],val batchSize:Int) {
+  /** Modes this server can serve: semantic/hybrid need both the query embedding client and the registered profile. */
+  val modes:List[RetrievalMode]=
+    if(embedding.nonEmpty && store.profile.nonEmpty) List(RetrievalMode.Lexical,RetrievalMode.Semantic,RetrievalMode.Hybrid) else List(RetrievalMode.Lexical)
   private def pointer(parts:Vector[String]):String=parts.map(_.replace("~","~0").replace("/","~1")).mkString("/","/","")
   private def chunkId(field:String,ptr:String,start:Int):String=RetrievalChecks.hash(io.circe.Json.arr(io.circe.Json.fromString("haystack-chunk-id-v1"),io.circe.Json.fromString(field),io.circe.Json.fromString(ptr),io.circe.Json.fromInt(start)).noSpaces)
   private def chunks(field:String,ptr:String,text:String):List[InputChunk]={

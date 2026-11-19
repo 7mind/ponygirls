@@ -3,8 +3,8 @@ import {constants} from 'node:fs';
 import {performance} from 'node:perf_hooks';
 import {State, readBounded} from './state.ts';
 import {type Arguments,text,number} from './args.ts';
-import {CliError,fail,object,envelope,TIMEOUT_MS,RESPONSE_BYTES,PROTOCOL,serverFault,key,parseDocument,parseStoredDocument,requestId,usage} from './core.ts';
-import {api,check,materialize,encode,decode,routes,failureSchema,type Schema,type Operation,type Codec,identitySchema,versions,ackSchema} from './protocol.ts';
+import {CliError,fail,object,envelope,TIMEOUT_MS,RESPONSE_BYTES,PROTOCOL,serverFault,unavailableReasons,key,parseDocument,parseStoredDocument,requestId,usage} from './core.ts';
+import {api,check,materialize,encode,decode,routes,failureSchema,type Schema,type Operation,type Codec,identitySchema,versions,ackSchema,capabilitiesSchema} from './protocol.ts';
 export interface Settings {readonly origin:string;readonly timeout:number;readonly maxResponse:number;readonly auth:'token'|'session';readonly token:string|undefined;readonly tokenFile:string|undefined}
 export function settings(args:Arguments,env:NodeJS.ProcessEnv,session:boolean,publicRoute:boolean):Settings {
   const value=text(args,'url')??env.HAYSTACK_URL;if(!value)usage('--url or HAYSTACK_URL is required');
@@ -83,7 +83,9 @@ export class Client {
     if(!response.ok){
       if(path.startsWith('/api/account/v1')){if(!object(parsed)||!object(parsed.error)||typeof parsed.error.code!=='string'||typeof parsed.error.message!=='string')return fail('invalid-response','invalid account failure response',6);throw serverFault(parsed.error.code,response.status,{});}
       if(!check(failureSchema,parsed)||!object(parsed))return fail('invalid-response','invalid generated failure response',6);
-      const failure=decode(api.Failure.jsonCodec(),materialize(failureSchema,parsed));const details:Record<string,unknown>={};if(failure.currentRevision!==undefined)details.currentRevision=failure.currentRevision;if(failure.spans.length)details.spans=failure.spans.map(span=>({start:span.start,end:span.end}));throw serverFault(failure.code,response.status,details);
+      const failure=decode(api.Failure.jsonCodec(),materialize(failureSchema,parsed));const details:Record<string,unknown>={};if(failure.currentRevision!==undefined)details.currentRevision=failure.currentRevision;if(failure.spans.length)details.spans=failure.spans.map(span=>({start:span.start,end:span.end}));
+      const typed=failure.code==='unavailable'&&Object.hasOwn(unavailableReasons,failure.message);if(typed)details.reason=unavailableReasons[failure.message];
+      throw serverFault(failure.code,response.status,details,typed?failure.message:undefined);
     }
     return{body:parsed,response};
   }
@@ -108,6 +110,7 @@ export class Client {
     } catch{return fail('invalid-response','server response violates the selected generated model',6);}
   }
   async identity():Promise<api.Identity> {const value=await this.raw('/api/v1/whoami',undefined,'GET',true,{});if(!check(identitySchema,value.body))return fail('invalid-response','invalid identity response',6);return decode(api.Identity.jsonCodec(),value.body);}
+  async capabilities():Promise<api.RetrievalCapabilities> {const value=await this.raw('/api/v1/capabilities',undefined,'GET',true,{});if(!check(capabilitiesSchema,value.body))return fail('invalid-response','invalid capabilities response',6);return decode(api.RetrievalCapabilities.jsonCodec(),value.body);}
   async health():Promise<unknown>{const value=await this.raw('/api/v1/health',undefined,'GET',false,{});if(!check(ackSchema,value.body)||!object(value.body)||value.body.ok!==true)return fail('invalid-response','invalid health response',6);return encode(api.Ack.jsonCodec(),decode(api.Ack.jsonCodec(),value.body));}
   async versions():Promise<unknown>{const value=await this.raw('/api/versions',undefined,'GET',false,{});if(!versions(value.body))return fail('version-mismatch','server versions are not the sole current API 1.0.0',6);return encode(api.VersionInfo.jsonCodec(),decode(api.VersionInfo.jsonCodec(),value.body));}
   async account(path:string,body:unknown,method:'GET'|'POST',schema:Schema,actor:string|undefined,authenticated:boolean):Promise<{body:unknown;response:Response}> {

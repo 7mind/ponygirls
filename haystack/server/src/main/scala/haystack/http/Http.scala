@@ -83,8 +83,12 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       case _:haystack.query.InvalidCursor=>("invalid-cursor",List.empty[api.Span],None)
       case _=>("unavailable",List.empty[api.Span],None)
     }
-    // Never send raw exception text (SQL, paths, submitted documents, secrets).
-    json(status(code),Wire.encode(api.Failure.codecJson,api.Failure(code,code.replace('-',' '),spans,current)))
+    // Never send raw exception text (SQL, paths, submitted documents, secrets); a typed retrieval reason has a fixed text.
+    val message=error match {
+      case ponygirls.retrieval.RetrievalError(_,_,Some(reason))=>reason.text
+      case _=>code.replace('-',' ')
+    }
+    json(status(code),Wire.encode(api.Failure.codecJson,api.Failure(code,message,spans,current)))
   }
   private def handled(operation: =>IO[Response[IO]]):IO[Response[IO]]=IO.defer(operation).handleError(e=>failure(e))
   private def accountBoundary(r:Request[IO]):Unit={
@@ -229,22 +233,12 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     }}}
     case r @ POST -> Root / "api" / "v1" / "retrieve" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
       val input=Wire.decode(api.RetrieveRequest.codecJson,raw)
-      val mode=input.mode match {
-        case api.RetrievalMode.Lexical=>ponygirls.retrieval.RetrievalMode.Lexical
-        case api.RetrievalMode.Semantic=>ponygirls.retrieval.RetrievalMode.Semantic
-        case api.RetrievalMode.Hybrid=>ponygirls.retrieval.RetrievalMode.Hybrid
+      val mode=Wire.retrievalMode(input.mode)
+      retrieval.search(input.query,mode,input.project,input.includeArchived,input.offset,input.limit).flatMap { page=>
+        revalidate(r,a).map(_=>ok(api.RetrieveResult.codecJson,Wire.retrieved(retrieval,mode,page)))
       }
-      retrieval.search(input.query,mode,input.project,input.includeArchived,input.offset,input.limit).flatMap { page=>revalidate(r,a).map { _=>
-        val sources=page.hits.map { hit=>
-          val revision=hit.version.takeWhile(_!='/').toInt
-          val publishedPolicy=hit.version.dropWhile(_!='/').drop(1)
-          if(!publishedPolicy.matches("[0-9a-f]{64}")) throw Fault("unavailable","invalid published projection identity")
-          if(mode!=ponygirls.retrieval.RetrievalMode.Lexical && (!hit.profile.contains(retrieval.store.profile.get.id) || !hit.embeddingSpace.contains(retrieval.store.profile.get.space.id) || publishedPolicy!=retrieval.policy.id)) throw Fault("unavailable","incompatible published profile")
-          api.RetrievedSource(hit.id,revision,hit.chunk.provenance.pointer.getOrElse(""),hit.chunk.text,hit.score,hit.generation,hit.profile,hit.embeddingSpace,publishedPolicy,hit.chunk.provenance.field,hit.chunk.provenance.start,hit.chunk.provenance.end)
-        }
-        ok(api.RetrieveResult.codecJson,api.RetrieveResult(sources,input.mode,page.countScope.toString,page.total,page.rankingLimit))
-      }}
     }}}
+    case r @ GET -> Root / "api" / "v1" / "capabilities" =>handled {authed(r) { _=>IO.pure(ok(api.RetrievalCapabilities.codecJson,Wire.capabilities(retrieval))) }}
     case r @ POST -> Root / "api" / "v1" / "history" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
       val input=Wire.decode(api.HistoryRequest.codecJson,raw)
       service.history(input.key).map(revisions=>ok(api.HistoryResult.codecJson,api.HistoryResult(revisions.map(v=>api.RevisionInfo(v.revision.toInt,v.modifiedAt.toString,v.modifiedBy,v.tokenId)).toList)))
@@ -269,7 +263,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
         val accept=all(r,"Accept").mkString(",")
         if(!accept.contains("application/json") || !accept.contains("text/event-stream")) throw Fault("bad-envelope","unsupported accept")
         if(all(r,"MCP-Protocol-Version").exists(_!="2025-11-25")) throw Fault("bad-envelope","unsupported MCP version")
-        authorizedBody(r,a,mcp=true).flatMap(raw=>new Mcp(service).handle(a.principal,raw)).flatTap(_=>revalidate(r,a,mcp=true)).map(_.fold(json(Status.Accepted,Json.Null))(json(Status.Ok,_)))
+        authorizedBody(r,a,mcp=true).flatMap(raw=>new Mcp(service,retrieval).handle(a.principal,raw)).flatTap(_=>revalidate(r,a,mcp=true)).map(_.fold(json(Status.Accepted,Json.Null))(json(Status.Ok,_)))
       }
     }.handleError { error=>
       val code=error match{case f:AccountFailure=>f.code;case f:Fault if f.code=="config"=>"unavailable";case f:Fault=>f.code;case _=>"unavailable"}
@@ -283,7 +277,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       val start=System.nanoTime()
       core(request).semiflatMap { response=>
         val path=request.uri.path.renderString
-        val label=if(path=="/mcp") "mcp" else if(path.startsWith("/api/")) accountLabel(request.method,path).orElse(path.split("/").lastOption.filter(Set("login","logout","whoami","get","put","search","history","analyze","complete","values","live","retrieve","health","versions"))).getOrElse("unknown") else "static"
+        val label=if(path=="/mcp") "mcp" else if(path.startsWith("/api/")) accountLabel(request.method,path).orElse(path.split("/").lastOption.filter(Set("login","logout","whoami","get","put","search","history","analyze","complete","values","live","retrieve","capabilities","health","versions"))).getOrElse("unknown") else "static"
         accounts.resolve(headers(request),mcp=label=="mcp").attempt.flatMap { resolved=>
           val principal=resolved.toOption.map(_.principal)
           val event=Json.obj("requestId"->Json.fromString(java.util.UUID.randomUUID().toString),"route"->Json.fromString(label),"status"->Json.fromInt(response.status.code),"result"->Json.fromString(if(response.status.isSuccess) "ok" else "fault"),"durationMs"->Json.fromLong((System.nanoTime()-start)/1000000)).deepMerge(principal.fold(Json.obj())(p=>Json.obj("userId"->Json.fromString(p.userId),"tokenId"->Json.fromString(p.tokenId))))

@@ -47,6 +47,11 @@ This file records user-approved implementation decisions and deviations.
    explicit new replay digest; retain old rows and refuse cross-format identity.
    See [API](api.md), [config](../server/README.md), [assertion register](port-contract-inventory.md).
 10. **Retrieval approval.** Exact Boolean metadata browsing remains provider-free.
-    Content retrieval explicitly selects lexical/semantic/hybrid; operator-approved
+    Content retrieval defaults to hybrid when the server offers it (capability
+    read); otherwise, or when a defaulted hybrid's query embedding is unavailable,
+    clients fall back to lexical with a visible notice naming the reason. An
+    explicit lexical/semantic/hybrid mode is never substituted. Operator-approved
     metadata/string pointers only. Shared transactional projection/outbox and lease
-    worker, strict published profile/policy/space; no hidden model fallback.
+    worker, strict published profile/policy/space; partial readiness is declared as
+    `pending`, never hidden. (2026-11-19, search parity: was "explicitly selects
+    lexical/semantic/hybrid; no hidden model fallback".)

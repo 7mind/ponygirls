@@ -18,12 +18,13 @@ const id='0193e8d5-6f5c-7a1b-8c2d-000000000001';
 const doc='{"title":"horse\\u001b[31m","description":"d","fields":{"n":9007199254740993,"d":0.10,"e":1e2,"z":-0,"__proto__":true},"type":"fact","status":"actual","importance":"low","human-attention":"cleared","links":[]}';
 const metadata={createdAt:'2026-11-16T00:00:00Z',createdBy:'bot',modifiedAt:'2026-11-16T00:00:00Z',modifiedBy:'bot'};
 let home,base,server,wss,hits=[],items=new Map(),replays=new Map(),lose=false,badResponse=false,mode='normal',slowPages=[],liveKey='p:i',swapTokenFile,putEffects=[];
+const allModes=['Lexical','Semantic','Hybrid'];let retrievalModes=allModes,retrievalPending='0';const refusedModes=new Map();
 function run(args,env={},input='') {return new Promise((resolve,reject)=>{const child=spawn(process.env.HAYSTACK_CLI_EXECUTABLE||process.execPath,[...(process.env.HAYSTACK_CLI_EXECUTABLE?[]:[cli]),...args],{env:{PATH:process.env.PATH,HOME:home,HAYSTACK_STATE_DIR:path.join(home,'state'),HAYSTACK_URL:base,HAYSTACK_TOKEN:token,...env},stdio:['pipe','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',b=>stdout+=b);child.stderr.on('data',b=>stderr+=b);child.on('error',reject);child.on('close',(code,signal)=>resolve({code,signal,stdout,stderr}));child.stdin.end(input);});}
 function ok(result){assert.equal(result.code,0,result.stderr);return JSON.parse(result.stdout);}
 function fault(result,exit,code){assert.equal(result.code,exit,result.stderr);assert.equal(result.stdout,'');assert.equal(JSON.parse(result.stderr).error.code,code);}
 before(async()=>{
  home=await mkdtemp(path.join(os.tmpdir(),'haystack-cli-'));
- server=http.createServer(async(req,res)=>{const chunks=[];for await(const c of req)chunks.push(c);const raw=Buffer.concat(chunks).toString();const body=raw?JSON.parse(raw):undefined;hits.push({url:req.url,headers:req.headers,body});
+ server=http.createServer(async(req,res)=>{const chunks=[];for await(const c of req)chunks.push(c);const raw=Buffer.concat(chunks).toString();const body=raw?JSON.parse(raw):undefined;hits.push({method:req.method,url:req.url,headers:req.headers,body});
  const send=(value,status=200)=>{res.writeHead(status,{'content-type':'application/json'});res.end(typeof value==='string'?value:JSON.stringify(value));};
  const fail=(code,status=400)=>send({code,message:'CANARY-SECRET-PASSWORD',spans:[],currentRevision:null},status);
  if(mode==='redirect'){res.writeHead(307,{location:base+'/api/v1/health'});res.end();return;}
@@ -51,7 +52,8 @@ before(async()=>{
  if(req.url==='/api/v1/history')return send({revisions:mode==='empty-history'?[]:[{revision:1,modifiedAt:metadata.modifiedAt,modifiedBy:'bot',tokenId:'worker'}]});
  if(mode==='slow-pages'&&req.url==='/api/v1/search'){if(!body.cursor&&swapTokenFile!==undefined)await writeFile(swapTokenFile,secret+'\n',{mode:0o600});res.on('close',()=>slowPages.push({cursor:body.cursor,finished:res.writableEnded}));setTimeout(()=>send({items:[],cursor:body.cursor?null:'slow-cursor'}),400);return;}
  if(req.url==='/api/v1/search')return send({items:[...items.values()].map(v=>({key:v.key,project:'p',item:'i',revision:v.revision,title:'horse\u001b[31m',docType:'fact',status:'actual',importance:'low',humanAttention:'cleared',tags:[],modifiedAt:metadata.modifiedAt,modifiedBy:'bot'})),cursor:body.cursor?null:'opaque-cursor'});
- if(req.url==='/api/v1/retrieve')return send('{"sources":[],"mode":"Lexical","countScope":"ExactMatches","total":9223372036854775807,"rankingLimit":null}');
+ if(req.url==='/api/v1/capabilities'&&req.method==='GET')return send({modes:retrievalModes});
+ if(req.url==='/api/v1/retrieve'){if(refusedModes.has(body.mode))return send({code:'unavailable',message:refusedModes.get(body.mode),spans:[],currentRevision:null},503);return send(`{"sources":[],"mode":"${body.mode}","countScope":"ExactMatches","total":9223372036854775807,"rankingLimit":null,"pending":"${retrievalPending}"}`);}
  if(req.url==='/api/v1/query/analyze'){if(mode==='error-spans')return send({code:'invalid-query',message:'CANARY-UNTRUSTED',currentRevision:null,spans:[{start:2,end:5,message:'CANARY-UNTRUSTED'}]},400);return send({valid:true,spans:[]});}
  if(req.url==='/api/v1/complete')return send({suggestions:mode==='empty-completions'?[]:['type:fact']});
  if(req.url==='/api/v1/values')return send({values:mode==='empty-values'?[]:['fact']});
@@ -105,6 +107,22 @@ test('search paging/sort/query, count scope and i64 decoding remain explicit',as
  const retrieved=ok(await run(['retrieve','horse','--json','--allow-http']));assert.equal(retrieved.result.total,'9223372036854775807');
  assert.match((await run(['retrieve','horse','--allow-http'])).stdout,/ExactMatches.*9223372036854775807/);
  for(const args of [['analyze','type:fact'],['complete','type:'],['values','type'],['history','p:i']])assert.equal((await run([...args,'--json','--allow-http'])).code,0);
+});
+test('retrieve without --mode is hybrid when offered, otherwise lexical with a notice; an explicit mode is never substituted',async()=>{
+ const notConfigured='semantic retrieval is not configured; lexical-only capability';const embeddingFailed='query embedding failed';
+ const lexicalNotice=reason=>`Notice: Hybrid search is not available on this server: ${reason}; showing lexical results\n`;
+ const calls=async args=>{const n=hits.length;const result=await run(['retrieve','horse',...args,'--json','--allow-http']);return {result,requests:hits.slice(n).map(h=>h.url==='/api/v1/retrieve'?h.body.mode:h.method+' '+h.url)};};
+ try{
+  retrievalPending='3';const hybrid=await calls([]);
+  assert.deepEqual(hybrid.requests,['GET /api/v1/capabilities','Hybrid']);assert.deepEqual([ok(hybrid.result).result.mode,ok(hybrid.result).result.pending],['Hybrid','3']);
+  assert.equal(hybrid.result.stderr,'Notice: 3 items are not yet indexed for semantic search; results may be incomplete\n');
+  retrievalPending='0';retrievalModes=['Lexical'];const lexical=await calls([]);
+  assert.deepEqual(lexical.requests,['GET /api/v1/capabilities','Lexical']);assert.equal(ok(lexical.result).result.mode,'Lexical');assert.equal(lexical.result.stderr,lexicalNotice(notConfigured));
+  retrievalModes=allModes;refusedModes.set('Hybrid',embeddingFailed);const retried=await calls([]);
+  assert.deepEqual(retried.requests,['GET /api/v1/capabilities','Hybrid','Lexical']);assert.equal(ok(retried.result).result.mode,'Lexical');assert.equal(retried.result.stderr,lexicalNotice(embeddingFailed));
+  refusedModes.set('Semantic',notConfigured);const explicit=await calls(['--mode','semantic']);
+  assert.deepEqual(explicit.requests,['Semantic']);fault(explicit.result,6,'unavailable');const error=JSON.parse(explicit.result.stderr).error;assert.deepEqual([error.message,error.reason,error.status],[notConfigured,'not-configured',503]);
+ }finally{retrievalModes=allModes;retrievalPending='0';refusedModes.clear();}
 });
 test('lost ACK retains immutable private operation and blocks fresh writes until exact replay',async()=>{
  lose=true;const failed=await run(['put','p:lost','--file','-','--expected-revision','0','--request-id','0193e8d5-6f5c-7a1b-8c2d-000000000002','--json','--allow-http'],{},doc);fault(failed,7,'uncertain-write');assert.ok(!failed.stderr.includes('horse'));

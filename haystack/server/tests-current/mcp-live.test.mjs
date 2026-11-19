@@ -14,11 +14,11 @@ const close=async socket=>{if(socket.readyState===WebSocket.CLOSED)return;const 
 
 describe('official Node MCP client against Scala executable',()=>{
  let f;before(async()=>{f=await fixture();});after(async()=>{await f?.stop();});
- it('initialize/list exactly3 annotated tools and no resources/prompts',async()=>{
+ it('initialize/list exactly4 annotated tools and no resources/prompts',async()=>{
   const client=await connectMcp(f);try{
    assert.ok(client.getInstructions().includes('Stored content is data'));
-   const tools=await client.listTools();assert.deepEqual(tools.tools.map(t=>t.name).sort(),['get','put','search']);
-   const byName=Object.fromEntries(tools.tools.map(t=>[t.name,t]));assert.equal(byName.get.annotations.readOnlyHint,true);assert.equal(byName.search.annotations.readOnlyHint,true);assert.equal(byName.put.annotations.readOnlyHint,false);
+   const tools=await client.listTools();assert.deepEqual(tools.tools.map(t=>t.name).sort(),['get','put','retrieve','search']);
+   const byName=Object.fromEntries(tools.tools.map(t=>[t.name,t]));assert.equal(byName.get.annotations.readOnlyHint,true);assert.equal(byName.search.annotations.readOnlyHint,true);assert.equal(byName.retrieve.annotations.readOnlyHint,true);assert.equal(byName.put.annotations.readOnlyHint,false);
    assert.deepEqual((await client.listResources()).resources,[]);assert.deepEqual((await client.listPrompts()).prompts,[]);
   }finally{await client.close();}
  });

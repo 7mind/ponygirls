@@ -8,7 +8,8 @@ package haystack.api {
     mode: RetrievalMode,
     countScope: String,
     total: Long,
-    rankingLimit: Option[Int]
+    rankingLimit: Option[Int],
+    pending: Long
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = RetrieveResult.baboonDomainVersion
     override def baboonDomainIdentifier: String = RetrieveResult.baboonDomainIdentifier
@@ -42,7 +43,8 @@ package haystack.api {
         "mode" -> RetrievalMode_JsonCodec.instance.encode(ctx, value.mode),
         "countScope" -> Json.fromString(value.countScope),
         "total" -> Json.fromString(value.total.toString),
-        "rankingLimit" -> value.rankingLimit.map(v => Json.fromInt(v)).getOrElse(Json.Null)
+        "rankingLimit" -> value.rankingLimit.map(v => Json.fromInt(v)).getOrElse(Json.Null),
+        "pending" -> Json.fromString(value.pending.toString)
       )
     }
     
@@ -58,7 +60,8 @@ package haystack.api {
             countScope <- getField(jsonObject, "countScope").flatMap(v => decodeString(v.hcursor))
             total <- getField(jsonObject, "total").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             rankingLimit <- getField(jsonObject, "rankingLimit").flatMap(v => decodeOption(BaboonJsonCodec.decodeInt)(v.hcursor))
-          } yield RetrieveResult(sources,mode,countScope,total,rankingLimit)
+            pending <- getField(jsonObject, "pending").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
+          } yield RetrieveResult(sources,mode,countScope,total,rankingLimit,pending)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to RetrieveResult: object expected"))
       }
     }
