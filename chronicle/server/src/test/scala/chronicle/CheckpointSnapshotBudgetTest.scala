@@ -90,7 +90,7 @@ class CheckpointSnapshotBudgetTest extends munit.FunSuite {
         (Wire.decode(chronicle.api.IngestRequest.codecJson,Sql.json(row,"snapshot")),row.getObject("binding_id",classOf[java.util.UUID]))
       }.get
     }
-    assertEquals(snapshot,claim.snapshot); assertEquals(id,claim.revisionBinding.id)
+    assertEquals(snapshot.copy(files=Nil),claim.snapshot); assertEquals(id,claim.revisionBinding.id)
     val restored=claim.copy(snapshot=snapshot,revisionBinding=RevisionBinding.captured(id,claim.sessionId,claim.revision,snapshot))
     val restoredKey=IndexCheckpoints.key(restored,IndexingStage.Annotation,0,0,"synthetic-policy",Json.fromInt(0))
     assertEquals(restoredKey,key); assertEquals(archive.checkpoint(restored,restoredKey),Some(value))

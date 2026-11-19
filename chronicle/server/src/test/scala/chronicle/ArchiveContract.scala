@@ -157,7 +157,9 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
         h.request=SnapshotProjection(r); h.revision+=1
         revisions((h.id,h.revision))=h.request; revisionIdentities((h.id,h.revision))=UUID.randomUUID()
         jobs.values.filter(j => j.claim.sessionId==h.id && j.claim.revision<h.revision && j.state!=JobState.Complete).foreach { j => j.state=JobState.Failed; j.claim=j.claim.copy(fence=j.claim.fence+1); failedStages.remove(j.claim.jobId) }
-        val claim=Claim(UUID.randomUUID(),h.id,h.revision,0L,selected.profile,h.request,owner,selected.epoch,UUID.randomUUID(),RevisionBinding.captured(revisionIdentities((h.id,h.revision)),h.id,h.revision,h.request))
+        // Like PostgresArchive.claim: indexing carries the revision without its raw files.
+        val indexed=h.request.copy(files=Nil)
+        val claim=Claim(UUID.randomUUID(),h.id,h.revision,0L,selected.profile,indexed,owner,selected.epoch,UUID.randomUUID(),RevisionBinding.captured(revisionIdentities((h.id,h.revision)),h.id,h.revision,indexed))
         jobs(claim.jobId)=Job(claim,JobState.Queued,0,Instant.EPOCH,0,None)
         val out=IngestReceipt(r.requestId,h.id,h.revision,claim.jobId); receipts((owner,k,r.requestId))=(digest,out); out
     }
@@ -297,7 +299,8 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
             case Some(j) =>
               j.state=JobState.Queued; j.attempts=0; j.claim=j.claim.copy(fence=j.claim.fence+1,targetEpoch=epoch,runId=UUID.randomUUID()); j.lease=Instant.EPOCH; j.completed=0; j.total=None; failedStages.remove(j.claim.jobId); j.claim
             case None =>
-              val claim=Claim(UUID.randomUUID(),h.id,h.revision,0,targetProfile,h.request,owner,epoch,UUID.randomUUID(),RevisionBinding.captured(revisionIdentities((h.id,h.revision)),h.id,h.revision,h.request))
+              val indexed=h.request.copy(files=Nil)
+              val claim=Claim(UUID.randomUUID(),h.id,h.revision,0,targetProfile,indexed,owner,epoch,UUID.randomUUID(),RevisionBinding.captured(revisionIdentities((h.id,h.revision)),h.id,h.revision,indexed))
               jobs(claim.jobId)=Job(claim,JobState.Queued,0,Instant.EPOCH,0,None); claim
           }
           Member(h.id,h.revision,current.jobId,current.runId)
@@ -336,7 +339,7 @@ abstract class ArchiveContract extends munit.FunSuite {
     assertEquals(a.ingest("a",request),receipt)
     assertEquals(intercept[DomainError](a.ingest("a",request.copy(messages=stored.messages,metadata=stored.metadata))).code,"conflict")
     val claim=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
-    assertEquals(claim.snapshot,stored); assert(a.publish(claim,Nil))
+    assertEquals(claim.snapshot,stored.copy(files=Nil)); assert(a.publish(claim,Nil))
     assertEquals(a.session("a",receipt.sessionId).metadata,stored.metadata)
   }}
   test("B-Atomic/GoodCommunication regression: scalar and repeated display NULs terminate fragment derivation") { withArchive { (a,c) =>
@@ -409,7 +412,7 @@ abstract class ArchiveContract extends munit.FunSuite {
     assertEquals(a.headSnapshot("a",first.sessionId),revised)
     assert(!a.publishProblems(stale,ProblemPublicationFixtures.oneProblem(stale)))
     val current=a.claim(Set(c.profile),ClaimScope.Owner("a"),300).get
-    assertEquals(current.jobId,second.jobId); assertEquals(current.snapshot,revised)
+    assertEquals(current.jobId,second.jobId); assertEquals(current.snapshot,revised.copy(files=Nil))
     assertEquals(current.snapshot.messages.head.role,"historian")
     val publication=ProblemPublicationFixtures.oneProblem(current)
     assertEquals(publication.chunks.map(_.chunk.text).mkString,revised.messages.head.text)
