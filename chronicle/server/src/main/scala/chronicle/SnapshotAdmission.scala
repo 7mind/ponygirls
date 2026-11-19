@@ -5,15 +5,16 @@ import cats.effect.std.Semaphore
 import izumi.distage.model.definition.Lifecycle
 import scala.concurrent.duration.*
 
-/** Large snapshots are decoded one at a time: an ingest of a body over largeBodyBytes, and every indexing claim (it
-  * decodes the claimed revision's whole snapshot; a small one takes milliseconds; waiting claims are not logged: idle
-  * lanes claim every second). Each costs seconds of CPU and a heap several times the snapshot; two at once doubled the
-  * collector's stop-the-world pauses, which stop every request, /api/versions included. Smaller ingests pass. */
+/** Large snapshots are processed one at a time: an ingest whose body is over largeBodyBytes or of unannounced size, and
+  * every indexing claim (it decodes the claimed revision's messages; a small one takes milliseconds; waiting claims are
+  * not logged: idle lanes claim every second). Each costs seconds of CPU and a heap several times the snapshot; two at
+  * once doubled the collector's stop-the-world pauses, which stop every request, /api/versions included. */
 final class SnapshotAdmission private (large: Semaphore[IO],logger: logstage.IzLogger,ingestWait: FiniteDuration) {
-  def ingest[A](bodyBytes: Int)(ingest: IO[A]): IO[A] =
-    if(bodyBytes<=SnapshotAdmission.largeBodyBytes) ingest
-    // Bounded below the gateway's response deadline: an abandoned request would otherwise keep its body queued.
-    else admitted(IO(logger.info(s"large ingest waits for admission bodyBytes=$bodyBytes")),
+  /** `ingest` reads the body: a large or unannounced one is admitted before it is read, so a waiting ingest holds none. */
+  def ingest[A](announcedBytes: Option[Long])(ingest: IO[A]): IO[A] =
+    if(announcedBytes.exists(_<=SnapshotAdmission.largeBodyBytes)) ingest
+    // Bounded below the gateway's response deadline: an abandoned request would otherwise keep waiting.
+    else admitted(IO(logger.info(s"large ingest waits for admission announcedBytes=${announcedBytes.fold("unknown")(_.toString)}")),
       _.timeoutTo(ingestWait,IO.raiseError(DomainError("unavailable","large ingest admission busy; retry later"))))(ingest)
   def claim[A](claim: IO[A]): IO[A] = admitted(IO.unit,identity)(claim)
   /** Ingests and claims waiting for the permit. */

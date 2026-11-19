@@ -97,6 +97,8 @@ object Sql {
 object PostgresArchive {
   /** Search rows per insertion statement. A row's vector-index insertion measured 1.5-3.1 ms on the full-size archive copy. */
   val searchRowsPerStatement = 500
+  /** Messages fetched per round trip while a claimed revision's messages are decoded one at a time. */
+  val claimedMessagesPerFetch = 64
 }
 object Jobs {
   val attemptLimit=5
@@ -256,15 +258,27 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
         source.flatMap { case (id,revision) =>
           Sql.one(c,s"""UPDATE ch_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
             WHERE id=(SELECT id FROM ch_jobs WHERE session_id=? AND revision=? AND profile=? AND attempts<${Jobs.attemptLimit} AND (state='Queued' OR (state='Running' AND lease_until<clock_timestamp())) FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,fence,run_id""",leaseSeconds,id,revision,target.profile) { row =>
-            val (snap,binding)=Sql.one(c,"SELECT snapshot,binding_id FROM ch_revisions WHERE session_id=? AND revision=?",id,revision) { r =>
-              val snapshot=Wire.decode(IngestRequest.codecJson,Sql.json(r,"snapshot"))
-              (snapshot,RevisionBinding.captured(r.getObject("binding_id",classOf[UUID]),id,revision,snapshot))
-            }.getOrElse(throw DomainError("stale-claim","archive revision no longer exists"))
+            val (snap,binding)=claimedSnapshot(c,id,revision)
             Claim(row.getObject("id",classOf[UUID]),id,revision,row.getLong("fence"),target.profile,snap,owner,target.epoch,row.getObject("run_id",classOf[UUID]),binding)
           }
         }
       }
     }.collectFirst { case Some(claim) => claim }
+  }
+  /** The claimed revision for indexing: its messages are decoded one at a time and its raw files are left out (indexing
+    * reads only messages and digest). Decoding a large snapshot as one syntax tree held gigabytes for seconds, long
+    * enough to be promoted, and drove the collector's longest pauses. */
+  private def claimedSnapshot(c: Connection,id: UUID,revision: Int): (IngestRequest,RevisionBinding) = {
+    val (envelope,bindingId)=Sql.one(c,"""SELECT snapshot-'messages'-'files'||'{"messages":[],"files":[]}'::jsonb,binding_id FROM ch_revisions WHERE session_id=? AND revision=?""",id,revision) { r =>
+      (Wire.decode(IngestRequest.codecJson,Wire.parse(r.getString(1))),r.getObject(2,classOf[UUID]))
+    }.getOrElse(throw DomainError("stale-claim","archive revision no longer exists"))
+    val messages=List.newBuilder[Message]
+    Using.resource(c.prepareStatement("SELECT item.value FROM ch_revisions r CROSS JOIN LATERAL jsonb_array_elements(r.snapshot->'messages') WITH ORDINALITY item(value,position) WHERE r.session_id=? AND r.revision=? ORDER BY item.position")) { statement =>
+      Sql.bind(statement,List(id,revision)); statement.setFetchSize(PostgresArchive.claimedMessagesPerFetch)
+      Using.resource(statement.executeQuery()) { rows => while(rows.next()) messages += Wire.decode(Message.codecJson,Wire.parse(rows.getString(1))) }
+    }
+    val snapshot=envelope.copy(messages=messages.result())
+    (snapshot,RevisionBinding.captured(bindingId,id,revision,snapshot))
   }
   private def current(c: Connection,claim: Claim): Boolean = {
     OwnerTargets.eligible(c,claim.owner).exists { target =>

@@ -192,7 +192,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     case r @ POST -> Root / "api" / "logout" => handle { IO.blocking { noUrlSecrets(r); origin(r,true); Check(header(r,"Authorization").isEmpty,"forbidden","browser cookie transport only"); val i = auth.browser(cookie(r)); auth.logout(i); json(Status.Ok,io.circe.Json.obj()).addCookie(sessionCookie("",0)) } }
     case r @ POST -> Root / "api" / "ingest" => handle {
       // A snapshot can be hundreds of megabytes: even its text decoding stays off the compute pool.
-      IO.blocking { noUrlSecrets(r); origin(r,false); val i = bearer(r); i.requireScope(Scope.Ingest); i }.flatMap(i => boundedBytes(r,config.maxBodyBytes).flatMap(bytes => snapshots.ingest(bytes.length)(IO.blocking(archive.ingest(i.user.id,Wire.decode(IngestRequest.codecJson,Wire.parse(new String(bytes,java.nio.charset.StandardCharsets.UTF_8)))))))).map(receipt => json(Status.Ok,Wire.encode(IngestReceipt.codecJson,receipt)))
+      IO.blocking { noUrlSecrets(r); origin(r,false); val i = bearer(r); i.requireScope(Scope.Ingest); i }.flatMap(i => snapshots.ingest(r.contentLength)(boundedBytes(r,config.maxBodyBytes).flatMap(bytes => IO.blocking(archive.ingest(i.user.id,Wire.decode(IngestRequest.codecJson,Wire.parse(new String(bytes,java.nio.charset.StandardCharsets.UTF_8)))))))).map(receipt => json(Status.Ok,Wire.encode(IngestReceipt.codecJson,receipt)))
     }
     case r @ POST -> Root / "api" / "collector" / "progress" => handle {
       IO.blocking { noUrlSecrets(r); origin(r,false); val i=bearer(r); i.requireScope(Scope.Ingest); i }.flatMap { i =>

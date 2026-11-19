@@ -120,4 +120,11 @@ final class OwnerLeaseBoundaryTest extends munit.FunSuite {
       assertEquals(db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_search_chunks WHERE session_id=?",claim.sessionId)(_.getInt(1))),Some(rows))
     }
   }
+  test("Effectual GoodCommunication: a claim carries the stored revision's messages, in order, and its digest, but not its raw files") {
+    OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
+      val receipt=a.ingest("a",messages(Fixtures.snapshot(),3*PostgresArchive.claimedMessagesPerFetch+1))
+      val claim=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
+      assertEquals(claim.snapshot,a.headSnapshot("a",receipt.sessionId).copy(files=Nil))
+    }
+  }
 }

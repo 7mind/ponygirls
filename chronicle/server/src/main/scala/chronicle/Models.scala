@@ -119,6 +119,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   private final case class StagedFailure(stage: IndexingStage,error: Throwable) extends RuntimeException
   private def publishStage(run: => IO[Unit]): IO[Unit] = IO.defer(run).handleErrorWith(error => IO.raiseError(StagedFailure(IndexingStage.Publication,error)))
   private final class Windows(claim: Claim,total: Int) {
+    private val vectors=new VectorArena(config.embedding.dimensions)
     def accepted[A](key: CheckpointKey)(decode: Json => A,encode: A => Json)(run: => IO[A]): IO[A] = IO.blocking(archive.checkpoint(claim,key)).flatMap {
       case Some(value) => IO(decode(value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted checkpoint payload")))
       case None => IO.defer(run).flatTap(value => IO.blocking(archive.checkpoint(claim,key,encode(value))))
@@ -161,7 +162,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
         val key=IndexCheckpoints.key(claim,IndexingStage.Embedding,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,CheckpointJson.chunks(batch))
         def validated(vectors: List[List[Double]]): List[List[Double]] = { CheckpointJson.validateVectors(vectors,batch.size,config.embedding.dimensions); vectors }
         accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(IO.defer(embedder.documents(claim.owner,batch.map(_.text))).map(validated))
-          .map(vectors => batch.zip(vectors).map((chunk,vector) => IndexedChunk(chunk,scala.collection.immutable.ArraySeq.from(vector))))
+          .map(batchVectors => batch.zip(batchVectors).map((chunk,vector) => IndexedChunk(chunk,vectors.add(vector))))
       }.map(_.flatten)
       // A part accepted under another batch size addresses other pieces: none of the window's parts is reused.
       parts.recoverWith { case _: CheckpointInputMismatch =>
