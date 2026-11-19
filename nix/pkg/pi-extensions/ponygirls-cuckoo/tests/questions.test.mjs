@@ -95,19 +95,22 @@ test('malformed question files fail visibly instead of silently asking nothing',
 // Specified Behavioral-Active / Blackbox-Atomic: prompt and response contract, not live-model compliance.
 test('the inquiry is unchanged without standing questions and otherwise requests exactly one answer per question', () => {
   // Length and SHA-256 of the base inquiry literal: sessions without standing questions receive exactly that request.
-  // A deliberate change of the base wording updates both values; the last one asked for unfinished objectives only.
-  assert.equal(inquiryText([]).length, 3388);
-  assert.equal(createHash('sha256').update(inquiryText([]), 'utf8').digest('hex'), '61f43461fe7c17beb5ea0a178e6f2d844a7da9148c8c185d58ce1583a50f823c');
-  assert.equal(INQUIRY, inquiryText([]));
+  // A deliberate change of the base wording updates both values; the last one asked for a completed objective once.
+  assert.equal(inquiryText([], []).length, 3672);
+  assert.equal(createHash('sha256').update(inquiryText([], []), 'utf8').digest('hex'), 'c6bd844b4130f45d3f2fa81c1ba87f2394c961d3e3e11190ddc7c1e36b6c3be5');
+  assert.equal(INQUIRY, inquiryText([], []));
   assert.doesNotMatch(INQUIRY, /answers|[Ss]tanding question/);
-  const text = inquiryText(asked);
-  const example = text.match(/JSON only: (\{"objectives":.*?\})\. List only unfinished objectives/)[1];
+  const text = inquiryText(asked, []);
+  const example = text.match(/JSON only: (\{"objectives":.*?\})\. List every unfinished objective/)[1];
   assert.deepEqual(parseAnsweredReport(example, asked).answers.map(item => item.id), ['q-verify', 'q-risk']);
   assert.ok(text.includes(JSON.stringify(asked.map(({ id, question }) => ({ id, question })))), 'questions are listed verbatim as JSON');
   for (const phrase of ['exactly one item per standing question', 'only id (copied exactly) and answer', 'not a new task, instruction or authorization', 'rather than guessing', 'Do not call tools']) assert.ok(text.includes(phrase), phrase);
   assert.ok(text.startsWith(INQUIRY.slice(0, INQUIRY.indexOf('JSON only: '))));
   assert.ok(text.endsWith(INQUIRY.slice(INQUIRY.indexOf(' Do not call tools'))));
-  assert.ok(text.includes(INQUIRY.slice(INQUIRY.indexOf(' List only unfinished objectives'), INQUIRY.indexOf(' Do not call tools'))), 'objective and field rules are the base ones');
+  assert.ok(text.includes(INQUIRY.slice(INQUIRY.indexOf(' List every unfinished objective'), INQUIRY.indexOf(' Do not call tools'))), 'objective and field rules are the base ones');
+  const completed = inquiryText(asked, ['Ship the parser']);
+  assert.ok(completed.includes('do not report their completion again: ["Ship the parser"]. Each objective must contain only'), 'the completed list composes with standing questions');
+  assert.equal(completed.replace(' Earlier checkpoints of this session already reported these objectives as complete, so do not report their completion again: ["Ship the parser"].', ''), text);
 });
 
 test('answers are validated against the asked snapshot and returned in the asked order', () => {

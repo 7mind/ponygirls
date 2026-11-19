@@ -114,6 +114,26 @@ export function checkpointRequestIds(entries: readonly SessionEntry[]): Set<stri
   }
   return ids;
 }
+/** The eta the inquiry prescribes for an objective reported as completed; older reports wrote longer variants. */
+const COMPLETE_ETA = /^\s*complete\b/i;
+export const MAX_COMPLETED_TITLES = 50;
+export const MAX_COMPLETED_TITLE_CHARS = 300;
+/**
+ * Objectives these reports already reported as complete, oldest first: the latest listing of a title decides, so one
+ * that was reopened since is not included. Saved reports outlive compaction, which the model's own earlier answers do not.
+ */
+export function completedObjectives(reports: readonly Checkpoint[]): string[] {
+  const complete = new Map<string, boolean>();
+  for (const value of reports) {
+    if (value.report === null) continue;
+    for (const item of value.report.objectives) {
+      // Re-inserting moves the title to the end, so the bound keeps the most recently reported ones.
+      complete.delete(item.objective);
+      complete.set(item.objective, item.eta !== null && COMPLETE_ETA.test(item.eta));
+    }
+  }
+  return [...complete].filter(([, done]) => done).map(([title]) => title.slice(0, MAX_COMPLETED_TITLE_CHARS)).slice(-MAX_COMPLETED_TITLES);
+}
 export function issuesText(issues: readonly string[] | null): string | null {
   return issues === null ? null : issues.length === 0 ? 'None known' : issues.map(issue => `- ${issue}`).join('\n');
 }

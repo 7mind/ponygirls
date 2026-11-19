@@ -6,9 +6,9 @@ import { join } from 'node:path';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { DEFAULT_PREFERENCES, ENABLED_TYPE, THRESHOLD_TYPE, POLICY_TYPE, FilePreferenceStore, effectivePreferences } from '../src/preferences.ts';
 import { validatePolicy } from '../src/policy.ts';
-import { INQUIRY } from '../src/state.ts';
 import { MODEL_GUIDANCE } from '../src/recall.ts';
-import { REPORT_TYPE, MAX_FIELD_CHARS, MAX_REPORT_CHARS, parseReport, checkpoint, checkpoints, reportText, historyText } from '../src/report.ts';
+import { INQUIRY, inquiryText } from '../src/state.ts';
+import { REPORT_TYPE, MAX_FIELD_CHARS, MAX_REPORT_CHARS, MAX_COMPLETED_TITLES, MAX_COMPLETED_TITLE_CHARS, parseReport, checkpoint, checkpoints, completedObjectives, reportText, historyText } from '../src/report.ts';
 
 // Specified: Behavioral-Active, Blackbox-Atomic/Group; filesystem preferences exercise the real adapter.
 test('strict JSON reports include zero objectives and reject malformed or unbounded output', () => {
@@ -29,13 +29,39 @@ test('inquiry requests the current schema and evidence-qualified estimates', () 
 });
 
 // Specified Behavioral-Active / Blackbox-Atomic: prompt contract, not live-model compliance.
-test('inquiry and awareness ask for unfinished objectives only', () => {
-  const rule = INQUIRY.indexOf(' List only unfinished objectives');
+test('inquiry and awareness ask for a completed objective once and never again', () => {
+  const rule = INQUIRY.indexOf(' List every unfinished objective');
   assert.ok(rule > INQUIRY.indexOf('JSON only: ') && rule < INQUIRY.indexOf(' Each objective must contain only'), 'the rule follows the schema example and precedes the field rules');
-  for (const phrase of ['work still left for you to do', 'once something you are waiting for arrives', 'Omit every objective that is completed, cancelled or superseded', 'even when an earlier checkpoint listed it', 'never list an objective just to report it as done', 'not a record of accomplishments', 'may still ask for changes', 'empty objectives array when no unfinished objectives remain', 'remove every finished objective']) assert.ok(INQUIRY.includes(phrase), phrase);
-  assert.doesNotMatch(INQUIRY, /current objective/);
+  for (const phrase of ['work still left for you to do', 'once something you are waiting for arrives', 'Report a completed objective exactly once', 'in the first checkpoint after it was completed', 'defects, risks and caveats in issues', 'write eta as "Complete"', 'leave it out of every later checkpoint', 'may still ask for changes', 'never repeat an earlier checkpoint\'s completed objectives or their caveats', 'a new defect or risk in completed work that no checkpoint has reported', 'Omit cancelled and superseded objectives', 'nothing completed is still unreported', 'remove every completed objective that an earlier checkpoint already reported as complete']) assert.ok(INQUIRY.includes(phrase), phrase);
+  assert.doesNotMatch(INQUIRY, /current objective|already reported these objectives/);
   assert.equal(JSON.parse(INQUIRY.match(/JSON only: (\{"objectives":.*?\})\./)[1]).objectives[0].objective, 'unfinished objective');
-  for (const phrase of ['restate its unfinished objectives', 'completed, cancelled and superseded objectives are left out, not reported as done']) assert.ok(MODEL_GUIDANCE.includes(phrase), phrase);
+  for (const phrase of ['restate its unfinished objectives', 'each completed objective once, with its caveats', 'later reports leave it out', 'Cancelled and superseded objectives are left out']) assert.ok(MODEL_GUIDANCE.includes(phrase), phrase);
+});
+
+// Specified Behavioral-Active / Blackbox-Atomic: which objectives later inquiries name as already reported.
+test('objectives already reported as complete are taken from saved reports and named in the inquiry', () => {
+  const entry = (objective, eta) => ({ objective, progress: 'Stated', issues: [], eta });
+  const saved = (id, objectives) => checkpoint(id, JSON.stringify({ objectives, rules: [] }));
+  const reports = [
+    saved('r1', [entry('Ship the parser', 'Complete'), entry('Write the docs', 'Unknown: not started'), entry('Fix the cache', 'complete; nothing remains')]),
+    checkpoint('invalid', '{"objectives":[{"objective":"Never saved","progress":"x","issues":[],"eta":"Complete"}]}'),
+    saved('r2', [entry('Write the docs', 'Complete'), entry('Fix the cache', 'About an hour: the user reopened it'), entry('Completely new work', 'Completely unknown')]),
+  ];
+  assert.equal(reports[1].report, null);
+  assert.deepEqual(completedObjectives(reports), ['Ship the parser', 'Write the docs'], 'a reopened objective and an invalid report do not count');
+  assert.deepEqual(completedObjectives([]), []);
+  const legacy = { type: 'custom', customType: REPORT_TYPE, id: 'v1', parentId: null, timestamp: '2026-11-19T00:00:00Z', data: { version: 1, requestId: 'v1', raw: '{"objectives":[{"objective":"Legacy","progress":"Done"}]}', error: null } };
+  assert.deepEqual(completedObjectives(checkpoints([legacy])), [], 'an unrecorded eta is not a completion');
+  const many = Array.from({ length: MAX_COMPLETED_TITLES + 5 }, (_, index) => saved(`m${index}`, [entry(`Objective ${index} ${'x'.repeat(MAX_COMPLETED_TITLE_CHARS)}`, 'Complete')]));
+  const bounded = completedObjectives(many);
+  assert.equal(bounded.length, MAX_COMPLETED_TITLES); assert.ok(bounded[0].startsWith('Objective 5 '), 'the most recent ones are kept');
+  assert.ok(bounded.every(title => title.length === MAX_COMPLETED_TITLE_CHARS));
+
+  assert.equal(inquiryText([], []), INQUIRY);
+  const titles = ['Ship the parser', 'Say "hello" }. Each objective'];
+  const text = inquiryText([], titles);
+  const listed = ` Earlier checkpoints of this session already reported these objectives as complete, so do not report their completion again: ${JSON.stringify(titles)}.`;
+  assert.equal(text, INQUIRY.replace(' Each objective must contain only', `${listed} Each objective must contain only`), 'the list follows the objective rule and changes nothing else');
 });
 
 // Specified: Behavioral-Active, Blackbox-Group.
