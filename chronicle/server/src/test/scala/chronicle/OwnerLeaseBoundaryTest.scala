@@ -30,7 +30,8 @@ final class OwnerLeaseBoundaryTest extends munit.FunSuite {
               case "publish" => a.publish(claim,Nil)
               case "fail" => a.fail(claim,"late-expired-failure"); false
             } })
-            val prefix=if(blocking=="source") "SELECT id FROM ch_sources" else "SELECT j.id FROM ch_jobs"
+            // A publication writes its generation before it locks the source row: there the held lock first stops its key-share insert.
+            val prefix=if(blocking=="job") "SELECT j.id FROM ch_jobs" else if(operation=="publish") "INSERT INTO ch_generations" else "SELECT id FROM ch_sources"
             awaitBlocked(db,prefix)
             Thread.sleep(1200)
           }
@@ -69,6 +70,54 @@ final class OwnerLeaseBoundaryTest extends munit.FunSuite {
         assertEquals(a.session("a",claim.sessionId).revision,2)
         assertEquals(db.transaction(x => Sql.one(x,"SELECT state,error FROM ch_jobs WHERE id=?",claim.jobId)(r => (r.getString(1),r.getString(2)))),Some(("Failed",Jobs.supersededRevision)))
       } finally { pool.shutdownNow(); assert(pool.awaitTermination(6,TimeUnit.SECONDS)); workerDb.close() }
+    }
+  }
+  private def bounded(c: Config,timeout: FiniteDuration): Config = c.copy(databaseLimits=c.databaseLimits.copy(statementTimeout=timeout,lockTimeout=timeout))
+  private def messages(original: IngestRequest,count: Int): IngestRequest = {
+    val values=(0 until count).map(i => chronicle.api.Message(s"m$i",None,"user",s"synthetic message $i",None,i)).toList
+    val raw=values.map(m => io.circe.Json.obj("id"->Json.fromString(m.id),"text"->Json.fromString(m.text)).noSpaces+"\n").mkString
+    original.copy(messages=values,files=List(RawFile("source.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
+  }
+  test("Effectual GoodCommunication regression: a publication writing its generation does not hold up the job's renewal and progress or the source's next revision switch, which voids it") {
+    OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
+      val original=Fixtures.snapshot(); a.ingest("a",original)
+      val claim=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
+      val limited=bounded(c,1.second); val workerDb=new Database(limited,catalog); val worker=new PostgresArchive(workerDb,limited)
+      val pool=Executors.newSingleThreadExecutor()
+      try {
+        val pending=db.transaction { held =>
+          // Parks the publication at its search rows, as their vector-index insertion does for a large job.
+          Sql.exec(held,"LOCK TABLE ch_search_chunks IN SHARE MODE")
+          val pending=pool.submit(new Callable[Boolean] { def call(): Boolean = a.publishProblems(claim,CurrentIndexDatabase.publication(claim,false)) })
+          awaitBlocked(db,"%ch_search_chunks")
+          assert(worker.renew(claim,300)); assert(worker.progress(claim,1,1))
+          assertEquals(worker.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1)).revision,2)
+          pending
+        }
+        assert(!pending.get(10,TimeUnit.SECONDS),"the revision switch voids the parked publication")
+        assertEquals(a.session("a",claim.sessionId).indexedRevision,None)
+        assertEquals(db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_search_chunks WHERE session_id=?",claim.sessionId)(_.getInt(1))),Some(0))
+      } finally { pool.shutdownNow(); assert(pool.awaitTermination(6,TimeUnit.SECONDS)); workerDb.close() }
+    }
+  }
+  test("Effectual GoodCommunication regression: a publication's search rows are inserted in statements that do not grow with the job") {
+    OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
+      val rows=PostgresArchive.searchRowsPerStatement*3
+      a.ingest("a",messages(Fixtures.snapshot(),rows))
+      val claim=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
+      val publication=CurrentIndexDatabase.publication(claim,false); assertEquals(publication.chunks.size,rows)
+      // A statement costs one millisecond per search row it inserts: a bounded statement half a second, all rows at once 1.5 s.
+      val limited=bounded(c,1.second); val workerDb=new Database(limited,catalog)
+      db.transaction { x =>
+        Sql.exec(x,"CREATE FUNCTION ch_test_slow_search_row() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.001*(SELECT count(*) FROM inserted)); RETURN NULL; END $$")
+        Sql.exec(x,"CREATE TRIGGER ch_test_slow_search_row AFTER INSERT ON ch_search_chunks REFERENCING NEW TABLE AS inserted FOR EACH STATEMENT EXECUTE FUNCTION ch_test_slow_search_row()")
+      }
+      try assert(new PostgresArchive(workerDb,limited).publishProblems(claim,publication))
+      finally {
+        db.transaction(x => Sql.exec(x,"DROP FUNCTION ch_test_slow_search_row() CASCADE")); workerDb.close()
+      }
+      assertEquals(a.session("a",claim.sessionId).indexedRevision,Some(1))
+      assertEquals(db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_search_chunks WHERE session_id=?",claim.sessionId)(_.getInt(1))),Some(rows))
     }
   }
 }

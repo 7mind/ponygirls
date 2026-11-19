@@ -94,6 +94,10 @@ object Sql {
   def lock(c: Connection, key: String): Unit = exec(c,"SELECT pg_advisory_xact_lock(hashtextextended(?,0))",key)
   def json(r: ResultSet, col: String): Json = Wire.parse(r.getString(col))
 }
+object PostgresArchive {
+  /** Search rows per insertion statement. A row's vector-index insertion measured 1.5-3.1 ms on the full-size archive copy. */
+  val searchRowsPerStatement = 500
+}
 object Jobs {
   val attemptLimit=5
   val supersededRevision = "superseded-revision"
@@ -137,13 +141,14 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
             (x.getObject("id",classOf[UUID]),revision)
           }.get
           // The advisory lock above serializes the ingests of this source; the source row is locked only for the switch
-          // to the new revision, not while a large snapshot is projected (indexing claims lock that row on every write).
+          // to the new revision, not while a large snapshot is projected (indexing claims lock that row on every write),
+          // and NO KEY UPDATE does not wait for a publication that is writing its generation.
           val (id,head) = source("")
           val next = head+1; val job = UUID.randomUUID(); val receipt = IngestReceipt(r.requestId,id,next,job)
           val snapshot=SnapshotProjection(r)
           Sql.exec(c,"INSERT INTO ch_revisions(session_id,revision,snapshot) VALUES(?,?,?::jsonb)",id,next,Wire.encode(IngestRequest.codecJson,snapshot).noSpaces)
           ArchiveProjection.persist(c,id,next,snapshot)
-          source(" FOR UPDATE")
+          source(" FOR NO KEY UPDATE")
           Sql.exec(c,"UPDATE ch_sources SET revision=? WHERE id=?",next,id)
           Sql.exec(c,"UPDATE ch_jobs SET state='Failed',error=?,failure_stage=NULL,fence=fence+1,lease_until=NULL WHERE session_id=? AND revision<? AND state<>'Complete'",Jobs.supersededRevision,id,next)
           Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile) VALUES(?,?,?,?)",job,id,next,target.profile)
@@ -329,9 +334,9 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     publishGeneration(claim,publication.chunks,IndexPolicy.ContextAwareProblemsV1,PassageFormat.ContextAwareProblems,publication.passages.size.toLong,
       _ => { publication.validate(claim,config.embedding.dimensions); true },(c,generation) => PassageStorage.persist(c,generation,publication))
   private def publishGeneration(claim: Claim,chunks: List[IndexedChunk],policy: IndexPolicy,format: PassageFormat,passageCount: Long,validate: Connection => Boolean,persist: (Connection,UUID) => Unit): Boolean = db.transaction { c =>
-    val valid=current(c,claim) && lockJob(c,claim) && Sql.one(c,s"SELECT id FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true) &&
-      revisionMatches(c,claim)
-    if (!valid) false else {
+    // The generation is written before the source and job rows are locked: a large one takes minutes, and those rows are
+    // what the job's lease renewal and the source's next revision switch lock. Readers see none of it before the commit.
+    if (!Sql.one(c,s"SELECT id FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true)) false else {
       PassageStorage.requirePolicy(c,claim.profile,policy)
       if(!validate(c)) false else {
       val publication=c.setSavepoint()
@@ -340,11 +345,16 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
       chunks.zipWithIndex.foreach { case (x,ordinal) => Sql.exec(c,"INSERT INTO ch_chunks(id,generation,value,document,embedding,ordinal) VALUES(?,?,?::jsonb,to_tsvector('english',?),?::vector,?)",x.chunk.id,generation,Wire.encode(Chunk.codecJson,x.chunk).noSpaces,s"${x.chunk.text} ${x.chunk.summary} ${x.chunk.tags.mkString(" ")}",x.vector.mkString("[",",","]"),ordinal) }
       persist(c,generation)
       chunks.flatMap(_.chunk.tags).distinct.foreach(tag => Sql.exec(c,"INSERT INTO ch_generation_tags(generation,tag) VALUES(?,?) ON CONFLICT DO NOTHING",generation,tag))
-      Sql.exec(c,"DELETE FROM ch_search_chunks WHERE session_id=?",claim.sessionId)
-      Sql.exec(c,"INSERT INTO ch_search_chunks(id,generation,session_id,revision,profile,document,embedding) SELECT ch.id,ch.generation,g.session_id,g.revision,g.profile,ch.document,ch.embedding FROM ch_chunks ch JOIN ch_generations g ON g.id=ch.generation WHERE g.id=?",generation)
-      Sql.exec(c,"UPDATE ch_sources SET published=? WHERE id=?",generation,claim.sessionId)
-      ReindexCohort.published(c,claim,generation)
-      val completed=Sql.exec(c,s"UPDATE ch_jobs SET state='Complete',error=NULL,failure_stage=NULL,lease_until=NULL WHERE $validJob",jobArgs(claim)*)==1
+      // Each search row costs its vector-index insertion: bounded statements instead of one that grows with the job.
+      chunks.indices.by(PostgresArchive.searchRowsPerStatement).foreach { from =>
+        Sql.exec(c,"INSERT INTO ch_search_chunks(id,generation,session_id,revision,profile,document,embedding) SELECT ch.id,ch.generation,g.session_id,g.revision,g.profile,ch.document,ch.embedding FROM ch_chunks ch JOIN ch_generations g ON g.id=ch.generation WHERE g.id=? AND ch.ordinal>=? AND ch.ordinal<?",generation,from,from+PostgresArchive.searchRowsPerStatement)
+      }
+      val completed=current(c,claim) && lockJob(c,claim) && Sql.one(c,s"SELECT id FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true) && revisionMatches(c,claim) && {
+        Sql.exec(c,"DELETE FROM ch_search_chunks WHERE session_id=? AND generation<>?",claim.sessionId,generation)
+        Sql.exec(c,"UPDATE ch_sources SET published=? WHERE id=?",generation,claim.sessionId)
+        ReindexCohort.published(c,claim,generation)
+        Sql.exec(c,s"UPDATE ch_jobs SET state='Complete',error=NULL,failure_stage=NULL,lease_until=NULL WHERE $validJob",jobArgs(claim)*)==1
+      }
       if(!completed) c.rollback(publication)
       c.releaseSavepoint(publication)
       completed
