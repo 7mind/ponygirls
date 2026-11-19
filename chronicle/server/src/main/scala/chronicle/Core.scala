@@ -52,7 +52,11 @@ final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int
     Check(embeddingBatchSize>=1 && embeddingBatchSize<=16,"config","embedding batch size must be 1..16")
   }
 }
-object IndexingCapacity { val defaults = IndexingCapacity(4,8,16) }
+object IndexingCapacity {
+  val defaults = IndexingCapacity(4,8,16)
+  /** Large jobs (LargeJobs.windows) running at once; small jobs use every annotation session. */
+  val largeJobs: Int = 1
+}
 final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Int, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits,accounts: Option[AccountsConfig]) {
   def accountsEnabled: Boolean = accounts.exists(_.enabled)
   def jdbcConfig: JdbcConfig = JdbcConfig(jdbcUrl,databaseUser,Path.of(databasePasswordFile),databaseLimits)
@@ -209,12 +213,23 @@ enum ClaimScope {
   case AllOwners
   case Owner(owner: String)
 }
+/** Whether a claim may take a large job (LargeJobs.windows): a skipped one stays queued for a later claim. */
+enum LargeJobs {
+  case Admitted
+  case Skipped
+}
+object LargeJobs {
+  /** A job is large when its revision's messages alone, one fragment each, fill more windows than this. */
+  val windows: Int = 100
+  val messages: Int = windows*ProblemPassages.maximumWindowFragments
+}
 trait SessionArchive extends IndexCheckpoints {
   def knownProfiles: Set[String]
   def ingest(owner: String, request: IngestRequest): IngestReceipt
   def session(reader: String, id: UUID): SessionInfo
   def headSnapshot(reader: String, id: UUID): IngestRequest
-  def claim(profiles: Set[String], scope: ClaimScope, leaseSeconds: Int): Option[Claim]
+  def claim(profiles: Set[String], scope: ClaimScope, leaseSeconds: Int, large: LargeJobs): Option[Claim]
+  final def claim(profiles: Set[String], scope: ClaimScope, leaseSeconds: Int): Option[Claim] = claim(profiles,scope,leaseSeconds,LargeJobs.Admitted)
   def renew(claim: Claim, leaseSeconds: Int): Boolean
   def progress(claim: Claim, completedWindows: Int, totalWindows: Int): Boolean
   def publishProblems(claim: Claim, publication: ProblemsPublication): Boolean

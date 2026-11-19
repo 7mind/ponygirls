@@ -243,10 +243,13 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     IO(logger.warn(s"job claim failed code=$code exceptionClass=$exceptionClass sqlState=$sqlState origin=$origin")).as(Worker.Iteration.ClaimFailed)
   }
   private def iteration: IO[Worker.Iteration] = admission.annotationSession.use { _ =>
-    snapshots.claim(IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds))).redeemWith(claimFailed,{
-      case None => IO.pure(Worker.Iteration.Idle)
-      case Some(claim) => process(claim).as(Worker.Iteration.Processed)
-    })
+    admission.largeJob.use { admitted =>
+      val large=if(admitted) LargeJobs.Admitted else LargeJobs.Skipped
+      snapshots.claim(IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds,large))).redeemWith(claimFailed,{
+        case None => IO.pure(Worker.Iteration.Idle)
+        case Some(claim) => process(claim).as(Worker.Iteration.Processed)
+      })
+    }
   }
   def once: IO[Boolean] = iteration.map(_==Worker.Iteration.Processed)
   def run: IO[Nothing] = {

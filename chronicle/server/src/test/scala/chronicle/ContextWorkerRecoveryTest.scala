@@ -33,7 +33,7 @@ class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
   def ingest(owner: String,r: IngestRequest): IngestReceipt=delegate.ingest(owner,r)
   def session(reader: String,id: UUID): SessionInfo=delegate.session(reader,id)
   def headSnapshot(reader: String,id: UUID): IngestRequest=delegate.headSnapshot(reader,id)
-  def claim(profiles: Set[String],scope: ClaimScope,lease: Int): Option[Claim]=delegate.claim(profiles,scope,lease)
+  def claim(profiles: Set[String],scope: ClaimScope,lease: Int,large: LargeJobs): Option[Claim]=delegate.claim(profiles,scope,lease,large)
   def renew(c: Claim,lease: Int): Boolean=delegate.renew(c,lease)
   def progress(c: Claim,done: Int,total: Int): Boolean=delegate.progress(c,done,total)
   def publishProblems(c: Claim,p: ProblemsPublication): Boolean=delegate.publishProblems(c,p)
@@ -164,10 +164,10 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
       published <- Deferred[IO,Unit]
       terminated <- Deferred[IO,OutcomeIO[Nothing]]
       archive=new ForwardingArchive(f.archive()) {
-        override def claim(profiles: Set[String],scope: ClaimScope,lease: Int): Option[Claim] = {
+        override def claim(profiles: Set[String],scope: ClaimScope,lease: Int,large: LargeJobs): Option[Claim] = {
           claims+=1
           if(claims==1) throw new java.sql.SQLException("canceling statement due to statement timeout","57014")
-          super.claim(profiles,scope,lease)
+          super.claim(profiles,scope,lease,large)
         }
         override def publishProblems(c: Claim,p: ProblemsPublication): Boolean = { val result=super.publishProblems(c,p); published.complete(()).unsafeRunSync(); result }
       }
@@ -433,6 +433,45 @@ final class DummyContextWorkerRecoveryTest extends ContextWorkerRecoveryContract
       def evidence(id: UUID): WorkerEvidence=value.workerEvidence(id)
     })
   }
+  test("BG/GoodCommunication regression: one large job runs at a time; another large job stays queued while lanes take small ones") { withFixture { f =>
+    val config=f.config.copy(indexing=f.config.indexing.copy(annotationSessions=2))
+    def large(owner: String): IngestRequest = request((0 to LargeJobs.messages).map(i => "user"->s"$owner message $i").toList)
+    val first=f.archive().ingest("a",large("a")); val second=f.archive().ingest("b",large("b"))
+    (for {
+      blocked <- Deferred[IO,Unit]
+      release <- Deferred[IO,Unit]
+      skipped <- Deferred[IO,Unit]
+      published <- cats.effect.Ref.of[IO,Int](0)
+      both <- Deferred[IO,Unit]
+      archive=new ForwardingArchive(f.archive()) {
+        override def claim(profiles: Set[String],scope: ClaimScope,lease: Int,large: LargeJobs): Option[Claim] = {
+          if(large==LargeJobs.Skipped && blocked.tryGet.unsafeRunSync().nonEmpty) skipped.complete(()).unsafeRunSync()
+          super.claim(profiles,scope,lease,large)
+        }
+        override def publishProblems(c: Claim,p: ProblemsPublication): Boolean = {
+          val result=super.publishProblems(c,p)
+          if(published.updateAndGet(_+1).unsafeRunSync()==2) both.complete(()).unsafeRunSync()
+          result
+        }
+      }
+      model=new ProblemPassageAnnotator {
+        def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] =
+          (if(previous.isEmpty) blocked.complete(()) *> release.get else IO.unit).as(one(window,previous))
+      }
+      embedding=new Embedder {
+        def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("no query embedding"))
+        def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.pure(text.map(_ => List(1.0,0.0,0.0)))
+      }
+      fiber <- worker(archive,config,model,embedding).run.start
+      _ <- blocked.get.timeout(10.seconds)
+      _ <- skipped.get.timeout(10.seconds)
+      _ <- IO(assertEquals(List(first,second).map(receipt => f.evidence(receipt.jobId).claims).sorted,List(0,1),"the other large job is not claimed"))
+      _ <- release.complete(())
+      _ <- both.get.timeout(30.seconds)
+      _ <- fiber.cancel
+    } yield ()).unsafeRunSync()
+    assertEquals(f.archive().session("a",first.sessionId).indexedRevision,Some(1)); assertEquals(f.archive().session("b",second.sessionId).indexedRevision,Some(1))
+  }}
 }
 final class PostgresContextWorkerRecoveryTest extends ContextWorkerRecoveryContract {
   def withFixture(run: ContextWorkerFixture => Unit): Unit = CurrentIndexDatabase.withDatabase { (c,db,_) =>

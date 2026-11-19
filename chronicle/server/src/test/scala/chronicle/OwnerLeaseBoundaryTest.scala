@@ -127,4 +127,13 @@ final class OwnerLeaseBoundaryTest extends munit.FunSuite {
       assertEquals(claim.snapshot,a.headSnapshot("a",receipt.sessionId).copy(files=Nil))
     }
   }
+  test("Effectual GoodCommunication: a claim that skips large jobs leaves them queued and takes a small one") {
+    OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
+      val large=a.ingest("a",messages(Fixtures.snapshot(),LargeJobs.messages+1)); val small=a.ingest("a",messages(Fixtures.snapshot(),1))
+      assertEquals(a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300,LargeJobs.Skipped).map(_.jobId),Some(small.jobId))
+      assertEquals(db.transaction(x => Sql.one(x,"SELECT state,attempts FROM ch_jobs WHERE id=?",large.jobId)(r => (r.getString(1),r.getInt(2)))),Some(("Queued",0)))
+      assertEquals(a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300,LargeJobs.Skipped),None)
+      assertEquals(a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300,LargeJobs.Admitted).map(_.jobId),Some(large.jobId))
+    }
+  }
 }

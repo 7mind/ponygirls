@@ -36,9 +36,9 @@ final class WorkerFailureServeTest extends munit.FunSuite {
           make[ProblemPassageAnnotator].fromValue(annotator)
           make[Worker.FailureBackoff].fromValue(ModelFixtures.failureBackoff)
           make[SessionArchive].from { (store: PostgresArchive) => new ForwardingArchive(store) {
-            override def claim(profiles: Set[String],scope: ClaimScope,lease: Int): Option[Claim] = {
+            override def claim(profiles: Set[String],scope: ClaimScope,lease: Int,large: LargeJobs): Option[Claim] = {
               if(recordFailed.tryGet.unsafeRunSync().nonEmpty) claimedAgain.complete(()).unsafeRunSync()
-              super.claim(profiles,scope,lease)
+              super.claim(profiles,scope,lease,large)
             }
             private def observed(record: => Unit): Unit = try record catch { case error: Exception => recordFailed.complete(()).unsafeRunSync(); throw error }
             override def fail(c: Claim,code: String): Unit = observed(super.fail(c,code))

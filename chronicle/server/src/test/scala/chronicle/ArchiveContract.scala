@@ -171,12 +171,13 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     SessionInfo(view,id,h.owner,h.revision,h.indexed,r.metadata,r.source,r.completion,r.redacted)
   }
   def headSnapshot(reader: String,id: UUID): IngestRequest = synchronized(head(reader,id).request)
-  def claim(profiles: Set[String],scope: ClaimScope,leaseSeconds: Int): Option[Claim] = synchronized {
+  def claim(profiles: Set[String],scope: ClaimScope,leaseSeconds: Int,large: LargeJobs): Option[Claim] = synchronized {
     Check(profiles.nonEmpty && leaseSeconds>=0,"invalid","invalid claim profiles or lease"); profiles.foreach(catalog.resolve)
     def eligible(j: Job): Boolean = {
       val c=j.claim; val selected=target(c.owner)
       val scoped=scope match { case ClaimScope.AllOwners => true; case ClaimScope.Owner(owner) => c.owner==owner }
-      scoped && enabled(c.owner) && !removed(c.sessionId) && profiles(c.profile) && selected.profile==c.profile && sources.values.exists(h => h.id==c.sessionId && h.revision==c.revision)
+      scoped && enabled(c.owner) && !removed(c.sessionId) && profiles(c.profile) && selected.profile==c.profile && sources.values.exists(h => h.id==c.sessionId && h.revision==c.revision) &&
+        (large==LargeJobs.Admitted || c.snapshot.messages.size<=LargeJobs.messages)
     }
     jobs.values.filter(j => eligible(j) && j.state==JobState.Running && !j.lease.isAfter(Instant.now()) && j.attempts>=Jobs.attemptLimit).foreach { j => j.state=JobState.Failed; j.claim=j.claim.copy(fence=j.claim.fence+1); failedStages.remove(j.claim.jobId) }
     jobs.values.find(j => eligible(j) && j.attempts<Jobs.attemptLimit && (j.state==JobState.Queued || (j.state==JobState.Running && !j.lease.isAfter(Instant.now())))).map { j =>
