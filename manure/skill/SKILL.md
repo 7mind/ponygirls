@@ -21,6 +21,11 @@ private source data. Do not assume public access is appropriate. If Manure is
 unavailable or publication is not authorized, provide the artifact locally and
 state that it was not published.
 
+When sharing a Manure link with the user, always show the full URL as plain text on its own line.
+Do not use Markdown links, angle brackets, or code formatting.
+The URL must remain visible and copyable even when a terminal
+cannot follow Markdown hyperlinks.
+
 ## Triggers
 
 - Producing a human-facing artifact, even without an explicit upload request.
