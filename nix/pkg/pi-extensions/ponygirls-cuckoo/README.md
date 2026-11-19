@@ -526,9 +526,19 @@ must do once something it waits for arrives. Completed, cancelled and superseded
 objectives are omitted even when an earlier checkpoint listed them or they were
 finished since; they are not reported as done, and a finished objective is not
 kept because the user may still ask for changes. The session's system-prompt
-section says the same. Earlier reports and the transcript keep the history. This
-is a prose instruction, not validation: the decoder cannot tell a finished
-objective from an unfinished one.
+section says the same. The transcript keeps the history; a report does not say
+whether an absent objective was completed, cancelled or dropped. This is a prose
+instruction, not validation: the decoder cannot tell a finished objective from
+an unfinished one.
+
+Issues belong to objectives, so the caveats of a finished objective leave the
+report with it unless an open objective depends on them. In controlled runs a
+model also used such entries to raise risks it noticed at the checkpoint; a
+defect that needed a correction was still reported, as a new objective. To keep
+the rest, add a standing question, for example `/cuckoo questions add Do you
+know of any defect or risk in finished work that you have not yet told me
+about?`. Right after a complete delivery, before the user reacts, a report has
+no objectives.
 
 The prompt asks for brief, concise, human-friendly plain language in every field,
 preferably one short sentence or phrase. It discourages jargon, repetition, filler
