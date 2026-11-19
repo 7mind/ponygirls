@@ -73,7 +73,9 @@ class LegacyFreeCheckTest extends ContractSuite {
     val psql = Path.of(sys.env.getOrElse("POSTGRES_HOME", throw new IllegalStateException("POSTGRES_HOME required (nix develop .#backend)")), "bin", "psql").toString
     val config = databaseConfig; val address = config.jdbcUrl.stripPrefix("jdbc:postgresql://").takeWhile(_ != '/')
     val connection = Map("PGHOST" -> address.takeWhile(_ != ':'), "PGPORT" -> address.dropWhile(_ != ':').drop(1), "PGUSER" -> config.user,
-      "PGPASSWORD" -> CredentialFile.read(config.passwordFile), "PGDATABASE" -> database)
+      "PGPASSWORD" -> CredentialFile.read(config.passwordFile), "PGDATABASE" -> database,
+      // F1: the tables are in public; a session whose search_path does not reach them must still find them (or refuse).
+      "PGOPTIONS" -> "-c search_path=lr_nowhere")
     val ran = CheckChild.run(List(psql, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", check.toString), sys.env, connection, CheckChild.limit)
     Checked(ran.exit, ran.out.linesIterator.toList, ran.err)
   }
@@ -117,6 +119,12 @@ class LegacyFreeCheckTest extends ContractSuite {
     Seed("the Node-format column default", List("ALTER TABLE write_requests ALTER COLUMN digest_format SET DEFAULT 'haystack-op-v1'"), Map("LF.replay.column_default_present" -> "1")),
     Seed("no current-format constraint", List("ALTER TABLE write_requests DROP CONSTRAINT write_requests_current_digest_format_check"), Map("LF.replay.current_format_constraint" -> "0")),
     Seed("no 0007 marker", List("DELETE FROM schema_migrations WHERE version = '0007-node-replay-retired'"), Map("LF.schema.node_replay_retired_marker" -> "0")))
+  test("an expected table that does not resolve: LF.missing|public.pony_retrieval_profiles, LF.result|refused-missing-objects, exit 3, nothing counted") {
+    val ran = run(copy(noProductWrites, List("DROP TABLE pony_retrieval_profiles CASCADE")))
+    assertEquals((ran.exit, ran.last), (3, "LF.result|refused-missing-objects"), ran.err)
+    assert(ran.err.contains("expected tables do not resolve"), ran.err)
+    assertEquals(ran.counters, Map("LF.missing" -> "public.pony_retrieval_profiles"))
+  }
   seeds.foreach { seed =>
     test(s"seeded: ${seed.name} -> ${seed.changed.map(_ + "|" + _).mkString(", ")}, LF.result|legacy-present, exit 3") {
       val ran = run(copy(noProductWrites, seed.sql))

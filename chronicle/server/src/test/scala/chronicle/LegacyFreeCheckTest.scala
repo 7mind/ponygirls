@@ -59,7 +59,9 @@ final class LegacyFreeCheckTest extends munit.FunSuite {
     val psql=Path.of(sys.env.getOrElse("POSTGRES_HOME",throw DomainError("test","POSTGRES_HOME required (nix develop .#chronicle)")),"bin","psql").toString
     val address=original.jdbcUrl.stripPrefix("jdbc:postgresql://").takeWhile(_!='/')
     val connection=Map("PGHOST"->address.takeWhile(_!=':'),"PGPORT"->address.dropWhile(_!=':').drop(1),
-      "PGUSER"->original.databaseUser,"PGPASSWORD"->Fixtures.databasePassword,"PGDATABASE"->database)
+      "PGUSER"->original.databaseUser,"PGPASSWORD"->Fixtures.databasePassword,"PGDATABASE"->database,
+      // F1: the tables are in public; a session whose search_path does not reach them must still find them (or refuse).
+      "PGOPTIONS"->"-c search_path=lr_nowhere")
     val ran=CheckChild.run(List(psql,"-X","-q","-v","ON_ERROR_STOP=1","-f",check.toString),sys.env,connection,CheckChild.limit)
     Checked(ran.exit,ran.out.linesIterator.toList,ran.err)
   }
@@ -135,6 +137,12 @@ final class LegacyFreeCheckTest extends munit.FunSuite {
     Seed("the legacy tables",List("ch_retained_profile_reads","ch_checkpoint_namespaces","ch_model_identity_migrations","ch_profile").map(table=>s"CREATE TABLE $table()"),
       Map("LF.legacy_tables_present"->"4")),
     Seed("no current-format constraint",List("ALTER TABLE ch_generations DROP CONSTRAINT ch_generations_current_format_check"),Map("LF.generations.current_format_constraint"->"0")))
+  test("an expected table that does not resolve: LF.missing|public.ch_sessions, LF.result|refused-missing-objects, exit 3, nothing counted") {
+    val ran=copy(noProductWrites,List("DROP TABLE ch_sessions CASCADE"))(checked)
+    assertEquals((ran.exit,ran.last),(3,"LF.result|refused-missing-objects"),ran.err)
+    assert(ran.err.contains("expected tables do not resolve"),ran.err)
+    assertEquals(ran.counters,Map("LF.missing"->"public.ch_sessions"))
+  }
   seeds.foreach { seed=>
     test(s"seeded: ${seed.name} -> ${seed.changed.map(_+"|"+_).mkString(", ")}, LF.result|legacy-present, exit 3") {
       val ran=copy(noProductWrites,seed.sql)(checked)

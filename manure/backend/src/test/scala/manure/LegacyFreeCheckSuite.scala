@@ -43,6 +43,9 @@ final class LegacyFreeCheckSuite extends munit.FunSuite:
       admin(created) { c =>
         c.setAutoCommit(false)
         Using.resource(c.createStatement())(_.execute(Files.readString(BackendFixture.source.resolve("manure/migration/schema.sql"))))
+        // Production layout: the service connects as role manure, whose "$user" schema is manure, so the unqualified
+        // shared registry lands there, not in public.
+        Using.resource(c.createStatement())(_.execute("SET LOCAL search_path = manure, public"))
         CatalogueProjection.initialize(c)
         new PostgresRetrieval("manure",Some(profile)).initialize(c)
         c.commit()
@@ -61,7 +64,9 @@ final class LegacyFreeCheckSuite extends munit.FunSuite:
       .getOrElse(throw new IllegalStateException("psql required on PATH (nix develop .#chronicle)")).toString
     val address = url.stripPrefix("jdbc:postgresql://").takeWhile(_ != '/')
     val connection = Map("PGHOST" -> address.takeWhile(_ != ':'),"PGPORT" -> address.dropWhile(_ != ':').drop(1),"PGUSER" -> user,
-      "PGPASSWORD" -> password,"PGDATABASE" -> name)
+      "PGPASSWORD" -> password,"PGDATABASE" -> name,
+      // As the operator runs it: a superuser session whose search_path ("$user", public for postgres) excludes manure.
+      "PGOPTIONS" -> "-c search_path=public")
     val ran = CheckChild.run(List(psql,"-X","-q","-v","ON_ERROR_STOP=1","-f",check.toString),sys.env,connection,CheckChild.limit)
     Checked(ran.exit,ran.out.linesIterator.toList,ran.err)
   /** A copy of the fresh database with the seed applied. */
@@ -79,11 +84,18 @@ final class LegacyFreeCheckSuite extends munit.FunSuite:
     "a v1" -> s"""["embedding-space-v1","${"e" * 64}","embed","v1",3,false,"query: ","passage: ","cosine"]""",
     "a non-JSON" -> "embedding-space-v2").foreach { (kind,descriptor) =>
     test(s"seeded: $kind retrieval profile descriptor -> LP.retrieval.not_proven_v2|1, LF.result|legacy-present, exit 3") {
-      val ran = copy(List(s"INSERT INTO pony_retrieval_profiles VALUES ('seeded', 'seeded-profile', 'seeded-space', '$descriptor', convert_to('seeded-policy', 'UTF8'))"))
+      val ran = copy(List(s"INSERT INTO manure.pony_retrieval_profiles VALUES ('seeded', 'seeded-profile', 'seeded-space', '$descriptor', convert_to('seeded-policy', 'UTF8'))"))
       assertEquals((ran.exit,ran.last),(3,"LF.result|legacy-present"),ran.err)
       assert(ran.err.contains("manure legacy-free check failed"),ran.err)
       assertEquals(ran.counters,Map("LP.retrieval.profiles" -> "2","LP.retrieval.not_proven_v2" -> "1"))
     }
+  }
+  test("the registry not in schema manure (moved to public): LF.missing|manure.pony_retrieval_profiles, LF.result|refused-missing-objects, exit 3, nothing counted") {
+    val ran = copy(List("ALTER TABLE manure.pony_retrieval_profiles SET SCHEMA public"))
+    assertEquals((ran.exit,ran.last),(3,"LF.result|refused-missing-objects"),ran.err)
+    assert(ran.lines.contains("LF.missing|manure.pony_retrieval_profiles"),ran.lines.mkString("\n"))
+    assert(ran.err.contains("expected tables do not resolve"),ran.err)
+    assertEquals(ran.counters,Map("LF.missing" -> "manure.pony_retrieval_profiles"))
   }
 
 /** The check's psql child, the helper of Chronicle's and Haystack's LegacyFreeCheckTest. Environment: an allow-list of
