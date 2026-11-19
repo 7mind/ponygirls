@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { startDevServer } from '../dev/serve.mjs';
 import { FAKE_PASSWORD, FAKE_TOKEN_SECRET, FAKE_WRONG_CODE } from '../dev/fake-server.js';
 import { LONG_TOKEN_NAME, longLogin } from '../dev/scenarios.js';
+import { LAYOUT_SCALES, launchWithScrollbars, layoutContext, resizeWindow, assertQuiescentAroundThreshold } from '../../ui-web/tests/layout-quiescence.mjs';
 
 const require = createRequire(new URL('../../../chronicle/web/package.json', import.meta.url));
 const { chromium } = require('playwright-core');
@@ -763,6 +764,26 @@ try {
     await focusOrder(view, USER_STOPS);
     await view.close({ runBeforeUnload: false });
   });
+
+  // UX-JIT (shared/ui-web/tests/layout-quiescence.mjs): with scrollbars that take space, at 100 % and 125 % display scaling,
+  // the Users and Tokens tables settle around the window height where the document starts to scroll.
+  const LAYOUT_WIDTH = 1440, LAYOUT_LOAD_HEIGHT = 900, LAYOUT_VIEWS = [['users-default', 'Users', 'tr[data-row-id="erin"]'], ['settings-tokens', 'Tokens', 'table[data-list="tokens"] tr[data-row-id]']];
+  const layoutBrowsers = await Promise.all(LAYOUT_SCALES.map(scale => launchWithScrollbars(chromium, scale, { executablePath: undefined, args: [] })));
+  try {
+    const outcomes = await Promise.allSettled(LAYOUT_SCALES.flatMap((scale, index) => LAYOUT_VIEWS.map(async ([scenario, name, ready]) => {
+      const context = await layoutContext(layoutBrowsers[index], {}), page = await context.newPage(), errors = [];
+      page.on('pageerror', error => errors.push(error.message));
+      try {
+        await resizeWindow(page, LAYOUT_WIDTH, LAYOUT_LOAD_HEIGHT);
+        await page.goto(`${server.origin}/?scenario=${scenario}&steps=0`);
+        await page.waitForFunction(() => document.documentElement.dataset.harnessReady === 'true'); await page.locator(ready).first().waitFor();
+        await assertQuiescentAroundThreshold(page, `${name} at ${scale * 100} %`, { width: LAYOUT_WIDTH, scroller: null });
+        assert.deepEqual(errors, []);
+      } finally { await context.close(); }
+    })));
+    assert.deepEqual(outcomes.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason.message), [], 'Users and Tokens settle at every size');
+    cases++; console.log('PASS account views: Users and Tokens settle with space-taking scrollbars at 100 % and 125 % around their scroll threshold');
+  } finally { await Promise.all(layoutBrowsers.map(item => item.close())); }
 
   console.log(`PASS ${cases} account view browser cases`);
 } finally { await browser.close(); await server.close(); }

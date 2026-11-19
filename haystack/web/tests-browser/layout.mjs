@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+import { LAYOUT_SCALES, launchWithScrollbars, layoutContext, resizeWindow, assertQuiescentAroundThreshold } from "../../../shared/ui-web/tests/layout-quiescence.mjs";
 
 const executablePath = process.env.HAYSTACK_CHROMIUM;
 assert.ok(typeof executablePath === "string" && executablePath.startsWith("/"), "HAYSTACK_CHROMIUM must name the pinned browser executable");
@@ -23,6 +24,11 @@ const normalItems = [
   { ...item, project: "activity", item: "verify-artifact", title: "Verify release artifact", type: "skill-draft", tags: [], humanAttention: "cleared", modifiedBy: "agent", revision: 1 },
 ];
 const KEY = `${item.project}:${item.item}`;
+/** The record of `?fixture=history`: twelve revisions in its History card. */
+const HISTORY_KEY = "operations:release-checklist", HISTORY_REVISIONS = 12;
+const historyItem = { key: HISTORY_KEY, revision: HISTORY_REVISIONS, metadata: { createdAt: "2026-06-01T08:00:00.000Z", createdBy: "operator", modifiedAt: item.modifiedAt, modifiedBy: "operator" },
+  document: { title: "Release checklist", description: "Steps before a release.", fieldsJson: "{}", type: "fact", status: "actual", importance: "high", humanAttention: "cleared", links: [], tags: ["release"] } };
+const historyRevisions = Array.from({ length: HISTORY_REVISIONS }, (_, index) => ({ revision: HISTORY_REVISIONS - index, modifiedAt: item.modifiedAt, modifiedBy: "operator", tokenId: "test" }));
 /** Visible column headers per width: Project and Rev hide at 1100 px and below, all but Record and Modified at 720 px and below. */
 const COLUMNS = {
   1440: ["Record", "Type", "Project", "Tags", "Attention", "Importance", "Modified", "Rev"],
@@ -51,6 +57,7 @@ const vite = await createServer({ root, optimizeDeps: { include: ["react", "reac
         };
         api.search = async () => ({items:location.search === "?fixture=normal" ? ${JSON.stringify(normalItems)} : [${JSON.stringify(item)}],cursor:undefined});
         api.analyze = async () => ({valid:true,diagnostics:[]});
+        if (location.search === "?fixture=history") { api.get = async () => (${JSON.stringify(historyItem)}); api.history = async () => ({revisions:${JSON.stringify(historyRevisions)}}); }
         if (new URLSearchParams(location.search).has('pending')) {
           let pending = {key:'project:' + 'uncertainwrite'.repeat(30)}; const listeners = new Set();
           api.pendingWrite = () => pending;
@@ -100,7 +107,7 @@ function textAudit({ minPx, minContrast }) {
   return { checked, problems };
 }
 
-let browser;
+let browser, layoutBrowsers = [];
 try {
   await vite.listen();
   browser = await chromium.launch({ executablePath, args: ["--no-sandbox"] });
@@ -166,4 +173,22 @@ try {
   await page.getByRole("button", { name: "Retry original write", exact: true }).click();
   await page.getByText(/Original write confirmed as revision 7/).waitFor();
   console.log("ok - uncertain-write recovery fits 320 px and Retry confirms the original write");
-} finally { if (browser) await browser.close(); await vite.close(); }
+  // UX-JIT (shared/ui-web/tests/layout-quiescence.mjs): with scrollbars that take space, at 100 % and 125 % display scaling,
+  // Browse and a record's history settle around the window height where the document starts to scroll.
+  const LAYOUT_WIDTH = 1440, LAYOUT_LOAD_HEIGHT = 900;
+  const views = [["Browse", "layout.html?fixture=normal#/browse", (page) => page.getByRole("button", { name: "operations:release-checklist", exact: true }).waitFor()],
+    ["Record history", `layout.html?fixture=history#/item/${HISTORY_KEY}`, (page) => page.getByRole("region", { name: "History", exact: true }).getByRole("listitem").nth(HISTORY_REVISIONS - 1).waitFor()]];
+  layoutBrowsers = await Promise.all(LAYOUT_SCALES.map((scale) => launchWithScrollbars(chromium, scale, { executablePath, args: ["--no-sandbox"] })));
+  const outcomes = await Promise.allSettled(LAYOUT_SCALES.flatMap((scale, index) => views.map(async ([name, path, ready]) => {
+    const context = await layoutContext(layoutBrowsers[index], {}), layoutPage = await context.newPage(), errors = [];
+    layoutPage.on("pageerror", (error) => errors.push(error.message));
+    try {
+      await resizeWindow(layoutPage, LAYOUT_WIDTH, LAYOUT_LOAD_HEIGHT);
+      await layoutPage.goto(`${vite.resolvedUrls.local[0]}${path}`); await ready(layoutPage);
+      await assertQuiescentAroundThreshold(layoutPage, `${name} at ${scale * 100} %`, { width: LAYOUT_WIDTH, scroller: null });
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  })));
+  assert.deepEqual(outcomes.filter((outcome) => outcome.status === "rejected").map((outcome) => outcome.reason.message), [], "Browse and record history settle at every size");
+  console.log("ok - Browse and record history settle with space-taking scrollbars at 100 % and 125 % around their scroll threshold");
+} finally { if (browser) await browser.close(); await Promise.all(layoutBrowsers.map((item) => item.close())); await vite.close(); }
