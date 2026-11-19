@@ -3,11 +3,11 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { cacheClaudeUsageBody, canonicalClaudeUsageUrl, CLAUDE_OAUTH_PREFIX } from "./adapters/claude.ts";
 import { parseRetryAfter, type Http, type HttpMethod, type HttpResponse } from "./http.ts";
 
 export const CLAUDE_MIN_QUERY_MS = 300_000;
 const RATE_LIMIT_BACKOFF_MS = 1_800_000;
-const OAUTH_PREFIX = "https://api.anthropic.com/api/oauth/";
 const BUSY_TIMEOUT_MS = 5_000;
 
 export function stateDbPath(home: string, platform: string, environ: Record<string, string | undefined>): string {
@@ -91,16 +91,21 @@ export class PacedHttp implements Http {
 
   async request(method: HttpMethod, url: string, headers: Record<string, string>, body: string | null): Promise<HttpResponse> {
     const authorization = headers.Authorization;
-    if (method !== "GET" || !authorization || !url.startsWith(OAUTH_PREFIX)) return this.inner.request(method, url, headers, body);
+    if (method !== "GET" || !authorization || !url.startsWith(CLAUDE_OAUTH_PREFIX)) return this.inner.request(method, url, headers, body);
     const key = createHash("sha256").update(authorization).digest("hex");
     const now = this.now();
-    const claim = this.ledger.claim(url, key, now);
+    const usageEndpoint = canonicalClaudeUsageUrl(url);
+    const endpoint = usageEndpoint ?? url;
+    const claim = this.ledger.claim(endpoint, key, now);
     const cached = (): HttpResponse => ({ status: 200, body: claim.body!, retryAfter: null, quotaCache: { fetchedAt: claim.fetchedAt, retryAt: claim.nextAllowedAt } });
     const held = (retryAt: Date): HttpResponse => ({ status: 429, body: '{"error":"rate_limited"}', retryAfter: String(Math.max(1, Math.ceil((retryAt.getTime() - now.getTime()) / 1000))) });
     if (!claim.proceed) return claim.body !== null ? cached() : held(claim.nextAllowedAt);
     let response: HttpResponse;
     try {
       response = await this.inner.request(method, url, headers, body);
+      if (usageEndpoint !== null && response.status === 200) {
+        response = { ...response, body: cacheClaudeUsageBody(response.body, this.now()) };
+      }
     } catch (error) {
       if (claim.body !== null) return cached();
       throw error;
@@ -108,7 +113,7 @@ export class PacedHttp implements Http {
     const retryAt = response.status === 429
       ? new Date(Math.max(now.getTime() + RATE_LIMIT_BACKOFF_MS, parseRetryAfter(response.retryAfter, now)?.getTime() ?? 0))
       : claim.nextAllowedAt;
-    this.ledger.record(url, key, now, response, retryAt);
+    this.ledger.record(endpoint, key, now, response, retryAt);
     if (response.status === 200) return { ...response, quotaCache: { fetchedAt: now, retryAt } };
     if (claim.body !== null) return { ...cached(), quotaCache: { fetchedAt: claim.fetchedAt, retryAt } };
     return response.status === 429 ? held(retryAt) : response;

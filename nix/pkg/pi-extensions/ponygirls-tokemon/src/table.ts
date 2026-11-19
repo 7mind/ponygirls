@@ -17,7 +17,7 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { columnCells, type Column } from "@ponygirls/pi-ui";
 import { formatResets, formatUsedLimit, hiddenCaption, isShownByDefault, rateLimitedStatus, retryQualifier, sortResults, usageBar, usedPercent, windowState, type WindowState } from "./format.ts";
-import type { QuotaWindow } from "./quota.ts";
+import { resetsAvailable, type QuotaWindow } from "./quota.ts";
 import { staleLabel } from "./freshness.ts";
 import type { QueryResult } from "./service.ts";
 
@@ -125,22 +125,25 @@ export function styleBar(style: TableStyle, state: WindowState, bar: string): st
  * A status from its parts. `states` are the state's own wordings, fullest
  * first (`low 98%`, `low`). `firm` qualifiers say when to look again or how
  * far to trust the row (the retry time, the stale marker): a column is hidden
- * to keep the first of them. `loose` ones (a provider's note) show only in
+ * to keep the shortest. `loose` ones (a provider's note) show only in
  * spare width. `full` is everything known, shown where it fits whole.
  */
 function statusLine(states: StatusText[], firm: StatusText[], loose: StatusText[], full: StatusText, style: (s: string) => string): StatusLine {
   const state = states[0]!;
   const qualify = (qualifier: StatusText): StatusText => ({ text: `${state.text}${NOTE_SEPARATOR}${qualifier.text}`, stale: state.stale || qualifier.stale });
-  const forms = [full, ...firm.map(qualify), ...loose.map(qualify), ...states].filter((form, index, all) => all.findIndex((other) => other.text === form.text) === index);
-  return { forms, need: visibleWidth(firm.length > 0 ? qualify(firm[0]!).text : state.text), least: visibleWidth(states.at(-1)!.text), style };
+  const required = firm.map(qualify);
+  const forms = [full, ...required, ...loose.map(qualify), ...states].filter((form, index, all) => all.findIndex((other) => other.text === form.text) === index);
+  const need = visibleWidth(required.at(-1)?.text ?? state.text);
+  return { forms, need, least: visibleWidth(states.at(-1)!.text), style };
 }
 
 const plain = (text: string): StatusText => ({ text, stale: false });
+const joinStatus = (parts: StatusText[]): StatusText => ({ text: parts.map((part) => part.text).join(NOTE_SEPARATOR), stale: parts.some((part) => part.stale) });
 
 /** An error, or a provider's note standing for the state, claims no width: it takes the cells left over and is cut where they end. */
 const unclaimed = (line: StatusLine): StatusLine => ({ ...line, need: 0, least: 0 });
 
-/** Per-window status lines; a row's qualifiers are shown once, on its first line. */
+/** Per-window status lines; account notes and stale markers are shown only on the first line. */
 function statusLines(result: QueryResult, windows: Array<QuotaWindow | null>, now: Date, style: TableStyle): StatusLine[] {
   if (result.rateLimited) {
     const retry = retryQualifier(result.retryAt, now);
@@ -151,20 +154,22 @@ function statusLines(result: QueryResult, windows: Array<QuotaWindow | null>, no
   const note = result.snapshot?.note ?? null;
   const staleText: StatusText[] = stale === null ? [] : [{ text: stale, stale: true }];
   const noteText: StatusText[] = note === null ? [] : [plain(note)];
-  const everything = (parts: StatusText[]): StatusText => ({ text: parts.map((part) => part.text).join(NOTE_SEPARATOR), stale: stale !== null });
   return windows.map((window, index) => {
     if (window === null) {
       // No quota windows: the provider's note, else the stale marker, stands for the state.
       const [state, ...rest] = [...noteText, ...staleText];
       if (state === undefined) return statusLine([plain("ok")], [], [], plain("ok"), style.success);
-      return unclaimed(statusLine([state], rest, [], everything([state, ...rest]), style.dim));
+      return unclaimed(statusLine([state], rest, [], joinStatus([state, ...rest]), style.dim));
     }
     const state = windowState(window);
     const percent = usedPercent(window);
     const states = percent === null ? [plain(state)] : [plain(`${state} ${percent}%`), plain(state)];
     const lineStyle = stale === null ? stateStyle(style, state) : style.warning;
-    if (index > 0) return statusLine(states, [], [], states[0]!, lineStyle);
-    return statusLine(states, staleText, noteText, everything([states[0]!, ...noteText, ...staleText]), lineStyle);
+    const available = resetsAvailable(window, now);
+    const countText = available === undefined ? [] : [plain(`resets: ${available}`)];
+    if (index > 0) return statusLine(states, countText, [], joinStatus([states[0]!, ...countText]), lineStyle);
+    const firm = staleText.length === 0 ? countText : countText.length === 0 ? staleText : [joinStatus([...countText, ...staleText]), ...staleText];
+    return statusLine(states, firm, noteText, joinStatus([states[0]!, ...countText, ...noteText, ...staleText]), lineStyle);
   });
 }
 

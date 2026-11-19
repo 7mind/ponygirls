@@ -16,6 +16,12 @@ export interface Credential {
   accountId: string | null;
 }
 
+export interface ResetBalance {
+  startsAt: number | null;
+  expiresAt: number | null;
+  count: number;
+}
+
 export interface QuotaWindow {
   name: string;
   used: number | null;
@@ -23,9 +29,18 @@ export interface QuotaWindow {
   /** "%", a currency code ("USD"), or a count unit ("tokens", "requests", "credits", "calls", "units"). */
   unit: string;
   resetsAt: Date | null;
+  resetBalances?: readonly ResetBalance[];
   unlimited: boolean;
   /** Set when the provider says so itself; otherwise derived from used/limit. */
   exhausted: boolean | null;
+}
+
+export function resetsAvailable(window: QuotaWindow, now: Date): number | undefined {
+  const nowMs = now.getTime();
+  return window.resetBalances?.reduce((total, { startsAt, expiresAt, count }) => {
+    const active = (startsAt === null || nowMs >= startsAt) && (expiresAt === null || nowMs < expiresAt);
+    return active ? total + count : total;
+  }, 0);
 }
 
 export interface QuotaSnapshot {
@@ -52,7 +67,7 @@ export class RateLimitedError extends QuotaFetchError {
 }
 
 export interface QuotaAdapter {
-  fetch(credential: Credential, http: Http): Promise<QuotaSnapshot>;
+  fetch(credential: Credential, http: Http, now?: Date): Promise<QuotaSnapshot>;
   /**
    * Whether the query needs the current access token (resolved through pi,
    * which refreshes an expired login). Adapters that query with the stored
