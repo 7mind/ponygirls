@@ -161,7 +161,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
         val key=IndexCheckpoints.key(claim,IndexingStage.Embedding,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,CheckpointJson.chunks(batch))
         def validated(vectors: List[List[Double]]): List[List[Double]] = { CheckpointJson.validateVectors(vectors,batch.size,config.embedding.dimensions); vectors }
         accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(IO.defer(embedder.documents(claim.owner,batch.map(_.text))).map(validated))
-          .map(vectors => batch.zip(vectors).map(IndexedChunk.apply.tupled))
+          .map(vectors => batch.zip(vectors).map((chunk,vector) => IndexedChunk(chunk,scala.collection.immutable.ArraySeq.from(vector))))
       }.map(_.flatten)
       // A part accepted under another batch size addresses other pieces: none of the window's parts is reused.
       parts.recoverWith { case _: CheckpointInputMismatch =>

@@ -202,7 +202,9 @@ final case class Identity(user: UserInfo, browser: Boolean, credentialHash: Stri
   def requireBrowser(): Unit = Check(browser, "forbidden", "browser session required")
 }
 final case class Claim(jobId: UUID, sessionId: UUID, revision: Int, fence: Long, profile: String, snapshot: IngestRequest, owner: String, targetEpoch: Long, runId: UUID, revisionBinding: RevisionBinding)
-final case class IndexedChunk(chunk: Chunk, vector: List[Double])
+/** `vector` of a running job is held until its publication: the worker stores it unboxed (an ArraySeq of Double); a
+  * job of 60k pieces would otherwise hold some 90M boxed numbers, which every full collection traverses. */
+final case class IndexedChunk(chunk: Chunk, vector: Seq[Double])
 enum ClaimScope {
   case AllOwners
   case Owner(owner: String)
