@@ -14,10 +14,13 @@ object TestRemoteCatalog {
   def fixture(values: Map[String, String]): TestRemoteCatalog = new TestRemoteCatalog { def lookup(repositoryId: String): Option[String] = values.get(repositoryId) }
 }
 class GitRepository(config: Config, remotes: TestRemoteCatalog) {
+  private final case class GitCredential(username: String, token: String)
+  private def forgeUsername(authority: Authority): String = if (authority.forge == rites.api.ForgeKind.Github) "x-access-token" else "oauth2"
+  private def credential(authority: Authority, token: String): GitCredential = GitCredential(forgeUsername(authority), token)
   private val maintenance = new Object
   private val baseEnv = Processes.pathEnvironment ++ Map("GIT_CONFIG_NOSYSTEM" -> "1", "GIT_TERMINAL_PROMPT" -> "0", "GIT_CONFIG_GLOBAL" -> "/dev/null", "GIT_CEILING_DIRECTORIES" -> config.workspaceRoot)
   private def text(bytes: Array[Byte]): String = StandardCharsets.UTF_8.newDecoder().onMalformedInput(java.nio.charset.CodingErrorAction.REPORT).decode(java.nio.ByteBuffer.wrap(bytes)).toString
-  private def git(args: List[String], cwd: Path, token: Option[String], allow: Set[Int] = Set(0)): String = {
+  private def git(args: List[String], cwd: Path, token: Option[GitCredential], allow: Set[Int] = Set(0)): String = {
     val baseArgs = List("git", "-c", "core.hooksPath=/dev/null", "-c", "credential.helper=", "-c", "http.followRedirects=false", "-c", "protocol.ext.allow=never") ++ args
     token match {
       case None =>
@@ -25,8 +28,8 @@ class GitRepository(config: Config, remotes: TestRemoteCatalog) {
       case Some(secret) =>
         val home = Files.createTempDirectory(config.workspaceRootPath, "auth-"); val ask = home.resolve("askpass")
         // The token appears only within this mode-0700 private askpass directory.
-        Files.writeString(home.resolve("credential"), secret, java.nio.file.StandardOpenOption.CREATE_NEW)
-        val content = GitAskpass.render(home.resolve("credential"), baseEnv("PATH"))
+        Files.writeString(home.resolve("credential"), secret.token, java.nio.file.StandardOpenOption.CREATE_NEW)
+        val content = GitAskpass.render(home.resolve("credential"), secret.username, baseEnv("PATH"))
         Files.writeString(ask, content, java.nio.file.StandardOpenOption.CREATE_NEW); Files.setPosixFilePermissions(ask, java.util.Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ, java.nio.file.attribute.PosixFilePermission.OWNER_WRITE, java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE))
         try {
           val output = Processes.run(baseArgs, cwd, baseEnv ++ Map("GIT_ASKPASS" -> ask.toString, "HOME" -> home.toString), Array.emptyByteArray, 65536, 120, "git-timeout"); Check(allow.contains(output.code), "git-failed", "git operation failed"); text(output.stdout).trim
@@ -38,7 +41,7 @@ class GitRepository(config: Config, remotes: TestRemoteCatalog) {
     remotes.lookup(authority.repository.id) match {
       case Some(local) => Check(config.testMode && (local.startsWith("file://") || local.startsWith("/")), "config", "test remotes require explicit test mode"); local
       case None =>
-        val user = if (authority.forge == rites.api.ForgeKind.Github) "x-access-token" else "oauth2"
+        val user = forgeUsername(authority)
         val clone = config.forge(authority.forge, authority.host).cloneUri(config.testMode)
         val project = authority.project.split('/').map(p => java.net.URLEncoder.encode(p, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20")).mkString("/")
         s"${clone.getScheme}://$user@${clone.getRawAuthority}${clone.getRawPath.stripSuffix("/")}/$project.git"
@@ -55,10 +58,10 @@ class GitRepository(config: Config, remotes: TestRemoteCatalog) {
     val repoId = authority.repository.id; val cache = config.cachePath(repoId); Files.createDirectories(config.root); Files.createDirectories(config.cacheRootPath)
     val url = forgeUrl(authority)
     if (!Files.exists(cache)) {
-      delete(cache); git(List("clone", "--mirror", "--no-checkout", "--", url, cache.toString), config.root, Some(token))
+      delete(cache); git(List("clone", "--mirror", "--no-checkout", "--", url, cache.toString), config.root, Some(credential(authority, token)))
     } else {
       git(List("-C", cache.toString, "remote", "set-url", "origin", url), config.root, None)
-      git(List("-C", cache.toString, "fetch", "--prune", "--no-tags", "origin", "+refs/heads/*:refs/heads/*"), config.root, Some(token))
+      git(List("-C", cache.toString, "fetch", "--prune", "--no-tags", "origin", "+refs/heads/*:refs/heads/*"), config.root, Some(credential(authority, token)))
     }
     val base = git(List("-C", cache.toString, "rev-parse", s"refs/heads/${authority.baseBranch}^{commit}"), config.root, None)
     Check(base.matches("[0-9a-f]{40,64}"), "git-failed", "invalid base revision")
@@ -124,7 +127,7 @@ class GitRepository(config: Config, remotes: TestRemoteCatalog) {
   /** Read-only verification after a crash; does not update mirrors or trust branch contents. */
   def branchHead(authority: Authority, branch: String, token: String): Option[String] = {
     Check(branch.startsWith("rites/"), "publication-denied", "invalid publication branch")
-    val raw = git(List("ls-remote", "--heads", "--exit-code", "--", forgeUrl(authority), s"refs/heads/$branch"), config.root, Some(token), Set(0, 2))
+    val raw = git(List("ls-remote", "--heads", "--exit-code", "--", forgeUrl(authority), s"refs/heads/$branch"), config.root, Some(credential(authority, token)), Set(0, 2))
     if (raw.isEmpty) None else {
       val lines = raw.linesIterator.filter(_.nonEmpty).toList
       Check(lines.size == 1 && lines.head.takeWhile(_ != '\t').matches("[0-9a-f]{40,64}") && lines.head.endsWith(s"refs/heads/$branch"), "publication-head-unverified", "unexpected branch identity")
@@ -133,7 +136,7 @@ class GitRepository(config: Config, remotes: TestRemoteCatalog) {
   }
   def push(prepared: PreparedRun, authority: Authority, delta: CommitDelta, token: String): Unit = {
     Check(delta.branch.startsWith("rites/") && delta.branch != authority.baseBranch, "publication-denied", "invalid publication branch")
-    git(List("-C", prepared.publication.toString, "push", "--no-force", "--", forgeUrl(authority), s"${delta.commit}:refs/heads/${delta.branch}"), config.root, Some(token))
+    git(List("-C", prepared.publication.toString, "push", "--no-force", "--", forgeUrl(authority), s"${delta.commit}:refs/heads/${delta.branch}"), config.root, Some(credential(authority, token)))
   }
   def cleanup(prepared: PreparedRun): Unit = delete(prepared.root)
   private def delete(path: Path): Unit = if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {

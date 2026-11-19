@@ -88,13 +88,15 @@
        version: CodeGraphPackageVersion,
        socketPath: this.socketPath,
        startedAt: Date.now(),
-@@ -421,11 +432,12 @@
+@@ -477,13 +488,14 @@
        this.server = null;
      }
      await this.engine.stop();
 -    this.cleanupLockfile();
 +    this.cleanupLockfile(false);
-     deregisterDaemon(this.projectRoot);
+     // Only this daemon's record: one that found another daemon serving its
+     // project leaves that one's record in place (#3245).
+     deregisterDaemon(this.projectRoot, process.pid);
      if (process.platform !== 'win32') {
        try { fs.unlinkSync(this.socketPath); } catch { /* may already be gone */ }
      }
