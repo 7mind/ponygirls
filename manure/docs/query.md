@@ -27,7 +27,9 @@ defaults to `catalogue` until it adopts the same rule):
   server reason) or `query embedding failed`; any other server message is never
   shown and the reason is the code `search-unavailable`.
 - A semantic/hybrid page with `pending > 0` adds the note `1 item is` / `N items
-  are not yet indexed for semantic search; results may be incomplete`.
+  are not yet indexed for semantic search; results may be incomplete`. `pending`
+  counts sources whose current version is not indexed yet; an older indexed
+  version of such a source may still be returned until it is replaced.
 
 The effective mode is always reported: CLI human output starts with
 `Mode: <mode>`; the notice and the pending note go to stderr (before the lexical

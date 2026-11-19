@@ -267,9 +267,12 @@ sourceVersion/generationId/policyId/optional embeddingProfile/optional embedding
 ExactMatches versus CandidateWindow + rankingLimit are explicit. Scores are
 ranking values, not confidence. `SearchPage.pending` (i64) declares partial
 readiness: for Semantic/Hybrid, the number of sources in the query's
-authorization/filter/expiry scope whose current version has no publication under
-the active profile (never published, an older version, or another profile/space);
-they are not ranked. Lexical reads current text and reports 0. Rebuild/profile
+authorization/filter/expiry scope whose current head is not indexed under the
+active profile (never published, published only for an older version, or only
+under another profile/space). Such a source's current head is not ranked, but an
+older publication of it under the active profile is still searchable (its pinned
+older version is returned) until the new head's publication replaces it. Lexical
+reads current text and reports 0. Rebuild/profile
 changes cannot mix vector spaces. `pending` was added to the sole `1.0.0` model in
 place: an older strict client rejects the new field and must be upgraded.
 

@@ -224,7 +224,8 @@ Without `mode:`, search text runs `hybrid` when the server offers it, else
 re-run once lexically. Each substitution prints `Hybrid search is not available
 on this server: <reason>; showing lexical results` (CLI stderr; MCP `notice`).
 The effective mode is shown (`Mode:` line; MCP `mode`). Semantic/hybrid pages
-report `pending` items not yet indexed (CLI stderr note; MCP `pending_note`).
+report `pending` items whose current version is not yet indexed (an older indexed
+version may still match; CLI stderr note; MCP `pending_note`).
 No text, a catalogue-only field or `--cursor` selects `mode:catalogue`, which
 matches literal name/artifact-ID/tag/hostname/project substrings, hides
 expired items and sorts `created_at desc`. Catalogue-only fields are `state`,
