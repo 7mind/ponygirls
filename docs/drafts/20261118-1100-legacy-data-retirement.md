@@ -401,6 +401,17 @@ checked** by the report (its `H7` counts the schema-version table). `run.sh hays
 Expected 0 (inferred: the table has no statistics in the report). The rehearsal answers it for both databases
 (section 8); if it is non-zero, inventory rows marked "guard R" stay until a caller is written.
 
+**F1 (DEL-VAL, 2026-11-19): the Manure value was a false zero.** Manure's tables, including its shared retrieval
+registry, live in schema `manure` (`manure-schema.sql`; the registry lands there through the `manure` role's
+`"$user"` schema). The scripts run as `postgres`, whose default `search_path` (`"$user", public`) does not reach it;
+the shared block then treated the invisible table as absent and printed `LP.retrieval.profiles|0`. **The production
+Manure preflight of 2026-11-18 21:49Z (`LP.retrieval.not_proven_v2|0`) was therefore not an observation and must be
+repeated with the fixed tooling (runbook step 4).** The clone (a copy of production from 11:57Z) read correctly has
+0 profiles. Fixed for every target: each session sets `search_path = pg_catalog, <the service's schema>` (Chronicle
+and Haystack `public`, Manure `manure`) and refuses with `LR.result|refused-missing-objects` (`LF.…` in the retained
+checks) when any table it reads or writes does not resolve there; nothing is counted then. No operator setting
+(`PGOPTIONS`, role defaults) is needed or consulted.
+
 ## 4. Evaluation v2 and the V3 binder (E-1)
 
 Not database rows; the inventory is in 6.5. The **current** V3 workflow binds a run to the server's model catalog
@@ -590,7 +601,7 @@ fence (7.2) relies on.
 | 1 | Pre-deployment net: **before `./redeploy-team-tools --apply`** (the deployment replaces pod `core-0` and restarts PostgreSQL; it is reversible, these dumps are a cheap net) | `"$OP" backup-haystack /<dir>/haystack-<time>.dump`; `"$OP" backup-manure /<dir>/manure-<time>.dump` | `LR.result|backup-published` each (above it `LR.backup.file|<file>|<size>|<sha256>`) | any other last line: do not deploy |
 | 2 | The binary built from `main` (`de43b916` or later, CH-FIX) deployed with the **deployed** config, unchanged (Q101); credential preflight | `bullshit-renew status --json`; `"$OP" ready` | `OP.ready|observed` with all containers `ready` and `OP.ready|pod|True` above it | not ready |
 | 3 | Chronicle preflight and worklist | `"$OP" chronicle preflight`; `"$OP" chronicle worklist` | `LR.result|preflight-complete`; `LR.result|worklist-complete`; note `N` = `LR.generations.old_format.published` (12 at the last production preflight; the sources are the `LR.retire_published|<source>|<owner>|<generation>|<format>|<revision>` lines, keep them for the owners: Q106) and `M` = `LR.generations.old_format.history` | schema ≠ `2,3,6,8,9,14,17,20`; counters far from section 1 |
-| 4 | Haystack, Manure preflight; codec check | `"$OP" haystack preflight`; `"$OP" manure preflight`; `"$OP" codec-check` | `preflight-complete` twice (with `LP.retrieval.not_proven_v2|0`); `LR.result|stored-documents-strict-ok` | a retrieval counter non-zero; codec check fails |
+| 4 | Haystack, Manure preflight; codec check (the Manure preflight of 2026-11-18 21:49Z was a false zero, 3.3 F1: this is its first real observation) | `"$OP" haystack preflight`; `"$OP" manure preflight`; `"$OP" codec-check` | `preflight-complete` twice (with `LP.retrieval.profiles|<n>` and `LP.retrieval.not_proven_v2|0`); `LR.result|stored-documents-strict-ok` | a retrieval counter non-zero; `LR.result|refused-missing-objects` (a table the script reads does not resolve in the service's schema: wrong database or schema; never treat as zero); codec check fails |
 | 5 | Owner's explicit go (Q102; Q106: the `N` sources become unindexed until re-indexed) | — | explicit | no go |
 | 6 | Fence Chronicle (7.2), wait for leases | `"$OP" chronicle fence --role chronicle`; repeat `"$OP" chronicle preflight` until `LR.info.jobs.running_live_lease|0` and `LR.other_client_backends|0` (≤ 5 min) | `LR.result|fenced`; later commands start with `FENCED since` | fence not confirmed → `fence-status`; see "Abort / lost session" |
 | 7 | Dry-run immediately before the apply | `"$OP" chronicle dry-run --retire-published --confirm-retire-published N --retire-history --confirm-retire-history M --batch-size 10` | `LR.result|dry-run-rolled-back` | refusal |
@@ -654,8 +665,9 @@ fence (7.2) relies on.
 Order note for steps 11–14: `run.sh … verify` reads the tables that the clean-up drops and is bound to the
 pre-clean-up schema, and it is deleted in step 13. It is therefore the **pre-removal** check (step 11) only. After
 the deployment the check is the retained SQL (step 14). Validated on the fixture databases: before the clean-up the
-retained check fails (`legacy-present`); after it, it passes and `run.sh chronicle verify` fails with "relation …
-does not exist" while `run.sh haystack dry-run` refuses with "unexpected schema_migrations".
+retained check fails (`legacy-present`); after it, it passes and `run.sh chronicle verify` refuses with
+`LR.result|refused-missing-objects` (the legacy tables it reads are gone) while `run.sh haystack dry-run` refuses with
+"unexpected schema_migrations".
 
 ### 7.1 Exec streams break; a broken stream does not stop the pod-side process
 
