@@ -56,6 +56,12 @@ Chronicle flags for the publication-formats item:
   `indexed-view-retired`). N is the count preflight prints as `LR.generations.old_format.history`.
 - `--skip-formats`: leaves the formats item alone; the identity item is complete without it.
 
+Tables are resolved by the scripts themselves, never through the caller's `search_path` (F1): every session sets
+`search_path = pg_catalog, <schema>` (Chronicle and Haystack `public`, Manure `manure`, the production layout) and first
+requires every table it reads or writes to resolve there; otherwise it prints `LR.missing|<schema.table,…>` and
+`LR.result|refused-missing-objects` and exits 3, without counting anything. The retained `check-legacy-free.sql` files
+do the same (`LF.missing`, `LF.result|refused-missing-objects`). Nothing has to be set by the operator.
+
 Output is `LR.<key>|<value>` lines: counts and states only, never row contents (the one exception is
 `haystack export-stored-documents`, which `check-stored-documents.sh` keeps in a private temporary file).
 Exit status: 0 success, 2 usage, 3 refusal / failed precondition / non-zero verify.

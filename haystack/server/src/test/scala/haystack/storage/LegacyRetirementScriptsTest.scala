@@ -23,6 +23,11 @@ class LegacyRetirementScriptsTest extends ContractSuite {
     def count(key: String): Long = value(key).toLong
     def steps(key: String): Long = out.linesIterator.collect { case line if line.startsWith(s"LR.step.$key|") => line.drop(key.length + 9).toLong }.sum
   }
+  /** The schema of a started Haystack: its migrations and the shared retrieval registry (created by the service at serve). */
+  private def serviceSchema(db: JdbcDatabase): IO[Unit] =
+    Migrations.initialize(db, Activity) *> db.transaction(c => new ponygirls.retrieval.postgres.PostgresRetrieval("haystack", None).initialize(c))
+  /** The LR./LP. lines a mode printed, without the per-invocation application name. */
+  private def lines(ran: Ran): List[String] = ran.out.linesIterator.filter(l => (l.startsWith("LR.") || l.startsWith("LP.")) && !l.startsWith("LR.application_name|")).toList
   private def database(db: JdbcDatabase): IO[String] = db.transaction(c => Sql.rows(c, "SELECT current_database()")(_.getString(1)).head)
   private def connection(database: String): Map[String, String] = {
     val config = databaseConfig
@@ -31,18 +36,20 @@ class LegacyRetirementScriptsTest extends ContractSuite {
       "PGPASSWORD" -> CredentialFile.read(config.passwordFile), "PGDATABASE" -> database)
   }
   // IO.interruptible: a cancelled or timed-out test interrupts the wait, and the helper kills the child.
-  private def script(database: String, arguments: String*): IO[Ran] = IO.interruptible {
+  private def script(database: String, arguments: String*): IO[Ran] = scriptWith(Map.empty, database, arguments*)
+  private def scriptWith(session: Map[String, String], database: String, arguments: String*): IO[Ran] = IO.interruptible {
     // The forked test JVM's working directory is the repository root or the project directory, depending on the build settings.
     val relative = Path.of("scripts", "one-off", "legacy-retirement", "run.sh")
     val located = Iterator.iterate(Path.of("").toAbsolutePath)(_.getParent).takeWhile(_ != null).map(_.resolve(relative)).find(Files.isRegularFile(_)).getOrElse(fail("legacy retirement driver is absent"))
     val psql = Path.of(sys.env.getOrElse("POSTGRES_HOME", throw new IllegalStateException("POSTGRES_HOME required (nix develop .#chronicle)")), "bin", "psql").toString
-    val ran = LegacyRetirementChild.run(List("sh", located.toString, "haystack") ++ arguments, sys.env, connection(database) + ("PSQL" -> psql), LegacyRetirementChild.timeout)
+    val ran = LegacyRetirementChild.run(List("sh", located.toString, "haystack") ++ arguments, sys.env, connection(database) ++ session + ("PSQL" -> psql), LegacyRetirementChild.timeout)
     Ran(ran.exit, ran.out, ran.err)
   }
-  private def psqlFile(database: String, file: Path): IO[Ran] = IO.interruptible {
+  private def psqlFile(database: String, file: Path): IO[Ran] = psqlFileWith(Map.empty, database, file)
+  private def psqlFileWith(session: Map[String, String], database: String, file: Path): IO[Ran] = IO.interruptible {
     val located = Iterator.iterate(Path.of("").toAbsolutePath)(_.getParent).takeWhile(_ != null).map(_.resolve(file)).find(Files.isRegularFile(_)).getOrElse(fail(s"missing SQL file $file"))
     val ran = LegacyRetirementChild.run(List(Path.of(sys.env("POSTGRES_HOME"), "bin", "psql").toString, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", located.toString),
-      sys.env, connection(database), LegacyRetirementChild.timeout)
+      sys.env, connection(database) ++ session, LegacyRetirementChild.timeout)
     Ran(ran.exit, ran.out, ran.err)
   }
   /** The codec check exactly as check-stored-documents.sh performs it: psql export, then the real decoder. */
@@ -97,7 +104,7 @@ class LegacyRetirementScriptsTest extends ContractSuite {
     val original = doc("original", "{\"n\":9007199254740993,\"decimal\":0.10}")
     val latest = doc("latest", "{\"unicode\":\"café 🐎\",\"decimal\":1.00e2}").replace("\"links\":[]", "\"links\":[[\"origin\",\"else:missing\"]]")
     run(emptyDatabase.use { db => for {
-      _ <- Migrations.initialize(db, Activity)
+      _ <- serviceSchema(db)
       name <- database(db)
       _ <- seedNodeEra(db, original, latest, oldId, oldFailureId)
       repo = new PostgresItemRepository(db)
@@ -146,7 +153,7 @@ class LegacyRetirementScriptsTest extends ContractSuite {
       idempotent <- everything(db); _ = assertEquals(idempotent, after)
 
       // The current service on the migrated database: startup, every acknowledged Node-era document and its history.
-      _ <- Migrations.initialize(db, Activity)
+      _ <- serviceSchema(db)
       head <- repo.current(ItemKey("p", "legacy")); first <- repo.revision(ItemKey("p", "legacy"), 1L); history <- repo.history(ItemKey("p", "legacy"))
       _ = assertEquals(head.get.documentCanonical, latest); _ = assertEquals(first.get.documentCanonical, original)
       _ = assertEquals(history.map(h => (h.revision, h.modifiedBy, h.tokenId)), Vector((2L, "bot", "old-agent-token"), (1L, "alice", "old-human-token")))
@@ -171,7 +178,7 @@ class LegacyRetirementScriptsTest extends ContractSuite {
     val latest = doc("latest", "{\"unicode\":\"café 🐎\",\"decimal\":1.00e2}").replace("\"links\":[]", "\"links\":[[\"origin\",\"else:missing\"]]")
     val wide = HistoricalFixtures.values.find(_.name == "unicode-bmp-over-new-byte-envelope").get.text
     run(emptyDatabase.use { db => for {
-      _ <- Migrations.initialize(db, Activity)
+      _ <- serviceSchema(db)
       name <- database(db)
       _ <- seedNodeEra(db, original, latest, oldId, oldFailureId)
       repo = new PostgresItemRepository(db)
@@ -217,9 +224,30 @@ class LegacyRetirementScriptsTest extends ContractSuite {
     } yield () })
   }
 
+  // F1: production runs the scripts as postgres. Haystack's tables are in public (its schema); here the session's
+  // search_path does not reach public at all, so every statement must resolve its tables itself.
+  test("legacy retirement F1: the scripts and the retained check resolve their tables in Haystack's schema whatever the session's search_path; a table that does not resolve refuses, never counts zero") {
+    val elsewhere = Map("PGOPTIONS" -> "-c search_path=lr_nowhere")
+    run(emptyDatabase.use { db => for {
+      _ <- serviceSchema(db)
+      name <- database(db)
+      _ <- seedNodeEra(db, doc("original", "{}"), doc("latest", "{}"), requestId(), requestId())
+      normal <- script(name, "verify")
+      moved <- scriptWith(elsewhere, name, "verify")
+      _ = assertEquals(moved.exit, 3, moved.out + moved.err); _ = assertEquals(moved.value("LR.result"), "verify-nonzero")
+      _ = assertEquals(moved.count("LP.replay.other_digest_format"), 2L); _ = assertEquals(lines(moved), lines(normal))
+      checked <- psqlFileWith(elsewhere, name, Path.of("haystack", "scripts", "check-legacy-free.sql"))
+      _ = assertEquals(checked.exit, 3); _ = assertEquals(checked.count("LP.replay.other_digest_format"), 2L); _ = assertEquals(checked.count("LF.replay.column_default_present"), 1L)
+      _ <- db.transaction(c => Sql.update(c, "DROP TABLE pony_retrieval_profiles CASCADE"))
+      refused <- script(name, "preflight")
+      _ = assertEquals(refused.exit, 3); _ = assertEquals(refused.value("LR.result"), "refused-missing-objects"); _ = assertEquals(refused.value("LR.missing"), "public.pony_retrieval_profiles")
+      refusedCheck <- psqlFile(name, Path.of("haystack", "scripts", "check-legacy-free.sql"))
+      _ = assertEquals(refusedCheck.exit, 3); _ = assertEquals(refusedCheck.value("LF.result"), "refused-missing-objects")
+    } yield () })
+  }
   test("legacy retirement: the proposed clean-up schema (0007) passes the retained check; the one-off refuses afterwards; the current binary cannot start on it") {
     run(emptyDatabase.use { db => for {
-      _ <- Migrations.initialize(db, Activity)
+      _ <- serviceSchema(db)
       name <- database(db)
       repo = new PostgresItemRepository(db)
       _ <- repo.commit(op(key = "p:current", document = doc("scala")), Bot, Later)

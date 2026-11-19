@@ -27,19 +27,22 @@ final class LegacyRetirementScriptsTest extends munit.FunSuite {
     val db: Database = new Database(config,catalog)
     val archive=new PostgresArchive(db,config)
     def run(arguments: String*): Ran = runIn(name,arguments*)
-    def runIn(database: String,arguments: String*): Ran = {
+    def runIn(database: String,arguments: String*): Ran = runWith(Map.empty,database,arguments*)
+    /** run.sh with extra session settings (e.g. PGOPTIONS), as an operator's environment could supply them. */
+    def runWith(session: Map[String,String],database: String,arguments: String*): Ran = {
       val script=Path.of("..","scripts","one-off","legacy-retirement","run.sh").toAbsolutePath.normalize()
       Check(Files.isRegularFile(script),"test","legacy retirement driver is absent")
       val psql=Path.of(sys.env.getOrElse("POSTGRES_HOME",throw DomainError("test","POSTGRES_HOME required (nix develop .#chronicle)")),"bin","psql").toString
-      val ran=LegacyRetirementChild.run(List("sh",script.toString,"chronicle")++arguments,sys.env,connection(database)+("PSQL"->psql),LegacyRetirementChild.timeout)
+      val ran=LegacyRetirementChild.run(List("sh",script.toString,"chronicle")++arguments,sys.env,connection(database)++session+("PSQL"->psql),LegacyRetirementChild.timeout)
       Ran(ran.exit,ran.out,ran.err)
     }
     private def connection(database: String): Map[String,String] =
       Map("PGHOST"->host,"PGPORT"->port,"PGUSER"->config.databaseUser,"PGPASSWORD"->Fixtures.databasePassword,"PGDATABASE"->database)
     /** A plain psql file against the scratch database (the retained check, the proposed clean-up schema). */
-    def psql(file: Path): Ran = {
+    def psql(file: Path): Ran = psqlWith(Map.empty,file)
+    def psqlWith(session: Map[String,String],file: Path): Ran = {
       Check(Files.isRegularFile(file),"test",s"missing SQL file $file")
-      val ran=LegacyRetirementChild.run(List(Path.of(sys.env("POSTGRES_HOME"),"bin","psql").toString,"-X","-q","-v","ON_ERROR_STOP=1","-f",file.toString),sys.env,connection(name),LegacyRetirementChild.timeout)
+      val ran=LegacyRetirementChild.run(List(Path.of(sys.env("POSTGRES_HOME"),"bin","psql").toString,"-X","-q","-v","ON_ERROR_STOP=1","-f",file.toString),sys.env,connection(name)++session,LegacyRetirementChild.timeout)
       Ran(ran.exit,ran.out,ran.err)
     }
     def one[A](sql: String,args: Sql.Param*)(read: java.sql.ResultSet=>A): A = db.transaction(c=>Sql.one(c,sql,args*)(read).get)
@@ -332,7 +335,7 @@ final class LegacyRetirementScriptsTest extends munit.FunSuite {
     List("proposed-cleanup-identity.sql","proposed-cleanup-formats.sql").foreach { file=>val cleaned=s.psql(oneOff.resolve(file)); assertEquals(cleaned.exit,0,cleaned.err) }
     val legacyFree=s.psql(retainedCheck); assertEquals(legacyFree.exit,0,legacyFree.out+legacyFree.err); assertEquals(legacyFree.value("LF.result"),"legacy-free")
     assertEquals(legacyFree.count("LF.legacy_tables_present"),0L); assertEquals(legacyFree.count("LP.generations.not_retired_old_format"),0L)
-    val gone=s.run("verify"); assertEquals(gone.exit,3); assert(gone.err.contains("does not exist"),gone.err)
+    val gone=s.run("verify"); assertEquals(gone.exit,3); assertEquals(gone.value("LR.result"),"refused-missing-objects"); assert(gone.value("LR.missing").contains("public.ch_checkpoint_namespaces"),gone.out)
     val refusedSchema=s.run("dry-run","--allow-active-connections"); assertEquals(refusedSchema.exit,3)
     // The clean-up constraint holds: a non-retired generation in an old format can no longer be stored.
     assert(scala.util.Try(s.exec("UPDATE ch_generations SET passage_format='LegacyAnnotations' WHERE id=(SELECT published FROM ch_sources WHERE id=?)",seeded.retained)).isFailure)
@@ -425,6 +428,25 @@ final class LegacyRetirementScriptsTest extends munit.FunSuite {
     assertEquals(semanticTotal(s,"b","x"),2)
     assertEquals(pinned(s,"b",seeded.legacyAnnotations,seeded.legacyAnnotationsPin),Left("indexed-view-retired"))
     assertEquals(s.run("verify").exit,0)
+  }}
+  // F1: production runs the scripts as postgres. Chronicle's tables are in public (its schema); here the session's
+  // search_path does not reach public at all, so every statement must resolve its tables itself.
+  test("legacy retirement F1: the scripts and the retained check resolve their tables in Chronicle's schema whatever the session's search_path; a table that does not resolve refuses, never counts zero") { withScratch { s=>
+    seed(s)
+    val elsewhere=Map("PGOPTIONS"->"-c search_path=lr_nowhere")
+    def lines(ran: Ran): List[String] = ran.out.linesIterator.filter(l => (l.startsWith("LR.")||l.startsWith("LP.")) && !l.startsWith("LR.application_name|") && !l.startsWith("LR.size.")).toList
+    val normal=s.run("preflight"); val moved=s.runWith(elsewhere,s.name,"preflight")
+    assertEquals(moved.exit,0,moved.err); assertEquals(lines(moved),lines(normal))
+    assertEquals(moved.count("LR.generations.old_format.published"),2L); assertEquals(moved.count("LR.spaces.v1"),1L)
+    val verify=s.runWith(elsewhere,s.name,"verify"); assertEquals(verify.exit,3); assertEquals(verify.value("LR.result"),"verify-nonzero")
+    val checked=s.psqlWith(elsewhere,Path.of("scripts","check-legacy-free.sql"))
+    assertEquals(checked.exit,3); assertEquals(checked.count("LF.legacy_tables_present"),4L); assertEquals(checked.count("LP.embedding_spaces.not_proven_v2"),1L)
+    s.exec("DROP TABLE ch_reindex_requests CASCADE")
+    val refused=s.run("preflight")
+    assertEquals(refused.exit,3); assertEquals(refused.value("LR.result"),"refused-missing-objects"); assertEquals(refused.value("LR.missing"),"public.ch_reindex_requests")
+    s.exec("DROP TABLE ch_sessions CASCADE")
+    val refusedCheck=s.psql(Path.of("scripts","check-legacy-free.sql"))
+    assertEquals(refusedCheck.exit,3); assertEquals(refusedCheck.value("LF.result"),"refused-missing-objects"); assertEquals(refusedCheck.value("LF.missing"),"public.ch_sessions")
   }}
   test("legacy retirement: an unfinished, unrelocated v1 run with accepted work resumes under the current worker") { withScratch { s=>
     import cats.effect.IO

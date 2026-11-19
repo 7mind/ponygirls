@@ -85,12 +85,16 @@ for m in haystack/migrations/000[1-6]-*.sql; do q -d haystack -f "$m" >/dev/null
   q -d haystack -c "INSERT INTO schema_migrations(version) VALUES ('$(basename "$m" .sql)') ON CONFLICT DO NOTHING" >/dev/null 2>&1 || true; done
 q -d haystack -c "INSERT INTO haystack_contract_cutovers(contract, policy) SELECT 'haystack.api/1.0.0', 'test' WHERE NOT EXISTS (SELECT 1 FROM haystack_contract_cutovers)" >/dev/null 2>&1 || true
 retrieval='CREATE TABLE pony_retrieval_profiles(namespace text NOT NULL, id text NOT NULL, space text NOT NULL, descriptor text NOT NULL, policy bytea NOT NULL, PRIMARY KEY(namespace, id))'
-q -d haystack -c "$retrieval" >/dev/null; q -d manure -c "$retrieval" >/dev/null
+# The production layout (the clone restored from production; manure/backend/src/main/resources/manure-schema.sql):
+# Haystack's tables in public; Manure's in schema manure (the shared retrieval tables land there through the manure
+# role's "$user" schema). The scripts run as postgres, whose default search_path ("$user", public) does not reach them.
+q -d haystack -c "$retrieval" >/dev/null; q -d manure -c 'CREATE SCHEMA manure' -c "${retrieval/pony_retrieval_profiles/manure.pony_retrieval_profiles}" >/dev/null
+rp() { [[ $1 == manure ]] && echo manure.pony_retrieval_profiles || echo pony_retrieval_profiles; }
 v2='["embedding-space-v2","m","r",768,false,"q","d","cosine"]'
 predicate_case() { # name, descriptor, expected verify outcome (zero|nonzero)
   local name=$1 desc=$2 want=$3 db
   for db in haystack manure; do
-    q -d "$db" -c "TRUNCATE pony_retrieval_profiles" -c "INSERT INTO pony_retrieval_profiles VALUES ('ns', 'p1', 's', '$v2', ''), ('ns', 'p2', 's', \$d\$$desc\$d\$, '')" >/dev/null
+    q -d "$db" -c "TRUNCATE $(rp $db)" -c "INSERT INTO $(rp $db) VALUES ('ns', 'p1', 's', '$v2', ''), ('ns', 'p2', 's', \$d\$$desc\$d\$, '')" >/dev/null
     PGDATABASE=$db sh "$dir/run.sh" "$db" verify >"$base/out" 2>&1; local rc=$?
     local got=nonzero; [[ $rc -eq 0 ]] && grep -q 'LR.result|verify-zero' "$base/out" && got=zero
     PGDATABASE=$db sh "$dir/run.sh" "$db" preflight >"$base/pf" 2>&1
@@ -119,6 +123,34 @@ predicate_case v2-incomplete-tuple '["embedding-space-v2"]' nonzero
 predicate_case v2-dimensions-out-of-range '["embedding-space-v2","m","r",4001,false,"q","d","cosine"]' nonzero
 predicate_case v2-dimensions-string '["embedding-space-v2","m","r","768",false,"q","d","cosine"]' nonzero
 predicate_case v2-not-cosine '["embedding-space-v2","m","r",768,false,"q","d","l2"]' nonzero
+# F1: a gate never passes because it could not see what it gates. Every script resolves its tables in the service's
+# schema itself, whatever the session's search_path; an expected table that does not resolve refuses with its marker.
+q -d manure -c "TRUNCATE manure.pony_retrieval_profiles" -c "INSERT INTO manure.pony_retrieval_profiles VALUES ('ns', 'old', 's', '[\"embedding-space-v1\"]', '')" >/dev/null
+PGDATABASE=manure sh "$dir/run.sh" manure verify >"$base/out" 2>&1; rc=$?
+[[ $rc -eq 3 ]] && grep -qx 'LP.retrieval.not_proven_v2|1' "$base/out" && grep -qx 'LR.result|verify-nonzero' "$base/out" && ok f1-manure-seeded-profile-found || ko f1-manure-seeded-profile-found "rc=$rc $(grep -E '^LP.retrieval|^LR.result' "$base/out" | tr '\n' ' ')"
+PGDATABASE=manure sh "$dir/run.sh" manure preflight >"$base/out" 2>&1
+grep -qx 'LP.retrieval.profiles|1' "$base/out" && ok f1-manure-preflight-counts-it || ko f1-manure-preflight-counts-it
+q -d manure -c "TRUNCATE manure.pony_retrieval_profiles" >/dev/null
+missing() { # name, database, command…: an expected table that does not resolve refuses with its own marker (exit 3)
+  local name=$1 db=$2; shift 2; PGDATABASE=$db "$@" >"$base/out" 2>"$base/err"; local rc=$?
+  [[ $rc -eq 3 && $(tail -n 1 "$base/out") =~ ^L[RF]\.result\|refused-missing-objects$ ]] && grep -q '^L[RF]\.missing|' "$base/out" \
+    && ok "$name" || ko "$name" "rc=$rc last=$(tail -n 1 "$base/out")"
+}
+q -d postgres -c 'CREATE DATABASE manure_public' >/dev/null; q -d manure_public -c "$retrieval" >/dev/null   # the old fixture layout
+missing f1-manure-tables-outside-their-schema-refused manure_public sh "$dir/run.sh" manure verify
+missing f1-manure-preflight-outside-their-schema-refused manure_public sh "$dir/run.sh" manure preflight
+q -d postgres -c 'CREATE DATABASE haystack_missing TEMPLATE haystack' >/dev/null; q -d haystack_missing -c 'DROP TABLE pony_retrieval_profiles' >/dev/null
+missing f1-haystack-missing-table-refused haystack_missing sh "$dir/run.sh" haystack verify
+missing f1-haystack-retained-missing-table-refused haystack_missing psql -X -q -v ON_ERROR_STOP=1 -f "$dir/../../../haystack/scripts/check-legacy-free.sql"
+# Haystack in public, the session's search_path elsewhere: the same lines as with the default path; a Node row is found.
+q -d haystack -c "INSERT INTO write_requests(principal_user,token_id,request_id,digest_format,digest,outcome,created_at) VALUES ('u','t',gen_random_uuid(),'haystack-op-v1',repeat('f',64),'{}'::jsonb,now())" >/dev/null 2>"$base/err" || echo "     setup: $(head -1 "$base/err")"
+PGDATABASE=haystack sh "$dir/run.sh" haystack verify >"$base/v1" 2>&1
+PGOPTIONS='-c search_path=lr_nowhere' PGDATABASE=haystack sh "$dir/run.sh" haystack verify >"$base/v2" 2>&1; rc=$?
+[[ $rc -eq 3 ]] && grep -qx 'LP.replay.other_digest_format|1' "$base/v2" && [[ $(grep '^L[PR]\.' "$base/v1" | grep -v application_name) == $(grep '^L[PR]\.' "$base/v2" | grep -v application_name) ]] \
+  && ok f1-haystack-search-path-independent || ko f1-haystack-search-path-independent "rc=$rc $(grep -E '^LP.replay|ERROR' "$base/v2" | head -2 | tr '\n' ' ')"
+PGOPTIONS='-c search_path=lr_nowhere' psql -X -q -v ON_ERROR_STOP=1 -d haystack -f "$dir/../../../haystack/scripts/check-legacy-free.sql" >"$base/out" 2>&1
+grep -qx 'LP.replay.other_digest_format|1' "$base/out" && grep -qx 'LF.replay.column_default_present|1' "$base/out" && ok f1-haystack-retained-search-path-independent || ko f1-haystack-retained-search-path-independent "$(grep -E '^LP.replay|^LF.replay.column|ERROR' "$base/out" | head -2 | tr '\n' ' ')"
+q -d haystack -c "DELETE FROM write_requests WHERE principal_user = 'u'" >/dev/null 2>&1
 # T5: one-off verify and the retained check print the SAME shared lines on the same rows (single definition)
 q -d haystack -c "TRUNCATE pony_retrieval_profiles" -c "INSERT INTO pony_retrieval_profiles VALUES ('ns', 'p1', 's', '$v2', ''), ('ns', 'p2', 's', '[\"embedding-space-v2\"]', '')" >/dev/null
 PGDATABASE=haystack sh "$dir/run.sh" haystack verify >"$base/v1" 2>&1
@@ -156,6 +188,16 @@ if [[ -n $(grep '^LP\.' "$base/v1") && $(grep '^LP\.' "$base/v1") == $(grep '^LP
 # U4: preflight prints the same shared structural lines on the same rows (a tag-only v2 descriptor is not proven)
 PGDATABASE=chronicle_t sh "$dir/run.sh" chronicle preflight >"$base/v3" 2>&1; rc=$?
 if [[ $rc -eq 0 && $(tail -n 1 "$base/v3") == 'LR.result|preflight-complete' && $(grep '^LP\.' "$base/v3") == $(grep '^LP\.' "$base/v1") ]] && grep -qx 'LP.embedding_spaces.not_proven_v2|1' "$base/v3"; then ok u4-preflight-prints-shared-lines; else ko u4-preflight-prints-shared-lines "rc=$rc last=$(tail -n 1 "$base/v3")"; fi
+# F1 (Chronicle in public, the session's search_path elsewhere): the same lines; a missing expected table refuses.
+PGOPTIONS='-c search_path=lr_nowhere' PGDATABASE=chronicle_t sh "$dir/run.sh" chronicle preflight >"$base/v4" 2>&1; rc=$?
+[[ $rc -eq 0 ]] && [[ $(grep '^L[PR]\.' "$base/v4" | grep -vE 'application_name|size\.') == $(grep '^L[PR]\.' "$base/v3" | grep -vE 'application_name|size\.') ]] \
+  && grep -qx 'LP.embedding_spaces.not_proven_v2|1' "$base/v4" && ok f1-chronicle-search-path-independent || ko f1-chronicle-search-path-independent "rc=$rc $(grep -E 'ERROR' "$base/v4" | head -1)"
+PGOPTIONS='-c search_path=lr_nowhere' psql -X -q -v ON_ERROR_STOP=1 -d chronicle_t -f "$dir/../../../chronicle/scripts/check-legacy-free.sql" >"$base/out" 2>&1
+grep -qx 'LP.embedding_spaces.not_proven_v2|1' "$base/out" && grep -qx 'LF.legacy_tables_present|4' "$base/out" && ok f1-chronicle-retained-search-path-independent || ko f1-chronicle-retained-search-path-independent "$(grep -E '^LF.legacy|ERROR' "$base/out" | head -2 | tr '\n' ' ')"
+q -d postgres -c 'CREATE DATABASE chronicle_missing TEMPLATE chronicle_t' >/dev/null; q -d chronicle_missing -c 'DROP TABLE ch_owner_targets CASCADE' >/dev/null
+missing f1-chronicle-missing-table-refused chronicle_missing sh "$dir/run.sh" chronicle preflight
+missing f1-chronicle-verify-missing-table-refused chronicle_missing sh "$dir/run.sh" chronicle verify
+missing f1-chronicle-retained-missing-table-refused chronicle_missing psql -X -q -v ON_ERROR_STOP=1 -f "$dir/../../../chronicle/scripts/check-legacy-free.sql"
 # T5: a retained file without the shared block makes the one-off composition fail (nothing is sent)
 mkdir -p "$base/tree/scripts/one-off" "$base/tree/chronicle/scripts"; cp -r "$dir" "$base/tree/scripts/one-off/legacy-retirement"
 grep -v "shared:chronicle" "$dir/../../../chronicle/scripts/check-legacy-free.sql" >"$base/tree/chronicle/scripts/check-legacy-free.sql"
@@ -270,7 +312,7 @@ expect_last() {
 if [[ -f $OP ]]; then
   [[ -x $OP ]] && ok s4-op-executable || ko s4-op-executable "mode $(stat -c %a "$OP")"
   [[ $(grep -vE '^[[:space:]]*#' "$OP" | grep -c 'kubectl') == 3 ]] && ok s2-kubectl-named-only-in-the-three-helpers || ko s2-kubectl-named-only-in-the-three-helpers
-  q -d manure -c "TRUNCATE pony_retrieval_profiles" >/dev/null
+  q -d manure -c "TRUNCATE manure.pony_retrieval_profiles" >/dev/null
   expect_last t8-success-record-is-last 0 'OP\.result\|ok\|LR\.result\|preflight-complete' normal manure preflight
   grep -q -- '-d manure' "$base/kubectl.calls" && ok s4-op-routes-to-target-database || ko s4-op-routes-to-target-database
   grep -qE '^LR\.restarts\|after\|chronicle=2' "$base/op.out" && ok s4-op-restart-lines || ko s4-op-restart-lines
@@ -278,9 +320,13 @@ if [[ -f $OP ]]; then
   expect_last t9-application-name-before-remote 3 'OP\.result\|failed\|3\|.*' exec-fail manure preflight
   grep -q '^LR\.application_name|lr:manure:preflight:' "$base/op.out" && ok t9-application-name-printed || ko t9-application-name-printed
   expect_last s4-cut-stream-exit0-without-marker-fails 3 'OP\.result\|failed\|3\|.*' cut-no-marker manure preflight
-  q -d manure -c "INSERT INTO pony_retrieval_profiles VALUES ('ns', 'x', 's', '[]', '')" >/dev/null
+  q -d manure -c "INSERT INTO manure.pony_retrieval_profiles VALUES ('ns', 'x', 's', '[]', '')" >/dev/null
   expect_last s4-failure-marker-with-exit0-fails 3 'OP\.result\|failed\|3\|.*' failure-marker manure verify
-  q -d manure -c "TRUNCATE pony_retrieval_profiles" >/dev/null
+  q -d manure -c "TRUNCATE manure.pony_retrieval_profiles" >/dev/null
+  q -d manure -c 'ALTER TABLE manure.pony_retrieval_profiles RENAME TO pony_retrieval_profiles_away' >/dev/null
+  expect_last f1-op-missing-table-is-a-failure 3 'OP\.result\|failed\|3\|.*' normal manure verify
+  grep -qx 'LR.result|refused-missing-objects' "$base/op.out" && ok f1-op-shows-the-refusal || ko f1-op-shows-the-refusal
+  q -d manure -c 'ALTER TABLE manure.pony_retrieval_profiles_away RENAME TO pony_retrieval_profiles' >/dev/null
   expect_last s4-before-probe-failure-sends-nothing 5 'OP\.result\|failed\|5\|.*' probe-before-fail manure preflight
   if grep -q 'LR.tool' "$base/op.out" || grep -q ' exec ' "$base/kubectl.calls"; then ko s4-before-probe-failure-ran-nothing; else ok s4-before-probe-failure-ran-nothing; fi
   expect_last s4-after-probe-failure-reported 6 'OP\.result\|failed\|6\|.*' probe-after-fail manure preflight

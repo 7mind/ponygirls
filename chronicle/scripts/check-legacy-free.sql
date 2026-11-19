@@ -14,6 +14,17 @@
 \else
 \set require_formats t
 \endif
+-- F1: resolve every table in the service's schema whatever the session's search_path (the operator runs this as
+-- postgres), and refuse instead of counting when an expected table does not resolve there.
+SET search_path = pg_catalog, public;
+SELECT coalesce(string_agg(format('%I.%I', 'public', t), ',' ORDER BY t), '') AS lf_missing, count(*) > 0 AS lf_has_missing
+FROM unnest(string_to_array('ch_embedding_spaces ch_generations ch_index_profiles ch_owner_targets ch_schema_migrations ch_sessions ch_sources', ' ')) t WHERE to_regclass(format('%I.%I', 'public', t)) IS NULL \gset
+\if :lf_has_missing
+\echo LF.missing|:lf_missing
+\echo LF.result|refused-missing-objects
+SELECT set_config('lf.missing', :'lf_missing', false) \gset lf_ignored_
+DO $$ BEGIN RAISE EXCEPTION 'legacy-free check refused: expected tables do not resolve (%), so nothing is counted: wrong database, schema or role', current_setting('lf.missing'); END $$;
+\endif
 SET default_transaction_read_only = on;
 SET statement_timeout = '120s';
 SET lock_timeout = '5s';
@@ -62,8 +73,9 @@ SELECT
 SELECT (:lp_spaces + :lp_profiles + :lp_profiles_unbound + :lp_targets + :lp_published + :lp_unregistered + :lp_sessions) = 0 AS lp_identity_clean,
        :lp_formats = 0 AS lp_formats_clean \gset
 -- END shared:chronicle
+-- Absence is the clean state for these four (the clean-up drops them): counted in the service's schema explicitly.
 SELECT count(*) AS lf_tables FROM (VALUES ('ch_retained_profile_reads'), ('ch_checkpoint_namespaces'), ('ch_model_identity_migrations'), ('ch_profile')) t(name)
-WHERE to_regclass(t.name) IS NOT NULL \gset
+WHERE to_regclass(format('%I.%I', 'public', t.name)) IS NOT NULL \gset
 SELECT count(*) AS lf_constraint FROM pg_constraint WHERE conrelid = 'ch_generations'::regclass AND conname = 'ch_generations_current_format_check' \gset
 SELECT count(*) AS lf_tombstones FROM ch_generations WHERE retired \gset
 ROLLBACK;

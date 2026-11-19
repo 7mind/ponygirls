@@ -8,6 +8,17 @@
 \pset format unaligned
 \pset tuples_only on
 \pset fieldsep '|'
+-- F1: resolve every table in the service's schema whatever the session's search_path (the operator runs this as
+-- postgres), and refuse instead of counting when an expected table does not resolve there.
+SET search_path = pg_catalog, public;
+SELECT coalesce(string_agg(format('%I.%I', 'public', t), ',' ORDER BY t), '') AS lf_missing, count(*) > 0 AS lf_has_missing
+FROM unnest(string_to_array('pony_retrieval_profiles schema_migrations write_requests', ' ')) t WHERE to_regclass(format('%I.%I', 'public', t)) IS NULL \gset
+\if :lf_has_missing
+\echo LF.missing|:lf_missing
+\echo LF.result|refused-missing-objects
+SELECT set_config('lf.missing', :'lf_missing', false) \gset lf_ignored_
+DO $$ BEGIN RAISE EXCEPTION 'legacy-free check refused: expected tables do not resolve (%), so nothing is counted: wrong database, schema or role', current_setting('lf.missing'); END $$;
+\endif
 SET default_transaction_read_only = on;
 SET statement_timeout = '120s';
 SET lock_timeout = '5s';
@@ -25,8 +36,7 @@ SELECT count(*) AS lp_replay FROM write_requests WHERE digest_format IS DISTINCT
 -- ["embedding-space-v2", model, revision, dimensions 1..4000, sendDimensions, queryPrefix, documentPrefix, "cosine"]
 -- (what EmbeddingSpace.verified checks structurally); invalid JSON or any NULL/failed test counts as not proven.
 -- Not checked (not reproducible in SQL): the id equals the hash of the compact JSON; the product refuses such a row.
-SELECT to_regclass('pony_retrieval_profiles') IS NOT NULL AS lp_has_retrieval \gset
-\if :lp_has_retrieval
+-- The table is required: the including script has resolved it (no "absent counts as zero").
 SELECT count(*) AS lp_retrieval_profiles,
   count(*) FILTER (WHERE (CASE WHEN pg_input_is_valid(descriptor, 'jsonb') THEN
     CASE WHEN jsonb_typeof(descriptor::jsonb) = 'array' THEN
@@ -38,15 +48,11 @@ SELECT count(*) AS lp_retrieval_profiles,
         AND jsonb_typeof(descriptor::jsonb->6) = 'string' AND jsonb_typeof(descriptor::jsonb->7) = 'string' AND descriptor::jsonb->>7 = 'cosine'
       ELSE false END ELSE false END ELSE false END) IS NOT TRUE) AS lp_retrieval_not_v2
 FROM pony_retrieval_profiles \gset
-\else
-\set lp_retrieval_profiles 0
-\set lp_retrieval_not_v2 0
-\endif
 \echo LP.retrieval.profiles|:lp_retrieval_profiles
 \echo LP.retrieval.not_proven_v2|:lp_retrieval_not_v2
 -- END shared:retrieval
-SELECT count(*) AS lf_default FROM information_schema.columns
-WHERE table_schema = current_schema() AND table_name = 'write_requests' AND column_name = 'digest_format' AND column_default IS NOT NULL \gset
+SELECT count(*) AS lf_default FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+WHERE d.adrelid = 'write_requests'::regclass AND a.attname = 'digest_format' \gset
 SELECT count(*) AS lf_constraint FROM pg_constraint WHERE conrelid = 'write_requests'::regclass AND conname = 'write_requests_current_digest_format_check' \gset
 SELECT count(*) AS lf_marker FROM schema_migrations WHERE version = '0007-node-replay-retired' \gset
 ROLLBACK;

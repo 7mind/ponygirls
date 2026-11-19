@@ -31,11 +31,11 @@ suite() {
 }
 if [[ $which == chronicle || $which == both ]]; then
   CHRONICLE_TEST_JDBC="jdbc:postgresql://127.0.0.1:$port/chronicle" CHRONICLE_REQUIRE_POSTGRES=1 \
-    suite chronicle 5 bash scripts/backend-sbt.sh 'chronicleServer/testOnly chronicle.LegacyRetirementScriptsTest' || status=1
+    suite chronicle 6 bash scripts/backend-sbt.sh 'chronicleServer/testOnly chronicle.LegacyRetirementScriptsTest' || status=1
 fi
 if [[ $which == haystack || $which == both ]]; then
   HAYSTACK_TEST_JDBC="jdbc:postgresql://127.0.0.1:$port/haystack_scala_test" HAYSTACK_TEST_DB_USER=postgres HAYSTACK_TEST_DB_PASSWORD_FILE="$base/password" \
-    suite haystack 5 bash scripts/backend-sbt.sh 'haystackServer/testOnly haystack.storage.LegacyRetirementScriptsTest' || status=1
+    suite haystack 6 bash scripts/backend-sbt.sh 'haystackServer/testOnly haystack.storage.LegacyRetirementScriptsTest' || status=1
 fi
 if [[ $which == drop || $which == both ]]; then
   bash scripts/one-off/legacy-retirement/test-drop-databases.sh || status=1

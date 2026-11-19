@@ -195,6 +195,25 @@ fragment() {
     { print }' "$sql/$1"
 }
 repeat() { i=0; while [ "$i" -lt "$max_batches" ]; do fragment "$1"; i=$((i + 1)); done; }
+# F1: no statement depends on the session's search_path. Every session sets it to pg_catalog and the ONE schema that
+# holds the target's tables (the production layout: Chronicle and Haystack in public; Manure in its fixed namespace
+# manure, manure-schema.sql), then requires every table its scripts read or write to resolve there. A table that does
+# not resolve ends the session with LR.result|refused-missing-objects (exit 3), never with a count of zero.
+service_schema() { case $1 in chronicle|haystack) echo public ;; manure) echo manure ;; esac; }
+expected_tables() {
+  case $1 in
+    chronicle) echo 'ch_annotation_attempts ch_checkpoint_namespaces ch_chunks ch_context_spans ch_embedding_spaces ch_generation_tags ch_generations ch_index_checkpoints ch_index_profiles ch_jobs ch_model_identity_migrations ch_owner_targets ch_problem_passages ch_problem_spans ch_profile ch_reindex_requests ch_retained_profile_reads ch_schema_migrations ch_search_chunks ch_sessions ch_sources ch_users' ;;
+    haystack) echo 'haystack_contract_cutovers item_revisions items pony_retrieval_profiles schema_migrations write_requests' ;;
+    manure) echo 'pony_retrieval_profiles' ;;
+  esac
+}
+resolve_tables() { # schema, tables: the search_path and the fail-closed presence check
+  printf "SET search_path = pg_catalog, %s;\n" "$1"
+  printf "SELECT coalesce(string_agg(format('%%I.%%I', '%s', t), ',' ORDER BY t), '') AS lr_missing, count(*) > 0 AS lr_has_missing FROM unnest(string_to_array('%s', ' ')) t WHERE to_regclass(format('%%I.%%I', '%s', t)) IS NULL \\gset\n" "$1" "$2" "$1"
+  printf '%s\n' '\if :lr_has_missing' '\echo LR.missing|:lr_missing' '\echo LR.result|refused-missing-objects' \
+    "SELECT set_config('lr.missing', :'lr_missing', false) \\gset lr_ignored_" \
+    "DO \$\$ BEGIN RAISE EXCEPTION 'legacy-retirement refused: expected tables do not resolve (%), so nothing is counted: wrong database, schema or role', current_setting('lr.missing'); END \$\$;" '\endif'
+}
 flag() { printf '\\set %s %s\n' "$1" "$2"; }
 
 compose() {
@@ -209,6 +228,7 @@ compose() {
   if [ "$mode" = apply ] && [ "$backup_reference" = "$no_backup_literal" ]; then printf '%s\n' '\echo LR.backup|none (owner decision Q102)'; fi
   flag lr_skip_formats "$skip_formats"; flag lr_retire_history "$retire_history"; flag lr_retire_published "$retire_published"
   printf '\\echo LR.tool|legacy-retirement %s %s\n' "$target" "$mode"
+  case $mode in fence|unfence|fence-status|sessions|terminate) ;; *) resolve_tables "$(service_schema "$target")" "$(expected_tables "$target")" ;; esac
   case $mode in
     preflight) fragment preflight.sql ;;
     verify) fragment verify.sql ;;
