@@ -300,11 +300,11 @@ smind.hm.dev.llm.generalContext = {
 };
 ```
 
-All sections and rules are enabled by default, with the original content and
-order. `text` replaces the complete section, including its Markdown heading,
-and takes precedence over that section's rule flags. Disabling a section
-removes its heading and all its rules regardless of their individual flags.
-Sections sort by ascending `order` (defaults are 100, 200, …, 1100);
+All sections and rules are enabled by default. `text` replaces the complete
+section, including its Markdown heading, and takes precedence over that section's
+rule flags. Disabling a section removes its heading and all its rules regardless
+of their individual flags.
+Sections sort by ascending `order` (defaults are 100, 200, …, 1200);
 equal orders sort by section name. Existing numbered headings are preserved
 when disabling or reordering sections. The supported section names, in default
 order, are:
@@ -320,6 +320,7 @@ order, are:
 - `code-style`
 - `project-structure`
 - `tools`
+- `code-navigation` — CodeGraph guidance for Claude Code, Codex, and Pi; disable it with `generalContext.sections.code-navigation.enable = false`.
 
 Finer controls use
 `generalContext.sections.<section>.rules.<rule>.enable`. The supported rules

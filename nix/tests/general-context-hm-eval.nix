@@ -60,6 +60,7 @@ let
   commitByDefault = "Commit policy (commit-by-default): Commit completed, verified task changes by default unless the user says otherwise. Only commit your own changes. This does not authorize pushing, force operations, or history rewriting.";
   disabled = evaluate { enable = false; };
   withoutHammer = evaluate { sections.hammer-mode.enable = false; };
+  withoutCodeNavigation = evaluate { sections.code-navigation.enable = false; };
   replaced = evaluate { sections.hammer-mode.text = "Kai's replacement"; };
   reordered = evaluate { sections.tools.order = 0; };
   tied = evaluate {
@@ -114,8 +115,11 @@ let
   before = first: second: text:
     builtins.match ".*${first}.*${second}.*" text != null;
 in
-assert builtins.hashString "sha256" contexts.general == "2de8a51797ad32b715391673ac710c436095700d86d87dc39834c55c8313a558";
+assert builtins.hashString "sha256" contexts.general == "bd163fcc06b1be549b41ad050e2b77059599e7b16c921cd22b92e9d768e9603b";
 assert general == contexts.general;
+assert lib.hasInfix "## Code navigation\n\nWhen CodeGraph is available, use `codegraph_explore` with an explicit absolute `projectPath`" (memory defaults);
+assert !(lib.hasInfix "## Code navigation" (memory withoutCodeNavigation));
+assert lib.hasInfix "## 10. Tools" (memory withoutCodeNavigation);
 assert lib.hasInfix "**Design before editing.** For nontrivial features, fixes, and refactors:" general;
 assert lib.hasInfix "not necessarily the smallest diff" general;
 assert lib.hasInfix "correct observable outcome" general;
