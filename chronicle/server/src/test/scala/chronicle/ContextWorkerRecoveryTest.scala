@@ -35,6 +35,7 @@ class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
   def headSnapshot(reader: String,id: UUID): IngestRequest=delegate.headSnapshot(reader,id)
   def claim(profiles: Set[String],scope: ClaimScope,lease: Int,large: LargeJobs): Option[Claim]=delegate.claim(profiles,scope,lease,large)
   def renew(c: Claim,lease: Int): Boolean=delegate.renew(c,lease)
+  def defer(c: Claim,total: Int): Boolean=delegate.defer(c,total)
   def progress(c: Claim,done: Int,total: Int): Boolean=delegate.progress(c,done,total)
   def publishProblems(c: Claim,p: ProblemsPublication): Boolean=delegate.publishProblems(c,p)
   def fail(c: Claim,code: String): Unit=delegate.fail(c,code)
@@ -435,7 +436,7 @@ final class DummyContextWorkerRecoveryTest extends ContextWorkerRecoveryContract
   }
   test("BG/GoodCommunication regression: one large job runs at a time; another large job stays queued while lanes take small ones") { withFixture { f =>
     val config=f.config.copy(indexing=f.config.indexing.copy(annotationSessions=2))
-    def large(owner: String): IngestRequest = request((0 to LargeJobs.messages).map(i => "user"->s"$owner message $i").toList)
+    def large(owner: String): IngestRequest = request((0 to LargeJobs.windows*ProblemPassages.maximumWindowFragments).map(i => "user"->s"$owner message $i").toList)
     val first=f.archive().ingest("a",large("a")); val second=f.archive().ingest("b",large("b"))
     (for {
       blocked <- Deferred[IO,Unit]
@@ -465,7 +466,7 @@ final class DummyContextWorkerRecoveryTest extends ContextWorkerRecoveryContract
       fiber <- worker(archive,config,model,embedding).run.start
       _ <- blocked.get.timeout(10.seconds)
       _ <- skipped.get.timeout(10.seconds)
-      _ <- IO(assertEquals(List(first,second).map(receipt => f.evidence(receipt.jobId).claims).sorted,List(0,1),"the other large job is not claimed"))
+      _ <- IO(assertEquals(List(first,second).map(receipt => f.evidence(receipt.jobId).claims).sorted,List(0,1),"the other large job is deferred without an attempt and then passed by"))
       _ <- release.complete(())
       _ <- both.get.timeout(30.seconds)
       _ <- fiber.cancel

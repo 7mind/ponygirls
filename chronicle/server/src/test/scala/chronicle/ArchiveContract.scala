@@ -177,7 +177,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
       val c=j.claim; val selected=target(c.owner)
       val scoped=scope match { case ClaimScope.AllOwners => true; case ClaimScope.Owner(owner) => c.owner==owner }
       scoped && enabled(c.owner) && !removed(c.sessionId) && profiles(c.profile) && selected.profile==c.profile && sources.values.exists(h => h.id==c.sessionId && h.revision==c.revision) &&
-        (large==LargeJobs.Admitted || c.snapshot.messages.size<=LargeJobs.messages)
+        (large==LargeJobs.Admitted || !j.total.exists(_>LargeJobs.windows))
     }
     jobs.values.filter(j => eligible(j) && j.state==JobState.Running && !j.lease.isAfter(Instant.now()) && j.attempts>=Jobs.attemptLimit).foreach { j => j.state=JobState.Failed; j.claim=j.claim.copy(fence=j.claim.fence+1); failedStages.remove(j.claim.jobId) }
     jobs.values.find(j => eligible(j) && j.attempts<Jobs.attemptLimit && (j.state==JobState.Queued || (j.state==JobState.Running && !j.lease.isAfter(Instant.now())))).map { j =>
@@ -195,6 +195,11 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     if(!valid(c)) false else {
       val j=jobs(c.jobId)
       if(j.completed>completedWindows || j.total.exists(_!=totalWindows)) false else { j.completed=completedWindows; j.total=Some(totalWindows); true }
+    }
+  }
+  def defer(c: Claim,totalWindows: Int): Boolean = synchronized {
+    if(!valid(c)) false else {
+      val j=jobs(c.jobId); j.state=JobState.Queued; j.attempts-=1; j.lease=Instant.EPOCH; j.claim=j.claim.copy(fence=j.claim.fence+1); j.completed=0; j.total=Some(totalWindows); true
     }
   }
   def renew(c: Claim,leaseSeconds: Int): Boolean = synchronized {

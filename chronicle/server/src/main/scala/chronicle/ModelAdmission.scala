@@ -5,7 +5,7 @@ import cats.effect.std.Semaphore
 
 trait ModelAdmission {
   def annotationSession: Resource[IO,Unit]
-  /** True while this lane may take a large job: at most IndexingCapacity.largeJobs run at once. Every running job holds
+  /** True while this lane may take a large job (LargeJobs): at most IndexingCapacity.largeJobs run at once. Every running job holds
     * its revision's messages and all its accumulated pieces until publication; with four large ones the live heap
     * reached 1.6-2 GB and each full collection of the native image paused HTTP for 300-630 ms. */
   def largeJob: Resource[IO,Boolean]

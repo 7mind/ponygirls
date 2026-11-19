@@ -127,12 +127,15 @@ final class OwnerLeaseBoundaryTest extends munit.FunSuite {
       assertEquals(claim.snapshot,a.headSnapshot("a",receipt.sessionId).copy(files=Nil))
     }
   }
-  test("Effectual GoodCommunication: a claim that skips large jobs leaves them queued and takes a small one") {
+  test("Effectual GoodCommunication: a deferred large job returns to the queue without its attempt and only claims that admit large jobs take it") {
     OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
-      val large=a.ingest("a",messages(Fixtures.snapshot(),LargeJobs.messages+1)); val small=a.ingest("a",messages(Fixtures.snapshot(),1))
-      assertEquals(a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300,LargeJobs.Skipped).map(_.jobId),Some(small.jobId))
-      assertEquals(db.transaction(x => Sql.one(x,"SELECT state,attempts FROM ch_jobs WHERE id=?",large.jobId)(r => (r.getString(1),r.getInt(2)))),Some(("Queued",0)))
+      val large=a.ingest("a",Fixtures.snapshot()); val small=a.ingest("b",Fixtures.snapshot())
+      val claim=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300,LargeJobs.Skipped).get
+      assert(a.defer(claim,LargeJobs.windows+1))
+      assertEquals(db.transaction(x => Sql.one(x,"SELECT state,attempts,total_windows,lease_until IS NULL FROM ch_jobs WHERE id=?",large.jobId)(r => (r.getString(1),r.getInt(2),r.getInt(3),r.getBoolean(4)))),Some(("Queued",0,LargeJobs.windows+1,true)))
+      assert(!a.defer(claim,LargeJobs.windows+1),"the deferred claim is stale")
       assertEquals(a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300,LargeJobs.Skipped),None)
+      assertEquals(a.claim(catalog.knownProfiles,ClaimScope.AllOwners,300,LargeJobs.Skipped).map(_.jobId),Some(small.jobId))
       assertEquals(a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300,LargeJobs.Admitted).map(_.jobId),Some(large.jobId))
     }
   }

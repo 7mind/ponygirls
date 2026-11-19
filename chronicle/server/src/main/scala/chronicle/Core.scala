@@ -213,15 +213,14 @@ enum ClaimScope {
   case AllOwners
   case Owner(owner: String)
 }
-/** Whether a claim may take a large job (LargeJobs.windows): a skipped one stays queued for a later claim. */
+/** Whether a claim may take a large job (more than LargeJobs.windows): a claim that may not defers one it finds, and then
+  * passes it by; the job waits in the queue for a claim that may. */
 enum LargeJobs {
   case Admitted
   case Skipped
 }
 object LargeJobs {
-  /** A job is large when its revision's messages alone, one fragment each, fill more windows than this. */
   val windows: Int = 100
-  val messages: Int = windows*ProblemPassages.maximumWindowFragments
 }
 trait SessionArchive extends IndexCheckpoints {
   def knownProfiles: Set[String]
@@ -230,6 +229,8 @@ trait SessionArchive extends IndexCheckpoints {
   def headSnapshot(reader: String, id: UUID): IngestRequest
   def claim(profiles: Set[String], scope: ClaimScope, leaseSeconds: Int, large: LargeJobs): Option[Claim]
   final def claim(profiles: Set[String], scope: ClaimScope, leaseSeconds: Int): Option[Claim] = claim(profiles,scope,leaseSeconds,LargeJobs.Admitted)
+  /** Returns a claimed job to the queue without counting the attempt, recording its window count. */
+  def defer(claim: Claim, totalWindows: Int): Boolean
   def renew(claim: Claim, leaseSeconds: Int): Boolean
   def progress(claim: Claim, completedWindows: Int, totalWindows: Int): Boolean
   def publishProblems(claim: Claim, publication: ProblemsPublication): Boolean

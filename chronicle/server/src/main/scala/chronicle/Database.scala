@@ -254,8 +254,8 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
         }
         val source=Sql.one(c,s"""SELECT s.id,s.revision FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
           SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.attempts<${Jobs.attemptLimit} AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp())))
-          AND (? OR NOT EXISTS(SELECT 1 FROM ch_revision_info i WHERE i.session_id=s.id AND i.revision=s.revision AND i.message_count>?))
-          ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",owner,target.profile,large==LargeJobs.Admitted,LargeJobs.messages)(r => (r.getObject(1,classOf[UUID]),r.getInt(2)))
+          AND (? OR NOT EXISTS(SELECT 1 FROM ch_jobs d WHERE d.session_id=s.id AND d.revision=s.revision AND d.profile=? AND d.total_windows>?))
+          ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",owner,target.profile,large==LargeJobs.Admitted,target.profile,LargeJobs.windows)(r => (r.getObject(1,classOf[UUID]),r.getInt(2)))
         source.flatMap { case (id,revision) =>
           Sql.one(c,s"""UPDATE ch_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
             WHERE id=(SELECT id FROM ch_jobs WHERE session_id=? AND revision=? AND profile=? AND attempts<${Jobs.attemptLimit} AND (state='Queued' OR (state='Running' AND lease_until<clock_timestamp())) FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,fence,run_id""",leaseSeconds,id,revision,target.profile) { row =>
@@ -337,6 +337,12 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     Check(completedWindows>=0 && totalWindows>=completedWindows,"invalid","invalid indexing progress")
     db.transaction { c =>
       current(c,claim) && lockJob(c,claim) && Sql.exec(c,s"UPDATE ch_jobs SET completed_windows=?,total_windows=? WHERE $validJob AND completed_windows<=? AND (total_windows IS NULL OR total_windows=?)",(List[Sql.Param](completedWindows,totalWindows)++jobArgs(claim)++List(completedWindows,totalWindows))*)==1
+    }
+  }
+  def defer(claim: Claim,totalWindows: Int): Boolean = {
+    Check(totalWindows>=0,"invalid","invalid indexing progress")
+    db.transaction { c =>
+      current(c,claim) && lockJob(c,claim) && Sql.exec(c,s"UPDATE ch_jobs SET state='Queued',attempts=attempts-1,lease_until=NULL,fence=fence+1,completed_windows=0,total_windows=? WHERE $validJob",(List[Sql.Param](totalWindows)++jobArgs(claim))*)==1
     }
   }
   def renew(claim: Claim,leaseSeconds: Int): Boolean = {

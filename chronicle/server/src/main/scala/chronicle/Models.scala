@@ -183,10 +183,17 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     }
     total
   }
-  private def passages(claim: Claim): IO[Unit] = IO.blocking {
+  private def passages(claim: Claim,large: LargeJobs): IO[Unit] = IO.blocking {
     val source=ProblemPassages.Source(claim.snapshot.messages)
     (source,count(source))
   }.flatMap { (source,total) =>
+    if(total>LargeJobs.windows && large==LargeJobs.Skipped) deferLarge(claim,total) else indexWindows(claim,source,total)
+  }
+  /** Back to the queue with its window count and without the attempt: claims that skip large jobs pass it by. */
+  private def deferLarge(claim: Claim,total: Int): IO[Unit] =
+    IO.blocking(Check(archive.defer(claim,total),"stale-claim","indexing claim is no longer current")) *>
+      IO(logger.info(s"large job deferred jobId=${claim.jobId} totalWindows=$total largeJobWindows=${LargeJobs.windows}"))
+  private def indexWindows(claim: Claim,source: ProblemPassages.Source,total: Int): IO[Unit] = {
     val windows=new Windows(claim,total)
     def loop(state: ProblemPassages.State,publication: ProblemsPublication.Builder,index: Int): IO[Unit] = IO.defer {
       source.next(state.nextSource) match {
@@ -212,8 +219,8 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     }
     windows.report(0) *> loop(ProblemPassages.State.start(claim.sessionId,claim.runId),ProblemsPublication.empty,0)
   }
-  private def process(claim: Claim): IO[Unit] = {
-    val work=passages(claim)
+  private def process(claim: Claim,large: LargeJobs): IO[Unit] = {
+    val work=passages(claim,large)
     val renew=(IO.sleep(30.seconds) *> IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current"))).foreverM
     IO.race(work,renew).void.handleErrorWith { failure =>
       val (stage,error)=failure match { case StagedFailure(stage,error) => (Some(stage),error); case error => (None,error) }
@@ -247,7 +254,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       val large=if(admitted) LargeJobs.Admitted else LargeJobs.Skipped
       snapshots.claim(IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds,large))).redeemWith(claimFailed,{
         case None => IO.pure(Worker.Iteration.Idle)
-        case Some(claim) => process(claim).as(Worker.Iteration.Processed)
+        case Some(claim) => process(claim,large).as(Worker.Iteration.Processed)
       })
     }
   }

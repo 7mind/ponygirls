@@ -24,6 +24,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     def headSnapshot(reader: String,id: UUID): IngestRequest = delegate.headSnapshot(reader,id)
     def claim(profiles: Set[String],scope: ClaimScope,lease: Int,large: LargeJobs): Option[Claim] = delegate.claim(profiles,scope,lease,large)
     def renew(claim: Claim,lease: Int): Boolean = delegate.renew(claim,lease)
+    def defer(claim: Claim,total: Int): Boolean = delegate.defer(claim,total)
     def progress(claim: Claim,done: Int,total: Int): Boolean = synchronized { progressCalls+=((done,total)); delegate.progress(claim,done,total) }
     def publishProblems(claim: Claim,publication: ProblemsPublication): Boolean = synchronized { publications+=publication; delegate.publishProblems(claim,publication) }
     def fail(claim: Claim,code: String): Unit = synchronized { failures+=code; delegate.fail(claim,code) }
@@ -237,6 +238,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
         def headSnapshot(owner: String,id: UUID)=delegate.headSnapshot(owner,id)
         def claim(p: Set[String],s: ClaimScope,l: Int,large: LargeJobs)=delegate.claim(p,s,l,large)
         def renew(c: Claim,l: Int)=delegate.renew(c,l)
+        def defer(c: Claim,t: Int)=delegate.defer(c,t)
         def progress(c: Claim,n: Int,t: Int)=delegate.progress(c,n,t)
         def publish(c: Claim,chunks: List[IndexedChunk])=delegate.publish(c,chunks)
         def publishProblems(c: Claim,p: ProblemsPublication): Boolean = {
