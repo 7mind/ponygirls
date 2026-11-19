@@ -146,8 +146,9 @@ outlet over a kept list and module-owned sign-out, and no native dialogs. Needs 
 `HAYSTACK_FIXTURE_ADMIN_AUTHORIZED=1`, or `HAYSTACK_TEST_PROVISION_COMMAND`), seeds records through the public
 API and drives the built `web/dist` in pinned Chromium: the document as the only scroller with the sticky view bar
 and table header, sorting, infinite loading to an explicit end marker, append failure and retry, legacy URL
-migration, Back from a record, live-change announcement, the query editor (filter shortcuts, completions, draft
-versus applied query, analyzer rejection) and no native dialogs. Fault and timing scenarios use page routes and
+migration, Back from a record, live-change announcement, Search of the applied query as the list's refresh (also
+at the address without a fragment; "No changes" when nothing changed), the query editor (filter shortcuts,
+completions, draft versus applied query, analyzer rejection) and no native dialogs. Fault and timing scenarios use page routes and
 Playwright's clock.
 
 ## Viewport layout regression

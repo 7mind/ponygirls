@@ -96,9 +96,26 @@ try {
   const counter = (page) => list(page).locator(".viewbar-meta");
   const toEnd = (page) => page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   const frames = (page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  /** Route changes (hashchange) are held while `holdRoutes()` is in effect and delivered by `releaseRoutes()`. */
+  const holdableRoutes = () => {
+    let holding = false;
+    const held = [];
+    window.heldRoutes = () => held.length;
+    window.holdRoutes = () => { holding = true; };
+    window.releaseRoutes = () => { holding = false; for (const deliver of held.splice(0)) deliver(); };
+    const add = window.addEventListener.bind(window);
+    window.addEventListener = (type, listener, options) => {
+      if (type !== "hashchange") { add(type, listener, options); return; }
+      add(type, (event) => {
+        const deliver = () => { if (typeof listener === "function") listener.call(window, event); else if (listener !== null) listener.handleEvent(event); };
+        if (holding) held.push(deliver); else deliver();
+      }, options);
+    };
+  };
   /** A signed-in page; native dialogs and page errors are recorded and asserted absent by `done` (spec §8 item 7). */
-  async function open({ viewport = DESKTOP, hash = "#/browse", clock = false, routeLive = false } = {}) {
+  async function open({ viewport = DESKTOP, hash = "#/browse", clock = false, routeLive = false, holdRoutes = false } = {}) {
     const context = await browser.newContext({ viewport });
+    if (holdRoutes) await context.addInitScript(holdableRoutes);
     await context.addInitScript(() => {
       window.nativeDialogs = [];
       for (const name of ["alert", "confirm", "prompt"]) window[name] = (...args) => { window.nativeDialogs.push([name, ...args]); return null; };
@@ -481,22 +498,7 @@ try {
 
   await check("delayed search navigation preserves a newer query draft", async () => {
     const context = await browser.newContext();
-    // Route changes (hashchange) are held while `holdRoutes()` is in effect and delivered by `releaseRoutes()`.
-    await context.addInitScript(() => {
-      let holding = false;
-      const held = [];
-      window.heldRoutes = () => held.length;
-      window.holdRoutes = () => { holding = true; };
-      window.releaseRoutes = () => { holding = false; for (const deliver of held.splice(0)) deliver(); };
-      const add = window.addEventListener.bind(window);
-      window.addEventListener = (type, listener, options) => {
-        if (type !== "hashchange") { add(type, listener, options); return; }
-        add(type, (event) => {
-          const deliver = () => { if (typeof listener === "function") listener.call(window, event); else if (listener !== null) listener.handleEvent(event); };
-          if (holding) held.push(deliver); else deliver();
-        }, options);
-      };
-    });
+    await context.addInitScript(holdableRoutes);
     const page = await context.newPage();
     try {
       await page.goto(`${base}/#/browse`);
@@ -719,6 +721,36 @@ try {
     await warning.getByRole("button", { name: "Reconnect now", exact: true }).click();
     await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
     await warning.waitFor({ state: "detached" });
+    await done();
+  });
+
+  await check("browse: Search with the applied query searches it again, also at the address without a fragment, and says when nothing changed; a sort back to it before the previous sort is shown is applied", async () => {
+    // The address the dashboard is opened at, and stays at after sign-in, has no fragment; it shows Browse.
+    const { page, done } = await open({ hash: "", holdRoutes: true });
+    await waitRows(page, PAGE);
+    // A scrolled list announces a live change instead of applying it: only the Search can show the new record.
+    await page.evaluate(() => window.scrollTo(0, 300));
+    const title = "Written after the list was loaded";
+    await put("refresh:probe", { title });
+    await list(page).getByRole("button", { name: "Records changed · Show", exact: true }).waitFor();
+    await searchButton(page).click();
+    await firstTitle(page, title);
+    await waitRows(page, PAGE);
+    const searches = await page.evaluate(() => window.listSearches.length);
+    await searchButton(page).click();
+    await counter(page).getByText(`No changes · ${PAGE} loaded · more available`, { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.listSearches.length), searches + 1, "the unchanged list was searched again");
+    assert.equal((await titles(page))[0], title);
+    // A sort back to the route shown before the previous sort's route is shown (a busy page delivers it late).
+    await page.evaluate(() => window.holdRoutes());
+    await list(page).getByRole("button", { name: "Sort by Record", exact: true }).click();
+    await page.waitForFunction(() => window.heldRoutes() > 0);
+    await list(page).getByRole("button", { name: "Sort by Modified", exact: true }).click();
+    await page.evaluate(() => window.releaseRoutes());
+    await page.waitForFunction(() => location.hash === "#/browse");
+    await waitRows(page, PAGE);
+    assert.equal(await list(page).getByRole("columnheader", { name: "Modified" }).getAttribute("aria-sort"), "descending", "the last sort is applied");
+    assert.equal((await titles(page))[0], title);
     await done();
   });
 } finally { await cleanup(); }

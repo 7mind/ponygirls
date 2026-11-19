@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { api, ApiError, AuthError, NetworkError, summaryKey, type SearchSort, type SearchSortField, type Summary } from "./api";
-import { browseHash, PRESETS, sameBrowseState, type BrowseState, type Preset } from "./browse-state";
+import { browseHash, PRESETS, readBrowseState, sameBrowseState, type BrowseState, type Preset } from "./browse-state";
 import { useConnection, useLiveUpdates } from "./Live";
 import { connectionLabel } from "./connection";
 import { UiIcon } from "./Masthead";
@@ -14,11 +14,12 @@ const PREFETCH_MARGIN = "0px 0px 240px 0px";
 const SEARCH_LIMIT_MAX = 100;
 const SKELETON_ROWS = 14;
 /**
- * first: a new query or sort (the list restarts); append: the next page of the chain; refresh: reload the first
- * `rows` rows of the same query in place — rows stay until the new chain arrives and the first visible row keeps
- * its position (live updates, spec §5 rule 6).
+ * first: a new query or sort (the list restarts); `shown` is set when the route shown is searched again (Search with
+ * the applied query): its settled first page (`firstPage`), compared with the answer so that an unchanged list says so.
+ * append: the next page of the chain; refresh: reload the first `rows` rows of the same query in place — rows stay
+ * until the new chain arrives and the first visible row keeps its position (live updates, spec §5 rule 6).
  */
-type Load = { kind: "first" } | { kind: "append"; cursor: string } | { kind: "refresh"; rows: number };
+type Load = { kind: "first"; shown: string | null } | { kind: "append"; cursor: string } | { kind: "refresh"; rows: number };
 /** The load whose failure is shown: its Retry repeats it. */
 type Failure = { load: Load["kind"]; message: string };
 interface Anchor { key: string; top: number }
@@ -75,6 +76,9 @@ const VISIBLE_TAGS = 2;
 const DATE_FORMAT: Intl.DateTimeFormatOptions = { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
 
 const records = (count: number) => `${count} ${count === 1 ? "record" : "records"}`;
+/** The first page of a list: its records at their revisions, and whether more follow. */
+const firstPage = (items: readonly Summary[], more: boolean) =>
+  JSON.stringify([items.slice(0, PAGE_SIZE).map((item) => [summaryKey(item), item.revision]), more || items.length > PAGE_SIZE]);
 const visible = (element: Element | null) => element !== null && element.getClientRects().length > 0;
 
 function SkeletonCell({ shape }: { shape: Skeleton }) {
@@ -202,6 +206,8 @@ export function Browse({ initial, preset, userId, activityProjectId, onOpen, onA
   // The syntax dialog is rendered only while open: a closed one would still be found by its label ("Query syntax").
   const [syntaxOpen, setSyntaxOpen] = useState(false);
   const [changed, setChanged] = useState(false);
+  // The last Search of the route shown answered its first page exactly as the reader saw it.
+  const [unchanged, setUnchanged] = useState(false);
   // A submitted query the server's analyzer rejected: it is not applied, the list keeps the applied query's rows.
   const [rejected, setRejected] = useState<{ query: string; diagnostics: Diagnostic[] } | null>(null);
   const validation = useRef(0);
@@ -268,6 +274,7 @@ export function Browse({ initial, preset, userId, activityProjectId, onOpen, onA
     setBusy(true);
     setFailure(null);
     setDiagnostics([]);
+    setUnchanged(false);
     if (load.kind !== "append") setChanged(false);
     refreshing.current = load.kind === "refresh";
     if (load.kind === "first") {
@@ -298,6 +305,7 @@ export function Browse({ initial, preset, userId, activityProjectId, onOpen, onA
       setItems((previous) => [...new Map([...(load.kind === "append" ? previous : []), ...rows].map((item) => [summaryKey(item), item])).values()]);
       continuation.current = next;
       setCursor(next);
+      if (load.kind === "first" && load.shown !== null) setUnchanged(firstPage(rows, next !== undefined) === load.shown);
       if (load.kind !== "append") phase.current = "settled";
       refreshing.current = false;
     } catch (err) {
@@ -348,11 +356,12 @@ export function Browse({ initial, preset, userId, activityProjectId, onOpen, onA
     const back = hash === null || fresh.current ? undefined : kept.current.get(hash);
     fresh.current = false;
     if (hash !== null) kept.current.delete(hash);
-    if (back === undefined) { void run(initial, { kind: "first" }); return; }
+    if (back === undefined) { void run(initial, { kind: "first", shown: null }); return; }
     sequence.current++;
     pending.current = null;
     refreshing.current = false;
     restored.current = back;
+    setUnchanged(false);
     setBusy(false);
     setFailure(back.failure);
     if (back.tag === "failed") {
@@ -405,10 +414,18 @@ export function Browse({ initial, preset, userId, activityProjectId, onOpen, onA
     continuation.current = undefined;
     setBusy(true);
     applied.current = state;
+    // The route shown is searched again where it is: navigating to it would not search (its address may also be spelled
+    // otherwise than `browseHash`: the address without a fragment shows Browse). An address another Search or sort has
+    // just set, whose route is not shown yet, is replaced by this one.
+    if (shown.current !== null && sameBrowseState(state, shown.current)) {
+      void run(state, { kind: "first", shown: phase.current === "settled" ? firstPage(items, cursor !== undefined) : null });
+      if (!sameBrowseState(state, readBrowseState(location.hash, preset))) location.hash = browseHash(state, preset);
+      return;
+    }
     const hash = browseHash(state, preset);
     // An explicit Search or sort searches again even where a kept route exists.
     if (location.hash !== hash) { fresh.current = true; location.hash = hash; return; }
-    void run(state, { kind: "first" });
+    void run(state, { kind: "first", shown: null });
   }
 
   function changeSort(field: SearchSortField) {
@@ -452,7 +469,7 @@ export function Browse({ initial, preset, userId, activityProjectId, onOpen, onA
   }
 
   function retry(load: Failure["load"]) {
-    if (load === "first") void run(applied.current, { kind: "first" });
+    if (load === "first") void run(applied.current, { kind: "first", shown: null });
     else if (load === "refresh") void refresh();
     else if (cursor !== undefined) void run(applied.current, { kind: "append", cursor });
   }
@@ -465,12 +482,13 @@ export function Browse({ initial, preset, userId, activityProjectId, onOpen, onA
   const loadingFirst = busy && items.length === 0 && failure === null;
   const empty = !busy && failure === null && items.length === 0;
   const inboxEmpty = empty && preset === "inbox" && appliedQuery === PRESETS.inbox.query;
+  const listed = empty ? inboxEmpty ? "Nothing to review" : "No matches"
+    : cursor === undefined ? `All ${records(items.length)} loaded` : `${items.length} loaded · more available`;
   const counter = rejected !== null ? `Query not applied · ${items.length} loaded`
     : migration || (firstFailure !== null && diagnostics.length === 0) ? "Not loaded"
     : firstFailure !== null ? "Query not applied"
     : loadingFirst ? "Loading records…"
-    : empty ? inboxEmpty ? "Nothing to review" : "No matches"
-    : cursor === undefined ? `All ${records(items.length)} loaded` : `${items.length} loaded · more available`;
+    : unchanged ? `No changes · ${listed}` : listed;
   const includeArchived = appendFilter(appliedQuery, "archived", "all");
 
   return (<section ref={section} className="browse" aria-labelledby={headingId} aria-busy={busy}>
