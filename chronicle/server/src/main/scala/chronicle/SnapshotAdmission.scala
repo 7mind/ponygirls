@@ -5,14 +5,17 @@ import cats.effect.std.Semaphore
 import izumi.distage.model.definition.Lifecycle
 
 /** Large snapshots are decoded one at a time: an ingest of a body over largeBodyBytes, and every indexing claim (it
-  * decodes the claimed revision's whole snapshot; a small one takes milliseconds). Each costs seconds of CPU and a heap
+  * decodes the claimed revision's whole snapshot; a small one takes milliseconds; waiting claims are not logged: idle
+  * lanes claim every second). Each costs seconds of CPU and a heap
   * several times the snapshot; two at once doubled the collector's stop-the-world pauses, which stop every request,
   * /api/versions included. Smaller ingests are not held up. */
 final class SnapshotAdmission private (large: Semaphore[IO],logger: logstage.IzLogger) {
   def ingest[A](bodyBytes: Int)(ingest: IO[A]): IO[A] =
     if(bodyBytes<=SnapshotAdmission.largeBodyBytes) ingest
     else admitted(IO(logger.info(s"large ingest waits for admission bodyBytes=$bodyBytes")))(ingest)
-  def claim[A](claim: IO[A]): IO[A] = admitted(IO(logger.debug("indexing claim waits for snapshot admission")))(claim)
+  def claim[A](claim: IO[A]): IO[A] = admitted(IO.unit)(claim)
+  /** Ingests and claims waiting for the permit. */
+  private[chronicle] def waiting: IO[Long] = large.count.map(count => (-count).max(0L))
   private def admitted[A](waiting: IO[Unit])(work: IO[A]): IO[A] =
     Resource.makeFull[IO,Unit](poll => large.tryAcquire.flatMap(admitted => if(admitted) IO.unit else waiting *> poll(large.acquire)))(_ => large.release).use(_ => work)
 }

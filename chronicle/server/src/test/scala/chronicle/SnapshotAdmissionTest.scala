@@ -10,13 +10,8 @@ final class SnapshotAdmissionTest extends munit.FunSuite {
   test("Effectual GoodCommunication: large ingests and indexing claims decode one snapshot at a time while smaller ingests pass") {
     (for {
       ingestWaits <- Deferred[IO,Unit]
-      claimWaits <- Deferred[IO,Unit]
-      logger=logstage.IzLogger(Log.Level.Debug,List(new izumi.logstage.api.logger.LogSink {
-        def flush(entry: Log.Entry): Unit = {
-          val text=entry.message.template.parts.head
-          if(text.startsWith("large ingest waits for admission")) ingestWaits.complete(()).unsafeRunSync()
-          if(text.startsWith("indexing claim waits for snapshot admission")) claimWaits.complete(()).unsafeRunSync()
-        }
+      logger=logstage.IzLogger(Log.Level.Info,List(new izumi.logstage.api.logger.LogSink {
+        def flush(entry: Log.Entry): Unit = if(entry.message.template.parts.head.startsWith("large ingest waits for admission")) { ingestWaits.complete(()).unsafeRunSync(); () }
       }))
       _ <- SnapshotAdmission.resource(logger).use { admission => for {
         inside <- Ref.of[IO,Int](0)
@@ -31,7 +26,8 @@ final class SnapshotAdmissionTest extends munit.FunSuite {
         claimIn <- Deferred[IO,Unit]
         claim <- admission.claim(tracked(claimIn.complete(()).void)).start
         _ <- admission.ingest(SnapshotAdmission.largeBodyBytes)(IO.unit).timeout(5.seconds)
-        _ <- ingestWaits.get.timeout(5.seconds) *> claimWaits.get.timeout(5.seconds)
+        _ <- ingestWaits.get.timeout(5.seconds)
+        _ <- (IO.cede *> admission.waiting).iterateUntil(_==2L).timeout(5.seconds)
         early <- (secondIn.tryGet,claimIn.tryGet).tupled
         _ <- IO(assertEquals(early,(None,None),"the second large ingest and the claim wait while the first is admitted"))
         _ <- releaseFirst.complete(())
