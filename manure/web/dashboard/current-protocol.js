@@ -107,13 +107,13 @@ function local(value) {
   return output;
 }
 
-export async function request(fetch, descriptor) {
+async function exchange(fetch, descriptor, init) {
   const [command, expected, project] = descriptor;
   const id = requestId();
   const envelope = new p.ClientEnvelope(id,version,command);
   const wire = p.ClientEnvelope_JsonCodec.instance.encode(ctx,envelope);
   validate('ClientEnvelope',wire);
-  const res = await fetch('/api/current',{method:'POST',credentials:'same-origin',
+  const res = await fetch('/api/current',{method:'POST',...init,
     headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify(wire)});
   const text = await res.text();
   if (text.length > 4*1024*1024) { bad(); }
@@ -127,6 +127,11 @@ export async function request(fetch, descriptor) {
   if (!res.ok || !(result.result instanceof expected)) { bad(); }
   return project(result.result);
 }
+export const request = (fetch, descriptor) => exchange(fetch, descriptor, {credentials:'same-origin'});
+const versionCommand = () => [new p.Command_Version(),p.Result_Version,r=>({current:r.versions.current,supported:r.versions.supported})];
+// The liveness heartbeat: the unauthenticated Version command, which the server answers from memory (no session lookup,
+// no database access, none of the per-user or per-client request limits); `signal` bounds the wait.
+export const probe = (fetch, signal) => exchange(fetch, versionCommand(), {credentials:'omit',signal});
 
 export const whoami = () => [new p.Command_Whoami(),p.Result_Identity,r=>local(r.principal)];
 export const login = token => [new p.Command_Login(token),p.Result_Identity,r=>local(r.principal)];

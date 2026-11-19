@@ -3,7 +3,7 @@
  * passwords stay transient. No HTML injection; account surfaces belong to account.js.
  */
 import * as current from "./current-protocol.js";
-import { ID_RE, NEW_TAB_NOTE, domHelpers, errorLabel, bytes, expired, contentUrl } from "./common.js";
+import { ID_RE, NEW_TAB_NOTE, domHelpers, errorLabel, bytes, expired, contentUrl, createConnection } from "./common.js";
 import { createOverlays } from "./overlays.js";
 import { createDetail } from "./detail.js";
 import { createUpload } from "./upload.js";
@@ -78,7 +78,7 @@ function expressionInput(input, list, change, compositionChange) {
 }
 
 
-(function (document, window, fetch) {
+(function (document, window, networkFetch) {
   var PAGE_LIMIT = 25;
   var SKELETON_ROWS = 14;
   var SOON_MS = 48 * 3600 * 1000;
@@ -116,6 +116,9 @@ function expressionInput(input, list, change, compositionChange) {
   var state = readRoute().state;
   var dateFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   var overlays = createOverlays(document, window);
+  // Every request below goes through the connection's fetch: its outcome is what the masthead indicator shows.
+  var connection = createConnection({ fetch: networkFetch, document: document, window: window, now: function () { return Date.now(); }, probe: current.probe });
+  var fetch = connection.fetch;
   var ctx = Object.assign({ document: document, window: window, fetch: fetch, apiFetch: apiFetch, overlays: overlays,
     sessionEpoch: 0, authenticated: false, deleting: new Set(), accessMutations: new Map() }, domHelpers(document));
   var $ = ctx.$, setText = ctx.setText, element = ctx.element;
@@ -167,6 +170,51 @@ function expressionInput(input, list, change, compositionChange) {
   function supported(value) {
     return capabilities !== null && capabilities.search_modes.includes(value) && capabilities.metadata_only_search;
   }
+
+  // ── Connection indicator ───────────────────────────────────────────────
+  // The shared .conn pill with Chronicle's and Haystack's labels where the meaning is the same. There is no Stale or
+  // Reconnecting state: nothing is held open between requests and a single answer restores the connection.
+  var CONNECTION_VIEWS = {
+    connecting: { label: "Connecting…", name: "Connecting", status: "status status-warn",
+      sentence: "Waiting for the first answer from the server. Nothing is confirmed yet." },
+    live: { label: "Live", name: "Live", status: "status status-ok",
+      sentence: "The server answered the latest request. This dashboard does not receive pushed changes: lists update when you search or press Refresh." },
+    offline: { label: "Offline", name: "Offline", status: "status status-danger",
+      sentence: "The server did not answer the latest request, so what is shown may be out of date. Nothing you saved is affected; actions work again once the server answers." }
+  };
+  var CONNECTION_ANNOUNCEMENTS = { offline: "Connection lost. The dashboard cannot reach the server.", live: "Connection restored." };
+  var clockFormat = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+  var shownPhase = "connecting";
+  var connectionDetails = overlays.popover($("connection-button"), $("connection-details"), function () { renderConnectionDetails(connection.snapshot()); });
+  function clockText(time, empty) { return time === null ? empty : clockFormat.format(new Date(time)); }
+  function renderConnectionDetails(snapshot) {
+    var view = CONNECTION_VIEWS[snapshot.phase];
+    $("connection-chip").className = view.status;
+    setText("connection-chip", view.label);
+    setText("connection-sentence", view.sentence);
+    var rows = [];
+    if (snapshot.phase === "offline") { rows.push(["Last failure", snapshot.lastFailure.reason + " · " + clockText(snapshot.lastFailure.at, "")]); }
+    rows.push(["Last answer", clockText(snapshot.lastAnswerAt, "None yet")],
+      ["Next check", clockText(snapshot.nextCheckAt, "Paused while this tab is hidden")],
+      ["Pending", snapshot.pending + (snapshot.pending === 1 ? " request" : " requests")]);
+    var cells = [];
+    rows.forEach(function (row) { cells.push(element("dt", row[0], null), element("dd", row[1], null)); });
+    $("connection-figures").replaceChildren.apply($("connection-figures"), cells);
+  }
+  function renderConnection(snapshot) {
+    if (snapshot.phase !== shownPhase) {
+      var view = CONNECTION_VIEWS[snapshot.phase];
+      $("connection-button").dataset.state = snapshot.phase;
+      $("connection-button").setAttribute("aria-label", "Connection: " + view.name);
+      setText("connection-text", view.label);
+      // The first answer of a page load is not news; losing the server and getting it back is.
+      if (snapshot.phase === "offline" || shownPhase === "offline") { setText("connection-announcement", CONNECTION_ANNOUNCEMENTS[snapshot.phase]); }
+      shownPhase = snapshot.phase;
+    }
+    if (connectionDetails.isOpen()) { renderConnectionDetails(snapshot); }
+  }
+  connection.subscribe(renderConnection);
+  $("connection-check").addEventListener("click", connection.checkNow);
 
   // ── Routes ─────────────────────────────────────────────────────────────
   // #/artifacts?query=… (catalogue) · #/artifact/<id>?query=… · #/upload · #/cli; #account… belongs to account.js.
@@ -962,6 +1010,7 @@ function expressionInput(input, list, change, compositionChange) {
   // The account page replaces the workspace view: no view is current while it is shown.
   document.addEventListener("account:route", function (event) { markNav(event.detail.section !== null || view === null ? null : navName(view)); });
   window.addEventListener("hashchange", function () { handleRoute(); });
+  connection.start();
   checkHostingMode();
   checkSession();
 })(document, window, window.fetch.bind(window));

@@ -1,4 +1,4 @@
-/* In-app overlays shared by the dashboard views: popup menus, the confirmation dialog, the manual-copy
+/* In-app overlays shared by the dashboard views: popup menus, anchored popovers, the confirmation dialog, the manual-copy
  * dialog and toasts (spec §1.8, §2.2). Never window.confirm/alert. Text always goes through textContent;
  * the only markup inserted is the constant icon SVG of ./ui/icons.js.
  */
@@ -66,6 +66,27 @@ export function createOverlays(document, window) {
     var index = list.indexOf(document.activeElement);
     list[(index + (event.key === "ArrowDown" ? 1 : list.length - 1 + (index === -1 ? 1 : 0))) % list.length].focus();
   }, true);
+
+  // Popovers: a trigger inside an .anchor toggles its panel. A pointer press or focus outside the anchor, a route change
+  // and Escape close it (Escape returns focus to the trigger). Unlike a menu, its panel may hold focusable content.
+  function popover(trigger, panel, opened) {
+    var anchor = trigger.parentElement, open = false;
+    function set(next, restoreFocus) {
+      open = next;
+      panel.hidden = !next;
+      trigger.setAttribute("aria-expanded", String(next));
+      if (next) { opened(); } else if (restoreFocus) { trigger.focus(); }
+    }
+    function outside(event) { return open && !anchor.contains(event.target); }
+    trigger.addEventListener("click", function () { set(!open, false); });
+    document.addEventListener("pointerdown", function (event) { if (outside(event)) { set(false, false); } });
+    document.addEventListener("focusin", function (event) { if (outside(event)) { set(false, false); } });
+    document.addEventListener("keydown", function (event) {
+      if (open && event.key === "Escape") { event.preventDefault(); event.stopPropagation(); set(false, true); }
+    }, true);
+    window.addEventListener("hashchange", function () { if (open) { set(false, false); } });
+    return { isOpen: function () { return open; } };
+  }
 
   // Dialogs: built on <dialog>; Escape cancels; focus returns to the element focused before opening.
   function dialogShell(title, wide) {
@@ -190,6 +211,6 @@ export function createOverlays(document, window) {
     window.setTimeout(function () { node.remove(); }, TOAST_MS);
   }
 
-  return { iconNode: iconNode, hydrateIcons: hydrateIcons, closeMenu: closeMenu, confirmAction: confirmAction,
+  return { iconNode: iconNode, hydrateIcons: hydrateIcons, closeMenu: closeMenu, popover: popover, confirmAction: confirmAction,
     inform: inform, copyText: copyText, toast: toast };
 }

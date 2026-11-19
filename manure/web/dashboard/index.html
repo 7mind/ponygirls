@@ -17,7 +17,7 @@
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="masthead">
-<a class="brand" href="#/artifacts"><span class="brand-mark" aria-hidden="true"><span data-icon="box"></span></span>manure</a>
+<a class="brand" href="#/artifacts"><span class="brand-mark" aria-hidden="true"><span data-icon="box"></span></span><span class="brand-name">manure</span></a>
 <nav id="main-nav" class="nav" aria-label="Main navigation" hidden>
 <a href="#/artifacts" data-nav="artifacts">Artifacts</a>
 <a href="#/upload" data-nav="upload">Upload</a>
@@ -26,6 +26,16 @@
 <div class="masthead-end">
 <!-- Hosting safety applies before login as well as inside the workspace. -->
 <button type="button" id="path-mode-warning" hidden class="chip chip-warn path-mode-chip" aria-haspopup="dialog"><span data-icon="alert" data-icon-class="icon-sm"></span><span id="path-mode-label">Path-mode hosting</span></button>
+<div class="anchor">
+<button type="button" id="connection-button" class="conn" data-state="connecting" aria-label="Connection: Connecting" aria-expanded="false" aria-controls="connection-details"><span id="connection-text" class="conn-text">Connecting…</span></button>
+<section id="connection-details" class="popover conn-popover" aria-label="Connection details" hidden>
+<div class="conn-head"><strong>Connection</strong><span id="connection-chip" class="status status-warn">Connecting…</span></div>
+<p id="connection-sentence" class="conn-sentence"></p>
+<dl id="connection-figures" class="dl conn-figures"></dl>
+<div class="conn-actions"><button type="button" id="connection-check" class="btn btn-sm">Check now</button></div>
+</section>
+<span id="connection-announcement" class="sr-only" role="status"></span>
+</div>
 <div class="anchor">
 <button type="button" id="theme-button" class="btn btn-ghost btn-icon" aria-label="Theme" title="Theme" aria-haspopup="menu" aria-controls="theme-menu" aria-expanded="false"><span data-icon="sun" data-icon-class="theme-light"></span><span data-icon="moon" data-icon-class="theme-dark"></span></button>
 <div id="theme-menu" class="menu" role="menu" aria-label="Theme" hidden>

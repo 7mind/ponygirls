@@ -8,6 +8,14 @@
 /* ── Shell ──────────────────────────────────────────────────────────────── */
 html[data-theme="dark"] .theme-light, html[data-theme="light"] .theme-dark { display: none; }
 .path-mode-chip { border: 0; cursor: pointer; font-family: inherit; }
+/* Connection indicator (shared .conn): the hidden pseudo-element is as wide as the longest label, so the pill keeps its width in every state. */
+.conn-text { text-align: left; }
+.conn-text::after { content: "Connecting…"; display: block; height: 0; overflow: hidden; visibility: hidden; }
+.conn-popover { display: flex; flex-direction: column; gap: var(--space-2); max-width: calc(100vw - 2 * var(--gutter)); max-height: calc(100dvh - var(--masthead-h) - var(--space-4)); overflow-y: auto; }
+.conn-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.conn-sentence { font-size: var(--text-xs); color: var(--text-muted); }
+.conn-figures { font-size: var(--text-xs); }
+.conn-actions { display: flex; gap: var(--space-2); }
 .user-button #whoami-text { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-item > .icon { color: var(--text-muted); }
 .noscript-note { padding: var(--space-3) var(--gutter); color: var(--text-muted); font-size: var(--text-sm); }
@@ -52,6 +60,10 @@ html[data-theme="dark"] .theme-light, html[data-theme="light"] .theme-dark { dis
   .viewbar-meta { min-width: 0; }
 }
 @media (max-width: 720px) {
+  /* Masthead: the brand mark and the user's avatar alone (the names stay the accessible names) make room for the connection pill;
+   * the popover spans the window. */
+  .brand-name, .user-button #whoami-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .conn-popover { position: fixed; top: var(--masthead-h); left: var(--gutter); right: var(--gutter); width: auto; }
   .col-access { width: 116px; } .col-row-actions { width: 72px; }
   .viewbar { flex-wrap: wrap; height: auto; padding-top: var(--space-2); padding-bottom: var(--space-2); }
   .querybar { min-width: 0; flex-basis: 100%; }

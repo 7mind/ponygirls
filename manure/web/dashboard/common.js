@@ -1,5 +1,5 @@
-/* Helpers shared by the dashboard modules: DOM construction, formatting and content-link validation.
- * No HTML injection: text always goes through textContent.
+/* Helpers shared by the dashboard modules: DOM construction, formatting, content-link validation and the
+ * connection state (what the dashboard can currently reach). No HTML injection: text always goes through textContent.
  */
 "use strict";
 
@@ -7,6 +7,16 @@ export var API = "/api/current";
 export var ID_RE = /^[0-9a-f]{32}$/;
 // A control that opens a new tab says so in its title and ends its accessible name with this note.
 export var NEW_TAB_NOTE = " (opens in a new tab)";
+// Connection indicator timing. A heartbeat is sent only after IDLE_CHECK_MS without any other request while the server
+// answers; after a failure (or before the first answer) the checks start at RETRY_FIRST_MS and double up to RETRY_MAX_MS.
+export var CONNECTION = {
+  IDLE_CHECK_MS: 30000,
+  RETRY_FIRST_MS: 5000,
+  RETRY_MAX_MS: 60000,
+  PROBE_TIMEOUT_MS: 10000,
+  // Statuses a gateway answers when the application is down; the application itself always answers in JSON.
+  GATEWAY_STATUSES: [502, 503, 504]
+};
 
 export function domHelpers(document) {
   function $(id) { return document.getElementById(id); }
@@ -49,4 +59,88 @@ export function contentUrl(info, dashboardOrigin) {
     if (!subdomain && !pathMode) { return null; }
     return url.href;
   } catch (_error) { return null; }
+}
+
+// ── Connection state ─────────────────────────────────────────────────────
+// Whether the dashboard can currently reach the server, from the outcome of every request it makes (connection.fetch
+// wraps the page's fetch) and from a heartbeat while nothing else is going on. Phases: "connecting" (no answer yet),
+// "live" (the latest request or heartbeat was answered), "offline" (it was not: connection refused or lost, no answer
+// in time, or a gateway error page). Any answer counts, a 401 or an application error included: the server is there.
+// env: { fetch, document, window, now(), probe(fetch, signal) } — probe sends one unauthenticated heartbeat through the
+// fetch it is given, so its outcome is recorded like every other request's.
+export function createConnection(env) {
+  var window = env.window, document = env.document;
+  var phase = "connecting", failures = 0, lastAnswerAt = null, lastFailure = null, pending = 0;
+  var timer = null, nextCheckAt = null, started = false, inflight = null;
+  var listeners = [];
+
+  function snapshot() {
+    return { phase: phase, failures: failures, lastAnswerAt: lastAnswerAt, lastFailure: lastFailure, nextCheckAt: nextCheckAt, pending: pending };
+  }
+  function notify() { listeners.forEach(function (listener) { listener(snapshot()); }); }
+  function hidden() { return document.visibilityState === "hidden"; }
+  // One timer: every outcome re-arms it, so a heartbeat is sent only when nothing else was.
+  function schedule() {
+    window.clearTimeout(timer);
+    timer = null; nextCheckAt = null;
+    if (!started || hidden()) { return; }
+    var delay = phase === "live" ? CONNECTION.IDLE_CHECK_MS
+      : Math.min(CONNECTION.RETRY_FIRST_MS * Math.pow(2, Math.max(failures, 1) - 1), CONNECTION.RETRY_MAX_MS);
+    nextCheckAt = env.now() + delay;
+    timer = window.setTimeout(check, delay);
+  }
+  function answered() {
+    phase = "live"; failures = 0; lastAnswerAt = env.now();
+    schedule(); notify();
+  }
+  function failed(reason) {
+    phase = "offline"; failures++; lastFailure = { reason: reason, at: env.now() };
+    schedule(); notify();
+  }
+  // A heartbeat from the timer waits for the one in flight; a forced check (tab shown, browser online, Check now)
+  // replaces it, which may be stuck on a connection that no longer exists.
+  function check(forced) {
+    if (inflight !== null) {
+      if (forced !== true) { return; }
+      inflight.controller.abort();
+    }
+    var heartbeat = { controller: new window.AbortController(), limit: null };
+    inflight = heartbeat;
+    heartbeat.limit = window.setTimeout(function () {
+      heartbeat.controller.abort(new window.DOMException("No answer within " + CONNECTION.PROBE_TIMEOUT_MS + " ms", "TimeoutError"));
+    }, CONNECTION.PROBE_TIMEOUT_MS);
+    // The outcome is recorded by observedFetch; a malformed answer is still an answer, so a rejection adds nothing.
+    env.probe(observedFetch, heartbeat.controller.signal).catch(function () {}).then(function () {
+      window.clearTimeout(heartbeat.limit);
+      if (inflight === heartbeat) { inflight = null; schedule(); }
+    });
+  }
+  function observedFetch(input, init) {
+    pending++;
+    return env.fetch(input, init).then(function (response) {
+      pending--;
+      var json = /^application\/json\b/i.test(response.headers.get("Content-Type") || "");
+      if (CONNECTION.GATEWAY_STATUSES.includes(response.status) && !json) { failed("HTTP " + response.status + " from a gateway"); }
+      else { answered(); }
+      return response;
+    }, function (error) {
+      pending--;
+      // Cancelling a request on purpose says nothing about the server.
+      var name = error ? error.name : "";
+      if (name === "AbortError") { notify(); } else { failed(name === "TimeoutError" ? "No answer in time" : "Network error"); }
+      throw error;
+    });
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (!started) { return; }
+    if (hidden()) { schedule(); } else { check(true); }
+  });
+  window.addEventListener("online", function () { if (started && !hidden()) { check(true); } });
+  return {
+    fetch: observedFetch,
+    snapshot: snapshot,
+    subscribe: function (listener) { listeners.push(listener); },
+    checkNow: function () { check(true); },
+    start: function () { started = true; schedule(); }
+  };
 }
