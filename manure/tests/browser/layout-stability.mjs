@@ -12,16 +12,22 @@ for await (const chunk of process.stdin) raw += chunk;
 const input = JSON.parse(raw);
 const { chromium } = createRequire(path.join(input.core, "package.json"))("playwright-core");
 const WIDTH = 1440, LOAD_HEIGHT = 900;
+// The masthead's connection pill in its Offline state (the browser reports it online; the server does not answer).
+const goOffline = async (page) => {
+  await page.route("**/api/current", (route) => route.abort("connectionrefused"));
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await page.getByRole("button", { name: "Connection: Offline", exact: true }).waitFor();
+};
 const views = [
-  ["Catalogue", (page) => page.getByText(`End of list · ${input.records} artifacts`, { exact: true }).waitFor()],
+  ["Catalogue", (page) => page.getByText(`End of list · ${input.records} artifacts`, { exact: true }).waitFor(), goOffline],
   ["Artifact file list", async (page) => {
     await page.evaluate((target) => { location.hash = "#/artifact/" + target; }, input.files);
     await page.getByRole("table", { name: "Content manifest" }).locator("tbody > tr").nth(input.fileCount - 1).waitFor();
   }],
 ];
 const browsers = await Promise.all(LAYOUT_SCALES.map((scale) => launchWithScrollbars(chromium, scale, { executablePath: input.browser, args: ["--no-sandbox", "--no-proxy-server", `--host-resolver-rules=${input.resolver}`] })));
-const results = await Promise.all(LAYOUT_SCALES.flatMap((scale, index) => views.map(async ([view, ready]) => {
-  const name = `${view} settles with space-taking scrollbars at ${scale * 100} % around its scroll threshold`;
+const results = await Promise.all(LAYOUT_SCALES.flatMap((scale, index) => views.map(async ([view, ready, offline]) => {
+  const name = `${view} settles with space-taking scrollbars at ${scale * 100} % around its scroll threshold` + (offline === undefined ? "" : ", also with the connection offline");
   const context = await layoutContext(browsers[index], {});
   try {
     const page = await context.newPage(), problems = [];
@@ -35,6 +41,10 @@ const results = await Promise.all(LAYOUT_SCALES.flatMap((scale, index) => views.
     await page.getByRole("button", { name: input.userId }).waitFor();
     await ready(page);
     await assertQuiescentAroundThreshold(page, `${view} at ${scale * 100} %`, { width: WIDTH, scroller: null });
+    if (offline !== undefined) {
+      await offline(page);
+      await assertQuiescentAroundThreshold(page, `${view}, connection offline, at ${scale * 100} %`, { width: WIDTH, scroller: null });
+    }
     if (problems.length > 0) throw new Error(problems.join("; "));
     return { name, ok: true };
   } catch (error) {

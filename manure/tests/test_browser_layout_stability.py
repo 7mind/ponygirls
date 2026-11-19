@@ -1,6 +1,7 @@
-"""Layout quiescence of the catalogue and the artifact page's file list in real Chromium (UX-JIT): with scrollbars that
-take space, at 100 % and 125 % display scaling, around the window height where each view starts to scroll, the scroll
-geometry settles and stays unchanged (browser/layout-stability.mjs, shared/ui-web/tests/layout-quiescence.mjs)."""
+"""Layout quiescence of the catalogue (also with the masthead's connection pill offline) and the artifact page's file list in
+real Chromium (UX-JIT): with scrollbars that take space, at 100 % and 125 % display scaling, around the window height where
+each view starts to scroll, the scroll geometry settles and stays unchanged (browser/layout-stability.mjs,
+shared/ui-web/tests/layout-quiescence.mjs)."""
 import json
 from pathlib import Path
 import subprocess
