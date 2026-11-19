@@ -111,6 +111,10 @@ let
   realLinux = realCompose "x86_64-linux";
   realDarwin = realCompose "aarch64-darwin";
   piMcpJson = realLinux.config.home.file."/home/alice/.pi/agent/mcp.json".source;
+  plainLinkRule = "always show the full URL as plain text on its own line";
+  piHasPlainLinkRule = { config, ... }: lib.all
+    (path: lib.hasInfix plainLinkRule config.home.file."${config.programs.pi.configDir}/${path}".text)
+    [ "AGENTS.md" "skills/manure/SKILL.md" ];
 in
 assert linuxMod.config.smind.hm.dev.llm.manure.url == "http://127.0.0.1:47329";
 assert darwinMod.config.smind.hm.dev.llm.manure.url == "http://127.0.0.1:47329";
@@ -195,6 +199,8 @@ assert lib.all (a: a.assertion) realLinux.config.assertions;
 assert lib.all (a: a.assertion) realDarwin.config.assertions;
 assert lib.hasInfix "manure file & directory hosting" realLinux.config.smind.hm.dev.llm.merged.memoryText;
 assert lib.hasInfix "manure file & directory hosting" realDarwin.config.smind.hm.dev.llm.merged.memoryText;
+assert piHasPlainLinkRule realLinux;
+assert piHasPlainLinkRule realDarwin;
 assert !(realLinux.config.programs.mcp.servers.manure.env ? MANURE_TOKEN_FILE);
 assert realLinux.config.programs.mcp.servers.sentinel-keepme.command == "/bin/false";
 # Pi re-emits the manure stdio entry and the host/yolo defaults come

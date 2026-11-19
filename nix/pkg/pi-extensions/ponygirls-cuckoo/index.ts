@@ -13,7 +13,7 @@ import { CuckooVectors } from './src/vector-runtime.ts';
 import { CuckooCritic } from './src/critic-runtime.ts';
 import { nativeNetworkServices, type CuckooNetworkServices } from './src/network-services.ts';
 import { growthTokens, policyText, validatePolicy } from './src/policy.ts';
-import { REPORT_TYPE, answeredCheckpoint, checkpointRequestIds, checkpoints } from './src/report.ts';
+import { REPORT_TYPE, answeredCheckpoint, checkpointRequestIds, checkpoints, completedObjectives } from './src/report.ts';
 import { COMMENT_RESPONSE, COMMENT_RESPONSE_TYPE, COMMENT_TYPE, commentDelivery, commentRecord, savedComments, undeliveredComments, type CommentDelivery } from './src/comments.ts';
 import { FileQuestionStore, QUESTIONS_FILE, StandingQuestions, questionsText, type QuestionScope, type QuestionStore } from './src/questions.ts';
 import { RECALL_TOOL, RECALL_NOTICE, MODEL_GUIDANCE, DEFAULT_LIST_ITEMS, MAX_LIST_ITEMS, DEFAULT_READ_CHARS, MAX_READ_CHARS, MAX_RESPONSE_BYTES, recallRounds, type RecallRequest } from './src/recall.ts';
@@ -148,12 +148,13 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
       const model = `${ctx.model === undefined ? 'unknown' : `${ctx.model.provider}:${ctx.model.id}`}:${usage.contextWindow}`;
       const next = observe(state, usage.tokens, model);
       const asked = standing.read(ctx).effective;
+      const reportedComplete = completedObjectives(checkpoints(ctx.sessionManager.getBranch()));
       const requestId = randomUUID();
       // Comments made before this request reach the model ahead of it.
       try { deliverComments(ctx); } catch (error) { commentFault(ctx, error); }
       pi.appendEntry(STATE_TYPE, { ...next, baseline: usage.tokens, pending: { requestId, resume: false, questions: asked }, resuming: false });
       try {
-        pi.sendMessage({ customType: INQUIRY_TYPE, content: inquiryText(asked), display: false,
+        pi.sendMessage({ customType: INQUIRY_TYPE, content: inquiryText(asked, reportedComplete), display: false,
           details: { version: 1, requestId, tokens: usage.tokens } }, { triggerTurn: true });
       } catch (error) { cancel(ctx, 'Manual inquiry could not start; no automatic retry'); throw error; }
     } catch (error) { ctx.ui.notify(terminalText(`Cuckoo: ${String(error)}`), 'error'); }
@@ -372,12 +373,13 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
     const state = observe(previous, usage.tokens, model);
     if (!manualRequested && !inquiryDue(state, config.policy, usage.contextWindow)) return { entries: [...base, stateDraft(state)] };
     const asked = standing.read(ctx).effective;
+    const reportedComplete = completedObjectives(checkpoints(branch));
     manualRequested = false;
     const requestId = randomUUID();
     const resume = (event.message.role === 'assistant' && (event.message.stopReason === 'toolUse' || event.message.content.some(part => part.type === 'toolCall'))) || event.continue;
     return { entries: [...base,
       stateDraft({ ...state, baseline: usage.tokens, pending: { requestId, resume, questions: asked }, resuming: false }),
-      { type: 'custom_message', customType: INQUIRY_TYPE, content: inquiryText(asked), display: false, details: { version: 1, requestId, tokens: usage.tokens } }], continue: true };
+      { type: 'custom_message', customType: INQUIRY_TYPE, content: inquiryText(asked, reportedComplete), display: false, details: { version: 1, requestId, tokens: usage.tokens } }], continue: true };
   }
   pi.on('turn_end', (event: TurnEndEvent, ctx) => {
     try { event.entries.push(...critic.ordinaryBoundary(event, ctx)); }

@@ -5,6 +5,6 @@
     }
   ],
   "fetch_artifacts": [
-    {"coord": "org.scala-sbt:sbt:2.0.12"}
+    {"coord": "org.scala-sbt:sbt:2.1.0"}
   ]
 }

@@ -1,17 +1,37 @@
-# Cuckoo: reports list unfinished objectives only
+# Cuckoo: a completed objective is reported once
 
-Change: commit `1565709e` on base `ff04a534`. This note was corrected after an independent review of that commit; the
-section "Review and follow-up runs" is new, and the claims it replaces are named there. The inquiry text did not change
-after `1565709e`.
+History of one task on base `ff04a534`:
 
-## Request and interpretation
+1. `1565709e` told the model to omit completed objectives ("strict" below).
+2. `5f91f874` corrected this note after an independent review: the omitted entries had carried caveats.
+3. The user then chose a third behaviour (decision Q117): the model states a completed objective and its caveats once
+   and does not repeat itself afterwards. This note describes that behaviour; sections 4 and 5 keep the earlier evidence.
 
-The user wants models to stop adding completed objectives to Cuckoo reports. Operational reading: an objective belongs in
-a report only while work on it is still left for the model, including work it must do once something it waits for
-arrives. Completed, cancelled and superseded objectives are omitted. The report schema has no status field, so the
-decoder cannot enforce this; the change is to the model-facing text.
+## 1. Behaviour
 
-## Observed defect
+- Every unfinished objective is listed: work is still left for the model, including work it must do once something it
+  waits for arrives.
+- A completed objective is reported exactly once, in the first checkpoint after it was completed: `progress` says what
+  was delivered, `issues` holds its remaining defects, risks and caveats, `eta` is `Complete`. Later checkpoints leave
+  it out. A new defect or risk in completed work is reported once the same way.
+- Cancelled and superseded objectives are omitted.
+
+Two mechanisms:
+
+- **Wording** (`src/state.ts` `INQUIRY_OBJECTIVES` and the reminder at the end of the field rules; `src/recall.ts` for
+  the system-prompt section). The opening sentence is unchanged: fixtures and pilots recognise an inquiry by it.
+- **A list of what was already reported** (`completedObjectives` in `src/report.ts`, passed to `inquiryText` by both
+  inquiry paths in `index.ts`). The model can see its earlier answers only until compaction removes them; saved reports
+  stay on the branch. The extension takes the objectives whose latest listing in the valid saved reports has an `eta`
+  starting with `Complete` (at most the 50 most recent, 300 characters each) and appends them to the rule as a JSON array
+  the model must not report as completed again. An objective listed again as unfinished leaves the set. With none, the
+  inquiry is exactly the base text (3672 characters, SHA-256
+  `c6bd844b4130f45d3f2fa81c1ba87f2394c961d3e3e11190ddc7c1e36b6c3be5`, pinned in `tests/questions.test.mjs`).
+
+The schema is unchanged: a completed objective is recognised by its `eta`, a convention in a text field. A typed status
+field would be the explicit form; it needs a new report version, panel changes and new fixtures, and was not done.
+
+## 2. Observed defect
 
 Survey of saved reports under `~/.pi/agent/sessions` (script `.local/cuckoo-open-objectives/harness/survey-saved-reports.mjs`,
 output `logs/survey-before.txt`). An objective counts as done-like when its ETA or progress starts with a completion
@@ -27,116 +47,90 @@ word or says no work remains; the pattern is narrow, so the counts are lower bou
 
 Typical entries: "Done, landed on main and pushed … ETA: No work left unless the owner asks for changes", "Complete;
 promotion is the owner's decision", "Done on my side; waiting for a reply". Every one of the 40 flagged objectives had a
-nonempty issues list (1 to 6 items), often an open problem ("fix underway", "waits for another session"). The old inquiry
-already contained "List only current objectives; use an empty array if none remain", as the last sentence of its field
-rules, about 270 characters before the end of a 2777-character request.
+nonempty issues list (1 to 6 items), often an open problem. The original inquiry already contained "List only current
+objectives; use an empty array if none remain", as the last sentence of its field rules, about 270 characters before
+the end of a 2777-character request.
 
-## Change
-
-- `src/state.ts`: a rule paragraph directly after the schema example (`INQUIRY_OBJECTIVES`), the example objective text
-  `unfinished objective`, and a reminder that replaces the old rule sentence. The opening sentence is unchanged:
-  fixtures and pilots recognise an inquiry by it.
-- `src/recall.ts`: the system-prompt section says reports list unfinished objectives only.
-- Tests: the prompt contract (`tests/data.test.mjs`), the base-inquiry pin and the standing-question composition
-  (`tests/questions.test.mjs`). README updated.
-
-Which of these elements produces the effect was not separated; no ablation was run.
-
-## Live comparison
+## 3. Evidence for the current behaviour
 
 Harness (kept in `.local/cuckoo-open-objectives/harness/`, outputs next to it): a Pi SDK session with the gateway
 provider extension and the Cuckoo extension loaded from one source tree; a seeded synthetic conversation with at least
-one earlier closed checkpoint; then one real `/cuckoo inquire now`. Baseline is the installed extension build, whose
-inquiry is the one of `main` at the base commit (2777 characters, SHA-256 `f89443cc…`); the committed wording is 3388
-characters, SHA-256 `61f43461fe7c17beb5ea0a178e6f2d844a7da9148c8c185d58ce1583a50f823c`, in every run counted for it.
-Model `claude-fable-5-2` through the gateway, no tools, invented content only. Grading is a keyword match on objective
-titles, checked against the known number of open objectives per scenario; an independent reviewer read about 120 raw
-reports and found no report of the committed wording misgraded.
+one earlier closed checkpoint; then two real `/cuckoo inquire now` in a row. Model `claude-fable-5-2` through the
+gateway, no tools, invented content only. Each objective of the 16 scenarios is classed as open, newly completed (not
+yet reported as complete), or already reported, cancelled or superseded. Grading is a keyword match on objective titles
+and progress, checked against the expected objective count of each report.
 
-"Lists a finished objective" below means an entry for an objective with no work left for the model.
+| Arm | Sessions | First report states a newly completed objective | Second report repeats one | Open objective missing | Already reported one listed again |
+|---|---|---|---|---|---|
+| Original wording (`ff04a534`) | 64 | 20 of 92 | 13 of 64 sessions | 0 | 0 |
+| Strict (`1565709e`) | 64 | 0 of 92 | 0 of 64 | 0 | 0 |
+| Current, effort high | 64 | 92 of 92 | 0 of 64 | 0 | 0 |
+| Current, effort xhigh and medium | 40 | 56 of 56 | 0 of 40 | 0 | 0 |
 
-| Scenario set | Effort | Baseline | Committed wording |
-|---|---|---|---|
-| 10 development scenarios | high, medium, xhigh | 16 of 92 | 0 of 80 |
-| 4 first held-out scenarios, 4 runs each | high | 1 of 16 | 0 of 16 |
-| `heldout-loose-ends`, 12 more runs | high | 9 of 12 | 0 of 12 |
-| `review-just-delivered` | high | 8 of 8 | 0 of 8 |
-| `review-unreported-defect` (must not list the finished objective) | high | 0 of 8 | 0 of 8 |
+- The original wording repeats: where it listed a completed objective in the first report it listed it again in the
+  second (`ledger-habit` 4 of 4, `residual-risk` 4 of 4, `review-just-delivered` 4 of 4, `heldout-loose-ends` 1 of 4).
+  This is the behaviour the request was about, reproduced with two inquiries in a row.
+- With the current code every objective count equals the expected one: open plus newly completed in the first report,
+  open only in the second. In one session the second report added an entry for a completed objective to state a defect
+  that the first had not mentioned, as the rule allows.
+- All 182 completed entries carry `eta` exactly `Complete`. In the scenarios with known caveats the caveat text is in the
+  first report of every session and in no second report.
+- Every second inquiry carried the list of titles and contained each title the first report had marked complete (126
+  sessions, including the two arms below).
+- **Compaction.** With the seeded earlier reports kept as saved reports but removed from the model's context, the
+  wording alone listed already reported objectives again in the first report of 12 of 12 sessions (and dropped them in
+  the second). With the list: 0 of 12.
+- **Standing questions.** 10 sessions with one standing question: valid composed replies, same objective behaviour.
+- The wording of this behaviour was written once and not adjusted after its first run; the 16 scenarios existed before it.
 
-No report in either arm missed an open objective (136 baseline and 124 committed-wording reports). In the 12-run
-row one baseline report was found by its objective count; the keyword grader missed its title.
+## 4. The strict variant and its review
 
-- Baseline failures in the development set are confined to two scenarios (`ledger-habit` 10 of 10, `residual-risk` 6 of
-  8); the listed entry is always the objective on which someone else acts later ("Complete unless the team comments",
-  "My part is done; completion depends on your run next week"). In eight other development scenarios the baseline listed
-  no finished objective, including those where earlier checkpoints had "Done" entries. In at least 9 of those baseline
-  runs finished work was still reported as done inside the progress of an open objective (reviewer's reading); the
-  committed wording has none.
-- The first held-out set was run once on an intermediate wording that differed from the committed one only in its
-  opening sentence ("Restate me your unfinished objectives"), then on the committed wording. It reproduced the baseline
-  behaviour in one scenario only, so it is mostly evidence that open objectives are not dropped on unseen sessions.
-- Two earlier wordings also listed no finished objective (30 and 98 reports). The first told the model to restate an
-  objective as its remaining step; it renamed partly finished objectives that way, so that sentence was removed.
+`1565709e` asked for unfinished objectives only. Its live comparison (one inquiry per session): the original wording
+listed a finished objective in 16 of 92 development reports, the strict wording in 0 of 80; no open objective was missed
+in 260 reports. An independent read-only review recomputed the counts, found the code and tests correct, and changed
+what the numbers meant:
 
-## Review and follow-up runs
+- In these sessions the original wording did not list finished objectives at random: it listed them when it had
+  something to say about them. 15 of the 16 development entries carried caveats the conversation had not stated. In
+  `heldout-loose-ends` 10 of 16 reports listed the finished work, all 10 to raise a risk the model noticed at the
+  checkpoint; the first version of this note had counted the one such report among four as the defect.
+- The strict wording removed those caveats unless an open objective depended on them (`ledger-habit` 9 of 10 against 0
+  of 8, `residual-risk` 8 of 8 against 1 of 8, `heldout-loose-ends` 10 of 16 against 0 of 16; `programme-stages` 10 of
+  10 against 8 of 8).
+- Right after a complete delivery the strict wording gave an empty report (0 of 8 against 8 of 8).
+- The first held-out set had been run on an intermediate wording; the keyword grader missed one title; a harness flag
+  for the system section read the wrong source.
 
-An independent read-only review of `1565709e` recomputed the counts and found the code and tests correct. Its findings
-changed what the numbers mean:
+Two other ways to keep the caveats were measured and not adopted: a standing question (40 sessions, caveats named in
+all 28 sessions of the scenarios that have them, objectives clean) and a sentence treating an untold defect or risk as
+work left (80 sessions; it produced "Tell the user about …" objectives, more of them than the original wording had
+entries).
 
-1. **What the baseline's finished entries carried.** In these sessions the baseline did not list finished objectives at
-   random: it listed them when it had something to say about them. 15 of the 16 development entries carried caveats the
-   conversation had not stated (a root cause that was an inference, SQL that was never run, assumed columns, a lock
-   risk). In `heldout-loose-ends` 10 of 16 baseline reports listed the finished work, all 10 to raise a risk the model
-   noticed at the checkpoint (the job is scheduled in the clock-change hour); the first version of this note counted
-   the one such report among four as the defect. In `review-just-delivered` all 8 baseline entries carried untold
-   caveats about the delivered regex.
-2. **Consequence of the committed wording.** With the finished objective, its caveats leave the report when no open
-   objective depends on them: caveat text present in `ledger-habit` 9 of 10 baseline reports and 0 of 8 with the
-   committed wording, `residual-risk` 8 of 8 and 1 of 8, `heldout-loose-ends` 10 of 16 and 0 of 16. Where an open
-   objective depends on the finished work the caveats moved into its issues (`programme-stages` 10 of 10 and 8 of 8).
-   A definite defect that needs a correction is still reported: the invented endpoint in `review-unreported-defect`
-   appears in 8 of 8 reports of both arms, as a new objective under the committed wording.
-3. **Right after a delivery.** An inquiry that follows a complete delivery, before the user reacts, now gets an empty
-   objectives array (0 of 8 list anything; the baseline listed the delivered objective in 8 of 8). This follows the
-   stated interpretation; it is also the state at the end of most runs.
-4. **Not held out strictly, grading blind spot, a dead harness flag.** Covered above; the runner's
-   `systemHasCuckooSection` flag was false in every run although the provider payloads carried the section, and now
-   reads the payload.
+## 5. Consequences and limits
 
-Two ways to keep the caveats were measured; neither is part of the change.
-
-- **A standing question** (existing feature, no code): `Do you know of any defect or risk in finished work that you
-  have not yet told me about?` with the committed wording, 40 runs over 13 scenarios. All replies were valid in the
-  composed form (4079 characters, one answer); none listed a finished objective or missed an open one; the answers
-  named the caveats in every scenario that has them (`heldout-loose-ends` 8 of 8, `review-just-delivered` 6 of 6,
-  `review-unreported-defect` 6 of 6, four development scenarios 2 of 2 each). This is also the only live evidence for
-  the inquiry with standing questions.
-- **A disclosure sentence in the inquiry** ("A defect or risk that you know of in finished work and have not yet told
-  the user is work still left: list an objective for it that states the problem"), 80 runs, not merged. It produced
-  "Tell the user about …" objectives with real caveats, and more of them than the baseline had entries: `all-finished`
-  4 of 4 (baseline 0 of 10), `tracked-plan` 4 of 4 (baseline 0 of 8), `heldout-loose-ends` 12 of 12,
-  `review-just-delivered` 8 of 8. It makes a checkpoint create objectives of its own, which the extension otherwise
-  avoids.
-
-## Limits
-
-- The entries in real sessions ("Done … No work left", with residual issues) were kept across many checkpoints of long
-  tool-using sessions. The synthetic sessions are short and tool-less, and reproduced the baseline behaviour only for
-  finished work with something left to say. The effect on real sessions is not measured; rerun the survey after some
-  days of use.
-- Residual issues that real reports kept under done objectives will no longer appear unless they belong to an open
-  objective or a standing question asks for them.
-- An absent objective is ambiguous: a report does not distinguish completed, cancelled and wrongly dropped objectives.
+- A defect in completed work is stated once and then leaves the reports, also when it needs a correction. In
+  `review-unreported-defect` the current wording reported the invented endpoint in the first report of 4 of 4 sessions
+  and kept no objective for it in the second; the strict and original wordings kept a correction objective in both
+  reports of 4 of 4.
+- The second inquiry follows the first directly. Real sessions have long tool-using stretches between checkpoints and
+  several completions per stretch; that was not run. Rerun the survey after some days of use: under the new rule a
+  title with `eta` `Complete` should occur in one report only.
+- The list matches titles exactly. A completed objective that the model later lists as unfinished under a different
+  title stays in the list; the rule then only forbids reporting its completion again.
+- The badge and the panel count a completed objective in the one report that lists it. A report does not distinguish
+  an objective that was never listed from a cancelled one.
 - One model was run live. GPT models were not run: the isolated harness reaches the gateway only, and their saved
   reports rarely show the defect.
-- One author wrote scenarios, wording and grader; 4 to 16 runs per cell. The first four-run sample of
-  `heldout-loose-ends` showed 1 of 4 where 16 runs show 10 of 16.
+- One author wrote scenarios, wording and grader; 2 to 4 sessions per cell and arm.
+- Which element of the wording produces the effect was not separated.
 - `scripts/cuckoo-memory-pilot` appends its delta focus to the live inquiry. Its frozen protocol pins the extension
   sources by hash and refuses to run against the changed text; a new freeze is a different study from `study-v1`.
 
-## Verification
+## 6. Verification
 
-- Fail-first: the new and updated tests run against the base sources fail on the missing rule and on the pin
-  (`logs/fail-first.log`: 2 of 17 fail, `2777 !== 3388`).
-- Local: `PI_OFFLINE=1 PI_TELEMETRY=0 node --test tests/*.test.mjs`, 562 tests pass, none skipped (`logs/local-tests.log`).
+- Fail-first: the new and updated tests run against the previous sources fail on the missing export, the absent list
+  and the pin (`logs/fail-first-once.log`, 3 failures); for the strict variant `logs/fail-first.log`.
+- Local: `PI_OFFLINE=1 PI_TELEMETRY=0 node --test tests/*.test.mjs`, 564 tests pass, none skipped
+  (`logs/local-tests-once.log`).
 - Nix: `nix build .#checks.x86_64-linux.ponygirls-cuckoo .#checks.x86_64-linux.subagents-policy-shape --no-link -L`.
+- The sources the "current" arms ran are saved in `once-final-*/src/` and are the committed ones.

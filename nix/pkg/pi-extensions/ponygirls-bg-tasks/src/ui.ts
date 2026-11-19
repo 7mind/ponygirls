@@ -25,8 +25,11 @@ export const VIEW_REFRESH_MS = 500;
 const CHROME_ROWS = 9;
 /** Spaces between list columns. */
 const COLUMN_GAP = 2;
-/** Widest label, state and exit cells before they are truncated. */
-const MAX_LABEL_COLUMN = 24;
+/** Reserve this much of a long label before spending width on secondary columns. */
+const PREFERRED_LABEL_COLUMN = 32;
+/** Let the label go shorter to keep a whole exit result visible. */
+const LABEL_FLOOR_WITH_EXIT = 24;
+const EXIT_DROP_RANK = 4;
 const MAX_STATE_COLUMN = 32;
 const MAX_EXIT_COLUMN = 28;
 /** Narrowest a `shrink` column gets when even the columns that always stay do not fit. */
@@ -59,17 +62,17 @@ interface ListColumn {
   /**
    * What a list too wide for the pane does with the column: `stay` keeps it
    * whole (which task, how it is doing), a number hides it (lowest first),
-   * `shrink` shortens it once nothing is left to hide.
+   * `shrink` takes any remaining room, up to the cell's natural width.
    */
   narrow: "stay" | "shrink" | number;
 }
 
 const LIST_COLUMNS: readonly ListColumn[] = [
   { header: "TASK", max: Number.POSITIVE_INFINITY, narrow: "stay" },
-  { header: "LABEL", max: MAX_LABEL_COLUMN, narrow: "shrink" },
+  { header: "LABEL", max: Number.POSITIVE_INFINITY, narrow: "shrink" },
   { header: "STATE", max: MAX_STATE_COLUMN, narrow: "stay" },
   { header: "TIME", max: Number.POSITIVE_INFINITY, narrow: 3 },
-  { header: "EXIT", max: MAX_EXIT_COLUMN, narrow: 4 },
+  { header: "EXIT", max: MAX_EXIT_COLUMN, narrow: EXIT_DROP_RANK },
   { header: "NOTICE", max: Number.POSITIVE_INFINITY, narrow: 2 },
   { header: "LOG", max: Number.POSITIVE_INFINITY, narrow: 1 },
 ];
@@ -350,25 +353,29 @@ export class BgInspector extends PanelLayout implements Component {
   }
 
   /**
-   * Columns are shown whole or not at all: the least important ones are hidden
-   * until the rest fits; only then does the label give up width.
+   * Admit whole secondary columns against a readable label width, then give
+   * the label the remaining space. A wide terminal can show the whole label.
    */
   private listLayout(width: number): ListLayout {
     const rows = this.items.map((task) => this.cells(task, false));
-    const widths = LIST_COLUMNS.map((column, index) => Math.min(column.max, Math.max(visibleWidth(column.header), ...rows.map((row) => visibleWidth(row[index]!.text)))));
+    const naturalWidths = LIST_COLUMNS.map((column, index) => Math.min(column.max, Math.max(visibleWidth(column.header), ...rows.map((row) => visibleWidth(row[index]!.text)))));
+    const widths = naturalWidths.map((natural, index) => LIST_COLUMNS[index]!.narrow === "shrink" ? Math.min(natural, PREFERRED_LABEL_COLUMN) : natural);
     // Deleting from a set keeps the order of the rest: the shown columns stay in table order.
     const shown = new Set(LIST_COLUMNS.keys());
     const excess = (): number => MARKER_WIDTH + [...shown].reduce((sum, index) => sum + widths[index]!, 0) + COLUMN_GAP * (shown.size - 1) - width;
     const hideOrder = LIST_COLUMNS
       .flatMap((column, index) => (typeof column.narrow === "number" ? [{ index, rank: column.narrow }] : []))
       .sort((a, b) => a.rank - b.rank);
-    for (const { index } of hideOrder) {
-      if (excess() <= 0) break;
+    const preferredLabel = widths[LIST_COLUMNS.findIndex((column) => column.narrow === "shrink")]!;
+    for (const { index, rank } of hideOrder) {
+      const labelGive = rank === EXIT_DROP_RANK ? Math.max(0, preferredLabel - LABEL_FLOOR_WITH_EXIT) : 0;
+      if (excess() <= labelGive) break;
       shown.delete(index);
     }
+    const spare = -excess();
     LIST_COLUMNS.forEach((column, index) => {
-      if (column.narrow !== "shrink" || excess() <= 0) return;
-      widths[index] = Math.max(Math.min(MIN_SHRUNK_COLUMN, widths[index]!), widths[index]! - excess());
+      if (column.narrow !== "shrink") return;
+      widths[index] = Math.min(naturalWidths[index]!, Math.max(MIN_SHRUNK_COLUMN, widths[index]! + spare));
     });
     return {
       shown: [...shown],

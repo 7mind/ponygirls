@@ -9,11 +9,11 @@ private[rites] object GitAskpass {
       .map(_.resolve(name)).find(path => Files.isRegularFile(path) && Files.isExecutable(path))
       .getOrElse(throw DomainError("toolchain-unavailable", "required Git helper executable is unavailable")).normalize()
   }
-  private def quote(path: Path): String = "'" + path.toString.replace("'", "'\\''") + "'"
-  def render(credentialFile: Path, searchPath: String): String = {
+  private def quote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+  def render(credentialFile: Path, username: String, searchPath: String): String = {
     Check(credentialFile.isAbsolute, "invalid", "Git credential file must be absolute")
     val shell = executable("sh", searchPath)
     val cat = executable("cat", searchPath)
-    s"#!$shell\ncase \"$$1\" in *Password*) exec ${quote(cat)} ${quote(credentialFile)};; *) exit 1;; esac\n"
+    s"#!$shell\ncase \"$$1\" in Username*) printf '%s' ${quote(username)};; Password*) exec ${quote(cat.toString)} ${quote(credentialFile.toString)};; *) exit 1;; esac\n"
   }
 }

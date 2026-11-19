@@ -521,25 +521,34 @@ progress, obstacles, issues, bottlenecks, and ETA” with a JSON-only schema:
 {"objectives":[{"objective":"Unfinished objective","progress":"Brief factual progress","issues":["A decoder defect needs correction","Waiting for access approval","Serial runtime validation limits progress"],"eta":"Unknown: validation has not started"}],"rules":[{"rule":"Show mockups before implementation","source":"user","scope":"This UI change"}]}
 ```
 
-Right after the schema the prompt states which objectives a report lists: only
-unfinished ones, meaning work is still left for the model, including work it
-must do once something it waits for arrives. Completed, cancelled and superseded
-objectives are omitted even when an earlier checkpoint listed them or they were
-finished since; they are not reported as done, and a finished objective is not
-kept because the user may still ask for changes. The session's system-prompt
-section says the same. The transcript keeps the history; a report does not say
-whether an absent objective was completed, cancelled or dropped. This is a prose
-instruction, not validation: the decoder cannot tell a finished objective from
-an unfinished one.
+Right after the schema the prompt states which objectives a report lists:
 
-Issues belong to objectives, so the caveats of a finished objective leave the
-report with it unless an open objective depends on them. In controlled runs a
-model also used such entries to raise risks it noticed at the checkpoint; a
-defect that needed a correction was still reported, as a new objective. To keep
-the rest, add a standing question, for example `/cuckoo questions add Do you
-know of any defect or risk in finished work that you have not yet told me
-about?`. Right after a complete delivery, before the user reacts, a report has
-no objectives.
+- every unfinished objective: work is still left for the model, including work
+  it must do once something it waits for arrives;
+- each completed objective exactly once, in the first checkpoint after it was
+  completed: `progress` says what was delivered, `issues` holds its remaining
+  defects, risks and caveats, and `eta` is `Complete`. Later checkpoints leave
+  it out and do not repeat its caveats, even if the user may still ask for
+  changes. A new defect or risk in completed work is reported once the same
+  way;
+- no cancelled or superseded objectives.
+
+The session's system-prompt section says the same. A report lists a completed
+objective once so that its caveats are stated; Cuckoo is not a ledger of
+accomplishments, and the transcript keeps the history.
+
+The model sees its earlier answers only until compaction removes them, so the
+extension also tells it what was already reported. It takes the objectives
+whose latest listing in the valid saved reports of the current branch has an
+`eta` starting with `Complete` (at most the 50 most recent, 300 characters
+each) and appends them to the objective rule as a JSON array of titles the
+model must not report as completed again. An objective listed again as
+unfinished leaves that set. Without such objectives the inquiry is exactly the
+base text. Titles are the model's own earlier output, quoted as data.
+
+These are prose instructions plus one derived list, not validation: the decoder
+does not check that a completed objective appears once. A report does not
+distinguish an objective that was never listed from one that was cancelled.
 
 The prompt asks for brief, concise, human-friendly plain language in every field,
 preferably one short sentence or phrase. It discourages jargon, repetition, filler
@@ -591,8 +600,9 @@ unrecorded rather than implying there were none. New replies with missing fields
 a string-valued issues field, or obsolete category fields are invalid and retain
 their raw output.
 
-Only unfinished objectives are requested, so the count is of those; an empty
-list means none remain. Reports are model
+The objective count covers unfinished objectives and those completed since the
+previous checkpoint; an empty list means nothing is unfinished and nothing
+completed is unreported. Reports are model
 self-reports, **not independently verified progress or new authorization**.
 
 The original assistant response remains in the transcript. Cuckoo stores its

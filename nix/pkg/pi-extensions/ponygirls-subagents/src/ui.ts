@@ -128,7 +128,7 @@ const INSPECTOR_CHROME = 20;
 /** First list row in the inspector's rendered lines (after the title and the column header). */
 const LIST_TOP = 2;
 const COLUMN_GAP = 2;
-const PATH_WIDTH = { min: 8, max: 40 };
+const PATH_WIDTH = { min: 8, preferred: 24 };
 /** Longest state text a list cell shows (after its glyph). */
 const STATE_TEXT_MAX = 24;
 const MAX_INDENT = 4;
@@ -282,15 +282,13 @@ function rowWidth(columns: readonly Column[]): number {
 }
 
 /**
- * Columns sized to their widest cell, so no cell is clipped. AGENT claims up
- * to PATH_WIDTH.max; a width too narrow for all columns drops TOKENS, then
- * MODEL, then KIND. AGENT then takes the room that is left: more of a long
- * path where there is spare room, less (paths shortened in the middle) where
- * even AGENT and STATE do not fit.
+ * Admit whole secondary columns against a readable AGENT width. Drop
+ * TOKENS, then MODEL, then KIND only when they cannot fit alongside it.
+ * AGENT then takes the remaining room, up to its widest path.
  */
 function listLayout(theme: UiTheme, views: AgentView[], width: number): ListLayout {
   const widest = (spec: ColumnSpec): number => Math.max(visibleWidth(spec.header), ...views.map((v) => visibleWidth(spec.cell(theme, v, Number.MAX_SAFE_INTEGER, false))));
-  const all = COLUMNS.map((spec): ListColumn => ({ spec, header: spec.header, width: spec.id === "agent" ? Math.min(PATH_WIDTH.max, Math.max(PATH_WIDTH.min, widest(spec))) : widest(spec), align: "left" }));
+  const all = COLUMNS.map((spec): ListColumn => ({ spec, header: spec.header, width: spec.id === "agent" ? Math.min(PATH_WIDTH.preferred, Math.max(PATH_WIDTH.min, widest(spec))) : widest(spec), align: "left" }));
   let columns = all;
   for (const id of DROP_ORDER) {
     if (rowWidth(columns) <= width) break;

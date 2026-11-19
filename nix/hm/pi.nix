@@ -92,18 +92,7 @@ let
   # second one collides (bin/python3, bin/pydoc3.13). Instead we prefix it onto
   # PATH for the pi process only (below), so the python3 pi spawns resolves to
   # this env without touching the home-manager profile.
-  # Backport nixpkgs b9eb668f72ae56cfbb69190682086d82ca73f61b until our pin
-  # includes primp's pkg-config/system-library build inputs.
-  ddgsInterpreter = pkgs.python3.override {
-    packageOverrides = final: prev: {
-      primp = prev.primp.overrideAttrs (old: {
-        __structuredAttrs = true;
-        nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.pkg-config ];
-        buildInputs = old.buildInputs ++ [ pkgs.aws-lc pkgs.zstd ];
-      });
-    };
-  };
-  ddgsPython = ddgsInterpreter.withPackages (ps: [ ps.ddgs ]);
+  ddgsPython = pkgs.python3.withPackages (ps: [ ps.ddgs ]);
   piWrapped = pkgs.symlinkJoin {
     name = "pi-coding-agent-wrapped";
     paths = [ piBase ];

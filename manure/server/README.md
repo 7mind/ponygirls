@@ -134,7 +134,7 @@ production shared library with `-Xcheck:jni` (strict and sanitizer runs:
 [`native-tests/README.md`](native-tests/README.md)). Mandatory existing-device rejection
 uses `/dev/null`; the owned-device `mknod` fixture is optional and reported as unavailable
 when the host refuses it. Build-only hosted registration is isolated behind an exact
-Graal CE 25.4.4.1.1 guard and invokes that Java home's tools. Both checks are members of
+Graal CE 25.5.5.0.3 guard and invokes that Java home's tools. Both checks are members of
 `scripts/verify manure`; individually:
 
 ```sh

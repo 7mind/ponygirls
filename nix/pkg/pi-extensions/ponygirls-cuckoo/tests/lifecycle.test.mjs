@@ -43,6 +43,19 @@ test('default-off is inert; 20k to exactly 23k triggers JSON checkpoint at 15% a
   assert.ok(!reply.entries.some(entry => entry.customType === INQUIRY_TYPE));
 });
 
+test('an objective reported as complete is named in later inquiries until it is reopened', async () => {
+  const f = fixture(); await f.command('on'); f.boundary();
+  const report = (objective, eta) => assistant(JSON.stringify({ objectives: [{ objective, progress: 'Stated', issues: ['One caveat'], eta }], rules: [] }));
+  const listed = 'already reported these objectives as complete, so do not report their completion again: ["Ship the parser"].';
+  f.tokens(23000); assert.ok(!f.boundary().entries.at(-1).content.includes('already reported these objectives'), 'nothing was reported yet');
+  f.boundary(report('Ship the parser', 'Complete'));
+  f.tokens(26450); const second = f.boundary();
+  assert.equal(second.entries.at(-1).customType, INQUIRY_TYPE); assert.ok(second.entries.at(-1).content.includes(listed));
+  f.boundary(report('Ship the parser', 'About an hour: the user asked for a change'));
+  await f.command('inquire now');
+  assert.equal(f.sent.at(-1)[0].customType, INQUIRY_TYPE); assert.ok(!f.sent.at(-1)[0].content.includes('already reported these objectives'), 'a reopened objective is not named');
+});
+
 test('unfinished tool turn resumes once; checkpoint tools blocked and malformed response preserved without retries', async () => {
   const f = fixture(); await f.command('on'); f.boundary(); f.tokens(23000); f.boundary(assistant('tool completed', 'toolUse'));
   assert.equal(f.handlers.get('tool_call')({}, f.ctx).block, true);

@@ -3,19 +3,16 @@ let
   # Audited provider-owned Graal release pin for the manure/chronicle native
   # toolchain. graalvmPackages used to be injected from the consuming flake's
   # nixpkgs, so one ponygirls rev built against different Graal releases
-  # depending on who evaluated it: ponygirls' own pin (nixpkgs f4a03c00)
-  # provides the audited GraalVM CE 25.4.4.1.1 (release dump:
-  # IMPLEMENTOR="GraalVM Community" GRAALVM_VERSION="25.4.4.1.1"
-  # JAVA_VERSION="25.0.4.1.1" JAVA_RUNTIME_VERSION="25.0.4.1.1+1-jvmci-25.4-b23",
-  # store graalvm-ce-25.4.4.1.1), while consumers with other nixpkgs pins got
+  # depending on who evaluated it: the selected snapshot provides
+  # GraalVM CE 25.5.5.0.3 (JDK 25.0.5.0.3), while consumers with other pins got
   # un-audited builds that the POSIX guard refused. This snapshot import
   # pins the toolchain to the audited derivation under EVERY consuming flake
   # (immune to follows and overlay drift) and fail-closes on any other
   # release. See 49b5d838 for the guard side and the acceptance evidence.
-  auditedGraalRelease = "25.4.4.1.1";
+  auditedGraalRelease = "25.5.5.0.3";
   auditedPkgs = import (builtins.fetchTarball {
-    url = "https://github.com/NixOS/nixpkgs/archive/f4a03c008967841f2a0b3cb7c436fc6fc31671f6.tar.gz";
-    sha256 = "sha256-ziZn2PvCJE5JEEpqTdxXwJpPB+L3YqoCpTAMCzyaP3U=";
+    url = "https://github.com/NixOS/nixpkgs/archive/04906337b6d53e8bb0eaf0470ae9f070a4d4eb55.tar.gz";
+    sha256 = "sha256-lME2lHoDHAaSHP3/okgiVoJ0icVEvsQH8LeU3We7tcc=";
   }) {
     # Explicit system: flake evaluation is pure and has no
     # builtins.currentSystem (nixpkgs' impure.nix fallback would abort
@@ -54,8 +51,8 @@ let
     };
   };
   launcher = fetchurl {
-    url = "https://repo.maven.apache.org/maven2/org/scala-sbt/sbt-launch/2.0.12/sbt-launch-2.0.12.jar";
-    hash = "sha256-0XOuS9brB/1wsAChLLcnXHqrJsZX48mTL0l9lXjXHrE=";
+    url = "https://repo.maven.apache.org/maven2/org/scala-sbt/sbt-launch/2.1.0/sbt-launch-2.1.0.jar";
+    hash = "sha256-K+1zBZW/p94gpGMrhdOrUfwsDeXm2d0X7+ruWEkXBvQ=";
   };
   repositories = writeText "chronicle-sbt-repositories" ''
     [repositories]

@@ -34,7 +34,7 @@ buildNpmPackage {
   npmDeps = fetchNpmDeps {
     inherit src;
     # Hash of the pinned main rev's package-lock.json closure. Refresh on bumps.
-    hash = "sha256-5QPaaLBY3ORU1gFsFE+tkCbhC/Vd8YQ2z//xqYouUls=";
+    hash = "sha256-iewSnvtUR7jWTF7dVsb2qOA7q3pzk+bwMaCJOZ8pMSM=";
   };
 
   nodejs = nodejs_24;
@@ -75,7 +75,10 @@ buildNpmPackage {
 
     # Launcher wrapper: --liftoff-only keeps tree-sitter's large WASM grammars
     # on V8's Liftoff baseline compiler, avoiding the turboshaft Zone OOM
-    # (CodeGraph issues #293/#298). Built with printf (not a heredoc) so the
+    # (CodeGraph issues #293/#298). Keep the flag even with upstream's guard:
+    # its spawnSync relaunch inserts a parent process and translates signals;
+    # this exec preserves the MCP host's direct child and signal semantics.
+    # Built with printf (not a heredoc) so the
     # shebang lands at column 0 regardless of this nix string's indentation.
     # CODEGRAPH_TELEMETRY defaults to 0: upstream sends anonymous usage
     # telemetry unless opted out, and the CLI opt-out (~/.codegraph/

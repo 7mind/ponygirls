@@ -111,7 +111,7 @@ class FixtureTests(unittest.TestCase):
         token_file = self.root / "git-token"
         token_file.write_text(FORGE_KEY, encoding="utf-8")
         token_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
-        askpass.write_text(f"#!/bin/sh\ncase \"$1\" in *Password*) exec /bin/cat {token_file};; *) exit 1;; esac\n", encoding="utf-8")
+        askpass.write_text(f"#!/bin/sh\ncase \"$1\" in Username*) printf '%s' 'x-access-token';; Password*) exec /bin/cat {token_file};; *) exit 1;; esac\n", encoding="utf-8")
         askpass.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
         env = {"GIT_ASKPASS": str(askpass)}
         url = f"http://x-access-token@127.0.0.1:{self.server.httpd.server_port}/github/git/fixture/github-repository.git"
@@ -134,7 +134,7 @@ class FixtureTests(unittest.TestCase):
         token_file = self.root / "gitlab-token"
         token_file.write_text(str(rotated["access_token"]), encoding="utf-8")
         token_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
-        askpass.write_text(f"#!/bin/sh\ncase \"$1\" in *Password*) exec /bin/cat {token_file};; *) exit 1;; esac\n", encoding="utf-8")
+        askpass.write_text(f"#!/bin/sh\ncase \"$1\" in Username*) printf '%s' 'oauth2';; Password*) exec /bin/cat {token_file};; *) exit 1;; esac\n", encoding="utf-8")
         askpass.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
         url = f"http://oauth2@127.0.0.1:{self.server.httpd.server_port}/gitlab/git/fixture/gitlab-repository.git"
         result = run_git(["clone", url, str(clone)], self.root, b"", {"GIT_ASKPASS": str(askpass)})
