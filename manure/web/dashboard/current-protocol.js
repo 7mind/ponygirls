@@ -4,6 +4,7 @@
 import * as p from './current/manure/api/index.js';
 import { BaboonCodecContext } from './current/BaboonSharedRuntime.js';
 import { schema } from './current-schema.js';
+import { ACCOUNT_API_PATH } from './account-client.js';
 const ctx = BaboonCodecContext.Default;
 const version = p.ClientEnvelope.BaboonDomainVersion;
 // randomUUID is secure-context-only; explicitly opted-in HTTP hosting still
@@ -129,6 +130,37 @@ async function exchange(fetch, descriptor, init) {
 }
 export const request = (fetch, descriptor) => exchange(fetch, descriptor, {credentials:'same-origin'});
 const versionCommand = () => [new p.Command_Version(),p.Result_Version,r=>({current:r.versions.current,supported:r.versions.supported})];
+// Whether a response with a gateway status (502, 503, 504) was produced by Manure rather than by a gateway in front of
+// it. Manure answers 503 only, as an error envelope for the request (its nil-id overload answer included) on the API
+// path, or as its `unavailable` body (or the overload envelope) on the account API; a gateway's error page, JSON or not,
+// is none of these.
+const NIL_REQUEST_ID = '00000000-0000-0000-0000-000000000000';
+const API_PATH = '/api/current';
+const MANURE_GATEWAY_STATUS = 503;
+const under = (path, prefix) => path === prefix || path.startsWith(prefix + '/');
+function requestIdOf(init) {
+  try { return JSON.parse(init.body).requestId; } catch (_error) { return null; }
+}
+function errorEnvelopeFor(text, id) {
+  try {
+    const json = parseStrict(text); validate('ServerEnvelope',json);
+    const envelope = p.ServerEnvelope_JsonCodec.instance.decode(ctx,json);
+    return envelope.result instanceof p.Result_Error && (envelope.requestId === id || envelope.requestId === NIL_REQUEST_ID);
+  } catch (_error) { return false; } // anything that does not decode is not Manure's envelope
+}
+function accountUnavailable(text) {
+  try {
+    const body = parseStrict(text);
+    return object(body) && Object.keys(body).join() === 'error' && object(body.error) && Object.keys(body.error).sort().join() === 'code,message' &&
+      body.error.code === 'unavailable' && typeof body.error.message === 'string';
+  } catch (_error) { return false; }
+}
+export function answeredByManure(path, init, status, text) {
+  if (status !== MANURE_GATEWAY_STATUS) { return false; }
+  // The server's overload answer is the nil-id envelope on every path.
+  if (under(path,ACCOUNT_API_PATH)) { return accountUnavailable(text) || errorEnvelopeFor(text,null); }
+  return under(path,API_PATH) && errorEnvelopeFor(text,requestIdOf(init));
+}
 // The liveness heartbeat: the unauthenticated Version command, which the server answers from memory (no session lookup,
 // no database access, none of the per-user or per-client request limits); `signal` bounds the wait.
 export const probe = (fetch, signal) => exchange(fetch, versionCommand(), {credentials:'omit',signal});

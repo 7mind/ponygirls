@@ -117,8 +117,12 @@ function expressionInput(input, list, change, compositionChange) {
   var dateFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   var overlays = createOverlays(document, window);
   // Every request below goes through the connection's fetch: its outcome is what the masthead indicator shows.
-  var connection = createConnection({ fetch: networkFetch, document: document, window: window, now: function () { return Date.now(); }, probe: current.probe });
+  var connection = createConnection({ fetch: networkFetch, document: document, window: window, now: function () { return Date.now(); },
+    probe: current.probe, answeredByManure: current.answeredByManure });
   var fetch = connection.fetch;
+  // The shared account UI (account.js) takes window.fetch when it is evaluated, which index.html does after this module:
+  // putting the connection's fetch there makes its requests (sign-in, sign-out, profile, tokens, users) count as well.
+  window.fetch = connection.fetch;
   var ctx = Object.assign({ document: document, window: window, fetch: fetch, apiFetch: apiFetch, overlays: overlays,
     sessionEpoch: 0, authenticated: false, deleting: new Set(), accessMutations: new Map() }, domHelpers(document));
   var $ = ctx.$, setText = ctx.setText, element = ctx.element;

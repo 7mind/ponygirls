@@ -11,8 +11,9 @@
 <link rel="stylesheet" href="./styles.css">
 <link rel="stylesheet" href="./upload.css">
 <link rel="stylesheet" href="/account.css">
-<script type="module" src="/account.js"></script>
+<!-- app.js first: it puts its observed fetch on window, which account.js takes when it is evaluated. -->
 <script type="module" src="./app.js"></script>
+<script type="module" src="/account.js"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>

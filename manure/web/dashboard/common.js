@@ -14,7 +14,7 @@ export var CONNECTION = {
   RETRY_FIRST_MS: 5000,
   RETRY_MAX_MS: 60000,
   PROBE_TIMEOUT_MS: 10000,
-  // Statuses a gateway answers when the application is down; the application itself always answers in JSON.
+  // Statuses a gateway answers when the application is down; Manure's own answers in this range are told apart by their body.
   GATEWAY_STATUSES: [502, 503, 504]
 };
 
@@ -64,10 +64,12 @@ export function contentUrl(info, dashboardOrigin) {
 // ── Connection state ─────────────────────────────────────────────────────
 // Whether the dashboard can currently reach the server, from the outcome of every request it makes (connection.fetch
 // wraps the page's fetch) and from a heartbeat while nothing else is going on. Phases: "connecting" (no answer yet),
-// "live" (the latest request or heartbeat was answered), "offline" (it was not: connection refused or lost, no answer
-// in time, or a gateway error page). Any answer counts, a 401 or an application error included: the server is there.
-// env: { fetch, document, window, now(), probe(fetch, signal) } — probe sends one unauthenticated heartbeat through the
-// fetch it is given, so its outcome is recorded like every other request's.
+// "live" (the latest request or heartbeat was answered), "offline" (it was not: connection refused or lost, in the
+// middle of the answer too, no answer in time, or a gateway's error page). Any answer counts, a 401 or an application
+// error included: the server is there.
+// env: { fetch, document, window, now(), probe(fetch, signal), answeredByManure(path, init, status, text) } — probe sends one
+// unauthenticated heartbeat through the fetch it is given, so its outcome is recorded like every other request's;
+// answeredByManure tells a gateway-status response Manure produced from a gateway's own.
 export function createConnection(env) {
   var window = env.window, document = env.document;
   var phase = "connecting", failures = 0, lastAnswerAt = null, lastFailure = null, pending = 0;
@@ -109,25 +111,34 @@ export function createConnection(env) {
     heartbeat.limit = window.setTimeout(function () {
       heartbeat.controller.abort(new window.DOMException("No answer within " + CONNECTION.PROBE_TIMEOUT_MS + " ms", "TimeoutError"));
     }, CONNECTION.PROBE_TIMEOUT_MS);
-    // The outcome is recorded by observedFetch; a malformed answer is still an answer, so a rejection adds nothing.
+    // observedFetch records the outcome, a failing or stalled body and the timeout included; a malformed answer is still
+    // an answer, so a rejection adds nothing.
     env.probe(observedFetch, heartbeat.controller.signal).catch(function () {}).then(function () {
       window.clearTimeout(heartbeat.limit);
       if (inflight === heartbeat) { inflight = null; schedule(); }
     });
   }
+  function pathOf(input) { return new window.URL(String(input), "http://dashboard.invalid").pathname; }
+  function transportFailed(error) {
+    // Cancelling a request on purpose says nothing about the server.
+    var name = error ? error.name : "";
+    if (name === "AbortError") { notify(); } else { failed(name === "TimeoutError" ? "No answer in time" : "Network error"); }
+  }
+  // The verdict comes when the body is complete, not with the headers: a connection that drops or stalls after them is no
+  // answer. The body is read on a clone, so it is judged even when the caller does not read it (an error status).
   function observedFetch(input, init) {
     pending++;
     return env.fetch(input, init).then(function (response) {
-      pending--;
-      var json = /^application\/json\b/i.test(response.headers.get("Content-Type") || "");
-      if (CONNECTION.GATEWAY_STATUSES.includes(response.status) && !json) { failed("HTTP " + response.status + " from a gateway"); }
-      else { answered(); }
+      response.clone().text().then(function (text) {
+        pending--;
+        if (CONNECTION.GATEWAY_STATUSES.includes(response.status) && !env.answeredByManure(pathOf(input), init, response.status, text)) {
+          failed("HTTP " + response.status + " from a gateway");
+        } else { answered(); }
+      }, function (error) { pending--; transportFailed(error); });
       return response;
     }, function (error) {
       pending--;
-      // Cancelling a request on purpose says nothing about the server.
-      var name = error ? error.name : "";
-      if (name === "AbortError") { notify(); } else { failed(name === "TimeoutError" ? "No answer in time" : "Network error"); }
+      transportFailed(error);
       throw error;
     });
   }

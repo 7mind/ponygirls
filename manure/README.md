@@ -326,11 +326,13 @@ The access scope (All / Internal / External / Public) and the shortcut toggles a
 at once; field shortcuts only insert text. Search, filters and sort persist in the
 URL fragment, never in web storage. Deleting and making an artifact public ask in
 an in-app dialog. A connection pill in the masthead (Connecting… / Live / Offline, details
-on click) tells whether the dashboard can reach the server: every request's outcome
-updates it, and an idle visible tab sends the unauthenticated `Version` command as a
-heartbeat (every 30 s; retries back off from 5 s to 60 s while the server does not
-answer; nothing is sent from a hidden tab). A 401 or an application error is an answer;
-a refused or lost connection, a timeout or a gateway error page is not.
+on click) tells whether the dashboard can reach the server: the outcome of every request
+the page makes (the account pages' included) updates it once its response is complete,
+and an idle visible tab sends the unauthenticated `Version` command as a heartbeat
+(every 30 s; retries back off from 5 s to 60 s while the server does not answer; nothing
+is sent from a hidden tab). A 401 or an application error is an answer; a refused or
+lost connection (also in the middle of an answer), a timeout, or a 502/503/504 that
+Manure did not produce (a gateway's page, JSON or not) is not.
 
 One query field holds search text, mode and filters, with caret-aware completion
 and an in-field clear button. The same expression is accepted by the MCP `search`
