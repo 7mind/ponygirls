@@ -57,7 +57,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   protected def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder): Worker = worker(archive,config,model,embedding,ModelFixtures.failureBackoff)
   private def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder,backoff: Worker.FailureBackoff): Worker =
     worker(archive,config,model,embedding,backoff,logstage.IzLogger())
-  private def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder,backoff: Worker.FailureBackoff,logger: logstage.IzLogger): Worker =
+  protected def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder,backoff: Worker.FailureBackoff,logger: logstage.IzLogger): Worker =
     new Worker(archive,model,embedding,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),logger,backoff)
   protected def one(window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): ProblemPassages.Decision =
     ProblemPassages.Decision(Vector(ProblemPassages.Part(ProblemPassages.Point(0,0),window.terminal,previous.nonEmpty,"synthetic goal",Nil)))
@@ -417,7 +417,7 @@ final class PostgresContextWorkerRecoveryTest extends ContextWorkerRecoveryContr
       }
     })
   }
-  test("BG/GoodCommunication regression: a corrupt accepted embedding part stays an internal fault that ends the worker run and is never discarded with its window") { CurrentIndexDatabase.withDatabase { (config,db,archive) =>
+  test("BG/GoodCommunication regression: a corrupt accepted embedding part stays an internal fault that restarts the worker lane, never discarded with its window") { CurrentIndexDatabase.withDatabase { (config,db,archive) =>
     val texts=(0 until 40).map(i => s"source-$i").toList; var failed=false; var calls=0
     val model=new ProblemPassageAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO(one(window,previous))
@@ -435,9 +435,26 @@ final class PostgresContextWorkerRecoveryTest extends ContextWorkerRecoveryContr
     def parts: Int = db.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_index_checkpoints WHERE job_id=? AND stage='Embedding'",receipt.jobId)(_.getInt(1)).get)
     assertEquals(parts,32/config.indexing.embeddingBatchSize)
     db.transaction(c => Sql.exec(c,"UPDATE ch_index_checkpoints SET value='[[1.0,2.0,3.0]]' WHERE job_id=? AND stage='Embedding' AND part=1",receipt.jobId)); calls=0
-    val regrouped=config.copy(indexing=config.indexing.copy(embeddingBatchSize=4))
-    val ended=worker(archive,regrouped,model,embedding).run.attempt.timeout(10.seconds).unsafeRunSync()
-    assertEquals(ended.left.map { case error: DomainError => error.code; case error => error.toString },Left("internal"))
+    val regrouped=config.copy(indexing=config.indexing.copy(annotationSessions=1,embeddingBatchSize=4)); val log=new WorkerLog
+    val outcome=(for {
+      restarted <- Deferred[IO,Unit]
+      terminated <- Deferred[IO,OutcomeIO[Nothing]]
+      claims <- cats.effect.Ref.of[IO,Int](0)
+      observed=new ForwardingArchive(archive) {
+        override def claim(profiles: Set[String],scope: ClaimScope,lease: Int): Option[Claim] = {
+          if(claims.updateAndGet(_+1).unsafeRunSync()==2) restarted.complete(()).unsafeRunSync()
+          super.claim(profiles,scope,lease)
+        }
+      }
+      fiber <- worker(observed,regrouped,model,embedding,ModelFixtures.failureBackoff,log.logger).run.guaranteeCase(outcome => terminated.complete(outcome).void).start
+      first <- IO.race(terminated.get,restarted.get).timeout(10.seconds)
+      _ <- IO(first.left.foreach(outcome => fail(s"the worker run ended: $outcome")))
+      _ <- fiber.cancel.timeout(5.seconds)
+      outcome <- terminated.get
+    } yield outcome).unsafeRunSync()
+    assert(outcome.isCanceled,s"cancellation stops the lane: $outcome")
+    val failures=log.lines.filter(_.startsWith("worker lane failed")); assertEquals(failures.size,1)
+    assert(failures.head.matches("worker lane failed code=internal exceptionClass=chronicle\\.DomainError origin=\\S+ restartAfterMs=[0-9]+"),failures.head)
     assertEquals(parts,32/config.indexing.embeddingBatchSize,"the corrupt part and its window are kept for inspection"); assertEquals(calls,0)
     assertEquals(db.transaction(c => Sql.one(c,"SELECT state FROM ch_jobs WHERE id=?",receipt.jobId)(_.getString(1))),Some("Running"),"the job keeps its lease until it expires")
   }}

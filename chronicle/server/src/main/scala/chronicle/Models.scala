@@ -251,12 +251,27 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       case Worker.Iteration.Idle => IO.sleep(idleDelay)
       case Worker.Iteration.ClaimFailed => IO.sleep(failureBackoff.delay)
     }.foreverM
-    List.fill(config.indexing.annotationSessions)(lane).parSequence.map(_.head)
+    List.fill(config.indexing.annotationSessions)(supervised(lane)).parSequence.map(_.head)
+  }
+  /** A lane that fails (a job's internal invariant, configuration) is restarted after a pause that doubles up to
+    * Worker.laneRestartLimit and starts over once the lane has run that long; the server keeps serving. */
+  private def supervised(lane: IO[Nothing]): IO[Nothing] = {
+    def attempt(pause: FiniteDuration): IO[Nothing] = IO.monotonic.flatMap { started =>
+      lane.handleErrorWith { error => IO.monotonic.flatMap { failed =>
+        val restartAfter=if(failed-started>=Worker.laneRestartLimit) failureBackoff.delay else pause
+        val code=failureCode(error); val exceptionClass=error.getClass.getName; val origin=failureOrigin(error)
+        IO(logger.error(s"worker lane failed code=$code exceptionClass=$exceptionClass origin=$origin restartAfterMs=${restartAfter.toMillis}")) *>
+          IO.sleep(restartAfter) *> attempt((restartAfter*2).min(Worker.laneRestartLimit))
+      }}
+    }
+    attempt(failureBackoff.delay)
   }
 }
 object Worker {
   private enum Iteration { case Processed,Idle,ClaimFailed }
   private def sqlState(error: Throwable): String = error match { case sql: java.sql.SQLException => Option(sql.getSQLState).getOrElse("unavailable"); case _ => "unavailable" }
+  /** The longest pause before a failed lane is restarted. */
+  val laneRestartLimit: FiniteDuration = 5.minutes
   /** How long a worker lane stays idle after recording a failed job. */
   final case class FailureBackoff(delay: FiniteDuration)
   object FailureBackoff {
