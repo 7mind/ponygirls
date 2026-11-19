@@ -974,8 +974,25 @@ export const scenarios = [
         await show(page, search({ q: query, mode: "semantic" }));
         await rec.shot(page, "retrieve-unavailable", { file: "haystack-search-unavailable-1440.png", desc: "Explicit semantic refused with the server's reason and the one-click lexical way out",
           how: "stub stopped, open #/search?q=…&mode=semantic", expect: [`${view} [data-notice="unavailable"]`] });
+        await page.route("**/api/v1/retrieve", (route) => route.request().postDataJSON().mode === "Lexical" ? route.abort() : route.continue());
+        await show(page, search({ q: `${query} plan` }));
+        await rec.shot(page, "retrieve-fallback-failed", { file: "haystack-search-fallback-failed-1440.png", desc: "Defaulted hybrid refused, then the lexical re-run failed: the error under the kept mode line and downgrade notice",
+          how: "stub stopped, route POST /api/v1/retrieve to abort Lexical requests, open #/search?q=…", expect: [`${view} [data-notice="lexical"]`, `${view} [role=alert]`] });
         await ctx.close();
       } finally { await stub.start(); }
+      {
+        const { ctx, page } = await open(env);
+        await show(page, search({ q: query, mode: "hybrid" }));
+        await stub.stop();
+        try {
+          await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+          await page.locator(`${view} [data-notice="unavailable"]`).waitFor();
+          await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight)); await page.waitForTimeout(250);
+          await rec.shot(page, "retrieve-append-refused", { file: "haystack-search-append-refused-1440.png", desc: "Explicit hybrid: the next batch refused (embedding failed) — hits kept, the refusal with Search lexically instead and Retry",
+            how: "open #/search?q=…&mode=hybrid, stop the stub, scroll to the end", expect: [`${view} [data-notice="unavailable"]`] });
+        } finally { await stub.start(); }
+        await ctx.close();
+      }
       {
         const hold = stub.hold((input) => input.includes("capture-pending-marker"));
         try {

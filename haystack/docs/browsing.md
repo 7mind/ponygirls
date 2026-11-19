@@ -59,10 +59,15 @@ Default (no mode in the route): hybrid when the server offers it, otherwise
 lexical with the notice "Hybrid search is not available on this server:
 <reason>; showing lexical results". A default hybrid search that the server
 refuses with its fixed reason (`query embedding failed`) is run once more
-lexically with the same notice. An explicitly chosen mode is never replaced:
-when the server refuses it, the view shows the reason and a **Search lexically
-instead** button. The line above the results always names the mode that
-answered and whether it was the default or chosen. A semantic or hybrid answer
+lexically with the same notice; if that lexical search fails too, the error is
+shown under the same notice and mode. An explicitly chosen mode is never
+replaced: when the server refuses it, the view shows the reason and a **Search
+lexically instead** button. The same rule applies when a later batch of a
+semantic or hybrid search is refused: a default search starts again lexically
+from the first result (rankings are not mixed), an explicit one keeps the
+results already loaded and offers **Search lexically instead**. The line above
+the results always names the mode that answered (or was attempted) and whether
+it was the default or chosen. Search and Retry run the shown values again. A semantic or hybrid answer
 with records not yet indexed shows "N items are not yet indexed for semantic
 search; results may be incomplete". An empty query sends no request.
 

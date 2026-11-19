@@ -33,10 +33,12 @@ const EXAMPLES: readonly string[] = ["token rotation", '"exact phrase"', "deploy
 const UNREACHABLE = "Server unreachable — the service may be down.";
 
 type Capabilities = { status: "loading" } | { status: "loaded"; modes: readonly RetrievalModeName[] } | { status: "failed"; message: string; network: boolean };
+/** A failed next page; `refusal`: an explicit mode's typed unavailability (its hits stay, the lexical search is offered). */
+interface AppendFailure { message: string; refusal: string | null }
 /** The plan actually served: a defaulted hybrid that fell back is a defaulted lexical plan with the fallback notice. */
 interface Settled {
   kind: "settled"; plan: Plan; mode: RetrievalModeName; hits: RetrievedHit[]; countScope: string; total: number; rankingLimit: number | undefined;
-  pending: number; next: number | null; appendFailure: string | null;
+  pending: number; next: number | null; appendFailure: AppendFailure | null;
 }
 /** idle: no query, nothing is requested (Browse is the listing). */
 type Results =
@@ -44,7 +46,8 @@ type Results =
   | { kind: "loading"; plan: Plan | null }
   | Settled
   | { kind: "unavailable"; plan: Plan; reason: string }
-  | { kind: "failed"; message: string; network: boolean };
+  /** `plan`: the plan attempted (null when the capability read failed); its mode and fallback notice stay shown. */
+  | { kind: "failed"; plan: Plan | null; message: string; network: boolean };
 /** A route this view showed before another search replaced it: only a settled answer is kept (spec §5 rule 2). */
 interface Kept { results: Settled | Extract<Results, { kind: "unavailable" }>; pageTop: number; focus: Element | null }
 
@@ -176,7 +179,7 @@ export function Retrieve({ initial, onOpen, onAuthLost }: { initial: RetrieveSta
     } catch (error) {
       if (request !== sequence.current) return;
       if (error instanceof AuthError) { onAuthLost(); return; }
-      setResults({ kind: "failed", message: failureText(error), network: error instanceof NetworkError });
+      setResults({ kind: "failed", plan: served, message: failureText(error), network: error instanceof NetworkError });
       return;
     }
     if (request !== sequence.current) return;
@@ -207,7 +210,7 @@ export function Retrieve({ initial, onOpen, onAuthLost }: { initial: RetrieveSta
       return;
     }
     if (applied.query.trim() === "") { sequence.current++; setAppending(false); setResults({ kind: "idle" }); return; }
-    if (plan === null) { sequence.current++; setResults(capabilities.status === "failed" ? { kind: "failed", message: capabilities.message, network: capabilities.network } : { kind: "loading", plan: null }); return; }
+    if (plan === null) { sequence.current++; setResults(capabilities.status === "failed" ? { kind: "failed", plan: null, message: capabilities.message, network: capabilities.network } : { kind: "loading", plan: null }); return; }
     void search(applied, plan);
   }, [appliedHash, planKey, waiting, attempt, search]);
 
@@ -235,11 +238,16 @@ export function Retrieve({ initial, onOpen, onAuthLost }: { initial: RetrieveSta
     } catch (error) {
       if (request !== sequence.current) return;
       if (error instanceof AuthError) { onAuthLost(); return; }
-      setResults((previous) => previous.kind !== "settled" ? previous : { ...previous, appendFailure: failureText(error) });
+      // The same rule as for the first page: a defaulted hybrid restarts lexically from the start (rankings are not
+      // mixed); an explicit mode keeps its hits and shows the refusal with the lexical search.
+      const fallback = error instanceof RetrievalUnavailable ? afterUnavailable(results.plan, error.reason) : null;
+      if (fallback !== null && fallback.kind === "lexical") { void search(applied, { mode: "Lexical", defaulted: true, notice: fallback.notice }); return; }
+      const refusal = fallback === null ? null : fallback.reason;
+      setResults((previous) => previous.kind !== "settled" ? previous : { ...previous, appendFailure: { message: failureText(error), refusal } });
     } finally {
       if (request === sequence.current) setAppending(false);
     }
-  }, [results, appending, applied, fetchPage, onAuthLost]);
+  }, [results, appending, applied, fetchPage, onAuthLost, search]);
 
   const canAppend = results.kind === "settled" && results.next !== null && !appending && results.appendFailure === null;
   useEffect(() => {
@@ -249,12 +257,11 @@ export function Retrieve({ initial, onOpen, onAuthLost }: { initial: RetrieveSta
     return () => observer.disconnect();
   }, [canAppend, append]);
 
-  /** Applies `state`: a changed route is navigated to; the route shown searches again. */
+  /** Applies `state`: changed values are navigated to; the values shown (whatever the fragment's spelling) search again. */
   function submit(state: RetrieveState) {
-    const hash = retrieveHash(state);
     setDraft(state);
     fresh.current = true;
-    if (location.hash !== hash) { location.hash = hash; return; }
+    if (!sameRetrieveState(state, applied)) { location.hash = retrieveHash(state); return; }
     if (capabilities.status === "failed" && state.mode === null) void readCapabilities();
     setAttempt((value) => value + 1);
   }
@@ -263,7 +270,7 @@ export function Retrieve({ initial, onOpen, onAuthLost }: { initial: RetrieveSta
   const offered = capabilities.status === "loaded" ? capabilities.modes : MODES;
   const unoffered = MODES.filter((mode) => !offered.includes(mode));
   const edited = draft.query !== applied.query;
-  const servedPlan = results.kind === "settled" || results.kind === "loading" || results.kind === "unavailable" ? results.plan : null;
+  const servedPlan = results.kind === "idle" ? null : results.plan;
   const served = results.kind === "settled" ? results.mode : servedPlan === null ? null : servedPlan.mode;
   const counter = results.kind === "idle" ? ""
     : results.kind === "loading" ? "Searching…"
@@ -311,7 +318,7 @@ export function Retrieve({ initial, onOpen, onAuthLost }: { initial: RetrieveSta
       {results.kind === "loading" && " · searching…"}
     </p>}
     <div className="retrieve-notices">
-      {notice !== null && results.kind !== "failed" && <div className="notice notice-warn notice-row" role="status" data-notice="lexical"><UiIcon name="alert" /><div className="grow">{notice}</div></div>}
+      {notice !== null && <div className="notice notice-warn notice-row" role="status" data-notice="lexical"><UiIcon name="alert" /><div className="grow">{notice}</div></div>}
       {results.kind === "settled" && results.mode !== "Lexical" && results.pending > 0 &&
         <div className="notice notice-row" role="status" data-notice="pending"><UiIcon name="info" /><div className="grow">{pendingNotice(results.pending)}</div></div>}
       {results.kind === "unavailable" && <div className="notice notice-warn" role="alert" data-notice="unavailable"><UiIcon name="alert" /><div className="grow">
@@ -354,9 +361,12 @@ export function Retrieve({ initial, onOpen, onAuthLost }: { initial: RetrieveSta
         </div>
       </div>}
       {results.kind === "settled" && results.hits.length > 0 && (results.appendFailure !== null ? <div className="retrieve-foot-notice">
-        <div className="notice notice-danger notice-row" role="alert"><UiIcon name="alert" /><div className="grow">
-          <span className="notice-title">The next results could not be loaded.</span> {results.appendFailure} The {records(results.hits.length)} above {results.hits.length === 1 ? "is" : "are"} kept.
-        </div><button type="button" className="btn btn-sm" onClick={() => setResults({ ...results, appendFailure: null })}>Retry loading results</button></div>
+        <div className="notice notice-danger notice-row" role="alert" data-notice={results.appendFailure.refusal === null ? undefined : "unavailable"}><UiIcon name="alert" /><div className="grow">
+          <span className="notice-title">The next results could not be loaded{results.appendFailure.refusal === null ? "." : `: ${results.mode} search is unavailable.`}</span>
+          {" "}{results.appendFailure.message} The {records(results.hits.length)} above {results.hits.length === 1 ? "is" : "are"} kept{results.appendFailure.refusal === null ? "." : "; no other mode was used."}
+        </div>
+        {results.appendFailure.refusal !== null && <button type="button" className="btn btn-sm" onClick={() => submit({ ...applied, mode: "Lexical" })}>Search lexically instead</button>}
+        <button type="button" className="btn btn-sm" onClick={() => setResults({ ...results, appendFailure: null })}>Retry loading results</button></div>
       </div> : results.next === null ? <div className="list-foot list-end" data-list-end="">
         {results.countScope === "CandidateWindow" ? "End of the candidate window" : "End of list"} · {records(results.hits.length)}</div>
         : <div ref={sentinel} className="list-foot">{appending && <span className="spinner" aria-hidden="true" />}{appending ? "Loading more results…" : "More results load as you scroll"}</div>)}

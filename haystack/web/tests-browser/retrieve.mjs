@@ -166,7 +166,8 @@ try {
       assert.deepEqual(await page.evaluate(() => window.nativeDialogs), [], "window.alert/confirm/prompt are never called");
       await context.close();
     };
-    return { page, done, retrievals: () => page.evaluate(() => window.retrievals.map((body) => body.mode)) };
+    return { page, done, retrievals: () => page.evaluate(() => window.retrievals.map((body) => body.mode)),
+      requests: () => page.evaluate(() => window.retrievals.map((body) => `${body.mode}@${body.offset}`)) };
   }
   const searchHash = (params) => `#/search?${new URLSearchParams(params)}`;
 
@@ -264,7 +265,7 @@ try {
     await done();
   });
 
-  await check("search: with the embedding stub stopped a defaulted hybrid is re-run lexically once and shows the server's reason", async () => {
+  await check("search: with the embedding stub stopped a defaulted hybrid is re-run lexically once and shows the server's reason; a failing re-run keeps that mode and notice with the error; Search and Retry search again", async () => {
     await stub.stop();
     try {
       const { page, done, retrievals } = await open(configured.base, searchHash({ q: "harbour" }));
@@ -272,6 +273,66 @@ try {
       assert.equal(await notice(page, "lexical").innerText(), lexicalNotice(EMBEDDING_FAILED));
       assert.match(await summary(page).innerText(), new RegExp(`^Mode Lexical \\(default\\) · ${LEXICAL} exact matches$`));
       assert.deepEqual(await retrievals(), ["Hybrid", "Lexical"], "one lexical re-run");
+      // The lexical re-run itself fails: the attempted mode and the downgrade notice stay shown with the error.
+      await page.route("**/api/v1/retrieve", (route) => route.request().postDataJSON().mode === "Lexical" ? route.abort() : route.continue());
+      await view(page).getByRole("button", { name: "Search", exact: true }).click();
+      const failure = view(page).getByRole("alert").filter({ hasText: "Search failed" });
+      await failure.waitFor();
+      assert.match(await failure.innerText(), /Server unreachable/);
+      assert.equal(await notice(page, "lexical").innerText(), lexicalNotice(EMBEDDING_FAILED), "the downgrade is never silent");
+      assert.equal(await summary(page).innerText(), "Mode Lexical (default)");
+      await page.unroute("**/api/v1/retrieve");
+      await failure.getByRole("button", { name: "Retry", exact: true }).click();
+      await settled(page, "Lexical", PAGE);
+      assert.deepEqual(await retrievals(), ["Hybrid", "Lexical", "Hybrid", "Lexical", "Hybrid", "Lexical"], "Search and Retry of unchanged values search again");
+      await done();
+    } finally { await stub.start(); }
+  });
+
+  await check("search: when the embedding fails after the first page, a default search restarts lexically from offset 0 with the notice; an explicit one keeps its hits and offers the lexical search", async () => {
+    {
+      const { page, done, requests } = await open(configured.base, searchHash({ q: "harbour" }));
+      await settled(page, "Hybrid", PAGE);
+      await stub.stop();
+      try {
+        await toEnd(page);
+        await settled(page, "Lexical", PAGE);
+        assert.equal(await notice(page, "lexical").innerText(), lexicalNotice(EMBEDDING_FAILED));
+        assert.match(await summary(page).innerText(), new RegExp(`^Mode Lexical \\(default\\) · ${LEXICAL} exact matches$`));
+        assert.deepEqual(await requests(), ["Hybrid@0", "Hybrid@20", "Lexical@0"], "the lexical search starts again: rankings are not mixed");
+        await done();
+      } finally { await stub.start(); }
+    }
+    {
+      const { page, done, requests } = await open(configured.base, searchHash({ q: "harbour", mode: "hybrid" }));
+      await settled(page, "Hybrid", PAGE);
+      await stub.stop();
+      try {
+        await toEnd(page);
+        const refusal = notice(page, "unavailable");
+        await refusal.waitFor();
+        assert.match(await refusal.innerText(), new RegExp(`Hybrid search is unavailable\\.\\s+The server answered: ${EMBEDDING_FAILED}\\. The ${PAGE} records above are kept; no other mode was used\\.`));
+        assert.equal(await hits(page).count(), PAGE, "the explicit mode's hits stay");
+        assert.equal(await notice(page, "lexical").count(), 0, "an explicit mode is not downgraded");
+        await refusal.getByRole("button", { name: "Search lexically instead", exact: true }).click();
+        await settled(page, "Lexical", PAGE);
+        assert.equal(new URL(page.url()).hash, "#/search?q=harbour&mode=lexical");
+        assert.deepEqual(await requests(), ["Hybrid@0", "Hybrid@20", "Lexical@0"]);
+        await done();
+      } finally { await stub.start(); }
+    }
+  });
+
+  await check("search: an address with the same values in another spelling searches again on the first Search", async () => {
+    const { page, done, retrievals } = await open(configured.base, "#/search?q=harbour%20note");
+    await settled(page, "Hybrid", PAGE);
+    await stub.stop();
+    try {
+      await view(page).getByRole("button", { name: "Search", exact: true }).click();
+      // Rendered proof that a search ran: with the stub stopped the defaulted hybrid now falls back.
+      await notice(page, "lexical").waitFor();
+      await settled(page, "Lexical", PAGE);
+      assert.deepEqual(await retrievals(), ["Hybrid", "Hybrid", "Lexical"]);
       await done();
     } finally { await stub.start(); }
   });
