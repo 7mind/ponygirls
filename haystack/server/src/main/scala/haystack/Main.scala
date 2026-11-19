@@ -8,7 +8,7 @@ import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry,RetrievalProfile}
 import ponygirls.retrieval.postgres.PostgresRetrieval
 import haystack.auth.{Auth,AccountService,ImperativeRuntime}
 import ponygirls.auth.PasswordHasher
-import haystack.storage.{Migrations,PostgresItemRepository,ItemRepository}
+import haystack.storage.{MigrationRefused,Migrations,PostgresItemRepository,ItemRepository}
 import haystack.application.ItemService
 import haystack.http.{Http,LiveHub}
 import haystack.retrieval.HaystackRetrieval
@@ -32,7 +32,13 @@ object Main extends IOApp {
         }
       }.as(ExitCode.Success)
     case _=>IO.println("usage: haystack-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json").as(ExitCode.Error)
-  }).handleErrorWith(_=>IO.println("haystack: startup or runtime failure").as(ExitCode.Error))
+  }).handleErrorWith(error=>IO.println(failureLine(error)).as(ExitCode.Error))
+
+  /** One fixed line for every failure; only a migration refusal (fixed text and a row count) names its cause. */
+  private[haystack] def failureLine(error:Throwable):String=error match{
+    case refused:MigrationRefused=>"haystack: startup refused: "+refused.getMessage
+    case _=>"haystack: startup or runtime failure"
+  }
 
   private def serve(config:Config,file:Path,database:JdbcDatabase):IO[Unit]=GracefulShutdown.resource.use(stop=>serveOwned(config,file,database).race(stop).void)
   private def serveOwned(config:Config,file:Path,database:JdbcDatabase):IO[Unit]={

@@ -1,14 +1,26 @@
 package haystack.storage
 
 import cats.effect.IO
-import haystack.domain.{Fault,ItemKey,QualifiedId}
+import haystack.domain.{Fault,ItemKey,OperationDigest,QualifiedId}
 import java.sql.{Connection,PreparedStatement}
 import java.util.Locale
 import ponygirls.runtime.JdbcDatabase
 import java.nio.charset.StandardCharsets
 
+/** A migration that refuses to apply because the database holds data it would invalidate. Nothing was changed: the
+  * start-up transaction rolled back. Main prints its message, which is fixed text plus a row count.
+  */
+final case class MigrationRefused(version: String, reason: String) extends RuntimeException(s"migration $version: $reason")
+
 object Migrations {
-  private val versions = Vector("0001-initial", "0002-search", "0003-tags", "0004-scala-current", "0005-exact-numeric-query", "0006-tag-completion", "0007-node-replay-retired")
+  private val NodeReplayRetired = "0007-node-replay-retired"
+  private val versions = Vector("0001-initial", "0002-search", "0003-tags", "0004-scala-current", "0005-exact-numeric-query", "0006-tag-completion", NodeReplayRetired)
+  /** The constraint of 0007 would refuse such a row too, but only as a generic database failure with no count. */
+  private def refuseNodeReplayRows(c: Connection): Unit = {
+    val others = Sql.rows(c,"SELECT count(*) FROM write_requests WHERE digest_format IS DISTINCT FROM ?",Seq(OperationDigest.Format))(_.getLong(1)).head
+    if (others > 0) throw MigrationRefused(NodeReplayRetired,
+      s"write_requests holds Node-era replay rows (digest_format other than ${OperationDigest.Format}; count $others); nothing was changed; delete them with the one-off legacy data retirement, then start again")
+  }
   def initialize(database: JdbcDatabase, activityProjectId: String): IO[Unit] = database.transaction { c =>
     QualifiedId.encodeComponent(activityProjectId)
     Sql.lock(c,"haystack/migrate/",Vector("schema"))
@@ -18,6 +30,7 @@ object Migrations {
     versions.filterNot(applied).foreach { version =>
       val resource = Option(getClass.getResourceAsStream("/" + version + ".sql")).getOrElse(throw Fault("config","missing migration resource"))
       val sql = try new String(resource.readAllBytes(),StandardCharsets.UTF_8) finally resource.close()
+      if(version==NodeReplayRetired) refuseNodeReplayRows(c)
       val statement=c.createStatement()
       try statement.execute(sql) finally statement.close()
       if(version=="0006-tag-completion") TagValuesProjection.backfill(c)

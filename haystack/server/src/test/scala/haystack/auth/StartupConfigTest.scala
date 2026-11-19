@@ -3,6 +3,8 @@ package haystack.auth
 import cats.effect.ExitCode
 import cats.effect.unsafe.implicits.global
 import haystack.{Config, Main}
+import haystack.domain.Fault
+import haystack.storage.MigrationRefused
 import io.circe.Json
 import java.nio.file.{Files, Path}
 import scala.concurrent.duration.*
@@ -104,6 +106,13 @@ class StartupConfigTest extends munit.FunSuite {
         assertEquals(Main.run(List(command, path.toString)).unsafeRunSync(), ExitCode.Error)
       }
     } }
+  }
+  test("the start-up failure line names the cause of a migration refusal only; every other failure keeps the fixed generic line") {
+    val generic = "haystack: startup or runtime failure"
+    assertEquals(Main.failureLine(MigrationRefused("0007-node-replay-retired", "2 rows")), "haystack: startup refused: migration 0007-node-replay-retired: 2 rows")
+    Vector(Fault("config", "unknown database migration"), new java.sql.SQLException("jdbc:postgresql://db.invalid/secret"), new IllegalStateException("x")).foreach { other =>
+      assertEquals(Main.failureLine(other), generic)
+    }
   }
   test("missing, malformed and duplicate-key config inputs fail closed") { directory { dir =>
     assertEquals(Main.run(List("check-config", dir.resolve("missing.json").toString)).unsafeRunSync(), ExitCode.Error)

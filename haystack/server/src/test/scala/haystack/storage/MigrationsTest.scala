@@ -174,7 +174,8 @@ class MigrationsTest extends ContractSuite {
       _ <- db.transaction(c => Sql.update(c, "INSERT INTO write_requests(principal_user,token_id,request_id,digest_format,digest,outcome,created_at) VALUES(?,?,?::uuid,'haystack-op-v1',?,?::jsonb,?)", Alice.userId, Alice.tokenId, nodeId, "f" * 64, "{\"kind\":\"committed\",\"revision\":1}", Now))
       before <- snapshot(db)
       failure <- Migrations.initialize(db, Activity).attempt
-      _ = assert(failure.left.toOption.exists(_.isInstanceOf[JdbcFailure]), failure)
+      refusal = failure.left.toOption.collect { case refused: MigrationRefused => refused }.getOrElse(fail("expected MigrationRefused, got " + failure))
+      _ = assertEquals(refusal.version, "0007-node-replay-retired"); _ = assert(refusal.getMessage.contains("count 1)"), refusal.getMessage)
       versions <- db.transaction(c => Sql.rows(c, "SELECT version FROM schema_migrations ORDER BY version")(_.getString(1)))
       _ = assertEquals(versions, throughSix)
       kept <- formatDefault(db); _ = assert(kept)
