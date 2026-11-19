@@ -28,6 +28,9 @@ class CurrentTransport:
         self.visibility=p.Visibility.Internal;self.content_base=content_base;self.name='fixture'
         self.tags=[];self.hostname=None;self.project_path=None
         self.override=None
+        # Advertised search modes, the Search page, and per-mode Search failures (code, message).
+        self.search_modes=list(p.SearchMode);self.search_page=p.SearchPage([],0,p.SearchCountScope.ExactMatches,None,None,0)
+        self.search_failures={}
 
     def artifact(self):
         return p.Artifact(AID,self.name,p.ArtifactKind.Directory,self.visibility,self.state,'u',
@@ -81,7 +84,13 @@ class CurrentTransport:
             elif isinstance(command,p.Command_Whoami):result=p.Result_Identity(p.Principal('u','t',p.PrincipalType.Agent))
             elif isinstance(command,p.Command_RotateExternalPassword):result=p.Result_PasswordRotated(PASSWORD)
             elif isinstance(command,p.Command_CreateGrant):result=p.Result_GrantCreated('handoff',60)
-            elif isinstance(command,p.Command_Search):result=p.Result_SearchResults(p.SearchPage([],0,p.SearchCountScope.ExactMatches,None,None))
+            elif isinstance(command,p.Command_GetCapabilities):
+                result=p.Result_CapabilityInfo(p.Capabilities(p.ContentMode.Path,self.search_modes,True,CHUNK,200,
+                    4*CHUNK,2**29,2**31,10000,31536000,'fixture'))
+            elif isinstance(command,p.Command_Search) and command.query.mode in self.search_failures:
+                code,message=self.search_failures[command.query.mode]
+                return 503,{},p.dumps(p.ServerEnvelope(req.requestId,p.Result_Error(p.Failure(code,message,None))))
+            elif isinstance(command,p.Command_Search):result=p.Result_SearchResults(self.search_page)
             else:result=p.Result_Ok()
             return 200,{},p.dumps(p.ServerEnvelope(req.requestId,result))
         if method=='PUT' and path==f'/api/current/artifacts/{AID}/chunks':

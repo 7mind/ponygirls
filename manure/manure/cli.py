@@ -27,6 +27,10 @@ def _eprint(msg: str, presentation: cli_output.Presentation) -> None:
     print(presentation.error(msg), file=sys.stderr)
 
 
+def _notice(text: str) -> None:
+    print(cli_output.terminal_text(text), file=sys.stderr)
+
+
 @dataclass(frozen=True)
 class _OutputOptions:
     color: cli_output.ColorMode
@@ -234,10 +238,13 @@ def build_parser(stdout_presentation: cli_output.Presentation,
     p_search = sub.add_parser("search", parents=[output_options],
         help="search artifact metadata and manifest paths",
         description="Search metadata, not file contents, using the dashboard/MCP query syntax.",
-        epilog='Default: catalogue. Use mode:lexical, mode:semantic or mode:hybrid for ranked retrieval; '
+        epilog='Without mode:, search text runs hybrid retrieval when the server offers it, else lexical '
+               '(a notice on stderr says why; a hybrid search the server cannot run is retried once lexically). '
+               'No text, a catalogue-only field (state, expired, sort, direction) or --cursor lists the catalogue. '
+               'An explicit mode:catalogue, mode:lexical, mode:semantic or mode:hybrid is never substituted; '
                'semantic/hybrid require server configuration. Fields: text, access, state, expired, '
                'kind, owner, sort, direction, tag, hostname, project. Quote values with JSON strings. '
-               'Catalogue mode supports --cursor; ranked retrieval does not. '
+               'Catalogue mode supports --cursor; ranked retrieval does not. Unindexed items are reported on stderr. '
                'Examples: manure search \'release tag:report\'; manure search \'mode:lexical "quarterly report"\'.')
     p_search.add_argument("query", help="shared search expression (quote it as one shell argument)")
     p_search.add_argument("--limit", type=int, default=None, help="maximum returned artifacts/hits (server cap applies)")
@@ -376,8 +383,11 @@ def main(argv: list[str] | None = None) -> int:
             _print_result(res, as_json, cli_output.catalogue, stdout_presentation)
             return 0
         if cmd == "search":
-            res = client.search_expression(args.query, limit=args.limit, cursor=args.cursor)
-            _print_result(res, as_json, cli_output.search, stdout_presentation)
+            # A fallback notice is printed before the lexical request, so it survives its failure.
+            found = client.search_expression(args.query, limit=args.limit, cursor=args.cursor, notify=_notice)
+            if found.pending_note is not None:
+                _notice(found.pending_note)
+            _print_result(found.page, as_json, lambda page: cli_output.search(page, found.mode), stdout_presentation)
             return 0
         if cmd == "info":
             res = client.get_artifact(args.id)

@@ -8,7 +8,8 @@ package manure.api {
     total: Long,
     countScope: SearchCountScope,
     rankingLimit: Option[Int],
-    nextCursor: Option[String]
+    nextCursor: Option[String],
+    pending: Long
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = SearchPage.baboonDomainVersion
     override def baboonDomainIdentifier: String = SearchPage.baboonDomainIdentifier
@@ -42,7 +43,8 @@ package manure.api {
         "total" -> Json.fromString(value.total.toString),
         "countScope" -> SearchCountScope_JsonCodec.instance.encode(ctx, value.countScope),
         "rankingLimit" -> value.rankingLimit.map(v => Json.fromInt(v)).getOrElse(Json.Null),
-        "nextCursor" -> value.nextCursor.map(v => Json.fromString(v)).getOrElse(Json.Null)
+        "nextCursor" -> value.nextCursor.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "pending" -> Json.fromString(value.pending.toString)
       )
     }
     
@@ -58,7 +60,8 @@ package manure.api {
             countScope <- getField(jsonObject, "countScope").flatMap(v => SearchCountScope_JsonCodec.circeDecoder(v.hcursor))
             rankingLimit <- getField(jsonObject, "rankingLimit").flatMap(v => decodeOption(BaboonJsonCodec.decodeInt)(v.hcursor))
             nextCursor <- getField(jsonObject, "nextCursor").flatMap(v => decodeOption(decodeString)(v.hcursor))
-          } yield SearchPage(hits,total,countScope,rankingLimit,nextCursor)
+            pending <- getField(jsonObject, "pending").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
+          } yield SearchPage(hits,total,countScope,rankingLimit,nextCursor,pending)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to SearchPage: object expected"))
       }
     }

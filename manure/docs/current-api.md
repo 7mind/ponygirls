@@ -254,15 +254,24 @@ needs no lookup and live mutation can move rows. Evaluate expiry each request.
 
 Search is distinct from exact ListArtifacts. Lexical/Semantic/Hybrid are
 explicit; missing endpoint advertises Lexical only, unavailable requested mode
-returns typed failure, never silent fallback. Authorize ready/unexpired rows
+returns typed failure, never silent fallback. `SearchUnavailable` carries a
+fixed `message`: `semantic retrieval is not configured; lexical-only capability`
+or `query embedding failed` (provider codes/text never), else the code
+`search-unavailable`. Clients may show only these fixed reasons; the CLI/MCP
+default rule (docs/query.md) falls back to lexical visibly. Authorize ready/unexpired rows
 before every candidate limit/count/evidence selection, reauthorize at delivery.
 Corpus is approved artifact metadata + manifest paths only
 (Name/ManifestPath/Tag/Hostname/ProjectPath provenance); no credentials, hashes, passwords, grant values or binary contents.
 Ordinary writes/catalogue/serving do not call a model. Published hits carry
 sourceVersion/generationId/policyId/optional embeddingProfile/optional embeddingSpace and evidence.
 ExactMatches versus CandidateWindow + rankingLimit are explicit. Scores are
-ranking values, not confidence. Rebuild/profile changes cannot mix vector spaces
-or replace good publication with an unlabelled partial generation.
+ranking values, not confidence. `SearchPage.pending` (i64) declares partial
+readiness: for Semantic/Hybrid, the number of sources in the query's
+authorization/filter/expiry scope whose current version has no publication under
+the active profile (never published, an older version, or another profile/space);
+they are not ranked. Lexical reads current text and reports 0. Rebuild/profile
+changes cannot mix vector spaces. `pending` was added to the sole `1.0.0` model in
+place: an older strict client rejects the new field and must be upgraded.
 
 ## Build and rollout
 

@@ -14,6 +14,8 @@ import re
 import stat
 import time
 import urllib.parse
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
@@ -48,6 +50,16 @@ RESERVED_TOP = ("__manure", "api")
 
 # Sentinel distinguishing omitted TTL from explicit null (clear) in PATCH.
 PATCH_OMIT: Any = object()
+
+NOT_CONFIGURED_REASON = "semantic retrieval is not configured"
+# The server's fixed `search-unavailable` reasons (a closed set) and their client
+# texts. Any other server/proxy message is untrusted and never shown.
+SEARCH_UNAVAILABLE_REASONS = {
+    "semantic retrieval is not configured; lexical-only capability": NOT_CONFIGURED_REASON,
+    "query embedding failed": "query embedding failed",
+}
+FALLBACK_SEARCH_MODE = "lexical"
+FALLBACK_NOTICE = "Hybrid search is not available on this server: {reason}; showing lexical results"
 
 
 # ---------------------------------------------------------------- errors
@@ -1224,9 +1236,11 @@ def _current_failure(failure: cp.Failure, status: int,
     retry = _lower_headers(headers).get("retry-after")
     if retry is None and failure.retryAfterSeconds is not None:
         retry = str(failure.retryAfterSeconds)
-    # Only the enumerated code is safe to expose. An untrusted server/proxy
-    # message can reflect credentials, bodies, headers or payload fragments.
-    return ManureError(code, code, http_status=status, retry_after=retry)
+    # Only the enumerated code and the closed set of fixed search reasons are
+    # safe to expose. An untrusted server/proxy message can reflect credentials,
+    # bodies, headers or payload fragments.
+    message = SEARCH_UNAVAILABLE_REASONS.get(failure.message, code) if code == "search-unavailable" else code
+    return ManureError(code, message, http_status=status, retry_after=retry)
 
 
 def _error_from_body(status: int, hdrs: dict[str, str], body: bytes) -> ManureError:
@@ -1238,6 +1252,26 @@ def _error_from_body(status: int, hdrs: dict[str, str], body: bytes) -> ManureEr
         pass
     return ManureError("unavailable", "request failed", http_status=status,
                        retry_after=_lower_headers(hdrs).get("retry-after"))
+
+
+def pending_note(pending: int) -> str | None:
+    if pending <= 0:
+        return None
+    items = "1 item is" if pending == 1 else f"{pending} items are"
+    return f"{items} not yet indexed for semantic search; results may be incomplete"
+
+
+@dataclass(frozen=True)
+class ExpressionSearch:
+    """An expression search result: the page and how its mode was chosen."""
+    mode: str
+    mode_explicit: bool
+    notice: str | None
+    page: dict[str, Any]
+
+    @property
+    def pending_note(self) -> str | None:
+        return pending_note(self.page.get("pending", 0))
 
 
 # ----------------------------------------------------------------- client
@@ -1472,23 +1506,49 @@ class ManureClient:
         return cp.local(self._current(cp.Command_ListArtifacts(q), cp.Result_Catalogue).page)
 
     def search_expression(self, query: str, *, limit: int | None = None,
-                          cursor: str | None = None) -> dict[str, Any]:
-        """Search using the shared dashboard/MCP expression dialect."""
+                          cursor: str | None = None,
+                          notify: Callable[[str], None] | None = None) -> ExpressionSearch:
+        """Search using the shared dashboard/MCP expression dialect.
+
+        Without `mode:`, search text uses hybrid when GetCapabilities offers it,
+        else lexical; a defaulted hybrid answered `search-unavailable` is re-run
+        once lexically. Each substitution is passed to `notify` before the lexical
+        request and kept in the result's `notice`. An explicit mode is never
+        substituted.
+        """
         from manure.query import QueryError, parse_expression
         try:
-            plan = parse_expression(query)
+            plan = parse_expression(query, continuation=cursor is not None)
         except QueryError as error:
             raise ManureError('bad-query', f'{error.message} (UTF-16 range {error.start}:{error.end})') from None
         if plan.mode == 'catalogue':
-            return self.list_artifacts(limit=limit, cursor=cursor, query=plan.q,
+            page = self.list_artifacts(limit=limit, cursor=cursor, query=plan.q,
                 include_expired=plan.include_expired, visibility=plan.visibility,
                 state=plan.item_state, sort_by=plan.sort, direction=plan.direction,
                 tags=plan.tags, hostname=plan.hostname, project_path=plan.project_path)
+            return ExpressionSearch(plan.mode, plan.mode_explicit, None, page)
         if cursor is not None:
             raise ManureError('bad-query', 'Retrieval mode does not support cursors; remove cursor.')
-        return self.search(plan.q, plan.mode, limit=50 if limit is None else limit,
-            visibility=plan.visibility, kind=plan.kind, created_by_user=plan.created_by_user,
-            tags=plan.tags, hostname=plan.hostname, project_path=plan.project_path)
+
+        def ranked(mode: str) -> dict[str, Any]:
+            return self.search(plan.q, mode, limit=50 if limit is None else limit,
+                visibility=plan.visibility, kind=plan.kind, created_by_user=plan.created_by_user,
+                tags=plan.tags, hostname=plan.hostname, project_path=plan.project_path)
+        if plan.mode_explicit:
+            return ExpressionSearch(plan.mode, True, None, ranked(plan.mode))
+        if plan.mode in self.capabilities()["search_modes"]:
+            try:
+                return ExpressionSearch(plan.mode, False, None, ranked(plan.mode))
+            except ManureError as error:
+                if error.code != "search-unavailable":
+                    raise
+                reason = error.message
+        else:
+            reason = NOT_CONFIGURED_REASON
+        notice = FALLBACK_NOTICE.format(reason=reason)
+        if notify is not None:
+            notify(notice)
+        return ExpressionSearch(FALLBACK_SEARCH_MODE, False, notice, ranked(FALLBACK_SEARCH_MODE))
 
     def get_artifact(self, artifact_id: str) -> dict[str, Any]:
         self._require_token(); self._check_id(artifact_id)

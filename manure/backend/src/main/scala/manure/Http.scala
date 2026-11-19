@@ -125,11 +125,11 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
   private def envelope(id: UUID,result: wire.Result,status: Int = 200): Response[IO] =
     json(CurrentWire.encode(wire.ServerEnvelope.codecJson,wire.ServerEnvelope(id,result)),status)
   private def failure(id: UUID,error: Throwable): Response[IO] =
-    val code = error match
-      case d: DomainError => d.code
-      case e: AccountFailure => e.code
-      case _ => "unavailable"
-    val response = envelope(id,CurrentWire.error(code),CurrentWire.status(code))
+    val (code,reason) = error match
+      case d: DomainError => (d.code,d.reason)
+      case e: AccountFailure => (e.code,None)
+      case _ => ("unavailable",None)
+    val response = envelope(id,CurrentWire.error(code,reason),CurrentWire.status(code))
     if Set("unavailable","rate-limited","session-limit")(code) then response.putHeaders(raw("Retry-After","5")) else response
   /** Rejection has no credential/body effects and cannot retain a keep-alive slot. */
   def overloaded: Response[IO] = secure(failure(new UUID(0L,0L),DomainError("unavailable")),false)

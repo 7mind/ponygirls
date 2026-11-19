@@ -115,7 +115,8 @@ class TargetSearchTests(unittest.TestCase):
                 self.assertTrue(model.document_started.wait(timeout=5))
                 # Query embedding is available while document work is incomplete:
                 # the unpublished artifact is not ranked yet, never a lexical-mode fallback.
-                self.assertEqual(client.search('hayneedle','semantic')['hits'],[])
+                waiting=client.search('hayneedle','semantic')
+                self.assertEqual((waiting['hits'],waiting['pending']),([],1))
                 start=time.monotonic();self.assertEqual(client.get_artifact(aid)['state'],'ready')
                 self.assertLess(time.monotonic()-start,2,'model call held the authoritative transaction/root monitor')
                 info=client.get_artifact(aid)
@@ -145,6 +146,12 @@ class TargetSearchTests(unittest.TestCase):
                     result=mcp.handle_tools_call('search',{'query':'mode:semantic access:external kind:dir owner:search-manager hayneedle','limit':5})
                     self.assertNotIn('isError',result,result)
                     page=json.loads(result['content'][0]['text'])
+                    self.assertEqual(page['hits'][0]['artifact']['artifact_id'],aid)
+                    # Without mode: text defaults to hybrid on a server that offers it.
+                    defaulted=mcp.handle_tools_call('search',{'query':'access:external kind:dir hayneedle','limit':5})
+                    self.assertNotIn('isError',defaulted,defaulted)
+                    page=json.loads(defaulted['content'][0]['text'])
+                    self.assertEqual((page['mode'],page['notice'],page['pending'],page['pending_note']),('hybrid',None,0,None))
                     self.assertEqual(page['hits'][0]['artifact']['artifact_id'],aid)
                 hit=semantic['hits'][0]
                 self.assertEqual(hit['artifact']['artifact_id'],aid)
@@ -199,7 +206,7 @@ class TargetSearchTests(unittest.TestCase):
                 self.assertEqual(len(model.snapshot()),count)
                 model.fail_all=True
                 with self.assertRaises(ManureError) as outage:client.search('hayneedle','hybrid')
-                self.assertEqual(outage.exception.code,'search-unavailable')
+                self.assertEqual((outage.exception.code,outage.exception.message),('search-unavailable','query embedding failed'))
                 self.assertEqual(client.search('hayneedle','lexical')['hits'][0]['artifact']['artifact_id'],aid)
                 self.assertEqual(client.get_artifact(aid)['name'],'metadata hayneedle')
                 server.close();server=None
@@ -208,7 +215,8 @@ class TargetSearchTests(unittest.TestCase):
                 config['embedding']=dict(endpoint,revision='immutable-v2')
                 server=TargetServer(config,tmp,owned_database=database,close_database=False)
                 client=ManureClient(server.api_url,token=token,cache_dir=str(root/'cache2'))
-                self.assertEqual(client.search('hayneedle','semantic')['hits'],[],'publication of another profile was served')
+                incompatible=client.search('hayneedle','semantic')
+                self.assertEqual((incompatible['hits'],incompatible['pending']),([],1),'publication of another profile was served')
                 model.fail_documents=False
                 replacement=eventually(client,'semantic')['hits'][0]
                 self.assertNotEqual(replacement['embedding_profile'],hit['embedding_profile'])

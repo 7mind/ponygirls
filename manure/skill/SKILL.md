@@ -211,7 +211,7 @@ CLI `manure search 'QUERY' [--limit N] [--cursor C] [--json]` and MCP `search`
 (required `query`, optional `limit` / `cursor`) share the dashboard query dialect,
 with no separate filtering arguments. CLI output is human-readable unless
 `--json` is supplied; retrieval output includes evidence, provenance and count
-scope. Bad expressions exit 2; unavailable modes are errors, not fallbacks:
+scope. Bad expressions exit 2; an explicit unavailable mode is an error, never substituted:
 
 ```text
 access:public state:ready sort:name direction:asc report
@@ -219,7 +219,14 @@ mode:lexical access:internal kind:dir owner:"Exact User" "quarterly report"
 mode:semantic tag:release tag:report hostname:build-host project:"/work/project" text:"release notes"
 ```
 
-Default `mode:catalogue` matches literal name/artifact-ID/tag/hostname/project substrings, hides
+Without `mode:`, search text runs `hybrid` when the server offers it, else
+`lexical`; a hybrid search the server cannot run (`search-unavailable`) is
+re-run once lexically. Each substitution prints `Hybrid search is not available
+on this server: <reason>; showing lexical results` (CLI stderr; MCP `notice`).
+The effective mode is shown (`Mode:` line; MCP `mode`). Semantic/hybrid pages
+report `pending` items not yet indexed (CLI stderr note; MCP `pending_note`).
+No text, a catalogue-only field or `--cursor` selects `mode:catalogue`, which
+matches literal name/artifact-ID/tag/hostname/project substrings, hides
 expired items and sorts `created_at desc`. Catalogue-only fields are `state`,
 `expired`, `sort`, `direction`. Retrieval-only fields are `kind:file|dir` and
 `owner:<exact creator>`. `access:internal|external|public`, repeatable
@@ -228,7 +235,7 @@ modes. These metadata values are case-sensitive exact matches; repeated tags
 require all of them (AND), with no duplicates.
 Retrieval modes `lexical`, `semantic`, `hybrid` search artifact metadata/manifest
 paths, not file bytes; retrieval requires nonblank text and rejects cursors.
-Semantic/hybrid use the configured provider without silent mode fallback.
+Semantic/hybrid use the configured provider; only a defaulted hybrid falls back, visibly.
 Fields conjoin; Boolean metadata expressions are unsupported. Only distinct
 tags may repeat. Field names are case-insensitive, closed values lowercase. Quote values with JSON strings.
 Bare quoted retrieval phrases preserve their quotes for the English search

@@ -113,6 +113,7 @@ class SearchPage(TypedDict):
     count_scope: str
     ranking_limit: int | None
     next_cursor: str | None
+    pending: int
 
 
 class UploadReceipt(Metadata):
@@ -201,12 +202,12 @@ def _catalogue(result: Catalogue, continuation: str) -> str:
     return '\n'.join(lines)
 
 
-def search(result: Catalogue | SearchPage) -> str:
+def search(result: Catalogue | SearchPage, mode: str) -> str:
     if 'artifacts' in result:
-        return _catalogue(cast(Catalogue, result),
-                          'Pass --cursor with the same search expression and options to continue.')
+        return 'Mode: ' + mode + '\n' + _catalogue(cast(Catalogue, result),
+            'Pass --cursor with the same search expression and options to continue.')
     page = cast(SearchPage, result)
-    lines = ['Metadata search results (not file contents)',
+    lines = ['Mode: ' + mode, 'Metadata search results (not file contents)',
              f"Returned hits: {len(page['hits'])}",
              f"Count: {page['total']} (scope: {terminal_text(page['count_scope'])})"]
     if page['ranking_limit'] is not None:

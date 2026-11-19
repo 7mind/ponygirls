@@ -9,13 +9,15 @@ export class SearchPage implements BaboonGeneratedLatest {
     private readonly _countScope: SearchCountScope;
     private readonly _rankingLimit: number | undefined;
     private readonly _nextCursor: string | undefined;
+    private readonly _pending: bigint;
 
-    constructor(hits: Array<SearchHit>, total: bigint, countScope: SearchCountScope, rankingLimit: number | undefined, nextCursor: string | undefined) {
+    constructor(hits: Array<SearchHit>, total: bigint, countScope: SearchCountScope, rankingLimit: number | undefined, nextCursor: string | undefined, pending: bigint) {
         this._hits = hits
         this._total = total
         this._countScope = countScope
         this._rankingLimit = rankingLimit
         this._nextCursor = nextCursor
+        this._pending = pending
     }
 
     public get hits(): Array<SearchHit> {
@@ -33,6 +35,9 @@ export class SearchPage implements BaboonGeneratedLatest {
     public get nextCursor(): string | undefined {
         return this._nextCursor;
     }
+    public get pending(): bigint {
+        return this._pending;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -40,27 +45,30 @@ export class SearchPage implements BaboonGeneratedLatest {
             total: this._total,
             countScope: this._countScope,
             rankingLimit: this._rankingLimit !== undefined ? this._rankingLimit : undefined,
-            nextCursor: this._nextCursor !== undefined ? this._nextCursor : undefined
+            nextCursor: this._nextCursor !== undefined ? this._nextCursor : undefined,
+            pending: this._pending
         };
     }
 
-    public with(overrides: {hits?: Array<SearchHit>; total?: bigint; countScope?: SearchCountScope; rankingLimit?: number | undefined; nextCursor?: string | undefined}): SearchPage {
+    public with(overrides: {hits?: Array<SearchHit>; total?: bigint; countScope?: SearchCountScope; rankingLimit?: number | undefined; nextCursor?: string | undefined; pending?: bigint}): SearchPage {
         return new SearchPage(
             'hits' in overrides ? overrides.hits! : this._hits,
             'total' in overrides ? overrides.total! : this._total,
             'countScope' in overrides ? overrides.countScope! : this._countScope,
             'rankingLimit' in overrides ? overrides.rankingLimit! : this._rankingLimit,
-            'nextCursor' in overrides ? overrides.nextCursor! : this._nextCursor
+            'nextCursor' in overrides ? overrides.nextCursor! : this._nextCursor,
+            'pending' in overrides ? overrides.pending! : this._pending
         );
     }
 
-    public static fromPlain(obj: {hits: Array<SearchHit>; total: bigint; countScope: SearchCountScope; rankingLimit: number | undefined; nextCursor: string | undefined}): SearchPage {
+    public static fromPlain(obj: {hits: Array<SearchHit>; total: bigint; countScope: SearchCountScope; rankingLimit: number | undefined; nextCursor: string | undefined; pending: bigint}): SearchPage {
         return new SearchPage(
             obj.hits,
             obj.total,
             obj.countScope,
             obj.rankingLimit,
-            obj.nextCursor
+            obj.nextCursor,
+            obj.pending
         );
     }
 
@@ -105,6 +113,7 @@ export class SearchPage_JsonCodec {
             "countScope": SearchCountScope_JsonCodec.instance.encode(BaboonCodecContext.Default, value.countScope),
             "rankingLimit": value.rankingLimit === undefined ? null : value.rankingLimit,
             "nextCursor": value.nextCursor === undefined ? null : value.nextCursor,
+            "pending": value.pending.toString(),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): SearchPage {
@@ -119,6 +128,7 @@ export class SearchPage_JsonCodec {
             SearchCountScope_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["countScope"]),
             obj["rankingLimit"] === undefined || obj["rankingLimit"] === null ? undefined : obj["rankingLimit"] === undefined || obj["rankingLimit"] === null ? undefined : obj["rankingLimit"] as number,
             obj["nextCursor"] === undefined || obj["nextCursor"] === null ? undefined : obj["nextCursor"] === undefined || obj["nextCursor"] === null ? undefined : obj["nextCursor"] as string,
+            BaboonInt64.read(obj["pending"], "i64/u64"),
         )
     }
 

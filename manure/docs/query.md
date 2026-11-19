@@ -5,14 +5,51 @@ The dashboard expression field and MCP `search` tool use the same dialect.
 integer) and `cursor` (optional string). The existing MCP `list_artifacts`
 tool and structured Python `list_artifacts` / `search` parameters remain
 available. Python also exposes `ManureClient.search_expression(query,
-limit=..., cursor=...)`, which compiles the same expression into current typed
-`CatalogueQuery` or `SearchQuery`; it does not add a wire protocol.
+limit=..., cursor=..., notify=...)`, which compiles the same expression into
+current typed `CatalogueQuery` or `SearchQuery` and returns an `ExpressionSearch`
+(`mode`, `mode_explicit`, `notice`, `page`, `pending_note`); it does not add a
+wire protocol.
+
+## Mode selection
+
+The CLI and MCP `search` choose the mode as follows (the dashboard still
+defaults to `catalogue` until it adopts the same rule):
+
+- An explicit `mode:` is never substituted. An unavailable explicit mode is an
+  error (`search-unavailable`) with the server's reason.
+- Without `mode:`, no search text, any catalogue-only field (`state`, `expired`,
+  `sort`, `direction`) or a continuation cursor selects `catalogue`.
+- Otherwise search text selects `hybrid` when `GetCapabilities.searchModes`
+  offers it, and `lexical` otherwise. A defaulted hybrid request answered
+  `search-unavailable` is re-run once as `lexical`. Each substitution produces
+  the notice `Hybrid search is not available on this server: <reason>; showing lexical results`, where the reason is
+  `semantic retrieval is not configured` (capabilities without hybrid, or that
+  server reason) or `query embedding failed`; any other server message is never
+  shown and the reason is the code `search-unavailable`.
+- A semantic/hybrid page with `pending > 0` adds the note `1 item is` / `N items
+  are not yet indexed for semantic search; results may be incomplete`.
+
+The effective mode is always reported: CLI human output starts with
+`Mode: <mode>`; the notice and the pending note go to stderr (before the lexical
+re-run, and in `--json` mode too, whose stdout stays the page with its `pending`
+field). MCP `search` results add `mode`, `notice` and `pending_note` to the page
+JSON (text content and `structuredContent`); a failed lexical re-run returns the
+error with its `notice`.
+
+| Expression | Capabilities / server answer | Effective mode |
+| --- | --- | --- |
+| `quarterly report` | hybrid offered | `hybrid` |
+| `quarterly report` | lexical only | `lexical` + notice |
+| `kind:dir tag:release report` | hybrid answered `search-unavailable` | `lexical` + notice |
+| `state:ready report`, `access:public tag:release`, empty | any | `catalogue` |
+| `report` with `--cursor` / `cursor` | any | `catalogue` |
+| `mode:semantic report` | lexical only | error `search-unavailable` |
 
 ## Fields and defaults
 
 | Field | Values | Scope |
 | --- | --- | --- |
-| `mode` | `catalogue`, `lexical`, `semantic`, `hybrid` | Default `catalogue` |
+| `mode` | `catalogue`, `lexical`, `semantic`, `hybrid` | Default: see [Mode selection](#mode-selection) |
 | `access` | `internal`, `external`, `public` | All modes |
 | `tag` | Exact tag; repeat up to 32 distinct tags (AND) | All modes |
 | `hostname` | Exact source hostname | All modes; nonblank, at most 253 Unicode scalars |
@@ -39,8 +76,9 @@ Catalogue text is the backend's literal case-insensitive substring filter over
 name, artifact ID, tags, hostname and project path. Retrieval searches authorized artifact metadata and manifest
 paths, not file bytes. Lexical mode uses the existing English retrieval syntax;
 semantic/hybrid require the configured provider and can report
-`search-unavailable`, with no silent lexical fallback. Retrieval results retain
-the backend's evidence, ranking, count scope and approximate candidate semantics.
+`search-unavailable`; only a defaulted hybrid falls back to lexical, visibly.
+Retrieval results retain the backend's evidence, ranking, count scope,
+approximate candidate semantics and `pending` count.
 
 ## Quoting and text
 
@@ -66,8 +104,8 @@ text:"mode:hybrid"
 `text:` always decodes its JSON string, preserving its exact internal and leading/
 trailing whitespace; it cannot be combined with bare search terms. Empty catalogue
 expressions are valid. Retrieval requires nonblank text (empty/whitespace-only
-quoted bare tokens do not count). Default catalogue hides expired artifacts and
-sorts newest first. Continue catalogue pages with the same expression and limit;
+quoted bare tokens do not count). The catalogue hides expired artifacts by
+default and sorts newest first. Continue catalogue pages with the same expression and limit;
 restart pagination after changes. Retrieval rejects any supplied cursor, including
 an empty one.
 
@@ -91,5 +129,10 @@ No field is silently ignored or reinterpreted as search text.
 each array entry contains `name`, `query`, and either an `expected` plan with
 `q`, `mode`, `visibility`, `itemState`, `includeExpired`, `kind`,
 `createdByUser`, `sort`, `direction`, `tags`, `hostname`, `projectPath`, or an
-`error` message. Parser fixtures do
-not establish browser interaction or real-provider semantic quality.
+`error` message. Cases without search text or with a catalogue-only field need
+no `mode:`; text cases state `mode:catalogue` explicitly, so the contract holds
+for both default rules while the dashboard keeps its catalogue default.
+`tests/fixtures/query-defaults.json` specifies the default rule itself: each
+entry adds `modeExplicit` and an optional `continuation` (a cursor was given);
+Python checks it now. Parser fixtures do not establish browser interaction or
+real-provider semantic quality.

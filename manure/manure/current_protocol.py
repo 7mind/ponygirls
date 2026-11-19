@@ -274,6 +274,7 @@ class SearchPage:
     countScope: SearchCountScope
     rankingLimit: Int32 | None
     nextCursor: str | None
+    pending: Int64
 
 
 class ErrorCode(Enum):

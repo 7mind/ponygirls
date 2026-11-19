@@ -200,7 +200,7 @@ class CliUsageTests(unittest.TestCase):
             'generation-id', 'policy-id', 'profile-id', 'embedding-space',
             [p.SearchEvidence(p.EvidenceField.ManifestPath, 'nested/report.md',
                 'report\ntext\x1b[31m', 0.125)], 0.25)], 2**63 - 1,
-            p.SearchCountScope.CandidateWindow, 1000, None)
+            p.SearchCountScope.CandidateWindow, 1000, None, 0)
         def reply(method, url, headers, body):
             request = p.decode(p.ClientEnvelope, p.loads(body))
             return 200, {}, p.dumps(p.ServerEnvelope(request.requestId, p.Result_SearchResults(page)))

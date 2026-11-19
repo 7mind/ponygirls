@@ -6,6 +6,7 @@ import cats.syntax.all.*
 import org.http4s.{Header,Method,Request,Uri}
 import org.typelevel.ci.CIString
 import manure.{api => wire}
+import ponygirls.retrieval.UnavailableReason
 import ponygirls.retrieval.postgres.PostgresRetrieval
 import ponygirls.auth.{AccountJson,CredentialGate,FastPasswordHasher,Secrets,Totp}
 import java.nio.file.Files
@@ -724,6 +725,12 @@ final class HttpSuite extends FunSuite:
       missing <- h.app.run(command(wire.Command.Search(query.copy(query="secret")),Some(f.token)))
       absent <- missing.as[String].map(s => CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(s)))
       _ <- IO(assertEquals(absent.result.asInstanceOf[wire.Result.SearchResults].page.hits,Nil))
+      lexicalOnly <- h.app.run(command(wire.Command.Search(query.copy(mode=wire.SearchMode.Semantic)),Some(f.token)))
+      refused <- lexicalOnly.as[String].map(s => CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(s)))
+      _ <- IO {
+        assertEquals(lexicalOnly.status.code,503)
+        assertEquals(refused.result,wire.Result.Error(wire.Failure(wire.ErrorCode.SearchUnavailable,UnavailableReason.NotConfigured.text,None)))
+      }
     yield ()
   }}
 

@@ -15,6 +15,10 @@ from manure import current_protocol as p
 from test_cli_resume import run_cli
 from test_current_client import AID, CONTENT, ORIGIN, PASSWORD, TOKEN, CurrentTransport
 
+LEXICAL_ONLY_NOTICE = ('Hybrid search is not available on this server: semantic retrieval is not configured; '
+                       'showing lexical results')
+EMBEDDING_NOTICE = 'Hybrid search is not available on this server: query embedding failed; showing lexical results'
+
 
 class CliOutputTests(unittest.TestCase):
     def setUp(self):
@@ -230,7 +234,7 @@ class CliOutputTests(unittest.TestCase):
                 page = p.SearchPage([p.SearchHit(self.transport.artifact(), 'source-version',
                     'generation-id', 'policy-id', 'profile-id', 'embedding-space',
                     [p.SearchEvidence(p.EvidenceField.ManifestPath, 'nested/report.md',
-                        'report\ntext\x1b[31m', 0.125)], 0.25)], 2**63-1, scope, 1000, None)
+                        'report\ntext\x1b[31m', 0.125)], 0.25)], 2**63-1, scope, 1000, None, 0)
                 def reply(method, url, headers, body):
                     request = p.decode(p.ClientEnvelope, p.loads(body))
                     self.assertIsInstance(request.command, p.Command_Search)
@@ -242,7 +246,7 @@ class CliOutputTests(unittest.TestCase):
                 self.transport.override = reply
                 expression = 'mode:' + mode + ' report tag:release'
                 out = self.invoke('search', expression, '--limit', '2')
-                for text in ['Metadata search', 'not file contents', AID, CONTENT,
+                for text in ['Mode: ' + mode, 'Metadata search', 'not file contents', AID, CONTENT,
                              'source-version', 'generation-id', 'policy-id', 'profile-id',
                              'embedding-space', 'nested/report.md', str(2**63-1),
                              'exactmatches' if mode == 'lexical' else 'candidatewindow',
@@ -256,17 +260,43 @@ class CliOutputTests(unittest.TestCase):
                     self.assertEqual(machine, json.dumps(p.local(page), sort_keys=True, indent=2) + '\n')
 
     def test_search_empty_catalogue_and_retrieval_are_explicit(self):
-        for expression in ['report', 'mode:lexical report']:
+        for expression in ['mode:catalogue report', 'mode:lexical report']:
             with self.subTest(expression=expression):
                 def reply(method, url, headers, body):
                     request = p.decode(p.ClientEnvelope, p.loads(body))
                     result = (p.Result_Catalogue(p.CataloguePage([], None))
                               if isinstance(request.command, p.Command_ListArtifacts) else
-                              p.Result_SearchResults(p.SearchPage([], 0, p.SearchCountScope.ExactMatches, None, None)))
+                              p.Result_SearchResults(p.SearchPage([], 0, p.SearchCountScope.ExactMatches, None, None, 0)))
                     return 200, {}, p.dumps(p.ServerEnvelope(request.requestId, result))
                 self.transport.override = reply
                 out = self.invoke('search', expression)
-                self.assertIn('No artifacts found.' if expression == 'report' else 'No search hits.', out)
+                self.assertIn('No artifacts found.' if expression == 'mode:catalogue report' else 'No search hits.', out)
+
+    def test_search_default_mode_notices_and_pending_go_to_stderr(self):
+        transcript = []
+        def run(*argv):
+            code, out, err = run_cli(list(argv), self.env, self.transport)
+            transcript.append({'argv': ['manure', *argv], 'exit': code, 'stdout': out, 'stderr': err})
+            return code, out, err
+        self.transport.search_modes = [p.SearchMode.Lexical]
+        code, out, err = run('search', 'report')
+        self.assertEqual((code, err), (0, LEXICAL_ONLY_NOTICE + '\n'))
+        self.assertTrue(out.startswith('Mode: lexical\nMetadata search results'), out)
+        code, out, err = run('search', 'report', '--json')
+        self.assertEqual((code, err, json.loads(out)), (0, LEXICAL_ONLY_NOTICE + '\n', p.local(self.transport.search_page)))
+        self.transport.search_modes = list(p.SearchMode)
+        self.transport.search_page = p.SearchPage([], 0, p.SearchCountScope.CandidateWindow, 1000, None, 1)
+        code, out, err = run('search', 'report')
+        self.assertEqual((code, err), (0, '1 item is not yet indexed for semantic search; results may be incomplete\n'))
+        self.assertTrue(out.startswith('Mode: hybrid\n'), out)
+        # The fallback notice precedes the lexical retry, so it survives that retry's own failure.
+        self.transport.search_failures = {p.SearchMode.Hybrid: (p.ErrorCode.SearchUnavailable, 'query embedding failed'),
+                                          p.SearchMode.Lexical: (p.ErrorCode.Forbidden, 'private-' + TOKEN)}
+        code, out, err = run('search', 'report')
+        self.assertEqual((code, out, err), (1, '', EMBEDDING_NOTICE + '\nforbidden: forbidden\n'))
+        modes = [c.query.mode.value if isinstance(c, p.Command_Search) else type(c).__name__ for c in self.transport.commands]
+        self.assertEqual(modes, ['Command_GetCapabilities', 'Lexical'] * 2 + ['Command_GetCapabilities', 'Hybrid'] * 2 + ['Lexical'])
+        print('CLI search transcript:', json.dumps(transcript))
 
     def test_search_bad_expression_or_retrieval_cursor_is_usage_without_network(self):
         for args in [('search', 'unknown:value'), ('search', 'mode:lexical report', '--cursor', 'opaque')]:

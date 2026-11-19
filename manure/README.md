@@ -245,15 +245,22 @@ echoing arbitrary argument values (which may contain passwords). Spell long
 options in full; abbreviated forms are not accepted.
 
 `search QUERY [--limit N] [--cursor C]` uses the same [query dialect](docs/query.md)
-as the dashboard and MCP. Default catalogue mode filters the full accessible
-catalogue and supports opaque continuation cursors; repeat the identical expression
-and options. `mode:lexical`, `mode:semantic` and `mode:hybrid` retrieve indexed
-metadata and manifest paths, **not file contents**, and reject cursors. Semantic
-and hybrid modes require server configuration and fail explicitly when unavailable.
-Human retrieval output preserves evidence, source/index provenance, exact counts
-and count scope; `--json` returns the existing catalogue or SearchPage payload.
-Invalid expressions exit 2 without a search request; there is no automatic mode
-fallback.
+as the dashboard and MCP. Without `mode:`, search text runs hybrid retrieval when
+the server offers it and lexical otherwise; a hybrid search the server cannot run
+is re-run once lexically. Each substitution prints `Hybrid search is not available
+on this server: <reason>; showing lexical results` on stderr, and items not yet
+indexed for semantic search are reported there too ([mode selection](docs/query.md#mode-selection)).
+No text, a catalogue-only field (`state`, `expired`, `sort`, `direction`) or
+`--cursor` selects catalogue mode, which filters the full accessible catalogue
+and supports opaque continuation cursors; repeat the identical expression and
+options. `mode:lexical`, `mode:semantic` and `mode:hybrid` retrieve indexed
+metadata and manifest paths, **not file contents**, and reject cursors. An
+explicit mode is never substituted: semantic and hybrid require server
+configuration and fail explicitly when unavailable. Human output starts with the
+effective mode; retrieval output preserves evidence, source/index provenance,
+exact counts and count scope; `--json` returns the existing catalogue or
+SearchPage payload (with `pending`). Invalid expressions exit 2 without a search
+request.
 
 ```bash
 manure whoami
@@ -336,8 +343,9 @@ Manure did not produce (a gateway's page, JSON or not) is not.
 
 One query field holds search text, mode and filters, with caret-aware completion
 and an in-field clear button. The same expression is accepted by the MCP `search`
-tool. Catalogue (literal name/ID/tag/hostname/project substring, nine sorts, state/expiry filters and
-keyset pages) is the default. `mode:lexical`, `mode:semantic` and `mode:hybrid`
+tool. In the dashboard, catalogue (literal name/ID/tag/hostname/project substring, nine sorts, state/expiry filters and
+keyset pages) is the default; the CLI and MCP default search text to hybrid retrieval
+([mode selection](docs/query.md#mode-selection)). `mode:lexical`, `mode:semantic` and `mode:hybrid`
 select retrieval through the current typed Search API over artifact metadata and
 manifest **paths only**, not uploaded file bytes. For example:
 

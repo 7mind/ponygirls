@@ -1041,12 +1041,17 @@ names must be spelled in full; implicit argparse abbreviations are not accepted.
 
 CLI search amendment: `manure search QUERY [--limit N] [--cursor C] [--json]`
 uses the existing shared dashboard/MCP expression grammar and management API.
-Default catalogue results preserve catalogue JSON; `mode:lexical|semantic|hybrid`
-results preserve SearchPage JSON, evidence, pinned source/index provenance,
-count scope and ranking limit. Search indexes metadata/manifest paths, not file
-contents. Cursors are catalogue-only and bind the same expression/options;
-invalid expressions or retrieval cursors exit 2 without a search request.
-Unavailable retrieval modes fail explicitly, without a catalogue fallback.
+Without `mode:`, search text selects hybrid when GetCapabilities offers it,
+else lexical, and a defaulted hybrid answered `search-unavailable` is re-run
+once lexically; each substitution prints a notice with the reason on stderr
+(docs/query.md "Mode selection"). No text, a catalogue-only field or `--cursor`
+selects the catalogue. Catalogue results preserve catalogue JSON; retrieval
+results preserve SearchPage JSON (including `pending`), evidence, pinned
+source/index provenance, count scope and ranking limit; human output names the
+effective mode. Search indexes metadata/manifest paths, not file contents.
+Cursors are catalogue-only and bind the same expression/options; invalid
+expressions or retrieval cursors exit 2 without a search request. An explicit
+unavailable retrieval mode fails explicitly, without any fallback.
 
 `upload` of a directory walks regular files + empty dirs (never
 symlinks), posts the manifest, streams chunk-resumable PUTs, publishes,

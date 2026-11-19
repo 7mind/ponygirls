@@ -61,7 +61,7 @@ def search_fixture(published):
          p.SearchEvidence(p.EvidenceField.Hostname,None,'build.example.invalid',0.5),
          p.SearchEvidence(p.EvidenceField.ProjectPath,None,'/work/é project',0.5)],0.625)
     page=p.SearchPage([hit],1,p.SearchCountScope.CandidateWindow if published else p.SearchCountScope.ExactMatches,
-        1000 if published else None,None)
+        1000 if published else None,None,3 if published else 0)
     return p.ServerEnvelope(REQUEST_ID,p.Result_SearchResults(page))
 
 results=[search_fixture(True) if cls is p.Result_SearchResults else p.ServerEnvelope(REQUEST_ID,sample(cls,options=True))

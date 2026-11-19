@@ -86,7 +86,7 @@ final class Search(database: JdbcTransactions, root: manure.storage.RootLease, c
       case wire.SearchMode.Lexical => RetrievalMode.Lexical
       case wire.SearchMode.Semantic => RetrievalMode.Semantic
       case wire.SearchMode.Hybrid => RetrievalMode.Hybrid
-    Require(mode == RetrievalMode.Lexical || embedding.nonEmpty, "search-unavailable")
+    if mode != RetrievalMode.Lexical && embedding.isEmpty then throw RetrievalError.unavailable(UnavailableReason.NotConfigured)
     val filters = q.filter.visibility.map(v => filter("visibility",CurrentWire.visibility(v).wire)).toVector ++
       q.filter.kind.map(k => filter("kind",CurrentWire.kind(k).wire)).toVector ++ q.filter.createdByUser.map(u => filter("createdByUser",u)).toVector ++
       q.filter.tags.map(tag => filter(projection.tagKey(tag),tag)) ++ q.filter.hostname.map(filter("hostname",_)) ++ q.filter.projectPath.map(filter("projectPath",_))
@@ -111,10 +111,11 @@ final class Search(database: JdbcTransactions, root: manure.storage.RootLease, c
           Some(wire.SearchHit(a,hit.version,hit.generation,projection.policy,hit.profile,hit.embeddingSpace,
             List(wire.SearchEvidence(field,hit.chunk.provenance.pointer,hit.chunk.text,hit.score)),hit.score))
       }
-      wire.SearchPage(hits,page.total,if page.countScope == CountScope.ExactMatches then wire.SearchCountScope.ExactMatches else wire.SearchCountScope.CandidateWindow,page.rankingLimit,None)
+      wire.SearchPage(hits,page.total,if page.countScope == CountScope.ExactMatches then wire.SearchCountScope.ExactMatches else wire.SearchCountScope.CandidateWindow,page.rankingLimit,None,page.pending)
     }}}
   }.handleErrorWith {
-    case _: RetrievalError => IO.raiseError(DomainError("search-unavailable"))
+    // Only the closed reason crosses the boundary; provider codes/text never do.
+    case error: RetrievalError => IO.raiseError(DomainError("search-unavailable",error.reason))
     case error => IO.raiseError(error)
   }
 

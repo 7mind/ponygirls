@@ -6,8 +6,10 @@ import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import io.circe.{Json, parser}
+import ponygirls.retrieval.UnavailableReason
 
-final case class DomainError(code: String) extends RuntimeException(code)
+/** `reason` is a closed, fixed client-visible explanation (never raw provider text). */
+final case class DomainError(code: String, reason: Option[UnavailableReason] = None) extends RuntimeException(code)
 object Require:
   def apply(ok: Boolean, code: String): Unit = if !ok then throw DomainError(code)
 

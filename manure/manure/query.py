@@ -20,6 +20,11 @@ CatalogueSort = Literal['name', 'created_at', 'expires_at', 'total_bytes', 'file
 FIELDS = ('mode', 'access', 'state', 'expired', 'kind', 'owner', 'sort', 'direction', 'text', 'tag', 'hostname', 'project')
 SORTS = ('name', 'created_at', 'expires_at', 'total_bytes', 'file_count', 'visibility',
          'state', 'kind', 'created_by_user')
+CATALOGUE_ONLY_FIELDS = ('state', 'expired', 'sort', 'direction')
+RETRIEVAL_ONLY_FIELDS = ('kind', 'owner')
+# Without `mode:`, search text selects this mode unless a catalogue-only field or a
+# continuation cursor asks for the catalogue; clients may substitute lexical, visibly.
+DEFAULT_RETRIEVAL_MODE: Mode = 'hybrid'
 
 
 
@@ -45,6 +50,7 @@ class QueryPlan:
     tags: list[str]
     hostname: str | None
     project_path: str | None
+    mode_explicit: bool
 
     def as_dict(self) -> dict[str, str | bool | list[str] | None]:
         return {'q': self.q, 'mode': self.mode, 'visibility': self.visibility,
@@ -106,8 +112,12 @@ def _closed(source: str, token: _Token, choices: tuple[str, ...], message: str) 
     return token.value
 
 
-def parse_expression(expression: str) -> QueryPlan:
-    """Compile conjunction-only metadata and opaque search text, without I/O."""
+def parse_expression(expression: str, *, continuation: bool = False) -> QueryPlan:
+    """Compile conjunction-only metadata and opaque search text, without I/O.
+
+    `continuation` marks a request that carries a catalogue cursor; without an
+    explicit `mode:` it keeps the catalogue.
+    """
     if not isinstance(expression, str):
         raise QueryError('Query must be a string.', 0, 0)
     source = _scalars(expression)
@@ -159,8 +169,16 @@ def parse_expression(expression: str) -> QueryPlan:
     def option(field: str, choices: tuple[str, ...], fallback: str | None, message: str) -> str | None:
         return _closed(source, fields[field], choices, message) if field in fields else fallback
 
-    mode = cast(Mode, option('mode', ('catalogue', 'lexical', 'semantic', 'hybrid'), 'catalogue',
-                            'Invalid mode value; use catalogue, lexical, semantic or hybrid.'))
+    explicit = cast(Mode | None, option('mode', ('catalogue', 'lexical', 'semantic', 'hybrid'), None,
+                                        'Invalid mode value; use catalogue, lexical, semantic or hybrid.'))
+    nonblank = (fields['text'].value.strip(WHITESPACE) != '' if 'text' in fields
+                else any(token.value.strip(WHITESPACE) for token in bare))
+    if explicit is not None:
+        mode = explicit
+    elif nonblank and not continuation and not any(field in fields for field in CATALOGUE_ONLY_FIELDS):
+        mode = DEFAULT_RETRIEVAL_MODE
+    else:
+        mode = 'catalogue'
     visibility = cast(Access | None, option('access', ('internal', 'external', 'public'), None,
                                            'Invalid access value; use internal, external or public.'))
     state = cast(State | None, option('state', ('ready', 'uploading', 'publishing'), None,
@@ -174,7 +192,7 @@ def parse_expression(expression: str) -> QueryPlan:
     if owner is not None and not owner.strip(WHITESPACE):
         token = fields['owner']
         raise _error(source, 'Owner must not be blank.', token.start, token.end)
-    forbidden = ('kind', 'owner') if mode == 'catalogue' else ('state', 'expired', 'sort', 'direction')
+    forbidden = RETRIEVAL_ONLY_FIELDS if mode == 'catalogue' else CATALOGUE_ONLY_FIELDS
     for field in forbidden:
         if field in fields:
             token = fields[field]
@@ -187,9 +205,8 @@ def parse_expression(expression: str) -> QueryPlan:
         token.value if mode == 'catalogue' else token.raw for token in bare)
     if _units(text) > MAX_TEXT_UTF16:
         raise _error(source, 'Search text exceeds 4096 UTF-16 code units.', 0, len(source))
-    nonblank = text.strip(WHITESPACE) if 'text' in fields else any(token.value.strip(WHITESPACE) for token in bare)
     if mode != 'catalogue' and not nonblank:
         raise _error(source, 'Retrieval mode requires nonblank search text.', 0, len(source))
     return QueryPlan(text, mode, visibility, state, expired == 'true', kind, owner, sort, direction,
                      tags, fields['hostname'].value if 'hostname' in fields else None,
-                     fields['project'].value if 'project' in fields else None)
+                     fields['project'].value if 'project' in fields else None, explicit is not None)

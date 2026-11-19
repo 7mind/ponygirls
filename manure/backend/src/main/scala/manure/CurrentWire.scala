@@ -3,6 +3,7 @@ package manure
 import io.circe.Json
 import baboon.runtime.shared.{BaboonCodecContext, BaboonJsonCodec}
 import manure.{api => wire}
+import ponygirls.retrieval.UnavailableReason
 import java.util.UUID
 
 object CurrentWire:
@@ -25,10 +26,10 @@ object CurrentWire:
     Require(value.hcursor.get[String]("apiVersion").toOption.contains(version), "unsupported-version")
     decode(wire.ContentEnvelope.codecJson,value)
   def requestId(value: Json): UUID = value.hcursor.get[UUID]("requestId").getOrElse(new UUID(0L,0L))
-  def error(code: String): wire.Result =
+  def error(code: String,reason: Option[UnavailableReason] = None): wire.Result =
     val name = code.split("-").map(p => p.headOption.map(_.toUpper).getOrElse(' ').toString + p.drop(1)).mkString
     val enumValue = wire.ErrorCode.parse(name).getOrElse(wire.ErrorCode.Unavailable)
-    wire.Result.Error(wire.Failure(enumValue,code,if Set("rate-limited","session-limit","unavailable")(code) then Some(5) else None))
+    wire.Result.Error(wire.Failure(enumValue,reason.fold(code)(_.text),if Set("rate-limited","session-limit","unavailable")(code) then Some(5) else None))
   def status(code: String): Int = code match
     case "unauthorized" | "password-required" | "password-invalid" | "grant-required" => 401
     case "forbidden" | "grant-invalid" | "grant-expired" | "session-not-owned" | "tls-required" => 403

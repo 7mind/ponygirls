@@ -84,6 +84,53 @@ final class MetadataSearchSuite extends FunSuite:
     }.unsafeRunSync()
   }
 
+  test("semantic declares an in-scope unpublished artifact as pending; unavailability keeps its fixed reason") {
+    BackendFixture.resource(true).use { f =>
+      val profile=RetrievalProfile(EmbeddingSpace("controlled-metadata","immutable-v1",3,false,"","","cosine"),"manure-metadata-paths-v2")
+      val engine=new PostgresRetrieval("manure",Some(profile))
+      val projection=new SearchProjection(f.config,engine)
+      val embedding=new EmbeddingClient:
+        def documents(values: List[String]): IO[List[List[Double]]] = IO.pure(values.map(_ => List(1.0,0.0,0.0)))
+        def query(value: String): IO[List[Double]] = IO.pure(List(1.0,0.0,0.0))
+      val failing=new EmbeddingClient:
+        def documents(values: List[String]): IO[List[List[Double]]] = IO.raiseError(new RuntimeException("provider detail"))
+        def query(value: String): IO[List[Double]] = IO.raiseError(new RuntimeException("provider detail"))
+      def search(client: Option[EmbeddingClient]): Search = new Search(f.database.get,f.lease,f.config,f.auth,f.clock,engine,projection,client)
+      def query(mode: wire.SearchMode): wire.SearchQuery = wire.SearchQuery("needle",mode,wire.SearchFilter(None,None,None,Nil,None,None),10,None)
+      def failure(result: Either[Throwable,wire.SearchPage]): Option[(String,Option[UnavailableReason])] =
+        result.left.toOption.collect { case error: DomainError => (error.code,error.reason) }
+      val input=InitUpload("needle",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None,Vector.empty,None,None)
+      for
+        a <- f.artifacts.init(f.identity,input)
+        published <- f.artifacts.finish(f.identity,a.artifact.id)
+        _ <- f.database.get.transaction { c =>
+          engine.initialize(c); projection.put(c,published)
+          var claim=engine.claim(c,30,java.time.Instant.now())
+          while claim.nonEmpty do
+            val work=claim.get
+            if work.chunks.nonEmpty then engine.accept(c,work,0,List.fill(work.chunks.size)(List(1.0,0.0,0.0)))
+            engine.publish(c,work)
+            claim=engine.claim(c,30,java.time.Instant.now())
+        }
+        b <- f.artifacts.init(f.identity,input)
+        unpublished <- f.artifacts.finish(f.identity,b.artifact.id)
+        _ <- f.database.get.transaction(c => projection.put(c,unpublished))
+        semantic <- search(Some(embedding)).query(f.other,query(wire.SearchMode.Semantic),f.config.apiOrigin)
+        lexical <- search(Some(embedding)).query(f.other,query(wire.SearchMode.Lexical),f.config.apiOrigin)
+        failed <- search(Some(failing)).query(f.other,query(wire.SearchMode.Hybrid),f.config.apiOrigin).attempt
+        unconfigured <- search(None).query(f.other,query(wire.SearchMode.Semantic),f.config.apiOrigin).attempt
+        _ <- IO {
+          assertEquals(semantic.hits.map(_.artifact.artifactId),List(published.id))
+          assertEquals(semantic.pending,1L)
+          assertEquals(lexical.hits.map(_.artifact.artifactId).toSet,Set(published.id,unpublished.id))
+          assertEquals(lexical.pending,0L)
+          assertEquals(failure(failed),Some(("search-unavailable",Some(UnavailableReason.EmbeddingFailed))))
+          assertEquals(failure(unconfigured),Some(("search-unavailable",Some(UnavailableReason.NotConfigured))))
+        }
+      yield ()
+    }.unsafeRunSync()
+  }
+
   test("all 32 supported tags can be combined with every other exact search filter") {
     BackendFixture.resource(true).use { f =>
       val tags=Vector.tabulate(MetadataRules.MaxTags)(i => "tag-" + i)

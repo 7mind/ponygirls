@@ -7,12 +7,14 @@ export class SearchPage {
     _countScope;
     _rankingLimit;
     _nextCursor;
-    constructor(hits, total, countScope, rankingLimit, nextCursor) {
+    _pending;
+    constructor(hits, total, countScope, rankingLimit, nextCursor, pending) {
         this._hits = hits;
         this._total = total;
         this._countScope = countScope;
         this._rankingLimit = rankingLimit;
         this._nextCursor = nextCursor;
+        this._pending = pending;
     }
     get hits() {
         return this._hits;
@@ -29,20 +31,24 @@ export class SearchPage {
     get nextCursor() {
         return this._nextCursor;
     }
+    get pending() {
+        return this._pending;
+    }
     toJSON() {
         return {
             hits: this._hits,
             total: this._total,
             countScope: this._countScope,
             rankingLimit: this._rankingLimit !== undefined ? this._rankingLimit : undefined,
-            nextCursor: this._nextCursor !== undefined ? this._nextCursor : undefined
+            nextCursor: this._nextCursor !== undefined ? this._nextCursor : undefined,
+            pending: this._pending
         };
     }
     with(overrides) {
-        return new SearchPage('hits' in overrides ? overrides.hits : this._hits, 'total' in overrides ? overrides.total : this._total, 'countScope' in overrides ? overrides.countScope : this._countScope, 'rankingLimit' in overrides ? overrides.rankingLimit : this._rankingLimit, 'nextCursor' in overrides ? overrides.nextCursor : this._nextCursor);
+        return new SearchPage('hits' in overrides ? overrides.hits : this._hits, 'total' in overrides ? overrides.total : this._total, 'countScope' in overrides ? overrides.countScope : this._countScope, 'rankingLimit' in overrides ? overrides.rankingLimit : this._rankingLimit, 'nextCursor' in overrides ? overrides.nextCursor : this._nextCursor, 'pending' in overrides ? overrides.pending : this._pending);
     }
     static fromPlain(obj) {
-        return new SearchPage(obj.hits, obj.total, obj.countScope, obj.rankingLimit, obj.nextCursor);
+        return new SearchPage(obj.hits, obj.total, obj.countScope, obj.rankingLimit, obj.nextCursor, obj.pending);
     }
     static BaboonDomainVersion = '1.0.0';
     baboonDomainVersion() {
@@ -83,6 +89,7 @@ export class SearchPage_JsonCodec {
             "countScope": SearchCountScope_JsonCodec.instance.encode(BaboonCodecContext.Default, value.countScope),
             "rankingLimit": value.rankingLimit === undefined ? null : value.rankingLimit,
             "nextCursor": value.nextCursor === undefined ? null : value.nextCursor,
+            "pending": value.pending.toString(),
         };
     }
     decode(ctx, json) {
@@ -90,7 +97,7 @@ export class SearchPage_JsonCodec {
             return SearchPage_JsonCodec.lazyInstance.value.decode(ctx, json);
         }
         const obj = json;
-        return new SearchPage(obj["hits"].map(item => SearchHit_JsonCodec.instance.decode(BaboonCodecContext.Default, item)), BaboonInt64.read(obj["total"], "i64/u64"), SearchCountScope_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["countScope"]), obj["rankingLimit"] === undefined || obj["rankingLimit"] === null ? undefined : obj["rankingLimit"] === undefined || obj["rankingLimit"] === null ? undefined : obj["rankingLimit"], obj["nextCursor"] === undefined || obj["nextCursor"] === null ? undefined : obj["nextCursor"] === undefined || obj["nextCursor"] === null ? undefined : obj["nextCursor"]);
+        return new SearchPage(obj["hits"].map(item => SearchHit_JsonCodec.instance.decode(BaboonCodecContext.Default, item)), BaboonInt64.read(obj["total"], "i64/u64"), SearchCountScope_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["countScope"]), obj["rankingLimit"] === undefined || obj["rankingLimit"] === null ? undefined : obj["rankingLimit"] === undefined || obj["rankingLimit"] === null ? undefined : obj["rankingLimit"], obj["nextCursor"] === undefined || obj["nextCursor"] === null ? undefined : obj["nextCursor"] === undefined || obj["nextCursor"] === null ? undefined : obj["nextCursor"], BaboonInt64.read(obj["pending"], "i64/u64"));
     }
     static BaboonDomainVersion = '1.0.0';
     baboonDomainVersion() {

@@ -631,7 +631,7 @@ class TestLoopbackFixture(unittest.TestCase):
             catalogue = cp.Result_Catalogue(cp.CataloguePage(artifacts, None))
             search = cp.Result_SearchResults(cp.SearchPage([cp.SearchHit(artifact,
                 'a' * 64, 'generation', 'manure-metadata-paths-v2', None, None, [], 1.0)
-                for artifact in artifacts], page_rows, cp.SearchCountScope.ExactMatches, None, None))
+                for artifact in artifacts], page_rows, cp.SearchCountScope.ExactMatches, None, None, 0))
             for result in (catalogue, search):
                 with self.subTest(character=ord(character), result=type(result).__name__):
                     wire = cp.dumps(cp.ServerEnvelope(UUID(int=0), result))

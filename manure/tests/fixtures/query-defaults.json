@@ -1,0 +1,322 @@
+[
+  {
+    "name": "bare text defaults to hybrid",
+    "query": "quarterly   report",
+    "modeExplicit": false,
+    "expected": {
+      "q": "quarterly report",
+      "mode": "hybrid",
+      "visibility": null,
+      "itemState": null,
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "created_at",
+      "direction": "desc",
+      "tags": [],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "default retrieval keeps quoted phrase spelling",
+    "query": "\"quarterly  report\" OR -draft",
+    "modeExplicit": false,
+    "expected": {
+      "q": "\"quarterly  report\" OR -draft",
+      "mode": "hybrid",
+      "visibility": null,
+      "itemState": null,
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "created_at",
+      "direction": "desc",
+      "tags": [],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "text field defaults to hybrid",
+    "query": "text:\"  report: Q1  \"",
+    "modeExplicit": false,
+    "expected": {
+      "q": "  report: Q1  ",
+      "mode": "hybrid",
+      "visibility": null,
+      "itemState": null,
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "created_at",
+      "direction": "desc",
+      "tags": [],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "metadata and retrieval-only fields with text default to hybrid",
+    "query": "access:internal kind:dir owner:\"Exact User\" tag:release hostname:build project:/work report",
+    "modeExplicit": false,
+    "expected": {
+      "q": "report",
+      "mode": "hybrid",
+      "visibility": "internal",
+      "itemState": null,
+      "includeExpired": false,
+      "kind": "dir",
+      "createdByUser": "Exact User",
+      "sort": "created_at",
+      "direction": "desc",
+      "tags": [
+        "release"
+      ],
+      "hostname": "build",
+      "projectPath": "/work"
+    }
+  },
+  {
+    "name": "state keeps catalogue",
+    "query": "state:ready report",
+    "modeExplicit": false,
+    "expected": {
+      "q": "report",
+      "mode": "catalogue",
+      "visibility": null,
+      "itemState": "ready",
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "created_at",
+      "direction": "desc",
+      "tags": [],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "expired keeps catalogue",
+    "query": "expired:false report",
+    "modeExplicit": false,
+    "expected": {
+      "q": "report",
+      "mode": "catalogue",
+      "visibility": null,
+      "itemState": null,
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "created_at",
+      "direction": "desc",
+      "tags": [],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "sort keeps catalogue",
+    "query": "sort:name report",
+    "modeExplicit": false,
+    "expected": {
+      "q": "report",
+      "mode": "catalogue",
+      "visibility": null,
+      "itemState": null,
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "name",
+      "direction": "desc",
+      "tags": [],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "direction keeps catalogue",
+    "query": "direction:asc \"quarterly  report\"",
+    "modeExplicit": false,
+    "expected": {
+      "q": "quarterly  report",
+      "mode": "catalogue",
+      "visibility": null,
+      "itemState": null,
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "created_at",
+      "direction": "asc",
+      "tags": [],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "filters only keep catalogue",
+    "query": "access:public tag:release",
+    "modeExplicit": false,
+    "expected": {
+      "q": "",
+      "mode": "catalogue",
+      "visibility": "public",
+      "itemState": null,
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "created_at",
+      "direction": "desc",
+      "tags": [
+        "release"
+      ],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "empty keeps catalogue",
+    "query": "",
+    "modeExplicit": false,
+    "expected": {
+      "q": "",
+      "mode": "catalogue",
+      "visibility": null,
+      "itemState": null,
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "created_at",
+      "direction": "desc",
+      "tags": [],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "blank quoted text keeps catalogue",
+    "query": "\"  \"",
+    "modeExplicit": false,
+    "expected": {
+      "q": "  ",
+      "mode": "catalogue",
+      "visibility": null,
+      "itemState": null,
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "created_at",
+      "direction": "desc",
+      "tags": [],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "blank text field keeps catalogue",
+    "query": "text:\" \"",
+    "modeExplicit": false,
+    "expected": {
+      "q": " ",
+      "mode": "catalogue",
+      "visibility": null,
+      "itemState": null,
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "created_at",
+      "direction": "desc",
+      "tags": [],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "continuation keeps catalogue",
+    "query": "\"quarterly  report\"",
+    "continuation": true,
+    "modeExplicit": false,
+    "expected": {
+      "q": "quarterly  report",
+      "mode": "catalogue",
+      "visibility": null,
+      "itemState": null,
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "created_at",
+      "direction": "desc",
+      "tags": [],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "explicit catalogue",
+    "query": "mode:catalogue report",
+    "modeExplicit": true,
+    "expected": {
+      "q": "report",
+      "mode": "catalogue",
+      "visibility": null,
+      "itemState": null,
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "created_at",
+      "direction": "desc",
+      "tags": [],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "explicit semantic",
+    "query": "mode:semantic report",
+    "modeExplicit": true,
+    "expected": {
+      "q": "report",
+      "mode": "semantic",
+      "visibility": null,
+      "itemState": null,
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "created_at",
+      "direction": "desc",
+      "tags": [],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "explicit lexical with continuation stays lexical",
+    "query": "mode:lexical report",
+    "continuation": true,
+    "modeExplicit": true,
+    "expected": {
+      "q": "report",
+      "mode": "lexical",
+      "visibility": null,
+      "itemState": null,
+      "includeExpired": false,
+      "kind": null,
+      "createdByUser": null,
+      "sort": "created_at",
+      "direction": "desc",
+      "tags": [],
+      "hostname": null,
+      "projectPath": null
+    }
+  },
+  {
+    "name": "retrieval-only field without text",
+    "query": "kind:dir",
+    "error": "Retrieval-only fields require lexical, semantic or hybrid mode."
+  },
+  {
+    "name": "retrieval-only field with a catalogue-only field",
+    "query": "state:ready kind:dir report",
+    "error": "Retrieval-only fields require lexical, semantic or hybrid mode."
+  }
+]

@@ -36,7 +36,7 @@ def _tool_defs() -> list[dict[str, Any]]:
                          "additionalProperties": False},
          "annotations": dict(ro)},
         {"name": "search",
-         "description": "Search artifacts with the dashboard expression syntax (max 131072 UTF-16 units; underlying search text max 4096 UTF-16 units). Default catalogue; fields: mode:catalogue|lexical|semantic|hybrid, access:internal|external|public; catalogue-only state:ready|uploading|publishing, expired:true|false, sort:name|created_at|expires_at|total_bytes|file_count|visibility|state|kind|created_by_user, direction:asc|desc; retrieval-only kind:file|dir, owner:<exact user>; all modes tag:<exact tag> (repeatable AND), hostname:<exact host>, project:<exact path>. Bare text is search text; text:<JSON string> preserves exact text and literal colons. Metadata fields conjoin, with no duplicates except up to 32 distinct tag fields. Retrieval requires text and rejects cursor; quoted retrieval phrases/OR/NOT belong to the search engine, not metadata Boolean syntax. Defaults: expired:false sort:created_at direction:desc.",
+         "description": "Search artifacts with the dashboard expression syntax (max 131072 UTF-16 units; underlying search text max 4096 UTF-16 units). Mode: without mode:, search text runs hybrid retrieval when the server offers it, else lexical with a notice; a hybrid search the server cannot run is re-run once lexically with a notice; no text, a catalogue-only field or a cursor lists the catalogue; an explicit mode is never substituted. Results add mode (effective), notice and pending_note (items not yet indexed for semantic search). Fields: mode:catalogue|lexical|semantic|hybrid, access:internal|external|public; catalogue-only state:ready|uploading|publishing, expired:true|false, sort:name|created_at|expires_at|total_bytes|file_count|visibility|state|kind|created_by_user, direction:asc|desc; retrieval-only kind:file|dir, owner:<exact user>; all modes tag:<exact tag> (repeatable AND), hostname:<exact host>, project:<exact path>. Bare text is search text; text:<JSON string> preserves exact text and literal colons. Metadata fields conjoin, with no duplicates except up to 32 distinct tag fields. Retrieval requires text and rejects cursor; quoted retrieval phrases/OR/NOT belong to the search engine, not metadata Boolean syntax. Defaults: expired:false sort:created_at direction:desc.",
          "inputSchema": {"type": "object",
                          "properties": {"query": {"type": "string", "maxLength": 131072},
                                         "limit": {"type": "integer", "minimum": 1},
@@ -183,8 +183,7 @@ def handle_tools_call(name: str, arguments: dict[str, Any], client_module: Any |
             res = client.list_artifacts(limit=arguments.get("limit"), cursor=arguments.get("cursor"),
                                         include_expired=bool(arguments.get("include_expired", False)))
         elif name == "search":
-            res = client.search_expression(arguments["query"], limit=arguments.get("limit"),
-                                           cursor=arguments.get("cursor"))
+            return _search(client, arguments)
         elif name == "get_artifact":
             res = client.get_artifact(arguments["artifact_id"])
         elif name == "get_manifest":
@@ -212,6 +211,21 @@ def handle_tools_call(name: str, arguments: dict[str, Any], client_module: Any |
         return {"content": [{"type": "text", "text": json.dumps({"code": "internal", "message": "tool failed"})}],
                 "isError": True}
     return {"content": [{"type": "text", "text": json.dumps(res, sort_keys=True)}]}
+
+
+def _search(client: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Expression search; the page plus effective mode, notice and pending note."""
+    from manure.client import ManureError
+    notices: list[str] = []
+    try:
+        found = client.search_expression(arguments["query"], limit=arguments.get("limit"),
+                                         cursor=arguments.get("cursor"), notify=notices.append)
+    except ManureError as e:
+        # A fallback notice precedes its lexical request; keep it when that request fails.
+        failure = {"code": e.code, "message": e.message, **({"notice": notices[0]} if notices else {})}
+        return {"content": [{"type": "text", "text": json.dumps(failure)}], "isError": True}
+    result = {**found.page, "mode": found.mode, "notice": found.notice, "pending_note": found.pending_note}
+    return {"content": [{"type": "text", "text": json.dumps(result, sort_keys=True)}], "structuredContent": result}
 
 
 def _err(id_val: Any, code: int, message: str) -> dict[str, Any]:

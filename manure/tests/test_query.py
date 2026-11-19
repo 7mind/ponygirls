@@ -11,6 +11,17 @@ from manure import current_protocol as cp
 from manure.client import ManureClient, ManureError
 from test_current_client import CurrentTransport, ORIGIN, TOKEN
 
+NOT_CONFIGURED = 'semantic retrieval is not configured; lexical-only capability'
+EMBEDDING_FAILED = 'query embedding failed'
+LEXICAL_ONLY_NOTICE = ('Hybrid search is not available on this server: semantic retrieval is not configured; '
+                       'showing lexical results')
+EMBEDDING_NOTICE = 'Hybrid search is not available on this server: query embedding failed; showing lexical results'
+
+
+def sent(transport):
+    return [type(c).__name__.removeprefix('Command_') + (':' + c.query.mode.value if isinstance(c, cp.Command_Search) else '')
+            for c in transport.commands]
+
 
 class QueryTests(unittest.TestCase):
     def test_mcp_exposes_query_only_search_schema(self):
@@ -37,11 +48,92 @@ class QueryTests(unittest.TestCase):
                 else:
                     self.assertEqual(parse_expression(case['query']).as_dict(), case['expected'])
 
+    def test_default_mode_fixtures(self):
+        from manure.query import parse_expression, QueryError
+        fixtures = json.loads((Path(__file__).parent / 'fixtures/query-defaults.json').read_text())
+        for case in fixtures:
+            with self.subTest(name=case['name']):
+                continuation = case.get('continuation', False)
+                if 'error' in case:
+                    with self.assertRaises(QueryError) as error:
+                        parse_expression(case['query'], continuation=continuation)
+                    self.assertEqual(error.exception.message, case['error'])
+                else:
+                    plan = parse_expression(case['query'], continuation=continuation)
+                    self.assertEqual((plan.as_dict(), plan.mode_explicit), (case['expected'], case['modeExplicit']))
+
+    def test_default_mode_follows_capabilities_and_the_servers_fixed_reason(self):
+        for name, modes, failures, requests, mode, notice in [
+            ('hybrid offered', list(cp.SearchMode), {}, ['GetCapabilities', 'Search:Hybrid'], 'hybrid', None),
+            ('lexical only', [cp.SearchMode.Lexical], {}, ['GetCapabilities', 'Search:Lexical'], 'lexical', LEXICAL_ONLY_NOTICE),
+            ('embedding failed', list(cp.SearchMode), {cp.SearchMode.Hybrid: (cp.ErrorCode.SearchUnavailable, EMBEDDING_FAILED)},
+             ['GetCapabilities', 'Search:Hybrid', 'Search:Lexical'], 'lexical', EMBEDDING_NOTICE),
+            ('untrusted reason', list(cp.SearchMode), {cp.SearchMode.Hybrid: (cp.ErrorCode.SearchUnavailable, 'private-' + TOKEN)},
+             ['GetCapabilities', 'Search:Hybrid', 'Search:Lexical'], 'lexical',
+             'Hybrid search is not available on this server: search-unavailable; showing lexical results'),
+        ]:
+            with self.subTest(name):
+                transport = CurrentTransport()
+                transport.search_modes, transport.search_failures = modes, failures
+                notices = []
+                found = ManureClient(ORIGIN, TOKEN, transport=transport).search_expression(
+                    'kind:dir tag:release "cat  dog"', limit=5, notify=notices.append)
+                self.assertEqual(sent(transport), requests)
+                self.assertEqual((found.mode, found.mode_explicit, found.notice), (mode, False, notice))
+                self.assertEqual(notices, [notice] if notice else [])
+                self.assertEqual(transport.commands[-1].query, cp.SearchQuery('"cat  dog"', cp.SearchMode(mode.capitalize()),
+                    cp.SearchFilter(None, cp.ArtifactKind.Directory, None, ['release'], None, None), 5, None))
+
+    def test_explicit_unavailable_mode_is_an_error_without_substitution(self):
+        transport = CurrentTransport()
+        transport.search_modes = [cp.SearchMode.Lexical]
+        transport.search_failures = {cp.SearchMode.Semantic: (cp.ErrorCode.SearchUnavailable, NOT_CONFIGURED)}
+        notices = []
+        with self.assertRaises(ManureError) as error:
+            ManureClient(ORIGIN, TOKEN, transport=transport).search_expression('mode:semantic report', notify=notices.append)
+        self.assertEqual((error.exception.code, error.exception.message), ('search-unavailable', 'semantic retrieval is not configured'))
+        self.assertEqual((sent(transport), notices), (['Search:Semantic'], []))
+
+    def test_filters_catalogue_only_fields_and_cursor_keep_the_catalogue(self):
+        for query, cursor in [('access:public tag:release', None), ('state:ready report', None), ('report', 'next')]:
+            with self.subTest(query=query, cursor=cursor):
+                transport = CurrentTransport()
+                found = ManureClient(ORIGIN, TOKEN, transport=transport).search_expression(query, cursor=cursor)
+                self.assertEqual((found.mode, found.notice, sent(transport)), ('catalogue', None, ['ListArtifacts']))
+                self.assertEqual(transport.commands[0].query.cursor, cursor)
+
+    def test_mcp_search_reports_effective_mode_notice_and_pending(self):
+        transport = CurrentTransport()
+        client = ManureClient(ORIGIN, TOKEN, transport=transport)
+        transport.search_page = cp.SearchPage([], 0, cp.SearchCountScope.CandidateWindow, 1000, None, 2)
+        with patch.object(mcp, '_client_from_env', return_value=client):
+            pending = mcp.handle_tools_call('search', {'query': 'report'})
+            transport.search_modes = [cp.SearchMode.Lexical]
+            transport.search_page = cp.SearchPage([], 0, cp.SearchCountScope.ExactMatches, None, None, 0)
+            lexical = mcp.handle_tools_call('search', {'query': 'report'})
+            transport.search_modes = list(cp.SearchMode)
+            transport.search_failures = {cp.SearchMode.Hybrid: (cp.ErrorCode.SearchUnavailable, EMBEDDING_FAILED),
+                                         cp.SearchMode.Lexical: (cp.ErrorCode.Unavailable, 'private-' + TOKEN)}
+            failed = mcp.handle_tools_call('search', {'query': 'report'})
+        print('MCP search transcript:', json.dumps([pending, lexical, failed]))
+        for result, mode, notice, note in [
+                (pending, 'hybrid', None, '2 items are not yet indexed for semantic search; results may be incomplete'),
+                (lexical, 'lexical', LEXICAL_ONLY_NOTICE, None)]:
+            self.assertNotIn('isError', result)
+            text = json.loads(result['content'][0]['text'])
+            self.assertEqual(text, result['structuredContent'])
+            self.assertEqual((text['mode'], text['notice'], text['pending_note']), (mode, notice, note))
+            self.assertEqual(text['pending'], 2 if mode == 'hybrid' else 0)
+        self.assertTrue(failed['isError'])
+        self.assertEqual(json.loads(failed['content'][0]['text']),
+                         {'code': 'unavailable', 'message': 'unavailable', 'notice': EMBEDDING_NOTICE})
+        self.assertNotIn(TOKEN, json.dumps(failed))
+
     def test_catalogue_expression_uses_typed_protocol(self):
         transport = CurrentTransport()
         client = ManureClient(ORIGIN, TOKEN, transport=transport)
-        page = client.search_expression('tag:Release tag:release hostname:HOST project:/work access:public state:ready expired:true sort:name direction:asc text:"cat: dog"', limit=7, cursor='page')
-        self.assertIn('artifacts', page)
+        found = client.search_expression('tag:Release tag:release hostname:HOST project:/work access:public state:ready expired:true sort:name direction:asc text:"cat: dog"', limit=7, cursor='page')
+        self.assertIn('artifacts', found.page)
         command = transport.commands[-1]
         self.assertEqual(command, cp.Command_ListArtifacts(cp.CatalogueQuery('cat: dog', True,
             cp.Visibility.Public, cp.ArtifactState.Ready, cp.CatalogueSort.Name, cp.SortDirection.Asc, 7, 'page', ['Release', 'release'], 'HOST', '/work')))
@@ -49,8 +141,8 @@ class QueryTests(unittest.TestCase):
     def test_retrieval_expression_uses_typed_protocol(self):
         transport = CurrentTransport()
         client = ManureClient(ORIGIN, TOKEN, transport=transport)
-        page = client.search_expression('mode:hybrid tag:Release tag:release hostname:HOST project:/work access:internal kind:dir owner:"Exact User" "cat  dog"', limit=8)
-        self.assertEqual(page['count_scope'], 'exactmatches')
+        found = client.search_expression('mode:hybrid tag:Release tag:release hostname:HOST project:/work access:internal kind:dir owner:"Exact User" "cat  dog"', limit=8)
+        self.assertEqual(found.page['count_scope'], 'exactmatches')
         self.assertEqual(transport.commands[-1], cp.Command_Search(cp.SearchQuery('"cat  dog"',
             cp.SearchMode.Hybrid, cp.SearchFilter(cp.Visibility.Internal, cp.ArtifactKind.Directory, 'Exact User', ['Release', 'release'], 'HOST', '/work'), 8, None)))
 
@@ -99,11 +191,10 @@ class QueryTests(unittest.TestCase):
         self.assertEqual(replies[5]['error']['code'], -32602)
         self.assertNotIn('isError', replies[6]['result'])
         self.assertTrue(replies[7]['result']['isError'])
-        self.assertEqual(len(transport.commands), 3)
-        self.assertIs(transport.commands[0].query.visibility, cp.Visibility.Public)
-        self.assertEqual(transport.commands[0].query.limit, 3)
-        self.assertIs(transport.commands[1].query.mode, cp.SearchMode.Semantic)
-        self.assertTrue(transport.commands[2].query.includeExpired)
+        self.assertEqual(sent(transport), ['GetCapabilities', 'Search:Hybrid', 'Search:Semantic', 'ListArtifacts'])
+        self.assertIs(transport.commands[1].query.filter.visibility, cp.Visibility.Public)
+        self.assertEqual(transport.commands[1].query.limit, 3)
+        self.assertTrue(transport.commands[3].query.includeExpired)
 
 
 if __name__ == '__main__':
