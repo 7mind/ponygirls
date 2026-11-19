@@ -9,8 +9,8 @@
 
 /** 100 % and 125 % display scaling. */
 export const LAYOUT_SCALES = [1, 1.25];
-const SETTLE_FRAMES = 30, STABLE_FRAMES = 60, THRESHOLD_STEP = 3, FRACTION_PHASES = 4, MEASURE_HEIGHT = 320, TRACE_FRAMES = 8, RESIZE_ATTEMPTS = 3;
-const PROBE = '__layoutQuiescence';
+const SETTLE_FRAMES = 30, STABLE_FRAMES = 60, THRESHOLD_STEP = 3, FRACTION_PHASES = 4, MEASURE_HEIGHT = 320, TRACE_FRAMES = 8, RESIZE_ATTEMPTS = 2;
+const PROBE = '__layoutQuiescence', RESIZE_COUNT = '__layoutQuiescenceResizes';
 
 /** Headless Chromium (`chromium`, a Playwright browser type) whose classic scrollbars take space, at device scale `scale`. */
 export function launchWithScrollbars(chromium, scale, { executablePath, args }) {
@@ -34,19 +34,31 @@ export async function layoutContext(browser, options) {
   return context;
 }
 /**
- * Resizes the page's window until its viewport is `width` × `height` device-independent pixels, within a pixel. A full
- * Chromium's window is taller than its viewport, and at 125 % its window size snaps, so each attempt corrects the last one.
+ * Resizes the page's window so that its viewport is `width` × `height` device-independent pixels, within a pixel, and waits
+ * until the page has been resized. The browser UI around the viewport is none in the headless shell and a bar above it in a
+ * full Chromium, whose window size also snaps at 125 %; a fractional viewport rounds in innerWidth/innerHeight. A second
+ * request corrects a first one that missed by more than a pixel.
  */
 export async function resizeWindow(page, width, height) {
   const session = await page.context().newCDPSession(page), viewport = () => page.evaluate(() => [innerWidth, innerHeight]);
   try {
+    const { windowId } = await session.send('Browser.getWindowForTarget');
+    const [uiWidth, uiHeight] = await page.evaluate(() => [Math.max(0, outerWidth - innerWidth), Math.max(0, outerHeight - innerHeight)]);
+    let request = { width: width + uiWidth, height: height + uiHeight };
     for (let attempt = 0; attempt < RESIZE_ATTEMPTS; attempt++) {
-      const { windowId, bounds } = await session.send('Browser.getWindowForTarget'), [w, h] = await viewport();
+      const resizes = await page.evaluate(key => {
+        if (window[key] === undefined) { window[key] = 0; addEventListener('resize', () => { window[key]++; }); }
+        return window[key];
+      }, RESIZE_COUNT);
+      const before = (await session.send('Browser.getWindowForTarget')).bounds;
+      await session.send('Browser.setWindowBounds', { windowId, bounds: { left: 0, top: 0, ...request } });
+      const applied = (await session.send('Browser.getWindowForTarget')).bounds;
+      if (applied.width !== before.width || applied.height !== before.height) await page.waitForFunction(([key, count]) => window[key] > count, [RESIZE_COUNT, resizes]);
+      const [w, h] = await viewport();
       if (Math.abs(w - width) <= 1 && Math.abs(h - height) <= 1) return;
-      await session.send('Browser.setWindowBounds', { windowId, bounds: { left: 0, top: 0, width: width + bounds.width - w, height: height + bounds.height - h } });
-      await page.waitForFunction(([w, h]) => innerWidth !== w || innerHeight !== h, [w, h]);
+      request = { width: applied.width + width - w, height: applied.height + height - h };
     }
-    throw new Error(`The viewport did not become ${width}x${height} in ${RESIZE_ATTEMPTS} attempts: ${(await viewport()).join('x')}`);
+    throw new Error(`The viewport did not become ${width}x${height} in ${RESIZE_ATTEMPTS} requests: ${(await viewport()).join('x')}.`);
   } finally { await session.detach(); }
 }
 // Runs in the page: samples the scroll geometry once per animation frame until it has been unchanged for `stable` frames.
@@ -90,9 +102,9 @@ export async function assertLayoutQuiescent(page, label) {
 export async function scrollThreshold(page, width, scroller) {
   await resizeWindow(page, width, MEASURE_HEIGHT);
   await assertLayoutQuiescent(page, `threshold measurement at ${width}x${MEASURE_HEIGHT}`);
-  const overflow = await page.evaluate(selector => { const element = selector === null ? document.scrollingElement : document.querySelector(selector); if (element === null) throw new Error(`No element matches ${selector}`); return element.scrollHeight - element.clientHeight; }, scroller);
+  const [viewport, overflow] = await page.evaluate(selector => { const element = selector === null ? document.scrollingElement : document.querySelector(selector); if (element === null) throw new Error(`No element matches ${selector}`); return [innerHeight, element.scrollHeight - element.clientHeight]; }, scroller);
   if (overflow <= 0) throw new Error(`${scroller ?? 'The document'} does not scroll at ${width}x${MEASURE_HEIGHT}; the threshold cannot be measured.`);
-  return MEASURE_HEIGHT + overflow;
+  return viewport + overflow;
 }
 /**
  * Asserts quiescence at the sizes around the scroll threshold of `scroller` at window width `width`: just below, at and just
