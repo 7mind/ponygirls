@@ -17,7 +17,7 @@ new file mode 100644
 diff --git a/src/claude-cli.ts b/src/claude-cli.ts
 --- a/src/claude-cli.ts
 +++ b/src/claude-cli.ts
-@@ -1,16 +1,16 @@
+@@ -1,16 +1,17 @@
  import { createHash, randomUUID } from "node:crypto";
  import { constants as fsConstants, existsSync } from "node:fs";
 -import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -26,7 +26,9 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
  import { delimiter, dirname, extname, isAbsolute, join, resolve } from "node:path";
  import { fileURLToPath } from "node:url";
  import { createInterface } from "node:readline";
- import { spawn, type ChildProcess } from "node:child_process";
+-import { spawn, type ChildProcess } from "node:child_process";
++import { execFile, spawn, type ChildProcess } from "node:child_process";
++import { promisify } from "node:util";
 -import { registerSessionResourceCleanup } from "@earendil-works/pi-ai";
  import { TurnRelay } from "./turn-relay.ts";
 +import type { DelegatedRequest } from "../src/execution-lifecycle.ts";
@@ -37,7 +39,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
  import type {
    AnthropicStreamEvent,
    NativeFrame,
-@@ -19,7 +19,9 @@
+@@ -19,7 +20,9 @@
    NativeResult,
    NativeUsage,
  } from "./native-types.ts";
@@ -48,7 +50,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
  
  export const INSTALL_HINT =
    "Claude Code is not installed. Install it with `npm install -g @anthropic-ai/claude-code` " +
-@@ -45,6 +47,7 @@
+@@ -45,6 +48,7 @@
  }
  
  export interface RunClaudeInput {
@@ -56,7 +58,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
    model: string;
    /** Working directory exposed to Claude and used for Pi tool paths. */
    cwd?: string;
-@@ -170,10 +173,12 @@
+@@ -170,10 +174,12 @@
    args: string[],
    env: Record<string, string>,
    signal?: AbortSignal,
@@ -71,7 +73,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
    let stdout = "";
    let stderr = "";
    child.stdout?.setEncoding("utf8");
-@@ -181,16 +186,43 @@
+@@ -181,16 +187,43 @@
    child.stdout?.on("data", (chunk: string) => (stdout = (stdout + chunk).slice(-1_000_000)));
    child.stderr?.on("data", (chunk: string) => (stderr = (stderr + chunk).slice(-65_536)));
  
@@ -118,7 +120,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
    }
  }
  
-@@ -220,6 +252,7 @@
+@@ -220,6 +253,7 @@
  export async function getClaudeStatus(
    envInput: Record<string, string | undefined> = process.env,
    signal?: AbortSignal,
@@ -126,7 +128,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
  ): Promise<ClaudeStatus> {
    const env = claudeEnvironment(envInput);
    const command = await resolveClaudeExecutable(env);
-@@ -227,9 +260,9 @@
+@@ -227,9 +261,9 @@
  
    let result: { code: number; stdout: string; stderr: string };
    try {
@@ -138,7 +140,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
      const message = error instanceof Error ? error.message : String(error);
      return {
        available: true,
-@@ -271,7 +304,6 @@
+@@ -271,7 +305,6 @@
  }
  
  const READY_STATUS_TTL_MS = 60_000;
@@ -146,7 +148,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
  
  /**
   * Resolve a logged-in Claude Code executable. Successful checks are cached
-@@ -280,7 +312,9 @@
+@@ -280,7 +313,9 @@
   */
  async function readyClaudeCommand(
    envInput: Record<string, string | undefined>,
@@ -156,7 +158,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
  ): Promise<string> {
    const env = claudeEnvironment(envInput);
    const key = JSON.stringify([
-@@ -293,7 +327,7 @@
+@@ -293,7 +328,7 @@
    const cached = readyStatusCache.get(key);
    if (cached && cached.expires > Date.now()) return cached.command;
  
@@ -165,7 +167,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
    if (!status.available || !status.command) throw new Error(INSTALL_HINT);
    if (!status.loggedIn) {
      readyStatusCache.delete(key);
-@@ -408,7 +442,8 @@
+@@ -408,7 +443,8 @@
    } finally {
      clearTimeout(timer);
      signal?.removeEventListener("abort", abort);
@@ -175,7 +177,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
    }
  }
  
-@@ -480,6 +515,8 @@
+@@ -480,6 +516,8 @@
  }
  
  function childExit(child: ChildProcess): Promise<number> {
@@ -184,7 +186,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
    return new Promise((resolve, reject) => {
      child.once("error", reject);
      child.once("exit", (code, signal) => {
-@@ -490,8 +527,9 @@
+@@ -490,8 +528,9 @@
  }
  
  export function killProcessTree(child: ChildProcess): void {
@@ -195,7 +197,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
      const killer = spawn("taskkill", ["/F", "/T", "/PID", String(child.pid)], {
        stdio: "ignore",
        windowsHide: true,
-@@ -501,12 +539,32 @@
+@@ -501,12 +540,53 @@
    }
    try {
      process.kill(-child.pid, "SIGKILL");
@@ -211,30 +213,51 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
 +  }
 +}
 +
++function groupExists(pid: number): boolean {
++  try { process.kill(-pid, 0); return true; }
++  catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
++}
++
++export async function processGroupAlive(pid: number): Promise<boolean> {
++  if (!Number.isInteger(pid) || pid <= 1 || pid > 0x7fffffff) throw new Error("Invalid Claude Code process group");
++  if (!groupExists(pid)) return false;
++  if (process.platform === "darwin") {
++    const helper = fileURLToPath(new URL("./darwin-process-info", import.meta.url));
++    try {
++      const { stdout } = await promisify(execFile)(helper, ["group", String(pid)], { timeout: 1000 });
++      if (stdout === "dead\n") return false;
++      if (stdout === "live\n") return true;
++      throw new Error("Invalid Claude Code process group observation");
++    } catch (error) {
++      if (!groupExists(pid)) return false;
++      throw error;
++    }
++  }
++  if (process.platform !== "linux") return true;
++  let zombie = false;
++  for (const name of await readdir("/proc")) {
++    if (!/^\d+$/.test(name)) continue;
++    try {
++      const fields = (await readFile(`/proc/${name}/stat`, "utf8")).split(") ").pop()!.split(" ");
++      if (Number(fields[2]) !== pid) continue;
++      if (fields[0] !== "Z" && fields[0] !== "X") return true;
++      zombie = true;
++    } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT" && (e as NodeJS.ErrnoException).code !== "ESRCH") throw e; }
++  }
++  if (!zombie && groupExists(pid)) throw new Error("Cannot inspect Claude Code process group");
++  return false;
++}
++
 +async function waitForProcessGroup(pid: number): Promise<void> {
 +  if (process.platform === "win32") return;
 +  const deadline = Date.now() + 5000;
-+  for (;;) {
-+    let alive = false;
-+    if (process.platform === "linux") {
-+      for (const name of await readdir("/proc")) {
-+        if (!/^\d+$/.test(name)) continue;
-+        try {
-+          const fields = (await readFile(`/proc/${name}/stat`, "utf8")).split(") ").pop()!.split(" ");
-+          if (Number(fields[2]) === pid && fields[0] !== "Z" && fields[0] !== "X") alive = true;
-+        } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT" && (e as NodeJS.ErrnoException).code !== "ESRCH") throw e; }
-+      }
-+    } else {
-+      try { process.kill(-pid, 0); alive = true; }
-+      catch (e) { if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e; }
-+    }
-+    if (!alive) return;
++  while (await processGroupAlive(pid)) {
 +    if (Date.now() >= deadline) throw new Error("Claude Code process group termination unconfirmed");
 +    await new Promise((resolve) => setTimeout(resolve, 10));
    }
  }
  
-@@ -610,13 +668,31 @@
+@@ -610,13 +690,31 @@
  }
  
  /** Writes a frame stamped with a fresh uuid, which Claude Code echoes back on that frame's result. */
@@ -271,7 +294,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
      });
    }
    return uuid;
-@@ -962,14 +1038,15 @@
+@@ -962,14 +1060,15 @@
      private readonly readTask: Promise<void>,
      private readonly exitOutcome: Promise<{ code?: number; error?: Error }>,
      private readonly timeoutMs: number,
@@ -289,7 +312,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
  
      const root = await mkdtemp(join(tmpdir(), "pi-claude-code-"));
      const toolsPath = join(root, "tools.json");
-@@ -1025,6 +1102,8 @@
+@@ -1025,6 +1124,8 @@
          JSON.stringify(mcp),
        ];
  
@@ -298,7 +321,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
        child = spawnCommand(command, args, {
          // Claude Code tells the model its process cwd. Keep transport files
          // private while exposing Pi's real working directory to the model.
-@@ -1055,12 +1134,22 @@
+@@ -1055,12 +1156,22 @@
          (code) => ({ code }),
          (error: unknown) => ({ error: error instanceof Error ? error : new Error(String(error)) }),
        );
@@ -325,7 +348,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
        throw error;
      }
    }
-@@ -1128,12 +1217,10 @@
+@@ -1128,12 +1239,10 @@
        deliver,
        (body) => rewriteInitialRequest(body, input.frames, input.initialSystemMessages, input.nativeSystemInjections),
        input.betas,
@@ -340,7 +363,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
      input.signal?.addEventListener("abort", abort, { once: true });
      const assistants: NativeMessage[] = [];
      let result: NativeResult | undefined;
-@@ -1144,7 +1231,9 @@
+@@ -1144,7 +1253,9 @@
      try {
        const frames = continuation ? input.frames.slice(-1) : input.frames;
        for (const frame of frames) {
@@ -351,7 +374,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
          if (frame.shouldQuery === false) {
            for (;;) {
              const event = await this.queue.next(input.signal, this.timeoutMs);
-@@ -1259,18 +1348,32 @@
+@@ -1259,18 +1370,32 @@
      }
    }
  
@@ -393,7 +416,7 @@ diff --git a/src/claude-cli.ts b/src/claude-cli.ts
    }
  
    private async exitError(fallback: string): Promise<Error> {
-@@ -1288,134 +1391,142 @@
+@@ -1288,134 +1413,142 @@
    sessionId?: string;
  }
  

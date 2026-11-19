@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { chmod, cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import { processState } from "./tests/process-state.ts";
 
 const sdkRoot = process.env.PI_SUBAGENTS_SDK_ROOT;
 const providerPackage = process.env.PI_SUBAGENTS_CLAUDE_PACKAGE;
@@ -25,7 +26,7 @@ async function lines(path) {
 }
 
 async function fixture(t, paths, portableOptions) {
-  const root = await mkdtemp(join(tmpdir(), "claude-addon-composition-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "claude-addon-composition-")));
   const agentDir = join(root, "agent");
   const config = join(root, "cli-config");
   await mkdir(agentDir);
@@ -51,8 +52,7 @@ async function fixture(t, paths, portableOptions) {
       }
       if (server !== null) { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
       for (const launch of [...await lines(join(config, "launch.jsonl")), ...await lines(join(config, "auth.jsonl"))]) {
-        try { assert.match((await readFile(`/proc/${launch.pid}/stat`, "utf8")).split(") ").pop(), /^[ZX] /, `owned process ${launch.pid} remains live`); }
-        catch (error) { if (error.code !== "ENOENT") throw error; }
+        assert.notEqual(processState(launch.pid), "live", `owned process ${launch.pid} remains live`);
       }
     } finally {
       for (const [name, value] of saved) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }

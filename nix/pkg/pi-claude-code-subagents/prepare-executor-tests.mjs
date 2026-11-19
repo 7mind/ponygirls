@@ -16,6 +16,7 @@ await writable(output);
 await cp(join(addon, "executor"), join(output, "src"), { recursive: true });
 await cp(join(addon, "src/execution-lifecycle.ts"), join(output, "src/execution-lifecycle.ts"));
 await writeFile(join(output, "tests/native-cleanup-fault.test.ts"), (await readFile(join(addon, "tests/native-cleanup-fault.test.ts"), "utf8")).replaceAll("../executor/", "../src/"));
+await cp(join(addon, "tests/process-state.ts"), join(output, "tests/process-state.ts"));
 const cli = join(output, "src/claude-cli.ts");
 await writeFile(cli, await readFile(cli, "utf8") + `\nconst testExecutor = new ClaudeExecutor();
 export const runClaudeRequest = (input: RunClaudeInput): Promise<RunClaudeOutput> => testExecutor.runClaudeRequest(input);

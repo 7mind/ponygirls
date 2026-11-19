@@ -44,7 +44,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { err } from "./errors.ts";
-import { readBootId, readProcessIdentity } from "./process-identity.ts";
+import { readProcessIdentity, verifyOwnership } from "./process-identity.ts";
 
 export const STORE_VERSION = 1;
 
@@ -298,7 +298,7 @@ export class RootLock {
     const staging = join(this.rootDir, `root.lock.staging-${randomUUID()}`);
     mkdirSync(staging);
     const self = readProcessIdentity(process.pid);
-    const owner: LockOwner = { pid: process.pid, bootId: readBootId(), starttime: self?.starttime ?? null, acquiredAt: new Date().toISOString(), nonce: randomUUID() };
+    const owner: LockOwner = { pid: process.pid, bootId: self?.bootId ?? "unknown", starttime: self?.starttime ?? null, acquiredAt: new Date().toISOString(), nonce: randomUUID() };
     writeFileSync(join(staging, "owner.json"), JSON.stringify(owner));
     fsyncFile(join(staging, "owner.json"));
     fsyncDir(staging);
@@ -322,10 +322,8 @@ export class RootLock {
 }
 
 function ownerAlive(owner: LockOwner): boolean {
-  if (owner.bootId !== readBootId()) return false;
-  const live = readProcessIdentity(owner.pid);
-  if (!live) return false;
-  return owner.starttime === null || owner.starttime === live.starttime;
+  const verdict = verifyOwnership(owner.pid, owner.starttime === null ? null : { bootId: owner.bootId, starttime: owner.starttime });
+  return verdict === "live-match" || verdict === "unknown";
 }
 
 const JOURNAL_FILE = "journal.log";

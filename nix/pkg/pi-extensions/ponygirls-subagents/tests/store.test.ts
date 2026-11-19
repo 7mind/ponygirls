@@ -257,8 +257,13 @@ test("root lock: a crashed owner's lock is reacquired; a live owner's is refused
   const child = spawn(process.execPath, ["--input-type=module", "-e", `const { RootLock } = await import(${JSON.stringify(storeModule)}); const r = new RootLock(${JSON.stringify(dir)}).acquire(); console.log(r.ok ? "locked" : "refused"); setInterval(() => {}, 1000);`], { stdio: ["ignore", "pipe", "inherit"] });
   const first = await new Promise<string>((resolve) => child.stdout.once("data", (d: Buffer) => resolve(d.toString().trim())));
   assert.equal(first, "locked");
-  assert.equal(new RootLock(dir).acquire().ok, false, "live owner must keep the lock");
-  child.kill("SIGKILL");
+  try {
+    assert.equal(new RootLock(dir).acquire().ok, false, "live owner must keep the lock");
+    const path = join(dir, "root.lock", "owner.json");
+    const owner = JSON.parse(readFileSync(path, "utf8"));
+    writeFileSync(path, JSON.stringify({ ...owner, bootId: "unknown" }));
+    assert.equal(new RootLock(dir).acquire().ok, false, "incomplete identity is not proof the live owner died");
+  } finally { child.kill("SIGKILL"); }
   await new Promise((resolve) => child.once("exit", resolve));
   const lock = new RootLock(dir);
   const res = lock.acquire();

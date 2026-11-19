@@ -1,6 +1,7 @@
-{ runCommand, nodejs, runtimeShell, pi-coding-agent, pi-claude-code, pi-claude-code-subagents, ponygirls-pi-extensions }:
+{ lib, runCommand, nodejs, python3, runtimeShell, unixtools, pi-coding-agent, pi-claude-code, pi-claude-code-subagents, ponygirls-pi-extensions }:
 runCommand "pi-claude-code-subagents-composition" {
-  nativeBuildInputs = [ nodejs ];
+  nativeBuildInputs = [ nodejs unixtools.ps ];
+  __darwinAllowLocalNetworking = true;
   PI_SUBAGENTS_SDK_ROOT = "${pi-coding-agent}/lib/node_modules/pi-monorepo";
   PI_SUBAGENTS_CLAUDE_PACKAGE = pi-claude-code;
   PI_SUBAGENTS_CLAUDE_FIXTURE = ../pi-claude-code/fake-cli.mjs;
@@ -27,15 +28,22 @@ runCommand "pi-claude-code-subagents-composition" {
   test ! -e "$PI_CLAUDE_SUBAGENTS_PACKAGE/executor/model-catalog.ts"
   test ! -e "$PI_CLAUDE_SUBAGENTS_PACKAGE/executor/index.ts"
   test ! -e "$PI_CLAUDE_SUBAGENTS_PACKAGE/node_modules"
+  mkdir -p installed/tests
+  cp ${pi-claude-code-subagents.src}/tests/{native-lifecycle.test.ts,process-state.ts} installed/tests/
+  ln -s "$PI_CLAUDE_SUBAGENTS_PACKAGE/executor" installed/executor
+  PATH=${lib.makeBinPath [ unixtools.ps python3 ]} ${nodejs}/bin/node --experimental-transform-types --disable-warning=ExperimentalWarning --test installed/tests/native-lifecycle.test.ts
   cd transport-ownership
-  node --experimental-transform-types --disable-warning=ExperimentalWarning ${./load-test.mjs} "$PI_SUBAGENTS_SDK_ROOT" "$PI_SUBAGENTS_CLAUDE_PACKAGE" "$PI_SUBAGENTS_CLAUDE_FIXTURE" "$PI_CLAUDE_SUBAGENTS_PACKAGE" > ../ownership.log 2> ../ownership.stderr || {
+  node --experimental-transform-types --disable-warning=ExperimentalWarning ${pi-claude-code-subagents.src}/load-test.mjs "$PI_SUBAGENTS_SDK_ROOT" "$PI_SUBAGENTS_CLAUDE_PACKAGE" "$PI_SUBAGENTS_CLAUDE_FIXTURE" "$PI_CLAUDE_SUBAGENTS_PACKAGE" > ../ownership.log 2> ../ownership.stderr || {
     cat ../ownership.log ../ownership.stderr >&2
     exit 1
   }
   cd ..
   test ! -s ownership.stderr
+  mkdir temp
+  ln -s temp temp-alias
+  export TMPDIR=$PWD/temp-alias
   export PI_COMPOSITION_OBSERVATION_PATH=$PWD/stock-observations.json
-  node --experimental-transform-types --disable-warning=ExperimentalWarning --test ${./composition.test.mjs} > composition.log 2>&1 || {
+  node --experimental-transform-types --disable-warning=ExperimentalWarning --test ${pi-claude-code-subagents.src}/composition.test.mjs > composition.log 2>&1 || {
     cat composition.log >&2
     exit 1
   }

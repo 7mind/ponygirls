@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import childProcess, { spawn } from "node:child_process";
+import fs, { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Supervisor } from "../src/supervisor.ts";
 import { killAndConfirm, readProcessIdentity, verifyOwnership } from "../src/process-identity.ts";
-import { FileRunStore } from "../src/store.ts";
+import { FileRunStore, RootLock } from "../src/store.ts";
 import { DummyToolExecutor } from "../src/sandbox.ts";
 import { DummyWorkspaceManager } from "../src/workspace.ts";
 import { defaultSupervisorPolicy } from "../src/policy.ts";
@@ -20,18 +21,61 @@ function sleepChild(): Promise<{ pid: number; kill: () => void }> {
   });
 }
 
-test("ownership: live-match is signalled and confirmed; mismatch never is", async () => {
+test("ownership: live-match is signalled and confirmed; mismatch never is", async (t) => {
   const proc = await sleepChild();
   try {
     const identity = readProcessIdentity(proc.pid);
     assert.ok(identity);
     assert.equal(verifyOwnership(proc.pid, identity), "live-match");
-    assert.equal(verifyOwnership(proc.pid, { bootId: "bogus", starttime: "0" }), "live-mismatch");
-    assert.equal(verifyOwnership(proc.pid, null), "unknown");
-    assert.equal(await killAndConfirm(proc.pid), true);
+    const other = { ...identity, starttime: `9${identity.starttime}` };
+    assert.equal(await killAndConfirm(proc.pid, other), "live-mismatch");
+    assert.equal(await killAndConfirm(proc.pid, null), "unknown");
+    assert.equal(verifyOwnership(proc.pid, identity), "live-match");
+    if (process.platform === "darwin") {
+      assert.equal(await killAndConfirm(proc.pid, identity), "live-match");
+      assert.equal(verifyOwnership(proc.pid, identity), "live-match");
+      return;
+    }
+    const signal = process.kill;
+    const denied = t.mock.method(process, "kill", (pid: number, sig: NodeJS.Signals | number) => {
+      if (pid === proc.pid && sig === "SIGKILL") throw Object.assign(new Error("denied"), { code: "EPERM" });
+      return signal(pid, sig);
+    });
+    assert.equal(await killAndConfirm(proc.pid, identity), "unknown");
+    assert.equal(verifyOwnership(proc.pid, identity), "live-match");
+    denied.mock.restore();
+    assert.equal(await killAndConfirm(proc.pid, identity), "dead");
     assert.equal(verifyOwnership(proc.pid, identity), "dead");
   } finally {
     proc.kill();
+  }
+});
+
+test("unreadable process metadata cannot retire a live lock or confirm worker termination", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "subagents-lock-observation-"));
+  const lock = new RootLock(dir);
+  const identity = readProcessIdentity(process.pid);
+  assert.ok(identity);
+  assert.equal(lock.acquire().ok, true);
+  let failure = "";
+  const fault = () => {
+    if (failure === "truncated") return "truncated";
+    throw Object.assign(new Error("process probe unavailable"), { code: failure });
+  };
+  const actual = fs.readFileSync;
+  const stub = process.platform === "darwin" ? t.mock.method(childProcess, "execFileSync", fault)
+    : t.mock.method(fs, "readFileSync", (...args: Parameters<typeof actual>) => args[0] === `/proc/${process.pid}/stat` ? fault() : actual(...args));
+  syncBuiltinESMExports();
+  try {
+    for (failure of ["ENOENT", "EACCES", "EPERM", "truncated"]) {
+      assert.equal(verifyOwnership(process.pid, identity), "unknown");
+      assert.equal(new RootLock(dir).acquire().ok, false);
+    }
+  } finally {
+    stub.mock.restore();
+    syncBuiltinESMExports();
+    lock.release();
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -164,11 +208,13 @@ test("cross-process restart restores tree, mailbox, queues, outcomes, gates", as
 });
 
 test("ownership: process identity uses the start time, which survives memory growth", async () => {
-  const stat = readFileSync(`/proc/${process.pid}/stat`, "utf8");
-  const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-  // /proc/<pid>/stat field 22 (starttime) is index 19 after the comm field.
-  assert.equal(readProcessIdentity(process.pid)?.starttime, fields[19]);
   const before = readProcessIdentity(process.pid);
+  assert.ok(before);
+  if (process.platform === "linux") {
+    const stat = readFileSync(`/proc/${process.pid}/stat`, "utf8");
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    assert.equal(before.starttime, fields[19]);
+  } else assert.match(before.starttime, /^[1-9]\d*\.\d{6}$/);
   const ballast = Buffer.alloc(64 * 1024 * 1024, 1);
   assert.equal(verifyOwnership(process.pid, before), "live-match");
   void ballast;

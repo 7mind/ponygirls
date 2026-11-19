@@ -22,6 +22,7 @@ stdenvNoCC.mkDerivation {
 
   dontBuild = true;
   doCheck = true;
+  __darwinAllowLocalNetworking = true;
   nativeCheckInputs = [ nodejs typescript ];
 
   checkPhase = ''
