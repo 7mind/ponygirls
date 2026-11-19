@@ -131,8 +131,7 @@ test("list: frame title, dim column header, aligned cells, hints, exact widths",
   const header = lines[1]!;
   assert.match(header, /^ {2}TASK +LABEL +STATE +TIME +EXIT +NOTICE +LOG$/);
   const rows = lines.slice(2, 5);
-  assert.match(rows[0]!, /mem0… +a much longer build lab… +● running +\d+s +— +on +0 B/);
-  assert.doesNotMatch(rows[0]!, /\x1b/, "a truncated cell carries no reset that would end the selection band");
+  assert.match(rows[0]!, /mem0… +a much longer build label +● running +\d+s +— +on +0 B/);
   assert.match(rows[1]!, /mem0… +tests +✖ failed +\d+s +3 +off +6 B/);
   assert.match(rows[2]!, /mem0… +lint +✓ completed +\d+s +0 +off +9 B/);
   for (const name of ["LABEL", "STATE", "EXIT", "NOTICE", "LOG"]) {
@@ -286,7 +285,7 @@ test("list: every line fits 60 to 170 columns; columns are hidden whole and name
     assert.equal(visibleWidth(lines[0]!), width);
     assert.match(lines[0]!, /^── Background tasks · 4 ─+ 1 running · ● live ──$/);
     const rows = lines.slice(2, 6);
-    assert.match(rows[0]!, /^▌ mem0… +a much longer build lab… +● running/, `identity and state at ${width}`);
+    assert.match(rows[0]!, /^▌ mem0… +a much longer build label +● running/, `identity and state at ${width}`);
     assert.match(rows[1]!, /^ {2}mem0… +sleeper +■ terminated/, `identity and state at ${width}`);
     for (const row of rows) assert.doesNotMatch(row, /…\s*$/, `no cell is cut at the row end at ${width}: ${row}`);
     assert.equal(hints(view, width).join("  "), "↑↓ select  ⏎ open  t terminate  s signal  m mute notice  esc close", `hints wrap, never cut, at ${width}`);
@@ -301,6 +300,52 @@ test("list: every line fits 60 to 170 columns; columns are hidden whole and name
     assert.match(lines[1]!, /^ {2}TASK +LABEL +STATE +TIME +EXIT +NOTICE +LOG$/);
     assert.doesNotMatch(lines.join("\n"), /hidden at this width/);
   }
+});
+
+test("list: wide terminals distinguish long labels, and resize keeps the selected task", async (t) => {
+  const backend = new MemoryTaskBackend("ui-render" as SessionId);
+  const mac = "Build release candidate · macOS arm64 · 結果 package step";
+  const linux = "Build release candidate · Linux arm64 · 結果 package step";
+  const selected = await finishedTask(backend, mac, "echo mac-build");
+  await finishedTask(backend, linux, "echo linux-build");
+  const view = await inspector(t, backend, TAG);
+  await press(view, DOWN);
+
+  for (const [width, narrow] of [[180, false], [60, true], [180, false]] as const) {
+    const rendered = view.render(width);
+    assertFits(rendered, width, "long task labels");
+    const lines = rendered.map((line) => line.replace(SGR, ""));
+    assert.match(lines[3]!, /^▌ /, `the same row stays selected at ${width}`);
+    if (narrow) {
+      assert.match(lines[1]!, /^ {2}TASK +LABEL +STATE +EXIT$/);
+      assert.match(lines[2]!, /Linux… +✓ completed/);
+      assert.match(lines[3]!, /macOS… +✓ completed/);
+      assert.match(tags(rendered[3]!), /^\[selectedBg <accent>▌<\/> \*.*<text>Build release candidate · macOS…<\/>/);
+      assert.doesNotMatch(rendered[3]!, /\x1b\[0m/, "clipping the label does not reset the selection band");
+      assert.ok(lines.includes("  hidden at this width: Time, Notice, Log"));
+    } else {
+      assert.match(lines[1]!, /^ {2}TASK +LABEL +STATE +TIME +EXIT +NOTICE +LOG$/);
+      assert.ok(lines[2]!.includes(linux), lines[2]);
+      assert.ok(lines[3]!.includes(mac), lines[3]);
+      assert.ok(!lines.some((line) => line.includes("hidden at this width")));
+    }
+  }
+  await press(view, ENTER);
+  const detail = view.render(180).map((line) => line.replace(SGR, ""));
+  assert.ok(detail[0]!.includes(selected.id), detail[0]);
+  assert.ok(detail.includes("mac-build"));
+});
+
+test("list: a long label yields cells to keep exit evidence visible at 60 columns", async (t) => {
+  const backend = new MemoryTaskBackend("ui-render" as SessionId);
+  const task = await backend.spawn({ label: "Build release candidate · macOS arm64 · package step", command: "sleep 30", cwd: "/", notify: false });
+  await backend.terminate(task.id);
+  const view = await inspector(t, backend, PLAIN_THEME);
+  const lines = view.render(60);
+  assertFits(lines, 60, "terminated task");
+  assert.match(lines[1]!, /^ {2}TASK +LABEL +STATE +EXIT$/);
+  assert.match(lines[2]!, /^▌ mem0… +Build release candidate · m… +■ terminated +SIGTERM *$/);
+  assert.ok(lines.includes("  hidden at this width: Time, Notice, Log"));
 });
 
 test("list: when even task, label and state do not fit, the label gives way and the state stays whole", async (t) => {
