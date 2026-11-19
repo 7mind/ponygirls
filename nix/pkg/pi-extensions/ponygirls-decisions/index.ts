@@ -6,7 +6,7 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { BORDER_ORDER, borderBadge, borderBadgeCompact, completeArgument, CustomViewToggle, ScopedSettingsView, type BorderBadge } from "@ponygirls/pi-ui";
 import { projectDisplayName, resolveProject } from "./src/project.ts";
 import { DECISION_LIMITS, SqliteDecisionStore, type Decision, type DecisionStore } from "./src/store.ts";
-import { DecisionsPane } from "./src/pane.ts";
+import { DecisionsPane, type RetainedAnswers } from "./src/pane.ts";
 import { CONTEXT_TYPE, contextLine, summarizeContext } from "./src/context.ts";
 import { completeDecisionArguments } from "./src/complete.ts";
 import { decisionVersion, deliveryHistory, fullToolVersion, indexMessage, NOTICE_LIMIT, NOTICE_TYPE, receipt, versionKey } from "./src/delivery.ts";
@@ -85,6 +85,7 @@ interface Binding {
   stop: () => void;
   repaint: (() => void) | null;
   pane: CustomViewToggle;
+  retainedAnswers: RetainedAnswers;
   badge: BadgeRegistration | null;
   failure: string | null;
 }
@@ -141,6 +142,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
   const dispose = (b: Binding): void => {
     revokeBadge(b);
     b.pane.dispose();
+    b.retainedAnswers.clear();
     b.stop();
     if (b.store !== null) { b.store.close(); b.store = null; }
   };
@@ -243,6 +245,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
       b.repaint = () => tui.requestRender();
       const pane = new DecisionsPane(theme, {
         tui,
+        retainedAnswers: b.retainedAnswers,
         load: () => storeFor(b).list(b.project),
         resolve: (q, status, answer) => {
           storeFor(b).resolve(b.project, q.id, q.revision, status, answer);
@@ -251,7 +254,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
         close: () => done(),
         requestRender: () => tui.requestRender(),
       }, projectDisplayName(b.project), id, () => Math.max(1, tui.terminal.rows - PANE_CHROME_ROWS), b.sessionId);
-      return Object.assign(pane, { dispose: () => { b.repaint = null; } });
+      return Object.assign(pane, { dispose: () => { pane.retainAnswer(); b.repaint = null; } });
     });
   };
 
@@ -264,7 +267,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
       const project = deps.projectFor(ctx.cwd);
       const delivered = deliveryHistory(ctx.sessionManager.getEntries(), project, ctx.sessionManager.getSessionId()).full;
       const b: Binding = { ctx, project, sessionId: ctx.sessionManager.getSessionId(), store: null, delivered,
-        stop: () => {}, repaint: null, pane: new CustomViewToggle(), badge: null, failure: null };
+        stop: () => {}, repaint: null, pane: new CustomViewToggle(), retainedAnswers: new Map(), badge: null, failure: null };
       binding = b;
       refresh(b);
       b.stop = deps.watch(() => refresh(b));

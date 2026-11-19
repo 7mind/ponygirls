@@ -32,12 +32,17 @@ pi -e ./nix/pkg/pi-extensions/ponygirls-decisions
   session ID.
 - The inbox supports keyboard navigation, Markdown context and recommendations,
   suggested answers, and a multiline free-form answer editor. Answers are saved
-  explicitly, never by merely moving the selection. Escape cancels an edit.
+  explicitly, never by merely moving the selection. Press Escape twice in a row
+  to leave a modified multiline answer. Editing the same question at the same
+  revision restores the draft, even after closing the inbox. Drafts are kept in
+  memory for the current Pi session only; saving clears the draft for that
+  question.
   Saving the final pending answer automatically closes the pane. Editing history
   or dismissing a question keeps it open.
 - **↑/↓** selects; **⏎** expands detail; **PgUp/PgDn** scrolls; **tab** toggles
   pending/history. **a/e** edits an answer, **o** or **1–9** stages an option,
-  **d** stages dismissal, **u** stages reopening. **^S** (Control+S) saves; **esc** cancels.
+  **d** stages dismissal, **u** stages reopening. **^S** (Control+S) saves;
+  **esc** goes back, with two presses only for a modified multiline answer.
   A stale edit keeps its draft; **^R** explicitly adopts the latest revision.
 - History retains answered and dismissed questions. Answers can be revised;
   reopening withdraws the previous answer and makes the question pending again.

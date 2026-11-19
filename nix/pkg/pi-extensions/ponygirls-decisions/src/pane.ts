@@ -1,15 +1,18 @@
 /** Keyboard-only decisions inbox. Persistence/CAS belongs to the injected store callbacks. */
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
-  CURSOR_MARKER, Editor, Key, Markdown, SelectList, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi,
+  CURSOR_MARKER, Editor, Key, Markdown, SelectList, isKeyRelease, isKeyRepeat, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi,
   type Component, type Focusable, type MarkdownTheme, type TUI,
 } from "@earendil-works/pi-tui";
 import { HINT, KEY, MARKER_WIDTH, PanelLayout, type PanelParts, ctrlKey, fit as fitCell, frameRule, frameTitle, keyHints, listRow, type KeyHint, type UiFg } from "@ponygirls/pi-ui";
 import type { Decision } from "./store.ts";
 import { relativeTime } from "./time.ts";
 
+export type RetainedAnswers = Map<string, { revision: number; text: string }>;
+
 export interface DecisionsPaneCallbacks {
   tui: TUI;
+  retainedAnswers: RetainedAnswers;
   load(): Decision[];
   /** Must throw on a stale revision or failed save; the pane retains the draft. */
   resolve(decision: Decision, status: "answered" | "dismissed" | "pending", answer: string | null): void;
@@ -23,6 +26,7 @@ type Draft = {
   answer: string | null;
   mode: "editor" | "options" | "confirm";
   choice: number;
+  optionSeed?: string;
 };
 
 // Stored text is untrusted. Strip terminal commands (including C1 forms and
@@ -64,7 +68,7 @@ const DETAIL_HINTS: readonly KeyHint[] = [HINT.scroll, HINT.page, HINT.back, { k
 const ACTION_HINTS: readonly KeyHint[] = [
   { key: "a/e", action: "answer" }, { key: "1–9/o", action: "options" }, { key: "d", action: "dismiss" }, { key: "u", action: "reopen" },
 ];
-const EDITOR_HINTS: readonly KeyHint[] = [{ key: KEY.enter, action: "newline" }, { key: SAVE_KEY, action: "save" }, { key: KEY.esc, action: "discard" }];
+const EDITOR_HINTS: readonly KeyHint[] = [{ key: KEY.enter, action: "newline" }, { key: SAVE_KEY, action: "save" }, { key: KEY.esc, action: "back" }];
 const REBASE_HINTS: readonly KeyHint[] = [{ key: REBASE_KEY, action: "reload latest revision, keeping draft" }];
 const OPTIONS_HINTS: readonly KeyHint[] = [
   { key: "↑↓/1–9", action: "choose" }, { key: SAVE_KEY, action: "save" }, { key: "e", action: "edit" }, { key: KEY.esc, action: "discard" },
@@ -79,8 +83,7 @@ interface Section {
 /**
  * Tab toggles pending/all. Arrows select; Enter expands detail; PgUp/PgDn
  * scroll detail. a/e edits, o or 1–9 selects options, d dismisses, u reopens.
- * Only Ctrl+S writes. Enter in the editor inserts a newline. Escape discards
- * an active draft, then returns to the inbox, then closes (never resolves).
+ * Only Ctrl+S writes. Enter in the editor inserts a newline.
  * Render reloads current records; a draft retains its original CAS revision.
  * Ctrl+R explicitly adopts the latest revision without dropping draft text.
  */
@@ -96,6 +99,7 @@ export class DecisionsPane extends PanelLayout implements Component, Focusable {
   private editor: Editor | null = null;
   private choices: SelectList | null = null;
   private pasteBuffer: string | null = null;
+  private exitArmed = false;
   private notice = "";
   private loadError = "";
   private hasFocus = false;
@@ -189,11 +193,18 @@ export class DecisionsPane extends PanelLayout implements Component, Focusable {
       if (!decision.options.length) { this.draft = null; this.notice = "No options; press a to write an answer."; return; }
       this.draft.answer = decision.options[choice]!;
       this.choices = this.makeChoices(5);
-    } else if (mode === "editor") this.edit();
+    } else if (mode === "editor") {
+      const retained = this.callbacks.retainedAnswers.get(decision.id);
+      if (retained?.revision === decision.revision) this.draft.answer = retained.text;
+      else this.callbacks.retainedAnswers.delete(decision.id);
+      this.edit();
+    }
   }
 
   private edit(): void {
     if (!this.draft) return;
+    const text = sanitize(this.draft.answer ?? "");
+    if (this.draft.mode === "options") this.draft.optionSeed = text;
     this.draft.mode = "editor";
     this.editor = new Editor(this.callbacks.tui, {
       borderColor: (s) => this.theme.fg("borderMuted", s),
@@ -203,23 +214,50 @@ export class DecisionsPane extends PanelLayout implements Component, Focusable {
       },
     });
     this.editor.disableSubmit = true;
-    this.editor.setText(sanitize(this.draft.answer ?? ""));
+    this.editor.setText(text);
     this.editor.focused = this.hasFocus;
+  }
+
+  private editorText(): string {
+    return sanitize(this.editor!.getExpandedText());
+  }
+
+  private dirtyAnswer(): string | undefined {
+    if (this.draft?.mode !== "editor") return undefined;
+    const text = this.editorText();
+    const baseline = this.draft.optionSeed ?? sanitize(this.draft.base.answer ?? "");
+    return text !== baseline ? text : undefined;
+  }
+
+  retainAnswer(): boolean {
+    if (this.draft?.mode !== "editor") return false;
+    const { id, revision } = this.draft.base;
+    const text = this.dirtyAnswer();
+    if (text !== undefined) this.callbacks.retainedAnswers.set(id, { revision, text });
+    else if (this.draft.optionSeed === undefined) this.callbacks.retainedAnswers.delete(id);
+    return text !== undefined;
+  }
+
+  private resetDraft(): void {
+    this.draft = null;
+    this.editor = null;
+    this.choices = null;
+    this.pasteBuffer = null;
+    this.exitArmed = false;
+    this.scroll = 0;
   }
 
   private save(): void {
     const draft = this.draft;
     if (!draft) return;
-    if (draft.mode === "editor") draft.answer = sanitize(this.editor!.getExpandedText());
+    if (draft.mode === "editor") draft.answer = this.editorText();
     if (draft.status === "answered" && !draft.answer?.trim()) { this.notice = "An answer cannot be empty."; return; }
     if (this.loadError) { this.notice = "Cannot save while loading decisions fails; your draft is retained."; return; }
     try {
       this.callbacks.resolve(draft.base, draft.status, draft.answer);
+      this.callbacks.retainedAnswers.delete(draft.base.id);
       this.detail = false;
-      this.draft = null;
-      this.editor = null;
-      this.choices = null;
-      this.scroll = 0;
+      this.resetDraft();
       this.notice = draft.status === "pending" ? "Reopened." : draft.status === "dismissed" ? "Dismissed." : "Answer saved.";
       this.refresh();
       if (draft.base.status === "pending" && draft.status === "answered" && !this.loadError
@@ -251,12 +289,22 @@ export class DecisionsPane extends PanelLayout implements Component, Focusable {
     this.refresh();
     // Paste bytes are text, not pane shortcuts, even across input packets.
     if (this.draft?.mode === "editor" && (this.pasteBuffer !== null || data.includes("\x1b[200~"))) {
+      this.exitArmed = false;
       this.editorInput(data); this.redraw(); return;
     }
-    const cancel = matchesKey(data, Key.escape) || matchesKey(data, "ctrl+c");
+    const escape = matchesKey(data, Key.escape);
+    if (escape && (isKeyRepeat(data) || isKeyRelease(data))) return;
+    const cancel = escape || matchesKey(data, "ctrl+c");
     if (this.draft) {
+      if (escape && !this.exitArmed && this.dirtyAnswer() !== undefined) {
+        this.exitArmed = true;
+        this.redraw();
+        return;
+      }
+      this.exitArmed = false;
       if (cancel) {
-        this.draft = null; this.editor = null; this.choices = null; this.notice = "Draft discarded."; this.scroll = 0;
+        this.notice = this.draft.mode !== "editor" ? "Draft discarded." : this.retainAnswer() ? "Draft kept. Press a/e to resume." : "";
+        this.resetDraft();
       } else if (matchesKey(data, "ctrl+s")) this.save();
       else if (matchesKey(data, "ctrl+r")) {
         const latest = this.latest();
@@ -376,7 +424,8 @@ export class DecisionsPane extends PanelLayout implements Component, Focusable {
     const fit = (s: string) => truncateToWidth(s, w, "…");
     const dim = (s: string) => this.theme.fg("dim", s);
     const draft = this.draft, d = draft?.base ?? this.current();
-    const warning = [this.loadError, this.notice, this.changed() ? `Changed elsewhere; draft kept. ${REBASE_KEY} adopts latest revision.` : ""].filter(Boolean).join(" ");
+    const warning = [this.exitArmed ? `Press ${KEY.esc} again to leave. Draft will be kept.` : "", this.loadError, this.notice,
+      this.changed() ? `Changed elsewhere; draft kept. ${REBASE_KEY} adopts latest revision.` : ""].filter(Boolean).join(" ");
     const hints: (readonly KeyHint[])[] = draft?.mode === "editor" ? [EDITOR_HINTS, REBASE_HINTS]
       : draft?.mode === "options" ? [OPTIONS_HINTS]
       : draft ? [[{ key: SAVE_KEY, action: `confirm ${draft.status === "pending" ? "reopen" : "dismiss"}` }, { key: KEY.esc, action: "cancel" }]]
