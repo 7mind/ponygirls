@@ -253,17 +253,24 @@ object SnapshotValidation {
     (List(metadata.title,metadata.producer)++metadata.project++metadata.gitRemote++metadata.gitBranch++metadata.gitCommit++metadata.model++metadata.tags).foreach(scalar)
     metadata.workdir.foreach(structured)
     Check(r.files.map(_.path).distinct.size == r.files.size, "invalid", "duplicate files")
+    // Each record is parsed once and not retained: all records of a large snapshot held as syntax trees would take
+    // several times the snapshot's size of heap.
+    var recordCount = 0
+    val rawIds = Set.newBuilder[String]
     r.files.foreach { f =>
       structured(f.path); structured(f.sha256); scalar(f.content)
       Check(f.content.getBytes(UTF_8).length <= c.maxFileBytes && !f.path.startsWith("/") && !f.path.split('/').contains(".."), "invalid", "invalid file")
-      Check(Wire.hash(f.content) == f.sha256 && f.content.linesIterator.filter(_.nonEmpty).forall(l => io.circe.parser.parse(l).isRight), "invalid", "invalid file digest or JSONL")
+      Check(Wire.hash(f.content) == f.sha256 && f.content.linesIterator.filter(_.nonEmpty).forall(l => io.circe.parser.parse(l) match {
+        case Right(record) =>
+          recordCount += 1
+          List("id","uuid").foreach(field => record.hcursor.get[String](field).foreach(rawIds += _))
+          true
+        case Left(_) => false
+      }), "invalid", "invalid file digest or JSONL")
     }
     Check(Wire.hash(r.files.map(_.content).mkString) == r.digest, "invalid", "source digest mismatch")
     Check(r.messages.map(_.id).distinct.size == r.messages.size, "invalid", "duplicate message IDs")
-    val records = r.files.flatMap(_.content.linesIterator.filter(_.nonEmpty).map(Wire.parse))
-    val recordCount = records.size
-    val rawIds = records.flatMap(j => List(j.hcursor.get[String]("id").toOption,j.hcursor.get[String]("uuid").toOption).flatten).toSet
-    val ids = r.messages.map(_.id).toSet ++ rawIds
+    val ids = r.messages.map(_.id).toSet ++ rawIds.result()
     r.messages.foreach { m =>
       (List(m.id,m.role)++m.parentId++m.timestamp).foreach(structured); scalar(m.text)
       Check.text(m.id,256); Check.text(m.role,64); Check(m.recordIndex >= 0 && m.recordIndex < recordCount && m.parentId.forall(ids.contains),"invalid","invalid message provenance")
