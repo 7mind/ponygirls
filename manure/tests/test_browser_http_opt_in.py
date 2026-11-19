@@ -28,7 +28,7 @@ class HttpOptInBrowserCase(unittest.TestCase):
             {'op': 'fill', 'selector': '[data-account-login] input[name=password]', 'value': fix.identity.password},
             {'op': 'click', 'selector': '[data-account-login] button[type=submit]'},
             {'op': 'waitForText', 'selector': '#list-status', 'contains': 'loaded'},
-            {'op': 'click', 'selector': 'button[data-action=open][data-artifact-id="' + internal + '"]'},
+            {'op': 'clickPopup', 'selector': '[data-action=open][data-artifact-id="' + internal + '"]'},
             {'op': 'waitForEval', 'fn': '() => document.title === "HTTP-INTERNAL"'},
             {'op': 'cookies', 'urls': [fix.api_base + '/', fix.api_base + '/view/' + internal + '/']},
             {'op': 'goto', 'url': external['content_url'] + '/'},

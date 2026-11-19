@@ -3,7 +3,7 @@
  * passwords stay transient. No HTML injection; account surfaces belong to account.js.
  */
 import * as current from "./current-protocol.js";
-import { ID_RE, domHelpers, errorLabel, bytes, expired, contentUrl } from "./common.js";
+import { ID_RE, NEW_TAB_NOTE, domHelpers, errorLabel, bytes, expired, contentUrl } from "./common.js";
 import { createOverlays } from "./overlays.js";
 import { createDetail } from "./detail.js";
 import { createUpload } from "./upload.js";
@@ -604,11 +604,12 @@ function expressionInput(input, list, change, compositionChange) {
     var id = item.artifact_id;
     var cell = element("td", null, "col-actions");
     var end = element("span", null, "row-end");
-    var open = element("button", "Open", "btn btn-sm btn-ghost");
-    open.type = "button"; open.dataset.action = "open"; open.dataset.artifactId = id; open.dataset.visibility = item.visibility;
-    open.disabled = item.state !== "ready" || expired(item) || contentUrl(item, window.location.origin) === null || ctx.accessMutations.has(id);
-    open.title = contentUrl(item, window.location.origin) === null ? "Content hosting is not configured" : item.state !== "ready" ? "Upload is not ready" : expired(item) ? "Artifact expired" : "Open on its isolated content origin";
-    open.addEventListener("click", function () { detail.openArtifact(id, item); });
+    var open = element("a", "Open", "btn btn-sm btn-ghost");
+    open.setAttribute("role", "link"); open.dataset.action = "open"; open.dataset.artifactId = id; open.dataset.visibility = item.visibility;
+    open.setAttribute("aria-label", "Open" + NEW_TAB_NOTE);
+    detail.setOpenLink(open, item, item.state === "ready" && !expired(item) && !ctx.accessMutations.has(id));
+    open.title = contentUrl(item, window.location.origin) === null ? "Content hosting is not configured" : item.state !== "ready" ? "Upload is not ready" : expired(item) ? "Artifact expired" : "Open the content in a new tab";
+    open.addEventListener("click", function (event) { detail.openContent(event, id, item); });
     var hover = element("span", null, "row-actions");
     var copy = element("button", null, "btn btn-sm btn-ghost btn-icon");
     copy.type = "button"; copy.dataset.action = "copy-link"; copy.dataset.artifactId = id;

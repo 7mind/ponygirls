@@ -5,6 +5,8 @@
 
 export var API = "/api/current";
 export var ID_RE = /^[0-9a-f]{32}$/;
+// A control that opens a new tab says so in its title and ends its accessible name with this note.
+export var NEW_TAB_NOTE = " (opens in a new tab)";
 
 export function domHelpers(document) {
   function $(id) { return document.getElementById(id); }

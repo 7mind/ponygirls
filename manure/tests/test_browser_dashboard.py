@@ -456,8 +456,8 @@ class DashboardFlows:
         self.assertEqual(blob.body, b"victim bytes")
 
     def test_d1_open_public_and_external_from_dashboard(self):
-        """Dashboard Open branches that need no grant: public navigates
-        straight to the bytes, external lands on the password form."""
+        """Dashboard Open branches that need no grant: public opens the
+        bytes in a new tab, external opens the password form in one."""
         token = self.fix.identity.token
         pub = bf.upload_fixture(
             self.fix, name="open-pub", kind="dir",
@@ -476,17 +476,15 @@ class DashboardFlows:
             {"op": "click", "selector": "[data-account-login] button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
              "contains": "loaded"},
-            {"op": "click",
-             "selector": "button[data-action=open][data-artifact-id=\"" +
+            {"op": "clickPopup",
+             "selector": "[data-action=open][data-artifact-id=\"" +
                          pub["artifact_id"] + "\"]"},
             {"op": "waitForText", "selector": "h1",
              "contains": "public landing"},
             {"op": "eval", "fn": "() => location.href"},
-            {"op": "goto", "url": self.api + "/"},
-            {"op": "waitForText", "selector": "#list-status",
-             "contains": "loaded"},
-            {"op": "click",
-             "selector": "button[data-action=open][data-artifact-id=\"" +
+            {"op": "usePage", "index": 0},
+            {"op": "clickPopup",
+             "selector": "[data-action=open][data-artifact-id=\"" +
                          ext["artifact_id"] + "\"]"},
             {"op": "waitForText", "selector": "h1",
              "contains": "Protected artifact"},

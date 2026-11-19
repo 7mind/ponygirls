@@ -200,7 +200,7 @@ export function createDetail(ctx, catalogue) {
     $("password-divider").hidden = $("password-box").hidden;
     ["password-reveal-button", "password-copy-button", "rotate-button"].forEach(function (key) { $(key).disabled = info === null || busy; });
     $("delete-button").disabled = info === null || busy;
-    $("open-button").disabled = !ready || busy || url === null;
+    setOpenLink($("open-button"), info, ready && !busy);
     $("copy-link-button").disabled = url === null;
     $("meta-copy-link-button").hidden = url === null;
     $("copy-id-button").disabled = info === null;
@@ -447,34 +447,49 @@ export function createDetail(ctx, catalogue) {
   }
 
   // ── Content handoff ────────────────────────────────────────────────────
-  // Internal artifacts use a single-use form POST to their content endpoint.
-  function openArtifact(id, knownInfo) {
+  // Content opens in a new tab without opener or referrer; the dashboard tab never navigates. The control is a link to
+  // the content URL, which serves public content and the external unlock page by itself.
+  // link: an Open control of the catalogue or the page; available: the artifact may be opened now.
+  function setOpenLink(link, info, available) {
+    var url = info === null || !available ? null : contentUrl(info, window.location.origin);
+    link.target = "_blank"; link.rel = "noopener noreferrer";
+    if (url === null) { link.removeAttribute("href"); link.setAttribute("aria-disabled", "true"); }
+    else { link.href = url; link.removeAttribute("aria-disabled"); }
+  }
+  // Internal content needs a single-use grant that the dashboard mints and form-POSTs to the content endpoint. A
+  // noopener window would leave nothing to post into, so the tab is opened synchronously in the activation, disowned
+  // before anything loads in it and closed again when the grant cannot be had.
+  function openContent(event, id, info) {
+    var link = event.currentTarget;
+    if (info === null || !link.hasAttribute("href")) { event.preventDefault(); return; }
+    if (info.visibility !== "internal") { return; }
+    event.preventDefault();
     if (!ID_RE.test(id) || accessMutations.has(id)) { return; }
+    var content = link.href;
     var epoch = ctx.sessionEpoch;
     var generation = ++openGeneration;
-    var infoRequest = knownInfo === null ? apiFetch(current.artifact(id)) : Promise.resolve(knownInfo);
-    infoRequest.then(function (info) {
-      if (epoch !== ctx.sessionEpoch || generation !== openGeneration) { return; }
-      var url = contentUrl(info, window.location.origin);
-      if (url === null) { throw new Error("content-unavailable"); }
-      if (info.visibility !== "internal") { window.location.assign(url); return; }
-      return apiFetch(current.grant(id)).then(function (body) {
-        if (epoch === ctx.sessionEpoch && generation === openGeneration) { postGrantHandoff(url, body.grant); }
-      });
+    var tab = window.open("", "_blank");
+    if (tab === null) { fail(id, "Open failed (popup-blocked)."); return; }
+    tab.opener = null;
+    apiFetch(current.grant(id)).then(function (body) {
+      if (epoch === ctx.sessionEpoch && generation === openGeneration) { postGrantHandoff(tab.document, content, body.grant); }
+      else { tab.close(); }
     }).catch(function (error) {
+      tab.close();
       if (epoch === ctx.sessionEpoch && generation === openGeneration) { fail(id, "Open failed (" + errorLabel(error) + ")."); }
     });
   }
-  function postGrantHandoff(content, grant) {
-    var form = document.createElement("form");
+  // target: the document of the opened tab (same origin as the dashboard until the POST navigates it).
+  function postGrantHandoff(target, content, grant) {
+    var form = target.createElement("form");
     form.method = "POST";
     form.action = content.replace(/\/$/, "") + "/__manure/grant";
     form.enctype = "application/x-www-form-urlencoded";
-    var field = document.createElement("input");
+    var field = target.createElement("input");
     field.type = "hidden";
     field.name = "grant";
     field.value = grant;
-    form.appendChild(field); document.body.appendChild(form);
+    form.appendChild(field); target.body.appendChild(form);
     form.submit(); form.remove();
   }
   // Failures of an action started on this page show on this page; actions started from the list report there.
@@ -882,7 +897,7 @@ export function createDetail(ctx, catalogue) {
   $("detail-reload-action").addEventListener("click", reload);
   $("access-refresh-button").addEventListener("click", reload);
   $("detail-notice-close").addEventListener("click", function () { detailNotice(null); });
-  $("open-button").addEventListener("click", function () { if (currentDetailId !== null) { openArtifact(currentDetailId, currentDetailInfo); } });
+  $("open-button").addEventListener("click", function (event) { openContent(event, currentDetailId, currentDetailInfo); });
   $("delete-button").addEventListener("click", function () { if (currentDetailId !== null && currentDetailInfo !== null) { deleteArtifact(currentDetailId, currentDetailInfo); } });
   $("copy-link-button").addEventListener("click", copyLink);
   $("meta-copy-link-button").addEventListener("click", copyLink);
@@ -935,6 +950,6 @@ export function createDetail(ctx, catalogue) {
   }
   function cancelOpen() { openGeneration++; hidePassword(); }
 
-  return { showDetail: showDetail, openArtifact: openArtifact, deleteArtifact: deleteArtifact, copy: copy,
+  return { showDetail: showDetail, setOpenLink: setOpenLink, openContent: openContent, deleteArtifact: deleteArtifact, copy: copy,
     invalidate: invalidate, leave: leave, clear: clear, cancelOpen: cancelOpen };
 }

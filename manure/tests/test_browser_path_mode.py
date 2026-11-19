@@ -78,7 +78,7 @@ class PathBrowserCase(unittest.TestCase):
         ])
         for item in (a, b):
             steps.extend([
-                {'op': 'click', 'selector': 'button[data-action=open][data-artifact-id="' + item['artifact_id'] + '"]'},
+                {'op': 'clickPopup', 'selector': '[data-action=open][data-artifact-id="' + item['artifact_id'] + '"]'},
                 {'op': 'waitForEval', 'fn': '() => document.title === "PATH-OK"'},
                 {'op': 'waitForEval', 'fn': '() => getComputedStyle(document.querySelector("h1")).color === "rgb(1, 2, 3)"'},
                 {'op': 'goto', 'url': fix.api_base + '/'},

@@ -52,11 +52,10 @@ class HandoffFlows:
             {"op": "click", "selector": "[data-account-login] button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
              "contains": "loaded"},
-            # Plain click (no waitForUrl: localhost navigations can settle
-            # before a waiter attaches; the title poll below proves the
-            # landing without any race).
-            {"op": "click",
-             "selector": "button[data-action=open][data-artifact-id=\"" + aid + "\"]"},
+            # Open hands off in a new tab; the steps below run in it (the
+            # title poll proves the landing without any race).
+            {"op": "clickPopup",
+             "selector": "[data-action=open][data-artifact-id=\"" + aid + "\"]"},
             {"op": "waitForEval",
              "fn": "() => document.title.indexOf('HANDOFF-OK:') === 0"},
             # Uploaded JS runs under the artifact origin: it sees its own

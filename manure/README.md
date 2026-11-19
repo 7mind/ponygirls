@@ -375,10 +375,12 @@ creator filter. Incoming unauthenticated shared links survive login but do not
 auto-submit retrieval.
 
 Details show metadata and the file manifest, with same-origin attachment
-Downloads. **Open** uses the configured content endpoint and one-time
-internal grant handoff (isolated origin in default subdomain mode only); when content hosting is unavailable, no working link
-is advertised. All configured users can manage all
-artifacts; the sidebar is an access filter, not an ownership boundary.
+Downloads. **Open** (catalogue row and artifact page) opens the configured content endpoint in a new tab
+(`target="_blank"`, `rel="noopener noreferrer"`; the dashboard tab keeps its route, list and scroll position), with the
+one-time internal grant handoff (isolated origin in default subdomain mode only) posted into that tab. Middle-click and
+"open in new tab" follow the bare content link instead: internal content then opens only through the path-mode session
+exchange described below, never in subdomain mode. When content hosting is unavailable, no working link is advertised.
+All configured users can manage all artifacts; the sidebar is an access filter, not an ownership boundary.
 
 **Quick upload:** after logging in, paste a screenshot (Ctrl+V) or drop files
 anywhere in the dashboard (both continue on the Upload view), or choose files there

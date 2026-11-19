@@ -22,10 +22,15 @@ const check = async (name, run) => {
     page.setDefaultTimeout(15000);
     const problems = [];
     const urls = [];
-    page.on("pageerror", (error) => problems.push("pageerror: " + error.message));
-    page.on("console", (message) => { if (/Content Security Policy/i.test(message.text())) problems.push("console: " + message.text()); });
-    page.on("dialog", (dialog) => { problems.push("native dialog: " + dialog.type()); dialog.dismiss().catch(() => {}); });
-    page.on("request", (request) => urls.push(request.url()));
+    // The dashboard page and every tab it opens.
+    const watch = (tab) => {
+      tab.on("pageerror", (error) => problems.push("pageerror: " + error.message));
+      tab.on("console", (message) => { if (/Content Security Policy/i.test(message.text())) problems.push("console: " + message.text()); });
+      tab.on("dialog", (dialog) => { problems.push("native dialog: " + dialog.type()); dialog.dismiss().catch(() => {}); });
+    };
+    watch(page);
+    context.on("page", watch);
+    context.on("request", (request) => urls.push(request.url()));
     await page.addInitScript(() => {
       // commands: names of the API commands sent; failPatch: answer the next PatchArtifact with 503; holdInfo: hold a GetArtifact reply.
       // dropDelete: send the next DeleteArtifact, then lose its answer; refuseClipboard: set while a held clipboard write waits.
@@ -96,6 +101,13 @@ const rowCount = (page, n) => page.waitForFunction((count) => document.querySele
 const layout = (page, label) => page.getByRole("group", { name: "Manifest layout" }).getByRole("button", { name: label, exact: true });
 const mode = (page, label) => page.getByRole("group", { name: "Access mode" }).getByRole("button", { name: label, exact: true });
 const password = (page) => page.locator('[data-secret="external-password"]');
+const OPEN_ARTIFACT = "Open artifact (opens in a new tab)";
+// Activates Open artifact and returns the tab it opens (the content never replaces the dashboard).
+const openTab = async (page, context) => {
+  const [tab] = await Promise.all([context.waitForEvent("page"), page.getByRole("link", { name: OPEN_ARTIFACT, exact: true }).click()]);
+  tab.setDefaultTimeout(15000);
+  return tab;
+};
 const commands = (page, name) => page.evaluate((command) => window.__artifact.commands.filter((sent) => sent === command).length, name);
 const settle = (page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 const api = async (page, command) => {
@@ -185,9 +197,10 @@ await check("a new artifact target cannot retain old metadata, manifest or destr
   await page.waitForFunction(() => window.__artifact.releaseInfo !== null);
   await pageState(page, "loading");
   // While the next artifact loads, no action of the previous one is offered (hidden and disabled).
-  for (const action of ["Delete artifact…", "Open artifact", "Copy link", "Rename", "Save access mode"]) {
+  for (const action of ["Delete artifact…", "Copy link", "Rename", "Save access mode"]) {
     assert.equal(await page.getByRole("button", { name: action }).count(), 0, action + " waits for the active artifact");
   }
+  assert.equal(await page.getByRole("link", { name: OPEN_ARTIFACT }).count(), 0, "Open artifact waits for the active artifact");
   assert.equal(await manifest(page).count(), 0);
   assert.equal(await page.getByRole("heading", { level: 1, name: "artifact-bundle" }).count(), 0);
   await page.evaluate(() => window.__artifact.releaseInfo());
@@ -203,7 +216,7 @@ await check("an unfinished upload shows its received bytes; access, edits and do
   await page.getByText("4 B of 8 B received.", { exact: true }).waitFor();
   await page.getByText("Access can be changed once the upload is ready.", { exact: true }).waitFor();
   assert.equal(await mode(page, "Internal").isDisabled(), true);
-  assert.equal(await page.getByRole("button", { name: "Open artifact", exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole("link", { name: OPEN_ARTIFACT, exact: true }).isDisabled(), true);
   for (const action of ["Save access mode", "Rename", "Change expiry"]) {
     assert.equal(await page.getByRole("button", { name: action, exact: true }).count(), 0, action + " waits for the finished upload");
   }
@@ -430,41 +443,39 @@ await check("delete confirms in an in-app dialog naming the artifact; a hostile 
   assert.equal(await page.locator(`#artifact-list tr[data-artifact-id="${input.doomed}"]`).count(), 0, "the list does not restore the deleted row");
 });
 
-await check("Open artifact hands an internal artifact to its isolated origin without dashboard credentials", async (page) => {
+await check("Open artifact hands an internal artifact to its isolated origin without dashboard credentials", async (page, context) => {
   await open(page, input.bundle, "artifact-bundle");
   const cookies = [];
-  page.on("request", async (request) => {
+  context.on("request", async (request) => {
     if (new URL(request.url()).hostname.startsWith(input.bundle + ".")) {
       const headers = await request.allHeaders();
       cookies.push({ dashboard: (headers.cookie || "").includes("manure-dev="), authorization: Boolean(headers.authorization) });
     }
   });
-  await page.getByRole("button", { name: "Open artifact", exact: true }).click();
-  await page.getByRole("heading", { name: "Isolated internal preview", exact: true }).waitFor();
-  assert.notEqual(new URL(page.url()).origin, input.base);
+  const tab = await openTab(page, context);
+  await tab.getByRole("heading", { name: "Isolated internal preview", exact: true }).waitFor();
+  assert.notEqual(new URL(tab.url()).origin, input.base);
   assert.equal(cookies.length > 0, true);
   assert.equal(cookies.some((headers) => headers.dashboard || headers.authorization), false);
 });
 
-await check("Open artifact navigates to public content and to the unlock page of an external artifact", async (page) => {
+await check("Open artifact opens public content and the unlock page of an external artifact in a new tab", async (page, context) => {
   await open(page, input.public, "artifact-public");
-  await page.getByRole("button", { name: "Open artifact", exact: true }).click();
-  await page.getByRole("heading", { name: "Public preview", exact: true }).waitFor();
-  await page.goto(input.base + "/#/artifacts", { waitUntil: "domcontentloaded" });
-  await counterLoaded(page);
+  const publicTab = await openTab(page, context);
+  await publicTab.getByRole("heading", { name: "Public preview", exact: true }).waitFor();
   await open(page, input.protected, "artifact-protected");
-  await page.getByRole("button", { name: "Open artifact", exact: true }).click();
-  await page.getByRole("heading", { name: "Protected artifact", exact: true }).waitFor();
-  await page.setViewportSize({ width: 390, height: 844 });
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "the unlock page fits a phone");
-  await page.locator("#password-input").fill("incorrect");
-  await page.locator("#unlock-form button[type=submit]").click();
-  await page.locator("#unlock-error").waitFor({ state: "visible" });
-  await page.locator("#password-input").fill(input.protectedPassword);
-  await page.locator("#unlock-form button[type=submit]").click();
-  await page.getByRole("region", { name: "File preview" }).getByText("protected", { exact: true }).waitFor();
-  assert.equal(await page.locator("#unlock-form").count(), 0, "the unlocked content replaces the unlock card");
-  assert.equal(page.url().includes(input.protectedPassword), false);
+  const tab = await openTab(page, context);
+  await tab.getByRole("heading", { name: "Protected artifact", exact: true }).waitFor();
+  await tab.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await tab.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "the unlock page fits a phone");
+  await tab.locator("#password-input").fill("incorrect");
+  await tab.locator("#unlock-form button[type=submit]").click();
+  await tab.locator("#unlock-error").waitFor({ state: "visible" });
+  await tab.locator("#password-input").fill(input.protectedPassword);
+  await tab.locator("#unlock-form button[type=submit]").click();
+  await tab.getByRole("region", { name: "File preview" }).getByText("protected", { exact: true }).waitFor();
+  assert.equal(await tab.locator("#unlock-form").count(), 0, "the unlocked content replaces the unlock card");
+  assert.equal(tab.url().includes(input.protectedPassword), false);
 });
 
 await browser.close();

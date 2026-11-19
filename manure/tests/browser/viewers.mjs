@@ -43,7 +43,7 @@ const check = async (name, run, hostileFixture) => {
   const pageErrors = [];
   const cspErrors = [];
   const blockedInlineHandlers = [];
-  page.on("console", (message) => {
+  const consoleGuard = (message) => {
     // PDF/font diagnostics can be harmless. Only browser CSP errors belong in
     // this guard, particularly stylesheet blocks that semantic checks miss.
     if (message.type() === "error" && /content[- ]security[- ]policy|\bcsp\b/i.test(message.text())) {
@@ -53,7 +53,8 @@ const check = async (name, run, hostileFixture) => {
         blockedInlineHandlers.push(clean(message.text()));
       } else if (cspErrors.length < 20) cspErrors.push(clean(message.text()));
     }
-  });
+  };
+  page.on("console", consoleGuard);
   let dialogs = 0;
   // Observe AND abort accidental internet access: failures are deterministic and
   // this controlled-system test never depends on a third-party server.
@@ -71,8 +72,12 @@ const check = async (name, run, hostileFixture) => {
     }
     return route.continue();
   });
+  // Tabs the dashboard opens show content too: the same guards apply to them.
   context.on("page", (tab) => {
-    if (tab !== page) tab.on("dialog", (dialog) => { dialogs++; dialog.dismiss().catch(() => {}); });
+    if (tab === page) return;
+    tab.on("dialog", (dialog) => { dialogs++; dialog.dismiss().catch(() => {}); });
+    tab.on("console", consoleGuard);
+    tab.on("pageerror", (error) => pageErrors.push(error.message));
   });
   page.on("dialog", (dialog) => { dialogs++; dialog.dismiss().catch(() => {}); });
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -592,11 +597,12 @@ await check("internal dashboard Open hands off a grant and renders the standalon
   await page.locator("#whoami-text").waitFor({ state: "visible" });
   await page.goto(input.base + "/#/artifact/" + record("internal").artifact_id, { waitUntil: "domcontentloaded" });
   await page.locator("#detail-section").waitFor({ state: "visible" });
-  await page.locator("#open-button").click();
-  await page.getByRole("heading", { name: "Internal viewer handoff", exact: true }).waitFor();
-  await shell(page, "internal");
-  await rawEqual(page, "internal");
-  await downloadEqual(page, "internal");
+  const [tab] = await Promise.all([page.context().waitForEvent("page"), page.locator("#open-button").click()]);
+  tab.setDefaultTimeout(15000);
+  await tab.getByRole("heading", { name: "Internal viewer handoff", exact: true }).waitFor();
+  await shell(tab, "internal");
+  await rawEqual(tab, "internal");
+  await downloadEqual(tab, "internal");
 }, false);
 
 await browser.close();

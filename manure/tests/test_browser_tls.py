@@ -132,8 +132,8 @@ class TlsSmokeCase(unittest.TestCase):
         out = self._browser(self._login_steps(token) + [
             {"op": "waitForText", "selector": "#list-status",
              "contains": "loaded"},
-            {"op": "click",
-             "selector": "button[data-action=open][data-artifact-id=\"" + aid + "\"]"},
+            {"op": "clickPopup",
+             "selector": "[data-action=open][data-artifact-id=\"" + aid + "\"]"},
             {"op": "waitForEval",
              "fn": "() => document.title.indexOf('TLS-OK:') === 0"},
             {"op": "eval", "fn": "() => document.cookie"},
