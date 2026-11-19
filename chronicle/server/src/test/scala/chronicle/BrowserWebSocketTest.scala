@@ -95,7 +95,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
   private def server(fixture: Fixture): Resource[IO,String] = for {
     gate <- Resource.eval(Semaphore[IO](2))
     controls <- BrowserControlAdmission.resource
-    snapshots <- SnapshotAdmission.resource(logstage.IzLogger())
+    snapshots <- SnapshotAdmission.resource(logstage.IzLogger(),SnapshotAdmission.ingestWait)
     rpc=new BrowserRpc(fixture.app,fixture.runs,fixture.wire)
     http=new Http(fixture.config,fixture.auth,fixture.app,fixture.archive,new Mcp(fixture.app),logstage.IzLogger(),Http.WebRoot(None),fixture.protocol,rpc,controls,TestLiveness,snapshots)
     server <- EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => http.routes(ws,gate).orNotFound).build

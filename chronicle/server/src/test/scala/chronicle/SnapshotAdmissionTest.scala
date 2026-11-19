@@ -13,7 +13,7 @@ final class SnapshotAdmissionTest extends munit.FunSuite {
       logger=logstage.IzLogger(Log.Level.Info,List(new izumi.logstage.api.logger.LogSink {
         def flush(entry: Log.Entry): Unit = if(entry.message.template.parts.head.startsWith("large ingest waits for admission")) { ingestWaits.complete(()).unsafeRunSync(); () }
       }))
-      _ <- SnapshotAdmission.resource(logger).use { admission => for {
+      _ <- SnapshotAdmission.resource(logger,SnapshotAdmission.ingestWait).use { admission => for {
         inside <- Ref.of[IO,Int](0)
         most <- Ref.of[IO,Int](0)
         tracked=(work: IO[Unit]) => inside.updateAndGet(_+1).flatMap(n => most.update(_.max(n))) *> work *> inside.update(_-1)
@@ -35,5 +35,15 @@ final class SnapshotAdmissionTest extends munit.FunSuite {
         maximum <- most.get
       } yield assertEquals(maximum,1) }
     } yield ()).unsafeRunSync()
+  }
+  test("Effectual GoodCommunication: a large ingest that is not admitted within its bound is refused as unavailable") {
+    SnapshotAdmission.resource(logstage.IzLogger(Log.Level.Info,Nil),50.millis).use { admission => for {
+      inside <- Deferred[IO,Unit]
+      release <- Deferred[IO,Unit]
+      claim <- admission.claim(inside.complete(()) *> release.get).start
+      _ <- inside.get.timeout(5.seconds)
+      refused <- admission.ingest(SnapshotAdmission.largeBodyBytes+1)(IO.unit).attempt
+      _ <- release.complete(()) *> claim.joinWithNever.timeout(5.seconds)
+    } yield assertEquals(refused.left.map { case error: DomainError => error.code; case error => error.toString },Left("unavailable")) }.unsafeRunSync()
   }
 }

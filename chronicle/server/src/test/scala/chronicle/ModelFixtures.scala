@@ -25,5 +25,5 @@ object ModelFixtures {
     new Worker(archive,annotator,embedder,config,IndexProfileCatalog.current(config),admission,logger,failureBackoff,snapshots)
   }
   /** A worker's own snapshot admission; its semaphore needs no release. */
-  def snapshots: SnapshotAdmission = SnapshotAdmission.resource(logstage.IzLogger()).allocated.unsafeRunSync()._1
+  def snapshots: SnapshotAdmission = SnapshotAdmission.resource(logstage.IzLogger(),SnapshotAdmission.ingestWait).allocated.unsafeRunSync()._1
 }
