@@ -1,6 +1,6 @@
 /**
  * ponygirls-tokemon — the providers this pi is configured for, as query
- * targets (tokemon's discovery without yolo profiles or Claude):
+ * targets:
  *
  * - every entry of the agent dir's `auth.json` (OAuth logins and API keys);
  * - the API-key environment variables pi resolves for providers with a plan
@@ -40,7 +40,7 @@ export const ENV_PROVIDER_KEYS: ReadonlyArray<[string, string]> = [
 
 const OPENAI_COMPLETIONS_API = "openai-completions";
 
-export type TargetOrigin = "auth.json" | "env" | "models.json";
+export type TargetOrigin = "auth.json" | "env" | "models.json" | "Claude Code";
 
 /** A credential as stored: the access token or key, plus an OAuth login's refresh token. */
 export interface StoredCredential {
@@ -96,6 +96,19 @@ function storedCredential(provider: string, entry: unknown): StoredCredential | 
     return key ? { kind: "api_key", secret: key, refreshToken: null, accountId: null } : `pi credential ${provider}: api_key entry has no key`;
   }
   return `pi credential ${provider}: unknown type ${JSON.stringify(entry["type"] ?? null)}`;
+}
+
+export function discoverClaudeCodeTarget(home: string, env: Readonly<Record<string, string | undefined>>): Target | null {
+  if (env.CLAUDE_CODE_OAUTH_TOKEN || env.ANTHROPIC_AUTH_TOKEN) return null;
+  const path = join(env.PI_CLAUDE_CODE_CONFIG_DIR || env.CLAUDE_CONFIG_DIR || join(home, ".claude"), ".credentials.json");
+  const target = { provider: "claude-code", origin: "Claude Code", label: shorten(path, home) } as const;
+  try {
+    const oauth = readJsonObject(path)?.["claudeAiOauth"];
+    const access = isObject(oauth) ? optionalString(oauth["accessToken"]) : null;
+    return access ? { ...target, credential: { kind: "oauth", secret: access, refreshToken: null, accountId: null }, note: null } : null;
+  } catch {
+    return { ...target, credential: null, note: "unreadable Claude Code credentials file" };
+  }
 }
 
 export function discoverTargets(agentDir: string, home: string, env: Readonly<Record<string, string | undefined>>): Target[] {

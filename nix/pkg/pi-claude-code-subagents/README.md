@@ -50,8 +50,14 @@ Usage-credit rejection and original request/auth identity are preserved.
 Canonical JSON has a **64 MiB serialized UTF-8 limit**, not a token guarantee.
 Ordered, digested, acknowledged frames carry at most 128 KiB raw bytes under the
 core 256 KiB envelope bound. Channels admit four transfers per direction and eight
-invocations. The parent event queue is bounded by 64 MiB and 1024 events; overflow
-fails visibly without truncation. Oversized input is rejected before inference.
+invocations. The parent relay pauses reads when its bounded queue fills and batches
+adjacent deltas without dropping content; Pi's SDK can still buffer raw events, and
+the relay does not pause Claude Code. A batch that would exceed the wire limit is
+sent as individual events instead.
+
+Oversized requests are rejected before inference: shorten the conversation or
+reduce attachments and tool output before retrying. For an oversized response,
+resume with a request for a shorter output or split the task into smaller turns.
 
 `captureOriginal` returns the single-iterator observation wrapper exposed to the
 SDK. Bare original EOF fails promptly even if SDK composition synthesizes a result.

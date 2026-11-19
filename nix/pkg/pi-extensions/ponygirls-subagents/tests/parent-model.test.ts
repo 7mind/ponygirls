@@ -123,7 +123,12 @@ async function terminal(sup: Supervisor, agentId: string, taskRunId: string, gen
 test("portable auth supports tool continuations with known cumulative usage", async (t) => {
   if (!process.env["PI_SUBAGENTS_SDK_ROOT"]) { t.skip("PI_SUBAGENTS_SDK_ROOT unset"); return; }
   const f = await fixture(t, "tool", "api-key");
-  const child = await f.sup.spawn("governor", { taskName: "tool", message: "Read probe.txt.", profile: "reader" }, "tool");
+  const child = await f.sup.spawn("governor", { taskName: "tool", message: "Read probe.txt.", profile: "reader", model: { provider: PROVIDER, id: MODEL, thinkingLevel: "high" } }, "tool");
+  for (const view of [child, f.sup.list("governor")[0]!, f.sup.read("governor", child.agentId, "status", 0, 10, null).status]) {
+    assert.equal(view.model, `${PROVIDER}/${MODEL}`);
+    assert.equal(view.requestedThinkingLevel, "high");
+    assert.equal(view.thinkingLevel, "off");
+  }
   const result = await terminal(f.sup, child.agentId, child.taskRunId, 1);
   assert.equal(result.outcome, "succeeded", result.detail);
   assert.equal(f.requests.length, 2);

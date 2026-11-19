@@ -424,7 +424,7 @@ export default function (pi: ExtensionAPI): void {
       name: "spawn_agent",
       label: "Spawn subagent",
       description:
-        "Start a subagent on a task and return immediately with its agent id, path, task-run id, generation, and workdir (it does not wait for completion; use wait_agent). By default (isolation worktree) a writer edits its own git worktree of your checkout; its changes stay in workdir until you bring them over (e.g. git -C <workdir> diff). repo_path selects a committed Git top-level at or below your working directory as the source for a managed worktree writer; it never edits that source in place. workspace_path instead puts the child in a git work tree you prepared and keep (policy workspaceRoots must contain it). isolation none edits your working directory in place. The child sees only its task text plus the skills and context files you pass. It inherits your model unless `model` names an allowlisted one. The default 32-agent cap counts open identities, including nested agents and reviewers; close_agent frees their slots without deleting history. Optional gate requires unanimous reviewer validation (single model or panel), with deterministic checks for writers. Alternatively review runs one-shot advisory reviewers without gating or automatic repairs. Both return all feedback through read_agent view=reviews.",
+        "Start a subagent on a task and return immediately with its agent id, path, task-run id, generation, and workdir (it does not wait for completion; use wait_agent). Includes model, requestedThinkingLevel, and effective thinkingLevel (unresolved until confirmed by the worker). By default (isolation worktree) a writer edits its own git worktree of your checkout; its changes stay in workdir until you bring them over (e.g. git -C <workdir> diff). repo_path selects a committed Git top-level at or below your working directory as the source for a managed worktree writer; it never edits that source in place. workspace_path instead puts the child in a git work tree you prepared and keep (policy workspaceRoots must contain it). isolation none edits your working directory in place. The child sees only its task text plus the skills and context files you pass. It inherits your model unless `model` names an allowlisted one. The default 32-agent cap counts open identities, including nested agents and reviewers; close_agent frees their slots without deleting history. Optional gate requires unanimous reviewer validation (single model or panel), with deterministic checks for writers. Alternatively review runs one-shot advisory reviewers without gating or automatic repairs. Both return all feedback through read_agent view=reviews.",
       promptGuidelines: [...DELEGATION_GUIDELINES.spawn_agent],
       parameters: spawnParameters<TSchema>(Type, {
         model: Type.Optional(Type.Object({ provider: Type.String(), id: Type.String(), thinkingLevel: Type.Optional(Type.String()) })),
@@ -496,7 +496,7 @@ export default function (pi: ExtensionAPI): void {
     defineTool({
       name: "list_agents",
       label: "List subagents",
-      description: "Return the subagent tree (agents: id, path, profile, model, the external tools (MCP etc) it may call, observed state, pending intent, current task-run id, generation, outcome, usage, and any open question a child asked you) and capacity: runnable/resident/open use against the configured limits (maxRunnable, maxResidentWorkers, maxOpenAgents), shared by the whole tree.",
+      description: "Return the subagent tree (agents: id, path, profile, model, requestedThinkingLevel, effective thinkingLevel (unresolved until confirmed), the external tools (MCP etc) it may call, observed state, pending intent, current task-run id, generation, outcome, usage, and any open question a child asked you) and capacity: runnable/resident/open use against the configured limits (maxRunnable, maxResidentWorkers, maxOpenAgents), shared by the whole tree.",
       parameters: Type.Object({}),
       async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
         try {
@@ -512,7 +512,7 @@ export default function (pi: ExtensionAPI): void {
     defineTool({
       name: "read_agent",
       label: "Read subagent",
-      description: "Read a subagent's status, task result, reviewer feedback (view=reviews after settlement), or bounded events. Results keep the main deliverable separate; reviews concatenates every review and error in panel order across all rounds. result/reviews use task_run_id for an earlier run and offset/length for paging; continue from nextOffset until null to receive all text. result.reviewCount says how many reviews are available.",
+      description: "Read a subagent's status, task result, reviewer feedback (view=reviews after settlement), or bounded events. Status includes model, requestedThinkingLevel, and effective thinkingLevel (unresolved until confirmed). Results keep the main deliverable separate; reviews concatenates every review and error in panel order across all rounds. result/reviews use task_run_id for an earlier run and offset/length for paging; continue from nextOffset until null to receive all text. result.reviewCount says how many reviews are available.",
       parameters: readParameters<TSchema>(Type),
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
         try {

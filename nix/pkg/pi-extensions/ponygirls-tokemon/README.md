@@ -1,9 +1,7 @@
 # ponygirls-tokemon
 
 Provider quotas inside pi (`v1.0.0` verified): this repository's `tokemon`
-dashboard (`nix/pkg/tokemon`) without external Claude/Codex profiles or
-yolo profile discovery. It covers only the providers the running pi
-is configured for.
+dashboard (`nix/pkg/tokemon`) limited to providers available to the running pi.
 
 ## Install
 
@@ -48,9 +46,10 @@ separate from rolling quotas and the credit balance. Claude accepts both modern
 enterprise responses. Missing limits stay unknown, never unlimited. When an
 enterprise account exposes no spend through OAuth, the note says
 `enterprise spend unavailable through OAuth`; this does not mean zero spend.
-No organization-admin key or browser cookie is used. Anthropic requires a usable
-OAuth login configured in pi; this extension does not import or refresh Claude
-Code profiles. API-key usage cannot reveal enterprise subscription spend.
+No organization-admin key or browser cookie is used. `anthropic` uses the Pi
+login. `claude-code` reads the selected CLI profile's `.credentials.json` and
+leaves token refresh to Claude Code. Keychain-only logins are not read.
+API-key usage cannot reveal enterprise subscription spend.
 
 Each target fails independently. Except for shared Anthropic responses below,
 an HTTP 429 holds that target's last result until `Retry-After` passes.

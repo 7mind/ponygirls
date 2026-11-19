@@ -1,7 +1,19 @@
 import type { AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { NATIVE_LOGICAL_BYTES } from "./native-framing.ts";
 
-const MAX_QUEUED_EVENTS = 1024;
+const MAX_QUEUED_EVENTS = 32;
+const MAX_MERGED_DELTA_CHARS = 8 * 1024;
+const MAX_MERGED_DELTA_FRAGMENTS = 64;
+
+type NativeDeltaEvent = Extract<AssistantMessageEvent, { delta: string }>;
+
+interface QueueEntry {
+  event: AssistantMessageEvent;
+  batch?: { fragments: NativeDeltaEvent[]; splitAt: number | null };
+}
+
+function isDelta(event: AssistantMessageEvent): event is NativeDeltaEvent {
+  return event.type === "thinking_delta" || event.type === "text_delta" || event.type === "toolcall_delta";
+}
 
 export function observeNativeOriginal(source: AssistantMessageEventStream, result: Promise<AssistantMessage>, onBareEnd: (error: Error) => void): AssistantMessageEventStream {
   let settled = false;
@@ -39,29 +51,44 @@ export function observeNativeOriginal(source: AssistantMessageEventStream, resul
 }
 
 export class NativeEventQueue implements AsyncIterator<AssistantMessageEvent> {
-  private readonly events: Array<{ event: AssistantMessageEvent; bytes: number }> = [];
-  private bytes = 0;
+  private readonly events: QueueEntry[] = [];
   private ended = false;
   private failure: Error | null = null;
   private waiting: { resolve(value: IteratorResult<AssistantMessageEvent>): void; reject(error: Error): void } | null = null;
+  private waitingForSpace: (() => void) | null = null;
 
   constructor(source: AsyncIterator<AssistantMessageEvent>, abort: AbortController) {
-    const cancelled = (): void => this.fail(new Error("NOT_RUNNING: native stream cancelled"));
+    const cancelled = (): void => {
+      this.fail(new Error("NOT_RUNNING: native stream cancelled"));
+      void Promise.resolve().then(() => source.return?.()).catch(() => {});
+    };
     abort.signal.addEventListener("abort", cancelled, { once: true });
     if (abort.signal.aborted) cancelled();
     void this.pump(source).catch((error: unknown) => {
       this.fail(error instanceof Error ? error : new Error("native stream failed"));
       abort.abort();
-      if (typeof source.return === "function") void Promise.resolve(source.return()).catch(() => {});
     }).finally(() => { abort.signal.removeEventListener("abort", cancelled); });
   }
 
-  next(): Promise<IteratorResult<AssistantMessageEvent>> {
-    if (this.failure !== null) return Promise.reject(this.failure);
-    const next = this.events.shift();
-    if (next !== undefined) { this.bytes -= next.bytes; return Promise.resolve({ done: false, value: next.event }); }
-    if (this.ended) return Promise.resolve({ done: true, value: undefined });
-    if (this.waiting !== null) return Promise.reject(new Error("INVALID: concurrent native consumer"));
+  async next(acceptBatch?: (event: AssistantMessageEvent) => boolean): Promise<IteratorResult<AssistantMessageEvent>> {
+    if (this.failure !== null) throw this.failure;
+    const head = this.events[0];
+    if (head !== undefined) {
+      const batch = head.batch;
+      let event = head.event;
+      if (batch !== undefined) {
+        if (batch.splitAt === null && acceptBatch?.(event) === false) batch.splitAt = 0;
+        if (batch.splitAt !== null) {
+          event = batch.fragments[batch.splitAt++];
+          if (batch.splitAt < batch.fragments.length) return { done: false, value: event };
+        }
+      }
+      this.events.shift();
+      this.resumePump();
+      return { done: false, value: event };
+    }
+    if (this.ended) return { done: true, value: undefined };
+    if (this.waiting !== null) throw new Error("INVALID: concurrent native consumer");
     return new Promise((resolve, reject) => { this.waiting = { resolve, reject }; });
   }
 
@@ -69,12 +96,40 @@ export class NativeEventQueue implements AsyncIterator<AssistantMessageEvent> {
     if (this.failure !== null) return;
     this.failure = error;
     this.events.length = 0;
-    this.bytes = 0;
+    this.resumePump();
     if (this.waiting !== null) { this.waiting.reject(error); this.waiting = null; }
   }
 
+  private resumePump(): void {
+    const resume = this.waitingForSpace;
+    this.waitingForSpace = null;
+    resume?.();
+  }
+
+  private enqueue(event: AssistantMessageEvent): void {
+    if (this.waiting !== null) {
+      this.waiting.resolve({ done: false, value: event });
+      this.waiting = null;
+      return;
+    }
+    const entry = this.events.at(-1);
+    const tail = entry?.event;
+    if (entry !== undefined && tail !== undefined && isDelta(tail) && isDelta(event) &&
+        tail.type === event.type && tail.contentIndex === event.contentIndex && tail.partial === event.partial &&
+        tail.delta.length + event.delta.length <= MAX_MERGED_DELTA_CHARS &&
+        (entry.batch === undefined || (entry.batch.splitAt === null && entry.batch.fragments.length < MAX_MERGED_DELTA_FRAGMENTS))) {
+      entry.batch ??= { fragments: [tail], splitAt: null };
+      entry.batch.fragments.push(event);
+      entry.event = { ...tail, delta: tail.delta + event.delta };
+    } else this.events.push({ event });
+  }
+
   private async pump(source: AsyncIterator<AssistantMessageEvent>): Promise<void> {
-    for (;;) {
+    while (this.failure === null) {
+      if (this.events.length >= MAX_QUEUED_EVENTS) {
+        await new Promise<void>((resolve) => { this.waitingForSpace = resolve; });
+        if (this.failure !== null) return;
+      }
       const next = await source.next();
       if (this.failure !== null) return;
       if (next.done === true) {
@@ -82,12 +137,8 @@ export class NativeEventQueue implements AsyncIterator<AssistantMessageEvent> {
         if (this.waiting !== null) { this.waiting.resolve({ done: true, value: undefined }); this.waiting = null; }
         return;
       }
-      const snapshot = structuredClone(next.value);
-      const bytes = Buffer.byteLength(JSON.stringify(snapshot), "utf8");
-      if (bytes > NATIVE_LOGICAL_BYTES || this.events.length >= MAX_QUEUED_EVENTS || this.bytes + bytes > NATIVE_LOGICAL_BYTES) throw new Error("PAYLOAD_TOO_LARGE: native event queue overflow");
-      if (this.waiting !== null) { this.waiting.resolve({ done: false, value: snapshot }); this.waiting = null; }
-      else { this.events.push({ event: snapshot, bytes }); this.bytes += bytes; }
-      if (snapshot.type === "done" || snapshot.type === "error") { this.ended = true; return; }
+      this.enqueue(next.value);
+      if (next.value.type === "done" || next.value.type === "error") { this.ended = true; return; }
     }
   }
 }

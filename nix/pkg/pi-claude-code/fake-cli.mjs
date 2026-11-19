@@ -17,7 +17,9 @@ let tools = [];
 if (querying) {
   const mcp = JSON.parse(argument("--mcp-config"));
   tools = JSON.parse(readFileSync(mcp.mcpServers.pi.args[1], "utf8")).map((tool) => tool.name);
-  appendFileSync(join(config, "launch.jsonl"), JSON.stringify({ pid: process.pid, cwd: process.cwd(), config, model: argument("--model"), detached: process.platform !== "win32", emptyTools: argument("--tools") === "", settingSources: argument("--setting-sources"), strictMcp: process.argv.includes("--strict-mcp-config") }) + "\n");
+  const settings = JSON.parse(readFileSync(argument("--settings"), "utf8"));
+  const effort = JSON.parse(settings.env.CLAUDE_CODE_EXTRA_BODY).output_config?.effort;
+  appendFileSync(join(config, "launch.jsonl"), JSON.stringify({ pid: process.pid, cwd: process.cwd(), config, model: argument("--model"), effort, detached: process.platform !== "win32", emptyTools: argument("--tools") === "", settingSources: argument("--setting-sources"), strictMcp: process.argv.includes("--strict-mcp-config") }) + "\n");
 }
 const history = [];
 for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
@@ -45,9 +47,27 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
   if (text.includes("WAIT_FIXTURE")) continue;
   const fixture = JSON.parse(readFileSync(join(config, "fixture.json"), "utf8"));
   const usage = { input_tokens: 7, output_tokens: 3, cache_read_input_tokens: 2, cache_creation_input_tokens: 1 };
+  const message = { id: `fixture-${process.pid}`, role: "assistant" };
+  const events = [];
+  const stream = (event) => events.push({ type: "stream_event", event });
   let content;
   let stopReason = "end_turn";
-  if (tools.includes("submit_gate_decision")) {
+  if (fixture.thinkingDeltas !== undefined) {
+    const signature = "fixture-signature";
+    const deltas = Array.from({ length: fixture.thinkingDeltas }, (_, i) => i.toString(16).padStart(4, "0"));
+    stream({ type: "message_start", message: { ...message, content: [], stop_reason: null, usage: { ...usage, output_tokens: 0 } } });
+    stream({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } });
+    for (const thinking of deltas) stream({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking } });
+    stream({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature } });
+    stream({ type: "content_block_stop", index: 0 });
+    stream({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } });
+    stream({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: fixture.answer } });
+    stream({ type: "content_block_stop", index: 1 });
+    usage.output_tokens = 1237;
+    usage.output_tokens_details = { thinking_tokens: 1234 };
+    stream({ type: "message_delta", delta: { stop_reason: stopReason, stop_sequence: null }, usage });
+    content = [{ type: "thinking", thinking: deltas.join(""), signature }, { type: "text", text: fixture.answer }];
+  } else if (tools.includes("submit_gate_decision")) {
     const prompt = history.map((message) => typeof message.content === "string" ? message.content : message.content.filter((block) => block.type === "text").map((block) => block.text).join("\n")).join("\n");
     const candidate = /Candidate (candidate-\d+)[^\n]*\n([^]*?)(?:\n\n|$)/.exec(prompt);
     if (!candidate) throw new Error("fixture reviewer missing candidate");
@@ -59,9 +79,10 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     content = [{ type: "tool_use", id: "read-fixture", name: "mcp__pi__read", input: { path: "probe.txt" } }];
     stopReason = "tool_use";
   } else content = [{ type: "text", text: fixture.answer }];
-  console.log(JSON.stringify({ type: "stream_event", event: { type: "message_stop" } }));
-  console.log(JSON.stringify({ type: "assistant", message: { id: `fixture-${process.pid}`, role: "assistant", content, stop_reason: stopReason, usage } }));
-  console.log(JSON.stringify({ type: "result", subtype: stopReason === "tool_use" ? "error_max_turns" : "success", is_error: stopReason === "tool_use", usage, ...uuid }));
+  stream({ type: "message_stop" });
+  events.push({ type: "assistant", message: { ...message, content, stop_reason: stopReason, usage } });
+  events.push({ type: "result", subtype: stopReason === "tool_use" ? "error_max_turns" : "success", is_error: stopReason === "tool_use", usage, ...uuid });
+  process.stdout.write(events.map((event) => JSON.stringify(event) + "\n").join(""));
 }
 
 if (!querying) await new Promise((resolve) => setTimeout(resolve, 50));

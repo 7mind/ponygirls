@@ -272,6 +272,14 @@ export interface InitializePayload {
   restore?: { sessionFile: string; leafEntryId: string | null } | null;
 }
 
+export interface InitializeResponse {
+  ok?: boolean;
+  sessionId?: string;
+  sessionFile?: string | null;
+  thinkingLevel?: unknown;
+  message?: string;
+}
+
 export function validateInitializePayload(raw: unknown): { ok: true; value: InitializePayload } | { ok: false; error: ReturnType<typeof err> } {
   if (typeof raw !== "object" || raw === null) {
     return { ok: false, error: err("INVALID", "initialize payload must be an object") };

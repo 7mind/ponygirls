@@ -27,7 +27,7 @@ import { Type } from "typebox";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { latestModelGenerations } from "../model-generations.ts";
 import { readableProviderColor, type Appearance } from "./src/colors.ts";
-import { discoverTargets } from "./src/discovery.ts";
+import { discoverClaudeCodeTarget, discoverTargets } from "./src/discovery.ts";
 import { FetchHttp } from "./src/http.ts";
 import { secretOf } from "./src/pi-auth.ts";
 import { PacedHttp, stateDbPath } from "./src/pacing.ts";
@@ -52,6 +52,15 @@ function authOf(ctx: ExtensionContext): ProviderAuth {
     apiKey: async (provider) => {
       const result = await ctx.modelRegistry.getProviderAuth(provider);
       return result === undefined ? null : secretOf(result.auth);
+    },
+    claudeCodeTarget: async () => {
+      try {
+        if (!ctx.modelRegistry.getAvailable().some((model) => model.provider === "claude-code")) return null;
+        const result = await ctx.modelRegistry.getProviderAuth("claude-code");
+        return result === undefined ? null : discoverClaudeCodeTarget(homedir(), { ...process.env, ...result.env });
+      } catch {
+        return { provider: "claude-code", origin: "Claude Code", label: "Claude Code CLI", credential: null, note: "could not resolve the Claude Code profile" };
+      }
     },
   };
 }
