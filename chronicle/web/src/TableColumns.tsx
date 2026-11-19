@@ -7,6 +7,17 @@ import './table-columns.css';
 interface ColumnState extends SizedColumn { visible: boolean }
 export interface TableLayout { columns: readonly SizedColumn[]; specs: readonly TableColumnSpec[]; visibilityKey: string; width: number; canPinEnds: boolean; container: RefObject<HTMLDivElement | null>; table: RefObject<HTMLTableElement | null>; resize(id: string, width: number): void; toggle(id: string, visible: boolean): void; fitContent(): void; fitWidth(): void; showAll(): void; compact(): void }
 const RESIZE_STEP = 16, MIN_UNPINNED_WIDTH = 120;
+// The width columns are fitted to: the container's content width, rounded down, so that a fitted table never overflows it.
+// `clientWidth` rounds a fractional width (125 % display scaling, browser zoom) to the nearest pixel; a table fitted to it
+// could be half a pixel too wide, the document then scrolls sideways, that scrollbar (and the vertical one the page's minimum
+// height brings with it) narrows the container, the narrower fit removes the overflow and both scrollbars, and the loop
+// repeats every frame. The computed width has six significant digits: rounded down, it stays within a layout width (a
+// multiple of 1/64 px) below 10 000 px. A container that is not rendered has no width, as with clientWidth.
+function availableWidth(element: HTMLElement): number {
+  if (element.getClientRects().length === 0) return 0;
+  const style = getComputedStyle(element), sides = style.boxSizing === 'border-box' ? [style.paddingLeft, style.paddingRight, style.borderLeftWidth, style.borderRightWidth] : [];
+  return Math.floor(sides.reduce((width, value) => width - Number.parseFloat(value), Number.parseFloat(style.width)));
+}
 // Canvas metrics ignore font-variant-numeric (e.g. tabular-nums), so such text is measured as rendered.
 function renderedWidth(text: string, style: CSSStyleDeclaration, document: Document): number {
   const probe = document.createElement('span');
@@ -60,7 +71,7 @@ export function useStoredTableColumns(choices: ColumnChoiceStore, specs: readonl
     const stored = choices.read();
     return specs.map(spec => ({ spec, width: clampColumn(spec, spec.ideal), visible: spec.required || (stored === null ? spec.compact : stored.includes(spec.id)) }));
   });
-  function viewport() { return container.current === null ? available : container.current.clientWidth; }
+  function viewport() { return container.current === null ? available : availableWidth(container.current); }
   function fit(previous: readonly ColumnState[], width: number): ColumnState[] {
     const fitted = fitTableColumns(previous.filter(column => column.visible), width);
     return previous.map(column => { const match = fitted.find(item => item.spec.id === column.spec.id); return match === undefined ? column : { ...column, width: match.width }; });
@@ -80,7 +91,7 @@ export function useStoredTableColumns(choices: ColumnChoiceStore, specs: readonl
   useLayoutEffect(() => {
     if (!enabled) return;
     const element = container.current; if (element === null) throw new Error('Table viewport is missing.');
-    const observer = new ResizeObserver(() => setAvailable(element.clientWidth)); observer.observe(element); setAvailable(element.clientWidth); return () => observer.disconnect();
+    const observer = new ResizeObserver(() => setAvailable(availableWidth(element))); observer.observe(element); setAvailable(availableWidth(element)); return () => observer.disconnect();
   }, [enabled]);
   useLayoutEffect(() => { if (enabled && automatic.current && available > 0) setState(previous => fit(previous, available)); }, [available, enabled]);
   useLayoutEffect(() => { if (enabled && !measured.current && rowCount > 0 && available > 0) { measured.current = true; if (automatic.current) setState(fit(natural(state), available)); } }, [rowCount, available, enabled]);
