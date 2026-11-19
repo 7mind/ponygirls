@@ -138,7 +138,7 @@ defaulted hybrid answered with one of the 503 reasons is re-run once as lexical
 with the same notice naming the server's message. An explicit mode is never
 substituted; its unavailability is reported with the server's message. `pending
 > 0` is shown as `N items are not yet indexed for semantic search; results may
-be incomplete`. The model stays `1.0.0`, changed in place (one negotiated
+be incomplete` (`1 item is not yet indexed …` for one). The model stays `1.0.0`, changed in place (one negotiated
 version): a client built before `pending`/`RetrievalCapabilities` rejects the
 retrieve response with its strict decoder, and the current CLI rejects an older
 server's response; upgrade clients with the server.
@@ -200,7 +200,7 @@ MCP tool arguments retain their externally declared schemas:
 
   ```text
   mode: hybrid (default)
-  1 items are not yet indexed for semantic search; results may be incomplete
+  1 item is not yet indexed for semantic search; results may be incomplete
   CandidateWindow: 1; 1 shown from offset 0
   p:a r1 title /title score 0.03252247488101533 harbour notes
   ```

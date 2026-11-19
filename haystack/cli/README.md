@@ -118,7 +118,8 @@ kind of notice naming the server's reason. An explicit `--mode` is never substit
 unavailable explicit mode fails with exit6, code `unavailable`, the server's
 fixed reason as `message` and `reason` `not-configured`|`embedding-failed`; no
 other server message text is ever shown. `pending > 0` adds the stderr note
-`Notice: N items are not yet indexed for semantic search; results may be incomplete`.
+`Notice: N items are not yet indexed for semantic search; results may be incomplete`
+(`Notice: 1 item is not yet indexed …` for one).
 Notices go to stderr when they are known: a downgrade notice before the lexical
 request, the pending note after the answer; stdout stays the result. If the
 lexical re-run fails too, stderr holds the notice line followed by the usual

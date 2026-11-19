@@ -116,6 +116,7 @@ test('retrieve without --mode is hybrid when offered, otherwise lexical with a n
   retrievalPending='3';const hybrid=await calls([]);
   assert.deepEqual(hybrid.requests,['GET /api/v1/capabilities','Hybrid']);assert.deepEqual([ok(hybrid.result).result.mode,ok(hybrid.result).result.pending],['Hybrid','3']);
   assert.equal(hybrid.result.stderr,'Notice: 3 items are not yet indexed for semantic search; results may be incomplete\n');
+  retrievalPending='1';assert.equal((await calls([])).result.stderr,'Notice: 1 item is not yet indexed for semantic search; results may be incomplete\n');
   retrievalPending='0';retrievalModes=['Lexical'];const lexical=await calls([]);
   assert.deepEqual(lexical.requests,['GET /api/v1/capabilities','Lexical']);assert.equal(ok(lexical.result).result.mode,'Lexical');assert.equal(lexical.result.stderr,lexicalNotice(notConfigured));
   retrievalModes=allModes;refusedModes.set('Hybrid',['unavailable',503,embeddingFailed]);const retried=await calls([]);

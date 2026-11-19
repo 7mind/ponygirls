@@ -130,5 +130,5 @@ object Mcp {
   val MaxRetrieveLimit=50
   val SnippetChars=200
   def lexicalNotice(reason:String):String=s"Hybrid search is not available on this server: $reason; showing lexical results"
-  def pendingNote(pending:Long):String=s"$pending items are not yet indexed for semantic search; results may be incomplete"
+  def pendingNote(pending:Long):String=s"$pending ${if(pending==1)"item is" else "items are"} not yet indexed for semantic search; results may be incomplete"
 }

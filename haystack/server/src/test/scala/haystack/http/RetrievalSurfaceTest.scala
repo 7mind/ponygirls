@@ -33,7 +33,7 @@ class RetrievalSurfaceTest extends ContractSuite {
   private val NotConfigured="semantic retrieval is not configured; lexical-only capability"
   private val EmbeddingFailed="query embedding failed"
   private def lexicalNotice(reason:String)=s"Hybrid search is not available on this server: $reason; showing lexical results"
-  private val PendingLine="1 items are not yet indexed for semantic search; results may be incomplete"
+  private val PendingLine="1 item is not yet indexed for semantic search; results may be incomplete"
   private val LongProject="long"
   private val LongItems=40
   private val LongTitle="harbour "+"long title words "*20
