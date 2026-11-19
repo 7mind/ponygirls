@@ -83,7 +83,7 @@ final class OpenAIEmbedder(http: ModelHttp,config: Config) extends Embedder {
     }
   }
 }
-final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger,failureBackoff: Worker.FailureBackoff) {
+final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger,failureBackoff: Worker.FailureBackoff,snapshots: SnapshotAdmission) {
   private val leaseSeconds = 300
   private val idleDelay = 1.second
   private final class AnnotationExhausted(val reason: String) extends RuntimeException(AnnotationAttempts.exhaustedCode) {
@@ -239,7 +239,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     IO(logger.warn(s"job claim failed code=$code exceptionClass=$exceptionClass sqlState=$sqlState origin=$origin")).as(Worker.Iteration.ClaimFailed)
   }
   private def iteration: IO[Worker.Iteration] = admission.annotationSession.use { _ =>
-    IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds)).redeemWith(claimFailed,{
+    snapshots.claim(IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds))).redeemWith(claimFailed,{
       case None => IO.pure(Worker.Iteration.Idle)
       case Some(claim) => process(claim).as(Worker.Iteration.Processed)
     })

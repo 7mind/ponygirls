@@ -48,7 +48,7 @@ object ChroniclePlugin extends PluginDef {
   make[McpRunPageEncoding].from { (wire: McpTestWire) => wire }
   make[McpTestRuns].fromResource[McpTestRunsResource]
   make[BrowserControlAdmission].fromResource[BrowserControlResource]
-  make[IngestAdmission].fromResource[IngestAdmissionResource]
+  make[SnapshotAdmission].fromResource[SnapshotAdmissionResource]
   make[BrowserRpc]
   make[Http]
   make[RuntimeServices]

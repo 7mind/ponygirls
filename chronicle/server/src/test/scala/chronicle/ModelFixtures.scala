@@ -22,6 +22,8 @@ object ModelFixtures {
   }
   def worker(archive: SessionArchive,annotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,logger: logstage.IzLogger): Worker = {
     val admission=ModelAdmission.make(config.indexing).unsafeRunSync()
-    new Worker(archive,annotator,embedder,config,IndexProfileCatalog.current(config),admission,logger,failureBackoff)
+    new Worker(archive,annotator,embedder,config,IndexProfileCatalog.current(config),admission,logger,failureBackoff,snapshots)
   }
+  /** A worker's own snapshot admission; its semaphore needs no release. */
+  def snapshots: SnapshotAdmission = SnapshotAdmission.resource(logstage.IzLogger()).allocated.unsafeRunSync()._1
 }

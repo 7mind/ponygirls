@@ -58,7 +58,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   private def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder,backoff: Worker.FailureBackoff): Worker =
     worker(archive,config,model,embedding,backoff,logstage.IzLogger())
   protected def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder,backoff: Worker.FailureBackoff,logger: logstage.IzLogger): Worker =
-    new Worker(archive,model,embedding,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),logger,backoff)
+    new Worker(archive,model,embedding,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),logger,backoff,ModelFixtures.snapshots)
   protected def one(window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): ProblemPassages.Decision =
     ProblemPassages.Decision(Vector(ProblemPassages.Part(ProblemPassages.Point(0,0),window.terminal,previous.nonEmpty,"synthetic goal",Nil)))
   test("BG/GoodCommunication: a worker lane stays idle for the failure back-off after the failed job is recorded, and not shorter") { withFixture { f =>

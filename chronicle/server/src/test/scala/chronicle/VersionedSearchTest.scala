@@ -42,8 +42,8 @@ class VersionedSearchTest extends munit.FunSuite {
       model <- Resource.eval(McpTestFixtures.model(_ => IO.pure(McpTestFixtures.finalReply("unused by protocol compatibility checks"))))
       runs <- McpTestRuns.resource(tools,model,new PostgresRunAuthorization(db,auth),new SystemMcpRunClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),wire,IO(UUID.randomUUID()))
       controls <- BrowserControlAdmission.resource
-      ingests <- IngestAdmission.resource(logstage.IzLogger())
-    } yield new Http(config,auth,app,archive,new Mcp(app),logstage.IzLogger(),Http.WebRoot(None),protocol,new BrowserRpc(app,runs,wire),controls,Http.SocketLiveness.production,ingests)).use { http =>
+      snapshots <- SnapshotAdmission.resource(logstage.IzLogger())
+    } yield new Http(config,auth,app,archive,new Mcp(app),logstage.IzLogger(),Http.WebRoot(None),protocol,new BrowserRpc(app,runs,wire),controls,Http.SocketLiveness.production,snapshots)).use { http =>
     Semaphore[IO](2).flatMap { gate =>
       EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => http.routes(ws,gate).orNotFound).build.use { server => IO.blocking {
         val (_,secret)=auth.login(LoginRequest("a","synthetic"))
