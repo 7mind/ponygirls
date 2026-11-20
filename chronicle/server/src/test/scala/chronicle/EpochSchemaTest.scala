@@ -11,6 +11,14 @@ final class EpochSchemaTest extends munit.FunSuite {
     def reset(): Unit = db.transaction(c => Sql.exec(c,"TRUNCATE ch_epochs,ch_sources,ch_ingest_receipts CASCADE"))
     try { reset(); f(config,db) } finally { reset(); db.close() }
   }
+  /** The mandatory epoch columns of the seeded revision as SQL values (message_time is optional). */
+  private val epochColumns=List("message_count"->"2","record_count"->"1","raw_bytes"->"8","message_bytes"->"4","fragment_count"->"2",
+    "raw_state"->"decode(repeat('00',40),'hex')","message_chain"->"sha256(''::bytea)")
+  /** An epoch revision of the seeded source and epoch (parameters: session, epoch) with `columns` besides the envelope. */
+  private def insertRevision(revision: Int,columns: List[(String,String)]): String = {
+    val all=List("session_id"->"?","revision"->revision.toString,"epoch"->"?","envelope"->"'{}'")++columns
+    s"INSERT INTO ch_revisions(${all.map(_._1).mkString(",")}) VALUES(${all.map(_._2).mkString(",")})"
+  }
   /** Revision 1 of a source covers messages 0..1, raw bytes 0..7 and record 0 of its epoch; message 2, the raw segment at
     * offset 8 and record 1 are staged beyond it. */
   private def seed(db: Database): (UUID,UUID) = db.transaction { c =>
@@ -21,8 +29,7 @@ final class EpochSchemaTest extends munit.FunSuite {
     Sql.exec(c,"""INSERT INTO ch_epoch_raw(epoch,byte_offset,content) VALUES(?,0,E'{"r":0}\n'),(?,8,E'{"r":1}\n')""",epoch,epoch)
     Sql.exec(c,"INSERT INTO ch_epoch_records(epoch,record_index,record_key) SELECT ?,r,sha256(convert_to('r'||r,'UTF8')) FROM generate_series(0,1) r",epoch)
     Sql.exec(c,"INSERT INTO ch_epoch_fragments(epoch,position,part,value) SELECT ?,p,0,'fragment '||p FROM generate_series(0,2) p",epoch)
-    Sql.exec(c,"""INSERT INTO ch_revisions(session_id,revision,epoch,envelope,message_count,record_count,raw_bytes,message_bytes,fragment_count,raw_state,message_chain)
-      VALUES(?,1,?,'{}',2,1,8,4,2,decode(repeat('00',40),'hex'),sha256(''::bytea))""",session,epoch)
+    Sql.exec(c,insertRevision(1,epochColumns),session,epoch)
     Sql.exec(c,"INSERT INTO ch_revision_info(session_id,revision,metadata,source,completion,redacted,message_count,lexical_version) VALUES(?,1,'{}','{}','Quiescent',false,2,?)",session,ArchiveProjection.lexicalVersion)
     (session,epoch)
   }
@@ -49,6 +56,10 @@ final class EpochSchemaTest extends munit.FunSuite {
       refused(db,"immutable archive revision",s"UPDATE ch_revisions SET $assignment WHERE session_id=?",session)
     }
     refused(db,"ch_revisions_layout","INSERT INTO ch_revisions(session_id,revision,snapshot,epoch,envelope,message_count,record_count,raw_bytes,message_bytes,fragment_count,raw_state,message_chain) SELECT session_id,2,'{}',epoch,envelope,message_count,record_count,raw_bytes,message_bytes,fragment_count,raw_state,message_chain FROM ch_revisions WHERE session_id=?",session)
+    // Every mandatory epoch column: all omitted, then each one NULL (a CHECK passes a NULL predicate).
+    (Nil::epochColumns.map(_._1).map(nulled => epochColumns.map((column,value) => column->(if(column==nulled) "NULL" else value)))).foreach { columns =>
+      refused(db,"ch_revisions_layout",insertRevision(2,columns),session,epoch)
+    }
     List("DELETE FROM ch_epoch_messages WHERE epoch=? AND position=1","DELETE FROM ch_epoch_raw WHERE epoch=? AND byte_offset=0",
       "DELETE FROM ch_epoch_records WHERE epoch=? AND record_index=0","DELETE FROM ch_epoch_fragments WHERE epoch=? AND position=1").foreach(refused(db,"committed epoch row",_,epoch))
     List("DELETE FROM ch_epoch_messages WHERE epoch=? AND position=2","DELETE FROM ch_epoch_raw WHERE epoch=? AND byte_offset=8",

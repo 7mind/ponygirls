@@ -63,9 +63,12 @@ DO $$ BEGIN
       (epoch IS NULL AND snapshot IS NOT NULL AND envelope IS NULL AND message_count IS NULL AND record_count IS NULL
         AND raw_bytes IS NULL AND message_bytes IS NULL AND fragment_count IS NULL AND raw_state IS NULL
         AND message_chain IS NULL AND message_time IS NULL)
-      OR (epoch IS NOT NULL AND snapshot IS NULL AND envelope IS NOT NULL AND message_count>=0 AND record_count>=0
-        AND raw_bytes>=0 AND message_bytes>=0 AND fragment_count>=0 AND octet_length(raw_state) BETWEEN 40 AND 103
-        AND octet_length(message_chain)=32)) NOT VALID;
+      -- Explicit IS NOT NULL: a CHECK passes when its predicate is NULL, and a missing count would defeat the guards.
+      OR (epoch IS NOT NULL AND snapshot IS NULL AND envelope IS NOT NULL
+        AND message_count IS NOT NULL AND record_count IS NOT NULL AND raw_bytes IS NOT NULL AND message_bytes IS NOT NULL
+        AND fragment_count IS NOT NULL AND raw_state IS NOT NULL AND message_chain IS NOT NULL
+        AND message_count>=0 AND record_count>=0 AND raw_bytes>=0 AND message_bytes>=0 AND fragment_count>=0
+        AND octet_length(raw_state) BETWEEN 40 AND 103 AND octet_length(message_chain)=32)) NOT VALID;
   END IF;
 END $$;
 ALTER TABLE ch_revisions VALIDATE CONSTRAINT ch_revisions_layout;
