@@ -48,6 +48,7 @@ PROBE_PERIOD_MS, PROBE_TIMEOUT_S = 100, 1.0
 PAGE = 100
 MAX_PAGE_BYTES = 64 * MiB
 JOB_WAIT_S = 1800
+DISK_SAMPLE_S = 10
 SMOKE_BUDGET = 96 * MiB
 
 # Needles: letters the generated vocabulary never uses (j, k, q, w, x, y, z), so none occurs by chance.
@@ -121,8 +122,30 @@ def du(path):
     return int(subprocess.run(['du', '-sb', str(path)], capture_output=True, text=True).stdout.split()[0])
 
 
+WORK = []  # the run's private directory: fixtures, collector state, logs
+
+
 def disk():
-    return dict(database=int(one('SELECT pg_database_size(current_database())')), cluster=du(OWNED / 'cluster'))
+    return dict(database=int(one('SELECT pg_database_size(current_database())')), cluster=du(OWNED / 'cluster'), workDir=du(WORK[0]) if WORK else 0)
+
+
+class DiskPeak:
+    """The largest cluster directory + work directory (fixtures included) seen every DISK_SAMPLE_S while a run lasts."""
+    def __init__(self):
+        self.peak, self.done = 0, threading.Event()
+        self.thread = threading.Thread(target=self.sample, daemon=True)
+        self.thread.start()
+
+    def sample(self):
+        while True:
+            self.peak = max(self.peak, du(OWNED / 'cluster') + (du(WORK[0]) if WORK else 0))
+            if self.done.wait(DISK_SAMPLE_S):
+                return
+
+    def stop(self):
+        self.done.set()
+        self.thread.join()
+        return self.peak
 
 
 def server_cpu():
@@ -250,17 +273,20 @@ class Fixture:
 
 # ---------------------------------------------------------------- processes
 
+# One line per sample: epoch ms, monotonic start and end (s), status; `stop` once the stop file appeared.
 PROBE = r'''
-import sys, time, urllib.request
-url, out, period, timeout = sys.argv[1], sys.argv[2], int(sys.argv[3]) / 1000, float(sys.argv[4])
+import os, sys, time, urllib.request
+url, out, period, timeout, stop = sys.argv[1], sys.argv[2], int(sys.argv[3]) / 1000, float(sys.argv[4]), sys.argv[5]
 with open(out, "a", buffering=1) as f:
-    while True:
-        t0 = time.time()
+    while not os.path.exists(stop):
+        wall, t0 = time.time(), time.monotonic()
         try:
             with urllib.request.urlopen(url, timeout=timeout) as r: r.read(); status = r.status
         except Exception as e: status = type(e).__name__
-        f.write(f"{int(t0 * 1000)} {(time.time() - t0) * 1000:.1f} {status}\n")
-        time.sleep(max(0, period - (time.time() - t0)))
+        t1 = time.monotonic()
+        f.write(f"{int(wall * 1000)} {t0:.4f} {t1:.4f} {status}\n")
+        time.sleep(max(0, period - (t1 - t0)))
+    f.write("stop\n")
 '''
 
 STUB = r'''
@@ -329,20 +355,53 @@ def percentile(values, q):
     return values[min(len(values) - 1, int(q * len(values)))] if values else 0
 
 
-class Probe:
-    """GET /api/versions every 100 ms with a 1 s timeout while a server runs."""
-    def __init__(self, root, label, origin):
-        self.file = root / f'probe-{label}.txt'
-        self.process = subprocess.Popen([sys.executable, '-c', PROBE, origin + '/api/versions', str(self.file), str(PROBE_PERIOD_MS), str(PROBE_TIMEOUT_S)],
-                                        stdin=subprocess.DEVNULL, start_new_session=True)
+def probe_samples(path):
+    """(monotonic start, monotonic end, status) of every sample, and whether the probe stopped on request."""
+    lines = path.read_text().splitlines() if path.exists() else []
+    return [(float(start), float(end), status) for _, start, end, status in (line.split() for line in lines if line != 'stop')], 'stop' in lines
 
-    def stop(self):
-        stop_group(self.process, 5)
-        rows = [line.split() for line in self.file.read_text().splitlines()]
-        answers = sorted(float(ms) for _, ms, status in rows if status == '200')
-        failures = [(int(t), status) for t, _, status in rows if status != '200']
-        return dict(probes=len(rows), failures=len(failures), firstFailures=failures[:5], maxMs=answers[-1] if answers else None,
-                    p99Ms=percentile(answers, 0.99), p999Ms=percentile(answers, 0.999), over500Ms=sum(1 for ms in answers if ms > 500))
+
+def probe_coverage(samples, start, end):
+    """The interval [start, end] (monotonic s) is monitored when every sample that starts inside it is a 200 within the
+    1 s deadline (monotonic elapsed time, not the socket timeout) and no stretch longer than two probe periods passes
+    without a sample in flight or one completed within it."""
+    deadline = PROBE_TIMEOUT_S
+    measured = [(a, b, status) for a, b, status in samples if start <= a <= end]
+    failures = [(round(a - start, 3), round((b - a) * 1000, 1), status) for a, b, status in measured if status != '200' or b - a >= deadline]
+    covered, gap = start, 0.0
+    for a, b, status in sorted(samples):
+        if b < start or a > end or status != '200' or b - a >= deadline:
+            continue
+        gap = max(gap, a - covered)
+        covered = max(covered, b)
+    gap = max(gap, end - covered)
+    latencies = sorted((b - a) * 1000 for a, b, status in measured if status == '200')
+    return dict(probes=len(measured), failures=len(failures), firstFailures=failures[:5], intervalSeconds=round(end - start, 1),
+                maxGapMs=round(gap * 1000, 1), maxMs=round(latencies[-1], 1) if latencies else None, p99Ms=round(percentile(latencies, 0.99), 1),
+                p999Ms=round(percentile(latencies, 0.999), 1), over500Ms=sum(1 for ms in latencies if ms > 500), allowedGapMs=2 * PROBE_PERIOD_MS)
+
+
+def probe_ok(probe):
+    return probe['probes'] > 0 and probe['failures'] == 0 and probe['maxGapMs'] <= probe['allowedGapMs'] and probe['aliveAtStop'] and probe['stoppedOnRequest']
+
+
+class Probe:
+    """GET /api/versions every 100 ms with a 1 s deadline, from before the server starts until it is asked to stop."""
+    def __init__(self, root, label, origin):
+        self.file, self.stop_file = root / f'probe-{label}.txt', root / f'probe-{label}.stop'
+        self.process = subprocess.Popen([sys.executable, '-c', PROBE, origin + '/api/versions', str(self.file), str(PROBE_PERIOD_MS), str(PROBE_TIMEOUT_S),
+                                         str(self.stop_file)], stdin=subprocess.DEVNULL, start_new_session=True)
+
+    def stop(self, ready):
+        """Coverage of [ready, now]: the server's measured interval, from its readiness to this stop request."""
+        alive, requested = self.process.poll() is None, time.monotonic()
+        self.stop_file.write_text('')
+        try:
+            self.process.wait(timeout=PROBE_TIMEOUT_S + 5)
+        except subprocess.TimeoutExpired:
+            stop_group(self.process, 5)
+        samples, stopped = probe_samples(self.file)
+        return dict(probe_coverage(samples, ready, requested), aliveAtStop=alive, stoppedOnRequest=stopped)
 
 
 class Stub:
@@ -379,13 +438,16 @@ class Server:
         self.origin = self.config['allowedOrigin']
         self.log_path = root / f'server-{label}.log'
         log = self.log_path.open('x')
+        self.probe = Probe(root, label, self.origin)
         self.started = time.monotonic()
         self.process = subprocess.Popen([str(binary), f'-XX:MaxHeapSize={heap}', '-XX:+PrintGC', 'serve', str(config)], stdin=subprocess.DEVNULL,
                                         stdout=log, stderr=subprocess.STDOUT, start_new_session=True, env=dict(os.environ, HOME=str(root / 'home')))
         log.close()
         deadline = time.monotonic() + 300
         while True:
-            assert self.process.poll() is None, f'the {label} server exited during start: {self.log_path.read_text()[-3000:]}'
+            if self.process.poll() is not None:
+                self.probe.stop(time.monotonic())
+                raise AssertionError(f'the {label} server exited during start: {self.log_path.read_text()[-3000:]}')
             try:
                 with urllib.request.urlopen(self.origin + '/api/versions', timeout=1) as response:
                     if response.status == 200:
@@ -394,15 +456,15 @@ class Server:
                 pass
             assert time.monotonic() < deadline, 'server readiness'
             time.sleep(0.2)
-        note(f'{label} server ready after {time.monotonic() - self.started:.1f} s')
+        self.ready = time.monotonic()
+        note(f'{label} server ready after {self.ready - self.started:.1f} s')
         running.append(self.process)
-        self.probe = Probe(root, label, self.origin)
 
     def alive(self):
         return self.process.poll() is None
 
     def stop(self):
-        probe = self.probe.stop()
+        probe = self.probe.stop(self.ready)
         alive = self.alive()
         stop_group(self.process)
         log = self.log_path.read_text(errors='replace')
@@ -678,8 +740,9 @@ class Harness:
         label = summary['label']
         check(f'{label} server: no out-of-memory and still running when stopped', summary['outOfMemory'] == 0 and summary['aliveAtStop'], summary)
         probe = summary['probe']
-        check(f'{label} server: every /api/versions probe answered within {PROBE_TIMEOUT_S:.0f} s ({probe["probes"]} probes, max {probe["maxMs"]} ms)',
-              probe['probes'] > 0 and probe['failures'] == 0, probe)
+        check(f'{label} server: from readiness to stop ({probe["intervalSeconds"]} s) every /api/versions probe answered 200 in under {PROBE_TIMEOUT_S:.0f} s '
+              f'({probe["probes"]} probes, max {probe["maxMs"]} ms) and none was missing for more than {probe["allowedGapMs"]} ms (longest {probe["maxGapMs"]} ms)',
+              probe_ok(probe), probe)
         return summary
 
     def reader(self):
@@ -1041,13 +1104,13 @@ def run_e(root):
     probed every 100 ms while it runs; the old collector's heap bounded with --trace-gc."""
     node, entry = packaged(os.environ['MAIN_COLLECTOR'])
     assert shutil.which('git') is not None, 'git on PATH (the collector reads repositories)'
-    server_log, probe, collector_log = root / 'server-E.log', root / 'probe-E.txt', root / 'collector-E.log'
+    server_log, probe, probe_stop, collector_log = root / 'server-E.log', root / 'probe-E.txt', root / 'probe-E.stop', root / 'collector-E.log'
     server_wrapper, collector_wrapper = root / 'chronicle-server', root / 'chronicle-collector'
     python = shlex.quote(sys.executable)
     server_wrapper.write_text(f"""#!/usr/bin/env bash
 if [[ ${{1-}} == serve || ${{1-}} == serve-standby ]]; then
   port=$({python} -c 'import json, sys; print(json.load(open(sys.argv[1]))["listenPort"])' "$2")
-  {python} -c {shlex.quote(PROBE)} "http://127.0.0.1:$port/api/versions" {shlex.quote(str(probe))} {PROBE_PERIOD_MS} {PROBE_TIMEOUT_S} &
+  setsid {python} -c {shlex.quote(PROBE)} "http://127.0.0.1:$port/api/versions" {shlex.quote(str(probe))} {PROBE_PERIOD_MS} {PROBE_TIMEOUT_S} {shlex.quote(str(probe_stop))} &
   {shlex.quote(str(SERVER))} -XX:MaxHeapSize=768m -XX:+PrintGC "$@" 2>&1 | tee -a {shlex.quote(str(server_log))}
   exit "${{PIPESTATUS[0]}}"
 fi
@@ -1065,12 +1128,27 @@ exit "${{PIPESTATUS[0]}}"
     print(result.stdout, result.stderr[-4000:], sep='\n', flush=True)
     passed = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
     check('E: gate O passes against the S2 server', result.returncode == 0 and passed and passed[-1]['status'] == 'passed', result.returncode)
-    rows = [line.split() for line in probe.read_text().splitlines()]
-    answered = [i for i, row in enumerate(rows) if row[2] == '200']
-    within = rows[answered[0]:answered[-1] + 1] if answered else []
-    latencies = sorted(float(ms) for _, ms, status in within if status == '200')
-    probe_summary = dict(probes=len(within), failures=sum(1 for row in within if row[2] != '200'), beforeReadiness=answered[0] if answered else len(rows),
-                         afterStop=len(rows) - answered[-1] - 1 if answered else 0, maxMs=latencies[-1] if latencies else None, p99Ms=percentile(latencies, 0.99))
+    # The probe runs in its own session, so gate O's stop of the server does not end it: its samples after the server
+    # stopped show it outlived the server. Gate O's server interval is from the probe's first 200 to its last one.
+    time.sleep(5 * PROBE_PERIOD_MS / 1000)
+    requested = time.monotonic()
+    probe_stop.write_text('')
+    deadline = requested + PROBE_TIMEOUT_S + 5
+    while not probe_samples(probe)[1] and time.monotonic() < deadline:
+        time.sleep(0.1)
+    samples, stopped = probe_samples(probe)
+    # Still sampling when asked to stop: its last sample before the request ended within two periods of it.
+    alive = any(a <= requested for a, _, _ in samples) and requested - max(b for a, b, _ in samples if a <= requested) <= 2 * PROBE_PERIOD_MS / 1000
+    answered = [i for i, (_, _, status) in enumerate(samples) if status == '200']
+    if answered:
+        first, last = samples[answered[0]], samples[answered[-1]]
+        probe_summary = probe_coverage(samples, first[0], last[1])
+        outside = samples[:answered[0]] + samples[answered[-1] + 1:]
+        probe_summary.update(beforeReadiness=answered[0], afterStop=len(samples) - answered[-1] - 1,
+                             slowOutside=sum(1 for a, b, _ in outside if b - a >= PROBE_TIMEOUT_S),
+                             aliveAtStop=alive and len(samples) > answered[-1] + 1, stoppedOnRequest=stopped)
+    else:
+        probe_summary = dict(probes=0, failures=0, maxGapMs=None, allowedGapMs=2 * PROBE_PERIOD_MS, aliveAtStop=False, stoppedOnRequest=stopped)
     log = server_log.read_text(errors='replace')
     gcs = [(kind, float(before), float(after), float(pause)) for _, kind, before, after, pause in GC.findall(log)]
     server = dict(label='E', binary=str(SERVER), heap='768m', mode='serve-standby (gate O)', outOfMemory=len(re.findall(r'OutOfMemoryError|Java heap space', log)),
@@ -1084,24 +1162,29 @@ exit "${{PIPESTATUS[0]}}"
                      peakLiveHeapMB=max((after for kind, _, after in node_gcs if kind == 'Mark-Compact'), default=None),
                      peakHeapBeforeCollectionMB=max((before for _, before, _ in node_gcs), default=None))
     collectors.append(collector)
-    check(f'E: every /api/versions probe while the server ran answered within {PROBE_TIMEOUT_S:.0f} s ({probe_summary["probes"]} probes, max {probe_summary["maxMs"]} ms)',
-          probe_summary['probes'] > 0 and probe_summary['failures'] == 0, probe_summary)
+    check(f'E: while the server ran every /api/versions probe answered 200 in under {PROBE_TIMEOUT_S:.0f} s ({probe_summary["probes"]} probes, max '
+          f'{probe_summary.get("maxMs")} ms), none was missing for more than {probe_summary["allowedGapMs"]} ms (longest {probe_summary["maxGapMs"]} ms), '
+          f'and the probe outlived the server', probe_ok(probe_summary) and probe_summary['slowOutside'] == 0, probe_summary)
     check('E: no out-of-memory on either side', server['outOfMemory'] == 0 and not collector['outOfMemory'], (server, collector))
     return dict(gateO=passed[-1], wallSeconds=round(time.monotonic() - started, 1))
 
 
-RUNS = {'A': (run_a, 25 * GiB), 'B': (run_b, 60 * GiB), 'D': (run_d, 2 * GiB), 'E': (run_e, 1 * GiB)}
+# run: (function, free space it needs, wall-time budget s, consumed-disk budget B) — the budgets of spec §11.1.
+RUNS = {'A': (run_a, 25 * GiB, 30 * 60, 25 * 10**9), 'B': (run_b, 60 * GiB, 90 * 60, 60 * 10**9), 'D': (run_d, 2 * GiB, 30 * 60, None),
+        'E': (run_e, 1 * GiB, None, None)}
 
 
 def main():
     os.umask(0o077)
     run = sys.argv[1]
-    function, space = RUNS[run]
+    function, space, wall_budget, disk_budget = RUNS[run]
     free = shutil.disk_usage(tempfile.gettempdir()).free
     check(f'{run}: {free / GiB:.0f} GiB free in {tempfile.gettempdir()} (needs {space * SCALE / GiB:.0f} GiB)', free >= space * SCALE)
     started, lsn = time.monotonic(), wal_lsn()
     with tempfile.TemporaryDirectory(prefix=f'upload-bounds-{run}-') as temporary:
         root = Path(temporary)
+        WORK.append(root)
+        sampler = DiskPeak()
         try:
             outcome = function(root)
         except BaseException:
@@ -1114,10 +1197,17 @@ def main():
                 for name in [*root.glob('server-*.log'), *root.glob('probe-*.txt'), *root.glob('collector-*.err'), *root.glob('collector-*.result'), *root.glob('proxy.log')]:
                     shutil.copy(name, EVIDENCE / f'{run}-{name.name}')
             fixtures = du(root)
+            consumed = sampler.stop()
+        wall = time.monotonic() - started
+        if wall_budget is not None:
+            check(f'{run}: wall time {wall / 60:.1f} min within the budget of {wall_budget / 60:.0f} min', wall <= wall_budget, dict(wallSeconds=round(wall, 1)), defer=True)
+        if disk_budget is not None:
+            check(f'{run}: disk consumed at most {consumed / 10**9:.1f} GB (cluster and work directory with the fixtures, sampled every {DISK_SAMPLE_S} s) '
+                  f'within the budget of {disk_budget / 10**9:.0f} GB', consumed <= disk_budget, dict(peakBytes=consumed), defer=True)
         for line in deferred:
             print('not ok -', line, flush=True)
-        summary = dict(run=run, status='failed' if deferred else 'passed', failed=deferred, scale=SCALE, wallSeconds=round(time.monotonic() - started, 1), walBytes=wal_since(lsn), disk=disk(),
-                       workDirBytesAtEnd=fixtures, checks=len(checks), phases=phases, servers=servers, collectors=collectors, outcome=outcome,
+        summary = dict(run=run, status='failed' if deferred else 'passed', failed=deferred, scale=SCALE, wallSeconds=round(wall, 1), walBytes=wal_since(lsn), disk=disk(),
+                       workDirBytesAtEnd=fixtures, peakDiskBytes=consumed, budgets=dict(wallSeconds=wall_budget, diskBytes=disk_budget), checks=len(checks), phases=phases, servers=servers, collectors=collectors, outcome=outcome,
                        server=str(SERVER), serverSha256=hashlib.sha256(SERVER.read_bytes()).hexdigest(), collector=str(COLLECTOR), cli=str(CLI))
     print(json.dumps(summary, default=str), flush=True)
     sys.exit(1 if deferred else 0)

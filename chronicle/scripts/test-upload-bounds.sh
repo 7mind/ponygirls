@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # S2 acceptance runs A, B, D and E of docs/drafts/20261120-1201-append-only-ingest-spec.md §11.1 (on demand, not part of
 # verify): the native server built from this tree in `serve` (normal indexing workers) with a bounded heap, -XX:+PrintGC
-# and GET /api/versions probed every 100 ms (1 s timeout) while it runs; the collector built from this tree with
+# and GET /api/versions probed every 100 ms from readiness to stop (asserted: every answer 200 within 1 s of monotonic
+# time, never more than 200 ms without a probe, the probe alive at the stop); the collector built from this tree with
 # --max-old-space-size=256 and --trace-gc, through a logging proxy (status and time of every request, the answers of all
 # but parts); a loopback stub model server; synthetic Pi sessions generated in a private
 # temporary directory; the owned database only. Every assertion prints `ok - …`; the last line is a JSON summary with
-# wall time, WAL, disk and the peak live heap of both sides. The script fails on any failed assertion.
+# wall time, WAL, disk and the peak live heap of both sides. The wall-time and disk budgets below are assertions (disk:
+# the cluster and the run's directory with the fixtures, sampled every 10 s). The script fails on any failed assertion.
 #   A  1,000,000,000 raw bytes uploaded as a replacement, +5 % as an append, the 1 GiB declaration boundary (413 above
 #      it), the job ending index-budget-exceeded, reads (pages, locate, context, Find, Archive search, GetRaw too-large),
 #      a 16 MiB session indexing on the same server; then the S2 -> S1 rollback (down-025-uploads.sql, the S1 server
-#      CHRONICLE_S1_SERVER with workers): the same verdicts. Server heap 768 MiB, budget scaled to it. ≤ 25 GB disk.
+#      CHRONICLE_S1_SERVER with workers): the same verdicts. Server heap 768 MiB, indexing budget scaled to it. ≤ 30 min, ≤ 25 GB.
 #   B  4,400,000,000 raw bytes with records of 9-20 MiB (large parts), appended to; raw_bytes > 2^32 exact; reads (pages
 #      holding a record above the CLI's 8 MiB frame bound over the browser protocol); the job ends index-budget-exceeded
-#      while four other sessions index. Server heap 1 GiB. ≤ 60 GB disk; about 55 minutes on this host (2026-11).
+#      while four other sessions index. Server heap 1 GiB. ≤ 90 min, ≤ 60 GB; about 55 minutes on this host (2026-11).
 #   D  a 2 MB session grows by six appends while its jobs run (stub annotation delay 1 s per window) and ends indexed at
-#      its head; jobs and windows spent.
+#      its head; jobs and windows spent. ≤ 30 min.
 #   E  gate O (scripts/test-main-collector.sh) against this tree's server, heaps bounded and the server probed.
 # One run per invocation; the owned-database wrapper stops a run after an hour, which B can reach on a loaded host. From
 # the repository root (S1 tip 4f4c941e: the rollback binary of A):
