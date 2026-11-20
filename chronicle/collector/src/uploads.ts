@@ -1,7 +1,7 @@
 import { CollectorError, object } from './domain.ts';
 import { decodeReceipt, endpointURL, tokenFromFile, UploadError } from './ingest.ts';
 import type { Config } from './config.ts';
-import { fetchResending } from './requests.ts';
+import { fetchOnNewConnection } from './requests.ts';
 import { UploadOpen, UploadOpen_JsonCodec } from '../../generated/typescript/chronicle/api/UploadOpen.js';
 import { UploadState, UploadState_JsonCodec } from '../../generated/typescript/chronicle/api/UploadState.js';
 import { UploadLimits, UploadLimits_JsonCodec } from '../../generated/typescript/chronicle/api/UploadLimits.js';
@@ -67,8 +67,7 @@ export class HttpUploader implements Uploader {
   private async request(method: 'GET' | 'POST', url: URL, body: string | null, timeoutMs: number): Promise<unknown> {
     const token = tokenFromFile(this.config.tokenFile);
     try {
-      // Every upload request is idempotent (open by intent, parts by ordinal and digest, commit and abort by attempt).
-      const { response } = await fetchResending(url, () => ({ method, headers: { ...(body === null || body === '' ? {} : { 'Content-Type': 'application/json' }), Authorization: `Bearer ${token}` }, body, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) }), timeoutMs);
+      const response = await fetchOnNewConnection(url, { method, headers: { ...(body === null || body === '' ? {} : { 'Content-Type': 'application/json' }), Authorization: `Bearer ${token}` }, body, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
       const chunks: Uint8Array[] = []; let size = 0;
       if (response.body !== null) {
         const reader = response.body.getReader();

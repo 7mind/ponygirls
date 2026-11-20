@@ -3,7 +3,7 @@ import { CollectorProgressAck, CollectorProgressAck_JsonCodec } from '../../gene
 import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRuntime.js';
 import { CollectorError } from './domain.ts';
 import { endpointURL, tokenFromFile } from './ingest.ts';
-import { fetchResending, requestFailure } from './requests.ts';
+import { fetchOnNewConnection, requestFailure } from './requests.ts';
 import type { Config } from './config.ts';
 
 const MAX_REPORT_BYTES = 65_536;
@@ -25,8 +25,7 @@ export class HttpProgressReporter implements ProgressReporter {
     try { token = tokenFromFile(this.config.tokenFile); } catch { throw new ReportError('token-unavailable'); }
     const timeoutMs = this.config.uploadTimeoutMs;
     try {
-      // A report is idempotent by its sequence, so a connection closed under it is resent once (see fetchResending).
-      const { response, resent } = await fetchResending(this.url, () => ({ method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: payload, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) }), timeoutMs);
+      const response = await fetchOnNewConnection(this.url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: payload, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
       if (!response.ok) { await response.body?.cancel(); throw new ReportError(`http:${response.status}`); }
       if (response.body === null) throw new ReportError('invalid-ack');
       const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
@@ -40,8 +39,7 @@ export class HttpProgressReporter implements ProgressReporter {
       try { ack = CollectorProgressAck_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown); }
       catch { throw new ReportError('invalid-ack'); }
       if (ack.sequence !== update.sequence || typeof ack.accepted !== 'boolean') throw new ReportError('invalid-ack');
-      // The server answers a sequence it already accepted with that sequence, not accepted: the first sending got through.
-      return resent && !ack.accepted ? new CollectorProgressAck(ack.sequence, true) : ack;
+      return ack;
     } catch (error) {
       // Never expose remote response bodies, paths, tokens or exception messages: only the class of the failure.
       throw error instanceof ReportError ? error : new ReportError(requestFailure(error, timeoutMs));

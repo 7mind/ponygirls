@@ -208,6 +208,8 @@ test('UploadParts opens a spool of the current release: its queued whole payload
     appendFileSync(path, jsonl(piMessage('m3', 'three')));
     const appended = await h.run(3);
     assert.deepEqual([appended.uploaded, appended.replacements, h.spool.head(key).revision], [1, 0, 3]);
+    // /api/ingest, the probes and the part-upload requests each travel on their own connection.
+    assert.equal(h.server.connections, h.server.requests.length);
   } finally { await h.close(); }
 });
 
@@ -426,13 +428,3 @@ test('UploadParts enters record-over-limit only on the server code record-too-la
   } finally { await h.close(); }
 });
 
-test('UploadParts sends a part again once when the server closed the pooled connection under it', async () => {
-  const h = await harness();
-  try {
-    h.server.limits = h.server.limits.with({ maxPartBytes: 1024n });
-    writeFileSync(join(h.roots.pi, 's.jsonl'), jsonl(piHeader('pi-reset'), ...Array.from({ length: 4 }, (_, index) => piMessage(`m${index}`, `synthetic message ${index} `.repeat(8)))));
-    h.server.resetNext = 'POST /api/ingest/uploads/{id}/parts';
-    const counters = await h.run(1);
-    assert.deepEqual([counters.uploaded, counters.uploadFailures, h.server.resetNext], [1, 0, null]);
-  } finally { await h.close(); }
-});

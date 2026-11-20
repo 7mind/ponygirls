@@ -11,6 +11,7 @@ import { RawFile } from '../../generated/typescript/chronicle/api/RawFile.js';
 import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRuntime.js';
 import { CollectorError, hash, type Format, type ParsedMetadata, type ParsedTranscript } from './domain.ts';
 import type { Config } from './config.ts';
+import { fetchOnNewConnection } from './requests.ts';
 
 export interface Ingester { send(payload: string): Promise<IngestReceipt> }
 export class UploadError extends CollectorError {
@@ -74,7 +75,7 @@ export class HttpIngester implements Ingester {
   async send(payload: string): Promise<IngestReceipt> {
     const token = tokenFromFile(this.config.tokenFile);
     try {
-      const response = await fetch(this.url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: payload, redirect: 'manual', signal: AbortSignal.timeout(this.config.uploadTimeoutMs) });
+      const response = await fetchOnNewConnection(this.url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: payload, redirect: 'manual', signal: AbortSignal.timeout(this.config.uploadTimeoutMs) });
       if (!response.ok) {
         await response.body?.cancel();
         if (response.status === 409) throw new UploadError('cas-conflict', false, true);

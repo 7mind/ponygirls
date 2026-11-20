@@ -8,12 +8,11 @@ export function requestFailure(error: unknown, timeoutMs: number): string {
   if (code === 'ECONNREFUSED') return 'connection-refused';
   return typeof code === 'string' && /^[A-Z][A-Z0-9_]{1,40}$/.test(code) ? `network:${code}` : 'network';
 }
-/** fetch, sent once more on a new connection when the pooled connection closed under the request before any answer:
- * a server closes an idle keep-alive connection just as a request leaves, and fetch never resends a POST itself. Only
- * for requests the server answers idempotently (progress reports by sequence, uploads by request id and ordinal).
- * `init` is called per attempt, so that each has its own timeout signal. */
-export async function fetchResending(url: URL, init: () => RequestInit, timeoutMs: number): Promise<{ response: Response; resent: boolean }> {
-  try { return { response: await fetch(url, init()), resent: false }; }
-  catch (error) { if (requestFailure(error, timeoutMs) !== 'connection-reset') throw error; }
-  return { response: await fetch(url, init()), resent: true };
+/** fetch on a connection of its own, closed after the answer (`Connection: close`). Every request of the collector to
+ * the server goes this way, so no idle keep-alive connection is ever pooled for reuse: the race of a server closing an
+ * idle connection just as the next request leaves on it (fetch never resends a POST) cannot occur. A dropped connection
+ * stays an ordinary failure. Costs one TCP (and TLS) handshake per request; parts are up to 8 MiB each. */
+export function fetchOnNewConnection(url: URL, init: RequestInit): Promise<Response> {
+  const headers = new Headers(init.headers); headers.set('Connection', 'close');
+  return fetch(url, { ...init, headers });
 }
