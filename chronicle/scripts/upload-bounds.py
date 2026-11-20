@@ -273,20 +273,25 @@ class Fixture:
 
 # ---------------------------------------------------------------- processes
 
-# One line per sample: epoch ms, monotonic start and end (s), status; `stop` once the stop file appeared.
+# One line per sample: epoch ms, monotonic start and end (s), status; `stop` once the stop file appeared. A writer
+# thread owns the file, so a write held up by the disk (other processes' fsyncs) never delays the next sample.
 PROBE = r'''
-import os, sys, time, urllib.request
+import os, queue, sys, threading, time, urllib.request
 url, out, period, timeout, stop = sys.argv[1], sys.argv[2], int(sys.argv[3]) / 1000, float(sys.argv[4]), sys.argv[5]
-with open(out, "a", buffering=1) as f:
-    while not os.path.exists(stop):
-        wall, t0 = time.time(), time.monotonic()
-        try:
-            with urllib.request.urlopen(url, timeout=timeout) as r: r.read(); status = r.status
-        except Exception as e: status = type(e).__name__
-        t1 = time.monotonic()
-        f.write(f"{int(wall * 1000)} {t0:.4f} {t1:.4f} {status}\n")
-        time.sleep(max(0, period - (t1 - t0)))
-    f.write("stop\n")
+lines = queue.SimpleQueue()
+def write():
+    with open(out, "a", buffering=1) as f:
+        for line in iter(lines.get, None): f.write(line)
+writer = threading.Thread(target=write); writer.start()
+while not os.path.exists(stop):
+    wall, t0 = time.time(), time.monotonic()
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r: r.read(); status = r.status
+    except Exception as e: status = type(e).__name__
+    t1 = time.monotonic()
+    lines.put(f"{int(wall * 1000)} {t0:.4f} {t1:.4f} {status}\n")
+    time.sleep(max(0, period - (t1 - t0)))
+lines.put("stop\n"); lines.put(None); writer.join()
 '''
 
 STUB = r'''
@@ -356,26 +361,31 @@ def percentile(values, q):
 
 
 def probe_samples(path):
-    """(monotonic start, monotonic end, status) of every sample, and whether the probe stopped on request."""
+    """(monotonic start, monotonic end, status, epoch ms) of every sample, and whether the probe stopped on request."""
     lines = path.read_text().splitlines() if path.exists() else []
-    return [(float(start), float(end), status) for _, start, end, status in (line.split() for line in lines if line != 'stop')], 'stop' in lines
+    return [(float(start), float(end), status, int(wall)) for wall, start, end, status in (line.split() for line in lines if line != 'stop')], 'stop' in lines
 
 
-def probe_coverage(samples, start, end):
+def probe_coverage(samples, start, end, shutdown=False):
     """The interval [start, end] (monotonic s) is monitored when every sample that starts inside it is a 200 within the
     1 s deadline (monotonic elapsed time, not the socket timeout) and no stretch longer than two probe periods passes
-    without a sample in flight or one completed within it."""
+    without a sample in flight or one completed within it. `shutdown`: the server was asked to stop at `end`, so the
+    sample in flight then is not judged (its start still counts as coverage)."""
     deadline = PROBE_TIMEOUT_S
-    measured = [(a, b, status) for a, b, status in samples if start <= a <= end]
-    failures = [(round(a - start, 3), round((b - a) * 1000, 1), status) for a, b, status in measured if status != '200' or b - a >= deadline]
+    crossing = [s for s in samples if shutdown and s[0] <= end < s[1]]
+    measured = [s for s in samples if start <= s[0] <= end and s not in crossing]
+    failures = [(round(a - start, 3), round((b - a) * 1000, 1), status) for a, b, status, _ in measured if status != '200' or b - a >= deadline]
     covered, gap = start, 0.0
-    for a, b, status in sorted(samples):
-        if b < start or a > end or status != '200' or b - a >= deadline:
+    for sample in sorted(samples):
+        a, b, status = sample[:3]
+        if b < start or a > end:
             continue
-        gap = max(gap, a - covered)
-        covered = max(covered, b)
+        if sample in crossing:
+            gap, covered = max(gap, a - covered), end
+        elif status == '200' and b - a < deadline:
+            gap, covered = max(gap, a - covered), max(covered, b)
     gap = max(gap, end - covered)
-    latencies = sorted((b - a) * 1000 for a, b, status in measured if status == '200')
+    latencies = sorted((b - a) * 1000 for a, b, status, _ in measured if status == '200')
     return dict(probes=len(measured), failures=len(failures), firstFailures=failures[:5], intervalSeconds=round(end - start, 1),
                 maxGapMs=round(gap * 1000, 1), maxMs=round(latencies[-1], 1) if latencies else None, p99Ms=round(percentile(latencies, 0.99), 1),
                 p999Ms=round(percentile(latencies, 0.999), 1), over500Ms=sum(1 for ms in latencies if ms > 500), allowedGapMs=2 * PROBE_PERIOD_MS)
@@ -1105,14 +1115,20 @@ def run_e(root):
     node, entry = packaged(os.environ['MAIN_COLLECTOR'])
     assert shutil.which('git') is not None, 'git on PATH (the collector reads repositories)'
     server_log, probe, probe_stop, collector_log = root / 'server-E.log', root / 'probe-E.txt', root / 'probe-E.stop', root / 'collector-E.log'
+    term = root / 'server-E.term'
     server_wrapper, collector_wrapper = root / 'chronicle-server', root / 'chronicle-collector'
     python = shlex.quote(sys.executable)
     server_wrapper.write_text(f"""#!/usr/bin/env bash
 if [[ ${{1-}} == serve || ${{1-}} == serve-standby ]]; then
   port=$({python} -c 'import json, sys; print(json.load(open(sys.argv[1]))["listenPort"])' "$2")
   setsid {python} -c {shlex.quote(PROBE)} "http://127.0.0.1:$port/api/versions" {shlex.quote(str(probe))} {PROBE_PERIOD_MS} {PROBE_TIMEOUT_S} {shlex.quote(str(probe_stop))} &
-  {shlex.quote(str(SERVER))} -XX:MaxHeapSize=768m -XX:+PrintGC "$@" 2>&1 | tee -a {shlex.quote(str(server_log))}
-  exit "${{PIPESTATUS[0]}}"
+  {shlex.quote(str(SERVER))} -XX:MaxHeapSize=768m -XX:+PrintGC "$@" > >(tee -a {shlex.quote(str(server_log))}) 2>&1 &
+  server=$!
+  # Gate O stops the server with SIGTERM to the group: the stop request's time ends the server's measured interval.
+  trap 'LC_ALL=C; printf "%s\\n" "$EPOCHREALTIME" > {shlex.quote(str(term))}; kill -TERM "$server" 2>/dev/null' TERM
+  wait "$server"; status=$?
+  if [[ -e {shlex.quote(str(term))} ]]; then wait "$server"; status=$?; fi
+  exit "$status"
 fi
 exec {shlex.quote(str(SERVER))} "$@"
 """)
@@ -1128,27 +1144,26 @@ exit "${{PIPESTATUS[0]}}"
     print(result.stdout, result.stderr[-4000:], sep='\n', flush=True)
     passed = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
     check('E: gate O passes against the S2 server', result.returncode == 0 and passed and passed[-1]['status'] == 'passed', result.returncode)
-    # The probe runs in its own session, so gate O's stop of the server does not end it: its samples after the server
-    # stopped show it outlived the server. Gate O's server interval is from the probe's first 200 to its last one.
+    # The probe runs in its own session, so gate O's stop of the server does not end it. The server's measured interval
+    # runs from the probe's first 200 to gate O's stop request (SIGTERM, recorded by the wrapper in wall-clock time and
+    # placed on the probe's monotonic clock through the last sample before it); the probe must outlive it.
     time.sleep(5 * PROBE_PERIOD_MS / 1000)
-    requested = time.monotonic()
     probe_stop.write_text('')
-    deadline = requested + PROBE_TIMEOUT_S + 5
+    deadline = time.monotonic() + PROBE_TIMEOUT_S + 5
     while not probe_samples(probe)[1] and time.monotonic() < deadline:
         time.sleep(0.1)
     samples, stopped = probe_samples(probe)
-    # Still sampling when asked to stop: its last sample before the request ended within two periods of it.
-    alive = any(a <= requested for a, _, _ in samples) and requested - max(b for a, b, _ in samples if a <= requested) <= 2 * PROBE_PERIOD_MS / 1000
-    answered = [i for i, (_, _, status) in enumerate(samples) if status == '200']
-    if answered:
-        first, last = samples[answered[0]], samples[answered[-1]]
-        probe_summary = probe_coverage(samples, first[0], last[1])
-        outside = samples[:answered[0]] + samples[answered[-1] + 1:]
-        probe_summary.update(beforeReadiness=answered[0], afterStop=len(samples) - answered[-1] - 1,
-                             slowOutside=sum(1 for a, b, _ in outside if b - a >= PROBE_TIMEOUT_S),
-                             aliveAtStop=alive and len(samples) > answered[-1] + 1, stoppedOnRequest=stopped)
+    answered = [s for s in samples if s[2] == '200']
+    stop_wall = float(term.read_text().split()[0]) if term.exists() else None
+    before = [s for s in samples if stop_wall is not None and s[3] / 1000 <= stop_wall]
+    if answered and before:
+        stop = before[-1][0] + stop_wall - before[-1][3] / 1000
+        probe_summary = probe_coverage(samples, answered[0][0], stop, shutdown=True)
+        probe_summary.update(beforeReadiness=samples.index(answered[0]), afterStop=sum(1 for s in samples if s[0] > stop),
+                             aliveAtStop=any(s[0] > stop for s in samples), stoppedOnRequest=stopped)
     else:
-        probe_summary = dict(probes=0, failures=0, maxGapMs=None, allowedGapMs=2 * PROBE_PERIOD_MS, aliveAtStop=False, stoppedOnRequest=stopped)
+        probe_summary = dict(probes=len(answered), failures=0, maxGapMs=None, allowedGapMs=2 * PROBE_PERIOD_MS, aliveAtStop=False,
+                             stoppedOnRequest=stopped, stopRequestRecorded=stop_wall is not None)
     log = server_log.read_text(errors='replace')
     gcs = [(kind, float(before), float(after), float(pause)) for _, kind, before, after, pause in GC.findall(log)]
     server = dict(label='E', binary=str(SERVER), heap='768m', mode='serve-standby (gate O)', outOfMemory=len(re.findall(r'OutOfMemoryError|Java heap space', log)),
@@ -1164,7 +1179,7 @@ exit "${{PIPESTATUS[0]}}"
     collectors.append(collector)
     check(f'E: while the server ran every /api/versions probe answered 200 in under {PROBE_TIMEOUT_S:.0f} s ({probe_summary["probes"]} probes, max '
           f'{probe_summary.get("maxMs")} ms), none was missing for more than {probe_summary["allowedGapMs"]} ms (longest {probe_summary["maxGapMs"]} ms), '
-          f'and the probe outlived the server', probe_ok(probe_summary) and probe_summary['slowOutside'] == 0, probe_summary)
+          f'and the probe outlived the server', probe_summary['maxGapMs'] is not None and probe_ok(probe_summary), probe_summary)
     check('E: no out-of-memory on either side', server['outOfMemory'] == 0 and not collector['outOfMemory'], (server, collector))
     return dict(gateO=passed[-1], wallSeconds=round(time.monotonic() - started, 1))
 
