@@ -2,8 +2,9 @@
 """S2 acceptance runs A, B and D of docs/drafts/20261120-1201-append-only-ingest-spec.md §11.1; started by
 test-upload-bounds.sh, whose header has the invocation. Synthetic Pi sessions only, generated here; the owned database
 of the with-service-postgres wrapper only; every process it starts is stopped on exit."""
-import base64, datetime, hashlib, json, os, random, re, resource, secrets, shlex, shutil, signal, socket, subprocess, sys, tempfile, time
-import urllib.error, urllib.request, uuid
+import base64, datetime, hashlib, http.client, json, os, random, re, resource, secrets, shlex, shutil, signal, socket, subprocess, sys, tempfile
+import threading, time, urllib.error, urllib.parse, urllib.request, uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 KiB, MiB, GiB = 1 << 10, 1 << 20, 1 << 30
@@ -56,13 +57,18 @@ RARE_APPENDED = 'jinx wizzy'
 NO_HIT = 'zyzzyva kumquat'
 COMMON_EVERY, COMMON_AT = 101, 7
 
-checks, phases, servers, collectors = [], [], [], []
+checks, phases, servers, collectors, deferred = [], [], [], [], []
 running = []  # the server process of the current phase, for its CPU time
 
 
-def check(label, condition, detail=''):
+def check(label, condition, detail='', defer=False):
+    """`defer`: a failure is reported now and fails the run at its end, after the remaining phases ran."""
     if not condition:
-        raise AssertionError(f'{label}: {str(detail)[:4000]}')
+        if not defer:
+            raise AssertionError(f'{label}: {str(detail)[:4000]}')
+        deferred.append(f'{label}: {str(detail)[:4000]}')
+        print('not ok -', label, str(detail)[:4000], flush=True)
+        return
     checks.append(label)
     print('ok -', label, flush=True)
 
@@ -416,12 +422,76 @@ class Server:
 NODE_GC = re.compile(r'ms: (Scavenge|Mark-Compact|Mark-Sweep|Minor Mark-Sweep)[^\d]*?([\d.]+) \(([\d.]+)\) -> ([\d.]+) \(([\d.]+)\) MB')
 
 
+class Proxy:
+    """The collector's endpoint: forwards every request to the server and logs method, path (ids elided), status,
+    milliseconds and body bytes, and the answer of every request that is not a part (progress reports, opens, commits)."""
+    def __init__(self, root, target):
+        target = urllib.parse.urlsplit(target)
+        self.log = open(root / 'proxy.log', 'a', buffering=1)
+        log = self.log
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+
+            def log_message(self, *args):
+                pass
+
+            def forward(self):
+                started = time.time()
+                length = int(self.headers.get('Content-Length') or 0)
+                body = self.rfile.read(length) if length else None
+                upstream = http.client.HTTPConnection(target.hostname, target.port, timeout=900)
+                try:
+                    upstream.request(self.command, self.path, body=body, headers={k: v for k, v in self.headers.items() if k.lower() not in ('host', 'connection', 'keep-alive')})
+                    response = upstream.getresponse()
+                    data = response.read()
+                finally:
+                    upstream.close()
+                path = re.sub(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', ':id', self.path)
+                answer = '' if path.endswith('/parts') and response.status < 300 else data[:300].decode(errors='replace')
+                log.write(f'{int(started * 1000)} {(time.time() - started) * 1000:.1f} {self.command} {path} {response.status} {length} {len(data)} {answer}\n')
+                try:
+                    self.send_response(response.status)
+                    for name, value in response.getheaders():
+                        if name.lower() not in ('transfer-encoding', 'connection', 'content-length'):
+                            self.send_header(name, value)
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except OSError as error:
+                    log.write(f'{int(time.time() * 1000)} client-gone {self.command} {path} {type(error).__name__}\n')
+            do_GET = do_POST = forward
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.origin = f'http://127.0.0.1:{self.server.server_address[1]}'
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def lines(self):
+        return Path(self.log.name).read_text().splitlines()
+
+    def summary(self, since=0):
+        lines = self.lines()[since:]
+        rows = [line.split(' ', 7) for line in lines if ' client-gone ' not in line]
+        parts = sorted(float(r[1]) for r in rows if r[3].endswith('/parts'))
+        unanswered = sum(1 for line in lines if ' client-gone ' in line)
+        failed = [dict(ms=float(r[1]), request=f'{r[2]} {r[3]}', status=int(r[4]), answer=r[7] if len(r) > 7 else '') for r in rows if int(r[4]) >= 300]
+        reports = [r for r in rows if r[3] == '/api/collector/progress']
+        return dict(requests=len(rows), parts=len(parts), partMsP50=percentile(parts, 0.5), partMsP99=percentile(parts, 0.99), partMsMax=parts[-1] if parts else None,
+                    over15s=sum(1 for r in rows if float(r[1]) > 15000), clientGone=unanswered, failed=failed[:20], progressReports=len(reports),
+                    progressNotAccepted=[r[7] for r in reports if len(r) > 7 and '"accepted":true' not in r[7]][:10])
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
 class Collector:
-    """The tree's collector, `--once`, under --max-old-space-size=256 with --trace-gc."""
+    """The tree's collector, `--once`, under --max-old-space-size=256 with --trace-gc, through the logging proxy."""
     def __init__(self, root, origin, token_file, max_file_bytes, max_messages):
         self.root, self.home = root, root / 'home'
         self.config = root / 'collector.json'
-        self.config.write_text(json.dumps(dict(enabled=True, endpoint=origin, tokenFile=str(token_file), stateDir=str(root / 'collector-state'),
+        self.proxy = Proxy(root, origin)
+        self.config.write_text(json.dumps(dict(enabled=True, endpoint=self.proxy.origin, tokenFile=str(token_file), stateDir=str(root / 'collector-state'),
                                                homeDir=str(self.home), discoverYolo=False, quietMs=0, uploadProtocol='parts',
                                                maxFileBytes=max_file_bytes, maxScanBytes=max_file_bytes, maxMessages=max_messages,
                                                maxRecordBytes=RECORD_BYTES)))
@@ -437,7 +507,7 @@ class Collector:
     def once(self, label):
         self.runs += 1
         out, err = self.root / f'collector-{self.runs}.out', self.root / f'collector-{self.runs}.err'
-        started, before = time.monotonic(), resource.getrusage(resource.RUSAGE_CHILDREN)
+        started, before, mark = time.monotonic(), resource.getrusage(resource.RUSAGE_CHILDREN), len(self.proxy.lines())
         with out.open('x') as stdout, err.open('x') as stderr:
             code = subprocess.run([NODE, f'--max-old-space-size={COLLECTOR_HEAP_MB}', '--trace-gc', str(COLLECTOR), '--config', str(self.config), '--once'],
                                   env=self.env, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, timeout=7200).returncode
@@ -450,7 +520,7 @@ class Collector:
                        peakLiveHeapMB=max((after for kind, _, after in gcs if kind == 'Mark-Compact'), default=None),
                        peakHeapBeforeCollectionMB=max((before for _, before, _ in gcs), default=None),
                        fullCollections=sum(1 for kind, _, _ in gcs if kind == 'Mark-Compact'),
-                       outOfMemory='heap out of memory' in text + err.read_text())
+                       outOfMemory='heap out of memory' in text + err.read_text(), requests=self.proxy.summary(mark))
         collectors.append(summary)
         note(json.dumps(summary))
         (self.root / f'collector-{self.runs}.result').write_text('\n'.join(line for line in text.splitlines() if not NODE_GC.search(line)) + '\n')
@@ -459,8 +529,10 @@ class Collector:
             note(f'{label}: collector result {results[-1] if results else None}')
             note(f'{label}: collector queue ' + json.dumps(status.get('queue'))[:4000])
             note(f'{label}: collector diagnostics ' + json.dumps(status.get('diagnostics'))[:4000])
-        check(f'{label}: the collector exits normally, no out-of-memory, within {COLLECTOR_HEAP_MB} MB of heap',
-              code == 0 and not summary['outOfMemory'] and results, (code, err.read_text()[-2000:], results[-1] if results else text[-2000:]))
+        check(f'{label}: the collector prints its result, no out-of-memory, within {COLLECTOR_HEAP_MB} MB of heap',
+              not summary['outOfMemory'] and results, (code, err.read_text()[-2000:], text[-2000:]))
+        check(f'{label}: --once exits 0 (no upload failure, nothing left, no failed progress report)', code == 0,
+              dict(exit=code, requests=summary['requests']), defer=True)
         return json.loads(results[-1])
 
     def status(self):
@@ -1030,13 +1102,16 @@ def main():
         finally:
             if EVIDENCE is not None:
                 EVIDENCE.mkdir(parents=True, exist_ok=True)
-                for name in [*root.glob('server-*.log'), *root.glob('probe-*.txt'), *root.glob('collector-*.err'), *root.glob('collector-*.result')]:
+                for name in [*root.glob('server-*.log'), *root.glob('probe-*.txt'), *root.glob('collector-*.err'), *root.glob('collector-*.result'), *root.glob('proxy.log')]:
                     shutil.copy(name, EVIDENCE / f'{run}-{name.name}')
             fixtures = du(root)
-        summary = dict(run=run, status='passed', scale=SCALE, wallSeconds=round(time.monotonic() - started, 1), walBytes=wal_since(lsn), disk=disk(),
+        for line in deferred:
+            print('not ok -', line, flush=True)
+        summary = dict(run=run, status='failed' if deferred else 'passed', failed=deferred, scale=SCALE, wallSeconds=round(time.monotonic() - started, 1), walBytes=wal_since(lsn), disk=disk(),
                        workDirBytesAtEnd=fixtures, checks=len(checks), phases=phases, servers=servers, collectors=collectors, outcome=outcome,
                        server=str(SERVER), serverSha256=hashlib.sha256(SERVER.read_bytes()).hexdigest(), collector=str(COLLECTOR), cli=str(CLI))
     print(json.dumps(summary, default=str), flush=True)
+    sys.exit(1 if deferred else 0)
 
 
 main()
