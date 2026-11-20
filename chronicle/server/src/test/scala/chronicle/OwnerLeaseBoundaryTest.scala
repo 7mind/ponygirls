@@ -73,6 +73,37 @@ final class OwnerLeaseBoundaryTest extends munit.FunSuite {
     }
   }
   private def bounded(c: Config,timeout: FiniteDuration): Config = c.copy(databaseLimits=c.databaseLimits.copy(statementTimeout=timeout,lockTimeout=timeout))
+  test("Effectual GoodCommunication regression: a claim streaming its snapshot does not hold up the projection of an ingest of a source whose older job's lease ended") {
+    OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
+      val original=Fixtures.snapshot(); a.ingest("a",original)
+      val older=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
+      val head=a.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1)); val other=a.ingest("a",Fixtures.snapshot())
+      db.transaction { x =>
+        Sql.exec(x,"UPDATE ch_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=?",older.jobId)
+        // A deferred large head job: a claim without the large-job permit passes this source and takes the next one.
+        Sql.exec(x,"UPDATE ch_jobs SET total_windows=? WHERE id=?",LargeJobs.windows+1,head.jobId)
+        // Parks a claim at its job update, just before it streams the claimed snapshot, holding the locks it streams under.
+        Sql.exec(x,"CREATE FUNCTION ch_test_park_claim() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock_shared(71393722); RETURN NEW; END $$")
+        Sql.exec(x,"CREATE TRIGGER ch_test_park_claim BEFORE UPDATE ON ch_jobs FOR EACH ROW WHEN (OLD.state='Queued' AND NEW.state='Running') EXECUTE FUNCTION ch_test_park_claim()")
+      }
+      val limited=bounded(c,1.second); val ingestDb=new Database(limited,catalog)
+      val pool=Executors.newSingleThreadExecutor()
+      try {
+        val pending=db.transaction { held =>
+          Sql.exec(held,"SELECT pg_advisory_xact_lock(71393722)")
+          val pending=pool.submit(new Callable[Option[Claim]] { def call(): Option[Claim] = a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300,LargeJobs.Skipped) })
+          awaitBlocked(db,"UPDATE ch_jobs SET state='Running'")
+          assertEquals(new PostgresArchive(ingestDb,limited).ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=2)).revision,3)
+          pending
+        }
+        assertEquals(pending.get(5,TimeUnit.SECONDS).map(_.jobId),Some(other.jobId))
+        assertEquals(db.transaction(x => Sql.one(x,"SELECT state,error FROM ch_jobs WHERE id=?",older.jobId)(r => (r.getString(1),r.getString(2)))),Some(("Failed",Jobs.supersededRevision)))
+      } finally {
+        pool.shutdownNow(); assert(pool.awaitTermination(6,TimeUnit.SECONDS)); ingestDb.close()
+        db.transaction(x => Sql.exec(x,"DROP FUNCTION ch_test_park_claim() CASCADE"))
+      }
+    }
+  }
   private def messages(original: IngestRequest,count: Int): IngestRequest = {
     val values=(0 until count).map(i => chronicle.api.Message(s"m$i",None,"user",s"synthetic message $i",None,i)).toList
     val raw=values.map(m => io.circe.Json.obj("id"->Json.fromString(m.id),"text"->Json.fromString(m.text)).noSpaces+"\n").mkString

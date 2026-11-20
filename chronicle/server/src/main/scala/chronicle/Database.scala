@@ -238,9 +238,30 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     Check(selected>0,"invalid","content revision must be positive")
     RawResult(content(c,id,selected).files,selected)
   }
-  def claim(profiles: Set[String],scope: ClaimScope,leaseSeconds: Int,large: LargeJobs): Option[Claim] = db.transaction { c =>
+  def claim(profiles: Set[String],scope: ClaimScope,leaseSeconds: Int,large: LargeJobs): Option[Claim] = {
     Check(profiles.nonEmpty && leaseSeconds>=0,"invalid","invalid claim profiles or lease")
     Check(profiles.subsetOf(knownProfiles),"unavailable","index policy is not executable; explicit rebuild required")
+    supersedeEndedLeases(profiles,scope)
+    claimHead(profiles,scope,leaseSeconds,large)
+  }
+  /** Running jobs of an older revision whose lease ended cannot renew and are never claimed again: they end superseded and
+    * stop blocking their head jobs. A short transaction of its own that locks the sources FOR NO KEY UPDATE, compatible with
+    * the key-share locks of an ingest's projection: inside the claim, FOR UPDATE locks on these sources would hold up their
+    * ingests while the claimed snapshot of another source streams. */
+  private def supersedeEndedLeases(profiles: Set[String],scope: ClaimScope): Unit = db.transaction { c =>
+    val (scoped,owner)=scope match {
+      case ClaimScope.AllOwners => ("",List.empty[Sql.Param])
+      case ClaimScope.Owner(value) => (" AND t.owner=?",List[Sql.Param](value))
+    }
+    val ended="j.revision<s.revision AND j.state='Running' AND (j.lease_until>clock_timestamp()) IS NOT TRUE"
+    val sources=Sql.rows(c,s"""SELECT s.id,t.profile FROM ch_sources s JOIN ch_owner_targets t ON t.owner=s.owner JOIN ch_users u ON u.id=s.owner AND u.enabled
+      WHERE t.profile IN(${profiles.toList.map(_ => "?").mkString(",")})$scoped AND NOT s.tombstone AND EXISTS(SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.profile=t.profile AND $ended)
+      ORDER BY s.id FOR NO KEY UPDATE OF s SKIP LOCKED""",(profiles.toList.sorted++owner)*)(r => (r.getObject(1,classOf[UUID]),r.getString(2)))
+    sources.foreach { (id,profile) =>
+      Sql.exec(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} FROM ch_sources s WHERE s.id=j.session_id AND j.session_id=? AND j.profile=? AND $ended",id,profile)
+    }
+  }
+  private def claimHead(profiles: Set[String],scope: ClaimScope,leaseSeconds: Int,large: LargeJobs): Option[Claim] = db.transaction { c =>
     profiles.foreach(IndexProfiles.registered(c,_))
     val scoped=scope match {
       case ClaimScope.AllOwners => ("",List.empty[Sql.Param])
@@ -250,17 +271,14 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     val owners=Sql.rows(c,s"SELECT t.owner FROM ch_owner_targets t JOIN ch_users u ON u.id=t.owner AND u.enabled WHERE t.profile IN($placeholders)${scoped._1} ORDER BY t.owner",(profiles.toList.sorted++scoped._2)*)(_.getString(1))
     owners.iterator.map { owner =>
       OwnerTargets.eligible(c,owner).filter(target => profiles.contains(target.profile)).flatMap { target =>
-        // Running jobs whose lease ended: one of an older revision cannot renew and is never claimed again, so it ends
-        // superseded; the head job's last attempt ends lease-exhausted.
-        val supersededLease="j.revision<s.revision AND (j.lease_until>clock_timestamp()) IS NOT TRUE"
-        val ended=Sql.rows(c,s"""SELECT s.id FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
-          SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.profile=? AND j.state='Running' AND (($supersededLease) OR (j.revision=s.revision AND j.lease_until<clock_timestamp() AND j.attempts>=${Jobs.attemptLimit})))
+        val exhausted=Sql.rows(c,s"""SELECT s.id FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
+          SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.state='Running' AND j.lease_until<clock_timestamp() AND j.attempts>=${Jobs.attemptLimit})
           ORDER BY s.id FOR UPDATE OF s SKIP LOCKED""",owner,target.profile)(_.getObject(1,classOf[UUID]))
-        ended.foreach { id =>
-          Sql.exec(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} FROM ch_sources s WHERE s.id=j.session_id AND j.session_id=? AND j.profile=? AND j.state='Running' AND $supersededLease",id,target.profile)
+        exhausted.foreach { id =>
           Sql.exec(c,s"UPDATE ch_jobs SET state='Failed',error='lease-exhausted',failure_stage=NULL,lease_until=NULL,fence=fence+1 WHERE session_id=? AND profile=? AND state='Running' AND lease_until<clock_timestamp() AND attempts>=${Jobs.attemptLimit}",id,target.profile)
         }
-        // One job per source and profile at a time: the head job waits while a job of an older revision is Running.
+        // One job per source and profile at a time: the head job waits while a job of an older revision is Running
+        // (supersedeEndedLeases ended those whose lease ended).
         val source=Sql.one(c,s"""SELECT s.id,s.revision FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
           SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.attempts<${Jobs.attemptLimit} AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp())))
           AND NOT EXISTS(SELECT 1 FROM ch_jobs o WHERE o.session_id=s.id AND o.revision<s.revision AND o.profile=? AND o.state='Running')
