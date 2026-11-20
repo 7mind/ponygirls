@@ -3,7 +3,8 @@ package chronicle
 import java.sql.SQLException
 import java.util.UUID
 
-/** Migration 024 on PostgreSQL: the revision layout check and the immutability of committed epoch rows. */
+/** Migration 024 on PostgreSQL: the revision layout check, the immutability of committed epoch rows and S1's candidate index
+  * of the HEAD switch. */
 final class EpochSchemaTest extends munit.FunSuite {
   private def database(f: (Config,Database) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
@@ -70,6 +71,22 @@ final class EpochSchemaTest extends munit.FunSuite {
     assertEquals(changed(db,"DELETE FROM ch_epochs WHERE id=?",epoch),1)
     db.transaction { c =>
       assertEquals(Sql.one(c,"SELECT (SELECT count(*) FROM ch_epoch_messages)+(SELECT count(*) FROM ch_epoch_raw)+(SELECT count(*) FROM ch_epoch_records)+(SELECT count(*) FROM ch_epoch_fragments)")(_.getLong(1)),Some(0L))
+    }
+  }}
+
+  test("a head switch reads the session's current candidates through their partial index, not the session's history") { database { (_,db) =>
+    val session=UUID.randomUUID()
+    // 50 superseded revisions of 100 fragments each, then the head (51) and the next revision (52), both candidates.
+    db.transaction { c =>
+      Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key,revision) VALUES(?,'a','head-candidates',51)",session)
+      Sql.exec(c,"INSERT INTO ch_revisions(session_id,revision,snapshot) SELECT ?,r,'{}' FROM generate_series(1,52) r",session)
+      Sql.exec(c,"INSERT INTO ch_archive_fragments(session_id,revision,ordinal,value,head_candidate) SELECT ?,r,o,'fragment',r>50 FROM generate_series(1,52) r,generate_series(0,99) o",session)
+    }
+    db.transaction(c => Sql.exec(c,"ANALYZE ch_archive_fragments"))
+    db.transaction { c =>
+      Sql.exec(c,"UPDATE ch_sources SET revision=52 WHERE id=?",session)
+      // One scan of the index by the trigger's obsolete-candidate query, reading the 200 candidates, not the 5,200 fragments.
+      assertEquals(Sql.one(c,"SELECT pg_stat_get_xact_numscans('ch_archive_fragments_session_candidates'::regclass),pg_stat_get_xact_tuples_returned('ch_archive_fragments_session_candidates'::regclass)")(r => (r.getLong(1),r.getLong(2))),Some((1L,200L)))
     }
   }}
 

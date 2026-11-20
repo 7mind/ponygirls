@@ -348,6 +348,8 @@ ALTER TABLE ch_revisions DROP COLUMN epoch, DROP COLUMN envelope, DROP COLUMN me
   DROP COLUMN message_chain, DROP COLUMN message_time;
 ALTER TABLE ch_revisions ALTER COLUMN snapshot SET NOT NULL;
 DROP TABLE ch_epoch_fragments, ch_epoch_records, ch_epoch_raw, ch_epoch_messages, ch_epochs;
+-- S1's index of the HEAD switch (migration 017 creates it at every start of S1; a start cut before 017 leaves none).
+DROP INDEX IF EXISTS ch_archive_fragments_session_candidates;
 DROP FUNCTION ch_immutable_epoch(), ch_immutable_epoch_rows(), ch_epoch_rows_guard();
 -- The body of migration 013.
 CREATE OR REPLACE FUNCTION ch_immutable_revision() RETURNS trigger LANGUAGE plpgsql AS $$

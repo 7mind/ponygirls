@@ -81,9 +81,9 @@ final class EpochDownScriptTest extends munit.FunSuite {
       (SELECT string_agg(to_jsonb(x)::text,',' ORDER BY id) FROM ch_jobs x),
       (SELECT string_agg(version::text,',' ORDER BY version) FROM ch_schema_migrations),
       (SELECT string_agg(attname,',' ORDER BY attnum) FROM pg_attribute WHERE attrelid='ch_revisions'::regclass AND attnum>0 AND NOT attisdropped)))""")(_.getString(1)).get)
-  /** The pre-024 schema: no epoch table or column, snapshots required, migration 013's immutability body. */
+  /** The pre-024 schema: no epoch table, column or S1 candidate index, snapshots required, migration 013's immutability body. */
   private def downgraded(database: String): Unit = connected(database) { c =>
-    assertEquals(Sql.one(c,"SELECT to_regclass('ch_epochs') IS NULL AND to_regclass('ch_epoch_messages') IS NULL")(_.getBoolean(1)),Some(true))
+    assertEquals(Sql.one(c,"SELECT to_regclass('ch_epochs') IS NULL AND to_regclass('ch_epoch_messages') IS NULL AND to_regclass('ch_archive_fragments_session_candidates') IS NULL")(_.getBoolean(1)),Some(true))
     assertEquals(Sql.rows(c,"SELECT attname||':'||attnotnull FROM pg_attribute WHERE attrelid='ch_revisions'::regclass AND attnum>0 AND NOT attisdropped ORDER BY attnum")(_.getString(1)),
       List("session_id:true","revision:true","snapshot:true","binding_id:true"))
     assertEquals(Sql.one(c,"SELECT count(*) FROM ch_schema_migrations WHERE version=24")(_.getInt(1)),Some(0))
