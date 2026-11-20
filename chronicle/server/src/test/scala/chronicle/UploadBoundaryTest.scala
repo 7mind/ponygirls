@@ -180,6 +180,26 @@ final class UploadBoundaryTest extends munit.FunSuite {
     } finally { pool.shutdownNow(); assert(pool.awaitTermination(10,TimeUnit.SECONDS)) }
   }}
 
+  test("written messages are read back through the key's range of an epoch the statistics do not know, not through the whole epoch") { database { (_,db,_) =>
+    // Statistics of 200 epochs whose rows sit where the next rows of a large epoch they do not know will be written.
+    val large=UUID.randomUUID()
+    try {
+      db.transaction { c =>
+        Sql.exec(c,"INSERT INTO ch_epochs(id,session_id,raw_path) SELECT md5('e'||i)::uuid,md5('s'||i)::uuid,'small.jsonl' FROM generate_series(1,200) i")
+        Sql.exec(c,"INSERT INTO ch_epoch_messages(epoch,position,message_id,value) SELECT md5('e'||i)::uuid,30000+p,'m'||p,jsonb_build_object('text',repeat('s',1000)) FROM generate_series(1,200) i,generate_series(0,9) p")
+        Sql.exec(c,"ANALYZE ch_epoch_messages")
+        Sql.exec(c,"INSERT INTO ch_epochs(id,session_id,raw_path) VALUES(?,?,'large.jsonl')",large,UUID.randomUUID())
+        Sql.exec(c,"INSERT INTO ch_epoch_messages(epoch,position,message_id,value) SELECT ?,p,'large '||p,jsonb_build_object('text',repeat('z',1000)) FROM generate_series(0,29999) p",large)
+      }
+      // The writer of every S1 append and every part; in its transaction, what each index of the messages returned.
+      val read=db.transaction { c =>
+        EpochWriter.append(c,large,30000,List.tabulate(100)(i => Message(s"next $i",None,"user",s"next text $i",None,0)),"",0,0L,0,ResumableSha256())
+        Sql.rows(c,"SELECT i,pg_stat_get_xact_tuples_returned(i::regclass) FROM unnest(ARRAY['ch_epoch_messages_pkey','ch_epoch_messages_epoch_message_id_key']) i ORDER BY i")(r => r.getString(1) -> r.getLong(2))
+      }
+      assertEquals(read,List("ch_epoch_messages_epoch_message_id_key"->0L,"ch_epoch_messages_pkey"->100L))
+    } finally db.transaction { c => Sql.exec(c,"TRUNCATE ch_epochs CASCADE"); Sql.exec(c,"ANALYZE ch_epoch_messages") }
+  }}
+
   test("retention drains part receipts and pending parents in statements of at most rowsPerStatement rows before it deletes the attempt; committed attempts keep theirs") { database { (config,db,archive) =>
     val uploads=new Uploads(db,config,UploadPolicy.production)
     val head=header(3)++pi("u1","s","user","question",1)

@@ -22,6 +22,14 @@ private[chronicle] object RevisionContent {
   final case class Epoch(id: UUID,revision: Int,epoch: UUID,messageCount: Int,rawBytes: Long) extends RevisionContent {
     def messages: ReadSources.Query = ReadSources.Query("(SELECT position,message_id,value FROM ch_epoch_messages WHERE epoch=? AND position<?)",List(epoch,messageCount))
   }
+  /** For the rest of the transaction, epoch rows read in position order come through the primary key's range: the
+    * planner expects an epoch it has no statistics for (one written after the last ANALYZE, or outside its most common
+    * values) to hold a few rows, and otherwise reads the whole epoch through the (epoch,message_id) key or a bitmap scan
+    * and sorts it, on disk for a large session (U4 rehearsal). Without sorts the key's range is the only ordered path. */
+  def keyOrdered(c: Connection): Unit = {
+    Sql.exec(c,"SET LOCAL enable_sort = off")
+    Sql.exec(c,"SET LOCAL enable_incremental_sort = off")
+  }
   def resolve(c: Connection,id: UUID,revision: Int): Option[RevisionContent] =
     Sql.one(c,"SELECT epoch,message_count,raw_bytes FROM ch_revisions WHERE session_id=? AND revision=?",id,revision) { r =>
       Option(r.getObject("epoch",classOf[UUID])).fold[RevisionContent](Legacy(id,revision))(epoch => Epoch(id,revision,epoch,r.getInt("message_count"),r.getLong("raw_bytes")))

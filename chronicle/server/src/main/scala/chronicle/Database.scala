@@ -271,14 +271,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     val stored=content.messages
     ReadSources.Query(s"SELECT position,value FROM ${stored.sql} m WHERE position>=? ORDER BY position LIMIT ?",stored.args++List(offset,limit))
   }
-  /** For the rest of the transaction, epoch rows read in position order come through the primary key's range: the
-    * planner expects an epoch it has no statistics for (one written after the last ANALYZE, or outside its most common
-    * values) to hold a few rows, and otherwise reads the whole epoch through the (epoch,message_id) key or a bitmap scan
-    * and sorts it, on disk for a large session (U4 rehearsal). Without sorts the key's range is the only ordered path. */
-  private def keyOrdered(c: Connection,content: RevisionContent): Unit = if(content.isInstanceOf[RevisionContent.Epoch]) {
-    Sql.exec(c,"SET LOCAL enable_sort = off")
-    Sql.exec(c,"SET LOCAL enable_incremental_sort = off")
-  }
+  private def keyOrdered(c: Connection,content: RevisionContent): Unit = if(content.isInstanceOf[RevisionContent.Epoch]) RevisionContent.keyOrdered(c)
   def locateMessage(reader: String,id: UUID,selector: ContentView,messageId: String): MessageLocation = reading { c =>
     Check.text(messageId,256)
     val (view,content)=selectContent(c,reader,id,Some(selector),ReadMaterialization.unrestricted)

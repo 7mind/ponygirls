@@ -163,6 +163,9 @@ object EpochWriter {
       }
       keys.flush()
     }
+    // The written messages are read back through the key's range, not by reading the whole epoch (each S1 append and
+    // each part of an upload into a large epoch would otherwise read all of it).
+    RevisionContent.keyOrdered(c)
     Using.resource(new Batch(c,"INSERT INTO ch_epoch_fragments(epoch,position,part,value) VALUES(?,?,?,?)")) { fragments =>
       Using.resource(c.prepareStatement("SELECT position,lower(value->>'text' COLLATE pg_unicode_fast) FROM ch_epoch_messages WHERE epoch=? AND position>=? AND position<? ORDER BY position")) { statement =>
         statement.setObject(1,epoch); statement.setInt(2,firstPosition); statement.setInt(3,firstPosition+messages.size); statement.setFetchSize(messageFetchSize)
