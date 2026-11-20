@@ -223,8 +223,12 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
   // Visits of this list: a new one starts each time it stops being the view on screen.
   const visit = useRef(0);
   useEffect(() => { if (!active) visit.current++; }, [active]);
-  // User Searches and sorts, also those the analyzer rejects; the latest settled load or restored route.
+  // User Searches and sorts, also those the analyzer rejects: numbered synchronously for the stamps, and held in state
+  // so that a new one re-renders at once (a changed query waits for the analyzer before anything else changes).
   const action = useRef(0);
+  const [actions, setActions] = useState(0);
+  const act = () => { action.current++; setActions(action.current); };
+  // The latest settled load or restored route.
   const settledLoad = useRef(0);
   // A submitted query the server's analyzer rejected: it is not applied, the list keeps the applied query's rows.
   const [rejected, setRejected] = useState<{ query: string; diagnostics: Diagnostic[] } | null>(null);
@@ -426,7 +430,7 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
   function apply(state: BrowseState) {
     if (state.migrationError !== null) return;
     validation.current++;
-    action.current++;
+    act();
     setRejected(null);
     // Invalidate an in-flight page before the hashchange event can arrive.
     pending.current = ++sequence.current;
@@ -459,7 +463,7 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
   async function submit() {
     const state: BrowseState = { query, sort, migrationError: initial.migrationError };
     if (query === applied.current.query) { apply(state); return; }
-    action.current++;
+    act();
     const check = ++validation.current;
     // A submission the reader has navigated away from (a record, another list) is dropped.
     const from = location.hash;
@@ -511,7 +515,7 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
     : cursor === undefined ? `All ${records(items.length)} loaded` : `${items.length} loaded · more available`;
   const includeArchived = appendFilter(appliedQuery, "archived", "all");
   const confirmed = confirmation !== null && active && !busy && !changed && rejected === null && confirmation.visit === visit.current
-    && confirmation.action === action.current && confirmation.load === settledLoad.current;
+    && confirmation.action === actions && confirmation.load === settledLoad.current;
 
   return (<section ref={section} className="browse" aria-labelledby={headingId} aria-busy={busy}>
     <h1 id={headingId} className="sr-only">{PRESETS[preset].label}</h1>

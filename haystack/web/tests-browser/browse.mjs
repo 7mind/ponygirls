@@ -801,6 +801,20 @@ try {
     await put("refresh:later", { title: "Written after the toast" });
     await list(page).getByRole("button", { name: "Records changed · Show", exact: true }).waitFor();
     assert.equal(await confirmation.count(), 0, "the toast ends when a newer change is announced");
+    // A new submission ends the toast at once, while the analyzer is still checking it.
+    await searchButton(page).click();
+    await waitRows(page, PAGE);
+    await searchButton(page).click();
+    await confirmation.waitFor();
+    let releaseAnalysis;
+    const analysis = new Promise((resolve) => { releaseAnalysis = resolve; });
+    await page.route("**/api/v1/query/analyze", async (route) => { await analysis; await route.continue(); });
+    await query(page).fill("hello");
+    await searchButton(page).click();
+    await confirmation.waitFor({ state: "detached" });
+    releaseAnalysis();
+    await list(page).getByRole("button", { name: "ui:note", exact: true }).waitFor();
+    await page.unroute("**/api/v1/query/analyze");
     await done();
   });
 } finally { await cleanup(); }
