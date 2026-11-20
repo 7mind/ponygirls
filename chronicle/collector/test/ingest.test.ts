@@ -42,7 +42,7 @@ test('GoodCommunication generated JSON boundary, UTF8/file digests and runtime t
   } finally { await h.close(); }
 });
 
-for (const [status, code, retryable, conflict] of [[409, 'cas-conflict', false, true], [401, 'unauthorized', false, false], [429, 'http-429', true, false], [503, 'http-503', true, false], [302, 'protocol-rejected', false, false]] as const) {
+for (const [status, code, retryable, conflict] of [[409, 'cas-conflict', false, true], [401, 'unauthorized', false, false], [429, 'http-429', true, false], [503, 'http-503', true, false], [413, 'server-payload-too-large', false, false], [302, 'protocol-rejected', false, false]] as const) {
   test(`GoodCommunication HTTP ${status} has observable safe ${code} policy`, async () => {
     const h = await harness((_req, res) => { res.writeHead(status, { Location: 'http://example.invalid/forbidden' }); res.end('SYNTHETIC_PRIVATE_ERROR'); });
     try { await assert.rejects(new HttpIngester(h.config).send('{}'), e => e instanceof UploadError && e.code === code && e.retryable === retryable && e.conflict === conflict && !e.message.includes('PRIVATE')); }

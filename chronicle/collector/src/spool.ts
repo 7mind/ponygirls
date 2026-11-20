@@ -4,7 +4,7 @@ import { chmodSync, closeSync, constants, mkdirSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { CollectorError, hash, type CollectorReport, type Diagnostic } from './domain.ts';
-import { rejectSymlinks } from './discovery.ts';
+import { rejectSymlinks, type SourceStat } from './discovery.ts';
 import { decodeOrigin, type CollectionOrigin } from './admission.ts';
 import { object } from './domain.ts';
 
@@ -19,10 +19,17 @@ interface BoundOrigin { requestId: string; payloadDigest: string; sourceKey: str
 export interface Head { revision: number; digest: string | null; tombstone: boolean }
 export interface Dropped { requestId: string; sourceKey: string; reason: string }
 export interface ReportingState { sequence: string; acceptedSequence: string | null; acceptedAt: number | null; error: string | null }
+/** The stat of a file when it was last read and the settled content it had: `digest` at source `revision` (acknowledged or queued). */
+export interface SourceRead { fileId: string; stat: SourceStat; sourceKey: string; digest: string; revision: number; policyDigest: string; controlsDigest: string }
 export interface Spool {
   readonly namespace: string;
   head(sourceKey: string): Head;
   observe(pathId: string, signature: string, now: number): number;
+  sourceRead(fileId: string): SourceRead | undefined;
+  /** Files deferred by the scan budget and when they were first deferred. */
+  deferredScans(): Map<string, number>;
+  /** After a complete scan: keeps read records of discovered files only, adds new ones and replaces the deferred files. */
+  saveScan(discovered: ReadonlySet<string>, reads: SourceRead[], deferred: ReadonlyMap<string, number>): void;
   controls(): Controls; setPaused(paused: boolean): void; exclude(path: string): void; unexclude(path: string): void;
   pendingEvidence(requestId: string): AdmissionEvidence | null;
   enqueue(entry: Pending, origin: CollectionOrigin, evidence: AdmissionEvidence | null): void; queue(): Pending[];
@@ -103,6 +110,16 @@ class DurableSpool implements Spool {
     const previous = this.storage.get<{ signature: string; since: number }>('observation', pathId);
     if (previous !== undefined && previous.signature === signature && previous.since <= now) return previous.since;
     this.storage.set('observation', pathId, { signature, since: now }); return now;
+  }
+  sourceRead(fileId: string): SourceRead | undefined { return this.storage.get<SourceRead>('source-read', fileId); }
+  deferredScans(): Map<string, number> { return new Map(this.storage.list<{ fileId: string; since: number }>('scan-deferred').map(({ fileId, since }) => [fileId, since])); }
+  saveScan(discovered: ReadonlySet<string>, reads: SourceRead[], deferred: ReadonlyMap<string, number>): void {
+    this.storage.transaction(() => {
+      for (const { fileId } of this.storage.list<SourceRead>('source-read')) if (!discovered.has(fileId)) this.storage.remove('source-read', fileId);
+      for (const read of reads) this.storage.set('source-read', read.fileId, read);
+      this.storage.clear('scan-deferred');
+      for (const [fileId, since] of deferred) this.storage.set('scan-deferred', fileId, { fileId, since });
+    });
   }
   private readControls(): Controls {
     try {

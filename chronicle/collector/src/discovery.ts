@@ -1,4 +1,4 @@
-import { constants, closeSync, fstatSync, lstatSync, openSync, opendirSync, readSync, realpathSync, type Dirent } from 'node:fs';
+import { constants, closeSync, fstatSync, lstatSync, openSync, opendirSync, readSync, realpathSync, type BigIntStats, type Dirent } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { CollectorError, hash, type Diagnostic, type DiscoveryRoot } from './domain.ts';
 import type { Config } from './config.ts';
@@ -7,7 +7,15 @@ import { validYoloProfileName, type CollectionOrigin } from './admission.ts';
 export interface DiscoveredRoot extends DiscoveryRoot { origin: CollectionOrigin }
 export interface SourceFile { root: DiscoveredRoot; path: string; relativePath: string }
 export interface Scan { files: SourceFile[]; diagnostics: Diagnostic[]; visited: number }
-export interface Snapshot { bytes: Buffer; digest: string; mtimeMs: number }
+/** Identity and change evidence of a source file, as decimal strings. */
+export interface SourceStat { dev: string; ino: string; size: string; mtimeNs: string; ctimeNs: string }
+export interface Snapshot { bytes: Buffer; digest: string; mtimeMs: number; stat: SourceStat }
+/** A file was not read because its size exceeds `limit`. */
+export class SizeLimitError extends CollectorError {
+  constructor(code: string, readonly size: number, readonly limit: number) { super(code); }
+}
+// Not an error of the file: it does not fit what is left of this scan's byte budget.
+export const SCAN_BUDGET_DEFERRED = 'scan-budget-deferred';
 export const pathWithin = (path: string, prefix: string): boolean => path === prefix || path.startsWith(prefix.endsWith(sep) ? prefix : prefix + sep);
 export const excludedPath = (path: string, prefixes: string[]): boolean => prefixes.some(prefix => pathWithin(resolve(path), resolve(prefix)));
 const code = (error: unknown): string | undefined => typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : undefined;
@@ -121,7 +129,18 @@ export function scanRoots(roots: DiscoveredRoot[], config: Config): Scan {
   return result;
 }
 
-export function readSnapshot(file: SourceFile, maxBytes: number): Snapshot {
+const sourceStat = (stat: BigIntStats): SourceStat => ({ dev: String(stat.dev), ino: String(stat.ino), size: String(stat.size), mtimeNs: String(stat.mtimeNs), ctimeNs: String(stat.ctimeNs) });
+export const sameStat = (a: SourceStat, b: SourceStat): boolean => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+/** The current stat of a regular source file without reading it; null when that cannot be established. */
+export function statSource(file: SourceFile): SourceStat | null {
+  try {
+    rejectSymlinks(file.path);
+    const stat = lstatSync(file.path, { bigint: true });
+    return stat.isFile() ? sourceStat(stat) : null;
+  } catch { return null; }
+}
+
+export function readSnapshot(file: SourceFile, maxFileBytes: number, scanBudget: number): Snapshot {
   let descriptor: number | null = null;
   try {
     rejectSymlinks(file.path);
@@ -130,7 +149,8 @@ export function readSnapshot(file: SourceFile, maxBytes: number): Snapshot {
     descriptor = openSync(file.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const before = fstatSync(descriptor, { bigint: true });
     if (!before.isFile()) throw new CollectorError('not-regular-file');
-    if (before.size > BigInt(maxBytes)) throw new CollectorError('snapshot-too-large');
+    if (before.size > BigInt(maxFileBytes)) throw new SizeLimitError('snapshot-too-large', Number(before.size), maxFileBytes);
+    if (before.size > BigInt(scanBudget)) throw new SizeLimitError(SCAN_BUDGET_DEFERRED, Number(before.size), scanBudget);
     const buffer = Buffer.alloc(Number(before.size) + 1);
     let size = 0;
     for (;;) {
@@ -143,7 +163,7 @@ export function readSnapshot(file: SourceFile, maxBytes: number): Snapshot {
     rejectSymlinks(file.path);
     if (before.ino !== after.ino || before.dev !== after.dev || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || after.ino !== pathStat.ino || after.dev !== pathStat.dev || size !== Number(after.size)) throw new CollectorError('source-changed-during-read');
     const bytes = buffer.subarray(0, size);
-    return { bytes, digest: hash(bytes), mtimeMs: Number(after.mtimeNs / 1_000_000n) };
+    return { bytes, digest: hash(bytes), mtimeMs: Number(after.mtimeNs / 1_000_000n), stat: sourceStat(after) };
   } catch (error) { throw error instanceof CollectorError ? error : new CollectorError('snapshot-read-failed'); }
   finally { if (descriptor !== null) closeSync(descriptor); }
 }

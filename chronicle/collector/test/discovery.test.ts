@@ -90,8 +90,8 @@ test('BG symlinks including root ancestors are rejected; regular snapshots are b
     const scan = scanRoots(discoverRoots(c, 'linux'), c);
     assert.equal(scan.files.length, 1);
     assert.equal(scan.diagnostics.filter(d => d.code === 'symlink-rejected').length, 2);
-    assert.equal(readSnapshot(scan.files[0]!, c.maxFileBytes).bytes.toString(), '{"synthetic":true}\n');
-    assert.throws(() => readSnapshot(scan.files[0]!, 1), /snapshot-too-large/);
+    assert.equal(readSnapshot(scan.files[0]!, c.maxFileBytes, c.maxScanBytes).bytes.toString(), '{"synthetic":true}\n');
+    assert.throws(() => readSnapshot(scan.files[0]!, 1, c.maxScanBytes), /snapshot-too-large/);
     symlinkSync(root, join(root, 'alias'));
     const aliased = config(root, { discoverNative: false, discoverYolo: false, roots: [{ id: 'alias', format: 'pi', path: join(root, 'alias/sessions') }] });
     assert.equal(scanRoots(discoverRoots(aliased, 'linux'), aliased).files.length, 0);
@@ -105,4 +105,5 @@ test('BA disabled configuration never discovers homes; malformed config fails at
   assert.throws(() => loadConfig({ enabled: true }), /invalid-config/);
   assert.throws(() => loadConfig({ enabled: false, unknown: 1 }), /invalid-config/);
   assert.throws(() => loadConfig({ enabled: false, quietMs: -1 }), /invalid-config/);
+  assert.throws(() => loadConfig({ enabled: false, maxFileBytes: 2, maxScanBytes: 1 }), /invalid-config/);
 });

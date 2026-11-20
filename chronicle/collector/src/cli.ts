@@ -141,7 +141,7 @@ async function main(): Promise<void> {
     for (;;) {
       const result = await collector.runOnce(Date.now()); print(result);
       if (arguments_.operation === 'once') {
-        if (result.uploadFailures + result.quarantined + result.pending + result.stopped + result.conflicts > 0 || spool.diagnostics().some(d => d.rootId === 'reporting')) process.exitCode = 1;
+        if (result.uploadFailures + result.quarantined + result.deferred + result.pending + result.stopped + result.conflicts > 0 || spool.diagnostics().some(d => d.rootId === 'reporting')) process.exitCode = 1;
         return;
       }
       await sleep(config.pollMs);

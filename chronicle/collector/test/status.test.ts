@@ -10,10 +10,10 @@ function status(): CollectorStatus {
 test('GoodAtomic human status retains actionable queue IDs, attempts, errors and dropped receipts', () => {
   const value = status();
   value.queue = [
-    { requestId: '00000000-0000-4000-8000-000000000001', sourceKey: 'first-source', attempts: 2, nextAt: Date.parse('2026-01-02T03:04:05Z'), status: 'pending', error: 'upload-unavailable' },
-    { requestId: '00000000-0000-4000-8000-000000000002', sourceKey: 'second-source', attempts: 5, nextAt: 0, status: 'stopped', error: 'upload-unavailable' },
-    { requestId: '00000000-0000-4000-8000-000000000003', sourceKey: 'third-source', attempts: 1, nextAt: 0, status: 'conflict', error: 'revision-conflict' },
-    { requestId: '00000000-0000-4000-8000-000000000004', sourceKey: 'fourth-source', attempts: 0, nextAt: 0, status: 'pending', error: null },
+    { requestId: '00000000-0000-4000-8000-000000000001', sourceKey: 'first-source', attempts: 2, nextAt: Date.parse('2026-01-02T03:04:05Z'), status: 'pending', error: 'upload-unavailable', payloadBytes: 1 },
+    { requestId: '00000000-0000-4000-8000-000000000002', sourceKey: 'second-source', attempts: 5, nextAt: 0, status: 'stopped', error: 'upload-unavailable', payloadBytes: 1 },
+    { requestId: '00000000-0000-4000-8000-000000000003', sourceKey: 'third-source', attempts: 1, nextAt: 0, status: 'conflict', error: 'revision-conflict', payloadBytes: 1 },
+    { requestId: '00000000-0000-4000-8000-000000000004', sourceKey: 'fourth-source', attempts: 0, nextAt: 0, status: 'pending', error: null, payloadBytes: 1 },
   ];
   value.dropped = [{ requestId: '00000000-0000-4000-8000-000000000005', sourceKey: 'fifth-source', reason: 'operator-drop' }];
   const text = formatCollectorStatus(value);

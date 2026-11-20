@@ -69,6 +69,7 @@ export function loadConfig(input: unknown): Config {
     if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < (key === 'quietMs' ? 0 : 1)) return invalid();
     limits[key] = value;
   }
-  if (limits.backoffBaseMs > limits.backoffCapMs || limits.maxDepth > 64) return invalid();
+  // A file within maxFileBytes must fit a scan's whole budget, or it would be deferred forever.
+  if (limits.backoffBaseMs > limits.backoffCapMs || limits.maxDepth > 64 || limits.maxFileBytes > limits.maxScanBytes) return invalid();
   return { enabled, endpoint, tokenFile, stateDir, homeDir, excludeDefaultProfile: bool(input['excludeDefaultProfile'] === undefined ? false : input['excludeDefaultProfile']), excludedYoloProfiles, yoloDir: absolute(input['yoloDir'] ?? join(homeDir, '.config/yolo')), trustedHTTP: bool(input['trustedHTTP'] ?? false), discoverNative: bool(input['discoverNative'] ?? true), discoverYolo: bool(input['discoverYolo'] ?? true), roots, exclusions, redactions, ...limits };
 }

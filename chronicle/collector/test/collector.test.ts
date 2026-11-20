@@ -12,6 +12,7 @@ import { UploadError, encodeSnapshot, sourceIdentity, sourceKey, type Ingester }
 import { parseTranscript } from '../src/parsers.ts';
 import { resolveRuntimePrivacy } from '../src/runtime-privacy.ts';
 import { hash } from '../src/domain.ts';
+import { formatCollectorStatus } from '../src/status.ts';
 import { IngestReceipt } from '../../generated/typescript/chronicle/api/IngestReceipt.js';
 import { IngestRequest_JsonCodec } from '../../generated/typescript/chronicle/api/IngestRequest.js';
 import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRuntime.js';
@@ -20,11 +21,12 @@ const fixture = (name: string) => readFileSync(new URL(`fixtures/${name}.jsonl`,
 class DummyIngester implements Ingester {
   readonly payloads: string[] = [];
   readonly receipts = new Map<string, IngestReceipt>();
-  loseACK = false; conflict = false;
+  loseACK = false; conflict = false; tooLarge = false;
   async send(payload: string): Promise<IngestReceipt> {
     this.payloads.push(payload);
     const request = IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(payload) as unknown);
     if (this.conflict) throw new UploadError('cas-conflict', false, true);
+    if (this.tooLarge) throw new UploadError('server-payload-too-large', false, false);
     const receipt = this.receipts.get(request.requestId) ?? new IngestReceipt(request.requestId, randomUUID(), request.expectedRevision + 1, randomUUID());
     this.receipts.set(request.requestId, receipt);
     if (this.loseACK) { this.loseACK = false; throw new UploadError('network-failed', true, false); }
@@ -146,9 +148,11 @@ test('BG privacy change cancels pending bytes and tombstones source; limits quar
     const altered = { ...config, redactions: { fieldNames: ['content'], textPatterns: [], secretFiles: [] } };
     const result = await new Collector(altered, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(2);
     assert.equal(result.quarantined, 1); assert.equal(spool.queue().length, 0); assert.equal(ingester.payloads.length, 1);
-    const limited = { ...config, maxFileBytes: 1 };
-    assert.equal((await new Collector(limited, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(3)).quarantined, 1);
-    assert.ok(spool.diagnostics().some(d => d.code === 'snapshot-too-large'));
+    const limited = new Collector({ ...config, maxFileBytes: 1 }, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets);
+    assert.equal((await limited.runOnce(3)).quarantined, 1);
+    const size = Buffer.byteLength(fixture('pi'));
+    assert.deepEqual(limited.status().diagnostics.find(d => d.code === 'snapshot-too-large'), { rootId: 'fixture', pathId: hash(join(source, 's.jsonl')), code: 'snapshot-too-large', measured: size, limit: 1 });
+    assert.match(formatCollectorStatus(limited.status()), new RegExp(`snapshot-too-large: fixture \\[[0-9a-f]{12}\\] · file .* \\(${size.toLocaleString('en-US')} bytes\\) over maxFileBytes 1 B`));
   } finally { spool.close(); rmSync(dir, { recursive: true }); }
 });
 
@@ -197,5 +201,59 @@ test('BG Pi restoration episodes preserve divergent histories and stable CAS acr
     const revision = decode(ingester.payloads.at(-1)!);
     assert.deepEqual(revision.source, restored.source); assert.equal(revision.expectedRevision, 1);
     assert.equal(spool.dropped().length, 0); assert.equal(spool.queue().length, 0);
+  } finally { spool.close(); rmSync(dir, { recursive: true }); }
+});
+
+test('BG a file whose stat is unchanged since an acknowledged read is not read again until its stat or the policy changes', async () => {
+  const { dir, source, config } = setup({ quietMs: 0 }); let spool = new SqliteSpool(config.stateDir); const ingester = new DummyIngester();
+  const collect = (now: number, c = config) => new Collector(c, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(now);
+  try {
+    const path = join(source, 's.jsonl'); writeFileSync(path, fixture('pi'));
+    const first = await collect(1); assert.equal(first.scanned, 1); assert.equal(first.uploaded, 1);
+    spool.close(); spool = new SqliteSpool(config.stateDir);
+    const unread = await collect(2); assert.equal(unread.unchanged, 1); assert.equal(unread.scanned, 0); assert.equal(unread.scannedBytes, 0);
+    const time = new Date('2026-01-01T00:00:00Z'); utimesSync(path, time, time);
+    const touched = await collect(3); assert.equal(touched.scanned, 1); assert.equal(touched.unchanged, 1);
+    assert.equal((await collect(4)).scanned, 0);
+    const policy = { ...config, redactions: { ...config.redactions, textPatterns: ['UNUSED_SYNTHETIC_PATTERN'] } };
+    const reread = await collect(5, policy); assert.equal(reread.scanned, 1); assert.equal(reread.unchanged, 1);
+    assert.equal(ingester.payloads.length, 1);
+  } finally { spool.close(); rmSync(dir, { recursive: true }); }
+});
+
+test('BG files beyond the scan budget are deferred, not too large, and read first in later cycles while others keep changing', async () => {
+  const session = (id: string, text: string) => fixture('pi').replace('pi-synthetic', id).replace('left branch', text);
+  const size = Buffer.byteLength(session('pi-synthetic-a', 'left branch'));
+  const { dir, source, config } = setup({ quietMs: 0, maxFileBytes: 2 * size, maxScanBytes: 2 * size }); const spool = new MemorySpool(); const ingester = new DummyIngester();
+  const collector = new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets);
+  const uploadedSessions = () => ingester.payloads.splice(0).map(p => IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(p) as unknown).source.producerSessionId).sort();
+  const ids = ['pi-synthetic-a', 'pi-synthetic-b', 'pi-synthetic-c'];
+  try {
+    for (const id of ids) writeFileSync(join(source, `${id}.jsonl`), session(id, 'left branch'));
+    const first = await collector.runOnce(1);
+    assert.equal(first.scanned, 2); assert.equal(first.deferred, 1); assert.equal(first.quarantined, 0); assert.equal(first.uploaded, 2);
+    assert.deepEqual(collector.status().diagnostics, []);
+    assert.match(formatCollectorStatus(collector.status()), /Deferred by scan budget: 1\b/);
+    const read = uploadedSessions(); const [deferred] = ids.filter(id => !read.includes(id));
+    for (const id of read) writeFileSync(join(source, `${id}.jsonl`), session(id, 'next branch'));
+    const second = await collector.runOnce(2);
+    assert.equal(second.deferred, 1); assert.equal(second.uploaded, 2);
+    const secondRead = uploadedSessions(); assert.ok(secondRead.includes(deferred!));
+    const third = await collector.runOnce(3);
+    assert.equal(third.deferred, 0); assert.equal(third.uploaded, 1); assert.equal(third.unchanged, 2);
+    assert.deepEqual([...secondRead, ...uploadedSessions()].sort(), ids);
+  } finally { spool.close(); rmSync(dir, { recursive: true }); }
+});
+
+test('BG a payload the server refuses as too large stops after one attempt and is reported with its size', async () => {
+  const { dir, source, config } = setup({ quietMs: 0 }); const spool = new MemorySpool(); const ingester = new DummyIngester(); ingester.tooLarge = true;
+  const collector = new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets);
+  try {
+    writeFileSync(join(source, 's.jsonl'), fixture('pi'));
+    const first = await collector.runOnce(1); assert.equal(first.uploadFailures, 1); assert.equal(first.stopped, 1);
+    const payloadBytes = Buffer.byteLength(ingester.payloads[0]!);
+    assert.deepEqual(collector.status().queue.map(({ status, attempts, error, payloadBytes }) => ({ status, attempts, error, payloadBytes })), [{ status: 'stopped', attempts: 1, error: 'server-payload-too-large', payloadBytes }]);
+    assert.match(formatCollectorStatus(collector.status()), new RegExp(`Error: refused by the server as too large \\(server-payload-too-large\\) · payload .* \\(${payloadBytes.toLocaleString('en-US')} bytes\\)`));
+    const second = await collector.runOnce(2); assert.equal(second.scanned, 0); assert.equal(second.waiting, 1); assert.equal(ingester.payloads.length, 1);
   } finally { spool.close(); rmSync(dir, { recursive: true }); }
 });

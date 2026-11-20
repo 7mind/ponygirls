@@ -15,14 +15,17 @@ export interface ParsedTranscript {
   raw: string; redacted: boolean; records: ParsedRecord[]; messages: ParsedMessage[]; metadata: ParsedMetadata;
 }
 export interface DiscoveryRoot { id: string; format: Format; path: string; layout: 'transcripts' | 'pi-subagents'; profile: string | null }
-export interface Diagnostic { rootId: string; pathId: string; code: string }
+/** `measured`/`limit` accompany a size or count limit: bytes, or messages for `message-limit`. */
+export interface Diagnostic { rootId: string; pathId: string; code: string; measured?: number; limit?: number }
 export interface Counters {
   enabled: boolean; discovered: number; scanned: number; scannedBytes: number; waiting: number;
   excluded: number; unchanged: number; enqueued: number; uploaded: number; uploadFailures: number;
-  quarantined: number; pending: number; stopped: number; conflicts: number;
+  quarantined: number; pending: number; stopped: number; conflicts: number; deferred: number;
 }
-export interface RootCoverage { rootId: string; pathId: string; format: Format; discovered: number; scanned: number; bytes: number; waiting: number; excluded: number; quarantined: number }
-export interface CollectorReport { at: number; counters: Counters; roots: RootCoverage[] }
+export interface RootCoverage { rootId: string; pathId: string; format: Format; discovered: number; scanned: number; bytes: number; waiting: number; excluded: number; quarantined: number; deferred: number }
+// Reports saved before scan-budget deferral existed have no deferred counts.
+type Saved<T> = Omit<T, 'deferred'> & { deferred?: number };
+export interface CollectorReport { at: number; counters: Saved<Counters>; roots: Saved<RootCoverage>[] }
 export class CollectorError extends Error {
   constructor(readonly code: string) { super(code); this.name = 'CollectorError'; }
 }

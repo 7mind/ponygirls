@@ -54,6 +54,8 @@ export function tokenFromFile(path: string): string {
     return token;
   } catch { throw new UploadError('token-file-unavailable', false, false); }
 }
+// The server refused the request body as too large; resending the same bytes cannot succeed.
+export const SERVER_PAYLOAD_TOO_LARGE = 'server-payload-too-large';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export class HttpIngester implements Ingester {
   private readonly url: URL; private readonly config: Config;
@@ -66,6 +68,7 @@ export class HttpIngester implements Ingester {
         await response.body?.cancel();
         if (response.status === 409) throw new UploadError('cas-conflict', false, true);
         if (response.status === 401 || response.status === 403) throw new UploadError('unauthorized', false, false);
+        if (response.status === 413) throw new UploadError(SERVER_PAYLOAD_TOO_LARGE, false, false);
         if (response.status === 408 || response.status === 429 || response.status >= 500) throw new UploadError(`http-${response.status}`, true, false);
         throw new UploadError('protocol-rejected', false, false);
       }

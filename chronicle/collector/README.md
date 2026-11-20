@@ -55,13 +55,13 @@ Additional keys, with defaults:
 | `redactions` | `{fieldNames:[],textPatterns:[],secretFiles:[]}`; secretFiles are absolute runtime file paths, never values |
 | `quietMs`, `pollMs` | `60000`, `30000` |
 | `maxDepth`, `maxFiles` | `16`, `10000`; files limit counts traversed entries, including directories |
-| `maxScanBytes`, `maxFileBytes` | `134217728`, `4194304` |
+| `maxScanBytes`, `maxFileBytes` | `134217728`, `4194304`; bytes read per scan and per file, `maxFileBytes` ≤ `maxScanBytes` |
 | `maxPayloadBytes`, `maxMessages` | `8388608`, `10000` |
 | `partialLineQuarantineMs` | `86400000` |
 | `uploadTimeoutMs`, `maxAttempts` | `15000`, `8` |
 | `backoffBaseMs`, `backoffCapMs` | `1000`, `300000` |
 
-Unknown keys, invalid types/bounds, duplicate explicit root `(id,format)` pairs, relative paths and empty redaction patterns fail configuration validation. `quietMs:0` is an explicit immediate-snapshot policy. Other duration/size bounds must be positive integers. Configure sufficient file/scan limits for the desired coverage: hitting a limit is visible quarantine and may leave later entries unscanned until the bound is raised. There is no silent truncation or promise of complete coverage after a limited scan.
+Unknown keys, invalid types/bounds, `maxFileBytes` above `maxScanBytes`, duplicate explicit root `(id,format)` pairs, relative paths and empty redaction patterns fail configuration validation. `quietMs:0` is an explicit immediate-snapshot policy. Other duration/size bounds must be positive integers. Configure sufficient file limits for the desired coverage: hitting `maxFiles` or `maxDepth` is visible quarantine and may leave later entries unscanned until the bound is raised. `maxScanBytes` only paces reading: files beyond it are deferred to later scans (see [Re-reading, scan budget and size limits](#re-reading-scan-budget-and-size-limits)). There is no silent truncation or promise of complete coverage after a limited scan.
 
 ## Command line
 
@@ -110,7 +110,7 @@ Output and exit status:
 
 ## Discovery and identity
 
-Every cycle discovers newly created named yolo profiles and hashes source contents, not just mtimes. Native roots are:
+Every cycle discovers newly created named yolo profiles and hashes the contents of every source it reads; a file whose stat is unchanged since a settled read is not read again (see [Re-reading, scan budget and size limits](#re-reading-scan-budget-and-size-limits)). Native roots are:
 
 - Claude: `~/.claude/projects/`, main JSONL plus `<session>/subagents/**/agent-*.jsonl` (including workflow nesting).
 - Codex: both `~/.codex/sessions/` and `~/.codex/archived_sessions/`.
@@ -238,13 +238,30 @@ No format supplies authoritative whole-session completion here. End-of-turn/task
 
 The frozen v1 server stores `Quiescent` but has no field for the measured observation duration or absolute canonical source path. Observation checkpoints stay in the local spool; server revision creation time is not proof of the source's quiet duration. Codex `history_base`/Pi `parentSession` references are preserved but **never followed**; a paginated history prefix residing in a different source file is not materialized into this snapshot.
 
+## Re-reading, scan budget and size limits
+
+A file is not read again while its identity and stat (device, inode, size, and mtime and ctime in nanoseconds) equal those recorded at its last read and the content of that read is still settled: it is the source's acknowledged head (same digest and revision) or the content of the source's queued pending, stopped or conflicting upload, under the same privacy/destination policy digest and the same dynamic exclusions. Such a file counts as `unchanged` (`waiting` while its upload is queued), consumes no scan budget and leaves its quiet-period observation alone. Any difference reads the file as before: a changed stat field, policy digest or dynamic exclusion list, a moved head digest or revision, a tombstone, a missing record. Records are spool rows of their own (`source-read`), written only after a complete read whose content was unchanged against the head, was enqueued, or equals the source's queued upload; a completed scan removes the records of files it did not discover. Like any stat-based cache this trusts filesystem timestamps: a rewrite that keeps size, mtime and ctime is seen at the next change.
+
+`maxScanBytes` bounds the bytes read in one scan. A file that does not fit what is left of it is **deferred**, not quarantined: it counts as `deferred` (`Deferred by scan budget` in `--status`, per root too) and the scan continues with the files that still fit. Deferred files are read first in the following scans, oldest deferral first, so files that keep changing cannot starve them; because `maxFileBytes` ≤ `maxScanBytes`, a file within `maxFileBytes` always fits an unspent budget. Deferral is not a failed collection (the progress phase stays `Idle`; the frozen progress protocol has no deferred counter), but `--once` exits 1 when files were deferred, as for other leftovers.
+
+A session that cannot be uploaded as it is gets its own code. `--status` names the root and hashed path (the source key for a queued upload) with the measured size or count and the limit; in `--status --json` a diagnostic carries them as `measured` and `limit`, a queued upload its `payloadBytes`:
+
+| Code | Meaning |
+| --- | --- |
+| `snapshot-too-large` | the file is larger than `maxFileBytes`; it is not read |
+| `message-limit` | the transcript has more normalized messages than `maxMessages` |
+| `payload-too-large` | the encoded request is larger than `maxPayloadBytes`; nothing is queued |
+| `server-payload-too-large` | the server refused the request with HTTP 413; shown as refused by the server as too large, with the payload size. The server's limit is not known to the collector |
+
+The first three are quarantine diagnostics, recomputed every scan; a file over `maxMessages` or `maxPayloadBytes` is therefore read again every scan. A `server-payload-too-large` upload is stopped after one attempt, is not retried automatically and blocks its source until `--retry` or `--drop`, like other stopped uploads. Other 4xx responses remain `protocol-rejected`.
+
 ## Durability and operations
 
 The private state directory is mode 0700, SQLite databases mode 0600. SQLite FULL synchronous transactions persist namespace, observations, source heads, exact pending encoded payload/digest, expected revision, request UUID and retry state before uploading. A separate SQLite exclusive daemon lock is automatically released on process death; there are no stale PID files. `--status` is read-only with respect to collection and does not need the daemon lock.
 
 SIGTERM and SIGINT use normal OS termination without waiting for an active scan, progress report or upload. Durable pending work and the daemon lock recover on restart; an upload interrupted before its local ACK is retried with the same request ID and bytes, even if the server already committed it. Shutdown does not increment retry attempts or claim that the cycle completed. No final network report is attempted; saved counters and remote progress may remain incomplete or stale.
 
-Lost acknowledgements retry the **same bytes and request ID**, including after restart. Only a valid matching generated receipt with exactly the expected next revision advances the local head. CAS conflicts stay visible and never silently adjust expected revision. Retryable network/408/429/5xx failures use capped exponential full jitter and finite attempts. Auth/protocol/invalid-receipt failures stop immediately; redirects are never followed. Uploads have a total request/body-read timeout and bounded acknowledgement size.
+Lost acknowledgements retry the **same bytes and request ID**, including after restart. Only a valid matching generated receipt with exactly the expected next revision advances the local head. CAS conflicts stay visible and never silently adjust expected revision. Retryable network/408/429/5xx failures use capped exponential full jitter and finite attempts. Auth/protocol/invalid-receipt failures and HTTP 413 (`server-payload-too-large`) stop immediately; redirects are never followed. Uploads have a total request/body-read timeout and bounded acknowledgement size.
 
 ```bash
 node dist/collector/src/cli.js --config /absolute/collector.json --retry REQUEST_UUID
@@ -253,7 +270,7 @@ node dist/collector/src/cli.js --config /absolute/collector.json --drop REQUEST_
 
 Both print the resulting status, as `--status` does: text by default, the snapshot with `--json`. Both take the daemon lock, so stop the daemon first; otherwise they fail with `collector-already-running`. Retry resets the finite attempt budget but retains the payload, request ID and expected revision. It does not resolve an actual CAS conflict. Drop deletes local pending bytes and creates a persistent **local source tombstone**, preventing automatic requeue; it does not delete the server's archive. A changed privacy/discovery/destination policy conservatively discards all older pending payloads and tombstones those sources, because an earlier upload may already have committed despite a lost acknowledgement. These tombstones and their reason are visible in status. There is no automatic tombstone removal, remote purge, stale-head merge or receipt reconstruction after discarding bytes; resolve those cases explicitly with the server operator rather than editing a CAS expectation blindly. `secure_delete` is enabled, but this is not a forensic-erasure guarantee for filesystem backups or old storage blocks.
 
-`--once` reconciles and attempts due queue entries, emits JSON counters, and exits nonzero for upload/quarantine/pending/stopped/conflict or progress-reporting failures. Waiting for first observed quiet evidence is not an error. Daemon mode prints the same counters each cycle. `--status` defaults to a human-readable summary of the saved scan, byte totals, per-root coverage, queue, diagnostics, dropped requests and reporting acknowledgements. It does not infer that the daemon is running or server indexing is complete. `--status --json` retains the machine-readable `{namespace,queue,diagnostics,dropped,lastRun,reporting}` snapshot; `lastRun` includes its scan-start timestamp, counters and hashed per-root coverage. Counters describe the last local scan, not a claim that every possible session was discovered or server annotation finished. Missing native roots are informational. Diagnostic status and pending/stopped queues survive restart. Successful raw ingestion does not mean annotation/search publication completed.
+`--once` reconciles and attempts due queue entries, emits JSON counters, and exits nonzero for upload/quarantine/deferred/pending/stopped/conflict or progress-reporting failures. Waiting for first observed quiet evidence is not an error. Daemon mode prints the same counters each cycle. `--status` defaults to a human-readable summary of the saved scan, byte totals, per-root coverage, queue, diagnostics, dropped requests and reporting acknowledgements. It does not infer that the daemon is running or server indexing is complete. `--status --json` retains the machine-readable `{namespace,queue,diagnostics,dropped,lastRun,reporting}` snapshot; `lastRun` includes its scan-start timestamp, counters and hashed per-root coverage, queue entries their encoded `payloadBytes`, and limit diagnostics their `measured` value and `limit`. Scans saved before this release have no `deferred` counts. Counters describe the last local scan, not a claim that every possible session was discovered or server annotation finished. Missing native roots are informational. Diagnostic status and pending/stopped queues survive restart. Successful raw ingestion does not mean annotation/search publication completed.
 
 ## Collection progress (protocol 1.2)
 
