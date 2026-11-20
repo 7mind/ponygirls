@@ -79,8 +79,8 @@
 .raw .source-code { color: var(--text-muted); }
 .raw .source-quote { color: var(--text-muted); font-style: italic; }
 .raw:focus-visible { box-shadow: var(--ring); }
-/* The escape character has no glyph of its own; the raw view of a log shows where it is. */
-.raw .ctl-esc::before { content: "\241B"; color: var(--text-faint); }
+/* Browsers draw the escape character as a control picture; the raw view of a log keeps it faint. */
+.raw .ctl-esc { color: var(--text-faint); }
 
 /* ── Syntax colours: aliases of the semantic tokens, so both themes follow tokens.css ── */
 :root {

@@ -68,12 +68,28 @@ project path, not a wildcard. `--fresh` initializes a new artifact.
 Opening a standalone Markdown, image (including SVG), PDF, Mermaid (`.mmd`,
 `.mermaid`) or Graphviz (`.dot`, `.gv`) artifact in a browser opens a formatted
 viewer with an original-file download. Markdown supports GFM and fenced
-`mermaid`, `dot` and `graphviz` diagrams. Rendering uses bundled browser code;
+`mermaid`, `dot` and `graphviz` diagrams; other fenced code blocks are syntax
+highlighted and have a Copy control. Rendering uses bundled browser code;
 there are no CDN or external rendering-service requests. External resources in
 Markdown are not loaded automatically.
 
+Text files open as numbered text whose line numbers are links (`#L12`,
+`#L12-L18`): source code and configuration are syntax highlighted (Python, C and
+C++, Java, Kotlin, Scala, Go, Rust, shell, YAML, TOML, Nix and others), `.diff` and
+`.patch` are coloured by line, `.json` and `.jsonl` get a Formatted | Raw switch,
+`.csv` and `.tsv` a Table | Raw switch, and a log with ANSI colour codes a Rendered |
+Raw switch. A text file over 2 MiB shows its first 2 MiB with a note. Audio and
+video files open in the browser's player. Every other file except HTML has a
+viewer page too: a type that is not listed is shown as text when its content is
+UTF-8 text, and otherwise (like archives) as a card that offers the download.
+HTML is always served as the page it is. Details and limits:
+`manure/web/viewer/README.md`.
+
 Non-HTML requests, range requests and existing attachment routes still return
-original bytes. Directory paths with an index remain unchanged static sites. Without an index,
+original bytes. On their own and raw URLs, files of text types are
+`text/plain; charset=utf-8` and audio and video files have their media type, so a
+direct link to a file inside a directory artifact opens in the browser; types that
+are not listed stay `application/octet-stream`. Directory paths with an index remain unchanged static sites. Without an index,
 a directory page lists immediate children with parent/nested navigation, viewer
 links for supported files and original-file downloads. An immediate `readme.md` file
 (case-insensitive) renders below the listing through the same local Markdown viewer.

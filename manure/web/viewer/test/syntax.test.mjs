@@ -84,4 +84,4 @@ test('markup in the highlighted text stays text', () => {
   }
 });
 
-test('the highlighting limit is stated in bytes of text', () => { assert.equal(HIGHLIGHT_LIMIT, 512 * 1024); });
+test('the highlighting limit is 256 KiB of text', () => { assert.equal(HIGHLIGHT_LIMIT, 256 * 1024); });

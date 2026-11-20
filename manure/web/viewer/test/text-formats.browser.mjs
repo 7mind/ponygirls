@@ -285,12 +285,12 @@ test('a text file over the limit shows its leading whole lines with a note; mark
 });
 
 test('source text above the highlighting limit is plain and says so', async () => {
-  const text = 'def f():\n    return "value"\n'.repeat(22000); // about 590 KiB
+  const text = 'def f():\n    return "value"\n'.repeat(22000); // about 600 KiB
   await view(file('big.py', 'text', text), `
     const view = labelled('File text');
     same(view.textContent.length, ${text.length}, 'whole text');
     check(!view.querySelector('[class^=hljs]'), 'not highlighted');
-    same($('#meta-extra').textContent, 'not highlighted above 512 KiB \u00b7 44,000 lines', 'meta line');
+    same($('#meta-extra').textContent, 'not highlighted above 256 KiB \u00b7 44,000 lines', 'meta line');
   `);
 });
 

@@ -80,11 +80,28 @@ Upload the source file directly; do not build an HTML wrapper just to make it
 readable. With viewer assets enabled, opening a standalone file's returned
 content URL in a browser shows:
 
-- `.md` / `.markdown`: formatted Markdown, including tables and fenced
-  `mermaid`, `dot` or `graphviz` diagrams.
+- `.md` / `.markdown`: formatted Markdown, including tables, fenced
+  `mermaid`, `dot` or `graphviz` diagrams, and syntax-highlighted code blocks
+  (name the language after the fence: `python`, `sh`, `diff`, `json`, `scala`, …).
 - Common images, including `.svg`: an image viewer.
 - `.pdf`: a paginated PDF viewer.
 - `.mmd` / `.mermaid`: Mermaid diagrams; `.dot` / `.gv`: Graphviz diagrams.
+- Source code and configuration (`.py`, `.c`, `.cpp`, `.java`, `.kt`, `.scala`,
+  `.go`, `.rs`, `.sh`, `.yaml`, `.toml`, `.nix`, `Makefile`, `Dockerfile`, …) and
+  plain `.txt` / `.log`: numbered, syntax-highlighted text. Append `#L12` or
+  `#L12-L18` to the viewer URL to point at lines.
+- `.diff` / `.patch`: coloured additions, deletions and hunks with totals.
+- `.json` / `.jsonl`: formatted view (numbers and strings exactly as stored)
+  beside the raw text; invalid JSON is reported with its line and column.
+- `.csv` / `.tsv`: a table (first row as header, first 2,000 rows) beside the raw text.
+- Logs with ANSI colour codes: rendered colours beside the raw text.
+- Audio and video (`.mp3`, `.wav`, `.ogg`, `.m4a`, `.flac`, `.mp4`, `.webm`,
+  `.mov`): the browser's player.
+- Anything else except `.html`: shown as text when the content is UTF-8 text,
+  otherwise a page that offers the download. Text over 2 MiB shows its first 2 MiB.
+
+So upload a diff, a JSON result, a CSV table, a log or a script as the file it
+is; do not wrap it in Markdown to make it readable.
 
 Renderers are bundled locally; source is not sent to a rendering service.
 Viewers provide original-file download links. CLI/MCP fetch remains byte-exact;

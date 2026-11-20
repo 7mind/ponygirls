@@ -330,7 +330,9 @@ function viewModes(label, renderedLabel, rendered, raw) {
 const SELECT_TEXT = 'Could not copy. Select the text and copy it instead.';
 const SELECT_RAW = 'Could not copy. Select and copy the text in Raw instead.';
 function lineCount(text) { return (text.match(/\n/g) || []).length + (text.endsWith('\n') || !text ? 0 : 1); }
-function counted(count, noun) { return `${count.toLocaleString('en-US')} ${noun}${count === 1 ? '' : 's'}`; }
+/** 20,763: digit groups as the rest of the chrome writes numbers. */
+function grouped(count) { return count.toLocaleString('en-US'); }
+function counted(count, noun) { return `${grouped(count)} ${noun}${count === 1 ? '' : 's'}`; }
 function markdownControls(text) {
   const preview = element('div', null, 'viewer-doc'); preview.id = 'markdown-preview';
   const source = markdownRaw(text); source.id = 'markdown-source'; source.classList.add('viewer-wide'); source.hidden = true;
@@ -494,7 +496,7 @@ function dataTable(records, total, name) {
   const body = element('tbody');
   for (let index = 1; index < records.length; index++) body.append(row(records[index], 'td', null, cell('th', String(index), 'row', 'row-n')));
   table.append(head, body); view.append(table);
-  if (records.length < total) view.append(element('p', `First ${(records.length - 1).toLocaleString('en-US')} of ${(total - 1).toLocaleString('en-US')} rows are shown as a table. Raw has every line.`, 'data-foot'));
+  if (records.length < total) view.append(element('p', `First ${grouped(records.length - 1)} of ${grouped(total - 1)} rows are shown as a table. Raw has every line.`, 'data-foot'));
   return view;
 }
 /**
@@ -517,14 +519,14 @@ function textFile(text, source) {
   if (source.truncated) {
     const actions = element('div', null, 'notice-actions'); actions.append(downloadLink('btn btn-sm btn-primary'));
     notes.push(viewNote('', 'info', `Showing the first ${displaySize(source.bytes.length)} of ${displaySize(source.total)}`,
-      `The preview ends at line ${lines.length.toLocaleString('en-US')}. Copy raw copies the shown part only.`, actions));
+      `The preview ends at line ${grouped(lines.length)}. Copy raw copies the shown part only.`, actions));
   }
   if (format === FORMAT_DIFF) {
     const { classes, files, additions, deletions } = diffLines(lines);
     raw = sourceView(plainRows(text), index => classes[index], 'File text');
     if (files + additions + deletions > 0) {
       const changes = element('span');
-      changes.append(element('span', `+${additions.toLocaleString('en-US')}`, 'diff-stat-add'), ' ', element('span', `${MINUS_SIGN}${deletions.toLocaleString('en-US')}`, 'diff-stat-del'));
+      changes.append(element('span', `+${grouped(additions)}`, 'diff-stat-add'), ' ', element('span', `${MINUS_SIGN}${grouped(deletions)}`, 'diff-stat-del'));
       facts.push(counted(files, 'file'), changes);
     }
   } else if (format === FORMAT_JSON || format === FORMAT_JSON_LINES) {

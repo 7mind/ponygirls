@@ -21,7 +21,7 @@ import scala from 'highlight.js/lib/languages/scala';
 const lowlight = createLowlight({ ...common, clojure, cmake, dart, dockerfile, elixir, erlang, groovy, haskell, latex, nginx, nix, ocaml, powershell, properties, protobuf, scala });
 
 /** Text above this size is shown without highlighting: tokenising and one element per token grow with it. */
-export const HIGHLIGHT_LIMIT = 512 * 1024;
+export const HIGHLIGHT_LIMIT = 256 * 1024;
 
 export const FORMAT_TEXT = 'text';
 export const FORMAT_DIFF = 'diff';
