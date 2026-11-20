@@ -80,21 +80,57 @@ final class OversizeGuardTest extends munit.FunSuite {
     }
   }
 
-  test("an annotator cutting one fragment into more pieces than the estimate ends the job Failed index-budget-exceeded before they are embedded, on its first attempt") {
-    // One message of one fragment: the estimate (about 16 KB) fits 64 KiB; 1,000 one-scalar pieces of 13,336 bytes do not.
-    val config=Fixtures.config().copy(maxIndexingBudgetBytes=64L*1024)
+  private final class Embedded(dimensions: Int) extends Embedder {
+    val batches=ListBuffer.empty[List[String]]
+    def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO { batches+=text; text.map(_ => List.tabulate(dimensions)(i => if(i==0) 1.0 else 0.0)) }
+    def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("worker queried embedding"))
+  }
+  private def worker(archive: SessionArchive,config: Config,annotator: ProblemPassageAnnotator,embedder: Embedder): Worker =
+    new Worker(archive,annotator,embedder,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger(),ModelFixtures.failureBackoff,ModelFixtures.snapshots)
+
+  test("the vector arena counts in whole blocks: a one-fragment job whose budget is below one block ends Failed at the claim, before it is decoded") {
+    val config=Fixtures.config().copy(maxIndexingBudgetBytes=1024L*1024)
     database(config) { (db,archive) =>
-      val receipt=archive.ingest("a",request(List("AB"*500)))
-      val embedded=ListBuffer.empty[List[String]]
-      val embedder=new Embedder {
-        def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO { embedded+=text; text.map(_ => List(1.0,0.0,0.0)) }
-        def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("worker queried embedding"))
-      }
+      val receipt=archive.ingest("a",request(List("one fragment")))
       val catalog=IndexProfileCatalog.current(config)
-      val worker=new Worker(archive,new ProblemPassageFixtures.Dummy,embedder,config,catalog,ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger(),ModelFixtures.failureBackoff,ModelFixtures.snapshots)
-      assert(worker.once.unsafeRunSync())
+      assertEquals(archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300),None)
+      assertEquals(job(db,receipt.jobId),JobRow("Failed",Some(IndexingBudget.exceededCode),None,0,1))
+      archive.retry("a",receipt.jobId)
+      // The same job within a budget of two blocks (a block of 3-dimensional vectors holds 2 MiB).
+      assert(new PostgresArchive(db,config.copy(maxIndexingBudgetBytes=4L*1024*1024)).claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).nonEmpty)
+    }
+  }
+
+  test("an annotator cutting one fragment into more pieces than the estimate ends the job Failed index-budget-exceeded before they are embedded, with the arena in whole blocks") {
+    // 4,000 dimensions: a block holds 65 vectors (2.08 MB). The estimate (one fragment, one block: about 2.1 MB) fits
+    // 4 MB; 80 one-scalar pieces need 1.07 MB of chunks and two blocks.
+    val original=Fixtures.config()
+    val config=original.copy(maxIndexingBudgetBytes=4000000L,embedding=original.embedding.copy(dimensions=4000))
+    database(config) { (db,archive) =>
+      val receipt=archive.ingest("a",request(List("AB"*40)))
+      val embedder=new Embedded(4000)
+      assert(worker(archive,config,new ProblemPassageFixtures.Dummy,embedder).once.unsafeRunSync())
       assertEquals(job(db,receipt.jobId),JobRow("Failed",Some(IndexingBudget.exceededCode),Some("Embedding"),1,1))
-      assertEquals(embedded.toList,Nil)
+      assertEquals(embedder.batches.toList,Nil)
+    }
+  }
+
+  test("an annotator subdividing its fragments into one-scalar Context parts ends the job Failed index-budget-exceeded before the coverage is retained") {
+    // 12,000 scalars in six fragments: the estimate (about 2.2 MB with one arena block) fits 2.4 MB; 12,000 retained
+    // Context coverage spans do not.
+    val config=Fixtures.config().copy(maxIndexingBudgetBytes=2400000L)
+    database(config) { (db,archive) =>
+      val receipt=archive.ingest("a",request(List("x"*12000)))
+      val scalars=new ProblemPassageAnnotator {
+        def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
+          val starts=window.fragments.zipWithIndex.flatMap((fragment,index) => (0 until fragment.scalarCount).map(ProblemPassages.Point(index,_)))
+          ProblemPassages.Decision(starts.zip(starts.drop(1):+window.terminal).map((start,end) => ProblemPassages.Part.context(start,end)))
+        }
+      }
+      val embedder=new Embedded(3)
+      assert(worker(archive,config,scalars,embedder).once.unsafeRunSync())
+      assertEquals(job(db,receipt.jobId),JobRow("Failed",Some(IndexingBudget.exceededCode),Some("Embedding"),1,1))
+      assertEquals((embedder.batches.toList,archive.session("a",receipt.sessionId).indexedRevision),(Nil,None))
     }
   }
 

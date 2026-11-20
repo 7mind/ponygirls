@@ -28,21 +28,23 @@ object Fragments {
     result.result()
   }
 }
-/** What one indexing job retains until its publication (append-only ingest spec §3.1): every decoded message, and per
-  * Problem piece its vector in the job's VectorArena and its chunk in the publication builder. A job whose estimate exceeds
-  * `maxIndexingBudgetBytes` ends Failed with `exceededCode` before its messages are decoded; a running job whose pieces
-  * outgrow the estimate ends the same way before it embeds them. */
+/** What one indexing job retains until its publication (append-only ingest spec §3.1): every decoded message, per Problem
+  * piece its chunk in the publication builder and its vector in the job's VectorArena (whole blocks), and per Context
+  * slice its coverage span. A job whose estimate exceeds `maxIndexingBudgetBytes` ends Failed with `exceededCode` before
+  * its messages are decoded; a running job whose windows outgrow the estimate ends the same way before it retains them. */
 object IndexingBudget {
   val exceededCode = "index-budget-exceeded"
   /** The objects of one decoded message besides its strings. */
   val messageObjectBytes = 256
   /** A piece's chunk: source slice (at most 4,096 B as UTF-16), summary (at most 4,000 B), tags (at most 4,096 B) and objects. */
   val chunkBytes = 13312
-  def pieceBytes(dimensions: Int): Long = 8L*dimensions+chunkBytes
-  /** Decoded strings take at most two bytes per UTF-8 byte of the stored message values (`messageBytes`); pieces are cut
-    * from fragments, one per fragment. */
+  /** One retained Context coverage span with its collection slot, and what publication's validation sorts per span. */
+  val coverageSpanBytes = 256
+  /** Decoded strings take at most two bytes per UTF-8 byte of the stored message values (`messageBytes`). Every fragment
+    * yields at least one piece or Context span; one piece per fragment (a span costs less than a piece) with its vector
+    * in whole arena blocks. */
   def estimate(messages: Long,messageBytes: Long,fragments: Long,dimensions: Int): BigInt =
-    BigInt(2)*BigInt(messageBytes)+BigInt(messageObjectBytes)*BigInt(messages)+BigInt(fragments)*BigInt(pieceBytes(dimensions))
+    BigInt(2)*BigInt(messageBytes)+BigInt(messageObjectBytes)*BigInt(messages)+BigInt(fragments)*BigInt(chunkBytes)+VectorArena.heldBytes(dimensions,fragments)
   /** The decoded messages' share, from their strings (two bytes per UTF-16 unit): at most the estimate's share, as a
     * string has no more UTF-16 units than UTF-8 bytes. */
   def decoded(messages: List[Message]): BigInt = messages.foldLeft(BigInt(0)) { (total,m) =>
@@ -140,14 +142,17 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   private final case class StagedFailure(stage: IndexingStage,error: Throwable) extends RuntimeException
   private def publishStage(run: => IO[Unit]): IO[Unit] = IO.defer(run).handleErrorWith(error => IO.raiseError(StagedFailure(IndexingStage.Publication,error)))
   private final class Windows(claim: Claim,total: Int) {
-    private val vectors=new VectorArena(config.embedding.dimensions)
-    private val pieceBytes=IndexingBudget.pieceBytes(config.embedding.dimensions)
-    private var retained=IndexingBudget.decoded(claim.snapshot.messages)
-    /** Counts the pieces of a batch before it is embedded and retained: past the budget the job ends instead. */
-    private def reserve(pieces: Int): Unit = {
-      val next=retained+BigInt(pieces)*BigInt(pieceBytes)
-      Check(next<=BigInt(config.maxIndexingBudgetBytes),IndexingBudget.exceededCode,s"indexing job would retain $next bytes, above the budget of ${config.maxIndexingBudgetBytes}")
-      retained=next
+    private val dimensions=config.embedding.dimensions
+    private val vectors=new VectorArena(dimensions)
+    private val decoded=IndexingBudget.decoded(claim.snapshot.messages)
+    /** The pieces and Context spans the publication holds once the windows so far are appended, and the vectors in the
+      * arena, counted as they are added: a part added again after an input mismatch is held twice and counted twice. */
+    private var pieces=0L
+    private var spans=0L
+    private var added=0L
+    private def within(pieces: Long,spans: Long,vectors: Long): Unit = {
+      val retained=decoded+BigInt(pieces)*BigInt(IndexingBudget.chunkBytes)+BigInt(spans)*BigInt(IndexingBudget.coverageSpanBytes)+VectorArena.heldBytes(dimensions,vectors)
+      Check(retained<=BigInt(config.maxIndexingBudgetBytes),IndexingBudget.exceededCode,s"indexing job would retain $retained bytes, above the budget of ${config.maxIndexingBudgetBytes}")
     }
     def accepted[A](key: CheckpointKey)(decode: Json => A,encode: A => Json)(run: => IO[A]): IO[A] = IO.blocking(archive.checkpoint(claim,key)).flatMap {
       case Some(value) => IO(decode(value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted checkpoint payload")))
@@ -184,22 +189,29 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       case staged: StagedFailure => IO.raiseError(staged)
       case error => failed(error,index,"annotation",0)
     }
-    def embed(chunks: List[Chunk],index: Int,attempt: Int): IO[List[IndexedChunk]] = {
+    /** Embeds the window's pieces. Before anything of the window is retained, its pieces, Context spans and vectors must
+      * fit the budget with everything retained so far; each part is checked again with the vectors the arena holds. */
+    def embed(delta: ProblemPassages.Delta,index: Int,attempt: Int): IO[List[IndexedChunk]] = {
+      val chunks=delta.pieces.map(_.chunk).toList
       val batchSize=config.indexing.embeddingBatchSize
       val batches=chunks.grouped(batchSize).toList
+      val admitted=IO {
+        within(pieces+chunks.size,spans+delta.context.size,added+chunks.size)
+        pieces+=chunks.size; spans+=delta.context.size
+      }
       val parts=batches.zipWithIndex.traverse { (batch,part) =>
         val key=IndexCheckpoints.key(claim,IndexingStage.Embedding,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,CheckpointJson.chunks(batch))
-        def validated(vectors: List[List[Double]]): List[List[Double]] = { CheckpointJson.validateVectors(vectors,batch.size,config.embedding.dimensions); vectors }
-        IO(reserve(batch.size)) *> accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(IO.defer(embedder.documents(claim.owner,batch.map(_.text))).map(validated))
-          .map(batchVectors => batch.zip(batchVectors).map((chunk,vector) => IndexedChunk(chunk,vectors.add(vector))))
+        def validated(vectors: List[List[Double]]): List[List[Double]] = { CheckpointJson.validateVectors(vectors,batch.size,dimensions); vectors }
+        IO(within(pieces,spans,added+batch.size)) *> accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(IO.defer(embedder.documents(claim.owner,batch.map(_.text))).map(validated))
+          .map(batchVectors => batch.zip(batchVectors).map { (chunk,vector) => added+=1; IndexedChunk(chunk,vectors.add(vector)) })
       }.map(_.flatten)
       // A part accepted under another batch size addresses other pieces: none of the window's parts is reused.
-      parts.recoverWith { case _: CheckpointInputMismatch =>
+      (admitted *> parts.recoverWith { case _: CheckpointInputMismatch =>
         IO.blocking(archive.discardCheckpoints(claim,IndexingStage.Embedding,index)).flatMap { discarded =>
           val currentParts=batches.size
           IO(logger.warn(s"accepted work discarded jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total stage=embedding discardedParts=$discarded currentParts=$currentParts embeddingBatchSize=$batchSize"))
         } *> parts
-      }.handleErrorWith(error => failed(error,index,"embedding",attempt))
+      }).handleErrorWith(error => failed(error,index,"embedding",attempt))
     }
   }
   private def count(source: ProblemPassages.Source): Int = {
@@ -238,7 +250,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
             windows.annotate(key,problemAnnotator.annotate(claim.owner,window,state.carry).flatTap(value => IO(ProblemPassages.validate(window,state.carry.nonEmpty,value))),index))
           decision.flatMap { (value,attempt) =>
             IO(ProblemPassages.accept(state,window,value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted annotation state"))).flatMap { delta =>
-              windows.embed(delta.pieces.map(_.chunk).toList,index,attempt).flatMap { indexed =>
+              windows.embed(delta,index,attempt).flatMap { indexed =>
                 val next=publication.append(delta,indexed)
                 windows.report(index+1) *> loop(delta.state,next,index+1)
               }

@@ -139,7 +139,11 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
       assert(worker(archive,configured(stored),model,embedding).once.unsafeRunSync()); assert(failed)
       assertEquals(f.acceptedParts(receipt.jobId,IndexingStage.Embedding),texts.indexOf(failedText)/stored)
       batches.clear(); val log=new WorkerLog
-      assert(worker(archive,configured(current),model,embedding,ModelFixtures.failureBackoff,log.logger).once.unsafeRunSync())
+      // Within a budget of exactly the claim's estimate: the window's pieces count once, also when the parts accepted
+      // under the other grouping are discarded and the window is embedded again.
+      val messageBytes=request(texts.map("assistant"->_)).messages.map(m => Wire.encode(Message.codecJson,m).noSpaces.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong).sum
+      val tight=configured(current).copy(maxIndexingBudgetBytes=IndexingBudget.estimate(texts.size,messageBytes,texts.size,f.config.embedding.dimensions).toLong)
+      assert(worker(archive,tight,model,embedding,ModelFixtures.failureBackoff,log.logger).once.unsafeRunSync())
       assertEquals(batches.toList,texts.grouped(current).toList,"the window is embedded again, under the current batch size")
       assertEquals(f.acceptedParts(receipt.jobId,IndexingStage.Embedding),texts.grouped(current).size,"no part of the other grouping remains")
       assertEquals(archive.session("a",receipt.sessionId).indexedRevision,Some(1)); assertEquals(annotations,1)

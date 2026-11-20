@@ -6,7 +6,7 @@ package chronicle
   * returned views never change. */
 final class VectorArena(dimensions: Int) {
   Check(dimensions>0,"internal","vector dimensions")
-  private val perBlock = math.max(1,VectorArena.blockDoubles/dimensions)
+  private val perBlock = VectorArena.vectorsPerBlock(dimensions)
   private var block = Array.emptyDoubleArray
   private var used = perBlock
   def add(vector: Seq[Double]): Seq[Double] = {
@@ -21,6 +21,13 @@ final class VectorArena(dimensions: Int) {
 object VectorArena {
   /** 2 MiB per block. */
   val blockDoubles: Int = 256*1024
+  private val arrayHeaderBytes = 16
+  def vectorsPerBlock(dimensions: Int): Int = math.max(1,blockDoubles/dimensions)
+  /** The heap of the blocks that hold `vectors` vectors: whole blocks, as `add` allocates the next one when one fills. */
+  def heldBytes(dimensions: Int,vectors: Long): BigInt = {
+    val perBlock=vectorsPerBlock(dimensions)
+    BigInt((vectors+perBlock-1)/perBlock)*BigInt(perBlock.toLong*dimensions*8+arrayHeaderBytes)
+  }
   final class View private[VectorArena] (block: Array[Double],offset: Int,val length: Int) extends scala.collection.immutable.IndexedSeq[Double] {
     def apply(index: Int): Double = { if(index<0 || index>=length) throw new IndexOutOfBoundsException(index.toString); block(offset+index) }
   }
