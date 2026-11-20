@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Old-client check (gate O of docs/drafts/20261120-1201-append-only-ingest-spec.md, §8 and §11): the collector built
 # from main 0aedcfa8, unmodified, uploads synthetic Pi sessions through /api/ingest to a server built from this tree (a
-# new session, an append, a rewrite, and a session above the server's body bound), and this tree's CLI reads every
-# revision back exactly. On demand, from the repository root:
+# new session, an append, a rewrite, and a session above the server's body bound), this tree's CLI reads every
+# revision back exactly, and while an upload attempt of the session is live its next revision meets 409 upload-busy
+# (the old collector's cas-conflict). On demand, from the repository root:
 #
 #   CHRONICLE_SERVER="$(nix build --no-link --print-out-paths .#chronicle.nativeArtifact)/libexec/chronicle-server" \
 #   MAIN_COLLECTOR="$(nix build --no-link --print-out-paths "git+file://$PWD?rev=0aedcfa8bcdbfd93610ba63b3836384240538b83#chronicle-collector")/bin/chronicle-collector" \
@@ -19,7 +20,7 @@ set -euo pipefail
 : "${PONYGIRLS_OWNED_FIXTURE_ROOT:?run via the owned with-service-postgres wrapper}"
 cd "$(dirname "$0")/../.."
 exec python3 -c "$(cat <<'PY'
-import hashlib, json, os, re, secrets, signal, socket, subprocess, tempfile, time, urllib.request, uuid
+import hashlib, json, os, re, secrets, signal, socket, subprocess, tempfile, time, urllib.error, urllib.request, uuid
 from pathlib import Path
 
 SERVER = Path(os.environ['CHRONICLE_SERVER']).resolve(strict=True)
@@ -198,6 +199,39 @@ def main():
                   len(queue) == 1 and queue[0]['status'] == 'stopped' and queue[0]['error'] == 'protocol-rejected', queue)
             check('the server stored nothing for it', sql("SELECT count(*) FROM ch_sources WHERE owner='alice'") == [['1']])
             check('the earlier session is unchanged', revisions(session) == layout)
+
+            # While an upload attempt of the same source is live, /api/ingest answers 409 upload-busy: the old collector
+            # keeps the revision as its own conflict, nothing is stored, and the attempt can still be aborted.
+            token = (root / 'collector-token').read_text().strip()
+
+            def api(method, path, body=None):
+                request = urllib.request.Request(origin + path, method=method, data=None if body is None else json.dumps(body).encode(),
+                                                 headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+                try:
+                    with urllib.request.urlopen(request, timeout=30) as response:
+                        return response.status, json.loads(response.read())
+                except urllib.error.HTTPError as error:
+                    return error.code, json.loads(error.read())
+
+            status_code, limits = api('GET', '/api/ingest/uploads')
+            check('the upload capability probe answers the limits', status_code == 200 and int(limits['maxPartBytes']) == 8 * 1024 * 1024, limits)
+            identity = json.loads(sql("SELECT source FROM ch_revision_info WHERE session_id=:'arg0' AND revision=3", session)[0][0])
+            metadata = dict(title='gate-o upload', project=None, workdir=None, gitRemote=None, gitBranch=None, gitCommit=None, producer='gate-o',
+                            model=None, startedAt=None, endedAt=None, tags=[])
+            status_code, opened = api('POST', '/api/ingest/uploads', dict(
+                requestId=str(uuid.uuid4()), source=identity, expectedRevision=3, rawPath='gate-o.jsonl', base=None, digest=hashlib.sha256(b'').hexdigest(),
+                rawBytes='0', messageCount=0, messageChain=hashlib.sha256(b'chronicle.message-chain.v1').hexdigest(), completion='Quiescent', redacted=False,
+                metadata=metadata))
+            check('an upload attempt of the session opens', status_code == 200 and opened['phase'] == 'Open', opened)
+            path.write_text(content(rewritten + [pi_message('a3', 'u3', 'assistant', 'answer while an upload is live', 6)]), encoding='utf-8')
+            counters = collect(1)
+            check('the old collector meets the live upload: one upload failure, one conflict, nothing uploaded',
+                  counters['uploadFailures'] == 1 and counters['conflicts'] == 1 and counters['uploaded'] == 0, counters)
+            entries = [entry for entry in status()['queue'] if entry['status'] == 'conflict']
+            check('the 409 upload-busy is the old collector\'s cas-conflict', len(entries) == 1 and entries[0]['error'] == 'cas-conflict', entries)
+            check('nothing was stored for it', revisions(session) == layout and sql("SELECT revision FROM ch_sources WHERE id=:'arg0'", session) == [['3']])
+            status_code, aborted = api('POST', f"/api/ingest/uploads/{opened['uploadId']}/abort")
+            check('the attempt aborts', status_code == 200 and aborted['phase'] == 'Aborted', aborted)
         except BaseException:
             log.flush()
             print((root / 'server.log').read_text()[-4000:], flush=True)
