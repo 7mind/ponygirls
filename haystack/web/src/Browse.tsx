@@ -14,12 +14,23 @@ const PREFETCH_MARGIN = "0px 0px 240px 0px";
 const SEARCH_LIMIT_MAX = 100;
 const SKELETON_ROWS = 14;
 /**
- * first: a new query or sort (the list restarts); `shown` is set when the route shown is searched again (Search with
- * the applied query): its settled first page (`firstPage`), compared with the answer so that an unchanged list says so.
- * append: the next page of the chain; refresh: reload the first `rows` rows of the same query in place — rows stay
- * until the new chain arrives and the first visible row keeps its position (live updates, spec §5 rule 6).
+ * What a Search of the route shown (with the applied query) was started from: the settled first page the reader saw
+ * (`firstPage`), compared with the answer so that an unchanged list says so, and the visit and user action it was
+ * clicked in (`Confirmation`).
  */
-type Load = { kind: "first"; shown: string | null } | { kind: "append"; cursor: string } | { kind: "refresh"; rows: number };
+interface Recheck { shown: string; visit: number; action: number }
+/**
+ * The "No changes" confirmation of one Search: shown only while this list is on screen in the same visit, no later
+ * user Search or sort was made, its load is the latest settled one, and nothing newer (a load, a live change, a
+ * rejected query) is shown. A response that settles after the visit ended applies its rows but never confirms.
+ */
+interface Confirmation { visit: number; action: number; load: number }
+/**
+ * first: a new query or sort (the list restarts), or the route shown searched again (`recheck`); append: the next page
+ * of the chain; refresh: reload the first `rows` rows of the same query in place — rows stay until the new chain
+ * arrives and the first visible row keeps its position (live updates, spec §5 rule 6).
+ */
+type Load = { kind: "first"; recheck: Recheck | null } | { kind: "append"; cursor: string } | { kind: "refresh"; rows: number };
 /** The load whose failure is shown: its Retry repeats it. */
 type Failure = { load: Load["kind"]; message: string };
 interface Anchor { key: string; top: number }
@@ -208,10 +219,13 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
   // The syntax dialog is rendered only while open: a closed one would still be found by its label ("Query syntax").
   const [syntaxOpen, setSyntaxOpen] = useState(false);
   const [changed, setChanged] = useState(false);
-  // The last Search of the route shown answered its first page exactly as the reader saw it (a toast says so). It is
-  // transient: leaving the view, any newer load or live change, and another Search or sort end it.
-  const [unchanged, setUnchanged] = useState(false);
-  useEffect(() => { if (!active) setUnchanged(false); }, [active]);
+  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  // Visits of this list: a new one starts each time it stops being the view on screen.
+  const visit = useRef(0);
+  useEffect(() => { if (!active) visit.current++; }, [active]);
+  // User Searches and sorts, also those the analyzer rejects; the latest settled load or restored route.
+  const action = useRef(0);
+  const settledLoad = useRef(0);
   // A submitted query the server's analyzer rejected: it is not applied, the list keeps the applied query's rows.
   const [rejected, setRejected] = useState<{ query: string; diagnostics: Diagnostic[] } | null>(null);
   const validation = useRef(0);
@@ -278,7 +292,6 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
     setBusy(true);
     setFailure(null);
     setDiagnostics([]);
-    setUnchanged(false);
     if (load.kind !== "append") setChanged(false);
     refreshing.current = load.kind === "refresh";
     if (load.kind === "first") {
@@ -309,7 +322,8 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
       setItems((previous) => [...new Map([...(load.kind === "append" ? previous : []), ...rows].map((item) => [summaryKey(item), item])).values()]);
       continuation.current = next;
       setCursor(next);
-      if (load.kind === "first" && load.shown !== null) setUnchanged(firstPage(rows, next !== undefined) === load.shown);
+      if (load.kind === "first" && load.recheck !== null && firstPage(rows, next !== undefined) === load.recheck.shown)
+        setConfirmation({ visit: load.recheck.visit, action: load.recheck.action, load: request });
       if (load.kind !== "append") phase.current = "settled";
       refreshing.current = false;
     } catch (err) {
@@ -329,7 +343,7 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
       }
       setFailure({ load: load.kind, message: err instanceof NetworkError ? "Server unreachable — the service may be down." : `Search failed: ${err instanceof Error ? err.message : "unknown"}.` });
     } finally {
-      if (request === sequence.current) { pending.current = null; setBusy(false); }
+      if (request === sequence.current) { pending.current = null; settledLoad.current = request; setBusy(false); }
     }
   }, [onAuthLost]);
 
@@ -360,12 +374,12 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
     const back = hash === null || fresh.current ? undefined : kept.current.get(hash);
     fresh.current = false;
     if (hash !== null) kept.current.delete(hash);
-    if (back === undefined) { void run(initial, { kind: "first", shown: null }); return; }
+    if (back === undefined) { void run(initial, { kind: "first", recheck: null }); return; }
     sequence.current++;
     pending.current = null;
+    settledLoad.current = sequence.current;
     refreshing.current = false;
     restored.current = back;
-    setUnchanged(false);
     setBusy(false);
     setFailure(back.failure);
     if (back.tag === "failed") {
@@ -393,7 +407,6 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
   const mountedVersion = useRef(live.version);
   useEffect(() => {
     if (live.version === mountedVersion.current || (live.version === 1 && live.key === null)) return;
-    setUnchanged(false);
     const top = visible(section.current) ? window.scrollY : pageTop.current;
     if (top === 0 && items.length <= PAGE_SIZE) void refresh();
     else setChanged(true);
@@ -413,8 +426,8 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
   function apply(state: BrowseState) {
     if (state.migrationError !== null) return;
     validation.current++;
+    action.current++;
     setRejected(null);
-    setUnchanged(false);
     // Invalidate an in-flight page before the hashchange event can arrive.
     pending.current = ++sequence.current;
     continuation.current = undefined;
@@ -424,14 +437,15 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
     // otherwise than `browseHash`: the address without a fragment shows Browse). An address another Search or sort has
     // just set, whose route is not shown yet, is replaced by this one.
     if (shown.current !== null && sameBrowseState(state, shown.current)) {
-      void run(state, { kind: "first", shown: phase.current === "settled" ? firstPage(items, cursor !== undefined) : null });
+      void run(state, { kind: "first", recheck: phase.current === "settled"
+        ? { shown: firstPage(items, cursor !== undefined), visit: visit.current, action: action.current } : null });
       if (!sameBrowseState(state, readBrowseState(location.hash, preset))) location.hash = browseHash(state, preset);
       return;
     }
     const hash = browseHash(state, preset);
     // An explicit Search or sort searches again even where a kept route exists.
     if (location.hash !== hash) { fresh.current = true; location.hash = hash; return; }
-    void run(state, { kind: "first", shown: null });
+    void run(state, { kind: "first", recheck: null });
   }
 
   function changeSort(field: SearchSortField) {
@@ -445,6 +459,7 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
   async function submit() {
     const state: BrowseState = { query, sort, migrationError: initial.migrationError };
     if (query === applied.current.query) { apply(state); return; }
+    action.current++;
     const check = ++validation.current;
     // A submission the reader has navigated away from (a record, another list) is dropped.
     const from = location.hash;
@@ -460,7 +475,7 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
     }
     if (!current()) return;
     if (result.valid) apply(state);
-    else { setUnchanged(false); setRejected({ query, diagnostics: result.diagnostics }); }
+    else setRejected({ query, diagnostics: result.diagnostics });
   }
 
   function changeDraft(next: string) {
@@ -475,7 +490,7 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
   }
 
   function retry(load: Failure["load"]) {
-    if (load === "first") void run(applied.current, { kind: "first", shown: null });
+    if (load === "first") void run(applied.current, { kind: "first", recheck: null });
     else if (load === "refresh") void refresh();
     else if (cursor !== undefined) void run(applied.current, { kind: "append", cursor });
   }
@@ -495,6 +510,8 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
     : empty ? inboxEmpty ? "Nothing to review" : "No matches"
     : cursor === undefined ? `All ${records(items.length)} loaded` : `${items.length} loaded · more available`;
   const includeArchived = appendFilter(appliedQuery, "archived", "all");
+  const confirmed = confirmation !== null && active && !busy && !changed && rejected === null && confirmation.visit === visit.current
+    && confirmation.action === action.current && confirmation.load === settledLoad.current;
 
   return (<section ref={section} className="browse" aria-labelledby={headingId} aria-busy={busy}>
     <h1 id={headingId} className="sr-only">{PRESETS[preset].label}</h1>
@@ -547,8 +564,8 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
     {changed && <div className="update-pill" role="status"><button type="button" onClick={() => void refresh()}><UiIcon name="arrow-up" />Records changed · Show</button></div>}
     {/* Success is a toast (spec §1.8), as on the record page: the counter is not shown on phones. */}
     <div className="toasts" role="status" aria-live="polite">
-      {unchanged && <div className="toast"><UiIcon name="check" /><span>No changes</span>
-        <button type="button" className="btn btn-sm btn-icon" aria-label="Dismiss" onClick={() => setUnchanged(false)}><UiIcon name="x" /></button></div>}
+      {confirmed && <div className="toast"><UiIcon name="check" /><span>No changes</span>
+        <button type="button" className="btn btn-sm btn-icon" aria-label="Dismiss" onClick={() => setConfirmation(null)}><UiIcon name="x" /></button></div>}
     </div>
     <div className="records" role="region" aria-label="Record results">
       {(items.length > 0 || loadingFirst) && <table ref={table} className="table table-2line" aria-label="Records">

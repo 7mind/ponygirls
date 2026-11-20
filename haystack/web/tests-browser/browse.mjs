@@ -725,7 +725,7 @@ try {
     await done();
   });
 
-  await check("browse: Search with the applied query searches it again, also at the address without a fragment, and says when nothing changed (also at 390 px, transiently); a sort back to it before the previous sort is shown is applied", async () => {
+  await check("browse: Search with the applied query searches it again, also at the address without a fragment, and says when nothing changed (also at 390 px, only in the visit it was clicked in); a sort back to it before the previous sort is shown is applied", async () => {
     // The address the dashboard is opened at, and stays at after sign-in, has no fragment; it shows Browse.
     const { page, done } = await open({ hash: "", holdRoutes: true });
     await waitRows(page, PAGE);
@@ -753,6 +753,26 @@ try {
     assert.equal(await confirmation.count(), 0, "no stale toast after the round trip");
     assert.deepEqual(await rowKeys(page), kept, "the retained rows are intact");
     assert.equal(await page.evaluate(() => window.listSearches.length), loads, "the retained list was not loaded again");
+    // A Search answered after the reader left (its response held until then) applies its rows but confirms nothing.
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    let holding = true;
+    await page.route("**/api/v1/search", async (route) => {
+      const body = route.request().postDataJSON();
+      if (holding && body.query === "" && body.limit === PAGE) { holding = false; await held; }
+      await route.continue();
+    });
+    await searchButton(page).click();
+    await nav(page).getByRole("link", { name: "Inbox", exact: true }).click();
+    await list(page).getByRole("button", { name: "ui:todo", exact: true }).waitFor();
+    release();
+    // The hidden Browse list settles with the released answer.
+    await page.waitForFunction(() => document.querySelector('[data-list="browse"] > section[aria-busy="false"] tbody tr[data-row-id]') !== null);
+    await page.unroute("**/api/v1/search");
+    await page.goBack();
+    await waitRows(page, PAGE);
+    assert.equal(await confirmation.count(), 0, "no toast from a Search answered after the visit ended");
+    assert.deepEqual(await rowKeys(page), kept, "the released answer's rows are shown");
     // Phones hide the counter: the confirmation is visible there too, inside the viewport, and the toolbar fits.
     await page.setViewportSize(PHONE);
     await searchButton(page).click();
