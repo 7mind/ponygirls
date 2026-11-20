@@ -125,8 +125,8 @@ class McpSourceBoundaryTest extends munit.FunSuite {
       Sql.exec(c,s"CREATE ROLE $role LOGIN PASSWORD '${Fixtures.databasePassword}'")
       Sql.exec(c,s"REVOKE TEMP ON DATABASE $databaseIdentifier FROM PUBLIC")
       Sql.exec(c,s"GRANT USAGE ON SCHEMA public TO $role")
-      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_revision_info,ch_messages,ch_chunks,ch_generation_tags,ch_search_chunks,ch_jobs,ch_owner_targets,ch_index_profiles,ch_embedding_spaces TO $role")
-      Sql.exec(c,s"GRANT SELECT(session_id,revision) ON ch_revisions TO $role")
+      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_revision_info,ch_messages,ch_epoch_messages,ch_chunks,ch_generation_tags,ch_search_chunks,ch_jobs,ch_owner_targets,ch_index_profiles,ch_embedding_spaces TO $role")
+      Sql.exec(c,s"GRANT SELECT(session_id,revision,epoch,message_count,raw_bytes) ON ch_revisions TO $role")
     }
     try {
       val denied=Fixtures.database(f.config.copy(databaseUser=role),f.catalog)
@@ -141,7 +141,8 @@ class McpSourceBoundaryTest extends munit.FunSuite {
     } finally f.db.transaction { c => Sql.exec(c,s"GRANT TEMP ON DATABASE $databaseIdentifier TO PUBLIC"); Sql.exec(c,s"DROP OWNED BY $role"); Sql.exec(c,s"DROP ROLE $role") }
   }}
   test("WG GoodCommunication: admitted SQL deadline cancels a controlled numeric preflight delay without changing model policy") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
-    val receipt=f.archive.ingest("a",Fixtures.snapshot())
+    // Replaces the legacy message table by a delaying view: pinned to the legacy layout.
+    val receipt=new PostgresArchive(f.db,f.config,RevisionLayoutPolicy.Legacy).ingest("a",Fixtures.snapshot())
     f.db.transaction { c =>
       Sql.exec(c,"ALTER TABLE ch_messages RENAME TO ch_test_source_messages")
       Sql.exec(c,"CREATE VIEW ch_messages AS SELECT session_id,revision,position,message_id,value || jsonb_build_object('delayed',(SELECT pg_sleep(8))) AS value FROM ch_test_source_messages")

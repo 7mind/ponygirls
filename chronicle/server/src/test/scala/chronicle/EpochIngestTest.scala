@@ -282,12 +282,12 @@ final class EpochIngestTest extends munit.FunSuite {
     }
   }}
 
-  test("production wiring: new revisions keep the legacy layout and epoch maintenance runs every 60 s") { database { (config,db,_) =>
+  test("production wiring: new revisions are stored in epochs and epoch maintenance runs every 60 s") { database { (config,db,_) =>
     def wired[A: Tag](module: Module): A = ChronicleInjector().produceGet[A](module).use(IO.pure).unsafeRunSync()
     val production: Module=_root_.chronicle.plugins.ChroniclePlugin
-    assertEquals(wired[RevisionLayoutPolicy](production),RevisionLayoutPolicy.Legacy)
+    assertEquals(wired[RevisionLayoutPolicy](production),RevisionLayoutPolicy.Epochs)
     assertEquals(wired[EpochMaintenance](production.overriddenBy(new ModuleDef { make[Database].fromValue(db) })).interval,60.seconds)
     val id=new PostgresArchive(db,config).ingest("a",session(source(),0,header(3),List(pi("u1","s","user","question",1)))).sessionId
-    db.transaction(c => assertEquals(epochOf(c,id,1),None))
+    db.transaction(c => assert(epochOf(c,id,1).isDefined))
   }}
 }

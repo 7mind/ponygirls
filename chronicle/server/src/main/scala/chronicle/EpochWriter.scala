@@ -14,8 +14,8 @@ enum RevisionLayoutPolicy {
   case Legacy,Epochs
 }
 object RevisionLayoutPolicy {
-  /** `Legacy` until every reader resolves epoch revisions (spec §11, U3). */
-  val production: RevisionLayoutPolicy = Legacy
+  /** Every reader resolves epoch revisions through RevisionContent. */
+  val production: RevisionLayoutPolicy = Epochs
 }
 
 /** The revision writer of `/api/ingest`, inside its transaction before the switch: the layout decision, the legacy writer

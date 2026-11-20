@@ -130,7 +130,7 @@ final class PostgresArchive(db: Database, config: Config, layout: RevisionLayout
   private val contextReader=new PostgresContextReader(db,this)
   def readMessageContext(reader: String,id: UUID,view: ContentView,anchor: Span,beforeBytes: Int,afterBytes: Int,materialization: ReadMaterialization): MessageContextResult =
     contextReader.readMessageContext(reader,id,view,anchor,beforeBytes,afterBytes,materialization)
-  private val messageSearch=new PostgresMessageSearch(db,this,new MessageSearchCursors)
+  private[chronicle] val messageSearch=new PostgresMessageSearch(db,this,new MessageSearchCursors,SessionMessageSearchPolicy.scanDeadlineMillis)
   def searchSessionMessages(reader: String,id: UUID,view: ContentView,literal: String,cursor: Option[String],limit: Int,materialization: ReadMaterialization): SessionMessageSearchResult =
     messageSearch.searchSessionMessages(reader,id,view,literal,cursor,limit,materialization)
   val visible = """EXISTS(SELECT 1 FROM ch_users ou WHERE ou.id=s.owner AND ou.enabled) AND EXISTS(SELECT 1 FROM ch_users ru WHERE ru.id=? AND ru.enabled) AND (s.owner=? OR EXISTS(SELECT 1 FROM ch_members a JOIN ch_members b ON a.group_id=b.group_id WHERE a.user_id=? AND b.user_id=s.owner)) AND NOT s.tombstone"""
@@ -178,10 +178,15 @@ final class PostgresArchive(db: Database, config: Config, layout: RevisionLayout
     materialization.begin(c)
     f(c)
   }
-  private def content(c: Connection,id: UUID,revision: Int): IngestRequest =
-    Sql.one(c,"SELECT snapshot FROM ch_revisions WHERE session_id=? AND revision=?",id,revision)(r => Wire.decode(IngestRequest.codecJson,Sql.json(r,"snapshot"))).getOrElse(throw DomainError("not-found","content view not found"))
+  private def content(c: Connection,id: UUID,revision: Int): RevisionContent =
+    RevisionContent.resolve(c,id,revision).getOrElse(throw DomainError("not-found","content view not found"))
   private[chronicle] def selectView(c: Connection,reader: String,id: UUID,selector: Option[ContentView]): ContentView = selectView(c,reader,id,selector,ReadMaterialization.unrestricted)
-  private[chronicle] def selectView(c: Connection,reader: String,id: UUID,selector: Option[ContentView],materialization: ReadMaterialization): ContentView = {
+  private[chronicle] def selectView(c: Connection,reader: String,id: UUID,selector: Option[ContentView],materialization: ReadMaterialization): ContentView =
+    select(c,reader,id,selector,materialization)(view => Sql.one(c,"SELECT 1 FROM ch_revisions WHERE session_id=? AND revision=?",id,view.revision)(_ => ()))._1
+  /** The selected view and where its revision's content is stored, resolved with the revision's existence. */
+  private[chronicle] def selectContent(c: Connection,reader: String,id: UUID,selector: Option[ContentView],materialization: ReadMaterialization): (ContentView,RevisionContent) =
+    select(c,reader,id,selector,materialization)(view => RevisionContent.resolve(c,id,view.revision))
+  private def select[A](c: Connection,reader: String,id: UUID,selector: Option[ContentView],materialization: ReadMaterialization)(stored: ContentView => Option[A]): (ContentView,A) = {
     authorized(c,reader,id)
     val (head,published,indexed)=Sql.one(c,"SELECT s.revision,s.published,g.revision AS indexed FROM ch_sources s LEFT JOIN ch_generations g ON g.id=s.published WHERE s.id=?",id) { r =>
       val revision=r.getInt("indexed"); val index=if(r.wasNull()) None else Some(revision)
@@ -195,8 +200,7 @@ final class PostgresArchive(db: Database, config: Config, layout: RevisionLayout
       Check(!retired,"indexed-view-retired","indexed content view was retired by an explicit rebuild")
       Check(current,"unavailable","indexed content view is not in the current passage format")
     }
-    Check(Sql.one(c,"SELECT 1 FROM ch_revisions WHERE session_id=? AND revision=?",id,view.revision)(_ => true).contains(true),"not-found","content view not found")
-    view
+    (view,stored(view).getOrElse(throw DomainError("not-found","content view not found")))
   }
   private[chronicle] def infoQuery(id: UUID,view: ContentView): ReadSources.Query = ReadSources.Query("SELECT s.owner,s.revision,g.revision AS indexed,i.metadata,i.source,i.completion,i.redacted FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=? LEFT JOIN ch_generations g ON g.id=s.published WHERE s.id=?",List(view.revision,id))
   def info(c: Connection,reader: String,id: UUID,selector: Option[ContentView]): SessionInfo = info(c,reader,id,selector,ReadMaterialization.unrestricted)
@@ -216,7 +220,7 @@ final class PostgresArchive(db: Database, config: Config, layout: RevisionLayout
   def headSnapshot(reader: String,id: UUID): IngestRequest = reading { c =>
     authorized(c,reader,id)
     val revision=Sql.one(c,"SELECT revision FROM ch_sources WHERE id=?",id)(_.getInt(1)).get
-    content(c,id,revision)
+    RevisionContent.request(c,content(c,id,revision))
   }
   def readSession(reader: String,id: UUID,selector: Option[ContentView]): SessionResult = readSession(reader,id,selector,ReadMaterialization.unrestricted)
   def readSession(reader: String,id: UUID,selector: Option[ContentView],materialization: ReadMaterialization): SessionResult = reading(materialization) { c =>
@@ -228,23 +232,25 @@ final class PostgresArchive(db: Database, config: Config, layout: RevisionLayout
   def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): MessagesResult = messages(reader,id,offset,limit,selector,ReadMaterialization.unrestricted)
   def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView],materialization: ReadMaterialization): MessagesResult = reading(materialization) { c =>
     Check.contentPage(offset,limit)
-    val view=selectView(c,reader,id,selector,materialization)
+    val (view,content)=selectContent(c,reader,id,selector,materialization)
     val total=Sql.one(c,"SELECT message_count FROM ch_revision_info WHERE session_id=? AND revision=?",id,view.revision)(_.getInt(1)).getOrElse(throw DomainError("projection","message projection missing"))
-    val query=ReadSources.Query("SELECT value FROM ch_messages WHERE session_id=? AND revision=? AND position>=? ORDER BY position LIMIT ?",List(id,view.revision,offset,limit))
+    val stored=content.messages
+    val query=ReadSources.Query(s"SELECT value FROM ${stored.sql} m WHERE position>=? ORDER BY position LIMIT ?",stored.args++List(offset,limit))
     materialization.admit(ReadSources.sum(List(JsonUtf8Size(Json.obj("message_count"->Json.fromInt(total))),ReadSources.bytes(c,query))))
     val messages=Sql.rows(c,query.sql,query.args*)(r => Wire.decode(Message.codecJson,Sql.json(r,"value")))
     MessagesResult(messages,total,offset,view)
   }
   def locateMessage(reader: String,id: UUID,selector: ContentView,messageId: String): MessageLocation = reading { c =>
     Check.text(messageId,256)
-    val view=selectView(c,reader,id,Some(selector))
-    Sql.one(c,"SELECT m.position,i.message_count FROM ch_messages m JOIN ch_revision_info i ON i.session_id=m.session_id AND i.revision=m.revision WHERE m.session_id=? AND m.revision=? AND m.message_id=?",id,view.revision,messageId)(r => MessageLocation(view,r.getInt(1),r.getInt(2))).getOrElse(throw DomainError("not-found","message not found"))
+    val (view,content)=selectContent(c,reader,id,Some(selector),ReadMaterialization.unrestricted)
+    val stored=content.messages
+    Sql.one(c,s"SELECT m.position,i.message_count FROM ${stored.sql} m JOIN ch_revision_info i ON i.session_id=? AND i.revision=? WHERE m.message_id=?",(stored.args++List(id,view.revision,messageId))*)(r => MessageLocation(view,r.getInt(1),r.getInt(2))).getOrElse(throw DomainError("not-found","message not found"))
   }
   def raw(reader: String,id: UUID,revision: Option[Int]): RawResult = reading { c =>
     authorized(c,reader,id)
     val selected=revision.getOrElse(Sql.one(c,"SELECT revision FROM ch_sources WHERE id=?",id)(_.getInt(1)).get)
     Check(selected>0,"invalid","content revision must be positive")
-    RawResult(content(c,id,selected).files,selected)
+    RawResult(RevisionContent.files(c,content(c,id,selected)),selected)
   }
   def claim(profiles: Set[String],scope: ClaimScope,leaseSeconds: Int,large: LargeJobs): Option[Claim] = {
     Check(profiles.nonEmpty && leaseSeconds>=0,"invalid","invalid claim profiles or lease")
@@ -305,16 +311,9 @@ final class PostgresArchive(db: Database, config: Config, layout: RevisionLayout
   /** The claimed revision for indexing: its messages are decoded one at a time and its raw files are left out (indexing
     * reads only messages and digest). Decoding a large snapshot as one syntax tree held gigabytes for seconds, long
     * enough to be promoted, and drove the collector's longest pauses. */
-  private def claimedSnapshot(c: Connection,id: UUID,revision: Int): (IngestRequest,RevisionBinding) = {
-    val (envelope,bindingId)=Sql.one(c,"""SELECT snapshot-'messages'-'files'||'{"messages":[],"files":[]}'::jsonb,binding_id FROM ch_revisions WHERE session_id=? AND revision=?""",id,revision) { r =>
-      (Wire.decode(IngestRequest.codecJson,Wire.parse(r.getString(1))),r.getObject(2,classOf[UUID]))
-    }.getOrElse(throw DomainError("stale-claim","archive revision no longer exists"))
-    val messages=List.newBuilder[Message]
-    Using.resource(c.prepareStatement("SELECT item.value FROM ch_revisions r CROSS JOIN LATERAL jsonb_array_elements(r.snapshot->'messages') WITH ORDINALITY item(value,position) WHERE r.session_id=? AND r.revision=? ORDER BY item.position")) { statement =>
-      Sql.bind(statement,List(id,revision)); statement.setFetchSize(PostgresArchive.claimedMessagesPerFetch)
-      Using.resource(statement.executeQuery()) { rows => while(rows.next()) messages += Wire.decode(Message.codecJson,Wire.parse(rows.getString(1))) }
-    }
-    val snapshot=envelope.copy(messages=messages.result())
+  private[chronicle] def claimedSnapshot(c: Connection,id: UUID,revision: Int): (IngestRequest,RevisionBinding) = {
+    val stored=RevisionContent.resolve(c,id,revision).getOrElse(throw DomainError("stale-claim","archive revision no longer exists"))
+    val (snapshot,bindingId)=RevisionContent.claimed(c,stored,PostgresArchive.claimedMessagesPerFetch)
     (snapshot,RevisionBinding.captured(bindingId,id,revision,snapshot))
   }
   /** The head revision of the claim's live source while the claim's owner target is current. A claim of an older revision

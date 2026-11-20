@@ -253,7 +253,8 @@ class ArchiveSearchTest extends munit.FunSuite {
     }
   }}
   test("stricter inherited SQL deadlines cover witness lock waits and remain observable") { database { f =>
-    f.archive.ingest("a",snapshot(List("needle")))
+    // Locks the legacy message table: pinned to the legacy layout.
+    new PostgresArchive(f.db,f.config,RevisionLayoutPolicy.Legacy).ingest("a",snapshot(List("needle")))
     val separator=if(f.config.jdbcUrl.contains("?")) "&" else "?"
     val options=java.net.URLEncoder.encode("-c statement_timeout=150",UTF_8)
     val config=f.config.copy(jdbcUrl=f.config.jdbcUrl+separator+"options="+options)

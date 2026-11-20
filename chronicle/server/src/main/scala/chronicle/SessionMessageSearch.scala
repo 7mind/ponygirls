@@ -22,6 +22,8 @@ object SessionMessageSearchPolicy {
   val maximumPageSize=100
   val maximumLocatorBytes=64*1024
   val statementDeadlineMillis=5000
+  /** Find in a current epoch scans under this limit first, then verifies the candidates of the epoch's trigram index. */
+  val scanDeadlineMillis=1000
   val matchingPolicy="normalized-message-text/pg-lower-strpos/v1"
   def validate(literal: String,cursor: Option[String],limit: Int): Unit = {
     Check(literal.nonEmpty && literal.length<=maximumQueryBytes && UTF_8.newEncoder().canEncode(literal) && literal.getBytes(UTF_8).length<=maximumQueryBytes,"invalid","invalid message search literal")
@@ -63,24 +65,44 @@ private[chronicle] final class MessageSearchCursors {
     }.getOrElse(throw DomainError("invalid","invalid message search cursor"))
   }
 }
-private[chronicle] final class PostgresMessageSearch(db: Database,archive: PostgresArchive,cursors: MessageSearchCursors) extends MessageSearchReader {
+/** `scanDeadlineMillis`: the limit of the first phase of Find in a current epoch (SessionMessageSearchPolicy). */
+private[chronicle] final class PostgresMessageSearch(db: Database,archive: PostgresArchive,cursors: MessageSearchCursors,val scanDeadlineMillis: Int) extends MessageSearchReader {
+  private def deadline(c: Connection,millis: Int): Unit =
+    Sql.exec(c,"SELECT set_config('statement_timeout',least(coalesce(nullif(setting::bigint,0),?),?)::text,true) FROM pg_settings WHERE name='statement_timeout'",millis,millis)
+  private val matches="strpos(lower((value->>'text') COLLATE pg_unicode_fast),lower(? COLLATE pg_unicode_fast))>0"
   def searchSessionMessages(reader: String,id: UUID,selector: ContentView,literal: String,cursor: Option[String],limit: Int,materialization: ReadMaterialization): SessionMessageSearchResult = {
     SessionMessageSearchPolicy.validate(literal,cursor,limit)
     try db.transaction { c =>
       c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
       // Apply even to unrestricted browser reads, preserving any stricter configured deadline.
-      Sql.exec(c,"SELECT set_config('statement_timeout',least(coalesce(nullif(setting::bigint,0),?),?)::text,true) FROM pg_settings WHERE name='statement_timeout'",SessionMessageSearchPolicy.statementDeadlineMillis,SessionMessageSearchPolicy.statementDeadlineMillis)
-      val view=archive.selectView(c,reader,id,Some(selector),materialization)
+      deadline(c,SessionMessageSearchPolicy.statementDeadlineMillis)
+      val (view,content)=archive.selectContent(c,reader,id,Some(selector),materialization)
       val after=cursors.decode(reader,id,view,literal,cursor)
-      val selection=ReadSources.Selection(ReadSources.Query(
-        "SELECT message_id AS \"messageId\",position FROM ch_messages WHERE session_id=? AND revision=? AND position>? AND strpos(lower((value->>'text') COLLATE pg_unicode_fast),lower(? COLLATE pg_unicode_fast))>0 ORDER BY position LIMIT ?",
-        List(id,view.revision,after,SnapshotProjection.text(literal),limit+1)),"position",limit+1)
+      val needle=SnapshotProjection.text(literal)
+      val stored=content.messages
+      val scan=ReadSources.Selection(ReadSources.Query(
+        s"SELECT message_id AS \"messageId\",position FROM ${stored.sql} m WHERE position>? AND $matches ORDER BY position LIMIT ?",
+        stored.args++List(after,needle,limit+1)),"position",limit+1)
       // Always measure/charge the bounded selected locators BEFORE fetching or decoding IDs.
       // The extra lookahead locator counts too: exceeding the budget is an error, never a partial page.
       val bounded=ReadMaterialization.admitted(new ReadAdmission {
         def consume(bytes: Long): Unit = { SessionMessageSearchPolicy.locatorBytes(bytes); materialization.admit(bytes) }
       })
-      val selected=bounded.selected(c,selection)(json => Wire.decode(MessageSearchHit.codecJson,json))
+      def page(selection: ReadSources.Selection): List[MessageSearchHit] = bounded.selected(c,selection)(json => Wire.decode(MessageSearchHit.codecJson,json))
+      val selected=content match {
+        case epoch: RevisionContent.Epoch if candidates(c,epoch,needle) =>
+          // The first phase runs inside a savepoint: its timeout aborts only the savepoint and its shorter limit.
+          val scanning=c.setSavepoint()
+          try { deadline(c,scanDeadlineMillis); page(scan) }
+          catch {
+            case error: SQLException if error.getSQLState=="57014" =>
+              c.rollback(scanning)
+              page(ReadSources.Selection(ReadSources.Query(
+                s"SELECT message_id AS \"messageId\",position FROM ${stored.sql} m WHERE position>? AND position IN(SELECT position FROM ch_epoch_fragments WHERE epoch=? AND head_candidate AND position>? AND position<? AND value LIKE lower(? COLLATE pg_unicode_fast) ESCAPE '\\') AND $matches ORDER BY position LIMIT ?",
+                stored.args++List(after,epoch.epoch,after,epoch.messageCount,LexicalCandidates.pattern(needle),needle,limit+1)),"position",limit+1))
+          }
+        case _ => page(scan)
+      }
       val hits=selected.take(limit)
       val next=if(selected.size>limit) hits.lastOption.map(hit => cursors.encode(reader,id,view,literal,hit.position)) else None
       SessionMessageSearchResult(view,hits,next)
@@ -88,4 +110,9 @@ private[chronicle] final class PostgresMessageSearch(db: Database,archive: Postg
       case error: SQLException if error.getSQLState=="57014" => throw DomainError("deadline","message search statement deadline exceeded")
     }
   }
+  /** Whether the epoch's fragments can answer the literal: the epoch is current (every fragment is a head candidate),
+    * the literal has trigram keys, and its folded form has at most as many scalars as fragments overlap, so each of its
+    * occurrences lies inside one fragment. */
+  private def candidates(c: Connection,epoch: RevisionContent.Epoch,needle: String): Boolean =
+    LexicalCandidates.trigrams(needle) && Sql.one(c,"SELECT candidates='current' AND char_length(lower(? COLLATE pg_unicode_fast))<=? FROM ch_epochs WHERE id=?",needle,ArchiveProjection.overlapScalars,epoch.epoch)(_.getBoolean(1)).contains(true)
 }

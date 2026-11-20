@@ -65,7 +65,8 @@ class MessageContextHttpTest extends munit.FunSuite {
     assertEquals(response._1,Status.Unauthorized); assertEquals(f.probe.observations,Nil)
   }}
   test("BG GoodCommunication regression: public HTTP context framing overflow is a correlated MCP tool error") { ReadSourceFixture.withFixture(_ => IO.pure(ProblemPublicationFixtures.vector)) { f =>
-    val original=Fixtures.snapshot(); val out=f.archive.ingest("a",original); val auth=new Auth(f.db,f.config); val owner=auth.browser(auth.login(LoginRequest("a","synthetic"))._2)
+    // Corrupts a legacy message row: pinned to the legacy layout.
+    val original=Fixtures.snapshot(); val out=new PostgresArchive(f.db,f.config,RevisionLayoutPolicy.Legacy).ingest("a",original); val auth=new Auth(f.db,f.config); val owner=auth.browser(auth.login(LoginRequest("a","synthetic"))._2)
     val token=auth.mutate(owner,ClientEnvelope(UUID.randomUUID(),Operation.MintToken("context-framing",List(Scope.Read)))).asInstanceOf[Result.Token].result
     // Corrupted metadata exceeds valid-ingest role bounds; exercise defensive public framing.
     f.db.transaction(c => Sql.exec(c,"UPDATE ch_messages SET value=jsonb_set(value,'{role}',to_jsonb(repeat(chr(127),20000))) WHERE session_id=?",out.sessionId))
@@ -111,7 +112,8 @@ class MessageContextHttpTest extends munit.FunSuite {
   }}
 
   test("Blackbox-GoodCommunication specified: opt-in public HTTP text keeps source framing and correlated budget errors") { ReadSourceFixture.withFixture(_ => IO.pure(ProblemPublicationFixtures.vector)) { f =>
-    val original=Fixtures.snapshot(); val out=f.archive.ingest("a",original); val auth=new Auth(f.db,f.config); val owner=auth.browser(auth.login(LoginRequest("a","synthetic"))._2)
+    // Corrupts a legacy message row: pinned to the legacy layout.
+    val original=Fixtures.snapshot(); val out=new PostgresArchive(f.db,f.config,RevisionLayoutPolicy.Legacy).ingest("a",original); val auth=new Auth(f.db,f.config); val owner=auth.browser(auth.login(LoginRequest("a","synthetic"))._2)
     val token=auth.mutate(owner,ClientEnvelope(UUID.randomUUID(),Operation.MintToken("context-text",List(Scope.Read)))).asInstanceOf[Result.Token].result
     val base=rpc(out.sessionId,original.messages.head.id)
     val arguments=base.hcursor.downField("params").downField("arguments").focus.get.mapObject(_.add("responseFormat",Json.fromString("text")))

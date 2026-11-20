@@ -209,8 +209,9 @@ final class SessionMessageSearchPostgresTest extends SessionMessageSearchContrac
     assertEquals(intercept[DomainError](restarted.searchSessionMessages("a",out.sessionId,view,"archive",first.nextCursor,1)).code,"invalid")
     assertEquals(restarted.searchSessionMessages("a",out.sessionId,view,"archive",None,1).hits,first.hits)
   }}
-  test("GoodCommunication: unrestricted browser materialization still preflights huge locator IDs") { OwnerProfilePostgres.withDatabase { (_,db,a,_) =>
-    val out=a.ingest("a",Fixtures.snapshot())
+  test("GoodCommunication: unrestricted browser materialization still preflights huge locator IDs") { OwnerProfilePostgres.withDatabase { (c,db,a,_) =>
+    // Corrupts a legacy message row: pinned to the legacy layout.
+    val out=new PostgresArchive(db,c,RevisionLayoutPolicy.Legacy).ingest("a",Fixtures.snapshot())
     db.transaction(c => Sql.exec(c,"UPDATE ch_messages SET message_id=repeat('x',100000) WHERE session_id=?",out.sessionId))
     assertEquals(intercept[DomainError](a.searchSessionMessages("a",out.sessionId,ContentView(1,None),"archive",None,1)).code,"read-budget")
   }}
@@ -219,8 +220,9 @@ final class SessionMessageSearchPostgresTest extends SessionMessageSearchContrac
     val admission=ReadAdmission.limited(0).unsafeRunSync()
     assertEquals(intercept[DomainError](a.searchSessionMessages("a",out.sessionId,view,"archive",None,1,ReadMaterialization.admitted(admission))).code,"read-budget")
   }}
-  test("GoodCommunication: lock wait hits explicit five second database deadline, never empty or partial hits") { OwnerProfilePostgres.withDatabase { (_,db,a,_) =>
-    val out=a.ingest("a",Fixtures.snapshot()); val acquired=new CountDownLatch(1); val release=new CountDownLatch(1)
+  test("GoodCommunication: lock wait hits explicit five second database deadline, never empty or partial hits") { OwnerProfilePostgres.withDatabase { (c,db,a,_) =>
+    // Locks the legacy message table: pinned to the legacy layout.
+    val out=new PostgresArchive(db,c,RevisionLayoutPolicy.Legacy).ingest("a",Fixtures.snapshot()); val acquired=new CountDownLatch(1); val release=new CountDownLatch(1)
     val blocker=new Thread(() => db.transaction { c =>
       Sql.exec(c,"LOCK TABLE ch_messages IN ACCESS EXCLUSIVE MODE")
       acquired.countDown(); release.await(20,TimeUnit.SECONDS); ()
@@ -234,8 +236,9 @@ final class SessionMessageSearchPostgresTest extends SessionMessageSearchContrac
       assert(millis>=4000 && millis<15000,s"deadline elapsed=$millis ms")
     } finally { release.countDown(); blocker.join(5000); assert(!blocker.isAlive) }
   }}
-  test("GoodCommunication: a caller's stricter statement deadline is not weakened") { OwnerProfilePostgres.withDatabase { (_,db,a,_) =>
-    val out=a.ingest("a",Fixtures.snapshot()); val acquired=new CountDownLatch(1); val release=new CountDownLatch(1)
+  test("GoodCommunication: a caller's stricter statement deadline is not weakened") { OwnerProfilePostgres.withDatabase { (c,db,a,_) =>
+    // Locks the legacy message table: pinned to the legacy layout.
+    val out=new PostgresArchive(db,c,RevisionLayoutPolicy.Legacy).ingest("a",Fixtures.snapshot()); val acquired=new CountDownLatch(1); val release=new CountDownLatch(1)
     val blocker=new Thread(() => db.transaction { c => Sql.exec(c,"LOCK TABLE ch_messages IN ACCESS EXCLUSIVE MODE"); acquired.countDown(); release.await(15,TimeUnit.SECONDS); () })
     // The database session default is a controllable fixture only, restored in finally.
     db.transaction(c => Sql.exec(c,"ALTER ROLE postgres SET statement_timeout='100ms'"))

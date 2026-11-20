@@ -72,14 +72,17 @@ class CheckpointSnapshotBudgetTest extends munit.FunSuite {
     }
     assertEquals(archive.checkpoint(claim,key),Some(Json.fromString("accepted")))
   }}
-  test("GoodCommunication: snapshot and logical revision identity updates are rejected by the database") { CurrentIndexDatabase.withDatabase { (_,db,archive) =>
-    val receipt=archive.ingest("a",Fixtures.snapshot())
+  test("GoodCommunication: snapshot and logical revision identity updates are rejected by the database") { CurrentIndexDatabase.withDatabase { (config,db,_) =>
+    // Updates the legacy snapshot column: pinned to the legacy layout (EpochSchemaTest covers epoch revisions).
+    val receipt=new PostgresArchive(db,config,RevisionLayoutPolicy.Legacy).ingest("a",Fixtures.snapshot())
     List("snapshot=jsonb_set(snapshot,'{metadata,title}',to_jsonb('changed metadata'::text))","binding_id=gen_random_uuid()").foreach { replacement =>
       val error=intercept[java.sql.SQLException](db.transaction(c => Sql.exec(c,s"UPDATE ch_revisions SET $replacement WHERE session_id=? AND revision=1",receipt.sessionId)))
       assertEquals(error.getSQLState,"23514")
     }
   }}
-  test("GoodCommunication: logical INSERT SELECT roundtrip changes physical xmin but preserves source binding and accepted work") { CurrentIndexDatabase.withDatabase { (_,db,archive) =>
+  test("GoodCommunication: logical INSERT SELECT roundtrip changes physical xmin but preserves source binding and accepted work") { CurrentIndexDatabase.withDatabase { (config,db,_) =>
+    // Copies the legacy snapshot column: pinned to the legacy layout.
+    val archive=new PostgresArchive(db,config,RevisionLayoutPolicy.Legacy)
     archive.ingest("a",Fixtures.snapshot()); val claim=archive.claim(archive.knownProfiles,ClaimScope.Owner("a"),300).get
     val key=IndexCheckpoints.key(claim,IndexingStage.Annotation,0,0,"synthetic-policy",Json.fromInt(0)); val value=Json.fromString("accepted")
     archive.checkpoint(claim,key,value)

@@ -72,6 +72,32 @@ final class OwnerLeaseBoundaryTest extends munit.FunSuite {
       } finally { pool.shutdownNow(); assert(pool.awaitTermination(6,TimeUnit.SECONDS)); workerDb.close() }
     }
   }
+  test("Effectual GoodCommunication: an epoch append parked at its fragment insert stays invisible to readers until it commits, then the new head is read whole") {
+    OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
+      val original=Fixtures.snapshot(); val id=a.ingest("a",original).sessionId
+      val raw=original.files.head.content+"""{"type":"message","id":"appended","parentId":"u","message":{"role":"assistant","content":[{"type":"text","text":"appended answer"}]}}"""+"\n"
+      val next=original.copy(requestId=UUID.randomUUID(),expectedRevision=1,digest=Wire.hash(raw),messages=original.messages:+Message("appended",Some("u"),"assistant","appended answer",None,3),files=List(original.files.head.copy(content=raw,sha256=Wire.hash(raw))))
+      def read(): (Int,List[String],List[Int]) = {
+        val head=a.session("a",id).revision
+        (head,a.messages("a",id,0,100,None).messages.map(_.id),a.searchSessionMessages("a",id,ContentView(head,None),"appended answer",None,10).hits.map(_.position))
+      }
+      val pool=Executors.newSingleThreadExecutor()
+      try {
+        val pending=db.transaction { held =>
+          // Parks the append after its messages, raw lines and record keys are written into the head's epoch.
+          Sql.exec(held,"LOCK TABLE ch_epoch_fragments IN SHARE MODE")
+          val pending=pool.submit(new Callable[IngestReceipt] { def call(): IngestReceipt = a.ingest("a",next) })
+          awaitBlocked(db,"INSERT INTO ch_epoch_fragments")
+          assertEquals(read(),(1,List("u"),Nil),"readers see the old head while the append is parked")
+          pending
+        }
+        assertEquals(pending.get(10,TimeUnit.SECONDS).revision,2)
+        assertEquals(read(),(2,List("u","appended"),List(1)))
+        assertEquals(a.messages("a",id,0,100,Some(ContentView(1,None))).messages.map(_.id),List("u"),"the pinned old revision is unchanged")
+        assertEquals(db.transaction(x => Sql.one(x,"SELECT count(epoch),count(DISTINCT epoch) FROM ch_revisions WHERE session_id=?",id)(r => (r.getInt(1),r.getInt(2)))),Some((2,1)),"an append into the head's epoch")
+      } finally { pool.shutdownNow(); assert(pool.awaitTermination(6,TimeUnit.SECONDS)) }
+    }
+  }
   private def bounded(c: Config,timeout: FiniteDuration): Config = c.copy(databaseLimits=c.databaseLimits.copy(statementTimeout=timeout,lockTimeout=timeout))
   test("Effectual GoodCommunication regression: a claim streaming its snapshot does not hold up the projection of an ingest of a source whose older job's lease ended") {
     OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>

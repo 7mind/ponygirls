@@ -116,7 +116,8 @@ class McpSourceAdmissionTest extends munit.FunSuite {
   }}
   test("WG GoodCommunication: selected-row UTF8 accounting matches an independent payload/printer oracle exactly") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
     val original=Fixtures.snapshot(); val text="\u0001\u007f\u0080\u009f🙂\"\\\n"*2000
-    val receipt=f.archive.ingest("a",original.copy(messages=original.messages.map(_.copy(text=text))))
+    // The oracle reads the legacy message table: pinned to the legacy layout.
+    val receipt=new PostgresArchive(f.db,f.config,RevisionLayoutPolicy.Legacy).ingest("a",original.copy(messages=original.messages.map(_.copy(text=text))))
     // The fixture oracle deliberately fetches bounded test payload outside the admitted production path.
     val payloadBytes=f.db.transaction(c => Sql.rows(c,"SELECT to_jsonb(selected_message)::text FROM (SELECT value FROM ch_messages WHERE session_id=? AND revision=1 AND position>=0 ORDER BY position LIMIT 20) selected_message",receipt.sessionId)(_.getString(1))).map(_.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong).sum
     val refs=Json.obj("revision"->Json.fromInt(1),"published"->Json.Null,"indexed"->Json.Null)

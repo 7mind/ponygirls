@@ -36,7 +36,8 @@ class MessageContextBoundaryTest extends munit.FunSuite {
     }}
   }
   test("GoodCommunication: endpoint cap rejects overlarge essential role framing before any textual payload even without caller admission") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
-    val original=Fixtures.snapshot(); val out=f.archive.ingest("a",original)
+    // Corrupts a legacy message row: pinned to the legacy layout.
+    val original=Fixtures.snapshot(); val out=new PostgresArchive(f.db,f.config,RevisionLayoutPolicy.Legacy).ingest("a",original)
     f.db.transaction(c => Sql.exec(c,"UPDATE ch_messages SET value=jsonb_set(value,'{role}',to_jsonb(repeat('x',70000))) WHERE session_id=?",out.sessionId))
     assertEquals(intercept[DomainError](context(f,out.sessionId,Span(original.messages.head.id,0,1),new ReadAdmission { def consume(bytes: Long): Unit=() })).code,"read-budget")
     assertEquals(payloads(f),Nil)
@@ -45,7 +46,8 @@ class MessageContextBoundaryTest extends munit.FunSuite {
     assertEquals(payloads(f),Nil)
   }}
   test("GoodCommunication: full serialized MCP text-content framing shares the result cap, including escaped controls") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
-    val original=Fixtures.snapshot(); val out=f.archive.ingest("a",original)
+    // Corrupts a legacy message row: pinned to the legacy layout.
+    val original=Fixtures.snapshot(); val out=new PostgresArchive(f.db,f.config,RevisionLayoutPolicy.Legacy).ingest("a",original)
     // Deliberately corrupted essential metadata exercises framing outside valid ingestion's role-length bound.
     f.db.transaction(c => Sql.exec(c,"UPDATE ch_messages SET value=jsonb_set(value,'{role}',to_jsonb(repeat(chr(127),20000))) WHERE session_id=?",out.sessionId))
     val result=context(f,out.sessionId,Span(original.messages.head.id,0,1),ReadAdmission.unlimited)
@@ -91,8 +93,8 @@ class MessageContextBoundaryTest extends munit.FunSuite {
     f.db.transaction { c =>
       Sql.exec(c,s"CREATE ROLE $role LOGIN PASSWORD '${Fixtures.databasePassword}'"); Sql.exec(c,s"REVOKE TEMP ON DATABASE $identifier FROM PUBLIC")
       Sql.exec(c,s"GRANT USAGE ON SCHEMA public TO $role")
-      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_revision_info,ch_messages TO $role")
-      Sql.exec(c,s"GRANT SELECT(session_id,revision) ON ch_revisions TO $role")
+      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_revision_info,ch_messages,ch_epoch_messages TO $role")
+      Sql.exec(c,s"GRANT SELECT(session_id,revision,epoch,message_count,raw_bytes) ON ch_revisions TO $role")
     }
     try {
       val config=f.config.copy(databaseUser=role); val db=Fixtures.database(config,f.catalog); val reader=new PostgresArchive(db,config)
@@ -101,8 +103,9 @@ class MessageContextBoundaryTest extends munit.FunSuite {
     } finally f.db.transaction { c => Sql.exec(c,s"GRANT TEMP ON DATABASE $identifier TO PUBLIC"); Sql.exec(c,s"DROP OWNED BY $role"); Sql.exec(c,s"DROP ROLE $role") }
   }}
   List(false,true).foreach { stricter =>
-    test(s"GoodCommunication: real lock wait has explicit deadline and preserves stricter configured deadline=$stricter") { OwnerProfilePostgres.withDatabase { (_,db,reader,_) =>
-      val original=Fixtures.snapshot(); val out=reader.ingest("a",original); val acquired=new CountDownLatch(1); val release=new CountDownLatch(1)
+    test(s"GoodCommunication: real lock wait has explicit deadline and preserves stricter configured deadline=$stricter") { OwnerProfilePostgres.withDatabase { (config,db,reader,_) =>
+      // Locks the legacy message table: pinned to the legacy layout.
+      val original=Fixtures.snapshot(); val out=new PostgresArchive(db,config,RevisionLayoutPolicy.Legacy).ingest("a",original); val acquired=new CountDownLatch(1); val release=new CountDownLatch(1)
       val blocker=new Thread(() => db.transaction { c => Sql.exec(c,"LOCK TABLE ch_messages IN ACCESS EXCLUSIVE MODE"); acquired.countDown(); release.await(20,TimeUnit.SECONDS); () })
       if(stricter) db.transaction(c => Sql.exec(c,"ALTER ROLE postgres SET statement_timeout='100ms'"))
       blocker.start()

@@ -11,7 +11,7 @@ class ArchiveContentBoundaryTest extends munit.FunSuite {
     val original=Fixtures.config(); val config=original.copy(maxMessages=maxMessages,maxBodyBytes=32*1024*1024)
     val db=new Database(config,IndexProfileCatalog.current(config)); db.initialize()
     db.transaction { c =>
-      Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE")
+      Sql.exec(c,"TRUNCATE ch_epochs,ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE")
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
     val archive=new PostgresArchive(db,config)
@@ -47,9 +47,16 @@ class ArchiveContentBoundaryTest extends munit.FunSuite {
     assertEquals(page.total,size); assertEquals(page.messages.map(_.id),List("m100100"))
     assertEquals(archive.messages("a",receipt.sessionId,Int.MaxValue,100,Some(view)).messages,Nil)
     assertEquals(intercept[DomainError](archive.messages("a",receipt.sessionId,-1,100,Some(view))).code,"invalid")
-    val plan=db.transaction(c => Sql.rows(c,"EXPLAIN (ANALYZE,BUFFERS) SELECT value FROM ch_messages WHERE session_id=? AND revision=1 AND position>=100100 ORDER BY position LIMIT 100",receipt.sessionId)(_.getString(1)).mkString("\n"))
+    val plan=db.transaction { c =>
+      val stored=RevisionContent.resolve(c,receipt.sessionId,1).get
+      assert(stored.isInstanceOf[RevisionContent.Epoch],stored.toString)
+      // The bound below the revision's count makes the position a two-sided range: without statistics (a fresh table, not
+      // the analyzed production one) the planner assumes it selects a few rows and sorts a bitmap scan.
+      Sql.exec(c,"ANALYZE ch_epoch_messages")
+      Sql.rows(c,s"EXPLAIN (ANALYZE,BUFFERS) SELECT value FROM ${stored.messages.sql} m WHERE position>=100100 ORDER BY position LIMIT 100",stored.messages.args*)(_.getString(1)).mkString("\n")
+    }
     println("CONTENT POSITION SEEK PLAN\n"+plan)
-    assert(plan.contains("Index Scan using ch_messages_pkey"),plan)
+    assert(plan.contains("Index Scan using ch_epoch_messages_pkey"),plan)
 
   }}
   test("BG GoodCommunication regression: annotation content pages have no unrelated100000 offset ceiling") { database(10000) { (config,db,archive,index) =>
