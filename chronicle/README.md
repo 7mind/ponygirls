@@ -80,6 +80,10 @@ On demand, not part of full verification; run them when you change what they gua
   session, append, rewrite, a body above the server's bound) and the tree's CLI reading every revision back:
   [`scripts/test-main-collector.sh`](scripts/test-main-collector.sh), whose header has the invocation; run it when
   the ingest path or its storage changes;
+- the heap of indexing jobs: synthetic sessions up to the owner's 556 MB shape, each indexed alone by the native server
+  in `serve`, with the job's measured live heap against the claim estimate of the indexing budget:
+  [`scripts/measure-index-heap.sh`](scripts/measure-index-heap.sh), whose header has the invocation; run it when the
+  estimate or what an indexing job retains changes;
 - the CUDA embedding runtime: [`docs/cuda-validation.md`](docs/cuda-validation.md) (`scripts/test-cuda.sh`);
 - the relevance workflow's controlled real-server and live-provider legs: [`eval/relevance/README.md`](eval/relevance/README.md).
 
