@@ -815,6 +815,41 @@ try {
     releaseAnalysis();
     await list(page).getByRole("button", { name: "ui:note", exact: true }).waitFor();
     await page.unroute("**/api/v1/query/analyze");
+    // A sort that is cancelled by sorting back before its route is shown leaves nothing behind: a later return through
+    // history to a route the list kept still restores its extended rows and scroll, and is not searched again.
+    await page.setViewportSize(DESKTOP);
+    await query(page).fill("project:scroll");
+    await searchButton(page).click();
+    await waitRows(page, PAGE);
+    await toEnd(page);
+    await waitRows(page, 2 * PAGE);
+    await toEnd(page);
+    await list(page).locator("[data-list-end]").waitFor();
+    await page.evaluate(() => window.scrollTo(0, 900));
+    const extended = await rowKeys(page);
+    assert.ok(extended.length > 2 * PAGE, "the list is extended beyond its first pages");
+    const scrolled = await page.evaluate(() => window.scrollY);
+    assert.ok(scrolled > 0, "the extended list is scrolled");
+    assert.equal(await list(page).getByRole("columnheader", { name: "Modified" }).getAttribute("aria-sort"), "descending", "the extended list is sorted by Modified");
+    await list(page).getByRole("button", { name: "Sort by Record", exact: true }).click();
+    await waitRows(page, PAGE);
+    const sorted = await page.evaluate(() => location.hash);
+    await page.evaluate(() => window.holdRoutes());
+    await list(page).getByRole("button", { name: "Sort by Modified", exact: true }).click();
+    await page.waitForFunction(() => window.heldRoutes() > 0);
+    await list(page).getByRole("button", { name: "Sort by Record", exact: true }).click();
+    await page.evaluate(() => window.releaseRoutes());
+    await page.waitForFunction((hash) => location.hash === hash, sorted);
+    await waitRows(page, PAGE);
+    const reloads = await page.evaluate(() => window.listSearches.length);
+    await page.goBack();
+    // The extended route (Modified, descending) is shown and its list has settled: with its kept rows, or searched again.
+    await page.waitForFunction(() => [...document.querySelectorAll("section.browse")].some((view) => view.getClientRects().length > 0
+      && view.getAttribute("aria-busy") === "false" && view.querySelector('th[aria-sort="descending"]') !== null
+      && view.querySelectorAll("tbody tr[data-row-id]").length > 0));
+    assert.deepEqual(await rowKeys(page), extended, "the kept extended rows are shown, not their first page");
+    assert.equal(await page.evaluate(() => window.listSearches.length), reloads, "the kept route was not searched again");
+    assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - scrolled) <= 2, "the document scroll is restored");
     await done();
   });
 } finally { await cleanup(); }

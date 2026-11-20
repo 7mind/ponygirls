@@ -439,8 +439,10 @@ export function Browse({ initial, preset, active, userId, activityProjectId, onO
     applied.current = state;
     // The route shown is searched again where it is: navigating to it would not search (its address may also be spelled
     // otherwise than `browseHash`: the address without a fragment shows Browse). An address another Search or sort has
-    // just set, whose route is not shown yet, is replaced by this one.
+    // just set, whose route is not shown yet, is replaced by this one: the `fresh` flag set with that address ends with
+    // it, as no route change is left to consume it.
     if (shown.current !== null && sameBrowseState(state, shown.current)) {
+      fresh.current = false;
       void run(state, { kind: "first", recheck: phase.current === "settled"
         ? { shown: firstPage(items, cursor !== undefined), visit: visit.current, action: action.current } : null });
       if (!sameBrowseState(state, readBrowseState(location.hash, preset))) location.hash = browseHash(state, preset);
