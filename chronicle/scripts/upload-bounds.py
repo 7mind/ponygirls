@@ -936,8 +936,11 @@ def run_b(root):
     """≥ 4 GiB: 4,400,000,000 raw bytes with records of 9-20 MiB (large parts), appended to; other sessions index."""
     h = Harness(root, 'B', '1g', DEPLOYMENT_FILE_BYTES)
     sizes, total = [int(9.5 * MiB), 12 * MiB, int(16.5 * MiB), 20 * MiB], int(4_400_000_000 * SCALE)
-    expected = (total - sum(sizes)) // 5200
-    large = {int(expected * at): size for at, size in zip((0.04, 0.36, 0.66, 0.94), sizes)} if total > 2 * sum(sizes) else {expected // 2: sizes[0]}
+    if total > 2 * sum(sizes):
+        expected = (total - sum(sizes)) // 5200
+        large = {int(expected * at): size for at, size in zip((0.04, 0.36, 0.66, 0.94), sizes)}
+    else:
+        large = {(total - sizes[0]) // 5200 // 2: sizes[0]}
     big = Fixture(h.collector.sessions('--u8-b--') / 'big.jsonl', 'u8-b-big', large)
     smalls = [Fixture(h.collector.sessions(f'--u8-b-small-{k}--') / 'small.jsonl', f'u8-b-small-{k}') for k in range(4)]
     started = time.monotonic()
