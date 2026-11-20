@@ -7,7 +7,8 @@
 # but parts); a loopback stub model server; synthetic Pi sessions generated in a private
 # temporary directory; the owned database only. Every assertion prints `ok - …`; the last line is a JSON summary with
 # wall time, WAL, disk and the peak live heap of both sides. The wall-time and disk budgets below are assertions (disk:
-# the cluster and the run's directory with the fixtures, sampled every 10 s). The script fails on any failed assertion.
+# the cluster and the run's directory with the fixtures, sampled every 10 s and once at the end; a sampler that failed or
+# stopped early fails the run). The script fails on any failed assertion.
 #   A  1,000,000,000 raw bytes uploaded as a replacement, +5 % as an append, the 1 GiB declaration boundary (413 above
 #      it), the job ending index-budget-exceeded, reads (pages, locate, context, Find, Archive search, GetRaw too-large),
 #      a 16 MiB session indexing on the same server; then the S2 -> S1 rollback (down-025-uploads.sql, the S1 server

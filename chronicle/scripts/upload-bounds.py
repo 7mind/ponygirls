@@ -118,8 +118,13 @@ def wal_since(lsn):
 
 
 def du(path):
-    # WAL segments recycled during the walk make du complain; its total stays meaningful.
-    return int(subprocess.run(['du', '-sb', str(path)], capture_output=True, text=True).stdout.split()[0])
+    """Bytes under `path`. WAL segments recycled during the walk make du complain and exit 1 with a meaningful total; no
+    total at all is an error."""
+    result = subprocess.run(['du', '-sb', str(path)], capture_output=True, text=True)
+    fields = result.stdout.split()
+    if not fields or not fields[0].isdigit():
+        raise RuntimeError(f'du {path} gave no size (exit {result.returncode}): {result.stderr.strip()[-300:]}')
+    return int(fields[0])
 
 
 WORK = []  # the run's private directory: fixtures, collector state, logs
@@ -130,22 +135,39 @@ def disk():
 
 
 class DiskPeak:
-    """The largest cluster directory + work directory (fixtures included) seen every DISK_SAMPLE_S while a run lasts."""
-    def __init__(self):
-        self.peak, self.done = 0, threading.Event()
+    """The largest cluster directory + work directory (fixtures included) seen every DISK_SAMPLE_S while a run lasts.
+    `stop` fails when a sample failed or the sampler was not running until then, and adds a final measurement."""
+    def __init__(self, measure):
+        self.measure, self.peak, self.samples, self.error, self.done = measure, 0, 0, None, threading.Event()
         self.thread = threading.Thread(target=self.sample, daemon=True)
         self.thread.start()
 
     def sample(self):
-        while True:
-            self.peak = max(self.peak, du(OWNED / 'cluster') + (du(WORK[0]) if WORK else 0))
-            if self.done.wait(DISK_SAMPLE_S):
-                return
+        try:
+            while True:
+                self.peak, self.samples = max(self.peak, self.measure()), self.samples + 1
+                if self.done.wait(DISK_SAMPLE_S):
+                    return
+        except BaseException as error:
+            self.error = error
 
     def stop(self):
+        alive = self.thread.is_alive()
         self.done.set()
         self.thread.join()
-        return self.peak
+        if self.error is not None:
+            raise RuntimeError(f'disk sampling failed after {self.samples} samples') from self.error
+        if not alive:
+            raise RuntimeError(f'disk sampling ended before the run did ({self.samples} samples)')
+        return max(self.peak, self.measure())
+
+    def abandon(self):
+        self.done.set()
+        self.thread.join()
+
+
+def consumed_disk():
+    return du(OWNED / 'cluster') + du(WORK[0])
 
 
 def server_cpu():
@@ -369,10 +391,11 @@ def probe_samples(path):
 def probe_coverage(samples, start, end, shutdown=False):
     """The interval [start, end] (monotonic s) is monitored when every sample that starts inside it is a 200 within the
     1 s deadline (monotonic elapsed time, not the socket timeout) and no stretch longer than two probe periods passes
-    without a sample in flight or one completed within it. `shutdown`: the server was asked to stop at `end`, so the
-    sample in flight then is not judged (its start still counts as coverage)."""
+    without a sample in flight or one completed within it. `shutdown`: the server was asked to stop at `end`, so a sample
+    in flight then is not judged by its answer if it had run less than the deadline at `end` (its start still counts as
+    coverage); one already overdue at `end` is a failure."""
     deadline = PROBE_TIMEOUT_S
-    crossing = [s for s in samples if shutdown and s[0] <= end < s[1]]
+    crossing = [s for s in samples if shutdown and s[0] <= end < s[1] and end - s[0] < deadline]
     measured = [s for s in samples if start <= s[0] <= end and s not in crossing]
     failures = [(round(a - start, 3), round((b - a) * 1000, 1), status) for a, b, status, _ in measured if status != '200' or b - a >= deadline]
     covered, gap = start, 0.0
@@ -1199,10 +1222,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix=f'upload-bounds-{run}-') as temporary:
         root = Path(temporary)
         WORK.append(root)
-        sampler = DiskPeak()
+        sampler = DiskPeak(consumed_disk)
         try:
             outcome = function(root)
         except BaseException:
+            sampler.abandon()
             for log in sorted(root.glob('server-*.log')):
                 print(f'--- {log.name} (tail)', log.read_text(errors='replace')[-3000:], sep='\n', flush=True)
             raise
@@ -1212,13 +1236,14 @@ def main():
                 for name in [*root.glob('server-*.log'), *root.glob('probe-*.txt'), *root.glob('collector-*.err'), *root.glob('collector-*.result'), *root.glob('proxy.log')]:
                     shutil.copy(name, EVIDENCE / f'{run}-{name.name}')
             fixtures = du(root)
-            consumed = sampler.stop()
         wall = time.monotonic() - started
+        consumed = sampler.stop()
         if wall_budget is not None:
             check(f'{run}: wall time {wall / 60:.1f} min within the budget of {wall_budget / 60:.0f} min', wall <= wall_budget, dict(wallSeconds=round(wall, 1)), defer=True)
         if disk_budget is not None:
             check(f'{run}: disk consumed at most {consumed / 10**9:.1f} GB (cluster and work directory with the fixtures, sampled every {DISK_SAMPLE_S} s) '
-                  f'within the budget of {disk_budget / 10**9:.0f} GB', consumed <= disk_budget, dict(peakBytes=consumed), defer=True)
+                  f'within the budget of {disk_budget / 10**9:.0f} GB, {sampler.samples} samples and a final measurement', consumed <= disk_budget,
+                  dict(peakBytes=consumed, samples=sampler.samples), defer=True)
         for line in deferred:
             print('not ok -', line, flush=True)
         summary = dict(run=run, status='failed' if deferred else 'passed', failed=deferred, scale=SCALE, wallSeconds=round(wall, 1), walBytes=wal_since(lsn), disk=disk(),
