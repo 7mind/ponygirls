@@ -44,12 +44,45 @@ export function authorizedSurvivors<T>(visible: readonly T[], authorized: readon
   return visible.flatMap(item => { const value = current.get(id(item)); return value === undefined ? [] : [value]; });
 }
 function sameOrder<T>(left: readonly T[], right: readonly T[], id: (item: T) => string): boolean { return left.length === right.length && left.every((item, index) => id(item) === id(right[index]!)); }
+/** One read of a positional list: the items from the requested offset on (a server may return fewer than requested) and the list's length. */
+export interface PositionalRead<T> { readonly items: readonly T[]; readonly total: number }
+/** Where a page of a positional list starts, and the list's length. */
+export interface PositionalMeta { readonly offset: number; readonly total: number }
+/**
+ * Reads at most `limit` items from `offset`: while the items end before `through` and before the list's end, the next read
+ * continues where they end and asks for the rest. A read returns at least one item where any exist, so there are at most
+ * `through - offset` reads; an empty read where items remain is an error.
+ */
+async function readPositions<T>(read: (offset: number, limit: number) => Promise<PositionalRead<T>>, offset: number, limit: number, through: number): Promise<PositionalRead<T>> {
+  if (through > offset + limit) throw new Error('A positional read must end within its limit.');
+  const items: T[] = [];
+  for (;;) {
+    const next = offset + items.length, page = await read(next, offset + limit - next);
+    items.push(...page.items);
+    if (offset + items.length >= Math.min(through, page.total)) return { items, total: page.total };
+    if (page.items.length === 0) throw new Error(`The server returned an empty page at position ${next + 1} of ${page.total}`);
+  }
+}
+/**
+ * The pages of a positional list (cursor: a page's offset) as one contiguous range, each item at its position, although the
+ * server may return fewer items than requested: a page asks for `pageSize` items; the first page, at `start`, reads on until
+ * it holds position `target`; a page before the loaded ones (`before`: the first of them) reads on until it ends where they begin.
+ */
+export function positionalPages<T>(read: (offset: number, limit: number) => Promise<PositionalRead<T>>, pageSize: number, start: number, target: number): (cursor: number | undefined, before: InfinitePage<T, PositionalMeta, number> | undefined) => Promise<InfinitePage<T, PositionalMeta, number>> {
+  return async (cursor, before) => {
+    const offset = cursor ?? start;
+    const page = before === undefined ? await readPositions(read, offset, pageSize, offset === start ? target + 1 : offset + 1) : await readPositions(read, offset, before.meta.offset - offset, before.meta.offset);
+    const end = offset + page.items.length;
+    return { items: page.items, next: end < page.total ? end : undefined, previous: offset > 0 ? Math.max(0, offset - pageSize) : undefined, meta: { offset, total: page.total } };
+  };
+}
 
-export function useInfiniteResource<T, M, C extends string | number>(connection: ResourceConnection, stats: ManagerStats, key: string, refresh: string, enabled: boolean, initialCursor: C | undefined, load: (cursor: C | undefined) => Promise<InfinitePage<T, M, C>>, id: (item: T) => string): InfiniteResource<T, M> {
+/** `load(cursor, before)` reads the page at `cursor`; `before` is set for the page before the loaded ones: their first page, where it must end. */
+export function useInfiniteResource<T, M, C extends string | number>(connection: ResourceConnection, stats: ManagerStats, key: string, refresh: string, enabled: boolean, initialCursor: C | undefined, load: (cursor: C | undefined, before: InfinitePage<T, M, C> | undefined) => Promise<InfinitePage<T, M, C>>, id: (item: T) => string): InfiniteResource<T, M> {
   return useSettledInfiniteResource(null, connection, stats, key, refresh, enabled, initialCursor, load, id);
 }
 /** As `useInfiniteResource`; settled chains are also kept in `store`, and a key whose settled chain is there shows it while it is read again. */
-export function useSettledInfiniteResource<T, M, C extends string | number>(store: SettledChainStore<T, M, C> | null, connection: ResourceConnection, stats: ManagerStats, key: string, refresh: string, enabled: boolean, initialCursor: C | undefined, load: (cursor: C | undefined) => Promise<InfinitePage<T, M, C>>, id: (item: T) => string): InfiniteResource<T, M> {
+export function useSettledInfiniteResource<T, M, C extends string | number>(store: SettledChainStore<T, M, C> | null, connection: ResourceConnection, stats: ManagerStats, key: string, refresh: string, enabled: boolean, initialCursor: C | undefined, load: (cursor: C | undefined, before: InfinitePage<T, M, C> | undefined) => Promise<InfinitePage<T, M, C>>, id: (item: T) => string): InfiniteResource<T, M> {
   const ready = enabled && stats.activeId !== null;
   const scope = { connection, generation: stats.generation, activeId: stats.activeId, key, initialCursor };
   const cleared = { pages: [], items: [], meta: null, loading: false, refreshing: false, loadingMore: false, loadingPrevious: false, error: null, updateAvailable: false, failedEdge: null };
@@ -85,7 +118,7 @@ export function useSettledInfiniteResource<T, M, C extends string | number>(stor
       for (let index = 0; index < count; index++) {
         if (seen.has(cursor)) throw new Error('The server repeated a paging cursor.');
         seen.add(cursor);
-        const page = await loader.current(cursor);
+        const page = await loader.current(cursor, undefined);
         if (!mounted || sequence.current !== operation) return;
         pages.push({ cursor, page });
         if (page.next === undefined) break;
@@ -124,13 +157,14 @@ export function useSettledInfiniteResource<T, M, C extends string | number>(stor
     const snapshot = currentState.current;
     if (!ready || !matches(snapshot) || inFlight.current !== null || snapshot.pages.length === 0) return;
     if (snapshot.error !== null && !(retry && snapshot.failedEdge === previous)) return;
-    const cursor = previous ? snapshot.pages[0]!.page.previous : snapshot.pages.at(-1)!.page.next;
+    const first = snapshot.pages[0]!, cursor = previous ? first.page.previous : snapshot.pages.at(-1)!.page.next;
     if (cursor === undefined) return;
     const operation = sequence.current; inFlight.current = operation;
     setState(value => ({ ...value, loadingMore: !previous, loadingPrevious: previous, error: null, failedEdge: null }));
-    void loader.current(cursor).then(page => {
+    void loader.current(cursor, previous ? first.page : undefined).then(page => {
       if (sequence.current !== operation) return;
       if (snapshot.pages.some(item => item.cursor === cursor)) throw new Error('The server repeated a paging cursor.');
+      if (previous && page.next !== first.cursor) throw new Error('The earlier page does not end where the loaded pages begin');
       setState(value => {
         const loaded = { cursor, page }, pages = previous ? [loaded, ...value.pages] : [...value.pages, loaded];
         const items = uniqueItems(previous ? [...page.items, ...value.items] : [...value.items, ...page.items], identity.current);

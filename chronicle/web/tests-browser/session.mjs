@@ -17,7 +17,7 @@ await server.listen();
 const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
 const browser = await chromium.launch({ headless: true });
 const DESKTOP = { width: 1440, height: 900 }, LAPTOP = { width: 1024, height: 700 }, PHONE = { width: 390, height: 844 };
-const SCROLL_TOLERANCE = 2, MESSAGE_PAGE = 40, PASSAGE_PAGE = 40;
+const SCROLL_TOLERANCE = 2, MESSAGE_PAGE = 40, PASSAGE_PAGE = 40, SHORT_PAGE = 7;
 const ARCHIVE_REFRESH_MS = 20_000, THEME_KEY = 'chronicle.theme.preference';
 let cases = 0;
 
@@ -31,6 +31,22 @@ class RetiringFixture extends Goal50Fixture {
     if (operation instanceof api.Operation_SearchSessionMessages) { const hits = this.messagesAt(operation.view.revision).flatMap((message, position) => message.text.toLowerCase().includes(operation.literal.toLowerCase()) ? [new api.MessageSearchHit(message.id, position)] : []); send(new api.Result_SessionMessageSearch(new api.SessionMessageSearchResult(operation.view, hits.slice(0, operation.limit), undefined))); return true; }
     return super.handle(operation, envelope, send, entry);
   }
+}
+
+/**
+ * A server whose page byte bound shortens every message page to SHORT_PAGE messages (GetMessages may return fewer than its
+ * limit, at least one where any exist). Eight-line messages (unfolded): a short page fills the transcript pane.
+ */
+class ShortPageFixture extends ChronicleFixture {
+  constructor() {
+    super(); this.messageCount = 200;
+    this.goal50Operation = (operation, _envelope, send) => {
+      if (!(operation instanceof api.Operation_GetMessages)) return false;
+      const messages = this.messagesAt(operation.view.revision);
+      send(new api.Result_Messages(new api.MessagesResult(messages.slice(operation.offset, operation.offset + Math.min(operation.limit, SHORT_PAGE)), messages.length, operation.offset, operation.view))); return true;
+    };
+  }
+  messagesAt() { return Array.from({ length: this.messageCount }, (_, position) => new api.Message(`m${position + 1}`, undefined, position % 2 === 0 ? 'user' : 'assistant', Array.from({ length: 8 }, (_, line) => `Message ${position + 1}, line ${line + 1}.`).join('\n'), undefined, position)); }
 }
 
 /** The view an Archive row opens (its matched or published view, else its HEAD), as address parameters. */
@@ -102,6 +118,20 @@ async function loadUntil(page, pane, selector, count) {
     await page.waitForFunction(([css, previous]) => document.querySelectorAll(css).length > previous, [selector, before]);
   }
   assert.equal(await page.locator(selector).count(), count);
+}
+/** Scrolls the transcript pane to its top until message `id` is loaded (each earlier page is prepended above). */
+async function loadBackTo(page, id) {
+  while (await message(page, id).count() === 0) {
+    const before = await messages(page).count();
+    await transcriptPane(page).evaluate(pane => pane.scrollTo({ top: 0, behavior: 'instant' }));
+    await page.waitForFunction(previous => document.querySelectorAll('[data-pane="transcript"] [data-message-id]').length > previous, before);
+  }
+}
+/** The shown messages are one run of consecutive positions, each message at its own (`m<n>` at position n - 1). */
+async function assertContiguous(page) {
+  const rows = await messages(page).evaluateAll(elements => elements.map(element => [element.dataset.messageId, Number(element.dataset.messagePosition)]));
+  assert.ok(rows.length > 0, 'messages are shown');
+  assert.deepEqual(rows, rows.map((_, index) => [`m${rows[0][1] + index + 1}`, rows[0][1] + index]));
 }
 /** Message id at the top of the transcript pane. */
 function topMessage(page) {
@@ -242,6 +272,19 @@ try {
     await page.getByRole('spinbutton', { name: 'Message number', exact: true }).fill('50'); await page.getByRole('spinbutton', { name: 'Message number', exact: true }).press('Enter');
     await waitTop(page, 'm50'); await visible(page).filter({ hasText: /^Messages 50–/ }).waitFor();
     assert.ok(calls(fixture, api.Operation_GetMessages).every(call => call.operation.limit === MESSAGE_PAGE), 'the position bar reads bounded message pages');
+  });
+  await run('short message pages keep one contiguous transcript: a jump reads on to its message, scrolling back fills each earlier page, the position bar finds its message', { Fixture: ShortPageFixture, hash: fixture => sessionHash(fixture, `${rowPin(fixture, 0)}&at=m170`) }, async ({ page, fixture }) => {
+    await ready(page); await waitTop(page, 'm170'); await assertContiguous(page);
+    await loadBackTo(page, 'm1'); await assertContiguous(page);
+    const reads = calls(fixture, api.Operation_GetMessages).length;
+    await page.getByRole('button', { name: 'Go to message…', exact: true }).click();
+    await page.getByRole('spinbutton', { name: 'Message number', exact: true }).fill('125'); await page.getByRole('spinbutton', { name: 'Message number', exact: true }).press('Enter');
+    await waitTop(page, 'm125');
+    assert.equal(calls(fixture, api.Operation_GetMessages).length, reads, 'a loaded position is found in the loaded pages');
+    // The last message is in the page of the jump above, beyond what that jump read.
+    await page.getByRole('button', { name: 'End', exact: true }).click();
+    await page.getByText('End of session · 200 messages', { exact: true }).waitFor(); await waitShown(page, 'm200'); await assertContiguous(page);
+    assert.ok(calls(fixture, api.Operation_GetMessages).every(call => call.operation.limit <= MESSAGE_PAGE), 'message pages stay bounded');
   });
 
   // ── Transcript rendering: inert untrusted text, exact clipboard and source bytes (was transcript.mjs, run.mjs) ──

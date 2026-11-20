@@ -3,10 +3,10 @@ import type { ReactNode } from 'react';
 import { SessionFind, type FindChoice } from './SessionFind.tsx';
 import { recordedYoloProfile } from './recorded-yolo-profile.ts';
 import type { SessionFindReadGate } from './session-find.ts';
-import { ContentView, Span, PassageFormat, Operation_GetPassages, Operation_GetPassageSpans, Result_Passages, Result_PassageSpans, type PassageInfo, type PassagesResult, Operation_GetSession, Operation_GetMessages, Operation_Related, Operation_LocateMessage, Result_Session, Result_Messages, Result_Related, Result_LocatedMessage, type UserInfo, type Message, type MessagesResult, type Operation, type Result, type SessionInfo } from './api.ts';
+import { ContentView, Span, PassageFormat, Operation_GetPassages, Operation_GetPassageSpans, Result_Passages, Result_PassageSpans, type PassageInfo, type PassagesResult, Operation_GetSession, Operation_GetMessages, Operation_Related, Operation_LocateMessage, Result_Session, Result_Messages, Result_Related, Result_LocatedMessage, type UserInfo, type Message, type Operation, type Result, type SessionInfo } from './api.ts';
 import { read, type ChronicleConnection } from './client.ts';
 import { useResource } from './hooks.ts';
-import { useInfiniteResource } from './infinite.ts';
+import { positionalPages, useInfiniteResource, type PositionalMeta } from './infinite.ts';
 import { InfiniteTrigger } from './InfiniteTrigger.tsx';
 import { ScrollAnchor } from './ScrollAnchor.tsx';
 import { ErrorNotice, formatDate } from './App.tsx';
@@ -335,7 +335,8 @@ function InfoPane({ session, view, sessionId, headRevision, passages, link }: { 
 }
 
 function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref, view, chooseView, resolveView, retry, initial, settledRevocations, knownHead, rememberHead, findReads, report: reportUnavailable, revocations, pane, setPane, page }: SessionViewProps & { view: ContentView | undefined; chooseView(view: ContentView | undefined): void; resolveView(view: ContentView): void; retry(): void; initial: PageIntegration['initial'] | null; knownHead: KnownHead | null; rememberHead: (ownerId: string, revision: number) => void }) {
-  const [messageStart, setMessageStart] = useState(0), [retired, setRetired] = useState(false);
+  // The message chain starts at the page of the position last navigated to (the first on arrival) and holds that position.
+  const [messageTarget, setMessageTarget] = useState(0), [retired, setRetired] = useState(false), messageStart = Math.floor(messageTarget / MESSAGE_PAGE_SIZE) * MESSAGE_PAGE_SIZE;
   const [passage, setPassage] = useState<PassageInfo | null>(null), [spanOffset, setSpanOffset] = useState(0);
   const [seekError, setSeekError] = useState<string | null>(null), [seeking, setSeeking] = useState(false), [revealedMessage, setRevealedMessage] = useState<string | null>(null);
   const [revealEpoch, setRevealEpoch] = useState(0), [findEpoch, setFindEpoch] = useState(0);
@@ -435,12 +436,13 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     setPendingPassage(null);
   }, [pendingPassage, passages.items, passages.meta, passages.loading, passages.refreshing, passages.loadingMore, passages.hasMore]);
   useEffect(() => { if (passages.error !== null) setPendingPassage(null); }, [passages.error]);
-  const messages = useInfiniteResource<Message, MessagesResult, number>(connection, stats, `${sessionId}:${contentViewKey(view)}:${messageStart}`, '', snapshot !== null, messageStart, async cursor => {
-    const offset = cursor === undefined ? messageStart : cursor;
-    const result = await readPinned(new Operation_GetMessages(sessionId, offset, MESSAGE_PAGE_SIZE, view), value => value instanceof Result_Messages ? value.result : null);
+  // A message page may hold fewer messages than requested (the server bounds its bytes).
+  const messages = useInfiniteResource<Message, PositionalMeta, number>(connection, stats, `${sessionId}:${contentViewKey(view)}:${messageTarget}`, '', snapshot !== null, messageStart, positionalPages(async (offset, limit) => {
+    const result = await readPinned(new Operation_GetMessages(sessionId, offset, limit, view), value => value instanceof Result_Messages ? value.result : null);
     requireContentView(view!, result.view);
-    return { items: result.messages, next: result.offset + result.messages.length < result.total ? result.offset + result.messages.length : undefined, previous: result.offset > 0 ? Math.max(0, result.offset - MESSAGE_PAGE_SIZE) : undefined, meta: result };
-  }, item => item.id);
+    if (result.offset !== offset) throw new Error('The server returned messages from another position');
+    return { items: result.messages, total: result.total };
+  }, MESSAGE_PAGE_SIZE, messageStart, messageTarget), item => item.id);
   // Related sessions are read for the session, not a pin: a denial reports the session's default view (null).
   const related = useResource(connection, stats, sessionId, '', snapshot !== null, () => readSource(new Operation_Related(sessionId, RELATED_LIMIT), value => value instanceof Result_Related ? value.result : null, null));
   const messageOffset = messages.meta === null ? 0 : messages.meta.offset;
@@ -490,7 +492,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
       if (origin === 'search' && arrivalSpan !== null) setSearchSpan(arrivalSpan);
       const pending = { messageId: target, operation, origin, position: location.position, focus };
       if (messages.items.some(message => message.id === target)) finishSourceScroll(pending);
-      else { pendingScroll.current = pending; setMessageStart(Math.floor(location.position / MESSAGE_PAGE_SIZE) * MESSAGE_PAGE_SIZE); }
+      else { pendingScroll.current = pending; setMessageTarget(location.position); }
     } catch (cause) { if (navigation.current === operation) { pendingScroll.current = null; setSeekError(cause instanceof Error ? cause.message : 'Source navigation failed'); if ((origin === 'find' && cause instanceof UnverifiedSourceLocator) || (cause instanceof RequestFailure && isAuthorityDenial(cause.code))) setFindEpoch(epoch => epoch + 1); } }
     finally { if (navigation.current === operation) setSeeking(false); }
   }
@@ -501,7 +503,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     const loaded = messageAt(position);
     if (loaded !== undefined) { pendingScroll.current = null; scrollToMessage(loaded.id); return; }
     pendingScroll.current = { operation, origin: 'place', messageId: null, position, focus: false };
-    setMessageStart(Math.floor(position / MESSAGE_PAGE_SIZE) * MESSAGE_PAGE_SIZE);
+    setMessageTarget(position);
   }
   // A layout effect: the arrival place's navigation starts before the arrival Find (`find=`, a child's passive effect) captures
   // the navigation it belongs to, so that a link's `at` and `find` together do not discard the Find result.
