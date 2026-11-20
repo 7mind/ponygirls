@@ -57,7 +57,7 @@ object IndexingCapacity {
   /** Large jobs (LargeJobs.windows) running at once; small jobs use every annotation session. */
   val largeJobs: Int = 1
 }
-final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Int, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits,accounts: Option[AccountsConfig]) {
+final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Long, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits,accounts: Option[AccountsConfig],maxRawReadBytes: Long,maxIndexingBudgetBytes: Long) {
   def accountsEnabled: Boolean = accounts.exists(_.enabled)
   def jdbcConfig: JdbcConfig = JdbcConfig(jdbcUrl,databaseUser,Path.of(databasePasswordFile),databaseLimits)
   def profile: String = IndexProfileCatalog.current(this).preferred.profile
@@ -83,6 +83,7 @@ final case class Config(listenHost: String, listenPort: Int, allowedOrigin: Stri
     }
     SearchPolicy.dimensions(this)
     Check(maxBodyBytes > 0 && maxBodyBytes <= Config.maximumBodyBytes && maxFileBytes > 0 && maxFiles > 0 && maxMessages > 0, "config", "invalid limits")
+    Check(maxRawReadBytes > 0 && maxRawReadBytes <= Config.maximumRawReadBytes && maxIndexingBudgetBytes > 0, "config", "invalid raw read or indexing budget limits")
     Check(sessionTtlSeconds > 0 && annotation.timeoutSeconds > 0 && embedding.timeoutSeconds > 0 && annotation.maxResponseBytes > 0 && embedding.maxResponseBytes > 0, "config", "invalid timeouts")
     val origin = java.net.URI.create(allowedOrigin)
     val loopbacks = Set("127.0.0.1","localhost","::1","[::1]")
@@ -93,6 +94,10 @@ final case class Config(listenHost: String, listenPort: Int, allowedOrigin: Stri
 }
 object Config {
   val maximumBodyBytes = 512*1024*1024
+  /** GetRaw builds the raw in one database value and doubles it in its JSON response; PostgreSQL cannot build 1 GiB. */
+  val maximumRawReadBytes: Long = 512L*1024*1024
+  /** The estimated heap one indexing job may retain (IndexingBudget); about 4.4 GB of the 6.4 GiB heap bound stay for the rest. */
+  val defaultIndexingBudgetBytes: Long = Int.MaxValue.toLong
   // An omitted member is absent; an explicit null is rejected, as for the other optional members.
   private def present[A: Decoder](cursor: io.circe.HCursor,field: String): Decoder.Result[Option[A]] =
     if(cursor.downField(field).focus.isEmpty) Right(None) else cursor.get[A](field).map(Some(_))
@@ -185,7 +190,7 @@ object Config {
     staticTokens <- if(cursor.downField("staticTokens").focus.isEmpty) Right(Nil) else cursor.get[List[StaticTokenConfig]]("staticTokens")
     maxBodyBytes <- cursor.get[Int]("maxBodyBytes")
     maxFiles <- cursor.get[Int]("maxFiles")
-    maxFileBytes <- cursor.get[Int]("maxFileBytes")
+    maxFileBytes <- cursor.get[Long]("maxFileBytes")
     maxMessages <- cursor.get[Int]("maxMessages")
     sessionTtlSeconds <- cursor.get[Int]("sessionTtlSeconds")
     annotation <- cursor.get[ModelConfig]("annotation")
@@ -193,7 +198,10 @@ object Config {
     allowInsecureHttp <- if(cursor.downField("allowInsecureHttp").focus.isEmpty) Right(false) else cursor.get[Boolean]("allowInsecureHttp")
     indexing <- if(cursor.downField("indexing").focus.isEmpty) Right(IndexingCapacity.defaults) else cursor.get[IndexingCapacity]("indexing")
     accounts <- present[AccountsConfig](cursor,"accounts")
-  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits,accounts) }
+    // Omitted: everything /api/ingest can store stays readable.
+    maxRawReadBytes <- optional(cursor,"maxRawReadBytes",maxBodyBytes.toLong)
+    maxIndexingBudgetBytes <- optional(cursor,"maxIndexingBudgetBytes",defaultIndexingBudgetBytes)
+  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits,accounts,maxRawReadBytes,maxIndexingBudgetBytes) }
   def load(path: String): Config = { val c = Wire.parse(Files.readString(Path.of(path))).as[Config].fold(_ => throw DomainError("config", "invalid configuration"), identity); c.validate(); c }
   def credential(path: String): String = BoundedSecretFile.read(Path.of(path),16384).stripTrailing()
 }
@@ -226,7 +234,6 @@ trait SessionArchive extends IndexCheckpoints {
   def knownProfiles: Set[String]
   def ingest(owner: String, request: IngestRequest): IngestReceipt
   def session(reader: String, id: UUID): SessionInfo
-  def headSnapshot(reader: String, id: UUID): IngestRequest
   def claim(profiles: Set[String], scope: ClaimScope, leaseSeconds: Int, large: LargeJobs): Option[Claim]
   final def claim(profiles: Set[String], scope: ClaimScope, leaseSeconds: Int): Option[Claim] = claim(profiles,scope,leaseSeconds,LargeJobs.Admitted)
   /** Returns a claimed job to the queue without counting the attempt, recording its window count. A job whose source has

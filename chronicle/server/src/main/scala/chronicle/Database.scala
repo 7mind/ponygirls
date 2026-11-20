@@ -98,6 +98,9 @@ object Sql {
 object PostgresArchive {
   /** Search rows per insertion statement. A row's vector-index insertion measured 1.5-3.1 ms on the full-size archive copy. */
   val searchRowsPerStatement = 500
+  /** A message page holds the longest prefix of its messages whose stored values fit (at least one message): a page of
+    * 100 messages each bounded only by its request would otherwise hold gigabytes. */
+  val messagePageBytes: Long = 64L*1024*1024
   /** Messages fetched per round trip while a claimed revision's messages are decoded one at a time. */
   val claimedMessagesPerFetch = 64
 }
@@ -125,7 +128,7 @@ object Jobs {
     job
   }
 }
-final class PostgresArchive(db: Database, config: Config, layout: RevisionLayoutPolicy) extends SessionArchive with PassageReader with MessageSearchReader with ContextReader {
+final class PostgresArchive(private[chronicle] val db: Database, config: Config, layout: RevisionLayoutPolicy) extends SessionArchive with PassageReader with MessageSearchReader with ContextReader {
   def this(db: Database,config: Config) = this(db,config,RevisionLayoutPolicy.production)
   private val contextReader=new PostgresContextReader(db,this)
   def readMessageContext(reader: String,id: UUID,view: ContentView,anchor: Span,beforeBytes: Int,afterBytes: Int,materialization: ReadMaterialization): MessageContextResult =
@@ -217,11 +220,6 @@ final class PostgresArchive(db: Database, config: Config, layout: RevisionLayout
     }.getOrElse(throw DomainError("projection","content metadata projection missing"))
   }
   def session(reader: String,id: UUID): SessionInfo = reading(c => info(c,reader,id,None))
-  def headSnapshot(reader: String,id: UUID): IngestRequest = reading { c =>
-    authorized(c,reader,id)
-    val revision=Sql.one(c,"SELECT revision FROM ch_sources WHERE id=?",id)(_.getInt(1)).get
-    RevisionContent.request(c,content(c,id,revision))
-  }
   def readSession(reader: String,id: UUID,selector: Option[ContentView]): SessionResult = readSession(reader,id,selector,ReadMaterialization.unrestricted)
   def readSession(reader: String,id: UUID,selector: Option[ContentView],materialization: ReadMaterialization): SessionResult = reading(materialization) { c =>
     val view=selectView(c,reader,id,selector,materialization)
@@ -230,15 +228,34 @@ final class PostgresArchive(db: Database, config: Config, layout: RevisionLayout
     SessionResult(infoForView(c,id,view),chunksForView(c,view,0,100,total).chunks)
   }
   def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): MessagesResult = messages(reader,id,offset,limit,selector,ReadMaterialization.unrestricted)
-  def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView],materialization: ReadMaterialization): MessagesResult = reading(materialization) { c =>
+  def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView],materialization: ReadMaterialization): MessagesResult =
+    messages(reader,id,offset,limit,selector,materialization,PostgresArchive.messagePageBytes)
+  private[chronicle] def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView],materialization: ReadMaterialization,pageBytes: Long): MessagesResult = reading(materialization) { c =>
     Check.contentPage(offset,limit)
     val (view,content)=selectContent(c,reader,id,selector,materialization)
     val total=Sql.one(c,"SELECT message_count FROM ch_revision_info WHERE session_id=? AND revision=?",id,view.revision)(_.getInt(1)).getOrElse(throw DomainError("projection","message projection missing"))
-    val stored=content.messages
-    val query=ReadSources.Query(s"SELECT value FROM ${stored.sql} m WHERE position>=? ORDER BY position LIMIT ?",stored.args++List(offset,limit))
+    val page=messagePage(c,content,offset,limit)
+    // Measured as ReadSources.bytes measures the page below, before any value is fetched.
+    val kept=Sql.one(c,s"SELECT greatest(1,count(*) FILTER (WHERE running<=?)) FROM (SELECT sum(octet_length(convert_to(jsonb_build_object('value',p.value)::text,'UTF8'))) OVER (ORDER BY p.position) AS running FROM (${page.sql}) p) w",((pageBytes: Sql.Param)::page.args)*)(_.getInt(1)).get
+    val cut=messagePage(c,content,offset,kept)
+    val query=ReadSources.Query(s"SELECT value FROM (${cut.sql}) m ORDER BY position",cut.args)
     materialization.admit(ReadSources.sum(List(JsonUtf8Size(Json.obj("message_count"->Json.fromInt(total))),ReadSources.bytes(c,query))))
     val messages=Sql.rows(c,query.sql,query.args*)(r => Wire.decode(Message.codecJson,Sql.json(r,"value")))
     MessagesResult(messages,total,offset,view)
+  }
+  /** At most `limit` messages from position `offset`, read in key order (`keyOrdered`). */
+  private[chronicle] def messagePage(c: Connection,content: RevisionContent,offset: Int,limit: Int): ReadSources.Query = {
+    keyOrdered(c,content)
+    val stored=content.messages
+    ReadSources.Query(s"SELECT position,value FROM ${stored.sql} m WHERE position>=? ORDER BY position LIMIT ?",stored.args++List(offset,limit))
+  }
+  /** For the rest of the transaction, epoch rows read in position order come through the primary key's range: the
+    * planner expects an epoch it has no statistics for (one written after the last ANALYZE, or outside its most common
+    * values) to hold a few rows, and otherwise reads the whole epoch through the (epoch,message_id) key or a bitmap scan
+    * and sorts it, on disk for a large session (U4 rehearsal). Without sorts the key's range is the only ordered path. */
+  private def keyOrdered(c: Connection,content: RevisionContent): Unit = if(content.isInstanceOf[RevisionContent.Epoch]) {
+    Sql.exec(c,"SET LOCAL enable_sort = off")
+    Sql.exec(c,"SET LOCAL enable_incremental_sort = off")
   }
   def locateMessage(reader: String,id: UUID,selector: ContentView,messageId: String): MessageLocation = reading { c =>
     Check.text(messageId,256)
@@ -250,7 +267,16 @@ final class PostgresArchive(db: Database, config: Config, layout: RevisionLayout
     authorized(c,reader,id)
     val selected=revision.getOrElse(Sql.one(c,"SELECT revision FROM ch_sources WHERE id=?",id)(_.getInt(1)).get)
     Check(selected>0,"invalid","content revision must be positive")
-    RawResult(RevisionContent.files(c,content(c,id,selected)),selected)
+    val stored=content(c,id,selected)
+    val size=rawBytes(c,stored)
+    Check(size<=config.maxRawReadBytes,"too-large",s"raw revision of $size bytes exceeds the raw read bound of ${config.maxRawReadBytes} bytes")
+    RawResult(RevisionContent.files(c,stored),selected)
+  }
+  /** The UTF-8 bytes of the revision's raw files, known before any of them is built. */
+  private def rawBytes(c: Connection,content: RevisionContent): Long = content match {
+    case epoch: RevisionContent.Epoch => epoch.rawBytes
+    case legacy: RevisionContent.Legacy =>
+      Sql.one(c,"SELECT coalesce(sum(octet_length(f->>'content')),0) FROM ch_revisions r CROSS JOIN LATERAL jsonb_array_elements(r.snapshot->'files') f WHERE r.session_id=? AND r.revision=?",legacy.id,legacy.revision)(_.getLong(1)).get
   }
   def claim(profiles: Set[String],scope: ClaimScope,leaseSeconds: Int,large: LargeJobs): Option[Claim] = {
     Check(profiles.nonEmpty && leaseSeconds>=0,"invalid","invalid claim profiles or lease")
@@ -293,26 +319,47 @@ final class PostgresArchive(db: Database, config: Config, layout: RevisionLayout
         }
         // One job per source and profile at a time: the head job waits while a job of an older revision is Running
         // (supersedeEndedLeases ended those whose lease ended).
-        val source=Sql.one(c,s"""SELECT s.id,s.revision FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
+        def source: Option[(UUID,Int)] = Sql.one(c,s"""SELECT s.id,s.revision FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
           SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.attempts<${Jobs.attemptLimit} AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp())))
           AND NOT EXISTS(SELECT 1 FROM ch_jobs o WHERE o.session_id=s.id AND o.revision<s.revision AND o.profile=? AND o.state='Running')
           AND (? OR NOT EXISTS(SELECT 1 FROM ch_jobs d WHERE d.session_id=s.id AND d.revision=s.revision AND d.profile=? AND d.total_windows>?))
           ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",owner,target.profile,target.profile,large==LargeJobs.Admitted,target.profile,LargeJobs.windows)(r => (r.getObject(1,classOf[UUID]),r.getInt(2)))
-        source.flatMap { case (id,revision) =>
-          Sql.one(c,s"""UPDATE ch_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
-            WHERE id=(SELECT id FROM ch_jobs WHERE session_id=? AND revision=? AND profile=? AND attempts<${Jobs.attemptLimit} AND (state='Queued' OR (state='Running' AND lease_until<clock_timestamp())) FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,fence,run_id""",leaseSeconds,id,revision,target.profile) { row =>
-            val (snap,binding)=claimedSnapshot(c,id,revision)
-            Claim(row.getObject("id",classOf[UUID]),id,revision,row.getLong("fence"),target.profile,snap,owner,target.epoch,row.getObject("run_id",classOf[UUID]),binding)
-          }
+        val claimable=s"SELECT id FROM ch_jobs WHERE session_id=? AND revision=? AND profile=? AND attempts<${Jobs.attemptLimit} AND (state='Queued' OR (state='Running' AND lease_until<clock_timestamp())) FOR UPDATE SKIP LOCKED LIMIT 1"
+        /** A job whose estimated heap exceeds the budget ends Failed before its messages are decoded, without an attempt;
+          * the next source is tried. */
+        @annotation.tailrec def next(): Option[Claim] = source match {
+          case Some((id,revision)) if retainedEstimate(c,id,revision)>BigInt(config.maxIndexingBudgetBytes) =>
+            if(Sql.exec(c,s"UPDATE ch_jobs SET state='Failed',error=?,failure_stage=NULL,lease_until=NULL,fence=fence+1 WHERE id=($claimable)",IndexingBudget.exceededCode,id,revision,target.profile)==1) next() else None
+          case Some((id,revision)) =>
+            Sql.one(c,s"""UPDATE ch_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
+              WHERE id=($claimable) RETURNING id,fence,run_id""",leaseSeconds,id,revision,target.profile) { row =>
+              val (snap,binding)=claimedSnapshot(c,id,revision)
+              Claim(row.getObject("id",classOf[UUID]),id,revision,row.getLong("fence"),target.profile,snap,owner,target.epoch,row.getObject("run_id",classOf[UUID]),binding)
+            }
+          case None => None
         }
+        next()
       }
     }.collectFirst { case Some(claim) => claim }
+  }
+  /** IndexingBudget.estimate of the revision: an epoch revision stores its counts; a legacy revision's are summed from its
+    * message rows (bounded by the request bound it was ingested under). */
+  private def retainedEstimate(c: Connection,id: UUID,revision: Int): BigInt = {
+    val stored=Sql.one(c,"SELECT epoch IS NOT NULL,message_count,message_bytes,fragment_count FROM ch_revisions WHERE session_id=? AND revision=?",id,revision) { r =>
+      Option.when(r.getBoolean(1))((r.getLong(2),r.getLong(3),r.getLong(4)))
+    }.getOrElse(throw DomainError("stale-claim","archive revision no longer exists"))
+    val (messages,bytes,fragments)=stored.getOrElse {
+      Sql.one(c,s"SELECT count(*),coalesce(sum(octet_length(value::text)),0),coalesce(sum(ceil(octet_length(value->>'text')::numeric/${EpochWriter.fragmentTextBytes})),0)::bigint FROM ch_messages WHERE session_id=? AND revision=?",id,revision)(r => (r.getLong(1),r.getLong(2),r.getLong(3))).get
+    }
+    IndexingBudget.estimate(messages,bytes,fragments,config.embedding.dimensions)
   }
   /** The claimed revision for indexing: its messages are decoded one at a time and its raw files are left out (indexing
     * reads only messages and digest). Decoding a large snapshot as one syntax tree held gigabytes for seconds, long
     * enough to be promoted, and drove the collector's longest pauses. */
   private[chronicle] def claimedSnapshot(c: Connection,id: UUID,revision: Int): (IngestRequest,RevisionBinding) = {
     val stored=RevisionContent.resolve(c,id,revision).getOrElse(throw DomainError("stale-claim","archive revision no longer exists"))
+    // The claim transaction ends after this stream.
+    keyOrdered(c,stored)
     val (snapshot,bindingId)=RevisionContent.claimed(c,stored,PostgresArchive.claimedMessagesPerFetch)
     (snapshot,RevisionBinding.captured(bindingId,id,revision,snapshot))
   }
@@ -430,7 +477,7 @@ final class PostgresArchive(db: Database, config: Config, layout: RevisionLayout
   def fail(claim: Claim,code: String): Unit = failAt(claim,code,None)
   def fail(claim: Claim,code: String,stage: IndexingStage): Unit = failAt(claim,code,Some(stage))
   private def failAt(claim: Claim,code: String,stage: Option[IndexingStage]): Unit = db.transaction { c =>
-    val exhausted=AnnotationAttempts.terminal(code)
+    val exhausted=AnnotationAttempts.terminal(code) || code==IndexingBudget.exceededCode
     head(c,claim).filter(_ => lockJob(c,claim)).foreach { head =>
       // A job of an older revision is never queued again: where it would be, it ends superseded.
       val superseded=head>claim.revision && Sql.one(c,s"SELECT attempts<${Jobs.attemptLimit} AND NOT ? FROM ch_jobs WHERE $validJob",(List[Sql.Param](exhausted)++jobArgs(claim))*)(_.getBoolean(1)).contains(true)

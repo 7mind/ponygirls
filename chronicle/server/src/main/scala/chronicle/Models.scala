@@ -28,6 +28,27 @@ object Fragments {
     result.result()
   }
 }
+/** What one indexing job retains until its publication (append-only ingest spec §3.1): every decoded message, and per
+  * Problem piece its vector in the job's VectorArena and its chunk in the publication builder. A job whose estimate exceeds
+  * `maxIndexingBudgetBytes` ends Failed with `exceededCode` before its messages are decoded; a running job whose pieces
+  * outgrow the estimate ends the same way before it embeds them. */
+object IndexingBudget {
+  val exceededCode = "index-budget-exceeded"
+  /** The objects of one decoded message besides its strings. */
+  val messageObjectBytes = 256
+  /** A piece's chunk: source slice (at most 4,096 B as UTF-16), summary (at most 4,000 B), tags (at most 4,096 B) and objects. */
+  val chunkBytes = 13312
+  def pieceBytes(dimensions: Int): Long = 8L*dimensions+chunkBytes
+  /** Decoded strings take at most two bytes per UTF-8 byte of the stored message values (`messageBytes`); pieces are cut
+    * from fragments, one per fragment. */
+  def estimate(messages: Long,messageBytes: Long,fragments: Long,dimensions: Int): BigInt =
+    BigInt(2)*BigInt(messageBytes)+BigInt(messageObjectBytes)*BigInt(messages)+BigInt(fragments)*BigInt(pieceBytes(dimensions))
+  /** The decoded messages' share, from their strings (two bytes per UTF-16 unit): at most the estimate's share, as a
+    * string has no more UTF-16 units than UTF-8 bytes. */
+  def decoded(messages: List[Message]): BigInt = messages.foldLeft(BigInt(0)) { (total,m) =>
+    total+BigInt(2L*(m.id.length+m.role.length+m.text.length+m.parentId.fold(0)(_.length)+m.timestamp.fold(0)(_.length))+messageObjectBytes)
+  }
+}
 trait Embedder { def documents(owner: String,text: List[String]): IO[List[List[Double]]]; def query(owner: String,text: String): IO[List[Double]] }
 object ModelHttp {
   def client(config: Config): Resource[IO,Client[IO]] =
@@ -120,6 +141,14 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   private def publishStage(run: => IO[Unit]): IO[Unit] = IO.defer(run).handleErrorWith(error => IO.raiseError(StagedFailure(IndexingStage.Publication,error)))
   private final class Windows(claim: Claim,total: Int) {
     private val vectors=new VectorArena(config.embedding.dimensions)
+    private val pieceBytes=IndexingBudget.pieceBytes(config.embedding.dimensions)
+    private var retained=IndexingBudget.decoded(claim.snapshot.messages)
+    /** Counts the pieces of a batch before it is embedded and retained: past the budget the job ends instead. */
+    private def reserve(pieces: Int): Unit = {
+      val next=retained+BigInt(pieces)*BigInt(pieceBytes)
+      Check(next<=BigInt(config.maxIndexingBudgetBytes),IndexingBudget.exceededCode,s"indexing job would retain $next bytes, above the budget of ${config.maxIndexingBudgetBytes}")
+      retained=next
+    }
     def accepted[A](key: CheckpointKey)(decode: Json => A,encode: A => Json)(run: => IO[A]): IO[A] = IO.blocking(archive.checkpoint(claim,key)).flatMap {
       case Some(value) => IO(decode(value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted checkpoint payload")))
       case None => IO.defer(run).flatTap(value => IO.blocking(archive.checkpoint(claim,key,encode(value))))
@@ -161,7 +190,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       val parts=batches.zipWithIndex.traverse { (batch,part) =>
         val key=IndexCheckpoints.key(claim,IndexingStage.Embedding,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,CheckpointJson.chunks(batch))
         def validated(vectors: List[List[Double]]): List[List[Double]] = { CheckpointJson.validateVectors(vectors,batch.size,config.embedding.dimensions); vectors }
-        accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(IO.defer(embedder.documents(claim.owner,batch.map(_.text))).map(validated))
+        IO(reserve(batch.size)) *> accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(IO.defer(embedder.documents(claim.owner,batch.map(_.text))).map(validated))
           .map(batchVectors => batch.zip(batchVectors).map((chunk,vector) => IndexedChunk(chunk,vectors.add(vector))))
       }.map(_.flatten)
       // A part accepted under another batch size addresses other pieces: none of the window's parts is reused.
