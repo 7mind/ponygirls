@@ -84,7 +84,7 @@ for (const adapter of ['memory', 'sqlite']) {
       const restricted = { ...base, excludeDefaultProfile: true }; await engine(restricted, spool, sink).runOnce(2); assert.deepEqual(spool.queue(), [entry]);
       const changed = { ...restricted, redactions: { ...restricted.redactions, textPatterns: ['additional-policy'] } };
       await engine(changed, spool, sink).runOnce(3); assert.equal(sink.bodies.length, 1); assert.deepEqual(spool.queue(), []);
-      assert.equal(spool.head(entry.sourceKey).tombstone, true); assert.equal(spool.dropped()[0]!.reason, 'privacy-or-destination-changed');
+      assert.equal(spool.head(entry.sourceKey).tombstone, false); assert.equal(spool.dropped()[0]!.reason, 'privacy-or-destination-changed');
       assert.throws(() => spool.pendingOrigin(entry.requestId), /request-not-found/);
     } finally { spool.close(); rmSync(home, { recursive: true }); }
   });

@@ -71,7 +71,7 @@ for (const adapter of ['dummy', 'file']) {
       assert.ok(parsed.messages.every(message => !message.text.includes(secret)));
     } finally { f.close(); }
   });
-  test(`runtime privacy contract ${adapter}: rotation across restart drops/tombstones old pending payloads`, async () => {
+  test(`runtime privacy contract ${adapter}: rotation across restart discards old pending payloads and requeues their sources`, async () => {
     const f = fixture(adapter); let spool = new SqliteSpool(f.config.stateDir); let sends = 0;
     try {
       writeFileSync(join(f.dir, 'sessions/s.jsonl'), transcript('stdout synthetic-credential-plain-stdout'));
@@ -83,8 +83,9 @@ for (const adapter of ['dummy', 'file']) {
       spool.close(); spool = new SqliteSpool(f.config.stateDir);
       f.put(f.config.redactions.secretFiles[0]!, 'rotated-synthetic-value\n');
       await new Collector(f.config, spool, ingester, () => 0, noGit, acceptingProgress, f.reader).runOnce(200);
-      assert.equal(sends, 1); assert.equal(spool.queue().length, 0);
-      assert.equal(spool.head(entry.sourceKey).tombstone, true);
+      const [requeued] = spool.queue();
+      assert.equal(sends, 2); assert.notEqual(requeued?.requestId, entry.requestId); assert.notEqual(requeued?.policyDigest, entry.policyDigest);
+      assert.equal(spool.head(entry.sourceKey).tombstone, false);
       assert.equal(spool.dropped()[0]!.reason, 'privacy-or-destination-changed');
     } finally { spool.close(); f.close(); }
   });
@@ -114,7 +115,7 @@ for (const adapter of ['dummy', 'file']) {
       assert.ok(!entry.payload.includes('synthetic-ingest-bearer'));
       f.put(f.config.tokenFile, undefined); assert.equal((await collector.runOnce(200)).discovered, 0); assert.equal(sends, 1);
       f.put(f.config.tokenFile, 'rotated-bearer'); await collector.runOnce(300);
-      assert.equal(sends, 1); assert.equal(spool.head(entry.sourceKey).tombstone, true);
+      assert.equal(sends, 2); assert.notEqual(spool.queue()[0]?.requestId, entry.requestId); assert.equal(spool.head(entry.sourceKey).tombstone, false);
     } finally { spool.close(); f.close(); }
   });
   test(`runtime privacy contract ${adapter}: successful end-to-end payload uses resolved policy`, async () => {

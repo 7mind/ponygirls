@@ -10,10 +10,10 @@ import { excludedPath } from './discovery.ts';
 import { FileSecretReader } from './runtime-privacy.ts';
 import { HttpProgressReporter } from './progress.ts';
 import { HttpIngester } from './ingest.ts';
-import { Collector } from './collector.ts';
+import { Collector, POLICY_CHANGED } from './collector.ts';
 import { LocalGitMetadata } from './git.ts';
-import { DaemonLock, SqliteSpool } from './spool.ts';
-import { formatCollectorStatus, literal } from './status.ts';
+import { DaemonLock, droppedOnlyFor, SqliteSpool } from './spool.ts';
+import { formatCollectorStatus, formatTombstones, literal, type TombstoneReport } from './status.ts';
 
 const PROGRAM = 'chronicle-collector';
 const HELP = `${PROGRAM} — uploads local Claude, Codex and Pi session histories to Chronicle
@@ -31,6 +31,9 @@ Commands:
   --exclusions        list excluded directories
   --retry REQUEST_ID  retry a stopped upload on the next scan
   --drop REQUEST_ID   discard a queued upload; its source is not collected again
+  --clear-policy-tombstones [--apply]
+                      list the sources that a privacy or destination change
+                      stopped collecting; with --apply, collect them again
 
 --once, --retry and --drop need the daemon stopped.
 
@@ -43,12 +46,12 @@ Options:
 `;
 // The command line itself is wrong: reported as text with exit 2, unlike runtime failures.
 class UsageError extends Error {}
-const COMMANDS = ['once', 'status', 'retry', 'drop', 'pause', 'resume', 'exclude', 'unexclude', 'exclusions'] as const;
+const COMMANDS = ['once', 'status', 'retry', 'drop', 'pause', 'resume', 'exclude', 'unexclude', 'exclusions', 'clear-policy-tombstones'] as const;
 type Command = typeof COMMANDS[number];
 const OPERANDS: Partial<Record<Command, string>> = { retry: 'a request id', drop: 'a request id', exclude: 'a path', unexclude: 'a path' };
-interface Arguments { configPath: string; operation: 'daemon' | Command; operand: string | null; json: boolean }
+interface Arguments { configPath: string; operation: 'daemon' | Command; operand: string | null; json: boolean; apply: boolean }
 function args(argv: string[], defaultConfigPath: string): Arguments {
-  let configPath: string | null = null; let operation: Command | null = null; let operand: string | null = null; let json = false;
+  let configPath: string | null = null; let operation: Command | null = null; let operand: string | null = null; let json = false; let apply = false;
   for (let i = 0; i < argv.length; i++) {
     const argument = argv[i]!;
     if (argument === '--config') {
@@ -58,6 +61,7 @@ function args(argv: string[], defaultConfigPath: string): Arguments {
       configPath = explicitConfig; continue;
     }
     if (argument === '--json') { if (json) throw new UsageError('--json given twice'); json = true; continue; }
+    if (argument === '--apply') { if (apply) throw new UsageError('--apply given twice'); apply = true; continue; }
     const command = COMMANDS.find(name => `--${name}` === argument);
     if (command === undefined) throw new UsageError(`unknown argument '${literal(argument)}'`);
     if (operation !== null) throw new UsageError(operation === command ? `${argument} given twice` : `--${operation} and ${argument} cannot be combined; give one command`);
@@ -68,11 +72,12 @@ function args(argv: string[], defaultConfigPath: string): Arguments {
     if (operand.length === 0) throw new UsageError(`${argument} needs ${expected}`);
   }
   if ((operation === 'retry' || operation === 'drop') && !/^[0-9a-f-]{36}$/i.test(operand!)) throw new UsageError(`--${operation} needs a request id as --status prints it, got '${literal(operand!)}'`);
+  if (apply && operation !== 'clear-policy-tombstones') throw new UsageError('--apply needs --clear-policy-tombstones');
   if (json && operation === null) throw new UsageError('--json needs a command; the daemon always prints JSON');
   if (json && operation === 'once') throw new UsageError('--json cannot be combined with --once, which always prints JSON');
   if (configPath !== null && !isAbsolute(configPath)) throw new UsageError(`--config needs an absolute path, got '${literal(configPath)}'`);
   if (configPath === null && !isAbsolute(defaultConfigPath)) throw new UsageError(`the default configuration path '${literal(defaultConfigPath)}' is not absolute; give --config PATH`);
-  return { configPath: configPath ?? defaultConfigPath, operation: operation ?? 'daemon', operand, json };
+  return { configPath: configPath ?? defaultConfigPath, operation: operation ?? 'daemon', operand, json, apply };
 }
 const print = (value: unknown): void => { process.stdout.write(JSON.stringify(value) + '\n'); };
 type Control = 'pause' | 'resume' | 'exclude' | 'unexclude' | 'exclusions';
@@ -91,6 +96,21 @@ const CONTROLS: Record<Control, (spool: SqliteSpool, operand: string | null) => 
   exclusions: spool => { const paths = spool.controls().exclusions; return paths.length === 0 ? 'No excluded directories.' : paths.map(literal).join('\n'); },
 };
 const isControl = (operation: Arguments['operation']): operation is Control => Object.hasOwn(CONTROLS, operation);
+// Earlier releases tombstoned the sources of uploads discarded by a policy change; only those tombstones are cleared.
+function clearPolicyTombstones(collector: Collector, spool: SqliteSpool, apply: boolean): TombstoneReport {
+  const tombstones = spool.tombstones();
+  const others = tombstones.filter(tombstone => !droppedOnlyFor(tombstone, POLICY_CHANGED));
+  const policyChanged = apply ? spool.clearTombstones(POLICY_CHANGED) : tombstones.filter(tombstone => droppedOnlyFor(tombstone, POLICY_CHANGED));
+  // Listing reads the discovered files to find those of each source; clearing touches the spool only.
+  const located = apply ? null : collector.locate(new Set(policyChanged.map(tombstone => tombstone.sourceKey)));
+  return {
+    applied: apply,
+    policyChanged: policyChanged.map(({ sourceKey, head }) => ({ sourceKey, revision: head.revision, acknowledged: head.digest !== null, ...(located === null ? {} : { files: located.files.get(sourceKey) ?? [] }) })),
+    ...(located === null ? {} : { unidentifiedFiles: located.unidentified }),
+    otherReasons: others.filter(tombstone => tombstone.reasons.length > 0).map(({ sourceKey, reasons }) => ({ sourceKey, reasons })),
+    unattributed: others.filter(tombstone => tombstone.reasons.length === 0).map(tombstone => tombstone.sourceKey),
+  };
+}
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.includes('--help') || argv.includes('-h')) { process.stdout.write(HELP); return; }
@@ -104,7 +124,7 @@ async function main(): Promise<void> {
     input = JSON.parse(readFileSync(arguments_.configPath, 'utf8')) as unknown;
   } catch { throw new CollectorError('config-read-failed'); }
   const config = loadConfig(input);
-  const controlMutation = ['pause', 'resume', 'exclude', 'unexclude'].includes(arguments_.operation);
+  const controlMutation = ['pause', 'resume', 'exclude', 'unexclude'].includes(arguments_.operation) || arguments_.apply;
   // The daemon and --once report JSON lines to the journal; every other command answers in text unless --json.
   const text = !arguments_.json && arguments_.operation !== 'daemon' && arguments_.operation !== 'once';
   if (!config.enabled) {
@@ -113,7 +133,7 @@ async function main(): Promise<void> {
     else print({ enabled: false });
     return;
   }
-  const lock = ['status', 'pause', 'resume', 'exclude', 'unexclude', 'exclusions'].includes(arguments_.operation) ? null : new DaemonLock(config.stateDir);
+  const lock = ['status', 'pause', 'resume', 'exclude', 'unexclude', 'exclusions', 'clear-policy-tombstones'].includes(arguments_.operation) ? null : new DaemonLock(config.stateDir);
   let spool: SqliteSpool | null = null;
   try {
     spool = new SqliteSpool(config.stateDir);
@@ -130,6 +150,12 @@ async function main(): Promise<void> {
       else print(status);
     };
     if (arguments_.operation === 'status') { printStatus(); return; }
+    if (arguments_.operation === 'clear-policy-tombstones') {
+      const report = clearPolicyTombstones(collector, spool, arguments_.apply);
+      if (text) process.stdout.write(formatTombstones(report));
+      else print(report);
+      return;
+    }
     if (arguments_.operation === 'retry' || arguments_.operation === 'drop') {
       if (arguments_.operand === null) throw new CollectorError('request-id-required');
       if (arguments_.operation === 'retry') spool.retry(arguments_.operand);

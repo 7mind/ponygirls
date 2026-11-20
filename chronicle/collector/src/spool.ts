@@ -18,6 +18,10 @@ export interface QueuedAdmission extends QueuedOrigin { evidence: AdmissionEvide
 interface BoundOrigin { requestId: string; payloadDigest: string; sourceKey: string; origin: CollectionOrigin }
 export interface Head { revision: number; digest: string | null; tombstone: boolean }
 export interface Dropped { requestId: string; sourceKey: string; reason: string }
+/** A tombstoned source with the distinct reasons of the drops recorded for it, sorted. */
+export interface Tombstone { sourceKey: string; head: Head; reasons: string[] }
+/** Every drop recorded for the source has `reason`: the tombstone can only come from such a drop. */
+export const droppedOnlyFor = (tombstone: Tombstone, reason: string): boolean => tombstone.reasons.length === 1 && tombstone.reasons[0] === reason;
 export interface ReportingState { sequence: string; acceptedSequence: string | null; acceptedAt: number | null; error: string | null }
 /** The stat of a file when it was last read and the settled content it had: `digest` at source `revision` (acknowledged or queued). */
 export interface SourceRead { fileId: string; stat: SourceStat; sourceKey: string; digest: string; revision: number; policyDigest: string; controlsDigest: string }
@@ -36,7 +40,14 @@ export interface Spool {
   pendingOrigin(requestId: string): CollectionOrigin; queueWithOrigins(): QueuedOrigin[]; queueWithAdmission(): QueuedAdmission[];
   ack(requestId: string, revision: number): void;
   fail(requestId: string, error: string, nextAt: number, conflict: boolean, maxAttempts: number): Pending['status'];
-  retry(requestId: string): void; drop(requestId: string, reason: string): void;
+  retry(requestId: string): void;
+  /** Removes the request and tombstones its source: it is not collected again. */
+  drop(requestId: string, reason: string): void;
+  /** Removes the request; its source stays collectable. */
+  discard(requestId: string, reason: string): void;
+  tombstones(): Tombstone[];
+  /** In one transaction: lifts the tombstones `droppedOnlyFor` `reason`, keeping revision and digest, and returns them. */
+  clearTombstones(reason: string): Tombstone[];
   diagnostics(): Diagnostic[]; diagnostic(value: Diagnostic): void; clearDiagnostics(): void;
   dropped(): Dropped[];
   report(): CollectorReport | null; saveReport(report: CollectorReport): void;
@@ -51,6 +62,7 @@ interface Storage {
   set<T>(bucket: string, key: string, value: T): void;
   remove(bucket: string, key: string): void;
   list<T>(bucket: string): T[];
+  entries<T>(bucket: string): [string, T][];
   clear(bucket: string): void;
   transaction<T>(run: () => T): T;
   readTransaction<T>(read: () => T): T;
@@ -62,6 +74,7 @@ class InMemoryStorage implements Storage {
   set<T>(bucket: string, key: string, value: T): void { this.rows.set(`${bucket}\0${key}`, JSON.stringify(value)); }
   remove(bucket: string, key: string): void { this.rows.delete(`${bucket}\0${key}`); }
   list<T>(bucket: string): T[] { return [...this.rows].filter(([key]) => key.startsWith(`${bucket}\0`)).map(([, value]) => JSON.parse(value) as T); }
+  entries<T>(bucket: string): [string, T][] { return [...this.rows].filter(([key]) => key.startsWith(`${bucket}\0`)).map(([key, value]) => [key.slice(bucket.length + 1), JSON.parse(value) as T]); }
   clear(bucket: string): void { for (const key of this.rows.keys()) if (key.startsWith(`${bucket}\0`)) this.rows.delete(key); }
   transaction<T>(run: () => T): T { const before = new Map(this.rows); try { return run(); } catch (error) { this.rows = before; throw error; } }
   readTransaction<T>(read: () => T): T { return read(); }
@@ -89,6 +102,7 @@ export class SqliteStorage implements Storage {
   set<T>(bucket: string, key: string, value: T): void { this.db.prepare('INSERT INTO kv VALUES (?,?,?) ON CONFLICT(bucket,key) DO UPDATE SET value=excluded.value').run(bucket, key, JSON.stringify(value)); }
   remove(bucket: string, key: string): void { this.db.prepare('DELETE FROM kv WHERE bucket=? AND key=?').run(bucket, key); }
   list<T>(bucket: string): T[] { return this.db.prepare('SELECT value FROM kv WHERE bucket=? ORDER BY key').all(bucket).map(row => JSON.parse(String(row['value'])) as T); }
+  entries<T>(bucket: string): [string, T][] { return this.db.prepare('SELECT key, value FROM kv WHERE bucket=? ORDER BY key').all(bucket).map(row => [String(row['key']), JSON.parse(String(row['value'])) as T]); }
   clear(bucket: string): void { this.db.prepare('DELETE FROM kv WHERE bucket=?').run(bucket); }
   transaction<T>(run: () => T): T { this.db.exec('BEGIN IMMEDIATE'); try { const result = run(); this.db.exec('COMMIT'); return result; } catch (error) { this.db.exec('ROLLBACK'); throw error; } }
   readTransaction<T>(read: () => T): T { this.db.exec('BEGIN'); try { const result = read(); this.db.exec('COMMIT'); return result; } catch (error) { this.db.exec('ROLLBACK'); throw error; } }
@@ -236,12 +250,28 @@ class DurableSpool implements Spool {
     const entry = this.required(requestId); entry.attempts = 0; entry.nextAt = 0; entry.status = 'pending'; entry.error = null;
     this.storage.set('pending', requestId, entry);
   }
-  drop(requestId: string, reason: string): void {
+  drop(requestId: string, reason: string): void { this.removeRequest(requestId, reason, true); }
+  discard(requestId: string, reason: string): void { this.removeRequest(requestId, reason, false); }
+  private removeRequest(requestId: string, reason: string, tombstone: boolean): void {
     this.storage.transaction(() => {
-      const entry = this.required(requestId); const head = this.head(entry.sourceKey); head.tombstone = true;
-      this.storage.set('head', entry.sourceKey, head); this.storage.remove('pending', requestId); this.storage.remove('pending-origin', requestId); this.storage.remove('pending-evidence', requestId);
+      const entry = this.required(requestId);
+      if (tombstone) { const head = this.head(entry.sourceKey); head.tombstone = true; this.storage.set('head', entry.sourceKey, head); }
+      this.storage.remove('pending', requestId); this.storage.remove('pending-origin', requestId); this.storage.remove('pending-evidence', requestId);
       this.storage.remove('source-pending', entry.sourceKey);
       this.storage.set('audit', requestId, { requestId, sourceKey: entry.sourceKey, reason });
+    });
+  }
+  private recordedTombstones(): Tombstone[] {
+    const reasons = new Map<string, Set<string>>();
+    for (const { sourceKey, reason } of this.dropped()) reasons.set(sourceKey, (reasons.get(sourceKey) ?? new Set()).add(reason));
+    return this.storage.entries<Head>('head').filter(([, head]) => head.tombstone).map(([sourceKey, head]) => ({ sourceKey, head, reasons: [...reasons.get(sourceKey) ?? []].sort() }));
+  }
+  tombstones(): Tombstone[] { return this.storage.readTransaction(() => this.recordedTombstones()); }
+  clearTombstones(reason: string): Tombstone[] {
+    return this.storage.transaction(() => {
+      const cleared = this.recordedTombstones().filter(tombstone => droppedOnlyFor(tombstone, reason));
+      for (const { sourceKey, head } of cleared) this.storage.set<Head>('head', sourceKey, { ...head, tombstone: false });
+      return cleared;
     });
   }
   reporting(): ReportingState { return this.storage.get<ReportingState>('meta', 'reporting') ?? { sequence: '0', acceptedSequence: null, acceptedAt: null, error: null }; }

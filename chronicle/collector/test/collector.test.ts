@@ -140,14 +140,20 @@ test('BG copied IDs across profiles stay independent; new profiles discovered af
   } finally { spool.close(); rmSync(dir, { recursive: true }); }
 });
 
-test('BG privacy change cancels pending bytes and tombstones source; limits quarantine without truncation', async () => {
+test('BG privacy change discards pending bytes without tombstoning: the next scan queues the source under the new policy; limits quarantine without truncation', async () => {
   const { dir, source, config } = setup({ quietMs: 0 }); const spool = new MemorySpool(); const ingester = new DummyIngester(); ingester.loseACK = true;
   try {
     writeFileSync(join(source, 's.jsonl'), fixture('pi'));
     await new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(1);
+    const [old] = spool.queue(); assert.ok(old !== undefined); assert.equal(ingester.payloads.length, 1);
     const altered = { ...config, redactions: { fieldNames: ['content'], textPatterns: [], secretFiles: [] } };
     const result = await new Collector(altered, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(2);
-    assert.equal(result.quarantined, 1); assert.equal(spool.queue().length, 0); assert.equal(ingester.payloads.length, 1);
+    assert.equal(result.quarantined, 1); assert.equal(result.enqueued, 1); assert.equal(result.uploaded, 1); assert.equal(spool.queue().length, 0);
+    assert.deepEqual(spool.dropped(), [{ requestId: old.requestId, sourceKey: old.sourceKey, reason: 'privacy-or-destination-changed' }]);
+    assert.equal(spool.head(old.sourceKey).tombstone, false); assert.equal(spool.head(old.sourceKey).revision, 1);
+    const [before, ...after] = ingester.payloads.map(payload => IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(payload) as unknown));
+    // The one upload after the change is a new request with the content re-read and redacted under the new policy.
+    assert.deepEqual(after.map(request => [request.requestId === old.requestId, request.files[0]!.content === before!.files[0]!.content, request.expectedRevision]), [[false, false, 0]]);
     const limited = new Collector({ ...config, maxFileBytes: 1 }, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets);
     assert.equal((await limited.runOnce(3)).quarantined, 1);
     const size = Buffer.byteLength(fixture('pi'));

@@ -20,6 +20,10 @@ interface Candidate { file: SourceFile; read: { transcript: ParsedTranscript; st
 const controlsDigest = (controls: Controls): string => hash(JSON.stringify(controls.exclusions));
 // Overlapping roots can discover one path twice, as different sources.
 const fileId = (file: SourceFile): string => hash(JSON.stringify([file.root.id, file.root.format, file.path]));
+// Queued uploads built under another privacy/destination policy are discarded with this reason.
+export const POLICY_CHANGED = 'privacy-or-destination-changed';
+/** A discovered file of a source and its size. */
+export interface SourceLocation { path: string; bytes: number }
 export function policyDigest(config: Config, runtimePrivacyIdentity: string): string {
   return hash(JSON.stringify({ endpoint: config.endpoint, roots: config.roots, homeDir: config.homeDir, yoloDir: config.yoloDir, discoverNative: config.discoverNative, discoverYolo: config.discoverYolo, exclusions: config.exclusions, redactions: config.redactions, runtimePrivacyIdentity }));
 }
@@ -107,8 +111,9 @@ export class Collector {
     const queuedContent = new Map<string, { digest: string; revision: number }>();
     for (const queued of this.spool.queue()) {
       if (queued.policyDigest !== digest) {
-        this.spool.drop(queued.requestId, 'privacy-or-destination-changed'); queueState.delete(queued.requestId);
-        this.spool.diagnostic({ rootId: 'spool', pathId: queued.sourceKey, code: 'privacy-or-destination-changed' });
+        // Never sent after the change; the source stays collectable and is read again under the new policy.
+        this.spool.discard(queued.requestId, POLICY_CHANGED); queueState.delete(queued.requestId);
+        this.spool.diagnostic({ rootId: 'spool', pathId: queued.sourceKey, code: POLICY_CHANGED });
         counters.quarantined++;
       } else queuedContent.set(queued.sourceKey, { digest: queued.sourceDigest, revision: queued.expectedRevision + 1 });
     }
@@ -274,6 +279,20 @@ export class Collector {
       await publish(CollectorPhase.Uploading, undefined, undefined, true);
     }
     return finish();
+  }
+  /** The discovered files of the given sources, identified by reading them as a scan does; `unidentified` counts files that cannot be (over maxFileBytes, unreadable, incomplete). */
+  locate(sourceKeys: ReadonlySet<string>): { files: Map<string, SourceLocation[]>; unidentified: number } {
+    const files = new Map<string, SourceLocation[]>(); let unidentified = 0;
+    if (sourceKeys.size === 0) return { files, unidentified };
+    const { policy } = resolveRuntimePrivacy(this.config, this.secrets);
+    for (const file of scanRoots(discoverRoots(this.config, process.platform), this.config).files) {
+      try {
+        const { bytes } = readSnapshot(file, this.config.maxFileBytes, this.config.maxFileBytes);
+        const key = sourceKey(sourceIdentity(this.spool.namespace, file.root.id, file.root.format, parseTranscript(file.root.format, bytes, file.path, policy), file.path));
+        if (sourceKeys.has(key)) files.set(key, [...files.get(key) ?? [], { path: file.path, bytes: bytes.length }]);
+      } catch { unidentified++; }
+    }
+    return { files, unidentified };
   }
   status(): { namespace: string; queue: { requestId: string; sourceKey: string; attempts: number; nextAt: number; status: string; error: string | null; payloadBytes: number }[]; diagnostics: Diagnostic[]; dropped: Dropped[]; lastRun: CollectorReport | null; reporting: ReturnType<Spool['reporting']>; controls: Controls; heldRequests: string[] } {
     const queued = this.spool.queueWithAdmission();

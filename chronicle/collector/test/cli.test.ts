@@ -7,8 +7,15 @@ import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { DaemonLock, SqliteSpool, type Pending } from '../src/spool.ts';
 import { hash, type CollectorReport } from '../src/domain.ts';
+import { Collector } from '../src/collector.ts';
+import { loadConfig } from '../src/config.ts';
+import { UploadError, type Ingester } from '../src/ingest.ts';
+import { FileSecretReader } from '../src/runtime-privacy.ts';
+import { noGit, acceptingProgress } from './helpers.ts';
+import { IngestReceipt } from '../../generated/typescript/chronicle/api/IngestReceipt.js';
 
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
 
@@ -34,6 +41,9 @@ Commands:
   --exclusions        list excluded directories
   --retry REQUEST_ID  retry a stopped upload on the next scan
   --drop REQUEST_ID   discard a queued upload; its source is not collected again
+  --clear-policy-tombstones [--apply]
+                      list the sources that a privacy or destination change
+                      stopped collecting; with --apply, collect them again
 
 --once, --retry and --drop need the daemon stopped.
 
@@ -88,6 +98,7 @@ test('GoodCommunication CLI usage errors exit 2 with a sentence naming the argum
       [[...selected, '--unexclude', ''], '--unexclude needs a path'],
       [[...selected, '--json'], '--json needs a command; the daemon always prints JSON'],
       [[...selected, '--once', '--json'], '--json cannot be combined with --once, which always prints JSON'],
+      [[...selected, '--status', '--apply'], '--apply needs --clear-policy-tombstones'],
     ];
     for (const [argv, message] of cases) {
       const result = invoke(join(dir, 'home'), undefined, argv, dir);
@@ -161,12 +172,59 @@ test('GoodCommunication retry and drop answer with the human status by default a
   } finally { rmSync(dir, { recursive: true }); }
 });
 
+test('GoodCommunication --clear-policy-tombstones lists, then once clears, only tombstones of a policy change while the daemon runs; the next scan collects the source', async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'chronicle-tombstones-')));
+  let lock: DaemonLock | null = null;
+  try {
+    const state = join(dir, 'state'), config = join(dir, 'config.json'), sessions = join(dir, 'sessions'), transcript = join(sessions, 's.jsonl'), token = join(dir, 'token');
+    mkdirSync(sessions); writeFileSync(token, 'synthetic-tombstone-token\n', { mode: 0o600 });
+    const settings = { ...enabledConfig(dir, state), tokenFile: token, quietMs: 0, roots: [{ id: 'fixture', format: 'pi', path: sessions }] };
+    writeFileSync(config, JSON.stringify(settings));
+    let accept = true;
+    const ingester: Ingester = { async send(payload) {
+      if (!accept) throw new UploadError('network-failed', true, false);
+      const request = JSON.parse(payload) as { requestId: string; expectedRevision: number };
+      return new IngestReceipt(request.requestId, randomUUID(), request.expectedRevision + 1, randomUUID());
+    } };
+    const raw = readFileSync(new URL('fixtures/pi.jsonl', import.meta.url), 'utf8');
+    const spool = new SqliteSpool(state);
+    const collect = (now: number) => new Collector(loadConfig(settings), spool, ingester, () => 0, noGit, acceptingProgress, new FileSecretReader()).runOnce(now);
+    try {
+      // What an earlier release leaves: revision 1 acknowledged, then a policy change dropped the queued revision 2 and tombstoned its source.
+      writeFileSync(transcript, raw); assert.equal((await collect(1)).uploaded, 1);
+      writeFileSync(transcript, raw.replace('left branch', 'next branch')); accept = false; await collect(2);
+      const [changed] = spool.queue(); assert.ok(changed !== undefined); spool.drop(changed.requestId, 'privacy-or-destination-changed');
+      const dropped: Pending = { requestId: randomUUID(), sourceKey: 'dropped', sourceDigest: hash('dropped'), payload: 'synthetic', payloadDigest: hash('synthetic'), expectedRevision: 0, policyDigest: 'policy', attempts: 0, nextAt: 0, status: 'pending', error: null };
+      spool.enqueue(dropped, { kind: 'explicit' }, null); spool.drop(dropped.requestId, 'operator-drop');
+      spool.exclude(join(dir, 'excluded'));
+      const database = new DatabaseSync(join(state, 'spool.sqlite'));
+      try { database.prepare("INSERT INTO kv VALUES ('head', 'unattributed', ?)").run(JSON.stringify({ revision: 2, digest: 'unattributed', tombstone: true })); } finally { database.close(); }
+      const answer = (...argv: string[]): string => {
+        const result = invoke(dir, undefined, ['--config', config, '--clear-policy-tombstones', ...argv], dir);
+        assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, ''); return result.stdout;
+      };
+      const others = 'Other tombstones, not cleared: 2\n  dropped for another reason (operator-drop): 1\n  no recorded drop, reason unknown: 1\n    unattributed\n';
+      assert.deepEqual(JSON.parse(answer('--json')) as unknown, { applied: false, policyChanged: [{ sourceKey: changed.sourceKey, revision: 1, acknowledged: true, files: [{ path: transcript, bytes: Buffer.byteLength(raw.replace('left branch', 'next branch')) }] }], unidentifiedFiles: 0, otherReasons: [{ sourceKey: 'dropped', reasons: ['operator-drop'] }], unattributed: ['unattributed'] });
+      const listed = answer();
+      assert.ok(listed.startsWith(`Not collected since a privacy or destination change: 1 source\n  ${changed.sourceKey} · last acknowledged revision 1\n    ${transcript} · `), listed);
+      assert.ok(listed.endsWith(`${others}Dry run, nothing changed. --apply collects these sources again at the next scan.\n`), listed);
+      lock = new DaemonLock(state);
+      assert.equal(answer('--apply'), `Cleared: 1 source, collected again at the next scan\n  ${changed.sourceKey} · last acknowledged revision 1\n${others}`);
+      assert.equal(answer('--apply'), `Cleared: none, no tombstone of a privacy or destination change is left\n${others}`);
+      lock.close(); lock = null;
+      assert.deepEqual([spool.head('dropped').tombstone, spool.head('unattributed').tombstone, spool.controls().exclusions], [true, true, [join(dir, 'excluded')]]);
+      accept = true; const next = await collect(3);
+      assert.equal(next.uploaded, 1); assert.deepEqual(spool.head(changed.sourceKey), { revision: 2, digest: changed.sourceDigest, tombstone: false });
+    } finally { spool.close(); }
+  } finally { lock?.close(); rmSync(dir, { recursive: true }); }
+});
+
 test('GoodCommunication disabled configuration answers in text by default wherever a text form exists', () => {
   const dir = mkdtempSync(join(tmpdir(), 'chronicle-disabled-text-'));
   try {
     const config = join(dir, 'config.json'), state = join(dir, 'state');
     writeFileSync(config, JSON.stringify({ enabled: false, stateDir: state }));
-    for (const command of [['--exclusions'], ['--retry', REQUEST_ID], ['--drop', REQUEST_ID]]) {
+    for (const command of [['--exclusions'], ['--retry', REQUEST_ID], ['--drop', REQUEST_ID], ['--clear-policy-tombstones']]) {
       const human = invoke(dir, undefined, ['--config', config, ...command], dir);
       assert.equal(human.status, 0, human.stderr); assert.equal(human.stdout, 'Chronicle collector: disabled\n');
       const json = invoke(dir, undefined, ['--config', config, ...command, '--json'], dir);

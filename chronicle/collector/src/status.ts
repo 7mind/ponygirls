@@ -1,9 +1,17 @@
-import type { Collector } from './collector.ts';
+import type { Collector, SourceLocation } from './collector.ts';
 import { holdReason } from './admission.ts';
 import { SERVER_PAYLOAD_TOO_LARGE } from './ingest.ts';
 import type { Diagnostic } from './domain.ts';
 
 export type CollectorStatus = ReturnType<Collector['status']>;
+/** `files` and `unidentifiedFiles` are present when the sources were located (the dry run). */
+export interface TombstoneReport {
+  applied: boolean;
+  policyChanged: { sourceKey: string; revision: number; acknowledged: boolean; files?: SourceLocation[] }[];
+  unidentifiedFiles?: number;
+  otherReasons: { sourceKey: string; reasons: string[] }[];
+  unattributed: string[];
+}
 const BYTE_BASE = 1024;
 const BYTE_UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'] as const;
 const PATH_ID_DISPLAY_LENGTH = 12;
@@ -28,6 +36,28 @@ function diagnosticLine(diagnostic: Diagnostic): string {
   const line = `  ${diagnostic.code === 'root-missing' ? 'root missing (root-missing)' : literal(diagnostic.code)}: ${rootLabel(diagnostic.rootId, diagnostic.pathId)}`;
   const limit = Object.hasOwn(LIMIT_DESCRIPTIONS, diagnostic.code) ? LIMIT_DESCRIPTIONS[diagnostic.code] : undefined;
   return limit === undefined || diagnostic.measured === undefined || diagnostic.limit === undefined ? line : `${line} · ${limit(diagnostic.measured, diagnostic.limit)}`;
+}
+
+export function formatTombstones(report: TombstoneReport): string {
+  const plural = (value: number, noun: string): string => `${count(value)} ${noun}${value === 1 ? '' : 's'}`;
+  const cleared = report.policyChanged.length;
+  const lines = [report.applied
+    ? cleared === 0 ? 'Cleared: none, no tombstone of a privacy or destination change is left' : `Cleared: ${plural(cleared, 'source')}, collected again at the next scan`
+    : `Not collected since a privacy or destination change: ${cleared === 0 ? 'none' : plural(cleared, 'source')}`];
+  for (const source of report.policyChanged) {
+    lines.push(`  ${literal(source.sourceKey)} · ${source.acknowledged ? `last acknowledged revision ${count(source.revision)}` : 'never acknowledged'}`);
+    if (source.files?.length === 0) lines.push('    no discovered file has this source');
+    for (const file of source.files ?? []) lines.push(`    ${literal(file.path)} · ${size(file.bytes)}`);
+  }
+  if (cleared > 0 && report.unidentifiedFiles !== undefined && report.unidentifiedFiles > 0) lines.push(`${plural(report.unidentifiedFiles, 'discovered file')} could not be identified (over maxFileBytes, unreadable or incomplete); a source without a file may be among them.`);
+  const others = report.otherReasons.length + report.unattributed.length;
+  if (others > 0) lines.push(`Other tombstones, not cleared: ${count(others)}`);
+  const byReasons = new Map<string, number>();
+  for (const { reasons } of report.otherReasons) { const key = reasons.join(', '); byReasons.set(key, (byReasons.get(key) ?? 0) + 1); }
+  for (const [reasons, number] of byReasons) lines.push(`  dropped for another reason (${literal(reasons)}): ${count(number)}`);
+  if (report.unattributed.length > 0) lines.push(`  no recorded drop, reason unknown: ${count(report.unattributed.length)}`, ...report.unattributed.map(key => `    ${literal(key)}`));
+  if (!report.applied && cleared > 0) lines.push('Dry run, nothing changed. --apply collects these sources again at the next scan.');
+  return lines.join('\n') + '\n';
 }
 
 export function formatCollectorStatus(status: CollectorStatus): string {
