@@ -992,3 +992,24 @@ staging); interaction with S0-I1 (a running job's staged generation vs a newer h
 Combined with I2 (reuse of window decisions across revisions, study §7, 15–25 h) only the appended windows would be
 re-annotated per revision.
 
+
+## 16. Implementation amendments (lead, 2026-11-20; the implemented behaviour, where it differs from the text above)
+- **Indexing budget** (U4): claim-time estimate `2·M + 256·n + 13,312·F + VectorArena.heldBytes(d, F)` (arena blocks of
+  ≈ 2 MiB counted whole); at run time each window is admitted before anything of it is retained (pieces 13,312 B each,
+  Context coverage spans 256 B each, vectors by arena blocks); over budget → `Failed index-budget-exceeded`, terminal, no
+  attempt consumed. Config `maxIndexingBudgetBytes` (Long, default 2,147,483,647); `maxRawReadBytes` (default
+  `maxBodyBytes`, ≤ 512 MiB); `maxFileBytes` is Long. CONTRACT.md is authoritative.
+- **Message pages** (U4/U4W): a page holds ≥ 1 message while `offset < total`; fewer than `limit` before the end only when
+  the 64 MiB byte bound cuts it; clients continue at `offset + messages.length` (the dashboard keeps one contiguous range).
+  Epoch page/claim reads run with `enable_sort`/`enable_incremental_sort` off for their own transaction (planner risk at
+  default costs, U4 rehearsal).
+- **Head-candidate trigger** (U4T): partial index `ch_archive_fragments_session_candidates ON ch_archive_fragments(session_id)
+  WHERE head_candidate`, created at the end of migration 017 (024 runs before 017's column exists on a fresh database),
+  dropped by down-024. On a table > 1 GiB a missing or INVALID index refuses the start with `migration-required` and the
+  operator command (pre-build `CREATE INDEX CONCURRENTLY` while the previous release serves; chronicle/docs/operations.md).
+- **S2 probe** (U6/U7): `GET /api/ingest/uploads` → 200 `UploadLimits`; an old server answers 404 without a JSON body.
+- **Record cap refusal** (U6/U7): HTTP 413 `Failure{code:"record-too-large"}` (size and limit in the message); other limits
+  `too-large`. Records are logical JSONL records split at LF, CRLF or bare CR (one rule for /api/ingest and parts).
+- **Unicode** (U7, orchestrator 14:53Z): the collector replaces lone surrogates in message text and readable metadata with
+  U+FFFD before hashing and sending (part of message-chain v1's normalization); ids with lone surrogates are refused
+  locally (`invalid-identifier-unicode`); raw bytes are never altered.
