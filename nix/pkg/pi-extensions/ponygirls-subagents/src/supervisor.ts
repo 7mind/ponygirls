@@ -27,7 +27,7 @@ import { parseParentModel, parseProviderRequestAuth, type ParentModels } from ".
 import { GateController, fingerprintSummary, restoreGateSpec, type CandidateRecord, type GateDecisionInput, type GateFinding, type GateHost, type GateSpecInput, type GateTerminalOutcome, type NormalizedGateCheck, type NormalizedGateSpec, type NormalizedReviewerSpec, type ReviewFeedback, type ReviewSpecInput, type WorkspaceFingerprint } from "./gate.ts";
 import { EMPTY_INSTRUCTIONS, instructionHash, parseSelection, selectInstructions } from "./instructions.ts";
 import { ISOLATION_LEVELS } from "./types.ts";
-import { authorizeWorkspace, intersectGrants, pathWithin, resolveAllowedConcrete, rootGrants, type RegisteredRepo, type SupervisorPolicy } from "./policy.ts";
+import { intersectGrants, pathWithin, resolveAllowedConcrete, rootGrants, type RegisteredRepo, type SupervisorPolicy } from "./policy.ts";
 import { GoverningToolDispatcher, type GoverningRegistry } from "./external-dispatcher.ts";
 import { snapshotGoverningHandles } from "./governing-runtime.ts";
 import type { DelegatedCall } from "./delegated-call.ts";
@@ -80,7 +80,7 @@ export interface SpawnParams {
   baseCommit?: string | null;
   /**
    * A directory the caller prepared and owns (the top level of a git work
-   * tree, inside a policy workspaceRoots entry) for the child to work in,
+   * tree) for the child to work in,
    * instead of a worktree the extension makes. Governing session only.
    */
   workspacePath?: string | null;
@@ -1730,19 +1730,14 @@ export class Supervisor implements GateHost {
 
   /**
    * Verify a caller-prepared workspace before anything is charged or
-   * created. Denied unless the policy lists a root containing its resolved
-   * path; it must be the top level of a git work tree with a commit, apart
+   * created. It must be the top level of a git work tree with a commit, apart
    * from the supervisor's own storage and (unless the policy allows it) the
    * governing checkout. Nothing here writes to it.
    */
   private prepareWorkspace(path: string, ownerWorkdir: string): PreparedWorkspace {
-    // Deny by default, before the filesystem is consulted.
-    if (this.policy.workspaceRoots.length === 0) throw err("POLICY_DENIED", "workspace_path is not permitted: the policy lists no workspaceRoots");
     if (!isAbsolute(path)) throw err("INVALID", "workspace_path must be an absolute path");
     const resolved = realDirectory(path);
     if (resolved === null) throw err("WORKSPACE_UNAVAILABLE", `workspace ${path} is not an existing directory`);
-    const allowed = authorizeWorkspace(this.policy.workspaceRoots.map(realDirectory).filter((root): root is string => root !== null), resolved);
-    if (!allowed.ok) throw allowed.error;
     for (const kept of [this.rootDir, ...(this.opts.hostAgentDir ? [this.opts.hostAgentDir] : [])]) {
       const storage = realDirectory(kept);
       if (storage !== null && (pathWithin(resolved, storage) || pathWithin(storage, resolved))) throw err("POLICY_DENIED", `workspace ${resolved} overlaps the supervisor's storage`);
@@ -1757,13 +1752,9 @@ export class Supervisor implements GateHost {
     return { path: resolved, checkout };
   }
 
-  /** A prepared workspace must still be allowed and present when a worker is loaded into it again. */
+  /** A prepared workspace must still be present when a worker is loaded into it again. */
   private assertPreparedWorkspace(allocation: WorkspaceAllocation): void {
-    if (this.policy.workspaceRoots.length === 0) throw err("POLICY_DENIED", "workspace_path is not permitted: the policy lists no workspaceRoots");
-    const resolved = realDirectory(allocation.workdir);
-    if (resolved === null) throw err("WORKSPACE_UNAVAILABLE", `workspace ${allocation.workdir} no longer exists; its owner removed it`);
-    const allowed = authorizeWorkspace(this.policy.workspaceRoots.map(realDirectory).filter((root): root is string => root !== null), resolved);
-    if (!allowed.ok) throw allowed.error;
+    if (realDirectory(allocation.workdir) === null) throw err("WORKSPACE_UNAVAILABLE", `workspace ${allocation.workdir} no longer exists; its owner removed it`);
   }
 
   /**

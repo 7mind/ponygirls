@@ -336,7 +336,6 @@ let
     repos = cfg.pi.subagentsRepos;
     gateBypassAllowed = cfg.pi.subagentsGateBypassAllowed;
     gateMaxRoundsCeiling = cfg.pi.subagentsGateMaxRoundsCeiling;
-    workspaceRoots = cfg.pi.subagentsWorkspaceRoots;
     workspaceOwnerCheckoutAllowed = cfg.pi.subagentsWorkspaceOwnerCheckoutAllowed;
     maxRunnable = cfg.pi.subagentsMaxRunnable;
     maxResidentWorkers = cfg.pi.subagentsMaxResidentWorkers;
@@ -357,7 +356,6 @@ let
     || cfg.pi.subagentsRepos != [ ]
     || cfg.pi.subagentsGateBypassAllowed
     || cfg.pi.subagentsGateMaxRoundsCeiling != 3
-    || cfg.pi.subagentsWorkspaceRoots != [ ]
     || cfg.pi.subagentsWorkspaceOwnerCheckoutAllowed
     || cfg.pi.subagentsMaxRunnable != 4
     || cfg.pi.subagentsMaxResidentWorkers != 8
@@ -772,27 +770,12 @@ in
       '';
     };
 
-    smind.hm.dev.llm.pi.subagentsWorkspaceRoots = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      example = [ "/home/user/worktrees" ];
-      description = ''
-        Absolute directories under which the governing session may assign a
-        git work tree it prepared itself to a subagent (`spawn_agent`
-        `workspace_path`), written as `workspaceRoots` into
-        `subagents-policy.json`. The path is compared after resolving
-        symlinks. Empty (the default) refuses every `workspace_path`.
-      '';
-    };
-
     smind.hm.dev.llm.pi.subagentsWorkspaceOwnerCheckoutAllowed = lib.mkOption {
       type = lib.types.bool;
       default = false;
       description = ''
-        Let `workspace_path` name the governing session's own checkout
-        (it must still lie inside
-        {option}`smind.hm.dev.llm.pi.subagentsWorkspaceRoots`). Written as
-        `workspaceOwnerCheckoutAllowed` into `subagents-policy.json`.
+        Let `workspace_path` name the governing session's own checkout.
+        Written as `workspaceOwnerCheckoutAllowed` into `subagents-policy.json`.
       '';
     };
 

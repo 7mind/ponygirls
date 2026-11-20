@@ -108,7 +108,6 @@ test("repo_path starts a managed gated writer from a non-Git governor without wo
   assert.equal(readFileSync(join(f.repo, "pkg", "a.txt"), "utf8"), "base\n");
   assert.equal(git(f.repo, "rev-parse", "HEAD"), f.head);
   assert.equal(git(f.repo, "status", "--porcelain"), "");
-  assert.deepEqual(rig.sup.activePolicy.workspaceRoots, []);
   assert.deepEqual(rig.sup.activePolicy.repos, []);
 });
 

@@ -167,15 +167,10 @@ that directory is its working directory and, for a writer, the tree
 `write`/`edit`/`bash` are meant for. As everywhere under host isolation,
 this is not a filesystem boundary.
 
-- **Denied by default.** It is accepted only when the policy's
-  `workspaceRoots` lists a directory that contains it; otherwise the spawn
-  fails with `POLICY_DENIED`. Both the path and the roots are compared after
-  resolving symlinks, so a link under a root does not admit a directory
-  outside it. A root that does not exist admits nothing.
 - **What is verified at spawn** (before any capacity is charged):
   the path is absolute (`INVALID`); it resolves to an existing directory
-  (`WORKSPACE_UNAVAILABLE`); the resolved path lies inside a listed root,
-  does not overlap the supervisor's root store or the host agent directory,
+  (`WORKSPACE_UNAVAILABLE`); the resolved path does not overlap the
+  supervisor's root store or the host agent directory,
   and is not the governing session's own checkout (a directory containing
   its working directory) unless `workspaceOwnerCheckoutAllowed` is `true`
   (`POLICY_DENIED`); it is the top-level directory of a git work tree that
@@ -207,9 +202,7 @@ this is not a filesystem boundary.
   touches the directory. If its owner removed it meanwhile, a lost run
   settles by the usual rules with `workspace <path> no longer exists` in
   its detail, and any later task for that agent fails with
-  `WORKSPACE_UNAVAILABLE` instead of starting a worker. Loading a worker
-  into the directory again also re-checks `workspaceRoots`, so a root
-  dropped from the policy fails the task with `POLICY_DENIED`.
+  `WORKSPACE_UNAVAILABLE` instead of starting a worker.
 
 Under host isolation the `reader` profile is a tool list, not a boundary,
 and gate checks can modify sources. Host jobs run as their own process

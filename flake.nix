@@ -116,7 +116,6 @@
               ];
               gateBypassAllowed = true;
               gateMaxRoundsCeiling = null;
-              workspaceRoots = [ "/home/user/worktrees" ];
               workspaceOwnerCheckoutAllowed = true;
               maxRunnable = 8;
               maxResidentWorkers = 12;
@@ -133,7 +132,6 @@
               repos = [ ];
               gateBypassAllowed = false;
               gateMaxRoundsCeiling = 3;
-              workspaceRoots = [ ];
               workspaceOwnerCheckoutAllowed = false;
               maxRunnable = 4;
               maxResidentWorkers = 8;
@@ -271,7 +269,7 @@
             ) [ managedPiConfigured historianChronicleConfigured ]);
             missingPiAssets = builtins.filter (asset: !(builtins.elem asset piSharedAssets)) managedPiAssets;
           in
-          assert builtins.attrNames listed == [ "allowedModels" "allowedTools" "gateBypassAllowed" "gateMaxRoundsCeiling" "latestModelsOnly" "maxDepth" "maxOpenAgents" "maxResidentWorkers" "maxRunnable" "nesting" "repos" "workspaceOwnerCheckoutAllowed" "workspaceRoots" "worktreeRoot" ];
+          assert builtins.attrNames listed == [ "allowedModels" "allowedTools" "gateBypassAllowed" "gateMaxRoundsCeiling" "latestModelsOnly" "maxDepth" "maxOpenAgents" "maxResidentWorkers" "maxRunnable" "nesting" "repos" "workspaceOwnerCheckoutAllowed" "worktreeRoot" ];
           assert listed == {
             maxDepth = 2;
             nesting = true;
@@ -285,7 +283,6 @@
             worktreeRoot = "/srv/nvme/subagents-worktrees";
             gateBypassAllowed = true;
             gateMaxRoundsCeiling = null;
-            workspaceRoots = [ "/home/user/worktrees" ];
             workspaceOwnerCheckoutAllowed = true;
             maxRunnable = 8;
             maxResidentWorkers = 12;
@@ -301,7 +298,6 @@
             worktreeRoot = null;
             gateBypassAllowed = false;
             gateMaxRoundsCeiling = 3;
-            workspaceRoots = [ ];
             workspaceOwnerCheckoutAllowed = false;
             maxRunnable = 4;
             maxResidentWorkers = 8;

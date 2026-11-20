@@ -1,7 +1,6 @@
 /**
- * A caller-prepared workspace (spawn_agent workspace_path): denied unless
- * the policy lists a root containing it, verified as the top level of a git
- * work tree, bound to the git dir and HEAD recorded at spawn, and never
+ * A caller-prepared workspace (spawn_agent workspace_path): verified as the
+ * top level of a git work tree, bound to the git dir and HEAD recorded at spawn, and never
  * created, changed, or removed by the extension.
  */
 import assert from "node:assert/strict";
@@ -27,12 +26,11 @@ interface Fixture {
   dir: string;
   /** The governing session's checkout. */
   repo: string;
-  /** The allowed root the caller keeps its worktrees under. */
+  /** The directory the caller keeps its worktrees under. */
   root: string;
   /** A worktree of `repo` the caller prepared under `root`. */
   wt: string;
   head: string;
-  policy: (p: SupervisorPolicy) => void;
   cleanup: () => void;
 }
 
@@ -48,7 +46,7 @@ function fixture(): Fixture {
   git(repo, "commit", "-qm", "base");
   const wt = join(root, "child-1");
   git(repo, "worktree", "add", "-q", "--detach", wt);
-  return { dir, repo, root, wt, head: git(repo, "rev-parse", "HEAD"), policy: (p) => { p.workspaceRoots = [root]; }, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  return { dir, repo, root, wt, head: git(repo, "rev-parse", "HEAD"), cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
 /** A git workspace manager that records every allocation and release it is asked for. */
@@ -86,7 +84,7 @@ function sup(f: Fixture, opts: { policy?: (p: SupervisorPolicy) => void; workspa
     workspace: opts.workspace ?? new GitWorkspaceManager(),
     governor: () => ({ ...testGovernor(), cwd: opts.cwd ?? f.repo }),
     policy: (p) => {
-      (opts.policy ?? f.policy)(p);
+      opts.policy?.(p);
       if (opts.nest === true) {
         p.maxDepth = 2;
         p.nesting = true;
@@ -97,24 +95,18 @@ function sup(f: Fixture, opts: { policy?: (p: SupervisorPolicy) => void; workspa
   });
 }
 
-test("workspace_path is denied unless the policy lists a root that contains it", async () => {
+test("workspace_path accepts a checkout outside the governing directory with default policy", async () => {
   const f = fixture();
   try {
-    const denied = sup(f, { policy: () => {} });
-    await assert.rejects(() => denied.sup.spawn("governor", { taskName: "w", message: "m", profile: "writer", workspacePath: f.wt }, "r1"), /POLICY_DENIED: workspace_path is not permitted/);
-    assert.equal(denied.sup.admissionScheduler.agentsCreatedCount, 0);
-    await denied.sup.shutdown();
-
-    const elsewhere = sup(f, { policy: (p) => { p.workspaceRoots = [join(f.dir, "other-root")]; } });
-    await assert.rejects(() => elsewhere.sup.spawn("governor", { taskName: "w", message: "m", profile: "writer", workspacePath: f.wt }, "r1"), /POLICY_DENIED: workspace .* lies outside/);
-    await elsewhere.sup.shutdown();
-    // A sibling directory sharing the root's name as a prefix is not inside it.
-    const sibling = join(f.dir, "prepared-other");
-    git(f.repo, "worktree", "add", "-q", "--detach", sibling);
-    const prefix = sup(f);
-    await assert.rejects(() => prefix.sup.spawn("governor", { taskName: "w", message: "m", profile: "writer", workspacePath: sibling }, "r1"), /POLICY_DENIED: workspace .* lies outside/);
-    assert.equal(prefix.sup.admissionScheduler.agentsCreatedCount, 0);
-    await prefix.sup.shutdown();
+    const other = join(f.dir, "other-repo");
+    git(f.dir, "clone", "-q", f.repo, other);
+    const { sup: s } = sup(f);
+    try {
+      const w = await s.spawn("governor", { taskName: "w", message: "m", profile: "writer", workspacePath: other }, "r1");
+      assert.equal(w.workdir, other);
+    } finally {
+      await s.shutdown();
+    }
   } finally {
     f.cleanup();
   }
@@ -172,18 +164,13 @@ test("a reader runs in the prepared workspace without write tools", async () => 
   }
 });
 
-test("the workspace is judged by its resolved path: a symlink out of the allowed root is denied, one into it is accepted", async () => {
+test("a symlink to a prepared workspace binds the worker to the resolved path", async () => {
   const f = fixture();
   try {
-    const outside = join(f.dir, "outside");
-    git(f.repo, "worktree", "add", "-q", "--detach", outside);
-    symlinkSync(outside, join(f.root, "escape"));
-    const linkDir = join(f.dir, "links");
-    mkdirSync(linkDir);
-    symlinkSync(f.wt, join(linkDir, "inward"));
+    const link = join(f.dir, "alias");
+    symlinkSync(f.wt, link);
     const { sup: s } = sup(f);
-    await assert.rejects(() => s.spawn("governor", { taskName: "a", message: "m", profile: "writer", workspacePath: join(f.root, "escape") }, "ra"), /POLICY_DENIED: workspace .*outside lies outside/);
-    const ok = await s.spawn("governor", { taskName: "b", message: "m", profile: "writer", workspacePath: join(linkDir, "inward") }, "rb");
+    const ok = await s.spawn("governor", { taskName: "b", message: "m", profile: "writer", workspacePath: link }, "rb");
     assert.equal(ok.workdir, f.wt);
     await s.shutdown();
   } finally {
@@ -218,11 +205,10 @@ test("workspace_path must be an absolute, existing top-level directory of a git 
 test("the governing checkout itself is refused as a workspace unless the policy allows it", async () => {
   const f = fixture();
   try {
-    const wide = (p: SupervisorPolicy): void => { p.workspaceRoots = [f.dir]; };
-    const refused = sup(f, { policy: wide, cwd: join(f.repo, "pkg") });
+    const refused = sup(f, { cwd: join(f.repo, "pkg") });
     await assert.rejects(() => refused.sup.spawn("governor", { taskName: "w", message: "m", profile: "writer", workspacePath: f.repo }, "r1"), /POLICY_DENIED: workspace .* is the governing session's own checkout/);
     await refused.sup.shutdown();
-    const allowed = sup(f, { policy: (p) => { wide(p); p.workspaceOwnerCheckoutAllowed = true; }, cwd: join(f.repo, "pkg") });
+    const allowed = sup(f, { policy: (p) => { p.workspaceOwnerCheckoutAllowed = true; }, cwd: join(f.repo, "pkg") });
     const w = await allowed.sup.spawn("governor", { taskName: "w", message: "m", profile: "writer", workspacePath: f.repo }, "r1");
     assert.equal(w.workdir, f.repo);
     await allowed.sup.shutdown();
@@ -240,8 +226,12 @@ test("the supervisor's own storage is never accepted as a workspace", async () =
     writeFileSync(join(inside, "x"), "x");
     git(inside, "add", ".");
     git(inside, "commit", "-qm", "base");
-    const { sup: s } = sup(f, { policy: (p) => { p.workspaceRoots = [f.dir]; } });
-    await assert.rejects(() => s.spawn("governor", { taskName: "w", message: "m", profile: "writer", workspacePath: inside }, "r1"), /POLICY_DENIED: workspace .* overlaps the supervisor's storage/);
+    const alias = join(f.dir, "storage-alias");
+    symlinkSync(inside, alias);
+    const { sup: s } = sup(f);
+    for (const workspacePath of [inside, alias]) {
+      await assert.rejects(() => s.spawn("governor", { taskName: "w", message: "m", profile: "writer", workspacePath }, "r1"), /POLICY_DENIED: workspace .* overlaps the supervisor's storage/);
+    }
     await s.shutdown();
   } finally {
     f.cleanup();
@@ -380,7 +370,7 @@ test("a workspace removed by its owner ends the lost run and fails later tasks c
   }
 });
 
-test("a reload re-checks the policy: a workspace whose root is no longer allowed is refused", async () => {
+test("a retained agent reloads into the caller's worktree with default policy", async () => {
   const f = fixture();
   try {
     const rootDir = join(f.dir, "root-store");
@@ -389,12 +379,14 @@ test("a reload re-checks the policy: a workspace whose root is no longer allowed
     a.byAgent(w.agentId)[0]!.settle("succeeded", "done");
     await tick();
     await a.sup.shutdown();
-    const b = sup(f, { policy: () => {}, store: new FileRunStore(rootDir, "root-1") });
+    const b = sup(f, { store: new FileRunStore(rootDir, "root-1") });
     const next = await b.sup.sendMessage("governor", w.agentId, "task", "continue", {}, "rn");
-    await tick(50);
-    const failed = b.sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records.find((r) => r.kind === "task.terminal" && r.body["taskRunId"] === next.taskRunId)!;
-    assert.equal(failed.body["outcome"], "failed");
-    assert.match(String(failed.body["detail"]), /POLICY_DENIED: workspace_path is not permitted/);
+    await tick();
+    const worker = b.byAgent(w.agentId)[0]!;
+    assert.equal(worker.init!["workdir"], f.wt);
+    worker.settle("succeeded", "continued");
+    await tick();
+    assert.deepEqual(terminals(b.sup, next.taskRunId!), ["succeeded"]);
     await b.sup.shutdown();
   } finally {
     f.cleanup();

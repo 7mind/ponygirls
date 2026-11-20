@@ -4,7 +4,7 @@
 # `subagents-policy-shape` flake check asserts it stays complete against
 # every field the extension's loadPolicy reads (maxDepth, nesting, repos,
 # allowedModels, latestModelsOnly, allowedTools, worktreeRoot, gateBypassAllowed,
-# gateMaxRoundsCeiling, workspaceRoots, workspaceOwnerCheckoutAllowed,
+# gateMaxRoundsCeiling, workspaceOwnerCheckoutAllowed,
 # maxRunnable, maxResidentWorkers, maxOpenAgents), so a
 # managed file can never half-clobber a hand-maintained partial one.
 # Defaults here mirror the extension's deny-by-default policy.
@@ -18,7 +18,6 @@
 , repos
 , gateBypassAllowed
 , gateMaxRoundsCeiling
-, workspaceRoots
 , workspaceOwnerCheckoutAllowed
 , maxRunnable
 , maxResidentWorkers
@@ -48,7 +47,6 @@
   worktreeRoot = worktreeRoot;
   gateBypassAllowed = gateBypassAllowed;
   gateMaxRoundsCeiling = gateMaxRoundsCeiling;
-  workspaceRoots = workspaceRoots;
   workspaceOwnerCheckoutAllowed = workspaceOwnerCheckoutAllowed;
   maxRunnable = maxRunnable;
   maxResidentWorkers = maxResidentWorkers;
