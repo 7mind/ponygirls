@@ -64,6 +64,19 @@ class PostgresBehaviorTest extends munit.FunSuite {
     val head=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get; assertEquals(head.jobId,third.jobId)
     assert(a.publish(head,Nil)); assertEquals(a.session("a",first.sessionId).indexedRevision,Some(3))
   }}
+  test("BG-GoodCommunication regression: a revision switch supersedes only unfinished older jobs; Failed ones keep their verdict, fence and row version") { database { (c,db,a,auth) =>
+    val request=Fixtures.snapshot(); val budget=a.ingest("a",request)
+    a.fail(a.claim(Set(c.profile),ClaimScope.AllOwners,300).get,IndexingBudget.exceededCode,IndexingStage.Embedding)
+    val worker=revise(a,request,1)
+    a.fail(a.claim(Set(c.profile),ClaimScope.AllOwners,300).get,AnnotationAttempts.exhaustedCode,IndexingStage.Annotation)
+    val queued=revise(a,request,2)
+    def terminal: List[List[String]] = db.transaction(x => Sql.rows(x,"SELECT state,error,failure_stage,fence,xmin FROM ch_jobs WHERE id IN(?,?) ORDER BY revision",budget.jobId,worker.jobId)(r => (1 to 5).map(r.getString).toList))
+    val before=terminal
+    assertEquals(before.map(_.take(3)),List(List("Failed",IndexingBudget.exceededCode,"Embedding"),List("Failed",AnnotationAttempts.exhaustedCode,"Annotation")))
+    revise(a,request,3)
+    assertEquals(terminal,before,"the switch writes no terminal row")
+    assertEquals(job(a,queued.jobId),(JobState.Failed,Some(Jobs.supersededRevision)))
+  }}
   test("BG-GoodCommunication regression: a retryable failure or a large-job deferral of a job of an older revision ends it superseded, never queued") { database { (c,db,a,auth) =>
     val request=Fixtures.snapshot(); val first=a.ingest("a",request)
     val failing=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get

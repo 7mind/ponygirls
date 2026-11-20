@@ -140,10 +140,10 @@ object Jobs {
     Sql.exec(c,"UPDATE ch_jobs SET state='Queued',attempts=0,lease_until=NULL,fence=fence+1,annotation_retry_epoch=annotation_retry_epoch+1,run_id=CASE WHEN state='Complete' THEN gen_random_uuid() ELSE run_id END,error=CASE WHEN state='Complete' THEN NULL ELSE error END,failure_stage=CASE WHEN state='Complete' THEN NULL ELSE failure_stage END,completed_windows=0,total_windows=NULL WHERE id=?",id)
   }
   /** The jobs of a source whose head just switched to revision `next`: older unfinished jobs end superseded (a leased
-    * Running one keeps its claim) and the new head's job is queued; returns its id. */
+    * Running one keeps its claim; Complete and Failed ones are not written) and the new head's job is queued; returns its id. */
   def switched(c: Connection,id: UUID,next: Int,profile: String): UUID = {
     val job=UUID.randomUUID()
-    Sql.exec(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} WHERE j.session_id=? AND j.revision<? AND j.state<>'Complete' AND (${Jobs.leased("j")}) IS NOT TRUE",id,next)
+    Sql.exec(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} WHERE j.session_id=? AND j.revision<? AND j.state IN('Queued','Running') AND (${Jobs.leased("j")}) IS NOT TRUE",id,next)
     Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile) VALUES(?,?,?,?)",job,id,next,profile)
     job
   }
