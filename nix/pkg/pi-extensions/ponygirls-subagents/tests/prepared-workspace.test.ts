@@ -8,7 +8,7 @@ import test from "node:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { FileRunStore } from "../src/store.ts";
 import type { SupervisorPolicy } from "../src/policy.ts";
 import type { WorkerFactory } from "../src/supervisor.ts";
@@ -104,6 +104,28 @@ test("workspace_path accepts a checkout outside the governing directory with def
     try {
       const w = await s.spawn("governor", { taskName: "w", message: "m", profile: "writer", workspacePath: other }, "r1");
       assert.equal(w.workdir, other);
+    } finally {
+      await s.shutdown();
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("a prepared checkout in a pool-shaped path runs in place without masking its parent", async () => {
+  const f = fixture();
+  try {
+    const shard = join(f.root, "root-1", "worktrees");
+    mkdirSync(shard, { recursive: true });
+    const checkout = join(shard, "checkout");
+    git(f.dir, "clone", "-q", f.repo, checkout);
+    const { sup: s, byAgent, dir } = sup(f, { cwd: f.dir });
+    try {
+      const prepared = await s.spawn("governor", { taskName: "prepared", message: "m", profile: "writer", workspacePath: checkout }, "prepared");
+      assert.equal(byAgent(prepared.agentId)[0]!.init!["workdir"], checkout);
+
+      const managed = await s.spawn("governor", { taskName: "managed", message: "m", profile: "writer", repoPath: f.wt }, "managed");
+      assert.equal(dirname(managed.workdir), join(dir, "worktrees"));
     } finally {
       await s.shutdown();
     }

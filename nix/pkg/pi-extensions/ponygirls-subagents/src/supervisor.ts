@@ -2200,7 +2200,7 @@ export class Supervisor implements GateHost {
       // else passes through byte-identical. The journal is never rewritten.
       const alloc = this.effectiveAllocation(rt.record);
       const w = alloc?.writableRoot;
-      if (alloc === null || alloc === undefined || typeof w !== "string" || w.length === 0) continue;
+      if (alloc === null || alloc === undefined || alloc.external || typeof w !== "string" || w.length === 0) continue;
       // 1. Recorded or proven allocation-time namespace.
       if (alloc.poolRoot != null) {
         roots.add(alloc.poolRoot);
@@ -2270,7 +2270,7 @@ export class Supervisor implements GateHost {
    */
   private effectiveAllocation(record: AgentRecord): WorkspaceAllocation {
     const alloc = record.allocation;
-    if (alloc === null || alloc === undefined) return alloc;
+    if (alloc === null || alloc === undefined || alloc.external) return alloc;
     const w = alloc.writableRoot;
     if (typeof w !== "string" || w.length === 0) return alloc;
     const pool = alloc.poolRoot != null ? alloc.poolRoot : this.deriveLexicalPool(record);
