@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { captureProcess, ClaudeExecutor, getClaudeStatus } from "../executor/claude-cli.ts";
 import { NativeSessions } from "../src/execution-lifecycle.ts";
+import { processState } from "./process-state.ts";
 
 const OBSERVATION_MS = 3000;
 const WARM_LIFETIME_MS = 5 * 60 * 1000;
@@ -16,8 +17,7 @@ async function records(path: string): Promise<{ pid: number }[]> {
 }
 
 async function stopped(pid: number): Promise<boolean> {
-  try { return ["Z", "X"].includes((await readFile(`/proc/${pid}/stat`, "utf8")).split(") ")[1]!.split(" ")[0]!); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT" || (error as NodeJS.ErrnoException).code === "ESRCH") return true; throw error; }
+  return processState(pid) !== "live";
 }
 
 async function observe(check: () => Promise<boolean>): Promise<void> {

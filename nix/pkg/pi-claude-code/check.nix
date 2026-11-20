@@ -1,6 +1,7 @@
 { runCommand, nodejs, runtimeShell, pi-coding-agent, pi-claude-code }:
 runCommand "pi-claude-code-load" {
   nativeBuildInputs = [ nodejs ];
+  __darwinAllowLocalNetworking = true;
 } ''
   mkdir -p bin home
   export HOME=$PWD/home

@@ -31,7 +31,7 @@ import { authorizeWorkspace, intersectGrants, pathWithin, resolveAllowedConcrete
 import { GoverningToolDispatcher, type GoverningRegistry } from "./external-dispatcher.ts";
 import { snapshotGoverningHandles } from "./governing-runtime.ts";
 import type { DelegatedCall } from "./delegated-call.ts";
-import { killAndConfirm, readProcessIdentity, verifyOwnership, type OwnershipVerdict, type ProcessIdentity } from "./process-identity.ts";
+import { killAndConfirm, readProcessIdentity, type ProcessIdentity } from "./process-identity.ts";
 import { AdmissionScheduler, PathRegistry, type AgentCreationReservation, type CapacitySnapshot, type LeaseTicket, type SchedulerLimits } from "./scheduler.ts";
 import { BwrapToolExecutor, HostToolExecutor, sandboxRuntimePath } from "./sandbox.ts";
 import { InMemoryRunStore, RootLock, checkpointSha256, fsyncDir, fsyncFile, type JournalKind, type JournalRecord, type ResultRef, type RunStore, type StoreFailure } from "./store.ts";
@@ -4941,11 +4941,7 @@ export class Supervisor implements GateHost {
     // completed outcomes (ok/error) account for an intent.
     const accounted = new Set(records.filter((r) => r.kind === "tool.outcome" && (r.body["status"] === "ok" || r.body["status"] === "error")).map((r) => r.body["operationId"]));
     const unconfirmed = intents.filter((i) => !accounted.has(i.body["operationId"]));
-    let ownership: OwnershipVerdict = "dead";
-    if (lost.workerPid !== null) {
-      ownership = verifyOwnership(lost.workerPid, lost.workerBoot);
-      if (ownership === "live-match") ownership = (await killAndConfirm(lost.workerPid)) ? "dead" : "live-mismatch";
-    }
+    const ownership = lost.workerPid === null ? "dead" : await killAndConfirm(lost.workerPid, lost.workerBoot);
     rt.workerPid = null;
     rt.workerBoot = null;
     rt.activeRun = null;
@@ -4963,7 +4959,9 @@ export class Supervisor implements GateHost {
       // policy. Other cases stay uncertain with effects unknown (see
       // journal), without claiming a prohibition that isn't enforced.
       const quarantinedHere = !!rt.record.allocation.writableRoot || !ownershipOk;
-      detail = !ownershipOk
+      detail = ownership === "live-match"
+        ? `RECOVERY_OWNER_UNCONFIRMED: recovered worker ${lost.workerPid} is live; cannot safely signal by PID; replacement execution prohibited here`
+        : !ownershipOk
         ? `RECOVERY_OWNER_UNCONFIRMED: unverifiable worker ownership (${ownership}); replacement execution prohibited here`
         : quarantinedHere
           ? `${unconfirmed.length} unconfirmed tool effect(s); replacement execution prohibited here`

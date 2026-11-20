@@ -75,14 +75,25 @@ removing the addon makes further retained Claude requests visibly unavailable.
 Old capabilities remain only for outstanding completion/accounting/cleanup.
 Stock workers retain core's bounded reload handoff and continue independently.
 
-Verification is controlled-CLI/local-server acceptance, not Anthropic acceptance:
+The flake targets `x86_64-linux` and `aarch64-darwin`. On macOS use `none` or
+`worktree` isolation; `sandbox` still requires Linux bubblewrap. The managed
+Darwin packages include a process probe for lock ownership, crash recovery and
+termination of detached CLI groups. An unreadable identity is not proof of death.
+After a hard supervisor crash, a still-live Darwin worker is quarantined rather
+than signalled by a recovered PID. Inspect outstanding work before starting a
+replacement. Normal session shutdown still stops its owned subprocesses.
+
+Run the build and composition check on the target system (controlled local CLI
+and loopback servers, no Anthropic account):
 
 ```bash
-nix build --builders '' --no-link .#checks.x86_64-linux.ponygirls-subagents
-nix build --builders '' --no-link .#packages.x86_64-linux.pi-claude-code .#checks.x86_64-linux.pi-claude-code
-nix build --builders '' --no-link .#packages.x86_64-linux.pi-claude-code-subagents .#checks.x86_64-linux.pi-claude-code-subagents
+system=$(nix eval --impure --raw --expr builtins.currentSystem)
+nix build --builders '' --no-link ".#packages.$system.pi-claude-code-subagents" ".#checks.$system.pi-claude-code-subagents" ".#checks.$system.pi-claude-code"
 ```
 
+A successful Linux build or Darwin flake evaluation is not a native Darwin
+check; the command above still needs to run on Apple Silicon to verify it there.
 The checks run full typechecking and unfiltered addon/upstream suites, immutable
 three-entrypoint SDK composition and lifecycle tests, and process-ownership
-regressions. Windows-only upstream cases remain platform skips on Linux.
+regressions. Six upstream Windows launcher cases apply only to Windows. The full
+core suite, `.#checks.x86_64-linux.ponygirls-subagents`, also tests bubblewrap.

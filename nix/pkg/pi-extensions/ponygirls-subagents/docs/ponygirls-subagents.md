@@ -16,7 +16,8 @@
   private session access; if the runtime signature drifts, external dispatch
   fails visibly rather than bypassing grants.
 - Node **24.x** (type-stripped `.ts` worker fork; `node --test` suites).
-- OS: **Linux x86_64**. `sandbox` isolation additionally needs bubblewrap
+- OS: **x86_64 Linux** and **Apple Silicon macOS** for managed `none` and
+  `worktree` isolation. `sandbox` isolation additionally needs Linux bubblewrap
   (`bwrap`) with user-namespace support: the backend probes it before
   running a job and rejects with `SANDBOX_UNAVAILABLE` when unsupported;
   there is no macOS/Windows sandbox backend and a sandboxed job is never
@@ -432,10 +433,14 @@ restart, in-process journal reset, or replay of uncertain effects is performed.
   each lost run gets exactly one terminal outcome. Old joins settle on old
   task IDs; replacements always take new IDs.
 - `RECOVERY_OWNER_UNCONFIRMED`: replacement execution is quarantined where
-  owned-job termination cannot be verified. Live worker PIDs are signalled
-  only after boot-identity verification (never guessed PIDs). Inspect the
-  preserved crashed native file and journal, reconcile effects manually,
-  then resume explicitly — the extension never auto-replays uncertain effects.
+  owned-job termination cannot be verified. On Linux, recovery checks boot ID
+  and process start time immediately before signalling a recorded worker. On
+  macOS a PID and kernel birth timestamp identify a live worker but cannot bind
+  a subsequent signal to it. Recovery leaves the process untouched and holds
+  that workspace; do not kill a process based only on its journal PID. The
+  quarantined agent cannot take another task, even after restart. Inspect the
+  saved session and journal, confirm the old worker has stopped, and reconcile
+  outstanding effects before spawning a new agent for any replacement task.
 - `RECOVERY_CORRUPT`: committed journal/checkpoint corruption. The store
   refuses to start rather than invent state. Restore from backup.
 - Lost main/repair generations settle `interrupted` (cleanup confirmed)

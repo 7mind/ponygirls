@@ -1,4 +1,4 @@
-{ lib, stdenvNoCC, nodejs, typescript, pi-coding-agent, pi-claude-code, ponygirls-pi-extensions }:
+{ lib, stdenvNoCC, nodejs, typescript, unixtools, python3, pi-coding-agent, pi-claude-code, ponygirls-pi-extensions }:
 let
   sdk = "${pi-coding-agent}/lib/node_modules/pi-monorepo";
 in
@@ -7,6 +7,8 @@ stdenvNoCC.mkDerivation {
   version = "0.1.0";
   src = lib.cleanSource ./.;
   nativeBuildInputs = [ nodejs typescript ];
+  nativeCheckInputs = [ unixtools.ps python3 ];
+  __darwinAllowLocalNetworking = true;
   dontBuild = true;
   doCheck = true;
 
@@ -15,6 +17,9 @@ stdenvNoCC.mkDerivation {
     cp ${pi-claude-code.src}/src/{claude-cli.ts,turn-relay.ts,billing.ts,env.ts,native-types.ts,inert-mcp.mjs} executor/
     chmod -R u+w executor
     patch --batch -d executor -p2 < ${./execution.patch}
+    ${lib.optionalString stdenvNoCC.hostPlatform.isDarwin ''
+      cp ${ponygirls-pi-extensions}/ponygirls-subagents/darwin-process-info executor/
+    ''}
   '';
 
   checkPhase = ''
@@ -39,7 +44,7 @@ stdenvNoCC.mkDerivation {
     ln -s ${sdk}/node_modules/@earendil-works/pi-ai node_modules/@earendil-works/pi-ai
     ln -s ${sdk}/node_modules/@types node_modules/@types
     tsc -p tsconfig.json
-    node --experimental-transform-types --test tests/*.test.ts
+    node --experimental-transform-types --test core-fixture/ponygirls-subagents/tests/{ownership,store}.test.ts tests/*.test.ts
     node ${./prepare-executor-tests.mjs} ${pi-claude-code.src} "$PWD" "$PWD/executor-suite"
     ln -s ../node_modules executor-suite/node_modules
     substituteInPlace executor-suite/tests/{billing,claude-cli,model-discovery,stream}.test.ts \
@@ -54,6 +59,9 @@ stdenvNoCC.mkDerivation {
     mkdir -p "$out/executor"
     cp -r index.ts src package.json README.md "$out/"
     cp executor/{claude-cli.ts,turn-relay.ts,billing.ts,env.ts,native-types.ts,inert-mcp.mjs,catalog-types.ts,execution-types.ts} "$out/executor/"
+    ${lib.optionalString stdenvNoCC.hostPlatform.isDarwin ''
+      cp executor/darwin-process-info "$out/executor/"
+    ''}
     cp ${pi-claude-code.src}/LICENSE "$out/LICENSE"
     runHook postInstall
   '';
@@ -61,6 +69,6 @@ stdenvNoCC.mkDerivation {
   meta = {
     description = "Additive Claude Code execution backend for ponygirls-subagents";
     license = lib.licenses.mit;
-    platforms = [ "x86_64-linux" ];
+    platforms = [ "x86_64-linux" "aarch64-darwin" ];
   };
 }

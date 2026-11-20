@@ -137,6 +137,7 @@ buildNpmPackage (finalAttrs: {
   '';
 
   doCheck = true;
+  __darwinAllowLocalNetworking = true;
   checkPhase = ''
     runHook preCheck
     printf '%s\n' '{"extends":"./tsconfig.json","include":["packages/*/src/**/*","packages/ai/test/openai-codex-stream.test.ts","packages/ai/test/pi-messages.test.ts","packages/coding-agent/test/captured-terminal-output.test.ts","packages/coding-agent/test/retained-custom-message-ingress.test.ts","packages/coding-agent/test/sdk-stream-options.test.ts","packages/coding-agent/test/compaction-codex-transport.test.ts","packages/coding-agent/test/compaction-codex-transport-wire.test.ts"]}' > tsconfig.compaction-backport.json

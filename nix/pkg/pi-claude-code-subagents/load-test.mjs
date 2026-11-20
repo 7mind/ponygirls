@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { access, chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { processState } from "./tests/process-state.ts";
 
 const [sdk, packagePath, fakeCli, addonPath] = process.argv.slice(2);
 assert.ok(sdk);
@@ -75,10 +76,7 @@ const withinObservation = async (pending) => {
   try { return await Promise.race([pending, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("logical cleanup exceeded 3000ms")), 3000); })]); }
   finally { clearTimeout(timer); }
 };
-const stopped = async (pid) => {
-  try { const state = (await readFile(`/proc/${pid}/stat`, "utf8")).split(") ").pop().split(" ")[0]; return state === "Z" || state === "X"; }
-  catch (error) { if (error.code === "ENOENT") return true; throw error; }
-};
+const stopped = (pid) => processState(pid) !== "live";
 const waitFor = async (predicate) => {
   const deadline = Date.now() + 5000;
   while (!await predicate()) {
@@ -265,7 +263,6 @@ try {
 const launchEvidence = (await readFile(join(config, "launch.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
 const authEvidence = (await readFile(join(resolve("pending-config"), "auth.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
 for (const launch of [...launchEvidence, ...authEvidence]) {
-  try { const fields = (await readFile(`/proc/${launch.pid}/stat`, "utf8")).split(") ").pop().split(" "); assert.ok(fields[0] === "Z" || fields[0] === "X", `owned CLI ${launch.pid} remains live`); }
-  catch (error) { if (error.code !== "ENOENT") throw error; }
+  assert.ok(stopped(launch.pid), `owned CLI ${launch.pid} remains live`);
 }
 console.log("Read-only pinned Claude package: SDK loader, published 5.5 catalog, native CLI routes/cwd/config, raw usage, pending acquisition/history replay/active concurrent/none-retention/warm disposal verified (controlled CLI, not Anthropic acceptance)");
