@@ -31,7 +31,9 @@ object Fragments {
 /** What one indexing job retains until its publication (append-only ingest spec §3.1): every decoded message, per Problem
   * piece its chunk in the publication builder and its vector in the job's VectorArena (whole blocks), and per Context
   * slice its coverage span. A job whose estimate exceeds `maxIndexingBudgetBytes` ends Failed with `exceededCode` before
-  * its messages are decoded; a running job whose windows outgrow the estimate ends the same way before it retains them. */
+  * its messages are decoded; a running job whose windows outgrow the estimate ends the same way before it retains them.
+  * Without the large-job permit (LargeJobs) a job is held to `maxSmallJobBudgetBytes` instead, without failing: above it
+  * at the claim it waits for the lane with the permit, above it while running it goes back to the queue for that lane. */
 object IndexingBudget {
   val exceededCode = "index-budget-exceeded"
   /** The objects of one decoded message besides its strings. */
@@ -112,6 +114,9 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   private final class AnnotationExhausted(val reason: String) extends RuntimeException(AnnotationAttempts.exhaustedCode) {
     def code: String = if(reason==AnnotationAttempts.callLimitReason) AnnotationAttempts.reservationExhaustedCode else AnnotationAttempts.exhaustedCode
   }
+  /** A job running without the large-job permit whose windows would retain more than maxSmallJobBudgetBytes: it goes back
+    * to the queue for the lane with the permit. */
+  private final class SmallJobOutgrown(val retained: BigInt) extends RuntimeException("small-job-budget")
   private def failureCode(error: Throwable): String = error match { case exhausted: AnnotationExhausted => exhausted.code; case d: DomainError => d.code; case _ => "worker-fault" }
   private def failureOrigin(error: Throwable): String = error.getStackTrace.find(frame => !Set("chronicle.DomainError","chronicle.DomainError$","chronicle.Check","chronicle.Check$").contains(frame.getClassName)).map(frame => s"${frame.getClassName}.${frame.getMethodName}:${frame.getLineNumber}").getOrElse("unavailable")
   private final case class FailureDetails(reason: String,httpStatus: String,structure: Json)
@@ -141,7 +146,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   }
   private final case class StagedFailure(stage: IndexingStage,error: Throwable) extends RuntimeException
   private def publishStage(run: => IO[Unit]): IO[Unit] = IO.defer(run).handleErrorWith(error => IO.raiseError(StagedFailure(IndexingStage.Publication,error)))
-  private final class Windows(claim: Claim,total: Int) {
+  private final class Windows(claim: Claim,total: Int,large: LargeJobs) {
     private val dimensions=config.embedding.dimensions
     private val vectors=new VectorArena(dimensions)
     private val decoded=IndexingBudget.decoded(claim.snapshot.messages)
@@ -153,6 +158,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     private def within(pieces: Long,spans: Long,vectors: Long): Unit = {
       val retained=decoded+BigInt(pieces)*BigInt(IndexingBudget.chunkBytes)+BigInt(spans)*BigInt(IndexingBudget.coverageSpanBytes)+VectorArena.heldBytes(dimensions,vectors)
       Check(retained<=BigInt(config.maxIndexingBudgetBytes),IndexingBudget.exceededCode,s"indexing job would retain $retained bytes, above the budget of ${config.maxIndexingBudgetBytes}")
+      if(large==LargeJobs.Skipped && retained>BigInt(config.maxSmallJobBudgetBytes)) throw new SmallJobOutgrown(retained)
     }
     def accepted[A](key: CheckpointKey)(decode: Json => A,encode: A => Json)(run: => IO[A]): IO[A] = IO.blocking(archive.checkpoint(claim,key)).flatMap {
       case Some(value) => IO(decode(value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted checkpoint payload")))
@@ -211,7 +217,10 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
           val currentParts=batches.size
           IO(logger.warn(s"accepted work discarded jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total stage=embedding discardedParts=$discarded currentParts=$currentParts embeddingBatchSize=$batchSize"))
         } *> parts
-      }).handleErrorWith(error => failed(error,index,"embedding",attempt))
+      }).handleErrorWith {
+        case outgrown: SmallJobOutgrown => IO.raiseError(outgrown)
+        case error => failed(error,index,"embedding",attempt)
+      }
     }
   }
   private def count(source: ProblemPassages.Source): Int = {
@@ -228,14 +237,18 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     val source=ProblemPassages.Source(claim.snapshot.messages)
     (source,count(source))
   }.flatMap { (source,total) =>
-    if(total>LargeJobs.windows && large==LargeJobs.Skipped) deferLarge(claim,total) else indexWindows(claim,source,total)
+    if(total>LargeJobs.windows && large==LargeJobs.Skipped)
+      deferLarge(claim,total) *> IO(logger.info(s"large job deferred jobId=${claim.jobId} totalWindows=$total largeJobWindows=${LargeJobs.windows}"))
+    else indexWindows(claim,source,total,large).recoverWith { case outgrown: SmallJobOutgrown =>
+      val retained=outgrown.retained
+      deferLarge(claim,total) *> IO(logger.info(s"job outgrew the small-job budget, deferred jobId=${claim.jobId} totalWindows=$total retainedBytes=$retained smallJobBudget=${config.maxSmallJobBudgetBytes}"))
+    }
   }
   /** Back to the queue with its window count and without the attempt: claims that skip large jobs pass it by. */
   private def deferLarge(claim: Claim,total: Int): IO[Unit] =
-    IO.blocking(Check(archive.defer(claim,total),"stale-claim","indexing claim is no longer current")) *>
-      IO(logger.info(s"large job deferred jobId=${claim.jobId} totalWindows=$total largeJobWindows=${LargeJobs.windows}"))
-  private def indexWindows(claim: Claim,source: ProblemPassages.Source,total: Int): IO[Unit] = {
-    val windows=new Windows(claim,total)
+    IO.blocking(Check(archive.defer(claim,total),"stale-claim","indexing claim is no longer current"))
+  private def indexWindows(claim: Claim,source: ProblemPassages.Source,total: Int,large: LargeJobs): IO[Unit] = {
+    val windows=new Windows(claim,total,large)
     def loop(state: ProblemPassages.State,publication: ProblemsPublication.Builder,index: Int): IO[Unit] = IO.defer {
       source.next(state.nextSource) match {
         case None => publishStage(IO.blocking {

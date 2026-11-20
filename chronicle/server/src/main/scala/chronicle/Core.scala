@@ -54,10 +54,10 @@ final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int
 }
 object IndexingCapacity {
   val defaults = IndexingCapacity(4,8,16)
-  /** Large jobs (LargeJobs.windows) running at once; small jobs use every annotation session. */
+  /** Large jobs (LargeJobs) running at once; small jobs use every annotation session. */
   val largeJobs: Int = 1
 }
-final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Long, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits,accounts: Option[AccountsConfig],maxRawReadBytes: Long,maxIndexingBudgetBytes: Long) {
+final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Long, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits,accounts: Option[AccountsConfig],maxRawReadBytes: Long,maxIndexingBudgetBytes: Long,maxSmallJobBudgetBytes: Long) {
   def accountsEnabled: Boolean = accounts.exists(_.enabled)
   def jdbcConfig: JdbcConfig = JdbcConfig(jdbcUrl,databaseUser,Path.of(databasePasswordFile),databaseLimits)
   def profile: String = IndexProfileCatalog.current(this).preferred.profile
@@ -83,7 +83,7 @@ final case class Config(listenHost: String, listenPort: Int, allowedOrigin: Stri
     }
     SearchPolicy.dimensions(this)
     Check(maxBodyBytes > 0 && maxBodyBytes <= Config.maximumBodyBytes && maxFileBytes > 0 && maxFiles > 0 && maxMessages > 0, "config", "invalid limits")
-    Check(maxRawReadBytes > 0 && maxRawReadBytes <= Config.maximumRawReadBytes && maxIndexingBudgetBytes > 0, "config", "invalid raw read or indexing budget limits")
+    Check(maxRawReadBytes > 0 && maxRawReadBytes <= Config.maximumRawReadBytes && maxIndexingBudgetBytes > 0 && maxSmallJobBudgetBytes > 0, "config", "invalid raw read or indexing budget limits")
     Check(sessionTtlSeconds > 0 && annotation.timeoutSeconds > 0 && embedding.timeoutSeconds > 0 && annotation.maxResponseBytes > 0 && embedding.maxResponseBytes > 0, "config", "invalid timeouts")
     val origin = java.net.URI.create(allowedOrigin)
     val loopbacks = Set("127.0.0.1","localhost","::1","[::1]")
@@ -98,6 +98,13 @@ object Config {
   val maximumRawReadBytes: Long = 512L*1024*1024
   /** The estimated heap one indexing job may retain (IndexingBudget); about 4.4 GB of the 6.4 GiB heap bound stay for the rest. */
   val defaultIndexingBudgetBytes: Long = Int.MaxValue.toLong
+  /** The estimated heap of a job that runs without the large-job permit (LargeJobs): IndexingBudget.estimate of
+    * LargeJobs.windows windows of full fragments, one message each (0.15 GB at 768 dimensions, 0.32 GB at 4,000). The
+    * other lanes then hold at most (annotationSessions - 1) times this beside the one large job's budget. */
+  def defaultSmallJobBudgetBytes(dimensions: Int): Long = {
+    val fragments=LargeJobs.windows.toLong*ProblemPassages.maximumWindowFragments
+    IndexingBudget.estimate(fragments,fragments*ProblemPassages.maximumFragmentBytes,fragments,dimensions).toLong
+  }
   // An omitted member is absent; an explicit null is rejected, as for the other optional members.
   private def present[A: Decoder](cursor: io.circe.HCursor,field: String): Decoder.Result[Option[A]] =
     if(cursor.downField(field).focus.isEmpty) Right(None) else cursor.get[A](field).map(Some(_))
@@ -201,7 +208,8 @@ object Config {
     // Omitted: everything /api/ingest can store stays readable.
     maxRawReadBytes <- optional(cursor,"maxRawReadBytes",maxBodyBytes.toLong)
     maxIndexingBudgetBytes <- optional(cursor,"maxIndexingBudgetBytes",defaultIndexingBudgetBytes)
-  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits,accounts,maxRawReadBytes,maxIndexingBudgetBytes) }
+    maxSmallJobBudgetBytes <- optional(cursor,"maxSmallJobBudgetBytes",defaultSmallJobBudgetBytes(embedding.dimensions))
+  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits,accounts,maxRawReadBytes,maxIndexingBudgetBytes,maxSmallJobBudgetBytes) }
   def load(path: String): Config = { val c = Wire.parse(Files.readString(Path.of(path))).as[Config].fold(_ => throw DomainError("config", "invalid configuration"), identity); c.validate(); c }
   def credential(path: String): String = BoundedSecretFile.read(Path.of(path),16384).stripTrailing()
 }
@@ -221,8 +229,9 @@ enum ClaimScope {
   case AllOwners
   case Owner(owner: String)
 }
-/** Whether a claim may take a large job (more than LargeJobs.windows): a claim that may not defers one it finds, and then
-  * passes it by; the job waits in the queue for a claim that may. */
+/** Whether a claim may take a large job (more than LargeJobs.windows, or estimated or running above
+  * `maxSmallJobBudgetBytes`): a claim that may not passes one it knows by and defers one it finds while running; the job
+  * waits in the queue for a claim that may. */
 enum LargeJobs {
   case Admitted
   case Skipped

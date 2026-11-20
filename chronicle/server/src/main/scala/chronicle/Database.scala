@@ -321,6 +321,9 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       Sql.exec(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} FROM ch_sources s WHERE s.id=j.session_id AND j.session_id=? AND j.profile=? AND $ended",id,profile)
     }
   }
+  /** Sources whose head revision (the value) is estimated above the small-job budget, one entry per source: a claim without
+    * the large-job permit passes them by without estimating them again (a legacy revision's estimate scans its messages). */
+  private val aboveSmallJobBudget=new java.util.concurrent.ConcurrentHashMap[UUID,Integer]()
   private def claimHead(profiles: Set[String],scope: ClaimScope,leaseSeconds: Int,large: LargeJobs): Option[Claim] = db.transaction { c =>
     profiles.foreach(IndexProfiles.registered(c,_))
     val scoped=scope match {
@@ -338,27 +341,38 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
           Sql.exec(c,s"UPDATE ch_jobs SET state='Failed',error='lease-exhausted',failure_stage=NULL,lease_until=NULL,fence=fence+1 WHERE session_id=? AND profile=? AND state='Running' AND lease_until<clock_timestamp() AND attempts>=${Jobs.attemptLimit}",id,target.profile)
         }
         // One job per source and profile at a time: the head job waits while a job of an older revision is Running
-        // (supersedeEndedLeases ended those whose lease ended).
-        def source: Option[(UUID,Int)] = Sql.one(c,s"""SELECT s.id,s.revision FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
+        // (supersedeEndedLeases ended those whose lease ended). Without the large-job permit, a claim passes by a job
+        // deferred to the lane with it (Queued with its window count: only a deferral records one while it is queued) and
+        // a large one whose lease ended; `after` continues past the sources passed by for the small-job budget.
+        def source(after: Option[UUID]): Option[(UUID,Int)] = Sql.one(c,s"""SELECT s.id,s.revision FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
           SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.attempts<${Jobs.attemptLimit} AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp())))
           AND NOT EXISTS(SELECT 1 FROM ch_jobs o WHERE o.session_id=s.id AND o.revision<s.revision AND o.profile=? AND o.state='Running')
-          AND (? OR NOT EXISTS(SELECT 1 FROM ch_jobs d WHERE d.session_id=s.id AND d.revision=s.revision AND d.profile=? AND d.total_windows>?))
-          ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",owner,target.profile,target.profile,large==LargeJobs.Admitted,target.profile,LargeJobs.windows)(r => (r.getObject(1,classOf[UUID]),r.getInt(2)))
+          AND (? OR NOT EXISTS(SELECT 1 FROM ch_jobs d WHERE d.session_id=s.id AND d.revision=s.revision AND d.profile=? AND (d.total_windows>? OR (d.state='Queued' AND d.total_windows IS NOT NULL))))
+          ${after.fold("")(_ => "AND s.id>? ")}ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",(List[Sql.Param](owner,target.profile,target.profile,large==LargeJobs.Admitted,target.profile,LargeJobs.windows)++after)*)(r => (r.getObject(1,classOf[UUID]),r.getInt(2)))
         val claimable=s"SELECT id FROM ch_jobs WHERE session_id=? AND revision=? AND profile=? AND attempts<${Jobs.attemptLimit} AND (state='Queued' OR (state='Running' AND lease_until<clock_timestamp())) FOR UPDATE SKIP LOCKED LIMIT 1"
         /** A job whose estimated heap exceeds the budget ends Failed before its messages are decoded, without an attempt;
-          * the next source is tried. */
-        @annotation.tailrec def next(): Option[Claim] = source match {
-          case Some((id,revision)) if retainedEstimate(c,id,revision)>BigInt(config.maxIndexingBudgetBytes) =>
-            if(Sql.exec(c,s"UPDATE ch_jobs SET state='Failed',error=?,failure_stage=NULL,lease_until=NULL,fence=fence+1 WHERE id=($claimable)",IndexingBudget.exceededCode,id,revision,target.profile)==1) next() else None
-          case Some((id,revision)) =>
-            Sql.one(c,s"""UPDATE ch_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
-              WHERE id=($claimable) RETURNING id,fence,run_id""",leaseSeconds,id,revision,target.profile) { row =>
-              val (snap,binding)=claimedSnapshot(c,id,revision)
-              Claim(row.getObject("id",classOf[UUID]),id,revision,row.getLong("fence"),target.profile,snap,owner,target.epoch,row.getObject("run_id",classOf[UUID]),binding)
-            }
-          case None => None
+          * without the large-job permit, one above the small-job budget is passed by. The next source is tried. */
+        @annotation.tailrec def next(after: Option[UUID]): Option[Claim] = {
+          // Rolled back to pass a source by: its row lock is released, and its ingests do not wait for this claim.
+          val passable=Option.when(large==LargeJobs.Skipped)(c.setSavepoint())
+          source(after) match {
+            case Some((id,revision)) if passable.nonEmpty && Option(aboveSmallJobBudget.get(id)).exists(_.intValue==revision) =>
+              c.rollback(passable.get); next(Some(id))
+            case Some((id,revision)) =>
+              val estimate=retainedEstimate(c,id,revision)
+              if(estimate>BigInt(config.maxIndexingBudgetBytes)) {
+                if(Sql.exec(c,s"UPDATE ch_jobs SET state='Failed',error=?,failure_stage=NULL,lease_until=NULL,fence=fence+1 WHERE id=($claimable)",IndexingBudget.exceededCode,id,revision,target.profile)==1) next(after) else None
+              } else if(passable.nonEmpty && estimate>BigInt(config.maxSmallJobBudgetBytes)) {
+                c.rollback(passable.get); aboveSmallJobBudget.put(id,revision); next(Some(id))
+              } else Sql.one(c,s"""UPDATE ch_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
+                WHERE id=($claimable) RETURNING id,fence,run_id""",leaseSeconds,id,revision,target.profile) { row =>
+                val (snap,binding)=claimedSnapshot(c,id,revision)
+                Claim(row.getObject("id",classOf[UUID]),id,revision,row.getLong("fence"),target.profile,snap,owner,target.epoch,row.getObject("run_id",classOf[UUID]),binding)
+              }
+            case None => None
+          }
         }
-        next()
+        next(None)
       }
     }.collectFirst { case Some(claim) => claim }
   }

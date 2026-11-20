@@ -999,6 +999,13 @@ re-annotated per revision.
   Context coverage spans 256 B each, vectors by arena blocks); over budget → `Failed index-budget-exceeded`, terminal, no
   attempt consumed. Config `maxIndexingBudgetBytes` (Long, default 2,147,483,647); `maxRawReadBytes` (default
   `maxBodyBytes`, ≤ 512 MiB); `maxFileBytes` is Long. CONTRACT.md is authoritative.
+- **Small-job budget** (U4B, U8H HEAP.md recommendation): lanes without the large-job permit hold a job to
+  `maxSmallJobBudgetBytes` (Long; default the estimate of 100 windows of 64 full fragments at the configured dimensions,
+  0.15 GB at 768, 0.32 GB at 4,000): above it at the claim the job waits for the permit (no attempt, no failure), above it
+  at run time it is deferred as a large job is (Queued, attempt not counted, window count recorded) and continues on the
+  large lane from its checkpoints; that lane keeps `maxIndexingBudgetBytes` and the terminal `index-budget-exceeded`.
+  Worst case budget + (lanes − 1) × small budget: 2.61 GB at the defaults (3.10 GB at 4,000 d), i.e. HEAP.md's reading A
+  enforced: 5.24 GB (5.74 GB) of an 8 GiB container's 6.87 GB heap bound with the ingest decode and young generation.
 - **Message pages** (U4/U4W): a page holds ≥ 1 message while `offset < total`; fewer than `limit` before the end only when
   the 64 MiB byte bound cuts it; clients continue at `offset + messages.length` (the dashboard keeps one contiguous range).
   Epoch page/claim reads run with `enable_sort`/`enable_incremental_sort` off for their own transaction (planner risk at

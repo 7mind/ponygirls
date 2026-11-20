@@ -9,7 +9,8 @@ import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.*
 
 /** The S1 oversize guards (append-only ingest spec §3.1): GetRaw's raw bound, the indexing budget before a claim decodes
-  * the revision and while its pieces are embedded, the message page byte bound, and their configuration keys. */
+  * the revision and while its pieces are embedded (the small-job budget on the lanes without the large-job permit), the
+  * message page byte bound, and their configuration keys. */
 final class OversizeGuardTest extends munit.FunSuite {
   override val munitTimeout=2.minutes
   private def database(config: Config)(f: (Database,PostgresArchive) => Unit): Unit = {
@@ -86,7 +87,12 @@ final class OversizeGuardTest extends munit.FunSuite {
     def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("worker queried embedding"))
   }
   private def worker(archive: SessionArchive,config: Config,annotator: ProblemPassageAnnotator,embedder: Embedder): Worker =
-    new Worker(archive,annotator,embedder,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger(),ModelFixtures.failureBackoff,ModelFixtures.snapshots)
+    worker(archive,config,annotator,embedder,ModelAdmission.make(config.indexing).unsafeRunSync())
+  private def worker(archive: SessionArchive,config: Config,annotator: ProblemPassageAnnotator,embedder: Embedder,admission: ModelAdmission): Worker =
+    new Worker(archive,annotator,embedder,config,IndexProfileCatalog.current(config),admission,logstage.IzLogger(),ModelFixtures.failureBackoff,ModelFixtures.snapshots)
+  /** Runs a worker iteration while another lane holds the large-job permit (munit assertions stay on the test thread). */
+  private def permitTaken[A](admission: ModelAdmission)(run: IO[A]): A =
+    admission.largeJob.use(taken => IO.raiseUnless(taken)(new AssertionError("the large-job permit is taken")) *> run).unsafeRunSync()
 
   test("the vector arena counts in whole blocks: a one-fragment job whose budget is below one block ends Failed at the claim, before it is decoded") {
     val config=Fixtures.config().copy(maxIndexingBudgetBytes=1024L*1024)
@@ -134,6 +140,46 @@ final class OversizeGuardTest extends munit.FunSuite {
     }
   }
 
+  test("a job whose estimate exceeds maxSmallJobBudgetBytes is not claimed while another lane holds the large-job permit, without an attempt or a failure, and the lane with the permit takes it") {
+    // 3 dimensions: one arena block (2.1 MB) holds every vector here. "small" is estimated at about 2.11 MB, the 20
+    // fragments of 40,000 scalars at 2.44 MB.
+    val config=Fixtures.config().copy(maxSmallJobBudgetBytes=2200000L)
+    database(config) { (db,archive) =>
+      val large=archive.ingest("a",request(List("x"*40000))); val small=archive.ingest("a",request(List("small")))
+      val admission=ModelAdmission.make(config.indexing).unsafeRunSync()
+      val lane=worker(archive,config,new ProblemPassageFixtures.Dummy,new Embedded(3),admission)
+      assert(permitTaken(admission)(lane.once))
+      assert(!permitTaken(admission)(lane.once),"the job above the small-job budget waits")
+      assertEquals(archive.session("a",small.sessionId).indexedRevision,Some(1))
+      assertEquals(job(db,large.jobId),JobRow("Queued",None,None,0,0))
+      assert(lane.once.unsafeRunSync())
+      assertEquals((job(db,large.jobId).state,job(db,large.jobId).attempts,archive.session("a",large.sessionId).indexedRevision),("Complete",1,Some(1)))
+    }
+  }
+
+  test("a job that outgrows maxSmallJobBudgetBytes while it runs without the large-job permit returns to the queue for the lane with the permit, without an attempt or a failure, and completes there; above maxIndexingBudgetBytes that lane ends it index-budget-exceeded") {
+    // "AB"*40: one fragment estimated at about 2.11 MB, cut by the annotator into 80 one-scalar pieces that retain 3.16 MB.
+    val config=Fixtures.config().copy(maxIndexingBudgetBytes=4000000L,maxSmallJobBudgetBytes=3000000L)
+    database(config) { (db,archive) =>
+      val outgrown=archive.ingest("a",request(List("AB"*40)))
+      val admission=ModelAdmission.make(config.indexing).unsafeRunSync()
+      val embedder=new Embedded(3)
+      val lane=worker(archive,config,new ProblemPassageFixtures.Dummy,embedder,admission)
+      assert(permitTaken(admission)(lane.once))
+      assertEquals(job(db,outgrown.jobId),JobRow("Queued",None,None,0,2))
+      assertEquals(archive.statuses("a",0,100).jobs.map(j => (j.state,j.attempts,j.error,j.completedWindows,j.totalWindows)),List((JobState.Queued,0,None,0,Some(1))))
+      assertEquals(embedder.batches.toList,Nil)
+      assert(!permitTaken(admission)(lane.once),"the deferred job waits for the lane with the permit")
+      assert(lane.once.unsafeRunSync())
+      assertEquals((job(db,outgrown.jobId).state,job(db,outgrown.jobId).attempts,archive.session("a",outgrown.sessionId).indexedRevision),("Complete",1,Some(1)))
+      assertEquals(embedder.batches.flatten.size,80)
+      val exceeded=archive.ingest("b",request(List("AB"*40)))
+      val tight=config.copy(maxIndexingBudgetBytes=3100000L)
+      assert(worker(new PostgresArchive(db,tight),tight,new ProblemPassageFixtures.Dummy,embedder).once.unsafeRunSync())
+      assertEquals(job(db,exceeded.jobId),JobRow("Failed",Some(IndexingBudget.exceededCode),Some("Embedding"),1,1))
+    }
+  }
+
   test("a message page holds the longest prefix of its messages within the page byte bound, at least one; the production bound is 64 MiB") {
     database(Fixtures.config()) { (db,archive) =>
       val receipt=archive.ingest("a",request(List.fill(5)("x"*3000):+("y"*20000)))
@@ -170,17 +216,18 @@ final class OversizeGuardTest extends munit.FunSuite {
     }
   }
 
-  test("configuration: maxFileBytes, maxRawReadBytes and maxIndexingBudgetBytes take values above 2^31; omitted, the raw bound is maxBodyBytes and the budget 2,147,483,647") {
+  test("configuration: maxFileBytes, maxRawReadBytes, maxIndexingBudgetBytes and maxSmallJobBudgetBytes take values above 2^31; omitted, the raw bound is maxBodyBytes, the budget 2,147,483,647 and the small-job budget the estimate of 100 windows of 64 full fragments") {
     val example=Wire.parse(java.nio.file.Files.readString(java.nio.file.Path.of("config.example.json"))).asObject.get
     def parsed(fields: (String,Json)*): Config = Json.fromJsonObject(fields.foldLeft(example)((o,f) => o.add(f._1,f._2))).as[Config].fold(error => fail(error.toString),identity)
     val omitted=parsed()
     omitted.validate()
-    assertEquals((omitted.maxRawReadBytes,omitted.maxIndexingBudgetBytes),(omitted.maxBodyBytes.toLong,Config.defaultIndexingBudgetBytes))
+    assertEquals((omitted.maxRawReadBytes,omitted.maxIndexingBudgetBytes,omitted.maxSmallJobBudgetBytes),(omitted.maxBodyBytes.toLong,Config.defaultIndexingBudgetBytes,Config.defaultSmallJobBudgetBytes(omitted.embedding.dimensions)))
     assertEquals(Config.defaultIndexingBudgetBytes,2147483647L)
-    val large=parsed("maxFileBytes"->Json.fromLong(8589934592L),"maxRawReadBytes"->Json.fromLong(536870912L),"maxIndexingBudgetBytes"->Json.fromLong(Long.MaxValue))
+    assertEquals((Config.defaultSmallJobBudgetBytes(768),Config.defaultSmallJobBudgetBytes(4000)),(152856880L,318971184L))
+    val large=parsed("maxFileBytes"->Json.fromLong(8589934592L),"maxRawReadBytes"->Json.fromLong(536870912L),"maxIndexingBudgetBytes"->Json.fromLong(Long.MaxValue),"maxSmallJobBudgetBytes"->Json.fromLong(4294967296L))
     large.validate()
-    assertEquals((large.maxFileBytes,large.maxRawReadBytes,large.maxIndexingBudgetBytes),(8589934592L,536870912L,Long.MaxValue))
-    List(omitted.copy(maxRawReadBytes=536870913L),omitted.copy(maxRawReadBytes=0),omitted.copy(maxIndexingBudgetBytes=0)).foreach { invalid =>
+    assertEquals((large.maxFileBytes,large.maxRawReadBytes,large.maxIndexingBudgetBytes,large.maxSmallJobBudgetBytes),(8589934592L,536870912L,Long.MaxValue,4294967296L))
+    List(omitted.copy(maxRawReadBytes=536870913L),omitted.copy(maxRawReadBytes=0),omitted.copy(maxIndexingBudgetBytes=0),omitted.copy(maxSmallJobBudgetBytes=0)).foreach { invalid =>
       assertEquals(intercept[DomainError](invalid.validate()).code,"config")
     }
     assert(Json.fromJsonObject(example.add("maxRawReadBytes",Json.Null)).as[Config].isLeft)
