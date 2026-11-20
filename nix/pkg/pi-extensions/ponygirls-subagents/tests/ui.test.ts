@@ -33,6 +33,7 @@ function view(overrides: Partial<AgentView> = {}): AgentView {
     generation: 1,
     taskOutcome: null,
     usage: { inputTokens: 1, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: null, cost: null, unknown: false },
+    contextFill: null,
     lastActivityAt: "2026-10-05T00:00:00.000Z",
     managedGateFor: null,
     gateTaskRunId: null,
@@ -365,7 +366,7 @@ test("the inspector is framed: title with counts, dim column header, aligned cel
   const views = [
     view({ observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded" }),
     view({ id: "a-2", path: "/root/b", observed: "running", pendingIntent: "running" }),
-    view({ id: "a-3", path: "/root/b/fix", parentId: "a-2", depth: 2, profile: "writer", isolation: "worktree", model: "kimi-k3", observed: "settled", pendingIntent: "settled", taskOutcome: "failed" }),
+    view({ id: "a-3", path: "/root/b/fix", parentId: "a-2", depth: 2, profile: "writer", isolation: "worktree", model: "kimi-k3", observed: "settled", pendingIntent: "settled", taskOutcome: "failed", contextFill: { tokens: 3_000, window: 200_000 } }),
   ];
   const { ui } = inspector(views, { rows: 30, theme: TAG_THEME });
   const lines = ui.render(140);
@@ -383,7 +384,7 @@ test("the inspector is framed: title with counts, dim column header, aligned cel
   assert.equal(plain[3]!.indexOf("● running"), column("STATE"));
   assert.equal(plain[4]!.indexOf("✖ failed"), column("STATE"));
   assert.equal(plain[4]!.indexOf("kimi-k3"), column("MODEL"));
-  assert.equal(plain[4]!.indexOf("1 in · 2 out"), column("TOKENS"));
+  assert.equal(plain[4]!.indexOf("1 in · 2 out · 1.5%"), column("TOKENS"));
   assert.ok(plain[4]!.startsWith("    /root/b/fix"), "nested agents are indented");
   assert.match(plain[5]!, /^─+$/, "a rule separates the list from the details");
   assert.equal(plain[6], "  id       a-1 · generation 1");
@@ -529,14 +530,14 @@ const hintLine = (lines: string[]): string => text(lines).slice(lines.findLastIn
 /** The agent of the specification's capture: settled, succeeded, 8.8k tokens in. */
 const demo = view({
   id: "7c1d4e9a-2b6f-4a35-8e0c-1f9b3d5a7e24", path: "/root/demo-reader", isolation: "worktree", workdir: `${HOME}/work/flakes/ponygirls`,
-  model: "openai-codex/gpt-6.1-sol", thinkingLevel: "high", requestedThinkingLevel: "high", observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded", usage: usage(8800, 5),
+  model: "openai-codex/gpt-6.1-sol", thinkingLevel: "high", requestedThinkingLevel: "high", observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded", usage: usage(8800, 5), contextFill: { tokens: 24_000, window: 200_000 },
 });
 
 const question = "Which of the two candidate files should I change: the legacy adapter under compat/, which every caller still imports, or the new facade, which only the tests use so far? I would rather not touch both.";
 
 /** One agent in every state the list distinguishes, with long values in every field. */
 const crowd: AgentView[] = [
-  view({ id: "11111111-1111-4111-8111-111111111111", path: "/root/orchestrator", profile: "writer", isolation: "worktree", workdir: `${HOME}/work/flakes/ponygirls/.worktrees/wt-ponygirls-orchestrator`, model: "anthropic/claude-opus-4-20250514", pendingIntent: "tool bash running", usage: usage(115173, 4210, 1.2345) }),
+  view({ id: "11111111-1111-4111-8111-111111111111", path: "/root/orchestrator", profile: "writer", isolation: "worktree", workdir: `${HOME}/work/flakes/ponygirls/.worktrees/wt-ponygirls-orchestrator`, model: "anthropic/claude-opus-4-20250514", pendingIntent: "tool bash running", usage: usage(115173, 4210, 1.2345), contextFill: { tokens: 61_000, window: 200_000 } }),
   view({ id: "22222222-2222-4222-8222-222222222222", path: "/root/orchestrator/implement-the-feature-with-a-long-name/verify-and-fix-regressions", parentId: "11111111-1111-4111-8111-111111111111", depth: 3, observed: "awaiting_parent", pendingIntent: "awaiting parent reply", openQuestion: { messageId: "q1", to: "governor", text: question, deadlineAt: "" }, usage: usage(52000, 900) }),
   view({ id: "33333333-3333-4333-8333-333333333333", path: "/root/queued", observed: "queued", pendingIntent: "queued: waiting for runnable capacity; wait for running work to settle", usage: usage(0, 0) }),
   view({ id: "44444444-4444-4444-8444-444444444444", path: "/root/gated", profile: "writer", isolation: "sandbox", observed: "settled", pendingIntent: "settled", taskOutcome: "review_limit_reached", gateTaskRunId: "task-run-0001", workdir: "/srv/checkouts/a-directory-name-without-any-space-that-is-longer-than-a-narrow-terminal-line/repo", usage: { ...usage(2400000, 31000), unknown: true } }),
@@ -560,7 +561,7 @@ test("target screen at 120 columns: one settled agent", () => {
   assert.match(lines[0]!, /^── Subagents · 1 ─+ 1 settled ──$/);
   assert.deepEqual(text(lines).slice(1), [
     "  AGENT              KIND               STATE        MODEL                          TOKENS",
-    "▌ /root/demo-reader  reader · worktree  ✓ succeeded  openai-codex/gpt-6.1-sol:high  8.8k in · 5 out",
+    "▌ /root/demo-reader  reader · worktree  ✓ succeeded  openai-codex/gpt-6.1-sol:high  8.8k in · 5 out · 12%",
     "─".repeat(120),
     "  id       7c1d4e9a-2b6f-4a35-8e0c-1f9b3d5a7e24 · generation 1",
     "  workdir  ~/work/flakes/ponygirls",
@@ -586,11 +587,11 @@ test("no rendered line exceeds the terminal and no detail value is cut with an e
   }
 });
 
-test("the selected agent's facts survive every width: id, generation, tokens, cost, workdir, gate, question", () => {
+test("the selected agent's facts survive every width: id, generation, tokens, cost, context fill, workdir, gate, question", () => {
   const flat = (lines: string[]): string => lines.map((l) => l.trim()).join(" ").replace(/\s+/g, " ");
   for (const width of WIDTHS) {
     const running = flat(crowdAt(0, width).lines);
-    for (const needle of ["11111111-1111-4111-8111-111111111111 · generation 1", "writer · worktree", "anthropic/claude-opus-4-20250514", "115k in · 4.21k out", "cost $1.2345", "tool bash running"]) {
+    for (const needle of ["11111111-1111-4111-8111-111111111111 · generation 1", "writer · worktree", "anthropic/claude-opus-4-20250514", "115k in · 4.21k out", "cost $1.2345", "30.5%", "tool bash running"]) {
       assert.ok(running.includes(needle), `${width} columns: missing ${needle}:\n${crowdAt(0, width).lines.join("\n")}`);
     }
     assert.ok(running.replace(/ /g, "").includes("anthropic/claude-opus-4-20250514:off"), `${width} columns: the model and effort are visible together`);
@@ -626,6 +627,26 @@ test("narrowing drops TOKENS, then MODEL, then KIND, names them, and never drops
       assert.ok(rows[i]!.includes(state), `${width} columns: row ${i} shows its state whole: ${rows[i]}`);
     }
   }
+});
+
+test("the tokens cell carries the context fill after the separator, tinted by fullness", () => {
+  const zero = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: null, cost: null, unknown: false };
+  const at = (tokens: number, window: number, id: string): AgentView => view({ id, path: `/root/${id}`, contextFill: { tokens, window } });
+  const { ui } = inspector([at(24_000, 200_000, "a-1"), at(150_000, 200_000, "warm"), at(185_000, 200_000, "hot"), view({ id: "none", path: "/root/none", usage: zero })], { theme: TAG_THEME, rows: 30 });
+  const lines = ui.render(120).map(tags);
+  assert.match(lines[2]!, /<muted>1 in · 2 out · <\/><muted>12%<\/>/);
+  assert.match(lines[3]!, /<muted>1 in · 2 out · <\/><warning>75%<\/>/);
+  assert.match(lines[4]!, /<muted>1 in · 2 out · <\/><error>92\.5%<\/>/);
+  assert.match(lines[5]!, /<dim>·<\/>/, "an agent with no usage and no provider request yet is a quiet dot");
+});
+
+test("a dropped TOKENS column is spelled out in the details; a visible one is not repeated", () => {
+  const filled = view({ contextFill: { tokens: 61_000, window: 200_000 } });
+  const wide = text(inspector([filled], { rows: 20 }).ui.render(120));
+  assert.ok(wide.some((line) => line.includes("1 in · 2 out · 30.5%")), wide.join("\n"));
+  assert.ok(!wide.some((line) => /^ +tokens /.test(line)), wide.join("\n"));
+  const narrow = text(inspector([filled], { rows: 20 }).ui.render(50));
+  assert.ok(narrow.some((line) => /^ +tokens +1 in · 2 out · 30\.5%$/.test(line)), narrow.join("\n"));
 });
 
 test("a long path trades spare width for metadata before dropping columns on resize", () => {

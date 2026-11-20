@@ -45,7 +45,7 @@ export interface ToolRequest {
   /** Prepared-ticket id minted by tool.prepare (absent for legacy direct calls). */
   ticket?: string;
   /** The generation's provider usage up to this call (worker-reported). */
-  usage: { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number | null; cost: number | null; unknown: boolean } | null;
+  usage: { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number | null; cost: number | null; unknown: boolean; contextTokens?: number | null } | null;
 }
 
 /**

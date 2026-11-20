@@ -347,9 +347,14 @@ gap; native child tools and provider requests continue independently.
 `/agents` opens a full-screen view of the tree: path (nested agents
 indented), profile and isolation, state, outcome, and model per row, with
 the selected agent's workdir, usage, open question, and result below. The
-model label includes the effective thinking level (for example,
+TOKENS cell shows the token totals, then the fill of the model's context
+window after the `·` separator (`8.8k in · 5 out · 12%`), tinted
+warning past 70% and error past 90%; the estimate is the whole context
+(prompt plus response) of the agent's latest valid provider request, and
+stays out of the cell until one reports. The model label includes the
+effective thinking level (for example,
 `claude-code/claude-sonnet-5-5:xhigh`), or `:unresolved` before confirmation.
-If the MODEL column is hidden, the label appears in the selected agent's details.
+If the MODEL or TOKENS column is hidden, its value appears in the selected agent's details.
 The list refreshes on its own. By default it shows only non-closed agents,
 including idle and completed agents. Press `f` to show all retained agents
 (including closed ones), or press it again to hide closed agents. The toggle

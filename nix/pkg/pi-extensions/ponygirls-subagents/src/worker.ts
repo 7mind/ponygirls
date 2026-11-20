@@ -90,7 +90,7 @@ interface GenerationState {
   stopReason: string | null;
   errorMessage: string | null;
   /** `input` includes the cache tokens; `reasoning` is part of `output`, null until a provider reports it. */
-  usage: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean };
+  usage: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean; contextTokens: number | null };
   /** When in-flight text was last forwarded. */
   previewAt: number;
   /** Usage observations owed by admitted provider requests; joined before settled publication. */
@@ -286,7 +286,7 @@ function setRequestIdentityEnv(taskRunId: string | null, generation: number | nu
 }
 
 function freshGeneration(taskRunId: string | null, generation: number | null): GenerationState {
-  return { taskRunId, generation, interruptRequested: false, settled: false, finalizing: false, lastText: "", stopReason: null, errorMessage: null, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: null, cost: null, unknown: false }, previewAt: 0, pendingUsage: [], observation: [] };
+  return { taskRunId, generation, interruptRequested: false, settled: false, finalizing: false, lastText: "", stopReason: null, errorMessage: null, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: null, cost: null, unknown: false, contextTokens: null }, previewAt: 0, pendingUsage: [], observation: [] };
 }
 
 function send(envelope: Partial<IpcEnvelope> & { operation: string }): void {
@@ -336,7 +336,11 @@ function isFullUsageShape(value: unknown): boolean {
   return true;
 }
 
-function accountResultUsage(gen: GenerationState, message: AssistantMessage): { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean } | null {
+function contextTokensOf(usage: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number }): number {
+  return usage.totalTokens > 0 ? usage.totalTokens : usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+}
+
+function accountResultUsage(gen: GenerationState, message: AssistantMessage): { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean; contextTokens: number | null } | null {
   if (accountedUsageMessages.has(message)) return null;
   const usage: Usage = message.usage;
   // Shared full-shape gate (also used by message_end): malformed usage marks
@@ -353,16 +357,18 @@ function accountResultUsage(gen: GenerationState, message: AssistantMessage): { 
   const cacheWrite = usage.cacheWrite as number;
   const costTotal = (usage.cost as unknown as Record<string, unknown>)["total"] as number;
   const reasoning: unknown = (usage as unknown as Record<string, unknown>)["reasoning"];
+  const contextTokens = message.stopReason === "error" || message.stopReason === "aborted" ? 0 : contextTokensOf({ input, output, cacheRead, cacheWrite, totalTokens: usage.totalTokens as number });
   accountedUsageMessages.add(message);
   gen.usage.input += input + cacheRead + cacheWrite;
   gen.usage.cacheRead += cacheRead;
   gen.usage.cacheWrite += cacheWrite;
   gen.usage.output += output;
   gen.usage.cost = (gen.usage.cost ?? 0) + costTotal;
+  if (contextTokens > 0) gen.usage.contextTokens = contextTokens;
   // Reasoning is part of output, reported apart: absent stays null (never
   // zero), a reported breakdown accumulates like every other counter.
   if (typeof reasoning === "number") gen.usage.reasoning = (gen.usage.reasoning ?? 0) + reasoning;
-  return { input: input + cacheRead + cacheWrite, output, cacheRead, cacheWrite, reasoning: typeof reasoning === "number" ? reasoning : null, cost: costTotal, unknown: false };
+  return { input: input + cacheRead + cacheWrite, output, cacheRead, cacheWrite, reasoning: typeof reasoning === "number" ? reasoning : null, cost: costTotal, unknown: false, contextTokens: contextTokens > 0 ? contextTokens : null };
 }
 
 /**
@@ -414,7 +420,7 @@ function observeRawUsageOnly(gen: GenerationState, taskRunId: unknown, generatio
  * instead of retiring it silently. Only the arrival that performs the
  * accounting emits (set-deduped, post-settle only).
  */
-function emitLateUsageReceipt(agentId: unknown, taskRunId: unknown, generation: unknown, receiptId: string, added: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean }): void {
+function emitLateUsageReceipt(agentId: unknown, taskRunId: unknown, generation: unknown, receiptId: string, added: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean; contextTokens: number | null }): void {
   send({
     type: "event",
     operation: "event",
@@ -1796,13 +1802,15 @@ function onSessionEvent(event: { type: string } & Record<string, unknown>): void
             gen.usage.unknown = true;
           } else {
             accountedUsageMessages.add(message);
-            const usage = message.usage as unknown as { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; reasoning?: number | null; cost?: { total?: number } };
+            const usage = message.usage as unknown as { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number; reasoning?: number | null; cost?: { total?: number } };
             const cacheRead = usage.cacheRead ?? 0;
             const cacheWrite = usage.cacheWrite ?? 0;
             gen.usage.input += (usage.input ?? 0) + cacheRead + cacheWrite;
             gen.usage.output += usage.output ?? 0;
             gen.usage.cacheRead += cacheRead;
             gen.usage.cacheWrite += cacheWrite;
+            const contextTokens = message.stopReason === "error" || message.stopReason === "aborted" ? 0 : contextTokensOf({ input: usage.input ?? 0, output: usage.output ?? 0, cacheRead, cacheWrite, totalTokens: usage.totalTokens ?? 0 });
+            if (contextTokens > 0) gen.usage.contextTokens = contextTokens;
             // Providers without a reasoning breakdown leave it undefined: not zero.
             if (typeof usage.reasoning === "number") gen.usage.reasoning = (gen.usage.reasoning ?? 0) + usage.reasoning;
             if (typeof usage.cost?.total === "number") gen.usage.cost = (gen.usage.cost ?? 0) + usage.cost.total;
