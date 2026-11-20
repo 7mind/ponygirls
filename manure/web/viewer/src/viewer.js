@@ -6,7 +6,7 @@ import { localUrl, artifactResourceUrl, markdownLinkUrl, boundedBytes, leadingBy
 import { textLines, tokenLines } from './tokens.js';
 import { diffLines } from './diff.js';
 import { formatJson, formatJsonLines, JsonSyntaxError, JsonFormatLimitError } from './json.js';
-import { parseCsv, numericColumns, CsvSyntaxError } from './csv.js';
+import { parseCsv, parseCsvPart, numericColumns, CsvSyntaxError } from './csv.js';
 import { hasAnsi, ansiTokens, escapeTokens } from './ansi.js';
 import { fileSyntax, fenceSyntax, highlightTokens, HIGHLIGHT_LIMIT, FORMAT_DIFF, FORMAT_JSON, FORMAT_JSON_LINES, FORMAT_CSV, FORMAT_TSV } from './syntax.js';
 
@@ -486,8 +486,11 @@ function metaExtra(...parts) {
   extra.replaceChildren();
   parts.forEach((part, index) => extra.append(...(index ? [' · '] : []), part));
 }
-/** Records as a table in the document: first record as the header, numbers right-aligned, records numbered. */
-function dataTable(records, total, name) {
+/**
+ * Records as a table in the document: first record as the header, numbers right-aligned, records numbered.
+ * `partial` records are those of the leading part of a file: nothing is said about the rows beyond them.
+ */
+function dataTable(records, total, name, partial) {
   const view = element('div', null, 'data-view');
   const table = element('table', null, 'data-table'); table.setAttribute('aria-label', `${name} table`);
   const numeric = numericColumns(records);
@@ -502,7 +505,8 @@ function dataTable(records, total, name) {
   const body = element('tbody');
   for (let index = 1; index < records.length; index++) body.append(row(records[index], 'td', null, cell('th', String(index), 'row', 'row-n')));
   table.append(head, body); view.append(table);
-  if (records.length < total) view.append(element('p', `First ${grouped(records.length - 1)} of ${grouped(total - 1)} rows are shown as a table. Raw has every line.`, 'data-foot'));
+  if (records.length < total) view.append(element('p', partial ? `First ${grouped(records.length - 1)} rows are shown as a table.`
+    : `First ${grouped(records.length - 1)} of ${grouped(total - 1)} rows are shown as a table. Raw has every line.`, 'data-foot'));
   return view;
 }
 /**
@@ -517,7 +521,8 @@ function textFile(fetched, source) {
   const lineCut = fetchedLines.length > LINE_LIMIT;
   const lines = lineCut ? fetchedLines.slice(0, LINE_LIMIT) : fetchedLines;
   const text = lineCut ? lines.join('') : fetched;
-  // Whatever needs the whole file (a formatted view, a table, totals) is not derived from a part.
+  // What is derived from a part is worded as a part (a table of the first rows) or withheld when it would describe
+  // the whole file (a formatted JSON value, validity, totals).
   const partial = source.truncated || lineCut;
   const sourceView = (lineRows, classify, label) => {
     const view = lineView(lineRows, classify, true, true); view.classList.add('viewer-wide', 'text-view');
@@ -562,18 +567,18 @@ function textFile(fetched, source) {
   } else if (format === FORMAT_CSV || format === FORMAT_TSV) {
     raw = sourceView(plainRows(text), unclassed, 'File text');
     const name = format === FORMAT_CSV ? 'CSV' : 'TSV';
-    if (!partial) {
-      try {
-        const { records, total } = parseCsv(text, format === FORMAT_CSV ? ',' : '\t');
-        if (records.length) {
-          rendered = dataTable(records, total, name);
-          modes = [`${name} view`, 'Table'];
-          facts.push(counted(total - 1, 'row'), counted(numericColumns(records).length, 'column'));
-        }
-      } catch (error) {
-        if (!(error instanceof CsvSyntaxError)) throw error;
-        notes.push(viewNote('notice-warn', 'alert', `Not shown as a table`, `${error.message} See `, lineLink(error.line, `line ${error.line}`), '. The raw text is shown.'));
+    const delimiter = format === FORMAT_CSV ? ',' : '\t';
+    try {
+      // The cut may have split the last record of a part; that is not a fault of the file.
+      const { records, total } = partial ? parseCsvPart(text, delimiter) : parseCsv(text, delimiter);
+      if (records.length) {
+        rendered = dataTable(records, total, name, partial);
+        modes = [`${name} view`, 'Table'];
+        facts.push(`${partial ? 'first ' : ''}${counted(total - 1, 'row')}`, counted(numericColumns(records).length, 'column'));
       }
+    } catch (error) {
+      if (!(error instanceof CsvSyntaxError)) throw error;
+      notes.push(viewNote('notice-warn', 'alert', `Not shown as a table`, `${error.message} See `, lineLink(error.line, `line ${error.line}`), '. The raw text is shown.'));
     }
   } else if (language === null && hasAnsi(text)) {
     rendered = sourceView(tokenLines(ansiTokens(text)), unclassed, 'Rendered log');

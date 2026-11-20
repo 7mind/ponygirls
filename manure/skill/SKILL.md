@@ -99,8 +99,9 @@ content URL in a browser shows:
   `.mov`): the browser's player.
 - Anything else except `.html`: shown as text when the content is UTF-8 text,
   otherwise a page that offers the download.
-- Text over 2 MiB or 50,000 lines shows only its leading part, as plain text
-  (no table, no formatted JSON); split larger results or link the download.
+- Text over 2 MiB or 50,000 lines shows only its leading part: CSV/TSV as a
+  table of the first rows, JSON as plain text; split larger results or link
+  the download.
 
 So upload a diff, a JSON result, a CSV table, a log or a script as the file it
 is; do not wrap it in Markdown to make it readable.

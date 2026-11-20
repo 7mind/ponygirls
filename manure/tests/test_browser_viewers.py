@@ -194,6 +194,7 @@ class ViewerBrowserTests(unittest.TestCase):
             "results.csv": b'name,score,note\r\nalpha,1.50,"said ""hi"", twice"\r\nbeta,-2,\r\n',
             "build.log": b"\x1b[2m06:02\x1b[0m \x1b[32mok\x1b[0m\n\x1b[1;31merror\x1b[0m at <x>\n",
             "crawl.log": (b"x" * 98 + "\u00e9\n".encode()) * 26000,
+            "big.csv": b"id,note\n" + b"".join(b"%d,%s\n" % (n, b"cell " * 20) for n in range(1, 22001)),
             "Makefile": b"all: dist\n\tnpm run build\n",
             "notes.md": b"# Notes\n\n```python\ndef f():\n    return 1\n```\n",
             "model.bin": b"\x00\x01binary\xff",

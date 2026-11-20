@@ -578,6 +578,17 @@ await check("text formats: highlighted source with line links, diff, JSON, table
   assert.equal(await meta(), "first 20,763 lines");
   await downloadEqual(page, "formats", "crawl.log");
 
+  // An over-limit table is tabulated as a part: its leading rows, counted as "first".
+  const big = text("big.csv");
+  const bigRows = big.slice(0, big.lastIndexOf("\n", 2 * 1024 * 1024 - 1) + 1).split("\n").length - 2;
+  await open(page, "formats", "big.csv");
+  await page.getByText(/^Showing the first 2\.0 MiB of 2\.\d MiB$/).waitFor();
+  assert.equal(await table.locator("tbody tr").count(), 2000, "the table shows the leading rows");
+  assert.deepEqual(await table.locator("tbody tr").nth(1999).evaluate((row) => [row.cells[0].textContent, row.cells[1].textContent]), ["2000", "2000"]);
+  assert.equal(await page.locator(".data-foot").textContent(), "First 2,000 rows are shown as a table.");
+  assert.equal(await meta(), `first ${bigRows.toLocaleString("en-US")} rows · 2 columns · first ${(bigRows + 1).toLocaleString("en-US")} lines`);
+  assert.equal(await page.getByRole("alert").count(), 0);
+
   await open(page, "formats", "Makefile");
   await fileText.waitFor();
   assert.equal(await page.locator("meta#manure-viewer").getAttribute("data-kind"), "text", "a well-known name is a text type");

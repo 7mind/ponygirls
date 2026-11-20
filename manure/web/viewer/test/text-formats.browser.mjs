@@ -308,21 +308,60 @@ test('a larger file without a declared length is cut all the same; an unstated s
 });
 
 // Regression (review F3): a cut-off table was parsed as if complete: a quoted cell split by the cut was reported as a
-// fault of the file, and counts of the shown part were presented as the file's. A cut-off file has no structured view.
-test('a cut-off file is shown as text only: no table, no formatted JSON, no diff totals, no fault of the cut', async () => {
-  // One cell of many lines lies across the 2 MiB boundary.
-  const csv = 'id,note\n' + ('7,' + 'short cell '.repeat(10) + '\n').repeat(17000) + '8,"' + ('a line inside one long quoted cell '.repeat(3) + '\n').repeat(4000) + '"\n' + '9,tail\n'.repeat(1000);
+// fault of the file, and counts of the shown part were presented as the file's.
+// Specified (owner decision): an over-limit CSV shows a table of its leading rows, worded as a part; a quoted cell left
+// open near the cut is cut damage, one left open further back is a fault of the file.
+test('an over-limit CSV shows a table of its leading rows; cut damage is not a fault, a stray quote far from the cut is', async () => {
+  const row = n => `${n},` + 'short cell '.repeat(9) + '\n';
+  // One cell of many lines lies across the 2 MiB boundary and starts a few kilobytes before it.
+  const head = 'id,note\n' + Array.from({ length: 19550 }, (_, i) => row(i + 1)).join('');
+  const csv = head + '99999,"' + ('a line inside one long quoted cell '.repeat(3) + '\n').repeat(4000) + '"\n' + '9,tail\n'.repeat(1000);
   const cut = csv.slice(0, csv.lastIndexOf('\n', 2 * 1024 * 1024 - 1) + 1);
   const cutLines = cut.split('\n').length - 1;
+  assert.equal((cut.match(/"/g) || []).length, 1, 'the fixture is cut inside a quoted cell');
+  assert.ok(cut.length - head.length < 64 * 1024 && cut.length - head.length > 1024, `the cell starts near the cut: ${cut.length - head.length}`);
   assert.ok(cutLines < 50000, 'the fixture is cut by size, not by its line count');
-  assert.equal((cut.match(/"/g) || []).length % 2, 1, 'the fixture is cut inside a quoted cell');
   await view(file('big.csv', 'text', csv), `
     same($('.view-note .notice-title').textContent, 'Showing the first 2.0 MiB of ${(csv.length / 1024 / 1024).toFixed(1)} MiB', 'the only note is the cut');
     same(all('.view-note').length, 1, 'the cut is not reported as a fault of the file');
-    check($('#view-mode').hidden && !labelled('CSV table'), 'no table of a part');
-    same(labelled('File text').textContent.length, ${cut.length}, 'the leading lines as text');
-    same($('#meta-extra').textContent, 'first ${cutLines.toLocaleString('en-US')} lines', 'no row or column counts of a part');
+    const { group, rendered, raw } = modes();
+    check(!group.hidden && pressed(rendered) && rendered.textContent === 'Table', 'table first');
+    const table = labelled('CSV table');
+    same(table.tBodies[0].rows.length, 2000, 'the leading rows, up to the table limit');
+    same([...table.tBodies[0].rows[1999].cells].map(cell => cell.textContent).slice(0, 2).join('|'), '2000|2000', 'in file order');
+    same($('.data-foot').textContent, 'First 2,000 rows are shown as a table.', 'the footer claims nothing about the rest of the file');
+    same($('#meta-extra').textContent, 'first 19,550 rows \u00b7 2 columns \u00b7 first ${cutLines.toLocaleString('en-US')} lines', 'complete rows of the part, worded as a part');
+    raw.click();
+    same(labelled('File text').textContent.length, ${cut.length}, 'Raw has the leading lines');
+    location.hash = '#L7';
+    await until(() => marked(labelled('File text')).join() === '7', 'line links address the shown lines');
   `);
+  const small = 'id,note\n' + Array.from({ length: 1200 }, (_, i) => `${i + 1},` + 'c'.repeat(1900) + '\n').join('');
+  const smallCut = small.slice(0, small.lastIndexOf('\n', 2 * 1024 * 1024 - 1) + 1);
+  const smallRows = smallCut.split('\n').length - 2;
+  assert.ok(smallRows < 2000 && small.length > 2 * 1024 * 1024);
+  await view(file('fewrows.csv', 'text', small), `
+    same(labelled('CSV table').tBodies[0].rows.length, ${smallRows}, 'every complete row of the part');
+    check(!$('.data-foot'), 'no footer when the table has every row of the part; the note above states the cut');
+    same($('#meta-extra').textContent.split(' \u00b7 ')[0], 'first ${smallRows.toLocaleString('en-US')} rows', 'meta line');
+  `);
+  const stray = 'id,note\n1,ok\n2,"stray quote on line 3\n' + Array.from({ length: 21000 }, (_, i) => row(i + 3)).join('');
+  await view(file('stray.csv', 'text', stray), `
+    same(all('.view-note').length, 2, 'the cut and the fault');
+    same(all('.view-note .notice-title')[1].textContent, 'Not shown as a table', 'a quote left open far from the cut is a fault');
+    check(all('.view-note')[1].textContent.includes('starts on line 3 is not closed'), 'fault text: ' + all('.view-note')[1].textContent);
+    same(all('.view-note')[1].querySelector('a').getAttribute('href'), '#L3', 'the fault links its line');
+    check($('#view-mode').hidden && !labelled('CSV table') && !labelled('File text').hidden, 'raw text only');
+  `);
+  const manyLines = 'n,sq\n' + Array.from({ length: 60000 }, (_, i) => `${i},${i * i}\n`).join('');
+  await view(file('long.csv', 'text', manyLines), `
+    same($('.view-note .notice-title').textContent, 'Showing the first 50,000 lines', 'cut by the line limit');
+    same(labelled('CSV table').tBodies[0].rows.length, 2000, 'table of the leading rows');
+    same($('#meta-extra').textContent, 'first 49,999 rows \u00b7 2 columns \u00b7 first 50,000 lines', 'meta line');
+  `);
+});
+
+test('a cut-off JSON or diff is shown as text only: no formatted view, no validity claim, no totals', async () => {
   const json = '[' + '{"n":1,"text":"' + 'z'.repeat(80) + '"},\n'.repeat(1) + ('{"n":2,"text":"' + 'z'.repeat(80) + '"},\n').repeat(26000) + 'null]\n';
   await view(file('big.json', 'text', json), `
     same(all('.view-note').length, 1, 'only the cut is noted');

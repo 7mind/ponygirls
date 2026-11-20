@@ -86,10 +86,14 @@ a proxy removed the length, when its body exceeds the limit; the size in the not
 from the byte-range answer and is left out when the server does not state it. A view
 also shows at most 50,000 lines (every line is a block with a gutter link; measured in
 headless Chromium, 100,000 two-byte lines took 5 s to render, and 2 MiB of line breaks
-did not finish in a minute), with the same note. Copy raw then copies the shown part. A
-part of a file gets no formatted JSON view, no table and no diff totals: they would
-describe the part as if it were the file. Markdown and diagram sources keep the hard
-2 MiB limit: a cut document would render as a different document.
+did not finish in a minute), with the same note. Copy raw then copies the shown part.
+What is derived from a part is worded as a part or withheld: a part of a JSON document
+gets no formatted view and no validity statement, a part of a diff no totals. A part of
+a CSV or TSV file gets a table of its leading rows, counted as "first N rows"; a record
+counts only when its line break is in the part, and a quoted cell left open within the
+last 64 KiB of the part is taken as split by the cut (its record is left out), while one
+left open further back is reported as a fault of the file. Markdown and diagram sources
+keep the hard 2 MiB limit: a cut document would render as a different document.
 
 ## Files of other types
 
