@@ -50,6 +50,8 @@ object ChroniclePlugin extends PluginDef {
   make[McpTestRuns].fromResource[McpTestRunsResource]
   make[BrowserControlAdmission].fromResource[BrowserControlResource]
   make[SnapshotAdmission].fromResource[SnapshotAdmissionResource]
+  make[UploadPolicy].fromValue(UploadPolicy.production)
+  make[Uploads]
   make[EpochMaintenance].fromResource[EpochMaintenanceResource]
   make[BrowserRpc]
   make[Http]

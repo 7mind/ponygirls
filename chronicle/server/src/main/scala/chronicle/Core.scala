@@ -57,7 +57,7 @@ object IndexingCapacity {
   /** Large jobs (LargeJobs) running at once; small jobs use every annotation session. */
   val largeJobs: Int = 1
 }
-final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Long, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits,accounts: Option[AccountsConfig],maxRawReadBytes: Long,maxIndexingBudgetBytes: Long,maxSmallJobBudgetBytes: Long) {
+final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Long, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits,accounts: Option[AccountsConfig],maxRawReadBytes: Long,maxIndexingBudgetBytes: Long,maxSmallJobBudgetBytes: Long,maxRecordBytes: Long=Config.defaultMaxRecordBytes) {
   def accountsEnabled: Boolean = accounts.exists(_.enabled)
   def jdbcConfig: JdbcConfig = JdbcConfig(jdbcUrl,databaseUser,Path.of(databasePasswordFile),databaseLimits)
   def profile: String = IndexProfileCatalog.current(this).preferred.profile
@@ -84,6 +84,7 @@ final case class Config(listenHost: String, listenPort: Int, allowedOrigin: Stri
     SearchPolicy.dimensions(this)
     Check(maxBodyBytes > 0 && maxBodyBytes <= Config.maximumBodyBytes && maxFileBytes > 0 && maxFiles > 0 && maxMessages > 0, "config", "invalid limits")
     Check(maxRawReadBytes > 0 && maxRawReadBytes <= Config.maximumRawReadBytes && maxIndexingBudgetBytes > 0 && maxSmallJobBudgetBytes > 0, "config", "invalid raw read or indexing budget limits")
+    Check(maxRecordBytes >= Config.minimumRecordBytes && maxRecordBytes <= Config.maximumRecordBytes, "config", "maxRecordBytes must be 1048576..134217728")
     Check(sessionTtlSeconds > 0 && annotation.timeoutSeconds > 0 && embedding.timeoutSeconds > 0 && annotation.maxResponseBytes > 0 && embedding.maxResponseBytes > 0, "config", "invalid timeouts")
     val origin = java.net.URI.create(allowedOrigin)
     val loopbacks = Set("127.0.0.1","localhost","::1","[::1]")
@@ -105,6 +106,12 @@ object Config {
     val fragments=LargeJobs.windows.toLong*ProblemPassages.maximumWindowFragments
     IndexingBudget.estimate(fragments,fragments*ProblemPassages.maximumFragmentBytes,fragments,dimensions).toLong
   }
+  /** Part uploads: the largest raw record (one JSONL line); a record whose part exceeds the ordinary part bound travels
+    * alone in a large part. The maximum keeps a message text derived from one record far below PostgreSQL's jsonb
+    * string limit (256 MiB). */
+  val defaultMaxRecordBytes: Long = 32L*1024*1024
+  val minimumRecordBytes: Long = 1024L*1024
+  val maximumRecordBytes: Long = 128L*1024*1024
   // An omitted member is absent; an explicit null is rejected, as for the other optional members.
   private def present[A: Decoder](cursor: io.circe.HCursor,field: String): Decoder.Result[Option[A]] =
     if(cursor.downField(field).focus.isEmpty) Right(None) else cursor.get[A](field).map(Some(_))
@@ -209,7 +216,8 @@ object Config {
     maxRawReadBytes <- optional(cursor,"maxRawReadBytes",maxBodyBytes.toLong)
     maxIndexingBudgetBytes <- optional(cursor,"maxIndexingBudgetBytes",defaultIndexingBudgetBytes)
     maxSmallJobBudgetBytes <- optional(cursor,"maxSmallJobBudgetBytes",defaultSmallJobBudgetBytes(embedding.dimensions))
-  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits,accounts,maxRawReadBytes,maxIndexingBudgetBytes,maxSmallJobBudgetBytes) }
+    maxRecordBytes <- optional(cursor,"maxRecordBytes",defaultMaxRecordBytes)
+  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits,accounts,maxRawReadBytes,maxIndexingBudgetBytes,maxSmallJobBudgetBytes,maxRecordBytes) }
   def load(path: String): Config = { val c = Wire.parse(Files.readString(Path.of(path))).as[Config].fold(_ => throw DomainError("config", "invalid configuration"), identity); c.validate(); c }
   def credential(path: String): String = BoundedSecretFile.read(Path.of(path),16384).stripTrailing()
 }
@@ -261,56 +269,29 @@ object SnapshotProjection {
     r.copy(metadata=m.copy(title=text(m.title),project=m.project.map(text),gitRemote=m.gitRemote.map(text),gitBranch=m.gitBranch.map(text),gitCommit=m.gitCommit.map(text),producer=text(m.producer),model=m.model.map(text),tags=m.tags.map(text)),messages=r.messages.map(m => m.copy(text=text(m.text))))
   }
 }
+/** A whole `/api/ingest` request, through the rules part uploads share (UploadValidation). */
 object SnapshotValidation {
-  private def scalar(value: String): Unit = {
-    var index=0
-    while(index<value.length) {
-      val char=value.charAt(index)
-      if(Character.isHighSurrogate(char)) {
-        Check(index+1<value.length && Character.isLowSurrogate(value.charAt(index+1)),"invalid","unpaired Unicode surrogate")
-        index+=2
-      } else {
-        Check(!Character.isLowSurrogate(char),"invalid","unpaired Unicode surrogate")
-        index+=1
-      }
-    }
-  }
-  private def structured(value: String): Unit = {
-    scalar(value)
-    Check(!value.contains('\u0000'),"invalid","NUL in structured field")
-  }
+  import UploadValidation.{scalar,structured}
   def validate(r: IngestRequest, c: Config): Unit = {
     Check(r.expectedRevision >= 0 && r.files.nonEmpty && r.files.size <= c.maxFiles && r.messages.size <= c.maxMessages, "invalid", "snapshot limits")
-    List(r.source.collectorNamespace,r.source.discoveryRootId,r.source.producerSessionId).foreach(Check.text(_,256))
-    r.source.subagentId.foreach(Check.text(_,256))
-    (List(r.source.collectorNamespace,r.source.discoveryRootId,r.source.producerSessionId,r.digest)++r.source.subagentId).foreach(structured)
-    val metadata=r.metadata
-    (List(metadata.title,metadata.producer)++metadata.project++metadata.gitRemote++metadata.gitBranch++metadata.gitCommit++metadata.model++metadata.tags).foreach(scalar)
-    metadata.workdir.foreach(structured)
+    UploadValidation.source(r.source)
+    structured(r.digest)
+    UploadValidation.metadata(r.metadata)
     Check(r.files.map(_.path).distinct.size == r.files.size, "invalid", "duplicate files")
-    // Each record is parsed once and not retained: all records of a large snapshot held as syntax trees would take
-    // several times the snapshot's size of heap.
     var recordCount = 0
     val rawIds = Set.newBuilder[String]
     r.files.foreach { f =>
-      structured(f.path); structured(f.sha256); scalar(f.content)
-      Check(f.content.getBytes(UTF_8).length <= c.maxFileBytes && !f.path.startsWith("/") && !f.path.split('/').contains(".."), "invalid", "invalid file")
-      Check(Wire.hash(f.content) == f.sha256 && f.content.linesIterator.filter(_.nonEmpty).forall(l => io.circe.parser.parse(l) match {
-        case Right(record) =>
-          recordCount += 1
-          List("id","uuid").foreach(field => record.hcursor.get[String](field).foreach(rawIds += _))
-          true
-        case Left(_) => false
-      }), "invalid", "invalid file digest or JSONL")
+      UploadValidation.path(f.path); structured(f.sha256); scalar(f.content)
+      Check(f.content.getBytes(UTF_8).length <= c.maxFileBytes, "invalid", "invalid file")
+      Check(Wire.hash(f.content) == f.sha256, "invalid", "invalid file digest or JSONL")
+      recordCount += UploadValidation.records(f.content)(rawIds ++= _)
     }
     Check(Wire.hash(r.files.map(_.content).mkString) == r.digest, "invalid", "source digest mismatch")
     Check(r.messages.map(_.id).distinct.size == r.messages.size, "invalid", "duplicate message IDs")
     val ids = r.messages.map(_.id).toSet ++ rawIds.result()
     r.messages.foreach { m =>
-      (List(m.id,m.role)++m.parentId++m.timestamp).foreach(structured); scalar(m.text)
-      Check.text(m.id,256); Check.text(m.role,64); Check(m.recordIndex >= 0 && m.recordIndex < recordCount && m.parentId.forall(ids.contains),"invalid","invalid message provenance")
+      UploadValidation.message(m)
+      Check(m.recordIndex < recordCount && m.parentId.forall(ids.contains),"invalid","invalid message provenance")
     }
-    Check(r.metadata.tags.size <= 32 && r.metadata.tags.forall(t => SnapshotProjection.text(t).length <= 128), "invalid", "invalid tags")
-    List(r.metadata.startedAt,r.metadata.endedAt).flatten.foreach(t => Check(scala.util.Try(java.time.Instant.parse(t)).isSuccess,"invalid","invalid timestamp"))
   }
 }

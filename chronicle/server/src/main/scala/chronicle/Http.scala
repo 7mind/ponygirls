@@ -14,7 +14,7 @@ import ponygirls.auth.{AccountJson,AccountFailure,PersistentCookie,AccountCreden
 import java.nio.file.{Files,Path}
 import scala.concurrent.duration.*
 
-final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot,protocol: VersionedWire,rpc: BrowserRpc,controls: BrowserControlAdmission,liveness: Http.SocketLiveness,snapshots: SnapshotAdmission) {
+final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot,protocol: VersionedWire,rpc: BrowserRpc,controls: BrowserControlAdmission,liveness: Http.SocketLiveness,snapshots: SnapshotAdmission,uploads: Uploads) {
   private val socketQueueCapacity = 32
   private val retryableCloseCode = 1013
   private val normalCloseCode = 1000
@@ -31,7 +31,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
   private def json(status: Status,j: io.circe.Json): Response[IO] = Response[IO](status).withEntity(j.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cache-Control"),"no-store"))
   private def sessionCookie(secret: String,maxAge: Long): ResponseCookie = ResponseCookie("chronicle_session",secret,path=Some("/"),maxAge=Some(maxAge),secure=config.secureCookies,httpOnly=true,sameSite=Some(SameSite.Strict))
   private def failure(d: DomainError): Response[IO] = {
-    val status = d.code match { case "unauthorized" | "totp-required" => Status.Unauthorized; case "forbidden" | "pending-approval" => Status.Forbidden; case "not-found" => Status.NotFound; case "conflict" => Status.Conflict; case "gone" => Status.Gone; case "too-large" => Status.PayloadTooLarge; case "rate-limited" => Status.TooManyRequests; case "unavailable" => Status.ServiceUnavailable; case _ => Status.BadRequest }
+    val status = d.code match { case "unauthorized" | "totp-required" => Status.Unauthorized; case "forbidden" | "pending-approval" => Status.Forbidden; case "not-found" => Status.NotFound; case "conflict" | "base-mismatch" | "upload-busy" | "content-mismatch" | "upload-expired" => Status.Conflict; case "gone" => Status.Gone; case "too-large" | "record-too-large" => Status.PayloadTooLarge; case "rate-limited" => Status.TooManyRequests; case "unavailable" => Status.ServiceUnavailable; case _ => Status.BadRequest }
     val r = json(status,Wire.encode(Failure.codecJson,Failure(d.code,d.detail)))
     if(status==Status.Unauthorized) r.putHeaders(Header.Raw(CIString("WWW-Authenticate"),"Bearer realm=\"chronicle\"")) else r
   }
@@ -194,6 +194,40 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
       // A snapshot can be hundreds of megabytes: even its text decoding stays off the compute pool.
       IO.blocking { noUrlSecrets(r); origin(r,false); val i = bearer(r); i.requireScope(Scope.Ingest); i }.flatMap(i => snapshots.ingest(r.contentLength)(boundedBytes(r,config.maxBodyBytes).flatMap(bytes => IO.blocking(archive.ingest(i.user.id,Wire.decode(IngestRequest.codecJson,Wire.parse(new String(bytes,java.nio.charset.StandardCharsets.UTF_8)))))))).map(receipt => json(Status.Ok,Wire.encode(IngestReceipt.codecJson,receipt)))
     }
+    case r @ GET -> Root / "api" / "ingest" / "uploads" => handle {
+      // The capability probe: a server without the upload API answers this path 404 without a Failure body.
+      ingestBearer(r).flatMap(_ => boundedBytes(r,0)).map(_ => json(Status.Ok,Wire.encode(UploadLimits.codecJson,uploads.limits)))
+    }
+    case r @ POST -> Root / "api" / "ingest" / "uploads" => handle {
+      ingestBearer(r).flatMap(i => boundedBody(r,math.min(config.maxBodyBytes,UploadPolicy.maxOpenBytes)).flatMap(raw => IO.blocking(uploads.open(i.user.id,Wire.decode(UploadOpen.codecJson,Wire.parse(raw))))))
+        .map(state => json(Status.Ok,Wire.encode(UploadState.codecJson,state)))
+    }
+    case r @ GET -> Root / "api" / "ingest" / "uploads" / UUIDVar(id) => handle {
+      ingestBearer(r).flatMap(i => boundedBytes(r,0).flatMap(_ => IO.blocking(uploads.status(i.user.id,id)))).map(state => json(Status.Ok,Wire.encode(UploadState.codecJson,state)))
+    }
+    case r @ POST -> Root / "api" / "ingest" / "uploads" / UUIDVar(id) / "parts" => handle {
+      ingestBearer(r).flatMap { i =>
+        def accept(maximum: Int): IO[UploadState] = boundedBytes(r,maximum).flatMap { bytes =>
+          IO.blocking(uploads.part(i.user.id,id,Wire.decode(UploadPart.codecJson,Wire.parse(new String(bytes,java.nio.charset.StandardCharsets.UTF_8))),bytes.length.toLong))
+        }
+        r.contentLength.filter(_>UploadPolicy.maxPartBytes) match {
+          // A large part (one record) announces its length and is admitted like a large ingest before its body is read.
+          case Some(announced) =>
+            Check(announced<=UploadPolicy.maxLargePartBytes(config),"too-large",s"a part has at most ${UploadPolicy.maxLargePartBytes(config)} bytes")
+            snapshots.ingest(Some(announced))(accept(announced.toInt))
+          case None => accept(UploadPolicy.maxPartBytes)
+        }
+      }.map(state => json(Status.Ok,Wire.encode(UploadState.codecJson,state)))
+    }
+    case r @ POST -> Root / "api" / "ingest" / "uploads" / UUIDVar(id) / "commit" => handle {
+      ingestBearer(r).flatMap(i => boundedBytes(r,0).flatMap(_ => IO.blocking(uploads.commit(i.user.id,id)))).map(receipt => json(Status.Ok,Wire.encode(IngestReceipt.codecJson,receipt)))
+    }
+    case r @ POST -> Root / "api" / "ingest" / "uploads" / UUIDVar(id) / "abort" => handle {
+      ingestBearer(r).flatMap(i => boundedBytes(r,0).flatMap(_ => IO.blocking(uploads.abort(i.user.id,id)))).map(state => json(Status.Ok,Wire.encode(UploadState.codecJson,state)))
+    }
+    // Every other request under the upload API is answered with a Failure body, so that clients never mistake it for a
+    // server without the API.
+    case r if r.uri.path.renderString=="/api/ingest/uploads" || r.uri.path.renderString.startsWith("/api/ingest/uploads/") => handle(IO.raiseError[Response[IO]](DomainError("not-found","no such upload endpoint")))
     case r @ POST -> Root / "api" / "collector" / "progress" => handle {
       IO.blocking { noUrlSecrets(r); origin(r,false); val i=bearer(r); i.requireScope(Scope.Ingest); i }.flatMap { i =>
         boundedBody(r,math.min(config.maxBodyBytes,CollectorProgress.maxBodyBytes)).flatMap(raw => IO.blocking(app.collectorProgress(i,Wire.decode(CollectorProgressUpdate.codecJson,Wire.parse(raw)))))
@@ -218,6 +252,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     case DELETE -> Root / "mcp" => IO.pure(Response[IO](Status.MethodNotAllowed).putHeaders(Header.Raw(CIString("Allow"),"POST")))
     case r if r.method==Method.GET && !r.uri.path.renderString.startsWith("/api/") => static(r)
   }
+  private def ingestBearer(r: Request[IO]): IO[Identity] = IO.blocking { noUrlSecrets(r); origin(r,false); val i=bearer(r); i.requireScope(Scope.Ingest); i }
   private def handle(io: IO[Response[IO]]): IO[Response[IO]] = IO.defer(io).handleErrorWith {
     case d: DomainError => IO.pure(failure(d))
     case _ => IO(logger.error("request failed")) *> IO.pure(json(Status.InternalServerError,Wire.encode(Failure.codecJson,Failure("unavailable","request failed"))))

@@ -98,6 +98,31 @@ final class OwnerLeaseBoundaryTest extends munit.FunSuite {
       } finally { pool.shutdownNow(); assert(pool.awaitTermination(6,TimeUnit.SECONDS)) }
     }
   }
+  test("Effectual GoodCommunication: parts staged while a reader holds a pinned view and a REPEATABLE READ transaction stay unreachable; the commit makes the new revision appear whole") {
+    OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
+      val uploads=new Uploads(db,c,UploadPolicy.production)
+      val original=Fixtures.snapshot(); val id=a.ingest("a",original).sessionId
+      val head=UploadFixtures.Content(original.files.head.content.linesIterator.toList,original.messages)
+      val delta=UploadFixtures.Content(List("""{"type":"message","id":"appended","parentId":"u","message":{"role":"assistant","content":[{"type":"text","text":"appended answer"}]}}"""),
+        List(Message("appended",Some("u"),"assistant","appended answer",None,3)))
+      def read(): (Int,List[String],List[Int]) = {
+        val head=a.session("a",id).revision
+        (head,a.messages("a",id,0,100,None).messages.map(_.id),a.searchSessionMessages("a",id,ContentView(head,None),"appended answer",None,10).hits.map(_.position))
+      }
+      val upload=uploads.open("a",UploadFixtures.declaration(original.source,1,head++delta,Some(head))).uploadId
+      UploadFixtures.send(uploads,"a",upload,UploadFixtures.part(0,delta))
+      assertEquals(read(),(1,List("u"),Nil),"a committed part is staged, not visible")
+      db.transaction { snapshot =>
+        snapshot.setTransactionIsolation(java.sql.Connection.TRANSACTION_REPEATABLE_READ)
+        def visible(): (Int,Int) = Sql.one(snapshot,"SELECT s.revision,count(m.position) FROM ch_sources s JOIN ch_revisions r ON r.session_id=s.id AND r.revision=s.revision JOIN ch_epoch_messages m ON m.epoch=r.epoch AND m.position<r.message_count WHERE s.id=? GROUP BY s.revision",id)(r => (r.getInt(1),r.getInt(2))).get
+        assertEquals(visible(),(1,1))
+        assertEquals(uploads.commit("a",upload).revision,2)
+        assertEquals(visible(),(1,1),"a REPEATABLE READ transaction keeps the head it read before the commit")
+      }
+      assertEquals(read(),(2,List("u","appended"),List(1)))
+      assertEquals(a.messages("a",id,0,100,Some(ContentView(1,None))).messages.map(_.id),List("u"),"the pinned old revision is unchanged")
+    }
+  }
   private def bounded(c: Config,timeout: FiniteDuration): Config = c.copy(databaseLimits=c.databaseLimits.copy(statementTimeout=timeout,lockTimeout=timeout))
   test("Effectual GoodCommunication regression: a claim streaming its snapshot does not hold up the projection of an ingest of a source whose older job's lease ended") {
     OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>

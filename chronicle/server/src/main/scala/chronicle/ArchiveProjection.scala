@@ -91,13 +91,14 @@ object ArchiveProjection {
     info(c,id,revision,request.metadata,request.source,request.completion,request.redacted,latest(request.metadata,request.messages.iterator),request.messages.size)
   }
   /** An epoch revision's projection: its metadata fragments and info row. Its message fragments are the epoch's rows, and
-    * `messageTime` is the latest message timestamp (the first choice of `latest`). */
-  def persistEpoch(c: Connection,id: UUID,revision: Int,request: IngestRequest,messageTime: Option[Instant]): Unit = {
+    * `messageTime` is the latest message timestamp (the first choice of `latest`); `request` carries the envelope, the
+    * revision has `messageCount` messages. */
+  def persistEpoch(c: Connection,id: UUID,revision: Int,request: IngestRequest,messageCount: Int,messageTime: Option[Instant]): Unit = {
     Using.resource(new Writer(c,id,revision)) { writer =>
       folded(c,"SELECT lower(value COLLATE pg_unicode_fast) FROM jsonb_array_elements_text(?::jsonb) field(value)",List(metadataJson(request.metadata,request.source)),writer)
       writer.flush()
     }
-    info(c,id,revision,request.metadata,request.source,request.completion,request.redacted,messageTime.orElse(parsedTime(request.metadata.endedAt)).orElse(parsedTime(request.metadata.startedAt)),request.messages.size)
+    info(c,id,revision,request.metadata,request.source,request.completion,request.redacted,messageTime.orElse(parsedTime(request.metadata.endedAt)).orElse(parsedTime(request.metadata.startedAt)),messageCount)
   }
   /** Rebuilds the projection of legacy revisions whose info row is missing or of another lexical version. Epoch revisions
     * get theirs in their ingest transaction; one without it, or of another version, refuses the start (rebuilding epoch

@@ -7,13 +7,15 @@ import izumi.distage.model.definition.Lifecycle
 import java.util.UUID
 import scala.concurrent.duration.*
 
-/** Background upkeep of the epoch layout (append-only ingest spec §3): clears the head-candidate mask of superseded
-  * epochs' fragments, then marks them pruned, and deletes the epochs of purged sources. Reads and search never depend on
-  * it (they join on the head's epoch and count). Each statement touches at most `rowsPerStatement` rows in a transaction
-  * of its own; a failed pass is logged and the next one runs an interval later, so a failure never ends the server. */
+/** Background upkeep of the epoch layout (append-only ingest spec §3, §4.6): clears the head-candidate mask of superseded
+  * epochs' fragments, then marks them pruned, deletes the epochs of purged sources, and sweeps part uploads (expires
+  * passed leases, deletes the staging of attempts that ended, deletes old terminal attempts). Reads and search never
+  * depend on it (they join on the head's epoch and count). Each statement touches at most `rowsPerStatement` rows in a
+  * transaction of its own; a failed pass is logged and the next one runs an interval later, so a failure never ends the
+  * server. */
 final class EpochMaintenance private (db: Database,logger: logstage.IzLogger,val interval: FiniteDuration) {
   import EpochMaintenance.rowsPerStatement
-  private def pass: IO[Unit] = prune *> deletePurged
+  private def pass: IO[Unit] = prune *> deletePurged *> sweepUploads
   /** A pass whose failure is logged: it ends only that pass. */
   private def attempt: IO[Unit] = pass.handleErrorWith(error => IO(logger.warn(s"epoch maintenance pass failed, next pass in $interval: $error")))
   private def transaction[A](f: java.sql.Connection => A): IO[A] = IO.blocking(db.transaction(f))
@@ -42,22 +44,43 @@ final class EpochMaintenance private (db: Database,logger: logstage.IzLogger,val
     * ingest lock, and the epoch is skipped for this pass while an ingest holds it (one that started before the purge and
     * still writes into the epoch fails at its switch). */
   private def deleteEpoch(epoch: UUID,owner: String,key: String): IO[Unit] = repeatWhile(transaction { c =>
-    Sql.one(c,"SELECT pg_try_advisory_xact_lock(hashtextextended(?,0))",s"ingest:$owner:$key")(_.getBoolean(1)).contains(true) && {
-      val deleted=EpochMaintenance.rowTables.iterator.map { case (table,keys) =>
-        val on=keys.map(k => s"t.$k=x.$k").mkString(" AND ")
-        Sql.exec(c,s"DELETE FROM $table t USING (SELECT ${keys.mkString(",")} FROM $table WHERE epoch=? LIMIT $rowsPerStatement) x WHERE t.epoch=? AND $on",epoch,epoch)
-      }.find(_>0)
-      if(deleted.isEmpty) Sql.exec(c,"DELETE FROM ch_epochs WHERE id=?",epoch)
-      deleted.nonEmpty
+    EpochMaintenance.ingestLock(c,owner,key) && {
+      val deleted=EpochMaintenance.deleteRows(c,epoch,EpochMaintenance.Floors.all)
+      if(!deleted) Sql.exec(c,"DELETE FROM ch_epochs WHERE id=?",epoch)
+      deleted
     }
   })
+
+  private def sweepUploads: IO[Unit] =
+    transaction(c => Sql.rows(c,"SELECT id,owner,source_key FROM ch_uploads WHERE (phase='Open' AND expires_at<=clock_timestamp()) OR (phase<>'Open' AND NOT cleaned) ORDER BY id")(r => (r.getObject(1,classOf[UUID]),r.getString(2),r.getString(3))))
+      .flatMap(_.traverse_ { case (id,owner,key) => repeatWhile(transaction(c => EpochMaintenance.ingestLock(c,owner,key) && Uploads.sweep(c,id))) }) *>
+      repeatWhile(transaction(c => Sql.exec(c,s"DELETE FROM ch_uploads WHERE id IN(SELECT id FROM ch_uploads WHERE cleaned AND phase IN('Aborted','Expired','Failed') AND terminal_at<clock_timestamp()-?::bigint*interval '1 second' LIMIT $rowsPerStatement)",Uploads.retention.toSeconds)==rowsPerStatement))
 }
 object EpochMaintenance {
   val interval: FiniteDuration = 60.seconds
   /** Rows per statement: 10,000 fragment candidates take ≈ 114 ms and 45 MB of WAL on the archive copy. */
   val rowsPerStatement = 10000
-  /** The epoch row tables with their keys besides the epoch. */
+  /** The epoch row tables with their keys besides the epoch, the first key being the one ordered along the epoch. */
   private val rowTables = List("ch_epoch_fragments"->List("position","part"),"ch_epoch_records"->List("record_index","record_key"),"ch_epoch_raw"->List("byte_offset"),"ch_epoch_messages"->List("position"))
+  /** The first message position, raw byte offset and record index of rows to delete: rows below them stay. */
+  final case class Floors(messages: Int,rawBytes: Long,records: Int)
+  object Floors {
+    val all: Floors = Floors(0,0L,0)
+    /** Every row beyond the counts of the epoch's committed revisions (all rows of an epoch without one). */
+    def staged(c: java.sql.Connection,epoch: UUID): Floors =
+      Sql.one(c,"SELECT coalesce(max(message_count),0),coalesce(max(raw_bytes),0),coalesce(max(record_count),0) FROM ch_revisions WHERE epoch=?",epoch)(r => Floors(r.getInt(1),r.getLong(2),r.getInt(3))).get
+  }
+  /** Deletes at most `rowsPerStatement` rows of `epoch` at or beyond `floors` from the first row table that has any;
+    * false when none was left. */
+  private[chronicle] def deleteRows(c: java.sql.Connection,epoch: UUID,floors: Floors): Boolean =
+    rowTables.iterator.map { case (table,keys) =>
+      val on=keys.map(k => s"t.$k=x.$k").mkString(" AND ")
+      val floor: Sql.Param=table match { case "ch_epoch_raw" => floors.rawBytes; case "ch_epoch_records" => floors.records; case _ => floors.messages }
+      Sql.exec(c,s"DELETE FROM $table t USING (SELECT ${keys.mkString(",")} FROM $table WHERE epoch=? AND ${keys.head}>=? LIMIT $rowsPerStatement) x WHERE t.epoch=? AND $on",epoch,floor,epoch)
+    }.exists(_>0)
+  /** The ingest lock of a source if no writer holds it (this transaction's, until it ends). */
+  private[chronicle] def ingestLock(c: java.sql.Connection,owner: String,key: String): Boolean =
+    Sql.one(c,"SELECT pg_try_advisory_xact_lock(hashtextextended(?,0))",s"ingest:$owner:$key")(_.getBoolean(1)).contains(true)
   /** Runs a pass after every `interval` (waited by `sleep`) until released. */
   def resource(db: Database,logger: logstage.IzLogger,interval: FiniteDuration,sleep: FiniteDuration => IO[Unit]): Resource[IO,EpochMaintenance] = for {
     supervisor <- Supervisor[IO](await=false)

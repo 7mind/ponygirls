@@ -52,6 +52,7 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     requireRetiredPassageFormatsMigrated(c)
     migrate(c,"022_passage_formats_retired.sql")
     migrate(c,"024_epoch_layout.sql")
+    migrate(c,"025_uploads.sql")
     val dimensions=SearchPolicy.dimensions(config)
     Sql.exec(c,s"CREATE INDEX IF NOT EXISTS ch_search_hnsw_d$dimensions ON ch_search_chunks USING hnsw ((l2_normalize(embedding)::halfvec($dimensions)) halfvec_cosine_ops) WHERE vector_dims(embedding)=$dimensions")
     profiles.register(c)
@@ -170,6 +171,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       } match {
         case Some(receipt) => receipt
         case None =>
+          Uploads.admitIngest(c,owner,key)
           val target=OwnerTargets.read(c,owner,true)
           db.profiles.resolve(target.profile)
           Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key) VALUES(?,?,?) ON CONFLICT(owner,source_key) DO NOTHING",UUID.randomUUID(),owner,key)

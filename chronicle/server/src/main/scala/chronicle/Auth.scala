@@ -337,6 +337,9 @@ final class Auth(db: Database, config: Config) {
         db.profiles.resolve(OwnerTargets.read(c,owner,true).profile)
         Jobs.retry(c,owner,id); receipt("RetryJob",Some(id))
       case Operation.Purge(id) =>
+        // First the source's live upload, in the writers' lock order (attempt row, then source row): it waits for a part
+        // or commit in flight, which then ends; a later part or commit finds the attempt aborted (gone).
+        Sql.exec(c,"UPDATE ch_uploads SET phase='Aborted',failure=?,terminal_at=clock_timestamp() WHERE owner=? AND source_key=(SELECT source_key FROM ch_sources WHERE id=? AND owner=?) AND phase='Open'",Uploads.purged,owner,id,owner)
         Check(Sql.exec(c,"UPDATE ch_sources SET tombstone=true,published=NULL WHERE id=? AND owner=?",id,owner)==1,"not-found","session not found")
         Sql.exec(c,"DELETE FROM ch_chunks WHERE generation IN(SELECT id FROM ch_generations WHERE session_id=?)",id); Sql.exec(c,"DELETE FROM ch_generations WHERE session_id=?",id); Sql.exec(c,"DELETE FROM ch_jobs WHERE session_id=?",id); Sql.exec(c,"DELETE FROM ch_revisions WHERE session_id=?",id)
         receipt("Purge",Some(id))

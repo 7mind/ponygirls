@@ -35,8 +35,8 @@ let
   # The scripts the fast gate and chronicle-backend-full run; not the inner-loop dispatcher chronicle/scripts/test.sh.
   tests = [ "chronicle/server/src/test" "chronicle/tests" "chronicle/models" "chronicle/config.example.json"
     "chronicle/scripts/test-postgres.sh" "chronicle/scripts/test-fast.sh" "chronicle/scripts/fast-suites.txt" "chronicle/scripts/sbt.sh"
-    # LegacyFreeCheckTest runs the retained post-deployment check, EpochDownScriptTest the S1 down-script.
-    "chronicle/scripts/check-legacy-free.sql" "chronicle/scripts/down-024-epoch-layout.sql" ];
+    # LegacyFreeCheckTest runs the retained post-deployment check, EpochDownScriptTest the S1 down-script, UploadBoundaryTest the S2 one.
+    "chronicle/scripts/check-legacy-free.sql" "chronicle/scripts/down-024-epoch-layout.sql" "chronicle/scripts/down-025-uploads.sql" ];
   sharedModuleTests = [ "shared/lossless-json/src/test"
     "shared/service-runtime/src/test" "shared/service-auth/src/test" "shared/model-http/src/test"
     "shared/retrieval-core/src/test" "shared/retrieval-postgres/src/test" ];
