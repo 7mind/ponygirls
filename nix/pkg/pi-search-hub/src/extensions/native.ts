@@ -3,7 +3,7 @@
 // https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
 // https://docs.x.ai/developers/tools/web-search
 // https://docs.x.ai/developers/tools/citations
-import type { Api, Context, Model, Usage } from "@earendil-works/pi-ai";
+import type { Api, Context, Model, ThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { boundedOperation } from "./engine/runtime.js";
 import { DEFAULT_TIMEOUTS, resolveTimeouts } from "./engine/policy.js";
@@ -119,6 +119,12 @@ export async function discoverNativeEngines(
 	return engines;
 }
 
+const SEARCH_REASONING_LEVEL: ThinkingLevel = "low";
+
+function searchReasoningLevel(model: Model<Api>): ThinkingLevel | undefined {
+	return model.reasoning && model.thinkingLevelMap?.off === undefined ? SEARCH_REASONING_LEVEL : undefined;
+}
+
 async function searchNative(
 	ctx: NativeDiscoveryContext,
 	id: NativeProviderId,
@@ -155,6 +161,7 @@ async function searchNative(
 		timeoutMs: timeouts.nativeMs,
 		maxRetries: 0,
 		transport: "sse",
+		reasoning: searchReasoningLevel(model),
 		...(proxyConversation ? { headers: { "x-grok-conv-id": proxyConversation } } : {}),
 		onPayload: (payload) => injectNativeSearchPayload(id, payload, model.id),
 		onProviderStreamEvent: (event) => collector.observe(id, event),

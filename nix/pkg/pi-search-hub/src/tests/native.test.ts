@@ -57,6 +57,7 @@ async function fixture(config: {
 	rawStopReason?: string;
 	current?: NativeProviderId;
 	settleAfterAbortMs?: number | "never";
+	model?: Partial<Model<Api>>;
 } = {}) {
 	const credentials = new InMemoryCredentialStore();
 	const models = createModels({ credentials, authContext: { env: async () => undefined, fileExists: async () => false } });
@@ -66,6 +67,7 @@ async function fixture(config: {
 			id: ids[id], name: ids[id], provider: id, api: apis[id], baseUrl: id === "grok-build" ? "https://cli-chat-proxy.grok.com/v1" : `https://${id}.configured-proxy.test/v1`,
 			headers: { "X-Model": "configured" }, reasoning: false, input: ["text"],
 			contextWindow: 10000, maxTokens: 3000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			...config.model,
 		};
 		const stream = (requestModel: Model<Api>, context: TranscriptContext, options?: SimpleStreamOptions) => {
 			const output = createAssistantMessageEventStream();
@@ -224,6 +226,27 @@ describe("configured native search", () => {
 		expect(engines.map((engine) => engine.id)).toEqual(["openai", "openai-codex"]);
 		expect(engines[1].label).toContain("gpt-6.1-sol; subscription OAuth");
 		await expect(engines[1].search("q", 3)).resolves.toHaveProperty("results");
+	});
+
+	it("requests a supported reasoning effort when the model cannot disable reasoning", async () => {
+		const { ctx, dispatch } = await fixture({ providers: ["openai-codex"], oauth: ["openai-codex"], model: { reasoning: true, thinkingLevelMap: { minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" } } });
+		const [engine] = await discoverNativeEngines(ctx);
+		await expect(engine.search("codex harness", 3)).resolves.toHaveProperty("results");
+		expect(dispatch.mock.calls[0][0].options.reasoning).toBe("low");
+	});
+
+	it("leaves reasoning at provider defaults when the model supports disabling it", async () => {
+		const { ctx, dispatch } = await fixture({ providers: ["openai-codex"], oauth: ["openai-codex"], model: { reasoning: true, thinkingLevelMap: { off: "none", low: "low" } } });
+		const [engine] = await discoverNativeEngines(ctx);
+		await expect(engine.search("codex harness", 3)).resolves.toHaveProperty("results");
+		expect(dispatch.mock.calls[0][0].options.reasoning).toBeUndefined();
+	});
+
+	it("does not request a reasoning effort for non-reasoning models", async () => {
+		const { ctx, dispatch } = await fixture({ providers: ["openai-codex"], oauth: ["openai-codex"], model: { reasoning: false } });
+		const [engine] = await discoverNativeEngines(ctx);
+		await expect(engine.search("codex harness", 3)).resolves.toHaveProperty("results");
+		expect(dispatch.mock.calls[0][0].options.reasoning).toBeUndefined();
 	});
 
 	it("keeps the compatibility Codex helper subscription-only with real configured providers", async () => {
