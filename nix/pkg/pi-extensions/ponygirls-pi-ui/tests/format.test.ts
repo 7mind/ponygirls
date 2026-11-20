@@ -46,7 +46,7 @@ test("border badges: glyph alone when quiet, label coloured by state, compact fo
   assert.equal(visibleWidth(clipped), 3);
 });
 
-test("wide badges use a padded chip and wide-only details; the narrower forms stay unchanged", () => {
+test("wide-only details remain available with a token-only theme; no tool background is substituted", () => {
   const tagged: UiTheme = {
     fg: (color, text) => `<${color}>${text}</>`,
     bg: (color, text) => `[${color}]${text}[/]`,
@@ -54,10 +54,10 @@ test("wide badges use a padded chip and wide-only details; the narrower forms st
   };
   const badge = { glyph: "📥", state: "attention", label: "5", compact: "5", wideLabel: "2+3", wideShortcut: "⌃⌥D" } as const;
   assert.equal(borderBadge(tagged, badge, 119), " 📥 <warning>5</> ");
-  assert.equal(borderBadge(tagged, badge, 120), "[customMessageBg] 📥 <warning>2+3</><muted> · ⌃⌥D</> [/]");
+  assert.equal(borderBadge(tagged, badge, 120), " 📥 <warning>2+3</><muted> · ⌃⌥D</> ");
   assert.equal(borderBadgeCompact(tagged, badge, 120), "📥<warning>5</>");
   const quiet = { glyph: "🗃️", state: "settled", label: "", compact: "" } as const;
-  assert.equal(borderBadge(tagged, quiet, 120), "[toolPendingBg] 🗃️ [/]");
+  assert.equal(borderBadge(tagged, quiet, 120), " 🗃️ ");
 });
 
 test("a wide badge that exceeds the whole render width falls back without clipping the hint", () => {
