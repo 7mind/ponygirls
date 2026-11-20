@@ -46,8 +46,9 @@ export interface ReceivedPart { uploadId: string; ordinal: number; bytes: number
 export class FakeChronicle {
   supportsUploads = true;
   limits = productionLimits();
-  /** The next commit is applied, but its response never arrives. */
+  /** The next commit is applied, but neither its answer nor the answer to the client's resending of it arrives. */
   loseCommitAck = false;
+  private lostCommitAnswers = 0;
   /** Attempts are unknown to status requests, as after their deletion. */
   forgetAttempts = false;
   /** The next part request with this ordinal answers 503 without being applied. */
@@ -68,6 +69,8 @@ export class FakeChronicle {
   rawTooLarge: number | null = null;
   /** The record cap of parts, when it differs from the announced limits. */
   partRecordCap: bigint | null = null;
+  /** The next request of this kind (e.g. `POST /api/ingest/uploads/{id}/parts`) finds its connection closed: no answer. */
+  resetNext: string | null = null;
   readonly heads = new Map<string, Head>();
   readonly attempts = new Map<string, Attempt>();
   readonly receivedParts: ReceivedPart[] = [];
@@ -97,6 +100,7 @@ export class FakeChronicle {
     const body = Buffer.concat(chunks).toString('utf8');
     const path = (request.url ?? '').split('/').map(segment => /^[0-9a-f-]{36}$/.test(segment) ? '{id}' : segment).join('/');
     this.requests.push(`${request.method} ${path}`);
+    if (this.resetNext === `${request.method} ${path}`) { this.resetNext = null; request.socket.destroy(); return; }
     const json = (status: number, value: unknown): void => { response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(value)); };
     const failure = (status: number, code: string): void => json(status, { code, message: `synthetic ${code}` });
     const segments = (request.url ?? '').split('/').slice(1);
@@ -184,7 +188,12 @@ export class FakeChronicle {
     json(200, this.state(attempt));
   }
   private commit(attempt: Attempt, response: ServerResponse, json: (status: number, value: unknown) => void, failure: (status: number, code: string) => void): void {
-    if (attempt.phase === UploadPhase.Committed) return json(200, IngestReceipt_JsonCodec.instance.encode(CODEC, attempt.receipt!));
+    // A commit held back stays in the server: another commit request of the attempt gets no answer either.
+    if (attempt.delayedCommit === true) { response.destroy(); return; }
+    if (attempt.phase === UploadPhase.Committed) {
+      if (this.lostCommitAnswers > 0) { this.lostCommitAnswers--; response.destroy(); return; }
+      return json(200, IngestReceipt_JsonCodec.instance.encode(CODEC, attempt.receipt!));
+    }
     if (this.expireCommit && attempt.phase === UploadPhase.Open) { this.expireCommit = false; attempt.phase = UploadPhase.Expired; this.onExpire?.(); }
     if (attempt.phase === UploadPhase.Expired) return failure(409, 'upload-expired');
     if (attempt.phase !== UploadPhase.Open) return failure(409, 'conflict');
@@ -196,7 +205,7 @@ export class FakeChronicle {
     if ((head?.revision ?? 0) !== open.expectedRevision) return failure(409, 'conflict');
     if (this.delayCommit) { this.delayCommit = false; attempt.delayedCommit = true; response.destroy(); return; }
     this.apply(attempt);
-    if (this.loseCommitAck) { this.loseCommitAck = false; response.destroy(); return; }
+    if (this.loseCommitAck) { this.loseCommitAck = false; this.lostCommitAnswers = 1; response.destroy(); return; }
     json(200, IngestReceipt_JsonCodec.instance.encode(CODEC, attempt.receipt!));
   }
   /** The commit itself: the attempt's content becomes the head (its checks passed). */

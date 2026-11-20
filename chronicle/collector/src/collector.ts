@@ -20,7 +20,7 @@ import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRunti
 import { CollectorPhase } from '../../generated/typescript/chronicle/api/CollectorPhase.js';
 import { CollectorCounters } from '../../generated/typescript/chronicle/api/CollectorCounters.js';
 import { CollectorProgressUpdate } from '../../generated/typescript/chronicle/api/CollectorProgressUpdate.js';
-import type { ProgressReporter } from './progress.ts';
+import { ReportError, type ProgressReporter } from './progress.ts';
 import type { Config } from './config.ts';
 import type { GitMetadata, GitObservation } from './git.ts';
 import { headBase, type Head, type Dropped, type EntryStatus, type HeadBase, type IdentifierRefusal, type RecordOverLimit, type Spool, type Pending, type SourceRead, type UnicodeRepair, type Upload, type UploadProbe } from './spool.ts';
@@ -133,11 +133,13 @@ export class Collector {
           new CollectorCounters(c.discovered, c.scanned, c.waiting, c.excluded, c.unchanged, c.enqueued, c.uploaded, c.uploadFailures, c.quarantined, c.pending, c.stopped, c.conflicts, BigInt(c.scannedBytes)),
           totalUploadBytes, uploadedBytes, current, error);
         const ack = await this.reporter.report(update);
-        if (ack.sequence !== sequence || ack.accepted !== true) throw new CollectorError('report-not-accepted');
+        if (ack.sequence !== sequence || ack.accepted !== true) throw new ReportError('not-accepted');
         this.spool.reportAccepted(sequence, Date.now());
-      } catch {
-        reportFailure = true; this.spool.reportFailed('report-failed');
-        this.spool.diagnostic({ rootId: 'reporting', pathId: hash('reporting'), code: 'report-failed' });
+      } catch (error) {
+        // The failure's class, never its text: a reporter's bounded reason, or a local error code.
+        const cause = error instanceof ReportError ? error.reason : error instanceof CollectorError ? error.code : 'unknown';
+        reportFailure = true; this.spool.reportFailed('report-failed', cause);
+        this.spool.diagnostic({ rootId: 'reporting', pathId: hash('reporting'), code: 'report-failed', cause });
       }
     };
     let scan; const coverage: RootCoverage[] = [];

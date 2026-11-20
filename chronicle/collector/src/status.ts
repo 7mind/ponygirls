@@ -43,9 +43,20 @@ function identifierRefusalText(refusal: IdentifierRefusal): string {
 export function recordOverLimitText(row: RecordOverLimit): string {
   return `${literal(row.format)} session ${literal(row.pathId.slice(0, PATH_ID_DISPLAY_LENGTH))}: record ${count(row.recordIndex)} is ${count(Number(row.size))} bytes, above the record limit of ${count(row.limit)} bytes (${row.limitSource} maxRecordBytes). This session is not uploaded. Raise maxRecordBytes on the collector and on the server (both, at most 134,217,728) and it is uploaded at the next scan.`;
 }
+const REPORT_CAUSES: Record<string, string> = { 'connection-reset': 'connection closed by the server before an answer', 'connection-refused': 'connection refused',
+  'ack-too-large': 'acknowledgement over 64 KiB', 'invalid-ack': 'invalid acknowledgement', 'not-accepted': 'not accepted by the server',
+  'request-too-large': 'report over 64 KiB', 'token-unavailable': 'token file unavailable', network: 'network failure' };
+/** The text of a progress-report failure class (progress.ts `ReportError`). */
+export function reportCause(cause: string): string {
+  const timeout = /^timeout:(\d+)$/.exec(cause); if (timeout !== null) return `timed out after ${count(Number(timeout[1]))} ms`;
+  const http = /^http:(\d{3})$/.exec(cause); if (http !== null) return `HTTP ${http[1]!}`;
+  const network = /^network:(.+)$/.exec(cause); if (network !== null) return `network failure ${literal(network[1]!)}`;
+  return Object.hasOwn(REPORT_CAUSES, cause) ? REPORT_CAUSES[cause]! : literal(cause);
+}
 function diagnosticLine(diagnostic: Diagnostic): string {
   const line = `  ${diagnostic.code === 'root-missing' ? 'root missing (root-missing)' : literal(diagnostic.code)}: ${rootLabel(diagnostic.rootId, diagnostic.pathId)}`;
   const limit = Object.hasOwn(LIMIT_DESCRIPTIONS, diagnostic.code) ? LIMIT_DESCRIPTIONS[diagnostic.code] : undefined;
+  if (diagnostic.cause !== undefined) return `${line} · ${reportCause(diagnostic.cause)}`;
   const values = diagnostic.values === undefined ? '' : ` · ${count(diagnostic.values)} distinct paths (limit ${count(EVIDENCE_LIMITS.values)})`;
   return limit === undefined || diagnostic.measured === undefined || diagnostic.limit === undefined ? line : `${line} · ${limit(diagnostic.measured, diagnostic.limit)}${values}`;
 }
@@ -124,7 +135,7 @@ export function formatCollectorStatus(status: CollectorStatus): string {
   const reporting = status.reporting;
   lines.push(`Reporting: sequence ${literal(reporting.sequence)}, acknowledged ${reporting.acceptedSequence === null ? 'never' : literal(reporting.acceptedSequence)}`);
   if (reporting.acceptedAt !== null) lines.push(`  Last acknowledged: ${new Date(reporting.acceptedAt).toISOString()}`);
-  if (reporting.error !== null) lines.push(`  Error: ${literal(reporting.error)}`);
+  if (reporting.error !== null) lines.push(`  Error: ${literal(reporting.error)}${reporting.cause === undefined || reporting.cause === null ? '' : ` · ${reportCause(reporting.cause)}`}`);
   lines.push('Saved local collection status; uploads do not imply completed server indexing.');
   return lines.join('\n') + '\n';
 }

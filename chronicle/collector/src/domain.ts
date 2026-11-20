@@ -19,7 +19,7 @@ export interface ParsedTranscript {
 export interface DiscoveryRoot { id: string; format: Format; path: string; layout: 'transcripts' | 'pi-subagents'; profile: string | null }
 /** `measured`/`limit` accompany a size or count limit: bytes, or messages for `message-limit`; `values` counts the
  * distinct paths of `admission-evidence-limit`. */
-export interface Diagnostic { rootId: string; pathId: string; code: string; measured?: number; limit?: number; values?: number }
+export interface Diagnostic { rootId: string; pathId: string; code: string; measured?: number; limit?: number; values?: number; cause?: string }
 export interface Counters {
   enabled: boolean; discovered: number; scanned: number; scannedBytes: number; waiting: number;
   excluded: number; unchanged: number; enqueued: number; uploaded: number; uploadFailures: number;

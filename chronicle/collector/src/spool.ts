@@ -62,7 +62,8 @@ export interface Dropped { requestId: string; sourceKey: string; reason: string 
 export interface Tombstone { sourceKey: string; head: Head; reasons: string[] }
 /** Every drop recorded for the source has `reason`: the tombstone can only come from such a drop. */
 export const droppedOnlyFor = (tombstone: Tombstone, reason: string): boolean => tombstone.reasons.length === 1 && tombstone.reasons[0] === reason;
-export interface ReportingState { sequence: string; acceptedSequence: string | null; acceptedAt: number | null; error: string | null }
+/** `cause` classifies the latest failure (see progress.ts); absent in states saved before it existed. */
+export interface ReportingState { sequence: string; acceptedSequence: string | null; acceptedAt: number | null; error: string | null; cause?: string | null }
 /** The stat of a file when it was last read and the settled content it had: `digest` at source `revision` (acknowledged or queued). */
 export interface SourceRead { fileId: string; stat: SourceStat; sourceKey: string; digest: string; revision: number; policyDigest: string; controlsDigest: string }
 export interface Spool {
@@ -120,7 +121,8 @@ export interface Spool {
   nextReportSequence(): bigint;
   reporting(): ReportingState;
   reportAccepted(sequence: bigint, at: number): void;
-  reportFailed(code: string): void;
+  /** `cause` classifies the failure (progress.ts `ReportError`). */
+  reportFailed(code: string, cause: string): void;
   close(): void;
 }
 interface Storage {
@@ -436,9 +438,9 @@ class DurableSpool implements Spool {
   reportAccepted(sequence: bigint, at: number): void {
     const state = this.reporting();
     if (sequence > BigInt(state.sequence) || sequence <= BigInt(state.acceptedSequence ?? '0')) throw new CollectorError('invalid-report-ack');
-    state.acceptedSequence = sequence.toString(); state.acceptedAt = at; state.error = null; this.storage.set('meta', 'reporting', state);
+    state.acceptedSequence = sequence.toString(); state.acceptedAt = at; state.error = null; state.cause = null; this.storage.set('meta', 'reporting', state);
   }
-  reportFailed(code: string): void { const state = this.reporting(); state.error = code; this.storage.set('meta', 'reporting', state); }
+  reportFailed(code: string, cause: string): void { const state = this.reporting(); state.error = code; state.cause = cause; this.storage.set('meta', 'reporting', state); }
   report(): CollectorReport | null { return this.storage.get<CollectorReport>('meta', 'last-report') ?? null; }
   saveReport(report: CollectorReport): void { this.storage.set('meta', 'last-report', report); }
   dropped(): Dropped[] { return this.storage.list<Dropped>('audit'); }

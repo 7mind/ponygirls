@@ -12,6 +12,7 @@ import { MemorySpool, SqliteSpool } from '../src/spool.ts';
 import { HttpProgressReporter, type ProgressReporter } from '../src/progress.ts';
 import { UploadError } from '../src/ingest.ts';
 import { FileSecretReader } from '../src/runtime-privacy.ts';
+import { formatCollectorStatus } from '../src/status.ts';
 import { noGit } from './helpers.ts';
 import { CollectorProgressUpdate, CollectorProgressUpdate_JsonCodec } from '../../generated/typescript/chronicle/api/CollectorProgressUpdate.js';
 import { CollectorProgressAck, CollectorProgressAck_JsonCodec } from '../../generated/typescript/chronicle/api/CollectorProgressAck.js';
@@ -21,17 +22,25 @@ import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRunti
 
 class ProgressSink {
   readonly reports: CollectorProgressUpdate[] = [];
-  mode: 'accept' | 'reject' | 'fail' | 'mismatch' | 'oversized' | 'malformed' | 'timeout' = 'accept';
+  mode: 'accept' | 'reject' | 'fail' | 'mismatch' | 'oversized' | 'malformed' | 'timeout' | 'reset' = 'accept';
+  /** Drops the next report that arrives on a reused connection: unread (`before`) or after accepting it (`after`). */
+  drop: 'before' | 'after' | null = null; dropped = 0;
+  private latest = 0n;
   accept(update: CollectorProgressUpdate): CollectorProgressAck {
     this.reports.push(update);
     if (this.mode === 'fail') throw new Error('private synthetic response must not escape');
+    // As the server: a sequence not above the latest accepted one answers that latest sequence, not accepted.
+    if (update.sequence <= this.latest) return new CollectorProgressAck(this.latest, false);
+    if (this.mode === 'accept') this.latest = update.sequence;
     return new CollectorProgressAck(update.sequence + (this.mode === 'mismatch' ? 1n : 0n), this.mode !== 'reject');
   }
 }
 async function harness(adapter: string) {
   const dir = mkdtempSync(join(tmpdir(), 'chronicle-progress-')); const sink = new ProgressSink();
   mkdirSync(join(dir, 'sessions')); writeFileSync(join(dir, 'token'), 'synthetic-token', { mode: 0o600 });
+  const used = new WeakSet<object>();
   const server = createServer(async (req, res) => {
+    const reused = used.has(req.socket); used.add(req.socket);
     assert.equal(req.method, 'POST'); assert.equal(req.url, '/api/collector/progress');
     assert.equal(req.headers.authorization, 'Bearer synthetic-token');
     const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -40,6 +49,9 @@ async function harness(adapter: string) {
     assert.equal(typeof value['uploadedBytes'], 'string');
     assert.equal(typeof value['totalUploadBytes'], 'string');
     const update = CollectorProgressUpdate_JsonCodec.instance.decode(BaboonCodecContext.Default, value);
+    // The server closed the connection as the request arrived (idle keep-alive timeout): no answer at all.
+    if (sink.mode === 'reset' || (sink.drop === 'before' && reused)) { sink.drop = null; sink.dropped++; req.socket.destroy(); return; }
+    if (sink.drop === 'after' && reused) { sink.drop = null; sink.dropped++; sink.accept(update); req.socket.destroy(); return; }
     if (sink.mode === 'timeout') return;
     if (sink.mode === 'oversized') { res.end('x'.repeat(65537)); return; }
     if (sink.mode === 'malformed') { res.end('{'); return; }
@@ -121,14 +133,38 @@ for (const adapter of ['dummy', 'http']) {
     });
   }
 }
-for (const mode of ['oversized', 'malformed', 'timeout'] as const) {
-  test(`GoodCommunication bounded progress ${mode} remains visible without fake ACK`, async () => {
+// The cause of a failed report is kept as a bounded class, never the server's text.
+const CAUSES = { oversized: ['ack-too-large', 'acknowledgement over 64 KiB'], malformed: ['invalid-ack', 'invalid acknowledgement'],
+  timeout: ['timeout:20', 'timed out after 20 ms'], fail: ['http:503', 'HTTP 503'], reject: ['not-accepted', 'not accepted by the server'],
+  reset: ['connection-reset', 'connection closed by the server before an answer'] } as const;
+for (const mode of Object.keys(CAUSES) as (keyof typeof CAUSES)[]) {
+  test(`GoodCommunication bounded progress ${mode} remains visible without fake ACK, with its cause`, async () => {
     const h = await harness('http'); const spool = new MemorySpool();
     try {
       h.sink.mode = mode;
       if (mode === 'timeout') h.config.uploadTimeoutMs = 20;
-      await new Collector(h.config, spool, { send: async () => { throw new Error('unused'); } }, () => 0, noGit, h.reporter, new FileSecretReader()).runOnce(100);
+      const collector = new Collector(h.config, spool, { send: async () => { throw new Error('unused'); } }, () => 0, noGit, h.reporter, new FileSecretReader());
+      await collector.runOnce(100);
       assert.equal(spool.reporting().error, 'report-failed'); assert.equal(spool.reporting().acceptedAt, null);
+      const [cause, text] = CAUSES[mode];
+      assert.equal(spool.reporting().cause, cause);
+      assert.deepEqual(collector.status().diagnostics.filter(d => d.code === 'report-failed').map(d => d.cause), [cause]);
+      const status = formatCollectorStatus(collector.status());
+      assert.ok(status.includes(`  Error: report-failed · ${text}`) && status.includes(`report-failed: reporting [`), status);
+      assert.ok(!status.includes('private synthetic'));
+    } finally { spool.close(); await h.close(); }
+  });
+}
+
+for (const drop of ['before', 'after'] as const) {
+  test(`GoodCommunication a report the server drops on a reused keep-alive connection (${drop} accepting it) is sent again once`, async () => {
+    const h = await harness('http'); const spool = new MemorySpool();
+    try {
+      h.sink.drop = drop;
+      await new Collector(h.config, spool, { send: async () => { throw new Error('unused'); } }, () => 0, noGit, h.reporter, new FileSecretReader()).runOnce(100);
+      assert.equal(h.sink.dropped, 1);
+      assert.deepEqual([spool.reporting().error, spool.reporting().acceptedSequence], [null, h.sink.reports.at(-1)!.sequence.toString()]);
+      assert.ok(!spool.diagnostics().some(d => d.rootId === 'reporting'));
     } finally { spool.close(); await h.close(); }
   });
 }

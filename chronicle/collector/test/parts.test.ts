@@ -425,3 +425,14 @@ test('UploadParts enters record-over-limit only on the server code record-too-la
     assert.deepEqual([(await h.run(4)).quarantined, h.server.count('POST /api/ingest/uploads')], [0, opens]);
   } finally { await h.close(); }
 });
+
+test('UploadParts sends a part again once when the server closed the pooled connection under it', async () => {
+  const h = await harness();
+  try {
+    h.server.limits = h.server.limits.with({ maxPartBytes: 1024n });
+    writeFileSync(join(h.roots.pi, 's.jsonl'), jsonl(piHeader('pi-reset'), ...Array.from({ length: 4 }, (_, index) => piMessage(`m${index}`, `synthetic message ${index} `.repeat(8)))));
+    h.server.resetNext = 'POST /api/ingest/uploads/{id}/parts';
+    const counters = await h.run(1);
+    assert.deepEqual([counters.uploaded, counters.uploadFailures, h.server.resetNext], [1, 0, null]);
+  } finally { await h.close(); }
+});
