@@ -7,14 +7,22 @@ verified. Design study: `reports/chronicle-ingest-design/DESIGN.md` (§6 B, §7,
 conversion), S4 (retiring `/api/ingest`), S5 (index reuse).
 
 ## Summary
-- **S1** stores every new single-file revision in an *epoch* (a linear history of one source: messages by position,
-  raw by byte offset, fragments by position); a revision is a row `(epoch, message_count, raw_bytes, …)`. `/api/ingest`
-  is unchanged on the wire; the server detects "append to the head's epoch" (raw prefix digest + message chain) and
-  writes only the delta. Legacy revisions stay as they are. Readers change their queries through one helper
-  (`RevisionContent`); views were measured and rejected (O(session) sorts).
-- **S2** adds an upload API in `chronicle.api` 1.9.0 (additive, precedent 3961370f): open → parts (≤ 8 MiB) → commit,
-  with status/resume/abort, incremental validation and a base proof; parts are written straight into epoch rows past
-  the head's count, so the commit is O(1). The collector streams (bounded memory), appends or replaces, and resumes.
+- **S1** stores every new epoch-safe single-file revision in an *epoch* (a linear history of one source: messages by
+  position, raw by byte offset, fragments by position); a revision is a row `(epoch, message_count, raw_bytes, …)`.
+  `/api/ingest` is unchanged on the wire; the server detects "append to the head's epoch" (raw prefix digest + message
+  chain) and writes only the delta. Requests the epoch layout cannot represent exactly (several files, raw not ending in
+  `\n`) keep today's legacy layout, so every request accepted today is still accepted. Legacy revisions stay as they are.
+  Readers change their queries through one helper (`RevisionContent`); views were measured and rejected (O(session) sorts).
+  The epoch writer ships behind a layout seam whose production default flips to epochs only in the unit that completes
+  the readers.
+- **S2** adds an upload API in `chronicle.api` 1.9.0 (additive, precedent 3961370f): open (with the complete declaration)
+  → parts (≤ 8 MiB) → commit, with status/resume/abort, per-ordinal part receipts, request intents separate from upload
+  attempts, staging owned by one attempt, incremental validation and a base proof; parts are written straight into epoch
+  rows past the head's count, so the commit is O(1). Sessions up to the configured raw bound (deployment ≥ 1 GiB, so the
+  owner's 556 MB session uploads); nothing materializes such a revision whole on the server: `GetRaw` refuses above a
+  raw bound (`too-large`) and an indexing claim above a message-bytes bound ends `Failed claim-too-large` before it
+  allocates — the session stays readable. The collector preflights the whole file (admission, identity, exclusions,
+  declaration) in a bounded-memory pass before any upload, then sends the delta or the whole content, and resumes.
 - Measured on a TEMPLATE copy of the clone: for the largest session the current ingest takes 65 s and 2.2 GB WAL; the
   S1 database work for its next real revision is 18 ms and 1.3 MB WAL (the unchanged whole-request decode/validate is
   11.3 s); a full new epoch is 21.6 s / 1.1 GB WAL. 44 revisions rebuilt from the epoch layout are md5-identical to their
@@ -55,11 +63,12 @@ CREATE TABLE IF NOT EXISTS ch_epoch_raw(
   epoch uuid NOT NULL REFERENCES ch_epochs(id) ON DELETE CASCADE,
   byte_offset bigint NOT NULL CHECK(byte_offset>=0), content text NOT NULL,   -- whole lines, <= 1 MiB unless one line is longer
   PRIMARY KEY(epoch,byte_offset));
-CREATE TABLE IF NOT EXISTS ch_epoch_records(                                  -- raw record ids (`id`/`uuid`) for parentId resolution
+CREATE TABLE IF NOT EXISTS ch_epoch_records(                                  -- raw record ids for parentId resolution (S2)
   epoch uuid NOT NULL REFERENCES ch_epochs(id) ON DELETE CASCADE,
-  record_index integer NOT NULL, record_id text NOT NULL,
-  PRIMARY KEY(epoch,record_index,record_id));
-CREATE INDEX IF NOT EXISTS ch_epoch_records_id ON ch_epoch_records(epoch,record_id);
+  record_index integer NOT NULL,
+  record_key bytea NOT NULL CHECK(octet_length(record_key)=32),               -- SHA-256 of the `id`/`uuid` string (§3)
+  PRIMARY KEY(epoch,record_index,record_key));
+CREATE INDEX IF NOT EXISTS ch_epoch_records_key ON ch_epoch_records(epoch,record_key);
 CREATE TABLE IF NOT EXISTS ch_epoch_fragments(
   epoch uuid NOT NULL REFERENCES ch_epochs(id) ON DELETE CASCADE,
   position integer NOT NULL, part integer NOT NULL,
@@ -71,15 +80,16 @@ ALTER TABLE ch_revisions ADD COLUMN IF NOT EXISTS epoch uuid REFERENCES ch_epoch
   ADD COLUMN IF NOT EXISTS envelope jsonb,          -- the IngestRequest without messages and files (= snapshot-'messages'-'files' of a legacy row)
   ADD COLUMN IF NOT EXISTS message_count integer, ADD COLUMN IF NOT EXISTS record_count integer,
   ADD COLUMN IF NOT EXISTS raw_bytes bigint,
+  ADD COLUMN IF NOT EXISTS message_bytes bigint,    -- Σ UTF-8 bytes of the written message values (Wire.encode(Message).noSpaces)
   ADD COLUMN IF NOT EXISTS raw_state bytea,         -- SHA-256 midstate after raw_bytes (40..103 B, §5)
   ADD COLUMN IF NOT EXISTS message_chain bytea,     -- chain v1 after message_count messages (32 B, §5)
   ADD COLUMN IF NOT EXISTS message_time text;       -- latest parsed message timestamp (Instant.toString) or NULL
--- added NOT VALID, then VALIDATE (SHARE UPDATE EXCLUSIVE; reads the 648 kB heap only [o V9])
+-- added NOT VALID (guarded by a pg_constraint lookup), then VALIDATE (SHARE UPDATE EXCLUSIVE; reads the 648 kB heap only [o V9])
 ALTER TABLE ch_revisions ADD CONSTRAINT ch_revisions_layout CHECK(
   (epoch IS NULL AND snapshot IS NOT NULL AND envelope IS NULL AND message_count IS NULL AND record_count IS NULL
-     AND raw_bytes IS NULL AND raw_state IS NULL AND message_chain IS NULL AND message_time IS NULL)
+     AND raw_bytes IS NULL AND message_bytes IS NULL AND raw_state IS NULL AND message_chain IS NULL AND message_time IS NULL)
   OR (epoch IS NOT NULL AND snapshot IS NULL AND envelope IS NOT NULL AND message_count>=0 AND record_count>=0
-     AND raw_bytes>=0 AND raw_state IS NOT NULL AND octet_length(message_chain)=32)) NOT VALID;  -- guarded by pg_constraint lookup
+     AND raw_bytes>=0 AND message_bytes>=0 AND raw_state IS NOT NULL AND octet_length(message_chain)=32)) NOT VALID;
 CREATE INDEX IF NOT EXISTS ch_revisions_epoch ON ch_revisions(epoch,message_count) WHERE epoch IS NOT NULL;
 ```
 The `ALTER TABLE ch_revisions` statements need ACCESS EXCLUSIVE for milliseconds [o V9] but wait for every running
@@ -90,11 +100,13 @@ Triggers (all in 024):
   `23514 immutable epoch row`; on `ch_epoch_fragments`: raises unless only `head_candidate` changes.
 - `ch_epoch_rows_guard()` `BEFORE DELETE` on the four row tables: raises when the row is covered by a committed revision
   (`position < max(message_count)`, `byte_offset < max(raw_bytes)`, `record_index < max(record_count)` over
-  `ch_revisions WHERE epoch=OLD.epoch`, index `ch_revisions_epoch`). Purge deletes revisions first, so it passes.
-- `ch_epochs` has no update trigger except that `id`, `session_id`, `raw_path` are immutable (same function pattern).
+  `ch_revisions WHERE epoch=OLD.epoch`, index `ch_revisions_epoch`). Rows become deletable only when no revision
+  references them (staging, or after purge deleted the revisions).
+- `ch_epochs`: `id`, `session_id`, `raw_path` immutable (same function pattern).
 `ch_archive_fragments` keeps one role for epoch revisions: their **metadata** fragments (≈ 4–12 rows per revision),
 keyed `(session_id, revision, ordinal)` as today; the 017 trigger keeps flipping them [o 017:64-80]. `ch_revision_info`
-is unchanged (one row per revision for every layout); `ch_messages` is never written for epoch revisions.
+is unchanged (one row per revision for every layout); `ch_messages` is never written for epoch revisions. S2's migration
+025 adds `ch_epochs.tail_upload` (§4.5).
 
 ### 1.2 Down-script `chronicle/scripts/down-024-epoch-layout.sql`
 Lives outside `chronicle/migrations/` (that directory is a classpath resource root [o build.sbt:147,172,191,278]); the
@@ -102,10 +114,14 @@ runner applies only its explicit list, so the script is never applied by a binar
 `chronicle/scripts/check-legacy-free.sql`, listed in `tests` of `nix/pkg/chronicle/source.nix:36-39` and exercised by
 `LegacyFreeCheckTest`; the down-script is listed there too. Run by an operator with the server stopped, with
 `statement_timeout=0`, after the S2 down-script (§9) if S2 was deployed. Steps:
-1. Refuse (raise, listing session/revision) if any epoch revision's estimated legacy snapshot
-   (`raw_bytes + Σ octet_length(value::text)` of its messages + 4 KiB) exceeds 268,435,000 B — such a revision cannot be a
-   jsonb value [o V1]; only S2 can create one (S1 bodies are bounded by `maxBodyBytes`; the largest real revision
-   rebuilds to 226.6 MB [o V6]).
+1. **Representability preflight (sound, then exact).** For every epoch revision compute the upper bound
+   `octet_length(envelope::text) + raw_bytes + message_bytes + 128 × message_count + 4096`. Strings are stored unescaped in
+   jsonb, so their text form (`message_bytes`, the envelope text) is never smaller; the 128 B per message cover jsonb's
+   per-node JEntries, alignment and numeric widening of a 6-key object [i; U4 proves it with worst-case shapes: many tiny
+   messages with nulls and large `recordIndex`], 4 KiB the snapshot/file containers. Bound ≤ 268,435,442 (the one-key
+   object limit, V1) → representable. Otherwise the script builds that one snapshot inside a savepoint; the jsonb error
+   (V1 texts) marks it not representable. If any revision is not representable the script stops before changing anything
+   and lists session/revision/bound.
 2. Per source (one transaction each, resumable: a revision with `epoch IS NULL` is done), with
    `ch_immutable_revision` disabled inside the transaction: for every epoch revision write
    `snapshot = envelope || {"messages": [values < message_count by position], "files": [{"path": raw_path,
@@ -115,10 +131,15 @@ runner applies only its explicit list, so the script is never applied by a binar
    and `head_candidate = (revision = ch_sources.revision)`.
 3. One final transaction: drop the epoch triggers/functions, constraint, index and columns, `ALTER COLUMN snapshot SET
    NOT NULL`, drop the four row tables and `ch_epochs`, re-create the 013 body of `ch_immutable_revision()`.
-Limits: (a) the jsonb cap (step 1); (b) disk and WAL: every epoch revision becomes a full legacy copy again (estimate
-before running: `Σ raw_bytes + message bytes` over epoch revisions, ×≈ 2 for fragments/TOAST/WAL); (c) S2 objects first.
-Fragment ordinals differ from what a legacy ingest would have produced (the legacy writer has no ORDER BY
-[o ArchiveProjection.scala:73]); no reader uses ordinals [o ArchiveIndex.scala:169-171].
+Limits: (a) the jsonb cap (step 1). **S1 itself can create a non-representable revision**: a whole request up to
+`maxBodyBytes` (≤ 512 MiB [o Core.scala:95]) is stored in an epoch although its snapshot might exceed the cap — today
+such a request fails at the snapshot INSERT (a jsonb error, HTTP 500). With production `maxBodyBytes` 256 MiB the largest
+real revision rebuilds to 226.6 MB [o V6]; bodies of 256 MiB with unusually many small messages could exceed it.
+Decision (D6): S1 does not prevent them (it stores strictly more than today); the preflight lists them and the operator
+purges them or stays on S1. S2 sessions above 256 MiB are never representable. (b) disk and WAL: every epoch revision
+becomes a full legacy copy again (estimate before running: `Σ raw_bytes + message_bytes` over epoch revisions, ×≈ 2 for
+fragments/TOAST/WAL); (c) S2 objects first. Fragment ordinals differ from what a legacy ingest would have produced (the
+legacy writer has no ORDER BY [o ArchiveProjection.scala:73]); no reader uses ordinals [o ArchiveIndex.scala:169-171].
 
 ### 1.3 Readers: query changes, not views (decided by V4/V5)
 | read (session `36763d39`, 28,515 messages) | legacy | epoch, query change | UNION ALL view |
@@ -129,6 +150,7 @@ Fragment ordinals differ from what a legacy ingest would have produced (the lega
 | literal search, no hit (whole revision) | 367 ms | 305 ms | 306 ms |
 | claim envelope / message stream | 631 ms / 811 ms (80 MB disk sort) | 0.027 ms / 10.7 ms | — |
 | GetRaw | 1,071 ms | 448 ms | — |
+
 The view's epoch branch is a nested loop whose output is not known to be ordered, so `ORDER BY position LIMIT` sorts the
 whole branch (O(session)) [o E4 R1]. Therefore every reader resolves the layout once and queries the right relation.
 New `RevisionContent.scala`:
@@ -156,22 +178,25 @@ position<c.message_count AND value LIKE …)`. Same matches, same cost (V5).
    `< R.record_count`. Positions equal legacy positions (an epoch starts at position 0).
 2. **Prefix:** revisions of one epoch are totally ordered by revision number and each is a prefix of the next
    (`message_count`, `raw_bytes`, `record_count` non-decreasing). A non-prefix revision starts a new epoch.
-3. **Line boundaries:** `raw_bytes` of every committed revision is 0 or follows a `\n`; every raw segment holds whole
-   lines; segments are contiguous (`byte_offset(k+1) = byte_offset(k) + octet_length(content(k))`) and every committed
+3. **Line boundaries (epoch revisions only):** `raw_bytes` is 0 or follows a `\n`; every raw segment holds whole lines;
+   segments are contiguous (`byte_offset(k+1) = byte_offset(k) + octet_length(content(k))`) and every committed
    revision's `raw_bytes` is a segment boundary (writers start a segment at each revision/part start), so a revision's raw
-   is the concatenation of its segments — never a cut.
+   is the concatenation of its segments — never a cut. A request that would violate this is stored in the legacy layout
+   (§3, L4), where today's representation applies unchanged.
 4. **Digests:** `envelope.digest = hex(SHA-256(raw[0..raw_bytes)))` = the file's `sha256`; `raw_state` is that hash's
    midstate; `message_chain` = chain v1 over its messages (§5). The S1 writer re-derives the final digest from the stored
    midstate and checks it against the validated request digest (self-check of the stored state).
 5. **Immutability:** committed revision rows never change (trigger); epoch rows covered by any committed revision are
-   never updated (except `head_candidate`) or deleted except by purge.
+   never updated (except `head_candidate`) or deleted (DELETE guard).
 6. **Head:** `ch_sources.revision` names the head; when a switch moves the head to another epoch, the old head's epoch
-   becomes `candidates='prune'` in the switching transaction (then `pruned` by the background prune). An epoch that no
-   revision references is S2 staging: committed or swept, never read.
+   becomes `candidates='prune'` in the switching transaction (then `pruned` by the background prune).
 7. **Visibility:** readers reach epoch rows only through a committed `ch_revisions` row and `RevisionContent` filters;
-   rows beyond every committed count (S2 staging, garbage) and epochs without a revision are unreachable.
-8. **Uniqueness:** message ids are unique per epoch (`UNIQUE(epoch,message_id)`), including staged rows; garbage
-   beyond the committed maximum is deleted before a writer appends to an epoch.
+   rows beyond every committed count and epochs without a revision are unreachable.
+8. **Uniqueness:** message ids are unique per epoch (`UNIQUE(epoch,message_id)`), including staged rows.
+9. **Staging ownership (S2):** rows of an epoch beyond its committed maximum belong to exactly one upload attempt,
+   `ch_epochs.tail_upload`; an epoch that no revision references belongs to the attempt recorded in its
+   `tail_upload`. Only the owner writes there; cleanup of a terminal attempt deletes rows only while it is still the
+   owner and happens once (`cleaned`), all under the source's advisory lock (§4.6).
 
 ## 3. S1 ingest path (`/api/ingest`, wire unchanged)
 Order inside `PostgresArchive.ingest` [o Database.scala:125-161] stays: validation outside the transaction
@@ -183,127 +208,205 @@ them, receipt [o Database.scala:130-157]. HTTP admission unchanged: bodies > 8 M
 and idle (30 s) timeouts unchanged — every S1 statement is bounded by a batch (128 rows) or a segment (≤ 1 MiB).
 
 **Decision** (head = current revision row; r = request; S = `SnapshotProjection(r)` [o Core.scala:240-246]):
-- `r.files.size != 1` → **legacy layout** (today's writer, kept). Never observed (0 of 7,804 [o V2]).
-- head is an epoch revision, `r.files(0).path == epoch.raw_path`, `utf8(content).length >= head.raw_bytes`,
-  `content[0..raw_bytes)` hashes (JDK digest) to `head.envelope.digest`, `r.messages.size >= head.message_count`, chain v1
-  of `S.messages[0..message_count)` equals `head.message_chain` → **append**.
-- otherwise (no head, legacy head, Historian replacement, Codex non-prefix, redaction change, Pi v1/v2 → v3 rewrite) →
-  **new epoch** (full write; for a legacy head this is the one-time first-touch cost, 21.6 s DB for the largest [o V7]).
-**Writes (append):** delete garbage beyond the epoch's committed maximum (S2 leftovers; none in S1-only deployments);
-insert `ch_revisions` (epoch, envelope = S without messages/files, counts, `raw_state` = resume(head.raw_state) +
-delta bytes, `message_chain` extended over the delta, `record_count`, `message_time` = max(head.message_time, delta)),
-`ch_epoch_messages` (delta, batches of 128), `ch_epoch_raw` (delta from `head.raw_bytes`, ≤ 1 MiB line-aligned
-segments), `ch_epoch_records` (delta records' `id`/`uuid`), fragments: delta messages via `lower(value->>'text' COLLATE
-pg_unicode_fast)` read back from `ch_epoch_messages` → `ArchiveProjection.fragments` → `ch_epoch_fragments(epoch,
-position, part)` (no cross-message overlap exists: fragmentation is per field [o ArchiveProjection.scala:56,71-77], so the
-previous tail is never rewritten); metadata fragments → `ch_archive_fragments(session, revision, ordinal)`;
-`ch_revision_info` with `message_count` and `last_timestamp` = `message_time` orElse `endedAt` orElse `startedAt`
-(same rule as `ArchiveProjection.latest` [o ArchiveProjection.scala:41-45], O(delta)). **New epoch:** the same with the
-whole content into a new `ch_epochs` row; in the switch transaction the previous head's epoch (if any) becomes
-`prune`. **Switch** unchanged: one `UPDATE ch_sources SET revision` under `FOR NO KEY UPDATE`; the 017 trigger now flips
-only metadata rows of epoch revisions (for a legacy previous head it prunes that head's fragments once, as today).
-Measured: append 18 ms / 1.3 MB WAL / row lock 2 ms; today 65 s / 2.2 GB [o V7, V8].
+- **Legacy layout** (today's writer, kept) when the request is not epoch-safe: `r.files.size != 1`, or the single file's
+  content is non-empty and does not end with `\n` (`SnapshotValidation` accepts a last record without a newline: it splits
+  with `linesIterator` [o Core.scala:281]). Neither occurs in the archive (all 7,804 revisions are single-file and
+  newline-terminated [o V2]); the Historian extension, the CLI and the relevance eval can send them. Nothing else in an
+  accepted request is epoch-unsafe: raw text never contains U+0000 (every non-empty line must parse as JSON), message
+  values and ids are stored exactly as in `ch_messages`, and raw record ids are stored as SHA-256 keys (below), so an
+  unreferenced record id with an escaped NUL or of any length is representable.
+- **Append** when the head is an epoch revision, `r.files(0).path == epoch.raw_path`, `utf8(content).length >=
+  head.raw_bytes`, `content[0..raw_bytes)` hashes (JDK digest) to `head.envelope.digest`, `r.messages.size >=
+  head.message_count`, and chain v1 of `S.messages[0..message_count)` equals `head.message_chain`.
+- **New epoch** otherwise (no head, legacy head, Historian replacement, Codex non-prefix, redaction change, Pi v1/v2 → v3
+  rewrite): full write (for a legacy head the one-time first-touch cost, 21.6 s DB for the largest [o V7]).
+**Writes (append):** insert `ch_revisions` (epoch, envelope = S without messages/files, counts, `raw_state` =
+resume(head.raw_state) + delta bytes, `message_chain` extended over the delta, `record_count`, `message_bytes` =
+head + delta, `message_time` = max(head.message_time, delta)), `ch_epoch_messages` (delta, batches of 128),
+`ch_epoch_raw` (delta from `head.raw_bytes`, ≤ 1 MiB line-aligned segments), `ch_epoch_records` (`SHA-256(id)` of each
+delta record's `id`/`uuid` string, as `SnapshotValidation` collects them [o Core.scala:283-284]), fragments: delta
+messages via `lower(value->>'text' COLLATE pg_unicode_fast)` read back from `ch_epoch_messages` →
+`ArchiveProjection.fragments` → `ch_epoch_fragments(epoch, position, part)` (no cross-message overlap exists:
+fragmentation is per field [o ArchiveProjection.scala:56,71-77], so the previous tail is never rewritten); metadata
+fragments → `ch_archive_fragments(session, revision, ordinal)`; `ch_revision_info` with `message_count` and
+`last_timestamp` = `message_time` orElse `endedAt` orElse `startedAt` (the rule of `ArchiveProjection.latest`
+[o ArchiveProjection.scala:41-45], O(delta)). Records are counted with the validation's own line rule applied to the
+delta; the count composes because the prefix ends with `\n`. **New epoch:** the same with the whole content into a new
+`ch_epochs` row; in the switch transaction the previous head's epoch (if any) becomes `prune`. **Switch** unchanged: one
+`UPDATE ch_sources SET revision` under `FOR NO KEY UPDATE`; the 017 trigger now flips only metadata rows of epoch
+revisions (for a legacy previous head it prunes that head's fragments once, as today). Measured: append 18 ms / 1.3 MB WAL
+/ row lock 2 ms; today 65 s / 2.2 GB [o V7, V8]. With S2 deployed, the append path first applies §4.6's tail rule
+(live attempt → 409 `upload-busy`; terminal owner → its tail is deleted once).
 - **Receipts/idempotency/CAS** unchanged (digest over the canonical request; same requestId+digest → stored receipt;
   different → 409; `expectedRevision == head`).
 - **S0-I1 jobs:** the switch calls S0-I1's job statements unchanged (extract them into `Jobs.switched(c,id,next,profile)`
   so S2's commit reuses them). A running older job reads its own revision's rows, which appends never change.
 - **Claim:** `claimedSnapshot` reads `envelope` and streams `ch_epoch_messages … ORDER BY position` (64 per fetch,
   unchanged API); `Claim.snapshot` equals the legacy claim value (no raw files). Worker heap stays O(session) — S1 does
-  not change it (study §5); the epoch claim avoids the 0.6 s envelope detoast and the 80 MB sort [o V4].
+  not change it (study §5); the epoch claim avoids the 0.6 s envelope detoast and the 80 MB sort [o V4]. The guard of
+  §4.8 bounds it once S2 admits larger sessions.
 - **`GetRaw`** of an epoch revision: `RawResult(List(RawFile(raw_path, digest, string_agg(segments))), revision)` —
-  exact bytes, one response as today (V4: 448 ms for 145.8 MB).
-- **Purge** [o Auth.scala:339-342]: after `DELETE FROM ch_revisions` add `DELETE FROM ch_epochs WHERE session_id=?`.
+  exact bytes, one response as today (V4: 448 ms for 145.8 MB); bounded by §4.8.
+- **Purge** [o Auth.scala:339-342] keeps its statements; epochs are not deleted inline (a writer's revision insert holds
+  `KEY SHARE` on its epoch, and purge already holds the source row, so an inline `DELETE FROM ch_epochs` could deadlock
+  with a writer waiting for the source [review R2]). `EpochMaintenance` deletes the rows and epochs of tombstoned sources
+  in statements of ≤ 10,000 rows (allowed by the DELETE guard because purge removed every revision); content is
+  unreachable from the purge's commit on and physically gone within one sweep (decision D7).
 - **Backfill** [o ArchiveProjection.scala:92-124]: selects legacy revisions only (`r.epoch IS NULL`); if an epoch
   revision has `lexical_version <> ArchiveProjection.lexicalVersion` it fails start-up with `migration-required`
   (an epoch fragment rebuild is a separate task when the version is next bumped).
-- **Candidate pruning:** `EpochMaintenance` (graph resource like `McpTestRuns`' loop [o McpTestRuns.scala:73-81], interval
-  60 s, injectable for tests): for each `prune` epoch, `UPDATE … SET head_candidate=false` on ≤ 10,000 rows per
-  statement (`FOR UPDATE SKIP LOCKED`), then `pruned`. Search correctness never depends on it (join on epoch and count);
-  cost 114 ms / 44.6 MB WAL per 10,000 rows [o V7] — only after a new epoch, not on appends.
-- **Layout seam for tests:** `PostgresArchive(db, config, layout: RevisionLayoutPolicy = RevisionLayoutPolicy.Epochs)`;
-  `Legacy` forces the legacy writer (differential tests; the existing tests that assert legacy-table behaviour —
-  `ArchiveHeadCandidateTest`, `ArchiveProjectionTest`, `ArchiveContentBoundaryTest`'s plan assertion — pin it).
+- **`EpochMaintenance`** (graph resource like `McpTestRuns`' loop [o McpTestRuns.scala:73-81], interval 60 s, injectable
+  for tests): prunes candidates of `prune` epochs (`UPDATE … SET head_candidate=false` on ≤ 10,000 rows per statement,
+  `FOR UPDATE SKIP LOCKED`, then `pruned`; 114 ms / 44.6 MB WAL per 10,000 rows [o V7], only after a new epoch) and deletes
+  tombstoned sources' epochs. Search correctness never depends on it (join on epoch and count).
+- **Layout seam:** `PostgresArchive(db, config, layout: RevisionLayoutPolicy)`, with `RevisionLayoutPolicy.production`
+  = `Legacy` until U3 completes the readers and flips it to `Epochs` (§11); `Legacy` also serves the differential tests
+  and the existing tests that assert legacy-table behaviour (`ArchiveHeadCandidateTest`, `ArchiveProjectionTest`,
+  `ArchiveContentBoundaryTest`'s plan assertion).
 
 ## 4. S2 protocol (additive in `chronicle.api` 1.9.0)
 ### 4.1 Types (`chronicle/models/chronicle.baboon`)
 ```
 enum UploadPhase { Open Committed Aborted Expired Failed }
 data UploadBase { digest: str rawBytes: i64 messageCount: i32 messageChain: str }
-root data UploadOpen { requestId: uid source: SourceIdentity expectedRevision: i32 rawPath: str base: opt[UploadBase] }
+root data UploadOpen { requestId: uid source: SourceIdentity expectedRevision: i32 rawPath: str base: opt[UploadBase]
+  digest: str rawBytes: i64 messageCount: i32 messageChain: str completion: Completion redacted: bit metadata: Metadata }
 root data UploadPart { ordinal: i32 sha256: str raw: str messages: lst[Message] }
-root data UploadCommit { digest: str rawBytes: i64 messageCount: i32 messageChain: str completion: Completion redacted: bit metadata: Metadata }
 data UploadLimits { maxPartBytes: i32 maxRawBytes: i64 maxMessages: i32 }
 root data UploadState { uploadId: uid requestId: uid phase: UploadPhase append: bit receivedParts: i32
   receivedRawBytes: i64 receivedMessages: i32 lastPartSha256: opt[str] expiresInSeconds: i32 limits: UploadLimits
   receipt: opt[IngestReceipt] failure: opt[str] }
 ```
-`IngestRequest`, `IngestReceipt`, `Message`, `Metadata` unchanged. i64 travel as decimal strings [o CONTRACT.md:132].
+`UploadOpen` carries the **complete declaration** of the resulting revision (final digest, raw bytes, message count,
+chain, completion, redaction flag, metadata): the collector knows it after its preflight pass (§6), and binding it at
+open makes the request intent replayable without the file (R5). `IngestRequest`, `IngestReceipt`, `Message`, `Metadata`
+unchanged. i64 travel as decimal strings [o CONTRACT.md:132].
 ### 4.2 Endpoints (bearer, Ingest scope, no query, Origin rule as `/api/ingest` [o Http.scala:193-196])
-| endpoint | body → result | notes |
+Every body bound is checked against `Content-Length` before reading and enforced while reading (`boundedBytes`
+[o Http.scala:27-30]); none of these routes takes the `SnapshotAdmission` permit.
+
+| endpoint | body → result | body bound |
 |---|---|---|
-| `POST /api/ingest/uploads` | `UploadOpen` → `UploadState` | idempotent by requestId; a new upload or the existing one |
-| `GET /api/ingest/uploads/{id}` | → `UploadState` | resume; other owners → 404 `not-found` |
-| `POST /api/ingest/uploads/{id}/parts` | `UploadPart` → `UploadState` | body ≤ `maxPartBytes` (413 before reading, like `boundedBytes` [o Http.scala:27-30]) |
-| `POST /api/ingest/uploads/{id}/commit` | `UploadCommit` → `IngestReceipt` | replay returns the stored receipt |
-| `POST /api/ingest/uploads/{id}/abort` | empty → `UploadState` | frees the source; staged rows swept |
+| `POST /api/ingest/uploads` | `UploadOpen` → `UploadState` | 64 KiB (`UploadPolicy.maxOpenBytes`) |
+| `GET /api/ingest/uploads/{id}` | → `UploadState` | none accepted (0) |
+| `POST /api/ingest/uploads/{id}/parts` | `UploadPart` → `UploadState` | 8 MiB (`maxPartBytes`) |
+| `POST /api/ingest/uploads/{id}/commit` | empty → `IngestReceipt` | 0 |
+| `POST /api/ingest/uploads/{id}/abort` | empty → `UploadState` | 0 |
+
+Inside the open bound every metadata string (title, project, workdir, gitRemote, gitBranch, gitCommit, producer, model,
+startedAt, endedAt) is at most 4,096 UTF-8 bytes and `rawPath` at most 4,096 (else `invalid`); tags keep today's 32 × 128
+rule [o Core.scala:296]; source fields keep `Check.text(_,256)` [o Core.scala:267-268].
 ### 4.3 Errors (`Failure{code,message}`; new codes get explicit statuses in `Http.failure` [o Http.scala:33-34], which maps unknown codes to 400)
-`invalid` 400 (any per-part validation, part sha mismatch, not line-aligned); `unauthorized`/`forbidden` 401/403;
-`not-found` 404; `conflict` 409 (CAS, requestId bound to another declaration, part ordinal already accepted with another
-sha256, part out of order — message names the expected ordinal); `base-mismatch` 409 (open: base ≠ head);
-`upload-busy` 409 (another live upload on the source, or > 8 open uploads of the owner); `content-mismatch` 409 (commit:
-declared ≠ computed; the upload becomes `Failed`); `upload-expired` 409 (part/commit after expiry); `gone` 410 (purged
-source); `too-large` 413 (part body; cumulative raw > `maxFileBytes`; messages > `maxMessages`; parts > 1,024);
-`unavailable` 503.
+`invalid` 400 (any per-part validation, part sha mismatch, not line-aligned, field bounds); `unauthorized`/`forbidden`
+401/403; `not-found` 404 (unknown or other owner's upload); `conflict` 409 (CAS; requestId bound to another declaration;
+an accepted ordinal replayed with another sha256; ordinal ahead of the next expected — the message names it);
+`base-mismatch` 409 (open: base ≠ head); `upload-busy` 409 (another live attempt on the source; > 8 live attempts of the
+owner; `/api/ingest` while an attempt is live); `content-mismatch` 409 (commit: computed ≠ declared; the attempt becomes
+`Failed`); `upload-expired` 409 (part/commit after expiry); `gone` 410 (purged source, also for an attempt aborted by
+purge); `too-large` 413 (any body over its bound; declared raw > `maxFileBytes`; declared messages > `maxMessages`; parts
+> 1,024); `unavailable` 503.
 ### 4.4 Limits and lease
-`UploadPolicy`: `maxPartBytes` = 8 MiB = `SnapshotAdmission.largeBodyBytes` (parts never take the admission permit);
-per-record cap = one record and its messages must fit in one part (data: longest line 1.34 MB, largest message
-0.6 MB [o V2]); `maxParts` 1,024; raw cap = config `maxFileBytes` (an `Int`, ≤ 2 GiB−1; production 256 MiB — raising
-it is decision D2); messages cap = `maxMessages`; positions and `recordIndex` i32, raw offsets i64/bigint. Lease: TTL
-3,600 s sliding, `expires_at = clock_timestamp() + ttl` set at open and on every accepted part (DB clock only; the client
-receives `expiresInSeconds`). At most one live upload per source (partial unique index on `(owner,source_key) WHERE
-phase='Open'`; an expired `Open` row is expired in the same advisory-locked transaction before the check), at most 8 per
-owner.
+`UploadPolicy`: `maxPartBytes` = 8 MiB = `SnapshotAdmission.largeBodyBytes`; per-record cap = one record and its
+messages must fit in one part (data: longest line 1.34 MB, largest message 0.6 MB [o V2]); `maxParts` 1,024; raw cap =
+config `maxFileBytes`, messages cap = `maxMessages` (both `Int`; positions and `recordIndex` i32, raw offsets i64/bigint).
+**Deployment values for S2** (L1: the owner's 556 MB session and a ≥ 600 MB synthetic one must upload): server
+`maxFileBytes` = 1,073,741,824 and `maxMessages` = 400,000 (the clone's largest session has 5.1 KB of raw per message,
+145.8 MB / 28,515 [o V2]: 1 GiB ≈ 210,000 messages [i]); `maxBodyBytes` stays 268,435,456 (it bounds only `/api/ingest`);
+collector `maxFileBytes` = 1,073,741,824, `maxMessages` = 400,000, `maxScanBytes` ≥ `maxFileBytes` (host today 4 GiB);
+`maxPayloadBytes` unchanged (whole mode only). Lease: TTL 3,600 s sliding, `expires_at = clock_timestamp() + ttl` set at
+open and on every accepted part (DB clock only; the client receives `expiresInSeconds`). At most one live attempt per
+source, at most 8 per owner.
 ### 4.5 Server state (migration `025_uploads.sql`)
-`ch_uploads(id uuid PK, owner, source_key, session_id uuid, request_id uuid, declaration jsonb, declaration_digest text, epoch uuid,
-append boolean, base_count int, base_raw_bytes bigint, base_records int, parts int, messages int, raw_bytes bigint,
-records int, raw_state bytea, message_chain bytea, max_record_index int, message_time text, last_part_sha256 text,
-receipt jsonb, failure text, phase text, expires_at timestamptz, UNIQUE(owner,source_key,request_id))` and
-`ch_upload_parents(upload uuid, parent_id text, PRIMARY KEY(upload,parent_id))` (unresolved forward references).
-`session_id` is the head's id, or a reserved new UUID when `expectedRevision = 0` (the `ch_sources` row is created by
-the commit, so no revision-0 source is ever visible [i: readers never saw such rows]).
-### 4.6 Operations (each one transaction under the advisory lock `ingest:owner:key` [o Database.scala:130])
-- **Open:** validate source/rawPath like `SnapshotValidation` [o Core.scala:265-275]; replay by requestId (same
-  `declaration_digest` → current state; different → 409); CAS `expectedRevision == head` (409); with `base`: head must be an
-  epoch revision with `raw_path = rawPath` and `envelope.digest, raw_bytes, message_count, message_chain` equal to the
-  base, else `base-mismatch`; delete garbage beyond the epoch's committed maximum; `append=true`, epoch = head epoch.
-  Without `base`: a new `ch_epochs` row, unreachable until the commit's revision references it.
-- **Part:** phase `Open` and not expired; `ordinal == parts` (else replay: same ordinal and sha → current state;
-  otherwise 409); recompute the part digest (§5) = `sha256`; raw empty or ending `\n`, every line a JSON value (records
-  counted with the shared `SnapshotValidation` line rule), scalar Unicode; every message checked as today
-  [o Core.scala:292-294]; positions assigned by the server from `messages` (contiguous); `recordIndex < records +
-  this part's records` or recorded in `max_record_index`; `parentId` resolved against `ch_epoch_messages` and
-  `ch_epoch_records` of the epoch (committed + staged), else inserted into `ch_upload_parents`; ids introduced by the
-  part delete matching pending parents; duplicate id → unique violation → `invalid`; write messages, raw segment(s) at
-  `base_raw_bytes + raw_bytes`, records, fragments (`head_candidate` true; unreachable until commit); extend `raw_state`
-  (resumable SHA-256), `message_chain`, counters, `message_time`, `expires_at`. Measured ≈ 1.1 s and ≈ 40 MB WAL per full
-  part [o V7].
-- **Commit:** phase `Open` (replay of `Committed` with the same commit digest → stored receipt); computed digest, raw bytes,
-  message count, chain equal the declaration, `ch_upload_parents` empty, `max_record_index < records`, metadata/tags/
-  timestamps valid [o Core.scala:296-297] — else `content-mismatch`, phase `Failed` (staged rows swept). Then CAS again,
-  create `ch_sources` for a new source, `ch_revisions` (envelope built from open + commit, `SnapshotProjection` applied to
-  metadata), `ch_revision_info`, metadata fragments, epoch `current` (and the previous head's epoch `prune` for a
+- **Intent** = `(owner, source_key, request_id)` bound to `declaration_digest = Wire.hash(Wire.canonical(UploadOpen))`;
+  its committed result is the row in `ch_ingest_receipts` [o migrations/001.sql:11] (shared with `/api/ingest`, kept
+  forever as today).
+- **Attempt** `ch_uploads(id uuid PK, owner, source_key, request_id, attempt int, session_id uuid, declaration jsonb,
+  declaration_digest text, epoch uuid, append boolean, base_count int, base_raw_bytes bigint, base_records int,
+  base_message_bytes bigint, parts int, messages int, raw_bytes bigint, records int, message_bytes bigint, raw_state bytea,
+  message_chain bytea, max_record_index int, message_time text, phase text, cleaned boolean NOT NULL DEFAULT false,
+  receipt jsonb, failure text, expires_at timestamptz, terminal_at timestamptz, UNIQUE(owner,source_key,request_id,attempt))`;
+  partial unique indexes `(owner,source_key,request_id) WHERE phase IN('Open','Committed')` (one live-or-committed
+  attempt per intent) and `(owner,source_key) WHERE phase='Open'` (one live attempt per source). Phases: `Open →
+  Committed | Aborted | Expired | Failed`; terminal phases never change; `cleaned` turns true once. Committed attempts are
+  kept (one small row per S2 revision, like receipts); other terminal attempts are deleted 7 days after `cleaned`.
+- **Part receipts** `ch_upload_parts(upload uuid, ordinal int, sha256 text, messages_end int, raw_end bigint,
+  records_end int, PRIMARY KEY(upload,ordinal))` — every accepted ordinal with its cumulative boundaries (R4).
+- **Pending parents** `ch_upload_parents(upload uuid, parent_key bytea, PRIMARY KEY(upload,parent_key))` — forward
+  `parentId` references not yet resolved (SHA-256 keys, as records).
+- `ALTER TABLE ch_epochs ADD COLUMN tail_upload uuid` — the staging owner (invariant 9).
+`session_id` is the head's id, or a reserved new UUID when `expectedRevision = 0`; the `ch_sources` row is created by the
+commit, so no revision-0 source is ever visible [i: readers never saw such rows].
+### 4.6 Operations (one transaction each, under the advisory lock `ingest:owner:key` [o Database.scala:130]; lock order: advisory → attempt row → source row)
+- **Open:** body bound, declaration bounds (§4.2) and `SnapshotValidation`'s source/metadata/tag/timestamp rules
+  [o Core.scala:265-275,296-297]; declared raw/messages within limits (413). Intent replay: a receipt for the
+  requestId → same digest: `UploadState(Committed, receipt)` of the committed attempt; other digest: 409. A live attempt
+  of the intent → same digest: its state; other: 409. Otherwise expire the source's live attempt if its lease passed;
+  if another live attempt remains → `upload-busy`. Source tombstoned → `gone`; CAS `expectedRevision == head` (409).
+  With `base`: head must be an epoch revision with `raw_path = rawPath` and `envelope.digest, raw_bytes, message_count,
+  message_chain` equal to the base, else `base-mismatch` (no attempt created). **Tail rule** on the head epoch: owner
+  `tail_upload` live → `upload-busy`; owner terminal and not `cleaned` → delete the tail (rows beyond the committed
+  maximum), mark it `cleaned`; then `tail_upload` = the new attempt. Without `base`: a new `ch_epochs` row with
+  `tail_upload` = the new attempt. Insert the attempt (`attempt` = previous + 1).
+- **Part:** attempt `Open`, lease valid (else `upload-expired`), source not tombstoned (else `gone`); ordinal `< parts`:
+  replay — equal `ch_upload_parts.sha256` → current state, different → 409; ordinal `> parts` → 409; `== parts`:
+  recompute the part digest (§5) = `sha256` (else `invalid`); raw empty or ending `\n`, every non-empty line a JSON value
+  (records counted with the shared `SnapshotValidation` line rule), scalar Unicode; every message checked as today
+  [o Core.scala:292-294]; positions assigned by the server (contiguous from `base_count + messages`); `recordIndex <
+  base_records + records + this part's records` or recorded in `max_record_index`; `parentId` resolved by
+  `SHA-256(parentId)` against `ch_epoch_records` and by id against `ch_epoch_messages` of the epoch (committed + this
+  attempt's staging), else inserted into `ch_upload_parents`; keys introduced by the part delete matching pending
+  parents; duplicate id → unique violation → `invalid`; write messages, raw segment(s) at `base_raw_bytes + raw_bytes`,
+  records, fragments (`head_candidate` true; unreachable until commit); insert the part receipt; extend `raw_state`
+  (resumable SHA-256), `message_chain`, counters, `message_bytes`, `message_time`, `expires_at`. ≈ 1.1 s and ≈ 40 MB WAL
+  per full part [o V7].
+- **Commit:** attempt `Committed` → stored receipt (replay). `Open` and lease valid: computed digest, raw bytes, message
+  count and chain equal the declaration, `ch_upload_parents` empty, `max_record_index < base_records + records` — else
+  `content-mismatch`, phase `Failed`. Then source not tombstoned, CAS again, create `ch_sources` for a new source,
+  `ch_revisions` (envelope from the declaration with `SnapshotProjection` applied to metadata, counts, `message_bytes`),
+  `ch_revision_info`, metadata fragments, `tail_upload` NULL, epoch `current` (the previous head's epoch `prune` for a
   replacement), `FOR NO KEY UPDATE` switch, `Jobs.switched`, receipt in `ch_ingest_receipts(owner, source_key,
-  request_id, digest = hash(declaration_digest ‖ commit digest))`, phase `Committed`. O(metadata), no staged-row update.
-- **Status/abort:** abort sets `Aborted`; the sweep deletes its staged rows.
-- **`/api/ingest` on a source with a live upload** (S2 adds this check to §3): 409 `upload-busy` — an old collector
-  shows it as `cas-conflict`; it needs two writers for one source key [i]. Expired uploads are expired inline first.
-- **Sweep** (`EpochMaintenance`, S2 part): `Open` with `expires_at < clock_timestamp()` → `Expired`; for `Expired`,
-  `Aborted`, `Failed`: delete staged rows (append: rows beyond the epoch's committed maximum; replacement: the epoch's rows
-  then the epoch) in statements of ≤ 10,000 rows, taking the source's advisory lock with `pg_try_advisory_xact_lock` (skip
-  when busy); terminal upload rows kept 7 days for replay, then deleted.
+  request_id, declaration_digest)` and in the attempt, phase `Committed`. O(metadata), no staged-row update.
+- **Status/abort:** `GET` returns the attempt's state (expiring it first if its lease passed). Abort: `Open` → `Aborted`;
+  terminal → current state.
+- **`/api/ingest` on the source** (S2 adds to §3): a live attempt → 409 `upload-busy` (an old collector shows
+  `cas-conflict`; needs two writers for one source key [i]); a terminal, uncleaned tail owner → its tail is deleted and
+  it is marked `cleaned` before the append.
+- **Purge** (S2 adds to §3, first statement, before the source update): `UPDATE ch_uploads SET phase='Aborted',
+  failure='purged' WHERE owner=? AND source_key=? AND phase='Open'` — it waits for an in-flight part or commit holding the
+  attempt row, then both writers and purge take attempt → source in the same order (no cycle); a later part/commit sees
+  the tombstone → `gone`.
+- **Sweep** (`EpochMaintenance`): `Open` past `expires_at` → `Expired`; for each terminal attempt not `cleaned`, under
+  `pg_try_advisory_xact_lock` of its source (skip when busy): if `epoch.tail_upload` = the attempt, delete its staging
+  (append: rows beyond the committed maximum; replacement: the epoch's rows, then the epoch) in statements of ≤ 10,000
+  rows and set `tail_upload` NULL; mark `cleaned` (also when another attempt already took the tail over). Deletes
+  terminal attempts 7 days after `cleaned` (committed ones stay).
 ### 4.7 Memory
-Server: one part (≤ 8 MiB body, its decode and fragments) per request; commit O(metadata); no admission permit.
-Unchanged O(session): the worker claim and `GetRaw` (decision D3). Collector: §6.
+Server, per request: one part (≤ 8 MiB body, its decode and fragments), open ≤ 64 KiB, commit O(metadata). No request
+materializes a session.
+### 4.8 Oversize guards (no server path materializes a large revision whole)
+- **`GetRaw`** (and `content`/`headSnapshot`): a revision whose `raw_bytes` (epoch) or file sizes (legacy) exceed
+  `maxRawReadBytes` returns `too-large` before any query that builds the raw — a documented contract change ("a positive
+  revision pins bytes" stays true; above the bound the bytes are retained and exact but not returned by `GetRaw`)
+  [o CONTRACT.md:100-102]. New optional server config key `maxRawReadBytes`, default 268,435,456 (the old request bound,
+  so nothing readable today becomes unreadable), validated 1..536,870,912 (`string_agg` cannot build ≥ 1 GiB, V1; the JSON
+  response doubles it). Recommended (D1); option: a paged `GetRawPage{revision, offset, maxBytes}` over segment
+  boundaries (new operation, more dashboard/CLI work).
+- **Worker claim:** inside the claim transaction, after choosing `(source, revision)` and before `claimedSnapshot`
+  allocates anything, compare the revision's message bytes (`message_bytes`; for a legacy revision `sum(octet_length(
+  value::text))` over its `ch_messages` rows — one index scan, bounded by the old request bound) with
+  `maxClaimMessageBytes`; above it the job becomes `Failed` with error `claim-too-large` (fence + 1, no attempt
+  consumed, visible in Activity/`IngestStatus`; `RetryJob` reaches the same verdict until the bound changes). Default
+  167,772,160 (160 MiB): ch-fix2's final run (the five largest jobs, one large job at a time, plus a 162 MB ingest) peaked at
+  1,525 MB live heap (after a full collection; cap 6,554 MB = 80 % of 8 GiB) [r ch-fix2 §3.1]; its largest job,
+  `36763d39`, has ≈ 80 MB of message values (226.6 MB rebuilt snapshot − 145.8 MB raw [o V6, V2]; its legacy claim sorted
+  79,776 kB [o E4 B6]). Charging the whole peak to
+  that job gives ≤ 19 heap bytes per message byte; half the heap bound, 3.28 GB, / 19 ≈ 172 MB → 160 MiB. New optional
+  config key `maxClaimMessageBytes` (1..2,147,483,647). The session stays readable: pages, locate, context, per-session
+  literal search and Archive lexical search use SQL over epoch rows (§1.3) and never decode the session. The owner's
+  556 MB session holds ≈ 305 MB of message values [i: same raw/message ratio] → not indexed at the default (D2).
+- Other server paths stay bounded: `/api/ingest` by `maxBodyBytes` and the admission permit; message pages, context and
+  literal search by their page/byte/deadline bounds [o MessageContext.scala:16-19, SessionMessageSearch.scala:24]; the
+  sweep and the down-script in SQL.
 
 ## 5. Base proof
 - **Raw digest:** `digest = hex(SHA-256(raw))` (unchanged meaning [o Core.scala:289]). Stored per epoch revision:
@@ -321,54 +424,72 @@ Unchanged O(session): the worker claim and `GetRaw` (decision D3). Collector: §
   `chronicle/tests/message-chain-v1.json`, read by the Scala and the collector tests.
 - **Part digest:** `SHA-256("chronicle.upload-part.v1" ‖ 0x00 ‖ u64be(len raw) ‖ raw ‖ u32be(n) ‖ m(x₁) ‖ … ‖ m(xₙ))`, hex.
 - **What the server verifies:** at open, `base` equals the head exactly (revision via CAS; digest, raw bytes, message
-  count, chain); during parts, it extends its own midstate and chain from the head's stored state over received bytes and
-  messages (O(delta)); at commit, the declared final digest/chain/counts equal its own. The server cannot see the
-  collector's prefix; a wrong local prefix decision (bug, file changed) yields `content-mismatch` because the declared
-  digest covers the collector's full raw while the server's covers head ‖ delta.
-- **`base-mismatch`** (409, at open; no upload created) and **`content-mismatch`** (409, at commit; upload `Failed`) make
-  the collector re-plan as a **replacement**: open without `base` → new epoch, all content in parts. A replacement that
-  ends in `content-mismatch` is a collector bug: the entry stops with that code.
+  count, chain); during parts it extends its own midstate and chain from the head's stored state over the received bytes
+  and messages (O(delta)); at commit the results equal the declaration bound at open. The server cannot see the
+  collector's prefix; a wrong local prefix decision (bug, file changed between the collector's passes) yields
+  `content-mismatch`, because the declaration covers the collector's full raw while the server computes head ‖ delta.
+- **`base-mismatch`** (409 at open; no attempt) and **`content-mismatch`** (409 at commit; attempt `Failed`) make the
+  collector re-plan as a **replacement** under a new requestId (the old intent never commits): open without `base` → new
+  epoch, all content in parts. A replacement that ends in `content-mismatch` stops the entry with
+  `upload-content-mismatch` (a collector bug or a file that keeps changing).
 
 ## 6. Collector (S2)
-- **Config:** `uploadProtocol: "parts" | "whole"` (default `parts`; `whole` = today's `/api/ingest` path); Home Manager
-  option `chronicle.collector.uploadProtocol` (string enum; `limits` takes integers only [o nix/hm/chronicle.nix:128-132]).
+- **Config:** `uploadProtocol: "parts" | "whole"` (default `parts`; `whole` = today's `/api/ingest` path, the explicit
+  rollback switch); Home Manager option `chronicle.collector.uploadProtocol` (string enum; `limits` takes integers only
+  [o nix/hm/chronicle.nix:128-132]). Limits for the 1 GiB deployment: §4.4.
 - **Spool** (existing spools open unchanged; new buckets only, so a downgraded collector ignores them):
-  `head` rows gain optional `rawBytes, recordCount, messageCount, messageChain` (absent = unknown base →
-  replacement; written after every acknowledgement, in `whole` mode too, because an S1 server stores the same digest and
-  chain, so a later switch to `parts` appends); bucket `upload` keyed by requestId `{requestId, sourceKey, uploadId, append, base, file {dev, ino},
-  plannedFileBytes, partBudget, partsAcked, lastPartSha256, policyDigest, status, attempts, nextAt, error}` and index
-  `source-upload` (not `source-pending`: an old collector would refuse that source with `source-already-pending`
-  [o spool.ts:174]). No content is spooled: parts are regenerated from the file.
+  `head` rows gain optional `rawBytes, recordCount, messageCount, messageChain` (absent = unknown base → replacement;
+  written after every acknowledgement, in `whole` mode too, because an S1 server stores the same digest and chain, so a
+  later switch to `parts` appends); bucket `upload` keyed by requestId `{requestId, sourceKey, open (the complete
+  UploadOpen JSON, ≤ 64 KiB), uploadId, append, baseFileOffset, file {dev, ino, size, mtimeNs, ctimeNs}, partBudget,
+  partsAcked, lastPartSha256, policyDigest, evidence, origin, status, attempts, nextAt, error}` and index `source-upload`
+  (not `source-pending`: an old collector would refuse that source with `source-already-pending` [o spool.ts:174]). No
+  content is spooled: parts are regenerated from the file. The entry, with its declaration, is written **before** the
+  open is sent (R5).
 - **Draining:** a source with a queued old-format `pending` entry uploads it through `/api/ingest` first (as today); no
-  upload is opened for it until that entry is acknowledged or dropped.
-- **Streaming pass** (replaces `readSnapshot` + `parseTranscript` holding the file [o discovery.ts:124-149,
-  parsers.ts:88-110]): open with the same identity/symlink/stat checks; read to the size observed at open (must end with
-  `\n`, else the partial-line rule applies); a 1 MiB buffer splits lines; per line: `JSON.parse`, depth check, redaction,
-  redacted raw line, `excludedTranscript` and `evidenceFor` checks [o collector.ts:22-37, controls.ts:28-43], record id,
-  metadata last-wins and title rule [o parsers.ts:149-158,181-188], normalization; SHA-256 (Node) of the redacted raw,
-  chain v1 (state = 32 B, storable), counts. **Codex** needs a pre-pass: the file-wide `event_msg` dedup keeps a multiset
-  of `SHA-256(role ‖ 0x00 ‖ text)` of `response_item` messages (32 B per entry instead of the text [o parsers.ts:159-173]);
-  then the main pass decides drops from it.
-- **Append vs replacement:** with a known base the pass checks, at record `head.recordCount`, raw bytes ==
-  `head.rawBytes`, `hash.copy().digest()` == `head.digest`, messages == `head.messageCount`, chain == `head.messageChain`;
-  all equal → open with `base` and continue the same pass emitting delta parts; otherwise open without base and re-read
-  from the start (page cache warm). Pi/Claude appends therefore read the file once.
-- **Parts:** greedy packing of whole records (raw line + its messages) up to the server's `maxPartBytes` minus envelope
-  margin; a record that alone exceeds it → `record-too-large` (source quarantined, status line with size and limit).
-  Sequential: send, then persist `partsAcked`/`lastPartSha256`.
-- **Resume** (restart, timeout, 5xx): `GET` status; re-run the pass recomputing parts up to `receivedParts`; the
-  recomputed sha of part `receivedParts-1` must equal `lastPartSha256` and the file identity must match, else abort and
-  re-plan. `upload-expired` → reopen with the same requestId (the server creates a new upload id). `upload-busy` → back-off.
-- **Commit:** at the end of the pass (stat unchanged since open): `UploadCommit` with digest, totals, chain, metadata
-  (after git-remote observation [o collector.ts:196-208]); on success store the new head with the base fields.
-- **Memory:** buffer + one part + Codex hash multiset (≈ 80 B/message) + metadata — independent of file size.
+  upload is planned for it until that entry is acknowledged or dropped.
+- **Pass 1 — preflight, before any network mutation** (R3; replaces `readSnapshot` + `parseTranscript` holding the
+  file [o discovery.ts:124-149, parsers.ts:88-110]): open with the same identity/symlink/stat checks, read to the size
+  observed at open (must end with `\n`, else the partial-line rule applies), a 1 MiB buffer splits lines; per line:
+  `JSON.parse`, depth check, redaction, redacted raw line, the `excludedTranscript` project/session checks and the
+  `evidenceFor` cwd paths [o collector.ts:22-37, controls.ts:28-43], Claude session/agent identity consistency
+  [o parsers.ts:124-133], record id, metadata last-wins and title rule [o parsers.ts:149-158,181-188], normalization,
+  SHA-256 (Node) of the redacted raw, chain v1, counts, message bytes; at record `head.recordCount` it records
+  `hash.copy().digest()`, the chain, raw bytes, message count and the file offset (base check). **Codex** first runs a
+  multiset pass for the file-wide `event_msg` dedup, keeping `SHA-256(role ‖ 0x00 ‖ text)` per `response_item` message
+  (32 B instead of the text [o parsers.ts:159-173]). At the end the whole file has passed admission, exclusion, identity
+  and limits exactly as today, and the complete declaration is known. Any exclusion or identity failure → the existing
+  outcome, nothing sent. Memory: buffer + Codex multiset (≈ 80 B/message) + the evidence path set + metadata.
+- **Append vs replacement:** base fields known and all equal (raw bytes, prefix digest, message count, chain) → append
+  with `base`, pass 2 seeks to `baseFileOffset`; otherwise replacement, pass 2 reads from the start.
+- **Live controls** (pause, exclusions, admission origin) are re-checked with the stored evidence before the open, each
+  part and the commit, as the current upload loop does for queued payloads [o collector.ts:221-228]; a held entry waits
+  (nothing aborted).
+- **Pass 2 — upload:** greedy packing of whole records (raw line + its messages) up to the server's `maxPartBytes` minus
+  envelope margin; a record that alone exceeds it → `record-too-large` (source quarantined, status line with size and
+  limit). Sequential: send, then persist `partsAcked`/`lastPartSha256`. The file's stat must stay equal to pass 1's until
+  the commit; otherwise abort the attempt and re-plan next cycle.
+- **Resume** (restart, timeout, 5xx): first recover the outcome without the file — `GET` the attempt; on 404 or a
+  terminal phase replay the open with the stored declaration (a committed intent returns its receipt; an uncommitted one
+  gets a new attempt). Only then regenerate: re-run the passes, check that the recomputed declaration equals the stored
+  one and that part `receivedParts-1` hashes to `lastPartSha256`, and continue from `receivedParts`; any difference →
+  abort the attempt, drop the intent and re-plan with a new requestId. `upload-expired` → open replay (new attempt);
+  `upload-busy` → back-off.
+- **Commit:** after the last part and the stat check; on the receipt store the new head with the base fields.
+- **Server without the upload API** (L2): before the first upload of a cycle the collector probes `GET
+  /api/ingest/uploads/00000000-0000-0000-0000-000000000000` — an S2 server answers `404 {"code":"not-found",…}`, an older
+  one `404` without a `Failure` JSON body [i from Http.scala routes: no `/api` GET route matches]. On the latter the
+  cycle uploads no parts, entries keep their status and attempts (no per-entry stop), `--status` and the progress report
+  carry one collector-level line `server-upload-unsupported` ("the server has no part-upload API; upgrade it or set
+  uploadProtocol=whole"), and the next cycle probes again, so the condition clears itself after the server upgrade. No
+  automatic fallback to `whole`; queued old-format entries still drain (they are whole payloads already).
 - **S0-COL codes:** `snapshot-too-large` (file > `maxFileBytes`), `message-limit`, `scan-budget-deferred` unchanged;
-  `payload-too-large` and `server-payload-too-large` apply to `whole` mode and old-format drains only; new:
-  `server-upload-unsupported` (404 without a `Failure` JSON body on `POST /api/ingest/uploads`; stopped, status names
-  `uploadProtocol`), `upload-too-large` (413 at open/part, with size and the server limit),
-  `record-too-large`, `upload-content-mismatch` (replacement mismatch; stopped); counters gain `replacements`. The
-  progress report wire is unchanged (`uploadedBytes` = acknowledged part bytes).
-- **Old server:** see §8; no automatic fallback.
+  `payload-too-large` and `server-payload-too-large` apply to `whole` mode and old-format drains only; new: the
+  collector-level `server-upload-unsupported`; per entry `upload-too-large` (413, with size and the server limit),
+  `record-too-large`, `upload-content-mismatch`; counters gain `replacements`. The progress report wire is unchanged
+  (`uploadedBytes` = acknowledged part bytes; `error` carries `server-upload-unsupported`).
+- **Privacy/destination policy change** during an upload: the entry is aborted and dropped like a queued payload today
+  [o collector.ts:102-107] (see §13).
 
 ## 7. Atomic visibility
 - **S1:** one transaction as today (study/ch-fix2 §2-A): the revision row, its rows, switch, jobs and receipt become
@@ -377,58 +498,73 @@ Unchanged O(session): the worker claim and `GetRaw` (decision D3). Collector: §
 - **S2 parts:** each part commits rows that are MVCC-visible but unreachable: beyond every committed count of the head's
   epoch (append) or in an epoch no revision references (replacement); head search filters `position <
   c.message_count` and joins on the head's epoch. **Commit** is the only transaction that makes the revision visible;
-  readers before it see the previous head (and pinned revisions stay exact). **Failure/abort/expiry:** nothing becomes
-  visible; the sweep deletes staged rows, never rows below a committed count (DELETE guard).
-- Test: extend `OwnerLeaseBoundaryTest` (§11): parts committed while a reader holds a pinned view and a REPEATABLE READ
-  transaction; both see the old content; after commit the new revision appears whole.
+  readers before it see the previous head (and pinned revisions stay exact). **Failure/abort/expiry/purge:** nothing
+  becomes visible; staging is deleted only by its owner's one-shot cleanup (invariant 9), never below a committed count
+  (DELETE guard).
+- Tests: §11 U3 (S1, ingest parked inside its transaction) and U6 (parts committed while a reader holds a pinned view
+  and a REPEATABLE READ transaction; after commit the new revision appears whole), both extending
+  `OwnerLeaseBoundaryTest`.
 
 ## 8. Compatibility and version policy
 Rules: one Baboon schema edited in place, VersionInfo `1.9.0` [o CONTRACT.md:3,137-139]; explicit removed/future-version
 rejection concerns the WebSocket/RPC negotiation [o VersionedWire.scala:8-15, ApiVersionCompatibilityTest]; additive
-in-place precedent 3961370f (enum value, `lock.json` unchanged) [o git]. **Decision: S2 is additive in 1.9.0** — new root
-types and endpoints only; `IngestRequest`/`IngestReceipt` codecs and their golden fixtures unchanged;
-`ApiVersionCompatibilityTest` unchanged; new golden fixtures for the five new root types in
-`scripts/codec-fixtures.mjs`/`CodecFixtureTest`. [u] whether the pinned Baboon re-generation accepts the changed 1.9.0
-signature without a `lock.json` update; if it refuses, update the lock entry in the same commit (it locks only 1.9.0).
+in-place precedent 3961370f (enum value, `lock.json` unchanged) [o git]. **S2 is additive in 1.9.0** — new root types and
+endpoints only; `IngestRequest`/`IngestReceipt` codecs and their golden fixtures unchanged; `ApiVersionCompatibilityTest`
+unchanged; new golden fixtures for `UploadOpen`, `UploadPart`, `UploadState` in `scripts/codec-fixtures.mjs`/
+`CodecFixtureTest`. [u] whether the pinned Baboon re-generation accepts the changed 1.9.0 signature without a `lock.json`
+update; if it refuses, update the lock entry in the same commit (it locks only 1.9.0). Contract changes (CONTRACT.md,
+U5/U6): the upload endpoints; `GetRaw` → `too-large` above `maxRawReadBytes`; the job error `claim-too-large`; the two
+optional config keys; purge's physical deletion by the sweep.
+
 | | server ≤ S1 (no upload API) | server S2 |
 |---|---|---|
-| collector ≤ S0-COL | `/api/ingest`; S1 stores deltas; > `maxBodyBytes` → 413 → `server-payload-too-large` (stopped) | same; the upload API is unused |
-| collector S2, `parts` | `POST /api/ingest/uploads` → 404 (http4s `orNotFound`, no JSON [i from Http.scala routes]) → `server-upload-unsupported`, stopped, status: "server lacks the part-upload API: upgrade it or set uploadProtocol=whole"; queued old-format entries still drain | parts; append/replacement; sessions up to the server's `maxFileBytes`; status shows parts acked, replacements |
+| collector ≤ S0-COL | `/api/ingest`; S1 stores deltas; > `maxBodyBytes` → 413 → `server-payload-too-large` (stopped) | same; a source with a live upload attempt (only with two writers) → 409 → `cas-conflict` |
+| collector S2, `parts` | probe 404 without JSON → collector-level `server-upload-unsupported` line, no parts sent, entries keep status, re-probed every cycle; old-format entries drain | parts; append/replacement; sessions up to the server's `maxFileBytes`; `--status` shows parts acked and replacements |
 | collector S2, `whole` | as an old collector (+ S0-COL codes) | as an old collector |
+
 Other `/api/ingest` clients (Historian extension, 8 MiB cap [o chronicle-upload.ts:18,72]; CLI `ingest`
 [o cli/src/main.ts:125-142]; relevance eval [o workflow_v3.py:278]) are unchanged; their revisions go through §3
-(Historian: a new 1-message epoch per revision). Rollout: server S1 → server S2 → collectors per host; S4 retires
-`/api/ingest` later.
+(Historian: a new 1-message epoch per revision; a raw without a final newline: legacy layout). The CLI `raw` command
+receives `too-large` above the raw bound. Rollout: server S1 → server S2 → collectors per host; S4 retires `/api/ingest`
+later. Acceptance after rollout (not a test; live data): the owner's 556 MB session reaches `Committed` and appears as
+the head with its message count.
 
 ## 9. Rollback
 - **S1:** stop the server, run `down-024-epoch-layout.sql` (§1.2), deploy the S0 binary. A pre-S1 binary must not
   run against epoch revisions: it would read `ch_messages` (empty for them) and serve empty pages with non-zero totals
-  [i from Database.scala:217-225]; the runbook orders down-script before binary. Not lossy (V6). Impossible for revisions
-  above the jsonb cap (S2 only); costly in disk/WAL (full copies again).
-- **S2 server:** stop, run `down-025-uploads.sql` (aborts and deletes staged rows, drops `ch_uploads`,
-  `ch_upload_parents`), deploy S1. Committed S2 revisions are ordinary epoch revisions; S1 deletes leftover garbage
-  beyond committed counts before appending (§3), so an S2 → S1 rollback is safe. Collectors must be on `whole` first.
+  [i from Database.scala:217-225]; the runbook orders down-script before binary. Not lossy (V6) for representable
+  revisions; impossible for revisions above the jsonb cap — S2 sessions above 256 MiB and, rarely, S1 revisions near
+  `maxBodyBytes` (§1.2, D6); costly in disk/WAL (full copies again).
+- **S2 server:** stop, run `down-025-uploads.sql` (aborts live attempts, deletes their staging, drops `ch_uploads`,
+  `ch_upload_parts`, `ch_upload_parents`, `ch_epochs.tail_upload`), deploy S1. Committed S2 revisions are ordinary epoch
+  revisions; the guards' config keys are ignored by S1 (S1 has no session above its body bound to protect). Collectors
+  must be on `whole` first.
 - **S2 collector:** set `uploadProtocol=whole` or install the previous collector; new spool buckets are ignored; heads
-  written back by an old collector lose the base fields (next S2 upload is a replacement); live server uploads expire.
-- **Lossy/impossible:** S1 down after S2 created a revision above the cap; S2 sessions larger than the old path's
-  `maxBodyBytes` can no longer be updated by `whole` collectors (413).
+  written back by an old collector lose the base fields (next S2 upload is a replacement); live server attempts expire.
+- **Lossy/impossible:** S1 down after a non-representable revision exists; S2 sessions larger than `maxBodyBytes` can no
+  longer be updated by `whole` collectors (413).
 
 ## 10. Bounds and failure modes
-- **Disk:** staging ≤ live uploads × `maxFileBytes` (≤ 8 per owner); an append costs its delta (V7); a replacement a full
+- **Disk:** staging ≤ live attempts × `maxFileBytes` (≤ 8 per owner); an append costs its delta (V7); a replacement a full
   epoch (old epoch retained: revisions are immutable until purge). WAL per full part ≈ 40 MB steady, 118 MB after a
-  checkpoint (GIN fragment index dominates); today's 233 MB ingest writes 2.2 GB [o V7, V8].
-- **Garbage:** expired/aborted/failed uploads swept by `EpochMaintenance`; S1 and S2 writers delete garbage beyond the
-  committed maximum before appending; orphan replacement epochs (no revision) deleted with their upload.
-- **Interrupted commit / crash:** single transaction; the upload stays `Open`; the collector retries commit (idempotent)
-  or resumes parts.
-- **Server restart mid-upload:** parts are durable; `GET` status resumes; the TTL keeps the lease 1 h after the last part.
+  checkpoint (GIN fragment index dominates); today's 233 MB ingest writes 2.2 GB [o V7, V8]; a 1 GiB replacement ≈ 128
+  parts ≈ 2.5 min of server time and ≈ 5 GB WAL [i from V7].
+- **Garbage:** terminal attempts cleaned once by their staging owner (sweep, next open, or `/api/ingest`); tombstoned
+  sources' epochs deleted by the sweep; orphan replacement epochs deleted with their attempt.
+- **Interrupted commit / crash:** single transaction; the attempt stays `Open`; the collector recovers by `GET`/open replay
+  before regenerating anything.
+- **Server restart mid-upload:** parts are durable with per-ordinal receipts; the lease runs 1 h after the last part.
 - **Two collectors for one source:** `upload-busy` for the second; commit CAS; same-namespace copies of a spool are the
   only way to get there [i].
+- **Purge during an upload:** purge aborts the live attempt first (lock order attempt → source, as writers); the
+  in-flight part or commit finishes or sees `gone`; staging is cleaned by the sweep.
 - **Clock skew:** TTL and expiry use `clock_timestamp()`; the client only receives `expiresInSeconds`.
-- **Statement/idle timeouts:** every statement bounded by 128 rows, one 1 MiB segment or one 8 MiB part; the commit and
-  the switch are O(metadata). The admission permit is untouched by parts.
-- **Remaining O(session):** worker claim heap (one at a time via the admission), `GetRaw` heap, the first S1 touch of a
-  legacy source, replacements, candidate pruning after a replacement (batched, background).
+- **Statement/idle timeouts:** every statement bounded by 128 rows, one 1 MiB segment, one 8 MiB part or 10,000 cleanup
+  rows; the commit and the switch are O(metadata). The admission permit is untouched by uploads.
+- **Large sessions:** `GetRaw` refuses above `maxRawReadBytes`; claims fail `claim-too-large` above
+  `maxClaimMessageBytes` before allocating; pages, locate, context, literal and Archive search stay available. Remaining
+  O(session) work: the first S1 touch of a legacy source, replacements, candidate pruning after a replacement (batched,
+  background), the down-script.
 
 ## 11. Work units
 Gates (from the worktree root; report counts and wall time): **B** = `T=$(mktemp -d /tmp/u.XXXXXX); nix develop
@@ -436,33 +572,45 @@ Gates (from the worktree root; report counts and wall time): **B** = `T=$(mktemp
 .#chronicle --command bash -c 'cd chronicle/web && npm ci --offline && cd .. && TSC="$PWD/web/node_modules/.bin/tsc"
 ./scripts/test-codecs.sh'`; **C** = `nix develop .#chronicle --command bash -c 'cd chronicle/collector && npm ci --offline &&
 npm run typecheck && npm test'`; after committing **BF** = `nix build --no-link -L .#checks.x86_64-linux.chronicle-backend-full`,
-**CF** = `… .#checks.x86_64-linux.chronicle-collector`; integration (orchestrator) `scripts/verify chronicle`.
+**CF** = `… .#checks.x86_64-linux.chronicle-collector`; integration (orchestrator) `scripts/verify chronicle`. Every unit
+passes its gates on its own: until U3 the production layout is `Legacy`, so no epoch revision exists outside tests.
+`Database.scala` is edited by U1 (initialize list), U2 (`ingest`, `Jobs.switched`), U3 (reader methods,
+`claimedSnapshot`, the seam default), U5 (`claim` guard, `raw`/`content` bound) and U6 (`ingest`'s upload check) — always
+sequentially.
+
 | unit | goal | owns | depends | tests added (lean) | gates | h |
 |---|---|---|---|---|---|---|
-| U1 S1 schema + digests | 024 migration, triggers, `ResumableSha256`, `MessageChain` v1 | `migrations/024_epoch_layout.sql`; `Database.scala` initialize list line; new `ResumableSha256.scala`, `MessageChain.scala`; `chronicle/tests/message-chain-v1.json`; new `EpochSchemaTest`, `ResumableSha256Test` | S0 tip | resumable SHA-256 = JDK on random inputs/splits incl. export/resume; chain golden vectors; immutability (update of committed epoch row / revision column refused; delete below committed count refused; purge passes); migration idempotent on restart (013 then 024) | B, BF | 6–9 |
-| U2 S1 write path | append/new-epoch/legacy decision, epoch writer, switch, purge, backfill guard, `EpochMaintenance` prune | `Database.scala` (`ingest`, `Jobs.switched`); `ArchiveProjection.scala`; new `EpochWriter.scala`, `EpochMaintenance.scala`; `Auth.scala` purge line; `plugins/ChroniclePlugin.scala` (one `make` line, as `McpTestRuns` [o ChroniclePlugin.scala:49]); tests `EpochIngestTest` (new), `OwnerLeaseBoundaryTest` (1 case), legacy-pinning edits in `ArchiveHeadCandidateTest`, `ArchiveProjectionTest` | U1 | decision cases: Pi append (rows written = delta only), equal revision (0 rows), Codex dedup fixture (non-prefix → new epoch), redaction change, Pi v2→v3 rewrite, Historian, multi-file → legacy; midstate self-check; receipt replay/409/CAS unchanged; ingest parked at an epoch fragment insert: readers see the old head, after commit the new (extends `OwnerLeaseBoundaryTest`); prune with an injected interval + production default asserted | B, BF | 10–14 |
-| U3 S1 read path + differential | `RevisionContent`, all readers, archive search | `Database.scala` reader methods (`selectView`, `messages`, `locateMessage`, `content`/`raw`, `claimedSnapshot`); `MessageContext.scala`; `SessionMessageSearch.scala`; `ArchiveSearch.scala`; `ArchiveIndex.scala`; new `RevisionContent.scala`; new `EpochReadDifferentialTest`; `ArchiveContentBoundaryTest` epoch seek plan | U2 (same file: sequential) | one revision sequence (append, append, non-prefix, append) ingested by `Legacy` and `Epochs` archives under two owners: identical GetMessages pages, LocateMessage, MessageContext, Find, ArchiveSearch (lexical global + per-session), GetRaw bytes, claim snapshots, for every revision incl. pinned old ones | B, BF | 8–11 |
-| U4 S1 down-script + rehearsal | exact rollback; clone rehearsal | `chronicle/scripts/down-024-epoch-layout.sql`; `nix/pkg/chronicle/source.nix` tests list; new `EpochDownScriptTest`; rehearsal report | U2 (parallel to U3) | after U2's sequence: reads before = after the down-script; snapshots equal a `Legacy` ingest of the same sequence; refusal above the cap (synthetic cap check via a low threshold parameter + production value asserted). Rehearsal on a TEMPLATE copy: S1 binary, next revisions of the 5 largest sessions as appends (time, WAL, lock probe, `/api/versions` probe as ch-fix2 §3), down-script, `verify` reads | B, BF | 5–8 |
-| U5 S2 wire | types §4.1, regenerated code, golden fixtures | `models/chronicle.baboon`, `models/lock.json` if needed, `generated/**`, `scripts/codec-fixtures.mjs`, `server/src/test/fixtures/upload-*.json`, `CodecFixtureTest.scala` | S1 merged | new golden fixtures (open with/without base, part, commit, state with receipt/failure, i64 strings); `IngestRequest` fixtures byte-identical | P, BF | 3–4 |
-| U6 S2 server | uploads, validation per part, commit, sweep | migration `025_uploads.sql`; new `Uploads.scala`, `UploadValidation.scala` (factored from `SnapshotValidation`, which then calls it); `Core.scala` (validation helpers); `Http.scala` (routes + failure codes); `EpochMaintenance.scala` (sweep); `chronicle/scripts/down-025-uploads.sql`; `CONTRACT.md` Ingestion; `README.md` server paragraph; new `UploadProtocolTest`, `UploadBoundaryTest` | U5 | open/part/commit/status/abort happy path (append and replacement); idempotency: same part replay, changed part 409, out-of-order 409, commit replay, CAS 409; `base-mismatch` (legacy head, wrong chain); `content-mismatch` (Codex fixture appended as if prefix); forward parentId resolved later and unresolved at commit; TTL expiry + sweep with injected TTL/interval, production defaults asserted; atomic visibility (extends `OwnerLeaseBoundaryTest`); part body > limit refused before reading | B, P, BF | 12–16 |
-| U7 S2 collector | streaming planner, parts client, resume, spool, status | `chronicle/collector/src/**`, `chronicle/collector/test/**`, `chronicle/collector/README.md`, collector paragraph of `chronicle/README.md`, `nix/hm/chronicle.nix` option | U5 (parallel to U6; against a fake server) | chain golden vectors; append vs replacement (Codex dedup fixture, redaction change, Pi v2→v3 rewrite); resume after restart from spool (parts not resent); `server-upload-unsupported` on a 404; old-format entry drains first; spool from the current release opens; bounded memory: an instrumented reader proves no buffer/part above its bound on a 64 MiB synthetic file | C, CF | 12–16 |
-| U8 S2 rehearsal + bounds | on-demand 1 GiB check; clone rehearsal of uploads | `chronicle/scripts/test-upload-bounds.sh` (on-demand, named in `chronicle/README.md`); reports | U6, U7 | on-demand (minutes of I/O; AGENTS.md "On-demand checks"): native server in serve-standby with `-XX:MaxHeapSize=512m` and collector with `--max-old-space-size=256` upload a 1 GiB synthetic session (append + replacement) — both heaps far below the session size; rehearsal on a TEMPLATE copy: parts uploads of the largest sessions, WAL/time/lock, `/api/versions` probe | the script; `scripts/verify chronicle` | 4–6 |
-S1 total 29–42 h, S2 total 31–42 h. Parallel: U3 ∥ U4; U6 ∥ U7. File ownership is disjoint between parallel units.
+| U1 S1 schema + digests | 024 migration, triggers, `ResumableSha256`, `MessageChain` v1 | `migrations/024_epoch_layout.sql`; `Database.scala` initialize list; new `ResumableSha256.scala`, `MessageChain.scala`; `chronicle/tests/message-chain-v1.json`; new `EpochSchemaTest`, `ResumableSha256Test` | S0 tip | resumable SHA-256 = JDK on random inputs/splits incl. export/resume; chain golden vectors; immutability (update of a committed epoch row / revision column refused; delete below a committed count refused; delete after the revisions are gone passes); migration idempotent on restart (013 then 024) | B, BF | 6–9 |
+| U2 S1 writer behind the seam | layout decision (legacy for multi-file / no final newline), epoch writer, hashed record keys, `message_bytes`, switch, backfill guard, `EpochMaintenance` (prune, tombstoned epochs) | `Database.scala` (`ingest`, `Jobs.switched`); `ArchiveProjection.scala`; new `EpochWriter.scala`, `EpochMaintenance.scala`; `plugins/ChroniclePlugin.scala` (one `make` line, as `McpTestRuns` [o ChroniclePlugin.scala:49]); new `EpochIngestTest`; legacy pinning in `ArchiveHeadCandidateTest`, `ArchiveProjectionTest` | U1 | with `Epochs`, asserted on tables: Pi append writes only the delta, equal revision writes no rows, Codex dedup fixture / redaction change / Pi v2→v3 rewrite / Historian → new epoch, multi-file and no-final-newline → legacy, unreferenced record id with an escaped NUL accepted; midstate self-check; receipt replay/409/CAS; prune and tombstoned-epoch deletion with an injected interval + production default asserted; production layout still `Legacy` asserted | B, BF | 10–14 |
+| U3 S1 readers, differential, enable | `RevisionContent`, every reader, archive search, flip the production layout to `Epochs` | `Database.scala` reader methods (`selectView`, `messages`, `locateMessage`, `content`/`raw`, `claimedSnapshot`) and the seam default; `MessageContext.scala`; `SessionMessageSearch.scala`; `ArchiveSearch.scala`; `ArchiveIndex.scala`; new `RevisionContent.scala`; new `EpochReadDifferentialTest`; `ArchiveContentBoundaryTest` epoch seek plan; `OwnerLeaseBoundaryTest` (1 case) | U2 | one revision sequence (append, append, non-prefix, append, no-final-newline, NUL record id) ingested by `Legacy` and `Epochs` archives under two owners: identical GetMessages pages, LocateMessage, MessageContext, Find, ArchiveSearch (global + per-session), GetRaw bytes, claim snapshots for every revision incl. pinned old ones; ingest parked at an epoch fragment insert: readers see the old head, after commit the new; production default `Epochs` asserted | B, BF | 9–12 |
+| U4 S1 down-script + rehearsal | exact rollback with a sound representability check; clone rehearsal | `chronicle/scripts/down-024-epoch-layout.sql`; `nix/pkg/chronicle/source.nix` tests list; new `EpochDownScriptTest`; rehearsal report | U3 | U3's sequence: reads before = after the down-script, snapshots equal a `Legacy` ingest; the bound holds for worst-case shapes (many tiny messages, nulls, large `recordIndex`) and a non-representable revision stops the script before changes (threshold parameter + production value asserted). Rehearsal on a TEMPLATE copy: S1 binary, next revisions of the 5 largest sessions as appends (time, WAL, lock probe, `/api/versions` probe as ch-fix2 §3), down-script, reads | B, BF | 6–9 |
+| U5 S2 wire + guards | types §4.1, generated code, golden fixtures; `GetRaw` bound, claim guard, config keys | `models/chronicle.baboon`, `models/lock.json` if needed, `generated/**`, `scripts/codec-fixtures.mjs`, `server/src/test/fixtures/upload-*.json`, `CodecFixtureTest.scala`; `Core.scala` (Config keys); `Database.scala` (`claim`, `raw`/`content`); `CONTRACT.md` (GetRaw, job error, config); new `OversizeGuardTest` | S1 merged | golden fixtures (open with/without base, part, state with receipt/failure, i64 strings), `IngestRequest` fixtures byte-identical; `GetRaw` above a small configured bound → `too-large` without building the raw, below → bytes; claim above a small bound → `Failed claim-too-large`, attempts unchanged, the session still pages/locates/searches; defaults asserted | P, B, BF | 6–8 |
+| U6 S2 server | intents/attempts, parts with receipts, staging ownership, commit, sweep, purge abort, `/api/ingest` busy check | migration `025_uploads.sql`; new `Uploads.scala`, `UploadValidation.scala` (factored from `SnapshotValidation`, which then calls it); `Core.scala` (validation helpers); `Http.scala` (routes, bounds, failure codes); `Database.scala` (`ingest` check); `Auth.scala` (purge first statement); `EpochMaintenance.scala` (sweep); `chronicle/scripts/down-025-uploads.sql`; `CONTRACT.md` Ingestion; `README.md` server paragraph; new `UploadProtocolTest`, `UploadBoundaryTest` | U5 | append and replacement happy paths; idempotency: replay of the last and of an older ordinal (same/different sha), out-of-order 409, commit replay, open replay after commit and after expiry (new attempt), CAS 409; `base-mismatch`; `content-mismatch` (Codex fixture sent as if prefix); forward `parentId` resolved later / unresolved at commit; abort-A/open-B/stage-B/sweep-A/commit-B → B complete (R1); purge racing a part and a commit → `gone`, no deadlock (R2); every body bound refused before reading; TTL expiry + sweep with injected TTL/interval, defaults asserted; atomic visibility (extends `OwnerLeaseBoundaryTest`) | B, P, BF | 14–18 |
+| U7 S2 collector | preflight + upload passes, parts client, resume, probe, spool, status | `chronicle/collector/src/**`, `chronicle/collector/test/**`, `chronicle/collector/README.md`, collector paragraph of `chronicle/README.md`, `nix/hm/chronicle.nix` option | U5 (parallel to U6; against a fake server) | chain golden vectors; append vs replacement (Codex dedup fixture, redaction change, Pi v2→v3 rewrite); an excluded cwd / a mixed Claude identity in the last record → nothing sent (R3); lost commit ACK with the file changed → receipt recovered from the stored declaration (R5); expiry → new attempt, parts resent; probe 404 without JSON → collector-level line, entries unchanged, next cycle uploads once the fake server supports it (L2); old-format entry drains first; spool from the current release opens; bounded memory: an instrumented reader proves no buffer/part above its bound on a 64 MiB synthetic file | C, CF | 14–18 |
+| U8 S2 acceptance + rehearsal | on-demand large-session check with normal workers; clone rehearsal | `chronicle/scripts/test-upload-bounds.sh` (on-demand, named in `chronicle/README.md`); reports | U6, U7 | on-demand (minutes of I/O; AGENTS.md "On-demand checks"): native server in `serve` with workers and the stub model server, `-XX:MaxHeapSize=768m`, guard set for that heap (production defaults asserted by U5); collector `--max-old-space-size=256`; a 1.2 GiB synthetic Pi session (append after a replacement) uploads completely; its job ends `Failed claim-too-large`, `GetRaw` returns `too-large`, pages/context/literal search answer; a 16 MiB session on the same server is indexed and published; no OOM, `/api/versions` probe < 1 s. Rehearsal on a TEMPLATE copy: parts uploads of the largest sessions, WAL/time/lock | the script; `scripts/verify chronicle` | 5–7 |
+
+S1 total 31–44 h, S2 total 39–51 h. Parallel: U6 ∥ U7 only (disjoint files). U4 after U3; U5 before U6/U7.
 
 ## 12. Decisions needed (owner/orchestrator)
-- **D1 Fallback of an S2 collector against a server without the upload API.** (a) explicit `uploadProtocol` switch,
-  `server-upload-unsupported` stops the entry (recommended: no silent fallback; rollback = flip the HM option);
-  (b) automatic visible fallback to `/api/ingest` per cycle.
-- **D2 S2 session limits.** Production `maxFileBytes` 256 MiB and `maxMessages` 100,000 (study §1) bound S2 sessions. Options:
-  keep; raise to 512 MiB / 200,000 (recommended until the claim streams messages — D3); raise to 1–2 GiB.
-- **D3 Remaining O(session) readers for sessions above 256 MiB.** Worker claim heap and `GetRaw` response.
-  (a) accept with D2 ≤ 512 MiB (recommended); (b) add a `GetRaw` byte bound returning `too-large` (contract change);
-  (c) follow-up: streamed claim windows and a paged raw read.
-- **D4 Superseded epochs' fragments.** Prune candidates in the background (recommended, 44.6 MB WAL per 10,000 rows only
+Settled by the lead in round 1: no automatic fallback to `whole` (collector-level probe, §6); S2 admits ≥ 1 GiB (§4.4).
+- **D1 `GetRaw` above `maxRawReadBytes`:** (a) explicit `too-large`, documented contract change (recommended; the bytes
+  stay exact and retained); (b) a paged raw read operation (dashboard/CLI work; the CLI `raw` command would page).
+- **D2 Indexing of very large sessions:** (a) `maxClaimMessageBytes` 160 MiB derived from ch-fix2's measured peak
+  (recommended; the 556 MB session is stored and readable but not indexed, ≈ 305 MB of message values [i]); (b) a higher
+  bound with a larger pod heap (≈ 19 B heap per message byte measured as an upper bound); (c) a follow-up with a streamed
+  claim (windows built from a cursor), outside S2's budget.
+- **D3 Superseded epochs' fragments:** prune candidates in the background (recommended, 44.6 MB WAL per 10,000 rows, only
   after replacements) or keep them as candidates (no WAL, GIN grows with replaced epochs).
-- **D5 Version policy.** Additive in 1.9.0 (recommended; precedent 3961370f) or bump to 1.10.0 (every client and fixture
+- **D4 Version policy:** additive in 1.9.0 (recommended; precedent 3961370f) or bump to 1.10.0 (every client and fixture
   moves; no compatibility gain).
-- **D6 Staging bound.** 8 live uploads per owner, TTL 1 h sliding (recommended) or other values.
+- **D5 Staging bound:** 8 live attempts per owner, TTL 1 h sliding (recommended) or other values.
+- **D6 S1 revisions that cannot be downgraded** (bodies near `maxBodyBytes` whose snapshot exceeds the jsonb cap): store
+  them and let the down-script list them (recommended; today they fail with a 500) or reject them in S1 with
+  `too-large`.
+- **D7 Purge's physical deletion of epochs:** by the sweep within one interval (recommended; no wait, no deadlock) or
+  inline under the source's advisory lock (purge waits for, or times out behind, a running ingest of up to tens of
+  seconds).
+- **D8 Deployment limits:** server `maxFileBytes` 1 GiB, `maxMessages` 400,000; collector the same (§4.4) — confirm.
 
 ## 13. S0 note — the "restore policy for 157 tombstones" (not implemented)
 When the collector's privacy/destination policy digest changes, every queued entry built under the old policy is dropped
@@ -475,6 +623,23 @@ Options: (a) keep (nothing is re-sent); (b) one-shot operator command clearing t
 tombstones stay); (c) change the rule: a policy change discards queued payloads without tombstoning (future changes
 only). Recommendation: (b) plus (c), as an owner decision outside S1/S2.
 
+## 14. Review round 1 resolutions
+| item | verdict | where |
+|---|---|---|
+| R1 stale cleanup deletes a newer attempt's staging | holds → fixed: staging owner `ch_epochs.tail_upload`, one-shot `cleaned`, the same tail rule at open, `/api/ingest` and sweep; regression abort-A/open-B/stage-B/sweep-A/commit-B | §2 inv. 9, §4.5, §4.6, §7, U6 |
+| R2 purge vs writer lock cycle; purge leaves attempts | holds (a writer's revision insert takes `KEY SHARE` on the epoch, purge holds the source and would `DELETE` the epoch) → fixed: no inline epoch delete (sweep deletes tombstoned sources' epochs), purge aborts live attempts first with the writers' order attempt → source, parts/commit check the tombstone | §3 Purge, §4.6, §10, D7, U6 |
+| R3 parts before whole-file admission | holds (today admission, exclusions and identity see the whole file [o collector.ts:144-217, parsers.ts:124-133]) → fixed: complete preflight pass before any network mutation, live controls re-checked before open/part/commit, stat stable until commit | §6, U7 |
+| R4 replay of older ordinals | holds → fixed: per-ordinal receipts `ch_upload_parts` | §4.5, §4.6, U6 |
+| R5 intent vs attempt, terminal replay, lost commit ACK | holds → fixed: intent = requestId + declaration digest (result in `ch_ingest_receipts`), attempts numbered under partial unique indexes, committed attempts kept; the declaration moves into `UploadOpen` and is spooled before the open; recovery by GET/open replay before regenerating | §4.1, §4.5, §4.6, §5, §6, U6, U7 |
+| R6 limits and O(session) paths | holds → fixed with L1: ≥ 1 GiB deployment limits, `GetRaw` bound, claim guard, every body bounded, U8 with normal workers | §4.2, §4.4, §4.8, §10, U5, U8, D1, D2, D8 |
+| R7 accepted inputs the epoch layout cannot hold | holds (`linesIterator` accepts a last record without `\n` [o Core.scala:281]; raw ids are unchecked strings [o Core.scala:284]) → fixed with L4: legacy layout for no final newline / several files; record ids stored as SHA-256 keys | §1.1, §2 inv. 3, §3, U2, U3 |
+| R8 down-script preflight unsound; S1 can create over-cap revisions | holds → fixed: sound upper bound + exact savepoint attempt; S1-created non-representable revisions documented, not prevented (D6) | §1.2, §9, U4 |
+| R9 units not independently gate-passing; ownership | holds → fixed with L3: production layout `Legacy` until U3 flips it, U4 after U3, `Database.scala` edits listed per unit, U6 owns the `/api/ingest` check | §3 seam, §11 |
+| L1 ≥ 1 GiB uploads, nothing materialized whole, bounded bodies, U8 with workers | done | §4.2, §4.4, §4.8, §6, §8, §11 U5/U8, §12 |
+| L2 no per-entry stop on a missing API | done: collector-level probe each cycle, prominent line, no fallback, `whole` stays the switch | §6, §8 |
+| L3 independent gates | done | §3 seam, §11 |
+| L4 epoch-unsafe requests → legacy | done: several files; non-empty raw without a final `\n`; nothing else is unsafe (record keys hashed) | §2, §3 |
+
 ## Appendix — findings against the design study
 1. "Reads go through views named like today's tables, readers change little" — measured: a UNION ALL view sorts the
    whole epoch branch for `ORDER BY position LIMIT` (52 ms vs 0.16 ms first page; locate 14 ms vs 0.02 ms on 28.5k
@@ -483,8 +648,8 @@ only). Recommendation: (b) plus (c), as an owner decision outside S1/S2.
    legacy head still prunes that head's fragments (once per source), and a superseded epoch's candidates must be pruned
    outside the switch (114 ms / 44.6 MB WAL per 10,000 rows).
 3. The base proof cannot be verified on the server as described (the server never sees the collector's prefix): the
-   server checks base = head, then computes head ‖ delta and compares the declared final digest/chain
-   (`content-mismatch`). The final declaration moves from open to commit so Pi/Claude appends need one read pass.
+   server checks base = head, then computes head ‖ delta and compares it with the declaration bound at open
+   (`content-mismatch`); the collector can declare at open because its preflight pass reads the whole file first.
 4. The collector needs no SHA-256 midstate: Node `Hash.copy()` gives the prefix digest inside one pass; only the server
    stores midstates (JDK cannot export state, V3).
 5. Not in the study: the legacy claim detoasts the whole snapshot for its envelope and sorts the message array
