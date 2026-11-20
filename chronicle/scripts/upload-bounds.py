@@ -405,6 +405,7 @@ class Server:
         summary = dict(label=self.label, binary=str(self.binary), heap=self.heap, wallSeconds=round(time.monotonic() - self.started, 1), aliveAtStop=alive,
                        outOfMemory=len(re.findall(r'OutOfMemoryError|Java heap space', log)),
                        peakLiveHeapMB=max((after for kind, _, after, _ in gcs if kind == 'Full'), default=None),
+                       peakHeapAfterAnyCollectionMB=max((after for _, _, after, _ in gcs), default=None),
                        peakHeapBeforeCollectionMB=max((before for _, before, _, _ in gcs), default=None),
                        fullCollections=len(full), fullPauseMaxMs=full[-1] if full else None, fullPauseP99Ms=percentile(full, 0.99), probe=probe)
         servers.append(summary)
@@ -452,8 +453,14 @@ class Collector:
                        outOfMemory='heap out of memory' in text + err.read_text())
         collectors.append(summary)
         note(json.dumps(summary))
+        (self.root / f'collector-{self.runs}.result').write_text('\n'.join(line for line in text.splitlines() if not NODE_GC.search(line)) + '\n')
+        if code != 0:
+            status = self.status()
+            note(f'{label}: collector result {results[-1] if results else None}')
+            note(f'{label}: collector queue ' + json.dumps(status.get('queue'))[:4000])
+            note(f'{label}: collector diagnostics ' + json.dumps(status.get('diagnostics'))[:4000])
         check(f'{label}: the collector exits normally, no out-of-memory, within {COLLECTOR_HEAP_MB} MB of heap',
-              code == 0 and not summary['outOfMemory'] and results, (code, err.read_text()[-2000:], text[-2000:]))
+              code == 0 and not summary['outOfMemory'] and results, (code, err.read_text()[-2000:], results[-1] if results else text[-2000:]))
         return json.loads(results[-1])
 
     def status(self):
@@ -856,11 +863,13 @@ def run_a(root):
 def run_b(root):
     """≥ 4 GiB: 4,400,000,000 raw bytes with records of 9-20 MiB (large parts), appended to; other sessions index."""
     h = Harness(root, 'B', '1g', DEPLOYMENT_FILE_BYTES)
-    large = {37_000: int(9.5 * MiB), 301_000: 12 * MiB, 555_000: int(16.5 * MiB), 790_000: 20 * MiB} if SCALE == 1 else {3_000: int(9.5 * MiB)}
+    sizes, total = [int(9.5 * MiB), 12 * MiB, int(16.5 * MiB), 20 * MiB], int(4_400_000_000 * SCALE)
+    expected = (total - sum(sizes)) // 5200
+    large = {int(expected * at): size for at, size in zip((0.04, 0.36, 0.66, 0.94), sizes)} if total > 2 * sum(sizes) else {expected // 2: sizes[0]}
     big = Fixture(h.collector.sessions('--u8-b--') / 'big.jsonl', 'u8-b-big', large)
     smalls = [Fixture(h.collector.sessions(f'--u8-b-small-{k}--') / 'small.jsonl', f'u8-b-small-{k}') for k in range(4)]
     started = time.monotonic()
-    big.write(int(4_400_000_000 * SCALE), RARE)
+    big.write(total, RARE)
     for fixture in smalls:
         fixture.write(int(3 * MiB * max(SCALE, 0.1)))
     note(f'fixture big {json.dumps(big.summary())} in {time.monotonic() - started:.1f} s')
@@ -877,7 +886,7 @@ def run_b(root):
               and int(state['receivedRawBytes']) == big.bytes and state['receivedMessages'] == big.messages, state)
     with Phase('B2 append (+44,000,000 bytes with one 10 MiB record)'):
         big.large[big.messages + 100] = 10 * MiB
-        big.write(int(44_000_000 * max(SCALE, 0.25)), RARE_APPENDED)
+        big.write(max(int(44_000_000 * SCALE), 24 * MiB), RARE_APPENDED)
         h.uploaded('B2', h.collector.once('B2 append'), 1, 0)
         _, head = h.stored('B2', big, 2, True, first)
         check('B2: the append carried its large record in a large part', head['upload']['largeParts'] >= 1, head['upload'])
@@ -985,6 +994,7 @@ exit "${{PIPESTATUS[0]}}"
     gcs = [(kind, float(before), float(after), float(pause)) for _, kind, before, after, pause in GC.findall(log)]
     server = dict(label='E', binary=str(SERVER), heap='768m', mode='serve-standby (gate O)', outOfMemory=len(re.findall(r'OutOfMemoryError|Java heap space', log)),
                   peakLiveHeapMB=max((after for kind, _, after, _ in gcs if kind == 'Full'), default=None),
+                  peakHeapAfterAnyCollectionMB=max((after for _, _, after, _ in gcs), default=None),
                   peakHeapBeforeCollectionMB=max((before for _, before, _, _ in gcs), default=None), probe=probe_summary)
     servers.append(server)
     text = collector_log.read_text(errors='replace') if collector_log.exists() else ''
@@ -1020,7 +1030,7 @@ def main():
         finally:
             if EVIDENCE is not None:
                 EVIDENCE.mkdir(parents=True, exist_ok=True)
-                for name in [*root.glob('server-*.log'), *root.glob('probe-*.txt'), *root.glob('collector-*.err')]:
+                for name in [*root.glob('server-*.log'), *root.glob('probe-*.txt'), *root.glob('collector-*.err'), *root.glob('collector-*.result')]:
                     shutil.copy(name, EVIDENCE / f'{run}-{name.name}')
             fixtures = du(root)
         summary = dict(run=run, status='passed', scale=SCALE, wallSeconds=round(time.monotonic() - started, 1), walBytes=wal_since(lsn), disk=disk(),
