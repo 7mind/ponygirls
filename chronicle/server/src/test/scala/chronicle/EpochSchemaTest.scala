@@ -62,12 +62,21 @@ final class EpochSchemaTest extends munit.FunSuite {
     }
   }}
 
-  test("a restart re-runs 013 and then 024 over existing revisions: the revision guard keeps the epoch columns, the layout check is added once and validated") { database { (config,db) =>
+  test("a restart re-runs 013 and then 024 over existing revisions: the revision guard keeps the epoch columns, the layout check is added once and validated, no indexing row changes") { database { (config,db) =>
     val (session,_)=seed(db)
-    new PostgresArchive(db,config).ingest("a",Fixtures.snapshot())
+    changed(db,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
+    val archive=new PostgresArchive(db,config)
+    archive.ingest("a",Fixtures.snapshot())
+    assert(archive.publish(archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get,Nil))
+    def indexing(): List[String] = db.transaction(c => Sql.rows(c,"""SELECT 'job '||j::text FROM ch_jobs j UNION ALL SELECT 'generation '||g::text FROM ch_generations g
+      UNION ALL SELECT concat_ws(' ','binding',session_id,revision,binding_id) FROM ch_revisions
+      UNION ALL SELECT concat_ws(' ','lexical',session_id,revision,lexical_version) FROM ch_revision_info ORDER BY 1""")(_.getString(1)))
+    val before=indexing()
     // An existing database without the check (before 024): the restart adds it NOT VALID and validates both layouts.
     changed(db,"ALTER TABLE ch_revisions DROP CONSTRAINT ch_revisions_layout")
     db.initialize()
+    assertEquals(indexing(),before)
+    assertEquals(before.count(_.startsWith("generation ")),1)
     refused(db,"immutable archive revision","UPDATE ch_revisions SET message_chain=sha256('x'::bytea) WHERE session_id=?",session)
     db.transaction { c =>
       assertEquals(Sql.rows(c,"SELECT conname,convalidated FROM pg_constraint WHERE conrelid='ch_revisions'::regclass AND (conname='ch_revisions_layout' OR confrelid='ch_epochs'::regclass) ORDER BY conname")(r => (r.getString(1),r.getBoolean(2))),
