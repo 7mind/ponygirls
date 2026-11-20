@@ -24,7 +24,8 @@ import { reportContent, terminalText, type CuckooContent } from './src/presentat
 
 const QUESTIONS_USAGE = 'Usage: /cuckoo [default|project] questions [list | add TEXT | remove ID]';
 
-export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, questions: QuestionStore, networkServices: CuckooNetworkServices): void {
+export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, questions: QuestionStore, networkServices: CuckooNetworkServices,
+  display = { showJson: false }): void {
   const configuration = new CuckooPreferences(pi, preferences, path => new FilePreferenceStore(path));
   const standing = new StandingQuestions(questions, path => new FileQuestionStore(path), () => networkServices.ids.nextId());
   const features = new CuckooFeatures(pi, configuration, randomUUID());
@@ -91,14 +92,17 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
     fault = message;
   }
   function refresh(ctx: ExtensionContext): void {
+    const previous = display.showJson;
+    display.showJson = false;
     try {
       const config = features.refresh(ctx);
+      display.showJson = config.showJson;
       const reports = checkpoints(ctx.sessionManager.getBranch());
       stateOnBranch(ctx.sessionManager.getBranch());
       // Unreadable standing questions stop inquiries but must not hide the saved reports.
       try { standing.read(ctx); fault = null; } catch (error) { warn(ctx, error); }
-      view.publish(ctx, reports, config.enabled, fault);
-    } catch (error) { warn(ctx, error); view.publish(ctx, [], false, fault); }
+      view.publish(ctx, reports, config.enabled, fault, display.showJson !== previous);
+    } catch (error) { warn(ctx, error); view.publish(ctx, [], false, fault, display.showJson !== previous); }
   }
   function statusIntro(ctx: ExtensionContext, reports: readonly import('./src/report.ts').Checkpoint[]): string {
     features.refresh(ctx);
@@ -412,11 +416,12 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
   pi.on('session_shutdown', (_event, ctx) => { try { view.dispose(ctx); } finally { settingsView.dispose(); features.shutdown(); } });
 }
 export default function (pi: ExtensionAPI): void {
+  const display = { showJson: false };
   const captured = new Set<string>();
   const registerDisplay = (liveCheckpoint: boolean) => {
     // Pi snapshots this transformer at component creation; its live decision survives later turns and redraws.
     pi.registerMarkdownTransformer((text, { messageId }) =>
-      (messageId === undefined ? liveCheckpoint : captured.has(messageId)) ? '🐦 Updating cuckoo status ...' : text,
+      !display.showJson && (messageId === undefined ? liveCheckpoint : captured.has(messageId)) ? '🐦 Updating cuckoo status ...' : text,
     { messageTypes: ['assistant'] });
   };
   registerDisplay(false);
@@ -436,5 +441,5 @@ export default function (pi: ExtensionAPI): void {
       typeof details.requestId === 'string' && details.requestId === stateOnBranch(branch)?.pending?.requestId);
   });
   const agentDir = getAgentDir();
-  registerCuckoo(pi, new FilePreferenceStore(join(agentDir, 'cuckoo.json')), new FileQuestionStore(join(agentDir, QUESTIONS_FILE)), nativeNetworkServices(agentDir));
+  registerCuckoo(pi, new FilePreferenceStore(join(agentDir, 'cuckoo.json')), new FileQuestionStore(join(agentDir, QUESTIONS_FILE)), nativeNetworkServices(agentDir), display);
 }

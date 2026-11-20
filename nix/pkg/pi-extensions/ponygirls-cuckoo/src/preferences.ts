@@ -11,17 +11,17 @@ export const PREFERENCES_TYPE = 'cuckoo.preferences';
 export const FEATURE_TYPE_PREFIX = 'cuckoo.feature.';
 export type PreferenceSource = 'default' | 'global' | 'project' | 'session';
 export type PreferenceScope = Exclude<PreferenceSource, 'default'>;
-export interface Preferences { enabled: boolean; policy: GrowthPolicy; features: FeatureSwitches }
-export interface PreferenceOverrides { enabled?: boolean; policy?: GrowthPolicy; features?: Partial<Record<FeatureId, boolean>> }
+export interface Preferences { enabled: boolean; showJson: boolean; policy: GrowthPolicy; features: FeatureSwitches }
+export interface PreferenceOverrides { enabled?: boolean; showJson?: boolean; policy?: GrowthPolicy; features?: Partial<Record<FeatureId, boolean>> }
 export interface EffectivePreferences extends Preferences {
   enabledSource: PreferenceSource;
   policySource: PreferenceSource;
   featureSources: Readonly<Record<FeatureId, PreferenceSource>>;
 }
-export const DEFAULT_PREFERENCES: Readonly<Preferences> = Object.freeze({ enabled: false, policy: DEFAULT_POLICY, features: DEFAULT_FEATURES });
+export const DEFAULT_PREFERENCES: Readonly<Preferences> = Object.freeze({ enabled: false, showJson: false, policy: DEFAULT_POLICY, features: DEFAULT_FEATURES });
 export interface PreferenceStore { readonly path: string; read(): PreferenceOverrides; write(value: PreferenceOverrides): void }
 export type PreferenceChange =
-  | { readonly field: 'enabled'; readonly value: boolean | null }
+  | { readonly field: 'enabled' | 'showJson'; readonly value: boolean | null }
   | { readonly field: 'policy'; readonly value: GrowthPolicy | null }
   | { readonly field: 'feature'; readonly id: FeatureId; readonly value: boolean | null };
 export type PreferenceContext = Pick<ExtensionContext, 'cwd' | 'isProjectTrusted' | 'sessionManager'>;
@@ -53,9 +53,10 @@ function policy(value: unknown): GrowthPolicy {
 }
 
 export function validateOverrides(value: unknown): PreferenceOverrides {
-  const data = object(value); keys(data, ['enabled', 'policy', 'features']);
+  const data = object(value); keys(data, ['enabled', 'showJson', 'policy', 'features']);
   const result: PreferenceOverrides = {};
   if ('enabled' in data) result.enabled = boolean(data.enabled);
+  if ('showJson' in data) result.showJson = boolean(data.showJson);
   if ('policy' in data) result.policy = policy(data.policy);
   if ('features' in data) {
     const features = object(data.features);
@@ -90,7 +91,7 @@ export class FilePreferenceStore implements PreferenceStore {
 export function changeKey(change: PreferenceChange): string { return change.field === 'feature' ? `feature:${change.id}` : change.field; }
 
 export function validateChanges(value: unknown): readonly PreferenceChange[] {
-  if (!Array.isArray(value) || value.length > FEATURES.length + 2) throw new Error('Invalid Cuckoo preference changes');
+  if (!Array.isArray(value) || value.length > FEATURES.length + 3) throw new Error('Invalid Cuckoo preference changes');
   const seen = new Set<string>();
   return value.map(raw => {
     const data = object(raw);
@@ -99,9 +100,9 @@ export function validateChanges(value: unknown): readonly PreferenceChange[] {
       keys(data, ['field', 'id', 'value']);
       if (typeof data.id !== 'string') throw new Error('Invalid Cuckoo feature ID');
       change = { field: 'feature', id: featureId(data.id), value: data.value === null ? null : boolean(data.value) };
-    } else if (data.field === 'enabled') {
+    } else if (data.field === 'enabled' || data.field === 'showJson') {
       keys(data, ['field', 'value']);
-      change = { field: 'enabled', value: data.value === null ? null : boolean(data.value) };
+      change = { field: data.field, value: data.value === null ? null : boolean(data.value) };
     } else if (data.field === 'policy') {
       keys(data, ['field', 'value']);
       change = { field: 'policy', value: data.value === null ? null : policy(data.value) };
@@ -116,11 +117,11 @@ export function validateChanges(value: unknown): readonly PreferenceChange[] {
 export function applyPreferenceChanges(overrides: PreferenceOverrides, changes: readonly PreferenceChange[]): PreferenceOverrides {
   const result = validateOverrides(overrides);
   for (const change of validateChanges(changes)) {
-    if (change.field === 'enabled') {
-      if (change.value === null) delete result.enabled; else result.enabled = change.value;
+    if (change.field === 'enabled' || change.field === 'showJson') {
+      if (change.value === null) delete result[change.field]; else result[change.field] = change.value;
     } else if (change.field === 'policy') {
       if (change.value === null) delete result.policy; else result.policy = change.value;
-    } else {
+    } else if (change.field === 'feature') {
       const features = { ...result.features };
       if (change.value === null) delete features[change.id]; else features[change.id] = change.value;
       if (Object.keys(features).length === 0) delete result.features; else result.features = features;
@@ -138,7 +139,7 @@ export function sessionPreferences(entries: readonly SessionEntry[], sessionId: 
     resolved.add(key);
   }
   for (let i = entries.length - 1; i >= 0; i--) {
-    if (resolved.size === FEATURES.length + 2) break;
+    if (resolved.size === FEATURES.length + 3) break;
     const entry = entries[i];
     if (entry.type !== 'custom' || !(entry.customType === ENABLED_TYPE || entry.customType === POLICY_TYPE ||
       entry.customType === THRESHOLD_TYPE || entry.customType === PREFERENCES_TYPE || entry.customType.startsWith(FEATURE_TYPE_PREFIX))) continue;
@@ -151,11 +152,11 @@ export function sessionPreferences(entries: readonly SessionEntry[], sessionId: 
     if (data.version !== 1) throw new Error('Invalid Cuckoo session setting version');
     if (entry.customType === PREFERENCES_TYPE) {
       keys(data, ['version', 'sessionId', 'changes']);
-      if (!Array.isArray(data.changes) || data.changes.length > FEATURES.length + 2) throw new Error('Invalid Cuckoo preference changes');
+      if (!Array.isArray(data.changes) || data.changes.length > FEATURES.length + 3) throw new Error('Invalid Cuckoo preference changes');
       const batch = new Set<string>();
       for (const raw of data.changes) {
         const change = object(raw);
-        const key = change.field === 'enabled' || change.field === 'policy' ? change.field :
+        const key = change.field === 'enabled' || change.field === 'showJson' || change.field === 'policy' ? change.field :
           change.field === 'feature' && typeof change.id === 'string' ? `feature:${featureId(change.id)}` : null;
         if (key === null || batch.has(key)) throw new Error('Invalid or duplicate Cuckoo preference change');
         batch.add(key); accept(raw, key);
@@ -183,6 +184,7 @@ function resolve<T>(fallback: T, global: T | undefined, project: T | undefined, 
 export function resolvePreferences(layers: PreferenceLayers): EffectivePreferences {
   const global = validateOverrides(layers.global), project = validateOverrides(layers.project), session = validateOverrides(layers.session);
   const enabled = resolve(DEFAULT_PREFERENCES.enabled, global.enabled, project.enabled, session.enabled);
+  const showJson = resolve(DEFAULT_PREFERENCES.showJson, global.showJson, project.showJson, session.showJson);
   const growth = resolve(DEFAULT_POLICY, global.policy, project.policy, session.policy);
   const features = { ...DEFAULT_FEATURES };
   const featureSources: Record<FeatureId, PreferenceSource> = { evidence: 'default', corrections: 'default', verifiers: 'default', reader: 'default', transfer: 'default', vectors: 'default', critic: 'default' };
@@ -191,7 +193,7 @@ export function resolvePreferences(layers: PreferenceLayers): EffectivePreferenc
       project.features === undefined ? undefined : project.features[id], session.features === undefined ? undefined : session.features[id]);
     features[id] = setting.value; featureSources[id] = setting.source;
   }
-  return { enabled: enabled.value, policy: growth.value, features, enabledSource: enabled.source, policySource: growth.source, featureSources };
+  return { enabled: enabled.value, showJson: showJson.value, policy: growth.value, features, enabledSource: enabled.source, policySource: growth.source, featureSources };
 }
 
 export function effectivePreferences(global: PreferenceOverrides, project: PreferenceOverrides, entries: readonly SessionEntry[], sessionId: string): EffectivePreferences {

@@ -156,6 +156,7 @@ test('Cuckoo maps every owner field, source and dependency explanation', () => {
     controller.state().rows.map(item => item.id),
     [
       'enabled',
+      'showJson',
       ...FEATURES.map(feature => feature.id),
       'policy',
     ],
@@ -169,6 +170,8 @@ test('Cuckoo maps every owner field, source and dependency explanation', () => {
   }
 
   assert.equal(row(controller, 'enabled').origin, 'global');
+  assert.equal(row(controller, 'showJson').label, 'Show Cuckoo JSON');
+  assert.equal(row(controller, 'showJson').checked, false);
   assert.equal(row(controller, 'reader').origin, 'project');
   assert.equal(row(controller, 'vectors').origin, 'session');
   assert.equal(row(controller, 'vectors').checked, true);
@@ -213,6 +216,9 @@ test('Cuckoo translates one heterogeneous draft into its native atomic batch', a
   select(controller, 'enabled');
   controller.toggleSelected();
 
+  select(controller, 'showJson');
+  controller.toggleSelected();
+
   select(controller, 'policy');
   await run(controller.beginEdit());
 
@@ -237,6 +243,7 @@ test('Cuckoo translates one heterogeneous draft into its native atomic batch', a
         value: true,
       })),
       { field: 'enabled', value: true },
+      { field: 'showJson', value: true },
       { field: 'policy', value: edited },
     ],
   );
@@ -261,6 +268,7 @@ test('Cuckoo translates inheritance to native null tombstones for every field', 
     project: {},
     session: {
       enabled: true,
+      showJson: true,
       policy: { kind: 'tokens', value: 9000 },
       features: {
         evidence: true,
@@ -287,6 +295,7 @@ test('Cuckoo translates inheritance to native null tombstones for every field', 
     f.saves[0].changes,
     [
       { field: 'enabled', value: null },
+      { field: 'showJson', value: null },
       ...FEATURES.map(feature => ({
         field: 'feature',
         id: feature.id,
@@ -297,6 +306,27 @@ test('Cuckoo translates inheritance to native null tombstones for every field', 
   );
 
   assert.deepEqual(f.callbacks.read().session, {});
+});
+
+test('Show Cuckoo JSON is independent of Automatic mode and only saves on Apply', async () => {
+  const f = fixture();
+  const draft = createSettingsController(f.callbacks);
+  select(draft, 'showJson');
+  draft.toggleSelected();
+  assert.equal(row(draft, 'showJson').checked, true);
+  assert.equal(row(draft, 'showJson').inactive, '');
+  assert.equal(f.callbacks.read().effective.showJson, false);
+  draft.dispose();
+  assert.equal(f.saves.length, 0);
+
+  const controller = createSettingsController(f.callbacks);
+  select(controller, 'showJson');
+  assert.equal(row(controller, 'showJson').checked, false);
+  controller.toggleSelected();
+  await run(controller.beginApply());
+  assert.deepEqual(f.saves[0].changes, [{ field: 'showJson', value: true }]);
+  assert.equal(f.applied[0].snapshot.effective.showJson, true);
+  assert.equal(f.applied[0].snapshot.effective.enabled, false);
 });
 
 test('policy cancellation is distinct from invalid/null policy results', async () => {
