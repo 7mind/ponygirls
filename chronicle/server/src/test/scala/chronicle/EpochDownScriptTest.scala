@@ -41,10 +41,18 @@ final class EpochDownScriptTest extends munit.FunSuite {
     try body(name) finally admin(maintenance,s"DROP DATABASE $name WITH (FORCE)")
   }
   /** The current binary on the database: its start-up, an Epochs archive and a Legacy one; closed afterwards, so the
-    * script sees no other client. */
+    * script sees no other client, and followed by the S2 down-script, which the operator runs before this one. */
   private def binary[A](database: String)(f: (PostgresArchive,PostgresArchive) => A): A = {
     val config=original.copy(jdbcUrl=url(database)); val db=new Database(config,IndexProfileCatalog.current(config))
-    try { db.initialize(); f(new PostgresArchive(db,config,RevisionLayoutPolicy.Epochs),new PostgresArchive(db,config,RevisionLayoutPolicy.Legacy)) } finally db.close()
+    try { db.initialize(); f(new PostgresArchive(db,config,RevisionLayoutPolicy.Epochs),new PostgresArchive(db,config,RevisionLayoutPolicy.Legacy)) } finally { db.close(); uploadsDown(database) }
+  }
+  private def uploadsDown(database: String): Unit = {
+    def down(variables: (String,String)*): List[String] = {
+      val ran=psql(database,Path.of("scripts","down-025-uploads.sql"),variables*)
+      assertEquals(ran.exit,0,ran.out+ran.err); ran.out.linesIterator.toList
+    }
+    val plan=down().collectFirst { case line if line.startsWith("DOWN025.plan|") => line.stripPrefix("DOWN025.plan|") }.get
+    assertEquals(down("mode"->"apply","apply_irreversible"->"yes","confirm_database"->database,"expect_plan"->plan).last,"DOWN025.result|applied")
   }
 
   private final case class Ran(exit: Int,lines: List[String],err: String) {
@@ -53,6 +61,10 @@ final class EpochDownScriptTest extends munit.FunSuite {
     def value(key: String): String = values(key) match { case List(one) => one; case other => fail(s"DOWN024.$key: $other\n${lines.mkString("\n")}\n$err") }
   }
   private def run(database: String,variables: (String,String)*): Ran = {
+    val ran=psql(database,script,variables*)
+    Ran(ran.exit,ran.out.linesIterator.toList,ran.err)
+  }
+  private def psql(database: String,file: Path,variables: (String,String)*): CheckChild.Result = {
     val psql=Path.of(sys.env.getOrElse("POSTGRES_HOME",throw DomainError("test","POSTGRES_HOME required (nix develop .#chronicle)")),"bin","psql").toString
     val address=original.jdbcUrl.stripPrefix("jdbc:postgresql://").takeWhile(_!='/')
     val connection=Map("PGHOST"->address.takeWhile(_!=':'),"PGPORT"->address.dropWhile(_!=':').drop(1),
@@ -60,8 +72,7 @@ final class EpochDownScriptTest extends munit.FunSuite {
       // The service's tables are in public: a session whose search_path does not reach them must still find them.
       "PGOPTIONS"->"-c search_path=down_nowhere")
     val arguments=variables.toList.flatMap((name,value) => List("-v",s"$name=$value"))
-    val ran=CheckChild.run(List(psql,"-X","-q","-v","ON_ERROR_STOP=1")++arguments++List("-f",script.toString),sys.env,connection,90.seconds)
-    Ran(ran.exit,ran.out.linesIterator.toList,ran.err)
+    CheckChild.run(List(psql,"-X","-q","-v","ON_ERROR_STOP=1")++arguments++List("-f",file.toString),sys.env,connection,90.seconds)
   }
   private def preflight(database: String): Ran = { val ran=run(database,"mode"->"preflight"); assertEquals((ran.exit,ran.last),(0,"DOWN024.result|preflight-complete"),ran.err); ran }
   private def apply(database: String,plan: String,more: (String,String)*): Ran =
