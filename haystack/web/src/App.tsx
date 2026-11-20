@@ -281,7 +281,8 @@ function Workspace({ identity, notice, onAuthLost }: { identity: Identity; notic
         <PendingWriteNotice />
         {notice !== "" && <p role="status" className="notice">{notice}</p>}
         {view.lists.map((entry) => <div key={entry.id} hidden={route.name !== "list" || entry.id !== view.shown} data-list={entry.route.preset} data-list-entry={entry.id}>
-          <Browse preset={entry.route.preset} initial={entry.route.state} userId={identity.userId} activityProjectId={identity.activityProjectId}
+          <Browse preset={entry.route.preset} initial={entry.route.state} active={!accountOpen && route.name === "list" && entry.id === view.shown}
+            userId={identity.userId} activityProjectId={identity.activityProjectId}
             onOpen={openItem} onAuthLost={onAuthLost} />
         </div>)}
         {view.search !== null && <div hidden={route.name !== "search"} data-search-entry="">

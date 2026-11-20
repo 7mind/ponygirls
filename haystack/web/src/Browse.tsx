@@ -175,9 +175,11 @@ function RecordRow({ item, onOpen }: { item: Summary; onOpen: (key: string) => v
   </tr>;
 }
 
-export function Browse({ initial, preset, userId, activityProjectId, onOpen, onAuthLost }: {
+export function Browse({ initial, preset, active, userId, activityProjectId, onOpen, onAuthLost }: {
   initial: BrowseState;
   preset: Preset;
+  /** This list is the view shown: not hidden behind another route or covered by the account page. */
+  active: boolean;
   /** The signed-in user: "Modified by me". */
   userId: string;
   /** Where agents write upstream activity and skill drafts. */
@@ -206,8 +208,10 @@ export function Browse({ initial, preset, userId, activityProjectId, onOpen, onA
   // The syntax dialog is rendered only while open: a closed one would still be found by its label ("Query syntax").
   const [syntaxOpen, setSyntaxOpen] = useState(false);
   const [changed, setChanged] = useState(false);
-  // The last Search of the route shown answered its first page exactly as the reader saw it (a toast says so).
+  // The last Search of the route shown answered its first page exactly as the reader saw it (a toast says so). It is
+  // transient: leaving the view, any newer load or live change, and another Search or sort end it.
   const [unchanged, setUnchanged] = useState(false);
+  useEffect(() => { if (!active) setUnchanged(false); }, [active]);
   // A submitted query the server's analyzer rejected: it is not applied, the list keeps the applied query's rows.
   const [rejected, setRejected] = useState<{ query: string; diagnostics: Diagnostic[] } | null>(null);
   const validation = useRef(0);
@@ -389,6 +393,7 @@ export function Browse({ initial, preset, userId, activityProjectId, onOpen, onA
   const mountedVersion = useRef(live.version);
   useEffect(() => {
     if (live.version === mountedVersion.current || (live.version === 1 && live.key === null)) return;
+    setUnchanged(false);
     const top = visible(section.current) ? window.scrollY : pageTop.current;
     if (top === 0 && items.length <= PAGE_SIZE) void refresh();
     else setChanged(true);
@@ -409,6 +414,7 @@ export function Browse({ initial, preset, userId, activityProjectId, onOpen, onA
     if (state.migrationError !== null) return;
     validation.current++;
     setRejected(null);
+    setUnchanged(false);
     // Invalidate an in-flight page before the hashchange event can arrive.
     pending.current = ++sequence.current;
     continuation.current = undefined;
@@ -454,7 +460,7 @@ export function Browse({ initial, preset, userId, activityProjectId, onOpen, onA
     }
     if (!current()) return;
     if (result.valid) apply(state);
-    else setRejected({ query, diagnostics: result.diagnostics });
+    else { setUnchanged(false); setRejected({ query, diagnostics: result.diagnostics }); }
   }
 
   function changeDraft(next: string) {

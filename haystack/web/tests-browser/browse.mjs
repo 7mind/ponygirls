@@ -725,7 +725,7 @@ try {
     await done();
   });
 
-  await check("browse: Search with the applied query searches it again, also at the address without a fragment, and says when nothing changed, also at 390 px; a sort back to it before the previous sort is shown is applied", async () => {
+  await check("browse: Search with the applied query searches it again, also at the address without a fragment, and says when nothing changed (also at 390 px, transiently); a sort back to it before the previous sort is shown is applied", async () => {
     // The address the dashboard is opened at, and stays at after sign-in, has no fragment; it shows Browse.
     const { page, done } = await open({ hash: "", holdRoutes: true });
     await waitRows(page, PAGE);
@@ -743,8 +743,16 @@ try {
     await confirmation.waitFor();
     assert.equal(await page.evaluate(() => window.listSearches.length), searches + 1, "the unchanged list was searched again");
     assert.equal((await titles(page))[0], title);
-    await confirmation.getByRole("button", { name: "Dismiss", exact: true }).click();
-    await confirmation.waitFor({ state: "detached" });
+    // The toast is transient: a record and Back return to the retained list, not loaded again, without it.
+    const kept = await rowKeys(page);
+    const loads = await page.evaluate(() => window.listSearches.length);
+    await list(page).getByRole("button", { name: "refresh:probe", exact: true }).click();
+    await page.getByRole("button", { name: "Back to Browse", exact: true }).waitFor();
+    await page.goBack();
+    await waitRows(page, PAGE);
+    assert.equal(await confirmation.count(), 0, "no stale toast after the round trip");
+    assert.deepEqual(await rowKeys(page), kept, "the retained rows are intact");
+    assert.equal(await page.evaluate(() => window.listSearches.length), loads, "the retained list was not loaded again");
     // Phones hide the counter: the confirmation is visible there too, inside the viewport, and the toolbar fits.
     await page.setViewportSize(PHONE);
     await searchButton(page).click();
@@ -755,6 +763,8 @@ try {
     }
     assert.equal(await list(page).getByRole("search", { name: "Search records" }).evaluate((bar) => bar.scrollWidth <= bar.clientWidth), true, "the toolbar does not overflow");
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "no horizontal document overflow");
+    await confirmation.getByRole("button", { name: "Dismiss", exact: true }).click();
+    await confirmation.waitFor({ state: "detached" });
     // A sort back to the route shown before the previous sort's route is shown (a busy page delivers it late).
     await page.evaluate(() => window.holdRoutes());
     await list(page).getByRole("button", { name: "Sort by Record", exact: true }).click();
@@ -765,6 +775,12 @@ try {
     await waitRows(page, PAGE);
     assert.equal(await list(page).getByRole("columnheader", { name: "Modified" }).getAttribute("aria-sort"), "descending", "the last sort is applied");
     assert.equal((await titles(page))[0], title);
+    // That search found nothing new either; a newer live change ends its toast, which never stands next to the pill.
+    await confirmation.waitFor();
+    await page.evaluate(() => window.scrollTo(0, 300));
+    await put("refresh:later", { title: "Written after the toast" });
+    await list(page).getByRole("button", { name: "Records changed · Show", exact: true }).waitFor();
+    assert.equal(await confirmation.count(), 0, "the toast ends when a newer change is announced");
     await done();
   });
 } finally { await cleanup(); }
