@@ -25,7 +25,7 @@ class Sink implements Ingester {
 function harness(adapter: string, extra: Record<string, unknown> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'chronicle-controls-')), source = join(dir, 'sessions'), state = join(dir, 'state');
   mkdirSync(source); const path = join(source, 's.jsonl'); writeFileSync(path, raw);
-  const config = loadConfig({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'token'), stateDir: state, homeDir: dir, discoverNative: false, discoverYolo: false, quietMs: 0, roots: [{ id: 'fixture', format: 'pi', path: source }], ...extra });
+  const config = loadConfig({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'token'), stateDir: state, homeDir: dir, discoverNative: false, discoverYolo: false, quietMs: 0, uploadProtocol: 'whole', roots: [{ id: 'fixture', format: 'pi', path: source }], ...extra });
   let spool: Spool = adapter === 'memory' ? new MemorySpool() : new SqliteSpool(state);
   const sink = new Sink();
   return { dir, source, path, config, sink, get spool() { return spool; }, restart() { if (adapter === 'sqlite') { spool.close(); spool = new SqliteSpool(state); } }, close() { spool.close(); rmSync(dir, { recursive: true }); } };

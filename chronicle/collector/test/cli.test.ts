@@ -178,7 +178,7 @@ test('GoodCommunication --clear-policy-tombstones lists, then once clears, only 
   try {
     const state = join(dir, 'state'), config = join(dir, 'config.json'), sessions = join(dir, 'sessions'), transcript = join(sessions, 's.jsonl'), token = join(dir, 'token');
     mkdirSync(sessions); writeFileSync(token, 'synthetic-tombstone-token\n', { mode: 0o600 });
-    const settings = { ...enabledConfig(dir, state), tokenFile: token, quietMs: 0, roots: [{ id: 'fixture', format: 'pi', path: sessions }] };
+    const settings = { ...enabledConfig(dir, state), tokenFile: token, quietMs: 0, uploadProtocol: 'whole', roots: [{ id: 'fixture', format: 'pi', path: sessions }] };
     writeFileSync(config, JSON.stringify(settings));
     let accept = true;
     const ingester: Ingester = { async send(payload) {
@@ -220,7 +220,8 @@ test('GoodCommunication --clear-policy-tombstones lists, then once clears, only 
       lock.close(); lock = null;
       assert.deepEqual([spool.head('dropped').tombstone, spool.head('unattributed').tombstone, spool.controls().exclusions], [true, true, [join(dir, 'excluded')]]);
       accept = true; const next = await collect(3);
-      assert.equal(next.uploaded, 1); assert.deepEqual(spool.head(changed.sourceKey), { revision: 2, digest: changed.sourceDigest, tombstone: false });
+      assert.equal(next.uploaded, 1);
+      const { revision, digest, tombstone } = spool.head(changed.sourceKey); assert.deepEqual({ revision, digest, tombstone }, { revision: 2, digest: changed.sourceDigest, tombstone: false });
     } finally { spool.close(); }
   } finally { lock?.close(); rmSync(dir, { recursive: true }); }
 });

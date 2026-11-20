@@ -140,30 +140,50 @@ export function statSource(file: SourceFile): SourceStat | null {
   } catch { return null; }
 }
 
-export function readSnapshot(file: SourceFile, maxFileBytes: number, scanBudget: number): Snapshot {
-  let descriptor: number | null = null;
+/** An open source file, checked as `readSnapshot` checks it; `size` is its size at open. */
+export interface OpenSource { descriptor: number; before: BigIntStats; size: bigint; stat: SourceStat }
+/** Opens a regular file inside its root without following symlinks. Close it with `closeSource`. */
+export function openSource(file: SourceFile): OpenSource {
+  rejectSymlinks(file.path);
+  const canonicalRoot = realpathSync(file.root.path);
+  if (!pathWithin(realpathSync(file.path), canonicalRoot)) throw new CollectorError('symlink-escape');
+  const descriptor = openSync(file.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    rejectSymlinks(file.path);
-    const canonicalRoot = realpathSync(file.root.path);
-    if (!pathWithin(realpathSync(file.path), canonicalRoot)) throw new CollectorError('symlink-escape');
-    descriptor = openSync(file.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const before = fstatSync(descriptor, { bigint: true });
     if (!before.isFile()) throw new CollectorError('not-regular-file');
-    if (before.size > BigInt(maxFileBytes)) throw new SizeLimitError('snapshot-too-large', Number(before.size), maxFileBytes);
-    if (before.size > BigInt(scanBudget)) throw new SizeLimitError(SCAN_BUDGET_DEFERRED, Number(before.size), scanBudget);
-    const buffer = Buffer.alloc(Number(before.size) + 1);
+    return { descriptor, before, size: before.size, stat: sourceStat(before) };
+  } catch (error) { closeSync(descriptor); throw error; }
+}
+/** The file kept its identity, size and times while `read` bytes of it were read; otherwise `source-changed-during-read`. */
+export function verifyUnchanged(file: SourceFile, source: OpenSource, read: bigint): void {
+  const after = fstatSync(source.descriptor, { bigint: true });
+  const pathStat = lstatSync(file.path, { bigint: true });
+  rejectSymlinks(file.path);
+  const before = source.before;
+  if (before.ino !== after.ino || before.dev !== after.dev || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || after.ino !== pathStat.ino || after.dev !== pathStat.dev || read !== after.size) throw new CollectorError('source-changed-during-read');
+}
+export const closeSource = (source: OpenSource): void => { closeSync(source.descriptor); };
+/** Refuses a file over `maxFileBytes`, or over what is left of the scan's byte budget. */
+export function checkSize(size: bigint, maxFileBytes: number, scanBudget: number): void {
+  if (size > BigInt(maxFileBytes)) throw new SizeLimitError('snapshot-too-large', Number(size), maxFileBytes);
+  if (size > BigInt(scanBudget)) throw new SizeLimitError(SCAN_BUDGET_DEFERRED, Number(size), scanBudget);
+}
+
+export function readSnapshot(file: SourceFile, maxFileBytes: number, scanBudget: number): Snapshot {
+  let source: OpenSource | null = null;
+  try {
+    source = openSource(file);
+    checkSize(source.size, maxFileBytes, scanBudget);
+    const buffer = Buffer.alloc(Number(source.size) + 1);
     let size = 0;
     for (;;) {
-      const count = readSync(descriptor, buffer, size, buffer.length - size, null);
+      const count = readSync(source.descriptor, buffer, size, buffer.length - size, null);
       size += count;
       if (count === 0 || size === buffer.length) break;
     }
-    const after = fstatSync(descriptor, { bigint: true });
-    const pathStat = lstatSync(file.path, { bigint: true });
-    rejectSymlinks(file.path);
-    if (before.ino !== after.ino || before.dev !== after.dev || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || after.ino !== pathStat.ino || after.dev !== pathStat.dev || size !== Number(after.size)) throw new CollectorError('source-changed-during-read');
+    verifyUnchanged(file, source, BigInt(size));
     const bytes = buffer.subarray(0, size);
-    return { bytes, digest: hash(bytes), mtimeMs: Number(after.mtimeNs / 1_000_000n), stat: sourceStat(after) };
+    return { bytes, digest: hash(bytes), mtimeMs: Number(source.before.mtimeNs / 1_000_000n), stat: source.stat };
   } catch (error) { throw error instanceof CollectorError ? error : new CollectorError('snapshot-read-failed'); }
-  finally { if (descriptor !== null) closeSync(descriptor); }
+  finally { if (source !== null) closeSource(source); }
 }

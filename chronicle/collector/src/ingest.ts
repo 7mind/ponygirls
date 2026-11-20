@@ -9,7 +9,7 @@ import { Metadata } from '../../generated/typescript/chronicle/api/Metadata.js';
 import { Message } from '../../generated/typescript/chronicle/api/Message.js';
 import { RawFile } from '../../generated/typescript/chronicle/api/RawFile.js';
 import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRuntime.js';
-import { CollectorError, hash, type Format, type ParsedTranscript } from './domain.ts';
+import { CollectorError, hash, type Format, type ParsedMetadata, type ParsedTranscript } from './domain.ts';
 import type { Config } from './config.ts';
 
 export interface Ingester { send(payload: string): Promise<IngestReceipt> }
@@ -19,7 +19,7 @@ export class UploadError extends CollectorError {
 }
 const FORMATS: Record<Format, SourceFormat> = { pi: SourceFormat.Pi, claude: SourceFormat.Claude, codex: SourceFormat.Codex };
 const PI_RESTORATION_FILE = /^restored-[0-9a-f]{8}-[0-9a-f]{8}\.jsonl$/;
-export function sourceIdentity(namespace: string, rootId: string, format: Format, transcript: ParsedTranscript, sourcePath: string): SourceIdentity {
+export function sourceIdentity(namespace: string, rootId: string, format: Format, transcript: Pick<ParsedTranscript, 'producerId' | 'subagentId'>, sourcePath: string): SourceIdentity {
   const filename = basename(sourcePath.replaceAll('\\', '/'));
   const episodeNamespace = format === 'pi' && PI_RESTORATION_FILE.test(filename)
     ? `${namespace}/pi-restored/${hash(filename.slice(0, -'.jsonl'.length))}` : namespace;
@@ -28,12 +28,15 @@ export function sourceIdentity(namespace: string, rootId: string, format: Format
 export function sourceKey(source: SourceIdentity): string {
   return hash(JSON.stringify([source.collectorNamespace, source.discoveryRootId, source.format, source.producerSessionId, source.subagentId ?? null]));
 }
-export function encodeSnapshot(requestId: string, source: SourceIdentity, revision: number, transcript: ParsedTranscript, logicalPath: string): string {
-  const meta = transcript.metadata;
+/** The revision metadata both protocols declare. */
+export function revisionMetadata(source: SourceIdentity, meta: ParsedMetadata): Metadata {
   const tags = meta.gitRemoteObserved ? ['collector-observed-current-git-remote'] : [];
   if (source.format === SourceFormat.Pi && source.subagentId !== undefined) tags.push('subagent');
+  return new Metadata(meta.title, meta.project ?? undefined, meta.workdir ?? undefined, meta.gitRemote ?? undefined, meta.gitBranch ?? undefined, meta.gitCommit ?? undefined, source.format, meta.model ?? undefined, meta.startedAt ?? undefined, undefined, tags);
+}
+export function encodeSnapshot(requestId: string, source: SourceIdentity, revision: number, transcript: ParsedTranscript, logicalPath: string): string {
   const request = new IngestRequest(requestId, source, revision, hash(transcript.raw), Completion.Quiescent, transcript.redacted,
-    new Metadata(meta.title, meta.project ?? undefined, meta.workdir ?? undefined, meta.gitRemote ?? undefined, meta.gitBranch ?? undefined, meta.gitCommit ?? undefined, source.format, meta.model ?? undefined, meta.startedAt ?? undefined, undefined, tags),
+    revisionMetadata(source, transcript.metadata),
     transcript.messages.map(message => new Message(message.id, message.parentId ?? undefined, message.role, message.text, message.timestamp ?? undefined, message.recordIndex)),
     [new RawFile(logicalPath, hash(transcript.raw), transcript.raw)]);
   return JSON.stringify(IngestRequest_JsonCodec.instance.encode(BaboonCodecContext.Default, request));
@@ -57,6 +60,14 @@ export function tokenFromFile(path: string): string {
 // The server refused the request body as too large; resending the same bytes cannot succeed.
 export const SERVER_PAYLOAD_TOO_LARGE = 'server-payload-too-large';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** A receipt with well-formed identifiers, or `invalid-receipt`. */
+export function decodeReceipt(value: unknown): IngestReceipt {
+  try {
+    const receipt = IngestReceipt_JsonCodec.instance.decode(BaboonCodecContext.Default, value);
+    if (typeof receipt.requestId !== 'string' || !UUID.test(receipt.requestId) || typeof receipt.sessionId !== 'string' || !UUID.test(receipt.sessionId) || typeof receipt.jobId !== 'string' || !UUID.test(receipt.jobId) || !Number.isSafeInteger(receipt.revision) || receipt.revision < 1) throw new Error();
+    return receipt;
+  } catch { throw new UploadError('invalid-receipt', false, false); }
+}
 export class HttpIngester implements Ingester {
   private readonly url: URL; private readonly config: Config;
   constructor(config: Config) { this.config = config; this.url = endpointURL(config.endpoint, config.trustedHTTP); }
@@ -80,13 +91,9 @@ export class HttpIngester implements Ingester {
         if (size > 65_536) { await reader.cancel(); throw new UploadError('receipt-too-large', false, false); }
         chunks.push(result.value);
       }
-      let receipt: IngestReceipt;
-      try {
-        const value: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-        receipt = IngestReceipt_JsonCodec.instance.decode(BaboonCodecContext.Default, value);
-        if (typeof receipt.requestId !== 'string' || !UUID.test(receipt.requestId) || typeof receipt.sessionId !== 'string' || !UUID.test(receipt.sessionId) || typeof receipt.jobId !== 'string' || !UUID.test(receipt.jobId) || !Number.isSafeInteger(receipt.revision) || receipt.revision < 1) throw new Error();
-      } catch { throw new UploadError('invalid-receipt', false, false); }
-      return receipt;
+      let value: unknown;
+      try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new UploadError('invalid-receipt', false, false); }
+      return decodeReceipt(value);
     } catch (error) { throw error instanceof UploadError ? error : new UploadError('network-failed', true, false); }
   }
 }

@@ -10,6 +10,7 @@ import { excludedPath } from './discovery.ts';
 import { FileSecretReader } from './runtime-privacy.ts';
 import { HttpProgressReporter } from './progress.ts';
 import { HttpIngester } from './ingest.ts';
+import { HttpUploader } from './uploads.ts';
 import { Collector, POLICY_CHANGED } from './collector.ts';
 import { LocalGitMetadata } from './git.ts';
 import { DaemonLock, droppedOnlyFor, readOnlySpool, SqliteSpool, type Spool } from './spool.ts';
@@ -150,7 +151,7 @@ async function main(): Promise<void> {
       else print(spool.controls());
       return;
     }
-    const collector = new Collector(config, spool, new HttpIngester(config), Math.random, new LocalGitMetadata('git', 1000, 65536), new HttpProgressReporter(config), new FileSecretReader());
+    const collector = new Collector(config, spool, new HttpIngester(config), Math.random, new LocalGitMetadata('git', 1000, 65536), new HttpProgressReporter(config), new FileSecretReader(), new HttpUploader(config));
     const printStatus = (): void => {
       const status = collector.status();
       if (text) process.stdout.write(formatCollectorStatus(status));
@@ -165,8 +166,8 @@ async function main(): Promise<void> {
     }
     if (arguments_.operation === 'retry' || arguments_.operation === 'drop') {
       if (arguments_.operand === null) throw new CollectorError('request-id-required');
-      if (arguments_.operation === 'retry') spool.retry(arguments_.operand);
-      else spool.drop(arguments_.operand, 'operator-drop');
+      if (arguments_.operation === 'drop') spool.drop(arguments_.operand, 'operator-drop');
+      else if (collector.retry(arguments_.operand) === 'rebuild' && text) process.stdout.write(`Rebuilding ${literal(arguments_.operand)} from its file at the next scan: its payload predates the collector's Unicode normalization.\n`);
       printStatus(); return;
     }
     // Keep OS signal termination: SQLite preserves pending work and releases the

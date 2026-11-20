@@ -40,7 +40,7 @@ let
     endpoint = baseUrl;
     tokenFile = if cfg.collector.tokenFile == null then "" else toString cfg.collector.tokenFile;
     stateDir = cfg.collector.stateDirectory;
-    inherit (cfg.collector) trustedHTTP discoverNative discoverYolo excludeDefaultProfile excludedYoloProfiles roots exclusions redactions;
+    inherit (cfg.collector) trustedHTTP uploadProtocol discoverNative discoverYolo excludeDefaultProfile excludedYoloProfiles roots exclusions redactions;
   } // cfg.collector.limits));
   collectorCommand = "${cfg.collector.package}/bin/chronicle-collector --config ${collectorConfig}";
 in
@@ -80,6 +80,11 @@ in
         type = lib.types.bool;
         default = false;
         description = "Explicitly permit non-loopback plaintext HTTP on a trusted private network.";
+      };
+      uploadProtocol = lib.mkOption {
+        type = lib.types.enum [ "parts" "whole" ];
+        default = "parts";
+        description = "How sessions are uploaded. \"parts\": the part-upload API of a Chronicle server with it (appends send only new records; sessions up to the server's maxFileBytes). \"whole\": one /api/ingest request per revision, as earlier collectors; the rollback switch, and the setting for a server without the part-upload API (with \"parts\" such a server pauses uploads, nothing is lost). Deploy the server first.";
       };
       discoverNative = lib.mkOption { type = lib.types.bool; default = true; description = "Discover native Claude, Codex active/archived, and Pi/subagent stores."; };
       discoverYolo = lib.mkOption { type = lib.types.bool; default = true; description = "Reconcile all named yolo profile stores as profiles are added."; };

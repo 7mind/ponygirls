@@ -67,7 +67,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) for (const phase of ['progr
     const address = server.address(); assert.ok(address !== null && typeof address === 'object');
     writeFileSync(config, JSON.stringify({ enabled: true, endpoint: `http://127.0.0.1:${address.port}`, tokenFile: join(directory, 'token'),
       stateDir: state, homeDir: directory, discoverNative: false, discoverYolo: false, roots: [{ id: 'fixture', format: 'pi', path: source }],
-      quietMs: 0, pollMs: POLL_MS, uploadTimeoutMs: UPLOAD_TIMEOUT_MS }));
+      quietMs: 0, pollMs: POLL_MS, uploadTimeoutMs: UPLOAD_TIMEOUT_MS, uploadProtocol: 'whole' }));
     const child = spawn(process.execPath, [CLI, '--config', config], { env: { ...process.env, HOME: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
     let restart: ChildProcess | null = null;
     try {

@@ -3,20 +3,60 @@ import { DatabaseSync } from 'node:sqlite';
 import { chmodSync, closeSync, constants, existsSync, mkdirSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { CollectorError, hash, type CollectorReport, type Diagnostic } from './domain.ts';
+import { CollectorError, hash, type CollectorReport, type Diagnostic, type Format } from './domain.ts';
 import { rejectSymlinks, type SourceStat } from './discovery.ts';
 import { decodeOrigin, type CollectionOrigin } from './admission.ts';
 import { object } from './domain.ts';
 
+export type EntryStatus = 'pending' | 'stopped' | 'conflict';
 export interface Pending {
   requestId: string; sourceKey: string; sourceDigest: string; payload: string; payloadDigest: string;
   expectedRevision: number; policyDigest: string; attempts: number; nextAt: number;
-  status: 'pending' | 'stopped' | 'conflict'; error: string | null;
+  status: EntryStatus; error: string | null;
+  /** What the head becomes on the acknowledgement; absent in entries of earlier releases. */
+  base?: HeadBase;
+  /** The Unicode normalization version the payload was built with; absent before version 2. */
+  normalization?: number;
 }
 export interface QueuedOrigin { entry: Pending; origin: CollectionOrigin }
 export interface QueuedAdmission extends QueuedOrigin { evidence: AdmissionEvidence | null }
 interface BoundOrigin { requestId: string; payloadDigest: string; sourceKey: string; origin: CollectionOrigin }
-export interface Head { revision: number; digest: string | null; tombstone: boolean }
+/** What a head revision holds, so that the next upload can append to it: raw bytes (decimal), records, messages, chain. */
+export interface HeadBase { rawBytes: string; recordCount: number; messageCount: number; messageChain: string }
+/** The base fields are absent for heads written by earlier releases or by a downgraded collector. */
+export interface Head extends Partial<HeadBase> { revision: number; digest: string | null; tombstone: boolean }
+export const headBase = (head: Head): HeadBase | null => head.digest === null || head.rawBytes === undefined || head.recordCount === undefined || head.messageCount === undefined || head.messageChain === undefined
+  ? null : { rawBytes: head.rawBytes, recordCount: head.recordCount, messageCount: head.messageCount, messageChain: head.messageChain };
+/** A part upload (bucket `upload`, index `source-upload`). Written with its complete declaration before the open is
+ * sent; parts are regenerated from the file, never spooled. */
+export interface Upload {
+  requestId: string; sourceKey: string; fileId: string;
+  /** The UploadOpen JSON. */
+  open: string; expectedRevision: number; sourceDigest: string; declared: HeadBase;
+  uploadId: string | null; append: boolean;
+  /** Where the parts start: the base's record count and file offset (decimal). */
+  baseRecordCount: number; baseFileOffset: string;
+  /** The file as pass 1 read it; it must stay so until the commit. */
+  file: SourceStat;
+  /** The packing budget of the attempt's parts (decimal), fixed before the first open. */
+  partBudget: string | null; partsAcked: number; lastPartSha256: string | null;
+  policyDigest: string; evidence: AdmissionEvidence | null; origin: CollectionOrigin;
+  status: EntryStatus; attempts: number; nextAt: number; error: string | null;
+  /** The size or count the server refused, with its limit (decimal), for `upload-too-large`. */
+  refused?: { measured: string; limit: string; unit: 'bytes' | 'messages' };
+}
+/** A source file with a record above the record limit: not read again until its stat or a limit changes. */
+export interface RecordOverLimit {
+  fileId: string; rootId: string; pathId: string; format: Format; stat: SourceStat;
+  recordIndex: number; size: string; limit: number; limitSource: 'collector' | 'server';
+  collectorLimit: number; serverLimit: string | null;
+}
+/** A source whose latest upload had unpaired UTF-16 surrogates replaced with U+FFFD (message text, metadata). */
+export interface UnicodeRepair { sourceKey: string; revision: number; replaced: number }
+/** A file refused for an identifier with an unpaired surrogate: not read again until its stat or the policy changes. */
+export interface IdentifierRefusal { fileId: string; rootId: string; pathId: string; format: Format; stat: SourceStat; policyDigest: string }
+/** The latest probe of the part-upload API. */
+export interface UploadProbe { outcome: 'supported' | 'unsupported' | 'failed'; code: string | null; at: number }
 export interface Dropped { requestId: string; sourceKey: string; reason: string }
 /** A tombstoned source with the distinct reasons of the drops recorded for it, sorted. */
 export interface Tombstone { sourceKey: string; head: Head; reasons: string[] }
@@ -39,7 +79,33 @@ export interface Spool {
   enqueue(entry: Pending, origin: CollectionOrigin, evidence: AdmissionEvidence | null): void; queue(): Pending[];
   pendingOrigin(requestId: string): CollectionOrigin; queueWithOrigins(): QueuedOrigin[]; queueWithAdmission(): QueuedAdmission[];
   ack(requestId: string, revision: number): void;
-  fail(requestId: string, error: string, nextAt: number, conflict: boolean, maxAttempts: number): Pending['status'];
+  fail(requestId: string, error: string, nextAt: number, conflict: boolean, maxAttempts: number): EntryStatus;
+  uploads(): Upload[];
+  /** Refuses a source that already has a queued request or upload, or whose head moved. */
+  planUpload(entry: Upload): void;
+  updateUpload(requestId: string, change: Partial<Pick<Upload, 'uploadId' | 'partBudget' | 'partsAcked' | 'lastPartSha256'>>): void;
+  /** In one transaction: replaces the upload by `next`, a new intent for the same source. */
+  replanUpload(requestId: string, next: Upload): void;
+  failUpload(requestId: string, error: string, nextAt: number, conflict: boolean, maxAttempts: number, refused?: Upload['refused']): EntryStatus;
+  /** The receipt's revision becomes the head, with the declared base fields. */
+  ackUpload(requestId: string, revision: number): void;
+  /** Removes the upload; its source stays collectable. */
+  discardUpload(requestId: string, reason: string): void;
+  recordOverLimit(fileId: string): RecordOverLimit | undefined;
+  recordsOverLimit(): RecordOverLimit[];
+  setRecordOverLimit(value: RecordOverLimit): void;
+  clearRecordOverLimit(fileId: string): void;
+  /** The server's UploadLimits JSON from its latest answer, and the latest probe. */
+  serverLimits(): unknown;
+  saveProbe(probe: UploadProbe, limits: unknown): void;
+  probe(): UploadProbe | null;
+  /** Records the repairs of the upload of `revision`; none removes the record. */
+  setUnicodeRepair(sourceKey: string, revision: number, replaced: number): void;
+  unicodeRepairs(): UnicodeRepair[];
+  identifierRefusal(fileId: string): IdentifierRefusal | undefined;
+  identifierRefusals(): IdentifierRefusal[];
+  setIdentifierRefusal(value: IdentifierRefusal): void;
+  clearIdentifierRefusal(fileId: string): void;
   retry(requestId: string): void;
   /** Removes the request and tombstones its source: it is not collected again. */
   drop(requestId: string, reason: string): void;
@@ -135,6 +201,8 @@ class DurableSpool implements Spool {
   saveScan(discovered: ReadonlySet<string>, reads: SourceRead[], deferred: ReadonlyMap<string, number>): void {
     this.storage.transaction(() => {
       for (const { fileId } of this.storage.list<SourceRead>('source-read')) if (!discovered.has(fileId)) this.storage.remove('source-read', fileId);
+      for (const { fileId } of this.recordsOverLimit()) if (!discovered.has(fileId)) this.storage.remove('record-over-limit', fileId);
+      for (const { fileId } of this.identifierRefusals()) if (!discovered.has(fileId)) this.storage.remove('identifier-refusal', fileId);
       for (const read of reads) this.storage.set('source-read', read.fileId, read);
       this.storage.clear('scan-deferred');
       for (const [fileId, since] of deferred) this.storage.set('scan-deferred', fileId, { fileId, since });
@@ -241,21 +309,99 @@ class DurableSpool implements Spool {
       const pending = this.required(requestId);
       if (revision !== pending.expectedRevision + 1) throw new CollectorError('receipt-revision-mismatch');
       if (this.head(pending.sourceKey).revision !== pending.expectedRevision) throw new CollectorError('source-head-mismatch');
-      this.storage.set<Head>('head', pending.sourceKey, { revision, digest: pending.sourceDigest, tombstone: false });
+      this.storage.set<Head>('head', pending.sourceKey, { revision, digest: pending.sourceDigest, tombstone: false, ...pending.base });
       this.storage.remove('pending', requestId); this.storage.remove('pending-origin', requestId); this.storage.remove('pending-evidence', requestId);
       this.storage.remove('source-pending', pending.sourceKey);
     });
   }
-  fail(requestId: string, error: string, nextAt: number, conflict: boolean, maxAttempts: number): Pending['status'] {
+  fail(requestId: string, error: string, nextAt: number, conflict: boolean, maxAttempts: number): EntryStatus {
     const entry = this.required(requestId); entry.attempts++; entry.error = error; entry.nextAt = nextAt;
     entry.status = conflict ? 'conflict' : entry.attempts >= maxAttempts ? 'stopped' : 'pending';
     this.storage.set('pending', requestId, entry); return entry.status;
   }
   retry(requestId: string): void {
+    const upload = this.storage.get<Upload>('upload', requestId);
+    if (upload !== undefined) { const { refused: _, ...entry } = upload; this.storage.set<Upload>('upload', requestId, { ...entry, attempts: 0, nextAt: 0, status: 'pending', error: null }); return; }
     const entry = this.required(requestId); entry.attempts = 0; entry.nextAt = 0; entry.status = 'pending'; entry.error = null;
     this.storage.set('pending', requestId, entry);
   }
-  drop(requestId: string, reason: string): void { this.removeRequest(requestId, reason, true); }
+  uploads(): Upload[] {
+    return this.storage.readTransaction(() => this.storage.list<Upload>('upload').map(entry => {
+      if (!object(entry) || typeof entry.requestId !== 'string' || typeof entry.sourceKey !== 'string' || this.storage.get<string>('source-upload', entry.sourceKey) !== entry.requestId) throw new CollectorError('invalid-upload-entry');
+      return { ...entry, origin: decodeOrigin(entry.origin), evidence: entry.evidence === null ? null : decodeEvidence(entry.evidence) };
+    }));
+  }
+  private requiredUpload(requestId: string): Upload { const entry = this.storage.get<Upload>('upload', requestId); if (entry === undefined) throw new CollectorError('request-not-found'); return entry; }
+  private insertUpload(entry: Upload): void {
+    if (this.storage.get<string>('source-pending', entry.sourceKey) !== undefined || this.storage.get<string>('source-upload', entry.sourceKey) !== undefined) throw new CollectorError('source-already-pending');
+    if (this.storage.get<Upload>('upload', entry.requestId) !== undefined || this.storage.get<Pending>('pending', entry.requestId) !== undefined) throw new CollectorError('request-already-pending');
+    const head = this.head(entry.sourceKey);
+    if (head.tombstone || head.revision !== entry.expectedRevision) throw new CollectorError('source-head-mismatch');
+    this.storage.set<Upload>('upload', entry.requestId, { ...entry, origin: decodeOrigin(entry.origin), evidence: entry.evidence === null ? null : decodeEvidence(entry.evidence) });
+    this.storage.set('source-upload', entry.sourceKey, entry.requestId);
+  }
+  private removeUpload(entry: Upload): void { this.storage.remove('upload', entry.requestId); this.storage.remove('source-upload', entry.sourceKey); }
+  planUpload(entry: Upload): void { this.storage.transaction(() => this.insertUpload(entry)); }
+  updateUpload(requestId: string, change: Partial<Pick<Upload, 'uploadId' | 'partBudget' | 'partsAcked' | 'lastPartSha256'>>): void {
+    this.storage.transaction(() => this.storage.set<Upload>('upload', requestId, { ...this.requiredUpload(requestId), ...change }));
+  }
+  replanUpload(requestId: string, next: Upload): void {
+    this.storage.transaction(() => {
+      const entry = this.requiredUpload(requestId);
+      if (entry.sourceKey !== next.sourceKey) throw new CollectorError('source-head-mismatch');
+      this.removeUpload(entry); this.insertUpload(next);
+      this.storage.set('audit', requestId, { requestId, sourceKey: entry.sourceKey, reason: 'upload-replanned' });
+    });
+  }
+  failUpload(requestId: string, error: string, nextAt: number, conflict: boolean, maxAttempts: number, refused?: Upload['refused']): EntryStatus {
+    return this.storage.transaction(() => {
+      const { refused: _, ...entry } = this.requiredUpload(requestId); const attempts = entry.attempts + 1;
+      const status: EntryStatus = conflict ? 'conflict' : attempts >= maxAttempts ? 'stopped' : 'pending';
+      this.storage.set<Upload>('upload', requestId, { ...entry, attempts, error, nextAt, status, ...(refused === undefined ? {} : { refused }) });
+      return status;
+    });
+  }
+  ackUpload(requestId: string, revision: number): void {
+    this.storage.transaction(() => {
+      const entry = this.requiredUpload(requestId);
+      if (revision !== entry.expectedRevision + 1) throw new CollectorError('receipt-revision-mismatch');
+      if (this.head(entry.sourceKey).revision !== entry.expectedRevision) throw new CollectorError('source-head-mismatch');
+      this.storage.set<Head>('head', entry.sourceKey, { revision, digest: entry.sourceDigest, tombstone: false, ...entry.declared });
+      this.removeUpload(entry);
+    });
+  }
+  discardUpload(requestId: string, reason: string): void {
+    this.storage.transaction(() => {
+      const entry = this.requiredUpload(requestId); this.removeUpload(entry);
+      this.storage.set('audit', requestId, { requestId, sourceKey: entry.sourceKey, reason });
+    });
+  }
+  recordOverLimit(fileId: string): RecordOverLimit | undefined { return this.storage.get<RecordOverLimit>('record-over-limit', fileId); }
+  recordsOverLimit(): RecordOverLimit[] { return this.storage.list<RecordOverLimit>('record-over-limit'); }
+  setRecordOverLimit(value: RecordOverLimit): void { this.storage.set('record-over-limit', value.fileId, value); }
+  clearRecordOverLimit(fileId: string): void { this.storage.remove('record-over-limit', fileId); }
+  serverLimits(): unknown { return this.storage.get<unknown>('upload-server', 'limits') ?? null; }
+  saveProbe(probe: UploadProbe, limits: unknown): void {
+    this.storage.transaction(() => { this.storage.set('upload-server', 'probe', probe); if (limits !== null) this.storage.set('upload-server', 'limits', limits); });
+  }
+  probe(): UploadProbe | null { return this.storage.get<UploadProbe>('upload-server', 'probe') ?? null; }
+  setUnicodeRepair(sourceKey: string, revision: number, replaced: number): void {
+    if (replaced === 0) this.storage.remove('unicode-repair', sourceKey);
+    else this.storage.set<UnicodeRepair>('unicode-repair', sourceKey, { sourceKey, revision, replaced });
+  }
+  unicodeRepairs(): UnicodeRepair[] { return this.storage.list<UnicodeRepair>('unicode-repair'); }
+  identifierRefusal(fileId: string): IdentifierRefusal | undefined { return this.storage.get<IdentifierRefusal>('identifier-refusal', fileId); }
+  identifierRefusals(): IdentifierRefusal[] { return this.storage.list<IdentifierRefusal>('identifier-refusal'); }
+  setIdentifierRefusal(value: IdentifierRefusal): void { this.storage.set('identifier-refusal', value.fileId, value); }
+  clearIdentifierRefusal(fileId: string): void { this.storage.remove('identifier-refusal', fileId); }
+  drop(requestId: string, reason: string): void {
+    const upload = this.storage.get<Upload>('upload', requestId);
+    if (upload === undefined) { this.removeRequest(requestId, reason, true); return; }
+    this.storage.transaction(() => {
+      const head = this.head(upload.sourceKey); head.tombstone = true; this.storage.set('head', upload.sourceKey, head);
+      this.removeUpload(upload); this.storage.set('audit', requestId, { requestId, sourceKey: upload.sourceKey, reason });
+    });
+  }
   discard(requestId: string, reason: string): void { this.removeRequest(requestId, reason, false); }
   private removeRequest(requestId: string, reason: string, tombstone: boolean): void {
     this.storage.transaction(() => {

@@ -48,7 +48,7 @@ async function harness(adapter: string) {
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const address = server.address(); if (address === null || typeof address === 'string') throw new Error();
-  const config = loadConfig({ enabled: true, endpoint: `http://127.0.0.1:${address.port}`, tokenFile: join(dir, 'token'), stateDir: join(dir, 'state'), discoverNative: false, discoverYolo: false, roots: [{ id: 'test', format: 'pi', path: join(dir, 'sessions') }], quietMs: 0, uploadTimeoutMs: 1000 });
+  const config = loadConfig({ enabled: true, endpoint: `http://127.0.0.1:${address.port}`, tokenFile: join(dir, 'token'), stateDir: join(dir, 'state'), discoverNative: false, discoverYolo: false, roots: [{ id: 'test', format: 'pi', path: join(dir, 'sessions') }], quietMs: 0, uploadTimeoutMs: 1000, uploadProtocol: 'whole' });
   const reporter: ProgressReporter = adapter === 'dummy' ? { report: async update => sink.accept(update) } : new HttpProgressReporter(config);
   return { dir, sink, config, reporter, close: async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); rmSync(dir, { recursive: true }); } };
 }

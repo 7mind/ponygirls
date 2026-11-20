@@ -17,7 +17,7 @@ import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRunti
 const pi = readFileSync(new URL('fixtures/pi.jsonl', import.meta.url), 'utf8');
 function file(path: string, raw: string): void { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, raw); }
 function config(homeDir: string, extra: Record<string, unknown>) {
-  return loadConfig({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(homeDir, 'token'), stateDir: join(homeDir, 'state'), homeDir, quietMs: 0, ...extra });
+  return loadConfig({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(homeDir, 'token'), stateDir: join(homeDir, 'state'), homeDir, quietMs: 0, uploadProtocol: 'whole', ...extra });
 }
 const decode = (payload: string) => IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(payload) as unknown);
 class AcceptingIngester implements Ingester {

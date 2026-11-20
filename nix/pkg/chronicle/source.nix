@@ -119,7 +119,7 @@ in {
   webBrowserTests = source "chronicle-web-browser-tests-source" (webEntries ++ [ "server/src/main/scala/chronicle/Http.scala" ]);
   # test_source_observations_v3.py reads Core.scala.
   eval = source "chronicle-eval-source" [ "eval/relevance" "server/src/main/scala/chronicle/Core.scala" ];
-  collector = source "chronicle-collector-source" [ "package.json" "collector" "generated/typescript" ];
+  collector = source "chronicle-collector-source" [ "package.json" "collector" "generated/typescript" "tests/message-chain-v1.json" ];
   documentation = source "chronicle-documentation-source" [ "README.md" "models" "migrations" ];
   development = lib.cleanSourceWith { name = "chronicle-development-source"; src = chronicle; filter = clean; };
 }

@@ -6,15 +6,19 @@ import { validYoloProfileName, type AdmissionPolicy } from './admission.ts';
 
 export interface Redactions extends PrivacyRules { secretFiles: string[] }
 export interface Exclusions { roots: string[]; profiles: string[]; projects: string[]; sessions: string[]; paths: string[] }
+/** `parts`: the part-upload API; `whole`: one `/api/ingest` request per revision, the rollback switch. */
+export type UploadProtocol = 'parts' | 'whole';
 export interface Config extends AdmissionPolicy {
-  enabled: boolean; endpoint: string; tokenFile: string; stateDir: string; trustedHTTP: boolean;
+  enabled: boolean; endpoint: string; tokenFile: string; stateDir: string; trustedHTTP: boolean; uploadProtocol: UploadProtocol;
   homeDir: string; yoloDir: string; discoverNative: boolean; discoverYolo: boolean;
   roots: DiscoveryRoot[]; exclusions: Exclusions; redactions: Redactions;
   quietMs: number; pollMs: number; maxDepth: number; maxFiles: number; maxScanBytes: number;
-  maxFileBytes: number; maxPayloadBytes: number; maxMessages: number; partialLineQuarantineMs: number;
+  maxFileBytes: number; maxPayloadBytes: number; maxMessages: number; maxRecordBytes: number; partialLineQuarantineMs: number;
   uploadTimeoutMs: number; maxAttempts: number; backoffBaseMs: number; backoffCapMs: number;
 }
-const LIMITS = { quietMs: 60_000, pollMs: 30_000, maxDepth: 16, maxFiles: 10_000, maxScanBytes: 134_217_728, maxFileBytes: 4_194_304, maxPayloadBytes: 8_388_608, maxMessages: 10_000, partialLineQuarantineMs: 86_400_000, uploadTimeoutMs: 15_000, maxAttempts: 8, backoffBaseMs: 1_000, backoffCapMs: 300_000 };
+const LIMITS = { quietMs: 60_000, pollMs: 30_000, maxDepth: 16, maxFiles: 10_000, maxScanBytes: 134_217_728, maxFileBytes: 4_194_304, maxPayloadBytes: 8_388_608, maxMessages: 10_000, maxRecordBytes: 33_554_432, partialLineQuarantineMs: 86_400_000, uploadTimeoutMs: 15_000, maxAttempts: 8, backoffBaseMs: 1_000, backoffCapMs: 300_000 };
+// The server's range: a message text derived from one record stays far below PostgreSQL's jsonb string limit.
+const RECORD_BYTES_RANGE = { min: 1_048_576, max: 134_217_728 } as const;
 const invalid = (): never => { throw new CollectorError('invalid-config'); };
 const strings = (value: unknown): string[] => {
   if (!Array.isArray(value) || value.some(v => typeof v !== 'string' || v.length === 0)) return invalid();
@@ -26,7 +30,7 @@ function absolute(value: unknown): string { if (typeof value !== 'string' || !is
 
 export function loadConfig(input: unknown): Config {
   if (!object(input)) return invalid();
-  keys(input, ['enabled', 'endpoint', 'tokenFile', 'stateDir', 'trustedHTTP', 'homeDir', 'yoloDir', 'discoverNative', 'discoverYolo', 'excludeDefaultProfile', 'excludedYoloProfiles', 'roots', 'exclusions', 'redactions', ...Object.keys(LIMITS)]);
+  keys(input, ['enabled', 'endpoint', 'tokenFile', 'stateDir', 'trustedHTTP', 'uploadProtocol', 'homeDir', 'yoloDir', 'discoverNative', 'discoverYolo', 'excludeDefaultProfile', 'excludedYoloProfiles', 'roots', 'exclusions', 'redactions', ...Object.keys(LIMITS)]);
   const enabled = bool(input['enabled'] ?? false);
   const homeDir = absolute(input['homeDir'] ?? homedir());
   const endpoint = input['endpoint'] ?? '';
@@ -71,5 +75,8 @@ export function loadConfig(input: unknown): Config {
   }
   // A file within maxFileBytes must fit a scan's whole budget, or it would be deferred forever.
   if (limits.backoffBaseMs > limits.backoffCapMs || limits.maxDepth > 64 || limits.maxFileBytes > limits.maxScanBytes) return invalid();
-  return { enabled, endpoint, tokenFile, stateDir, homeDir, excludeDefaultProfile: bool(input['excludeDefaultProfile'] === undefined ? false : input['excludeDefaultProfile']), excludedYoloProfiles, yoloDir: absolute(input['yoloDir'] ?? join(homeDir, '.config/yolo')), trustedHTTP: bool(input['trustedHTTP'] ?? false), discoverNative: bool(input['discoverNative'] ?? true), discoverYolo: bool(input['discoverYolo'] ?? true), roots, exclusions, redactions, ...limits };
+  if (limits.maxRecordBytes < RECORD_BYTES_RANGE.min || limits.maxRecordBytes > RECORD_BYTES_RANGE.max) return invalid();
+  const uploadProtocol = input['uploadProtocol'] ?? 'parts';
+  if (uploadProtocol !== 'parts' && uploadProtocol !== 'whole') return invalid();
+  return { enabled, endpoint, tokenFile, stateDir, homeDir, excludeDefaultProfile: bool(input['excludeDefaultProfile'] === undefined ? false : input['excludeDefaultProfile']), excludedYoloProfiles, yoloDir: absolute(input['yoloDir'] ?? join(homeDir, '.config/yolo')), trustedHTTP: bool(input['trustedHTTP'] ?? false), uploadProtocol, discoverNative: bool(input['discoverNative'] ?? true), discoverYolo: bool(input['discoverYolo'] ?? true), roots, exclusions, redactions, ...limits };
 }

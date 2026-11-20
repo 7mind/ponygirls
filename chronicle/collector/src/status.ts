@@ -1,4 +1,7 @@
-import type { Collector, SourceLocation } from './collector.ts';
+import { uploadsPausedText, type Collector, type SourceLocation } from './collector.ts';
+import { EVIDENCE_LIMITS } from './passes.ts';
+import type { IdentifierRefusal, RecordOverLimit } from './spool.ts';
+import { IDENTIFIER_UNICODE } from './unicode.ts';
 import { holdReason } from './admission.ts';
 import { SERVER_PAYLOAD_TOO_LARGE } from './ingest.ts';
 import type { Diagnostic } from './domain.ts';
@@ -31,11 +34,20 @@ const LIMIT_DESCRIPTIONS: Record<string, (measured: number, limit: number) => st
   'snapshot-too-large': (measured, limit) => `file ${size(measured)} over maxFileBytes ${size(limit)}`,
   'message-limit': (measured, limit) => `${count(measured)} messages over maxMessages ${count(limit)}`,
   'payload-too-large': (measured, limit) => `encoded payload ${size(measured)} over maxPayloadBytes ${size(limit)}`,
+  'admission-evidence-limit': (measured, limit) => `${size(measured)} of admission evidence over ${size(limit)}, or a path over ${count(EVIDENCE_LIMITS.valueBytes)} bytes`,
 };
+function identifierRefusalText(refusal: IdentifierRefusal): string {
+  return `${literal(refusal.format)} session ${literal(refusal.pathId.slice(0, PATH_ID_DISPLAY_LENGTH))}: an identifier holds an unpaired UTF-16 surrogate (${IDENTIFIER_UNICODE}). This session is not uploaded; it is read again when the file changes.`;
+}
+/** The text of a source in `record-over-limit`, until its stat or a limit changes. */
+export function recordOverLimitText(row: RecordOverLimit): string {
+  return `${literal(row.format)} session ${literal(row.pathId.slice(0, PATH_ID_DISPLAY_LENGTH))}: record ${count(row.recordIndex)} is ${count(Number(row.size))} bytes, above the record limit of ${count(row.limit)} bytes (${row.limitSource} maxRecordBytes). This session is not uploaded. Raise maxRecordBytes on the collector and on the server (both, at most 134,217,728) and it is uploaded at the next scan.`;
+}
 function diagnosticLine(diagnostic: Diagnostic): string {
   const line = `  ${diagnostic.code === 'root-missing' ? 'root missing (root-missing)' : literal(diagnostic.code)}: ${rootLabel(diagnostic.rootId, diagnostic.pathId)}`;
   const limit = Object.hasOwn(LIMIT_DESCRIPTIONS, diagnostic.code) ? LIMIT_DESCRIPTIONS[diagnostic.code] : undefined;
-  return limit === undefined || diagnostic.measured === undefined || diagnostic.limit === undefined ? line : `${line} · ${limit(diagnostic.measured, diagnostic.limit)}`;
+  const values = diagnostic.values === undefined ? '' : ` · ${count(diagnostic.values)} distinct paths (limit ${count(EVIDENCE_LIMITS.values)})`;
+  return limit === undefined || diagnostic.measured === undefined || diagnostic.limit === undefined ? line : `${line} · ${limit(diagnostic.measured, diagnostic.limit)}${values}`;
 }
 
 export function formatTombstones(report: TombstoneReport): string {
@@ -61,7 +73,9 @@ export function formatTombstones(report: TombstoneReport): string {
 }
 
 export function formatCollectorStatus(status: CollectorStatus): string {
-  const lines = ['Chronicle collector: enabled (configuration)', `Namespace: ${literal(status.namespace)}`];
+  const paused = status.uploadProtocol === 'parts' && status.server.probe?.outcome === 'unsupported';
+  const lines = [...(paused ? [uploadsPausedText(literal(status.server.endpoint))] : []), 'Chronicle collector: enabled (configuration)', `Namespace: ${literal(status.namespace)}`,
+    `Upload protocol: ${status.uploadProtocol}${status.uploadProtocol === 'parts' && status.server.probe !== null ? ` · server ${status.server.probe.outcome === 'failed' ? `not reached (${literal(status.server.probe.code ?? 'unknown')})` : status.server.probe.outcome === 'supported' ? 'has the part-upload API' : 'has no part-upload API'}` : ''}`];
   lines.push(`Collection control: ${status.controls.paused ? 'paused' : 'resumed'} (durable; not daemon liveness)`, `Dynamic exclusions: ${count(status.controls.exclusions.length)}`);
   for (const path of status.controls.exclusions) lines.push(`  ${literal(path)}`);
   if (status.heldRequests.length > 0) lines.push(`Durable admission: ${count(status.heldRequests.length)} queued requests held (exact payloads retained)`);
@@ -73,7 +87,7 @@ export function formatCollectorStatus(status: CollectorStatus): string {
       `  Discovered: ${count(c.discovered)} · Scanned: ${count(c.scanned)} · Unchanged: ${count(c.unchanged)}`,
       `  Read: ${bytes(c.scannedBytes)} (${count(c.scannedBytes)} bytes) · Waiting: ${count(c.waiting)} · Excluded: ${count(c.excluded)}${c.deferred === undefined ? '' : ` · Deferred by scan budget: ${count(c.deferred)}`}`,
       `  Enqueued: ${count(c.enqueued)} · Uploaded: ${count(c.uploaded)} · Upload failures: ${count(c.uploadFailures)}`,
-      `  Quarantined: ${count(c.quarantined)} · Pending: ${count(c.pending)} · Stopped: ${count(c.stopped)} · Conflicts: ${count(c.conflicts)}`);
+      `  Quarantined: ${count(c.quarantined)} · Pending: ${count(c.pending)} · Stopped: ${count(c.stopped)} · Conflicts: ${count(c.conflicts)}${c.replacements === undefined ? '' : ` · Replacements: ${count(c.replacements)}`}`);
     if (report.roots.length > 0) lines.push(`Roots in last saved scan (${count(report.roots.length)}):`);
     for (const root of report.roots) lines.push(`  ${literal(root.format)} / ${rootLabel(root.rootId, root.pathId)}: discovered ${count(root.discovered)}, scanned ${count(root.scanned)}, read ${bytes(root.bytes)}, waiting ${count(root.waiting)}, excluded ${count(root.excluded)}, quarantined ${count(root.quarantined)}${root.deferred === undefined ? '' : `, deferred ${count(root.deferred)}`}`);
   }
@@ -88,8 +102,23 @@ export function formatCollectorStatus(status: CollectorStatus): string {
     if (entry.error === SERVER_PAYLOAD_TOO_LARGE) lines.push(`    Error: refused by the server as too large (${SERVER_PAYLOAD_TOO_LARGE}) · payload ${size(entry.payloadBytes)}`);
     else if (entry.error !== null) lines.push(`    Error: ${literal(entry.error)}`);
   }
-  lines.push(`Diagnostics: ${count(status.diagnostics.length)}`);
-  for (const diagnostic of status.diagnostics) lines.push(diagnosticLine(diagnostic));
+  if (status.uploads.length > 0) lines.push(`Part uploads: ${count(status.uploads.length)}`);
+  for (const upload of status.uploads) {
+    const due = upload.status === 'pending' ? ` · next attempt: ${upload.nextAt === 0 ? 'due' : new Date(upload.nextAt).toISOString()}` : '';
+    lines.push(`  ${literal(upload.requestId)}: ${literal(upload.status)} · ${upload.append ? 'append' : 'replacement'} · ${size(Number(upload.newRawBytes))} new of ${size(Number(upload.rawBytes))} · parts acknowledged: ${count(upload.partsAcked)} · attempts: ${count(upload.attempts)}${due} · source: ${literal(upload.sourceKey)}`);
+    if (upload.refused !== undefined) lines.push(`    Error: refused by the server as too large (upload-too-large) · ${upload.refused.unit === 'bytes' ? `${size(Number(upload.refused.measured))} over the server's maxRawBytes ${size(Number(upload.refused.limit))}` : `${count(Number(upload.refused.measured))} messages over the server's maxMessages ${count(Number(upload.refused.limit))}`}`);
+    else if (upload.error !== null) lines.push(`    Error: ${literal(upload.error)}`);
+  }
+  if (status.unicodeRepairs.length > 0) lines.push(`Unicode repaired (unpaired UTF-16 surrogates replaced with U+FFFD in message text or metadata; raw unchanged): ${count(status.unicodeRepairs.length)} sources`);
+  for (const repair of status.unicodeRepairs) lines.push(`  ${literal(repair.sourceKey)} · revision ${count(repair.revision)} · ${count(repair.replaced)} code units`);
+  if (status.identifierRefusals.length > 0) lines.push(`Identifiers refused: ${count(status.identifierRefusals.length)}`);
+  for (const refusal of status.identifierRefusals) lines.push(`  ${identifierRefusalText(refusal)}`);
+  if (status.recordsOverLimit.length > 0) lines.push(`Records over the record limit: ${count(status.recordsOverLimit.length)}`);
+  for (const row of status.recordsOverLimit) lines.push(`  ${recordOverLimitText(row)}`);
+  // Refused records and identifiers are shown above while they last, not only in the scan that found them.
+  const diagnostics = status.diagnostics.filter(diagnostic => diagnostic.code !== 'record-over-limit' && diagnostic.code !== IDENTIFIER_UNICODE);
+  lines.push(`Diagnostics: ${count(diagnostics.length)}`);
+  for (const diagnostic of diagnostics) lines.push(diagnosticLine(diagnostic));
   lines.push(`Dropped: ${count(status.dropped.length)}`);
   for (const entry of status.dropped) lines.push(`  ${literal(entry.requestId)}: ${literal(entry.reason)} · source: ${literal(entry.sourceKey)}`);
   const reporting = status.reporting;

@@ -28,7 +28,7 @@ import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRunti
 const pi = readFileSync(new URL('fixtures/pi.jsonl', import.meta.url), 'utf8');
 const decode = (body: string) => IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(body) as unknown);
 function put(path: string, text: string): void { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, text, { mode: 0o600 }); }
-function config(home: string, extra: Record<string, unknown>): Config { return loadConfig({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(home, 'token'), stateDir: join(home, 'state'), homeDir: home, quietMs: 0, ...extra }); }
+function config(home: string, extra: Record<string, unknown>): Config { return loadConfig({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(home, 'token'), stateDir: join(home, 'state'), homeDir: home, quietMs: 0, uploadProtocol: 'whole', ...extra }); }
 function pending(key: string, digest: string): Pending { return { requestId: randomUUID(), sourceKey: key, sourceDigest: hash(key), payload: 'synthetic', payloadDigest: hash('synthetic'), expectedRevision: 0, policyDigest: digest, attempts: 0, nextAt: 0, status: 'pending', error: null }; }
 class Sink implements Ingester {
   readonly bodies: string[] = []; readonly receipts = new Map<string, IngestReceipt>(); unavailable = false;

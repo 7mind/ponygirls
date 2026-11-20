@@ -26,7 +26,7 @@ function fixture(adapter: string) {
   const dir = mkdtempSync(join(tmpdir(), 'chronicle-runtime-privacy-'));
   mkdirSync(join(dir, 'sessions'));
   const dummy = new DummySecretReader();
-  const config = loadConfig({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'bearer'), stateDir: join(dir, 'state'), discoverNative: false, discoverYolo: false, quietMs: 0, roots: [{ id: 'fixture', format: 'pi', path: join(dir, 'sessions') }], redactions: { secretFiles: [join(dir, 'secret')] } });
+  const config = loadConfig({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'bearer'), stateDir: join(dir, 'state'), discoverNative: false, discoverYolo: false, quietMs: 0, roots: [{ id: 'fixture', format: 'pi', path: join(dir, 'sessions') }], redactions: { secretFiles: [join(dir, 'secret')] }, uploadProtocol: 'whole' });
   const reader: SecretReader = adapter === 'dummy' ? dummy : new FileSecretReader();
   const put = (path: string, value: string | undefined) => {
     if (value === undefined) { dummy.values.delete(path); rmSync(path, { force: true }); }

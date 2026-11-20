@@ -106,4 +106,6 @@ test('BA disabled configuration never discovers homes; malformed config fails at
   assert.throws(() => loadConfig({ enabled: false, unknown: 1 }), /invalid-config/);
   assert.throws(() => loadConfig({ enabled: false, quietMs: -1 }), /invalid-config/);
   assert.throws(() => loadConfig({ enabled: false, maxFileBytes: 2, maxScanBytes: 1 }), /invalid-config/);
+  assert.deepEqual([c.uploadProtocol, c.maxRecordBytes], ['parts', 33_554_432]);
+  for (const extra of [{ uploadProtocol: 'stream' }, { maxRecordBytes: 1_048_575 }, { maxRecordBytes: 134_217_729 }]) assert.throws(() => loadConfig({ enabled: false, ...extra }), /invalid-config/);
 });

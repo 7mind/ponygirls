@@ -178,7 +178,7 @@ pkgs.runCommandLocal "chronicle-modules-test" { nativeBuildInputs = [ pkgs.jq ];
   jq -e '.allowInsecureHttp == false and .secureCookies == true' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.allowInsecureHttp == true and .secureCookies == false and .allowedOrigin == "http://192.168.50.10:47330"' ${lib.last (lib.splitString " " privateHttpServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.allowInsecureHttp == true and .secureCookies == true' ${lib.last (lib.splitString " " optedInHttpsServer.systemd.services.chronicle.serviceConfig.ExecStart)}
-  jq -e '.excludeDefaultProfile == false and .excludedYoloProfiles == []' ${lib.last (lib.splitString " " linux.systemd.user.services.chronicle-collector.Service.ExecStart)}
+  jq -e '.excludeDefaultProfile == false and .excludedYoloProfiles == [] and .uploadProtocol == "parts"' ${lib.last (lib.splitString " " linux.systemd.user.services.chronicle-collector.Service.ExecStart)}
   jq -e '.excludeDefaultProfile == true and .excludedYoloProfiles == ["Foo","default","foo"] and .discoverNative == true and .discoverYolo == true' ${lib.last (lib.splitString " " admission.systemd.user.services.chronicle-collector.Service.ExecStart)}
   jq -e '.tokenFile == "/run/secrets/chronicle-agent"' ${lib.last (lib.splitString " " linux.systemd.user.services.chronicle-collector.Service.ExecStart)}
   jq -e '.tokenFile == "/run/secrets/chronicle-ingest"' ${lib.last (lib.splitString " " separate.systemd.user.services.chronicle-collector.Service.ExecStart)}

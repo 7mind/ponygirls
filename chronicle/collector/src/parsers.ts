@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import { CollectorError, object, string, timestamp, type Format, type Json, type JsonObject, type ParsedMessage, type ParsedMetadata, type ParsedRecord, type ParsedTranscript } from './domain.ts';
 import type { PrivacyPolicy } from './privacy.ts';
+import { requireScalar, wellFormed } from './unicode.ts';
 
 const TITLE_PREVIEW_UTF16_UNITS = 160;
 function titlePreview(value: string): string {
@@ -85,107 +87,171 @@ function normalize(record: ParsedRecord, format: Format): ParsedMessage | null {
   return { id: messageId ?? `record:${record.index}`, parentId: record.parentId, role, text: content, timestamp: timestamp(body['timestamp']) ?? timestamp(r['timestamp']), recordIndex: record.index };
 }
 
+/** A JSON value, or `invalid-json`. */
+export function parseJson(line: string): Json {
+  try { return JSON.parse(line) as Json; } catch { throw new CollectorError('invalid-json'); }
+}
+/** One JSONL line as a record: depth-checked and redacted. `raw` is the line as uploaded. */
+export interface RecordLine { record: ParsedRecord; raw: string; redacted: boolean }
+export function recordOf(format: Format, parsed: Json, line: string, index: number, policy: PrivacyPolicy): RecordLine {
+  if (!object(parsed)) throw new CollectorError('invalid-record');
+  ensureDepth(parsed, 0);
+  const cleaned = policy.redact(parsed);
+  if (!object(cleaned.value)) throw new CollectorError('invalid-record');
+  const value = cleaned.value;
+  const payload = object(value['payload']) ? value['payload'] : value;
+  return { record: { value, id: string(value[format === 'claude' ? 'uuid' : 'id']) ?? (format === 'codex' ? string(payload['id']) : null), parentId: string(value[format === 'claude' ? 'parentUuid' : 'parentId']), index }, raw: cleaned.changed ? JSON.stringify(value) : line, redacted: cleaned.changed };
+}
+
+/** The file-wide multiset of Codex `response_item` messages whose `event_msg` duplicates are dropped, keyed by a
+ * digest of role and text. Above `limit` entries it stops counting (`overflowed`): such a file is over maxMessages. */
+export class CodexDuplicates {
+  private readonly counts = new Map<string, number>();
+  private entries = 0;
+  overflowed = false;
+  constructor(private readonly limit: number) {}
+  private static key(message: ParsedMessage): string {
+    // UTF-16 code units keep lone surrogates distinct, as the role/text strings themselves are.
+    return createHash('sha256').update(message.role, 'utf16le').update('\0', 'utf16le').update(message.text, 'utf16le').digest('base64');
+  }
+  add(record: ParsedRecord): void {
+    if (this.overflowed || record.value['type'] !== 'response_item') return;
+    const message = normalize(record, 'codex'); if (message === null) return;
+    if (++this.entries > this.limit) { this.overflowed = true; this.counts.clear(); return; }
+    const key = CodexDuplicates.key(message); this.counts.set(key, (this.counts.get(key) ?? 0) + 1);
+  }
+  consume(message: ParsedMessage): boolean {
+    const key = CodexDuplicates.key(message); const count = this.counts.get(key) ?? 0;
+    if (count > 0) this.counts.set(key, count - 1);
+    return count > 0;
+  }
+}
+/** The normalized, redacted message of a record; null without one or for a Codex `event_msg` duplicate. `replaced`
+ * counts the unpaired surrogates of its text that became U+FFFD; an identifier with one refuses the file. */
+export function messageOf(format: Format, record: ParsedRecord, duplicates: CodexDuplicates | null, policy: PrivacyPolicy): { message: ParsedMessage; redacted: boolean; replaced: number } | null {
+  const message = normalize(record, format);
+  if (message === null) return null;
+  if (duplicates !== null && record.value['type'] === 'event_msg' && duplicates.consume(message)) return null;
+  requireScalar(message.id, message.parentId, message.role);
+  // Normalization joins content blocks and can reconstruct a literal that was
+  // not contiguous in any raw JSON string. Apply the same policy once more.
+  const cleaned = policy.redact(message.text);
+  if (typeof cleaned.value !== 'string') throw new CollectorError('message-redaction-invariant');
+  const text = wellFormed(cleaned.value);
+  return { message: { ...message, text: text.value }, redacted: cleaned.changed, replaced: text.replaced };
+}
+
+export interface TranscriptIdentity { producerId: string; subagentId: string | null; parentId: string | null }
+/** Session identity and metadata accumulated record by record, so that a file need not be held. */
+export class TranscriptState {
+  private records = 0;
+  private first: { type: Json | undefined; version: Json | undefined; id: string | null; parentSession: string | null; cwd: string | null; startedAt: string | null } | null = null;
+  private claude: { sessionId: string | null; agentId: string | null; error: string | null } = { sessionId: null, agentId: null, error: null };
+  private header: Pick<ParsedMetadata, 'workdir' | 'startedAt' | 'gitRemote' | 'gitBranch' | 'gitCommit'> & { producerId: string | null; parentId: string | null } | null = null;
+  private headerSeen = false;
+  private workdir: string | null = null; private gitBranch: string | null = null; private model: string | null = null;
+  private firstTimestamp: string | null = null; private title: string | null = null; private firstUserText: string | null = null;
+  private replacedInMessages = 0;
+  constructor(private readonly format: Format, private readonly sourcePath: string) {}
+  add(record: ParsedRecord): void {
+    const value = record.value;
+    if (this.records++ === 0) this.first = { type: value['type'], version: value['version'], id: string(value['id']), parentSession: string(value['parentSession']), cwd: string(value['cwd']), startedAt: timestamp(value['timestamp']) };
+    if (this.format === 'claude' && this.claude.error === null) {
+      const found = string(value['sessionId']);
+      if (found !== null && this.claude.sessionId !== null && found !== this.claude.sessionId) this.claude.error = 'mixed-session-identities';
+      else {
+        this.claude.sessionId = found ?? this.claude.sessionId;
+        const agent = string(value['agentId']);
+        if (agent !== null && this.claude.agentId !== null && agent !== this.claude.agentId) this.claude.error = 'mixed-agent-identities';
+        this.claude.agentId = agent ?? this.claude.agentId;
+      }
+    }
+    if (this.format === 'codex' && !this.headerSeen && value['type'] === 'session_meta') {
+      this.headerSeen = true;
+      if (object(value['payload'])) {
+        const meta = value['payload']; const git = object(meta['git']) ? meta['git'] : null;
+        this.header = { producerId: string(meta['id']), parentId: string(meta['parent_thread_id']) ?? string(meta['forked_from_id']), workdir: string(meta['cwd']), startedAt: timestamp(meta['timestamp']) ?? timestamp(value['timestamp']),
+          gitRemote: git === null ? null : string(git['repository_url']), gitBranch: git === null ? null : string(git['branch']), gitCommit: git === null ? null : string(git['commit_hash']) };
+      }
+    }
+    const payload = object(value['payload']) ? value['payload'] : value;
+    const message = object(value['message']) ? value['message'] : payload;
+    this.workdir = string(payload['cwd']) ?? this.workdir;
+    this.gitBranch = string(value['gitBranch']) ?? this.gitBranch;
+    this.model = string(message['model']) ?? (value['type'] === 'model_change' ? string(value['modelId']) : null) ?? this.model;
+    this.firstTimestamp ??= timestamp(value['timestamp']);
+    if (value['type'] === 'session_info') this.title = string(value['name']) ?? this.title;
+  }
+  message(message: ParsedMessage, replaced: number): void {
+    if (this.firstUserText === null && message.role === 'user') this.firstUserText = message.text;
+    this.replacedInMessages += replaced;
+  }
+  get recordCount(): number { return this.records; }
+  /** The session identity, or the error that refuses the file. */
+  identity(): TranscriptIdentity {
+    const first = this.first;
+    if (first === null) throw new CollectorError('missing-session-identity');
+    let producerId: string | null = null; let subagentId: string | null = null; let parentId: string | null = null;
+    if (this.format === 'pi') {
+      if (first.type !== 'session') throw new CollectorError('missing-session-identity');
+      if (first.version !== 3 && first.version !== 2 && first.version !== 1 && first.version !== undefined) throw new CollectorError('unsupported-version');
+      producerId = first.id; parentId = first.parentSession;
+      const subagentPath = /\/subagents\/[^/]+\/sessions\/([^/]+)\/[^/]+\.jsonl$/.exec(this.sourcePath.replaceAll('\\', '/'));
+      if (subagentPath !== null) subagentId = subagentPath[1] ?? null;
+    } else if (this.format === 'claude') {
+      if (this.claude.error !== null) throw new CollectorError(this.claude.error);
+      producerId = this.claude.sessionId; subagentId = this.claude.agentId;
+      if (subagentId === null && this.sourcePath.replaceAll('\\', '/').includes('/subagents/')) subagentId = basename(this.sourcePath, '.jsonl').replace(/^agent-/, '');
+    } else if (this.header !== null) { producerId = this.header.producerId; parentId = this.header.parentId; }
+    if (producerId === null || producerId.length === 0 || producerId === '[REDACTED]') throw new CollectorError('missing-session-identity');
+    requireScalar(producerId, subagentId);
+    return { producerId, subagentId, parentId };
+  }
+  /** Last-wins metadata, its readable strings well-formed; the title falls back to the first user message. `repairs`
+   * counts the unpaired surrogates replaced in message text and metadata. */
+  metadata(identity: TranscriptIdentity): { metadata: ParsedMetadata; repairs: number } {
+    const header = this.format === 'pi' ? { workdir: this.first?.cwd ?? null, startedAt: this.first?.startedAt ?? null, gitRemote: null, gitBranch: null, gitCommit: null } : this.header;
+    const workdir = this.workdir ?? header?.workdir ?? null;
+    let title = this.title ?? '';
+    if (title === '') {
+      let text = this.firstUserText ?? undefined;
+      if (this.format === 'pi' && identity.subagentId !== null && text !== undefined) {
+        const harness = /^\[subagent (\S+) task \S+\]\n/.exec(text);
+        if (harness !== null && harness[1] === identity.subagentId) text = text.slice(harness[0].length).trimStart() || 'pi session';
+      }
+      title = text === undefined ? `${this.format} session` : titlePreview(text);
+    }
+    let repairs = this.replacedInMessages;
+    const readable = (value: string | null): string | null => { if (value === null) return null; const result = wellFormed(value); repairs += result.replaced; return result.value; };
+    const metadata: ParsedMetadata = { title: readable(title)!, project: null, workdir: readable(workdir), gitRemote: readable(header?.gitRemote ?? null), gitBranch: readable(this.gitBranch ?? header?.gitBranch ?? null),
+      gitCommit: readable(header?.gitCommit ?? null), model: readable(this.model), startedAt: header?.startedAt ?? this.firstTimestamp, gitRemoteObserved: false };
+    metadata.project = metadata.workdir;
+    return { metadata, repairs };
+  }
+}
+
 export function parseTranscript(format: Format, bytes: Uint8Array, sourcePath: string, policy: PrivacyPolicy): ParsedTranscript {
   let input: string;
   try { input = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
   catch { throw new CollectorError('invalid-utf8'); }
   if (!input.endsWith('\n')) throw new CollectorError('partial-line');
-  const lines = input.slice(0, -1).split('\n');
   const records: ParsedRecord[] = [];
   const rawLines: string[] = [];
   let redacted = false;
-  for (const [index, line] of lines.entries()) {
-    let value: Json;
-    try { value = JSON.parse(line) as Json; }
-    catch { throw new CollectorError('invalid-json'); }
-    if (!object(value)) throw new CollectorError('invalid-record');
-    ensureDepth(value, 0);
-    const cleaned = policy.redact(value);
-    if (!object(cleaned.value)) throw new CollectorError('invalid-record');
-    value = cleaned.value;
-    redacted ||= cleaned.changed;
-    rawLines.push(cleaned.changed ? JSON.stringify(value) : line);
-    const payload = object(value['payload']) ? value['payload'] : value;
-    records.push({ value, id: string(value[format === 'claude' ? 'uuid' : 'id']) ?? (format === 'codex' ? string(payload['id']) : null), parentId: string(value[format === 'claude' ? 'parentUuid' : 'parentId']), index });
+  for (const [index, line] of input.slice(0, -1).split('\n').entries()) {
+    const parsed = recordOf(format, parseJson(line), line, index, policy);
+    records.push(parsed.record); rawLines.push(parsed.raw); redacted ||= parsed.redacted;
   }
-  const first = records[0];
-  if (first === undefined) throw new CollectorError('missing-session-identity');
-  let producerId: string | null = null;
-  let subagentId: string | null = null;
-  let parentId: string | null = null;
-  const metadata: ParsedMetadata = { title: '', project: null, workdir: null, gitRemote: null, gitBranch: null, gitCommit: null, model: null, startedAt: null, gitRemoteObserved: false };
-  if (format === 'pi') {
-    if (first.value['type'] !== 'session') throw new CollectorError('missing-session-identity');
-    if (first.value['version'] !== 3 && first.value['version'] !== 2 && first.value['version'] !== 1 && first.value['version'] !== undefined) throw new CollectorError('unsupported-version');
-    producerId = string(first.value['id']); parentId = string(first.value['parentSession']);
-    metadata.workdir = string(first.value['cwd']); metadata.startedAt = timestamp(first.value['timestamp']);
-    const subagentPath = /\/subagents\/[^/]+\/sessions\/([^/]+)\/[^/]+\.jsonl$/.exec(sourcePath.replaceAll('\\', '/'));
-    if (subagentPath !== null) subagentId = subagentPath[1] ?? null;
-  } else if (format === 'claude') {
-    for (const record of records) {
-      const value = record.value;
-      const found = string(value['sessionId']);
-      if (found !== null && producerId !== null && found !== producerId) throw new CollectorError('mixed-session-identities');
-      producerId = found ?? producerId;
-      const agent = string(value['agentId']);
-      if (agent !== null && subagentId !== null && agent !== subagentId) throw new CollectorError('mixed-agent-identities');
-      subagentId = agent ?? subagentId;
-    }
-    if (subagentId === null && sourcePath.replaceAll('\\', '/').includes('/subagents/')) {
-      subagentId = basename(sourcePath, '.jsonl').replace(/^agent-/, '');
-    }
-  } else {
-    const header = records.find(record => record.value['type'] === 'session_meta');
-    if (header !== undefined && object(header.value['payload'])) {
-      const meta = header.value['payload'];
-      producerId = string(meta['id']); parentId = string(meta['parent_thread_id']) ?? string(meta['forked_from_id']);
-      metadata.workdir = string(meta['cwd']); metadata.startedAt = timestamp(meta['timestamp']) ?? timestamp(header.value['timestamp']);
-      if (object(meta['git'])) {
-        metadata.gitRemote = string(meta['git']['repository_url']); metadata.gitBranch = string(meta['git']['branch']); metadata.gitCommit = string(meta['git']['commit_hash']);
-      }
-    }
-  }
-  if (producerId === null || producerId.length === 0 || producerId === '[REDACTED]') throw new CollectorError('missing-session-identity');
-  for (const record of records) {
-    const value = record.value;
-    const payload = object(value['payload']) ? value['payload'] : value;
-    const message = object(value['message']) ? value['message'] : payload;
-    metadata.workdir = string(payload['cwd']) ?? metadata.workdir;
-    metadata.gitBranch = string(value['gitBranch']) ?? metadata.gitBranch;
-    metadata.model = string(message['model']) ?? (value['type'] === 'model_change' ? string(value['modelId']) : null) ?? metadata.model;
-    metadata.startedAt ??= timestamp(value['timestamp']);
-    if (value['type'] === 'session_info') metadata.title = string(value['name']) ?? metadata.title;
-  }
-  const canonical = new Map<string, number>();
-  if (format === 'codex') for (const record of records) {
-    if (record.value['type'] !== 'response_item') continue;
-    const msg = normalize(record, format);
-    if (msg !== null) { const key = `${msg.role}\0${msg.text}`; canonical.set(key, (canonical.get(key) ?? 0) + 1); }
-  }
+  const state = new TranscriptState(format, sourcePath);
+  for (const record of records) state.add(record);
+  const identity = state.identity();
+  const duplicates = format === 'codex' ? new CodexDuplicates(Infinity) : null;
+  if (duplicates !== null) for (const record of records) duplicates.add(record);
   const messages: ParsedMessage[] = [];
   for (const record of records) {
-    const message = normalize(record, format);
-    if (message === null) continue;
-    if (format === 'codex' && record.value['type'] === 'event_msg') {
-      const key = `${message.role}\0${message.text}`;
-      const count = canonical.get(key) ?? 0;
-      if (count > 0) { canonical.set(key, count - 1); continue; }
-    }
-    // Normalization joins content blocks and can reconstruct a literal that was
-    // not contiguous in any raw JSON string. Apply the same policy once more.
-    const cleaned = policy.redact(message.text);
-    if (typeof cleaned.value !== 'string') throw new CollectorError('message-redaction-invariant');
-    redacted ||= cleaned.changed;
-    messages.push({ ...message, text: cleaned.value });
+    const parsed = messageOf(format, record, duplicates, policy);
+    if (parsed === null) continue;
+    redacted ||= parsed.redacted; messages.push(parsed.message); state.message(parsed.message, parsed.replaced);
   }
-  if (metadata.title === '') {
-    let title = messages.find(message => message.role === 'user')?.text;
-    if (format === 'pi' && subagentId !== null && title !== undefined) {
-      const header = /^\[subagent (\S+) task \S+\]\n/.exec(title);
-      if (header !== null && header[1] === subagentId) title = title.slice(header[0].length).trimStart() || 'pi session';
-    }
-    metadata.title = title === undefined ? `${format} session` : titlePreview(title);
-  }
-  metadata.project = metadata.workdir;
-  return { producerId, subagentId, parentId, raw: rawLines.join('\n') + '\n', redacted, records, messages, metadata };
+  return { ...identity, raw: rawLines.join('\n') + '\n', redacted, records, messages, ...state.metadata(identity) };
 }

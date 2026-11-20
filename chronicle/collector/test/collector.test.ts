@@ -36,7 +36,7 @@ class DummyIngester implements Ingester {
 function setup(extra: Record<string, unknown>) {
   const dir = mkdtempSync(join(tmpdir(), 'chronicle-engine-'));
   const source = join(dir, 'sessions'); mkdirSync(source);
-  const config = loadConfig({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'token'), stateDir: join(dir, 'state'), homeDir: dir, discoverNative: false, discoverYolo: false, quietMs: 10, roots: [{ id: 'fixture', format: 'pi', path: source }], ...extra });
+  const config = loadConfig({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'token'), stateDir: join(dir, 'state'), homeDir: dir, discoverNative: false, discoverYolo: false, quietMs: 10, uploadProtocol: 'whole', roots: [{ id: 'fixture', format: 'pi', path: source }], ...extra });
   return { dir, source, config };
 }
 
