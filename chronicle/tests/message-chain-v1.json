@@ -1,0 +1,149 @@
+{
+  "initial": "80fe65ca641f2779b2bad03d8d4dc01e800a9e5226eb86fb474a52fe81db2c8a",
+  "cases": [
+    {
+      "name": "minimal message: empty text, no parent, no timestamp, record 0",
+      "messages": [
+        {
+          "id": "m",
+          "parentId": null,
+          "role": "user",
+          "text": "",
+          "timestamp": null,
+          "recordIndex": 0
+        }
+      ],
+      "messageDigests": [
+        "fe4ce839f4af23b11f47be7642c6d8dfa48926cf5781c2d94498682c3577268b"
+      ],
+      "chains": [
+        "8cc48cb3ae927fb4a32d07d3cecfdcc5d32e6108a9a11f4e03bc07aecb398d06"
+      ]
+    },
+    {
+      "name": "present but empty parentId and timestamp differ from absent ones",
+      "messages": [
+        {
+          "id": "m",
+          "parentId": "",
+          "role": "user",
+          "text": "",
+          "timestamp": "",
+          "recordIndex": 0
+        }
+      ],
+      "messageDigests": [
+        "f89e4cae8ba18c31bc1e694f1643a0217f6260082836619faea1c8929ccbd655"
+      ],
+      "chains": [
+        "4c3ccb29eeaa9c7fa68b67642a0df71ad3506ff2b62ffbb3e993df00e4ae5e01"
+      ]
+    },
+    {
+      "name": "UTF-8 lengths: two-, three- and four-byte characters in id, parentId and text; largest recordIndex",
+      "messages": [
+        {
+          "id": "é-中-🚀",
+          "parentId": "p🚀",
+          "role": "assistant",
+          "text": "résumé 中文 🚀\n\ttabs \"quotes\" \\ backslash",
+          "timestamp": "2026-01-01T00:00:00.123Z",
+          "recordIndex": 2147483647
+        }
+      ],
+      "messageDigests": [
+        "73a2e4bf69d926ccb0f264c131b221cdd68c015da35a6a17ab51a80584db3f93"
+      ],
+      "chains": [
+        "76e4b44249bb54c8204834354f9457284b8c4452f159e69382b2f45ead146cd9"
+      ]
+    },
+    {
+      "name": "text containing U+0000 hashes as its stored projection",
+      "messages": [
+        {
+          "id": "nul",
+          "parentId": null,
+          "role": "user",
+          "text": "before\u0000after\u0000",
+          "timestamp": null,
+          "recordIndex": 0
+        }
+      ],
+      "messageDigests": [
+        "9f0a33368b201f9fd5e08e1ae386681bcda478874de8d222b2b834209d1a4a9f"
+      ],
+      "chains": [
+        "867977fa5c5fdc198d75b4f016846e9de17514923bb9498da1a571a285f6c952"
+      ]
+    },
+    {
+      "name": "stored projection of the previous case: the six characters \\u0000 give the same message digest",
+      "messages": [
+        {
+          "id": "nul",
+          "parentId": null,
+          "role": "user",
+          "text": "before\\u0000after\\u0000",
+          "timestamp": null,
+          "recordIndex": 0
+        }
+      ],
+      "messageDigests": [
+        "9f0a33368b201f9fd5e08e1ae386681bcda478874de8d222b2b834209d1a4a9f"
+      ],
+      "chains": [
+        "867977fa5c5fdc198d75b4f016846e9de17514923bb9498da1a571a285f6c952"
+      ]
+    },
+    {
+      "name": "a Pi-like session: chain after every message",
+      "messages": [
+        {
+          "id": "a1",
+          "parentId": null,
+          "role": "user",
+          "text": "Fix the failing test in parser.ts",
+          "timestamp": "2026-01-01T10:00:00Z",
+          "recordIndex": 1
+        },
+        {
+          "id": "b2",
+          "parentId": "a1",
+          "role": "assistant",
+          "text": "Reading parser.ts first.",
+          "timestamp": "2026-01-01T10:00:05Z",
+          "recordIndex": 2
+        },
+        {
+          "id": "c3",
+          "parentId": "b2",
+          "role": "tool",
+          "text": "{\"path\":\"parser.ts\"}",
+          "timestamp": null,
+          "recordIndex": 3
+        },
+        {
+          "id": "d4",
+          "parentId": "c3",
+          "role": "assistant",
+          "text": "The test passes now.",
+          "timestamp": "2026-01-01T10:01:00Z",
+          "recordIndex": 5
+        }
+      ],
+      "messageDigests": [
+        "23bbef0a7482024a702f76e7345b4b00ddfab47cae7444ee83b247973d1b6fc6",
+        "28d9c9d55015eca85ef96dc28105763535036fd90b37ce4c1af02769a11f8f16",
+        "ee6b15c55c82780784af81b5ebff2e6a66897bc089bc46a6baef6ddd9991f9b9",
+        "48695e920b3141bba4f4b2dd96a8ef5582734801729f813df306d33709cf0115"
+      ],
+      "chains": [
+        "8856247fa9a9804082fa9b6e3fe7305c2165dc19ffd49db08d6d32f2c4ad0743",
+        "bd3536e2e0df025ddec36b6e50fc9e7d635c12a183408e991dd754230110a58b",
+        "4a910b600cb6ba45b64352005fd5e6be81b48139052cb1c1d97dcb9ee11eece8",
+        "796d759ea270553be645ef2a0da96bb2e4278a6ed5c2bd8c426dd902fa72235e"
+      ]
+    }
+  ]
+}

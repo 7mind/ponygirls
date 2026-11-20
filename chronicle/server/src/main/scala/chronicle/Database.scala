@@ -41,6 +41,7 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     migrate(c,"021_model_identity_retired.sql")
     requireRetiredPassageFormatsMigrated(c)
     migrate(c,"022_passage_formats_retired.sql")
+    migrate(c,"024_epoch_layout.sql")
     val dimensions=SearchPolicy.dimensions(config)
     Sql.exec(c,s"CREATE INDEX IF NOT EXISTS ch_search_hnsw_d$dimensions ON ch_search_chunks USING hnsw ((l2_normalize(embedding)::halfvec($dimensions)) halfvec_cosine_ops) WHERE vector_dims(embedding)=$dimensions")
     profiles.register(c)
