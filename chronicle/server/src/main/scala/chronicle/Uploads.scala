@@ -35,7 +35,7 @@ object UploadPolicy {
   * count, which only the attempt reaches (`ch_epochs.tail_upload`); the commit checks the computed digest, counts and
   * chain against the declaration and makes the revision visible in O(metadata). Every operation is one transaction under
   * the source's ingest lock, then the attempt row, then the source row: the lock order of `/api/ingest` and purge. An
-  * open adds its attempt under the owner's upload lock, taken last, after its source's work. */
+  * open adds its attempt, and a part renews its attempt's lease, under the owner's upload lock, taken last. */
 final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
   import Uploads.*
   def limits: UploadLimits = UploadPolicy.limits(config)
@@ -81,7 +81,7 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
           Check(attempt.parts<UploadPolicy.maxParts(config),"too-large",s"an upload has at most ${UploadPolicy.maxParts(config)} parts")
           Check(attempt.rawEnd+content.rawBytes<=UploadPolicy.maxRawBytes(config) && attempt.messageEnd.toLong+content.messages.size<=config.maxMessages,
             "too-large",s"an upload stays within ${UploadPolicy.maxRawBytes(config)} raw bytes and ${config.maxMessages} messages")
-          write(c,attempt,part,content)
+          write(c,owner,attempt,part,content)
           state(reread(c,id))
         }
       }
@@ -192,8 +192,8 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
       part.messages.map(_.recordIndex).maxOption,part.messages.iterator.flatMap(m => ArchiveProjection.parsedTime(m.timestamp)).maxOption)
   }
   /** Writes the part's rows past the attempt's, resolves parentIds against the epoch (pending ones wait for a later part)
-    * and records the part's receipt and the attempt's new state. */
-  private def write(c: Connection,a: Attempt,part: UploadPart,content: Received): Unit = {
+    * and records the part's receipt and the attempt's new state, renewing its lease. */
+  private def write(c: Connection,owner: String,a: Attempt,part: UploadPart,content: Received): Unit = {
     val digest=ResumableSha256.resume(a.rawState)
     val appended=try EpochWriter.append(c,a.epoch,a.messageEnd,content.messages,part.raw,0,a.rawEnd,a.recordEnd,digest) catch {
       case error: SQLException if uniqueViolation(error) => throw DomainError("invalid","duplicate message IDs")
@@ -213,13 +213,19 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
     val records=a.records+content.records
     Sql.exec(c,"INSERT INTO ch_upload_parts(upload,ordinal,sha256,messages_end,raw_end,records_end) VALUES(?,?,?,?,?,?)",a.id,part.ordinal,part.sha256,messages,rawBytes,records)
     val messageTime=(content.messageTime++a.messageTime.map(Instant.parse)).maxOption
-    Using.resource(c.prepareStatement(s"""UPDATE ch_uploads SET parts=parts+1,messages=?,raw_bytes=?,records=?,message_bytes=message_bytes+?,fragment_count=fragment_count+?,
-        raw_state=?,message_chain=?,max_record_index=greatest(max_record_index,?),message_time=?,expires_at=clock_timestamp()+?::bigint*interval '1 millisecond' WHERE id=?""")) { s =>
+    // The lease passed since the attempt was read once an open, counting under the owner's upload lock, could see it
+    // ended and give its slot away: the renewal holds that lock and happens only while the lease still runs. Otherwise
+    // the part is refused, its rows roll back, and the attempt's earlier staging stays its own for the sweep.
+    Sql.lock(c,s"uploads:$owner")
+    val renewed=Using.resource(c.prepareStatement(s"""UPDATE ch_uploads SET parts=parts+1,messages=?,raw_bytes=?,records=?,message_bytes=message_bytes+?,fragment_count=fragment_count+?,
+        raw_state=?,message_chain=?,max_record_index=greatest(max_record_index,?),message_time=?,expires_at=clock_timestamp()+?::bigint*interval '1 millisecond'
+        WHERE id=? AND expires_at>clock_timestamp()""")) { s =>
       s.setInt(1,messages); s.setLong(2,rawBytes); s.setInt(3,records); s.setLong(4,appended.messageBytes); s.setLong(5,appended.fragments)
       s.setBytes(6,digest.state); s.setBytes(7,MessageChain.extend(a.chain,content.messages)); s.setInt(8,content.maxRecordIndex.getOrElse(-1))
       messageTime.fold(s.setNull(9,Types.VARCHAR))(time => s.setString(9,time.toString)); s.setLong(10,policy.ttl.toMillis); s.setObject(11,a.id)
       s.executeUpdate()
     }
+    Check(renewed==1,"upload-expired",leaseEnded)
   }
   /** The only visibility point: the staged rows below the declared counts become the next revision of the source. */
   private def commit(c: Connection,owner: String,a: Attempt): Either[DomainError,IngestReceipt] = {
@@ -277,6 +283,7 @@ object Uploads {
   val purged = "purged"
   private val contentMismatch = "content-mismatch"
   private val purgedSource = "source purged; use a new collector namespace to restore"
+  private val leaseEnded = "the upload attempt expired; open it again"
   def sourceKey(source: SourceIdentity): String = Wire.hash(Wire.canonical(Wire.encode(SourceIdentity.codecJson,source)))
 
   private final case class Attempt(id: UUID,key: String,requestId: UUID,sessionId: UUID,declaration: UploadOpen,digest: String,epoch: UUID,
@@ -312,7 +319,7 @@ object Uploads {
   /** Why parts and the commit are refused by an attempt that is not Open (Committed is answered by the commit itself). */
   private def writable(a: Attempt): Option[DomainError] = a.phase match {
     case UploadPhase.Open => None
-    case UploadPhase.Expired => Some(DomainError("upload-expired","the upload attempt expired; open it again"))
+    case UploadPhase.Expired => Some(DomainError("upload-expired",leaseEnded))
     case UploadPhase.Aborted if a.failure.contains(purged) => Some(DomainError("gone",purgedSource))
     case phase => Some(DomainError("conflict",s"the upload attempt is $phase"))
   }

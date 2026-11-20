@@ -154,6 +154,32 @@ final class UploadBoundaryTest extends munit.FunSuite {
     } finally { pool.shutdownNow(); assert(pool.awaitTermination(10,TimeUnit.SECONDS)) }
   }}
 
+  test("a part in flight when its lease passes cannot renew it once an open may have taken the attempt's slot: the part is upload-expired") { database { (config,db,archive) =>
+    // The bound is 2 throughout; one attempt keeps its slot for an hour, A's lease is 2 s (injected) and passes while its
+    // part is held after the lease check, at its fragment insert.
+    val lasting=new Uploads(db,config,UploadPolicy(UploadPolicy.production.ttl,2))
+    val brief=new Uploads(db,config,UploadPolicy(2.seconds,2))
+    val head=header(3)++pi("u1","s","user","question",1)
+    lasting.open("a",declaration(source(),0,head,None))
+    val a=brief.open("a",declaration(source(),0,head,None)).uploadId
+    val pool=Executors.newSingleThreadExecutor()
+    try {
+      val (sending,opened)=db.transaction { held =>
+        Sql.exec(held,"LOCK TABLE ch_epoch_fragments IN SHARE MODE")
+        val sending=pool.submit(new Callable[String] { def call(): String = code(send(brief,"a",a,part(0,head))) })
+        awaitBlocked(db,"INSERT INTO ch_epoch_fragments")
+        def passed: Boolean = db.transaction(c => Sql.one(c,"SELECT expires_at<=clock_timestamp() FROM ch_uploads WHERE id=?",a)(_.getBoolean(1)).get)
+        val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10)
+        while(!passed && System.nanoTime()<deadline) Thread.onSpinWait()
+        assert(passed,"A's lease passed while its part is held")
+        (sending,code(lasting.open("a",declaration(source(),0,head,None))))
+      }
+      assertEquals((opened,sending.get(10,TimeUnit.SECONDS)),("accepted","upload-expired"),"the open took A's slot; A's part does not renew A")
+      assertEquals(brief.status("a",a).phase,UploadPhase.Expired)
+      db.transaction(c => assertEquals(Sql.one(c,"SELECT count(*) FROM ch_uploads WHERE owner='a' AND phase='Open' AND expires_at>clock_timestamp()")(_.getInt(1)),Some(2)))
+    } finally { pool.shutdownNow(); assert(pool.awaitTermination(10,TimeUnit.SECONDS)) }
+  }}
+
   test("retention drains part receipts and pending parents in statements of at most rowsPerStatement rows before it deletes the attempt; committed attempts keep theirs") { database { (config,db,archive) =>
     val uploads=new Uploads(db,config,UploadPolicy.production)
     val head=header(3)++pi("u1","s","user","question",1)
