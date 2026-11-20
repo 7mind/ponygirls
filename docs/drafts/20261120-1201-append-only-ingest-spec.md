@@ -19,10 +19,12 @@ conversion), S4 (retiring `/api/ingest`), S5 (index reuse).
   → parts (≤ 8 MiB) → commit, with status/resume/abort, per-ordinal part receipts, request intents separate from upload
   attempts, staging owned by one attempt, incremental validation and a base proof; parts are written straight into epoch
   rows past the head's count, so the commit is O(1). Sessions up to the configured raw bound (deployment ≥ 1 GiB, so the
-  owner's 556 MB session uploads); nothing materializes such a revision whole on the server: `GetRaw` refuses above a
-  raw bound (`too-large`) and an indexing claim above a message-bytes bound ends `Failed claim-too-large` before it
-  allocates — the session stays readable. The collector preflights the whole file (admission, identity, exclusions,
-  declaration) in a bounded-memory pass before any upload, then sends the delta or the whole content, and resumes.
+  owner's 556 MB session uploads). Nothing materializes such a revision whole on the server — guards shipped with S1 so
+  that any rollback binary has them: `GetRaw` refuses above a raw bound (`too-large`), and an indexing job whose
+  estimated retained heap (messages, one vector of the configured dimensions and one chunk per fragment) exceeds a budget
+  ends `Failed index-budget-exceeded` before it allocates, with a runtime cap behind the estimate — the session stays
+  readable. The collector preflights the whole file (admission, identity, exclusions, declaration) in a pass whose line
+  reader and evidence set are capped, before any upload, then sends the delta or the whole content, and resumes.
 - Measured on a TEMPLATE copy of the clone: for the largest session the current ingest takes 65 s and 2.2 GB WAL; the
   S1 database work for its next real revision is 18 ms and 1.3 MB WAL (the unchanged whole-request decode/validate is
   11.3 s); a full new epoch is 21.6 s / 1.1 GB WAL. 44 revisions rebuilt from the epoch layout are md5-identical to their
@@ -81,15 +83,17 @@ ALTER TABLE ch_revisions ADD COLUMN IF NOT EXISTS epoch uuid REFERENCES ch_epoch
   ADD COLUMN IF NOT EXISTS message_count integer, ADD COLUMN IF NOT EXISTS record_count integer,
   ADD COLUMN IF NOT EXISTS raw_bytes bigint,
   ADD COLUMN IF NOT EXISTS message_bytes bigint,    -- Σ UTF-8 bytes of the written message values (Wire.encode(Message).noSpaces)
+  ADD COLUMN IF NOT EXISTS fragment_count bigint,   -- Σ ceil(text bytes / 2,045) over non-empty texts (indexing budget, §3.1)
   ADD COLUMN IF NOT EXISTS raw_state bytea,         -- SHA-256 midstate after raw_bytes (40..103 B, §5)
   ADD COLUMN IF NOT EXISTS message_chain bytea,     -- chain v1 after message_count messages (32 B, §5)
   ADD COLUMN IF NOT EXISTS message_time text;       -- latest parsed message timestamp (Instant.toString) or NULL
 -- added NOT VALID (guarded by a pg_constraint lookup), then VALIDATE (SHARE UPDATE EXCLUSIVE; reads the 648 kB heap only [o V9])
 ALTER TABLE ch_revisions ADD CONSTRAINT ch_revisions_layout CHECK(
   (epoch IS NULL AND snapshot IS NOT NULL AND envelope IS NULL AND message_count IS NULL AND record_count IS NULL
-     AND raw_bytes IS NULL AND message_bytes IS NULL AND raw_state IS NULL AND message_chain IS NULL AND message_time IS NULL)
+     AND raw_bytes IS NULL AND message_bytes IS NULL AND fragment_count IS NULL AND raw_state IS NULL AND message_chain IS NULL
+     AND message_time IS NULL)
   OR (epoch IS NOT NULL AND snapshot IS NULL AND envelope IS NOT NULL AND message_count>=0 AND record_count>=0
-     AND raw_bytes>=0 AND message_bytes>=0 AND raw_state IS NOT NULL AND octet_length(message_chain)=32)) NOT VALID;
+     AND raw_bytes>=0 AND message_bytes>=0 AND fragment_count>=0 AND raw_state IS NOT NULL AND octet_length(message_chain)=32)) NOT VALID;
 CREATE INDEX IF NOT EXISTS ch_revisions_epoch ON ch_revisions(epoch,message_count) WHERE epoch IS NOT NULL;
 ```
 The `ALTER TABLE ch_revisions` statements need ACCESS EXCLUSIVE for milliseconds [o V9] but wait for every running
@@ -114,14 +118,18 @@ runner applies only its explicit list, so the script is never applied by a binar
 `chronicle/scripts/check-legacy-free.sql`, listed in `tests` of `nix/pkg/chronicle/source.nix:36-39` and exercised by
 `LegacyFreeCheckTest`; the down-script is listed there too. Run by an operator with the server stopped, with
 `statement_timeout=0`, after the S2 down-script (§9) if S2 was deployed. Steps:
-1. **Representability preflight (sound, then exact).** For every epoch revision compute the upper bound
-   `octet_length(envelope::text) + raw_bytes + message_bytes + 128 × message_count + 4096`. Strings are stored unescaped in
-   jsonb, so their text form (`message_bytes`, the envelope text) is never smaller; the 128 B per message cover jsonb's
-   per-node JEntries, alignment and numeric widening of a 6-key object [i; U4 proves it with worst-case shapes: many tiny
-   messages with nulls and large `recordIndex`], 4 KiB the snapshot/file containers. Bound ≤ 268,435,442 (the one-key
-   object limit, V1) → representable. Otherwise the script builds that one snapshot inside a savepoint; the jsonb error
-   (V1 texts) marks it not representable. If any revision is not representable the script stops before changing anything
-   and lists session/revision/bound.
+1. **Representability preflight — a read-only phase over every epoch revision, finished before the first mutation.**
+   The rebuilt snapshot consists of exactly: the envelope (every request field except messages and files), the messages,
+   and one file object with `path` = `raw_path`, `sha256` = the digest (64 characters) and `content` = the raw. Its upper
+   bound is `octet_length(envelope::text) + octet_length(raw_path) + 64 + raw_bytes + message_bytes + 128 × message_count
+   + 4,096`. `raw_path` is not length-bounded by `SnapshotValidation` (only structured, relative, no `..`
+   [o Core.scala:279-280]), so it is counted explicitly [review B4]. Strings are stored unescaped in jsonb, so their text
+   forms (envelope text, `message_bytes`, path) are never smaller; 128 B per message cover jsonb's per-node JEntries,
+   alignment and numeric widening of a 6-key object [i; U4 proves it with worst-case shapes: many tiny messages with
+   nulls and large `recordIndex`], 4 KiB the snapshot, file and array containers. Bound ≤ 268,435,442 (the one-key object
+   limit, V1) → representable. Otherwise the phase builds that snapshot exactly (read-only `SELECT` of the E6 expression)
+   and records whether PostgreSQL accepts it. Any non-representable revision → the script stops with the list of
+   session/revision/bound/exact result before it changes anything.
 2. Per source (one transaction each, resumable: a revision with `epoch IS NULL` is done), with
    `ch_immutable_revision` disabled inside the transaction: for every epoch revision write
    `snapshot = envelope || {"messages": [values < message_count by position], "files": [{"path": raw_path,
@@ -221,8 +229,8 @@ and idle (30 s) timeouts unchanged — every S1 statement is bounded by a batch 
 - **New epoch** otherwise (no head, legacy head, Historian replacement, Codex non-prefix, redaction change, Pi v1/v2 → v3
   rewrite): full write (for a legacy head the one-time first-touch cost, 21.6 s DB for the largest [o V7]).
 **Writes (append):** insert `ch_revisions` (epoch, envelope = S without messages/files, counts, `raw_state` =
-resume(head.raw_state) + delta bytes, `message_chain` extended over the delta, `record_count`, `message_bytes` =
-head + delta, `message_time` = max(head.message_time, delta)), `ch_epoch_messages` (delta, batches of 128),
+resume(head.raw_state) + delta bytes, `message_chain` extended over the delta, `record_count`, `message_bytes` and
+`fragment_count` = head + delta, `message_time` = max(head.message_time, delta)), `ch_epoch_messages` (delta, batches of 128),
 `ch_epoch_raw` (delta from `head.raw_bytes`, ≤ 1 MiB line-aligned segments), `ch_epoch_records` (`SHA-256(id)` of each
 delta record's `id`/`uuid` string, as `SnapshotValidation` collects them [o Core.scala:283-284]), fragments: delta
 messages via `lower(value->>'text' COLLATE pg_unicode_fast)` read back from `ch_epoch_messages` →
@@ -243,10 +251,10 @@ revisions (for a legacy previous head it prunes that head's fragments once, as t
   so S2's commit reuses them). A running older job reads its own revision's rows, which appends never change.
 - **Claim:** `claimedSnapshot` reads `envelope` and streams `ch_epoch_messages … ORDER BY position` (64 per fetch,
   unchanged API); `Claim.snapshot` equals the legacy claim value (no raw files). Worker heap stays O(session) — S1 does
-  not change it (study §5); the epoch claim avoids the 0.6 s envelope detoast and the 80 MB sort [o V4]. The guard of
-  §4.8 bounds it once S2 admits larger sessions.
+  not change it (study §5); the epoch claim avoids the 0.6 s envelope detoast and the 80 MB sort [o V4]. The indexing
+  budget of §3.1 bounds it.
 - **`GetRaw`** of an epoch revision: `RawResult(List(RawFile(raw_path, digest, string_agg(segments))), revision)` —
-  exact bytes, one response as today (V4: 448 ms for 145.8 MB); bounded by §4.8.
+  exact bytes, one response as today (V4: 448 ms for 145.8 MB); bounded by §3.1.
 - **Purge** [o Auth.scala:339-342] keeps its statements; epochs are not deleted inline (a writer's revision insert holds
   `KEY SHARE` on its epoch, and purge already holds the source row, so an inline `DELETE FROM ch_epochs` could deadlock
   with a writer waiting for the source [review R2]). `EpochMaintenance` deletes the rows and epochs of tombstoned sources
@@ -263,6 +271,53 @@ revisions (for a legacy previous head it prunes that head's fragments once, as t
   = `Legacy` until U3 completes the readers and flips it to `Epochs` (§11); `Legacy` also serves the differential tests
   and the existing tests that assert legacy-table behaviour (`ArchiveHeadCandidateTest`, `ArchiveProjectionTest`,
   `ArchiveContentBoundaryTest`'s plan assertion).
+
+### 3.1 Oversize guards (S1, unit U4; every later binary and any S2 → S1 rollback binary carries them)
+S1 already stores revisions up to `maxBodyBytes` (≤ 512 MiB [o Core.scala:85,95]) in epochs, and an S2 → S1 rollback
+keeps S2's larger ones, so the guards belong to S1. No server path materializes a revision above them.
+- **`GetRaw`** (and `content`/`headSnapshot`): the raw size is known before anything is built (epoch: `raw_bytes`;
+  legacy: `sum(octet_length(f->>'content'))` over `snapshot->'files'` in SQL). Above `maxRawReadBytes` the read returns
+  `too-large` — a documented contract change ("a positive revision pins bytes" stays true; above the bound the bytes are
+  retained and exact but not returned by `GetRaw`) [o CONTRACT.md:100-102]. New optional config key `maxRawReadBytes`,
+  default = `maxBodyBytes` (so nothing that `/api/ingest` can store becomes unreadable), validated 1..536,870,912
+  (`string_agg` cannot build ≥ 1 GiB [o V1]; the JSON response doubles it). Recommended (D1); option: a paged
+  `GetRawPage{revision, offset, maxBytes}` over segment boundaries (new operation, dashboard/CLI work).
+- **Indexing budget, checked before allocation.** What a job retains until publication: every decoded message
+  (`claim.snapshot.messages`, held by `ProblemPassages.Source` for the whole job [o Database.scala:272-283,
+  Models.scala:187]); one embedding vector per Problem piece in a `VectorArena` of 8-byte doubles in 2 MiB blocks
+  [o VectorArena.scala:7-23, Models.scala:122,165]; each piece's `Chunk` (source slice ≤ 2,048 UTF-8 bytes, summary ≤ 1,000
+  scalars, ≤ 16 tags × 64 scalars) in the publication builder [o Models.scala:213, ProblemsPublication.scala:83-87,
+  ProblemPassages.scala:14,19-21]. Window fragments are transient (≤ 64 per window, rebuilt per window
+  [o ProblemPassages.scala:80-110]). Pieces never join messages and are cut from fragments, and ch-fix2's 698-window job
+  had 44,432 chunks against ≤ 44,672 fragments [r ch-fix2 §2-D], so the estimate counts one piece per fragment. With
+  `n` messages, `M` message bytes (Σ UTF-8 of the stored values), `F = Σ ceil(text_bytes / 2,045)` over non-empty texts
+  (a fragment ends at the last scalar fitting 2,048 B, so all but the last hold ≥ 2,045 B [o ProblemPassages.scala:94])
+  and `d = config.embedding.dimensions` (1..4,000):
+  `E = 2·M + 256·n + F·(8·d + 13,312)` — decoded strings ≤ 2 B per UTF-8 byte; ≈ 256 B of objects per message; per piece
+  the vector and ≤ 13 KiB of chunk text (≤ 4,096 B as UTF-16), summary (≤ 4,000 B), tags (≤ 4,096 B) and objects.
+  Inside the claim transaction, after choosing `(source, revision)` and before `claimedSnapshot` runs, `E` is computed
+  from stored columns (`message_count`, `message_bytes`, `fragment_count`, written by the epoch writer in O(delta)) or,
+  for a legacy revision, from one SQL scan of its `ch_messages` rows (bounded by the old request bound). `E >
+  maxIndexingBudgetBytes` → the job becomes `Failed` with error `index-budget-exceeded` (fence + 1, no attempt consumed,
+  visible in Activity/`IngestStatus`; `RetryJob` reaches the same verdict until the bound or the dimensions change).
+- **Runtime cap** (pieces beyond one per fragment, e.g. an annotation alternating Problem/Context inside fragments):
+  `Windows` starts from `2·M + 256·n` and, before `vectors.add` [o Models.scala:165], checks that the retained pieces
+  plus the batch stay within the budget at `8·d + 13,312` bytes each; otherwise it raises `index-budget-exceeded`,
+  which `failAt` treats as terminal like the annotation-exhaustion codes [o Database.scala:388,
+  AnnotationAttempts.scala:15] — so the bound holds whatever the annotator returns.
+- **Default** `maxIndexingBudgetBytes` = 2,147,483,647 (new optional config key, `Int`, 1..2,147,483,647). Calibration:
+  `36763d39` (n = 28,515, M ≈ 80 MB [o V6, V2], F ≈ 58,000 = 911 windows of ≤ 64 fragments [r ch-fix2 §3.1]) gives
+  `E` ≈ 1.30 GB at 768 dimensions, against ch-fix2's measured whole-process peak of 1,525 MB live heap while the five
+  largest jobs ran one at a time [r ch-fix2 §3.1] — the estimate is in range and conservative for the job alone. The
+  default leaves ≥ 4.4 GB of the 6,554 MB heap bound (80 % of 8 GiB) for the server, small jobs (≤ 100 windows each, the
+  other lanes [o Core.scala:58]) and one admitted large decode. Examples: 400,000 short messages at 4,000 dimensions
+  → `E` ≥ 18.1 GB → refused before allocation although `M` is ≈ 40 MB [review B3]; the owner's 556 MB session
+  (n ≈ 109,000, M ≈ 305 MB, F ≈ 220,000 [i: the clone's ratios]) → `E` ≈ 4.9 GB → stored and readable, not indexed at the
+  default (D2).
+- The session stays readable above both bounds: pages, locate, context, per-session literal search and Archive lexical
+  search are SQL over epoch rows (§1.3) and never decode the session. Other paths stay bounded: `/api/ingest` by
+  `maxBodyBytes` and the admission permit; pages, context and literal search by their page/byte/deadline bounds
+  [o MessageContext.scala:16-19, SessionMessageSearch.scala:24]; the sweep and the down-script in SQL.
 
 ## 4. S2 protocol (additive in `chronicle.api` 1.9.0)
 ### 4.1 Types (`chronicle/models/chronicle.baboon`)
@@ -311,7 +366,8 @@ messages must fit in one part (data: longest line 1.34 MB, largest message 0.6 M
 config `maxFileBytes`, messages cap = `maxMessages` (both `Int`; positions and `recordIndex` i32, raw offsets i64/bigint).
 **Deployment values for S2** (L1: the owner's 556 MB session and a ≥ 600 MB synthetic one must upload): server
 `maxFileBytes` = 1,073,741,824 and `maxMessages` = 400,000 (the clone's largest session has 5.1 KB of raw per message,
-145.8 MB / 28,515 [o V2]: 1 GiB ≈ 210,000 messages [i]); `maxBodyBytes` stays 268,435,456 (it bounds only `/api/ingest`);
+145.8 MB / 28,515 [o V2]: 1 GiB ≈ 210,000 messages [i]); `maxBodyBytes` stays 268,435,456 (it bounds only `/api/ingest`
+and is the default of `maxRawReadBytes`); `maxIndexingBudgetBytes` default (§3.1);
 collector `maxFileBytes` = 1,073,741,824, `maxMessages` = 400,000, `maxScanBytes` ≥ `maxFileBytes` (host today 4 GiB);
 `maxPayloadBytes` unchanged (whole mode only). Lease: TTL 3,600 s sliding, `expires_at = clock_timestamp() + ttl` set at
 open and on every accepted part (DB clock only; the client receives `expiresInSeconds`). At most one live attempt per
@@ -322,7 +378,8 @@ source, at most 8 per owner.
   forever as today).
 - **Attempt** `ch_uploads(id uuid PK, owner, source_key, request_id, attempt int, session_id uuid, declaration jsonb,
   declaration_digest text, epoch uuid, append boolean, base_count int, base_raw_bytes bigint, base_records int,
-  base_message_bytes bigint, parts int, messages int, raw_bytes bigint, records int, message_bytes bigint, raw_state bytea,
+  base_message_bytes bigint, base_fragment_count bigint, parts int, messages int, raw_bytes bigint, records int,
+  message_bytes bigint, fragment_count bigint, raw_state bytea,
   message_chain bytea, max_record_index int, message_time text, phase text, cleaned boolean NOT NULL DEFAULT false,
   receipt jsonb, failure text, expires_at timestamptz, terminal_at timestamptz, UNIQUE(owner,source_key,request_id,attempt))`;
   partial unique indexes `(owner,source_key,request_id) WHERE phase IN('Open','Committed')` (one live-or-committed
@@ -357,12 +414,13 @@ commit, so no revision-0 source is ever visible [i: readers never saw such rows]
   attempt's staging), else inserted into `ch_upload_parents`; keys introduced by the part delete matching pending
   parents; duplicate id → unique violation → `invalid`; write messages, raw segment(s) at `base_raw_bytes + raw_bytes`,
   records, fragments (`head_candidate` true; unreachable until commit); insert the part receipt; extend `raw_state`
-  (resumable SHA-256), `message_chain`, counters, `message_bytes`, `message_time`, `expires_at`. ≈ 1.1 s and ≈ 40 MB WAL
+  (resumable SHA-256), `message_chain`, counters, `message_bytes`, `fragment_count`, `message_time`, `expires_at`. ≈ 1.1 s and ≈ 40 MB WAL
   per full part [o V7].
 - **Commit:** attempt `Committed` → stored receipt (replay). `Open` and lease valid: computed digest, raw bytes, message
   count and chain equal the declaration, `ch_upload_parents` empty, `max_record_index < base_records + records` — else
   `content-mismatch`, phase `Failed`. Then source not tombstoned, CAS again, create `ch_sources` for a new source,
-  `ch_revisions` (envelope from the declaration with `SnapshotProjection` applied to metadata, counts, `message_bytes`),
+  `ch_revisions` (envelope from the declaration with `SnapshotProjection` applied to metadata, counts, `message_bytes`,
+  `fragment_count`),
   `ch_revision_info`, metadata fragments, `tail_upload` NULL, epoch `current` (the previous head's epoch `prune` for a
   replacement), `FOR NO KEY UPDATE` switch, `Jobs.switched`, receipt in `ch_ingest_receipts(owner, source_key,
   request_id, declaration_digest)` and in the attempt, phase `Committed`. O(metadata), no staged-row update.
@@ -383,30 +441,9 @@ commit, so no revision-0 source is ever visible [i: readers never saw such rows]
 ### 4.7 Memory
 Server, per request: one part (≤ 8 MiB body, its decode and fragments), open ≤ 64 KiB, commit O(metadata). No request
 materializes a session.
-### 4.8 Oversize guards (no server path materializes a large revision whole)
-- **`GetRaw`** (and `content`/`headSnapshot`): a revision whose `raw_bytes` (epoch) or file sizes (legacy) exceed
-  `maxRawReadBytes` returns `too-large` before any query that builds the raw — a documented contract change ("a positive
-  revision pins bytes" stays true; above the bound the bytes are retained and exact but not returned by `GetRaw`)
-  [o CONTRACT.md:100-102]. New optional server config key `maxRawReadBytes`, default 268,435,456 (the old request bound,
-  so nothing readable today becomes unreadable), validated 1..536,870,912 (`string_agg` cannot build ≥ 1 GiB, V1; the JSON
-  response doubles it). Recommended (D1); option: a paged `GetRawPage{revision, offset, maxBytes}` over segment
-  boundaries (new operation, more dashboard/CLI work).
-- **Worker claim:** inside the claim transaction, after choosing `(source, revision)` and before `claimedSnapshot`
-  allocates anything, compare the revision's message bytes (`message_bytes`; for a legacy revision `sum(octet_length(
-  value::text))` over its `ch_messages` rows — one index scan, bounded by the old request bound) with
-  `maxClaimMessageBytes`; above it the job becomes `Failed` with error `claim-too-large` (fence + 1, no attempt
-  consumed, visible in Activity/`IngestStatus`; `RetryJob` reaches the same verdict until the bound changes). Default
-  167,772,160 (160 MiB): ch-fix2's final run (the five largest jobs, one large job at a time, plus a 162 MB ingest) peaked at
-  1,525 MB live heap (after a full collection; cap 6,554 MB = 80 % of 8 GiB) [r ch-fix2 §3.1]; its largest job,
-  `36763d39`, has ≈ 80 MB of message values (226.6 MB rebuilt snapshot − 145.8 MB raw [o V6, V2]; its legacy claim sorted
-  79,776 kB [o E4 B6]). Charging the whole peak to
-  that job gives ≤ 19 heap bytes per message byte; half the heap bound, 3.28 GB, / 19 ≈ 172 MB → 160 MiB. New optional
-  config key `maxClaimMessageBytes` (1..2,147,483,647). The session stays readable: pages, locate, context, per-session
-  literal search and Archive lexical search use SQL over epoch rows (§1.3) and never decode the session. The owner's
-  556 MB session holds ≈ 305 MB of message values [i: same raw/message ratio] → not indexed at the default (D2).
-- Other server paths stay bounded: `/api/ingest` by `maxBodyBytes` and the admission permit; message pages, context and
-  literal search by their page/byte/deadline bounds [o MessageContext.scala:16-19, SessionMessageSearch.scala:24]; the
-  sweep and the down-script in SQL.
+### 4.8 Oversize guards
+Defined and shipped in S1 (§3.1, U4); S2 adds no materializing path. The `ch_uploads` counters `message_bytes` and the
+part writer's `fragment_count` give a committed S2 revision the columns the budget reads.
 
 ## 5. Base proof
 - **Raw digest:** `digest = hex(SHA-256(raw))` (unchanged meaning [o Core.scala:289]). Stored per epoch revision:
@@ -450,8 +487,12 @@ materializes a session.
   upload is planned for it until that entry is acknowledged or dropped.
 - **Pass 1 — preflight, before any network mutation** (R3; replaces `readSnapshot` + `parseTranscript` holding the
   file [o discovery.ts:124-149, parsers.ts:88-110]): open with the same identity/symlink/stat checks, read to the size
-  observed at open (must end with `\n`, else the partial-line rule applies), a 1 MiB buffer splits lines; per line:
-  `JSON.parse`, depth check, redaction, redacted raw line, the `excludedTranscript` project/session checks and the
+  observed at open (must end with `\n`, else the partial-line rule applies), a 1 MiB buffer splits lines. The line reader
+  (shared by every pass) enforces `maxRecordBytes` = 2,031,616 (2 MiB − 64 KiB; one record's part carries its raw line
+  JSON-escaped (≤ 2×) and its messages, whose encoded text derives from that line [i: ≤ 2× more], so a record under the
+  cap fits an 8 MiB part) **while reading**: a line that reaches the cap stops the pass with the quarantine code
+  `record-too-large` (size ≥ cap, cap) before `JSON.parse` and before any network call; the reader never holds more than
+  the cap (largest observed line 1,344,233 B [o V2]; D9). Per line: `JSON.parse`, depth check, redaction, redacted raw line, the `excludedTranscript` project/session checks and the
   `evidenceFor` cwd paths [o collector.ts:22-37, controls.ts:28-43], Claude session/agent identity consistency
   [o parsers.ts:124-133], record id, metadata last-wins and title rule [o parsers.ts:149-158,181-188], normalization,
   SHA-256 (Node) of the redacted raw, chain v1, counts, message bytes; at record `head.recordCount` it records
@@ -459,15 +500,18 @@ materializes a session.
   multiset pass for the file-wide `event_msg` dedup, keeping `SHA-256(role ‖ 0x00 ‖ text)` per `response_item` message
   (32 B instead of the text [o parsers.ts:159-173]). At the end the whole file has passed admission, exclusion, identity
   and limits exactly as today, and the complete declaration is known. Any exclusion or identity failure → the existing
-  outcome, nothing sent. Memory: buffer + Codex multiset (≈ 80 B/message) + the evidence path set + metadata.
+  outcome, nothing sent. The admission evidence is a set of distinct `cwd` values, each resolved once with
+  `pathAliases`; it is capped at 1,024 per file: the 1,025th distinct value stops the pass with the quarantine code
+  `admission-evidence-limit` (nothing sent; status line with the count) [review B2]. Memory: 1 MiB buffer + ≤ 2 MiB
+  line + ≤ 1,024 evidence paths + Codex multiset (≤ `maxMessages` × ≈ 80 B, ≤ 32 MB at 400,000) + metadata.
 - **Append vs replacement:** base fields known and all equal (raw bytes, prefix digest, message count, chain) → append
   with `base`, pass 2 seeks to `baseFileOffset`; otherwise replacement, pass 2 reads from the start.
 - **Live controls** (pause, exclusions, admission origin) are re-checked with the stored evidence before the open, each
   part and the commit, as the current upload loop does for queued payloads [o collector.ts:221-228]; a held entry waits
   (nothing aborted).
 - **Pass 2 — upload:** greedy packing of whole records (raw line + its messages) up to the server's `maxPartBytes` minus
-  envelope margin; a record that alone exceeds it → `record-too-large` (source quarantined, status line with size and
-  limit). Sequential: send, then persist `partsAcked`/`lastPartSha256`. The file's stat must stay equal to pass 1's until
+  envelope margin, measured on the encoded part; a record whose encoded part alone exceeds it → `record-too-large`
+  (exact check behind the read cap). Sequential: send, then persist `partsAcked`/`lastPartSha256`. The file's stat must stay equal to pass 1's until
   the commit; otherwise abort the attempt and re-plan next cycle.
 - **Resume** (restart, timeout, 5xx): first recover the outcome without the file — `GET` the attempt; on 404 or a
   terminal phase replay the open with the stored declaration (a committed intent returns its receipt; an uncommitted one
@@ -486,7 +530,7 @@ materializes a session.
 - **S0-COL codes:** `snapshot-too-large` (file > `maxFileBytes`), `message-limit`, `scan-budget-deferred` unchanged;
   `payload-too-large` and `server-payload-too-large` apply to `whole` mode and old-format drains only; new: the
   collector-level `server-upload-unsupported`; per entry `upload-too-large` (413, with size and the server limit),
-  `record-too-large`, `upload-content-mismatch`; counters gain `replacements`. The progress report wire is unchanged
+  `record-too-large`, `admission-evidence-limit`, `upload-content-mismatch`; counters gain `replacements`. The progress report wire is unchanged
   (`uploadedBytes` = acknowledged part bytes; `error` carries `server-upload-unsupported`).
 - **Privacy/destination policy change** during an upload: the entry is aborted and dropped like a queued payload today
   [o collector.ts:102-107] (see §13).
@@ -512,9 +556,10 @@ in-place precedent 3961370f (enum value, `lock.json` unchanged) [o git]. **S2 is
 endpoints only; `IngestRequest`/`IngestReceipt` codecs and their golden fixtures unchanged; `ApiVersionCompatibilityTest`
 unchanged; new golden fixtures for `UploadOpen`, `UploadPart`, `UploadState` in `scripts/codec-fixtures.mjs`/
 `CodecFixtureTest`. [u] whether the pinned Baboon re-generation accepts the changed 1.9.0 signature without a `lock.json`
-update; if it refuses, update the lock entry in the same commit (it locks only 1.9.0). Contract changes (CONTRACT.md,
-U5/U6): the upload endpoints; `GetRaw` → `too-large` above `maxRawReadBytes`; the job error `claim-too-large`; the two
-optional config keys; purge's physical deletion by the sweep.
+update; if it refuses, update the lock entry in the same commit (it locks only 1.9.0). Contract changes (CONTRACT.md):
+with S1 (U4) `GetRaw` → `too-large` above `maxRawReadBytes`, the job error `index-budget-exceeded`, the two optional config
+keys `maxRawReadBytes` and `maxIndexingBudgetBytes`, purge's physical deletion by the sweep; with S2 (U6) the upload
+endpoints.
 
 | | server ≤ S1 (no upload API) | server S2 |
 |---|---|---|
@@ -537,8 +582,8 @@ the head with its message count.
   `maxBodyBytes` (§1.2, D6); costly in disk/WAL (full copies again).
 - **S2 server:** stop, run `down-025-uploads.sql` (aborts live attempts, deletes their staging, drops `ch_uploads`,
   `ch_upload_parts`, `ch_upload_parents`, `ch_epochs.tail_upload`), deploy S1. Committed S2 revisions are ordinary epoch
-  revisions; the guards' config keys are ignored by S1 (S1 has no session above its body bound to protect). Collectors
-  must be on `whole` first.
+  revisions, and the S1 binary carries both guards (§3.1), so the large ones stay readable and are refused by `GetRaw`
+  and indexing exactly as under S2 (U8 runs this rollback with the large fixture). Collectors must be on `whole` first.
 - **S2 collector:** set `uploadProtocol=whole` or install the previous collector; new spool buckets are ignored; heads
   written back by an old collector lose the base fields (next S2 upload is a replacement); live server attempts expire.
 - **Lossy/impossible:** S1 down after a non-representable revision exists; S2 sessions larger than `maxBodyBytes` can no
@@ -561,8 +606,9 @@ the head with its message count.
 - **Clock skew:** TTL and expiry use `clock_timestamp()`; the client only receives `expiresInSeconds`.
 - **Statement/idle timeouts:** every statement bounded by 128 rows, one 1 MiB segment, one 8 MiB part or 10,000 cleanup
   rows; the commit and the switch are O(metadata). The admission permit is untouched by uploads.
-- **Large sessions:** `GetRaw` refuses above `maxRawReadBytes`; claims fail `claim-too-large` above
-  `maxClaimMessageBytes` before allocating; pages, locate, context, literal and Archive search stay available. Remaining
+- **Large sessions:** `GetRaw` refuses above `maxRawReadBytes`; jobs whose estimated retained heap exceeds
+  `maxIndexingBudgetBytes` end `index-budget-exceeded` before allocating, and a runtime cap stops a job whose pieces
+  outgrow the estimate; pages, locate, context, literal and Archive search stay available. Remaining
   O(session) work: the first S1 touch of a legacy source, replacements, candidate pruning after a replacement (batched,
   background), the down-script.
 
@@ -575,30 +621,31 @@ npm run typecheck && npm test'`; after committing **BF** = `nix build --no-link 
 **CF** = `… .#checks.x86_64-linux.chronicle-collector`; integration (orchestrator) `scripts/verify chronicle`. Every unit
 passes its gates on its own: until U3 the production layout is `Legacy`, so no epoch revision exists outside tests.
 `Database.scala` is edited by U1 (initialize list), U2 (`ingest`, `Jobs.switched`), U3 (reader methods,
-`claimedSnapshot`, the seam default), U5 (`claim` guard, `raw`/`content` bound) and U6 (`ingest`'s upload check) — always
-sequentially.
+`claimedSnapshot`, the seam default), U4 (`claim` budget, `raw`/`content` bound, `failAt` terminal code) and U6
+(`ingest`'s upload check) — always sequentially. `Core.scala`: U4 (config keys), then U6 (validation helpers);
+`CONTRACT.md`: U4 (guards), then U6 (Ingestion).
 
 | unit | goal | owns | depends | tests added (lean) | gates | h |
 |---|---|---|---|---|---|---|
 | U1 S1 schema + digests | 024 migration, triggers, `ResumableSha256`, `MessageChain` v1 | `migrations/024_epoch_layout.sql`; `Database.scala` initialize list; new `ResumableSha256.scala`, `MessageChain.scala`; `chronicle/tests/message-chain-v1.json`; new `EpochSchemaTest`, `ResumableSha256Test` | S0 tip | resumable SHA-256 = JDK on random inputs/splits incl. export/resume; chain golden vectors; immutability (update of a committed epoch row / revision column refused; delete below a committed count refused; delete after the revisions are gone passes); migration idempotent on restart (013 then 024) | B, BF | 6–9 |
-| U2 S1 writer behind the seam | layout decision (legacy for multi-file / no final newline), epoch writer, hashed record keys, `message_bytes`, switch, backfill guard, `EpochMaintenance` (prune, tombstoned epochs) | `Database.scala` (`ingest`, `Jobs.switched`); `ArchiveProjection.scala`; new `EpochWriter.scala`, `EpochMaintenance.scala`; `plugins/ChroniclePlugin.scala` (one `make` line, as `McpTestRuns` [o ChroniclePlugin.scala:49]); new `EpochIngestTest`; legacy pinning in `ArchiveHeadCandidateTest`, `ArchiveProjectionTest` | U1 | with `Epochs`, asserted on tables: Pi append writes only the delta, equal revision writes no rows, Codex dedup fixture / redaction change / Pi v2→v3 rewrite / Historian → new epoch, multi-file and no-final-newline → legacy, unreferenced record id with an escaped NUL accepted; midstate self-check; receipt replay/409/CAS; prune and tombstoned-epoch deletion with an injected interval + production default asserted; production layout still `Legacy` asserted | B, BF | 10–14 |
+| U2 S1 writer behind the seam | layout decision (legacy for multi-file / no final newline), epoch writer, hashed record keys, `message_bytes`/`fragment_count`, switch, backfill guard, `EpochMaintenance` (prune, tombstoned epochs) | `Database.scala` (`ingest`, `Jobs.switched`); `ArchiveProjection.scala`; new `EpochWriter.scala`, `EpochMaintenance.scala`; `plugins/ChroniclePlugin.scala` (one `make` line, as `McpTestRuns` [o ChroniclePlugin.scala:49]); new `EpochIngestTest`; legacy pinning in `ArchiveHeadCandidateTest`, `ArchiveProjectionTest` | U1 | with `Epochs`, asserted on tables: Pi append writes only the delta, equal revision writes no rows, Codex dedup fixture / redaction change / Pi v2→v3 rewrite / Historian → new epoch, multi-file and no-final-newline → legacy, unreferenced record id with an escaped NUL accepted; midstate self-check; receipt replay/409/CAS; prune and tombstoned-epoch deletion with an injected interval + production default asserted; production layout still `Legacy` asserted | B, BF | 10–14 |
 | U3 S1 readers, differential, enable | `RevisionContent`, every reader, archive search, flip the production layout to `Epochs` | `Database.scala` reader methods (`selectView`, `messages`, `locateMessage`, `content`/`raw`, `claimedSnapshot`) and the seam default; `MessageContext.scala`; `SessionMessageSearch.scala`; `ArchiveSearch.scala`; `ArchiveIndex.scala`; new `RevisionContent.scala`; new `EpochReadDifferentialTest`; `ArchiveContentBoundaryTest` epoch seek plan; `OwnerLeaseBoundaryTest` (1 case) | U2 | one revision sequence (append, append, non-prefix, append, no-final-newline, NUL record id) ingested by `Legacy` and `Epochs` archives under two owners: identical GetMessages pages, LocateMessage, MessageContext, Find, ArchiveSearch (global + per-session), GetRaw bytes, claim snapshots for every revision incl. pinned old ones; ingest parked at an epoch fragment insert: readers see the old head, after commit the new; production default `Epochs` asserted | B, BF | 9–12 |
-| U4 S1 down-script + rehearsal | exact rollback with a sound representability check; clone rehearsal | `chronicle/scripts/down-024-epoch-layout.sql`; `nix/pkg/chronicle/source.nix` tests list; new `EpochDownScriptTest`; rehearsal report | U3 | U3's sequence: reads before = after the down-script, snapshots equal a `Legacy` ingest; the bound holds for worst-case shapes (many tiny messages, nulls, large `recordIndex`) and a non-representable revision stops the script before changes (threshold parameter + production value asserted). Rehearsal on a TEMPLATE copy: S1 binary, next revisions of the 5 largest sessions as appends (time, WAL, lock probe, `/api/versions` probe as ch-fix2 §3), down-script, reads | B, BF | 6–9 |
-| U5 S2 wire + guards | types §4.1, generated code, golden fixtures; `GetRaw` bound, claim guard, config keys | `models/chronicle.baboon`, `models/lock.json` if needed, `generated/**`, `scripts/codec-fixtures.mjs`, `server/src/test/fixtures/upload-*.json`, `CodecFixtureTest.scala`; `Core.scala` (Config keys); `Database.scala` (`claim`, `raw`/`content`); `CONTRACT.md` (GetRaw, job error, config); new `OversizeGuardTest` | S1 merged | golden fixtures (open with/without base, part, state with receipt/failure, i64 strings), `IngestRequest` fixtures byte-identical; `GetRaw` above a small configured bound → `too-large` without building the raw, below → bytes; claim above a small bound → `Failed claim-too-large`, attempts unchanged, the session still pages/locates/searches; defaults asserted | P, B, BF | 6–8 |
+| U4 S1 guards, down-script, rehearsal | §3.1 guards (raw bound, indexing budget + runtime cap, config keys, contract); exact rollback with a complete representability preflight; clone rehearsal | `Database.scala` (`claim`, `raw`/`content`, `failAt`); `Models.scala` (`Windows` cap); `Core.scala` (config keys); `CONTRACT.md` (GetRaw, job error, config, purge); `chronicle/scripts/down-024-epoch-layout.sql`; `nix/pkg/chronicle/source.nix` tests list; new `OversizeGuardTest`, `EpochDownScriptTest`; rehearsal report | U3 | `GetRaw` above a small configured bound → `too-large` without building the raw, below → bytes; 20,000 one-word messages at 4,000 dimensions with a budget the message bytes alone would pass → `Failed index-budget-exceeded` before `claimedSnapshot`, attempts unchanged, the session still pages/locates/searches (B3); an annotator stub splitting every fragment into many pieces → runtime cap ends the job `index-budget-exceeded`, terminal; defaults asserted. Down-script: U3's sequence reads equal before/after and snapshots equal a `Legacy` ingest; the bound holds for worst-case shapes; a revision with a long `raw_path` (low threshold parameter) is refused before any mutation (B4). Rehearsal on a TEMPLATE copy: S1 binary, next revisions of the 5 largest sessions as appends (time, WAL, lock probe, `/api/versions` probe as ch-fix2 §3), down-script, reads | B, BF | 12–16 |
+| U5 S2 wire | types §4.1, generated code, golden fixtures | `models/chronicle.baboon`, `models/lock.json` if needed, `generated/**`, `scripts/codec-fixtures.mjs`, `server/src/test/fixtures/upload-*.json`, `CodecFixtureTest.scala` | S1 merged | golden fixtures (open with/without base, part, state with receipt/failure, i64 strings); `IngestRequest` fixtures byte-identical | P, BF | 3–4 |
 | U6 S2 server | intents/attempts, parts with receipts, staging ownership, commit, sweep, purge abort, `/api/ingest` busy check | migration `025_uploads.sql`; new `Uploads.scala`, `UploadValidation.scala` (factored from `SnapshotValidation`, which then calls it); `Core.scala` (validation helpers); `Http.scala` (routes, bounds, failure codes); `Database.scala` (`ingest` check); `Auth.scala` (purge first statement); `EpochMaintenance.scala` (sweep); `chronicle/scripts/down-025-uploads.sql`; `CONTRACT.md` Ingestion; `README.md` server paragraph; new `UploadProtocolTest`, `UploadBoundaryTest` | U5 | append and replacement happy paths; idempotency: replay of the last and of an older ordinal (same/different sha), out-of-order 409, commit replay, open replay after commit and after expiry (new attempt), CAS 409; `base-mismatch`; `content-mismatch` (Codex fixture sent as if prefix); forward `parentId` resolved later / unresolved at commit; abort-A/open-B/stage-B/sweep-A/commit-B → B complete (R1); purge racing a part and a commit → `gone`, no deadlock (R2); every body bound refused before reading; TTL expiry + sweep with injected TTL/interval, defaults asserted; atomic visibility (extends `OwnerLeaseBoundaryTest`) | B, P, BF | 14–18 |
-| U7 S2 collector | preflight + upload passes, parts client, resume, probe, spool, status | `chronicle/collector/src/**`, `chronicle/collector/test/**`, `chronicle/collector/README.md`, collector paragraph of `chronicle/README.md`, `nix/hm/chronicle.nix` option | U5 (parallel to U6; against a fake server) | chain golden vectors; append vs replacement (Codex dedup fixture, redaction change, Pi v2→v3 rewrite); an excluded cwd / a mixed Claude identity in the last record → nothing sent (R3); lost commit ACK with the file changed → receipt recovered from the stored declaration (R5); expiry → new attempt, parts resent; probe 404 without JSON → collector-level line, entries unchanged, next cycle uploads once the fake server supports it (L2); old-format entry drains first; spool from the current release opens; bounded memory: an instrumented reader proves no buffer/part above its bound on a 64 MiB synthetic file | C, CF | 14–18 |
-| U8 S2 acceptance + rehearsal | on-demand large-session check with normal workers; clone rehearsal | `chronicle/scripts/test-upload-bounds.sh` (on-demand, named in `chronicle/README.md`); reports | U6, U7 | on-demand (minutes of I/O; AGENTS.md "On-demand checks"): native server in `serve` with workers and the stub model server, `-XX:MaxHeapSize=768m`, guard set for that heap (production defaults asserted by U5); collector `--max-old-space-size=256`; a 1.2 GiB synthetic Pi session (append after a replacement) uploads completely; its job ends `Failed claim-too-large`, `GetRaw` returns `too-large`, pages/context/literal search answer; a 16 MiB session on the same server is indexed and published; no OOM, `/api/versions` probe < 1 s. Rehearsal on a TEMPLATE copy: parts uploads of the largest sessions, WAL/time/lock | the script; `scripts/verify chronicle` | 5–7 |
+| U7 S2 collector | preflight + upload passes with a capped line reader and evidence set, parts client, resume, probe, spool, status | `chronicle/collector/src/**`, `chronicle/collector/test/**`, `chronicle/collector/README.md`, collector paragraph of `chronicle/README.md`, `nix/hm/chronicle.nix` option | U5 (parallel to U6; against a fake server) | chain golden vectors; append vs replacement (Codex dedup fixture, redaction change, Pi v2→v3 rewrite); an excluded cwd / a mixed Claude identity in the last record → nothing sent (R3); lost commit ACK with the file changed → receipt recovered from the stored declaration (R5); expiry → new attempt, parts resent; probe 404 without JSON → collector-level line, entries unchanged, next cycle uploads once the fake server supports it (L2); old-format entry drains first; spool from the current release opens; bounded memory: an instrumented reader proves no buffer/part above its bound on a 64 MiB synthetic file; a 3 MiB single line → `record-too-large`, the reader never above the cap, nothing sent; 1,025 distinct `cwd` values → `admission-evidence-limit`, nothing sent (B2) | C, CF | 15–19 |
+| U8 S2 acceptance + rehearsal | on-demand large-session check with normal workers, S2 → S1 rollback leg; clone rehearsal | `chronicle/scripts/test-upload-bounds.sh` (on-demand, named in `chronicle/README.md`); reports | U6, U7 | on-demand (minutes of I/O; AGENTS.md "On-demand checks"): the test instance uses the production deployment limits of §4.4 (server and collector `maxFileBytes` 1,073,741,824, `maxMessages` 400,000; collector `maxScanBytes` 2 GiB) and a synthetic Pi session of 1,000,000,000 raw bytes (≈ 196,000 messages; ≥ 600 MB and within the limits) uploaded as a replacement and then appended to; an open declaring 1,073,741,825 bytes is refused 413 (B5). Native server in `serve` with workers and the stub model server, `-XX:MaxHeapSize=768m`, `maxIndexingBudgetBytes` scaled to that heap (production defaults asserted by U4); collector `--max-old-space-size=256`: the session uploads completely; its job ends `Failed index-budget-exceeded`; `GetRaw` returns `too-large`; pages/context/literal search answer; a 16 MiB session on the same server is indexed and published; no OOM; `/api/versions` probe < 1 s. Rollback leg (B1): stop, run `down-025-uploads.sql`, start the S1 binary with workers: the same verdicts, no OOM. Rehearsal on a TEMPLATE copy: parts uploads of the largest sessions, WAL/time/lock | the script; `scripts/verify chronicle` | 6–8 |
 
-S1 total 31–44 h, S2 total 39–51 h. Parallel: U6 ∥ U7 only (disjoint files). U4 after U3; U5 before U6/U7.
+S1 total 37–51 h, S2 total 38–49 h. Parallel: U6 ∥ U7 only (disjoint files). U4 after U3; U5 before U6/U7.
 
 ## 12. Decisions needed (owner/orchestrator)
 Settled by the lead in round 1: no automatic fallback to `whole` (collector-level probe, §6); S2 admits ≥ 1 GiB (§4.4).
 - **D1 `GetRaw` above `maxRawReadBytes`:** (a) explicit `too-large`, documented contract change (recommended; the bytes
   stay exact and retained); (b) a paged raw read operation (dashboard/CLI work; the CLI `raw` command would page).
-- **D2 Indexing of very large sessions:** (a) `maxClaimMessageBytes` 160 MiB derived from ch-fix2's measured peak
-  (recommended; the 556 MB session is stored and readable but not indexed, ≈ 305 MB of message values [i]); (b) a higher
-  bound with a larger pod heap (≈ 19 B heap per message byte measured as an upper bound); (c) a follow-up with a streamed
-  claim (windows built from a cursor), outside S2's budget.
+- **D2 Indexing of very large sessions:** (a) the §3.1 budget with `maxIndexingBudgetBytes` 2 GiB − 1 (recommended; the
+  556 MB session is stored and readable but not indexed, `E` ≈ 4.9 GB [i]); (b) a larger pod heap with a proportional
+  budget (that session needs a budget ≥ 4.9 GB, i.e. a heap of ≈ 10 GiB); (c) a follow-up that streams the claim and publishes in parts, outside S2's
+  budget.
 - **D3 Superseded epochs' fragments:** prune candidates in the background (recommended, 44.6 MB WAL per 10,000 rows, only
   after replacements) or keep them as candidates (no WAL, GIN grows with replaced epochs).
 - **D4 Version policy:** additive in 1.9.0 (recommended; precedent 3961370f) or bump to 1.10.0 (every client and fixture
@@ -611,6 +658,9 @@ Settled by the lead in round 1: no automatic fallback to `whole` (collector-leve
   inline under the source's advisory lock (purge waits for, or times out behind, a running ingest of up to tens of
   seconds).
 - **D8 Deployment limits:** server `maxFileBytes` 1 GiB, `maxMessages` 400,000; collector the same (§4.4) — confirm.
+- **D9 Collector caps in parts mode:** a record (raw line) cap of 2,031,616 B and 1,024 distinct `cwd` values per file
+  (recommended; observed maxima 1,344,233 B and a handful) or larger single-record parts through the admission permit
+  (more server work); a line above the cap quarantines the session in parts mode (`record-too-large`).
 
 ## 13. S0 note — the "restore policy for 157 tombstones" (not implemented)
 When the collector's privacy/destination policy digest changes, every queued entry built under the old policy is dropped
@@ -631,14 +681,23 @@ only). Recommendation: (b) plus (c), as an owner decision outside S1/S2.
 | R3 parts before whole-file admission | holds (today admission, exclusions and identity see the whole file [o collector.ts:144-217, parsers.ts:124-133]) → fixed: complete preflight pass before any network mutation, live controls re-checked before open/part/commit, stat stable until commit | §6, U7 |
 | R4 replay of older ordinals | holds → fixed: per-ordinal receipts `ch_upload_parts` | §4.5, §4.6, U6 |
 | R5 intent vs attempt, terminal replay, lost commit ACK | holds → fixed: intent = requestId + declaration digest (result in `ch_ingest_receipts`), attempts numbered under partial unique indexes, committed attempts kept; the declaration moves into `UploadOpen` and is spooled before the open; recovery by GET/open replay before regenerating | §4.1, §4.5, §4.6, §5, §6, U6, U7 |
-| R6 limits and O(session) paths | holds → fixed with L1: ≥ 1 GiB deployment limits, `GetRaw` bound, claim guard, every body bounded, U8 with normal workers | §4.2, §4.4, §4.8, §10, U5, U8, D1, D2, D8 |
+| R6 limits and O(session) paths | holds → fixed with L1: ≥ 1 GiB deployment limits, `GetRaw` bound, claim guard (moved to S1 and made a budget in round 2), every body bounded, U8 with normal workers | §3.1, §4.2, §4.4, §10, U4, U8, D1, D2, D8 |
 | R7 accepted inputs the epoch layout cannot hold | holds (`linesIterator` accepts a last record without `\n` [o Core.scala:281]; raw ids are unchecked strings [o Core.scala:284]) → fixed with L4: legacy layout for no final newline / several files; record ids stored as SHA-256 keys | §1.1, §2 inv. 3, §3, U2, U3 |
 | R8 down-script preflight unsound; S1 can create over-cap revisions | holds → fixed: sound upper bound + exact savepoint attempt; S1-created non-representable revisions documented, not prevented (D6) | §1.2, §9, U4 |
 | R9 units not independently gate-passing; ownership | holds → fixed with L3: production layout `Legacy` until U3 flips it, U4 after U3, `Database.scala` edits listed per unit, U6 owns the `/api/ingest` check | §3 seam, §11 |
-| L1 ≥ 1 GiB uploads, nothing materialized whole, bounded bodies, U8 with workers | done | §4.2, §4.4, §4.8, §6, §8, §11 U5/U8, §12 |
+| L1 ≥ 1 GiB uploads, nothing materialized whole, bounded bodies, U8 with workers | done | §3.1, §4.2, §4.4, §6, §8, §11 U4/U8, §12 |
 | L2 no per-entry stop on a missing API | done: collector-level probe each cycle, prominent line, no fallback, `whole` stays the switch | §6, §8 |
 | L3 independent gates | done | §3 seam, §11 |
 | L4 epoch-unsafe requests → legacy | done: several files; non-empty raw without a final `\n`; nothing else is unsafe (record keys hashed) | §2, §3 |
+
+### Review round 2 resolutions
+| item | verdict | where |
+|---|---|---|
+| B1 S2 → S1 rollback binary without guards | holds (round 1 put the guards in U5, an S2 unit) → fixed: guards are S1 (§3.1, U4), so the S1 tip and any rollback binary carry them; U8 runs the S2 → S1 rollback with the large fixture and workers | §3.1, §9, U4, U8 |
+| B2 collector preflight memory | holds (the record cap was checked only when packing; the evidence set was unbounded, as `evidenceFor` collects every `cwd` [o controls.ts:28-43]) → fixed: the shared line reader stops at 2,031,616 B before parsing (`record-too-large`), evidence capped at 1,024 distinct values (`admission-evidence-limit`), both quarantine with nothing sent | §6, U7, D9 |
+| B3 message bytes do not bound the job heap | holds (vectors are retained until publication in the job's `VectorArena` and chunks in the publication builder [o Models.scala:122,165,213, VectorArena.scala:7-23, ProblemsPublication.scala:83-87]) → fixed: pre-allocation budget `E = 2M + 256n + F(8d + 13,312)` with `F` from fragments and `d` the configured dimensions, plus a runtime cap at `vectors.add`; test with many short messages at 4,000 dimensions | §3.1, U4, D2 |
+| B4 down-script bound omits `raw_path` | holds (`raw_path` has no length bound [o Core.scala:279-280]) → fixed: the bound enumerates every rebuilt field incl. path and digest, exact read-only check otherwise, whole preflight before any mutation; long-path test | §1.2, U4 |
+| B5 U8 fixture above the limits | holds → fixed: U8 uses the production limits (1 GiB / 400,000) and a 1,000,000,000-byte fixture, plus a 413 for a declared 1 GiB + 1 | U8 |
 
 ## Appendix — findings against the design study
 1. "Reads go through views named like today's tables, readers change little" — measured: a UNION ALL view sorts the
