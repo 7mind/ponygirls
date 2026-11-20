@@ -427,7 +427,8 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     case "ico" => "image/x-icon"
     case "pdf" => "application/pdf"
     case "wasm" => "application/wasm"
-    case _ => "application/octet-stream"
+    // Files the text viewer shows are text for a browser as well; nosniff keeps them inert.
+    case _ => if viewerKind(path).contains("text") then "text/plain; charset=utf-8" else "application/octet-stream"
   private def encoded(value: String): String = value.split("/",-1).map(v => URLEncoder.encode(v,"UTF-8").replace("+","%20")).mkString("/")
   private def disposition(value: String): String =
     val base = value.split("/").last

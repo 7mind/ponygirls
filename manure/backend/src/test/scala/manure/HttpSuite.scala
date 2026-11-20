@@ -1028,6 +1028,38 @@ final class HttpSuite extends FunSuite:
       yield ()
     }
   }}
+  // Regression: a text file inside a directory artifact was application/octet-stream on its own URL, so a browser
+  // downloaded run.sh, fix.diff or values.yaml instead of showing it. Site assets and unknown types keep their type.
+  test("files of text types are served as text/plain on their direct and raw URLs") { run { (f,h) =>
+    val plain = "text/plain; charset=utf-8"
+    val expected = Vector("run.sh" -> plain,"fix.diff" -> plain,"values.yaml" -> plain,"src/Main.scala" -> plain,"tool.py" -> plain,"notes.txt" -> plain,
+      "build.log" -> plain,"table.csv" -> plain,"config.xml" -> plain,"data.json" -> "application/json","app.js" -> "application/javascript; charset=utf-8",
+      "site.css" -> "text/css; charset=utf-8","page.html" -> "text/html; charset=utf-8","photo.png" -> "image/png","blob.bin" -> "application/octet-stream",
+      "bundle.zip" -> "application/octet-stream","noextension" -> "application/octet-stream")
+    def contentType(r: org.http4s.Response[IO]) = r.headers.headers.find(_.name == CIString("Content-Type")).map(_.value)
+    for
+      a <- f.artifacts.init(f.identity,InitUpload("types",ArtifactKind.Directory,Visibility.Public,
+        expected.map((path,_) => ManifestEntry(path,false,Exact.utf8(path).length,SecretCodec.sha256(Exact.utf8(path)))),None,Vector.empty,None,None))
+      _ <- expected.traverse_((path,_) => f.artifacts.putChunk(f.identity,a.artifact.id,path,0,Exact.utf8(path),SecretCodec.sha256(Exact.utf8(path))))
+      _ <- f.artifacts.finish(f.identity,a.artifact.id)
+      _ <- expected.traverse_ { (path,mime) =>
+        Vector(s"/view/${a.artifact.id}/$path",s"/view/${a.artifact.id}/__manure/raw/$path").traverse_ { url =>
+          for
+            response <- h.app.run(request(Method.GET,url).putHeaders(Header.Raw(CIString("Accept"),"text/html")))
+            body <- response.as[String]
+            _ <- IO {
+              assertEquals(response.status.code,200,url)
+              assertEquals(contentType(response),Some(mime),url)
+              assertEquals(response.headers.headers.find(_.name == CIString("X-Content-Type-Options")).map(_.value),Some("nosniff"),url)
+              assertEquals(body,path,"the bytes are the stored file")
+            }
+          yield ()
+        }
+      }
+      download <- h.app.run(request(Method.GET,s"/view/${a.artifact.id}/__manure/files/run.sh/content"))
+      _ <- IO(assertEquals(contentType(download),Some("application/octet-stream"),"attachment downloads stay opaque"))
+    yield ()
+  }}
   // Regression: directories without an index were inaccessible, including empty uploads.
   // Behavioral-Active / Blackbox / Good Communication (owned PostgreSQL + filesystem).
   test("no-index directories browse immediate children, nested and empty directories") { run { (f,h) =>
