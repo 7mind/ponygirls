@@ -116,8 +116,17 @@ object Jobs {
     Check(profile==target,"conflict","job superseded by the target model profile")
     Sql.exec(c,"UPDATE ch_jobs SET state='Queued',attempts=0,lease_until=NULL,fence=fence+1,annotation_retry_epoch=annotation_retry_epoch+1,run_id=CASE WHEN state='Complete' THEN gen_random_uuid() ELSE run_id END,error=CASE WHEN state='Complete' THEN NULL ELSE error END,failure_stage=CASE WHEN state='Complete' THEN NULL ELSE failure_stage END,completed_windows=0,total_windows=NULL WHERE id=?",id)
   }
+  /** The jobs of a source whose head just switched to revision `next`: older unfinished jobs end superseded (a leased
+    * Running one keeps its claim) and the new head's job is queued; returns its id. */
+  def switched(c: Connection,id: UUID,next: Int,profile: String): UUID = {
+    val job=UUID.randomUUID()
+    Sql.exec(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} WHERE j.session_id=? AND j.revision<? AND j.state<>'Complete' AND (${Jobs.leased("j")}) IS NOT TRUE",id,next)
+    Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile) VALUES(?,?,?,?)",job,id,next,profile)
+    job
+  }
 }
-final class PostgresArchive(db: Database, config: Config) extends SessionArchive with PassageReader with MessageSearchReader with ContextReader {
+final class PostgresArchive(db: Database, config: Config, layout: RevisionLayoutPolicy) extends SessionArchive with PassageReader with MessageSearchReader with ContextReader {
+  def this(db: Database,config: Config) = this(db,config,RevisionLayoutPolicy.production)
   private val contextReader=new PostgresContextReader(db,this)
   def readMessageContext(reader: String,id: UUID,view: ContentView,anchor: Span,beforeBytes: Int,afterBytes: Int,materialization: ReadMaterialization): MessageContextResult =
     contextReader.readMessageContext(reader,id,view,anchor,beforeBytes,afterBytes,materialization)
@@ -151,14 +160,12 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
           // to the new revision, not while a large snapshot is projected (indexing claims lock that row on every write),
           // and NO KEY UPDATE does not wait for a publication that is writing its generation.
           val (id,head) = source("")
-          val next = head+1; val job = UUID.randomUUID(); val receipt = IngestReceipt(r.requestId,id,next,job)
-          val snapshot=SnapshotProjection(r)
-          Sql.exec(c,"INSERT INTO ch_revisions(session_id,revision,snapshot) VALUES(?,?,?::jsonb)",id,next,Wire.encode(IngestRequest.codecJson,snapshot).noSpaces)
-          ArchiveProjection.persist(c,id,next,snapshot)
+          val next = head+1
+          val written=EpochWriter.write(c,layout,id,head,next,SnapshotProjection(r))
           source(" FOR NO KEY UPDATE")
           Sql.exec(c,"UPDATE ch_sources SET revision=? WHERE id=?",next,id)
-          Sql.exec(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} WHERE j.session_id=? AND j.revision<? AND j.state<>'Complete' AND (${Jobs.leased("j")}) IS NOT TRUE",id,next)
-          Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile) VALUES(?,?,?,?)",job,id,next,target.profile)
+          EpochWriter.switched(c,written)
+          val receipt = IngestReceipt(r.requestId,id,next,Jobs.switched(c,id,next,target.profile))
           Sql.exec(c,"INSERT INTO ch_ingest_receipts VALUES(?,?,?,?,?::jsonb)",owner,key,r.requestId,digest,Wire.encode(IngestReceipt.codecJson,receipt).noSpaces)
           receipt
       }

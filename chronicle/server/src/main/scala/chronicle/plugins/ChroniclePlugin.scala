@@ -11,6 +11,7 @@ object ChroniclePlugin extends PluginDef {
   make[IndexProfileCatalog].from { (config: Config) => IndexProfileCatalog.current(config) }
   make[Database].fromResource[DatabaseResource]
   make[Auth]
+  make[RevisionLayoutPolicy].fromValue(RevisionLayoutPolicy.production)
   make[PostgresArchive]
   make[SessionArchive].from[PostgresArchive]
   make[SearchIndex].from[PostgresSearch]
@@ -49,7 +50,8 @@ object ChroniclePlugin extends PluginDef {
   make[McpTestRuns].fromResource[McpTestRunsResource]
   make[BrowserControlAdmission].fromResource[BrowserControlResource]
   make[SnapshotAdmission].fromResource[SnapshotAdmissionResource]
+  make[EpochMaintenance].fromResource[EpochMaintenanceResource]
   make[BrowserRpc]
   make[Http]
-  make[RuntimeServices]
+  make[RuntimeServices].addDependency[EpochMaintenance]
 }

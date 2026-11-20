@@ -25,7 +25,8 @@ class ArchiveHeadCandidateTest extends munit.FunSuite {
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_members CASCADE")
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
-    val archive=new PostgresArchive(db,config)
+    // Asserts per-revision fragment rows of the legacy layout: pinned to it.
+    val archive=new PostgresArchive(db,config,RevisionLayoutPolicy.Legacy)
     f(config,db,archive,new PostgresArchiveIndex(db,archive,config))
   }
 

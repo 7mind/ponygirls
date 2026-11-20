@@ -68,13 +68,14 @@ object ArchiveProjection {
     }
     def close(): Unit = { message.close(); fragment.close() }
   }
-  private def lexical(c: Connection,id: UUID,revision: Int,metadata: Metadata,source: SourceIdentity,writer: Writer): Unit = {
-    val values=io.circe.Json.arr(metadataValues(metadata,source).map(io.circe.Json.fromString)*).noSpaces
-    Using.resource(c.prepareStatement("SELECT lower(field.value COLLATE pg_unicode_fast) FROM (SELECT jsonb_array_elements_text(?::jsonb) AS value UNION ALL SELECT value->>'text' FROM ch_messages WHERE session_id=? AND revision=?) field")) { statement =>
-      Sql.bind(statement,List(values,id,revision)); statement.setFetchSize(messageFetchSize)
+  private def lexical(c: Connection,id: UUID,revision: Int,metadata: Metadata,source: SourceIdentity,writer: Writer): Unit =
+    folded(c,"SELECT lower(field.value COLLATE pg_unicode_fast) FROM (SELECT jsonb_array_elements_text(?::jsonb) AS value UNION ALL SELECT value->>'text' FROM ch_messages WHERE session_id=? AND revision=?) field",List(metadataJson(metadata,source),id,revision),writer)
+  private def metadataJson(metadata: Metadata,source: SourceIdentity): String = io.circe.Json.arr(metadataValues(metadata,source).map(io.circe.Json.fromString)*).noSpaces
+  private def folded(c: Connection,sql: String,args: List[Sql.Param],writer: Writer): Unit =
+    Using.resource(c.prepareStatement(sql)) { statement =>
+      Sql.bind(statement,args); statement.setFetchSize(messageFetchSize)
       Using.resource(statement.executeQuery()) { rows => while(rows.next()) writer.addFoldedText(rows.getString(1)) }
     }
-  }
   private def info(c: Connection,id: UUID,revision: Int,metadata: Metadata,source: SourceIdentity,completion: Completion,redacted: Boolean,time: Option[Instant],count: Int): Unit = {
     val timestamp = time.fold("NULL")(_ => "?")
     val args: List[Sql.Param] = List(id,revision,Wire.encode(Metadata.codecJson,metadata).noSpaces,Wire.encode(SourceIdentity.codecJson,source).noSpaces,completion.toString,redacted) ++ time.toList.flatMap(t => List[Sql.Param](t.toString,timestampOrder(t))) ++ List(count)
@@ -89,11 +90,27 @@ object ArchiveProjection {
     }
     info(c,id,revision,request.metadata,request.source,request.completion,request.redacted,latest(request.metadata,request.messages.iterator),request.messages.size)
   }
+  /** An epoch revision's projection: its metadata fragments and info row. Its message fragments are the epoch's rows, and
+    * `messageTime` is the latest message timestamp (the first choice of `latest`). */
+  def persistEpoch(c: Connection,id: UUID,revision: Int,request: IngestRequest,messageTime: Option[Instant]): Unit = {
+    Using.resource(new Writer(c,id,revision)) { writer =>
+      folded(c,"SELECT lower(value COLLATE pg_unicode_fast) FROM jsonb_array_elements_text(?::jsonb) field(value)",List(metadataJson(request.metadata,request.source)),writer)
+      writer.flush()
+    }
+    info(c,id,revision,request.metadata,request.source,request.completion,request.redacted,messageTime.orElse(parsedTime(request.metadata.endedAt)).orElse(parsedTime(request.metadata.startedAt)),request.messages.size)
+  }
+  /** Rebuilds the projection of legacy revisions whose info row is missing or of another lexical version. Epoch revisions
+    * get theirs in their ingest transaction; one without it, or of another version, refuses the start (rebuilding epoch
+    * fragments is a separate task when the version changes). */
   def backfill(db: Database): Unit = {
+    db.transaction { c =>
+      val stale=Sql.one(c,s"SELECT count(*) FROM ch_revisions r LEFT JOIN ch_revision_info i ON i.session_id=r.session_id AND i.revision=r.revision WHERE r.epoch IS NOT NULL AND (i.session_id IS NULL OR i.lexical_version<>$lexicalVersion)")(_.getLong(1)).get
+      Check(stale==0,"migration-required",s"$stale epoch revisions lack the archive projection of lexical version $lexicalVersion; rebuild their epoch fragments before starting this release")
+    }
     var more = true
     while(more) more = db.transaction { c =>
       Sql.lock(c,"archive-projection-backfill")
-      val missing = Sql.rows(c,s"SELECT r.session_id,r.revision,i.session_id IS NOT NULL AS has_info FROM ch_revisions r LEFT JOIN ch_revision_info i ON i.session_id=r.session_id AND i.revision=r.revision WHERE i.session_id IS NULL OR i.lexical_version<>$lexicalVersion ORDER BY r.session_id,r.revision LIMIT $backfillRevisions FOR UPDATE OF r")(r => (r.getObject(1,classOf[UUID]),r.getInt(2),r.getBoolean(3)))
+      val missing = Sql.rows(c,s"SELECT r.session_id,r.revision,i.session_id IS NOT NULL AS has_info FROM ch_revisions r LEFT JOIN ch_revision_info i ON i.session_id=r.session_id AND i.revision=r.revision WHERE r.epoch IS NULL AND (i.session_id IS NULL OR i.lexical_version<>$lexicalVersion) ORDER BY r.session_id,r.revision LIMIT $backfillRevisions FOR UPDATE OF r")(r => (r.getObject(1,classOf[UUID]),r.getInt(2),r.getBoolean(3)))
       missing.foreach { case (id,revision,hasInfo) =>
         val select=if(hasInfo) "SELECT metadata,source,completion,redacted FROM ch_revision_info WHERE session_id=? AND revision=?" else "SELECT snapshot->'metadata' AS metadata,snapshot->'source' AS source,snapshot->>'completion' AS completion,(snapshot->>'redacted')::boolean AS redacted FROM ch_revisions WHERE session_id=? AND revision=?"
         val (metadata,source,completion,redacted) = Sql.one(c,select,id,revision) { r =>
