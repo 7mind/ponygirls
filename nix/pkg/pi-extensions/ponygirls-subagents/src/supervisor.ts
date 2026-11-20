@@ -771,7 +771,9 @@ export class Supervisor implements GateHost {
             rt.record.outcome = null;
           }
           for (const q of rt.queue) {
-            if (q.id === taskRunId) q.dispatched = true;
+            if (q.id !== taskRunId) continue;
+            if (q.gated) rt.gateTaskRunId = taskRunId;
+            q.dispatched = true;
           }
           started.set(taskRunId, {
             agentId: rt.record.id,
@@ -843,8 +845,23 @@ export class Supervisor implements GateHost {
         }
         case "mailbox.accepted": {
           const messageId = b["messageId"] as string;
-          if (!messageId || this.messages.has(messageId)) break;
+          const gated = b["gated"] === true;
+          if (!messageId || this.messages.has(messageId)) {
+            if (gated) throw err("RECOVERY_CORRUPT", "gated mailbox acceptance lacks a fresh message id");
+            break;
+          }
           const to = b["to"] as AgentId | "governor";
+          const rt = to !== "governor" ? this.agents.get(to) : undefined;
+          if (gated) {
+            const taskRunId = b["taskRunId"] as TaskRunId;
+            const gate = gates.get(taskRunId);
+            if (!rt || rt.record.profile !== "writer" || b["mode"] !== "task" || gate?.agentId !== to || gate.spec.mode !== "gate" ||
+                gate.linkedFrom !== null || gate.reviewerIds.length === 0 || gate.reviewerIds.length !== gate.spec.reviewers.length ||
+                new Set(gate.reviewerIds).size !== gate.reviewerIds.length || rt.queue.some((q) => q.id === taskRunId) ||
+                gate.reviewerIds.some((id) => !reviewerLinks.some((link) => link.reviewerId === id && link.taskRunId === taskRunId && link.mainAgentId === to))) {
+              throw err("RECOVERY_CORRUPT", `mailbox task ${taskRunId} lacks its protected gate panel`);
+            }
+          }
           const message: MailboxMessage = {
             id: messageId,
             rootId: this.rootId,
@@ -862,14 +879,13 @@ export class Supervisor implements GateHost {
             replied: false,
           };
           this.messages.set(messageId, message);
-          const rt = to !== "governor" ? this.agents.get(to) : undefined;
           if (rt) {
             rt.record.pendingMessageIds.push(messageId);
             if (b["model"]) rt.record.model = b["model"] as ResolvedModel;
             // Acceptance owns task intent; task.queued is only a projection.
             // A crash between these appends must not lose the accepted run.
             if (message.mode === "task" && message.taskRunId !== null && !rt.queue.some((q) => q.id === message.taskRunId)) {
-              rt.queue.push({ id: message.taskRunId, agentId: rt.record.id, messageId, text: message.text, createdAt: r.at, replaces: null, dispatched: false });
+              rt.queue.push({ id: message.taskRunId, agentId: rt.record.id, messageId, text: message.text, createdAt: r.at, replaces: null, dispatched: false, ...(gated ? { gated: true } : {}) });
               rt.record.pendingTaskIds.push(message.taskRunId);
             }
           }
@@ -1085,6 +1101,9 @@ export class Supervisor implements GateHost {
       if (gate !== null && !gate.terminal && gate.linkedFrom !== null && gate.candidate === null) {
         this.pendingSettle.set(taskRunId, { agentId: draft.agentId, outcome: "interrupted", error: "PROCESS_LOST: linked review stopped before candidate publication" });
       }
+    }
+    for (const rt of this.agents.values()) {
+      if (rt.queue.some((q) => q.gated && !q.dispatched)) rt.held = true;
     }
     this.scheduler.restoreSnapshot({ created: spawned, openAgentIds: [...this.agents.values()].filter((rt) => rt.record.desiredLifecycle === "open").map((rt) => rt.record.id) });
     // A discarded uncommitted tail means a previous owner may have acted on
@@ -3213,6 +3232,7 @@ export class Supervisor implements GateHost {
     };
     switch (tool) {
       case "send_message":
+        if (args["gate"] !== undefined) throw err("FORBIDDEN", "gated follow-ups require the governing session");
         return this.sendMessage(caller, str("target"), str("mode") as MessageMode, str("message"), {
           requestReply: args["request_reply"] === true ? true : undefined,
           replyTo: typeof args["reply_to"] === "string" ? args["reply_to"] : undefined,
@@ -3691,7 +3711,8 @@ export class Supervisor implements GateHost {
     if (this.admissionHoldError() !== null) return;
     if (this.pendingLost.has(rt.record.id) || rt.parkedStartup !== null) return;
     const next = rt.queue.find((q) => !q.dispatched);
-    if (!next) return;
+    if (!next || (next.gated && rt.loading)) return;
+    this.assertQueuedGate(rt, next);
     if (!rt.worker) {
       if (!rt.loading) this.detached(() => this.loadForQueue(rt));
       return;
@@ -3705,6 +3726,7 @@ export class Supervisor implements GateHost {
     next.dispatched = true;
     const record = rt.record;
     record.currentTaskRunId = next.id;
+    if (next.gated) rt.gateTaskRunId = next.id;
     record.executionGeneration += 1;
     record.taskPhase = "working";
     record.taskOutcome = null;
@@ -3726,20 +3748,25 @@ export class Supervisor implements GateHost {
    * any other reload failure ends the queued tasks explicitly.
    */
   private async loadForQueue(rt: AgentRuntime): Promise<void> {
-    if (rt.worker || rt.loading || !rt.queue.some((q) => !q.dispatched)) {
+    const next = rt.queue.find((q) => !q.dispatched);
+    if (rt.worker || rt.loading || !next) {
       this.pumpQueue(rt);
       return;
     }
     rt.loading = true;
     try {
-      await this.reloadAgent(rt);
+      await this.reloadAgent(rt, next);
     } catch (e) {
       if ((e as { code?: string }).code === "CAPACITY_EXCEEDED") {
         rt.record.detail = "task queued: waiting for resident capacity";
         return;
       }
-      for (const q of rt.queue.filter((x) => !x.dispatched)) this.settleTaskTerminal(rt, q.id, "failed", `reload failed: ${(e as Error).message}`);
-      return;
+      const failed = next.gated ? [next] : rt.queue.filter((q) => !q.dispatched);
+      for (const q of failed) {
+        if (q.gated) this.gate.cancelTask(q.id, "failed");
+        this.settleTaskTerminal(rt, q.id, "failed", `reload failed: ${(e as Error).message}`);
+      }
+      if (!next.gated) return;
     } finally {
       rt.loading = false;
     }
@@ -3795,11 +3822,17 @@ export class Supervisor implements GateHost {
     target: AgentId | "parent",
     mode: MessageMode,
     text: string,
-    opts: { requestReply?: boolean; replyTo?: MessageId; model?: SpawnParams["model"] },
+    opts: { requestReply?: boolean; replyTo?: MessageId; model?: SpawnParams["model"]; gate?: GateSpecInput },
     requestId: string,
   ): Promise<{ messageId: MessageId; taskRunId: TaskRunId | null }> {
     return this.serialized(async () => {
       this.sweepExpiredQuestions();
+      if (opts.gate !== undefined) {
+        if (!isGovernor(caller)) throw err("FORBIDDEN", "gated follow-ups require the governing session");
+        if (mode !== "task" || opts.replyTo !== undefined || opts.model !== undefined) {
+          throw err("INVALID", "gate requires mode=task and cannot be combined with reply_to or model");
+        }
+      }
       if (opts.model !== undefined && (mode !== "task" || opts.replyTo !== undefined)) {
         throw err("INVALID", "model override requires mode=task and cannot answer a question");
       }
@@ -3854,7 +3887,7 @@ export class Supervisor implements GateHost {
         receipt: null,
         replied: false,
       };
-      const accepted = this.publish("mailbox.accepted", {
+      const body = {
         messageId,
         agentId: from === "governor" ? to : from,
         from,
@@ -3868,7 +3901,12 @@ export class Supervisor implements GateHost {
         deadlineAt,
         requestId,
         digest,
-      });
+      };
+      const gateInput = opts.gate;
+      const gated = gateInput !== undefined;
+      const accepted = gated
+        ? this.acceptGatedTask(rt!, taskRunId!, gateInput, text, body)
+        : this.publish("mailbox.accepted", body);
       message.seq = accepted.seq;
       this.messages.set(messageId, message);
       if (rt && model) {
@@ -3878,7 +3916,7 @@ export class Supervisor implements GateHost {
       }
       rt?.record.pendingMessageIds.push(messageId);
       const queued: QueuedTask | null = rt && mode === "task"
-        ? { id: taskRunId!, agentId: to, messageId, text, createdAt: this.now(), replaces: null, dispatched: false }
+        ? { id: taskRunId!, agentId: to, messageId, text, createdAt: this.now(), replaces: null, dispatched: false, ...(gated ? { gated: true as const } : {}) }
         : null;
       if (rt && queued) {
         rt.queue.push(queued);
@@ -3900,10 +3938,11 @@ export class Supervisor implements GateHost {
         this.preemptForQuestion(message);
       }
 
-      this.store.recordCommand(requestId, accepted);
+      if (!gated) this.store.recordCommand(requestId, accepted);
       if (!rt) return { messageId, taskRunId };
       if (queued) {
-        this.publish("task.queued", { id: queued.id, agentId: to, messageId, text, replaces: null });
+        if (gated) this.notifyChanged();
+        else this.publish("task.queued", { id: queued.id, agentId: to, messageId, text, replaces: null });
         // An explicit new task resumes an agent recovery held — unless
         // admission itself is held (billing uncommitted, retained faults,
         // or suspend/dispose): the task queues with a held detail and
@@ -3929,11 +3968,64 @@ export class Supervisor implements GateHost {
     });
   }
 
+  private acceptGatedTask(rt: AgentRuntime, taskRunId: TaskRunId, input: GateSpecInput, text: string, body: Record<string, unknown> & { messageId: MessageId }): JournalRecord {
+    if (!this.isSettledForReuse(rt) || !this.quiescent(rt.record.id)) {
+      throw err("CONFLICT", "gate requires a settled open ordinary writer with no running, queued or owned work");
+    }
+    const allocation = this.effectiveAllocation(rt.record);
+    if (rt.record.profile !== "writer" || allocation.writableRoot === null || allocation.git === null) {
+      throw err("INVALID", "gate on a retained agent requires a writable Git workspace");
+    }
+    const hold = this.admissionHoldError();
+    if (hold !== null) throw hold;
+    if (allocation.external) this.assertPreparedWorkspace(allocation);
+    const spec = this.gate.validateSpec(input);
+    const charged = this.scheduler.reserveAgentCreation(spec.reviewers.length);
+    if (!charged.ok) {
+      throw err(charged.code, `${charged.message}. A gated follow-up needs open-agent slots for the entire reviewer panel. Close an unneeded subtree to reclaim slots.`, { capacity: "open_agents", ...this.scheduler.snapshot() });
+    }
+    const panel: ReturnType<Supervisor["stageManagedReviewer"]>[] = [];
+    let committed = false;
+    try {
+      for (const [index, reviewer] of spec.reviewers.entries()) {
+        panel.push(this.stageManagedReviewer(rt, allocation, taskRunId, reviewer, index));
+      }
+      const gate = this.gate.prepareRegistration(rt.record.id, taskRunId, spec, text, panel.map(({ record }) => record.id));
+      const records = this.store.appendBatch([
+        ...panel.map(({ body }) => ({ kind: "agent.spawned" as const, body })),
+        { kind: "gate.registered", body: gate.body },
+        { kind: "mailbox.accepted", body: { ...body, gated: true } },
+        { kind: "task.queued", body: { id: taskRunId, agentId: rt.record.id, messageId: body.messageId, text, replaces: null } },
+      ]);
+      committed = true;
+      for (const { record } of panel) this.installManagedReviewer(record, rt.record.id, taskRunId, charged.reservation);
+      gate.install();
+      return records[panel.length + 1]!;
+    } finally {
+      if (!committed) for (const { record } of panel) this.paths.release(record.path);
+      this.scheduler.cancelAgentCreation(charged.reservation);
+    }
+  }
+
+  private assertQueuedGate(rt: AgentRuntime, task: QueuedTask): void {
+    if (!task.gated) return;
+    const gate = this.gate.inspect(task.id);
+    if (gate === null || gate.agentId !== rt.record.id || gate.terminal !== null || gate.spec.mode !== "gate" ||
+        gate.reviewerIds.length === 0 || gate.reviewerIds.length !== gate.spec.reviewers.length ||
+        gate.reviewerIds.some((id) => !this.scheduler.isAgentOpen(id) || this.gate.managedTaskFor(id) !== task.id)) {
+      throw err("RECOVERY_CORRUPT", `queued task ${task.id} lacks its protected gate panel`);
+    }
+  }
+
   private canReuseSettled(rt: AgentRuntime): boolean {
+    return (rt.gateTaskRunId === null || rt.gateTaskRunId !== rt.record.currentTaskRunId) && this.isSettledForReuse(rt);
+  }
+
+  private isSettledForReuse(rt: AgentRuntime): boolean {
     return rt.record.desiredLifecycle === "open" && rt.record.taskPhase === "terminal" && rt.record.observed === "settled"
       && rt.activeRun === null && rt.parkedStartup === null && rt.checkpointing === null
       && !rt.queue.some((q) => !q.dispatched) && !this.isPhaseLocked(rt)
-      && !this.gate.isReviewer(rt.record.id) && rt.gateTaskRunId === null
+      && !this.gate.isReviewer(rt.record.id)
       && !rt.loading && !rt.usage.unknown && !rt.quarantined && !this.pendingLost.has(rt.record.id)
       && this.activeDescendants(rt.record.id).length === 0
       && this.broker.activeJobs(rt.record.id).length === 0 && this.externalDispatcher.activeJobs(rt.record.id).length === 0;
@@ -4422,7 +4514,9 @@ export class Supervisor implements GateHost {
     const record = rt.record;
     if (rt.activeRun) rt.activeRun.interruptRequested = true;
     if (rt.worker !== null) this.backendSessions.get(rt.worker)?.cancel();
-    this.publish("agent.interrupted", { agentId: record.id, taskRunId: rt.activeRun?.taskRunId ?? record.currentTaskRunId });
+    const queuedGate = rt.queue.find((q) => q.gated && !q.dispatched);
+    const taskRunId = rt.activeRun?.taskRunId ?? queuedGate?.id ?? record.currentTaskRunId;
+    this.publish("agent.interrupted", { agentId: record.id, taskRunId });
     this.cancelCallerWaits(record.id);
     rt.leaseWaitCancel?.();
     // An owner joining descendants settles (interrupted) once they stop.
@@ -4464,6 +4558,14 @@ export class Supervisor implements GateHost {
       const rt = this.agents.get(target);
       if (!rt) throw err("NOT_FOUND", `agent ${target} unknown`);
       this.checkControl(caller, rt.record);
+      if (this.gate.isReviewer(target)) {
+        const gateId = this.gate.managedTaskFor(target);
+        const gate = gateId === null ? null : this.gate.inspect(gateId);
+        const main = gate === null ? undefined : this.agents.get(gate.agentId);
+        if (main?.queue.some((q) => q.gated && !q.dispatched && q.id === gateId)) {
+          throw err("CONFLICT", "reviewer belongs to a queued gated task; interrupt or close the writer first");
+        }
+      }
       if (this.store.loadCommand(requestId)) throw err("DUPLICATE_REQUEST", `requestId ${requestId} already used`);
       const accepted = this.publish("command.accepted", { requestId, action: "close", agentId: target });
       this.store.recordCommand(requestId, accepted);
@@ -4541,7 +4643,10 @@ export class Supervisor implements GateHost {
       if (rt.gateTaskRunId === run.taskRunId) this.gate.cancelTask(run.taskRunId, "interrupted");
       this.settleTaskTerminal(rt, run.taskRunId, "interrupted", "closed; the worker did not confirm its interrupt and was stopped");
     }
-    for (const q of rt.queue.filter((x) => !x.dispatched)) this.settleTaskTerminal(rt, q.id, "interrupted", "closed before dispatch");
+    for (const q of rt.queue.filter((x) => !x.dispatched)) {
+      if (q.gated) this.gate.cancelTask(q.id, "interrupted");
+      this.settleTaskTerminal(rt, q.id, "interrupted", "closed before dispatch");
+    }
     rt.record.observed = "settled";
     this.releaseRunnable(rt);
     this.releaseResident(rt);
@@ -4562,7 +4667,7 @@ export class Supervisor implements GateHost {
    * fresh session file, select its recorded leaf, and reconcile mailbox
    * entries. Work is dispatched separately (task or repair).
    */
-  private async reloadAgent(rt: AgentRuntime): Promise<void> {
+  private async reloadAgent(rt: AgentRuntime, queued?: QueuedTask): Promise<void> {
     this.purgePreparedTickets(rt.record.id);
     if (rt.record.desiredLifecycle === "closed") throw err("CLOSED", "closed agents cannot be resumed");
     if (rt.worker) return;
@@ -4597,6 +4702,9 @@ export class Supervisor implements GateHost {
     rt.record.policyRevision = this.policy.revision;
     if (rt.record.allocation.external) this.assertPreparedWorkspace(rt.record.allocation);
     const checkpoint = this.store.loadCheckpoint(rt.record.id);
+    if (queued?.gated && (checkpoint === null || checkpoint.ref.generation !== rt.record.executionGeneration)) {
+      throw err("RECOVERY_OWNER_UNCONFIRMED", "reloading a gated follow-up requires a validated checkpoint of the writer's current execution generation");
+    }
     if (checkpoint) {
       // Each incarnation gets its own working file; earlier ones (including
       // a crashed one) are preserved for diagnosis.
@@ -5038,15 +5146,19 @@ export class Supervisor implements GateHost {
       this.checkControl(caller, rt.record);
       const queued = rt.queue.find((q) => q.id === taskRunId && !q.dispatched);
       if (!queued) throw err("NOT_FOUND", `pending task ${taskRunId} unknown`);
-      if (rt.activeRun) throw err("CONFLICT", "agent has an unfinished run");
+      if (rt.activeRun || (rt.queue.some((q) => q.gated && !q.dispatched) && !queued.gated)) throw err("CONFLICT", "agent has an unfinished run");
+      this.assertQueuedGate(rt, queued);
       const resumeHold = this.admissionHoldError();
       if (resumeHold !== null) throw resumeHold;
       if (rt.record.model !== null) this.assertLatestModel(rt.record.model);
       rt.held = false;
       // Move it to the front: the explicit choice dispatches first.
       rt.queue = [queued, ...rt.queue.filter((q) => q !== queued)];
-      if (!rt.worker) await this.reloadAgent(rt);
-      this.pumpQueue(rt);
+      if (queued.gated) await this.loadForQueue(rt);
+      else {
+        if (!rt.worker) await this.reloadAgent(rt);
+        this.pumpQueue(rt);
+      }
     });
   }
 
@@ -5132,6 +5244,7 @@ export class Supervisor implements GateHost {
     const rt = this.agents.get(agentId);
     if (!rt || rt.activeRun || rt.pendingRepair || this.broker.activeJobs(agentId).length > 0 || this.externalDispatcher.activeJobs(agentId).length > 0) return false;
     if (rt.record.currentTaskRunId !== null && !this.terminalRuns.has(rt.record.currentTaskRunId)) return false;
+    if (rt.queue.some((q) => q.gated && !q.dispatched)) return false;
     for (const reviewerId of this.gate.reviewersOf(agentId)) {
       if (this.agents.get(reviewerId)?.activeRun) return false;
     }
@@ -5152,12 +5265,22 @@ export class Supervisor implements GateHost {
   /** One protected sibling identity per panel slot, reused across candidate rounds. */
   private createManagedReviewer(mainAgentId: AgentId, taskRunId: TaskRunId, spec: NormalizedReviewerSpec, index: number, reservation: AgentCreationReservation): AgentId {
     const main = this.agents.get(mainAgentId)!;
+    const { record, body } = this.stageManagedReviewer(main, main.record.allocation, taskRunId, spec, index);
+    try {
+      this.store.append("agent.spawned", body);
+    } catch (e) {
+      this.paths.release(record.path);
+      throw e;
+    }
+    this.installManagedReviewer(record, mainAgentId, taskRunId, reservation);
+    return record.id;
+  }
+
+  private stageManagedReviewer(main: AgentRuntime, mainAlloc: WorkspaceAllocation, taskRunId: TaskRunId, spec: NormalizedReviewerSpec, index: number): { record: AgentRecord; body: Record<string, unknown> } {
     const reviewerId = randomUUID();
-    const mainAlloc = main.record.allocation;
     const readRoots = mainAlloc.writableRoot ? [mainAlloc.writableRoot, ...mainAlloc.readRoots] : [...mainAlloc.readRoots];
     const basePath = `${main.record.path}/__gate${index === 0 ? "" : `-${index + 1}`}`;
     const path = this.paths.isTaken(basePath) ? `${basePath}-${taskRunId}` : basePath;
-    this.paths.reserve(path);
     const record: AgentRecord = {
       id: reviewerId,
       path,
@@ -5168,7 +5291,7 @@ export class Supervisor implements GateHost {
       createdEntryId: `gate:${taskRunId}`,
       nativeSessionPath: null,
       grants: { tools: [...FILE_TOOLS], externalTools: [], repos: [], shell: false, network: false, nesting: false, maxDepth: main.record.depth, isolation: main.record.grants.isolation },
-      allocation: { kind: "reader", workdir: mainAlloc.workdir, readRoots, writableRoot: null, git: null, repoId: mainAlloc.repoId, tmpDir: this.agentTmp(reviewerId), external: mainAlloc.external },
+      allocation: { kind: "reader", workdir: mainAlloc.workdir, readRoots, writableRoot: null, git: null, repoId: mainAlloc.repoId, tmpDir: join(this.rootDir, "tmp", reviewerId), external: mainAlloc.external },
       instructions: EMPTY_INSTRUCTIONS,
       instructionHash: instructionHash(EMPTY_INSTRUCTIONS),
       policyRevision: this.policy.revision,
@@ -5189,16 +5312,14 @@ export class Supervisor implements GateHost {
       lastActivityAt: this.now(),
       activeDescendants: 0,
     };
-    try {
-      this.store.append("agent.spawned", { agentId: reviewerId, path, parentId: record.parentId, depth: record.depth, profile: "reader", taskRunId, managedGate: true, mainAgentId, grants: record.grants, allocation: record.allocation, instructions: record.instructions, model: record.model });
-    } catch (e) {
-      this.paths.release(path);
-      throw e;
-    }
-    this.scheduler.commitAgentCreation(reservation, reviewerId);
-    this.agents.set(reviewerId, newRuntime(record));
-    this.gate.linkReviewer(reviewerId, taskRunId, mainAgentId);
-    return reviewerId;
+    this.paths.reserve(path);
+    return { record, body: { agentId: reviewerId, path, parentId: record.parentId, depth: record.depth, profile: "reader", taskRunId, managedGate: true, mainAgentId: main.record.id, grants: record.grants, allocation: record.allocation, instructions: record.instructions, model: record.model } };
+  }
+
+  private installManagedReviewer(record: AgentRecord, mainAgentId: AgentId, taskRunId: TaskRunId, reservation: AgentCreationReservation): void {
+    this.scheduler.commitAgentCreation(reservation, record.id);
+    this.agents.set(record.id, newRuntime(record));
+    this.gate.linkReviewer(record.id, taskRunId, mainAgentId);
   }
 
   /** Fresh in-memory reviewer conversation per evaluation, same identity. */
@@ -5261,6 +5382,7 @@ export class Supervisor implements GateHost {
     rt.activeRun = run;
     void (async () => {
       try {
+        mkdirSync(rt.record.allocation.tmpDir, { recursive: true });
         const worker = await this.launchWorker(rt);
         // Re-check AFTER the launch await at the actual send boundary: a
         // shutdown or recover that landed mid-launch holds the root now, so
@@ -5378,7 +5500,7 @@ export class Supervisor implements GateHost {
       // Reload under current authority (no inference), then repair.
       this.detached(async () => {
         try {
-          await this.reloadAgent(rt);
+          await this.reloadAgent(rt, rt.queue.find((q) => q.id === taskRunId));
           this.dispatchRepair(rt);
         } catch (e) {
           rt.pendingRepair = null;
@@ -5593,7 +5715,7 @@ export class Supervisor implements GateHost {
       contextFill: rt.contextTokens !== null && rt.contextWindow !== null ? { tokens: rt.contextTokens, window: rt.contextWindow } : null,
       lastActivityAt: r.lastActivityAt,
       managedGateFor: this.gate.isReviewer(r.id) ? this.gate.managedTaskFor(r.id) : null,
-      gateTaskRunId: rt.gateTaskRunId,
+      gateTaskRunId: rt.gateTaskRunId === r.currentTaskRunId ? rt.gateTaskRunId : null,
       openQuestion,
     };
   }

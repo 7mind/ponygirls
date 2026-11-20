@@ -505,6 +505,21 @@ The capacity response separates same-model reusable IDs from checkpoint-ready
 model-switch IDs. A fresh gated/reviewed spawn still needs its reserved managed
 reviewer identities; ordinary-agent reuse is not a substitute for that panel.
 
+To give a settled writer a fresh validation gate while keeping its identity,
+model, history, and Git workspace, the governing session can pass:
+
+```text
+send_message(target="<settled-writer-id>", mode="task", message="Correct the implementation.", gate={model:{provider:"<provider>", id:"<reviewer-model>"}, thinkingLevel:"high", prompt:"Verify the correction."})
+```
+
+This starts a new task run and needs enough open slots for the whole new
+reviewer panel. The previous run's result and reviews are unchanged. Do not
+combine `gate` with a main `model` override or use it on a busy or queued agent.
+If the writer needs to reload, the gate requires a validated checkpoint of its
+latest execution generation; it will not start a fresh conversation.
+Omitting `gate` starts an ordinary follow-up. To re-review an existing frozen
+candidate without sending new work, use `manage_gate` with `retry_review`.
+
 For an explicit model/provider change, the owner or governor can pass:
 
 ```text

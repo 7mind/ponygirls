@@ -370,13 +370,30 @@ test("the governing model is told about gate checks and promised outputs", async
   const agentDir = mkdtempSync(join(tmpdir(), "subagents-ext-"));
   try {
     const { schemas } = await loadExtension(agentDir);
-    for (const tool of ["spawn_agent", "manage_gate"]) {
+    for (const tool of ["spawn_agent", "manage_gate", "send_message"]) {
       const gate = schemas.get(tool)!.properties!["gate"]!;
       const check = gate.properties!["checks"]!.items!;
       assert.deepEqual(Object.keys(check.properties!).sort(), ["command", "id", "timeoutMs"], tool);
       assert.ok(gate.properties!["promisedOutputs"], `${tool} lacks promisedOutputs`);
     }
   } finally {
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("the governing send_message forwards the spawn gate schema and does not expose it to children", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "subagents-followup-schema-"));
+  const { schemas, tools, handlers, ctx } = await loadExtension(agentDir);
+  try {
+    assert.deepEqual(schemas.get("send_message")!.properties!["gate"], schemas.get("spawn_agent")!.properties!["gate"]);
+    assert.equal((childToolSpec<TSchema>(Type, "send_message").parameters as Schema).properties?.["gate"], undefined);
+    const result = await tools.get("send_message")!("id", {
+      target: "missing", mode: "note", message: "not a task", gate: { model: { provider: "p", id: "m" }, thinkingLevel: "low", prompt: "rubric" },
+    }, undefined, undefined, ctx);
+    assert.equal(result.isError, true);
+    assert.match(result.content[0]!.text, /INVALID: gate requires mode=task/);
+  } finally {
+    await handlers.get("session_shutdown")!({}, ctx);
     rmSync(agentDir, { recursive: true, force: true });
   }
 });
