@@ -144,7 +144,31 @@ test('a failed download, an ignored byte range and an oversized range answer are
   await assert.rejects(leadingBytes(whole, 10), /HTTP 200 for a byte range/);
   const tooMuch = headers => new Response('x'.repeat(50), {status: headers.Range ? 206 : 200, headers: {'content-length': '50'}});
   await assert.rejects(leadingBytes(tooMuch, 10), /too large/);
-  await assert.rejects(leadingBytes(() => new Response('x'.repeat(50)), 10), /too large/, 'without a declared length the stream cap applies');
+  await assert.rejects(leadingBytes(() => new Response('x'.repeat(50)), 10), /HTTP 200 for a byte range/, 'no declared length and no byte ranges');
+});
+// Regression (review F2): a compressing or chunking proxy removes Content-Length; the larger file was refused as too large
+// instead of being cut. The byte-range answer is never compressed and states the size.
+test('a larger file without a declared length is still cut to its first bytes', async () => {
+  const text = 'line one\nline two\nline three\n';
+  const asked = [];
+  const chunked = body => new Response(new ReadableStream({start(controller) { controller.enqueue(new TextEncoder().encode(body)); controller.close(); }}));
+  const proxy = headers => {
+    asked.push(headers);
+    const range = headers.Range && /^bytes=0-(\d+)$/.exec(headers.Range);
+    if (!range) return chunked(text);
+    const body = text.slice(0, Number(range[1]) + 1);
+    return new Response(body, {status: 206, headers: {'content-range': `bytes 0-${body.length - 1}/${text.length}`}});
+  };
+  assert.equal(chunked(text).headers.get('content-length'), null);
+  const large = await leadingBytes(proxy, 22);
+  assert.deepEqual([decoded(large.bytes), large.truncated, large.total], ['line one\nline two\n', true, text.length]);
+  assert.deepEqual(asked, [{}, {Range: 'bytes=0-21'}]);
+  asked.length = 0;
+  const small = await leadingBytes(proxy, 100);
+  assert.deepEqual([decoded(small.bytes), small.truncated, small.total], [text, false, null]);
+  assert.deepEqual(asked, [{}], 'a file within the limit needs no second request');
+  const unsized = headers => headers.Range ? new Response(text.slice(0, 22), {status: 206, headers: {'content-range': 'bytes 0-21/*'}}) : chunked(text);
+  assert.equal((await leadingBytes(unsized, 22)).total, null, 'an unstated size stays unknown');
 });
 test('line fragments address one line or an inclusive range within the text', () => {
   assert.deepEqual(lineRange('#L12', 40), {first: 12, last: 12});

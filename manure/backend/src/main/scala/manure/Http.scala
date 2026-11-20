@@ -411,7 +411,12 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       navigational.putHeaders(raw("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action " + forms))
     else navigational
   }
-  private def mime(path: String): String = path.toLowerCase(java.util.Locale.ROOT).split('.').lastOption.getOrElse("") match
+  /** Lower-case file name and its extension (the text after the last dot of the name; empty without a dot). The one
+    * reading of a path's type for both the content type and the viewer. */
+  private def nameAndExtension(path: String): (String,String) =
+    val name = path.substring(path.lastIndexOf('/') + 1).toLowerCase(java.util.Locale.ROOT)
+    (name,if name.contains('.') then name.substring(name.lastIndexOf('.') + 1) else "")
+  private def mime(path: String): String = nameAndExtension(path)._2 match
     case "html" | "htm" => "text/html; charset=utf-8"
     case "js" | "mjs" => "application/javascript; charset=utf-8"
     case "css" => "text/css; charset=utf-8"
@@ -520,8 +525,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
   /** A type that is not listed is `unknown`: the viewer shows it as text when its content is text, and otherwise
     * offers the download. */
   private def fileType(path: String): FileType =
-    val name = path.split('/').last.toLowerCase(java.util.Locale.ROOT)
-    val extension = if name.contains('.') then name.substring(name.lastIndexOf('.') + 1) else ""
+    val (name,extension) = nameAndExtension(path)
     fileNames.get(name).orElse(fileTypes.get(extension))
       .getOrElse(FileType(if extension.isEmpty then "File" else extension.toUpperCase(java.util.Locale.ROOT) + " file",Some("unknown")))
   private def viewerKind(path: String): Option[String] = fileType(path).viewer

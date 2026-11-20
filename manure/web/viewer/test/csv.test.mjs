@@ -43,6 +43,13 @@ test('an unclosed quoted field and text after a closing quote are faults with th
   assert.match(after.message, /Line 3 has text after the closing quote/);
 });
 
+// Regression (review F6): a lone CR ends a record but is not a line of the text view, which splits at LF only.
+test('fault lines count line feeds, as the text view does', () => {
+  assert.equal(fault('a,b\rc,d\r1,"open\r').line, 1);
+  assert.equal(fault('a,b\r\nc,"x\ry"z\r\n').line, 2);
+  assert.equal(fault('a\n\n\n"x\ny\rz" w\n').line, 5);
+});
+
 test('only a leading part of a large table is kept; every record is counted', () => {
   const tall = parseCsv('n\n' + Array.from({ length: 5000 }, (_, i) => i).join('\n') + '\n', ',');
   assert.equal(tall.total, 5001);

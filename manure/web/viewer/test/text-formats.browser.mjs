@@ -14,7 +14,7 @@ const CSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src
 const E = '\x1b';
 
 /** Loads `file` (name, viewer kind, bytes) at `hash` and runs `probe` in the page; returns the requests for the raw file. */
-async function view({ name, kind, bytes, hash = '', type = 'text/plain; charset=utf-8' }, probe) {
+async function view({ name, kind, bytes, hash = '', type = 'text/plain; charset=utf-8', declaresLength = true, statesTotal = true }, probe) {
   assert.ok(process.env.CHROMIUM_BIN, 'set CHROMIUM_BIN');
   const template = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
   const rawUrl = `/__manure/raw/${encodeURIComponent(name)}`;
@@ -49,9 +49,10 @@ async function view({ name, kind, bytes, hash = '', type = 'text/plain; charset=
         requests.push(req.headers.range || 'whole');
         res.setHeader('content-type', type);
         const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || '');
-        if (!range) { res.setHeader('content-length', bytes.length); res.end(bytes); return; }
+        // Without a declared length the body is chunked, as behind a compressing proxy.
+        if (!range) { if (declaresLength) res.setHeader('content-length', bytes.length); else res.flushHeaders(); res.end(bytes); return; }
         const start = Number(range[1]), end = Math.min(bytes.length, range[2] === '' ? bytes.length : Number(range[2]) + 1);
-        res.statusCode = 206; res.setHeader('content-range', `bytes ${start}-${end - 1}/${bytes.length}`); res.setHeader('content-length', end - start);
+        res.statusCode = 206; res.setHeader('content-range', `bytes ${start}-${end - 1}/${statesTotal ? bytes.length : '*'}`); res.setHeader('content-length', end - start);
         res.end(bytes.subarray(start, end));
       }
       else if (await serveShell(req, res)) { /* shared design system */ }
@@ -109,6 +110,10 @@ test('line links: fragment on load, click, shift-click range, history navigation
     const box = view.children[119].getBoundingClientRect();
     check(box.top >= 0 && box.bottom <= innerHeight, 'the first addressed line is scrolled into sight');
     const number = n => view.children[n - 1].querySelector('a.ln');
+    // Regression (review F7): a shift-click after opening a line link started a new selection instead of extending it.
+    number(125).dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, shiftKey:true}));
+    same(location.hash, '#L120-L125', 'a shift-click extends from the line the address names');
+    same(marked(view).length, 6, 'the extended range is marked');
     same(number(5).getAttribute('href'), '#L5', 'each number links its own line');
     number(5).dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}));
     same(location.hash, '#L5', 'a click addresses the line');
@@ -123,6 +128,10 @@ test('line links: fragment on load, click, shift-click range, history navigation
     check(!open.defaultPrevented && location.hash === '#L2-L5', 'a modified click keeps its browser meaning');
     location.hash = '#L290';
     await until(() => marked(view).join() === '290', 'a changed fragment marks its line');
+    number(292).dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, shiftKey:true}));
+    same(location.hash, '#L290-L292', 'and is where the next shift-click extends from');
+    location.hash = '#L290';
+    await until(() => marked(view).join() === '290', 'back to one line');
     const late = view.children[289].getBoundingClientRect();
     check(late.top >= 0 && late.bottom <= innerHeight, 'and scrolls to it');
     location.hash = '#L999';
@@ -167,7 +176,6 @@ test('JSON: formatted by default with stored lexemes, raw on demand and for line
     check(pressed(raw) && formattedView.hidden && !rawView.hidden, 'raw on demand');
     rendered.click();
     check(pressed(rendered) && !formattedView.hidden && rawView.hidden, 'and back');
-    rawView.querySelector('a.ln');
     location.hash = '#L1';
     await until(() => pressed(raw) && !rawView.hidden && marked(rawView).join() === '1', 'a line link switches to the raw text');`));
   await view({ ...file('metrics.json', 'text', json), hash: '#L1' }, probe(`
@@ -284,6 +292,75 @@ test('a text file over the limit shows its leading whole lines with a note; mark
   assert.deepEqual(requests, ['whole', 'bytes=0-2097151'], 'the oversized file is asked for again as its first bytes');
 });
 
+// Regression (review F2): behind a proxy that removes Content-Length the larger file was refused as too large.
+test('a larger file without a declared length is cut all the same; an unstated size is not invented', async () => {
+  const text = ('y'.repeat(99) + '\n').repeat(26000); // 2,600,000 bytes
+  const kept = Math.floor(2 * 1024 * 1024 / 100);
+  const requests = await view({ ...file('proxied.log', 'text', text), declaresLength: false }, `
+    same(labelled('File text').children.length, ${kept}, 'whole lines up to the limit');
+    same($('.view-note .notice-title').textContent, 'Showing the first 2.0 MiB of 2.5 MiB', 'the size comes from the byte-range answer');
+  `);
+  assert.deepEqual(requests, ['whole', 'bytes=0-2097151']);
+  await view({ ...file('proxied.log', 'text', text), declaresLength: false, statesTotal: false }, `
+    same($('.view-note .notice-title').textContent, 'Showing the first 2.0 MiB', 'no total without a stated size');
+    same($('#meta-extra').textContent, 'first ${kept.toLocaleString('en-US')} lines', 'meta line');
+  `);
+});
+
+// Regression (review F3): a cut-off table was parsed as if complete: a quoted cell split by the cut was reported as a
+// fault of the file, and counts of the shown part were presented as the file's. A cut-off file has no structured view.
+test('a cut-off file is shown as text only: no table, no formatted JSON, no diff totals, no fault of the cut', async () => {
+  // One cell of many lines lies across the 2 MiB boundary.
+  const csv = 'id,note\n' + ('7,' + 'short cell '.repeat(10) + '\n').repeat(17000) + '8,"' + ('a line inside one long quoted cell '.repeat(3) + '\n').repeat(4000) + '"\n' + '9,tail\n'.repeat(1000);
+  const cut = csv.slice(0, csv.lastIndexOf('\n', 2 * 1024 * 1024 - 1) + 1);
+  const cutLines = cut.split('\n').length - 1;
+  assert.ok(cutLines < 50000, 'the fixture is cut by size, not by its line count');
+  assert.equal((cut.match(/"/g) || []).length % 2, 1, 'the fixture is cut inside a quoted cell');
+  await view(file('big.csv', 'text', csv), `
+    same($('.view-note .notice-title').textContent, 'Showing the first 2.0 MiB of ${(csv.length / 1024 / 1024).toFixed(1)} MiB', 'the only note is the cut');
+    same(all('.view-note').length, 1, 'the cut is not reported as a fault of the file');
+    check($('#view-mode').hidden && !labelled('CSV table'), 'no table of a part');
+    same(labelled('File text').textContent.length, ${cut.length}, 'the leading lines as text');
+    same($('#meta-extra').textContent, 'first ${cutLines.toLocaleString('en-US')} lines', 'no row or column counts of a part');
+  `);
+  const json = '[' + '{"n":1,"text":"' + 'z'.repeat(80) + '"},\n'.repeat(1) + ('{"n":2,"text":"' + 'z'.repeat(80) + '"},\n').repeat(26000) + 'null]\n';
+  await view(file('big.json', 'text', json), `
+    same(all('.view-note').length, 1, 'only the cut is noted');
+    check($('#view-mode').hidden && !labelled('Formatted JSON'), 'no formatted view of a part');
+    check(!$('#meta-extra').textContent.includes('valid JSON'), 'validity is not claimed for a part: ' + $('#meta-extra').textContent);
+  `);
+  const diff = 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,30000 +1,30000 @@\n' + ('-' + 'o'.repeat(58) + '\n+' + 'n'.repeat(58) + '\n').repeat(30000);
+  await view(file('big.diff', 'text', diff), `
+    check(/^first [\\d,]+ lines$/.test($('#meta-extra').textContent), 'no totals of a part: ' + $('#meta-extra').textContent);
+    check(labelled('File text').querySelector('.diff-add') && labelled('File text').querySelector('.diff-del'), 'the shown lines are still coloured');
+  `);
+});
+
+// Regression (review F8): one block per line without a bound; a file of very many short lines (2 MiB of line breaks is
+// two million) froze the page. Measured before the bound: 100,000 two-byte lines took 5 s to render.
+test('a file of very many lines shows its first 50,000 with a note', async () => {
+  const text = 'x\n'.repeat(60000);
+  const requests = await view(file('many.txt', 'text', text), `
+    const view = labelled('File text');
+    same(view.children.length, 50000, 'the first lines');
+    same(view.textContent.length, 100000, 'and exactly their text');
+    same($('.view-note .notice-title').textContent, 'Showing the first 50,000 lines', 'note title');
+    check($('.view-note').textContent.includes('The preview ends at line 50,000.'), 'note text: ' + $('.view-note').textContent);
+    check($('.view-note a[download]'), 'the note offers the original');
+    same($('#meta-extra').textContent, 'first 50,000 lines', 'meta line');
+    same((await copied()).length, 100000, 'copy raw copies the shown part');
+    await until(() => toast() === 'Shown part of the file copied.', 'and says so');
+    location.hash = '#L50001';
+    await until(() => marked(view).length === 0, 'a line that is not shown cannot be marked');
+  `);
+  assert.deepEqual(requests, ['whole'], 'the file itself was within the byte limit');
+  await view(file('limit.txt', 'text', 'x\n'.repeat(50000)), `
+    same(labelled('File text').children.length, 50000, 'exactly the limit is the whole file');
+    check(!$('.view-note'), 'no note');
+    same($('#meta-extra').textContent, '50,000 lines', 'meta line');
+  `);
+});
+
 test('source text above the highlighting limit is plain and says so', async () => {
   const text = 'def f():\n    return "value"\n'.repeat(22000); // about 600 KiB
   await view(file('big.py', 'text', text), `
@@ -348,6 +425,20 @@ test('Markdown code blocks: highlighted by info string, diff by lines, plain whe
     $('#toasts').replaceChildren(); copies[3].click();
     await until(() => toast().includes('Could not copy. Select the text'), 'denial feedback');
     same($('#meta-extra').textContent, '1 section \u00b7 24 lines', 'markdown meta unchanged');
+  `);
+});
+
+test('Markdown code blocks beyond the document highlighting limit stay plain and are counted in the meta line', async () => {
+  const block = size => '```python\n' + 'value = "text"\n'.repeat(Math.ceil(size / 15)) + '```\n\n';
+  const markdown = '# Big\n\n' + block(200 * 1024) + block(100 * 1024) + '```sh\necho small\n```\n';
+  await view(file('big.md', 'markdown', markdown), `
+    const blocks = all('article.markdown pre > code');
+    same(blocks.length, 3, 'code blocks');
+    check(blocks[0].querySelector('.hljs-string'), 'the first block is within the limit');
+    check(!blocks[1].children.length, 'the block that exceeds what is left stays plain');
+    check(blocks[2].querySelector('.hljs-built_in'), 'a later small block still fits');
+    same(blocks[1].textContent.length, ${Math.ceil(100 * 1024 / 15) * 15}, 'its text is complete');
+    check($('#meta-extra').textContent.endsWith(' \u00b7 1 code block not highlighted'), 'meta line: ' + $('#meta-extra').textContent);
   `);
 });
 

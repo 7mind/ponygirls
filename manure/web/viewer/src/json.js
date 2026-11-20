@@ -20,7 +20,11 @@ export class JsonFormatLimitError extends Error {
   constructor(message) { super(message); this.name = 'JsonFormatLimitError'; }
 }
 
-function position(text, offset) {
+/** 1-based line and column of an offset. The end of a text that ends with a line break is the end of its last
+ * line: a text view of the file has no line after it. */
+function position(text, at) {
+  let offset = at;
+  if (offset === text.length && text.endsWith('\n')) offset -= text.endsWith('\r\n') ? 2 : 1;
   const before = text.slice(0, offset);
   const line = (before.match(/\n/g) || []).length + 1;
   return [line, offset - (before.lastIndexOf('\n') + 1) + 1];

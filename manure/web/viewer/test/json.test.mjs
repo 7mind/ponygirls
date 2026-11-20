@@ -45,6 +45,10 @@ test('faults are reported with the line and column of the first offending charac
     ['', 1, 1, /end of text: a value was expected/],
     [' \n ', 2, 2, /end of text: a value was expected/],
     ['[1,\n [2,\n  3', 3, 4, /end of text: "," or "]" was expected/],
+    // Regression (review F6): after a final line break the fault is at the end of the last line, not on a line the file lacks.
+    ['{"a": 1,\n', 1, 9, /end of text: a member name was expected/],
+    ['[1,\r\n', 1, 4, /end of text: a value was expected/],
+    ['[\n\n', 2, 1, /end of text: a value or "]" was expected/],
     ['{"a":', 1, 6, /end of text: a value was expected/],
     ['"open', 1, 6, /end of text: the closing quote of the string was expected/],
     ['"bad \\x escape"', 1, 6, /"\\": a valid escape sequence was expected/],

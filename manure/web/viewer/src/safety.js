@@ -1,4 +1,7 @@
 export const TEXT_LIMIT = 2 * 1024 * 1024;
+/** Lines a text view shows: each is a block element with a gutter link, and their number is not bounded by TEXT_LIMIT
+ * in any useful way (2 MiB of line breaks is two million lines). */
+export const LINE_LIMIT = 50000;
 export const GRAPH_LIMIT = 50000;
 export function localUrl(value, base = location.href) {
   try {
@@ -41,9 +44,13 @@ export function markdownLinkUrl(value, base, mountPath) {
 export function diagramCount(count) {
   if (count > 32) throw new Error('Markdown exceeds the preview limit of 32 diagrams.');
 }
+/** A body larger than the preview limit, as declared or as received. */
+export class TooLargeError extends Error {
+  constructor() { super('File is too large to preview. Download the original instead.'); this.name = 'TooLargeError'; }
+}
 export async function boundedBytes(response, limit) {
   if (!response.ok) throw new Error(`Download failed (HTTP ${response.status}).`);
-  if (Number(response.headers.get('content-length')) > limit) throw new Error('File is too large to preview. Download the original instead.');
+  if (Number(response.headers.get('content-length')) > limit) throw new TooLargeError();
   const reader = response.body.getReader();
   const chunks = []; let size = 0;
   try {
@@ -51,7 +58,7 @@ export async function boundedBytes(response, limit) {
       const {done, value} = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > limit) throw new Error('File is too large to preview. Download the original instead.');
+      if (size > limit) throw new TooLargeError();
       chunks.push(value);
     }
   } catch (error) { await reader.cancel(); throw error; }
@@ -77,18 +84,26 @@ export function wholeLines(bytes) {
   const lineEnd = bytes.subarray(0, end).lastIndexOf(0x0a);
   return bytes.subarray(0, lineEnd < 0 ? end : lineEnd + 1);
 }
+const RANGE_TOTAL = /^bytes \d+-\d+\/(\d+)$/;
 /**
  * At most the first `limit` bytes of a file. `request(headers)` performs the fetch. A larger file is asked for
- * again as a byte range and reported as `truncated` with its `total` size; its bytes end at a line end.
+ * again as a byte range and reported as `truncated`, with its `total` size when the server states it; its bytes
+ * end at a line end. A file is larger when its declared length says so or, without a declared length (a
+ * compressing or chunking proxy), when its body exceeds the limit.
  */
 export async function leadingBytes(request, limit) {
   const whole = await request({});
   if (!whole.ok) throw new Error(`Download failed (HTTP ${whole.status}).`);
-  const total = Number(whole.headers.get('content-length'));
-  if (!(total > limit)) return { bytes: await boundedBytes(whole, limit), total: null, truncated: false };
-  await whole.body.cancel();
+  const declared = Number(whole.headers.get('content-length'));
+  if (declared > limit) await whole.body.cancel();
+  else {
+    try { return { bytes: await boundedBytes(whole, limit), total: null, truncated: false }; }
+    catch (error) { if (!(error instanceof TooLargeError)) throw error; }
+  }
   const part = await request({ Range: `bytes=0-${limit - 1}` });
   if (part.status !== 206) throw new Error(`Download failed (HTTP ${part.status} for a byte range).`);
+  const stated = RANGE_TOTAL.exec(part.headers.get('content-range') ?? '');
+  const total = stated ? Number(stated[1]) : declared > limit ? declared : null;
   return { bytes: wholeLines(await boundedBytes(part, limit)), total, truncated: true };
 }
 const LINE_FRAGMENT = /^#L([1-9][0-9]*)(?:-L([1-9][0-9]*))?$/;

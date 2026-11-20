@@ -1011,7 +1011,7 @@ final class HttpSuite extends FunSuite:
     Vector("summarise.py" -> Some("text"),"fix.diff" -> Some("text"),"Main.kt" -> Some("text"),"Makefile" -> Some("text"),"Dockerfile" -> Some("text"),
       "LICENSE" -> Some("text"),".gitignore" -> Some("text"),"flake.lock" -> Some("text"),"demo.webm" -> Some("video"),"clip.MP4" -> Some("video"),
       "tone.wav" -> Some("audio"),"bundle.zip" -> Some("archive"),"model.safetensors" -> Some("unknown"),"run-20261120" -> Some("unknown"),
-      "BUILD" -> Some("unknown"),"page.html" -> None,"PAGE.HTM" -> None).traverse_ { (name,kind) =>
+      "BUILD" -> Some("unknown"),"html" -> Some("unknown"),"page.html." -> Some("unknown"),"page.html" -> None,"PAGE.HTM" -> None).traverse_ { (name,kind) =>
       val bytes = Exact.utf8("payload of " + name)
       for
         a <- f.artifacts.init(f.identity,InitUpload(name,ArtifactKind.File,Visibility.Public,Vector(ManifestEntry(name,false,bytes.length,SecretCodec.sha256(bytes))),None,Vector.empty,None,None))
@@ -1083,7 +1083,9 @@ final class HttpSuite extends FunSuite:
       "build.log" -> plain,"table.csv" -> plain,"config.xml" -> plain,"data.json" -> "application/json","app.js" -> "application/javascript; charset=utf-8",
       "site.css" -> "text/css; charset=utf-8","page.html" -> "text/html; charset=utf-8","photo.png" -> "image/png","blob.bin" -> "application/octet-stream",
       "bundle.zip" -> "application/octet-stream","noextension" -> "application/octet-stream","Makefile" -> plain,"docker/Dockerfile" -> plain,
-      "LICENSE" -> plain,".gitignore" -> plain,"flake.lock" -> plain,"demo.webm" -> "video/webm","tone.wav" -> "audio/wav")
+      "LICENSE" -> plain,".gitignore" -> plain,"flake.lock" -> plain,"demo.webm" -> "video/webm","tone.wav" -> "audio/wav",
+      // Regression (review F5): the type was taken from the text after any dot of the path, so these were text/html.
+      "html" -> "application/octet-stream","page.html." -> "application/octet-stream","dir.html/data" -> "application/octet-stream","dir.html/readme" -> plain)
     def contentType(r: org.http4s.Response[IO]) = r.headers.headers.find(_.name == CIString("Content-Type")).map(_.value)
     for
       a <- f.artifacts.init(f.identity,InitUpload("types",ArtifactKind.Directory,Visibility.Public,

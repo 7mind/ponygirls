@@ -78,7 +78,7 @@ Text files open as numbered text whose line numbers are links (`#L12`,
 C++, Java, Kotlin, Scala, Go, Rust, shell, YAML, TOML, Nix and others), `.diff` and
 `.patch` are coloured by line, `.json` and `.jsonl` get a Formatted | Raw switch,
 `.csv` and `.tsv` a Table | Raw switch, and a log with ANSI colour codes a Rendered |
-Raw switch. A text file over 2 MiB shows its first 2 MiB with a note. Audio and
+Raw switch. A text file over 2 MiB or 50,000 lines shows its leading part with a note. Audio and
 video files open in the browser's player. Every other file except HTML has a
 viewer page too: a type that is not listed is shown as text when its content is
 UTF-8 text, and otherwise (like archives) as a card that offers the download.

@@ -7,7 +7,7 @@ const QUOTE = '"';
 const NUMERIC_CELL = /^[+-]?(?:[0-9]+(?:[.,][0-9]+)*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?%?$/;
 
 export class CsvSyntaxError extends Error {
-  /** `line` is the 1-based line of the text where the fault starts. */
+  /** `line` is the 1-based line of the text where the fault starts; lines end at a line feed, as in the text view. */
   constructor(message, line) { super(message); this.name = 'CsvSyntaxError'; this.line = line; }
 }
 
@@ -24,7 +24,7 @@ export function parseCsv(text, delimiter) {
   while (at < length) {
     // Skip empty lines between records.
     if (text[at] === '\n') { line++; at++; continue; }
-    if (text[at] === '\r') { if (text[at + 1] !== '\n') line++; at++; continue; }
+    if (text[at] === '\r') { at++; continue; }
     const record = [];
     const recordLine = line;
     for (;;) {
@@ -38,7 +38,7 @@ export function parseCsv(text, delimiter) {
           if (close < 0) throw new CsvSyntaxError(`The quoted field that starts on line ${opened} is not closed.`, opened);
           const part = text.slice(at, close);
           value += part;
-          line += (part.match(/\r\n|\r|\n/g) || []).length;
+          line += (part.match(/\n/g) || []).length;
           at = close + 1;
           if (text[at] !== QUOTE) break;
           value += QUOTE; at++;

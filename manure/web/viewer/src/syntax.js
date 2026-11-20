@@ -30,22 +30,23 @@ export const FORMAT_JSON_LINES = 'jsonl';
 export const FORMAT_CSV = 'csv';
 export const FORMAT_TSV = 'tsv';
 
-const EXTENSION_FORMAT = { diff: FORMAT_DIFF, patch: FORMAT_DIFF, json: FORMAT_JSON, ipynb: FORMAT_JSON, jsonl: FORMAT_JSON_LINES, ndjson: FORMAT_JSON_LINES, csv: FORMAT_CSV, tsv: FORMAT_TSV };
-const NAME_FORMAT = { 'flake.lock': FORMAT_JSON };
+// Maps, not object literals: a file may be named `constructor` or `__proto__`.
+const EXTENSION_FORMAT = new Map(Object.entries({ diff: FORMAT_DIFF, patch: FORMAT_DIFF, json: FORMAT_JSON, ipynb: FORMAT_JSON, jsonl: FORMAT_JSON_LINES, ndjson: FORMAT_JSON_LINES, csv: FORMAT_CSV, tsv: FORMAT_TSV }));
+const NAME_FORMAT = new Map(Object.entries({ 'flake.lock': FORMAT_JSON }));
 // Extensions that are not themselves a grammar name or alias of highlight.js.
-const EXTENSION_LANGUAGE = {
+const EXTENSION_LANGUAGE = new Map(Object.entries({
   jsonl: 'json', ndjson: 'json', ipynb: 'json', sbt: 'scala', sc: 'scala', conf: 'ini', cfg: 'ini', env: 'ini', gradle: 'groovy',
   bzl: 'python', bazel: 'python', star: 'python', pyi: 'python', hs: 'haskell', ex: 'elixir', exs: 'elixir', erl: 'erlang',
   clj: 'clojure', cljs: 'clojure', ml: 'ocaml', mli: 'ocaml', tex: 'latex', proto: 'protobuf', ps1: 'powershell', mm: 'objectivec',
-};
-const NAME_LANGUAGE = {
+}));
+const NAME_LANGUAGE = new Map(Object.entries({
   makefile: 'makefile', gnumakefile: 'makefile', dockerfile: 'dockerfile', containerfile: 'dockerfile', 'cmakelists.txt': 'cmake',
   'flake.lock': 'json', 'cargo.lock': 'ini', 'poetry.lock': 'ini', 'uv.lock': 'ini', pipfile: 'ini',
   gemfile: 'ruby', rakefile: 'ruby', vagrantfile: 'ruby', jenkinsfile: 'groovy', 'nginx.conf': 'nginx',
   '.bashrc': 'bash', '.bash_profile': 'bash', '.profile': 'bash', '.zshrc': 'bash', '.gitconfig': 'ini', '.editorconfig': 'ini', '.npmrc': 'ini',
-};
+}));
 // Bazel files are recognised in their conventional spelling only: `build` is also an ordinary script name.
-const EXACT_NAME_LANGUAGE = { BUILD: 'python', 'BUILD.bazel': 'python', WORKSPACE: 'python', 'WORKSPACE.bazel': 'python', 'MODULE.bazel': 'python' };
+const EXACT_NAME_LANGUAGE = new Map(Object.entries({ BUILD: 'python', 'BUILD.bazel': 'python', WORKSPACE: 'python', 'WORKSPACE.bazel': 'python', 'MODULE.bazel': 'python' }));
 const DOCKERFILE_PREFIX = 'dockerfile.';
 // highlight.js registers plain text as a grammar; it marks nothing.
 const UNMARKED = new Set(['plaintext', 'text', 'txt']);
@@ -58,8 +59,8 @@ export function fileSyntax(path) {
   const written = path.split('/').at(-1);
   const name = written.toLowerCase();
   const extension = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : '';
-  const format = NAME_FORMAT[name] ?? EXTENSION_FORMAT[extension] ?? FORMAT_TEXT;
-  const named = EXACT_NAME_LANGUAGE[written] ?? NAME_LANGUAGE[name] ?? (name.startsWith(DOCKERFILE_PREFIX) ? 'dockerfile' : EXTENSION_LANGUAGE[extension]);
+  const format = NAME_FORMAT.get(name) ?? EXTENSION_FORMAT.get(extension) ?? FORMAT_TEXT;
+  const named = EXACT_NAME_LANGUAGE.get(written) ?? NAME_LANGUAGE.get(name) ?? (name.startsWith(DOCKERFILE_PREFIX) ? 'dockerfile' : EXTENSION_LANGUAGE.get(extension));
   // A diff is coloured by its own line classification, not by a grammar.
   return { format, language: format === FORMAT_DIFF ? null : grammar(named ?? extension) };
 }
@@ -67,15 +68,23 @@ export function fileSyntax(path) {
 /** `{format, language}` of a fenced code block by the first word of its info string. */
 export function fenceSyntax(info) {
   const name = info.toLowerCase();
-  if (EXTENSION_FORMAT[name] === FORMAT_DIFF) return { format: FORMAT_DIFF, language: null };
-  return { format: FORMAT_TEXT, language: grammar(EXTENSION_LANGUAGE[name] ?? name) };
+  if (EXTENSION_FORMAT.get(name) === FORMAT_DIFF) return { format: FORMAT_DIFF, language: null };
+  return { format: FORMAT_TEXT, language: grammar(EXTENSION_LANGUAGE.get(name) ?? name) };
 }
 
-function flatten(node, cls, tokens) {
-  if (node.type === 'text') tokens.push({ cls, text: node.value });
-  else for (const child of node.children) flatten(child, node.type === 'element' ? node.properties.className.join(' ') : cls, tokens);
+/** Text runs of a highlight tree in order, each with the classes of its innermost element. Scopes nest without bound
+ * in some grammars (a template literal inside a substitution inside a template literal ...), so this does not recurse. */
+function flatten(root) {
+  const tokens = [];
+  const pending = [{ node: root, cls: '' }];
+  while (pending.length) {
+    const { node, cls } = pending.pop();
+    if (node.type === 'text') { tokens.push({ cls, text: node.value }); continue; }
+    const inner = node.type === 'element' ? node.properties.className.join(' ') : cls;
+    for (let index = node.children.length - 1; index >= 0; index--) pending.push({ node: node.children[index], cls: inner });
+  }
   return tokens;
 }
 
 /** Tokens of `text` under a grammar accepted by fileSyntax/fenceSyntax; each run has the classes of its innermost scope. */
-export function highlightTokens(text, language) { return flatten(lowlight.highlight(language, text), '', []); }
+export function highlightTokens(text, language) { return flatten(lowlight.highlight(language, text)); }

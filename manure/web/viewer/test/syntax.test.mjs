@@ -36,6 +36,15 @@ test('plain text, logs, unknown extensions and bare names get no grammar', () =>
   }
 });
 
+// Regression (review F1): the name tables were plain objects, so `constructor` or `__proto__` resolved to an inherited
+// member and the highlighter threw on it; the file, or the whole Markdown document, lost its preview.
+test('names of object members are ordinary names without a grammar', () => {
+  for (const name of ['constructor', '__proto__', 'toString', 'valueOf', 'hasOwnProperty', 'Constructor', 'a.constructor', 'a.__proto__', 'dir/toString']) {
+    assert.deepEqual(fileSyntax(name), { format: 'text', language: null }, name);
+  }
+  for (const info of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) assert.deepEqual(fenceSyntax(info), { format: 'text', language: null }, info);
+});
+
 test('structural formats: diff, JSON, JSON Lines and delimited tables', () => {
   const expected = { 'a.diff': 'diff', 'a.patch': 'diff', 'a.json': 'json', 'flake.lock': 'json', 'notebook.ipynb': 'json', 'a.jsonl': 'jsonl', 'a.ndjson': 'jsonl', 'a.csv': 'csv', 'a.tsv': 'tsv', 'a.py': 'text', 'a.txt': 'text', Makefile: 'text', 'a.yaml': 'text', 'a.json5': 'text' };
   for (const [path, name] of Object.entries(expected)) assert.equal(format(path), name, path);
@@ -82,6 +91,15 @@ test('markup in the highlighted text stays text', () => {
     assert.equal(tokens.map(token => token.text).join(''), html, name);
     for (const token of tokens) assert.match(token.cls, /^(?:hljs-[a-z_]+(?: [a-z_]+)*)?$/, `class list ${JSON.stringify(token.cls)}`);
   }
+});
+
+// Regression (review F4): scopes nest without bound in some grammars (a template literal inside a substitution inside a
+// template literal ...); flattening them by recursion overflowed the stack and the preview failed.
+test('deeply nested scopes are flattened without recursion', () => {
+  const nested = '`${'.repeat(40000);
+  const tokens = highlightTokens(nested, 'javascript');
+  assert.equal(tokens.map(token => token.text).join(''), nested);
+  assert.ok(tokens.some(token => token.cls === 'hljs-subst' || token.cls === 'hljs-string'), 'still classed');
 });
 
 test('the highlighting limit is 256 KiB of text', () => { assert.equal(HIGHLIGHT_LIMIT, 256 * 1024); });

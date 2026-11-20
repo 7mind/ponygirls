@@ -72,15 +72,24 @@ and the meta line says so (measured in headless Chromium: a 250 KiB Python file 
 rendered in about 1.3 s with highlighting against 0.8 s without).
 
 **Line links.** A click on a line number puts `#L12` in the address, a shift-click on
-another extends it to `#L12-L18`; opening such an address marks the lines and scrolls to
+another extends it to `#L12-L18` (from the line clicked before, or from the line the
+opened address names); opening such an address marks the lines and scrolls to
 them. Lines are the lines of the stored file: formatted JSON and the table have none and
-give way to Raw when a line is addressed. Markdown's Raw view has plain numbers.
+give way to Raw when a line is addressed. Markdown's Raw view has plain numbers. The
+numbers are pointer targets only (no tab stop per line); a line can always be addressed
+by typing the fragment.
 
 **Large files.** A text file over 2 MiB is fetched as its first 2 MiB (a byte range of
 the raw route), cut at the last complete line, and shown with a note that names the last
-line and offers the original. Copy raw then copies the shown part. A cut-off file gets
-no formatted JSON view. Markdown and diagram sources keep the hard 2 MiB limit: a cut
-document would render as a different document.
+line and offers the original. The file counts as larger by its declared length or, when
+a proxy removed the length, when its body exceeds the limit; the size in the note comes
+from the byte-range answer and is left out when the server does not state it. A view
+also shows at most 50,000 lines (every line is a block with a gutter link; measured in
+headless Chromium, 100,000 two-byte lines took 5 s to render, and 2 MiB of line breaks
+did not finish in a minute), with the same note. Copy raw then copies the shown part. A
+part of a file gets no formatted JSON view, no table and no diff totals: they would
+describe the part as if it were the file. Markdown and diagram sources keep the hard
+2 MiB limit: a cut document would render as a different document.
 
 ## Files of other types
 
@@ -99,8 +108,9 @@ Fenced and indented code blocks have **Copy** above the block (shown on hover or
 like the table tools); it copies the code without its fence. A block is highlighted by
 the first word of its info string (` ```python `, `sh`, `yaml`, `scala`, …); ` ```diff `
 is coloured by line like a `.diff` file; blocks without a known language stay plain. One
-document highlights at most 256 KiB of code. `<pre><code>` written as raw HTML with markup
-inside is left alone.
+document highlights at most 256 KiB of code; blocks that do not fit stay plain and the
+meta line counts them (`2 code blocks not highlighted`). `<pre><code>` written as raw HTML
+with markup inside is left alone.
 
 ## Markdown source
 
@@ -222,8 +232,8 @@ output or an uploaded file, so uploaded site favicons and raw bytes are unchange
 ## Bounds and failure behavior
 
 - Markdown and diagram sources: 2 MiB, checked both by declared length and streaming
-  bytes; fetch 30 s. Text files: the first 2 MiB (whole lines) of a larger file, under
-  the same 30 s deadline for both requests.
+  bytes; fetch 30 s. Text files: the first 2 MiB (whole lines) of a larger file and at
+  most 50,000 lines, under the same 30 s deadline for both requests.
 - Highlighting: 256 KiB per text file and per Markdown document, on the main thread.
   Formatted JSON: 256 nesting levels and 8 MiB of formatted text, otherwise raw text
   with a note. Tables: 2,000 rows, 100,000 cells, 500 columns.
