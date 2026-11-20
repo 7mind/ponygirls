@@ -1,0 +1,1 @@
+[{"ordinal":3,"sha256":"synthetic-part-digest","raw":"{\"id\":\"u1\",\"text\":\"λ🐎\"}\n{\"id\":\"a1\",\"parentId\":\"u1\"}\n","messages":[{"id":"u1","parentId":null,"role":"user","text":"λ🐎","timestamp":"2026-11-20T00:00:00Z","recordIndex":0},{"id":"a1","parentId":"u1","role":"assistant","text":"synthetic \\u0000 text","timestamp":null,"recordIndex":1}]}]

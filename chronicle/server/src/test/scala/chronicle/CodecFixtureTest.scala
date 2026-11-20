@@ -110,5 +110,14 @@ class CodecFixtureTest extends munit.FunSuite {
     assertEquals(value.evidence.map(_.sessionId),value.page.rows.map(_.head.id))
     assertEquals(responses.last.result.asInstanceOf[Result.ArchiveSearch].result.evidence,Nil)
   }
+  test("BA specified: upload open/part/state goldens keep 64-bit byte sizes exact, the optional base, receipts and failures") {
+    val opens=checkList("upload-open",UploadOpen.codecJson)
+    assertEquals(opens.map(open => (open.base.map(_.rawBytes),open.rawBytes)),Vector((Some(9007199254740993L),Long.MaxValue),(None,9007199254740993L)))
+    assertEquals(checkList("upload-part",UploadPart.codecJson).map(_.messages.map(_.recordIndex)),Vector(List(0,1)))
+    val states=checkList("upload-state",UploadState.codecJson)
+    assertEquals(states.map(state => (state.phase,state.receivedRawBytes,state.receipt.map(_.revision),state.failure)),
+      Vector((UploadPhase.Committed,9214364837600034814L,Some(4),None),(UploadPhase.Failed,0L,None,Some("content-mismatch"))))
+    assertEquals(states.map(_.limits.maxRawBytes).distinct,Vector(Long.MaxValue))
+  }
 
 }

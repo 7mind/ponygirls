@@ -111,6 +111,12 @@ import { TokenRateWindow, TokenRateWindow_JsonCodec } from './TokenRateWindow.js
 import { TokenResult, TokenResult_JsonCodec } from './TokenResult.js';
 import { TokenSource, TokenSource_JsonCodec } from './TokenSource.js';
 import { TokensResult, TokensResult_JsonCodec } from './TokensResult.js';
+import { UploadBase, UploadBase_JsonCodec } from './UploadBase.js';
+import { UploadLimits, UploadLimits_JsonCodec } from './UploadLimits.js';
+import { UploadOpen, UploadOpen_JsonCodec } from './UploadOpen.js';
+import { UploadPart, UploadPart_JsonCodec } from './UploadPart.js';
+import { UploadPhase, UploadPhase_JsonCodec } from './UploadPhase.js';
+import { UploadState, UploadState_JsonCodec } from './UploadState.js';
 import { UserInfo, UserInfo_JsonCodec } from './UserInfo.js';
 import { VersionInfo, VersionInfo_JsonCodec } from './VersionInfo.js';
 
@@ -225,6 +231,12 @@ class DomainChronicleApiV1_9_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(TokenResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => TokenResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(TokenSource_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => TokenSource_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(TokensResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => TokensResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(UploadBase_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => UploadBase_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(UploadLimits_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => UploadLimits_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(UploadOpen_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => UploadOpen_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(UploadPart_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => UploadPart_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(UploadPhase_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => UploadPhase_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(UploadState_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => UploadState_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(UserInfo_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => UserInfo_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(VersionInfo_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => VersionInfo_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
     }
@@ -352,6 +364,12 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
         "chronicle.api/:#TokenResult": ['1.9.0'],
         "chronicle.api/:#TokenSource": ['1.9.0'],
         "chronicle.api/:#TokensResult": ['1.9.0'],
+        "chronicle.api/:#UploadBase": ['1.9.0'],
+        "chronicle.api/:#UploadLimits": ['1.9.0'],
+        "chronicle.api/:#UploadOpen": ['1.9.0'],
+        "chronicle.api/:#UploadPart": ['1.9.0'],
+        "chronicle.api/:#UploadPhase": ['1.9.0'],
+        "chronicle.api/:#UploadState": ['1.9.0'],
         "chronicle.api/:#UserInfo": ['1.9.0'],
         "chronicle.api/:#VersionInfo": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#ExpressionHintTarget]#ActivityCollectors": ['1.9.0'],
@@ -553,6 +571,12 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
         "chronicle.api/:#TokenResult": { '1.9.0': 'identical' },
         "chronicle.api/:#TokenSource": { '1.9.0': 'identical' },
         "chronicle.api/:#TokensResult": { '1.9.0': 'identical' },
+        "chronicle.api/:#UploadBase": { '1.9.0': 'identical' },
+        "chronicle.api/:#UploadLimits": { '1.9.0': 'identical' },
+        "chronicle.api/:#UploadOpen": { '1.9.0': 'identical' },
+        "chronicle.api/:#UploadPart": { '1.9.0': 'identical' },
+        "chronicle.api/:#UploadPhase": { '1.9.0': 'identical' },
+        "chronicle.api/:#UploadState": { '1.9.0': 'identical' },
         "chronicle.api/:#UserInfo": { '1.9.0': 'identical' },
         "chronicle.api/:#VersionInfo": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#ExpressionHintTarget]#ActivityCollectors": { '1.9.0': 'identical' },

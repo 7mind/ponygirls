@@ -23,6 +23,25 @@ root data IngestRequest { requestId: uid source: SourceIdentity expectedRevision
 
 root data IngestReceipt { requestId: uid sessionId: uid revision: i32 jobId: uid }
 
+enum UploadPhase { Open Committed Aborted Expired Failed }
+
+data UploadBase { digest: str rawBytes: i64 messageCount: i32 messageChain: str }
+
+root data UploadOpen {
+  requestId: uid source: SourceIdentity expectedRevision: i32 rawPath: str base: opt[UploadBase]
+  digest: str rawBytes: i64 messageCount: i32 messageChain: str completion: Completion redacted: bit metadata: Metadata
+}
+
+root data UploadPart { ordinal: i32 sha256: str raw: str messages: lst[Message] }
+
+data UploadLimits { maxPartBytes: i64 maxLargePartBytes: i64 maxRecordBytes: i64 maxRawBytes: i64 maxMessages: i32 }
+
+root data UploadState {
+  uploadId: uid requestId: uid phase: UploadPhase append: bit receivedParts: i32
+  receivedRawBytes: i64 receivedMessages: i32 lastPartSha256: opt[str] expiresInSeconds: i32 limits: UploadLimits
+  receipt: opt[IngestReceipt] failure: opt[str]
+}
+
 root data LoginRequest { login: str password: str }
 
 root data LoginResponse { user: UserInfo versions: VersionInfo }
