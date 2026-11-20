@@ -71,14 +71,14 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
   const start = emit("session_start", { type: "session_start", reason: "startup" });
   assert.equal(start, undefined, "startup hook must not return the owned background promise");
   assert.equal(widgets.at(-1)!.placement, "borderBottomLeft");
-  assert.equal(widgets.at(-1)!.text![0], "[toolPendingBg] 🕸️ indexing [/]");
+  assert.equal(widgets.at(-1)!.text![0], " 🕸️ indexing ");
   assert.equal(badgeColours.at(-1), "accent");
   const firstBadge = badgeComponents.at(-1)!;
   const { fg, bg } = theme;
   theme.fg = (color, text) => { badgeColours.push(color); return `new-theme:${text}`; };
   theme.bg = (color, text) => `[new-theme:${color}]${text}[/]`;
   firstBadge.invalidate();
-  assert.equal(firstBadge.render(120)[0], "[new-theme:toolPendingBg] 🕸️ new-theme:indexing [/]");
+  assert.equal(firstBadge.render(120)[0], " 🕸️ new-theme:indexing ");
   theme.fg = fg;
   theme.bg = bg;
   for (let n = 0; n < 100; n++) {
@@ -106,10 +106,10 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
   assert.match(widgets.at(-1)!.text![0], /🕸️ off/);
   emit("tool_execution_start", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "one" });
   emit("tool_execution_start", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "two" });
-  assert.equal(widgets.at(-1)!.text![0], "[toolPendingBg] 🕸️ querying 2 [/]");
+  assert.equal(widgets.at(-1)!.text![0], " 🕸️ querying 2 ");
   emit("tool_execution_end", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "one" });
   emit("tool_execution_end", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "one" });
-  assert.equal(widgets.at(-1)!.text![0], "[toolPendingBg] 🕸️ querying [/]");
+  assert.equal(widgets.at(-1)!.text![0], " 🕸️ querying ");
   emit("tool_execution_end", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "two" });
   assert.match(widgets.at(-1)!.text![0], /🕸️ off/);
   assert.doesNotMatch(widgets.at(-1)!.text![0], /querying/);
@@ -236,7 +236,7 @@ test("Pi loader: empty checkout is an info notice and failures are one-line erro
   assert.equal(badge!.renderCompact(20), "🕸️<accent>●</accent>");
   await settle(() => notices.length > 0);
   assert.deepEqual(notices, [{ text: "Codegraph: nothing indexed in this checkout yet · /cg status for details", level: "info" }]);
-  assert.equal(badge!.render(120)[0], "[toolPendingBg] 🕸️ <muted>empty</muted> [/toolPendingBg]");
+  assert.equal(badge!.render(120)[0], " 🕸️ <muted>empty</muted> ");
   assert.equal(badge!.renderCompact(20), "🕸️");
   await emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
 
@@ -274,7 +274,7 @@ test("Pi loader: empty checkout is an info notice and failures are one-line erro
   for (let n = 0; n < 500 && (await syncAttempts() === 0 || badge!.renderCompact(20) !== "🕸️"); n++) await new Promise((wait) => setTimeout(wait, 10));
   assert.equal(await syncAttempts(), 1, "the first sync must have met the lock");
   assert.deepEqual(notices, [], "lock contention is neither an error line nor any other notice");
-  assert.equal(badge!.render(120)[0], "[toolPendingBg] 🕸️ [/toolPendingBg]", "no error badge");
+  assert.equal(badge!.render(120)[0], " 🕸️ ", "no error badge");
   assert.equal(badge!.renderCompact(20), "🕸️");
   badge!.handleMouse({ type: "click", button: "left", x: 0, y: 0 });
   await settle(() => panes.at(-1)!.component !== undefined && !panes.at(-1)!.closed);

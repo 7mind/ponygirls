@@ -124,13 +124,12 @@ common dir ~/work/flakes/ponygirls/.git
   is the last check, not live watcher health, and exact byte counts; `d` returns.
   The pane is a snapshot taken when it opens.
 
-The padded `🕸️` badge uses the theme's `selectedBg` background, evaluated during
-rendering. It shows setup/sync state and parallel query count. `ready` is the last
-completed verification, not continuous freshness or proof of MCP connectivity.
-When the border is too narrow, the compact form `cg` shows a state glyph instead:
-◇ ready (success colour), ⚙ working or querying, ✖ error, ◇ other idle phases (muted).
-The system theme may choose a terminal-default background; colored themes supply
-an explicit background. There are no animation/polling timers.
+At 120 columns and up, the padded `🕸️` badge uses the shared state tints:
+quiet, working, attention, or error. It shows setup/sync state and query count.
+`ready` is the last completed verification, not continuous freshness or proof
+of MCP connectivity. Narrow and compact forms have no fill; the compact form
+keeps `●` for working or querying, `!` for cancellation, and `✖` for error.
+There are no animation/polling timers.
 
 ## Workspace-wide opt-in
 

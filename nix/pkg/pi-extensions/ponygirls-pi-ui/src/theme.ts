@@ -1,6 +1,6 @@
 /**
  * The part of pi's Theme the kit styles with, plus the shared state palette.
- * Only theme tokens are used, so custom and light themes keep working.
+ * Styles follow the active Pi theme, including custom and light themes.
  */
 
 /** Foreground tokens the kit and its callers use. */
@@ -23,7 +23,7 @@ export type UiFg =
   | "thinkingMax";
 
 /** Background tokens the kit uses. */
-export type UiBg = "selectedBg" | "customMessageBg" | "toolPendingBg" | "toolSuccessBg" | "toolErrorBg";
+export type UiBg = "selectedBg" | "customMessageBg" | "toolPendingBg";
 
 export interface UiTheme {
   fg(color: UiFg, text: string): string;
