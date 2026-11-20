@@ -190,7 +190,7 @@ test('model guidance declares cadence, current enablement and historical authori
   f.handlers.get('before_agent_start')(event, f.ctx);
   const text = event.systemPromptOptions.sections.cuckoo;
   assert.match(text, /OFF/); assert.match(text, /self-reflection/); assert.match(text, /context.*growth/i); assert.match(text, /not a timer/);
-  assert.match(text, /cuckoo_recall/); assert.match(text, /JSON.only/); assert.match(text, /not.*authorization/i);
+  assert.match(text, /cuckoo_recall/); assert.match(text, /follow the inquiry's requested format and use no tools/); assert.match(text, /not.*authorization/i);
   assert.equal(event.systemPromptOptions.sections.existing, 'keep me');
   f.preferences.read = () => ({ enabled: true, policy: { kind: 'tokens', value: 12345 } });
   f.handlers.get('before_agent_start')(event, f.ctx); assert.match(event.systemPromptOptions.sections.cuckoo, /ON.*12345/);

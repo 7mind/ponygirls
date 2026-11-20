@@ -3,6 +3,7 @@ import { commentsOn, savedComments, type NodeRef, type ShownComment } from './co
 import { validateAskedQuestions, type AskedQuestion, type QuestionScope } from './questions.ts';
 
 export const REPORT_TYPE = 'cuckoo.report';
+const SAVED_CHECKPOINT_PREFIX = /^\s*CUCKOO-CHECKPOINT[ \t]*(?:\r?\n|$)/;
 export const MAX_OBJECTIVES = 100;
 export const MAX_ISSUES = 100;
 export const MAX_RULES = 100;
@@ -99,7 +100,7 @@ export function checkpoints(entries: readonly SessionEntry[]): Checkpoint[] {
     if (value.error !== null && typeof value.error !== 'string') throw new Error('Invalid saved Cuckoo checkpoint error');
     const questions = value.version === 5 ? validateAskedQuestions(value.questions) : [];
     if (value.version === 5 && questions.length === 0) throw new Error('Invalid saved Cuckoo checkpoint: version 5 requires standing questions');
-    const parsed = versionedCheckpoint(value.requestId, value.raw, value.version, questions);
+    const parsed = { ...versionedCheckpoint(value.requestId, value.raw.replace(SAVED_CHECKPOINT_PREFIX, ''), value.version, questions), raw: value.raw };
     return [value.error === null ? parsed : { ...parsed, report: null, error: value.error }];
   });
 }

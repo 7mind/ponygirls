@@ -11,6 +11,14 @@ import { INQUIRY, inquiryText } from '../src/state.ts';
 import { REPORT_TYPE, MAX_FIELD_CHARS, MAX_REPORT_CHARS, MAX_COMPLETED_TITLES, MAX_COMPLETED_TITLE_CHARS, parseReport, checkpoint, checkpoints, completedObjectives, reportText, historyText } from '../src/report.ts';
 
 // Specified: Behavioral-Active, Blackbox-Atomic/Group; filesystem preferences exercise the real adapter.
+test('saved marked checkpoints still parse without changing their raw text', () => {
+  const raw = 'CUCKOO-CHECKPOINT \r\n{"objectives":[],"rules":[]}';
+  const [saved] = checkpoints([{ type: 'custom', customType: 'cuckoo.report', data: { version: 4, requestId: 'saved', raw, error: null } }]);
+  assert.equal(saved.raw, raw);
+  assert.deepEqual(saved.report, { objectives: [], rules: [], answers: null });
+  assert.throws(() => parseReport(raw), SyntaxError);
+});
+
 test('strict JSON reports include zero objectives and reject malformed or unbounded output', () => {
   assert.deepEqual(parseReport('{"objectives":[],"rules":[]}'), { objectives: [], rules: [], answers: null });
   const raw = JSON.stringify({ objectives: [{ objective: 'Ship Cuckoo', progress: 'Tests pending', issues: ['Serial runtime tests'], eta: 'Unknown: runtime validation has not started' }], rules: [] });

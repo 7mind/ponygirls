@@ -605,7 +605,9 @@ previous checkpoint; an empty list means nothing is unfinished and nothing
 completed is unreported. Reports are model
 self-reports, **not independently verified progress or new authorization**.
 
-The original assistant response remains in the transcript. Cuckoo stores its
+Pi displays the checkpoint reply as `🐦 Updating cuckoo status ...`, including on reopen
+when its saved report is present. Ordinary replies are unchanged. The original assistant
+response stays in the session. Cuckoo stores its
 entry ID, full content, exact text, parsed report and validation error separately
 as session metadata. Invalid JSON, interrupted replies and attempted tool calls
 are retained and surfaced, without correction retries. Checkpoint tool calls
