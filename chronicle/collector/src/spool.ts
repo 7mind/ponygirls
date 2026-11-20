@@ -1,6 +1,6 @@
 import { decodeControls, decodeEvidence, pathAliases, type Controls, type AdmissionEvidence } from './controls.ts';
 import { DatabaseSync } from 'node:sqlite';
-import { chmodSync, closeSync, constants, mkdirSync, openSync } from 'node:fs';
+import { chmodSync, closeSync, constants, existsSync, mkdirSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { CollectorError, hash, type CollectorReport, type Diagnostic } from './domain.ts';
@@ -87,14 +87,18 @@ function secureFile(path: string): void {
   const fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
   closeSync(fd); rejectSymlinks(path); chmodSync(path, 0o600);
 }
+const SPOOL_FILE = 'spool.sqlite';
 export class SqliteStorage implements Storage {
   private readonly db: DatabaseSync;
-  constructor(directory: string) {
+  /** `create` makes and secures the directory, database and table when absent; `read-only` opens an existing database and changes nothing. */
+  constructor(directory: string, access: 'create' | 'read-only' = 'create') {
+    const path = join(directory, SPOOL_FILE);
+    if (access === 'read-only') { rejectSymlinks(path); this.db = new DatabaseSync(path, { readOnly: true }); this.db.exec('PRAGMA busy_timeout=1000;'); return; }
     secureDirectory(directory);
-    const path = join(directory, 'spool.sqlite');
     secureFile(path); this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA busy_timeout=1000; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; CREATE TABLE IF NOT EXISTS kv (bucket TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(bucket,key));');
   }
+  initialized(): boolean { return this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='kv'").get() !== undefined; }
   get<T>(bucket: string, key: string): T | undefined {
     const row = this.db.prepare('SELECT value FROM kv WHERE bucket=? AND key=?').get(bucket, key);
     return row === undefined ? undefined : JSON.parse(String(row['value'])) as T;
@@ -111,9 +115,10 @@ export class SqliteStorage implements Storage {
 class DurableSpool implements Spool {
   readonly namespace: string;
   private readonly storage: Storage;
-  constructor(storage: Storage) {
+  /** Without `namespace` it is read from the storage, or created there on first use. */
+  constructor(storage: Storage, namespace?: string) {
     this.storage = storage;
-    this.namespace = storage.transaction(() => {
+    this.namespace = namespace ?? storage.transaction(() => {
       const existing = storage.get<string>('meta', 'namespace');
       if (existing !== undefined) return existing;
       const namespace = randomUUID(); storage.set('meta', 'namespace', namespace); return namespace;
@@ -298,6 +303,14 @@ class DurableSpool implements Spool {
 }
 export class MemorySpool extends DurableSpool { constructor() { super(new InMemoryStorage()); } }
 export class SqliteSpool extends DurableSpool { constructor(directory: string) { super(new SqliteStorage(directory)); } }
+/** The spool in `directory` opened read-only: nothing is created, initialised or chmod-ed and writes fail; null when there is no initialised spool. */
+export function readOnlySpool(directory: string): Spool | null {
+  if (!existsSync(join(directory, SPOOL_FILE))) return null;
+  const storage = new SqliteStorage(directory, 'read-only');
+  const namespace = storage.initialized() ? storage.get<string>('meta', 'namespace') : undefined;
+  if (namespace === undefined) { storage.close(); return null; }
+  return new DurableSpool(storage, namespace);
+}
 
 export class DaemonLock {
   private readonly db: DatabaseSync;

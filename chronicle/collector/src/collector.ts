@@ -99,24 +99,28 @@ export class Collector {
       await publish(failed ? CollectorPhase.Failed : CollectorPhase.Idle, undefined, failed ? 'collection-incomplete' : undefined, true);
       this.spool.saveReport({ at: now, counters, roots: coverage }); return counters;
     };
-    let runtimePrivacy: RuntimePrivacy;
-    try { runtimePrivacy = resolveRuntimePrivacy(this.config, this.secrets); }
-    catch {
+    const privacyUnavailable = (): void => {
       counters.quarantined++;
       this.spool.diagnostic({ rootId: 'privacy', pathId: hash('privacy'), code: 'privacy-secret-unavailable' });
-      return finish();
-    }
+    };
+    let runtimePrivacy: RuntimePrivacy;
+    try { runtimePrivacy = resolveRuntimePrivacy(this.config, this.secrets); }
+    catch { privacyUnavailable(); return finish(); }
     const digest = policyDigest(this.config, runtimePrivacy.identity);
-    // The content each queued source will have at its next revision.
-    const queuedContent = new Map<string, { digest: string; revision: number }>();
-    for (const queued of this.spool.queue()) {
-      if (queued.policyDigest !== digest) {
-        // Never sent after the change; the source stays collectable and is read again under the new policy.
+    // Uploads queued under another policy are never sent: discarded, their sources stay collectable and are read again under the current one.
+    const discardStale = (current: string): Pending[] => {
+      const kept: Pending[] = [];
+      for (const queued of this.spool.queue()) {
+        if (queued.policyDigest === current) { kept.push(queued); continue; }
         this.spool.discard(queued.requestId, POLICY_CHANGED); queueState.delete(queued.requestId);
         this.spool.diagnostic({ rootId: 'spool', pathId: queued.sourceKey, code: POLICY_CHANGED });
         counters.quarantined++;
-      } else queuedContent.set(queued.sourceKey, { digest: queued.sourceDigest, revision: queued.expectedRevision + 1 });
-    }
+      }
+      return kept;
+    };
+    // The content each queued source will have at its next revision.
+    const queuedContent = new Map<string, { digest: string; revision: number }>();
+    for (const queued of discardStale(digest)) queuedContent.set(queued.sourceKey, { digest: queued.sourceDigest, revision: queued.expectedRevision + 1 });
     for (const { entry, origin, evidence } of this.spool.queueWithAdmission()) {
       const reason = admissionReason(origin, this.config);
       if (heldByControls(this.spool.controls(), evidence)) heldSources.add(entry.sourceKey);
@@ -263,6 +267,12 @@ export class Collector {
       if (heldByControls(controls, this.spool.pendingEvidence(entry.requestId))) { heldSources.add(entry.sourceKey); continue; }
       const reason = admissionReason(this.spool.pendingOrigin(entry.requestId), this.config);
       if (reason !== null) { heldSources.add(entry.sourceKey); this.spool.diagnostic(holdDiagnostic(entry.sourceKey, reason)); continue; }
+      // A secret can rotate while an earlier upload awaits its response: resolve the policy again before every send.
+      // Unresolvable, nothing more is sent this cycle and the queue stays; changed, the old policy's uploads are discarded.
+      let current: string;
+      try { current = policyDigest(this.config, resolveRuntimePrivacy(this.config, this.secrets).identity); }
+      catch { privacyUnavailable(); break; }
+      if (current !== entry.policyDigest) { discardStale(current); break; }
       try {
         if (hash(entry.payload) !== entry.payloadDigest) throw new UploadError('payload-digest-mismatch', false, false);
         const receipt = await this.ingester.send(entry.payload);

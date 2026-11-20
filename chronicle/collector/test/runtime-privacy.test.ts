@@ -89,6 +89,27 @@ for (const adapter of ['dummy', 'file']) {
       assert.equal(spool.dropped()[0]!.reason, 'privacy-or-destination-changed');
     } finally { spool.close(); f.close(); }
   });
+  test(`runtime privacy contract ${adapter}: a secret rotated while an upload awaits its response stops the old policy's next payload; the next scan collects it under the new policy`, async () => {
+    const f = fixture(adapter); const spool = new MemorySpool(); const sent: string[] = [];
+    try {
+      writeFileSync(join(f.dir, 'sessions/a.jsonl'), transcript('first'));
+      writeFileSync(join(f.dir, 'sessions/b.jsonl'), transcript('second').toString().replace('"id":"synthetic"', '"id":"synthetic-second"'));
+      const ingester = { send: async (payload: string) => {
+        sent.push(payload);
+        if (sent.length === 1) f.put(f.config.redactions.secretFiles[0]!, 'rotated-synthetic-value\n');
+        const request = JSON.parse(payload) as { requestId: string; expectedRevision: number };
+        return new IngestReceipt(request.requestId, randomUUID(), request.expectedRevision + 1, randomUUID());
+      } };
+      const collector = new Collector(f.config, spool, ingester, () => 0, noGit, acceptingProgress, f.reader);
+      const rotated = await collector.runOnce(100);
+      assert.deepEqual([rotated.enqueued, rotated.uploaded, sent.length, spool.queue().length], [2, 1, 1, 0]);
+      const [discarded] = spool.dropped(); assert.ok(discarded !== undefined);
+      assert.equal(discarded.reason, 'privacy-or-destination-changed'); assert.equal(spool.head(discarded.sourceKey).tombstone, false);
+      const next = await collector.runOnce(200);
+      assert.deepEqual([next.uploaded, sent.length], [1, 2]);
+      assert.notEqual((JSON.parse(sent[1]!) as { requestId: string }).requestId, discarded.requestId); assert.equal(spool.head(discarded.sourceKey).revision, 1);
+    } finally { spool.close(); f.close(); }
+  });
   for (const failure of ['missing', 'empty', 'oversized'] as const) {
     test(`runtime privacy contract ${adapter}: ${failure} fails closed before scanning or ingesting old pending`, async () => {
       const f = fixture(adapter); const spool = new MemorySpool(); let sends = 0;

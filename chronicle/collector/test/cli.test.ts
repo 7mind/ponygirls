@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, statSync, existsSync, readdirSync, readFileSync, realpathSync, symlinkSync } from 'node:fs';
+import { chmodSync, mkdtempSync, writeFileSync, mkdirSync, rmSync, statSync, existsSync, readdirSync, readFileSync, realpathSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -187,6 +187,12 @@ test('GoodCommunication --clear-policy-tombstones lists, then once clears, only 
       return new IngestReceipt(request.requestId, randomUUID(), request.expectedRevision + 1, randomUUID());
     } };
     const raw = readFileSync(new URL('fixtures/pi.jsonl', import.meta.url), 'utf8');
+    const answer = (...argv: string[]): string => {
+      const result = invoke(dir, undefined, ['--config', config, '--clear-policy-tombstones', ...argv], dir);
+      assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, ''); return result.stdout;
+    };
+    // The dry run opens the state read-only: absent state stays absent, existing state keeps its bytes and modes.
+    assert.equal(answer(), 'No collector state yet: nothing to clear.\n'); assert.equal(existsSync(state), false);
     const spool = new SqliteSpool(state);
     const collect = (now: number) => new Collector(loadConfig(settings), spool, ingester, () => 0, noGit, acceptingProgress, new FileSecretReader()).runOnce(now);
     try {
@@ -199,15 +205,15 @@ test('GoodCommunication --clear-policy-tombstones lists, then once clears, only 
       spool.exclude(join(dir, 'excluded'));
       const database = new DatabaseSync(join(state, 'spool.sqlite'));
       try { database.prepare("INSERT INTO kv VALUES ('head', 'unattributed', ?)").run(JSON.stringify({ revision: 2, digest: 'unattributed', tombstone: true })); } finally { database.close(); }
-      const answer = (...argv: string[]): string => {
-        const result = invoke(dir, undefined, ['--config', config, '--clear-policy-tombstones', ...argv], dir);
-        assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, ''); return result.stdout;
-      };
+      chmodSync(state, 0o750); chmodSync(join(state, 'spool.sqlite'), 0o640);
+      const files = () => [statSync(state).mode, readdirSync(state).sort().map(name => [name, statSync(join(state, name)).mode, readFileSync(join(state, name))])];
+      const before = files();
       const others = 'Other tombstones, not cleared: 2\n  dropped for another reason (operator-drop): 1\n  no recorded drop, reason unknown: 1\n    unattributed\n';
       assert.deepEqual(JSON.parse(answer('--json')) as unknown, { applied: false, policyChanged: [{ sourceKey: changed.sourceKey, revision: 1, acknowledged: true, files: [{ path: transcript, bytes: Buffer.byteLength(raw.replace('left branch', 'next branch')) }] }], unidentifiedFiles: 0, otherReasons: [{ sourceKey: 'dropped', reasons: ['operator-drop'] }], unattributed: ['unattributed'] });
       const listed = answer();
       assert.ok(listed.startsWith(`Not collected since a privacy or destination change: 1 source\n  ${changed.sourceKey} · last acknowledged revision 1\n    ${transcript} · `), listed);
       assert.ok(listed.endsWith(`${others}Dry run, nothing changed. --apply collects these sources again at the next scan.\n`), listed);
+      assert.deepEqual(files(), before);
       lock = new DaemonLock(state);
       assert.equal(answer('--apply'), `Cleared: 1 source, collected again at the next scan\n  ${changed.sourceKey} · last acknowledged revision 1\n${others}`);
       assert.equal(answer('--apply'), `Cleared: none, no tombstone of a privacy or destination change is left\n${others}`);

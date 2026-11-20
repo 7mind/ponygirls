@@ -12,7 +12,7 @@ import { HttpProgressReporter } from './progress.ts';
 import { HttpIngester } from './ingest.ts';
 import { Collector, POLICY_CHANGED } from './collector.ts';
 import { LocalGitMetadata } from './git.ts';
-import { DaemonLock, droppedOnlyFor, SqliteSpool } from './spool.ts';
+import { DaemonLock, droppedOnlyFor, readOnlySpool, SqliteSpool, type Spool } from './spool.ts';
 import { formatCollectorStatus, formatTombstones, literal, type TombstoneReport } from './status.ts';
 
 const PROGRAM = 'chronicle-collector';
@@ -82,7 +82,7 @@ function args(argv: string[], defaultConfigPath: string): Arguments {
 const print = (value: unknown): void => { process.stdout.write(JSON.stringify(value) + '\n'); };
 type Control = 'pause' | 'resume' | 'exclude' | 'unexclude' | 'exclusions';
 // Each control applies its change and returns the text that reports it.
-const CONTROLS: Record<Control, (spool: SqliteSpool, operand: string | null) => string> = {
+const CONTROLS: Record<Control, (spool: Spool, operand: string | null) => string> = {
   pause: spool => { spool.setPaused(true); return 'Collection paused. Queued uploads are kept; --resume continues.'; },
   resume: spool => { spool.setPaused(false); return 'Collection resumed.'; },
   exclude: (spool, operand) => { const path = resolve(operand!); spool.exclude(path); return `Excluded ${literal(path)}.`; },
@@ -97,7 +97,7 @@ const CONTROLS: Record<Control, (spool: SqliteSpool, operand: string | null) => 
 };
 const isControl = (operation: Arguments['operation']): operation is Control => Object.hasOwn(CONTROLS, operation);
 // Earlier releases tombstoned the sources of uploads discarded by a policy change; only those tombstones are cleared.
-function clearPolicyTombstones(collector: Collector, spool: SqliteSpool, apply: boolean): TombstoneReport {
+function clearPolicyTombstones(collector: Collector, spool: Spool, apply: boolean): TombstoneReport {
   const tombstones = spool.tombstones();
   const others = tombstones.filter(tombstone => !droppedOnlyFor(tombstone, POLICY_CHANGED));
   const policyChanged = apply ? spool.clearTombstones(POLICY_CHANGED) : tombstones.filter(tombstone => droppedOnlyFor(tombstone, POLICY_CHANGED));
@@ -134,9 +134,16 @@ async function main(): Promise<void> {
     return;
   }
   const lock = ['status', 'pause', 'resume', 'exclude', 'unexclude', 'exclusions', 'clear-policy-tombstones'].includes(arguments_.operation) ? null : new DaemonLock(config.stateDir);
-  let spool: SqliteSpool | null = null;
+  let spool: Spool | null = null;
   try {
-    spool = new SqliteSpool(config.stateDir);
+    // The dry run of --clear-policy-tombstones creates, initialises and chmods nothing.
+    const dryRun = arguments_.operation === 'clear-policy-tombstones' && !arguments_.apply;
+    spool = dryRun ? readOnlySpool(config.stateDir) : new SqliteSpool(config.stateDir);
+    if (spool === null) {
+      if (text) process.stdout.write('No collector state yet: nothing to clear.\n');
+      else print({ initialized: false });
+      return;
+    }
     if (isControl(arguments_.operation)) {
       const answer = CONTROLS[arguments_.operation](spool, arguments_.operand);
       if (text) process.stdout.write(answer + '\n');
