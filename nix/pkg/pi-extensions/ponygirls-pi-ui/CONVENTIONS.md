@@ -49,8 +49,13 @@ implements the pane parts; use it instead of formatting by hand.
 
 - One place per badge: `BORDER_ORDER`, passed as `setWidget`'s `order`.
 - Use `borderBadge` for the padded form. At 120 editor columns or more it
-  uses a theme background and can show extra detail and an existing shortcut.
-  Below that width it keeps the plain form. Provide `borderBadgeCompact` for
+  tints each chip by state: quiet from the theme border (soft blue in the
+  built-in themes), working from its accent, amber for attention, red for
+  errors, and green for an explicitly healthy reading. Labels and shortcuts
+  stay readable on the chip; the chip does not reuse tool backgrounds. If a
+  needed colour is a terminal-defined 16-colour index, retain the normal ink
+  without guessing a fill.
+- Below 120 columns, keep the plain form. Provide `borderBadgeCompact` for
   tight slots at any width; Pi can then drop wide details instead of clipping
   a label or key hint.
 
