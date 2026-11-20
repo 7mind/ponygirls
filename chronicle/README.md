@@ -84,6 +84,10 @@ On demand, not part of full verification; run them when you change what they gua
   in `serve`, with the job's measured live heap against the claim estimate of the indexing budget:
   [`scripts/measure-index-heap.sh`](scripts/measure-index-heap.sh), whose header has the invocation; run it when the
   estimate or what an indexing job retains changes;
+- the S2 acceptance runs of part uploads (1 GB with the S2 → S1 rollback, ≥ 4 GiB, a session growing while it is
+  indexed, the old collector against the S2 server; bounded heaps, the `/api/versions` probe, wall time, WAL and disk):
+  [`scripts/test-upload-bounds.sh`](scripts/test-upload-bounds.sh), whose header has the invocation; run it when
+  uploads, their storage, the oversize guards or the collector's part uploads change;
 - the CUDA embedding runtime: [`docs/cuda-validation.md`](docs/cuda-validation.md) (`scripts/test-cuda.sh`);
 - the relevance workflow's controlled real-server and live-provider legs: [`eval/relevance/README.md`](eval/relevance/README.md).
 
