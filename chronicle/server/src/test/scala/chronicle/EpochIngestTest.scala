@@ -216,6 +216,28 @@ final class EpochIngestTest extends munit.FunSuite {
     }
   }}
 
+  test("a purge that commits between the ingest's source read and its head-revision lookup ends the ingest gone, in either layout") { database { (config,db,epochs) =>
+    val auth=new Auth(db,config); val owner=auth.browser(auth.login(LoginRequest("a","synthetic"))._2)
+    val pool=Executors.newFixedThreadPool(2)
+    try List(new PostgresArchive(db,config,RevisionLayoutPolicy.Legacy),epochs).foreach { archive =>
+      val identity=source(); val u1=pi("u1","s","user","question",1)
+      val id=archive.ingest("a",session(identity,0,header(3),List(u1))).sessionId
+      val ingesting=db.transaction { held =>
+        // The head lookup is the ingest's first statement that reads ch_epochs: it waits there, after its source read.
+        Sql.exec(held,"LOCK TABLE ch_epochs IN ACCESS EXCLUSIVE MODE")
+        val ingesting=pool.submit(new Callable[IngestReceipt] { def call(): IngestReceipt = archive.ingest("a",session(identity,1,header(3),List(u1,pi("a1","u1","assistant","answer",2)))) })
+        val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5)
+        def parked: Boolean = db.transaction(c => Sql.one(c,"SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT r.epoch,e.raw_path%')")(_.getBoolean(1)).get)
+        while(!parked && !ingesting.isDone && System.nanoTime()<deadline) Thread.onSpinWait()
+        assert(parked,"the ingest must wait at its head-revision lookup")
+        pool.submit(new Callable[Unit] { def call(): Unit = { auth.mutate(owner,ClientEnvelope(UUID.randomUUID(),Operation.Purge(id))); () } }).get(5,TimeUnit.SECONDS)
+        ingesting
+      }
+      val failure=intercept[ExecutionException](ingesting.get(5,TimeUnit.SECONDS)).getCause
+      assertEquals(failure match { case error: DomainError => error.code; case other => other.toString },"gone")
+    } finally { pool.shutdownNow(); assert(pool.awaitTermination(6,TimeUnit.SECONDS)) }
+  }}
+
   test("maintenance prunes superseded epochs and deletes purged sources' epochs one interval after the last pass, and a failed pass does not end it") { database { (config,db,archive) =>
     val identity=source(); val u1=pi("u1","s","user","question",1)
     val rewritten=archive.ingest("a",session(identity,0,header(2),List(u1))).sessionId

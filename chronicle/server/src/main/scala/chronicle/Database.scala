@@ -161,7 +161,7 @@ final class PostgresArchive(db: Database, config: Config, layout: RevisionLayout
           // and NO KEY UPDATE does not wait for a publication that is writing its generation.
           val (id,head) = source("")
           val next = head+1
-          val written=EpochWriter.write(c,layout,id,head,next,SnapshotProjection(r))
+          val written=EpochWriter.write(c,layout,id,head,next,SnapshotProjection(r),() => source(""))
           source(" FOR NO KEY UPDATE")
           Sql.exec(c,"UPDATE ch_sources SET revision=? WHERE id=?",next,id)
           EpochWriter.switched(c,written)

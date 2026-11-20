@@ -32,10 +32,12 @@ object EpochWriter {
   private val batchSize = 128
   private val messageFetchSize = 32
 
-  def write(c: Connection,layout: RevisionLayoutPolicy,id: UUID,head: Int,next: Int,snapshot: IngestRequest): Written = {
+  /** `head` is the revision the ingest read without a lock; a purge that committed since deleted it, and `recheckSource`,
+    * the ingest's own source check, then fails with `gone`. */
+  def write(c: Connection,layout: RevisionLayoutPolicy,id: UUID,head: Int,next: Int,snapshot: IngestRequest,recheckSource: () => Unit): Written = {
     val current=if(head==0) None else Sql.one(c,"SELECT r.epoch,e.raw_path,r.envelope->>'digest',r.raw_bytes,r.message_count,r.record_count,r.message_bytes,r.fragment_count,r.raw_state,r.message_chain,r.message_time FROM ch_revisions r LEFT JOIN ch_epochs e ON e.id=r.epoch WHERE r.session_id=? AND r.revision=?",id,head) { r =>
       Option(r.getObject(1,classOf[UUID])).map(epoch => Head(epoch,r.getString(2),r.getString(3),r.getLong(4),r.getInt(5),r.getInt(6),r.getLong(7),r.getLong(8),r.getBytes(9),r.getBytes(10),Option(r.getString(11)).map(Instant.parse)))
-    }.get
+    }.getOrElse { recheckSource(); throw DomainError("internal","head revision of a live source is missing") }
     val previous=current.map(_.epoch)
     if(layout==RevisionLayoutPolicy.Legacy || !epochSafe(snapshot)) {
       Sql.exec(c,"INSERT INTO ch_revisions(session_id,revision,snapshot) VALUES(?,?,?::jsonb)",id,next,Wire.encode(IngestRequest.codecJson,snapshot).noSpaces)
