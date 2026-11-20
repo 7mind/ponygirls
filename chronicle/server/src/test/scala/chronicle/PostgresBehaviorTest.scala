@@ -108,18 +108,22 @@ class PostgresBehaviorTest extends munit.FunSuite {
     assertEquals(intercept[DomainError](mutation(auth,owner,Operation.RetryJob(old.jobId))).code,"conflict")
     assertEquals(a.claim(Set(c.profile),ClaimScope.AllOwners,300).get.revision,2)
   }}
-  test("BG-GoodCommunication regression: startup reconciles pre-existing obsolete unfinished jobs without deleting published history") { database { (c,db,a,auth) =>
+  test("BG-GoodCommunication regression: startup reconciles pre-existing obsolete unfinished jobs without rewriting terminal verdicts or deleting published history") { database { (c,db,a,auth) =>
     val request=Fixtures.snapshot(); val first=a.ingest("a",request)
     assert(a.publish(a.claim(Set(c.profile),ClaimScope.AllOwners,300).get,Nil))
     val published=a.session("a",first.sessionId).view
-    val second=a.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))
-    a.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=2))
+    val second=revise(a,request,1); val third=revise(a,request,2)
+    a.fail(a.claim(Set(c.profile),ClaimScope.AllOwners,300).get,IndexingBudget.exceededCode,IndexingStage.Embedding)
+    revise(a,request,3)
+    val verdict=a.statuses("a",0,100).jobs.find(_.id==third.jobId).get
+    assertEquals((verdict.state,verdict.error,verdict.failureStage),(JobState.Failed,Some(IndexingBudget.exceededCode),Some(IndexingFailureStage.Embedding)))
     db.transaction(x => Sql.exec(x,"UPDATE ch_jobs SET state='Running',error='model-timeout',failure_stage='Embedding',lease_until=now()+interval '300 seconds' WHERE id=?",second.jobId))
     db.initialize()
     val jobs=a.statuses("a",0,100).jobs
     assertEquals(jobs.find(_.id==second.jobId).get.state,JobState.Failed)
     assertEquals(jobs.find(_.id==second.jobId).get.error,Some("superseded-revision"))
     assertEquals(jobs.find(_.id==second.jobId).get.failureStage,None)
+    assertEquals(jobs.find(_.id==third.jobId).get,verdict,"an older terminal job keeps its verdict and stage")
     assertEquals(jobs.find(_.id==first.jobId).get.state,JobState.Complete)
     assertEquals(a.readSession("a",first.sessionId,Some(published)).session.view,published)
   }}

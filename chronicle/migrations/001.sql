@@ -16,5 +16,6 @@ CREATE INDEX IF NOT EXISTS ch_jobs_claim ON ch_jobs(state,lease_until);
 
 ALTER TABLE ch_chunks ADD COLUMN IF NOT EXISTS ordinal integer NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS ch_chunks_order ON ch_chunks(generation,ordinal);
+-- Every start: jobs of an older revision that the previous process left Queued or Running end superseded; Complete and Failed ones keep their verdict.
 UPDATE ch_jobs j SET state='Failed',error='superseded-revision',fence=fence+1,lease_until=NULL
-FROM ch_sources s WHERE s.id=j.session_id AND j.revision<s.revision AND j.state<>'Complete' AND j.error IS DISTINCT FROM 'superseded-revision';
+FROM ch_sources s WHERE s.id=j.session_id AND j.revision<s.revision AND j.state IN('Queued','Running');
