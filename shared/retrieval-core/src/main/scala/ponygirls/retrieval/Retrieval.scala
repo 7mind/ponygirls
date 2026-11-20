@@ -65,7 +65,7 @@ object Vectors {
 enum RetrievalMode { case Lexical, Semantic, Hybrid }
 enum CountScope { case ExactMatches, CandidateWindow }
 object CandidatePolicy {
-  /** Sources (each by its best chunk) in the semantic leg's window; chunks per leg in the lexical leg. */
+  /** At most this many sources (each by its best chunk) in the semantic leg's window; chunks in the lexical leg's. */
   val candidatesPerLeg = 1000
   /** A namespace holding at most this many published chunks ranks its semantic leg by an exact scan; above it the
     * approximate HNSW index (which can miss chunks it never reaches, e.g. beside large groups of identical vectors). */

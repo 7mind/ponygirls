@@ -234,9 +234,10 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
       val authorized=s"(SELECT true FROM pony_retrieval_sources s WHERE s.namespace=ch.namespace AND s.id=ch.source_id AND s.published=ch.generation AND $scope OFFSET 0)"
       val base=s"ch.namespace=? AND vector_dims(ch.embedding)=${p.space.dimensions} AND ch.profile=? AND $authorized"
       val baseArgs=List[Value](ns,p.id)++scopeArgs
-      // The exact scan orders by the reranking distance, which no index serves, over the authorization join; the HNSW
-      // scan reads several chunks per window slot. Either way the window holds each authorized source's best chunk,
-      // so the chunks of a few sources cannot crowd the others out.
+      // The window keeps each authorized source's best chunk. The exact scan orders every chunk by the reranking distance,
+      // which no index serves, over the authorization join: the window is the nearest sources. The HNSW scan keeps the
+      // distinct sources among its first candidatesPerLeg*annChunksPerCandidate chunks; sources with more near chunks than
+      // that can still fill the read.
       val (scan,scanArgs)=if(exact)
         (s"SELECT ch.id,ch.source_id,ch.embedding <=> ?::vector AS distance FROM pony_retrieval_chunks ch JOIN pony_retrieval_sources s ON s.namespace=ch.namespace AND s.id=ch.source_id AND s.published=ch.generation WHERE ch.namespace=? AND ch.profile=? AND $scope",List[Value](v,ns,p.id)++scopeArgs)
       else

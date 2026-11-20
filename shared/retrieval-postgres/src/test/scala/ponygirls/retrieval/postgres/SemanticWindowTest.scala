@@ -56,9 +56,10 @@ class SemanticWindowTest extends munit.FunSuite {
       (id,exact,semantic(f,f.index,vector).hits.map(_.id),semantic(f,approximate,vector).hits.map(_.id))
     }
     assertEquals(ranked.map(_._3),ranked.map(_._2))
-    // Negative control: through the HNSW index a target is reached only if it drew an upper layer (p ~ 1/16 each); if no
-    // target is lost, this corpus no longer reproduces the cause.
-    assert(ranked.exists((id,_,_,viaIndex) => !viaIndex.headOption.contains(id)),"the HNSW index ranked every target first")
+    // Diagnostic only, not asserted: through the HNSW index a target is reached only if it drew an upper layer (p ~ 1/16
+    // each, an internal of pgvector 0.8), so the index usually loses most targets of this corpus.
+    val lost=ranked.collect { case (id,_,_,viaIndex) if !viaIndex.headOption.contains(id) => id }
+    println(s"ANN-1 diagnostic: the HNSW index does not rank ${lost.size}/${targets.size} targets first")
   }
   test("ANN-2: the exact scan holds up to and including the threshold; one more published chunk selects the HNSW index") {
     val dimensions=5; val threshold=3
