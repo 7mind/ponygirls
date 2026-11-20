@@ -1003,10 +1003,15 @@ final class HttpSuite extends FunSuite:
     yield ()
   }}
   // Regression (UX-M4): source files downloaded instead of previewing; archives stay downloads behind an explicit card.
-  test("file artifacts negotiate a text preview for source files, an archive card, and raw bytes for HTML") { run { (f,_) =>
+  // Specified: every type except HTML has a viewer page. Well-known names are text, media get a player, and a type
+  // that is not listed is `unknown` (shown as text when its content is text, otherwise a download card).
+  test("file artifacts negotiate a viewer by type: text, media, archive card, unknown; HTML stays raw bytes") { run { (f,_) =>
     val viewer = Some(java.nio.file.Path.of(sys.env("MANURE_SOURCE_ROOT"),"manure/web/viewer"))
     val h = app(f,_.copy(viewerDir=viewer))
-    Vector("summarise.py" -> Some("text"),"bundle.zip" -> Some("archive"),"page.html" -> None).traverse_ { (name,kind) =>
+    Vector("summarise.py" -> Some("text"),"fix.diff" -> Some("text"),"Main.kt" -> Some("text"),"Makefile" -> Some("text"),"Dockerfile" -> Some("text"),
+      "LICENSE" -> Some("text"),".gitignore" -> Some("text"),"flake.lock" -> Some("text"),"demo.webm" -> Some("video"),"clip.MP4" -> Some("video"),
+      "tone.wav" -> Some("audio"),"bundle.zip" -> Some("archive"),"model.safetensors" -> Some("unknown"),"run-20261120" -> Some("unknown"),
+      "BUILD" -> Some("unknown"),"page.html" -> None,"PAGE.HTM" -> None).traverse_ { (name,kind) =>
       val bytes = Exact.utf8("payload of " + name)
       for
         a <- f.artifacts.init(f.identity,InitUpload(name,ArtifactKind.File,Visibility.Public,Vector(ManifestEntry(name,false,bytes.length,SecretCodec.sha256(bytes))),None,Vector.empty,None,None))
@@ -1025,8 +1030,50 @@ final class HttpSuite extends FunSuite:
               assert(unshelledBody.contains("data-kind=\"" + value + "\"") && !unshelledBody.contains("__manure/shell"),"no shell links without a shell directory")
             case None => assertEquals(body,Exact.string(bytes))
         }
+        // Clients that do not ask for HTML, and byte ranges, always get the stored bytes.
+        direct <- h.app.run(request(Method.GET,s"/view/${a.artifact.id}/"))
+        directBody <- direct.as[String]
+        ranged <- h.app.run(request(Method.GET,s"/view/${a.artifact.id}/").putHeaders(Header.Raw(CIString("Accept"),"text/html"),Header.Raw(CIString("Range"),"bytes=0-6")))
+        rangedBody <- ranged.as[String]
+        _ <- IO {
+          assertEquals(directBody,Exact.string(bytes),name)
+          assertEquals(ranged.status.code,206,name)
+          assertEquals(rangedBody,"payload",name)
+        }
       yield ()
     }
+  }}
+  // Specified: the viewer page may load media of its own origin (audio and video players) and nothing else new.
+  test("the viewer policy admits same-origin media; media files have media types on their raw URL") { run { (f,_) =>
+    val viewer = Some(java.nio.file.Path.of(sys.env("MANURE_SOURCE_ROOT"),"manure/web/viewer"))
+    val h = app(f,_.copy(viewerDir=viewer))
+    val files = Vector("demo.webm" -> "video/webm","clip.mp4" -> "video/mp4","take.mov" -> "video/quicktime","old.ogv" -> "video/ogg","song.mp3" -> "audio/mpeg",
+      "tone.wav" -> "audio/wav","voice.ogg" -> "audio/ogg","voice.opus" -> "audio/ogg","track.m4a" -> "audio/mp4","master.flac" -> "audio/flac","raw.aac" -> "audio/aac")
+    def value(r: org.http4s.Response[IO],name: String) = r.headers.headers.find(_.name == CIString(name)).map(_.value).getOrElse("")
+    for
+      a <- f.artifacts.init(f.identity,InitUpload("media",ArtifactKind.Directory,Visibility.Public,
+        files.map((path,_) => ManifestEntry(path,false,Exact.utf8(path).length,SecretCodec.sha256(Exact.utf8(path)))),None,Vector.empty,None,None))
+      _ <- files.traverse_((path,_) => f.artifacts.putChunk(f.identity,a.artifact.id,path,0,Exact.utf8(path),SecretCodec.sha256(Exact.utf8(path))))
+      _ <- f.artifacts.finish(f.identity,a.artifact.id)
+      _ <- files.traverse_ { (path,mime) =>
+        for
+          page <- h.app.run(request(Method.GET,s"/view/${a.artifact.id}/__manure/view/$path"))
+          html <- page.as[String]
+          bytes <- h.app.run(request(Method.GET,s"/view/${a.artifact.id}/__manure/raw/$path").putHeaders(Header.Raw(CIString("Range"),"bytes=2-4")))
+          part <- bytes.as[String]
+          _ <- IO {
+            assertEquals(page.status.code,200,path)
+            assert(html.contains("data-kind=\"" + mime.takeWhile(_ != '/') + "\""),path)
+            val policy = value(page,"Content-Security-Policy").split(";").map(_.trim).toVector
+            assertEquals(policy.find(_.startsWith("media-src ")),Some("media-src 'self'"),path)
+            assertEquals(policy.find(_.startsWith("default-src ")),Some("default-src 'none'"),path)
+            assertEquals(value(bytes,"Content-Type"),mime,path)
+            assertEquals(bytes.status.code,206,"players seek with byte ranges")
+            assertEquals(part,path.substring(2,5),path)
+          }
+        yield ()
+      }
+    yield ()
   }}
   // Regression: a text file inside a directory artifact was application/octet-stream on its own URL, so a browser
   // downloaded run.sh, fix.diff or values.yaml instead of showing it. Site assets and unknown types keep their type.
@@ -1035,7 +1082,8 @@ final class HttpSuite extends FunSuite:
     val expected = Vector("run.sh" -> plain,"fix.diff" -> plain,"values.yaml" -> plain,"src/Main.scala" -> plain,"tool.py" -> plain,"notes.txt" -> plain,
       "build.log" -> plain,"table.csv" -> plain,"config.xml" -> plain,"data.json" -> "application/json","app.js" -> "application/javascript; charset=utf-8",
       "site.css" -> "text/css; charset=utf-8","page.html" -> "text/html; charset=utf-8","photo.png" -> "image/png","blob.bin" -> "application/octet-stream",
-      "bundle.zip" -> "application/octet-stream","noextension" -> "application/octet-stream")
+      "bundle.zip" -> "application/octet-stream","noextension" -> "application/octet-stream","Makefile" -> plain,"docker/Dockerfile" -> plain,
+      "LICENSE" -> plain,".gitignore" -> plain,"flake.lock" -> plain,"demo.webm" -> "video/webm","tone.wav" -> "audio/wav")
     def contentType(r: org.http4s.Response[IO]) = r.headers.headers.find(_.name == CIString("Content-Type")).map(_.value)
     for
       a <- f.artifacts.init(f.identity,InitUpload("types",ArtifactKind.Directory,Visibility.Public,

@@ -47,6 +47,11 @@
 .markdown-table { position: relative; scroll-margin-top: calc(var(--masthead-h) + var(--space-6)); }
 .table-controls { position: absolute; right: 0; bottom: 100%; display: flex; gap: var(--space-1); opacity: 0; }
 .markdown-table:is(:hover, :focus-within, :has(table:target)) > .table-controls { opacity: 1; }
+/* Copy sits above a code block, like the table tools; a fenced diff has one block per line. */
+.markdown-code { position: relative; }
+.code-controls { position: absolute; right: 0; bottom: 100%; display: flex; gap: var(--space-1); opacity: 0; }
+.markdown-code:is(:hover, :focus-within) > .code-controls { opacity: 1; }
+.prose pre code > .line { display: block; margin: 0 calc(-1 * var(--space-4)); padding: 0 var(--space-4); }
 /* The top padding holds the zoom tools, so they never cover the diagram. */
 .diagram { position: relative; padding: var(--space-6) var(--space-5) var(--space-5); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-surface); }
 .diagram img { display: block; margin: 0 auto; max-width: none; height: auto; }
@@ -59,14 +64,92 @@
 .diagram > .notice { width: 100%; }
 
 
-/* ── Raw source and text files (line numbers by CSS counter) ─────────────── */
+/* ── Raw source and text files ───────────────────────────────────────────── */
+/* Every line is a block with an empty link in the gutter; the number is that link's generated content, so the
+ * text of the view is exactly the text of the file. */
 .raw { margin: 0; padding: var(--space-4) 0; font-family: var(--font-mono); font-size: var(--text-sm); line-height: var(--leading-prose); counter-reset: line; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
-.raw > span { display: block; position: relative; min-height: calc(var(--leading-prose) * 1em); padding: 0 var(--space-4) 0 calc(var(--space-7) + var(--space-4)); }
-.raw > span::before { counter-increment: line; content: counter(line); position: absolute; left: 0; width: var(--space-7); text-align: right; color: var(--text-faint); font-weight: var(--weight-regular); font-style: normal; }
+.raw > span { display: block; position: relative; min-height: calc(var(--leading-prose) * 1em); padding: 0 var(--space-4) 0 calc(var(--space-7) + var(--space-4)); border-left: 2px solid transparent; scroll-margin-top: calc(var(--masthead-h) + 41px + var(--space-6)); }
+.raw .ln { position: absolute; left: 0; top: 0; width: var(--space-7); text-align: right; color: var(--text-faint); font-weight: var(--weight-regular); font-style: normal; user-select: none; -webkit-user-select: none; }
+.raw .ln::before { counter-increment: line; content: counter(line); }
+.raw a.ln[href]:hover { color: var(--accent); text-decoration: underline; }
+.raw > .is-target { background: var(--accent-soft); border-left-color: var(--accent); }
+.raw > .is-target > .ln { color: var(--accent); font-weight: var(--weight-semibold); }
+.raw.no-lines > span { padding-left: var(--space-4); }
 .raw .source-heading { color: var(--accent); font-weight: var(--weight-semibold); }
 .raw .source-code { color: var(--text-muted); }
 .raw .source-quote { color: var(--text-muted); font-style: italic; }
 .raw:focus-visible { box-shadow: var(--ring); }
+/* The escape character has no glyph of its own; the raw view of a log shows where it is. */
+.raw .ctl-esc::before { content: "\241B"; color: var(--text-faint); }
+
+/* ── Syntax colours: aliases of the semantic tokens, so both themes follow tokens.css ── */
+:root {
+  --syn-keyword: var(--accent);
+  --syn-string: var(--ok-fg);
+  --syn-number: var(--warn-fg);
+  --syn-title: var(--info-fg);
+  --syn-type: var(--role-assistant);
+  --syn-comment: var(--text-muted);
+  --syn-meta: var(--neutral-fg);
+}
+.hljs-comment, .hljs-quote { color: var(--syn-comment); font-style: italic; }
+.hljs-doctag { color: var(--syn-comment); font-weight: var(--weight-semibold); }
+.hljs-keyword, .hljs-selector-tag, .hljs-template-tag, .hljs-name { color: var(--syn-keyword); }
+.hljs-string, .hljs-regexp, .hljs-char, .hljs-link, .hljs-code { color: var(--syn-string); }
+.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet { color: var(--syn-number); }
+.hljs-title, .hljs-section, .hljs-attr, .hljs-attribute, .hljs-property, .hljs-selector-class, .hljs-selector-id, .hljs-selector-attr, .hljs-selector-pseudo { color: var(--syn-title); }
+.hljs-type, .hljs-built_in, .hljs-title.class_, .hljs-variable, .hljs-template-variable { color: var(--syn-type); }
+.hljs-meta { color: var(--syn-meta); font-weight: var(--weight-medium); }
+.hljs-section, .hljs-strong { font-weight: var(--weight-semibold); }
+.hljs-emphasis { font-style: italic; }
+.hljs-addition { color: var(--ok-fg); background: var(--ok-bg); }
+.hljs-deletion { color: var(--danger-fg); background: var(--danger-bg); }
+
+/* ── Diff lines (file views and fenced diff blocks) ── */
+.diff-file { font-weight: var(--weight-semibold); }
+.raw > .diff-file { background: var(--bg-sunken); }
+.diff-hunk { background: var(--info-bg); color: var(--info-fg); }
+.diff-add { background: var(--ok-bg); }
+.diff-del { background: var(--danger-bg); }
+.diff-note { color: var(--text-muted); font-style: italic; }
+.diff-stat-add { color: var(--ok-fg); font-weight: var(--weight-medium); }
+.diff-stat-del { color: var(--danger-fg); font-weight: var(--weight-medium); }
+
+/* ── ANSI SGR: the 16-colour palette as semantic tokens; other colours keep the default ── */
+.ansi-bold { font-weight: var(--weight-semibold); }
+.ansi-dim { color: var(--text-faint); }
+.ansi-italic { font-style: italic; }
+.ansi-underline { text-decoration: underline; }
+.ansi-fg-0, .ansi-fg-8 { color: var(--text-muted); }
+.ansi-fg-1, .ansi-fg-9 { color: var(--danger-fg); }
+.ansi-fg-2, .ansi-fg-10 { color: var(--ok-fg); }
+.ansi-fg-3, .ansi-fg-11 { color: var(--warn-fg); }
+.ansi-fg-4, .ansi-fg-12 { color: var(--info-fg); }
+.ansi-fg-5, .ansi-fg-13 { color: var(--accent); }
+.ansi-fg-6, .ansi-fg-14 { color: var(--role-assistant); }
+.ansi-fg-7, .ansi-fg-15 { color: var(--text); }
+.ansi-bg-1, .ansi-bg-9 { background: var(--danger-bg); }
+.ansi-bg-2, .ansi-bg-10 { background: var(--ok-bg); }
+.ansi-bg-3, .ansi-bg-11 { background: var(--warn-bg); }
+.ansi-bg-4, .ansi-bg-12 { background: var(--info-bg); }
+.ansi-bg-5, .ansi-bg-13 { background: var(--accent-soft); }
+.ansi-bg-0, .ansi-bg-6, .ansi-bg-7, .ansi-bg-8, .ansi-bg-14, .ansi-bg-15 { background: var(--neutral-bg); }
+
+/* ── Notes above a text view (cut-off file, not valid JSON, …) ── */
+#content > .notice.view-note { max-width: calc(1120px - 2 * var(--gutter)); margin: var(--space-5) auto 0; }
+#content > .notice.view-note ~ .raw { max-width: 1120px; margin: 0 auto; padding-top: var(--space-3); border: 0; border-radius: 0; background: none; }
+
+/* ── CSV / TSV table: in the document, no inner scroller; a wide table extends the page to the right ── */
+.data-view { max-width: 1120px; margin: 0 auto; padding: var(--space-5) var(--gutter) var(--space-7); }
+.data-table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--text-sm); background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.data-table th, .data-table td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; max-width: 420px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.data-table thead th { position: sticky; top: calc(var(--masthead-h) + 41px); z-index: calc(var(--z-sticky) - 1); background: var(--bg-sunken); color: var(--text-muted); font-size: var(--text-xs); font-weight: var(--weight-semibold); white-space: nowrap; border-bottom-color: var(--border-strong); }
+.data-table tbody tr:last-child > * { border-bottom: 0; }
+.data-table tbody tr:hover > * { background: var(--bg-hover); }
+.data-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.data-table .row-n { position: sticky; left: 0; text-align: right; white-space: nowrap; color: var(--text-faint); font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; background: var(--bg-surface); border-right: 1px solid var(--border); }
+.data-table thead .row-n { background: var(--bg-sunken); z-index: var(--z-sticky); }
+.data-foot { margin: var(--space-3) 0 0; text-align: center; color: var(--text-muted); font-size: var(--text-xs); }
 
 /* ── Image, diagram file and PDF stage: the page is the stage ────────────── */
 .stage { display: block; min-height: calc(100dvh - var(--masthead-h) - 41px); padding: var(--space-5) var(--gutter) var(--space-7); background: var(--bg-canvas); }
@@ -77,6 +160,8 @@
 .stage-page[data-zoom="width"] { width: min(100%, 816px); }
 .stage-page[data-zoom="page"] { width: auto; max-width: 100%; max-height: calc(100dvh - var(--masthead-h) - 41px - 2 * var(--space-5)); }
 .stage > .notice { max-width: var(--measure); margin: 0 auto; }
+.stage-video { display: block; margin: 0 auto; max-width: 100%; max-height: calc(100dvh - var(--masthead-h) - 41px - 2 * var(--space-5)); background: var(--qr-fg); box-shadow: var(--shadow-1); }
+.stage-audio { display: block; margin: var(--space-7) auto 0; width: min(100%, 560px); }
 
 .empty .btn { margin-top: var(--space-3); }
 .readme .viewer-doc { max-width: none; padding: 0; }

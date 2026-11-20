@@ -30,21 +30,22 @@ export const FORMAT_JSON_LINES = 'jsonl';
 export const FORMAT_CSV = 'csv';
 export const FORMAT_TSV = 'tsv';
 
-const EXTENSION_FORMAT = { diff: FORMAT_DIFF, patch: FORMAT_DIFF, json: FORMAT_JSON, jsonl: FORMAT_JSON_LINES, ndjson: FORMAT_JSON_LINES, csv: FORMAT_CSV, tsv: FORMAT_TSV };
+const EXTENSION_FORMAT = { diff: FORMAT_DIFF, patch: FORMAT_DIFF, json: FORMAT_JSON, ipynb: FORMAT_JSON, jsonl: FORMAT_JSON_LINES, ndjson: FORMAT_JSON_LINES, csv: FORMAT_CSV, tsv: FORMAT_TSV };
 const NAME_FORMAT = { 'flake.lock': FORMAT_JSON };
 // Extensions that are not themselves a grammar name or alias of highlight.js.
 const EXTENSION_LANGUAGE = {
-  jsonl: 'json', ndjson: 'json', sbt: 'scala', sc: 'scala', conf: 'ini', cfg: 'ini', env: 'ini', gradle: 'groovy',
+  jsonl: 'json', ndjson: 'json', ipynb: 'json', sbt: 'scala', sc: 'scala', conf: 'ini', cfg: 'ini', env: 'ini', gradle: 'groovy',
   bzl: 'python', bazel: 'python', star: 'python', pyi: 'python', hs: 'haskell', ex: 'elixir', exs: 'elixir', erl: 'erlang',
   clj: 'clojure', cljs: 'clojure', ml: 'ocaml', mli: 'ocaml', tex: 'latex', proto: 'protobuf', ps1: 'powershell', mm: 'objectivec',
 };
 const NAME_LANGUAGE = {
   makefile: 'makefile', gnumakefile: 'makefile', dockerfile: 'dockerfile', containerfile: 'dockerfile', 'cmakelists.txt': 'cmake',
-  build: 'python', 'build.bazel': 'python', workspace: 'python', 'workspace.bazel': 'python', 'module.bazel': 'python',
   'flake.lock': 'json', 'cargo.lock': 'ini', 'poetry.lock': 'ini', 'uv.lock': 'ini', pipfile: 'ini',
   gemfile: 'ruby', rakefile: 'ruby', vagrantfile: 'ruby', jenkinsfile: 'groovy', 'nginx.conf': 'nginx',
   '.bashrc': 'bash', '.bash_profile': 'bash', '.profile': 'bash', '.zshrc': 'bash', '.gitconfig': 'ini', '.editorconfig': 'ini', '.npmrc': 'ini',
 };
+// Bazel files are recognised in their conventional spelling only: `build` is also an ordinary script name.
+const EXACT_NAME_LANGUAGE = { BUILD: 'python', 'BUILD.bazel': 'python', WORKSPACE: 'python', 'WORKSPACE.bazel': 'python', 'MODULE.bazel': 'python' };
 const DOCKERFILE_PREFIX = 'dockerfile.';
 // highlight.js registers plain text as a grammar; it marks nothing.
 const UNMARKED = new Set(['plaintext', 'text', 'txt']);
@@ -54,10 +55,11 @@ function grammar(name) { return name && !UNMARKED.has(name) && lowlight.register
 
 /** `{format, language}` of a file by its name; `language` is null when no grammar applies. */
 export function fileSyntax(path) {
-  const name = path.split('/').at(-1).toLowerCase();
+  const written = path.split('/').at(-1);
+  const name = written.toLowerCase();
   const extension = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : '';
   const format = NAME_FORMAT[name] ?? EXTENSION_FORMAT[extension] ?? FORMAT_TEXT;
-  const named = NAME_LANGUAGE[name] ?? (name.startsWith(DOCKERFILE_PREFIX) ? 'dockerfile' : EXTENSION_LANGUAGE[extension]);
+  const named = EXACT_NAME_LANGUAGE[written] ?? NAME_LANGUAGE[name] ?? (name.startsWith(DOCKERFILE_PREFIX) ? 'dockerfile' : EXTENSION_LANGUAGE[extension]);
   // A diff is coloured by its own line classification, not by a grammar.
   return { format, language: format === FORMAT_DIFF ? null : grammar(named ?? extension) };
 }

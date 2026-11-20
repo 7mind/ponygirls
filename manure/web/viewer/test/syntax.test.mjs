@@ -26,6 +26,8 @@ test('well-known file names resolve without an extension', () => {
     BUILD: 'python', 'BUILD.bazel': 'python', WORKSPACE: 'python', 'MODULE.bazel': 'python', 'Cargo.lock': 'ini', 'flake.lock': 'json', Gemfile: 'ruby', Jenkinsfile: 'groovy',
     '.bashrc': 'bash', '.gitconfig': 'ini', '.editorconfig': 'ini', '.env': 'ini', 'nginx.conf': 'nginx' };
   for (const [name, grammar] of Object.entries(expected)) assert.equal(language(`repo/${name}`), grammar, name);
+  for (const name of ['makefile', 'DOCKERFILE', 'cmakelists.txt']) assert.notEqual(language(name), null, `${name}: conventional names in any case`);
+  for (const name of ['build', 'workspace', 'Build']) assert.equal(language(name), null, `${name}: only the Bazel spelling is a Bazel file`);
 });
 
 test('plain text, logs, unknown extensions and bare names get no grammar', () => {
@@ -35,7 +37,7 @@ test('plain text, logs, unknown extensions and bare names get no grammar', () =>
 });
 
 test('structural formats: diff, JSON, JSON Lines and delimited tables', () => {
-  const expected = { 'a.diff': 'diff', 'a.patch': 'diff', 'a.json': 'json', 'flake.lock': 'json', 'a.jsonl': 'jsonl', 'a.ndjson': 'jsonl', 'a.csv': 'csv', 'a.tsv': 'tsv', 'a.py': 'text', 'a.txt': 'text', Makefile: 'text', 'a.yaml': 'text', 'a.json5': 'text' };
+  const expected = { 'a.diff': 'diff', 'a.patch': 'diff', 'a.json': 'json', 'flake.lock': 'json', 'notebook.ipynb': 'json', 'a.jsonl': 'jsonl', 'a.ndjson': 'jsonl', 'a.csv': 'csv', 'a.tsv': 'tsv', 'a.py': 'text', 'a.txt': 'text', Makefile: 'text', 'a.yaml': 'text', 'a.json5': 'text' };
   for (const [path, name] of Object.entries(expected)) assert.equal(format(path), name, path);
 });
 
