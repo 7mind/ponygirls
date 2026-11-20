@@ -13,9 +13,9 @@ import scala.concurrent.duration.*
   * of its own; a failed pass is logged and the next one runs an interval later, so a failure never ends the server. */
 final class EpochMaintenance private (db: Database,logger: logstage.IzLogger,val interval: FiniteDuration) {
   import EpochMaintenance.rowsPerStatement
-  /** One pass; failures propagate (the loop logs them). */
-  def pass: IO[Unit] = prune *> deletePurged
-  private[chronicle] def attempt: IO[Unit] = pass.handleErrorWith(error => IO(logger.warn(s"epoch maintenance pass failed, next pass in $interval: $error")))
+  private def pass: IO[Unit] = prune *> deletePurged
+  /** A pass whose failure is logged: it ends only that pass. */
+  private def attempt: IO[Unit] = pass.handleErrorWith(error => IO(logger.warn(s"epoch maintenance pass failed, next pass in $interval: $error")))
   private def transaction[A](f: java.sql.Connection => A): IO[A] = IO.blocking(db.transaction(f))
   private def repeatWhile(step: IO[Boolean]): IO[Unit] = step.flatMap(more => if(more) repeatWhile(step) else IO.unit)
 
