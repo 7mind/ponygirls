@@ -45,6 +45,12 @@ let
   disabledPackages = disabled.programs.pi.settings.packages;
   enabledPackages = enabled.programs.pi.settings.packages;
   isRemoteClaude = spec: lib.hasInfix "pi-claude-code" spec && !(lib.hasPrefix builtins.storeDir spec);
+  piCatalogLib = import ../lib/pi-catalog.nix;
+  fixtureSol = text: piCatalogLib.latestSolModel "fixture" text;
+  catalogText = builtins.readFile (piCatalogLib.codexCatalogPath piBase);
+  catalogSolIds = builtins.concatLists (builtins.filter builtins.isList (builtins.split "\"(gpt-[0-9.]+-sol)\"" catalogText));
+  solVersion = id: builtins.head (builtins.match "gpt-([0-9.]+)-sol" id);
+  resolvedSol = disabled.programs.pi.historian.model.id;
 in
 assert lib.assertMsg (disabled.smind.hm.dev.llm.pi.providers ? claude-code) "Claude Code provider option is missing";
 assert !disabled.smind.hm.dev.llm.pi.providers.claude-code.enable;
@@ -60,4 +66,10 @@ assert enabledPackages == disabledPackages ++ [ (toString package) ];
 assert !(builtins.any isRemoteClaude enabledPackages);
 assert builtins.elem "npm:pi-xai@0.18.0" mixed.programs.pi.settings.packages;
 assert builtins.elem "npm:pi-ollama-cloud@0.13.1" mixed.programs.pi.settings.packages;
+assert lib.assertMsg (builtins.elem resolvedSol catalogSolIds) "Historian default model must come from the pinned pi catalog sol models";
+assert lib.assertMsg (builtins.all (id: builtins.compareVersions (solVersion id) (solVersion resolvedSol) <= 0) catalogSolIds) "Historian default model must be the newest sol model in the pinned pi catalog";
+assert lib.assertMsg (fixtureSol "{ id: \"gpt-6.10-sol\" } { id: \"gpt-6.9-sol\" }" == "gpt-6.10-sol") "latestSolModel must order dotted versions numerically";
+assert lib.assertMsg (fixtureSol "{ id: \"gpt-6-sol\" } { id: \"gpt-5.6-sol\" }" == "gpt-6-sol") "latestSolModel must prefer the higher major version";
+assert lib.assertMsg (!(builtins.tryEval (fixtureSol "no sol models here")).success) "latestSolModel must fail fast on a catalog without sol models";
+assert lib.assertMsg (disabled.programs.pi.historian.model == { provider = "openai-codex"; id = resolvedSol; thinking = "medium"; }) "Historian default model must stay provider openai-codex with medium thinking";
 pkgs.runCommand "pi-providers-hm-eval" { } "touch $out"
