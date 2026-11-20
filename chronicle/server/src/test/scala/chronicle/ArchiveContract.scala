@@ -472,6 +472,6 @@ final class ArchivePostgresTest extends ArchiveContract {
     val c=Fixtures.config()
     val db=new Database(c,IndexProfileCatalog.current(c)); db.initialize()
     db.transaction(x => { Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) })
-    Injector().produceGet[SessionArchive](new ModuleDef { tag(StandardAxis.Repo.Prod); make[Config].fromValue(c); make[Database].fromValue(db); make[SessionArchive].from[PostgresArchive] }).use(a => f(a,c))
+    Injector().produceGet[SessionArchive](new ModuleDef { tag(StandardAxis.Repo.Prod); make[Config].fromValue(c); make[Database].fromValue(db); make[RevisionLayoutPolicy].fromValue(RevisionLayoutPolicy.production); make[SessionArchive].from[PostgresArchive] }).use(a => f(a,c))
   }
 }
