@@ -72,8 +72,9 @@ object ReindexCohort {
   def status(c: Connection,owner: String,id: UUID): ReindexStatusResult = {
     OwnerTargets.enabled(c,owner,false)
     val profile=Sql.one(c,"SELECT target_profile FROM ch_reindex_requests WHERE owner=? AND request_id=?",owner,id)(_.getString(1)).getOrElse(throw DomainError("not-found","rebuild request not found"))
-    Sql.one(c,"""WITH outcomes AS(SELECT CASE WHEN m.completed_generation IS NOT NULL THEN 'complete'
-      WHEN s.id IS NULL OR s.tombstone OR s.revision<>m.revision OR j.id IS NULL OR j.run_id<>m.run_id OR t.profile<>? OR t.epoch<>m.target_epoch THEN 'superseded'
+    // A member whose job keeps running after a newer revision can still complete: it stays pending until the job ends.
+    Sql.one(c,s"""WITH outcomes AS(SELECT CASE WHEN m.completed_generation IS NOT NULL THEN 'complete'
+      WHEN s.id IS NULL OR s.tombstone OR (s.revision<>m.revision AND (${Jobs.leased("j")}) IS NOT TRUE) OR j.id IS NULL OR j.run_id<>m.run_id OR t.profile<>? OR t.epoch<>m.target_epoch THEN 'superseded'
       WHEN j.state='Failed' THEN 'failed' ELSE 'pending' END AS state
       FROM ch_reindex_members m LEFT JOIN ch_sources s ON s.id=m.session_id LEFT JOIN ch_jobs j ON j.id=m.job_id LEFT JOIN ch_owner_targets t ON t.owner=m.owner
       WHERE m.owner=? AND m.request_id=?) SELECT count(*),count(*) FILTER(WHERE state='complete'),count(*) FILTER(WHERE state='superseded'),count(*) FILTER(WHERE state='failed'),count(*) FILTER(WHERE state='pending') FROM outcomes""",profile,owner,id) { row =>

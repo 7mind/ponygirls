@@ -18,6 +18,7 @@ trait ContextWorkerFixture {
   def archive(): SessionArchive
   def stage(id: UUID): Option[IndexingStage]
   def acceptedParts(id: UUID,stage: IndexingStage): Int
+  def rebuild(owner: String): Unit
 }
 /** Worker log lines as the code interpolated them. */
 final class WorkerLog {
@@ -310,7 +311,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
     val archive=f.archive(); val original=request(List("user"->"synthetic task")); val receipt=archive.ingest("a",original); var calls=0
     val model=new ProblemPassageAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
-        calls+=1; archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1))
+        calls+=1; f.rebuild("a")
         ProblemPassages.Decision(Vector(ProblemPassages.Part.context(ProblemPassages.Point(0,0),ProblemPassages.Point(0,1))))
       }
     }
@@ -432,6 +433,7 @@ final class DummyContextWorkerRecoveryTest extends ContextWorkerRecoveryContract
       def stage(id: UUID): Option[IndexingStage]=value.failureStage(id)
       def acceptedParts(id: UUID,stage: IndexingStage): Int=value.acceptedParts(id,stage)
       def evidence(id: UUID): WorkerEvidence=value.workerEvidence(id)
+      def rebuild(owner: String): Unit={ val plan=value.preview(owner); value(owner,UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true); () }
     })
   }
   test("BG/GoodCommunication regression: one large job runs at a time; another large job stays queued while lanes take small ones") { withFixture { f =>
@@ -485,6 +487,7 @@ final class PostgresContextWorkerRecoveryTest extends ContextWorkerRecoveryContr
         val claims=Sql.one(connection,"SELECT attempts FROM ch_jobs WHERE id=?",id)(_.getInt(1)).get
         Sql.one(connection,"SELECT count(*),count(rejection_reason) FROM ch_annotation_attempts WHERE job_id=?",id)(r => WorkerEvidence(claims,r.getInt(1),r.getInt(2))).get
       }
+      def rebuild(owner: String): Unit={ Fixtures.rebuild(db,owner); () }
     })
   }
   test("BG/GoodCommunication regression: a corrupt accepted embedding part stays an internal fault that ends the worker run and is never discarded with its window") { CurrentIndexDatabase.withDatabase { (config,db,archive) =>

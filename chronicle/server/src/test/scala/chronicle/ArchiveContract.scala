@@ -38,7 +38,11 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     SessionMessageSearchResult(view,hits,next)
   }
   private final case class Head(id: UUID,owner: String,var request: IngestRequest,var revision: Int,var indexed: Option[Int])
-  private final case class Job(var claim: Claim,var state: JobState,var attempts: Int,var lease: Instant,var completed: Int,var total: Option[Int])
+  private final case class Job(var claim: Claim,var state: JobState,var attempts: Int,var lease: Instant,var completed: Int,var total: Option[Int]) {
+    def leased: Boolean = state==JobState.Running && lease.isAfter(Instant.now())
+  }
+  private def supersede(j: Job): Unit = { j.state=JobState.Failed; j.claim=j.claim.copy(fence=j.claim.fence+1); j.lease=Instant.EPOCH; failedStages.remove(j.claim.jobId); () }
+  private def headRevision(c: Claim): Int = sources.values.find(_.id==c.sessionId).map(_.revision).getOrElse(0)
   private val sources = mutable.Map.empty[(String,String),Head]
   private val receipts = mutable.Map.empty[(String,String,UUID),(String,IngestReceipt)]
   private val targets=mutable.Map.empty[String,OwnerTarget]
@@ -156,7 +160,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
         Check(h.revision==r.expectedRevision,"conflict","revision mismatch")
         h.request=SnapshotProjection(r); h.revision+=1
         revisions((h.id,h.revision))=h.request; revisionIdentities((h.id,h.revision))=UUID.randomUUID()
-        jobs.values.filter(j => j.claim.sessionId==h.id && j.claim.revision<h.revision && j.state!=JobState.Complete).foreach { j => j.state=JobState.Failed; j.claim=j.claim.copy(fence=j.claim.fence+1); failedStages.remove(j.claim.jobId) }
+        jobs.values.filter(j => j.claim.sessionId==h.id && j.claim.revision<h.revision && j.state!=JobState.Complete && !j.leased).foreach(supersede)
         // Like PostgresArchive.claim: indexing carries the revision without its raw files.
         val indexed=h.request.copy(files=Nil)
         val claim=Claim(UUID.randomUUID(),h.id,h.revision,0L,selected.profile,indexed,owner,selected.epoch,UUID.randomUUID(),RevisionBinding.captured(revisionIdentities((h.id,h.revision)),h.id,h.revision,indexed))
@@ -179,15 +183,17 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
       scoped && enabled(c.owner) && !removed(c.sessionId) && profiles(c.profile) && selected.profile==c.profile && sources.values.exists(h => h.id==c.sessionId && h.revision==c.revision) &&
         (large==LargeJobs.Admitted || !j.total.exists(_>LargeJobs.windows))
     }
+    def older(j: Job): Iterable[Job] = jobs.values.filter(o => o.claim.sessionId==j.claim.sessionId && o.claim.profile==j.claim.profile && o.claim.revision<j.claim.revision && o.state==JobState.Running)
+    jobs.values.filter(eligible).toList.flatMap(older).filterNot(_.leased).foreach(supersede)
     jobs.values.filter(j => eligible(j) && j.state==JobState.Running && !j.lease.isAfter(Instant.now()) && j.attempts>=Jobs.attemptLimit).foreach { j => j.state=JobState.Failed; j.claim=j.claim.copy(fence=j.claim.fence+1); failedStages.remove(j.claim.jobId) }
-    jobs.values.find(j => eligible(j) && j.attempts<Jobs.attemptLimit && (j.state==JobState.Queued || (j.state==JobState.Running && !j.lease.isAfter(Instant.now())))).map { j =>
+    jobs.values.find(j => eligible(j) && older(j).isEmpty && j.attempts<Jobs.attemptLimit && (j.state==JobState.Queued || (j.state==JobState.Running && !j.lease.isAfter(Instant.now())))).map { j =>
       j.state=JobState.Running; j.attempts+=1; j.claim=j.claim.copy(fence=j.claim.fence+1,targetEpoch=target(j.claim.owner).epoch)
       j.lease=Instant.now().plusSeconds(leaseSeconds); j.completed=0; j.total=None; j.claim
     }
   }
   private def valid(c: Claim): Boolean = {
     val selected=target(c.owner)
-    enabled(c.owner) && !removed(c.sessionId) && c.revisionBinding.matches(c) && revisionIdentities.get((c.sessionId,c.revision)).contains(c.revisionBinding.id) && selected==OwnerTarget(c.profile,c.targetEpoch) && sources.values.exists(h => h.id==c.sessionId && h.owner==c.owner && h.revision==c.revision) &&
+    enabled(c.owner) && !removed(c.sessionId) && c.revisionBinding.matches(c) && revisionIdentities.get((c.sessionId,c.revision)).contains(c.revisionBinding.id) && selected==OwnerTarget(c.profile,c.targetEpoch) && sources.values.exists(h => h.id==c.sessionId && h.owner==c.owner && h.revision>=c.revision) &&
       jobs.get(c.jobId).exists(j => j.claim==c && j.state==JobState.Running && j.lease.isAfter(Instant.now()))
   }
   def progress(c: Claim,completedWindows: Int,totalWindows: Int): Boolean = synchronized {
@@ -198,7 +204,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     }
   }
   def defer(c: Claim,totalWindows: Int): Boolean = synchronized {
-    if(!valid(c)) false else {
+    if(!valid(c)) false else if(headRevision(c)>c.revision) { val j=jobs(c.jobId); supersede(j); j.total=Some(totalWindows); false } else {
       val j=jobs(c.jobId); j.state=JobState.Queued; j.attempts-=1; j.lease=Instant.EPOCH; j.claim=j.claim.copy(fence=j.claim.fence+1); j.completed=0; j.total=Some(totalWindows); true
     }
   }
@@ -212,7 +218,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     if(!valid(c)) false else {
       Check(catalog.resolve(c.profile).policy==policy,"invalid","publication payload does not match profile policy")
       problems.foreach(_.validate(c,config.embedding.dimensions))
-      if(!valid(c)) false else {
+      if(!valid(c)) false else if(published.get(c.sessionId).exists(_._1.revision>c.revision)) { supersede(jobs(c.jobId)); false } else {
         val h=head(c.owner,c.sessionId); h.indexed=Some(c.revision)
         val generation=UUID.randomUUID(); val view=ContentView(c.revision,Some(generation))
         published(h.id)=(view,c.snapshot,c.profile)
@@ -269,12 +275,13 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     }.toList
     PassageSpansResult(view,passageId,spans,passage.spanCount,offset)
   }
-  def fail(c: Claim,code: String): Unit = synchronized {
-    if(valid(c)) { val j=jobs(c.jobId); j.state=if(j.attempts>=Jobs.attemptLimit || AnnotationAttempts.terminal(code)) JobState.Failed else JobState.Queued; j.lease=Instant.EPOCH; failedStages.remove(c.jobId); () }
+  private def failed(c: Claim,code: String,stage: Option[IndexingStage]): Unit = if(valid(c)) {
+    val j=jobs(c.jobId); val terminal=j.attempts>=Jobs.attemptLimit || AnnotationAttempts.terminal(code)
+    if(!terminal && headRevision(c)>c.revision) supersede(j)
+    else { j.state=if(terminal) JobState.Failed else JobState.Queued; j.lease=Instant.EPOCH; stage.fold(failedStages.remove(c.jobId))(value => failedStages.put(c.jobId,value)); () }
   }
-  def fail(c: Claim,code: String,stage: IndexingStage): Unit = synchronized {
-    if(valid(c)) { fail(c,code); failedStages(c.jobId)=stage }
-  }
+  def fail(c: Claim,code: String): Unit = synchronized(failed(c,code,None))
+  def fail(c: Claim,code: String,stage: IndexingStage): Unit = synchronized(failed(c,code,Some(stage)))
   private def ownerHeads(owner: String): List[Head] = sources.values.filter(h => h.owner==owner && !removed(h.id)).toList.sortBy(_.id.toString)
   private def ready(h: Head,profile: String): Boolean = published.get(h.id).exists(p => p._1.revision==h.revision && p._3==profile)
   def preview(owner: String): OwnerReindexPreview = synchronized {
@@ -321,7 +328,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     val rebuild=rebuilds.getOrElse((owner,id),throw DomainError("not-found","rebuild request not found"))
     val outcomes=rebuild.members.map { member =>
       if(rebuild.completed(member.sessionId)) "complete"
-      else if(!sources.values.exists(h => h.id==member.sessionId && h.revision==member.revision && !removed(h.id)) || target(owner)!=OwnerTarget(rebuild.result.targetProfile,rebuild.epoch) || !jobs.get(member.jobId).exists(_.claim.runId==member.runId)) "superseded"
+      else if(!sources.values.exists(h => h.id==member.sessionId && (h.revision==member.revision || jobs.get(member.jobId).exists(_.leased)) && !removed(h.id)) || target(owner)!=OwnerTarget(rebuild.result.targetProfile,rebuild.epoch) || !jobs.get(member.jobId).exists(_.claim.runId==member.runId)) "superseded"
       else if(jobs(member.jobId).state==JobState.Failed) "failed" else "pending"
     }
     ReindexStatusResult(id,rebuild.result.targetProfile,outcomes.size.toLong,outcomes.count(_=="complete").toLong,outcomes.count(_=="superseded").toLong,outcomes.count(_=="failed").toLong,outcomes.count(_=="pending").toLong)
@@ -410,13 +417,13 @@ abstract class ArchiveContract extends munit.FunSuite {
     assertEquals(a.ingest("a",original),first)
     assertEquals(a.headSnapshot("a",first.sessionId),original)
     assertEquals(intercept[DomainError](a.ingest("a",original.copy(metadata=original.metadata.copy(title="changed replay")))).code,"conflict")
-    val stale=a.claim(Set(c.profile),ClaimScope.Owner("a"),300).get
+    val older=a.claim(Set(c.profile),ClaimScope.Owner("a"),300).get
     val revised=HistorianFixtures.next(original); val second=a.ingest("a",revised)
     assertEquals(second.sessionId,first.sessionId); assertEquals(second.revision,2); assert(second.jobId!=first.jobId)
     assertEquals(a.ingest("a",original),first); assertEquals(a.ingest("a",revised),second)
     assertEquals(intercept[DomainError](a.ingest("a",original.copy(requestId=UUID.randomUUID()))).code,"conflict")
     assertEquals(a.headSnapshot("a",first.sessionId),revised)
-    assert(!a.publishProblems(stale,ProblemPublicationFixtures.oneProblem(stale)))
+    assert(a.publishProblems(older,ProblemPublicationFixtures.oneProblem(older)))
     val current=a.claim(Set(c.profile),ClaimScope.Owner("a"),300).get
     assertEquals(current.jobId,second.jobId); assertEquals(current.snapshot,revised.copy(files=Nil))
     assertEquals(current.snapshot.messages.head.role,"historian")
@@ -445,8 +452,8 @@ abstract class ArchiveContract extends munit.FunSuite {
     assertEquals(selected.revision,2); assertEquals(selected.metadata.title,r.metadata.title)
     assertEquals(a.headSnapshot("a",out.sessionId).metadata.title,"new-head")
   }}
-  test("B-Atomic/GoodCommunication: stale worker cannot publish over newer archive head") { withArchive { (a,c) =>
-    val r=Fixtures.snapshot(); val out=a.ingest("a",r); val claim=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
+  test("B-Atomic/GoodCommunication: a worker whose lease expired cannot publish over newer archive head") { withArchive { (a,c) =>
+    val r=Fixtures.snapshot(); val out=a.ingest("a",r); val claim=a.claim(Set(c.profile),ClaimScope.AllOwners,0).get
     a.ingest("a",r.copy(requestId=UUID.randomUUID(),expectedRevision=1))
     assert(!a.publish(claim,Nil)); assertEquals(a.session("a",out.sessionId).indexedRevision,None)
     val fresh=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get; assert(a.publish(fresh,Nil)); assertEquals(a.session("a",out.sessionId).indexedRevision,Some(2))

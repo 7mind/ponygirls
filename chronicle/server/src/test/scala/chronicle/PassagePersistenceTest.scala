@@ -174,9 +174,9 @@ abstract class PassagePersistenceContract extends munit.FunSuite {
     List(current.copy(owner="b"),current.copy(fence=current.fence+1),current.copy(targetEpoch=current.targetEpoch+1),current.copy(jobId=UUID.randomUUID())).foreach { bad =>
       assert(!f.archive.publishProblems(bad,publication))
     }
-    f.archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1))
+    f.archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1)); f.transition("a")
     assert(!f.archive.publishProblems(current,publication)); assertEquals(f.archive.session("a",receipt.sessionId).indexedRevision,None)
-    val fresh=claim(f,"a"); assert(f.archive.publishProblems(fresh,oneProblem(fresh)))
+    val fresh=claim(f,"a"); assertEquals(fresh.revision,2); assert(f.archive.publishProblems(fresh,oneProblem(fresh)))
     val expired=f.archive.ingest("a",request(List("A expired")))
     val expiring=f.archive.claim(f.catalog.knownProfiles,ClaimScope.Owner("a"),0).get
     assert(!f.archive.publishProblems(expiring,oneProblem(expiring))); assertEquals(f.archive.session("a",expired.sessionId).indexedRevision,None)

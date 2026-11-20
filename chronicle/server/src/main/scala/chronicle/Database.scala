@@ -103,6 +103,10 @@ object PostgresArchive {
 object Jobs {
   val attemptLimit=5
   val supersededRevision = "superseded-revision"
+  /** A Running job with a valid lease keeps its claim when its source gets a newer revision, and the head job of its
+    * source and profile waits for it; every other unfinished job of an older revision ends superseded. */
+  def leased(job: String): String = s"$job.state='Running' AND $job.lease_until>clock_timestamp()"
+  val superseding = s"state='Failed',error='$supersededRevision',failure_stage=NULL,fence=fence+1,lease_until=NULL"
   def retry(c: Connection,owner: String,id: UUID): Unit = {
     val target=OwnerTargets.read(c,owner,true).profile
     val head=Sql.one(c,"SELECT s.revision FROM ch_sources s JOIN ch_jobs j ON j.session_id=s.id WHERE j.id=? AND s.owner=? AND NOT s.tombstone FOR UPDATE OF s",id,owner)(_.getInt(1)).getOrElse(throw DomainError("not-found","job not found"))
@@ -152,7 +156,7 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
           ArchiveProjection.persist(c,id,next,snapshot)
           source(" FOR NO KEY UPDATE")
           Sql.exec(c,"UPDATE ch_sources SET revision=? WHERE id=?",next,id)
-          Sql.exec(c,"UPDATE ch_jobs SET state='Failed',error=?,failure_stage=NULL,fence=fence+1,lease_until=NULL WHERE session_id=? AND revision<? AND state<>'Complete'",Jobs.supersededRevision,id,next)
+          Sql.exec(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} WHERE j.session_id=? AND j.revision<? AND j.state<>'Complete' AND (${Jobs.leased("j")}) IS NOT TRUE",id,next)
           Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile) VALUES(?,?,?,?)",job,id,next,target.profile)
           Sql.exec(c,"INSERT INTO ch_ingest_receipts VALUES(?,?,?,?,?::jsonb)",owner,key,r.requestId,digest,Wire.encode(IngestReceipt.codecJson,receipt).noSpaces)
           receipt
@@ -246,16 +250,22 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     val owners=Sql.rows(c,s"SELECT t.owner FROM ch_owner_targets t JOIN ch_users u ON u.id=t.owner AND u.enabled WHERE t.profile IN($placeholders)${scoped._1} ORDER BY t.owner",(profiles.toList.sorted++scoped._2)*)(_.getString(1))
     owners.iterator.map { owner =>
       OwnerTargets.eligible(c,owner).filter(target => profiles.contains(target.profile)).flatMap { target =>
-        val exhausted=Sql.rows(c,s"""SELECT s.id FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
-          SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.state='Running' AND j.lease_until<clock_timestamp() AND j.attempts>=${Jobs.attemptLimit})
+        // Running jobs whose lease ended: one of an older revision cannot renew and is never claimed again, so it ends
+        // superseded; the head job's last attempt ends lease-exhausted.
+        val supersededLease="j.revision<s.revision AND (j.lease_until>clock_timestamp()) IS NOT TRUE"
+        val ended=Sql.rows(c,s"""SELECT s.id FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
+          SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.profile=? AND j.state='Running' AND (($supersededLease) OR (j.revision=s.revision AND j.lease_until<clock_timestamp() AND j.attempts>=${Jobs.attemptLimit})))
           ORDER BY s.id FOR UPDATE OF s SKIP LOCKED""",owner,target.profile)(_.getObject(1,classOf[UUID]))
-        exhausted.foreach { id =>
+        ended.foreach { id =>
+          Sql.exec(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} FROM ch_sources s WHERE s.id=j.session_id AND j.session_id=? AND j.profile=? AND j.state='Running' AND $supersededLease",id,target.profile)
           Sql.exec(c,s"UPDATE ch_jobs SET state='Failed',error='lease-exhausted',failure_stage=NULL,lease_until=NULL,fence=fence+1 WHERE session_id=? AND profile=? AND state='Running' AND lease_until<clock_timestamp() AND attempts>=${Jobs.attemptLimit}",id,target.profile)
         }
+        // One job per source and profile at a time: the head job waits while a job of an older revision is Running.
         val source=Sql.one(c,s"""SELECT s.id,s.revision FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
           SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.attempts<${Jobs.attemptLimit} AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp())))
+          AND NOT EXISTS(SELECT 1 FROM ch_jobs o WHERE o.session_id=s.id AND o.revision<s.revision AND o.profile=? AND o.state='Running')
           AND (? OR NOT EXISTS(SELECT 1 FROM ch_jobs d WHERE d.session_id=s.id AND d.revision=s.revision AND d.profile=? AND d.total_windows>?))
-          ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",owner,target.profile,large==LargeJobs.Admitted,target.profile,LargeJobs.windows)(r => (r.getObject(1,classOf[UUID]),r.getInt(2)))
+          ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",owner,target.profile,target.profile,large==LargeJobs.Admitted,target.profile,LargeJobs.windows)(r => (r.getObject(1,classOf[UUID]),r.getInt(2)))
         source.flatMap { case (id,revision) =>
           Sql.one(c,s"""UPDATE ch_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
             WHERE id=(SELECT id FROM ch_jobs WHERE session_id=? AND revision=? AND profile=? AND attempts<${Jobs.attemptLimit} AND (state='Queued' OR (state='Running' AND lease_until<clock_timestamp())) FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,fence,run_id""",leaseSeconds,id,revision,target.profile) { row =>
@@ -281,13 +291,14 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     val snapshot=envelope.copy(messages=messages.result())
     (snapshot,RevisionBinding.captured(bindingId,id,revision,snapshot))
   }
-  private def current(c: Connection,claim: Claim): Boolean = {
-    OwnerTargets.eligible(c,claim.owner).exists { target =>
-      target.profile==claim.profile && target.epoch==claim.targetEpoch && knownProfiles.contains(claim.profile) &&
-        // NO KEY UPDATE: serialized with the revision switch and purge, not with the key-share locks an ingest's projection takes.
-        Sql.one(c,"SELECT id FROM ch_sources WHERE id=? AND owner=? AND revision=? AND NOT tombstone FOR NO KEY UPDATE",claim.sessionId,claim.owner,claim.revision)(_ => true).contains(true)
+  /** The head revision of the claim's live source while the claim's owner target is current. A claim of an older revision
+    * keeps its authority: newer revisions do not end a Running job with a valid lease. */
+  private def head(c: Connection,claim: Claim): Option[Int] =
+    OwnerTargets.eligible(c,claim.owner).filter(target => target.profile==claim.profile && target.epoch==claim.targetEpoch && knownProfiles.contains(claim.profile)).flatMap { _ =>
+      // NO KEY UPDATE: serialized with the revision switch and purge, not with the key-share locks an ingest's projection takes.
+      Sql.one(c,"SELECT revision FROM ch_sources WHERE id=? AND owner=? AND revision>=? AND NOT tombstone FOR NO KEY UPDATE",claim.sessionId,claim.owner,claim.revision)(_.getInt(1))
     }
-  }
+  private def current(c: Connection,claim: Claim): Boolean = head(c,claim).nonEmpty
   private val claimedJob="id=? AND session_id=? AND revision=? AND profile=? AND fence=? AND run_id=? AND state='Running'"
   private val validJob=claimedJob+" AND lease_until>clock_timestamp()"
   private def jobArgs(claim: Claim): List[Sql.Param] = List(claim.jobId,claim.sessionId,claim.revision,claim.profile,claim.fence,claim.runId)
@@ -342,7 +353,11 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
   def defer(claim: Claim,totalWindows: Int): Boolean = {
     Check(totalWindows>=0,"invalid","invalid indexing progress")
     db.transaction { c =>
-      current(c,claim) && lockJob(c,claim) && Sql.exec(c,s"UPDATE ch_jobs SET state='Queued',attempts=attempts-1,lease_until=NULL,fence=fence+1,completed_windows=0,total_windows=? WHERE $validJob",(List[Sql.Param](totalWindows)++jobArgs(claim))*)==1
+      head(c,claim).filter(_ => lockJob(c,claim)).exists { head =>
+        // A job of an older revision is never queued again: it ends superseded instead.
+        if(head>claim.revision) { Sql.exec(c,s"UPDATE ch_jobs SET ${Jobs.superseding},total_windows=? WHERE $validJob",(List[Sql.Param](totalWindows)++jobArgs(claim))*); false }
+        else Sql.exec(c,s"UPDATE ch_jobs SET state='Queued',attempts=attempts-1,lease_until=NULL,fence=fence+1,completed_windows=0,total_windows=? WHERE $validJob",(List[Sql.Param](totalWindows)++jobArgs(claim))*)==1
+      }
     }
   }
   def renew(claim: Claim,leaseSeconds: Int): Boolean = {
@@ -370,7 +385,10 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
       chunks.indices.by(PostgresArchive.searchRowsPerStatement).foreach { from =>
         Sql.exec(c,"INSERT INTO ch_search_chunks(id,generation,session_id,revision,profile,document,embedding) SELECT ch.id,ch.generation,g.session_id,g.revision,g.profile,ch.document,ch.embedding FROM ch_chunks ch JOIN ch_generations g ON g.id=ch.generation WHERE g.id=? AND ch.ordinal>=? AND ch.ordinal<?",generation,from,from+PostgresArchive.searchRowsPerStatement)
       }
-      val completed=current(c,claim) && lockJob(c,claim) && Sql.one(c,s"SELECT id FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true) && revisionMatches(c,claim) && {
+      val authorized=current(c,claim) && lockJob(c,claim) && Sql.one(c,s"SELECT id FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true) && revisionMatches(c,claim)
+      // Publication is monotonic: a job never replaces the published generation of a newer revision; it ends superseded.
+      val superseded=authorized && Sql.one(c,"SELECT g.revision>? FROM ch_sources s JOIN ch_generations g ON g.id=s.published WHERE s.id=?",claim.revision,claim.sessionId)(_.getBoolean(1)).contains(true)
+      val completed=authorized && !superseded && {
         Sql.exec(c,"DELETE FROM ch_search_chunks WHERE session_id=? AND generation<>?",claim.sessionId,generation)
         Sql.exec(c,"UPDATE ch_sources SET published=? WHERE id=?",generation,claim.sessionId)
         ReindexCohort.published(c,claim,generation)
@@ -378,6 +396,8 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
       }
       if(!completed) c.rollback(publication)
       c.releaseSavepoint(publication)
+      // The rollback released the savepoint's locks: they are taken again, in the same order, to end the job.
+      if(superseded && current(c,claim) && lockJob(c,claim)) Sql.exec(c,s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob",jobArgs(claim)*)
       completed
       }
     }
@@ -386,8 +406,12 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
   def fail(claim: Claim,code: String,stage: IndexingStage): Unit = failAt(claim,code,Some(stage))
   private def failAt(claim: Claim,code: String,stage: Option[IndexingStage]): Unit = db.transaction { c =>
     val exhausted=AnnotationAttempts.terminal(code)
-    if(current(c,claim) && lockJob(c,claim)) Sql.exec(c,s"UPDATE ch_jobs SET state=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN 'Failed' ELSE 'Queued' END,error=?,failure_stage=NULLIF(?,''),lease_until=NULL,completed_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN completed_windows ELSE 0 END,total_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN total_windows ELSE NULL END WHERE $validJob",(List[Sql.Param](exhausted,code.take(64),stage.fold("")(_.toString),exhausted,exhausted)++jobArgs(claim))*)
-    ()
+    head(c,claim).filter(_ => lockJob(c,claim)).foreach { head =>
+      // A job of an older revision is never queued again: where it would be, it ends superseded.
+      val superseded=head>claim.revision && Sql.one(c,s"SELECT attempts<${Jobs.attemptLimit} AND NOT ? FROM ch_jobs WHERE $validJob",(List[Sql.Param](exhausted)++jobArgs(claim))*)(_.getBoolean(1)).contains(true)
+      if(superseded) Sql.exec(c,s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob",jobArgs(claim)*)
+      else Sql.exec(c,s"UPDATE ch_jobs SET state=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN 'Failed' ELSE 'Queued' END,error=?,failure_stage=NULLIF(?,''),lease_until=NULL,completed_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN completed_windows ELSE 0 END,total_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN total_windows ELSE NULL END WHERE $validJob",(List[Sql.Param](exhausted,code.take(64),stage.fold("")(_.toString),exhausted,exhausted)++jobArgs(claim))*)
+    }
   }
   private def chunksQuery(generation: UUID,offset: Int,limit: Int): ReadSources.Query = ReadSources.Query("SELECT value FROM ch_chunks WHERE generation=? ORDER BY ordinal,id LIMIT ? OFFSET ?",List(generation,limit,offset))
   private def chunkSourceBytes(c: Connection,view: ContentView,offset: Int,limit: Int): Long = view.generationId.map(generation => ReadSources.bytes(c,chunksQuery(generation,offset,limit))).getOrElse(0L)

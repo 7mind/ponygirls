@@ -40,21 +40,53 @@ class PostgresBehaviorTest extends munit.FunSuite {
       assertEquals(result.hits.head.chunks.head.spans,fragments.find(_.text==word).get.spans)
     }
   }}
-  List(false,true).foreach { running =>
-    test(s"BG-GoodCommunication regression: resumed heads terminalize superseded ${if(running) "Running" else "Queued"} jobs") { database { (c,db,a,auth) =>
-      val request=Fixtures.snapshot(); val old=a.ingest("a",request)
-      val stale=if(running) a.claim(Set(c.profile),ClaimScope.AllOwners,300) else None
-      a.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))
-      val current=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get; assertEquals(current.revision,2); assert(a.publish(current,Nil))
-      stale.foreach { claim => assert(!a.publish(claim,Nil)); a.fail(claim,"late-model-failure") }
-      assertEquals(a.claim(Set(c.profile),ClaimScope.AllOwners,300),None)
-      val jobs=a.statuses("a",0,100).jobs
-      val superseded=jobs.find(_.id==old.jobId).get
-      assertEquals(superseded.state,JobState.Failed)
-      assertEquals(superseded.error,Some("superseded-revision"))
-      assertEquals(jobs.find(_.id==current.jobId).get.state,JobState.Complete)
-    }}
-  }
+  private def job(a: PostgresArchive,id: UUID): (JobState,Option[String]) = a.statuses("a",0,100).jobs.find(_.id==id).map(job => (job.state,job.error)).get
+  private def revise(a: PostgresArchive,request: IngestRequest,head: Int): IngestReceipt = a.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=head))
+  test("BG-GoodCommunication regression: resumed heads terminalize superseded Queued jobs") { database { (c,db,a,auth) =>
+    val request=Fixtures.snapshot(); val old=a.ingest("a",request)
+    revise(a,request,1)
+    val current=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get; assertEquals(current.revision,2); assert(a.publish(current,Nil))
+    assertEquals(a.claim(Set(c.profile),ClaimScope.AllOwners,300),None)
+    assertEquals(job(a,old.jobId),(JobState.Failed,Some(Jobs.supersededRevision)))
+    assertEquals(job(a,current.jobId),(JobState.Complete,None))
+  }}
+  test("BG-GoodCommunication regression: a Running job with a valid lease survives newer heads and publishes its revision; the head job waits for it") { database { (c,db,a,auth) =>
+    val request=Fixtures.snapshot(); val first=a.ingest("a",request)
+    val running=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
+    val second=revise(a,request,1); val third=revise(a,request,2)
+    assertEquals(job(a,second.jobId),(JobState.Failed,Some(Jobs.supersededRevision)),"the next ingest supersedes a queued head job")
+    assertEquals(a.claim(Set(c.profile),ClaimScope.AllOwners,300),None,"the head job waits while a job of its source is Running")
+    val key=IndexCheckpoints.key(running,IndexingStage.Annotation,0,0,ProblemPassages.identity,io.circe.Json.fromString("window"))
+    assert(a.renew(running,300)); assert(a.progress(running,1,1))
+    a.checkpoint(running,key,io.circe.Json.fromString("accepted")); assertEquals(a.checkpoint(running,key),Some(io.circe.Json.fromString("accepted")))
+    assert(a.publish(running,Nil))
+    assertEquals(job(a,first.jobId),(JobState.Complete,None)); assertEquals(a.session("a",first.sessionId).indexedRevision,Some(1))
+    val head=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get; assertEquals(head.jobId,third.jobId)
+    assert(a.publish(head,Nil)); assertEquals(a.session("a",first.sessionId).indexedRevision,Some(3))
+  }}
+  test("BG-GoodCommunication regression: a retryable failure or a large-job deferral of a job of an older revision ends it superseded, never queued") { database { (c,db,a,auth) =>
+    val request=Fixtures.snapshot(); val first=a.ingest("a",request)
+    val failing=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
+    revise(a,request,1); assert(a.renew(failing,300)); a.fail(failing,"model-http")
+    assertEquals(job(a,first.jobId),(JobState.Failed,Some(Jobs.supersededRevision)))
+    val deferred=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get; assertEquals(deferred.revision,2)
+    val third=revise(a,request,2); assert(a.renew(deferred,300)); assert(!a.defer(deferred,LargeJobs.windows+1))
+    assertEquals(job(a,deferred.jobId),(JobState.Failed,Some(Jobs.supersededRevision)))
+    assertEquals(a.claim(Set(c.profile),ClaimScope.AllOwners,300).map(_.jobId),Some(third.jobId))
+  }}
+  test("BG-GoodCommunication regression: a publication never replaces the published generation of a newer revision") { database { (c,db,a,auth) =>
+    val request=Fixtures.snapshot(); val first=a.ingest("a",request)
+    val older=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
+    revise(a,request,1)
+    // Overlapping claims of one source, which the claims exclude, reach the publication's own check.
+    def state(value: String): Unit = { db.transaction(x => Sql.exec(x,"UPDATE ch_jobs SET state=? WHERE id=?",value,older.jobId)); () }
+    state("Complete"); val newer=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get; state("Running")
+    assert(a.publish(newer,Nil)); val published=a.session("a",first.sessionId).view; assertEquals(published.revision,2)
+    assert(!a.publish(older,Nil))
+    assertEquals(a.session("a",first.sessionId).view,published)
+    assertEquals(job(a,older.jobId),(JobState.Failed,Some(Jobs.supersededRevision)))
+    assertEquals(db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_generations WHERE session_id=? AND revision=1",first.sessionId)(_.getInt(1))),Some(0))
+  }}
   test("BG-GoodCommunication regression: retry rejects obsolete revisions rather than acknowledging ineligible work") { database { (c,db,a,auth) =>
     val request=Fixtures.snapshot(); val old=a.ingest("a",request)
     a.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))
@@ -252,13 +284,15 @@ class PostgresBehaviorTest extends munit.FunSuite {
     try {
       db.transaction { held =>
         Sql.one(held,"SELECT id FROM ch_jobs WHERE id=? FOR UPDATE",old.jobId)(_.getString(1))
-        ingesting=executor.submit(new java.util.concurrent.Callable[IngestReceipt] { def call(): IngestReceipt=archive.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1)) })
-        awaitBlocked(timedDb,"UPDATE ch_jobs SET state='Failed',error=")
         publishing=executor.submit(new java.util.concurrent.Callable[Boolean] { def call(): Boolean=archive.publish(old,Nil) })
-        awaitBlocked(timedDb,"SELECT id FROM ch_sources")
+        awaitBlocked(timedDb,"SELECT j.id FROM ch_jobs")
+        ingesting=executor.submit(new java.util.concurrent.Callable[IngestReceipt] { def call(): IngestReceipt=archive.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1)) })
+        awaitBlocked(timedDb,"SELECT id,revision,tombstone FROM ch_sources")
+        // The lease ends while both wait: the publication is void and the switch supersedes the job.
+        Sql.exec(held,"UPDATE ch_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=?",old.jobId)
       }
-      assertEquals(ingesting.get(5,java.util.concurrent.TimeUnit.SECONDS).revision,2)
       assertEquals(publishing.get(5,java.util.concurrent.TimeUnit.SECONDS),false)
+      assertEquals(ingesting.get(5,java.util.concurrent.TimeUnit.SECONDS).revision,2)
       assertEquals(archive.statuses("a",0,100).jobs.find(_.id==old.jobId).get.error,Some("superseded-revision"))
     } finally { executor.shutdownNow(); executor.awaitTermination(6,java.util.concurrent.TimeUnit.SECONDS) }
   }}

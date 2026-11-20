@@ -134,7 +134,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     }}
   }
   List(false,true).foreach { withPrefix =>
-    test(s"BG/GoodCommunication regression: superseding a passage claim before length prevents a stale retry ${if(withPrefix) "after an embedded prefix" else "on the first window"}") { withArchive { (config,catalog,delegate,_) =>
+    test(s"BG/GoodCommunication regression: superseding a passage claim before length prevents a stale retry ${if(withPrefix) "after an embedded prefix" else "on the first window"}") { withArchive { (config,catalog,delegate,retarget) =>
       val archive=new Recording(delegate); val original=source((0 until 160).map(i => s"A substep $i").toList)
       val receipt=archive.ingest("a",original); val embedding=new Embeddings; val requests=ListBuffer.empty[Json]
       val invalidatingAttempt=if(withPrefix) 2 else 1
@@ -145,11 +145,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
         val input=Wire.parse(payload.hcursor.downField("messages").downN(1).get[String]("content").toOption.get)
         val texts=input.hcursor.get[Vector[Json]]("fragments").toOption.get.map(_.hcursor.get[String]("text").toOption.get)
         val previous=input.hcursor.downField("previous").get[List[String]]("tags").toOption.flatMap(_.headOption)
-        val finish=if(requests.size==invalidatingAttempt) {
-          val replacement=archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1))
-          assertEquals(replacement.revision,2)
-          "length"
-        } else "stop"
+        val finish=if(requests.size==invalidatingAttempt) { retarget("a",catalog.preferred.profile); "length" } else "stop"
         Response[IO](Status.Ok).withEntity(ProblemPassageFixtures.envelope(ProblemPassageFixtures.json(ProblemPassageFixtures.plan(texts,previous)).noSpaces,finish).noSpaces)
       }}
       val model=new OpenAIProblemPassageAnnotator(ModelFixtures.http(Client.fromHttpApp(app),config),config)
@@ -162,7 +158,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
       assertEquals(delegate.session("a",receipt.sessionId).indexedRevision,None)
     }}
   }
-  test("BG/GoodCommunication: a stale claim after embedding cannot annotate another window or publish") { withArchive { (config,catalog,delegate,_) =>
+  test("BG/GoodCommunication: a stale claim after embedding cannot annotate another window or publish") { withArchive { (config,catalog,delegate,retarget) =>
     val archive=new Recording(delegate); val request=source((0 until 160).map(i => s"A substep $i").toList); archive.ingest("a",request)
     var calls=0; var invalidated=false
     val base=new ProblemPassageFixtures.Dummy
@@ -172,7 +168,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     val embedder=new Embedder {
       def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("unexpected query"))
       def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO {
-        if(!invalidated) { invalidated=true; archive.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1)) }
+        if(!invalidated) { invalidated=true; retarget("a",catalog.preferred.profile) }
         text.map(_ => List(1.0,0.0,0.0))
       }
     }
@@ -276,6 +272,6 @@ class PostgresPassageWorkerTest extends PassageWorkerContract {
     val base=Fixtures.config(); val config=base.copy(annotation=base.annotation.copy(timeoutSeconds=900,requestPolicy=AnnotationRequestPolicy.GlmMaxReasoning),indexing=IndexingCapacity(2,2,3))
     val catalog=IndexProfileCatalog.current(config); val db=new Database(config,catalog); db.initialize()
     db.transaction(c => { Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",catalog.preferred.profile) })
-    f(config,catalog,new PostgresArchive(db,config),(owner,profile) => { db.transaction(c => Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0 WHERE owner=?",profile,owner)); () })
+    f(config,catalog,new PostgresArchive(db,config),(owner,profile) => { db.transaction(c => Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=epoch+1 WHERE owner=?",profile,owner)); () })
   }
 }

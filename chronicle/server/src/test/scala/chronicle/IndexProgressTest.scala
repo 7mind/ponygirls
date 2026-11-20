@@ -41,12 +41,16 @@ class IndexProgressTest extends munit.FunSuite {
     assertEquals(counters(a,out.jobId),(2,Some(2)))
     assertEquals(a.statuses("c",0,100).jobs,Nil)
   }}
-  test("superseded source revisions and target profiles reject progress") { database { (c,db,a) =>
+  test("an older job whose lease expired is superseded by the next claim and does not block the head job; target profiles reject progress") { database { (c,db,a) =>
     val request=Fixtures.snapshot(); val out=a.ingest("a",request)
     val first=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get; assert(a.progress(first,1,2))
     a.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))
-    assert(!a.progress(first,2,2)); assertEquals(counters(a,out.jobId),(1,Some(2)))
-    val current=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get; assert(a.progress(current,1,2))
+    assert(a.renew(first,300))
+    db.transaction(x => Sql.exec(x,"UPDATE ch_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=?",out.jobId))
+    assert(!a.progress(first,2,2))
+    val current=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get; assertEquals(current.revision,2); assert(a.progress(current,1,2))
+    val superseded=a.statuses("a",0,100).jobs.find(_.id==out.jobId).get
+    assertEquals((superseded.state,superseded.error),(JobState.Failed,Some(Jobs.supersededRevision))); assertEquals(counters(a,out.jobId),(1,Some(2)))
     val next=c.copy(embedding=c.embedding.copy(revision="progress-target"))
     val nextDb=new Database(next,IndexProfileCatalog.current(next)); nextDb.initialize()
     Fixtures.rebuild(nextDb,"a")

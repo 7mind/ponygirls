@@ -229,7 +229,8 @@ trait SessionArchive extends IndexCheckpoints {
   def headSnapshot(reader: String, id: UUID): IngestRequest
   def claim(profiles: Set[String], scope: ClaimScope, leaseSeconds: Int, large: LargeJobs): Option[Claim]
   final def claim(profiles: Set[String], scope: ClaimScope, leaseSeconds: Int): Option[Claim] = claim(profiles,scope,leaseSeconds,LargeJobs.Admitted)
-  /** Returns a claimed job to the queue without counting the attempt, recording its window count. */
+  /** Returns a claimed job to the queue without counting the attempt, recording its window count. A job whose source has
+    * a newer revision ends superseded instead and false is returned. */
   def defer(claim: Claim, totalWindows: Int): Boolean
   def renew(claim: Claim, leaseSeconds: Int): Boolean
   def progress(claim: Claim, completedWindows: Int, totalWindows: Int): Boolean

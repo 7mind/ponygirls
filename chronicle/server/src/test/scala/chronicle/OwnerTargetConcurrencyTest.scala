@@ -16,16 +16,16 @@ final class OwnerTargetConcurrencyTest extends munit.FunSuite {
       Sql.rows(c,"SELECT to_jsonb(t)::text FROM ch_owner_targets t WHERE owner=?",owner)(_.getString(1))
   }
   test("Effectual GoodCommunication: ingest-first serializes owner apply and stale preview cannot omit an appended head") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
-    val request=Fixtures.snapshot(); a.ingest("a",request); a.ingest("b",Fixtures.snapshot())
-    val old=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
+    // The ingest waits on the queued job it supersedes, holding the owner target it read.
+    val request=Fixtures.snapshot(); val queued=a.ingest("a",request); a.ingest("b",Fixtures.snapshot())
     val plan=new PostgresOwnerReindex(db).preview("a"); val untouched=rows(db,"b")
     val pool=Executors.newFixedThreadPool(2)
     var ingesting: Future[IngestReceipt]=null; var applying: Future[OwnerReindexOutcome]=null
     try {
       db.transaction { held =>
-        Sql.one(held,"SELECT id FROM ch_jobs WHERE id=? FOR UPDATE",old.jobId)(_.getString(1))
+        Sql.one(held,"SELECT id FROM ch_jobs WHERE id=? FOR UPDATE",queued.jobId)(_.getString(1))
         ingesting=pool.submit(new Callable[IngestReceipt] { def call(): IngestReceipt = a.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1)) })
-        awaitBlocked(db,"UPDATE ch_jobs SET state='Failed'")
+        awaitBlocked(db,"UPDATE ch_jobs j SET state='Failed'")
         applying=pool.submit(new Callable[OwnerReindexOutcome] { def call(): OwnerReindexOutcome = new PostgresOwnerReindex(db).apply("a",UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true) })
         awaitBlocked(db,"SELECT profile,epoch FROM ch_owner_targets")
       }

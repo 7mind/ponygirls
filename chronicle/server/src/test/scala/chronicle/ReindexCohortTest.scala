@@ -115,8 +115,11 @@ class ReindexCohortTest extends munit.FunSuite {
     val again=service.preview("a"); val next=UUID.randomUUID()
     assertEquals(again.alreadyCurrent,0L); assertEquals(again.replacements,1L)
     service("a",next,again.targetProfile,again.selectionHash,true)
+    val member=archive.claim(archive.knownProfiles,ClaimScope.Owner("a"),300).get
     archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1))
     archive.ingest("a",Fixtures.snapshot())
+    assertEquals(status(db,next),ReindexStatusResult(next,config.profile,1,0,0,0,1),"a member whose job keeps running can still complete")
+    archive.fail(member,"model-http")
     assertEquals(status(db,next),ReindexStatusResult(next,config.profile,1,0,1,0,0))
     assertEquals(status(db,id),ReindexStatusResult(id,config.profile,1,1,0,0,0))
     val auth=new Auth(db,config); val owner=auth.browser(auth.login(LoginRequest("a","synthetic"))._2)

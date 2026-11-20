@@ -31,7 +31,7 @@ final class OwnerLeaseBoundaryTest extends munit.FunSuite {
               case "fail" => a.fail(claim,"late-expired-failure"); false
             } })
             // A publication writes its generation before it locks the source row: there the held lock first stops its key-share insert.
-            val prefix=if(blocking=="job") "SELECT j.id FROM ch_jobs" else if(operation=="publish") "INSERT INTO ch_generations" else "SELECT id FROM ch_sources"
+            val prefix=if(blocking=="job") "SELECT j.id FROM ch_jobs" else if(operation=="publish") "INSERT INTO ch_generations" else "SELECT revision FROM ch_sources"
             awaitBlocked(db,prefix)
             Thread.sleep(1200)
           }
@@ -78,7 +78,7 @@ final class OwnerLeaseBoundaryTest extends munit.FunSuite {
     val raw=values.map(m => io.circe.Json.obj("id"->Json.fromString(m.id),"text"->Json.fromString(m.text)).noSpaces+"\n").mkString
     original.copy(messages=values,files=List(RawFile("source.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
   }
-  test("Effectual GoodCommunication regression: a publication writing its generation does not hold up the job's renewal and progress or the source's next revision switch, which voids it") {
+  test("Effectual GoodCommunication regression: a publication writing its generation does not hold up the job's renewal and progress or the source's next revision switch, and still publishes its revision") {
     OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
       val original=Fixtures.snapshot(); a.ingest("a",original)
       val claim=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
@@ -94,9 +94,9 @@ final class OwnerLeaseBoundaryTest extends munit.FunSuite {
           assertEquals(worker.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1)).revision,2)
           pending
         }
-        assert(!pending.get(10,TimeUnit.SECONDS),"the revision switch voids the parked publication")
-        assertEquals(a.session("a",claim.sessionId).indexedRevision,None)
-        assertEquals(db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_search_chunks WHERE session_id=?",claim.sessionId)(_.getInt(1))),Some(0))
+        assert(pending.get(10,TimeUnit.SECONDS),"a newer revision does not void the publication of a running job")
+        assertEquals((a.session("a",claim.sessionId).revision,a.session("a",claim.sessionId).indexedRevision),(2,Some(1)))
+        assertEquals(db.transaction(x => Sql.one(x,"SELECT count(*)>0 FROM ch_search_chunks WHERE session_id=? AND revision=1",claim.sessionId)(_.getBoolean(1))),Some(true))
       } finally { pool.shutdownNow(); assert(pool.awaitTermination(6,TimeUnit.SECONDS)); workerDb.close() }
     }
   }
