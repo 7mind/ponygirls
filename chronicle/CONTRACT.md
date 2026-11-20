@@ -66,7 +66,7 @@ Valid JSONL may encode U+0000 as `\u0000`. Raw file content, its SHA256, the sou
 
 Source identity and receipt payload hashes bind the ORIGINAL request, before display projection. Retrying the same requestId and unchanged pending payload returns the exact receipt; changing original NUL text to a literal escape with the same requestId conflicts even when the display projection matches. No collector/spool rewrite, API version change, migration or reindex of previously accepted data is required.
 
-U+0000 is unsupported in source/message/parent IDs, file paths, metadata workdir, digests, roles and timestamps and returns `invalid`/HTTP400 (existing format validations still apply). Unpaired UTF-16 surrogates in request strings are unsupported non-scalar Unicode and return `invalid` rather than reaching PostgreSQL. This does not reject other previously accepted controls in opaque IDs or POSIX paths.
+U+0000 is unsupported in source/message/parent IDs, file paths, metadata workdir, digests, roles and timestamps and returns `invalid`/HTTP400 (existing format validations still apply). Unpaired UTF-16 surrogates in request strings are unsupported non-scalar Unicode and return `invalid` rather than reaching PostgreSQL (collectors from the part-upload release on replace them with U+FFFD in derived message text and metadata, leave raw content unchanged and refuse identifiers holding one locally). This does not reject other previously accepted controls in opaque IDs or POSIX paths.
 
 ### Part uploads (additive in 1.9.0)
 

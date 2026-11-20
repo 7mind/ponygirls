@@ -542,6 +542,19 @@ part writer's `fragment_count` give a committed S2 revision the columns the budg
   stored values so S3 can compute chains from legacy rows; the projection is not injective (1,668 head messages already
   contain the text [o V2]), which only identifies values the archive cannot distinguish anyway. Golden vectors in
   `chronicle/tests/message-chain-v1.json`, read by the Scala and the collector tests.
+- **Collector normalization v2 (orchestrator 14:53Z, DIAG-22AB; U7):** what the chain covers is what the collector
+  sends, and the collector normalizes derived strings before chaining and sending, in one function for `parts` and
+  `whole` (`collector/src/unicode.ts`, `NORMALIZATION_VERSION = 2`; 1 = earlier releases, no replacement): every unpaired
+  UTF-16 surrogate (a code unit U+D800..U+DFFF without its partner, as `JSON.parse` yields from an escape such as
+  `\ud83e` that a producer cut out of a pair) becomes U+FFFD (`String.prototype.toWellFormed`) in (a) the normalized,
+  redacted message **text** and (b) the readable metadata strings: title, project, workdir, gitRemote, gitBranch,
+  gitCommit, model. Identifiers are never rewritten: a lone surrogate in a session or subagent id, message id, parentId
+  or role refuses the file locally (`invalid-identifier-unicode`, reported once until the file or the policy changes).
+  The raw JSONL is never altered (it holds the escape, valid UTF-8), so the raw digest stays the file's. The server
+  stores what is sent, so its chain and the collector's agree; the server's rule (unpaired surrogates → `invalid`) is
+  unchanged. Changing what is replaced, where or with what changes the chain of every affected prefix: it needs a new
+  normalization version (and chain v2 if the chained value changes), else each affected append is re-planned as a
+  replacement (the collector's recomputed prefix chain no longer equals the head's).
 - **Part digest:** `SHA-256("chronicle.upload-part.v1" ‖ 0x00 ‖ u64be(len raw) ‖ raw ‖ u32be(n) ‖ m(x₁) ‖ … ‖ m(xₙ))`, hex.
 - **What the server verifies:** at open, `base` equals the head exactly (revision via CAS; digest, raw bytes, message
   count, chain); during parts it extends its own midstate and chain from the head's stored state over the received bytes
@@ -578,7 +591,7 @@ part writer's `fragment_count` give a committed S2 revision the columns the budg
   Per line: `JSON.parse`, depth check, redaction, redacted raw line, the `excludedTranscript` project/session checks and the
   `evidenceFor` cwd paths [o collector.ts:22-37, controls.ts:28-43], Claude session/agent identity consistency
   [o parsers.ts:124-133], record id, metadata last-wins and title rule [o parsers.ts:149-158,181-188], normalization,
-  SHA-256 (Node) of the redacted raw, chain v1, counts, message bytes; at record `head.recordCount` it records
+  SHA-256 (Node) of the redacted raw, chain v1 over the normalized messages (§5, normalization v2), counts, message bytes; at record `head.recordCount` it records
   `hash.copy().digest()`, the chain, raw bytes, message count and the file offset (base check). **Codex** first runs a
   multiset pass for the file-wide `event_msg` dedup, keeping `SHA-256(role ‖ 0x00 ‖ text)` per `response_item` message
   (32 B instead of the text [o parsers.ts:159-173]). At the end the whole file has passed admission, exclusion, identity
@@ -630,6 +643,9 @@ part writer's `fragment_count` give a committed S2 revision the columns the budg
   `payload-too-large` and `server-payload-too-large` apply to `whole` mode and old-format drains only; new: the
   collector-level `server-upload-unsupported`; per source `record-over-limit`, `admission-evidence-limit`; per entry
   `upload-too-large` (413 for the declared raw/messages, with size and the server limit), `upload-content-mismatch`;
+  per file, in both protocols, `invalid-identifier-unicode` (§5 normalization v2; reported once, with the per-source count
+  of replaced code units shown by `--status`); `--retry` of a queued whole payload of normalization 1 that the server
+  refuses as non-scalar removes it without a tombstone and the next scan rebuilds it from the file;
   counters gain `replacements`. The progress report wire is unchanged
   (`uploadedBytes` = acknowledged part bytes; `error` carries `server-upload-unsupported`).
 - **Privacy/destination policy change** during an upload: the entry is aborted and dropped like a queued payload today
