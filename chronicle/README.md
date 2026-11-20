@@ -76,6 +76,10 @@ On demand, not part of full verification; run them when you change what they gua
 
 - indexing worker recovery against a native executable: [`tests/README.md`](tests/README.md);
 - the CLI against a real server: [`cli/README.md`](cli/README.md), section "Build and verification";
+- the collector of main `0aedcfa8`, unmodified, uploading through `/api/ingest` to a server built from the tree (new
+  session, append, rewrite, a body above the server's bound) and the tree's CLI reading every revision back:
+  [`scripts/test-main-collector.sh`](scripts/test-main-collector.sh), whose header has the invocation; run it when
+  the ingest path or its storage changes;
 - the CUDA embedding runtime: [`docs/cuda-validation.md`](docs/cuda-validation.md) (`scripts/test-cuda.sh`);
 - the relevance workflow's controlled real-server and live-provider legs: [`eval/relevance/README.md`](eval/relevance/README.md).
 

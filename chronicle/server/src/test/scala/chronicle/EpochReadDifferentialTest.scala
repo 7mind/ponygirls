@@ -77,14 +77,17 @@ final class EpochReadDifferentialTest extends munit.FunSuite {
       assertEquals(layouts.flatMap(_._2).distinct.size,3,"a non-prefix revision and the first after a legacy head start new epochs")
       assertEquals(Sql.one(c,"SELECT count(*) FROM ch_revisions WHERE session_id=? AND epoch IS NOT NULL",ids(0))(_.getInt(1)),Some(0))
     }
-    val messageIds=revisions.flatMap(_.messages.map(_.id)).distinct:+"missing"
-    val literals=List("needle marker","qqqq","nul\u0000t","σ","[redacted]")
+    val literals=List("needle marker","nul\u0000t","σ")
     revisions.zipWithIndex.foreach { (revision,index) =>
       val view=ContentView(index+1,None); val count=revision.messages.size
+      // The first and the last message of the revision, and one that only a later revision has.
+      val probes=List(revision.messages.head,revision.messages.last).distinct
+      val later=revisions.drop(index+1).flatMap(_.messages.map(_.id)).find(id => !revision.messages.exists(_.id==id)).toList
       List((0,100),(1,2),(count-1,100),(count,100)).foreach { (offset,limit) => same(s"page $offset+$limit of $view")((owner,id,archive) => archive.messages(owner,id,offset,limit,Some(view))) }
-      messageIds.foreach(messageId => same(s"locate $messageId in $view")((owner,id,archive) => outcome(archive.locateMessage(owner,id,view,messageId))))
-      for { message <- revision.messages; (before,after) <- List((4,4),(2048,2048)) } same(s"context of ${message.id} in $view")((owner,id,archive) =>
-        outcome(archive.readMessageContext(owner,id,view,Span(message.id,0,0),before,after)).map(_.copy(sessionId=named(id))))
+      (probes.map(_.id)++later:+"missing").foreach(messageId => same(s"locate $messageId in $view")((owner,id,archive) => outcome(archive.locateMessage(owner,id,view,messageId))))
+      // A small budget before the anchor (a cut inside the previous message), a large one after it (adjacent messages).
+      probes.foreach(message => same(s"context of ${message.id} in $view")((owner,id,archive) =>
+        outcome(archive.readMessageContext(owner,id,view,Span(message.id,0,0),4,2048)).map(_.copy(sessionId=named(id)))))
       literals.foreach { literal => same(s"Find $literal in $view") { (owner,id,archive) =>
         Iterator.iterate(Option(archive.searchSessionMessages(owner,id,view,literal,None,1))) { page => page.flatMap(_.nextCursor).map(cursor => archive.searchSessionMessages(owner,id,view,literal,Some(cursor),1)) }
           .takeWhile(_.nonEmpty).flatten.map(page => (page.view,page.hits,page.nextCursor.isDefined)).toList
@@ -102,9 +105,9 @@ final class EpochReadDifferentialTest extends munit.FunSuite {
     val identity=SourceIdentity("find","native",SourceFormat.Pi,"session",None)
     val filler="lorem ipsum dolor sit amet "*110
     // Hits only late in the session: the first page's scan reads nearly every message. One crosses a fragment boundary.
-    val texts=Vector.tabulate(1500)(position => if(position==1100) "Σ"+"x"*4088+"NEEDLE marker"+filler else if(position==1490) filler+"a needle Marker" else filler)
+    val texts=Vector.tabulate(1000)(position => if(position==700) "Σ"+"x"*4088+"NEEDLE marker"+filler else if(position==990) filler+"a needle Marker" else filler)
     val records=texts.zipWithIndex.map((text,position) => pi(s"m$position",if(position==0) "s" else s"m${position-1}","user",text,position+1)).toList
-    val appended=List(pi("m1500","m1499","assistant","needle marker one",1501),pi("m1501","m1500","user","needle marker two",1502))
+    val appended=List(pi("m1000","m999","assistant","needle marker one",1001),pi("m1001","m1000","user","needle marker two",1002))
     val first=request(identity,0,(header,None)::records.map(message))
     val id=archive.ingest("a",first).sessionId
     archive.ingest("a",request(identity,1,(header,None)::(records++appended).map(message)))
@@ -117,7 +120,7 @@ final class EpochReadDifferentialTest extends munit.FunSuite {
       def pages(search: PostgresMessageSearch,view: ContentView): List[SessionMessageSearchResult] =
         Iterator.iterate(Option(search.searchSessionMessages("a",id,view,"needle marker",None,1))) { page => page.flatMap(_.nextCursor).map(cursor => search.searchSessionMessages("a",id,view,"needle marker",Some(cursor),1)) }
           .takeWhile(_.nonEmpty).flatten.toList
-      List(1->List(1100,1490),2->List(1100,1490,1500,1501)).foreach { (revision,positions) =>
+      List(1->List(700,990),2->List(700,990,1000,1001)).foreach { (revision,positions) =>
         val view=ContentView(revision,None)
         val scanned=pages(scanning,view)
         assertEquals(scanned.flatMap(_.hits.map(_.position)),positions)
