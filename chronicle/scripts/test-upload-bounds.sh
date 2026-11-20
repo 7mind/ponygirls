@@ -2,7 +2,8 @@
 # S2 acceptance runs A, B, D and E of docs/drafts/20261120-1201-append-only-ingest-spec.md §11.1 (on demand, not part of
 # verify): the native server built from this tree in `serve` (normal indexing workers) with a bounded heap, -XX:+PrintGC
 # and GET /api/versions probed every 100 ms (1 s timeout) while it runs; the collector built from this tree with
-# --max-old-space-size=256 and --trace-gc; a loopback stub model server; synthetic Pi sessions generated in a private
+# --max-old-space-size=256 and --trace-gc, through a logging proxy (status and time of every request, the answers of all
+# but parts); a loopback stub model server; synthetic Pi sessions generated in a private
 # temporary directory; the owned database only. Every assertion prints `ok - …`; the last line is a JSON summary with
 # wall time, WAL, disk and the peak live heap of both sides. The script fails on any failed assertion.
 #   A  1,000,000,000 raw bytes uploaded as a replacement, +5 % as an append, the 1 GiB declaration boundary (413 above
@@ -11,7 +12,7 @@
 #      CHRONICLE_S1_SERVER with workers): the same verdicts. Server heap 768 MiB, budget scaled to it. ≤ 25 GB disk.
 #   B  4,400,000,000 raw bytes with records of 9-20 MiB (large parts), appended to; raw_bytes > 2^32 exact; reads (pages
 #      holding a record above the CLI's 8 MiB frame bound over the browser protocol); the job ends index-budget-exceeded
-#      while four other sessions index. Server heap 1 GiB. ≤ 60 GB disk; about an hour.
+#      while four other sessions index. Server heap 1 GiB. ≤ 60 GB disk; about 55 minutes on this host (2026-11).
 #   D  a 2 MB session grows by six appends while its jobs run (stub annotation delay 1 s per window) and ends indexed at
 #      its head; jobs and windows spent.
 #   E  gate O (scripts/test-main-collector.sh) against this tree's server, heaps bounded and the server probed.
