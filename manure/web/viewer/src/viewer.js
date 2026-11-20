@@ -2,7 +2,13 @@ import { renderMarkdown } from './markdown.js';
 import DOMPurify from 'dompurify';
 import mermaid from 'mermaid';
 import * as pdfjs from 'pdfjs-dist/build/pdf.mjs';
-import { localUrl, artifactResourceUrl, markdownLinkUrl, boundedBytes, graphSource, diagramCount, TEXT_LIMIT } from './safety.js';
+import { localUrl, artifactResourceUrl, markdownLinkUrl, boundedBytes, leadingBytes, lineRange, lineFragment, graphSource, diagramCount, TEXT_LIMIT, LINE_LIMIT } from './safety.js';
+import { textLines, tokenLines } from './tokens.js';
+import { diffLines } from './diff.js';
+import { formatJson, formatJsonLines, JsonSyntaxError, JsonFormatLimitError } from './json.js';
+import { parseCsv, parseCsvPart, numericColumns, CsvSyntaxError } from './csv.js';
+import { hasAnsi, ansiTokens, escapeTokens } from './ansi.js';
+import { fileSyntax, fenceSyntax, highlightTokens, HIGHLIGHT_LIMIT, FORMAT_DIFF, FORMAT_JSON, FORMAT_JSON_LINES, FORMAT_CSV, FORMAT_TSV } from './syntax.js';
 
 const meta = document.querySelector('#manure-viewer').dataset;
 const embedded = meta.embed === 'readme';
@@ -53,10 +59,33 @@ function downloadLink(cls) {
   link.append(iconSlot('download', 'icon-sm'), document.createTextNode('Download original'));
   return link;
 }
-function rawLines(text, classify) {
-  const pre = element('pre', null, 'raw');
-  for (const line of text.match(/[^\n]*\n|[^\n]+$/g) || []) pre.append(element('span', line, classify(line)));
+function tokenNodes(tokens) {
+  const nodes = document.createDocumentFragment();
+  for (const { cls, text } of tokens) nodes.append(cls ? element('span', text, cls) : text);
+  return nodes;
+}
+function plainRows(text) { return textLines(text).map(line => [{ cls: '', text: line }]); }
+/**
+ * Lines of text, one block per row of tokens. The line number is generated content of an empty gutter link, so the
+ * text of the element is exactly the text of the rows; `links` makes the numbers `#L<n>` links.
+ */
+function lineView(rows, classify, links, numbers) {
+  const pre = element('pre', null, numbers ? 'raw' : 'raw no-lines');
+  rows.forEach((tokens, index) => {
+    const line = element('span', null, classify(index));
+    if (numbers) {
+      const number = element('a', null, 'ln'); number.setAttribute('aria-hidden', 'true');
+      if (links) { number.href = `#L${index + 1}`; number.tabIndex = -1; }
+      line.append(number);
+    }
+    line.append(tokenNodes(tokens));
+    pre.append(line);
+  });
   return pre;
+}
+function rawLines(text, classify) {
+  const lines = textLines(text);
+  return lineView(lines.map(line => [{ cls: '', text: line }]), index => classify(lines[index]), false, true);
 }
 /** Failure notice in place of a preview; the stored file is untouched and stays downloadable. */
 function fail(error, target = content, source = null) {
@@ -271,17 +300,7 @@ function markdownRaw(text) {
     return markdownSource(line);
   });
 }
-function bindCopy(copy, text) {
-  copy.addEventListener('click', async () => {
-    copy.disabled = true;
-    try { await copyText(text, 'Raw Markdown copied.'); }
-    catch { toast(SELECT_RAW); }
-    finally { copy.disabled = false; }
-  });
-}
-function rawCopy(text, success, failure) {
-  const copy = document.querySelector('#copy-raw');
-  copy.hidden = false; copy.disabled = false;
+function bindCopy(copy, text, success, failure) {
   copy.addEventListener('click', async () => {
     copy.disabled = true;
     try { await copyText(text, success); }
@@ -289,32 +308,46 @@ function rawCopy(text, success, failure) {
     finally { copy.disabled = false; }
   });
 }
+function rawCopy(text, success, failure) {
+  const copy = document.querySelector('#copy-raw');
+  copy.hidden = false; copy.disabled = false;
+  bindCopy(copy, text, success, failure);
+}
+/** The bar's two-way switch between a rendered and a raw panel; returns select('rendered' | 'raw'). */
+function viewModes(label, renderedLabel, rendered, raw) {
+  const modes = document.querySelector('#view-mode');
+  const buttons = [...modes.querySelectorAll('button')];
+  modes.setAttribute('aria-label', label);
+  buttons.find(b => b.dataset.mode === 'rendered').textContent = renderedLabel;
+  const select = mode => {
+    for (const b of buttons) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
+    rendered.hidden = mode !== 'rendered'; raw.hidden = mode !== 'raw';
+  };
+  for (const b of buttons) b.addEventListener('click', () => select(b.dataset.mode));
+  modes.hidden = false;
+  return select;
+}
 const SELECT_TEXT = 'Could not copy. Select the text and copy it instead.';
 const SELECT_RAW = 'Could not copy. Select and copy the text in Raw instead.';
 function lineCount(text) { return (text.match(/\n/g) || []).length + (text.endsWith('\n') || !text ? 0 : 1); }
-function counted(count, noun) { return `${count} ${noun}${count === 1 ? '' : 's'}`; }
+/** 20,763: digit groups as the rest of the chrome writes numbers. */
+function grouped(count) { return count.toLocaleString('en-US'); }
+function counted(count, noun) { return `${grouped(count)} ${noun}${count === 1 ? '' : 's'}`; }
 function markdownControls(text) {
   const preview = element('div', null, 'viewer-doc'); preview.id = 'markdown-preview';
   const source = markdownRaw(text); source.id = 'markdown-source'; source.classList.add('viewer-wide'); source.hidden = true;
   source.setAttribute('aria-label', 'Raw Markdown'); source.tabIndex = 0;
   content.append(preview, source);
   if (embedded) return preview;
-  const modes = document.querySelector('#view-mode');
-  const buttons = [...modes.querySelectorAll('button')];
-  const select = mode => {
-    for (const b of buttons) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
-    preview.hidden = mode !== 'rendered'; source.hidden = mode !== 'raw';
-  };
-  for (const b of buttons) b.addEventListener('click', () => select(b.dataset.mode));
-  modes.hidden = false;
+  viewModes('Markdown view', 'Rendered', preview, source);
   rawCopy(text, 'Raw Markdown copied.', SELECT_RAW);
   return preview;
 }
-function copySourceButton(text, label, cls) {
+function copySourceButton(text, label, cls, success, failure) {
   const copy = element('button', null, `btn btn-sm btn-ghost ${cls}`); copy.type = 'button';
   copy.append(iconSlot('copy', 'icon-sm'), document.createTextNode('Copy'));
   copy.setAttribute('aria-label', label); copy.title = label;
-  bindCopy(copy, text);
+  bindCopy(copy, text, success, failure);
   return copy;
 }
 function markdownCopyControls(article, sources, text) {
@@ -324,7 +357,7 @@ function markdownCopyControls(article, sources, text) {
     node.removeAttribute('data-manure-source');
     const table = node.tagName === 'TABLE';
     if (!source || source.kind !== (table ? 'table' : 'section')) throw new Error('Markdown copy source is unavailable.');
-    const copy = copySourceButton(text.slice(source.start, source.end), `Copy ${table ? 'table' : 'section'} Markdown`, table ? 'copy-table' : 'copy-section');
+    const copy = copySourceButton(text.slice(source.start, source.end), `Copy ${table ? 'table' : 'section'} Markdown`, table ? 'copy-table' : 'copy-section', 'Raw Markdown copied.', SELECT_RAW);
     if (!table) { node.querySelector(':scope > .heading-tools').append(copy); continue; }
     const wrapper = element('div', null, 'markdown-table');
     const controls = element('div', null, 'table-controls');
@@ -336,6 +369,38 @@ function markdownCopyControls(article, sources, text) {
     controls.append(link, copy); wrapper.append(controls, node);
   }
 }
+/**
+ * Fenced and indented code blocks: highlighted by the first word of the info string, a diff by its lines, each with
+ * Copy above the block. One document highlights at most HIGHLIGHT_LIMIT characters; returns the number of blocks
+ * with a known language that did not fit and stay plain.
+ */
+function markdownCode(article, diagrams) {
+  let budget = HIGHLIGHT_LIMIT, plain = 0;
+  for (const code of article.querySelectorAll('pre > code')) {
+    // Raw HTML may put markup inside <code>; only blocks of plain text are code blocks of the document.
+    if (diagrams.includes(code) || code.children.length) continue;
+    const text = code.textContent;
+    const info = code.className.match(/(?:^|\s)language-(\S+)/);
+    const { format, language } = fenceSyntax(info ? info[1] : '');
+    if (format === FORMAT_DIFF) {
+      const lines = textLines(text);
+      const { classes } = diffLines(lines);
+      const blocks = document.createDocumentFragment();
+      lines.forEach((line, index) => blocks.append(element('span', line, `line ${classes[index]}`.trim())));
+      code.replaceChildren(blocks);
+    } else if (language !== null && text.length <= budget) {
+      budget -= text.length;
+      code.replaceChildren(tokenNodes(highlightTokens(text, language)));
+    } else if (language !== null) plain++;
+    const block = code.parentElement;
+    const wrapper = element('div', null, 'markdown-code');
+    const controls = element('div', null, 'code-controls');
+    controls.append(copySourceButton(text, 'Copy code', 'copy-code', 'Code copied.', SELECT_TEXT));
+    block.replaceWith(wrapper);
+    wrapper.append(controls, block);
+  }
+  return plain;
+}
 async function markdown(text, target) {
   const article = element('article',null,'markdown prose');
   const rendered = renderMarkdown(text);
@@ -344,9 +409,11 @@ async function markdown(text, target) {
   markdownCopyControls(article, rendered.sources, text);
   const graphs = [...article.querySelectorAll('pre > code')].filter(code => /language-(mermaid|mmd|dot|gv|graphviz)\b/.test(code.className));
   diagramCount(graphs.length);
+  const plainBlocks = markdownCode(article, graphs);
   target.append(article);
   if (!embedded) document.querySelector('#meta-extra').textContent =
-    `${counted(article.querySelectorAll('h1,h2,h3,h4,h5,h6').length, 'section')} · ${counted(lineCount(text), 'line')}`;
+    `${counted(article.querySelectorAll('h1,h2,h3,h4,h5,h6').length, 'section')} · ${counted(lineCount(text), 'line')}` +
+    (plainBlocks ? ` · ${counted(plainBlocks, 'code block')} not highlighted` : '');
   scrollToFragment();
   const deadline = Date.now() + 30000;
   for (const code of graphs) {
@@ -360,24 +427,231 @@ async function markdown(text, target) {
   }
   scrollToFragment();
 }
-function plainText(text) {
-  const view = rawLines(text, () => ''); view.classList.add('viewer-wide', 'text-view');
-  view.setAttribute('aria-label', 'File text'); view.tabIndex = 0;
-  content.append(view);
-  document.querySelector('#meta-extra').textContent = counted(lineCount(text), 'line');
-  rawCopy(text, 'File text copied.', SELECT_TEXT);
+const SIZE_STEP = 1024;
+const SIZE_UNITS = ['KiB', 'MiB', 'GiB', 'TiB'];
+/** The size wording of the server's meta line. */
+function displaySize(bytes) {
+  if (bytes < SIZE_STEP) return `${bytes} B`;
+  let value = bytes / SIZE_STEP, unit = 0;
+  while (value >= SIZE_STEP && unit < SIZE_UNITS.length - 1) { value /= SIZE_STEP; unit++; }
+  return `${value.toFixed(1)} ${SIZE_UNITS[unit]}`;
 }
-function archive() {
+const LIMIT_KIB = HIGHLIGHT_LIMIT / SIZE_STEP;
+/** Persistent note above a text view: what the preview shows instead of the whole or the structured file. */
+function viewNote(kind, icon, title, ...body) {
+  const notice = element('div', null, `notice ${kind} view-note`); notice.setAttribute('role', 'status');
+  const text = element('div'); text.append(element('div', title, 'notice-title'), ...body);
+  notice.append(iconSlot(icon), text);
+  return notice;
+}
+function lineLink(line, text) { const link = element('a', text); link.href = lineFragment(line, line); return link; }
+/**
+ * `#L12` and `#L12-L18` mark those lines in every view of the file's lines; `scroll` also reveals the views and
+ * brings the first marked line into sight. A click on a number selects its line, a shift-click extends from the
+ * line clicked before.
+ */
+function lineLinks(views, count, reveal) {
+  let anchor = null;
+  const mark = scroll => {
+    const range = lineRange(location.hash, count);
+    for (const view of views) {
+      for (const line of view.querySelectorAll(':scope > .is-target')) line.classList.remove('is-target');
+      // A rendered view can end before the file does (a last line of escape sequences only).
+      if (range) for (let n = range.first; n <= Math.min(range.last, view.children.length); n++) view.children[n - 1].classList.add('is-target');
+    }
+    if (!scroll) return;
+    // An address opened or typed is where the next shift-click extends from.
+    anchor = range ? range.first : null;
+    if (!range) return;
+    reveal();
+    const target = views.find(view => !view.hidden).querySelector(':scope > .is-target');
+    if (target) target.scrollIntoView({ block: 'center' });
+  };
+  for (const view of views) view.addEventListener('click', event => {
+    const link = event.target.closest('a.ln');
+    // Modified clicks keep their browser meaning (open the link elsewhere).
+    if (!link || event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey) return;
+    event.preventDefault();
+    const number = Array.prototype.indexOf.call(view.children, link.parentElement) + 1;
+    const extend = event.shiftKey && anchor !== null;
+    history.replaceState(null, '', lineFragment(extend ? anchor : number, number));
+    if (!extend) anchor = number;
+    mark(false);
+  });
+  addEventListener('hashchange', () => mark(true));
+  mark(true);
+}
+function metaExtra(...parts) {
+  const extra = document.querySelector('#meta-extra');
+  extra.replaceChildren();
+  parts.forEach((part, index) => extra.append(...(index ? [' · '] : []), part));
+}
+/**
+ * Records as a table in the document: first record as the header, numbers right-aligned, records numbered.
+ * `partial` records are those of the leading part of a file: nothing is said about the rows beyond them.
+ */
+function dataTable(records, total, name, partial) {
+  const view = element('div', null, 'data-view');
+  const table = element('table', null, 'data-table'); table.setAttribute('aria-label', `${name} table`);
+  const numeric = numericColumns(records);
+  const cell = (tag, text, scope, cls) => { const el = element(tag, text, cls); if (scope) el.scope = scope; return el; };
+  const row = (record, tag, scope, number) => {
+    const tr = element('tr');
+    tr.append(number, ...numeric.map((isNumber, column) => cell(tag, record[column], scope, isNumber ? 'num' : null)));
+    return tr;
+  };
+  const corner = cell('th', null, 'col', 'row-n'); corner.append(element('span', 'Row', 'sr-only'));
+  const head = element('thead'); head.append(row(records[0], 'th', 'col', corner));
+  const body = element('tbody');
+  for (let index = 1; index < records.length; index++) body.append(row(records[index], 'td', null, cell('th', String(index), 'row', 'row-n')));
+  table.append(head, body); view.append(table);
+  if (records.length < total) view.append(element('p', partial ? `First ${grouped(records.length - 1)} rows are shown as a table.`
+    : `First ${grouped(records.length - 1)} of ${grouped(total - 1)} rows are shown as a table. Raw has every line.`, 'data-foot'));
+  return view;
+}
+/**
+ * A text file: numbered, linkable lines of the stored text, highlighted by its grammar; a diff by its lines; and a
+ * second, rendered view where the format has one (formatted JSON, a table, a log with its colours).
+ */
+function textFile(fetched, source) {
+  const { format, language } = fileSyntax(meta.path);
+  const rows = value => language !== null && value.length <= HIGHLIGHT_LIMIT ? tokenLines(highlightTokens(value, language)) : plainRows(value);
+  // The shown part: the fetched bytes (the first TEXT_LIMIT of a larger file), and of those at most LINE_LIMIT lines.
+  const fetchedLines = textLines(fetched);
+  const lineCut = fetchedLines.length > LINE_LIMIT;
+  const lines = lineCut ? fetchedLines.slice(0, LINE_LIMIT) : fetchedLines;
+  const text = lineCut ? lines.join('') : fetched;
+  // What is derived from a part is worded as a part (a table of the first rows) or withheld when it would describe
+  // the whole file (a formatted JSON value, validity, totals).
+  const partial = source.truncated || lineCut;
+  const sourceView = (lineRows, classify, label) => {
+    const view = lineView(lineRows, classify, true, true); view.classList.add('viewer-wide', 'text-view');
+    view.setAttribute('aria-label', label); view.tabIndex = 0;
+    return view;
+  };
+  const unclassed = () => '';
+  const notes = [], facts = [];
+  // `rendered` is the format's second view; `lineViews` are the views whose lines are the lines of the file.
+  let rendered = null, raw, lineViews, modes;
+  if (partial) {
+    const actions = element('div', null, 'notice-actions'); actions.append(downloadLink('btn btn-sm btn-primary'));
+    const shown = lineCut ? `${grouped(LINE_LIMIT)} lines`
+      : displaySize(source.bytes.length) + (source.total === null ? '' : ` of ${displaySize(source.total)}`);
+    notes.push(viewNote('', 'info', `Showing the first ${shown}`,
+      `The preview ends at line ${grouped(lines.length)}. Copy raw copies the shown part only.`, actions));
+  }
+  if (format === FORMAT_DIFF) {
+    const { classes, files, additions, deletions } = diffLines(lines);
+    raw = sourceView(plainRows(text), index => classes[index], 'File text');
+    if (!partial && files + additions + deletions > 0) {
+      const changes = element('span');
+      changes.append(element('span', `+${grouped(additions)}`, 'diff-stat-add'), ' ', element('span', `${MINUS_SIGN}${grouped(deletions)}`, 'diff-stat-del'));
+      facts.push(counted(files, 'file'), changes);
+    }
+  } else if (format === FORMAT_JSON || format === FORMAT_JSON_LINES) {
+    raw = sourceView(rows(text), unclassed, 'File text');
+    if (!partial) {
+      try {
+        const formatted = format === FORMAT_JSON ? formatJson(text) : formatJsonLines(text);
+        rendered = lineView(rows(formatted), unclassed, false, false); rendered.classList.add('viewer-wide', 'text-view');
+        rendered.setAttribute('aria-label', 'Formatted JSON'); rendered.tabIndex = 0;
+        modes = ['JSON view', 'Formatted'];
+        facts.push(format === FORMAT_JSON ? 'valid JSON' : counted(lines.filter(line => line.trim()).length, 'record'));
+      } catch (error) {
+        if (error instanceof JsonSyntaxError) notes.push(viewNote('notice-warn', 'alert', 'Not valid JSON', `${error.message} At `,
+          lineLink(error.line, `line ${error.line}, column ${error.column}`), '. The raw text is shown.'));
+        else if (error instanceof JsonFormatLimitError) notes.push(viewNote('notice-neutral', 'info', 'No formatted view', `${error.message} The raw text is shown.`));
+        else throw error;
+      }
+    }
+  } else if (format === FORMAT_CSV || format === FORMAT_TSV) {
+    raw = sourceView(plainRows(text), unclassed, 'File text');
+    const name = format === FORMAT_CSV ? 'CSV' : 'TSV';
+    const delimiter = format === FORMAT_CSV ? ',' : '\t';
+    try {
+      // The cut may have split the last record of a part; that is not a fault of the file.
+      const { records, total } = partial ? parseCsvPart(text, delimiter) : parseCsv(text, delimiter);
+      if (records.length) {
+        rendered = dataTable(records, total, name, partial);
+        modes = [`${name} view`, 'Table'];
+        facts.push(`${partial ? 'first ' : ''}${counted(total - 1, 'row')}`, counted(numericColumns(records).length, 'column'));
+      }
+    } catch (error) {
+      if (!(error instanceof CsvSyntaxError)) throw error;
+      notes.push(viewNote('notice-warn', 'alert', `Not shown as a table`, `${error.message} See `, lineLink(error.line, `line ${error.line}`), '. The raw text is shown.'));
+    }
+  } else if (language === null && hasAnsi(text)) {
+    rendered = sourceView(tokenLines(ansiTokens(text)), unclassed, 'Rendered log');
+    raw = sourceView(tokenLines(escapeTokens(text)), unclassed, 'File text');
+    lineViews = [rendered, raw];
+    modes = ['Log view', 'Rendered'];
+    facts.push('ANSI colours');
+  } else raw = sourceView(rows(text), unclassed, 'File text');
+  lineViews ??= [raw];
+  content.append(...notes, ...(rendered ? [rendered] : []), raw);
+  let showLines = () => {};
+  if (rendered) {
+    const select = viewModes(...modes, rendered, raw);
+    select('rendered');
+    // A view that is not made of the file's lines gives way to the raw text when lines are addressed.
+    if (!lineViews.includes(rendered)) showLines = () => select('raw');
+  }
+  if (language !== null && text.length > HIGHLIGHT_LIMIT) facts.push(`not highlighted above ${LIMIT_KIB} KiB`);
+  facts.push(partial ? `first ${counted(lines.length, 'line')}` : counted(lines.length, 'line'));
+  metaExtra(...facts);
+  rawCopy(text, partial ? 'Shown part of the file copied.' : 'File text copied.', SELECT_TEXT);
+  lineLinks(lineViews, lines.length, showLines);
+}
+function downloadCard(icon, title, text) {
   const card = element('div', null, 'empty viewer-doc');
-  card.append(iconSlot('archive'), element('h2', 'No preview for archives'),
-    element('p', 'Download the original to open it locally, or fetch the whole artifact with the manure CLI.'), downloadLink('btn btn-primary'));
+  card.append(iconSlot(icon), element('h2', title), element('p', text), downloadLink('btn btn-primary'));
   content.append(card);
 }
-async function fetchBytes(limit) {
+function archive() {
+  downloadCard('archive', 'No preview for archives', 'Download the original to open it locally, or fetch the whole artifact with the manure CLI.');
+}
+function noPreview() {
+  downloadCard('file', 'No preview for this file type', 'The file is not text. Download the original to open it locally, or fetch the whole artifact with the manure CLI.');
+}
+const SECONDS_PER_MINUTE = 60;
+const MINUTES_PER_HOUR = 60;
+/** 0:04, 12:31, 1:02:03. */
+function displayDuration(seconds) {
+  const whole = Math.round(seconds);
+  const minutes = Math.floor(whole / SECONDS_PER_MINUTE);
+  const tail = `${String(minutes % MINUTES_PER_HOUR).padStart(minutes >= MINUTES_PER_HOUR ? 2 : 1, '0')}:${String(whole % SECONDS_PER_MINUTE).padStart(2, '0')}`;
+  return minutes >= MINUTES_PER_HOUR ? `${Math.floor(minutes / MINUTES_PER_HOUR)}:${tail}` : tail;
+}
+/** The browser's own player; it seeks with byte ranges of the raw file. */
+function media(kind) {
+  const stage = element('div', null, 'stage');
+  const player = element(kind, null, kind === 'video' ? 'stage-video' : 'stage-audio');
+  player.controls = true; player.preload = 'metadata';
+  player.setAttribute('aria-label', meta.path);
+  player.addEventListener('error', () => fail(new Error(`The browser cannot play this ${kind} file.`)));
+  player.addEventListener('loadedmetadata', () => {
+    const facts = [...(kind === 'video' && player.videoWidth ? [`${player.videoWidth} × ${player.videoHeight}`] : []),
+      ...(Number.isFinite(player.duration) ? [displayDuration(player.duration)] : [])];
+    document.querySelector('#file-facts').textContent = facts.map(fact => ` · ${fact}`).join('');
+  });
+  player.src = raw;
+  stage.append(player); content.append(stage);
+}
+const FETCH_DEADLINE_MS = 30000;
+async function fetchWithDeadline(read) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30000);
-  try { return await boundedBytes(await fetch(raw, {credentials:'same-origin', signal:controller.signal, redirect:'error'}), limit); }
+  const timer = setTimeout(() => controller.abort(), FETCH_DEADLINE_MS);
+  try { return await read(headers => fetch(raw, {headers, credentials:'same-origin', signal:controller.signal, redirect:'error'})); }
   finally {clearTimeout(timer);}
+}
+function fetchBytes(limit) { return fetchWithDeadline(async request => boundedBytes(await request({}), limit)); }
+/** At most the first TEXT_LIMIT bytes of the file, cut at a line end when the file is larger. */
+function fetchLeadingText() { return fetchWithDeadline(request => leadingBytes(request, TEXT_LIMIT)); }
+const NUL = 0;
+/** The text of a file of unknown type, or null when its bytes are not UTF-8 text. */
+function textOrNull(bytes) {
+  if (bytes.includes(NUL)) return null;
+  try { return new TextDecoder('utf-8', {fatal:true}).decode(bytes); } catch { return null; }
 }
 async function pdf() {
   pdfjs.GlobalWorkerOptions.workerSrc = new URL('./pdf.worker.min.mjs',import.meta.url).href;
@@ -466,6 +740,16 @@ async function main() {
   if (meta.kind === 'image') imageView(raw,meta.path);
   else if (meta.kind === 'pdf') await pdf();
   else if (meta.kind === 'archive') archive();
+  else if (meta.kind === 'video' || meta.kind === 'audio') media(meta.kind);
+  else if (meta.kind === 'text') {
+    const source = await fetchLeadingText();
+    textFile(new TextDecoder('utf-8', {fatal:true}).decode(source.bytes), source);
+  }
+  else if (meta.kind === 'unknown') {
+    const source = await fetchLeadingText();
+    const text = textOrNull(source.bytes);
+    if (text === null) noPreview(); else textFile(text, source);
+  }
   else {
     const text = new TextDecoder('utf-8', {fatal:true}).decode(await fetchBytes(TEXT_LIMIT));
     if (meta.kind === 'markdown') {
@@ -475,7 +759,6 @@ async function main() {
     else if (['mermaid','graphviz'].includes(meta.kind)) {
       try { await diagram(text,meta.kind,content); } catch (error) { rawCopy(text, 'Raw source copied.', SELECT_TEXT); fail(error, content, text); }
     }
-    else if (meta.kind === 'text') plainText(text);
     else throw new Error('Unsupported preview format.');
   }
   status.textContent = '';

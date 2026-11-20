@@ -6,9 +6,10 @@ uploaded HTML execution is involved. Markdown uses a source-positioned mdast/has
 GFM pipeline + DOMPurify;
 Mermaid uses strict mode; Graphviz runs its embedded WASM in a disposable worker;
 PDF.js renders pages to canvas without annotation, scripting or action handlers.
-Images (including SVG) are displayed only in browser image context. Source and other
-text files (`.py`, `.json`, `.csv`, `.log`, …) are shown as exact, line-numbered text;
-archives (`.zip`, `.tar`, `.gz`, …) get a card that offers the original download.
+Images (including SVG) are displayed only in browser image context. Text files are
+shown as exact, line-numbered text with format-aware views (below); audio and video
+use the browser's player; archives (`.zip`, `.tar`, `.gz`, …) and files that are not
+text get a card that offers the original download.
 
 The page chrome (bar, breadcrumb, meta line, theme menu, icons, toasts) belongs to the
 content shell, `manure/web/unlock` (configured as `unlock_shell_dir`): `content.css`,
@@ -49,6 +50,71 @@ same `created_at` shown in artifact metadata, not the file modification, upload-
 or preview-request time. All files and directory listings in an artifact share it. The
 server renders the semantic `<time datetime="…">` after ordinary content authorization;
 no additional browser API request is needed.
+
+## Text files
+
+A text file (`data-kind="text"`, or `unknown` whose content is text) is shown as its exact
+text, one block per line. The line number is generated content of an empty link in the
+gutter, so the text of the view, a selection and **Copy raw** are exactly the stored
+text. What is added on top is decided from the file name (`src/syntax.js`):
+
+| Files | View |
+| --- | --- |
+| Source code and configuration: `.py`, `.c`/`.h`, `.cpp`/`.hpp`, `.java`, `.kt`, `.scala`/`.sbt`, `.go`, `.rs`, `.js`/`.ts`, `.sh`, `.yaml`, `.toml`/`.ini`/`.conf`, `.nix`, `.sql`, `.xml`, `.proto`, `.bzl`, … and names such as `Makefile`, `Dockerfile`, `CMakeLists.txt`, `BUILD` | syntax highlighting (highlight.js grammars: its common set plus Scala, Nix, Dockerfile, Protocol Buffers, LaTeX, Haskell, CMake, Groovy, Properties, Nginx, PowerShell, Erlang, Elixir, Clojure, OCaml, Dart) |
+| `.diff`, `.patch` | file headers, hunks, additions and deletions coloured by line (classified from the hunk line counts); files and `+`/`−` totals in the meta line |
+| `.json`, `.ipynb`, `flake.lock`; `.jsonl`, `.ndjson` | **Formatted \| Raw**. Formatted is a two-space re-indentation that copies every number and string as written (`12345678901234567890`, `1.0`, `"\u00e9"`); JSON Lines format each line. A file that is not valid JSON shows a note with the line and column of the fault and its raw text. |
+| `.csv`, `.tsv` | **Table \| Raw**. RFC 4180 quoting with either delimiter; first record as the header, numeric columns right-aligned, at most 2,000 rows and 100,000 cells (the cut is stated). An unclosed quote, text after a closing quote or more than 500 fields are reported and the raw text is shown. |
+| any text without a grammar that contains ANSI escape sequences (logs) | **Rendered \| Raw**. The 16-colour palette, bold, dim, italic and underline become theme colours; 256-colour and true-colour codes select the default colour; every other escape sequence is removed. Raw keeps the escapes. |
+
+Colours are aliases of the design-system tokens (`styles.css`), so both themes follow
+`tokens.css`. Highlighting applies up to 256 KiB of text; above that the text is plain
+and the meta line says so (measured in headless Chromium: a 250 KiB Python file is
+rendered in about 1.3 s with highlighting against 0.8 s without).
+
+**Line links.** A click on a line number puts `#L12` in the address, a shift-click on
+another extends it to `#L12-L18` (from the line clicked before, or from the line the
+opened address names); opening such an address marks the lines and scrolls to
+them. Lines are the lines of the stored file: formatted JSON and the table have none and
+give way to Raw when a line is addressed. Markdown's Raw view has plain numbers. The
+numbers are pointer targets only (no tab stop per line); a line can always be addressed
+by typing the fragment.
+
+**Large files.** A text file over 2 MiB is fetched as its first 2 MiB (a byte range of
+the raw route), cut at the last complete line, and shown with a note that names the last
+line and offers the original. The file counts as larger by its declared length or, when
+a proxy removed the length, when its body exceeds the limit; the size in the note comes
+from the byte-range answer and is left out when the server does not state it. A view
+also shows at most 50,000 lines (every line is a block with a gutter link; measured in
+headless Chromium, 100,000 two-byte lines took 5 s to render, and 2 MiB of line breaks
+did not finish in a minute), with the same note. Copy raw then copies the shown part.
+What is derived from a part is worded as a part or withheld: a part of a JSON document
+gets no formatted view and no validity statement, a part of a diff no totals. A part of
+a CSV or TSV file gets a table of its leading rows, counted as "first N rows"; a record
+counts only when its line break is in the part, and a quoted cell left open within the
+last 64 KiB of the part is taken as split by the cut (its record is left out), while one
+left open further back is reported as a fault of the file. Markdown and diagram sources
+keep the hard 2 MiB limit: a cut document would render as a different document.
+
+## Files of other types
+
+Every file except HTML has a viewer page. A type that the server does not list is
+`unknown`: the viewer shows it as a text file when its first 2 MiB contain no NUL byte
+and decode as UTF-8, and otherwise shows "No preview for this file type" with the
+download (not an error). A listed text type that is not UTF-8 is a preview failure.
+`.mp4`, `.m4v`, `.webm`, `.mov`, `.ogv` and `.mp3`, `.wav`, `.ogg`, `.oga`, `.opus`,
+`.m4a`, `.flac`, `.aac` open in the browser's native player on the stage (it seeks with
+byte ranges of the raw route); resolution and duration appear in the meta line, and a
+file the browser cannot play is reported with the download.
+
+## Markdown code blocks
+
+Fenced and indented code blocks have **Copy** above the block (shown on hover or focus,
+like the table tools); it copies the code without its fence. A block is highlighted by
+the first word of its info string (` ```python `, `sh`, `yaml`, `scala`, …); ` ```diff `
+is coloured by line like a `.diff` file; blocks without a known language stay plain. One
+document highlights at most 256 KiB of code; blocks that do not fit stay plain and the
+meta line counts them (`2 code blocks not highlighted`). `<pre><code>` written as raw HTML
+with markup inside is left alone.
 
 ## Markdown source
 
@@ -113,7 +179,7 @@ quotes, ampersands and angle brackets):
 - `__MANURE_PATH__`: original artifact-relative path, not URL-encoded
 - `__MANURE_RAW_URL__`: same-origin `/<mount>/__manure/raw/<encoded path>`
 - `__MANURE_DOWNLOAD_URL__`: original attachment download URL
-- `__MANURE_KIND__`: `markdown`, `image`, `pdf`, `mermaid`, `graphviz`, `text`, `archive`
+- `__MANURE_KIND__`: `markdown`, `image`, `pdf`, `mermaid`, `graphviz`, `text`, `video`, `audio`, `archive`, `unknown`
 - `__MANURE_ASSET_BASE__`: reserved local asset route, without trailing slash
 - `__MANURE_SHELL_BASE__`: the content shell route (`<mount>/__manure/shell`); the template's
   `<!--manure-shell-->…<!--/manure-shell-->` block is dropped when no shell directory is configured
@@ -152,12 +218,15 @@ Allowlist exactly these outputs (no directory listing or arbitrary path serving)
 | `pdf.renderer.min.mjs` | `text/javascript; charset=utf-8` |
 | `styles.css` | `text/css; charset=utf-8` |
 
-`viewer.js` is approximately 5.9 MB; allow at least 8 MiB per bundled asset.
+`viewer.js` is approximately 6.1 MB; allow at least 8 MiB per bundled asset.
 Graphviz's WASM is embedded in its worker, so no `.wasm` route is required.
 Suggested CSP: `default-src 'none'; script-src 'self' 'wasm-unsafe-eval';
-style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'
-blob:; worker-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none';
-form-action 'none'`. SVG styles generated by Mermaid need inline style support.
+style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self';
+connect-src 'self' blob:; worker-src 'self'; object-src 'none'; frame-src 'none';
+base-uri 'none'; form-action 'none'`. SVG styles generated by Mermaid need inline
+style support; `media-src` is for the audio and video players. The raw route must
+answer single byte ranges (large text previews and media seeking use them) and
+should serve text types as `text/plain` and media with their media types.
 Always apply authorization and `X-Content-Type-Options: nosniff` on raw/renderer-asset routes.
 The exception is `/__manure/viewer/favicon.svg`: the server embeds the generic
 Manure SVG and serves it without artifact credentials, including on locked pages.
@@ -166,7 +235,12 @@ output or an uploaded file, so uploaded site favicons and raw bytes are unchange
 
 ## Bounds and failure behavior
 
-- Text: 2 MiB, checked both by declared length and streaming bytes; fetch 30 s.
+- Markdown and diagram sources: 2 MiB, checked both by declared length and streaming
+  bytes; fetch 30 s. Text files: the first 2 MiB (whole lines) of a larger file and at
+  most 50,000 lines, under the same 30 s deadline for both requests.
+- Highlighting: 256 KiB per text file and per Markdown document, on the main thread.
+  Formatted JSON: 256 nesting levels and 8 MiB of formatted text, otherwise raw text
+  with a note. Tables: 2,000 rows, 100,000 cells, 500 columns.
 - Diagrams: 50,000 characters, Mermaid 500 edges, at most 32 fenced diagrams per
   Markdown document; Graphviz worker killed after 10 s, each rendered SVG capped
   at 8 MiB. No new diagram rendering starts after the document's 30 s rendering
@@ -182,10 +256,13 @@ output or an uploaded file, so uploaded site favicons and raw bytes are unchange
   failed diagrams do not silently fall back to raw source. The original download
   link stays available, regardless of renderer success.
 
-Focused Node tests cover safety contracts (Blackbox/Atomic) and the production
+Focused Node tests cover safety contracts and the text-format modules (line model, diff
+classification, JSON formatting, delimited records, ANSI sequences, grammar resolution;
+Blackbox/Atomic) and the production
 PDF page-operation closure (Whitebox/Atomic regression tests), all Behavioral/Active.
 After building, run `CHROMIUM_BIN=/path/to/chromium npm run test:browser` for the
 real-browser regressions, including sibling hyperlinks without automatic sibling
-requests and sanitized Mermaid labels under the production CSP without
-permitting foreignObject. Authentication, complete
+requests, sanitized Mermaid labels under the production CSP without
+permitting foreignObject, and the text, table, log, media and unknown-type views
+against a file server that answers byte ranges (`test/text-formats.browser.mjs`). Authentication, complete
 browser journeys and PDF fidelity remain parent-project acceptance checks.

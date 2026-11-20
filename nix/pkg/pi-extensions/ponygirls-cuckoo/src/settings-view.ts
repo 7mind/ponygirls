@@ -88,6 +88,7 @@ export interface SettingsCallbacks {
 
 export interface ScopeValues {
   enabled: boolean;
+  showJson: boolean;
   policy: GrowthPolicy;
   evidence: boolean;
   corrections: boolean;
@@ -154,6 +155,10 @@ function flattenOverrides(
     result.enabled = checked.enabled;
   }
 
+  if (checked.showJson !== undefined) {
+    result.showJson = checked.showJson;
+  }
+
   if (checked.policy !== undefined) {
     result.policy = checked.policy;
   }
@@ -173,6 +178,7 @@ function flattenOverrides(
 function defaultValues(): Readonly<ScopeValues> {
   return Object.freeze({
     enabled: DEFAULT_PREFERENCES.enabled,
+    showJson: DEFAULT_PREFERENCES.showJson,
     policy: validatePolicy(DEFAULT_PREFERENCES.policy),
     ...DEFAULT_PREFERENCES.features,
   });
@@ -201,9 +207,9 @@ function sharedSnapshot(
 function preferenceChange(
   change: ScopedSettingChange<ScopeValues>,
 ): PreferenceChange {
-  if (change.key === 'enabled') {
+  if (change.key === 'enabled' || change.key === 'showJson') {
     return {
-      field: 'enabled',
+      field: change.key,
       value: change.op === 'inherit' ? null : change.value,
     };
   }
@@ -253,6 +259,11 @@ function fields(
       MASTER_LABEL,
       'Controls automatic checkpoints and new features. Saved recall/history ' +
         'and explicitly requested manual inquiries remain available while off.',
+    ),
+
+    showJson: scopedBooleanField(
+      'Show Cuckoo JSON',
+      'Show raw checkpoint replies in the main chat instead of the status line.',
     ),
 
     policy: {
@@ -361,7 +372,7 @@ function inactiveExplanation(
   key: ScopedSettingKey<ScopeValues>,
   effective: Readonly<ScopeValues>,
 ): string {
-  if (key === 'policy') return '';
+  if (key === 'policy' || key === 'showJson') return '';
 
   if (key === 'enabled') {
     return effective.enabled
@@ -447,6 +458,7 @@ export function createSettingsController(
 ): ScopedSettingsController<ScopeValues> {
   const order: readonly ScopedSettingKey<ScopeValues>[] = [
     'enabled',
+    'showJson',
     ...FEATURES.map(feature => feature.id),
     'policy',
   ];

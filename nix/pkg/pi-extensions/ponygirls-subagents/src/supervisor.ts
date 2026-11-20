@@ -138,6 +138,7 @@ export interface AgentView extends ModelView {
   generation: number;
   taskOutcome: string | null;
   usage: UsageTotals;
+  contextFill: { tokens: number; window: number } | null;
   lastActivityAt: string;
   /** For a gate reviewer: the gated task run it reviews. Null for every other agent. */
   managedGateFor: TaskRunId | null;
@@ -290,6 +291,8 @@ interface AgentRuntime {
   /** Deliverable text of the latest settled generation (its inline prefix is the gate's candidate answer). */
   lastText: ({ taskRunId: TaskRunId } & RetainedText) | null;
   usage: UsageTotals;
+  contextTokens: number | null;
+  contextWindow: number | null;
   lastPreview: string;
   /** Assistant text still being generated (cleared when the message completes). */
   streaming: string | null;
@@ -443,6 +446,8 @@ function newRuntime(record: AgentRecord): AgentRuntime {
     lastResult: null,
     lastText: null,
     usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: null, cost: null, unknown: false },
+    contextTokens: null,
+    contextWindow: null,
     lastPreview: "",
     streaming: null,
     quarantined: null,
@@ -713,7 +718,9 @@ export class Supervisor implements GateHost {
             lastActivityAt: r.at,
             activeDescendants: 0,
           };
-          this.agents.set(agentId, newRuntime(record));
+          const restoredRuntime = newRuntime(record);
+          restoredRuntime.contextWindow = this.describeContextWindow(record.model);
+          this.agents.set(agentId, restoredRuntime);
           const parent = record.parentId ? this.agents.get(record.parentId) : undefined;
           if (parent) parent.record.activeDescendants++;
           if (b["managedGate"] === true) {
@@ -2559,6 +2566,7 @@ export class Supervisor implements GateHost {
       const descriptor = this.opts.parentModels.describe(model);
       if (descriptor !== null) rt.parentModel = parseParentModel(descriptor, model);
     }
+    rt.contextWindow = rt.parentModel !== null ? rt.parentModel.contextWindow : null;
     const worker = this.makeWorker(rt.record.id);
     rt.worker = worker;
     if (backend !== null) {
@@ -3087,7 +3095,11 @@ export class Supervisor implements GateHost {
       return { content: "STALE_GENERATION: execution generation superseded", isError: true };
     }
     if (rt.activeRun.interruptRequested) return { content: "NOT_RUNNING: the generation is being interrupted", isError: true };
-    if (payload.usage) rt.usageSnapshot = payload.usage;
+    if (payload.usage) {
+      rt.usageSnapshot = payload.usage;
+      const contextTokens = normalizeContextTokens(payload.usage.contextTokens);
+      if (contextTokens !== null) rt.contextTokens = contextTokens;
+    }
     // Supervisor-side allowlist: the worker's registry is never trusted.
     // Re-checked at execution (not just exposure) with current root-concrete.
     if (!this.childTools(rt).includes(payload.tool)) {
@@ -3461,7 +3473,7 @@ export class Supervisor implements GateHost {
 
   /** Pure normalization for late receipts (mirrors accountUsage defaults
    * without side effects, so the durable commit precedes live mutation). */
-  private normalizeLateUsage(usage: UsageDetail): { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean } {
+  private normalizeLateUsage(usage: UsageDetail): { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean; contextTokens: number | null } {
     return {
       input: usage.input ?? 0,
       output: usage.output ?? 0,
@@ -3470,6 +3482,7 @@ export class Supervisor implements GateHost {
       reasoning: typeof usage.reasoning === "number" ? usage.reasoning : null,
       cost: typeof usage.cost === "number" ? usage.cost : null,
       unknown: usage.unknown === true,
+      contextTokens: normalizeContextTokens(usage.contextTokens),
     };
   }
 
@@ -3581,7 +3594,7 @@ export class Supervisor implements GateHost {
       : this.accountUsage(rt, usage);
   }
 
-  private accountUsage(rt: AgentRuntime | null, usage: UsageDetail): { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean } {
+  private accountUsage(rt: AgentRuntime | null, usage: UsageDetail): { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean; contextTokens: number | null } {
     const input = usage.input ?? 0;
     const output = usage.output ?? 0;
     const cacheRead = usage.cacheRead ?? 0;
@@ -3589,6 +3602,8 @@ export class Supervisor implements GateHost {
     const reasoning = typeof usage.reasoning === "number" ? usage.reasoning : null;
     const cost = typeof usage.cost === "number" ? usage.cost : null;
     const unknown = usage.unknown === true;
+    const contextTokens = normalizeContextTokens(usage.contextTokens);
+    if (contextTokens !== null && rt !== null) rt.contextTokens = contextTokens;
     for (const target of rt ? [rt.usage, this.cumulativeUsage] : [this.cumulativeUsage]) {
       target.inputTokens += input;
       target.outputTokens += output;
@@ -3598,7 +3613,7 @@ export class Supervisor implements GateHost {
       if (cost !== null) target.cost = (target.cost ?? 0) + cost;
       if (unknown) target.unknown = true;
     }
-    return { input, output, cacheRead, cacheWrite, reasoning, cost, unknown };
+    return { input, output, cacheRead, cacheWrite, reasoning, cost, unknown, contextTokens };
   }
 
   /**
@@ -5550,6 +5565,16 @@ export class Supervisor implements GateHost {
     };
   }
 
+  private describeContextWindow(model: ResolvedModel | null): number | null {
+    if (model === null || this.opts.parentModels === undefined) return null;
+    try {
+      const descriptor = this.opts.parentModels.describe(model);
+      return descriptor !== null ? descriptor.contextWindow : null;
+    } catch {
+      return null;
+    }
+  }
+
   private viewOf(rt: AgentRuntime): AgentView {
     const r = rt.record;
     let openQuestion: AgentView["openQuestion"] = null;
@@ -5574,6 +5599,7 @@ export class Supervisor implements GateHost {
       generation: r.executionGeneration,
       taskOutcome: r.taskOutcome,
       usage: { ...rt.usage },
+      contextFill: rt.contextTokens !== null && rt.contextWindow !== null ? { tokens: rt.contextTokens, window: rt.contextWindow } : null,
       lastActivityAt: r.lastActivityAt,
       managedGateFor: this.gate.isReviewer(r.id) ? this.gate.managedTaskFor(r.id) : null,
       gateTaskRunId: rt.gateTaskRunId,
@@ -5626,6 +5652,7 @@ interface UsageDetail {
   reasoning?: number | null;
   cost?: number | null;
   unknown?: boolean;
+  contextTokens?: number | null;
 }
 
 /**
@@ -5633,6 +5660,10 @@ interface UsageDetail {
  * Returns null when no billable usage was reported (unknown stays unset;
  * callers decide whether to mark unknown). Never throws.
  */
+function normalizeContextTokens(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
 function normalizeExternalUsage(raw: unknown): UsageDetail | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Record<string, unknown>;

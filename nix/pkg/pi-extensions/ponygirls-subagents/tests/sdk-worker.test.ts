@@ -442,7 +442,30 @@ test("real worker: cache and reasoning tokens are reported apart from the input 
   try {
     const settled = await untilEvent(events, (e) => e.kind === "settled");
     // One scripted request: 10 uncached + 3 cache-read + 2 cache-write input tokens; 5 output tokens, 1 of them reasoning.
-    assert.deepEqual(settled.detail["usage"], { input: 15, output: 5, cacheRead: 3, cacheWrite: 2, reasoning: 1, cost: 0, unknown: false });
+    assert.deepEqual(settled.detail["usage"], { input: 15, output: 5, cacheRead: 3, cacheWrite: 2, reasoning: 1, cost: 0, unknown: false, contextTokens: 20 });
+  } finally {
+    handle.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("real worker: the settled usage carries the whole context of the latest request", async () => {
+  if (!SDK_ROOT) {
+    console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; context-fill check skipped, not passed");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "subagents-ctx-"));
+  const script = [
+    { tool: "read", args: { path: "/x" }, usage: { input: 100, output: 5 } },
+    { text: "done", usage: { input: 200, output: 5, cacheRead: 4, cacheWrite: 1 } },
+  ];
+  const { handle, events } = await deterministicWorker(dir, script, async () => ({ content: "ok", isError: false }));
+  try {
+    const settled = await untilEvent(events, (e) => e.kind === "settled");
+    const usage = settled.detail["usage"] as Record<string, unknown>;
+    assert.equal(usage["contextTokens"], 210, "the latest request's whole context (prompt plus response) wins");
+    assert.equal(usage["input"], 305, "both requests are summed into the totals");
+    assert.equal(usage["output"], 10);
   } finally {
     handle.kill();
     rmSync(dir, { recursive: true, force: true });
@@ -653,7 +676,7 @@ test("real worker: facade-local end wins public completion while genuine ORIGINA
     assert.equal(settled.detail["status"], "succeeded", "local completion still settles the turn");
     assert.deepEqual(
       settled.detail["usage"],
-      { input: 26, output: 6, cacheRead: 7, cacheWrite: 8, reasoning: null, cost: 9, unknown: false },
+      { input: 26, output: 6, cacheRead: 7, cacheWrite: 8, reasoning: null, cost: 9, unknown: false, contextTokens: 32 },
       "ledger bills exactly the genuine ORIGINAL breakdown (11+7+8 input), never the local 1000s",
     );
     assert.equal(settled.detail["lastAssistantText"], "facade-local-text", "public completion is the local message");
@@ -717,14 +740,14 @@ test("real worker: ORIGINAL held past public completion still accounts exactly o
     // unknown (incomplete accounting at settle time, never fabricated).
     assert.deepEqual(
       settled.detail["usage"],
-      { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: null, cost: null, unknown: true },
+      { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: null, cost: null, unknown: true, contextTokens: null },
       "settled snapshot carries no genuine usage (it arrives late)",
     );
     // Exactly-once late receipt under the captured identity.
     const late = await untilEvent(events, (e) => e.kind === "usage_late", 15000);
     assert.deepEqual(
       late.detail["usage"],
-      { input: 26, output: 6, cacheRead: 7, cacheWrite: 8, reasoning: null, cost: 9, unknown: false },
+      { input: 26, output: 6, cacheRead: 7, cacheWrite: 8, reasoning: null, cost: 9, unknown: false, contextTokens: 32 },
       "late receipt bills exactly the genuine ORIGINAL breakdown, never the local 1000s",
     );
     assert.equal(late.detail["taskRunId"], "task-1", "late receipt carries the captured task identity");
@@ -801,7 +824,7 @@ test("real worker: ORIGINAL end(message) completes the Agent loop with identical
     assert.equal(settled.detail["lastAssistantText"], "original-end-text", "Agent loop completed with the ORIGINAL text");
     assert.deepEqual(
       settled.detail["usage"],
-      { input: 44, output: 14, cacheRead: 15, cacheWrite: 16, reasoning: null, cost: 10, unknown: false },
+      { input: 44, output: 14, cacheRead: 15, cacheWrite: 16, reasoning: null, cost: 10, unknown: false, contextTokens: 58 },
       "Agent loop accounted the full ORIGINAL Usage (13+15+16 input)",
     );
   } finally {

@@ -133,6 +133,8 @@ const PATH_WIDTH = { min: 8, preferred: 24 };
 const STATE_TEXT_MAX = 24;
 const MAX_INDENT = 4;
 const INDENT_STEP = 2;
+const CONTEXT_FILL_ERROR = 90;
+const CONTEXT_FILL_WARN = 70;
 const ELLIPSIS = "…";
 const TITLE = "Subagents";
 /** A table cell without a value (conventions: zeros stay quiet). */
@@ -207,15 +209,35 @@ function stateCell(theme: UiTheme, v: AgentView): string {
 }
 
 /** `8.8k in · 5 out`; null while the agent has reported no tokens. */
-function tokensText(v: AgentView): string | null {
+function tokensPart(v: AgentView): string | null {
   const { inputTokens, outputTokens } = v.usage;
   return inputTokens === 0 && outputTokens === 0 ? null : `${formatCompact(inputTokens)} in · ${formatCompact(outputTokens)} out`;
 }
 
+function fillPart(v: AgentView): { text: string; tone: UiFg } | null {
+  const fill = v.contextFill;
+  if (fill === null) return null;
+  const percent = (fill.tokens / fill.window) * 100;
+  const tone: UiFg = percent > CONTEXT_FILL_ERROR ? "error" : percent > CONTEXT_FILL_WARN ? "warning" : "muted";
+  return { text: `${Number(percent.toFixed(1))}%`, tone };
+}
+
+function tokensText(v: AgentView): string | null {
+  const tokens = tokensPart(v);
+  const fill = fillPart(v);
+  const text = [tokens, fill === null ? null : fill.text].filter((part): part is string => part !== null).join(" · ");
+  return text === "" ? null : text;
+}
+
 /** Secondary text is muted; a missing value is dim except on the selection (dim lacks contrast on selectedBg). */
 function tokensCell(theme: UiTheme, v: AgentView, selected: boolean): string {
-  const tokens = tokensText(v);
-  return tokens === null ? theme.fg(selected ? "muted" : "dim", NO_VALUE) : theme.fg("muted", tokens);
+  const tokens = tokensPart(v);
+  const fill = fillPart(v);
+  if (tokens === null && fill === null) return theme.fg(selected ? "muted" : "dim", NO_VALUE);
+  const parts: string[] = [];
+  if (tokens !== null) parts.push(theme.fg("muted", fill === null ? tokens : `${tokens} · `));
+  if (fill !== null) parts.push(theme.fg(fill.tone, fill.text));
+  return parts.join("");
 }
 
 function modelLabel(theme: UiTheme, v: AgentView): string {

@@ -13,6 +13,7 @@ import type { WorkerEvent } from "../src/protocol.ts";
 import type { ToolRequest } from "../src/worker-launch.ts";
 import { InMemoryRunStore, type RunStore } from "../src/store.ts";
 import type { GoverningRegistry } from "../src/external-dispatcher.ts";
+import type { ParentModels } from "../src/parent-models.ts";
 import { DummyToolExecutor } from "../src/sandbox.ts";
 import { DummyWorkspaceManager, type WorkspaceManager } from "../src/workspace.ts";
 import { defaultSupervisorPolicy, type SupervisorPolicy } from "../src/policy.ts";
@@ -106,9 +107,9 @@ export class CtlWorker implements WorkerPort {
     this.exit?.({ code: null, signal: "SIGKILL" });
   }
 
-  call(tool: string, args: Record<string, unknown>): Promise<{ content: string; isError: boolean }> {
+  call(tool: string, args: Record<string, unknown>, usage: NonNullable<ToolRequest["usage"]> = { input: 3, output: 2, cost: 0.01, unknown: false }): Promise<{ content: string; isError: boolean }> {
     return this.tool!(
-      { tool, args, toolCallId: randomUUID(), usage: { input: 3, output: 2, cost: 0.01, unknown: false } },
+      { tool, args, toolCallId: randomUUID(), usage },
       { taskRunId: this.taskRunId, executionGeneration: this.generation },
     );
   }
@@ -130,6 +131,7 @@ export function mkSup(opts: {
   store?: RunStore;
   rootId?: string;
   governingRegistry?: () => GoverningRegistry | null;
+  parentModels?: ParentModels;
   dir?: string;
   workspace?: WorkspaceManager;
   governor?: () => GovernorContext;
@@ -151,6 +153,7 @@ export function mkSup(opts: {
     executors,
     workspace: opts.workspace ?? new DummyWorkspaceManager(),
     governingRegistry: opts.governingRegistry,
+    parentModels: opts.parentModels,
     onChange: opts.onChange,
     workerFactory: opts.factory ?? ((o) => {
       const w = new CtlWorker(o.agentId);

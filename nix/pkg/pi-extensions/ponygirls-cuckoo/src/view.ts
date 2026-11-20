@@ -564,12 +564,13 @@ export class CuckooView {
     if (requested && this.active) this.inquire(ctx);
   }
 
-  publish(ctx: ExtensionContext, reports: readonly Checkpoint[], enabled: boolean, fault: string | null): void {
+  publish(ctx: ExtensionContext, reports: readonly Checkpoint[], enabled: boolean, fault: string | null, repaint = false): void {
     this.lastReports = reports;
     this.lastFault = fault;
     this.lastEnabled = enabled;
     if (!this.active) return;
-    if (!enabled && reports.length === 0 && fault === null) { ctx.ui.setWidget('cuckoo', undefined); return; }
+    const showBadge = enabled || reports.length > 0 || fault !== null;
+    if (!showBadge && !repaint) { ctx.ui.setWidget('cuckoo', undefined); return; }
     const latest = reports.at(-1);
     const valid = reports.findLast(value => value.report !== null);
     // The objective count of the last valid report; nothing before the first one.
@@ -583,18 +584,22 @@ export class CuckooView {
       compact,
       wideShortcut: REPORTS_SHORTCUT.label,
     };
-    ctx.ui.setWidget('cuckoo', (_tui, theme) => ({
-      render: width => [borderBadge(theme, badge, width)],
-      renderCompact: width => borderBadgeCompact(theme, badge, width),
-      invalidate() {},
-      handleMouse: event => {
-        if (!this.active || event.type !== 'click' || event.button !== 'left' || ctx.mode !== 'tui' || !ctx.hasUI) return undefined;
-        const intro = this.lastFault !== null ? `Error: ${this.lastFault}` :
-          this.lastEnabled ? 'Cuckoo: ON (badge)' : 'Cuckoo: OFF (badge)';
-        void this.showReports(ctx, this.lastReports, intro);
-        return { handled: true };
-      },
-    }), { placement: 'borderBottomLeft', order: BORDER_ORDER.cuckoo });
+    ctx.ui.setWidget('cuckoo', (tui, theme) => {
+      if (repaint) tui.invalidate();
+      return {
+        render: width => [borderBadge(theme, badge, width)],
+        renderCompact: width => borderBadgeCompact(theme, badge, width),
+        invalidate() {},
+        handleMouse: event => {
+          if (!this.active || event.type !== 'click' || event.button !== 'left' || ctx.mode !== 'tui' || !ctx.hasUI) return undefined;
+          const intro = this.lastFault !== null ? `Error: ${this.lastFault}` :
+            this.lastEnabled ? 'Cuckoo: ON (badge)' : 'Cuckoo: OFF (badge)';
+          void this.showReports(ctx, this.lastReports, intro);
+          return { handled: true };
+        },
+      };
+    }, { placement: 'borderBottomLeft', order: BORDER_ORDER.cuckoo });
+    if (!showBadge) ctx.ui.setWidget('cuckoo', undefined);
   }
 
   dispose(ctx: ExtensionContext): void { this.active = false; this.pane.dispose(); ctx.ui.setWidget('cuckoo', undefined); }

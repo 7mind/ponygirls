@@ -197,7 +197,7 @@ for (const example of errors) {
       assert.equal(settled.detail["lastAssistantText"], "");
       assert.equal(settled.detail["textLength"], 0);
       assert.equal(settled.detail["resultFile"], null);
-      assert.deepEqual(settled.detail["usage"], { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: null, cost: 0, unknown: false });
+      assert.deepEqual(settled.detail["usage"], { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: null, cost: 0, unknown: false, contextTokens: null });
       assert.equal(requests, 1);
       assert.equal(toolRequests, 0);
     });
@@ -246,7 +246,7 @@ test("real worker: error truncation preserves the prior text file, retention bou
     assert.equal(bytes.toString("utf8"), text.slice(0, 300_000));
     assert.equal(bytes.length, file.byteCount);
     assert.equal(createHash("sha256").update(bytes).digest("hex"), file.sha256);
-    assert.deepEqual(settled.detail["usage"], { input: 16, output: 7, cacheRead: 3, cacheWrite: 2, reasoning: 2, cost: 0, unknown: false });
+    assert.deepEqual(settled.detail["usage"], { input: 16, output: 7, cacheRead: 3, cacheWrite: 2, reasoning: 2, cost: 0, unknown: false, contextTokens: 23 });
     assert.equal(requests, 2);
     assert.equal(toolRequests, 1);
   });

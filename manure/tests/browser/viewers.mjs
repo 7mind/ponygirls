@@ -419,8 +419,12 @@ await check("no-index directory browsing renders README and safely navigates nes
   assert.equal(await page.locator("meta#manure-viewer").count(), 0);
   await page.getByRole("link", { name: "Parent directory", exact: true }).click();
   await page.getByRole("heading", { name: "Viewer specification", exact: true }).waitFor();
+  // A type that is not listed opens in the viewer too; content that is not text gets a card with the download.
   const original = page.getByRole("link", { name: "original.bin", exact: true });
-  assert.equal(await original.getAttribute("href"), new URL(root("browse")).pathname.replace(/\/$/, "") + "/original.bin");
+  assert.equal(await original.getAttribute("href"), new URL(root("browse")).pathname.replace(/\/$/, "") + "/__manure/view/original.bin");
+  await original.click();
+  await page.getByRole("heading", { name: "No preview for this file type", exact: true }).waitFor();
+  await shell(page, "browse", "original.bin");
   await downloadEqual(page, "browse", "original.bin");
 }, true);
 
@@ -487,7 +491,7 @@ await check("source files preview as exact numbered text; archives get a downloa
   const text = page.getByLabel("File text", { exact: true });
   await text.waitFor();
   assert.equal(await text.textContent(), expected("code").toString("utf8"), "text preview must be the exact file text");
-  assert.equal(await text.locator("span").count(), 2, "one numbered row per source line");
+  assert.equal(await text.locator(":scope > span").count(), 2, "one numbered row per source line");
   await page.getByText("2 lines", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Copy raw", exact: true }).isEnabled(), true);
   await page.goto(root("archive") + "/", { waitUntil: "domcontentloaded" });
@@ -507,6 +511,147 @@ const scrolledChrome = async (page, selector) => {
   await page.waitForFunction(() => scrollY > 0);
   return page.locator(selector).evaluate((el) => el.getBoundingClientRect().top);
 };
+// Specified: format-aware text views through the real raw route (byte ranges included) and under the real viewer policy.
+await check("text formats: highlighted source with line links, diff, JSON, table, log colours, a cut-off log, a named file", async (page) => {
+  const fileText = page.getByLabel("File text", { exact: true });
+  const text = (name) => expected("formats", name).toString("utf8");
+  const meta = () => page.locator("#meta-extra").textContent();
+  const mode = (name) => page.getByRole("button", { name, exact: true });
+  await open(page, "formats", "src/summarise.py");
+  await fileText.waitFor();
+  assert.equal(await fileText.textContent(), text("src/summarise.py"), "highlighting keeps the exact file text");
+  assert.deepEqual(await fileText.locator(".hljs-keyword").allTextContents(), ["import", "def", "return"]);
+  assert.equal(await fileText.locator("b").count(), 0, "markup in a source file stays text");
+  assert.equal(await meta(), "7 lines");
+  await fileText.locator(":scope > span").nth(3).locator("a.ln").click();
+  await page.waitForFunction(() => location.hash === "#L4");
+  await fileText.locator(":scope > span").nth(5).locator("a.ln").click({ modifiers: ["Shift"] });
+  await page.waitForFunction(() => location.hash === "#L4-L6");
+  assert.deepEqual(await fileText.locator(":scope > .is-target").evaluateAll((lines) => lines.map((line) => line.textContent.trim().slice(0, 8))), ["def load", '"""Doc', 'string."']);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await fileText.locator(":scope > .is-target").first().waitFor();
+  assert.equal(await fileText.locator(":scope > .is-target").count(), 3, "a line link survives a reload");
+
+  await open(page, "formats", "fix.diff");
+  await fileText.waitFor();
+  assert.equal(await fileText.textContent(), text("fix.diff"));
+  assert.deepEqual(await fileText.locator(":scope > span").evaluateAll((lines) => lines.map((line) => line.className)),
+    ["diff-file", "diff-file", "diff-file", "diff-hunk", "", "diff-del", "diff-add"]);
+  assert.equal(await meta(), "1 file · +1 −1 · 7 lines");
+
+  await open(page, "formats", "metrics.json");
+  const formatted = page.getByLabel("Formatted JSON", { exact: true });
+  await formatted.waitFor();
+  assert.equal(await formatted.textContent(), '{\n  "run": "m4",\n  "big": 12345678901234567890,\n  "rows": [\n    1.50,\n    null\n  ]\n}\n', "numbers are shown as stored");
+  assert.equal(await mode("Formatted").getAttribute("aria-pressed"), "true");
+  await mode("Raw").click();
+  assert.equal(await fileText.textContent(), text("metrics.json"));
+  assert.equal(await formatted.isVisible(), false);
+
+  await open(page, "formats", "results.csv");
+  const table = page.getByRole("table", { name: "CSV table", exact: true });
+  await table.waitFor();
+  assert.deepEqual(await table.locator("tbody tr").evaluateAll((rows) => rows.map((row) => [...row.cells].map((cell) => cell.textContent))),
+    [["1", "alpha", "1.50", 'said "hi", twice'], ["2", "beta", "-2", ""]]);
+  assert.equal(await meta(), "2 rows · 3 columns · 3 lines");
+  assert.deepEqual(await scrollers(page), [], "the table is in the document, not in a scroll box");
+  await mode("Raw").click();
+  assert.equal(await fileText.textContent(), text("results.csv"));
+
+  await open(page, "formats", "build.log");
+  const rendered = page.getByLabel("Rendered log", { exact: true });
+  await rendered.waitFor();
+  assert.equal(await rendered.textContent(), "06:02 ok\nerror at <x>\n", "escape sequences are interpreted, not shown");
+  assert.equal(await rendered.locator(".ansi-bold.ansi-fg-1").textContent(), "error");
+  await mode("Raw").click();
+  assert.equal(await fileText.textContent(), text("build.log"), "the raw view keeps every escape");
+
+  // 2.6 MB: the viewer asks the raw route for the first 2 MiB and shows whole lines of them.
+  const ranges = [];
+  page.on("request", (request) => { if (request.url() === rawURL("formats", "crawl.log")) ranges.push(request.headers().range || "whole"); });
+  await open(page, "formats", "crawl.log");
+  await page.getByText("Showing the first 2.0 MiB of 2.5 MiB", { exact: true }).waitFor();
+  const shown = await fileText.textContent();
+  assert.equal(shown.length % 100, 0, "no cut line and no cut character");
+  assert.equal(text("crawl.log").startsWith(shown) && shown.length === Math.floor(2 * 1024 * 1024 / 101) * 100, true, "the leading whole lines of the file");
+  assert.deepEqual(ranges, ["whole", "bytes=0-2097151"]);
+  assert.equal(await meta(), "first 20,763 lines");
+  await downloadEqual(page, "formats", "crawl.log");
+
+  // An over-limit table is tabulated as a part: its leading rows, counted as "first".
+  const big = text("big.csv");
+  const bigRows = big.slice(0, big.lastIndexOf("\n", 2 * 1024 * 1024 - 1) + 1).split("\n").length - 2;
+  await open(page, "formats", "big.csv");
+  await page.getByText(/^Showing the first 2\.0 MiB of 2\.\d MiB$/).waitFor();
+  assert.equal(await table.locator("tbody tr").count(), 2000, "the table shows the leading rows");
+  assert.deepEqual(await table.locator("tbody tr").nth(1999).evaluate((row) => [row.cells[0].textContent, row.cells[1].textContent]), ["2000", "2000"]);
+  assert.equal(await page.locator(".data-foot").textContent(), "First 2,000 rows are shown as a table.");
+  assert.equal(await meta(), `first ${bigRows.toLocaleString("en-US")} rows · 2 columns · first ${(bigRows + 1).toLocaleString("en-US")} lines`);
+  assert.equal(await page.getByRole("alert").count(), 0);
+
+  await open(page, "formats", "Makefile");
+  await fileText.waitFor();
+  assert.equal(await page.locator("meta#manure-viewer").getAttribute("data-kind"), "text", "a well-known name is a text type");
+  assert.equal(await fileText.textContent(), text("Makefile"));
+
+  await open(page, "formats", "notes.md");
+  await page.locator("article.markdown pre .hljs-keyword").first().waitFor();
+  const copy = page.getByRole("button", { name: "Copy code", exact: true });
+  await copy.focus();
+  assert.equal(await copy.evaluate((el) => getComputedStyle(el.parentElement).opacity), "1", "Copy appears on keyboard focus");
+}, false);
+
+await check("unknown and media types: a card instead of a browser download, a native player, and stored bytes for other clients", async (page) => {
+  // A browser navigation to a standalone file of an unlisted type gets the viewer page ...
+  const response = await page.goto(root("unknown") + "/", { waitUntil: "domcontentloaded" });
+  assert.equal(response.status(), 200);
+  assert.match(response.headers()["content-type"], /^text\/html/);
+  await shell(page, "unknown");
+  assert.equal(await page.locator("meta#manure-viewer").getAttribute("data-kind"), "unknown");
+  await page.getByRole("heading", { name: "No preview for this file type", exact: true }).waitFor();
+  assert.equal(await page.getByRole("alert").count(), 0, "not an error");
+  assert.equal(await page.getByRole("button", { name: "Copy raw", exact: true }).isVisible(), false);
+  const download = page.getByRole("main").getByRole("link", { name: "Download original", exact: true });
+  assert.equal(new URL(await download.getAttribute("href"), page.url()).href, downloadURL("unknown"));
+  await downloadEqual(page, "unknown");
+  // ... and a client that does not ask for HTML gets the stored bytes at the same URL.
+  const bytes = await fetchBytes(page, root("unknown") + "/");
+  assert.equal(bytes.status, 200);
+  assert.equal(bytes.type, "application/octet-stream");
+  assert.deepEqual(Buffer.from(bytes.bytes), expected("unknown"));
+
+  await open(page, "formats", "model.bin");
+  await page.getByRole("heading", { name: "No preview for this file type", exact: true }).waitFor();
+
+  await open(page, "formats", "tone.wav");
+  assert.equal(await page.locator("meta#manure-viewer").getAttribute("data-kind"), "audio");
+  const player = page.locator("main audio");
+  await player.waitFor();
+  assert.equal(await player.evaluate((el) => el.controls && new URL(el.src).href), rawURL("formats", "tone.wav"));
+  await page.locator("#file-facts").filter({ hasText: "0:02" }).waitFor();
+  assert.equal(await player.evaluate((el) => Math.round(el.duration)), 2, "the player loaded the file under the viewer policy");
+  const part = await page.evaluate(async (url) => {
+    const ranged = await fetch(url, { headers: { Range: "bytes=0-3" } });
+    return { status: ranged.status, type: ranged.headers.get("content-type"), text: await ranged.text() };
+  }, rawURL("formats", "tone.wav"));
+  assert.deepEqual(part, { status: 206, type: "audio/wav", text: "RIFF" }, "players seek with byte ranges");
+
+  await open(page, "formats", "broken.mp4");
+  assert.equal(await page.locator("meta#manure-viewer").getAttribute("data-kind"), "video");
+  await page.getByRole("alert").filter({ hasText: "The browser cannot play this video file." }).waitFor();
+  await downloadEqual(page, "formats", "broken.mp4");
+
+  // Direct URLs inside a directory artifact: text types are text for a browser, the listing links every file to its viewer.
+  const direct = await fetchBytes(page, root("formats") + "/fix.diff");
+  assert.equal(direct.type, "text/plain; charset=utf-8");
+  assert.deepEqual(Buffer.from(direct.bytes), expected("formats", "fix.diff"));
+  await page.goto(root("formats") + "/", { waitUntil: "domcontentloaded" });
+  const base = new URL(root("formats")).pathname.replace(/\/$/, "");
+  for (const name of ["Makefile", "model.bin", "tone.wav", "fix.diff"]) {
+    assert.equal(await page.getByRole("link", { name, exact: true }).getAttribute("href"), `${base}/__manure/view/${name}`, name);
+  }
+}, false);
+
 await check("viewer pages scroll only the document under sticky chrome; section tools, theme and CLI disclosure work by keyboard", async (page) => {
   await open(page, "markdown");
   await markdownRendered(page);

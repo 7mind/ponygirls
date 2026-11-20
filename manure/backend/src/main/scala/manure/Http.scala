@@ -411,7 +411,12 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       navigational.putHeaders(raw("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action " + forms))
     else navigational
   }
-  private def mime(path: String): String = path.toLowerCase(java.util.Locale.ROOT).split('.').lastOption.getOrElse("") match
+  /** Lower-case file name and its extension (the text after the last dot of the name; empty without a dot). The one
+    * reading of a path's type for both the content type and the viewer. */
+  private def nameAndExtension(path: String): (String,String) =
+    val name = path.substring(path.lastIndexOf('/') + 1).toLowerCase(java.util.Locale.ROOT)
+    (name,if name.contains('.') then name.substring(name.lastIndexOf('.') + 1) else "")
+  private def mime(path: String): String = nameAndExtension(path)._2 match
     case "html" | "htm" => "text/html; charset=utf-8"
     case "js" | "mjs" => "application/javascript; charset=utf-8"
     case "css" => "text/css; charset=utf-8"
@@ -427,7 +432,18 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     case "ico" => "image/x-icon"
     case "pdf" => "application/pdf"
     case "wasm" => "application/wasm"
-    case _ => "application/octet-stream"
+    case "mp4" | "m4v" => "video/mp4"
+    case "webm" => "video/webm"
+    case "mov" => "video/quicktime"
+    case "ogv" => "video/ogg"
+    case "mp3" => "audio/mpeg"
+    case "wav" => "audio/wav"
+    case "ogg" | "oga" | "opus" => "audio/ogg"
+    case "m4a" => "audio/mp4"
+    case "flac" => "audio/flac"
+    case "aac" => "audio/aac"
+    // Files the text viewer shows are text for a browser as well; nosniff keeps them inert.
+    case _ => if viewerKind(path).contains("text") then "text/plain; charset=utf-8" else "application/octet-stream"
   private def encoded(value: String): String = value.split("/",-1).map(v => URLEncoder.encode(v,"UTF-8").replace("+","%20")).mkString("/")
   private def disposition(value: String): String =
     val base = value.split("/").last
@@ -467,32 +483,51 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         q.drop(2).toDoubleOption.exists(v => v > 0 && v <= 1)
       }
     })
-  /** Display label and preview renderer of a file, by extension. `viewer` is the viewer shell's `data-kind`. */
+  /** Display label and preview renderer of a file, by name or extension. `viewer` is the viewer shell's `data-kind`;
+    * HTML alone has none and is always served as the page it is. */
   private final case class FileType(label: String,viewer: Option[String])
+  private def group(viewer: Option[String],labels: (String,Seq[String])*): Seq[(String,FileType)] =
+    labels.flatMap((label,keys) => keys.map(_ -> FileType(label,viewer)))
   private val fileTypes: Map[String,FileType] =
-    def group(viewer: Option[String],labels: (String,Seq[String])*): Seq[(String,FileType)] =
-      labels.flatMap((label,extensions) => extensions.map(_ -> FileType(label,viewer)))
     (group(Some("markdown"),"Markdown" -> Seq("md","markdown")) ++
       group(Some("image"),"PNG image" -> Seq("png"),"JPEG image" -> Seq("jpg","jpeg"),"GIF image" -> Seq("gif"),"WebP image" -> Seq("webp"),
         "AVIF image" -> Seq("avif"),"BMP image" -> Seq("bmp"),"SVG image" -> Seq("svg"),"Icon" -> Seq("ico")) ++
       group(Some("pdf"),"PDF document" -> Seq("pdf")) ++
       group(Some("mermaid"),"Mermaid source" -> Seq("mmd","mermaid")) ++
       group(Some("graphviz"),"Graphviz source" -> Seq("dot","gv")) ++
-      group(Some("text"),"Text" -> Seq("txt","text"),"Log" -> Seq("log"),"CSV" -> Seq("csv"),"TSV" -> Seq("tsv"),"JSON" -> Seq("json"),
-        "JSON lines" -> Seq("jsonl","ndjson"),"YAML" -> Seq("yaml","yml"),"TOML" -> Seq("toml"),"Configuration" -> Seq("ini","cfg","conf"),
-        "XML" -> Seq("xml"),"Python" -> Seq("py"),"JavaScript" -> Seq("js","mjs","cjs"),"TypeScript" -> Seq("ts","tsx"),"JSX" -> Seq("jsx"),
-        "Shell script" -> Seq("sh","bash","zsh"),"Nix" -> Seq("nix"),"Scala" -> Seq("scala","sc","sbt"),"Java" -> Seq("java"),
-        "Kotlin" -> Seq("kt","kts"),"Go" -> Seq("go"),"Rust" -> Seq("rs"),"C" -> Seq("c","h"),"C++" -> Seq("cc","cpp","cxx","hh","hpp"),
-        "Ruby" -> Seq("rb"),"SQL" -> Seq("sql"),"Lua" -> Seq("lua"),"R" -> Seq("r"),"CSS" -> Seq("css"),"Diff" -> Seq("diff","patch"),
-        "reStructuredText" -> Seq("rst"),"LaTeX" -> Seq("tex"),"Protocol Buffers" -> Seq("proto")) ++
+      group(Some("text"),"Text" -> Seq("txt","text"),"Log" -> Seq("log"),"CSV" -> Seq("csv"),"TSV" -> Seq("tsv"),"JSON" -> Seq("json","json5","jsonc"),
+        "JSON lines" -> Seq("jsonl","ndjson"),"Jupyter notebook" -> Seq("ipynb"),"YAML" -> Seq("yaml","yml"),"TOML" -> Seq("toml"),
+        "Configuration" -> Seq("ini","cfg","conf","properties","env"),"Lock file" -> Seq("lock"),
+        "XML" -> Seq("xml"),"Python" -> Seq("py","pyi"),"JavaScript" -> Seq("js","mjs","cjs"),"TypeScript" -> Seq("ts","tsx"),"JSX" -> Seq("jsx"),
+        "Shell script" -> Seq("sh","bash","zsh","fish"),"PowerShell" -> Seq("ps1"),"Batch file" -> Seq("bat","cmd"),"Nix" -> Seq("nix"),
+        "Scala" -> Seq("scala","sc","sbt"),"Java" -> Seq("java"),"Kotlin" -> Seq("kt","kts"),"Groovy" -> Seq("groovy","gradle"),"Go" -> Seq("go"),"Rust" -> Seq("rs"),
+        "C" -> Seq("c","h"),"C++" -> Seq("cc","cpp","cxx","hh","hpp","hxx"),"C#" -> Seq("cs"),"Swift" -> Seq("swift"),"Dart" -> Seq("dart"),"Zig" -> Seq("zig"),
+        "Ruby" -> Seq("rb"),"PHP" -> Seq("php"),"Perl" -> Seq("pl","pm"),"SQL" -> Seq("sql"),"Lua" -> Seq("lua"),"R" -> Seq("r"),"Julia" -> Seq("jl"),
+        "Haskell" -> Seq("hs"),"OCaml" -> Seq("ml","mli"),"Elixir" -> Seq("ex","exs"),"Erlang" -> Seq("erl"),"Clojure" -> Seq("clj","cljs"),
+        "CSS" -> Seq("css","scss","sass","less"),"Vue" -> Seq("vue"),"Svelte" -> Seq("svelte"),"GraphQL" -> Seq("graphql","gql"),"Diff" -> Seq("diff","patch"),
+        "Starlark" -> Seq("bzl","bazel","star"),"CMake" -> Seq("cmake"),"Makefile" -> Seq("mk"),"Terraform" -> Seq("tf","tfvars","hcl"),
+        "reStructuredText" -> Seq("rst"),"AsciiDoc" -> Seq("adoc"),"LaTeX" -> Seq("tex"),"Protocol Buffers" -> Seq("proto"),"Thrift" -> Seq("thrift"),
+        "Baboon model" -> Seq("baboon")) ++
+      group(Some("video"),"MP4 video" -> Seq("mp4","m4v"),"WebM video" -> Seq("webm"),"QuickTime video" -> Seq("mov"),"Ogg video" -> Seq("ogv")) ++
+      group(Some("audio"),"MP3 audio" -> Seq("mp3"),"WAV audio" -> Seq("wav"),"Ogg audio" -> Seq("ogg","oga","opus"),"MPEG-4 audio" -> Seq("m4a"),
+        "FLAC audio" -> Seq("flac"),"AAC audio" -> Seq("aac")) ++
       group(Some("archive"),"ZIP archive" -> Seq("zip"),"Tar archive" -> Seq("tar"),"Gzip archive" -> Seq("gz","tgz"),
         "Bzip2 archive" -> Seq("bz2"),"XZ archive" -> Seq("xz"),"Zstandard archive" -> Seq("zst"),"7-Zip archive" -> Seq("7z"),
         "Java archive" -> Seq("jar"),"Python wheel" -> Seq("whl")) ++
       group(None,"HTML" -> Seq("html","htm"))).toMap
+  /** Text files known by their whole name, compared in lower case. */
+  private val fileNames: Map[String,FileType] =
+    group(Some("text"),"Makefile" -> Seq("makefile","gnumakefile"),"Dockerfile" -> Seq("dockerfile","containerfile"),
+      "Text" -> Seq("license","licence","copying","notice","authors","contributors","readme","changelog","todo"),
+      "Groovy" -> Seq("jenkinsfile"),"Ruby" -> Seq("gemfile","rakefile","vagrantfile"),
+      "Configuration" -> Seq(".gitignore",".gitattributes",".gitconfig",".dockerignore",".editorconfig",".npmrc",".env"),
+      "Shell script" -> Seq(".bashrc",".bash_profile",".profile",".zshrc")).toMap
+  /** A type that is not listed is `unknown`: the viewer shows it as text when its content is text, and otherwise
+    * offers the download. */
   private def fileType(path: String): FileType =
-    val name = path.split('/').last
-    val extension = if name.contains('.') then name.substring(name.lastIndexOf('.') + 1).toLowerCase(java.util.Locale.ROOT) else ""
-    fileTypes.getOrElse(extension,FileType(if extension.isEmpty then "File" else extension.toUpperCase(java.util.Locale.ROOT) + " file",None))
+    val (name,extension) = nameAndExtension(path)
+    fileNames.get(name).orElse(fileTypes.get(extension))
+      .getOrElse(FileType(if extension.isEmpty then "File" else extension.toUpperCase(java.util.Locale.ROOT) + " file",Some("unknown")))
   private def viewerKind(path: String): Option[String] = fileType(path).viewer
   private val sizeUnits = Vector("KiB","MiB","GiB","TiB")
   private val sizeStep = 1024L
@@ -528,7 +563,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     finally input.close()
   }
   /** Viewer CSP; also used by directory listings that render a README with the viewer bundle. */
-  private val viewerPolicy = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; worker-src 'self'; connect-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+  private val viewerPolicy = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self'; font-src 'self'; worker-src 'self'; connect-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
   /** The content shell: page chrome and the shared design system of Manure's content-origin pages (viewer, listing,
     * unlock), served from unlock_shell_dir under the reserved prefix, independently of the dashboard and the viewer.
     * Without a shell directory these pages are the built-in unstyled versions, like the built-in unlock form. */

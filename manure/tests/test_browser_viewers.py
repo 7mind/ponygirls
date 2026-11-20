@@ -7,6 +7,7 @@ Hyperlink navigation assertions also cover the external-href stripping regressio
 import base64
 import binascii
 import json
+import math
 import os
 from pathlib import Path
 import struct
@@ -42,6 +43,18 @@ def two_page_pdf():
         result.extend(f"{offset:010} 00000 n \n".encode())
     result.extend(f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
     return bytes(result)
+
+
+WAV_RATE = 8000
+WAV_SECONDS = 2
+
+
+def wav_fixture():
+    """Two seconds of a 440 Hz tone: 16-bit mono PCM in a RIFF container."""
+    samples = b"".join(struct.pack("<h", round(8000 * math.sin(2 * math.pi * 440 * i / WAV_RATE))) for i in range(WAV_RATE * WAV_SECONDS))
+    header = (b"RIFF" + struct.pack("<I", 36 + len(samples)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, WAV_RATE, WAV_RATE * 2, 2, 16)
+              + b"data" + struct.pack("<I", len(samples)))
+    return header + samples
 
 
 def png_fixture():
@@ -174,6 +187,20 @@ class ViewerBrowserTests(unittest.TestCase):
         upload("internal", {"private.md": b"# Internal viewer handoff\n"}, visibility="internal")
         upload("code", {"tool.py": b"print('hi')\n# done\n"})
         upload("archive", {"bundle.zip": b"PK\x05\x06" + bytes(18)})
+        upload("formats", {
+            "src/summarise.py": b'import json\n\n\ndef load(path):\n    """Doc\n    string."""\n    return json.loads(path)  # <b>text</b>\n',
+            "fix.diff": b"diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n keep\n-old\n+new\n",
+            "metrics.json": b'{"run":"m4","big":12345678901234567890,"rows":[1.50,null]}',
+            "results.csv": b'name,score,note\r\nalpha,1.50,"said ""hi"", twice"\r\nbeta,-2,\r\n',
+            "build.log": b"\x1b[2m06:02\x1b[0m \x1b[32mok\x1b[0m\n\x1b[1;31merror\x1b[0m at <x>\n",
+            "crawl.log": (b"x" * 98 + "\u00e9\n".encode()) * 26000,
+            "big.csv": b"id,note\n" + b"".join(b"%d,%s\n" % (n, b"cell " * 20) for n in range(1, 22001)),
+            "Makefile": b"all: dist\n\tnpm run build\n",
+            "notes.md": b"# Notes\n\n```python\ndef f():\n    return 1\n```\n",
+            "model.bin": b"\x00\x01binary\xff",
+            "tone.wav": wav_fixture(),
+            "broken.mp4": b"not a video"}, kind="dir")
+        upload("unknown", {"model.safetensors": b"\x7fELF\x00\x01binary\xff"})
         upload("unlock-states", {"index.html": b"<h1>Unlock states</h1>"}, kind="dir", visibility="external")
         upload("unlock-gone", {"index.html": b"<h1>Deleted while locked</h1>"}, kind="dir", visibility="external")
         payload = {"base": fix.api_base, "token": fix.identity.token, "login": fix.identity.login, "loginPassword": fix.identity.password,
@@ -186,7 +213,7 @@ class ViewerBrowserTests(unittest.TestCase):
             output = output.replace(secret, "[REDACTED]")
         self.assertEqual(result.returncode, 0, output[-12000:])
         report = json.loads(result.stdout)
-        self.assertEqual(len(report), 15, report)
+        self.assertEqual(len(report), 17, report)
         self.assertTrue(all(item["ok"] for item in report), report)
         for item in report:
             print("ok - " + mode + " viewer: " + item["name"])

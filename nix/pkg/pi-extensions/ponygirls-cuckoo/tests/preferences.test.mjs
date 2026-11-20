@@ -109,6 +109,26 @@ test('untrusted project state is neither read nor written; trust is checked agai
   assert.deepEqual(f.project.read(), {});
 });
 
+test('Show Cuckoo JSON inherits across existing sparse files and session overrides', t => {
+  const f = fixture(t, 'filesystem'); mkdirSync(join(f.cwd, 'agent'));
+  const sparse = '{"version":3,"enabled":false}';
+  writeFileSync(f.global.path, sparse);
+  assert.equal(f.read().effective.showJson, false);
+  assert.equal(readFileSync(f.global.path, 'utf8'), sparse);
+  const show = value => [{ field: 'showJson', value }];
+  f.apply('global', show(true));
+  assert.deepEqual(JSON.parse(readFileSync(f.global.path, 'utf8')), { version: 3, enabled: false, showJson: true });
+  f.apply('project', show(false));
+  assert.equal(f.read().effective.showJson, false);
+  f.apply('session', show(true));
+  assert.equal(f.read().effective.showJson, true);
+  f.apply('session', show(null));
+  assert.equal(f.read().effective.showJson, false);
+  f.ctx.isProjectTrusted = () => false;
+  assert.equal(f.read().effective.showJson, true);
+  assert.equal(f.read().effective.enabled, false);
+});
+
 test('legacy global formats preserve meaning, do not rewrite on read, and write sparse v3 explicitly', t => {
   const f = fixture(t, 'filesystem'); mkdirSync(join(f.cwd, 'agent'));
   for (const [document, expected] of [
@@ -150,7 +170,7 @@ test('a later valid field override repairs an older invalid value without revivi
 
 test('invalid file and session values fail without repair, coercion or silent fallback', t => {
   const f = fixture(t, 'filesystem'); mkdirSync(join(f.cwd, 'agent'));
-  for (const document of [[], null, { version: 4 }, { version: 3, enabled: 'false' }, { version: 3, features: { reader: 1 } },
+  for (const document of [[], null, { version: 4 }, { version: 3, enabled: 'false' }, { version: 3, showJson: 'false' }, { version: 3, features: { reader: 1 } },
     { version: 3, features: { typo: true } }, { version: 3, credentials: 'not-an-actual-secret' }, { version: 3, policy: { kind: 'tokens', value: 1, extra: true } },
     { version: 2, enabled: true }, { version: 1, enabled: true, thresholdPercent: 0 }]) {
     const raw = JSON.stringify(document); writeFileSync(f.global.path, raw);

@@ -6,8 +6,8 @@ Opt-in objective/progress and session-local rule checkpoints from the **main con
 ## Controls
 
 - `/cuckoo` or `/cuckoo status`: view current-branch reports and effective settings.
-- `/cuckoo settings`: staged checkbox dialog for the master switch and all seven
-  feature preferences. Tab or Left/Right changes Session/Project/Global scope;
+- `/cuckoo settings`: staged checkbox dialog for Automatic mode, **Show Cuckoo
+  JSON**, and all seven feature preferences. Tab or Left/Right changes Session/Project/Global scope;
   Space/Enter toggles, `r` resets to inheritance, `p` edits the complete growth
   policy, Ctrl-S applies the selected scope, and Escape discards unsaved drafts.
   Scope tabs, checkboxes and footer actions also support mouse clicks. The dialog
@@ -605,7 +605,10 @@ previous checkpoint; an empty list means nothing is unfinished and nothing
 completed is unreported. Reports are model
 self-reports, **not independently verified progress or new authorization**.
 
-The original assistant response remains in the transcript. Cuckoo stores its
+By default Pi displays the checkpoint reply as `🐦 Updating cuckoo status ...`, including on
+reopen when its saved report is present. **Show Cuckoo JSON** restores the original reply
+in the main chat, even when Automatic mode is off. Ordinary replies are unchanged. The
+original assistant response stays in the session. Cuckoo stores its
 entry ID, full content, exact text, parsed report and validation error separately
 as session metadata. Invalid JSON, interrupted replies and attempted tool calls
 are retained and surfaced, without correction retries. Checkpoint tool calls

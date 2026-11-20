@@ -12,12 +12,12 @@ import { INQUIRY_TYPE, STATE_TYPE, stateOnBranch } from '../src/state.ts';
 import { readMemory, textDigest } from '../src/memory-core.ts';
 
 const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
-async function configuredFixture(t, enableMemory, loadDirectory, terminal) {
+async function configuredFixture(t, enableMemory, loadDirectory, terminal, extensionFactories = []) {
   const dir = mkdtempSync(join(tmpdir(), 'cuckoo-host-')); const previous = process.env.PI_CODING_AGENT_DIR; process.env.PI_CODING_AGENT_DIR = dir;
   const settings = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
   const entry = process.env.PI_CUCKOO_EXTENSION === undefined ? resolve(import.meta.dirname, '../index.ts') : process.env.PI_CUCKOO_EXTENSION;
   const loader = new sdk.DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager: settings,
-    additionalExtensionPaths: [loadDirectory ? dirname(entry) : entry], noSkills: true, noThemes: true, noContextFiles: true, noPromptTemplates: true });
+    extensionFactories, additionalExtensionPaths: [loadDirectory ? dirname(entry) : entry], noSkills: true, noThemes: true, noContextFiles: true, noPromptTemplates: true });
   await loader.reload(); assert.deepEqual(loader.getExtensions().errors, []);
   const runtime = await sdk.ModelRuntime.create({ authPath: join(dir, 'auth.json'), modelsPath: null, refreshOnCreate: false });
   const contexts = []; const replies = []; let onRequest = () => {};
@@ -105,6 +105,51 @@ for (const [kind, value, threshold] of [['window', 15, 50000], ['tokens', 10000,
     assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
   });
 }
+
+test('real Pi labels the checkpoint by identity even after a custom context message', { timeout: 20000 }, async t => {
+  const auxiliary = 'Synthetic project inventory';
+  const f = await configuredFixture(t, false, false, true, [pi => {
+    pi.on('before_agent_start', () => ({ message: { customType: 'codegraph-projects', content: auxiliary, display: false } }));
+  }]);
+  const label = '🐦 Updating cuckoo status ...';
+  const marker = 'CUCKOO-CHECKPOINT\nAn ordinary reply';
+  const transforms = () => f.session.extensionRunner.getMarkdownTransformers();
+  const display = (chain, text, messageId, isStreaming = false) => chain.reduce(
+    (markdown, transform) => transform(markdown, { messageType: 'assistant', messageId, isStreaming, availableWidth: 100 }), text);
+  const live = [];
+  const unsubscribe = f.session.subscribe(event => {
+    if (event.type === 'message_start' && event.message.role === 'assistant') live.push(transforms());
+  });
+  t.after(unsubscribe);
+  f.replies.push({ text: report, tokens: 20000 }, { text: report, tokens: 20100 }, { text: marker, tokens: 20200 });
+  await f.session.prompt('Ordinary work');
+  await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
+  assert.match(getCurrentSystemPrompt(f.contexts.at(-1).messages), /follow the inquiry's requested format and use no tools/);
+  assert.doesNotMatch(JSON.stringify(f.contexts.at(-1)), /CUCKOO-CHECKPOINT/);
+  assert.match(JSON.stringify(f.contexts.at(-1).messages.at(-2)), /Restate me your objectives/);
+  assert.match(JSON.stringify(f.contexts.at(-1).messages.at(-1)), /Synthetic project inventory/);
+  await f.session.prompt('More ordinary work');
+  assert.equal(live.length, 3);
+  assert.equal(display(live[0], report, undefined, true), report);
+  assert.equal(display(live[1], report.slice(0, 27), undefined, true), label);
+  assert.equal(display(live[1], report), label);
+  assert.equal(display(live[2], marker, undefined, true), marker);
+  const branch = f.manager.getBranch();
+  const [ordinary, reply, markedOrdinary] = branch.filter(entry => entry.type === 'message' && entry.message.role === 'assistant');
+  const entry = branch.find(item => item.customType === 'cuckoo.report');
+  const [saved] = checkpoints(branch);
+  assert.equal(entry.data.messageEntryId, reply.id);
+  assert.equal(saved.raw, report);
+  assert.equal(saved.error, null);
+  await f.session.reload({ beforeSessionStart() {
+    const replay = transforms();
+    assert.equal(f.session.extensionRunner.getEntryRenderer(entry.customType)(entry), undefined);
+    assert.equal(display(replay, report, reply.id), label);
+    assert.equal(display(replay, report, ordinary.id), report);
+    assert.equal(display(replay, marker, markedOrdinary.id), marker);
+  } });
+  assert.deepEqual(f.errors, []);
+});
 
 test('real Pi fresh defaults use 15% of context window, not 15% relative growth', { timeout: 20000 }, async t => {
   const f = await fixture(t); await f.session.prompt('/cuckoo on');
@@ -277,13 +322,13 @@ test('real Pi rejects invalid recall arguments through tool validation', { timeo
   assert.equal(checkpoints(f.manager.getBranch()).length, 0); assert.equal(f.contexts.length, 2); assert.deepEqual(f.errors, []);
 });
 
-test('real Pi still blocks recall during a JSON-only inquiry and resumes once without recursive reflection', { timeout: 20000 }, async t => {
+test('real Pi still blocks recall during an inquiry and resumes once without recursive reflection', { timeout: 20000 }, async t => {
   const f = await fixture(t);
   f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
   f.replies.push({ content: [{ type: 'toolCall', id: 'blocked-recall', name: 'cuckoo_recall', arguments: { action: 'list' } }], tokens: 20100 }, { text: 'Original task finished', tokens: 20200 });
   await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
   const result = f.manager.getEntries().find(entry => entry.type === 'message' && entry.message.role === 'toolResult' && entry.message.toolCallId === 'blocked-recall').message;
-  assert.equal(result.isError, true); assert.match(JSON.stringify(result.content), /JSON only/);
+  assert.equal(result.isError, true); assert.match(JSON.stringify(result.content), /Tool execution is not permitted during a Cuckoo checkpoint/);
   assert.equal(checkpoints(f.manager.getBranch()).length, 1); assert.equal(checkpoints(f.manager.getBranch())[0].report, null);
   assert.equal(f.contexts.length, 3); assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
 });
@@ -331,7 +376,7 @@ test('real Pi blocks memory writes during a checkpoint and resumes exactly once'
   f.replies.push({ content: [{ type: 'toolCall', id: 'blocked-memory', name: 'cuckoo_memory', arguments: { action: 'task', label: 'Forbidden checkpoint write' } }], tokens: 20100 }, { text: 'Original task finished', tokens: 20200 });
   await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
   const result = f.manager.getEntries().find(entry => entry.type === 'message' && entry.message.role === 'toolResult' && entry.message.toolCallId === 'blocked-memory').message;
-  assert.equal(result.isError, true); assert.match(JSON.stringify(result.content), /JSON only/);
+  assert.equal(result.isError, true); assert.match(JSON.stringify(result.content), /Tool execution is not permitted during a Cuckoo checkpoint/);
   assert.equal(f.manager.getEntries().filter(entry => entry.type === 'custom' && entry.customType === 'cuckoo.memory').length, 0);
   assert.equal(checkpoints(f.manager.getBranch()).length, 1);
   assert.equal(checkpoints(f.manager.getBranch())[0].report, null);
@@ -513,7 +558,7 @@ test('real Pi delivers a comment left undelivered by an earlier process with the
   assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
 });
 
-test('real Pi closing the panel with i sends the comments and one JSON-only inquiry, not a second request to respond', { timeout: 20000 }, async t => {
+test('real Pi closing the panel with i sends the comments and one checkpoint inquiry, not a second request to respond', { timeout: 20000 }, async t => {
   const f = await terminalFixture(t);
   f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
   f.replies.push({ text: report, tokens: 20100 }); await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();

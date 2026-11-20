@@ -7,7 +7,7 @@ buildNpmPackage {
     filter = path: type: lib.cleanSourceFilter path type && !(builtins.elem (baseNameOf path) [ "node_modules" "dist" "test-results" ]);
   };
   nodejs = nodejs_24;
-  npmDepsHash = "sha256-wQNXMyo0DnI2gge3Yvr+YRnErpnVP2WTsbeYJl4e/0I=";
+  npmDepsHash = "sha256-gJSRsuQoV5VubRUu+xA7aheA4Oftm1+NZXUYG6H02XE=";
   npmFlags = [ "--ignore-scripts" ];
   doCheck = true;
   checkPhase = ''
