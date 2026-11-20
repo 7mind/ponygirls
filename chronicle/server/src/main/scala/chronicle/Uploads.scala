@@ -34,7 +34,8 @@ object UploadPolicy {
   * and starts an attempt; parts are validated one at a time and written straight into epoch rows past every committed
   * count, which only the attempt reaches (`ch_epochs.tail_upload`); the commit checks the computed digest, counts and
   * chain against the declaration and makes the revision visible in O(metadata). Every operation is one transaction under
-  * the source's ingest lock, then the attempt row, then the source row: the lock order of `/api/ingest` and purge. */
+  * the source's ingest lock, then the attempt row, then the source row: the lock order of `/api/ingest` and purge. An
+  * open adds its attempt under the owner's upload lock, taken last, after its source's work. */
 final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
   import Uploads.*
   def limits: UploadLimits = UploadPolicy.limits(config)
@@ -58,7 +59,6 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
             case Some(attempt) if attempt.requestId==open.requestId => state(attempt)
             case Some(_) => throw DomainError("upload-busy","another upload of this source is in progress")
             case None =>
-              Check(Sql.one(c,"SELECT count(*) FROM ch_uploads WHERE owner=? AND phase='Open' AND expires_at>clock_timestamp()",owner)(_.getInt(1)).get<policy.liveAttemptsPerOwner,"upload-busy",s"at most ${policy.liveAttemptsPerOwner} uploads of an owner are in progress")
               db.profiles.resolve(OwnerTargets.read(c,owner,true).profile)
               start(c,owner,key,open,digest)
           }
@@ -104,7 +104,8 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
     OwnerTargets.enabled(c,owner,true)
     val key=Sql.one(c,"SELECT source_key FROM ch_uploads WHERE id=? AND owner=?",id,owner)(_.getString(1)).getOrElse(throw DomainError("not-found","upload not found"))
     Sql.lock(c,s"ingest:$owner:$key")
-    expired(c,Sql.one(c,s"$selectAttempt WHERE u.id=? FOR UPDATE OF u",id)(attempt).get)
+    // Retention deletes ended attempts without the source's lock: one may be gone once the lock is ours.
+    expired(c,Sql.one(c,s"$selectAttempt WHERE u.id=? FOR UPDATE OF u",id)(attempt).getOrElse(throw DomainError("not-found","upload not found")))
   }
   private def state(a: Attempt): UploadState =
     UploadState(a.id,a.requestId,a.phase,a.declaration.base.isDefined,a.parts,a.rawBytes,a.messages,a.lastPart,if(a.phase==UploadPhase.Open) a.expiresIn else 0,limits,a.receipt,a.failure)
@@ -139,9 +140,14 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
       val head=(if(revision==0) None else EpochWriter.head(c,session,revision,unpurged)).filter(h => h.rawPath==open.rawPath && h.digest==declared.digest && h.rawBytes==declared.rawBytes
         && h.messages==declared.messageCount && EpochWriter.hex(h.chain)==declared.messageChain).getOrElse(throw DomainError("base-mismatch","the declared base is not the head revision"))
       releaseTail(c,head.epoch)
-      Sql.exec(c,"UPDATE ch_epochs SET tail_upload=? WHERE id=?",id,head.epoch)
       head
     }
+    // The owner's live attempts are counted and the new one is added under the owner's upload lock. Only opens take it,
+    // always after their source's lock, so opens of the owner's other sources cannot both take the last slot.
+    Sql.lock(c,s"uploads:$owner")
+    Check(Sql.one(c,"SELECT count(*) FROM ch_uploads WHERE owner=? AND phase='Open' AND expires_at>clock_timestamp()",owner)(_.getInt(1)).get<policy.liveAttemptsPerOwner,
+      "upload-busy",s"at most ${policy.liveAttemptsPerOwner} uploads of an owner are in progress")
+    base.foreach(head => Sql.exec(c,"UPDATE ch_epochs SET tail_upload=? WHERE id=?",id,head.epoch))
     val epoch=base.fold {
       val epoch=UUID.randomUUID()
       Sql.exec(c,"INSERT INTO ch_epochs(id,session_id,raw_path,tail_upload) VALUES(?,?,?,?)",epoch,session,open.rawPath,id)
@@ -165,14 +171,11 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
     Check(part.ordinal>=0,"invalid","invalid part ordinal")
     UploadValidation.scalar(part.raw)
     Check(part.raw.isEmpty || part.raw.endsWith("\n"),"invalid","a part carries whole lines")
-    // Lines end with a newline here: the part ends with one.
-    var start=0; var lines=0
-    while(start<part.raw.length) {
-      val end=part.raw.indexOf('\n',start)
-      val bytes=utf8Length(part.raw,start,end)
+    var lines=0
+    UploadValidation.recordLines(part.raw).foreach { record =>
+      val bytes=utf8Length(record)
       if(bytes>config.maxRecordBytes) throw DomainError("record-too-large",s"record $lines of part ${part.ordinal} is $bytes bytes, above the record limit of ${config.maxRecordBytes} bytes (maxRecordBytes)")
-      if(end>start) lines+=1
-      start=end+1
+      lines+=1
     }
     Check(bodyBytes<=UploadPolicy.maxPartBytes || lines==1,"too-large",s"a part above ${UploadPolicy.maxPartBytes} bytes carries exactly one record")
     val raw=part.raw.getBytes(UTF_8)
@@ -182,7 +185,7 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
     val ids=part.messages.map(_.id)
     Check(ids.distinct.size==ids.size,"invalid","duplicate message IDs")
     part.messages.foreach(UploadValidation.message)
-    val introduced=(ids++recordIds.result()).distinct
+    val introduced=(ids++UploadValidation.parentKeys(recordIds.result())).distinct
     val local=introduced.toSet
     Received(part.messages.map(m => m.copy(text=SnapshotProjection.text(m.text))),raw.length.toLong,records,introduced.map(key),
       part.messages.flatMap(_.parentId).distinct.filterNot(local.contains).map(parent => parent -> key(parent)),
@@ -354,10 +357,9 @@ object Uploads {
       more
     }
   private def key(id: String): String = MessageDigest.getInstance("SHA-256").digest(id.getBytes(UTF_8)).map(b => f"${b & 255}%02x").mkString
-  private def utf8Length(value: String,from: Int,end: Int): Long = {
-    var bytes=0L; var index=from
-    val stop=if(end<0) value.length else end
-    while(index<stop) {
+  private def utf8Length(value: String): Long = {
+    var bytes=0L; var index=0
+    while(index<value.length) {
       val char=value.charAt(index)
       bytes+= (if(char<0x80) 1 else if(char<0x800) 2 else if(Character.isHighSurrogate(char)) { index+=1; 4 } else 3)
       index+=1

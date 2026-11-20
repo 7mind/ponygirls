@@ -54,7 +54,18 @@ final class EpochMaintenance private (db: Database,logger: logstage.IzLogger,val
   private def sweepUploads: IO[Unit] =
     transaction(c => Sql.rows(c,"SELECT id,owner,source_key FROM ch_uploads WHERE (phase='Open' AND expires_at<=clock_timestamp()) OR (phase<>'Open' AND NOT cleaned) ORDER BY id")(r => (r.getObject(1,classOf[UUID]),r.getString(2),r.getString(3))))
       .flatMap(_.traverse_ { case (id,owner,key) => repeatWhile(transaction(c => EpochMaintenance.ingestLock(c,owner,key) && Uploads.sweep(c,id))) }) *>
-      repeatWhile(transaction(c => Sql.exec(c,s"DELETE FROM ch_uploads WHERE id IN(SELECT id FROM ch_uploads WHERE cleaned AND phase IN('Aborted','Expired','Failed') AND terminal_at<clock_timestamp()-?::bigint*interval '1 second' LIMIT $rowsPerStatement)",Uploads.retention.toSeconds)==rowsPerStatement))
+      deleteRetired
+  /** Ended attempts past the retention: their part receipts and pending parents first, then the attempts that have none
+    * left, each statement bounded (one attempt may have thousands of receipts). Committed attempts are never retired. */
+  private def deleteRetired: IO[Unit] = {
+    val retired=s"u.cleaned AND u.phase IN('Aborted','Expired','Failed') AND u.terminal_at<clock_timestamp()-?::bigint*interval '1 second'"
+    val seconds=Uploads.retention.toSeconds
+    def drain(table: String,key: String): IO[Unit] = repeatWhile(transaction(c =>
+      Sql.exec(c,s"DELETE FROM $table t USING (SELECT r.upload,r.$key FROM $table r JOIN ch_uploads u ON u.id=r.upload WHERE $retired LIMIT $rowsPerStatement) x WHERE t.upload=x.upload AND t.$key=x.$key",seconds)==rowsPerStatement))
+    drain("ch_upload_parts","ordinal") *> drain("ch_upload_parents","parent_key") *> repeatWhile(transaction(c =>
+      Sql.exec(c,s"""DELETE FROM ch_uploads WHERE id IN(SELECT u.id FROM ch_uploads u WHERE $retired AND NOT EXISTS(SELECT 1 FROM ch_upload_parts p WHERE p.upload=u.id)
+        AND NOT EXISTS(SELECT 1 FROM ch_upload_parents p WHERE p.upload=u.id) LIMIT $rowsPerStatement)""",seconds)==rowsPerStatement))
+  }
 }
 object EpochMaintenance {
   val interval: FiniteDuration = 60.seconds

@@ -49,6 +49,7 @@ final class UploadProtocolTest extends munit.FunSuite {
   private def messages(archive: PostgresArchive,id: UUID,revision: Int): List[Message] = archive.messages("a",id,0,100,Some(ContentView(revision,None))).messages
   private def raw(archive: PostgresArchive,id: UUID,revision: Int): String = archive.raw("a",id,Some(revision)).files.map(_.content).mkString
   private def stored(content: Content): List[Message] = content.messages.map(m => m.copy(text=SnapshotProjection.text(m.text)))
+  private val mebibyte=1024*1024
 
   test("a new source, an append on the head's epoch, an /api/ingest append after it and a replacement commit through parts and read back whole") { database { (config,db,archive) =>
     val uploads=new Uploads(db,config,UploadPolicy.production)
@@ -188,5 +189,49 @@ final class UploadProtocolTest extends munit.FunSuite {
     send(uploads,"a",failing.uploadId,part(0,early))
     send(uploads,"a",failing.uploadId,part(1,Content(List("""{"type":"compaction","id":"other"}"""),Nil)))
     assertEquals(code(uploads.commit("a",failing.uploadId)),"content-mismatch")
+  }}
+
+  test("a raw record id that is not scalar Unicode resolves no parentId, as in SnapshotValidation, wherever it arrives; unreferenced it is accepted") { database { (config,db,archive) =>
+    val uploads=new Uploads(db,config,UploadPolicy.production)
+    // A JSON escape gives the record id a lone surrogate; Java's UTF-8 encoder writes that as "?".
+    val lone=Content(List("""{"type":"compaction","id":"\ud800"}"""),Nil)
+    def child(record: Int): Content = Content(List(s"""{"type":"message","id":"c$record","parentId":"?"}"""),List(Message(s"c$record",Some("?"),"user","answer",None,record)))
+    val scenarios=List(
+      ("in the same part",None,List(header(3)++lone++child(2))),
+      ("in an earlier part",None,List(header(3)++lone,child(2))),
+      ("in a later part",None,List(header(3)++child(1),lone)),
+      ("in the base",Some(header(3)++lone),List(child(2))),
+      ("unreferenced",None,List(header(3)++lone++pi("u1","s","user","question",2))))
+    val verdicts=scenarios.map { case (name,base,parts) =>
+      val identity=source()
+      val whole=(base.toList++parts).reduce(_++_)
+      val expected=base.size
+      base.foreach(content => archive.ingest("a",request(identity,0,content)))
+      val opened=uploads.open("a",declaration(identity,expected,whole,base))
+      parts.zipWithIndex.foreach { case (content,ordinal) => send(uploads,"a",opened.uploadId,part(ordinal,content)) }
+      name -> (code(SnapshotValidation.validate(request(identity,expected,whole),config)),code(uploads.commit("a",opened.uploadId)))
+    }
+    assertEquals(verdicts,scenarios.map(_._1).map(name => name -> (if(name=="unreferenced") ("accepted","accepted") else ("invalid","content-mismatch"))))
+  }}
+
+  test("records are the lines linesIterator splits, also at a bare CR: a CRLF record of exactly maxRecordBytes is accepted, two records on one LF line do not make a large part") { database { (_,db,archive) =>
+    val cap=5*mebibyte
+    val config=Fixtures.config().copy(maxRecordBytes=cap.toLong,maxFileBytes=64*mebibyte)
+    val uploads=new Uploads(db,config,UploadPolicy.production)
+    /** A record of exactly `bytes` UTF-8 bytes. */
+    def record(id: String,bytes: Int): String = { val prefix=s"""{"type":"blob","id":"$id","text":""""; prefix+"x"*(bytes-prefix.length-2)+"\"}" }
+    val crlf=Content(List(record("crlf",cap)+"\r"),Nil)
+    val identity=source()
+    val opened=uploads.open("a",declaration(identity,0,header(3)++crlf,None)).uploadId
+    send(uploads,"a",opened,part(0,header(3)))
+    assertEquals(code(send(uploads,"a",opened,part(1,crlf))),"accepted")
+    assertEquals(code(uploads.commit("a",opened)),"accepted")
+    assertEquals(code(SnapshotValidation.validate(request(identity,0,header(3)++crlf),config)),"accepted")
+    val pair=Content(List(record("one",cap-mebibyte/2)+"\r"+record("two",cap-mebibyte/2)),Nil)
+    val other=uploads.open("a",declaration(source(),0,header(3)++pair,None)).uploadId
+    send(uploads,"a",other,part(0,header(3)))
+    val large=part(1,pair)
+    assert(Wire.encode(UploadPart.codecJson,large).noSpaces.length>UploadPolicy.maxPartBytes)
+    assertEquals(code(send(uploads,"a",other,large)),"too-large")
   }}
 }

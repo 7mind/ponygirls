@@ -8,18 +8,22 @@ import java.security.MessageDigest
 /** The request rules of ingestion, one implementation each: `SnapshotValidation` applies them to a whole `/api/ingest`
   * request, part uploads to a declaration at the open and to every part on its own (append-only ingest spec §4.6). */
 object UploadValidation {
-  def scalar(value: String): Unit = {
+  def scalar(value: String): Unit = Check(scalarText(value),"invalid","unpaired Unicode surrogate")
+  /** No unpaired surrogate: the string has an exact UTF-8 encoding (`getBytes(UTF_8)` writes `?` for an unpaired one). */
+  def scalarText(value: String): Boolean = {
     var index=0
-    while(index<value.length) {
+    var paired=true
+    while(paired && index<value.length) {
       val char=value.charAt(index)
       if(Character.isHighSurrogate(char)) {
-        Check(index+1<value.length && Character.isLowSurrogate(value.charAt(index+1)),"invalid","unpaired Unicode surrogate")
+        paired=index+1<value.length && Character.isLowSurrogate(value.charAt(index+1))
         index+=2
       } else {
-        Check(!Character.isLowSurrogate(char),"invalid","unpaired Unicode surrogate")
+        paired= !Character.isLowSurrogate(char)
         index+=1
       }
     }
+    paired
   }
   def structured(value: String): Unit = {
     scalar(value)
@@ -41,12 +45,18 @@ object UploadValidation {
     structured(value)
     Check(!value.startsWith("/") && !value.split('/').contains(".."),"invalid","invalid file")
   }
-  /** The records of JSONL `content`: its non-empty lines as `linesIterator` splits them (it also ends a line at CR), each
-    * one JSON value, parsed once and not retained (a large snapshot's syntax trees would take several times its size of
-    * heap). `found` receives each record's `id` and `uuid` strings. Returns the number of records. */
+  /** The logical records of JSONL `content`, the one rule of record counts, indexes and sizes: its non-empty lines as
+    * `linesIterator` splits them (at LF, CRLF and a bare CR), without their terminators. */
+  def recordLines(content: String): Iterator[String] = content.linesIterator.filter(_.nonEmpty)
+  /** The record ids that can be a message's parent: an id with an unpaired surrogate equals no parentId (parentIds are
+    * structured) and has no exact UTF-8 key, so it is never offered as one. */
+  def parentKeys(ids: List[String]): List[String] = ids.filter(scalarText)
+  /** The records of JSONL `content` (`recordLines`), each one JSON value, parsed once and not retained (a large
+    * snapshot's syntax trees would take several times its size of heap). `found` receives each record's `id` and `uuid`
+    * strings. Returns the number of records. */
   def records(content: String)(found: List[String] => Unit): Int = {
     var count=0
-    content.linesIterator.filter(_.nonEmpty).foreach { line =>
+    recordLines(content).foreach { line =>
       val record=io.circe.parser.parse(line).fold(_ => throw DomainError("invalid","invalid file digest or JSONL"),identity)
       found(List("id","uuid").flatMap(field => record.hcursor.get[String](field).toOption))
       count+=1

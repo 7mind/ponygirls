@@ -133,6 +133,76 @@ final class UploadBoundaryTest extends munit.FunSuite {
     assertEquals(ChronicleInjector().produceGet[UploadPolicy](production).use(IO.pure).unsafeRunSync(),UploadPolicy.production)
   }}
 
+  test("concurrent opens of one owner's sources at the last free slot: one takes it, the other is upload-busy") { database { (config,db,archive) =>
+    val uploads=new Uploads(db,config,UploadPolicy(UploadPolicy.production.ttl,2))
+    val head=header(3)++pi("u1","s","user","question",1)
+    uploads.open("a",declaration(source(),0,head,None))
+    val pool=Executors.newFixedThreadPool(2)
+    try {
+      val opens=db.transaction { held =>
+        // Holds the insert of an attempt: each open has passed its source's checks when it waits here or for another open.
+        Sql.exec(held,"LOCK TABLE ch_uploads IN SHARE MODE")
+        val opens=List.fill(2)(pool.submit(new Callable[String] { def call(): String = code(uploads.open("a",declaration(source(),0,head,None))) }))
+        def waiting: Int = db.transaction(c => Sql.one(c,"SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND (query LIKE 'INSERT INTO ch_uploads%' OR query LIKE 'SELECT pg_advisory_xact_lock%')")(_.getInt(1)).get)
+        val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10)
+        while(waiting<2 && System.nanoTime()<deadline) Thread.onSpinWait()
+        assertEquals(waiting,2,"both opens wait")
+        opens
+      }
+      assertEquals(opens.map(_.get(10,TimeUnit.SECONDS)).sorted,List("accepted","upload-busy"))
+      db.transaction(c => assertEquals(Sql.one(c,"SELECT count(*) FROM ch_uploads WHERE owner='a' AND phase='Open'")(_.getInt(1)),Some(2)))
+    } finally { pool.shutdownNow(); assert(pool.awaitTermination(10,TimeUnit.SECONDS)) }
+  }}
+
+  test("retention drains part receipts and pending parents in statements of at most rowsPerStatement rows before it deletes the attempt; committed attempts keep theirs") { database { (config,db,archive) =>
+    val uploads=new Uploads(db,config,UploadPolicy.production)
+    val head=header(3)++pi("u1","s","user","question",1)
+    val committed=uploads.open("a",declaration(source(),0,head,None)).uploadId
+    send(uploads,"a",committed,part(0,head)); uploads.commit("a",committed)
+    val aborted=uploads.open("a",declaration(source(),0,head,None)).uploadId
+    uploads.abort("a",aborted)
+    val fanOut=EpochMaintenance.rowsPerStatement+1
+    db.transaction { c =>
+      Sql.exec(c,"INSERT INTO ch_upload_parts(upload,ordinal,sha256,messages_end,raw_end,records_end) SELECT ?,g,'synthetic',0,0,0 FROM generate_series(1,?) g",aborted,fanOut)
+      Sql.exec(c,"INSERT INTO ch_upload_parents(upload,parent_key) SELECT ?,sha256(g::text::bytea) FROM generate_series(1,?) g",aborted,fanOut)
+      Sql.exec(c,"UPDATE ch_uploads SET terminal_at=terminal_at-?::bigint*interval '1 second'",Uploads.retention.toSeconds+1)
+      Sql.exec(c,"CREATE TABLE ch_test_deleted(relation text,count bigint)")
+      Sql.exec(c,"CREATE FUNCTION ch_test_count_deleted() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO ch_test_deleted SELECT TG_TABLE_NAME,count(*) FROM gone; RETURN NULL; END $$")
+      List("ch_upload_parts","ch_upload_parents").foreach(table => Sql.exec(c,s"CREATE TRIGGER ch_test_count_deleted AFTER DELETE ON $table REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION ch_test_count_deleted()"))
+    }
+    try {
+      maintenancePass(db,EpochMaintenance.interval)
+      db.transaction { c =>
+        assertEquals(Sql.rows(c,"SELECT id FROM ch_uploads")(_.getObject(1,classOf[UUID])),List(committed))
+        assertEquals(Sql.rows(c,"SELECT upload,count(*) FROM ch_upload_parts GROUP BY upload")(r => (r.getObject(1,classOf[UUID]),r.getInt(2))),List((committed,1)))
+        assertEquals(Sql.one(c,"SELECT count(*) FROM ch_upload_parents")(_.getInt(1)),Some(0))
+        val deleted=Sql.rows(c,"SELECT relation,max(count),sum(count) FROM ch_test_deleted GROUP BY relation ORDER BY relation")(r => (r.getString(1),r.getLong(2),r.getLong(3)))
+        assertEquals(deleted,List(("ch_upload_parents",EpochMaintenance.rowsPerStatement.toLong,fanOut.toLong),("ch_upload_parts",EpochMaintenance.rowsPerStatement.toLong,fanOut.toLong)))
+      }
+    } finally db.transaction { c => Sql.exec(c,"DROP TABLE ch_test_deleted"); Sql.exec(c,"DROP FUNCTION ch_test_count_deleted() CASCADE") }
+  }}
+
+  test("a request waiting for its source's lock while retention deletes its attempt is answered not-found") { database { (config,db,archive) =>
+    val uploads=new Uploads(db,config,UploadPolicy.production)
+    val identity=source()
+    val id=uploads.open("a",declaration(identity,0,header(3),None)).uploadId
+    uploads.abort("a",id)
+    maintenancePass(db,EpochMaintenance.interval)
+    db.transaction(c => Sql.exec(c,"UPDATE ch_uploads SET terminal_at=terminal_at-?::bigint*interval '1 second' WHERE id=? AND cleaned",Uploads.retention.toSeconds+1,id))
+    val pool=Executors.newSingleThreadExecutor()
+    try {
+      val status=db.transaction { held =>
+        Sql.lock(held,s"ingest:a:${Uploads.sourceKey(identity)}")
+        val status=pool.submit(new Callable[String] { def call(): String = code(uploads.status("a",id)) })
+        awaitBlocked(db,"SELECT pg_advisory_xact_lock")
+        maintenancePass(db,EpochMaintenance.interval)
+        db.transaction(c => assertEquals(Sql.one(c,"SELECT count(*) FROM ch_uploads WHERE id=?",id)(_.getInt(1)),Some(0),"retention deleted the attempt"))
+        status
+      }
+      assertEquals(status.get(10,TimeUnit.SECONDS),"not-found")
+    } finally { pool.shutdownNow(); assert(pool.awaitTermination(10,TimeUnit.SECONDS)) }
+  }}
+
   test("the down-script refuses without its confirmation and changes nothing; applied, it deletes all staging and the upload tables and keeps the revisions uploads committed") { database { (config,db,archive) =>
     val uploads=new Uploads(db,config,UploadPolicy.production)
     val identity=source()

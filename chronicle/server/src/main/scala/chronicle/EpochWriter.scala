@@ -147,12 +147,12 @@ object EpochWriter {
           val bytes=line.getBytes(UTF_8)
           if(size>0 && size+bytes.length>segmentBytes) segment()
           digest.update(bytes); size+=bytes.length; end=stop
-          // SnapshotValidation's records: the non-empty lines of linesIterator, which also ends lines at CR. The count
-          // composes across revisions and parts because each one's raw ends with a newline.
-          line.linesIterator.filter(_.nonEmpty).foreach { record =>
+          // The validation's records, line by line: the count composes across revisions and parts because each one's raw
+          // ends with a newline.
+          UploadValidation.recordLines(line).foreach { record =>
             val json=io.circe.parser.parse(record).fold(_ => throw DomainError("internal","validated raw record does not parse"),identity)
             val index=firstRecord+records
-            List("id","uuid").flatMap(field => json.hcursor.get[String](field).toOption).distinct.foreach { key =>
+            UploadValidation.parentKeys(List("id","uuid").flatMap(field => json.hcursor.get[String](field).toOption).distinct).foreach { key =>
               val hashed=keyDigest.digest(key.getBytes(UTF_8))
               keys.add { s => s.setObject(1,epoch); s.setInt(2,index); s.setBytes(3,hashed) }
             }
