@@ -50,9 +50,10 @@ private[postgres] final class MemoryStore extends RetrievalContractStore {
     RetrievalPage(selected.drop(q.offset).take(q.limit),selected.size.toLong,if(semantic) CountScope.CandidateWindow else CountScope.ExactMatches,if(semantic) Some(CandidatePolicy.rankingLimit(q.mode)) else None,pending)
   }
 }
-private[postgres] final class PgFixture(val profile: Option[RetrievalProfile],candidatesPerLeg: Int) {
+private[postgres] final class PgFixture(val profile: Option[RetrievalProfile],candidatesPerLeg: Int,exactScanChunks: Int) {
+  def this(profile: Option[RetrievalProfile],candidatesPerLeg: Int) = this(profile,candidatesPerLeg,CandidatePolicy.exactScanChunks)
   def this(profile: Option[RetrievalProfile]) = this(profile,CandidatePolicy.candidatesPerLeg)
-  val index=new PostgresRetrieval("controlled-"+UUID.randomUUID().toString,profile,candidatesPerLeg)
+  val index=new PostgresRetrieval("controlled-"+UUID.randomUUID().toString,profile,candidatesPerLeg,exactScanChunks)
   val url=sys.env.getOrElse("CHRONICLE_TEST_JDBC",throw new IllegalStateException("CHRONICLE_TEST_JDBC required: real PostgreSQL tests must execute"))
   def tx[A](run: Connection => A): A = Using.resource(DriverManager.getConnection(url,"postgres","")) { c =>
     c.setAutoCommit(false)

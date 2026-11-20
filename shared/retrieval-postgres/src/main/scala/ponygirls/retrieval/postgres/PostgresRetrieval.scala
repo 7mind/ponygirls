@@ -49,10 +49,11 @@ object PostgresRetrieval {
   * in that same transaction. Principal authentication/revocation is app-owned; this
   * is not a cache of a previously computed allowed-ID list.
   */
-final class PostgresRetrieval(val namespace: String,val profile: Option[RetrievalProfile],private[postgres] val candidatesPerLeg: Int) {
+final class PostgresRetrieval(val namespace: String,val profile: Option[RetrievalProfile],private[postgres] val candidatesPerLeg: Int,private[postgres] val exactScanChunks: Int) {
   import Jdbc.*
-  def this(namespace: String,profile: Option[RetrievalProfile]) = this(namespace,profile,CandidatePolicy.candidatesPerLeg)
+  def this(namespace: String,profile: Option[RetrievalProfile]) = this(namespace,profile,CandidatePolicy.candidatesPerLeg,CandidatePolicy.exactScanChunks)
   RetrievalChecks(candidatesPerLeg>0,"config","candidate window must be positive")
+  RetrievalChecks(exactScanChunks>=0,"config","exact-scan threshold must not be negative")
   private def rankingLimit(mode: RetrievalMode): Int = if(mode==RetrievalMode.Hybrid) candidatesPerLeg*2 else candidatesPerLeg
   RetrievalChecks.text(namespace,128)
   profile.foreach(_.validate())
@@ -207,6 +208,9 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
     val arguments=query.filters.toList.flatMap { case AttributeFilter.Equal(k,v) => List[Value](k.value,bytes(v.value)) }
     ("s.namespace=? AND s.eligible AND (? OR NOT s.archived) AND (s.expires_at IS NULL OR s.expires_at>?) AND EXISTS(SELECT 1 FROM pony_retrieval_audience acl WHERE acl.namespace=s.namespace AND acl.source_id=s.id AND acl.principal=?)"+attributes,List[Value](ns,query.includeArchived,query.now.value,key(query.principal))++arguments)
   }
+  /** Decided per query from the data, not from configuration: a count bounded at the threshold + 1. */
+  private def exactScan(c: Connection): Boolean =
+    one(c,"SELECT count(*) FROM (SELECT 1 FROM pony_retrieval_chunks WHERE namespace=? LIMIT ?) bounded",ns,exactScanChunks.toLong+1)(_.getLong(1)).exists(_<=exactScanChunks)
   private[postgres] def plan(c: Connection,query: RetrievalQuery,vector: Option[List[Double]]): RetrievalPlan = {
     transaction(c)
     RetrievalChecks(query.principal.nonEmpty && query.text.length<=2048 && query.offset>=0 && query.limit>=1 && query.filters.size<=PostgresRetrieval.MaxFilters,"invalid","invalid retrieval query")
@@ -223,17 +227,25 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
       val v=Vectors.sql(vector.getOrElse(throw RetrievalError.unavailable(UnavailableReason.EmbeddingFailed)),p.space.dimensions)
       // Declared partial readiness: in-scope sources whose current head has no publication under the active profile.
       val pending=RetrievalPlan(s"SELECT count(*) AS n FROM pony_retrieval_sources s WHERE $scope AND NOT EXISTS(SELECT 1 FROM pony_retrieval_generations g WHERE g.namespace=s.namespace AND g.id=s.published AND g.version=s.version AND g.profile=?)",scopeArgs:+p.id)
-      CandidateSql.configureStatements.foreach(exec(c,_))
+      val exact=exactScan(c)
+      if(!exact) CandidateSql.configureStatements.foreach(exec(c,_))
       val fields="ch.id,ch.chunk_id,ch.source_id,g.version,ch.generation,ch.profile,g.space,ch.body,ch.provenance,ch.document,ch.embedding"
       // OFFSET 0 keeps live visibility/filter checks inside the ordered index scan before LIMIT.
       val authorized=s"(SELECT true FROM pony_retrieval_sources s WHERE s.namespace=ch.namespace AND s.id=ch.source_id AND s.published=ch.generation AND $scope OFFSET 0)"
       val base=s"ch.namespace=? AND vector_dims(ch.embedding)=${p.space.dimensions} AND ch.profile=? AND $authorized"
       val baseArgs=List[Value](ns,p.id)++scopeArgs
-      val ann=s"ann AS MATERIALIZED(SELECT $fields FROM pony_retrieval_chunks ch JOIN pony_retrieval_generations g ON g.namespace=ch.namespace AND g.id=ch.generation WHERE $base ORDER BY ${CandidateSql.annDistance(p.space.dimensions,"ch.embedding")} LIMIT $candidatesPerLeg)"
+      // The exact scan orders by the reranking distance, which no index serves, over the authorization join; the HNSW
+      // scan reads several chunks per window slot. Either way the window holds each authorized source's best chunk,
+      // so the chunks of a few sources cannot crowd the others out.
+      val (scan,scanArgs)=if(exact)
+        (s"SELECT ch.id,ch.source_id,ch.embedding <=> ?::vector AS distance FROM pony_retrieval_chunks ch JOIN pony_retrieval_sources s ON s.namespace=ch.namespace AND s.id=ch.source_id AND s.published=ch.generation WHERE ch.namespace=? AND ch.profile=? AND $scope",List[Value](v,ns,p.id)++scopeArgs)
+      else
+        (s"SELECT ch.id,ch.source_id,${CandidateSql.annDistance(p.space.dimensions,"ch.embedding")} AS distance FROM pony_retrieval_chunks ch WHERE $base ORDER BY distance LIMIT ${candidatesPerLeg.toLong*CandidatePolicy.annChunksPerCandidate}",v::baseArgs)
+      val ann=s"ann_scan AS MATERIALIZED($scan),ann_best AS(SELECT DISTINCT ON(source_id) id,source_id,distance FROM ann_scan ORDER BY source_id,distance,id),ann AS MATERIALIZED(SELECT $fields FROM (SELECT id FROM ann_best ORDER BY distance,source_id LIMIT $candidatesPerLeg) w JOIN pony_retrieval_chunks ch ON ch.namespace=? AND ch.id=w.id JOIN pony_retrieval_generations g ON g.namespace=ch.namespace AND g.id=ch.generation)"
       val (legs,legArgs)=if(query.mode==RetrievalMode.Hybrid && query.text.nonEmpty) {
         (s",lexical AS MATERIALIZED(SELECT $fields FROM pony_retrieval_chunks ch JOIN pony_retrieval_generations g ON g.namespace=ch.namespace AND g.id=ch.generation WHERE $base AND ch.document @@ websearch_to_tsquery('english',?) ORDER BY ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) DESC,ch.id LIMIT $candidatesPerLeg),candidates AS(SELECT * FROM ann UNION SELECT * FROM lexical)",baseArgs++List[Value](query.text,query.text))
       } else (",candidates AS(SELECT * FROM ann)",Nil)
-      (s"WITH $ann$legs,"+CandidateSql.rerankCtes(query.mode,"source_id"),baseArgs++List[Value](v)++legArgs++List[Value](query.text,query.text,v),pending)
+      (s"WITH $ann$legs,"+CandidateSql.rerankCtes(query.mode,"source_id"),scanArgs++List[Value](ns)++legArgs++List[Value](query.text,query.text,v),pending)
     }
     // One statement: the pending count shares the snapshot of the ranked page.
     val page=sql+s",result_entities AS MATERIALIZED(SELECT * FROM sessions),pending AS(${pending.sql}) SELECT counted.total,pending.n AS pending,page.* FROM pending,(SELECT count(*) AS total FROM result_entities) counted LEFT JOIN LATERAL(SELECT * FROM result_entities ORDER BY score DESC,source_id LIMIT ? OFFSET ?) page ON true ORDER BY page.score DESC,page.source_id"
