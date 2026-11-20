@@ -20,7 +20,7 @@ object Main extends IOApp {
     case List("migrate",path) =>
       IO.blocking(Config.load(path)).flatMap { config =>
         cats.effect.Resource.make(IO.blocking(new Database(config,IndexProfileCatalog.current(config))))(db => IO.blocking(db.close()))
-          .use(db => IO.blocking(db.initialize()))
+          .use(initialize)
       }.as(ExitCode.Success)
     case List(mode,path) if mode=="serve" || mode=="serve-standby" =>
       IO.blocking(Config.load(path)).flatMap { config =>
@@ -32,11 +32,15 @@ object Main extends IOApp {
             make[org.http4s.client.Client[IO]].fromValue(client)
           })
           lifecycle.use { services =>
-            IO.blocking(services.database.initialize()) *> serve(config,services,mode=="serve")
+            initialize(services.database) *> serve(config,services,mode=="serve")
           }
         }
       }.as(ExitCode.Success)
     case _ => IO.println("usage: chronicle-server serve CONFIG.json | serve-standby CONFIG.json (writable API, no background workers) | migrate CONFIG.json | password-hash (stdin)").as(ExitCode.Error)
+  }
+  /** A refused start prints its reason and remedy: a DomainError's message is only its code. */
+  private def initialize(database: Database): IO[Unit] = IO.blocking(database.initialize()).onError {
+    case refused: DomainError => IO.blocking(System.err.println(s"chronicle start refused: ${refused.code}: ${refused.detail}"))
   }
   private[chronicle] def background(workersEnabled: Boolean,worker: => IO[Unit]): IO[Unit] =
     if(workersEnabled) worker else IO.never[Unit]

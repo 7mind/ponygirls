@@ -81,6 +81,24 @@ the provider at an unmarked production directory.
 
 The backend remains loopback-only. The module does not open firewall ports. Without `proxy.acmeHost`, arrange TLS at the existing edge; the configured `publicUrl` must remain the exact browser Origin. Deliberately trusted private-network HTTP requires `allowInsecureHttp = true` and an `http://` `publicUrl`; it exposes credentials/data on the wire, keeps the backend loopback-only, and does not open firewall ports (see the server README). Standalone server JSON configuration is in `config.example.json`. All model endpoints are **full operation URLs**, not just `/v1` base URLs.
 
+## Upgrading to the epoch layout
+
+From the release with the epoch layout (migration 024) on, every revision switch of a source finds the source's previous
+search candidates through the index `ch_archive_fragments_session_candidates`. Its start builds that index itself only while `ch_archive_fragments` is at
+most 1 GiB (`pg_relation_size`); on a larger archive it refuses with `migration-required` until the index exists, and it
+refuses an invalid one (left by an interrupted concurrent build) at any size. Build it before the upgrade while the
+running release keeps serving (a concurrent build blocks neither reads nor writes; it waits for transactions already
+writing the table), in psql as the owner of the table, without the service's timeouts:
+
+```sql
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ch_archive_fragments_session_candidates ON ch_archive_fragments(session_id) WHERE head_candidate;
+```
+
+If the build is interrupted, run `DROP INDEX CONCURRENTLY ch_archive_fragments_session_candidates;` and build it again.
+The down-script of 024 (`chronicle/scripts/down-024-epoch-layout.sql`) drops the index.
+
 ## Models
 
 An annotation model must honor the structured JSON contract in the server README. Source text is untrusted input, never instructions to execute tools. The model chooses semantic chunk boundaries over bounded, numbered source fragments; the server verifies complete, non-overlapping coverage and constructs the original spans itself.

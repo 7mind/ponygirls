@@ -33,9 +33,19 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     val remaining= !checked && Sql.one(c,"SELECT 1 FROM ch_generations WHERE NOT retired AND passage_format IS DISTINCT FROM 'ContextAwareProblems' LIMIT 1")(_ => true).nonEmpty
     Check(!remaining,"migration-required","generations that are not retired remain in an old publication format; retire them with the legacy-retirement procedure before starting this release")
   }
-  def initialize(): Unit = {
+  /** Migration 017 builds [[Database.candidateIndex]] inside the start's transaction only on a heap of at most `inlineBytes`;
+    * above it a missing index, and an invalid one (an interrupted concurrent build) at any size, refuse the start with the
+    * operator's psql commands. */
+  private def requireCandidateIndex(c: Connection,inlineBytes: Long): Unit = {
+    val (index,bytes)=Sql.one(c,"SELECT coalesce((SELECT CASE WHEN indisvalid THEN 'valid' ELSE 'invalid' END FROM pg_index WHERE indexrelid=to_regclass(?)),'missing'),coalesce(pg_relation_size(to_regclass('ch_archive_fragments')),0)",Database.candidateIndex)(r => (r.getString(1),r.getLong(2))).get
+    val psql="in psql as the table's owner (the serving release may keep running): SET statement_timeout=0; SET lock_timeout=0;"
+    Check(index!="invalid","migration-required",s"index ${Database.candidateIndex} is invalid (an interrupted concurrent build); before starting this release, $psql DROP INDEX CONCURRENTLY ${Database.candidateIndex}; ${Database.candidateIndexBuild};")
+    Check(index=="valid" || bytes<=inlineBytes,"migration-required",s"ch_archive_fragments has $bytes bytes, more than the $inlineBytes a start builds index ${Database.candidateIndex} on; before starting this release, $psql ${Database.candidateIndexBuild};")
+  }
+  def initialize(startupCandidateIndexBytes: Long = Database.startupCandidateIndexBytes): Unit = {
     transaction { c =>
     Sql.exec(c,"SELECT pg_advisory_xact_lock(71393721)")
+    requireCandidateIndex(c,startupCandidateIndexBytes)
     List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql","006_archive_projection.sql","007_owner_profiles.sql","008_problem_passages.sql","009_transient_security_epoch.sql","010_index_checkpoints.sql","011_context_coverage.sql","012_reindex_cohorts.sql","013_revision_bindings.sql","014_renewable_sessions.sql","015_annotation_attempts.sql","020_persistent_sessions.sql").foreach(migrate(c,_))
     requireRetiredModelIdentityMigrated(c)
     migrate(c,"021_model_identity_retired.sql")
@@ -71,11 +81,21 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     ArchiveProjection.backfill(this)
     transaction { c =>
       Sql.exec(c,"SELECT pg_advisory_xact_lock(71393721)")
+      // Again: the backfill since the first check can have grown the table.
+      requireCandidateIndex(c,startupCandidateIndexBytes)
       migrate(c,"017_head_literal_candidates.sql")
     }
   }
 }
 object Database {
+  /** The index of migration 017 through which a HEAD switch reads the session's head candidates (S1). */
+  val candidateIndex = "ch_archive_fragments_session_candidates"
+  /** The operator's build of [[candidateIndex]] beside a serving release (psql, autocommit). */
+  val candidateIndexBuild = s"CREATE INDEX CONCURRENTLY IF NOT EXISTS $candidateIndex ON ch_archive_fragments(session_id) WHERE head_candidate"
+  /** The largest ch_archive_fragments heap a start builds [[candidateIndex]] on, inside its transaction under the service's
+    * statement (30 s) and socket (35 s) timeouts. The build reads the whole heap: the clone's 11.8 GB took 1.8 s with two
+    * workers and 4.8 s serially from the page cache; 1 GiB from a disk at 100 MB/s takes about 11 s. */
+  val startupCandidateIndexBytes: Long = 1024L*1024*1024
   /** Startup diagnostics of imperative accounts: the active ones, which are suspended while the master switch
     * is off, and the rows whose TOTP secret was sealed with a key other than `keyId`. */
   def activeImperativeAccounts(c: Connection): Int = Sql.one(c,"SELECT count(*) FROM ponygirls_imperative_users WHERE status='active'")(_.getInt(1)).getOrElse(0)

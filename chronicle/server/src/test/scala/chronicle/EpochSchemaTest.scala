@@ -1,7 +1,8 @@
 package chronicle
 
-import java.sql.SQLException
+import java.sql.{DriverManager,SQLException}
 import java.util.UUID
+import scala.util.Using
 
 /** Migration 024 on PostgreSQL: the revision layout check, the immutability of committed epoch rows and S1's candidate index
   * of the HEAD switch. */
@@ -88,6 +89,42 @@ final class EpochSchemaTest extends munit.FunSuite {
       // One scan of the index by the trigger's obsolete-candidate query, reading the 200 candidates, not the 5,200 fragments.
       assertEquals(Sql.one(c,"SELECT pg_stat_get_xact_numscans('ch_archive_fragments_session_candidates'::regclass),pg_stat_get_xact_tuples_returned('ch_archive_fragments_session_candidates'::regclass)")(r => (r.getLong(1),r.getLong(2))),Some((1L,200L)))
     }
+  }}
+
+  test("a start builds the candidate index only on a small archive; a missing one above the threshold and an invalid one refuse the start before any change") { database { (config,db) =>
+    assertEquals(Database.startupCandidateIndexBytes,1024L*1024*1024)
+    val (session,_)=seed(db)
+    db.transaction { c =>
+      Sql.exec(c,"INSERT INTO ch_archive_fragments(session_id,revision,ordinal,value) VALUES(?,1,0,'metadata fragment')",session)
+      Sql.exec(c,s"DROP INDEX ${Database.candidateIndex}")
+      // A change a start makes: 024 records its version again.
+      Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=24")
+    }
+    def state(): (String,Int) = db.transaction(c => Sql.one(c,"SELECT coalesce((SELECT CASE WHEN indisvalid THEN 'valid' ELSE 'invalid' END FROM pg_index WHERE indexrelid=to_regclass(?)),'missing'),(SELECT count(*)::int FROM ch_schema_migrations WHERE version=24)",Database.candidateIndex)(r => (r.getString(1),r.getInt(2))).get)
+    def refused(threshold: Long,remedy: String): Unit = {
+      val error=intercept[DomainError](db.initialize(threshold))
+      assertEquals(error.code,"migration-required"); assert(error.detail.contains(remedy),error.detail)
+    }
+    /** The operator's psql session: autocommit, as CREATE INDEX CONCURRENTLY requires. */
+    def operator(statements: String*): Unit = Using.resource(DriverManager.getConnection(config.jdbcUrl,config.databaseUser,Fixtures.databasePassword))(c => statements.foreach(Sql.exec(c,_)))
+    try {
+      // The table's one page is above a zero threshold.
+      refused(0L,Database.candidateIndexBuild)
+      assertEquals(state(),("missing",0))
+      db.initialize()
+      assertEquals(state(),("valid",1))
+      // An interrupted operator build: it waits for this open writer until its lock timeout ends it.
+      operator(s"DROP INDEX CONCURRENTLY ${Database.candidateIndex}")
+      db.transaction { writer =>
+        Sql.exec(writer,"UPDATE ch_archive_fragments SET value=value WHERE session_id=?",session)
+        intercept[SQLException](operator("SET lock_timeout='100ms'",Database.candidateIndexBuild))
+      }
+      refused(Database.startupCandidateIndexBytes,s"DROP INDEX CONCURRENTLY ${Database.candidateIndex}")
+      assertEquals(state(),("invalid",1))
+      operator(s"DROP INDEX CONCURRENTLY ${Database.candidateIndex}",Database.candidateIndexBuild)
+      db.initialize(0L)
+      assertEquals(state(),("valid",1))
+    } finally if(state()._1!="valid") { operator(s"DROP INDEX CONCURRENTLY IF EXISTS ${Database.candidateIndex}"); db.initialize() }
   }}
 
   test("a restart re-runs 013 and then 024 over existing revisions: the revision guard keeps the epoch columns, the layout check is added once and validated, no indexing row changes") { database { (config,db) =>

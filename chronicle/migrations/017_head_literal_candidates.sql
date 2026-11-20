@@ -40,4 +40,6 @@ $$;
 CREATE INDEX IF NOT EXISTS ch_archive_fragments_lower_trgm ON ch_archive_fragments USING gin(value gin_trgm_ops) WHERE head_candidate;
 -- The obsolete-candidate query of a HEAD switch reads the session's candidates, not every fragment of its revisions.
 -- Added with migration 024 (S1), whose down-script drops it; created here because 024 runs before head_candidate exists.
+-- The start reaches this only when the index exists or the table is small (Database.startupCandidateIndexBytes); a large
+-- archive gets it from the operator's concurrent build first (docs/operations.md, "Upgrading to the epoch layout").
 CREATE INDEX IF NOT EXISTS ch_archive_fragments_session_candidates ON ch_archive_fragments(session_id) WHERE head_candidate;
