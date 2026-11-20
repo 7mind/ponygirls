@@ -171,7 +171,10 @@ BEGIN
 END $$;
 SELECT current_database() AS d_database,
   count(*) AS d_revisions, count(DISTINCT r.session_id) AS d_sources,
-  coalesce(sum(r.raw_bytes + r.message_bytes), 0) AS d_copy_bytes, 2 * coalesce(sum(r.raw_bytes + r.message_bytes), 0) AS d_estimate_bytes,
+  coalesce(sum(r.raw_bytes + r.message_bytes), 0) AS d_copy_bytes,
+  -- Measured on the clone copy (U4 rehearsal: 161 revisions, 2.07 GB copied): disk +1.7x, WAL 6.0x (snapshot, message
+  -- rows, fragments and their trigram index); a dry-run writes as much WAL as the apply.
+  2 * coalesce(sum(r.raw_bytes + r.message_bytes), 0) AS d_disk_bytes, 7 * coalesce(sum(r.raw_bytes + r.message_bytes), 0) AS d_wal_bytes,
   md5(coalesce(string_agg(format('%s|%s|%s|%s|%s|%s|%s|%s|%s', r.session_id, r.revision, r.epoch, r.message_count, r.record_count,
     r.raw_bytes, r.message_bytes, r.fragment_count, octet_length(e.raw_path)), ',' ORDER BY r.session_id, r.revision), '') || '#' || current_setting('down024.rejected')) AS d_plan
 FROM ch_revisions r JOIN ch_epochs e ON e.id = r.epoch \gset
@@ -198,7 +201,8 @@ SELECT 'DOWN024.non_downgradable_owner', s.owner, count(*) FROM ch_sources s
 WHERE s.id IN (SELECT split_part(l, '|', 1)::uuid FROM regexp_split_to_table(current_setting('down024.rejected'), E'\n') l WHERE l <> '')
 GROUP BY s.owner ORDER BY s.owner;
 \echo DOWN024.legacy_copy_bytes|:d_copy_bytes
-\echo DOWN024.estimate_disk_wal_bytes|:d_estimate_bytes
+\echo DOWN024.estimate_disk_bytes|:d_disk_bytes
+\echo DOWN024.estimate_wal_bytes|:d_wal_bytes
 SELECT 'DOWN024.s2_objects', :'d_s2'::boolean::integer;
 \echo DOWN024.other_clients|:d_other_clients
 \echo DOWN024.plan|:d_plan
