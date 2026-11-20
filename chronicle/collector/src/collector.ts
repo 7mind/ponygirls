@@ -312,7 +312,9 @@ export class Collector {
         const key = sourceKey(sourceIdentity(this.spool.namespace, file.root.id, file.root.format, transcript, file.path));
         addCandidate({ file, read: { transcript, stat: snapshot.stat }, key, digest: hash(transcript.raw), evidence });
       } catch (error) {
-        const stat = error instanceof RecordOverLimitError ? statSource(file) : null;
+        const stat = error instanceof RecordOverLimitError || error instanceof EvidenceLimitError ? statSource(file) : null;
+        // A pass stopped by a cap has read up to the whole file: it spends that much of the scan budget.
+        if (stat !== null) counters.scannedBytes += Number(stat.size);
         if (error instanceof RecordOverLimitError && stat !== null) {
           this.spool.setRecordOverLimit({ fileId: id, rootId: file.root.id, pathId, format: file.root.format, stat, recordIndex: error.recordIndex, size: String(error.size),
             limit: error.limit, limitSource: recordCap.source, collectorLimit: this.config.maxRecordBytes, serverLimit: recordCap.server });
