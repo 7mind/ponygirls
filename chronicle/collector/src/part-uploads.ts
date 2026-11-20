@@ -12,7 +12,7 @@ import type { EntryStatus, RecordOverLimit, Spool, Upload } from './spool.ts';
 import { UploadOpen, UploadOpen_JsonCodec } from '../../generated/typescript/chronicle/api/UploadOpen.js';
 import { UploadPhase } from '../../generated/typescript/chronicle/api/UploadPhase.js';
 import type { UploadLimits } from '../../generated/typescript/chronicle/api/UploadLimits.js';
-import type { UploadState } from '../../generated/typescript/chronicle/api/UploadState.js';
+import { UploadState } from '../../generated/typescript/chronicle/api/UploadState.js';
 import type { IngestReceipt } from '../../generated/typescript/chronicle/api/IngestReceipt.js';
 import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRuntime.js';
 
@@ -51,15 +51,17 @@ export class PartUploads {
     }
   }
   /** An entry that must not continue (its head moved, or its policy changed): the server outcome is recovered, a live
-   * attempt aborted. Kept when the server cannot be asked. */
+   * attempt aborted. Kept when the server cannot be asked. Without `recover` (the head moved) a committed outcome cannot
+   * become the head and the entry is discarded. */
   async retire(entry: Upload, reason: string, recover: boolean): Promise<UploadOutcome | null> {
-    if (entry.uploadId !== null) {
-      let state: UploadState | null;
-      try { state = await this.ctx.uploader.status(entry.uploadId); } catch { return null; }
-      if (recover && state?.phase === UploadPhase.Committed && state.receipt !== undefined) return this.acknowledged(entry, state.receipt);
-      if (state?.phase === UploadPhase.Open) await this.abortQuietly(state.uploadId);
-    }
-    return this.discard(entry, reason);
+    try {
+      if (entry.uploadId !== null) {
+        const state = await this.ctx.uploader.status(entry.uploadId);
+        if (state?.phase === UploadPhase.Committed) return recover ? this.committed(entry, state) : this.discard(entry, reason);
+        if (state?.phase === UploadPhase.Open) return await this.abandon(entry, state.uploadId, reason, recover);
+      }
+      return this.discard(entry, reason);
+    } catch { return null; }
   }
   private async attempt(entry: Upload): Promise<UploadOutcome> {
     const { ctx } = this; const open = decodeOpen(entry.open);
@@ -69,17 +71,18 @@ export class PartUploads {
     if (state?.phase === UploadPhase.Failed && state.failure === 'content-mismatch') throw new Replan();
     if (state !== null && state.phase !== UploadPhase.Open && state.phase !== UploadPhase.Committed) state = null;
     if (state === null) {
-      const gate = ctx.gate(entry); if (gate !== 'send') return { kind: gate };
-      state = await this.open(entry, open);
+      const opened = await this.open(entry, open); if (!(opened instanceof UploadState)) return opened;
+      state = opened;
     }
     if (state.phase === UploadPhase.Committed) return this.committed(entry, state);
     const file = ctx.file(entry.fileId); const stat = file === undefined ? null : statSource(file);
-    if (file === undefined || stat === null || !sameStat(stat, entry.file)) { await this.abortQuietly(state.uploadId); return this.discard(entry, 'source-changed'); }
+    if (file === undefined || stat === null || !sameStat(stat, entry.file)) return this.abandon(entry, state.uploadId, 'source-changed');
     for (let reopened = false; ; reopened = true) {
       const sent = await this.send(entry, open, file, state);
       if (sent.kind === 'expired') {
         if (reopened) throw new UploadError('upload-expired', true, false);
-        state = await this.open(entry, open);
+        const opened = await this.open(entry, open); if (!(opened instanceof UploadState)) return opened;
+        state = opened;
         if (state.phase === UploadPhase.Committed) return this.committed(entry, state);
         continue;
       }
@@ -91,7 +94,8 @@ export class PartUploads {
       catch (error) {
         if (error instanceof UploadError && error.code === 'content-mismatch') throw new Replan();
         if (error instanceof UploadError && error.code === 'upload-expired' && !reopened) {
-          state = await this.open(entry, open);
+          const opened = await this.open(entry, open); if (!(opened instanceof UploadState)) return opened;
+          state = opened;
           if (state.phase === UploadPhase.Committed) return this.committed(entry, state);
           continue;
         }
@@ -100,7 +104,10 @@ export class PartUploads {
       return this.acknowledged(entry, receipt);
     }
   }
-  private async open(entry: Upload, open: UploadOpen): Promise<UploadState> {
+  /** Every open — the first and those after an expiry — asks the live controls and the privacy policy first: an
+   * expired answer can arrive after a pause, an exclusion or a policy change, and the open sends the declaration. */
+  private async open(entry: Upload, open: UploadOpen): Promise<UploadState | { kind: 'held' } | { kind: 'stop' }> {
+    const gate = this.ctx.gate(entry); if (gate !== 'send') return { kind: gate };
     let state: UploadState;
     try { state = await this.ctx.uploader.open(open); }
     catch (error) {
@@ -141,7 +148,9 @@ export class PartUploads {
           if (!(error instanceof UploadError)) throw error;
           if (error.code === 'upload-expired') return { kind: 'expired' };
           if (error.code === 'upload-conflict') throw new UploadError('upload-part-conflict', true, false);
-          if (error.code === 'upload-too-large' && part.records === 1) return this.overLimit(entry, file, part, state.uploadId);
+          if (error.code === 'record-too-large') return this.recordTooLarge(entry, file, part, state.uploadId);
+          // Any other 413 (a proxy, another body limit) is an ordinary failure: retried, shown with its status.
+          if (error.code === 'upload-too-large') throw new UploadError('http-413', true, false);
           throw error;
         }
         ctx.spool.updateUpload(entry.requestId, { partsAcked: state.receivedParts, lastPartSha256: state.lastPartSha256 ?? null });
@@ -150,14 +159,15 @@ export class PartUploads {
     } catch (error) {
       if (!(error instanceof Regeneration)) throw error;
       if (error.code === 'upload-part-too-large') throw new UploadError(error.code, false, false);
-      await this.abortQuietly(state.uploadId);
-      return this.discard(entry, error.code === 'record-over-limit' ? error.code : error.code === 'upload-regeneration-mismatch' ? error.code : 'source-changed');
+      return this.abandon(entry, state.uploadId, error.code === 'record-over-limit' ? error.code : error.code === 'upload-regeneration-mismatch' ? error.code : 'source-changed');
     } finally { parts.return(undefined as unknown as PartsSummary); }
   }
-  /** The server refused a part of one record: the source enters `record-over-limit` with the server's limit. */
-  private async overLimit(entry: Upload, file: SourceFile, part: GeneratedPart, uploadId: string): Promise<UploadOutcome> {
+  /** The server refused a record over its record cap (`record-too-large`). A part of one record puts the source in
+   * `record-over-limit` with the server's limit; for a part of several the next scan applies the refreshed limit. */
+  private async recordTooLarge(entry: Upload, file: SourceFile, part: GeneratedPart, uploadId: string): Promise<UploadOutcome> {
     const { ctx } = this;
-    await this.abortQuietly(uploadId); this.discard(entry, 'record-over-limit');
+    const abandoned = await this.abandon(entry, uploadId, 'record-over-limit');
+    if (abandoned.kind !== 'discarded' || part.records !== 1) return abandoned;
     const row: RecordOverLimit = { fileId: entry.fileId, rootId: file.root.id, pathId: hash(file.path), format: file.root.format, stat: entry.file, recordIndex: part.firstRecord,
       size: String(part.rawBytes - 1n), limit: Number(ctx.limits.maxRecordBytes), limitSource: 'server', collectorLimit: ctx.config.maxRecordBytes, serverLimit: String(ctx.limits.maxRecordBytes) };
     ctx.spool.setRecordOverLimit(row);
@@ -173,7 +183,18 @@ export class PartUploads {
     return { kind: 'committed', replacement: !entry.append };
   }
   private discard(entry: Upload, reason: string): UploadOutcome { this.ctx.spool.discardUpload(entry.requestId, reason); return { kind: 'discarded', reason }; }
-  private async abortQuietly(uploadId: string): Promise<void> { try { await this.ctx.uploader.abort(uploadId); } catch { /* The lease expires the attempt. */ } }
+  /** Gives the intent up by aborting its live attempt. A commit that won the race (the abort answers Committed) is
+   * acknowledged instead; an abort that cannot be confirmed keeps the entry, recovered at the next cycle. An attempt the
+   * server does not know cannot have committed: committed attempts are kept. */
+  private async abandon(entry: Upload, uploadId: string, reason: string, recover = true): Promise<UploadOutcome> {
+    let state: UploadState;
+    try { state = await this.ctx.uploader.abort(uploadId); }
+    catch (error) {
+      if (error instanceof UploadError && error.code === 'upload-not-found') return this.discard(entry, reason);
+      return this.fail(entry, error);
+    }
+    return state.phase === UploadPhase.Committed && recover ? this.committed(entry, state) : this.discard(entry, reason);
+  }
   /** A replacement under a new intent: no base, all content in parts from the start of the file. */
   private replan(entry: Upload): Upload {
     const requestId = randomUUID();

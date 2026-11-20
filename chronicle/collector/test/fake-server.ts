@@ -38,6 +38,8 @@ interface Head { revision: number; sessionId: string; digest: string; rawBytes: 
 interface Attempt {
   uploadId: string; open: UploadOpen; key: string; phase: UploadPhase; parts: string[]; rawBytes: bigint; messages: number;
   hash: Hash; chain: MessageChain; receipt?: IngestReceipt; failure?: string;
+  /** A commit received but not yet applied: it wins against a later abort. */
+  delayedCommit?: boolean;
 }
 /** A received part, for assertions: its attempt, ordinal, encoded size, records and whether it came as a large part. */
 export interface ReceivedPart { uploadId: string; ordinal: number; bytes: number; records: number; large: boolean; announced: boolean }
@@ -54,6 +56,18 @@ export class FakeChronicle {
   expirePart: number | null = null;
   /** The next open answers 503. */
   failOpen = false;
+  /** The next commit with this flag is held back (its response lost) and applied when an abort arrives. */
+  delayCommit = false;
+  /** The next abort answers 503. */
+  failAbort = false;
+  /** The next commit finds its attempt expired. */
+  expireCommit = false;
+  /** Runs when a part or commit finds its attempt expired, before the answer leaves. */
+  onExpire: (() => void) | null = null;
+  /** The next part request with this ordinal answers 413 without a Failure body, as a proxy would. */
+  rawTooLarge: number | null = null;
+  /** The record cap of parts, when it differs from the announced limits. */
+  partRecordCap: bigint | null = null;
   readonly heads = new Map<string, Head>();
   readonly attempts = new Map<string, Attempt>();
   readonly receivedParts: ReceivedPart[] = [];
@@ -98,8 +112,13 @@ export class FakeChronicle {
     const attempt = this.attempts.get(id);
     if (attempt === undefined || (this.forgetAttempts && request.method === 'GET')) return failure(404, 'not-found');
     if (request.method === 'GET') return json(200, this.state(attempt));
-    if (action === 'abort') { if (attempt.phase === UploadPhase.Open) attempt.phase = UploadPhase.Aborted; return json(200, this.state(attempt)); }
-    if (action === 'parts') return this.part(attempt, body, request.headers['content-length'] !== undefined, json, failure);
+    if (action === 'abort') {
+      if (this.failAbort) { this.failAbort = false; return failure(503, 'unavailable'); }
+      if (attempt.delayedCommit === true) { attempt.delayedCommit = false; this.apply(attempt); }
+      if (attempt.phase === UploadPhase.Open) attempt.phase = UploadPhase.Aborted;
+      return json(200, this.state(attempt));
+    }
+    if (action === 'parts') return this.part(attempt, body, request.headers['content-length'] !== undefined, response, json, failure);
     if (action === 'commit') return this.commit(attempt, response, json, failure);
     failure(404, 'not-found');
   }
@@ -142,10 +161,11 @@ export class FakeChronicle {
     this.attempts.set(attempt.uploadId, attempt); this.intents.set(open.requestId, { declaration, live: attempt.uploadId });
     json(200, this.state(attempt));
   }
-  private part(attempt: Attempt, body: string, announced: boolean, json: (status: number, value: unknown) => void, failure: (status: number, code: string) => void): void {
+  private part(attempt: Attempt, body: string, announced: boolean, response: ServerResponse, json: (status: number, value: unknown) => void, failure: (status: number, code: string) => void): void {
     const part = UploadPart_JsonCodec.instance.decode(CODEC, JSON.parse(body) as unknown);
-    if (this.expirePart === part.ordinal) { this.expirePart = null; attempt.phase = UploadPhase.Expired; }
+    if (this.expirePart === part.ordinal) { this.expirePart = null; attempt.phase = UploadPhase.Expired; this.onExpire?.(); }
     if (attempt.phase === UploadPhase.Expired) return failure(409, 'upload-expired');
+    if (this.rawTooLarge === part.ordinal) { this.rawTooLarge = null; response.writeHead(413, { 'Content-Type': 'text/html' }); response.end('<html>Request Entity Too Large</html>'); return; }
     if (attempt.phase !== UploadPhase.Open) return failure(409, 'conflict');
     if (this.failPart === part.ordinal) { this.failPart = null; return failure(503, 'unavailable'); }
     if (part.ordinal < attempt.parts.length) return attempt.parts[part.ordinal] === part.sha256 ? json(200, this.state(attempt)) : failure(409, 'conflict');
@@ -153,7 +173,8 @@ export class FakeChronicle {
     const digests = part.messages.map(message => messageDigest(chainable(message)));
     if (partDigest([part.raw], digests) !== part.sha256 || !part.raw.endsWith('\n') || !scalar(part.raw) || !scalarMessages(part.messages)) return failure(400, 'invalid');
     const records = part.raw.slice(0, -1).split('\n');
-    if (records.some(record => BigInt(Buffer.byteLength(record)) > this.limits.maxRecordBytes)) return failure(413, 'too-large');
+    // The agreed record-cap refusal (U6): 413 with the Failure code record-too-large; other limits answer too-large.
+    if (records.some(record => BigInt(Buffer.byteLength(record)) > (this.partRecordCap ?? this.limits.maxRecordBytes))) return failure(413, 'record-too-large');
     const bytes = Buffer.byteLength(body); const large = BigInt(bytes) > this.limits.maxPartBytes;
     if (large && (records.length !== 1 || !announced || BigInt(bytes) > this.limits.maxLargePartBytes)) return failure(413, 'too-large');
     attempt.hash.update(part.raw); for (const digest of digests) attempt.chain.extend(digest);
@@ -164,6 +185,7 @@ export class FakeChronicle {
   }
   private commit(attempt: Attempt, response: ServerResponse, json: (status: number, value: unknown) => void, failure: (status: number, code: string) => void): void {
     if (attempt.phase === UploadPhase.Committed) return json(200, IngestReceipt_JsonCodec.instance.encode(CODEC, attempt.receipt!));
+    if (this.expireCommit && attempt.phase === UploadPhase.Open) { this.expireCommit = false; attempt.phase = UploadPhase.Expired; this.onExpire?.(); }
     if (attempt.phase === UploadPhase.Expired) return failure(409, 'upload-expired');
     if (attempt.phase !== UploadPhase.Open) return failure(409, 'conflict');
     const open = attempt.open; const head = this.heads.get(attempt.key);
@@ -172,12 +194,18 @@ export class FakeChronicle {
       attempt.phase = UploadPhase.Failed; attempt.failure = 'content-mismatch'; return failure(409, 'content-mismatch');
     }
     if ((head?.revision ?? 0) !== open.expectedRevision) return failure(409, 'conflict');
-    const next: Head = { revision: open.expectedRevision + 1, sessionId: head?.sessionId ?? randomUUID(), digest, rawBytes: open.rawBytes, messageCount: open.messageCount, chain: open.messageChain, hash: attempt.hash, rawPath: open.rawPath };
+    if (this.delayCommit) { this.delayCommit = false; attempt.delayedCommit = true; response.destroy(); return; }
+    this.apply(attempt);
+    if (this.loseCommitAck) { this.loseCommitAck = false; response.destroy(); return; }
+    json(200, IngestReceipt_JsonCodec.instance.encode(CODEC, attempt.receipt!));
+  }
+  /** The commit itself: the attempt's content becomes the head (its checks passed). */
+  private apply(attempt: Attempt): void {
+    const open = attempt.open; const head = this.heads.get(attempt.key);
+    const next: Head = { revision: open.expectedRevision + 1, sessionId: head?.sessionId ?? randomUUID(), digest: attempt.hash.copy().digest('hex'), rawBytes: open.rawBytes, messageCount: open.messageCount, chain: open.messageChain, hash: attempt.hash, rawPath: open.rawPath };
     this.heads.set(attempt.key, next); this.titles.push(open.metadata.title);
     attempt.receipt = new IngestReceipt(open.requestId, next.sessionId, next.revision, randomUUID()); attempt.phase = UploadPhase.Committed;
     this.intents.get(open.requestId)!.receipt = attempt.receipt;
-    if (this.loseCommitAck) { this.loseCommitAck = false; response.destroy(); return; }
-    json(200, IngestReceipt_JsonCodec.instance.encode(CODEC, attempt.receipt));
   }
 }
 const chainable = (message: Message) => ({ id: message.id, parentId: message.parentId ?? null, role: message.role, text: message.text, timestamp: message.timestamp ?? null, recordIndex: message.recordIndex });

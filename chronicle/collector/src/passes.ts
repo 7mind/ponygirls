@@ -28,7 +28,8 @@ class EvidenceSet {
     let aliases: string[];
     try { aliases = pathAliases(path); } catch { aliases = []; this.uncertain = true; }
     const added = [...new Set([resolve(path), ...aliases])].filter(alias => !this.paths.has(alias));
-    const bytes = this.bytes + added.reduce((sum, alias) => sum + Buffer.byteLength(alias), 0);
+    // The value itself is retained too (for deduplication), however short its aliases.
+    const bytes = this.bytes + Buffer.byteLength(path) + added.reduce((sum, alias) => sum + Buffer.byteLength(alias), 0);
     if (this.values.size + 1 > EVIDENCE_LIMITS.values || bytes > EVIDENCE_LIMITS.bytes) throw new EvidenceLimitError(this.values.size + 1, bytes);
     this.values.add(path); for (const alias of added) this.paths.add(alias); this.bytes = bytes;
   }

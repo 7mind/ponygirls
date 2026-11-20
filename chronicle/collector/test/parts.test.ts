@@ -44,9 +44,11 @@ async function harness(extra: Record<string, unknown> = {}) {
   const reports: CollectorProgressUpdate[] = [];
   const reporter: ProgressReporter = { async report(update) { reports.push(update); return new CollectorProgressAck(update.sequence, true); } };
   let spool: Spool = new SqliteSpool(join(dir, 'state'));
-  const collector = (more: Record<string, unknown> = {}) => { const config = settings(more); return new Collector(config, spool, new HttpIngester(config), () => 0, noGit, reporter, syntheticSecrets, new HttpUploader(config)); };
+  // Every credential file reads as `secret.value`: changing it rotates the runtime privacy policy.
+  const secret = { value: 'synthetic-default-credential' }; const secrets = { read: (_path: string) => secret.value };
+  const collector = (more: Record<string, unknown> = {}) => { const config = settings(more); return new Collector(config, spool, new HttpIngester(config), () => 0, noGit, reporter, secrets, new HttpUploader(config)); };
   return {
-    dir, roots, server, reports, input, settings, collector,
+    dir, roots, server, reports, input, settings, collector, secret,
     get spool() { return spool; },
     /** A restart: the spool reopened from disk. */
     reopen() { spool.close(); spool = new SqliteSpool(join(dir, 'state')); },
@@ -258,10 +260,12 @@ test('UploadParts refuses admission evidence over 1,024 distinct paths, over 1 M
     writeFileSync(join(h.roots.pi, 'count.jsonl'), jsonl(piHeader('pi-count'), ...cwds('count', 1_025, 4)));
     writeFileSync(join(h.roots.pi, 'bytes.jsonl'), jsonl(piHeader('pi-bytes'), ...cwds('bytes', 300, 4_000)));
     writeFileSync(join(h.roots.pi, 'long.jsonl'), jsonl(piHeader('pi-long'), piMessage('m', 'synthetic', { cwd: '/long/' + 'x'.repeat(MiB) })));
+    // Each value is under 4,096 bytes but normalizes to a short path: the retained values count, not only their aliases.
+    writeFileSync(join(h.roots.pi, 'lexical.jsonl'), jsonl(piHeader('pi-lexical'), ...Array.from({ length: 300 }, (_, index) => piMessage(`m${index}`, 'synthetic', { cwd: `/lexical/${'./'.repeat(1_900)}p${index}` }))));
     const counters = await h.run(1);
-    assert.deepEqual([counters.quarantined, counters.enqueued], [3, 0]);
+    assert.deepEqual([counters.quarantined, counters.enqueued], [4, 0]);
     const refused = h.spool.diagnostics().filter(diagnostic => diagnostic.code === 'admission-evidence-limit');
-    assert.equal(refused.length, 3);
+    assert.equal(refused.length, 4);
     assert.ok(refused.some(diagnostic => diagnostic.values === 1_025 && diagnostic.measured! < MiB));
     assert.ok(refused.some(diagnostic => diagnostic.values! < 1_024 && diagnostic.measured! > MiB));
     assert.ok(refused.some(diagnostic => diagnostic.measured! > MiB && diagnostic.values! <= 3));
@@ -357,5 +361,67 @@ test('UploadNormalization --retry rebuilds from its file a stopped payload that 
     assert.deepEqual([h.spool.queue(), h.spool.head(key).tombstone, h.spool.dropped().map(entry => entry.reason)], [[], false, ['retry-rebuild']]);
     assert.equal((await h.run(1)).uploaded, 1);
     assert.deepEqual([h.server.heads.get(key)?.digest, h.server.texts], [hash(raw), ['cut \uFFFD\nend']]);
+  } finally { await h.close(); }
+});
+
+for (const variant of ['privacy rotated during a part', 'paused during the commit', 'excluded during a part'] as const) {
+  test(`UploadParts asks the policy and live controls again before reopening an expired attempt: ${variant}`, async () => {
+    const h = await harness();
+    try {
+      h.server.limits = h.server.limits.with({ maxPartBytes: 1024n });
+      writeFileSync(join(h.roots.pi, 's.jsonl'), jsonl(piHeader('pi-expiry'), ...Array.from({ length: 4 }, (_, index) => piMessage(`m${index}`, `synthetic message ${index} `.repeat(8)))));
+      // The change happens while the request that finds the attempt expired awaits its answer.
+      h.server.onExpire = () => {
+        if (variant === 'privacy rotated during a part') h.secret.value = 'synthetic-rotated-credential';
+        else if (variant === 'paused during the commit') h.spool.setPaused(true);
+        else h.spool.exclude(h.roots.pi);
+      };
+      if (variant === 'paused during the commit') h.server.expireCommit = true; else h.server.expirePart = 1;
+      const counters = await h.run(1);
+      assert.deepEqual([counters.uploaded, h.server.count('POST /api/ingest/uploads'), h.server.attempts.size], [0, 1, 1]);
+      assert.equal(h.spool.uploads().length, 1);
+    } finally { await h.close(); }
+  });
+}
+
+test('UploadParts acknowledges a commit that wins against its abort, and keeps the intent while an abort is unconfirmed', async () => {
+  const h = await harness();
+  try {
+    const path = join(h.roots.pi, 's.jsonl'); const content = jsonl(piHeader('pi-abort'), piMessage('m1', 'one'));
+    writeFileSync(path, content);
+    // The commit arrives but is not applied yet, and its answer is lost: the attempt still reads Open.
+    h.server.delayCommit = true;
+    assert.deepEqual(await h.run(1).then(counters => [counters.uploaded, counters.uploadFailures]), [0, 1]);
+    appendFileSync(path, jsonl(piMessage('m2', 'two')));
+    // The file changed, so the open attempt is aborted; an abort that fails leaves the intent unresolved, not given up.
+    h.server.failAbort = true;
+    assert.deepEqual(await h.run(2).then(counters => [counters.uploaded, counters.pending]), [0, 1]);
+    const key = [...h.server.attempts.values()][0]!.key;
+    assert.equal(h.spool.head(key).revision, 0);
+    // The delayed commit wins against the next abort, which answers Committed with the receipt.
+    assert.equal((await h.run(3)).uploaded, 1);
+    assert.deepEqual([h.spool.head(key).revision, h.spool.head(key).digest], [1, hash(content)]);
+    const appended = await h.run(4);
+    assert.deepEqual([appended.uploaded, appended.conflicts, h.spool.head(key).revision], [1, 0, 2]);
+  } finally { await h.close(); }
+});
+
+test('UploadParts enters record-over-limit only on the server code record-too-large; another 413 is an ordinary failure', async () => {
+  const h = await harness();
+  try {
+    h.server.limits = h.server.limits.with({ maxPartBytes: 1024n });
+    writeFileSync(join(h.roots.pi, 'a.jsonl'), jsonl(piHeader('pi-ingress'), ...Array.from({ length: 4 }, (_, index) => piMessage(`m${index}`, `synthetic message ${index} `.repeat(8)))));
+    // A proxy in front of the server refuses one single-record part, far below every record limit.
+    h.server.rawTooLarge = 1;
+    const refused = await h.run(1);
+    assert.deepEqual([refused.uploadFailures, refused.quarantined, refused.pending, h.spool.recordsOverLimit().length], [1, 0, 1, 0]);
+    assert.equal(h.spool.uploads()[0]?.error, 'http-413');
+    assert.equal((await h.run(2)).uploaded, 1);
+    h.server.partRecordCap = 1_500n;
+    writeFileSync(join(h.roots.pi, 'b.jsonl'), jsonl(piHeader('pi-record-cap'), piMessage('long', 'synthetic '.repeat(200))));
+    const capped = await h.run(3);
+    assert.deepEqual([capped.quarantined, capped.uploadFailures, h.spool.recordsOverLimit().map(row => [row.limitSource, row.recordIndex])], [1, 0, [['server', 1]]]);
+    const opens = h.server.count('POST /api/ingest/uploads');
+    assert.deepEqual([(await h.run(4)).quarantined, h.server.count('POST /api/ingest/uploads')], [0, opens]);
   } finally { await h.close(); }
 });

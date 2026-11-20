@@ -52,7 +52,10 @@ function failure(status: number, body: unknown): UploadError {
   if (status === 401 || status === 403) return new UploadError('unauthorized', false, false);
   if (status === 409 && code !== null && Object.hasOwn(CONFLICT_CODES, code)) return new UploadError(CONFLICT_CODES[code]!, code === 'upload-busy', code === 'conflict');
   if (status === 410) return new UploadError('upload-gone', false, false);
-  if (status === 413) return new UploadError('upload-too-large', false, false);
+  // The server's record cap (agreed with U6) and its declared-size limits; any other 413 is an ordinary failure.
+  if (status === 413 && code === 'record-too-large') return new UploadError('record-too-large', false, false);
+  if (status === 413 && code === 'too-large') return new UploadError('upload-too-large', false, false);
+  if (status === 413) return new UploadError('http-413', true, false);
   if (status === 408 || status === 429 || status >= 500) return new UploadError(`http-${status}`, true, false);
   return new UploadError('protocol-rejected', false, false);
 }
