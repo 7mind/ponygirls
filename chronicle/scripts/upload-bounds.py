@@ -783,6 +783,14 @@ class Harness:
     def source_revision(self, session):
         return int(one("SELECT revision FROM ch_sources WHERE id=:'arg0'", session))
 
+    def rpc(self, operation):
+        """One operation on its own socket: an idle socket misses the server's 20 s heartbeat and is closed (1013)."""
+        socket = Rpc(self.origin, self.password.read_text().strip())
+        try:
+            return socket.call(operation)
+        finally:
+            socket.close()
+
     def page(self, label, fixture, revision, page, elapsed, offset, client):
         n = fixture.messages
         got = page['messages']
@@ -798,7 +806,6 @@ class Harness:
         Pages holding a record above the CLI's 8 MiB frame bound are read over the browser protocol; the CLI's answer
         for them is recorded, not asserted."""
         cli = self.reader()
-        rpc = Rpc(self.origin, self.password.read_text().strip())
         n = fixture.messages
         timings, observations = {}, {}
         regular = [offset for offset in (0, n // 2, n - PAGE) if not any(offset <= i < offset + PAGE for i in fixture.large)]
@@ -808,7 +815,7 @@ class Harness:
             timings[f'messages@{offset}'] = round(elapsed, 2)
         for offset in sorted({*large_pages, *(offset for offset in (0, n // 2, n - PAGE) if offset not in regular)}):
             started = time.monotonic()
-            result = rpc.call({'GetMessages': dict(sessionId=session, offset=offset, limit=PAGE, view=dict(revision=revision, generationId=None))})
+            result = self.rpc({'GetMessages': dict(sessionId=session, offset=offset, limit=PAGE, view=dict(revision=revision, generationId=None))})
             elapsed = time.monotonic() - started
             check(f'{label}: the page at offset {offset:,} answers', 'Messages' in result, str(result)[:2000])
             self.page(label, fixture, revision, result['Messages']['result'], elapsed, offset, 'the browser protocol')
@@ -846,11 +853,10 @@ class Harness:
         failure, elapsed = self.reader().call('raw', session, '--revision', str(revision), '--auth', 'session', expect=1)
         check(f'{label}: the CLI\'s raw answers too-large ({elapsed:.2f} s)', 'too-large' in failure, failure)
         started = time.monotonic()
-        result = rpc.call({'GetRaw': dict(sessionId=session, revision=revision)})
+        result = self.rpc({'GetRaw': dict(sessionId=session, revision=revision)})
         elapsed = time.monotonic() - started
         check(f'{label}: GetRaw answers too-large naming the exact size {fixture.bytes:,} ({elapsed:.2f} s)',
               json.dumps(result).count('too-large') == 1 and f'raw revision of {fixture.bytes} bytes' in json.dumps(result), result)
-        rpc.close()
         note(f'{label}: read timings {json.dumps(timings)}')
         return dict(timings=timings, observations=observations)
 
