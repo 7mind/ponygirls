@@ -11,9 +11,9 @@ import scala.concurrent.duration.*
   * epochs' fragments, then marks them pruned, deletes the epochs of purged sources, sweeps part uploads (expires
   * passed leases, deletes the staging of attempts that ended, deletes old terminal attempts), merges the fragment
   * trigram index's pending list, deletes the staged generations no run will continue and completes the retirement of
-  * replaced generations' search rows and of explicitly retired generations' derived rows (ingest-limits spec §5.2.4,
-  * §5.2.5). Reads and search never depend on it (they join on the head's epoch and count, and on the published
-  * generation). Each statement touches at most `rowsPerStatement` rows, the merge the pending list, in a transaction of
+  * replaced lineages, replaced generations' search rows, explicitly retired generations' derived rows and superseded
+  * ranges of search rows (ingest-limits spec §5.2.4, §5.2.5, §5.6.2). Reads and search never depend on it (they join on
+  * the head's epoch and count, and on the published generation). Each statement touches at most `rowsPerStatement` rows, the merge the pending list, in a transaction of
   * its own; a failed pass is logged and the next one runs an interval later, so a failure never ends the server. */
 final class EpochMaintenance private (db: Database,logger: logstage.IzLogger,val interval: FiniteDuration) {
   import EpochMaintenance.rowsPerStatement
@@ -52,9 +52,12 @@ final class EpochMaintenance private (db: Database,logger: logstage.IzLogger,val
   private def sweepStaged: IO[Unit] =
     transaction(PassageStorage.stale).flatMap(_.traverse_(generation => transaction(PassageStorage.abandonIfStale(_,generation)))) *>
       transaction(PassageStorage.abandoned).flatMap(_.traverse_(generation => IO.blocking(PassageStorage.deleteAbandoned(db,generation))))
-  /** What a crash left of a switch's retirement (the worker retires right after its switch). */
+  /** What a crash left of a switch's retirement (the worker retires right after its switch): replaced lineages (their
+    * generations queued, their tag rows), replaced and rebuilt generations, superseded ranges of search rows. */
   private def retireGenerations: IO[Unit] =
-    transaction(PassageStorage.retiring(_,None)).flatMap(_.traverse_(generation => IO.blocking(PassageStorage.retire(db,generation))))
+    transaction(PassageStorage.retiringLineages(_,None)).flatMap(_.traverse_(lineage => IO.blocking(PassageStorage.retireLineage(db,lineage)))) *>
+      transaction(PassageStorage.retiring(_,None)).flatMap(_.traverse_(generation => IO.blocking(PassageStorage.retire(db,generation)))) *>
+      transaction(PassageStorage.retiringRanges(_,None)).flatMap(_.traverse_((origin,lo) => IO.blocking(PassageStorage.retireRange(db,origin,lo))))
 
   private def deletePurged: IO[Unit] =
     transaction(c => Sql.rows(c,"SELECT e.id,s.owner,s.source_key FROM ch_epochs e JOIN ch_sources s ON s.id=e.session_id WHERE s.tombstone ORDER BY e.id")(r => (r.getObject(1,classOf[UUID]),r.getString(2),r.getString(3))))

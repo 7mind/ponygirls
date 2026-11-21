@@ -106,6 +106,24 @@ final class StagedGenerationTest extends munit.FunSuite {
     assertEquals(archive.pageChunks("a",first.sessionId,0,1,Some(previous)).total,pieces)
   }}
 
+  test("a generation a release before 028 staged (no lineage) resumes and is published as it was staged: its own rows, its generation tags") { database { (config,db,archive) =>
+    val vectors=new Ring
+    val receipt=archive.ingest("a",request(text))
+    stopped(db,"ch_chunks")(assert(worker(archive,config,vectors).once.unsafeRunSync()))
+    val List((generation,"Pieces",500,0))=staged(db): @unchecked
+    db.transaction { c =>
+      Sql.exec(c,"DELETE FROM ch_lineage_segments WHERE lineage=?",generation)
+      Sql.exec(c,"DELETE FROM ch_lineage_tags WHERE lineage=?",generation)
+      Sql.exec(c,"DELETE FROM ch_generation_lineage WHERE generation=?",generation)
+      Sql.exec(c,"UPDATE ch_generations SET lineage=NULL WHERE id=?",generation)
+    }
+    assert(worker(archive,config,vectors).once.unsafeRunSync())
+    assertEquals(archive.session("a",receipt.sessionId).view,ContentView(1,Some(generation)))
+    assertEquals(archive.pageChunks("a",receipt.sessionId,0,1,None).total,pieces)
+    assertEquals(db.transaction(c => Sql.one(c,"SELECT concat_ws('|',lineage,lineage_version,(SELECT count(*) FROM ch_lineage_tags WHERE lineage=g.id),(SELECT count(*) FROM ch_generation_lineage WHERE generation=g.id)) FROM ch_generations g WHERE id=?",generation)(_.getString(1))),Some("0|0"))
+    assertEquals(new PostgresSearch(db,archive,config).tags("a",TagSearchQuery("staged",SearchFilter(None,None,None,None,Nil),None,10)).map(_.value),List("staged"))
+  }}
+
   test("a superseded job's staged generation is deleted by the maintenance pass; a run that a retry makes live again deletes its abandoned staged generation before it stages a new one") { database { (config,db,archive) =>
     val vectors=new Ring
     val superseded=archive.ingest("a",request(text))

@@ -70,7 +70,7 @@ private[chronicle] object ArchiveSearchWitnesses {
       if(remaining>0) {
         Check(witness.operand>=0 && witness.operand<parsed.textOperands.size && positives.contains(parsed.textOperands(witness.operand)),"projection","invalid archive semantic operand")
         val view=archive.selectView(c,reader,row.head.id,Some(witness.view),materialization)
-        val selection=ReadSources.Selection(ReadSources.Query("SELECT value FROM ch_chunks WHERE id=? AND generation=?",List(witness.id,view.generationId.get)),"value->>'id'",1)
+        val selection=ReadSources.Selection(GenerationRows.chunk(view.generationId.get,witness.id),"value->>'id'",1)
         val chunk=materialization.selected(c,selection)(json => Wire.decode(Chunk.codecJson,json.hcursor.downField("value").focus.get)).headOption.getOrElse(throw DomainError("projection","archive semantic witness missing"))
         Check(chunk.id==witness.id && chunk.sessionId==row.head.id && chunk.spans.nonEmpty,"projection","invalid archive semantic witness")
         val selected=chunk.spans.take(remaining)

@@ -162,16 +162,18 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
 
   private def corpus: String = s"""corpus AS MATERIALIZED(SELECT s.id,s.owner,s.revision,s.published,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp,i.last_timestamp_order,i.message_count,g.revision AS indexed_revision,g.id AS generation,g.passage_format AS published_format,
       j.id AS job_id,j.state AS job_state,j.attempts AS job_attempts,j.error AS job_error,j.failure_stage,j.completed_windows,j.total_windows,
-      ARRAY(SELECT tag FROM (SELECT jsonb_array_elements_text(i.metadata->'tags') AS tag UNION SELECT tag FROM ch_generation_tags WHERE generation=s.published) tag_values ORDER BY lower(tag $unicode),tag) AS tags
+      ARRAY(SELECT tag FROM (SELECT jsonb_array_elements_text(i.metadata->'tags') AS tag UNION SELECT generated.tag FROM ${GenerationRows.tags("s.published","g.lineage")} generated) tag_values ORDER BY lower(tag $unicode),tag) AS tags
       FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision
       JOIN ch_owner_targets profile ON profile.owner=s.owner LEFT JOIN ch_generations g ON g.id=s.published
       LEFT JOIN ch_jobs j ON j.session_id=s.id AND j.revision=s.revision AND j.profile=profile.profile WHERE ${archive.visible})"""
   private def annRows(index: Int): String = s"ann_rows_$index"
-  /** The semantic operands' visible set (it is the same for every operand): published chunks of the corpus passing the
-    * metadata restrictions, of a compatible profile, counted up to the second pass's cap. */
+  /** A search row `ch` that is a piece of the published generation of corpus row `c` (`p`: that generation's row). */
+  private val published=GenerationRows.piece("c.published","p.lineage","p.lineage_version","ch")
+  /** The semantic operands' visible set (it is the same for every operand): pieces of the corpus's published generations
+    * passing the metadata restrictions, of a compatible profile, counted up to the second pass's cap. */
   private def visibleCount(c: Connection,reader: String,parsed: ParsedArchiveExpression): Long = {
     val restrictions=expression(parsed.candidateFilter,_ => throw DomainError("query","text in candidate metadata restriction"))
-    Sql.one(c,s"WITH $corpus SELECT count(*) FROM (SELECT 1 FROM corpus c JOIN ch_search_chunks ch ON ch.session_id=c.id AND ch.generation=c.published WHERE vector_dims(ch.embedding)=${SearchPolicy.dimensions(config)} AND ${IndexProfiles.compatibleSql("ch.profile")} AND (${restrictions.text}) LIMIT ?) visible",
+    Sql.one(c,s"WITH $corpus SELECT count(*) FROM (SELECT 1 FROM corpus c JOIN ch_generations p ON p.id=c.published JOIN ch_search_chunks ch ON ch.session_id=c.id AND $published WHERE vector_dims(ch.embedding)=${SearchPolicy.dimensions(config)} AND ${IndexProfiles.compatibleSql("ch.profile")} AND (${restrictions.text}) LIMIT ?) visible",
       (List[Sql.Param](reader,reader,reader,EmbeddingSpaceDescriptor.from(config.embedding).id)++restrictions.args++List(SemanticLeg.visibleCap(budget)))*)(_.getLong(1)).get
   }
 
@@ -201,10 +203,10 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
         val value=SearchPolicy.vector(vector.values,config)
         passes.getOrElse(index,LegPass.Index) match {
           case LegPass.Index =>
-            ctes+=s"a$index AS MATERIALIZED(SELECT ch.id,ch.session_id,ch.revision,ch.generation,ch.embedding <=> ?::vector AS distance FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND (SELECT true FROM corpus c WHERE c.id=ch.session_id AND c.published=ch.generation AND (${restrictions.text}) OFFSET 0) ORDER BY ${CandidateSql.annDistance(dimensions,"ch.embedding")} LIMIT ${SearchPolicy.candidatesPerLeg})"
+            ctes+=s"a$index AS MATERIALIZED(SELECT ch.id,ch.session_id,ch.revision,ch.generation,ch.ordinal,ch.embedding <=> ?::vector AS distance FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND (SELECT true FROM corpus c JOIN ch_generations p ON p.id=c.published WHERE c.id=ch.session_id AND $published AND (${restrictions.text}) OFFSET 0) ORDER BY ${CandidateSql.annDistance(dimensions,"ch.embedding")} LIMIT ${SearchPolicy.candidatesPerLeg})"
             args+=value; args+=EmbeddingSpaceDescriptor.from(config.embedding).id; args++=restrictions.args; args+=value
           case LegPass.Exact =>
-            ctes+=s"a$index AS MATERIALIZED(SELECT ch.id,ch.session_id,ch.revision,ch.generation,ch.embedding <=> ?::vector AS distance FROM corpus c JOIN ch_search_chunks ch ON ch.session_id=c.id AND ch.generation=c.published WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND (${restrictions.text}) ORDER BY distance,ch.id LIMIT ${SearchPolicy.candidatesPerLeg})"
+            ctes+=s"a$index AS MATERIALIZED(SELECT ch.id,ch.session_id,ch.revision,ch.generation,ch.ordinal,ch.embedding <=> ?::vector AS distance FROM corpus c JOIN ch_generations p ON p.id=c.published JOIN ch_search_chunks ch ON ch.session_id=c.id AND $published WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND (${restrictions.text}) ORDER BY distance,${SearchPolicy.tieBreakSql("ch.")} LIMIT ${SearchPolicy.candidatesPerLeg})"
             args+=value; args+=EmbeddingSpaceDescriptor.from(config.embedding).id; args++=restrictions.args
         }
       }
@@ -246,9 +248,10 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
         THEN (SELECT coalesce(jsonb_agg(x.position ORDER BY x.position),'[]'::jsonb) FROM (SELECT DISTINCT f.position FROM e$index f WHERE f.epoch=head.epoch AND f.position<head.message_count ORDER BY f.position LIMIT ${ArchiveSearchPolicy.maximumMatches}) x) END
         FROM ch_revisions head WHERE head.session_id=page.id AND head.revision=page.revision) AS ${literalPositions(index)}"""
     }.mkString
+    // A witness is a piece of the page row's published generation: its view is that generation and revision.
     val references=if(witnesses && semantic && positives.nonEmpty) {
-      val candidates=positives.map(i => s"SELECT $i AS operand,id,revision,generation,distance FROM a$i WHERE session_id=page.id").mkString(" UNION ALL ")
-      s"(SELECT coalesce(jsonb_agg(to_jsonb(w)), '[]'::jsonb) FROM (SELECT operand,id,revision,generation FROM ($candidates) candidates ORDER BY distance,operand,id LIMIT ${ArchiveSearchPolicy.maximumMatches}) w)"
+      val candidates=positives.map(i => s"SELECT $i AS operand,id,ordinal,distance FROM a$i WHERE session_id=page.id").mkString(" UNION ALL ")
+      s"(SELECT coalesce(jsonb_agg(to_jsonb(w)), '[]'::jsonb) FROM (SELECT operand,id,page.indexed_revision AS revision,page.generation AS generation FROM ($candidates) candidates ORDER BY distance,operand,ordinal,id LIMIT ${ArchiveSearchPolicy.maximumMatches}) w)"
     } else "'[]'::jsonb"
     val legRows=if(semantic) parsed.textOperands.indices.map(index => s",(SELECT count(*) FROM a$index) AS ${annRows(index)}").mkString else ""
     ArchiveSql("WITH "+ctes.result().mkString(",")+s" SELECT counted.total,page.*,page.sort_key::text AS sort_value,page.relevance::text AS relevance_value,$references AS witnesses$positions$legRows FROM (SELECT count(*) AS total FROM matched) counted LEFT JOIN LATERAL(SELECT r.* FROM matched r WHERE (${cursor.text}) ORDER BY ${order("r")} LIMIT ?) page ON true ORDER BY ${order("page")}",args.result()++literal.map(parsed.textOperands)++cursor.args++List(query.limit+1))
@@ -262,7 +265,7 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     val job=Option(r.getObject("job_id",classOf[UUID])).map(jobId => JobInfo(jobId,id,head.revision,JobState.parse(r.getString("job_state")).get,r.getInt("job_attempts"),Option(r.getString("job_error")),r.getInt("completed_windows"),Option(r.getObject("total_windows",classOf[java.lang.Integer])).map(_.intValue),Option(r.getString("failure_stage")).map(IndexingFailureStage.parse(_).getOrElse(throw DomainError("internal","invalid persisted failure stage")))))
     val tags=Sql.json(r,"tag_values").as[List[String]].getOrElse(throw DomainError("projection","invalid projected tags"))
     val stored=Option(r.getString("published_format"))
-    val format=published.map(_ => if(stored.contains(PassageFormat.ContextAwareProblems.toString)) PassageFormat.ContextAwareProblems else throw DomainError("projection","published generation is not in the current passage format"))
+    val format=published.map(_ => if(stored.exists(GenerationRows.formats.contains)) PassageFormat.ContextAwareProblems else throw DomainError("projection","published generation is not in the current passage format"))
     ArchiveRow(head,published,matched,Option(r.getString("last_timestamp")),r.getInt("message_count"),tags,job,format)
   }
   def browse(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector]): ArchiveResult = db.transaction { c =>

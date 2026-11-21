@@ -126,8 +126,11 @@ final class StreamedPublicationDifferentialTest extends munit.FunSuite {
           val (streamed,expected)=(tables(c,"",staged._1),tables(c,"oracle_",oracleGeneration))
           expected.foreach((table,rows) => assertEquals(streamed(table),rows,table))
           // The search rows are the chunks' (today's INSERT…SELECT), and the generation row is what the release wrote.
-          assertEquals(Sql.rows(c,"SELECT concat_ws('|',id,session_id,revision,profile,document::text,embedding::text) FROM ch_search_chunks WHERE generation=? ORDER BY id",staged._1)(_.getString(1)),
-            Sql.rows(c,"SELECT concat_ws('|',ch.id,?::uuid,1,?,ch.document::text,ch.embedding::text) FROM oracle_ch_chunks ch WHERE generation=? ORDER BY ch.id",receipt.sessionId,claim.profile,oracleGeneration)(_.getString(1)))
+          assertEquals(Sql.rows(c,"SELECT concat_ws('|',id,session_id,revision,profile,document::text,embedding::text,ordinal) FROM ch_search_chunks WHERE generation=? ORDER BY id",staged._1)(_.getString(1)),
+            Sql.rows(c,"SELECT concat_ws('|',ch.id,?::uuid,1,?,ch.document::text,ch.embedding::text,ch.ordinal) FROM oracle_ch_chunks ch WHERE generation=? ORDER BY ch.id",receipt.sessionId,claim.profile,oracleGeneration)(_.getString(1)))
+          // A root's lineage tags count its pieces per tag, each once although the resumed step wrote its rows again.
+          assertEquals(Sql.rows(c,"SELECT tag||':'||pieces FROM ch_lineage_tags WHERE lineage=? ORDER BY tag",staged._1)(_.getString(1)),
+            Sql.rows(c,"SELECT tag||':'||count(*) FROM oracle_ch_chunks ch CROSS JOIN LATERAL(SELECT DISTINCT jsonb_array_elements_text(ch.value->'tags') AS tag) tags WHERE generation=? GROUP BY tag ORDER BY tag",oracleGeneration)(_.getString(1)))
           assertEquals(Sql.one(c,"SELECT concat_ws('|',session_id,revision,profile,passage_format,passage_count,run_id,retired) FROM ch_generations WHERE id=?",staged._1)(_.getString(1)),
             Some(s"${receipt.sessionId}|1|${claim.profile}|ContextAwareProblems|${publication.passages.size}|${claim.runId}|f"))
         }

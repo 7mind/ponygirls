@@ -220,7 +220,7 @@ class TagSearchTest extends munit.FunSuite {
     f.db.transaction { c =>
       Sql.exec(c,s"CREATE ROLE $role LOGIN PASSWORD '${Fixtures.databasePassword}'"); Sql.exec(c,s"REVOKE TEMP ON DATABASE $identifier FROM PUBLIC")
       Sql.exec(c,s"GRANT USAGE ON SCHEMA public TO $role")
-      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_revision_info,ch_generation_tags TO $role")
+      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_revision_info,ch_generation_tags,ch_lineage_tags TO $role")
     }
     try {
       val config=f.config.copy(databaseUser=role,jdbcUrl=f.probe.url(f.config.jdbcUrl)); val db=Fixtures.database(config,f.catalog)

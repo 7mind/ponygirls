@@ -27,10 +27,10 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     Check(!unseeded,"migration-required","users without an owner target in an archive from before owner targets; start the previous release once to seed them, then migrate with the legacy-retirement procedure")
   }
   /** The old publication formats are retired: until migration 022 has added its check, a generation that is not retired
-    * and not in the current format (including one without a format) refuses the start instead of failing the check. */
+    * and not in a current format (including one without a format) refuses the start instead of failing the check. */
   private def requireRetiredPassageFormatsMigrated(c: Connection): Unit = {
     val checked=Sql.one(c,"SELECT 1 FROM pg_constraint WHERE conrelid='ch_generations'::regclass AND conname='ch_generations_current_format_check'")(_ => true).nonEmpty
-    val remaining= !checked && Sql.one(c,"SELECT 1 FROM ch_generations WHERE NOT retired AND passage_format IS DISTINCT FROM 'ContextAwareProblems' LIMIT 1")(_ => true).nonEmpty
+    val remaining= !checked && Sql.one(c,s"SELECT 1 FROM ch_generations WHERE NOT retired AND (passage_format IS NULL OR passage_format NOT IN ${GenerationRows.formatsSql}) LIMIT 1")(_ => true).nonEmpty
     Check(!remaining,"migration-required","generations that are not retired remain in an old publication format; retire them with the legacy-retirement procedure before starting this release")
   }
   /** Migration 017 builds [[Database.candidateIndex]] inside the start's transaction only on a heap of at most `inlineBytes`;
@@ -55,6 +55,7 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     migrate(c,"025_uploads.sql")
     migrate(c,"026_staged_generations.sql")
     migrate(c,"027_window_reuse.sql")
+    migrate(c,"028_generation_lineage.sql")
     val dimensions=SearchPolicy.dimensions(config)
     Sql.exec(c,s"CREATE INDEX IF NOT EXISTS ch_search_hnsw_d$dimensions ON ch_search_chunks USING hnsw ((l2_normalize(embedding)::halfvec($dimensions)) halfvec_cosine_ops) WHERE vector_dims(embedding)=$dimensions")
     profiles.register(c)
@@ -226,7 +227,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     Check(view.revision>0,"invalid","content revision must be positive")
     view.generationId.foreach { generation =>
       // A staged generation (migration 026) is not a content view until its switch.
-      val (retired,current)=Sql.one(c,"SELECT retired,passage_format IS NOT DISTINCT FROM ? FROM ch_generations g WHERE id=? AND session_id=? AND revision=? AND NOT EXISTS(SELECT 1 FROM ch_staged_generations st WHERE st.generation=g.id)",PassageFormat.ContextAwareProblems.toString,generation,id,view.revision)(r => (r.getBoolean(1),r.getBoolean(2))).getOrElse(throw DomainError("not-found","content view not found"))
+      val (retired,current)=Sql.one(c,s"SELECT retired,coalesce(passage_format IN ${GenerationRows.formatsSql},false) FROM ch_generations g WHERE id=? AND session_id=? AND revision=? AND NOT EXISTS(SELECT 1 FROM ch_staged_generations st WHERE st.generation=g.id)",generation,id,view.revision)(r => (r.getBoolean(1),r.getBoolean(2))).getOrElse(throw DomainError("not-found","content view not found"))
       Check(!retired,"indexed-view-retired","indexed content view was retired by an explicit rebuild")
       Check(current,"unavailable","indexed content view is not in the current passage format")
     }
@@ -506,6 +507,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       row.spans.map(span => 64+text(span.span.messageId)).sum+row.context.map((_,span) => 64+text(span.messageId)).sum
     def written(next: StagedGeneration)(batch: Vector[ProblemRows.Passages]): Unit = staging(claim,staged.generation,StagedLock.Write) { c =>
       PassageStorage.writePassages(c,staged.generation,batch)
+      next.counts.foreach(counts => PassageStorage.writeLineage(c,staged.generation,counts.pieces))
       Check(PassageStorage.resume(c,claim,next),"internal","staged generation resume point not recorded")
     }
     val batches=new Batches[ProblemRows.Passages](bytes,(batch,step) => written(staged.copy(step=step))(batch))
@@ -520,11 +522,12 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     next
   }
   /** Phase W discarded embedding parts the staged chunks may have been written from: every staged chunk (with its search
-    * row and piece) is deleted in bounded statements, then P2 starts again at step 0. */
+    * row and piece) and the lineage tag counts of them are deleted in bounded statements, then P2 starts again at step 0. */
   private def rewritePieces(claim: Claim,staged: StagedGeneration,counts: ProblemRows.Counts): StagedGeneration = {
     (0 until counts.pieces by PassageStorage.rowsPerStatement).foreach { from =>
       staging(claim,staged.generation,StagedLock.Write)(c => Sql.exec(c,"DELETE FROM ch_chunks WHERE generation=? AND ordinal>=? AND ordinal<?",staged.generation,from,from+PassageStorage.rowsPerStatement))
     }
+    while(staging(claim,staged.generation,StagedLock.Write)(PassageStorage.deleteLineageTagsStep(_,staged.generation))) {}
     val next=staged.copy(step=0,invalid=false)
     staging(claim,staged.generation,StagedLock.Write)(c => Check(PassageStorage.resume(c,claim,next),"internal","staged generation resume point not recorded"))
     next
@@ -582,10 +585,12 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       // All of the switch or none: its last statement can still find the lease ended.
       val switching=c.setSavepoint()
       val completed=Sql.exec(c,"DELETE FROM ch_staged_generations WHERE generation=? AND job_id=? AND run_id=?",generation,claim.jobId,claim.runId)==1 && {
-        Sql.one(c,"SELECT published FROM ch_sources WHERE id=?",claim.sessionId)(r => Option(r.getObject(1,classOf[UUID]))).flatten.foreach { previous =>
+        val previous=Sql.one(c,"SELECT published FROM ch_sources WHERE id=?",claim.sessionId)(r => Option(r.getObject(1,classOf[UUID]))).flatten
+        previous.foreach { previous =>
           Sql.exec(c,"INSERT INTO ch_generation_retirements(generation,payload) VALUES(?,false) ON CONFLICT DO NOTHING",previous)
         }
         Sql.exec(c,"UPDATE ch_generations SET passage_count=? WHERE id=?",passages.toLong,generation)
+        PassageStorage.switchRoot(c,generation,previous)
         Sql.exec(c,"UPDATE ch_sources SET published=? WHERE id=?",generation,claim.sessionId)
         ReindexCohort.published(c,claim,generation)
         Sql.exec(c,s"UPDATE ch_jobs SET state='Complete',error=NULL,failure_stage=NULL,lease_until=NULL WHERE $validJob",jobArgs(claim)*)==1
@@ -595,10 +600,15 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       completed
     }
   }
-  /** Deletes the search rows of the generations a switch of the claim's source replaced, and the derived rows of those an
-    * explicit rebuild retired, in bounded statements (spec §5.2.4 retirement); the maintenance pass completes what a
-    * crash leaves. */
-  def retire(claim: Claim): Unit = db.transaction(c => PassageStorage.retiring(c,Some(claim.sessionId))).foreach(PassageStorage.retire(db,_))
+  /** Deletes the search rows of the generations a switch of the claim's source replaced (with every generation of a
+    * replaced lineage, whose tag rows go too), and the derived rows of those an explicit rebuild retired, and the
+    * superseded ranges of search rows, in bounded statements (spec §5.2.4 retirement, §5.6.2 step 4); the maintenance
+    * pass completes what a crash leaves. */
+  def retire(claim: Claim): Unit = {
+    db.transaction(c => PassageStorage.retiringLineages(c,Some(claim.sessionId))).foreach(PassageStorage.retireLineage(db,_))
+    db.transaction(c => PassageStorage.retiring(c,Some(claim.sessionId))).foreach(PassageStorage.retire(db,_))
+    db.transaction(c => PassageStorage.retiringRanges(c,Some(claim.sessionId))).foreach(PassageStorage.retireRange(db,_,_))
+  }
   def fail(claim: Claim,code: String): Unit = failAt(claim,code,None)
   def fail(claim: Claim,code: String,stage: IndexingStage): Unit = failAt(claim,code,Some(stage))
   private def failAt(claim: Claim,code: String,stage: Option[IndexingStage]): Unit = db.transaction { c =>
@@ -610,15 +620,14 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       else Sql.exec(c,s"UPDATE ch_jobs SET state=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN 'Failed' ELSE 'Queued' END,error=?,failure_stage=NULLIF(?,''),lease_until=NULL,completed_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN completed_windows ELSE 0 END,total_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN total_windows ELSE NULL END WHERE $validJob",(List[Sql.Param](exhausted,code.take(64),stage.fold("")(_.toString),exhausted,exhausted)++jobArgs(claim))*)
     }
   }
-  private def chunksQuery(generation: UUID,offset: Int,limit: Int): ReadSources.Query = ReadSources.Query("SELECT value FROM ch_chunks WHERE generation=? ORDER BY ordinal,id LIMIT ? OFFSET ?",List(generation,limit,offset))
-  private def chunkSourceBytes(c: Connection,view: ContentView,offset: Int,limit: Int): Long = view.generationId.map(generation => ReadSources.bytes(c,chunksQuery(generation,offset,limit))).getOrElse(0L)
-  private def chunkCount(c: Connection,view: ContentView): Int = view.generationId.map(generation => Sql.one(c,"SELECT count(*) FROM ch_chunks WHERE generation=?",generation)(_.getInt(1)).get).getOrElse(0)
+  private def chunkSourceBytes(c: Connection,view: ContentView,offset: Int,limit: Int): Long = view.generationId.map(generation => ReadSources.bytes(c,GenerationRows.chunks(generation,offset,limit))).getOrElse(0L)
+  private def chunkCount(c: Connection,view: ContentView): Int = view.generationId.map(GenerationRows.pieceCount(c,_)).getOrElse(0)
   private def chunkCountBytes(view: ContentView,total: Int): Long = if(view.generationId.isDefined) JsonUtf8Size(Json.obj("count"->Json.fromInt(total))) else 0L
   private def chunksForView(c: Connection,view: ContentView,offset: Int,limit: Int): ChunksResult = chunksForView(c,view,offset,limit,chunkCount(c,view))
   private def chunksForView(c: Connection,view: ContentView,offset: Int,limit: Int,total: Int): ChunksResult = view.generationId match {
     case None => ChunksResult(Nil,0,offset,view)
     case Some(generation) =>
-      val query=chunksQuery(generation,offset,limit)
+      val query=GenerationRows.chunks(generation,offset,limit)
       val values=Sql.rows(c,query.sql,query.args*)(r => Wire.decode(Chunk.codecJson,Sql.json(r,"value")))
       ChunksResult(values,total,offset,view)
   }

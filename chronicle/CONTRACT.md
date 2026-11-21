@@ -446,8 +446,9 @@ scalar. SQL checks the enclosing prefix-length inequalities; a violated
 projection invariant fails rather than returning an unrelated preview.
 
 Semantic evidence comes only from retained positive-operand ANN candidate IDs,
-ordered deterministically by original full distance, operand order and chunk ID.
-The selected chunk is fetched without retrieval or model calls, after validating
+ordered deterministically by original full distance, operand order, the chunk's
+place in its session and chunk ID. The selected chunk is fetched without
+retrieval or model calls, after validating
 its exact same-session generation/revision pin. At most two representative
 matches are returned: when both kinds exist, one literal span and one semantic
 span; otherwise up to two literals, or the first real spans from at most two

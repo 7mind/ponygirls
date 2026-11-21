@@ -65,7 +65,7 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
     db.transaction { c =>
       Sql.exec(c,s"CREATE ROLE $role LOGIN PASSWORD '${Fixtures.databasePassword}'")
       Sql.exec(c,s"GRANT USAGE ON SCHEMA public TO $role")
-      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_staged_generations,ch_problem_passages,ch_problem_spans TO $role")
+      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_staged_generations,ch_lineage_segments,ch_problem_passages,ch_problem_spans TO $role")
       Sql.exec(c,s"GRANT SELECT(session_id,revision) ON ch_revisions TO $role")
     }
     try {
@@ -98,7 +98,7 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
         Sql.exec(held,"LOCK TABLE ch_problem_passages IN ACCESS EXCLUSIVE MODE")
         pending=executor.submit(new Callable[PassagesResult] { def call(): PassagesResult=archive.passages("b",receipt.sessionId,0,100,Some(view)) })
         val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5)
-        def blocked: Boolean=db.transaction(c => Sql.one(c,"SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT value FROM ch_problem_passages%')")(_.getBoolean(1)).get)
+        def blocked: Boolean=db.transaction(c => Sql.one(c,"SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT p.value FROM %JOIN ch_problem_passages p%')")(_.getBoolean(1)).get)
         while(!blocked && System.nanoTime()<deadline) Thread.sleep(5)
         assert(blocked,"metadata read must be observed after snapshot authorization, waiting on the passage table")
         db.transaction { c => Sql.exec(c,"DELETE FROM ch_members WHERE group_id=? AND user_id='b'",group) }
