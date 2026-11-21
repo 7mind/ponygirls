@@ -731,6 +731,9 @@ try {
       const url = new URL(request.url, origin), [sessionId, revision, file, ...rest] = url.pathname.split('/').slice(3);
       fixture.rawRequests.push(`${request.method} ${url.pathname}${url.search}`);
       const failure = (status, code, message) => response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ code, message }));
+      // The server's browser boundary (R1): no query string, no Authorization, Origin absent or exact, the session cookie.
+      if (url.search !== '') return failure(400, 'invalid', 'Query strings are not accepted');
+      if (request.headers.authorization !== undefined || (request.headers.origin !== undefined && request.headers.origin !== origin)) return failure(403, 'forbidden', 'Browser requests only');
       if (request.headers.cookie !== 'chronicle_session=synthetic') return failure(401, 'unauthorized', 'Sign in');
       if (sessionId !== fixture.session.id || revision !== String(fixture.view.revision) || rest.length > 0) return failure(404, 'not-found', 'Raw source not found');
       if (file === undefined) return response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ sessionId, revision: fixture.view.revision, files: RAW_FILES.map((bytes, index) => ({ index, path: `synthetic/part-${index + 1}.jsonl`, sha256: sha256(bytes), bytes: String(bytes.length) })) }));
@@ -752,7 +755,7 @@ try {
     const [download] = await Promise.all([page.waitForEvent('download'), second.click()]);
     assert.equal(sha256(await readFile(await download.path())), sha256(RAW_FILES[1]), 'the saved file is byte-exact');
     assert.equal(download.suggestedFilename(), `chronicle-${fixture.session.id}-r${pinned}-f1.jsonl`);
-    assert.deepEqual(fixture.rawRequests, [`GET ${base}/${pinned}`, `GET ${base}/${pinned}/1`], 'one manifest read, then the bytes, both with the session cookie');
+    assert.deepEqual(fixture.rawRequests, [`GET ${base}/${pinned}`, `GET ${base}/${pinned}/1`], 'one manifest read, then the bytes, both inside the browser boundary');
     await sessionMenu(page, 'Go to latest archive'); await page.locator('.session-meta').filter({ hasText: `source r${fixture.headRevision}` }).waitFor();
     await raw.getByText('Not available for this revision', { exact: true }).waitFor();
     assert.equal(await raw.getByRole('link').count(), 0, 'no link to a revision the server does not offer');
