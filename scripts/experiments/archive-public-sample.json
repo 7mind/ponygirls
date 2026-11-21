@@ -1,0 +1,106 @@
+{
+  "submissionMetadata": "https://github.com/SWE-bench/experiments/blob/40f164d5b8f1d249bf95a6df8b74b577fd8e519d/evaluation/verified/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/metadata.yaml",
+  "samplingFrame": {
+    "sympy__sympy": 75,
+    "matplotlib__matplotlib": 34,
+    "sphinx-doc__sphinx": 44
+  },
+  "objects": [
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sympy__sympy-18189/sympy__sympy-18189.traj.json",
+      "sha256": "c127e21d4f18fdc0ea464e077423de0aec9e62ceb56151a932f2b05104194770"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sympy__sympy-23950/sympy__sympy-23950.traj.json",
+      "sha256": "321621f689e3432a51d18013e88d7fb6937b542fbdf18f08b1ffdb59540d55f9"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sympy__sympy-16766/sympy__sympy-16766.traj.json",
+      "sha256": "8989313ca406c03e966b0c981f9b558f242edd1d6422442e70b39177dc55f61a"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sympy__sympy-19346/sympy__sympy-19346.traj.json",
+      "sha256": "86c0f3cc95a9da4328b8465c470d620c234a841eae919421cf009a0a15461dc7"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sympy__sympy-14248/sympy__sympy-14248.traj.json",
+      "sha256": "9b02b9af86a699126f1ebb2e24432d4f68630bdf242a234ef555c9a4bd20ad91"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sympy__sympy-17655/sympy__sympy-17655.traj.json",
+      "sha256": "4b8d3a90cda257b37eae6a07f7966d1c814f2df82433cac7310c5769d9fada96"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sympy__sympy-18698/sympy__sympy-18698.traj.json",
+      "sha256": "65501943685d5e4ec65895a665d8fde344e1732b9738b88ac37fc7651ed2b31b"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sympy__sympy-21930/sympy__sympy-21930.traj.json",
+      "sha256": "029510c77b3f38fc96b5ed4f6bbb3dc62a5d60b51888d4ac1d69d62fbbed6d7e"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/matplotlib__matplotlib-25775/matplotlib__matplotlib-25775.traj.json",
+      "sha256": "038f309970c7677aa5ec41837d5e3eb41d811cfe552faa9c748a857c8ff1be30"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/matplotlib__matplotlib-20826/matplotlib__matplotlib-20826.traj.json",
+      "sha256": "068d256dc3bda34198dd5ebb7ea1ed9b85737be7679501e71c03634bae085be6"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/matplotlib__matplotlib-25960/matplotlib__matplotlib-25960.traj.json",
+      "sha256": "90d63404f29116010b45fdfd80f773c91003d79b614e7aadf1c61d461ecf46bf"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/matplotlib__matplotlib-24149/matplotlib__matplotlib-24149.traj.json",
+      "sha256": "65bd2327724d12e863c801f6cbe5a505bcfe768a10b291202ed5fba42f2f1750"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/matplotlib__matplotlib-26342/matplotlib__matplotlib-26342.traj.json",
+      "sha256": "8b154198797a4ef92b85a29b2996a048cc74b2bec305984ab0d786f15b78428e"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/matplotlib__matplotlib-24970/matplotlib__matplotlib-24970.traj.json",
+      "sha256": "3fdb40bd0a5a5932f027345a16cadb2ba87c067379df96a745e621d1c6015a37"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/matplotlib__matplotlib-23476/matplotlib__matplotlib-23476.traj.json",
+      "sha256": "5d9de921a7f7d79cda4dcc85a9e019eda65d12107d6531b8fd67e63cc65326ec"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/matplotlib__matplotlib-24177/matplotlib__matplotlib-24177.traj.json",
+      "sha256": "5c0d8c784d47155f40efb069ca1acaaa1b13f3dcb2884826ef23a9509620ae59"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sphinx-doc__sphinx-7757/sphinx-doc__sphinx-7757.traj.json",
+      "sha256": "88098beb917c241b7a5db17efa372e6160d5b63e95a8db75941581d81ec99b71"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sphinx-doc__sphinx-8035/sphinx-doc__sphinx-8035.traj.json",
+      "sha256": "0a842bb95040b20772d5a8f72715da7ffe49e5c254e0a501d9ea093e1d5c6ca2"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sphinx-doc__sphinx-8593/sphinx-doc__sphinx-8593.traj.json",
+      "sha256": "fda592d609d8ebf38c703dc38f2aa3d601048eac787aef7f60b38148eb91346f"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sphinx-doc__sphinx-8548/sphinx-doc__sphinx-8548.traj.json",
+      "sha256": "8a198d05fd2826660a189e22829da64f059f68ee3c5760fe0d3b92dd3bb79843"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sphinx-doc__sphinx-9658/sphinx-doc__sphinx-9658.traj.json",
+      "sha256": "354827d60f1e57a093d7a888fa09195c806b774dabb7a913d4f4e92a87f56a05"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sphinx-doc__sphinx-10449/sphinx-doc__sphinx-10449.traj.json",
+      "sha256": "b952eb63f39ca50ffc44169e0a45f42dc1c665e4d469d0e5555ae06607b9faac"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sphinx-doc__sphinx-9461/sphinx-doc__sphinx-9461.traj.json",
+      "sha256": "02fe93cdc94ef863f5c0d65e84438696f5ac9760bd9a53fec80bf920d65783ee"
+    },
+    {
+      "key": "bash-only/20250726_mini-v1.0.0_gpt-4.1-2025-04-14/trajs/sphinx-doc__sphinx-9602/sphinx-doc__sphinx-9602.traj.json",
+      "sha256": "48b01d45f2ee78c40056864a00247598388860d6d286a621bcc494a9c7ccf6b4"
+    }
+  ]
+}
