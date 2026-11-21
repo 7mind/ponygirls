@@ -50,27 +50,28 @@ object SearchPolicy {
 private[chronicle] final case class SearchStatement(sql: String,args: List[Sql.Param],ann: Boolean=false)
 final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config,budget: SemanticLegBudget) extends SearchIndex {
   def this(db: Database,archive: PostgresArchive,config: Config) = this(db,archive,config,SemanticLegBudget.production)
-  /** The filters of a relation with ch_sources `s`, the published revision's ch_revision_info `r` and the published
-    * ch_generations row `published`. */
-  private def filter(f: SearchFilter,published: String): (String,List[Sql.Param]) = {
+  /** The filters of a relation with ch_sources `s`, the published revision's metadata `r.metadata` and the published
+    * ch_generations row `published` (none: the tag filter reads the generation of `s.published`). */
+  private def filter(f: SearchFilter,published: Option[String]): (String,List[Sql.Param]) = {
     val b = List.newBuilder[String]; val p = List.newBuilder[Sql.Param]
     List(("project",f.project),("gitBranch",f.gitBranch)).foreach { case (key,v) => v.foreach { s => Check.text(s,256); b += s"r.metadata->>'$key'=?"; p += s } }
     f.after.foreach { s => Check(scala.util.Try(java.time.Instant.parse(s)).isSuccess,"invalid","invalid time filter"); b += "(r.metadata->>'startedAt')::timestamptz>=?::timestamptz"; p += s }
     f.before.foreach { s => Check(scala.util.Try(java.time.Instant.parse(s)).isSuccess,"invalid","invalid time filter"); b += "(r.metadata->>'startedAt')::timestamptz<=?::timestamptz"; p += s }
     Check(f.tags.size<=32,"invalid","tag filter limit")
-    f.tags.foreach { s => Check.text(s,128); b += s"((r.metadata->'tags') @> ?::jsonb OR EXISTS(SELECT 1 FROM ${GenerationRows.tags(s"$published.id",s"$published.lineage",s"$published.lineage_version")} tagged WHERE tagged.tag=?))"; val tag=io.circe.Json.arr(io.circe.Json.fromString(s)).noSpaces; p += tag; p += s }
+    val generated=published.fold(s"ch_generations tagged_g CROSS JOIN LATERAL ${GenerationRows.tags("tagged_g.id","tagged_g.lineage","tagged_g.lineage_version")} tagged WHERE tagged_g.id=s.published AND")(g => s"${GenerationRows.tags(s"$g.id",s"$g.lineage",s"$g.lineage_version")} tagged WHERE")
+    f.tags.foreach { s => Check.text(s,128); b += s"((r.metadata->'tags') @> ?::jsonb OR EXISTS(SELECT 1 FROM $generated tagged.tag=?))"; val tag=io.circe.Json.arr(io.circe.Json.fromString(s)).noSpaces; p += tag; p += s }
     (b.result().map(" AND "+_).mkString,p.result())
   }
   private def facetCorpus(reader: String,f: SearchFilter): SearchStatement = {
-    val (fs,p)=filter(f,"g")
+    val (fs,p)=filter(f,Some("g"))
     SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT s.id,s.published,g.lineage,g.lineage_version,r.metadata FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.visible}$fs)",List(reader,reader,reader)++p)
   }
   private[chronicle] def statement(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchStatement = statement(reader,q,vector,LegPass.Index)
   private def statement(reader: String,q: SearchQuery,vector: Option[List[Double]],pass: LegPass): SearchStatement = {
-    val (fs,fp)=filter(q.filter,"p")
+    val (fs,fp)=filter(q.filter,None)
     // OFFSET 0 keeps the live authorization check inside the ordered index scan, before its limit: the row is a piece of
     // the published generation, whose revision's metadata the filters read.
-    val authorized=s"(SELECT true FROM ch_sources s JOIN ch_generations p ON p.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=p.revision WHERE s.id=ch.session_id AND ${GenerationRows.piece("s.published","p.lineage","p.lineage_version","ch")} AND ${archive.visible}$fs OFFSET 0)"
+    val authorized=s"(SELECT true FROM ch_sources s CROSS JOIN LATERAL(${GenerationRows.publishedInfo("s.id","s.published","ch")}) r WHERE s.id=ch.session_id AND ${archive.visible}$fs OFFSET 0)"
     val acl: List[Sql.Param]=List(reader,reader,reader)++fp
     val lexicalPredicate=if(q.query.nonEmpty) "ch.document @@ websearch_to_tsquery('english',?) AND " else ""
     val lexicalArgs: List[Sql.Param]=(if(q.query.nonEmpty) List(q.query) else Nil)++acl
@@ -102,12 +103,12 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
   private def visibleChunks(fs: String): String =
     s"ch_sources s JOIN ch_generations p ON p.id=s.published JOIN ch_search_chunks ch ON ch.session_id=s.id AND ${GenerationRows.piece("s.published","p.lineage","p.lineage_version","ch")} JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=p.revision WHERE ${archive.visible}$fs AND ${IndexProfiles.compatibleSql("ch.profile")}"
   private def visibleCount(c: Connection,reader: String,q: SearchQuery): Long = {
-    val (fs,fp)=filter(q.filter,"p")
+    val (fs,fp)=filter(q.filter,Some("p"))
     Sql.one(c,s"SELECT count(*) FROM (SELECT 1 FROM ${visibleChunks(fs)} AND vector_dims(ch.embedding)=${SearchPolicy.dimensions(config)} LIMIT ?) visible",
       (List[Sql.Param](reader,reader,reader)++fp++List(EmbeddingSpaceDescriptor.from(config.embedding).id,SemanticLeg.visibleCap(budget)))*)(_.getLong(1)).get
   }
   private[chronicle] def legacyStatement(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchStatement = {
-    val (fs,fp)=filter(q.filter,"g")
+    val (fs,fp)=filter(q.filter,Some("g"))
     val semantic=q.mode!=SearchMode.Lexical
     val distance=if(semantic) "embedding <=> ?::vector" else "0.0"
     val score=q.mode match {
@@ -122,8 +123,9 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
   }
   private[chronicle] def pageStatement(plan: SearchStatement,q: SearchQuery): SearchStatement = {
     val annRows=if(plan.ann) "(SELECT count(*) FROM ann) AS ann_rows," else ""
-    // A hit's view is its session's published generation and revision (the chunk's row may be an earlier origin's).
-    SearchStatement(plan.sql+s",result_sessions AS MATERIALIZED(SELECT hit.id,hs.published AS generation,hit.session_id,hp.revision,hit.score FROM sessions hit JOIN ch_sources hs ON hs.id=hit.session_id JOIN ch_generations hp ON hp.id=hs.published) SELECT counted.total,${annRows}page.id,page.generation,page.session_id,page.revision,page.score FROM (SELECT count(*) AS total FROM result_sessions) counted LEFT JOIN LATERAL(SELECT * FROM result_sessions ORDER BY score DESC,session_id LIMIT ? OFFSET ?) page ON true ORDER BY page.score DESC,page.session_id",plan.args++List(q.limit,q.offset),plan.ann)
+    // A hit's view is its session's published generation and revision (the chunk's row may be an earlier origin's); only the
+    // page's hits read it, not every ranked session.
+    SearchStatement(plan.sql+s",result_sessions AS MATERIALIZED(SELECT id,session_id,score FROM sessions) SELECT counted.total,${annRows}page.id,page.generation,page.session_id,page.revision,page.score FROM (SELECT count(*) AS total FROM result_sessions) counted LEFT JOIN LATERAL(SELECT hit.id,hs.published AS generation,hit.session_id,hp.revision,hit.score FROM (SELECT * FROM result_sessions ORDER BY score DESC,session_id LIMIT ? OFFSET ?) hit JOIN ch_sources hs ON hs.id=hit.session_id JOIN ch_generations hp ON hp.id=hs.published) page ON true ORDER BY page.score DESC,page.session_id",plan.args++List(q.limit,q.offset),plan.ann)
   }
   def search(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchResult = search(reader,q,vector,ReadMaterialization.unrestricted)
   def search(reader: String,q: SearchQuery,vector: Option[List[Double]],materialization: ReadMaterialization): SearchResult = run(reader,q,vector,false,materialization)

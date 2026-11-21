@@ -310,7 +310,7 @@ final class GenerationLineageTest extends munit.FunSuite {
     }
     /** Per tuple: the published generation's lineage and the row's origin (E7's hashed form probes by origin alone). */
     def correlated(scans: List[(String,String)],index: Boolean): Unit = scans.foreach { (node,condition) =>
-      assert(raw".*\(lineage = p(_[0-9]+)?\.lineage\).*".r.matches(condition) && raw".*\(origin = ch(_[0-9]+)?\.generation\).*".r.matches(condition) && (!index || node.startsWith("Index")),scans.mkString("\n"))
+      assert(raw".*\(lineage = [pc](_[0-9]+)?\.lineage\).*".r.matches(condition) && raw".*\(origin = ch(_[0-9]+)?\.generation\).*".r.matches(condition) && (!index || node.startsWith("Index")),scans.mkString("\n"))
     }
     // E7's statistics: many generations analyzed, a near-empty segment table freshly analyzed.
     f.db.transaction { c =>
@@ -411,6 +411,47 @@ final class GenerationLineageTest extends munit.FunSuite {
       assert(found.evidence.flatMap(_.matches).nonEmpty,s"$pass $expression")
       assertEquals(archive("c").page.rows.map(_.head.id),List(h.secret),s"$pass $expression")
     }
+  }}
+
+  test("the per-row authorization reads the published generation's row and probes the segments only for rows of another origin: in the production statements' plans both are bounded by those rows, not by the candidates") { database { f =>
+    val h=hidden(f)
+    val limit=10
+    // Discriminating: the own rows each leg checks outnumber the bound of both legs.
+    assert(h.visibleOwn>2*h.otherOrigin+limit,h.toString)
+    def loops(sql: String,args: List[Sql.Param]): Map[String,Long] = {
+      val plan=f.db.transaction { c =>
+        SemanticLeg.configure(c,SemanticLegBudget.production)
+        Sql.one(c,"EXPLAIN (ANALYZE,FORMAT JSON) "+sql,args*)(_.getString(1)).get
+      }
+      // A relation's executions: its scan's loops, or for a hashed scan, the loops of the join probing the hash table.
+      def loops(node: io.circe.Json): Long = node.hcursor.get[Long]("Actual Loops").getOrElse(fail(plan))
+      def scans(node: io.circe.Json,probes: Long): List[(String,Long)] = {
+        val c=node.hcursor
+        val children=c.downField("Plans").values.toList.flatten
+        val hashed=c.get[String]("Node Type").toOption.contains("Hash Join")
+        c.get[String]("Relation Name").toOption.map(_ -> math.max(loops(node),probes)).toList++
+          children.flatMap(child => scans(child,if(hashed && child.hcursor.get[String]("Node Type").toOption.contains("Hash")) loops(node) else if(c.get[String]("Node Type").toOption.contains("Hash")) probes else 0L))
+      }
+      scans(Wire.parse(plan).asArray.get.head.hcursor.downField("Plan").focus.get,0L).groupMapReduce(_._1)(_._2)(_+_)
+    }
+    val pages=List(SearchMode.Semantic,SearchMode.Hybrid,SearchMode.Lexical).map { mode =>
+      val q=SearchQuery("goal",mode,emptyFilter,limit,0)
+      mode -> f.search.pageStatement(f.search.statement("a",q,Option.when(mode!=SearchMode.Lexical)(hiddenVector)),q)
+    }
+    pages.foreach { (mode,page) =>
+      val read=loops(page.sql,page.args)
+      assert(read.getOrElse("ch_search_chunks",0L)>0,s"$mode $read")
+      // The page's hits read their view (limit); each leg's authorization reads the generation for another origin's rows.
+      val legs=if(mode==SearchMode.Hybrid) 2 else 1
+      assert(read.getOrElse("ch_generations",0L)<=legs*h.otherOrigin+limit,s"$mode $read $h")
+      assert(read.getOrElse("ch_lineage_segments",0L)<=legs*h.otherOrigin,s"$mode $read $h")
+    }
+    val parsed=ArchiveExpression.parse("mode:semantic goal")
+    val archive=f.index.statement("a",ArchiveQuery("mode:semantic goal",ArchiveSort.LastTimestamp,SortDirection.Desc,None,limit,true),parsed,parsed.textOperands.map(ArchiveVector(_,hiddenVector)),None)
+    val read=loops(archive.text,archive.args)
+    // The corpus reads each readable source's published generation once; the semantic leg reads none.
+    assert(read.getOrElse("ch_generations",0L)<=2,read.toString)
+    assert(read.getOrElse("ch_lineage_segments",0L)<=h.otherOrigin,read.toString)
   }}
 
   test("exact score ties are ordered by session and ordinal, not by chunk id: two id assignments rank alike in every mode") { database { f =>

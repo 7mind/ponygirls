@@ -41,6 +41,13 @@ private[chronicle] object GenerationRows {
     * EXISTS inside the OR, PostgreSQL 18 planned it as a hashed ANY probing by origin alone (spec §5.6.2, E7). */
   def piece(id: String,lineage: String,version: String,row: String): String =
     s"($id=$row.generation OR (SELECT true FROM ch_lineage_segments held_m WHERE held_m.lineage=$lineage AND held_m.origin=$row.generation AND held_m.since<=$version AND (held_m.until IS NULL OR held_m.until>$version) AND held_m.kind='piece' AND $row.ordinal>=held_m.lo AND $row.ordinal<held_m.hi LIMIT 1))"
+  /** The published revision's ch_revision_info `metadata` for the search row `row` (an alias with generation, revision
+    * and ordinal) of the source whose id and published generation are the SQL expressions given, if the row is a piece of
+    * that generation, else no row. A row of the published generation itself is of its revision and reads neither the
+    * generation's row nor the segments (one probe per index tuple, as before 028); a row of an earlier origin reads the
+    * generation's revision, lineage and version and probes the segments as `piece`. */
+  def publishedInfo(source: String,published: String,row: String): String =
+    s"SELECT own.metadata FROM ch_revision_info own WHERE $published=$row.generation AND own.session_id=$source AND own.revision=$row.revision UNION ALL SELECT held.metadata FROM ch_generations p JOIN ch_revision_info held ON held.session_id=$source AND held.revision=p.revision WHERE p.id=$published AND $published<>$row.generation AND ${piece(published,"p.lineage","p.lineage_version",row)}"
   /** The generated tags (column `tag`) of the published generation whose id, lineage and version are the SQL expressions
     * given: its lineage's tag set, or the own tags of a generation without a version. */
   def tags(id: String,lineage: String,version: String): String =
