@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync, writeSync, appendFileSync, ftruncateSync } from 'node:fs';
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync, appendFileSync, ftruncateSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -13,7 +13,7 @@ import { SqliteSpool, type Spool } from '../src/spool.ts';
 import { encodeSnapshot, HttpIngester, sourceIdentity, sourceKey } from '../src/ingest.ts';
 import { HttpUploader } from '../src/uploads.ts';
 import { messageDigest, MessageChain, INITIAL_CHAIN } from '../src/chain.ts';
-import { readerMemory, READ_BUFFER_BYTES } from '../src/lines.ts';
+import { lineReads, readerMemory, READ_BUFFER_BYTES } from '../src/lines.ts';
 import { generateParts } from '../src/passes.ts';
 import { parseTranscript } from '../src/parsers.ts';
 import { resolveRuntimePrivacy } from '../src/runtime-privacy.ts';
@@ -57,6 +57,8 @@ async function harness(extra: Record<string, unknown> = {}) {
   };
 }
 const attemptsOf = (server: FakeChronicle, producer: string) => [...server.attempts.values()].filter(attempt => attempt.open.source.producerSessionId === producer);
+/** `--status --json`'s record of the latest pass 1 over the only discovered file. */
+const lastPass = (h: { collector: () => Collector }) => { const sources = h.collector().status().sources; assert.equal(sources.length, 1); return sources[0]!.lastPass; };
 
 test('UploadParts message chain v1 reproduces the golden vectors, U+0000 hashing as its stored six characters', () => {
   const vectors = JSON.parse(readFileSync(new URL('../../../../tests/message-chain-v1.json', import.meta.url), 'utf8')) as { initial: string; cases: { name: string; messages: { id: string; parentId: string | null; role: string; text: string; timestamp: string | null; recordIndex: number }[]; messageDigests: string[]; chains: string[] }[] };
@@ -91,6 +93,8 @@ test('UploadParts appends the delta to an unchanged prefix; a Pi v2→v3 rewrite
     assert.ok(appended?.open.base !== undefined); assert.equal(appended.rawBytes, BigInt(Buffer.byteLength(aDelta)));
     assert.equal(attemptsOf(h.server, 'pi-b')[1]?.open.base, undefined);
     assert.equal(attemptsOf(h.server, 'codex-thread')[1]?.open.base, undefined);
+    const passes = new Map(h.collector().status().sources.map(source => [source.pathId, source.lastPass]));
+    assert.deepEqual([a, b, c].map(path => [passes.get(hash(path))?.kind, passes.get(hash(path))?.reason]), [['incremental', null], ['full', 'source-prefix-changed'], ['full', 'codex-dedup-changed']]);
     // Every upload committed the collector's declaration (the server's running digest equals it), and every open was
     // decided locally: none came back as a base mismatch.
     for (const attempt of h.server.attempts.values()) assert.equal(attempt.phase, UploadPhase.Committed);
@@ -286,7 +290,7 @@ test('UploadParts regenerates parts at file offsets above 2^32 as bigint, in a s
     const file = { root: { id: 'sparse', format: 'pi' as const, path: dir, layout: 'transcripts' as const, profile: null, origin: { kind: 'explicit' as const } }, path, relativePath: 's.jsonl' };
     const parts = generateParts({ file, policy: resolveRuntimePrivacy(loadConfig({ enabled: false }), syntheticSecrets).policy, recordCap: MiB, maxMessages: 10,
       stat: { dev: String(stat.dev), ino: String(stat.ino), size: String(stat.size), mtimeNs: String(stat.mtimeNs), ctimeNs: String(stat.ctimeNs) },
-      startRecord: 5, startOffset: offset, baseChain: INITIAL_CHAIN, partBudget: 8 * MiB, maxLargePartBytes: 16 * MiB });
+      startRecord: 5, startOffset: offset, baseChain: INITIAL_CHAIN, partBudget: 8 * MiB, maxLargePartBytes: 16 * MiB, codexSeed: null });
     const generated = [...{ [Symbol.iterator]: () => parts }];
     assert.equal(stat.size, offset + BigInt(Buffer.byteLength(delta)));
     assert.equal(generated.length, 1);
@@ -428,3 +432,117 @@ test('UploadParts enters record-over-limit only on the server code record-too-la
   } finally { await h.close(); }
 });
 
+
+test('UploadParts append parses only the addition; an in-place edit of an old line is detected at the next upload and becomes a replacement', async () => {
+  const h = await harness();
+  try {
+    const path = join(h.roots.pi, 's.jsonl');
+    writeFileSync(path, jsonl(piHeader('pi-edit'), piMessage('m1', 'original old line'), piMessage('m2', 'two')));
+    assert.equal((await h.run(1)).uploaded, 1);
+    const before = BigInt(statSync(path).size); const delta = jsonl(piMessage('m3', 'three')); appendFileSync(path, delta);
+    const appended = await h.run(2);
+    assert.deepEqual([appended.uploaded, appended.replacements], [1, 0]);
+    assert.deepEqual(lastPass(h), { kind: 'incremental', reason: null, parsedBytes: String(Buffer.byteLength(delta)), hashedBytes: String(before), at: 2 });
+    // The same number of bytes rewritten in place (same inode), then an append: only the prefix hash can tell.
+    const checkpoint = BigInt(statSync(path).size); const offset = readFileSync(path).indexOf('original');
+    const descriptor = openSync(path, 'r+'); writeSync(descriptor, 'REDACTED', offset); closeSync(descriptor);
+    appendFileSync(path, jsonl(piMessage('m4', 'four')));
+    const edited = await h.run(3);
+    assert.deepEqual([edited.uploaded, edited.replacements, edited.quarantined], [1, 1, 0]);
+    assert.deepEqual(h.spool.diagnostics().map(diagnostic => [diagnostic.code, diagnostic.pathId]), [['source-prefix-changed', hash(path)]]);
+    assert.deepEqual(lastPass(h), { kind: 'full', reason: 'source-prefix-changed', parsedBytes: String(statSync(path).size), hashedBytes: String(checkpoint), at: 3 });
+    const key = [...h.server.heads.keys()][0]!;
+    assert.equal(h.server.heads.get(key)?.digest, hash(readFileSync(path)));
+    const status = formatCollectorStatus(h.collector().status());
+    assert.match(status, /source-prefix-changed: pi \[/); assert.match(status, /\nPass 1, latest per file: 0 incremental · 1 full \(source-prefix-changed 1\)\n/);
+    appendFileSync(path, jsonl(piMessage('m5', 'five')));
+    assert.deepEqual(await h.run(4).then(counters => [counters.uploaded, counters.replacements]), [1, 0]);
+    assert.deepEqual([lastPass(h).kind, h.spool.diagnostics()], ['incremental', []]);
+    assert.equal(h.server.heads.get(key)?.digest, hash(readFileSync(path)));
+  } finally { await h.close(); }
+});
+
+test('UploadParts takes the full pass after a policy change, a record limit change, a head moved by another writer and a new inode', async () => {
+  const h = await harness();
+  try {
+    const path = join(h.roots.pi, 's.jsonl'); writeFileSync(path, jsonl(piHeader('pi-invalidate'), piMessage('m0', 'zero')));
+    assert.equal((await h.run(1)).uploaded, 1);
+    let settings: Record<string, unknown> = {};
+    const append = async (now: number, change: Record<string, unknown>): Promise<[string, string | null]> => {
+      settings = { ...settings, ...change }; appendFileSync(path, jsonl(piMessage(`m${now}`, `message ${now}`)));
+      const counters = await h.run(now, settings);
+      assert.deepEqual([counters.uploaded, counters.replacements], [1, 0], String(now));
+      return [lastPass(h).kind, lastPass(h).reason];
+    };
+    assert.deepEqual(await append(2, { redactions: { fieldNames: [], textPatterns: ['synthetic-absent'], secretFiles: [] } }), ['full', 'policy-changed']);
+    assert.deepEqual(await append(3, {}), ['incremental', null]);
+    assert.deepEqual(await append(4, { maxRecordBytes: 16 * MiB }), ['full', 'limits-changed']);
+    // Another writer (here `whole`, as a downgraded collector) commits the next revision.
+    appendFileSync(path, jsonl(piMessage('m5', 'whole'))); assert.equal((await h.run(5, { ...settings, uploadProtocol: 'whole' })).uploaded, 1);
+    assert.deepEqual(await append(6, {}), ['full', 'head-moved']);
+    const replaced = `${path}.new`; writeFileSync(replaced, readFileSync(path)); renameSync(replaced, path);
+    assert.deepEqual(await append(7, {}), ['full', 'file-replaced']);
+    assert.deepEqual(await append(8, {}), ['incremental', null]);
+    assert.equal([...h.server.heads.values()][0]?.digest, hash(readFileSync(path)));
+  } finally { await h.close(); }
+});
+
+test('UploadParts reads a file whose stat changes every cycle only once it is quiet', async () => {
+  const h = await harness({ quietMs: 1_000 });
+  try {
+    const path = join(h.roots.pi, 's.jsonl'); writeFileSync(path, jsonl(piHeader('pi-active')));
+    lineReads.bytes = 0n;
+    for (const now of [0, 600, 1_200]) {
+      appendFileSync(path, jsonl(piMessage(`m${now}`, 'still being written')));
+      assert.deepEqual(await h.run(now).then(counters => [counters.waiting, counters.scanned, counters.enqueued]), [1, 0, 0], String(now));
+    }
+    assert.equal(lineReads.bytes, 0n);
+    assert.deepEqual(await h.run(2_200).then(counters => [counters.scanned, counters.uploaded]), [1, 1]);
+  } finally { await h.close(); }
+});
+
+test('UploadParts opens a spool written by the base release: the first append takes the full pass, the next one is incremental', async () => {
+  const h = await harness();
+  try {
+    const path = join(h.roots.pi, 's.jsonl'); writeFileSync(path, jsonl(piHeader('pi-base'), piMessage('m1', 'one')));
+    assert.equal((await h.run(1)).uploaded, 1);
+    // What the base release writes: its buckets only, and observations signed by content digest and mtime.
+    const database = new DatabaseSync(join(h.dir, 'state', 'spool.sqlite'));
+    try {
+      const buckets = database.prepare('SELECT DISTINCT bucket FROM kv ORDER BY bucket').all().map(row => String(row['bucket']));
+      assert.deepEqual(buckets.filter(bucket => ['append-checkpoint', 'last-pass'].includes(bucket)), ['append-checkpoint', 'last-pass']);
+      database.exec("DELETE FROM kv WHERE bucket IN ('append-checkpoint', 'upload-checkpoint', 'codex-dedup', 'last-pass')");
+      database.prepare("UPDATE kv SET value=? WHERE bucket='observation'").run(JSON.stringify({ signature: `${hash(readFileSync(path))}:${Math.floor(statSync(path).mtimeMs)}`, since: 1 }));
+    } finally { database.close(); }
+    h.reopen();
+    appendFileSync(path, jsonl(piMessage('m2', 'two')));
+    assert.deepEqual(await h.run(2).then(counters => [counters.uploaded, counters.replacements]), [1, 0]);
+    assert.deepEqual([lastPass(h).kind, lastPass(h).reason], ['full', 'no-checkpoint']);
+    appendFileSync(path, jsonl(piMessage('m3', 'three')));
+    assert.deepEqual(await h.run(3).then(counters => [counters.uploaded, counters.replacements]), [1, 0]);
+    assert.deepEqual([lastPass(h).kind, lastPass(h).reason], ['incremental', null]);
+  } finally { await h.close(); }
+});
+
+test('UploadParts appends to a Codex session from the base offset with the duplicate state of its prefix', async () => {
+  const h = await harness();
+  try {
+    const path = join(h.roots.codex, 'c.jsonl'); writeFileSync(path, fixture('codex').trimEnd().split('\n').slice(0, 9).join('\n') + '\n');
+    assert.equal((await h.run(1)).uploaded, 1);
+    const event = (text: string) => ({ timestamp: '2026-01-01T00:01:00Z', type: 'event_msg', payload: { type: 'agent_message', message: text } });
+    // Dropped by a response item of the prefix, dropped by one of the addition, kept.
+    const delta = jsonl(event('function_call exec_command {"command":"synthetic-command"}'),
+      { timestamp: '2026-01-01T00:01:00Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'fresh reply' }] } },
+      event('fresh reply'), event('another event-only message'));
+    appendFileSync(path, delta); lineReads.bytes = 0n; const texts = h.server.texts.length;
+    assert.deepEqual(await h.run(2).then(counters => [counters.uploaded, counters.replacements]), [1, 0]);
+    // Both passes read the addition twice (response items, then records), never the prefix.
+    assert.equal(lineReads.bytes, 4n * BigInt(Buffer.byteLength(delta)));
+    assert.deepEqual(h.server.texts.slice(texts), ['fresh reply', 'another event-only message']);
+    // The head equals what a whole read of the file declares.
+    const whole = parseTranscript('codex', readFileSync(path), path, resolveRuntimePrivacy(h.settings(), syntheticSecrets).policy);
+    const chain = new MessageChain(); for (const message of whole.messages) chain.extend(messageDigest(message));
+    const head = [...h.server.heads.values()][0]!;
+    assert.deepEqual([head.digest, head.messageCount, head.chain], [hash(whole.raw), whole.messages.length, chain.hex]);
+  } finally { await h.close(); }
+});

@@ -9,7 +9,7 @@ export interface SourceFile { root: DiscoveredRoot; path: string; relativePath: 
 export interface Scan { files: SourceFile[]; diagnostics: Diagnostic[]; visited: number }
 /** Identity and change evidence of a source file, as decimal strings. */
 export interface SourceStat { dev: string; ino: string; size: string; mtimeNs: string; ctimeNs: string }
-export interface Snapshot { bytes: Buffer; digest: string; mtimeMs: number; stat: SourceStat }
+export interface Snapshot { bytes: Buffer; stat: SourceStat }
 /** A file was not read because its size exceeds `limit`. */
 export class SizeLimitError extends CollectorError {
   constructor(code: string, readonly size: number, readonly limit: number) { super(code); }
@@ -183,7 +183,7 @@ export function readSnapshot(file: SourceFile, maxFileBytes: number, scanBudget:
     }
     verifyUnchanged(file, source, BigInt(size));
     const bytes = buffer.subarray(0, size);
-    return { bytes, digest: hash(bytes), mtimeMs: Number(source.before.mtimeNs / 1_000_000n), stat: source.stat };
+    return { bytes, stat: source.stat };
   } catch (error) { throw error instanceof CollectorError ? error : new CollectorError('snapshot-read-failed'); }
   finally { if (source !== null) closeSource(source); }
 }

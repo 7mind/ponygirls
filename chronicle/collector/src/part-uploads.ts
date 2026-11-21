@@ -123,7 +123,7 @@ export class PartUploads {
     const { ctx } = this; let state = start;
     const parts = generateParts({ file, policy: ctx.policy, stat: entry.file, recordCap: ctx.recordCap, maxMessages: ctx.config.maxMessages,
       startRecord: entry.baseRecordCount, startOffset: BigInt(entry.baseFileOffset), baseChain: open.base?.messageChain ?? INITIAL_CHAIN,
-      partBudget: Number(entry.partBudget), maxLargePartBytes: Number(ctx.limits.maxLargePartBytes) });
+      partBudget: Number(entry.partBudget), maxLargePartBytes: Number(ctx.limits.maxLargePartBytes), codexSeed: entry.append ? entry.codexSeed ?? null : null });
     const next = (): IteratorResult<GeneratedPart, PartsSummary> => {
       try { return parts.next(); }
       catch (error) { throw new Regeneration(error instanceof CollectorError ? error.code : 'snapshot-read-failed'); }
@@ -199,7 +199,8 @@ export class PartUploads {
   private replan(entry: Upload): Upload {
     const requestId = randomUUID();
     const open = decodeOpen(entry.open).with({ requestId, base: undefined });
-    const next: Upload = { ...entry, requestId, open: encodeOpen(open), uploadId: null, append: false, baseRecordCount: 0, baseFileOffset: '0', partBudget: null, partsAcked: 0, lastPartSha256: null, attempts: 0, nextAt: 0, status: 'pending', error: null };
+    const { codexSeed: _, ...rest } = entry;
+    const next: Upload = { ...rest, requestId, open: encodeOpen(open), uploadId: null, append: false, baseRecordCount: 0, baseFileOffset: '0', partBudget: null, partsAcked: 0, lastPartSha256: null, attempts: 0, nextAt: 0, status: 'pending', error: null };
     this.ctx.spool.replanUpload(entry.requestId, next);
     return next;
   }

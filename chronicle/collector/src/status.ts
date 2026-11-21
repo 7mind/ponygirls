@@ -102,6 +102,11 @@ export function formatCollectorStatus(status: CollectorStatus): string {
     if (report.roots.length > 0) lines.push(`Roots in last saved scan (${count(report.roots.length)}):`);
     for (const root of report.roots) lines.push(`  ${literal(root.format)} / ${rootLabel(root.rootId, root.pathId)}: discovered ${count(root.discovered)}, scanned ${count(root.scanned)}, read ${bytes(root.bytes)}, waiting ${count(root.waiting)}, excluded ${count(root.excluded)}, quarantined ${count(root.quarantined)}${root.deferred === undefined ? '' : `, deferred ${count(root.deferred)}`}`);
   }
+  if (status.sources.length > 0) {
+    const full = status.sources.filter(source => source.lastPass.kind === 'full'); const reasons = new Map<string, number>();
+    for (const { lastPass } of full) reasons.set(lastPass.reason ?? 'unknown', (reasons.get(lastPass.reason ?? 'unknown') ?? 0) + 1);
+    lines.push(`Pass 1, latest per file: ${count(status.sources.length - full.length)} incremental · ${count(full.length)} full${reasons.size === 0 ? '' : ` (${[...reasons].map(([reason, number]) => `${literal(reason)} ${count(number)}`).join(', ')})`}`);
+  }
   const holds = new Map(status.diagnostics.flatMap(value => { const reason = holdReason(value); return reason === null ? [] : [[value.pathId, reason] as const]; }));
   const held = status.queue.filter(entry => holds.has(entry.sourceKey)).length;
   lines.push(status.queue.length === 0 ? 'Queue: empty' : `Queue: ${count(status.queue.length)} entries`);

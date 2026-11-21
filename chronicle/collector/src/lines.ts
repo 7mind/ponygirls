@@ -1,10 +1,13 @@
 import { readSync } from 'node:fs';
+import type { Hash } from 'node:crypto';
 import { CollectorError } from './domain.ts';
 
 export const READ_BUFFER_BYTES = 1_048_576;
 const MIN_LINE_CAPACITY = 65_536;
 /** The most bytes any line reader of this process has held at once: its read buffer and the line it assembles. */
 export const readerMemory = { highWater: 0 };
+/** The bytes every line reader of this process has read: what the passes parse. */
+export const lineReads = { bytes: 0n };
 /** A record longer than `limit` bytes; it was measured, never held. */
 export class RecordOverLimitError extends CollectorError {
   constructor(readonly recordIndex: number, readonly size: bigint, readonly limit: number) { super('record-over-limit'); }
@@ -30,6 +33,7 @@ export function* readLines(descriptor: number, start: bigint, end: bigint, first
     const count = readSync(descriptor, buffer, 0, wanted, position);
     // The file is shorter than its size at open: it changed while it was read.
     if (count === 0) throw new CollectorError('source-changed-during-read');
+    lineReads.bytes += BigInt(count);
     const chunk = buffer.subarray(0, count);
     let from = 0;
     while (from < count) {
@@ -47,4 +51,15 @@ export function* readLines(descriptor: number, start: bigint, end: bigint, first
   }
   if (over) throw new RecordOverLimitError(index, measured, cap);
   if (length > 0) yield { bytes: line.subarray(0, length), offset: lineStart, index, terminated: false };
+}
+
+/** Feeds the bytes of `descriptor` in [start, end) to `hash` (the native prefix check of an incremental pass). */
+export function hashRange(descriptor: number, start: bigint, end: bigint, hash: Hash): void {
+  const buffer = Buffer.allocUnsafe(end - start < BigInt(READ_BUFFER_BYTES) ? Math.max(1, Number(end - start)) : READ_BUFFER_BYTES);
+  for (let position = start; position < end;) {
+    const wanted = end - position < BigInt(buffer.length) ? Number(end - position) : buffer.length;
+    const count = readSync(descriptor, buffer, 0, wanted, position);
+    if (count === 0) throw new CollectorError('source-changed-during-read');
+    hash.update(buffer.subarray(0, count)); position += BigInt(count);
+  }
 }

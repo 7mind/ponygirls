@@ -1,12 +1,13 @@
 import { evidenceFor, heldByControls, pathAliases, type AdmissionEvidence, type Controls } from './controls.ts';
 import { randomUUID } from 'node:crypto';
 import { admissionReason, holdDiagnostic, isQueueHoldDiagnostic, ROOT_DENIED } from './admission.ts';
-import { CollectorError, hash, object, string, type CollectorReport, type Counters, type Diagnostic, type ParsedTranscript, type RootCoverage } from './domain.ts';
+import { CollectorError, hash, object, string, type CollectorReport, type Counters, type Diagnostic, type Format, type ParsedTranscript, type RootCoverage } from './domain.ts';
 import { discoverRoots, excludedPath, readSnapshot, sameStat, scanRoots, SCAN_BUDGET_DEFERRED, SizeLimitError, statSource, type SourceFile, type SourceStat } from './discovery.ts';
 import { parseTranscript } from './parsers.ts';
 import { resolveRuntimePrivacy, type RuntimePrivacy, type SecretReader } from './runtime-privacy.ts';
 import { encodeSnapshot, revisionMetadata, sourceIdentity, sourceKey, UploadError, type Ingester } from './ingest.ts';
-import { EVIDENCE_LIMITS, EvidenceLimitError, preflight, type StreamedTranscript, type TranscriptPrefix } from './passes.ts';
+import { CHECKPOINT_VERSION, EVIDENCE_LIMITS, EvidenceLimitError, MAX_RECORD_INDEX, preflight, SOURCE_PREFIX_CHANGED, type PassEnd, type PassStart, type StreamedTranscript, type TranscriptPrefix } from './passes.ts';
+import { Sha256 } from './sha256.ts';
 import { RecordOverLimitError } from './lines.ts';
 import { IDENTIFIER_UNICODE, NORMALIZATION_VERSION, payloadPredatesNormalization } from './unicode.ts';
 import { MessageChain, messageDigest } from './chain.ts';
@@ -23,21 +24,31 @@ import { CollectorProgressUpdate } from '../../generated/typescript/chronicle/ap
 import { ReportError, type ProgressReporter } from './progress.ts';
 import type { Config } from './config.ts';
 import type { GitMetadata, GitObservation } from './git.ts';
-import { headBase, type Head, type Dropped, type EntryStatus, type HeadBase, type IdentifierRefusal, type RecordOverLimit, type Spool, type Pending, type SourceRead, type UnicodeRepair, type Upload, type UploadProbe } from './spool.ts';
+import { headBase, type AppendCheckpoint, type Head, type Dropped, type EntryStatus, type HeadBase, type IdentifierRefusal, type LastPass, type RecordOverLimit, type Spool, type Pending, type SourceRead, type UnicodeRepair, type Upload, type UploadProbe } from './spool.ts';
 import type { CollectionOrigin } from './admission.ts';
 
 export type { Counters } from './domain.ts';
 // `read` is null for a file not read again because its stat is unchanged since a settled read. A whole read holds the
-// transcript; a preflight (parts) holds what pass 1 declared.
-type CandidateRead = { transcript: ParsedTranscript; stat: SourceStat } | { streamed: StreamedTranscript; stat: SourceStat };
+// transcript; a preflight (parts) holds what pass 1 declared and the checkpoint state it ended with.
+type CandidateRead = { transcript: ParsedTranscript; stat: SourceStat } | { streamed: StreamedTranscript; stat: SourceStat; end: PassEnd | null };
 interface Candidate { file: SourceFile; read: CandidateRead | null; key: string; digest: string; evidence: AdmissionEvidence }
 const controlsDigest = (controls: Controls): string => hash(JSON.stringify(controls.exclusions));
 // Overlapping roots can discover one path twice, as different sources.
 const fileId = (file: SourceFile): string => hash(JSON.stringify([file.root.id, file.root.format, file.path]));
+/** The observation signature: a file is read once its stat has not changed for `quietMs` (append-limits spec §2.2 item 1). */
+const statSignature = (stat: SourceStat): string => `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+/** A checkpoint read back from the spool has the fields an incremental pass resumes from. */
+const resumable = (checkpoint: AppendCheckpoint): boolean => {
+  const state = object(checkpoint.state) ? checkpoint.state : null;
+  return state !== null && object(state.transcript) && object(state.evidence) && Array.isArray(state.evidence.values) && typeof state.rawState === 'string' && typeof state.fileOffset === 'string'
+    && typeof state.filePrefixSha256 === 'string' && typeof state.dev === 'string' && typeof state.ino === 'string';
+};
 // Queued uploads built under another privacy/destination policy are discarded with this reason.
 export const POLICY_CHANGED = 'privacy-or-destination-changed';
 /** `--retry` removed a payload built before the Unicode normalization; the next scan rebuilds it from its file. */
 export const RETRY_REBUILD = 'retry-rebuild';
+/** A file's latest pass 1 as `--status --json` shows it, under `sources`. */
+export interface SourceStatus { sourceKey: string | null; rootId: string; pathId: string; lastPass: Pick<LastPass, 'kind' | 'reason' | 'parsedBytes' | 'hashedBytes' | 'at'> }
 /** A discovered file of a source and its size. */
 export interface SourceLocation { path: string; bytes: number }
 /** What the head becomes when a whole-file upload of `transcript` is acknowledged. */
@@ -97,6 +108,23 @@ export class Collector {
   private recordCap(): { cap: number; source: RecordOverLimit['limitSource']; server: string | null } {
     const stored = this.spool.serverLimits(); const server = stored === null ? null : decodeLimits(stored).maxRecordBytes;
     return server !== null && server < BigInt(this.config.maxRecordBytes) ? { cap: Number(server), source: 'server', server: String(server) } : { cap: this.config.maxRecordBytes, source: 'collector', server: server === null ? null : String(server) };
+  }
+  /** Where pass 1 starts for a file: its checkpoint, when that describes the committed head of its source with nothing
+   * queued for it, under the current policy and limits (append-limits spec §2.2 item 3); otherwise the whole file. */
+  private passStart(id: string, policy: string, limits: string, queued: ReadonlySet<string>): PassStart {
+    const checkpoint = this.spool.appendCheckpoint(id);
+    if (checkpoint === undefined) return { reason: 'no-checkpoint' };
+    if (checkpoint.version !== CHECKPOINT_VERSION) return { reason: 'checkpoint-version' };
+    if (!resumable(checkpoint)) return { reason: 'checkpoint-invalid' };
+    const head = this.spool.head(checkpoint.sourceKey); const base = headBase(head); const state = checkpoint.state;
+    if (head.tombstone || head.revision !== checkpoint.headRevision || head.digest !== checkpoint.headDigest || base === null || base.rawBytes !== state.rawBytes
+      || base.recordCount !== state.recordCount || base.messageCount !== state.messageCount || base.messageChain !== state.messageChain) return { reason: 'head-moved' };
+    if (queued.has(checkpoint.sourceKey)) return { reason: 'upload-queued' };
+    if (checkpoint.policyDigest !== policy) return { reason: 'policy-changed' };
+    if (checkpoint.limitsDigest !== limits) return { reason: 'limits-changed' };
+    let digest: string | null; try { digest = Sha256.resume(state.rawState).digest(); } catch { digest = null; }
+    if (digest !== checkpoint.headDigest) return { reason: 'checkpoint-invalid' };
+    return { checkpoint: state, codex: key => this.spool.codexBalance(id, key) };
   }
   async runOnce(now: number): Promise<Counters> {
     const counters = empty(this.config.enabled);
@@ -197,6 +225,9 @@ export class Collector {
       }
     }
     const recordCap = this.recordCap();
+    // Everything besides the lines, the policy and the head that pass 1's result depends on.
+    const limitsDigest = (format: Format): string => hash(JSON.stringify({ format, collectorRecordBytes: this.config.maxRecordBytes, serverRecordBytes: recordCap.server,
+      maxMessages: this.config.maxMessages, maxRecordIndex: MAX_RECORD_INDEX, normalization: NORMALIZATION_VERSION }));
     try {
       const roots = discoverRoots(this.config, process.platform).filter(root => {
         if (admissionReason(root.origin, this.config) === null) return true;
@@ -236,6 +267,7 @@ export class Collector {
     const deferredSince = this.spool.deferredScans(); const deferred = new Map<string, number>();
     const deferredAt = (file: SourceFile): number | undefined => deferredSince.get(fileId(file));
     const files = [...scan.files.filter(file => deferredAt(file) !== undefined).sort((a, b) => deferredAt(a)! - deferredAt(b)!), ...scan.files.filter(file => deferredAt(file) === undefined)];
+    const queuedKeys = new Set(queuedContent.keys());
     for (const file of files) {
       await publish(CollectorPhase.Scanning, undefined, undefined, false);
       const controls = this.spool.controls();
@@ -271,15 +303,24 @@ export class Collector {
         if (stat !== null && sameStat(stat, over.stat) && over.collectorLimit === this.config.maxRecordBytes && over.serverLimit === recordCap.server) continue;
         this.spool.clearRecordOverLimit(id);
       }
+      // Quiet by stat: nothing is read while the file's stat keeps changing. A file that changed between this stat and
+      // the read starts its quiet period again (the observation of the read's stat below).
+      const observed = statSource(file);
+      if (observed !== null && now - this.spool.observe(pathId, statSignature(observed), now) < this.config.quietMs) { counters.waiting++; rootCoverage(file).waiting++; continue; }
       try {
         if (parts) {
           // The head this file had at its last read: pass 1 records the prefix an append would extend.
           const hint = known === undefined ? null : headBase(this.spool.head(known.sourceKey));
           const result = preflight({ file, policy, exclusions: this.config.exclusions, maxFileBytes: this.config.maxFileBytes, scanBudget: this.config.maxScanBytes - counters.scannedBytes,
-            recordCap: recordCap.cap, maxMessages: this.config.maxMessages, prefixRecords: hint?.recordCount ?? null });
+            recordCap: recordCap.cap, maxMessages: this.config.maxMessages, prefixRecords: hint?.recordCount ?? null, start: this.passStart(id, digest, limitsDigest(file.root.format), queuedKeys) });
           const size = Number(result.size);
           counters.scanned++; counters.scannedBytes += size; rootCoverage(file).scanned++; rootCoverage(file).bytes += size;
-          const since = this.spool.observe(pathId, `${result.fileDigest}:${result.mtimeMs}`, now);
+          const read = result.transcript === null ? null : { streamed: result.transcript, key: sourceKey(sourceIdentity(this.spool.namespace, file.root.id, file.root.format, result.transcript, file.path)) };
+          const { kind, reason, parsedBytes, hashedBytes } = result.pass;
+          this.spool.setLastPass({ fileId: id, rootId: file.root.id, pathId, sourceKey: read?.key ?? null, kind, reason, parsedBytes: String(parsedBytes), hashedBytes: String(hashedBytes), at: now });
+          // An edited prefix is shown once: the replacement's checkpoint takes the place of the one it contradicts.
+          if (reason === SOURCE_PREFIX_CHANGED) this.spool.diagnostic({ rootId: file.root.id, pathId, code: SOURCE_PREFIX_CHANGED });
+          const since = this.spool.observe(pathId, statSignature(result.stat), now);
           if (heldByControls(this.spool.controls(), result.evidence) || result.excluded) { counters.excluded++; rootCoverage(file).excluded++; continue; }
           if (result.partial) {
             if (now - since >= this.config.partialLineQuarantineMs) diagnose(file, 'partial-line-expired');
@@ -287,20 +328,19 @@ export class Collector {
             continue;
           }
           if (result.error === IDENTIFIER_UNICODE) { refuse(result.stat); continue; }
-          if (result.error !== null || result.transcript === null) { diagnose(file, result.error ?? 'parse-failed'); continue; }
-          const streamed = result.transcript;
+          if (result.error !== null || read === null) { diagnose(file, result.error ?? 'parse-failed'); continue; }
+          const { streamed, key } = read;
           if (this.config.exclusions.sessions.includes(streamed.producerId) || (streamed.subagentId !== null && this.config.exclusions.sessions.includes(streamed.subagentId))) { counters.excluded++; continue; }
           if (streamed.messageCount > this.config.maxMessages) { diagnose(file, 'message-limit', { measured: streamed.messageCount, limit: this.config.maxMessages }); continue; }
           if (now - since < this.config.quietMs) { counters.waiting++; rootCoverage(file).waiting++; continue; }
-          const key = sourceKey(sourceIdentity(this.spool.namespace, file.root.id, file.root.format, streamed, file.path));
-          addCandidate({ file, read: { streamed, stat: result.stat }, key, digest: streamed.digest, evidence: result.evidence });
+          addCandidate({ file, read: { streamed, stat: result.stat, end: result.end }, key, digest: streamed.digest, evidence: result.evidence });
           continue;
         }
         const snapshot = readSnapshot(file, this.config.maxFileBytes, this.config.maxScanBytes - counters.scannedBytes);
         const evidence = evidenceFor(snapshot.bytes, file.path);
         counters.scanned++; counters.scannedBytes += snapshot.bytes.length;
         rootCoverage(file).scanned++; rootCoverage(file).bytes += snapshot.bytes.length;
-        const since = this.spool.observe(pathId, `${snapshot.digest}:${snapshot.mtimeMs}`, now);
+        const since = this.spool.observe(pathId, statSignature(snapshot.stat), now);
         if (heldByControls(this.spool.controls(), evidence) || excludedTranscript(snapshot.bytes, this.config)) { counters.excluded++; rootCoverage(file).excluded++; continue; }
         if (!snapshot.bytes.subarray(-1).equals(Buffer.from('\n'))) {
           if (now - since >= this.config.partialLineQuarantineMs) diagnose(file, 'partial-line-expired');
@@ -373,12 +413,15 @@ export class Collector {
       const requestId = randomUUID();
       if ('streamed' in read) {
         // The declaration is spooled before anything is sent; an append extends the head's base, a replacement starts over.
-        const streamed = read.streamed; const prefix = appendable(head, streamed.prefix); const base = prefix === null ? undefined : new UploadBase(prefix.digest, prefix.rawBytes, prefix.messageCount, prefix.messageChain);
+        const { streamed, end } = read; const prefix = appendable(head, streamed.prefix); const base = prefix === null ? undefined : new UploadBase(prefix.digest, prefix.rawBytes, prefix.messageCount, prefix.messageChain);
+        const id = fileId(candidate.file);
+        const checkpoint = end === null ? null : { version: CHECKPOINT_VERSION, fileId: id, sourceKey: key, policyDigest: digest, limitsDigest: limitsDigest(candidate.file.root.format), state: end.state, codex: end.codex };
         const open = new UploadOpen(requestId, source, head.revision, candidate.file.relativePath, base, streamed.digest, streamed.rawBytes, streamed.messageCount, streamed.messageChain, Completion.Quiescent, streamed.redacted, revisionMetadata(source, meta));
-        this.spool.planUpload({ requestId, sourceKey: key, fileId: fileId(candidate.file), open: encodeOpen(open), expectedRevision: head.revision, sourceDigest: streamed.digest,
+        this.spool.planUpload({ requestId, sourceKey: key, fileId: id, open: encodeOpen(open), expectedRevision: head.revision, sourceDigest: streamed.digest,
           declared: { rawBytes: String(streamed.rawBytes), recordCount: streamed.recordCount, messageCount: streamed.messageCount, messageChain: streamed.messageChain },
           uploadId: null, append: prefix !== null, baseRecordCount: prefix?.recordCount ?? 0, baseFileOffset: String(prefix?.fileOffset ?? 0n), file: read.stat,
-          partBudget: null, partsAcked: 0, lastPartSha256: null, policyDigest: digest, evidence, origin: candidate.file.root.origin, status: 'pending', attempts: 0, nextAt: 0, error: null });
+          partBudget: null, partsAcked: 0, lastPartSha256: null, policyDigest: digest, evidence, origin: candidate.file.root.origin, status: 'pending', attempts: 0, nextAt: 0, error: null,
+          ...(prefix !== null && end?.codexSeed != null ? { codexSeed: end.codexSeed } : {}) }, checkpoint);
         this.spool.setUnicodeRepair(key, head.revision + 1, streamed.repairs);
       } else {
         const payload = encodeSnapshot(requestId, source, head.revision, read.transcript, candidate.file.relativePath);
@@ -492,7 +535,7 @@ export class Collector {
         let identity: Pick<ParsedTranscript, 'producerId' | 'subagentId'>; let bytes: number;
         // With parts, maxFileBytes is a session bound, not a memory bound: identify the file in a preflight pass.
         if (this.config.uploadProtocol === 'parts') {
-          const result = preflight({ file, policy, exclusions: this.config.exclusions, maxFileBytes: this.config.maxFileBytes, scanBudget: this.config.maxFileBytes, recordCap: this.recordCap().cap, maxMessages: this.config.maxMessages, prefixRecords: null });
+          const result = preflight({ file, policy, exclusions: this.config.exclusions, maxFileBytes: this.config.maxFileBytes, scanBudget: this.config.maxFileBytes, recordCap: this.recordCap().cap, maxMessages: this.config.maxMessages, prefixRecords: null, start: { reason: 'no-checkpoint' } });
           if (result.transcript === null) throw new CollectorError(result.error ?? 'partial-line');
           identity = result.transcript; bytes = Number(result.size);
         } else {
@@ -505,7 +548,7 @@ export class Collector {
     }
     return { files, unidentified };
   }
-  status(): { namespace: string; uploadProtocol: Config['uploadProtocol']; server: { endpoint: string; probe: UploadProbe | null }; queue: { requestId: string; sourceKey: string; attempts: number; nextAt: number; status: string; error: string | null; payloadBytes: number }[]; uploads: UploadStatus[]; recordsOverLimit: RecordOverLimit[]; identifierRefusals: IdentifierRefusal[]; unicodeRepairs: UnicodeRepair[]; diagnostics: Diagnostic[]; dropped: Dropped[]; lastRun: CollectorReport | null; reporting: ReturnType<Spool['reporting']>; controls: Controls; heldRequests: string[] } {
+  status(): { namespace: string; uploadProtocol: Config['uploadProtocol']; server: { endpoint: string; probe: UploadProbe | null }; queue: { requestId: string; sourceKey: string; attempts: number; nextAt: number; status: string; error: string | null; payloadBytes: number }[]; uploads: UploadStatus[]; recordsOverLimit: RecordOverLimit[]; identifierRefusals: IdentifierRefusal[]; unicodeRepairs: UnicodeRepair[]; diagnostics: Diagnostic[]; dropped: Dropped[]; lastRun: CollectorReport | null; reporting: ReturnType<Spool['reporting']>; controls: Controls; heldRequests: string[]; sources: SourceStatus[] } {
     const queued = this.spool.queueWithAdmission(); const uploads = this.spool.uploads();
     const restricted = this.config.excludeDefaultProfile || this.config.excludedYoloProfiles.length > 0;
     const diagnostics = this.spool.diagnostics().filter(value => !isQueueHoldDiagnostic(value) && (value.code !== ROOT_DENIED || restricted));
@@ -516,7 +559,8 @@ export class Collector {
     const controls = this.spool.controls();
     const held = (origin: CollectionOrigin, evidence: AdmissionEvidence | null): boolean => admissionReason(origin, this.config) !== null || heldByControls(controls, evidence);
     const heldRequests = [...queued.filter(({ origin, evidence }) => held(origin, evidence)).map(({ entry }) => entry.requestId), ...uploads.filter(entry => held(entry.origin, entry.evidence)).map(entry => entry.requestId)];
-    return { controls, heldRequests, namespace: this.spool.namespace, uploadProtocol: this.config.uploadProtocol, server: { endpoint: this.config.endpoint, probe: this.spool.probe() },
+    const sources = this.spool.lastPasses().map(({ sourceKey, rootId, pathId, kind, reason, parsedBytes, hashedBytes, at }) => ({ sourceKey, rootId, pathId, lastPass: { kind, reason, parsedBytes, hashedBytes, at } }));
+    return { sources, controls, heldRequests, namespace: this.spool.namespace, uploadProtocol: this.config.uploadProtocol, server: { endpoint: this.config.endpoint, probe: this.spool.probe() },
       queue: queued.map(({ entry: { requestId, sourceKey, attempts, nextAt, status, error, payload } }) => ({ requestId, sourceKey, attempts, nextAt, status, error, payloadBytes: Buffer.byteLength(payload) })),
       uploads: uploads.map(entry => {
         const open = decodeOpen(entry.open);

@@ -103,28 +103,51 @@ export function recordOf(format: Format, parsed: Json, line: string, index: numb
   return { record: { value, id: string(value[format === 'claude' ? 'uuid' : 'id']) ?? (format === 'codex' ? string(payload['id']) : null), parentId: string(value[format === 'claude' ? 'parentUuid' : 'parentId']), index }, raw: cleaned.changed ? JSON.stringify(value) : line, redacted: cleaned.changed };
 }
 
+/** Response items not yet matched by an event message (`credits`) and event messages of the key that were not dropped
+ * (`kept`) — at most one of them is nonzero once every event message of the file was consumed. */
+export interface CodexBalance { credits: number; kept: number }
 /** The file-wide multiset of Codex `response_item` messages whose `event_msg` duplicates are dropped, keyed by a
- * digest of role and text. Above `limit` entries it stops counting (`overflowed`): such a file is over maxMessages. */
+ * digest of role and text, consumed in file order. Above `limit` response items it stops counting (`overflowed`): such
+ * a file is over maxMessages. Resumed from a checkpoint, `stored` answers the balances of the prefix (append-limits spec
+ * §2.2 item 4): the counted response items are those of the addition, and `prefixChanged` is set when one of them
+ * matches an event message the prefix kept — the prefix would lose that message. */
 export class CodexDuplicates {
-  private readonly counts = new Map<string, number>();
+  private readonly balances = new Map<string, CodexBalance>();
+  private readonly stored: (key: string) => CodexBalance | undefined;
+  /** The prefix's credits of the keys this pass met: what pass 2 of an append resumes from. */
+  readonly seed = new Map<string, number>();
   private entries = 0;
   overflowed = false;
-  constructor(private readonly limit: number) {}
+  prefixChanged = false;
+  constructor(private readonly limit: number, stored?: (key: string) => CodexBalance | undefined) { this.stored = stored ?? (() => undefined); }
   private static key(message: ParsedMessage): string {
     // UTF-16 code units keep lone surrogates distinct, as the role/text strings themselves are.
     return createHash('sha256').update(message.role, 'utf16le').update('\0', 'utf16le').update(message.text, 'utf16le').digest('base64');
   }
+  private balance(key: string): CodexBalance {
+    let balance = this.balances.get(key);
+    if (balance === undefined) {
+      const stored = this.stored(key); balance = { credits: stored?.credits ?? 0, kept: stored?.kept ?? 0 };
+      if (balance.credits > 0) this.seed.set(key, balance.credits);
+      this.balances.set(key, balance);
+    }
+    return balance;
+  }
   add(record: ParsedRecord): void {
     if (this.overflowed || record.value['type'] !== 'response_item') return;
     const message = normalize(record, 'codex'); if (message === null) return;
-    if (++this.entries > this.limit) { this.overflowed = true; this.counts.clear(); return; }
-    const key = CodexDuplicates.key(message); this.counts.set(key, (this.counts.get(key) ?? 0) + 1);
+    if (++this.entries > this.limit) { this.overflowed = true; this.balances.clear(); this.seed.clear(); return; }
+    const balance = this.balance(CodexDuplicates.key(message));
+    if (balance.kept > 0) this.prefixChanged = true;
+    balance.credits++;
   }
   consume(message: ParsedMessage): boolean {
-    const key = CodexDuplicates.key(message); const count = this.counts.get(key) ?? 0;
-    if (count > 0) this.counts.set(key, count - 1);
-    return count > 0;
+    const balance = this.balance(CodexDuplicates.key(message));
+    if (balance.credits > 0) { balance.credits--; return true; }
+    balance.kept++; return false;
   }
+  /** The balances of the keys this pass met, as `[key, credits, kept]`. */
+  rows(): [string, number, number][] { return [...this.balances].map(([key, { credits, kept }]) => [key, credits, kept]); }
 }
 /** The normalized, redacted message of a record; null without one or for a Codex `event_msg` duplicate. `replaced`
  * counts the unpaired surrogates of its text that became U+FFFD; an identifier with one refuses the file. */
@@ -142,89 +165,101 @@ export function messageOf(format: Format, record: ParsedRecord, duplicates: Code
 }
 
 export interface TranscriptIdentity { producerId: string; subagentId: string | null; parentId: string | null }
+type FirstRecord = { piHeader: boolean; supportedVersion: boolean; id: string | null; parentSession: string | null; cwd: string | null; startedAt: string | null };
+type Header = Pick<ParsedMetadata, 'workdir' | 'startedAt' | 'gitRemote' | 'gitBranch' | 'gitCommit'> & { producerId: string | null; parentId: string | null };
+/** Everything `TranscriptState` holds after some records, as JSON: a checkpoint resumes from it. */
+export interface TranscriptSnapshot {
+  records: number; first: FirstRecord | null; claude: { sessionId: string | null; agentId: string | null; error: string | null };
+  header: Header | null; headerSeen: boolean; workdir: string | null; gitBranch: string | null; model: string | null;
+  firstTimestamp: string | null; title: string | null; firstUserTitle: string | null; replacedInMessages: number;
+}
+const PI_SUBAGENT_PATH = /\/subagents\/[^/]+\/sessions\/([^/]+)\/[^/]+\.jsonl$/;
 /** Session identity and metadata accumulated record by record, so that a file need not be held. */
 export class TranscriptState {
-  private records = 0;
-  private first: { type: Json | undefined; version: Json | undefined; id: string | null; parentSession: string | null; cwd: string | null; startedAt: string | null } | null = null;
-  private claude: { sessionId: string | null; agentId: string | null; error: string | null } = { sessionId: null, agentId: null, error: null };
-  private header: Pick<ParsedMetadata, 'workdir' | 'startedAt' | 'gitRemote' | 'gitBranch' | 'gitCommit'> & { producerId: string | null; parentId: string | null } | null = null;
-  private headerSeen = false;
-  private workdir: string | null = null; private gitBranch: string | null = null; private model: string | null = null;
-  private firstTimestamp: string | null = null; private title: string | null = null; private firstUserText: string | null = null;
-  private replacedInMessages = 0;
-  constructor(private readonly format: Format, private readonly sourcePath: string) {}
+  private value: TranscriptSnapshot = { records: 0, first: null, claude: { sessionId: null, agentId: null, error: null }, header: null, headerSeen: false,
+    workdir: null, gitBranch: null, model: null, firstTimestamp: null, title: null, firstUserTitle: null, replacedInMessages: 0 };
+  /** A Pi subagent transcript's agent ID, from its path. */
+  private readonly piSubagent: string | null;
+  constructor(private readonly format: Format, private readonly sourcePath: string, snapshot?: TranscriptSnapshot) {
+    this.piSubagent = format === 'pi' ? PI_SUBAGENT_PATH.exec(sourcePath.replaceAll('\\', '/'))?.[1] ?? null : null;
+    if (snapshot !== undefined) this.value = structuredClone(snapshot);
+  }
+  get snapshot(): TranscriptSnapshot { return structuredClone(this.value); }
   add(record: ParsedRecord): void {
-    const value = record.value;
-    if (this.records++ === 0) this.first = { type: value['type'], version: value['version'], id: string(value['id']), parentSession: string(value['parentSession']), cwd: string(value['cwd']), startedAt: timestamp(value['timestamp']) };
-    if (this.format === 'claude' && this.claude.error === null) {
+    const value = record.value; const state = this.value;
+    if (state.records++ === 0) {
+      const version = value['version'];
+      state.first = { piHeader: value['type'] === 'session', supportedVersion: version === 3 || version === 2 || version === 1 || version === undefined, id: string(value['id']), parentSession: string(value['parentSession']), cwd: string(value['cwd']), startedAt: timestamp(value['timestamp']) };
+    }
+    if (this.format === 'claude' && state.claude.error === null) {
       const found = string(value['sessionId']);
-      if (found !== null && this.claude.sessionId !== null && found !== this.claude.sessionId) this.claude.error = 'mixed-session-identities';
+      if (found !== null && state.claude.sessionId !== null && found !== state.claude.sessionId) state.claude.error = 'mixed-session-identities';
       else {
-        this.claude.sessionId = found ?? this.claude.sessionId;
+        state.claude.sessionId = found ?? state.claude.sessionId;
         const agent = string(value['agentId']);
-        if (agent !== null && this.claude.agentId !== null && agent !== this.claude.agentId) this.claude.error = 'mixed-agent-identities';
-        this.claude.agentId = agent ?? this.claude.agentId;
+        if (agent !== null && state.claude.agentId !== null && agent !== state.claude.agentId) state.claude.error = 'mixed-agent-identities';
+        state.claude.agentId = agent ?? state.claude.agentId;
       }
     }
-    if (this.format === 'codex' && !this.headerSeen && value['type'] === 'session_meta') {
-      this.headerSeen = true;
+    if (this.format === 'codex' && !state.headerSeen && value['type'] === 'session_meta') {
+      state.headerSeen = true;
       if (object(value['payload'])) {
         const meta = value['payload']; const git = object(meta['git']) ? meta['git'] : null;
-        this.header = { producerId: string(meta['id']), parentId: string(meta['parent_thread_id']) ?? string(meta['forked_from_id']), workdir: string(meta['cwd']), startedAt: timestamp(meta['timestamp']) ?? timestamp(value['timestamp']),
+        state.header = { producerId: string(meta['id']), parentId: string(meta['parent_thread_id']) ?? string(meta['forked_from_id']), workdir: string(meta['cwd']), startedAt: timestamp(meta['timestamp']) ?? timestamp(value['timestamp']),
           gitRemote: git === null ? null : string(git['repository_url']), gitBranch: git === null ? null : string(git['branch']), gitCommit: git === null ? null : string(git['commit_hash']) };
       }
     }
     const payload = object(value['payload']) ? value['payload'] : value;
     const message = object(value['message']) ? value['message'] : payload;
-    this.workdir = string(payload['cwd']) ?? this.workdir;
-    this.gitBranch = string(value['gitBranch']) ?? this.gitBranch;
-    this.model = string(message['model']) ?? (value['type'] === 'model_change' ? string(value['modelId']) : null) ?? this.model;
-    this.firstTimestamp ??= timestamp(value['timestamp']);
-    if (value['type'] === 'session_info') this.title = string(value['name']) ?? this.title;
+    state.workdir = string(payload['cwd']) ?? state.workdir;
+    state.gitBranch = string(value['gitBranch']) ?? state.gitBranch;
+    state.model = string(message['model']) ?? (value['type'] === 'model_change' ? string(value['modelId']) : null) ?? state.model;
+    state.firstTimestamp ??= timestamp(value['timestamp']);
+    if (value['type'] === 'session_info') state.title = string(value['name']) ?? state.title;
   }
+  /** The first user message is kept only as the title it yields when the session has no name. */
   message(message: ParsedMessage, replaced: number): void {
-    if (this.firstUserText === null && message.role === 'user') this.firstUserText = message.text;
-    this.replacedInMessages += replaced;
+    if (this.value.firstUserTitle === null && message.role === 'user') {
+      let text = message.text;
+      if (this.piSubagent !== null) {
+        const harness = /^\[subagent (\S+) task \S+\]\n/.exec(text);
+        if (harness !== null && harness[1] === this.piSubagent) text = text.slice(harness[0].length).trimStart() || 'pi session';
+      }
+      this.value.firstUserTitle = titlePreview(text);
+    }
+    this.value.replacedInMessages += replaced;
   }
-  get recordCount(): number { return this.records; }
+  get recordCount(): number { return this.value.records; }
   /** The session identity, or the error that refuses the file. */
   identity(): TranscriptIdentity {
-    const first = this.first;
+    const { first, claude, header } = this.value;
     if (first === null) throw new CollectorError('missing-session-identity');
     let producerId: string | null = null; let subagentId: string | null = null; let parentId: string | null = null;
     if (this.format === 'pi') {
-      if (first.type !== 'session') throw new CollectorError('missing-session-identity');
-      if (first.version !== 3 && first.version !== 2 && first.version !== 1 && first.version !== undefined) throw new CollectorError('unsupported-version');
-      producerId = first.id; parentId = first.parentSession;
-      const subagentPath = /\/subagents\/[^/]+\/sessions\/([^/]+)\/[^/]+\.jsonl$/.exec(this.sourcePath.replaceAll('\\', '/'));
-      if (subagentPath !== null) subagentId = subagentPath[1] ?? null;
+      if (!first.piHeader) throw new CollectorError('missing-session-identity');
+      if (!first.supportedVersion) throw new CollectorError('unsupported-version');
+      producerId = first.id; parentId = first.parentSession; subagentId = this.piSubagent;
     } else if (this.format === 'claude') {
-      if (this.claude.error !== null) throw new CollectorError(this.claude.error);
-      producerId = this.claude.sessionId; subagentId = this.claude.agentId;
+      if (claude.error !== null) throw new CollectorError(claude.error);
+      producerId = claude.sessionId; subagentId = claude.agentId;
       if (subagentId === null && this.sourcePath.replaceAll('\\', '/').includes('/subagents/')) subagentId = basename(this.sourcePath, '.jsonl').replace(/^agent-/, '');
-    } else if (this.header !== null) { producerId = this.header.producerId; parentId = this.header.parentId; }
+    } else if (header !== null) { producerId = header.producerId; parentId = header.parentId; }
     if (producerId === null || producerId.length === 0 || producerId === '[REDACTED]') throw new CollectorError('missing-session-identity');
     requireScalar(producerId, subagentId);
     return { producerId, subagentId, parentId };
   }
   /** Last-wins metadata, its readable strings well-formed; the title falls back to the first user message. `repairs`
    * counts the unpaired surrogates replaced in message text and metadata. */
-  metadata(identity: TranscriptIdentity): { metadata: ParsedMetadata; repairs: number } {
-    const header = this.format === 'pi' ? { workdir: this.first?.cwd ?? null, startedAt: this.first?.startedAt ?? null, gitRemote: null, gitBranch: null, gitCommit: null } : this.header;
-    const workdir = this.workdir ?? header?.workdir ?? null;
-    let title = this.title ?? '';
-    if (title === '') {
-      let text = this.firstUserText ?? undefined;
-      if (this.format === 'pi' && identity.subagentId !== null && text !== undefined) {
-        const harness = /^\[subagent (\S+) task \S+\]\n/.exec(text);
-        if (harness !== null && harness[1] === identity.subagentId) text = text.slice(harness[0].length).trimStart() || 'pi session';
-      }
-      title = text === undefined ? `${this.format} session` : titlePreview(text);
-    }
-    let repairs = this.replacedInMessages;
+  metadata(): { metadata: ParsedMetadata; repairs: number } {
+    const state = this.value;
+    const header = this.format === 'pi' ? { workdir: state.first?.cwd ?? null, startedAt: state.first?.startedAt ?? null, gitRemote: null, gitBranch: null, gitCommit: null } : state.header;
+    const workdir = state.workdir ?? header?.workdir ?? null;
+    let title = state.title ?? '';
+    if (title === '') title = state.firstUserTitle ?? `${this.format} session`;
+    let repairs = state.replacedInMessages;
     const readable = (value: string | null): string | null => { if (value === null) return null; const result = wellFormed(value); repairs += result.replaced; return result.value; };
-    const metadata: ParsedMetadata = { title: readable(title)!, project: null, workdir: readable(workdir), gitRemote: readable(header?.gitRemote ?? null), gitBranch: readable(this.gitBranch ?? header?.gitBranch ?? null),
-      gitCommit: readable(header?.gitCommit ?? null), model: readable(this.model), startedAt: header?.startedAt ?? this.firstTimestamp, gitRemoteObserved: false };
+    const metadata: ParsedMetadata = { title: readable(title)!, project: null, workdir: readable(workdir), gitRemote: readable(header?.gitRemote ?? null), gitBranch: readable(state.gitBranch ?? header?.gitBranch ?? null),
+      gitCommit: readable(header?.gitCommit ?? null), model: readable(state.model), startedAt: header?.startedAt ?? state.firstTimestamp, gitRemoteObserved: false };
     metadata.project = metadata.workdir;
     return { metadata, repairs };
   }
@@ -253,5 +288,5 @@ export function parseTranscript(format: Format, bytes: Uint8Array, sourcePath: s
     if (parsed === null) continue;
     redacted ||= parsed.redacted; messages.push(parsed.message); state.message(parsed.message, parsed.replaced);
   }
-  return { ...identity, raw: rawLines.join('\n') + '\n', redacted, records, messages, ...state.metadata(identity) };
+  return { ...identity, raw: rawLines.join('\n') + '\n', redacted, records, messages, ...state.metadata() };
 }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { formatCollectorStatus, type CollectorStatus } from '../src/status.ts';
 
 function status(): CollectorStatus {
-  return { controls: { paused: false, exclusions: [] }, heldRequests: [], namespace: 'synthetic-namespace', uploadProtocol: 'whole', server: { endpoint: 'http://127.0.0.1:9', probe: null }, lastRun: null, queue: [], uploads: [], recordsOverLimit: [], identifierRefusals: [], unicodeRepairs: [], diagnostics: [], dropped: [],
+  return { controls: { paused: false, exclusions: [] }, heldRequests: [], namespace: 'synthetic-namespace', uploadProtocol: 'whole', server: { endpoint: 'http://127.0.0.1:9', probe: null }, lastRun: null, queue: [], uploads: [], recordsOverLimit: [], identifierRefusals: [], unicodeRepairs: [], diagnostics: [], dropped: [], sources: [],
     reporting: { sequence: '0', acceptedSequence: null, acceptedAt: null, error: null } };
 }
 
