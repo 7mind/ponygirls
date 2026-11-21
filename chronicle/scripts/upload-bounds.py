@@ -1517,15 +1517,17 @@ def phase_split(samples):
     late): the wait for a claim, the count pass (claimed, windows not yet counted), W (windows), P1 (staged phase
     Passages), P2 (phase Pieces until search rows are inserted), P3 (search rows, until the switch); HNSW rows per second
     over P3 and per sample. A boundary no sample shows (a claim before the first sample, a phase shorter than the sampling
-    period, a job that did not complete) is listed in `unresolved` and every duration that depends on it is None: nothing
-    falls back to a zero-length phase."""
+    period — W included: it needs a sample with the windows counted and not all done —, a job that did not complete) is
+    listed in `unresolved` and every duration that depends on it is None: nothing falls back to a zero-length phase."""
     def first(predicate, after=0):
         return next((i for i in range(after, len(samples)) if predicate(samples[i])), None)
     end = len(samples) - 1 if samples and samples[-1]['state'] == 'Complete' else None
     claimed = first(lambda x: x['state'] == 'Running')
     claimed = claimed if claimed is not None and claimed > 0 else None  # running at the first sample: claimed before it
-    counted = first(lambda x: x['total'] >= 0)
-    windows_done = first(lambda x: x['total'] >= 0 and x['completed'] >= x['total'])
+    # W needs a sample inside it (windows counted, not all done); without one, counting and the windows ended between the
+    # same two samples and neither boundary is known.
+    counted = first(lambda x: 0 <= x['total'] and x['completed'] < x['total'])
+    windows_done = None if counted is None else first(lambda x: x['completed'] >= x['total'], counted)
     p1 = first(lambda x: x['phase'] == 'Passages')
     p2 = first(lambda x: x['phase'] == 'Pieces')
     # P3 starts after the last sample of P2 without new search rows; it needs one sample inside it besides the end.
