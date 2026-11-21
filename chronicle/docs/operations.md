@@ -141,6 +141,27 @@ connection pool), each statement of 500 rows committed.
   jobs too large for its estimate end `index-budget-exceeded` again there. Before an older rollback (part uploads,
   epoch layout) run this script first, then `down-025`, then `down-024`.
 
+## Window reuse (migration 027)
+
+A job annotates and embeds only the windows no earlier run of the same source and index profile accepted for the same
+input: after an append, the windows from the previous revision's last one on (a window's input is its source fragments
+with their message positions and the passage carried into it). Each reused decision or embedding part is recorded as a
+reference to the exact checkpoint it took (`ch_index_checkpoint_refs`); the publication and a resumed job read those
+references, never a new lookup. A `RetryJob` of a Complete job, or an explicit rebuild into the same profile, reuses
+every window of its revision (no model call); a replacement reuses a decision only where the source and its positions
+are unchanged. Purge removes jobs, checkpoints and references together.
+
+- **Nothing is indexed again.** Profiles, checkpoint keys and published rows are unchanged; checkpoints written before
+  027 have no content hash and are never reused.
+- **Migration 027** (applied by the start) adds a nullable column and a partial index to `ch_index_checkpoints` (the
+  index build reads the table's main heap, about 40 MB for 380,000 checkpoints; the values are out of line) and creates
+  the empty reference table.
+- **Rollback.** Stop the server and run `chronicle/scripts/down-027-window-reuse.sql` (read-only preflight, then
+  `mode=apply` with the confirmation it names) **before** starting the previous release: it copies the references of
+  jobs that are not Complete into their own checkpoints (the preflight prints how many and their bytes), so such a job
+  resumes from exactly the work it accepted, then drops the reference table, the index and the column. Before an older
+  rollback run it first, then `down-026`.
+
 ## Models
 
 An annotation model must honor the structured JSON contract in the server README. Source text is untrusted input, never instructions to execute tools. The model chooses semantic chunk boundaries over bounded, numbered source fragments; the server verifies complete, non-overlapping coverage and constructs the original spans itself.

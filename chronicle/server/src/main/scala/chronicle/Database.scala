@@ -54,6 +54,7 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     migrate(c,"024_epoch_layout.sql")
     migrate(c,"025_uploads.sql")
     migrate(c,"026_staged_generations.sql")
+    migrate(c,"027_window_reuse.sql")
     val dimensions=SearchPolicy.dimensions(config)
     Sql.exec(c,s"CREATE INDEX IF NOT EXISTS ch_search_hnsw_d$dimensions ON ch_search_chunks USING hnsw ((l2_normalize(embedding)::halfvec($dimensions)) halfvec_cosine_ops) WHERE vector_dims(embedding)=$dimensions")
     profiles.register(c)
@@ -411,6 +412,12 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     checkpointAuthority(c,claim)
     IndexCheckpoints.write(c,claim,key,value)
     checkpointAuthority(c,claim)
+  }
+  def reuse(claim: Claim,key: CheckpointKey): Option[Json] = db.transaction { c =>
+    checkpointAuthority(c,claim)
+    val value=IndexCheckpoints.reuse(c,claim,key)
+    checkpointAuthority(c,claim)
+    value
   }
   def discardCheckpoints(claim: Claim,stage: IndexingStage,window: Int): Int = db.transaction { c =>
     checkpointAuthority(c,claim)

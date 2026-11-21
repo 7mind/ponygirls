@@ -139,9 +139,20 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   private def publishStage(run: => IO[Unit]): IO[Unit] = IO.defer(run).handleErrorWith(error => IO.raiseError(StagedFailure(IndexingStage.Publication,error)))
   private final class Windows(claim: Claim,total: Int) {
     private val dimensions=config.embedding.dimensions
-    def accepted[A](key: CheckpointKey)(decode: Json => A,encode: A => Json)(run: => IO[A]): IO[A] = IO.blocking(archive.checkpoint(claim,key)).flatMap {
-      case Some(value) => IO(decode(value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted checkpoint payload")))
-      case None => IO.defer(run).flatTap(value => IO.blocking(archive.checkpoint(claim,key,encode(value))))
+    /** Decisions and embedding parts this attempt took from another run's accepted work (ingest-limits spec §5.4). */
+    val reusedDecisions=new java.util.concurrent.atomic.AtomicInteger(0)
+    val reusedParts=new java.util.concurrent.atomic.AtomicInteger(0)
+    /** The run's accepted work (its own or by reference), else the work another run accepted for an equal input, else
+      * `run`: a reused window reserves no annotation attempt and calls no model. */
+    def accepted[A](key: CheckpointKey)(decode: Json => A,encode: A => Json)(run: => IO[A]): IO[A] = {
+      def decoded(value: Json): IO[A] = IO(decode(value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted checkpoint payload")))
+      IO.blocking(archive.checkpoint(claim,key)).flatMap {
+        case Some(value) => decoded(value)
+        case None => IO.blocking(archive.reuse(claim,key)).flatMap {
+          case Some(value) => IO((if(key.stage==IndexingStage.Annotation) reusedDecisions else reusedParts).incrementAndGet()) *> decoded(value)
+          case None => IO.defer(run).flatTap(value => IO.blocking(archive.checkpoint(claim,key,encode(value))))
+        }
+      }
     }
     def report(completed: Int): IO[Unit] = IO.blocking {
       Check(archive.progress(claim,completed,total),"stale-claim","indexing claim is no longer current")
@@ -185,7 +196,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
         Check(held<=BigInt(config.maxIndexingBudgetBytes),IndexingBudget.exceededCode,s"indexing window would hold $held bytes, above the budget of ${config.maxIndexingBudgetBytes}")
       }
       val parts=batches.zipWithIndex.traverse_ { (batch,part) =>
-        val key=IndexCheckpoints.key(claim,IndexingStage.Embedding,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,CheckpointJson.chunks(batch))
+        val key=IndexCheckpoints.embedding(claim,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,batch)
         def validated(vectors: List[List[Double]]): List[List[Double]] = { CheckpointJson.validateVectors(vectors,batch.size,dimensions); vectors }
         accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(IO.defer(embedder.documents(claim.owner,batch.map(_.text))).map(validated))
       }
@@ -213,7 +224,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       while(next.nonEmpty) {
         val value=next.get
         val input=Json.arr(value.sourceJson,state.carry.map(ProblemPassages.carryJson).getOrElse(Json.Null))
-        val decision=ProblemPassages.decode(value,state.carry.nonEmpty,accepted(IndexCheckpoints.key(claim,IndexingStage.Annotation,index,0,ProblemPassages.identity,input)))
+        val decision=ProblemPassages.decode(value,state.carry.nonEmpty,accepted(IndexCheckpoints.annotation(claim,index,input)))
         val delta=ProblemPassages.accept(state,value,decision)
         window(index,value,delta)
         state=delta.state; index+=1; next=source.next(state.nextSource)
@@ -247,7 +258,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
         if(index>=from) {
           val chunks=delta.pieces.map(_.chunk).toList
           val vectors=chunks.grouped(config.indexing.embeddingBatchSize).zipWithIndex.flatMap { (batch,part) =>
-            val key=IndexCheckpoints.key(claim,IndexingStage.Embedding,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,CheckpointJson.chunks(batch))
+            val key=IndexCheckpoints.embedding(claim,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,batch)
             val values=try CheckpointJson.vectors(accepted(key)) catch { case _: CheckpointInputMismatch => throw DomainError("internal","accepted embedding of another grouping for the publication") }
             CheckpointJson.validateVectors(values,batch.size,dimensions); values
           }.toVector
@@ -284,15 +295,21 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   private def deferLarge(claim: Claim,total: Int): IO[Unit] =
     IO.blocking(Check(archive.defer(claim,total),"stale-claim","indexing claim is no longer current"))
   /** Phase W (ingest-limits spec §5.2.3): each window's decision and embedding parts accepted (checkpointed) in order;
-    * between windows only the passage state with its bounded carry is kept. */
+    * between windows only the passage state with its bounded carry is kept. A window whose input (source and carry) an
+    * earlier run of the source accepted reuses that output by reference (§5.4): after an append, the windows below the
+    * previous revision's last one. */
   private def indexWindows(claim: Claim,source: ProblemPassages.Source,total: Int): IO[Unit] = {
     val windows=new Windows(claim,total)
     // A window reads its messages from the database.
     def loop(state: ProblemPassages.State,index: Int): IO[Unit] = IO.blocking(source.next(state.nextSource)).flatMap {
-      case None => IO(Check(index==total,"internal","source window count changed"))
+      case None =>
+        IO(Check(index==total,"internal","source window count changed")) *> IO {
+          val decisions=windows.reusedDecisions.get; val parts=windows.reusedParts.get
+          logger.info(s"windows accepted jobId=${claim.jobId} fence=${claim.fence} totalWindows=$total reusedDecisions=$decisions reusedEmbeddingParts=$parts")
+        }
       case Some(window) =>
         val input=Json.arr(window.sourceJson,state.carry.map(ProblemPassages.carryJson).getOrElse(Json.Null))
-        val key=IndexCheckpoints.key(claim,IndexingStage.Annotation,index,0,ProblemPassages.identity,input)
+        val key=IndexCheckpoints.annotation(claim,index,input)
         val decision=windows.accepted(key)(json => (ProblemPassages.decode(window,state.carry.nonEmpty,json),0),value => CheckpointJson.decision(value._1))(
           windows.annotate(key,problemAnnotator.annotate(claim.owner,window,state.carry).flatTap(value => IO(ProblemPassages.validate(window,state.carry.nonEmpty,value))),index))
         decision.flatMap { (value,attempt) =>
