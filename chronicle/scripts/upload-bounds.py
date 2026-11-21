@@ -888,15 +888,15 @@ class Chromium:
     shown, clicks the raw download link with the mouse, and samples the page's JS heap until the browser has saved the file."""
     def __init__(self, root):
         self.root, self.profile, self.saved = root, root / 'chromium-profile', root / 'chromium-downloads'
-        self.profile.mkdir()
-        self.saved.mkdir()
+        for directory in (self.profile, self.saved, root / 'chromium-tmp'):
+            directory.mkdir()
         self.log = root / 'chromium.log'
         with self.log.open('x') as log:
             self.process = subprocess.Popen([str(CHROMIUM), '--headless=new', '--no-sandbox', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
                                              '--disable-extensions', '--disable-background-networking', '--disable-sync', '--window-size=1600,1000',
                                              '--remote-debugging-port=0', f'--user-data-dir={self.profile}', 'about:blank'],
                                             stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-                                            env=dict(os.environ, HOME=str(root / 'home')))
+                                            env=dict(os.environ, HOME=str(root / 'home'), TMPDIR=str(root / 'chromium-tmp')))
         active, deadline = self.profile / 'DevToolsActivePort', time.monotonic() + 60
         while not (active.exists() and len(active.read_text().splitlines()) == 2):
             assert self.process.poll() is None and time.monotonic() < deadline, f'chromium start: {self.log.read_text()[-2000:]}'
