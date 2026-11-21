@@ -56,7 +56,9 @@ let
   # Pi: vendored formula (version pinned in ../pkg/pi-coding-agent/package.nix;
   # nixpkgs lags at 0.75.x, and its older releases have broken Codex/ChatGPT
   # subscription token exchange). Bump: edit version + rerun the two fake-hash builds in pkg/pi-coding-agent/package.nix.
-  piBase = pkgs.callPackage ../pkg/pi-coding-agent/package.nix { };
+  piBase = pkgs.callPackage ../pkg/pi-coding-agent/package.nix {
+    loginModelWorkaround = cfg.pi.providers.claude-code.enable && cfg.pi.providers.claude-code.loginModelWorkaround;
+  };
   piCatalogLib = import ../lib/pi-catalog.nix;
   latestCodexSolModel = piCatalogLib.latestCodexSolModel piBase;
   piClaudeCode = pkgs.callPackage ../pkg/pi-claude-code/package.nix { pi-coding-agent = piBase; };
@@ -835,6 +837,11 @@ in
           provider is enabled by default; all are opt-in.
         '';
       };
+    } // lib.optionalAttrs (name == "claude-code") {
+      loginModelWorkaround = lib.mkEnableOption ''
+        the Pi startup patch for restoring a saved Claude Code model when resuming a session.
+        Applies only when the Claude Code provider is enabled
+      '';
     }) inferenceProviderPackages;
   };
 

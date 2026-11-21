@@ -145,6 +145,18 @@ this branch has manifests, including while OFF:
 {"action":"read","entryId":"<id>","sha256":"<digest>","offset":0,"limit":8000}
 ```
 
+Use `find` when you have a literal identifier or phrase but don't know which archive or page contains it:
+
+```json
+{"action":"find","query":"Drawer 123","limit":4}
+```
+
+`find` searches decoded text in archived tool results and the specific archived `bash.command` / `write.content` strings. It does not search live files, other branches, session prose, sibling arguments or metadata. Matching is literal and case-sensitive (no regex or normalization); a query must be nonblank and at most 128 UTF-16 code units. Duplicate occurrences are returned individually, not ranked or resolved as current. Inspect the surrounding evidence when two records disagree.
+
+`matches` contains bounded excerpts, each with an `entryId`, `sha256`, `readOffset` and `readLimit`. To verify an excerpt, call `read` with that ID/hash and its `readOffset` as `offset` and `readLimit` as `limit`. The returned `payload` is the JSON-escaped string fragment of the excerpt (for example, a newline appears as `\n`). To read more context take a larger original-JSON page around it. Find's **own** `offset` skips match occurrences rather than characters. Its `limit` defaults to 4, at most 8. Continue with the same query and the returned `nextOffset` until it is null. `matches: []` at the initial offset means **no literal match in the archived fields on this branch**, not no such fact in the project.
+
+`find` uses existing hash-checked originals: no secondary index, no new manifest format, no change to older stubs and no inference request. It is available after compaction and while archival is OFF if this branch already has archives.
+
 Catalog `active` means the latest edit still matches our stub, not that compaction
 currently includes it. List limit ≤20; read limit ≤12000 UTF-16 code units. Follow `nextOffset` until null;
 concatenate `payload` strings to reconstruct exact original message JSON (a page
@@ -185,8 +197,7 @@ preference/controller tests run against both a manual in-memory port and the rea
 filesystem. Real SDK tests exercise the loader, native boundaries/JSONL, provider
 context, recovery tool loop, disable/reload, abort and native compaction. A scripted
 provider validates integration, not semantic task preservation or remote provider
-serialization. The deterministic suite has 78 checks, including nine real SDK
-tests. Cases cover provider/character-estimate disagreement, cache accounting,
+serialization. The SDK suite also searches compacted archives while OFF and verifies the returned excerpt with the original `read` action. Cases cover provider/character-estimate disagreement, cache accounting,
 unknown and invalidated usage, pending boundary drafts, numeric diagnostics,
 independently layered defaults, threshold-pair validation/effects, legacy migration,
 session isolation, independent resets, reload/resume and fork identity. Earlier badge/on-off controls were checked in a
