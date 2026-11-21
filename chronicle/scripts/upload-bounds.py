@@ -71,6 +71,9 @@ JOB_WAIT_S = 1800
 # probe's query and the longest query (the server's bound is 2,048 characters).
 INDEX_WAIT_S, INDEX_SAMPLE_S, ANN_PROBE_S, STEADY_SEARCHES = 20 * 3600, 15, 60, 3
 ANN_PROBE_QUERY, SEARCH_QUERY_CHARS = 'synthetic annotation of the session', 2000
+# The sampled publication (first sample after W → first sample showing the switch) against the server's logged seconds
+# (truncated): each end up to one sampling period late, one second of truncation.
+PUBLICATION_TOLERANCE_S = 2 * INDEX_SAMPLE_S + 1
 DISK_SAMPLE_S = 10
 SMOKE_BUDGET = 96 * MiB
 # Targets of spec §9: L3 Archive search of a rare literal, the 1 GiB and 4.4 GB runs' difference; L1 CLI download RSS;
@@ -1020,6 +1023,56 @@ class Chromium:
 
 # ---------------------------------------------------------------- the server side of a run
 
+class IndexWatch:
+    """Samples one job from the database every INDEX_SAMPLE_S in a thread, from before any worker can claim it (started
+    while no server with workers runs) until it completes or fails: state, attempts, windows, the staged phase and step,
+    search and chunk row inserts, WAL since the start; and, while it publishes, one semantic search every ANN_PROBE_S
+    (outcome, `unavailable` included, and latency)."""
+    def __init__(self, harness, session, revision):
+        self.harness, self.session, self.revision = harness, session, revision
+        self.job = one("SELECT id FROM ch_jobs WHERE session_id=:'arg0' AND revision=:'arg1'", session, revision)
+        self.lsn, self.started, self.samples, self.probes, self.error = wal_lsn(), time.monotonic(), [], [], None
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self.sample, daemon=True)
+        self.thread.start()
+
+    def sample(self):
+        try:
+            next_probe = 0.0
+            while True:
+                row = one("SELECT j.state, coalesce(j.error,''), j.attempts, j.completed_windows, coalesce(j.total_windows,-1), coalesce(g.phase,''), "
+                          "coalesce(g.resume->>'step',''), (SELECT n_tup_ins FROM pg_stat_user_tables WHERE relname='ch_search_chunks'), "
+                          "(SELECT n_tup_ins FROM pg_stat_user_tables WHERE relname='ch_chunks'), pg_wal_lsn_diff(pg_current_wal_insert_lsn(), :'arg1') "
+                          "FROM ch_jobs j LEFT JOIN ch_staged_generations g ON g.job_id=j.id AND g.run_id=j.run_id WHERE j.id=:'arg0'", self.job, self.lsn)
+                now = time.monotonic()
+                sample = dict(t=round(now - self.started, 1), wall=round(time.time(), 1), state=row[0], error=row[1], attempts=int(row[2]), completed=int(row[3]),
+                              total=int(row[4]), phase=row[5], step=row[6], searchRows=int(row[7]), chunkRows=int(row[8]), wal=int(float(row[9])))
+                self.samples.append(sample)
+                if sample['state'] in ('Complete', 'Failed'):
+                    return
+                if sample['phase'] and now >= next_probe:
+                    self.probes.append(dict(t=sample['t'], phase=sample['phase'], **self.harness.search_outcome('semantic', ANN_PROBE_QUERY)))
+                    next_probe = now + ANN_PROBE_S
+                if now - self.started >= INDEX_WAIT_S:
+                    raise AssertionError(f'the job did not end within {INDEX_WAIT_S} s: {sample}')
+                if self.stop.wait(INDEX_SAMPLE_S):
+                    return
+        except BaseException as error:
+            self.error = error
+
+    def finish(self, label):
+        """Waits for the job's end while the server stays alive; the monotonic end. A sampling failure fails the run."""
+        while self.thread.is_alive():
+            self.thread.join(INDEX_SAMPLE_S)
+            server = self.harness.server
+            if server is not None and not server.alive():
+                self.stop.set()
+                raise AssertionError(f'{label}: the server exited during indexing: {server.log_path.read_text(errors="replace")[-3000:]}')
+        if self.error is not None:
+            raise RuntimeError(f'{label}: the indexing watch failed') from self.error
+        return time.monotonic()
+
+
 class Harness:
     """One run's server side at the default bounds (spec §9): the default heap and indexing budget, the deployment limits."""
     def __init__(self, root, run):
@@ -1174,41 +1227,23 @@ class Harness:
               last.get('kind') == 'incremental' and int(last.get('parsedBytes', -1)) == delta, last)
         return last
 
-    def indexing(self, label, fixture, session, revision):
+    def indexing(self, label, fixture, session, revision, watch=None):
         """The head job at the default bounds: on the prefix it ends `index-budget-exceeded` (the whole session was held);
-        with streamed indexing (stage l5) it completes and publishes at the head (`streamed`)."""
+        with streamed indexing (stage l5) it completes and publishes at the head (`streamed`, with the watch started
+        before the server with workers)."""
         if STAGE == 'prefix':
             outside_stage.append(f'{label}: the head job completes at the default bounds and publishes; semantic and hybrid search find the session (stage l5)')
             return self.budget_verdict(label, session, revision)
-        return self.streamed(label, fixture, session, revision)
+        return self.streamed(label, fixture, session, revision, watch)
 
-    def streamed(self, label, fixture, session, revision):
-        """L5 (spec §5, §9): the head job, at the default heap and budget, completes and publishes at the head. The job's
-        progress is sampled from the database every INDEX_SAMPLE_S (state, windows, staged phase and step, search and chunk
-        row inserts, WAL) and split into the count pass, W, P1, P2, P3 and the switch; while it publishes, a semantic search
-        runs every ANN_PROBE_S and its outcome is recorded (`unavailable` included). Then semantic and hybrid search, CLI and
-        MCP, find the session by a query equal to one of its chunks' text, and STEADY_SEARCHES more of each answer."""
-        job = one("SELECT id FROM ch_jobs WHERE session_id=:'arg0' AND revision=:'arg1'", session, revision)
-        lsn, started, samples, probes = wal_lsn(), time.monotonic(), [], []
-        next_probe = 0.0
-        while True:
-            row = one("SELECT j.state, coalesce(j.error,''), j.attempts, j.completed_windows, coalesce(j.total_windows,-1), coalesce(g.phase,''), "
-                      "coalesce(g.resume->>'step',''), (SELECT n_tup_ins FROM pg_stat_user_tables WHERE relname='ch_search_chunks'), "
-                      "(SELECT n_tup_ins FROM pg_stat_user_tables WHERE relname='ch_chunks'), pg_wal_lsn_diff(pg_current_wal_insert_lsn(), :'arg1') "
-                      "FROM ch_jobs j LEFT JOIN ch_staged_generations g ON g.job_id=j.id AND g.run_id=j.run_id WHERE j.id=:'arg0'", job, lsn)
-            now = time.monotonic()
-            sample = dict(t=round(now - started, 1), state=row[0], error=row[1], attempts=int(row[2]), completed=int(row[3]), total=int(row[4]), phase=row[5],
-                          step=row[6], searchRows=int(row[7]), chunkRows=int(row[8]), wal=int(float(row[9])))
-            samples.append(sample)
-            if sample['state'] in ('Complete', 'Failed'):
-                break
-            if sample['phase'] and now >= next_probe:
-                probes.append(dict(t=sample['t'], phase=sample['phase'], **self.search_outcome('semantic', ANN_PROBE_QUERY)))
-                next_probe = now + ANN_PROBE_S
-            assert self.server.alive(), f'{label}: the server exited during indexing: {self.server.log_path.read_text(errors="replace")[-3000:]}'
-            assert now - started < INDEX_WAIT_S, f'{label}: the job did not end within {INDEX_WAIT_S} s: {sample}'
-            time.sleep(INDEX_SAMPLE_S)
-        ended = time.monotonic()
+    def streamed(self, label, fixture, session, revision, watch):
+        """L5 (spec §5, §9): the head job, at the default heap and budget, completes and publishes at the head. Its samples
+        (IndexWatch, from before any claim) are split into the wait for a claim, the count pass, W, P1, P2, P3 and the
+        switch; the split must resolve every boundary (else `not measured`) and agree with the server's logged publication
+        time within two sampling periods. Then semantic and hybrid search, CLI and MCP, find the session by a query equal to
+        one of its chunks' text, and STEADY_SEARCHES more of each answer."""
+        ended = watch.finish(label)
+        job, samples, probes, started, sample = watch.job, watch.samples, watch.probes, watch.started, watch.samples[-1]
         (self.root / f'index-{label.split()[0]}.jsonl').write_text(''.join(json.dumps(x) + '\n' for x in samples))
         split = phase_split(samples)
         heap = self.server.gc_peaks(started, ended)
@@ -1218,12 +1253,22 @@ class Harness:
         logged = {event: re.findall(r'^I (\S+) .*publication ' + event + r' jobId=(?:\w+=)?' + job + r' .*?totalWindows=(?:\w+=)?(\d+)(?: seconds=(?:\w+=)?(\d+))?', log, re.M)
                   for event in ('started', 'switched')}
         switched = [(windows, seconds) for _, windows, seconds in logged['switched']]
-        split.update(publicationLoggedAt={event: [at for at, _, _ in lines] for event, lines in logged.items()})
+        deferred = re.findall(r'^I (\S+) .*large job deferred jobId=(?:\w+=)?' + job + r' ', log, re.M)
+        split.update(publicationLoggedAt={event: [at for at, _, _ in lines] for event, lines in logged.items()}, largeJobDeferralsLoggedAt=deferred)
         note(f'{label}: indexing {json.dumps(dict(split=split, heap=heap, switched=switched, probes=len(probes), unavailable=len(unavailable)))}')
-        check(f'{label}: the head job of revision {revision} completes at the default heap and budget ({split["windows"]:,} windows, {split["searchRows"]:,} search rows, '
-              f'{split["totalSeconds"] / 3600:.2f} h from the claim, {sample["attempts"]} attempt(s))', sample['state'] == 'Complete', sample)
+        check(f'{label}: the head job of revision {revision} completes at the default heap and budget ({split["windows"]:,} windows, {sample["attempts"]} attempt(s), '
+              f'{len(deferred)} large-job deferral(s))', sample['state'] == 'Complete', sample)
         job_row = self.indexed(label, session, revision)
         check(f'{label}: the server logged the switch of that job ({switched})', len(switched) == 1, switched)
+        if split['unresolved']:
+            skip(f'{label}: the phase split (claim, count, W, P1, P2, P3, switch) and HNSW rows/s',
+                 f'not measured: no sample shows the boundaries {split["unresolved"]} at {INDEX_SAMPLE_S} s sampling')
+        else:
+            logged_seconds = int(switched[0][1])
+            check(f'{label}: phase split from the claim: {split["totalSeconds"] / 3600:.2f} h (count {split["countSeconds"]} s, W {split["wSeconds"]} s, '
+                  f'P1 {split["p1Seconds"]} s, P2 {split["p2Seconds"]} s, P3 {split["p3Seconds"]} s, {split["searchRows"]:,} search rows at {split["hnswRowsPerSecond"]} rows/s); '
+                  f'its publication {split["publicationSeconds"]} s agrees with the logged {logged_seconds} s within {PUBLICATION_TOLERANCE_S} s',
+                  abs(split['publicationSeconds'] - logged_seconds) <= PUBLICATION_TOLERANCE_S and split['hnswRowsPerSecond'] > 0, split)
         check(f'{label}: no out-of-memory; the peak live heap during indexing was {heap["peakLiveHeapMB"]} MB after a full collection, '
               f'{heap["peakHeapBeforeCollectionMB"]} MB before one ({heap["collections"]} collections)', 'OutOfMemoryError' not in log and 'Java heap space' not in log, heap)
         note(f'{label}: semantic searches while it published: {len(probes)}, {len(unavailable)} unavailable'
@@ -1468,29 +1513,40 @@ class Harness:
 # ---------------------------------------------------------------- runs
 
 def phase_split(samples):
-    """The job's phases from the database samples (each boundary at the first sample showing it, so ± INDEX_SAMPLE_S):
-    count pass (claimed, windows not yet counted), W (windows), P1 (staged phase Passages), P2 (phase Pieces until search
-    rows are inserted), P3 (search rows, until the switch); HNSW rows per second over P3 and per sample."""
-    def first(predicate, default=None):
-        return next((x for x in samples if predicate(x)), default)
-    end = samples[-1]
-    claimed = first(lambda x: x['state'] == 'Running') or end
-    counted = first(lambda x: x['total'] >= 0) or end
-    windows_done = first(lambda x: x['total'] >= 0 and x['completed'] >= x['total']) or end
-    p1 = first(lambda x: x['phase'] == 'Passages') or first(lambda x: x['phase'] == 'Pieces') or end
-    p2 = first(lambda x: x['phase'] == 'Pieces') or end
-    p2_index = samples.index(p2)
-    # P3 starts after the last sample of P2 without new search rows.
-    p3 = next((previous for previous, x in zip(samples[p2_index:], samples[p2_index + 1:]) if x['searchRows'] > previous['searchRows']), end)
-    rates = sorted(round((b['searchRows'] - a['searchRows']) / max(b['t'] - a['t'], 1e-9)) for a, b in zip(samples, samples[1:]) if p3['t'] <= a['t'] and b['t'] <= end['t'])
-    rows = end['searchRows'] - p3['searchRows']
-    seconds = lambda a, b: round(b['t'] - a['t'], 1)
-    return dict(windows=end['total'], searchRows=rows, chunkRows=end['chunkRows'] - samples[0]['chunkRows'], samples=len(samples), sampleSeconds=INDEX_SAMPLE_S,
-                waitedForClaimSeconds=seconds(samples[0], claimed), countSeconds=seconds(claimed, counted), wSeconds=seconds(counted, windows_done),
-                p1Seconds=seconds(p1, p2), p2Seconds=seconds(p2, p3), p3Seconds=seconds(p3, end), switchToP1Seconds=seconds(windows_done, p1),
-                totalSeconds=seconds(claimed, end), wWindowsPerSecond=round(end['total'] / max(seconds(counted, windows_done), 1e-9), 2),
-                hnswRowsPerSecond=round(rows / max(seconds(p3, end), 1e-9)), hnswRowsPerSecondSamples=dict(min=rates[0], median=rates[len(rates) // 2], max=rates[-1]) if rates else None,
-                walBytes=end['wal'])
+    """The job's phases from the database samples, each boundary at the first sample showing it (so up to INDEX_SAMPLE_S
+    late): the wait for a claim, the count pass (claimed, windows not yet counted), W (windows), P1 (staged phase
+    Passages), P2 (phase Pieces until search rows are inserted), P3 (search rows, until the switch); HNSW rows per second
+    over P3 and per sample. A boundary no sample shows (a claim before the first sample, a phase shorter than the sampling
+    period, a job that did not complete) is listed in `unresolved` and every duration that depends on it is None: nothing
+    falls back to a zero-length phase."""
+    def first(predicate, after=0):
+        return next((i for i in range(after, len(samples)) if predicate(samples[i])), None)
+    end = len(samples) - 1 if samples and samples[-1]['state'] == 'Complete' else None
+    claimed = first(lambda x: x['state'] == 'Running')
+    claimed = claimed if claimed is not None and claimed > 0 else None  # running at the first sample: claimed before it
+    counted = first(lambda x: x['total'] >= 0)
+    windows_done = first(lambda x: x['total'] >= 0 and x['completed'] >= x['total'])
+    p1 = first(lambda x: x['phase'] == 'Passages')
+    p2 = first(lambda x: x['phase'] == 'Pieces')
+    # P3 starts after the last sample of P2 without new search rows; it needs one sample inside it besides the end.
+    p3 = None if p2 is None else next((i for i in range(p2, len(samples) - 1) if samples[i + 1]['searchRows'] > samples[i]['searchRows']), None)
+    p3 = p3 if p3 is not None and end is not None and p3 < end - 1 else None
+    boundaries = dict(claim=claimed, counted=counted, windows=windows_done, p1=p1, p2=p2, p3=p3, switch=end)
+    unresolved = [name for name, index in boundaries.items() if index is None]
+
+    def seconds(a, b):
+        return None if a is None or b is None else round(samples[b]['t'] - samples[a]['t'], 1)
+    rates = sorted(round((samples[i + 1]['searchRows'] - samples[i]['searchRows']) / max(samples[i + 1]['t'] - samples[i]['t'], 1e-9))
+                   for i in range(p3, end)) if p3 is not None and end is not None else []
+    rows = samples[end]['searchRows'] - samples[p3]['searchRows'] if p3 is not None and end is not None else None
+    w, p3_seconds = seconds(counted, windows_done), seconds(p3, end)
+    last = samples[-1]
+    return dict(unresolved=unresolved, windows=last['total'], searchRows=rows, chunkRows=last['chunkRows'] - samples[0]['chunkRows'], samples=len(samples),
+                sampleSeconds=INDEX_SAMPLE_S, waitedForClaimSeconds=seconds(0, claimed), countSeconds=seconds(claimed, counted), wSeconds=w,
+                switchToP1Seconds=seconds(windows_done, p1), p1Seconds=seconds(p1, p2), p2Seconds=seconds(p2, p3), p3Seconds=p3_seconds,
+                publicationSeconds=seconds(windows_done, end), totalSeconds=seconds(claimed, end),
+                wWindowsPerSecond=round(last['total'] / w, 2) if w else None, hnswRowsPerSecond=round(rows / p3_seconds) if p3_seconds else None,
+                hnswRowsPerSecondSamples=dict(min=rates[0], median=rates[len(rates) // 2], max=rates[-1]) if rates else None, walBytes=last['wal'])
 
 
 def wal_per_raw_byte(phase_name, raw_bytes):
@@ -1545,9 +1601,11 @@ def run_a(root):
         check('A3: that attempt aborts', status == 200 and aborted['phase'] == 'Aborted', (status, aborted))
         status, refused = declare(h.max_file_bytes + 1)
         check(f'A3: an open declaring {h.max_file_bytes + 1:,} raw bytes is refused 413 too-large', status == 413 and refused['code'] == 'too-large', (status, refused))
-    uploads = None
+    uploads, watch = None, None
     if STAGE == 'l5':
         uploads = h.stop()
+        # Sampled from before the workers start: a lane claims the head job at once, while A4 runs.
+        watch = IndexWatch(h, session, 2)
         h.start('A-S2')
     with Phase('A4 a 16 MiB session indexes and publishes on the same server'):
         small.write(int(16 * MiB * SCALE))
@@ -1558,7 +1616,7 @@ def run_a(root):
     with Phase('A5 indexing of the 1 GB session'):
         if STAGE == 'prefix':
             check(f'A5: the 1 GB head\'s estimate {head["estimate"]:,} exceeds the budget {h.budget:,}', head['estimate'] > h.budget, head)
-        a5 = h.indexing('A5', big, session, 2)
+        a5 = h.indexing('A5', big, session, 2, watch)
     with Phase('A6 reads of the 1 GB session (S2)'):
         a6 = h.reads('A6', big, session, 2)
     with Phase('A6 raw downloads of the 1 GB session (S2)'):
@@ -1643,14 +1701,15 @@ def run_b(root):
         status, state = h.api('GET', f"/api/ingest/uploads/{head['upload']['id']}")
         check('B2: the append attempt reports its received bytes exactly', status == 200 and int(state['receivedRawBytes']) == big.bytes - first['rawBytes'], state)
         h.incremental('B2', big, big.bytes - before)
-    uploads = None
+    uploads, watch = None, None
     if STAGE == 'l5':
         uploads = h.stop()
+        watch = IndexWatch(h, session, 2)  # sampled from before the workers start
         h.start('B-S2')
     with Phase('B3 indexing: the 4.4 GB session\'s verdict, the other sessions index'):
         if STAGE == 'prefix':
             check(f'B3: the head\'s estimate {head["estimate"]:,} exceeds the budget {h.budget:,}', head['estimate'] > h.budget, head)
-        b3 = h.indexing('B3', big, session, 2)
+        b3 = h.indexing('B3', big, session, 2, watch)
         small_jobs = [h.indexed(f'B3 small session {k}', h.source(fixture)[0], 1) for k, fixture in enumerate(smalls)]
     with Phase('B4 reads of the 4.4 GB session'):
         b4 = h.reads('B4', big, session, 2, large_pages=[min(big.large) - PAGE // 2, max(i for i in big.large if i < first['messages']) - 10, max(big.large) - 1])
