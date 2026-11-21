@@ -6,7 +6,9 @@ Base `3505965a`; developed on branch `task/cuckoo-pane-nav`. Paths under
 **State (2026-11-21): implemented.** Decision Q131 was answered with variant A
 and no extras. The decision was made on a mockup page published as Manure
 artifact `311dfbaa2178612f725f4894b101ff03` (public, expires 2027-01-20); its
-sources are under `.local/cuckoo-pane-nav/mockup/`.
+sources are under `.local/cuckoo-pane-nav/mockup/`. Decision Q132, about what
+the list view shows after Escape, was answered after the merge with option A:
+keep it as built.
 
 ## Request
 
@@ -217,11 +219,14 @@ these places; no approved frame is affected.
      one did, so Enter shows more of what precedes it.
    - After Escape (not directly after Enter) the shorter view follows the
      selected item when it was on screen and would otherwise be hidden. This
-     one is a choice, open as decision Q132. The alternative keeps the first
-     line and lets the selection leave the screen, after which `c` comments on
-     the first item on screen instead. Its cost: Escape then Enter does not
-     restore the earlier report view exactly (the cursor is kept; the text
-     starts up to the height of the table further down).
+     one is a choice; decision Q132 kept it as built. The alternative that
+     was not chosen keeps the first line and lets the selection leave the
+     screen, after which `c` comments on the first item on screen instead.
+     The cost of the built behaviour: Escape then Enter does not restore the
+     earlier report view exactly (the cursor is kept; the text starts up to
+     the height of the table further down). A third option, to remember the
+     report view at Escape so that a directly following Enter returns to it,
+     was offered and not chosen.
 3. **Narrow widths**, which the page does not show: titles shorten instead of
    being cut (see Implementation).
 4. **Hints of an empty pane**: `i inquire now  esc close` only. The page says
@@ -274,8 +279,8 @@ Source identity: branch `task/cuckoo-pane-nav` on base `3505965a`; pinned Node
   from in the report; reproduced by a test and corrected (`hold`).
 - Second review, of the corrections (same agent, run `4e4b50a5`): the four
   corrections hold in the layout-engine path, traced pass by pass; no blocking
-  defect; three low findings and one point for the owner (Q132, see
-  "Differences", item 2). Each finding was again reproduced by a failing test
+  defect; three low findings and one point for the owner (Q132, since
+  answered: keep as built; see "Differences", item 2). Each finding was again reproduced by a failing test
   first where it concerned behaviour (`fail-first-review2.log`):
   1. A table that returns after the terminal grew kept its old row count until
      the next key when the report fits. Reproduced (`1–1 of 5` in a pane with
