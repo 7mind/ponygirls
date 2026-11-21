@@ -330,7 +330,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   test("BG/GoodCommunication regression: corrupt accepted annotation fails internally instead of entering a provider retry loop") { withFixture { f =>
     val archive=f.archive(); archive.ingest("a",request(List("user"->"synthetic task")))
     val claim=archive.claim(archive.knownProfiles,ClaimScope.Owner("a"),300).get
-    val window=ProblemPassages.Source(claim.snapshot.messages).next(ProblemPassages.SourceCursor.start).get
+    val window=ProblemPassages.Source(claim.messages.decoded).next(ProblemPassages.SourceCursor.start).get
     val key=IndexCheckpoints.key(claim,IndexingStage.Annotation,0,0,ProblemPassages.identity,Json.arr(window.sourceJson,Json.Null))
     val corrupt=ProblemPassages.Decision(Vector(ProblemPassages.Part.context(ProblemPassages.Point(0,0),ProblemPassages.Point(0,1))))
     archive.checkpoint(claim,key,CheckpointJson.decision(corrupt)); archive.fail(claim,"model-timeout",IndexingStage.Annotation)

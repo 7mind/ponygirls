@@ -76,15 +76,51 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
     }
   }
 
-  final class Source private[ProblemPassages](val messages: Vector[Message]) {
+  /** One source's messages in position order (ingest-limits spec §5.2.2): `count` of them, read from a position on. */
+  trait SourceMessages {
+    def count: Int
+    /** The messages from position `from` (below `count`) on, in position order: at least one, as many as one fetch holds. */
+    def read(from: Int): Vector[Message]
+  }
+  object SourceMessages {
+    /** Decoded messages, checked as a stored source checks each message it reads. */
+    def apply(messages: Seq[Message]): SourceMessages = {
+      Check(messages.map(_.id).distinct.size==messages.size,"invalid","duplicate source message IDs")
+      val held=messages.toVector.map(checked)
+      new SourceMessages {
+        def count: Int = held.size
+        def read(from: Int): Vector[Message] = held.drop(from)
+      }
+    }
+    /** A source message's bounds (its ID's uniqueness is its storage's). */
+    def checked(message: Message): Message = {
+      Check(message.id.nonEmpty && message.id.length<=maximumMessageIdUnits && message.role.nonEmpty && message.role.length<=maximumRoleUnits,"invalid","source metadata bounds")
+      List(message.id,message.role,message.text).foreach(textSize(_,"invalid"))
+      message
+    }
+  }
+  /** The windows of a source. The messages of its last read are kept until the cursor leaves them: a message longer than a
+    * window is read once, and each message once per pass in cursor order. */
+  final class Source private[ProblemPassages](messages: SourceMessages) {
+    private var held=Vector.empty[Message]
+    private var heldFrom=0
+    def count: Int = messages.count
+    private[chronicle] def message(position: Int): Message = {
+      if(position<heldFrom || position>=heldFrom+held.size) {
+        held=Vector.empty; heldFrom=position
+        held=messages.read(position)
+        Check(held.nonEmpty && held.size<=messages.count-position,"internal","source read outside its messages")
+      }
+      held(position-heldFrom)
+    }
     def next(cursor: SourceCursor): Option[Window] = {
-      Check(cursor.messagePosition>=0 && cursor.messagePosition<=messages.size,"invalid","invalid source cursor")
+      Check(cursor.messagePosition>=0 && cursor.messagePosition<=messages.count,"invalid","invalid source cursor")
       var position=cursor.messagePosition; var charStart=cursor.utf16Offset; var byteStart=cursor.byteOffset
       var fragments=Vector.empty[Fragment]; var full=false
       var sourceBytes=bytes(sourcePrefix)+bytes(sourceSuffix)
       var contentBytes=stringContentBytes(sourcePrefix)+stringContentBytes(sourceSuffix)+2
-      while(position<messages.size && fragments.size<maximumWindowFragments && !full) {
-        val message=messages(position)
+      while(position<messages.count && fragments.size<maximumWindowFragments && !full) {
+        val message=this.message(position)
         Check(charStart>=0 && charStart<=message.text.length && byteStart>=0,"invalid","invalid source cursor")
         if(charStart==message.text.length) { position+=1; charStart=0; byteStart=0 }
         else {
@@ -120,14 +156,8 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
   }
   object Source {
     // HTTP admission is capped at 512 MiB (Config.maximumBodyBytes); standalone strings still need i32 UTF8 offsets.
-    def apply(messages: List[Message]): Source = {
-      Check(messages.map(_.id).distinct.size==messages.size,"invalid","duplicate source message IDs")
-      messages.foreach { message =>
-        Check(message.id.nonEmpty && message.id.length<=maximumMessageIdUnits && message.role.nonEmpty && message.role.length<=maximumRoleUnits,"invalid","source metadata bounds")
-        List(message.id,message.role,message.text).foreach(textSize(_,"invalid"))
-      }
-      new Source(messages.toVector)
-    }
+    def apply(messages: List[Message]): Source = new Source(SourceMessages(messages))
+    def apply(messages: SourceMessages): Source = new Source(messages)
   }
 
   final case class SourceExcerpt private[ProblemPassages](span: SourceSpan,role: String,text: String)

@@ -192,7 +192,7 @@ final class OversizeGuardTest extends munit.FunSuite {
     }
   }
 
-  test("an epoch revision larger than the planner's statistics: its first page reads one page of rows and the claim streams it in key order without a sort") {
+  test("an epoch revision larger than the planner's statistics: its first page reads one page of rows, and a window's reads of its sizes and values take the key's range without a sort") {
     database(Fixtures.config()) { (db,archive) =>
       // Statistics of more epochs than their 100 most common values (as in production), then an epoch they do not know:
       // the planner expects about ten of its rows.
@@ -204,14 +204,14 @@ final class OversizeGuardTest extends munit.FunSuite {
       val large=archive.ingest("a",request((0 until 2000).map(i => s"large $i "+"z"*1000))).sessionId
       def plan(c: java.sql.Connection,query: ReadSources.Query): String = Sql.rows(c,"EXPLAIN (ANALYZE,BUFFERS) "+query.sql,query.args*)(_.getString(1)).mkString("\n")
       val page=db.transaction { c => val stored=RevisionContent.resolve(c,large,1).get; plan(c,archive.messagePage(c,stored,0,100)) }
-      val stream=db.transaction { c =>
-        val stored=RevisionContent.resolve(c,large,1).get
-        archive.claimedSnapshot(c,large,1)
-        plan(c,ReadSources.Query(s"SELECT value FROM ${stored.messages.sql} m ORDER BY position",stored.messages.args))
+      val (sizes,values)=db.transaction { c =>
+        val stored=new StoredMessages(db,RevisionContent.resolve(c,large,1).get,2000)
+        stored.keyed(c)
+        (plan(c,stored.sizesQuery(0,StoredMessages.sizeBatch)),plan(c,stored.valuesQuery(0,StoredMessages.sizeBatch)))
       }
-      println(s"FIRST PAGE PLAN\n$page\nCLAIM STREAM PLAN\n$stream")
+      println(s"FIRST PAGE PLAN\n$page\nWINDOW SIZES PLAN\n$sizes\nWINDOW VALUES PLAN\n$values")
       // The key's range: no other index, no rows read and filtered away, no sort.
-      List(page,stream).foreach(plan => assert(plan.contains("Index Scan using ch_epoch_messages_pkey") && !plan.contains("Rows Removed") && !plan.contains("Sort"),plan))
+      List(page,sizes,values).foreach(plan => assert(plan.contains("Index Scan using ch_epoch_messages_pkey") && !plan.contains("Rows Removed") && !plan.contains("Sort"),plan))
       assertEquals("""Index Scan.*actual time=[0-9.]+\.\.[0-9.]+ rows=([0-9]+)""".r.findFirstMatchIn(page).map(_.group(1).toInt),Some(100))
     }
   }

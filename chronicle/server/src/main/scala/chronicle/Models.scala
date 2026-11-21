@@ -1,6 +1,7 @@
 package chronicle
 import chronicle.api.*
 import cats.effect.{IO,Ref,Resource}
+import cats.effect.std.Dispatcher
 import cats.syntax.all.*
 import org.http4s.{Request,Method,Uri,Header}
 import org.http4s.client.Client
@@ -28,7 +29,8 @@ object Fragments {
     result.result()
   }
 }
-/** What one indexing job retains until its publication (append-only ingest spec §3.1): every decoded message, per Problem
+/** What one indexing job retains until its publication (append-only ingest spec §3.1): every decoded message (the
+  * publication's validation reads them all; until then the windows read them by position, ingest-limits spec §5.2.2), per Problem
   * piece its chunk in the publication builder and its vector in the job's VectorArena (whole blocks), and per Context
   * slice its coverage span. A job whose estimate exceeds `maxIndexingBudgetBytes` ends Failed with `exceededCode` before
   * its messages are decoded; a running job whose windows outgrow the estimate ends the same way before it retains them.
@@ -49,9 +51,12 @@ object IndexingBudget {
     BigInt(2)*BigInt(messageBytes)+BigInt(messageObjectBytes)*BigInt(messages)+BigInt(fragments)*BigInt(chunkBytes)+VectorArena.heldBytes(dimensions,fragments)
   /** The decoded messages' share, from their strings (two bytes per UTF-16 unit): at most the estimate's share, as a
     * string has no more UTF-16 units than UTF-8 bytes. */
-  def decoded(messages: List[Message]): BigInt = messages.foldLeft(BigInt(0)) { (total,m) =>
+  def decoded(messages: Seq[Message]): BigInt = messages.foldLeft(BigInt(0)) { (total,m) =>
     total+BigInt(2L*(m.id.length+m.role.length+m.text.length+m.parentId.fold(0)(_.length)+m.timestamp.fold(0)(_.length))+messageObjectBytes)
   }
+  /** Heap per byte of a message's stored text while it is fetched and decoded (ingest-limits spec §5.2.8): the driver's row,
+    * the decoded string (UTF-16), the JSON tree and the decoded Message. */
+  val messageDecodeFactor = 7
 }
 trait Embedder { def documents(owner: String,text: List[String]): IO[List[List[Double]]]; def query(owner: String,text: String): IO[List[Double]] }
 object ModelHttp {
@@ -146,10 +151,9 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   }
   private final case class StagedFailure(stage: IndexingStage,error: Throwable) extends RuntimeException
   private def publishStage(run: => IO[Unit]): IO[Unit] = IO.defer(run).handleErrorWith(error => IO.raiseError(StagedFailure(IndexingStage.Publication,error)))
-  private final class Windows(claim: Claim,total: Int,large: LargeJobs) {
+  private final class Windows(claim: Claim,total: Int,large: LargeJobs,decoded: BigInt) {
     private val dimensions=config.embedding.dimensions
     private val vectors=new VectorArena(dimensions)
-    private val decoded=IndexingBudget.decoded(claim.snapshot.messages)
     /** The pieces and Context spans the publication holds once the windows so far are appended, and the vectors in the
       * arena, counted as they are added: a part added again after an input mismatch is held twice and counted twice. */
     private var pieces=0L
@@ -223,7 +227,15 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       }
     }
   }
-  private def count(source: ProblemPassages.Source): Int = {
+  /** The count pass, through the reader the windows use: the source's windows and the decoded messages' share of the
+    * estimate (IndexingBudget.decoded; a pass reads each message once). */
+  private def count(claim: Claim,fetch: MessageFetch): (Int,BigInt) = {
+    val messages=claim.messages.reader(fetch)
+    var decoded=BigInt(0)
+    val source=ProblemPassages.Source(new ProblemPassages.SourceMessages {
+      def count: Int = messages.count
+      def read(from: Int): Vector[Message] = { val read=messages.read(from); decoded+=IndexingBudget.decoded(read); read }
+    })
     var cursor=ProblemPassages.SourceCursor.start
     var total=0
     var next=source.next(cursor)
@@ -231,15 +243,17 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       Check(total<Int.MaxValue,"internal","source window count overflow")
       total+=1; cursor=next.get.next; next=source.next(cursor)
     }
-    total
+    (total,decoded)
   }
-  private def passages(claim: Claim,large: LargeJobs): IO[Unit] = IO.blocking {
-    val source=ProblemPassages.Source(claim.snapshot.messages)
-    (source,count(source))
-  }.flatMap { (source,total) =>
+  /** A message above SnapshotAdmission.largeBodyBytes is fetched and decoded under the snapshot admission's permit, one
+    * at a time in the process like large ingests (ingest-limits spec §5.2.2). */
+  private def fetch(dispatcher: Dispatcher[IO]): MessageFetch = MessageFetch(config.maxIndexingBudgetBytes,new LargeDecodes {
+    def apply[A](decode: => A): A = dispatcher.unsafeRunSync(snapshots.claim(IO.blocking(decode)))
+  })
+  private def passages(claim: Claim,large: LargeJobs,fetch: MessageFetch): IO[Unit] = IO.blocking(count(claim,fetch)).flatMap { (total,decoded) =>
     if(total>LargeJobs.windows && large==LargeJobs.Skipped)
       deferLarge(claim,total) *> IO(logger.info(s"large job deferred jobId=${claim.jobId} totalWindows=$total largeJobWindows=${LargeJobs.windows}"))
-    else indexWindows(claim,source,total,large).recoverWith { case outgrown: SmallJobOutgrown =>
+    else indexWindows(claim,ProblemPassages.Source(claim.messages.reader(fetch)),total,large,decoded).recoverWith { case outgrown: SmallJobOutgrown =>
       val retained=outgrown.retained
       deferLarge(claim,total) *> IO(logger.info(s"job outgrew the small-job budget, deferred jobId=${claim.jobId} totalWindows=$total retainedBytes=$retained smallJobBudget=${config.maxSmallJobBudgetBytes}"))
     }
@@ -247,10 +261,11 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   /** Back to the queue with its window count and without the attempt: claims that skip large jobs pass it by. */
   private def deferLarge(claim: Claim,total: Int): IO[Unit] =
     IO.blocking(Check(archive.defer(claim,total),"stale-claim","indexing claim is no longer current"))
-  private def indexWindows(claim: Claim,source: ProblemPassages.Source,total: Int,large: LargeJobs): IO[Unit] = {
-    val windows=new Windows(claim,total,large)
-    def loop(state: ProblemPassages.State,publication: ProblemsPublication.Builder,index: Int): IO[Unit] = IO.defer {
-      source.next(state.nextSource) match {
+  private def indexWindows(claim: Claim,source: ProblemPassages.Source,total: Int,large: LargeJobs,decoded: BigInt): IO[Unit] = {
+    val windows=new Windows(claim,total,large,decoded)
+    // A window reads its messages from the database.
+    def loop(state: ProblemPassages.State,publication: ProblemsPublication.Builder,index: Int): IO[Unit] = IO.blocking(source.next(state.nextSource)).flatMap { pending =>
+      pending match {
         case None => publishStage(IO.blocking {
           Check(index==total,"internal","source window count changed")
           val finished=ProblemPassages.finish(state,source)
@@ -274,7 +289,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     windows.report(0) *> loop(ProblemPassages.State.start(claim.sessionId,claim.runId),ProblemsPublication.empty,0)
   }
   private def process(claim: Claim,large: LargeJobs): IO[Unit] = {
-    val work=passages(claim,large)
+    val work=Dispatcher.sequential[IO](await=true).use(dispatcher => passages(claim,large,fetch(dispatcher)))
     val renew=(IO.sleep(30.seconds) *> IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current"))).foreverM
     IO.race(work,renew).void.handleErrorWith { failure =>
       val (stage,error)=failure match { case StagedFailure(stage,error) => (Some(stage),error); case error => (None,error) }
@@ -306,7 +321,8 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   private def iteration: IO[Worker.Iteration] = admission.annotationSession.use { _ =>
     admission.largeJob.use { admitted =>
       val large=if(admitted) LargeJobs.Admitted else LargeJobs.Skipped
-      snapshots.claim(IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds,large))).redeemWith(claimFailed,{
+      // A claim decodes no message (ingest-limits spec §5.2.1): it waits for no snapshot admission.
+      IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds,large)).redeemWith(claimFailed,{
         case None => IO.pure(Worker.Iteration.Idle)
         case Some(claim) => process(claim,large).as(Worker.Iteration.Processed)
       })

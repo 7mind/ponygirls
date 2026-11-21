@@ -93,9 +93,13 @@ final class EpochReadDifferentialTest extends munit.FunSuite {
           .takeWhile(_.nonEmpty).flatten.map(page => (page.view,page.hits,page.nextCursor.isDefined)).toList
       }}
       same(s"raw of $view")((owner,id,archive) => archive.raw(owner,id,Some(index+1)))
-      same(s"claim of $view")((_,id,archive) => db.transaction(c => archive.claimedSnapshot(c,id,index+1)._1))
+      def claimed(archive: PostgresArchive,id: UUID): (IngestRequest,List[Message]) = {
+        val (envelope,_,messages)=db.transaction(c => archive.claimedSnapshot(c,id,index+1))
+        (envelope,messages.decoded)
+      }
+      same(s"claim of $view")((_,id,archive) => claimed(archive,id))
       assertEquals(epochs.raw("b",ids(1),Some(index+1)).files,revision.files)
-      assertEquals(db.transaction(c => epochs.claimedSnapshot(c,ids(1),index+1)._1),SnapshotProjection(revision).copy(files=Nil))
+      assertEquals(claimed(epochs,ids(1)),(SnapshotProjection(revision).copy(messages=Nil,files=Nil),SnapshotProjection(revision).messages))
     }
     same("head snapshot")((owner,id,archive) => archive.headSnapshot(owner,id))
   }}

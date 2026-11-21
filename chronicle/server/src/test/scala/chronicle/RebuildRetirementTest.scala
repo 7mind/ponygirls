@@ -8,7 +8,7 @@ abstract class RebuildRetirementContract extends munit.FunSuite {
   protected def withArchive(run: F => Unit): Unit
   private def publish(archive: SessionArchive): Claim = {
     val claim=archive.claim(archive.knownProfiles,ClaimScope.Owner("a"),300).get
-    val chunks=Fragments.split(claim.snapshot.messages).map(chunk => IndexedChunk(chunk.copy(sessionId=claim.sessionId,summary="synthetic problem"),List(1.0,0.0,0.0)))
+    val chunks=Fragments.split(claim.messages.decoded).map(chunk => IndexedChunk(chunk.copy(sessionId=claim.sessionId,summary="synthetic problem"),List(1.0,0.0,0.0)))
     assert(archive.publishProblems(claim,TestPublications.from(claim,chunks))); claim
   }
   // Regression-origin: supersession is not permission to retain old payload forever or to delete all future history.

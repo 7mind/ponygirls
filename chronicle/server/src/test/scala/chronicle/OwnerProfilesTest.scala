@@ -193,7 +193,7 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
   }}
   test("Blackbox GoodCommunication: unknown same-dimension and incompatible published profiles are explicit availability failures") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
     val out=a.ingest("a",Fixtures.snapshot()); val claim=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
-    assert(a.publish(claim,List(IndexedChunk(Fragments.split(claim.snapshot.messages).head.copy(sessionId=out.sessionId),List(1.0,0.0,0.0)))))
+    assert(a.publish(claim,List(IndexedChunk(Fragments.split(claim.messages.decoded).head.copy(sessionId=out.sessionId),List(1.0,0.0,0.0)))))
     val search=new PostgresSearch(db,a,c); val q=SearchQuery("archive",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),20,0)
     def rejected(): Unit = {
       assertEquals(intercept[DomainError](search.search("a",q,Some(List(1.0,0.0,0.0)))).code,"unavailable")
@@ -229,7 +229,7 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
   test("regression: annotation-only profile changes must not disable compatible semantic reads") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
     val out=a.ingest("a",Fixtures.snapshot())
     val claim=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
-    val chunk=Fragments.split(claim.snapshot.messages).head.copy(sessionId=out.sessionId)
+    val chunk=Fragments.split(claim.messages.decoded).head.copy(sessionId=out.sessionId)
     assert(a.publish(claim,List(IndexedChunk(chunk,List(1.0,0.0,0.0)))))
     val next=c.copy(annotation=c.annotation.copy(revision="owner-new-policy"))
     val q=SearchQuery("archive",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),20,0)

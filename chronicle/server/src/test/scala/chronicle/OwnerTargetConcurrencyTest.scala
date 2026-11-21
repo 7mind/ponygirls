@@ -77,7 +77,7 @@ final class OwnerTargetConcurrencyTest extends munit.FunSuite {
   }}
   test("Effectual GoodCommunication: expiry during generation persistence rolls back all publication side effects") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
     val out=a.ingest("a",Fixtures.snapshot()); val first=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
-    def chunks(claim: Claim): List[IndexedChunk] = List(IndexedChunk(Fragments.split(claim.snapshot.messages).head.copy(sessionId=claim.sessionId),List(1.0,0.0,0.0)))
+    def chunks(claim: Claim): List[IndexedChunk] = List(IndexedChunk(Fragments.split(claim.messages.decoded).head.copy(sessionId=claim.sessionId),List(1.0,0.0,0.0)))
     assert(a.publish(first,chunks(first))); val previous=a.session("a",out.sessionId).view
     val service=new PostgresOwnerReindex(db); val plan=service.preview("a")
     service("a",UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true)

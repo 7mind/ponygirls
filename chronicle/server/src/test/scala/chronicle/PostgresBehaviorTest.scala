@@ -198,7 +198,7 @@ class PostgresBehaviorTest extends munit.FunSuite {
     val pending=call(owner,Operation.GetMessages(out.sessionId,0,100,Some(ContentView(2,None)))).asInstanceOf[Result.Messages].result
     assertEquals(pending.view,ContentView(2,None)); assertEquals(pending.messages.head.text,"new")
     val latest=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
-    assert(a.publish(latest,List(IndexedChunk(Fragments.split(latest.snapshot.messages).head.copy(sessionId=out.sessionId),List(0.0,1.0,0.0)))))
+    assert(a.publish(latest,List(IndexedChunk(Fragments.split(latest.messages.decoded).head.copy(sessionId=out.sessionId),List(0.0,1.0,0.0)))))
     val pinnedSession=call(owner,Operation.GetSession(out.sessionId,Some(pin))).asInstanceOf[Result.Session].result
     assertEquals(pinnedSession.session.view,pin); assertEquals(pinnedSession.session.revision,2); assertEquals(pinnedSession.session.indexedRevision,Some(2)); assertEquals(pinnedSession.session.metadata.project,Some("project-old"))
     val pinnedMessages=call(owner,Operation.GetMessages(out.sessionId,0,100,Some(pin))).asInstanceOf[Result.Messages].result
@@ -251,7 +251,7 @@ class PostgresBehaviorTest extends munit.FunSuite {
     mutation(auth,ib,Operation.AcceptInvite(invite,true))
     val bc=entity(mutation(auth,ib,Operation.CreateGroup("BC"))); val inviteC=entity(mutation(auth,ib,Operation.Invite(bc,"c"))); mutation(auth,ic,Operation.AcceptInvite(inviteC,true))
     val out=a.ingest("a",Fixtures.snapshot()); val claim=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
-    val chunk=Fragments.split(claim.snapshot.messages).head.copy(sessionId=out.sessionId,summary="synthetic archive")
+    val chunk=Fragments.split(claim.messages.decoded).head.copy(sessionId=out.sessionId,summary="synthetic archive")
     assert(a.publish(claim,List(IndexedChunk(chunk,List(1.0,0.0,0.0)))))
     assertEquals(a.headSnapshot("b",out.sessionId).messages.head.id,"u")
     assertEquals(intercept[DomainError](a.headSnapshot("c",out.sessionId)).code,"not-found")

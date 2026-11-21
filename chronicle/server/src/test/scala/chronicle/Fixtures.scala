@@ -13,6 +13,13 @@ extension (archive: SessionArchive) {
     case other => throw new AssertionError(s"no stored head snapshot for ${other.getClass.getName}")
   }
 }
+extension (messages: ClaimedMessages) {
+  /** Every claimed message, decoded at once (production reads them per window). */
+  def decoded: List[Message] = {
+    val reader=messages.reader(MessageFetch(Long.MaxValue,LargeDecodes.unadmitted))
+    Iterator.unfold(0)(from => Option.when(from<reader.count)(reader.read(from)).map(read => (read,from+read.size))).flatten.toList
+  }
+}
 import java.nio.file.{Files,Path}
 import java.util.UUID
 import scala.concurrent.duration.*

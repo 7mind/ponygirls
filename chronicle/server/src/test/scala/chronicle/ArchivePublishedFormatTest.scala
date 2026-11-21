@@ -62,7 +62,7 @@ class ArchivePublishedFormatTest extends munit.FunSuite {
   test("Blackbox GoodCommunication: a published leftover in an old format is unavailable to its session, message, search, facet, tag and hint readers; revision-only reads stay") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
     val request=Fixtures.snapshot(); val receipt=archive.ingest("a",request)
     val claim=archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
-    assert(archive.publish(claim,List(IndexedChunk(Fragments.split(claim.snapshot.messages).head.copy(sessionId=receipt.sessionId,tags=List("generated")),List(1.0,0.0,0.0)))))
+    assert(archive.publish(claim,List(IndexedChunk(Fragments.split(claim.messages.decoded).head.copy(sessionId=receipt.sessionId,tags=List("generated")),List(1.0,0.0,0.0)))))
     val view=archive.session("a",receipt.sessionId).view
     val search=new PostgresSearch(db,archive,config); val hints=new PostgresExpressionHintIndex(db,archive,java.time.Clock.systemUTC())
     val noFilter=SearchFilter(None,None,None,None,Nil); val lexical=SearchQuery("synthetic",SearchMode.Lexical,noFilter,20,0)

@@ -202,11 +202,12 @@ final class OwnerLeaseBoundaryTest extends munit.FunSuite {
       assertEquals(db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_search_chunks WHERE session_id=?",claim.sessionId)(_.getInt(1))),Some(rows))
     }
   }
-  test("Effectual GoodCommunication: a claim carries the stored revision's messages, in order, and its digest, but not its raw files") {
+  test("Effectual GoodCommunication: a claim carries the stored revision's envelope and digest, not its messages or raw files, and reads its messages in order") {
     OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
-      val receipt=a.ingest("a",messages(Fixtures.snapshot(),3*PostgresArchive.claimedMessagesPerFetch+1))
+      val receipt=a.ingest("a",messages(Fixtures.snapshot(),3*StoredMessages.sizeBatch+1))
       val claim=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
-      assertEquals(claim.snapshot,a.headSnapshot("a",receipt.sessionId).copy(files=Nil))
+      val head=a.headSnapshot("a",receipt.sessionId)
+      assertEquals((claim.snapshot,claim.messages.decoded),(head.copy(messages=Nil,files=Nil),head.messages))
     }
   }
   test("Effectual GoodCommunication: a deferred large job returns to the queue without its attempt and only claims that admit large jobs take it") {

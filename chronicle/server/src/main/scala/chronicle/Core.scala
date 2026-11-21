@@ -229,7 +229,9 @@ final case class Identity(user: UserInfo, browser: Boolean, credentialHash: Stri
   def requireScope(s: Scope): Unit = Check(user.scopes.contains(s), "forbidden", "scope required")
   def requireBrowser(): Unit = Check(browser, "forbidden", "browser session required")
 }
-final case class Claim(jobId: UUID, sessionId: UUID, revision: Int, fence: Long, profile: String, snapshot: IngestRequest, owner: String, targetEpoch: Long, runId: UUID, revisionBinding: RevisionBinding)
+/** `snapshot` is the claimed revision's envelope (no messages, no raw files); `messages` reads its messages by position
+  * (ingest-limits spec §5.2.1). */
+final case class Claim(jobId: UUID, sessionId: UUID, revision: Int, fence: Long, profile: String, snapshot: IngestRequest, owner: String, targetEpoch: Long, runId: UUID, revisionBinding: RevisionBinding, messages: ClaimedMessages)
 /** `vector` of a running job is held until its publication: the worker stores it unboxed in a VectorArena; a job of
   * 60k pieces would otherwise hold some 90M boxed numbers, which every full collection traverses. */
 final case class IndexedChunk(chunk: Chunk, vector: Seq[Double])

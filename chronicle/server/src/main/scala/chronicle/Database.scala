@@ -122,7 +122,7 @@ object PostgresArchive {
   /** A message page holds the longest prefix of its messages whose stored values fit (at least one message): a page of
     * 100 messages each bounded only by its request would otherwise hold gigabytes. */
   val messagePageBytes: Long = 64L*1024*1024
-  /** Messages fetched per round trip while a claimed revision's messages are decoded one at a time. */
+  /** Messages fetched per round trip while a whole revision's messages are decoded one at a time (`RevisionContent.request`). */
   val claimedMessagesPerFetch = 64
 }
 object Jobs {
@@ -361,8 +361,8 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
                 c.rollback(passable.get); aboveSmallJobBudget.put(id,revision); next(Some(id))
               } else Sql.one(c,s"""UPDATE ch_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
                 WHERE id=($claimable) RETURNING id,fence,run_id""",leaseSeconds,id,revision,target.profile) { row =>
-                val (snap,binding)=claimedSnapshot(c,id,revision)
-                Claim(row.getObject("id",classOf[UUID]),id,revision,row.getLong("fence"),target.profile,snap,owner,target.epoch,row.getObject("run_id",classOf[UUID]),binding)
+                val (snap,binding,messages)=claimedSnapshot(c,id,revision)
+                Claim(row.getObject("id",classOf[UUID]),id,revision,row.getLong("fence"),target.profile,snap,owner,target.epoch,row.getObject("run_id",classOf[UUID]),binding,messages)
               }
             case None => None
           }
@@ -382,15 +382,14 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     }
     IndexingBudget.estimate(messages,bytes,fragments,config.embedding.dimensions)
   }
-  /** The claimed revision for indexing: its messages are decoded one at a time and its raw files are left out (indexing
-    * reads only messages and digest). Decoding a large snapshot as one syntax tree held gigabytes for seconds, long
-    * enough to be promoted, and drove the collector's longest pauses. */
-  private[chronicle] def claimedSnapshot(c: Connection,id: UUID,revision: Int): (IngestRequest,RevisionBinding) = {
+  /** The claimed revision for indexing (ingest-limits spec §5.2.1): its envelope, binding and the reader of its messages.
+    * No message is decoded here: the claim transaction locks the source row FOR UPDATE, which the source's next revision
+    * switch waits for; each window reads its messages in a transaction of its own. */
+  private[chronicle] def claimedSnapshot(c: Connection,id: UUID,revision: Int): (IngestRequest,RevisionBinding,ClaimedMessages) = {
     val stored=RevisionContent.resolve(c,id,revision).getOrElse(throw DomainError("stale-claim","archive revision no longer exists"))
-    // The claim transaction ends after this stream.
-    keyOrdered(c,stored)
-    val (snapshot,bindingId)=RevisionContent.claimed(c,stored,PostgresArchive.claimedMessagesPerFetch)
-    (snapshot,RevisionBinding.captured(bindingId,id,revision,snapshot))
+    val (snapshot,bindingId,count)=RevisionContent.claimed(c,stored)
+    val messages=new StoredMessages(db,stored,count)
+    (snapshot,RevisionBinding.captured(bindingId,id,revision,snapshot,messages),messages)
   }
   /** The head revision of the claim's live source while the claim's owner target is current. A claim of an older revision
     * keeps its authority: newer revisions do not end a Running job with a valid lease. */
@@ -467,15 +466,18 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       current(c,claim) && lockJob(c,claim) && Sql.exec(c,s"UPDATE ch_jobs SET lease_until=clock_timestamp()+make_interval(secs=>?) WHERE $validJob",(List[Sql.Param](leaseSeconds)++jobArgs(claim))*)==1
     }
   }
-  def publishProblems(claim: Claim,publication: ProblemsPublication): Boolean =
+  /** The publication is validated against the claimed messages before its transaction: each read of them is a transaction
+    * of its own. */
+  def publishProblems(claim: Claim,publication: ProblemsPublication): Boolean = {
+    publication.validate(claim,config.embedding.dimensions,ProblemPassages.Source(claim.messages.reader(MessageFetch(config.maxIndexingBudgetBytes,LargeDecodes.unadmitted))))
     publishGeneration(claim,publication.chunks,IndexPolicy.ContextAwareProblemsV1,PassageFormat.ContextAwareProblems,publication.passages.size.toLong,
-      _ => { publication.validate(claim,config.embedding.dimensions); true },(c,generation) => PassageStorage.persist(c,generation,publication))
-  private def publishGeneration(claim: Claim,chunks: List[IndexedChunk],policy: IndexPolicy,format: PassageFormat,passageCount: Long,validate: Connection => Boolean,persist: (Connection,UUID) => Unit): Boolean = db.transaction { c =>
+      (c,generation) => PassageStorage.persist(c,generation,publication))
+  }
+  private def publishGeneration(claim: Claim,chunks: List[IndexedChunk],policy: IndexPolicy,format: PassageFormat,passageCount: Long,persist: (Connection,UUID) => Unit): Boolean = db.transaction { c =>
     // The generation is written before the source and job rows are locked: a large one takes minutes, and those rows are
     // what the job's lease renewal and the source's next revision switch lock. Readers see none of it before the commit.
     if (!Sql.one(c,s"SELECT id FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true)) false else {
       PassageStorage.requirePolicy(c,claim.profile,policy)
-      if(!validate(c)) false else {
       val publication=c.setSavepoint()
       val generation = UUID.randomUUID()
       Sql.exec(c,"INSERT INTO ch_generations(id,session_id,revision,profile,passage_format,passage_count,run_id) VALUES(?,?,?,?,?,?,?)",generation,claim.sessionId,claim.revision,claim.profile,format.toString,passageCount,claim.runId)
@@ -500,7 +502,6 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       // The rollback released the savepoint's locks: they are taken again, in the same order, to end the job.
       if(superseded && current(c,claim) && lockJob(c,claim)) Sql.exec(c,s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob",jobArgs(claim)*)
       completed
-      }
     }
   }
   def fail(claim: Claim,code: String): Unit = failAt(claim,code,None)

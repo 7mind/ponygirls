@@ -97,7 +97,7 @@ final class LegacyFreeCheckTest extends munit.FunSuite {
     try {
       val archive=new PostgresArchive(db,config); archive.ingest("a",Fixtures.snapshot())
       val claim=archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).getOrElse(fail("no claimable job"))
-      assert(archive.publish(claim,Fragments.split(claim.snapshot.messages).map(chunk=>IndexedChunk(chunk.copy(sessionId=claim.sessionId,summary="current problem"),List(1.0,0.0,0.0)))))
+      assert(archive.publish(claim,Fragments.split(claim.messages.decoded).map(chunk=>IndexedChunk(chunk.copy(sessionId=claim.sessionId,summary="current problem"),List(1.0,0.0,0.0)))))
     } finally db.close()
   }
   private def publishedSource(generationColumns: String,generationValues: String): List[String] = List(

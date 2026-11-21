@@ -7,8 +7,8 @@ import java.util.UUID
 final case class ProblemPieceLink(chunkId: UUID,passageOrdinal: Int,source: ProblemPassages.SourceSpan)
 final case class ProblemSourceSpan(passageOrdinal: Int,ordinal: Long,source: ProblemPassages.SourceSpan)
 final class ProblemsPublication private[chronicle] (val chunks: List[IndexedChunk],val passages: Vector[ProblemPassages.Passage],val spans: Vector[ProblemSourceSpan],val links: Vector[ProblemPieceLink],val context: Vector[ProblemPassages.SourceSpan]) {
-  def validate(claim: Claim,dimensions: Int): Unit = {
-    val messages=ProblemPassages.Source(claim.snapshot.messages).messages
+  /** Against the claim's messages, read through `source`. */
+  def validate(claim: Claim,dimensions: Int,source: ProblemPassages.Source): Unit = {
     Check(passages.map(_.ordinal)==passages.indices.toVector && passages.map(_.id).distinct.size==passages.size,"invalid","publication passage order/identity")
     Check(chunks.size==links.size && chunks.map(_.chunk.id).distinct.size==chunks.size,"invalid","publication piece identity/count")
     passages.foreach { passage =>
@@ -20,15 +20,15 @@ final class ProblemsPublication private[chronicle] (val chunks: List[IndexedChun
     def location(span: ProblemPassages.SourceSpan): (Int,Int) = (span.messagePosition,span.start)
     Check(context==context.sortBy(location) && links.map(_.source)==links.map(_.source).sortBy(location),"invalid","publication coverage order")
     var position=0; var chars=0; var offset=0
-    def skipEmpty(): Unit = while(position<messages.size && chars==messages(position).text.length) { position+=1; chars=0; offset=0 }
+    def skipEmpty(): Unit = while(position<source.count && chars==source.message(position).text.length) { position+=1; chars=0; offset=0 }
     val coverage=links.zip(chunks).map { (link,indexed) =>
       Check(link.chunkId==indexed.chunk.id && indexed.chunk.sessionId==claim.sessionId,"invalid","publication piece/session identity")
       (link.source,Some(indexed))
     }++context.map(span => (span,None))
     coverage.sortBy(item => location(item._1)).foreach { (span,indexed) =>
       skipEmpty()
-      Check(position<messages.size,"invalid","publication coverage past source")
-      val message=messages(position)
+      Check(position<source.count,"invalid","publication coverage past source")
+      val message=source.message(position)
       Check(span.messageId==message.id && span.messagePosition==position && span.start==offset && span.end>span.start,"invalid","publication source coverage")
       indexed.foreach { value =>
         val chunk=value.chunk; val size=chunk.text.getBytes(UTF_8).length
@@ -42,7 +42,7 @@ final class ProblemsPublication private[chronicle] (val chunks: List[IndexedChun
       }
       Check(offset==span.end,"invalid","publication coverage UTF8 boundary")
     }
-    skipEmpty(); Check(position==messages.size,"invalid","incomplete publication problem/context coverage")
+    skipEmpty(); Check(position==source.count,"invalid","incomplete publication problem/context coverage")
     val expectedSpans=spans.iterator
     var passageOrdinal = -1; var pieceCount=0L; var sourceBytes=0L; var spanCount=0L
     var pending=Option.empty[ProblemPassages.SourceSpan]

@@ -15,7 +15,7 @@ object CurrentIndexDatabase extends munit.Assertions {
     run(config,db,new PostgresArchive(db,config))
   }
   def publication(claim: Claim,contextOnly: Boolean): ProblemsPublication = {
-    val source=ProblemPassages.Source(claim.snapshot.messages); var state=ProblemPassages.State.start(claim.sessionId,claim.runId); var builder=ProblemsPublication.empty
+    val source=ProblemPassages.Source(claim.messages.decoded); var state=ProblemPassages.State.start(claim.sessionId,claim.runId); var builder=ProblemsPublication.empty
     var next=source.next(state.nextSource)
     while(next.nonEmpty) {
       val window=next.get
