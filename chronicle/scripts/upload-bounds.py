@@ -43,6 +43,9 @@ STAGE = os.environ.get('UPLOAD_BOUNDS_STAGE', 'prefix')
 assert STAGE in STAGES, f'UPLOAD_BOUNDS_STAGE must be one of {STAGES}'
 # B only: the JSON summary (last line of the output) of an A run of the same tree, for the Archive search comparison.
 COMPARE_A = Path(os.environ['UPLOAD_BOUNDS_COMPARE_A']) if os.environ.get('UPLOAD_BOUNDS_COMPARE_A') else None
+# Where the run's large data goes (fixtures, collector state, downloads; the wrapper's --data-root holds the cluster's data
+# directory): its own private directory under DATA_ROOT, removed at the end. Unset: TMPDIR.
+DATA_ROOT = Path(os.environ['UPLOAD_BOUNDS_DATA_ROOT']).resolve(strict=True) if os.environ.get('UPLOAD_BOUNDS_DATA_ROOT') else None
 WEB_ROOT = Path(os.environ['CHRONICLE_WEB_ROOT']).resolve(strict=True) if os.environ.get('CHRONICLE_WEB_ROOT') else None
 CHROMIUM = Path(os.environ['CHRONICLE_CHROMIUM']).resolve(strict=True) if os.environ.get('CHRONICLE_CHROMIUM') else None
 
@@ -74,7 +77,9 @@ RENDERER_HEAP = 64 * 10**6
 APPEND_CPU_SECONDS = 10.0
 DOWNLOAD_MIN_RATE = 5 * 10**6  # bytes per second: the download deadlines, generous for this host
 NOT_RUN_EXIT = 3
-GROWTH_APPENDS, GROWTH_PERCENT, GROWTH_BUDGET_S = 20, 0.5, 30 * 60
+# G (spec §9 as amended by the lead, round 2): the initial 1 GiB replacement ≤ 30 min, the growth and the edit ≤ 30 min,
+# the whole run ≤ 60 min (RUNS).
+GROWTH_APPENDS, GROWTH_PERCENT, G_UPLOAD_BUDGET_S, GROWTH_BUDGET_S = 20, 0.5, 30 * 60, 30 * 60
 # Needles: letters the generated vocabulary never uses (j, k, q, w, x, y, z), so none occurs by chance.
 COMMON = 'kobalt needle'
 RARE = 'xyzzy quokka'
@@ -109,10 +114,16 @@ def skip(label, reason):
     print('not run -', label, '-', reason, flush=True)
 
 
-def later_stage(label, stage):
-    """A leg of a later landing stage (a hook): listed, not judged."""
-    outside_stage.append(f'{label} (stage {stage})')
-    note(f'outside stage {STAGE}: {label} (stage {stage})')
+def hook(label, stage):
+    """A leg of landing stage `stage` whose assertions come with a later phase. A run of an earlier stage lists it as
+    outside its stage (returns True: the caller asserts that stage's expectation instead); a run of that stage or a later
+    one reports it `not run`, so the run ends incomplete (returns False)."""
+    if STAGES.index(STAGE) < STAGES.index(stage):
+        outside_stage.append(f'{label} (stage {stage})')
+        note(f'outside stage {STAGE}: {label} (stage {stage})')
+        return True
+    skip(label, f'its stage-{stage} assertion comes with phase 3')
+    return False
 
 
 def smoke_budget():
@@ -186,8 +197,14 @@ def du(path):
 WORK = []  # the run's private directory: fixtures, collector state, logs
 
 
+def cluster_bytes():
+    """The owned cluster's directory and, when the wrapper moved it to its --data-root, the data directory there."""
+    data = OWNED / 'cluster/data'
+    return du(OWNED / 'cluster') + (du(data.resolve(strict=True)) if data.is_symlink() else 0)
+
+
 def disk():
-    return dict(database=int(one('SELECT pg_database_size(current_database())')), cluster=du(OWNED / 'cluster'), workDir=du(WORK[0]) if WORK else 0)
+    return dict(database=int(one('SELECT pg_database_size(current_database())')), cluster=cluster_bytes(), workDir=du(WORK[0]) if WORK else 0)
 
 
 class DiskPeak:
@@ -223,7 +240,7 @@ class DiskPeak:
 
 
 def consumed_disk():
-    return du(OWNED / 'cluster') + du(WORK[0])
+    return cluster_bytes() + du(WORK[0])
 
 
 def server_cpu():
@@ -887,8 +904,11 @@ class Chromium:
     """Headless Chromium driven over the DevTools protocol (no dependency): opens the dashboard's session view with Info
     shown, clicks the raw download link with the mouse, and samples the page's JS heap until the browser has saved the file."""
     def __init__(self, root):
-        self.root, self.profile, self.saved = root, root / 'chromium-profile', root / 'chromium-downloads'
-        for directory in (self.profile, self.saved, root / 'chromium-tmp'):
+        # Profile and temporary files (Chromium's singleton socket) in a short private directory under TMPDIR, the
+        # saved file in the run's directory.
+        self.short = Path(tempfile.mkdtemp(prefix='acc-chromium-'))
+        self.root, self.profile, self.saved = root, self.short / 'profile', root / 'chromium-downloads'
+        for directory in (self.profile, self.saved, self.short / 'tmp'):
             directory.mkdir()
         self.log = root / 'chromium.log'
         with self.log.open('x') as log:
@@ -896,7 +916,7 @@ class Chromium:
                                              '--disable-extensions', '--disable-background-networking', '--disable-sync', '--window-size=1600,1000',
                                              '--remote-debugging-port=0', f'--user-data-dir={self.profile}', 'about:blank'],
                                             stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-                                            env=dict(os.environ, HOME=str(root / 'home'), TMPDIR=str(root / 'chromium-tmp')))
+                                            env=dict(os.environ, HOME=str(root / 'home'), TMPDIR=str(self.short / 'tmp')))
         active, deadline = self.profile / 'DevToolsActivePort', time.monotonic() + 60
         while not (active.exists() and len(active.read_text().splitlines()) == 2):
             assert self.process.poll() is None and time.monotonic() < deadline, f'chromium start: {self.log.read_text()[-2000:]}'
@@ -959,6 +979,7 @@ class Chromium:
             pass
         self.socket.close()
         stop_group(self.process, 10)
+        shutil.rmtree(self.short)
 
 
 # ---------------------------------------------------------------- the server side of a run
@@ -1117,11 +1138,8 @@ class Harness:
     def indexing(self, label, session, revision):
         """The head job's verdict at the default budget: `index-budget-exceeded` on the prefix (the whole session is held);
         streamed indexing (L5) is a later stage, whose assertions are hooks here."""
-        if STAGE == 'prefix':
-            later_stage(f'{label}: the head job completes at the default heap, published at the head; semantic and hybrid search find the session', 'l5')
+        if hook(f'{label}: the head job completes at the default heap, published at the head; semantic and hybrid search find the session', 'l5'):
             return self.budget_verdict(label, session, revision)
-        skip(f'{label}: the head job completes at the default heap, published at the head; semantic and hybrid search find the session',
-             'the L5 assertions come with phase 3')
         return None
 
     def budget_verdict(self, label, session, revision):
@@ -1510,7 +1528,7 @@ def run_d(root):
     spent = sum(j['completedWindows'] for j in jobs)
     head_windows = jobs[-1]['totalWindows']
     note(f'D: windows completed {spent} in total, head revision {head["revision"]} has {head_windows}')
-    later_stage('D′: windows annotated ≈ the head\'s windows plus the boundary windows (I2 reuse, L5d)', 'l5')
+    hook('D′: windows annotated ≈ the head\'s windows plus the boundary windows (I2 reuse, L5d)', 'l5')
     s2 = h.stop()
     h.stub.stop()
     return dict(revisions=[dict(revision=r['revision'], rawBytes=r['rawBytes'], messages=r['messages'], estimate=r['estimate'], parts=r['upload']['parts']) for r in revisions],
@@ -1606,9 +1624,13 @@ def run_g(root):
     grow.write(int(1_000_000_000 * SCALE), RARE)
     note(f'fixture grow {json.dumps(grow.summary())} in {time.monotonic() - started:.1f} s')
     h.start('G-S2')
+    upload_started = time.monotonic()
     with Phase('G1 replacement upload of the 1 GB session'):
         h.uploaded('G1', h.collector.once('G1 replacement'), 1, 1)
         session, head = h.stored('G1', grow, 1, False)
+    upload = time.monotonic() - upload_started
+    check(f'G1: the initial replacement upload took {upload / 60:.1f} min, within {G_UPLOAD_BUDGET_S / 60:.0f} min', upload <= G_UPLOAD_BUDGET_S,
+          dict(seconds=round(upload, 1)), defer=True)
     growth_started, appends, incremental = time.monotonic(), [], True
     with Phase(f'G2 {GROWTH_APPENDS} appends of +{GROWTH_PERCENT} %'):
         step = int(1_000_000_000 * SCALE * GROWTH_PERCENT / 100)
@@ -1644,11 +1666,12 @@ def run_g(root):
           dict(seconds=round(growth, 1)), defer=True)
     s2 = h.stop()
     h.stub.stop()
-    return dict(fixture=grow.summary(), appends=appends, editedMessage=edited, editOffset=offset, head=head, growthSeconds=round(growth, 1), servers=[s2])
+    return dict(fixture=grow.summary(), appends=appends, editedMessage=edited, editOffset=offset, head=head, uploadSeconds=round(upload, 1), growthSeconds=round(growth, 1),
+                servers=[s2])
 
 
 # run: (function, free space it needs, wall-time budget s, consumed-disk budget B) — the budgets of spec §9 (G: the whole
-# run; its growth and edit alone GROWTH_BUDGET_S).
+# run; its initial upload and its growth with the edit are budgeted separately, G_UPLOAD_BUDGET_S and GROWTH_BUDGET_S).
 RUNS = {'A': (run_a, 50 * GiB, 4 * 3600, 50 * 10**9), 'B': (run_b, 110 * GiB, 14 * 3600, 110 * 10**9), 'D': (run_d, 2 * GiB, 30 * 60, None),
         'E': (run_e, 1 * GiB, 15 * 60, None), 'G': (run_g, 25 * GiB, 60 * 60, 25 * 10**9)}
 
@@ -1657,11 +1680,15 @@ def main():
     os.umask(0o077)
     run = sys.argv[1]
     function, space, wall_budget, disk_budget = RUNS[run]
-    free = shutil.disk_usage(tempfile.gettempdir()).free
-    check(f'{run}: {free / GiB:.0f} GiB free in {tempfile.gettempdir()} (needs {space * SCALE / GiB:.0f} GiB)', free >= space * SCALE)
+    data_root = DATA_ROOT or Path(tempfile.gettempdir())
+    free = shutil.disk_usage(data_root).free
+    check(f'{run}: {free / GiB:.0f} GiB free in {data_root} (needs {space * SCALE / GiB:.0f} GiB)', free >= space * SCALE)
+    if DATA_ROOT is not None:
+        data = (OWNED / 'cluster/data').resolve(strict=True)
+        check(f'{run}: the cluster\'s data directory {data} is under the data root (the wrapper\'s --data-root)', data.is_relative_to(DATA_ROOT), data)
     settings = production_postgres()
     started, lsn = time.monotonic(), wal_lsn()
-    with tempfile.TemporaryDirectory(prefix=f'upload-bounds-{run}-') as temporary:
+    with tempfile.TemporaryDirectory(prefix=f'upload-bounds-{run}-', dir=DATA_ROOT) as temporary:
         root = Path(temporary)
         WORK.append(root)
         sampler = DiskPeak(consumed_disk)

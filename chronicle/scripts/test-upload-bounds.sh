@@ -24,19 +24,22 @@
 #   B  B′ 4,400,000,000 raw bytes with records of 9-20 MiB (large parts), appended to; raw_bytes > 2^32 exact; pages
 #      holding the large records through the CLI and the browser protocol; Archive search ≤ 1.0 s and within 0.2 s of an
 #      A run's (UPLOAD_BOUNDS_COMPARE_A=its output); the downloads as in A (≥ 4 GiB); the head's indexing verdict while
-#      four other sessions index. ≤ 14 h, ≤ 110 GB: run it with TMPDIR on /mnt/dev-data and a long wrapper timeout.
+#      four other sessions index. ≤ 14 h, ≤ 110 GB: run it with the data root below and a long wrapper timeout.
 #   D  a 2 MB session grows by six appends while its jobs run (stub annotation delay 1 s per window) and ends indexed at
 #      its head; jobs and windows spent. ≤ 30 min.
 #   E  gate O (scripts/test-main-collector.sh) against this tree's server, heaps bounded and the server probed. ≤ 15 min.
 #   G  the 1 GiB session grows by 20 appends of +0.5 % (each incremental; collector CPU per append), then a same-length
 #      in-place edit of a line in the middle plus an append: a replacement (source-prefix-changed) whose archive equals the
-#      file. The growth ≤ 30 min, the run ≤ 1 h, ≤ 25 GB.
+#      file. The initial 1 GiB upload ≤ 30 min, the growth with the edit ≤ 30 min, the run ≤ 1 h; ≤ 25 GB.
 # One run per invocation. The owned-database wrapper stops its command after an hour unless given
-# --child-timeout-seconds=N (at most 86400); A and B need more. From the repository root (S1 tip 7bc75834 =
-# agent/ingest-b-s1: the rollback binary of A):
+# --child-timeout-seconds=N (at most 86400); A and B need more. Large data (the cluster's data directory through the
+# wrapper's --data-root, the fixtures, collector state and downloads through UPLOAD_BOUNDS_DATA_ROOT; the harness checks
+# both are the same place) goes under the run's directory in the ingest-c scratch area; sockets stay in the short TMPDIR.
+# From the repository root (S1 tip 7bc75834 = agent/ingest-b-s1: the rollback binary of A):
 #
 #   nix develop .#chronicle --command bash -c '
-#     export TMPDIR=$(mktemp -d /tmp/upload-bounds.XXXXXX)    # short: PostgreSQL socket paths; B: a directory on /mnt/dev-data
+#     export TMPDIR=$(mktemp -d /tmp/upload-bounds.XXXXXX)    # short: PostgreSQL and Chromium socket paths
+#     export UPLOAD_BOUNDS_DATA_ROOT=/mnt/dev-data/pavel-legacy-rehearsal/scratch-ingest-c/ACC.<run>    # mkdir -p first
 #     CHRONICLE_SERVER="$(nix build --no-link --print-out-paths .#chronicle.nativeArtifact)/libexec/chronicle-server" \
 #     CHRONICLE_S1_SERVER="$(nix build --no-link --print-out-paths "git+file://$PWD?rev=7bc75834ffc86edd2480372e4e693cafeb91fa41#chronicle.nativeArtifact")/libexec/chronicle-server" \
 #     CHRONICLE_COLLECTOR="$(nix build --no-link --print-out-paths .#chronicle-collector)" \
@@ -45,11 +48,13 @@
 #     CHRONICLE_CHROMIUM="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#chromium)/bin/chromium" \
 #     MAIN_COLLECTOR="$(nix build --no-link --print-out-paths "git+file://$PWD?rev=0aedcfa8bcdbfd93610ba63b3836384240538b83#chronicle-collector")/bin/chronicle-collector" \
 #     "$(nix build --no-link --print-out-paths .#service-test-fixture-tools)/bin/with-service-postgres" --child-timeout-seconds=21600 \
+#       --data-root="$UPLOAD_BOUNDS_DATA_ROOT" \
 #       nice -n 10 bash chronicle/scripts/test-upload-bounds.sh A|B|D|E|G'
 #
 # CHRONICLE_S1_SERVER is needed by A only, MAIN_COLLECTOR by E only, CHRONICLE_COLLECTOR by A, B, D and G; without
 # CHRONICLE_WEB_ROOT and CHRONICLE_CHROMIUM the dashboard download of A and B is `not run`. UPLOAD_BOUNDS_STAGE=prefix
-# (default; L4, L1, L3, L6, L2) or l5 (streamed indexing as well) selects the stage the run accepts.
+# (default; L4, L1, L3, L6, L2) or l5 (streamed indexing as well) selects the stage the run accepts: a run of stage l5
+# reports the L5 legs whose assertions are not written yet as `not run` (incomplete), a prefix run lists them as outside it.
 # UPLOAD_BOUNDS_EVIDENCE=DIR keeps the server logs, probe samples, collector output and Chromium's log;
 # UPLOAD_BOUNDS_PROXY=1 puts U8's logging proxy between collector and server (diagnostic: status and time of every
 # request). To try the harness (not an acceptance run): UPLOAD_BOUNDS_SCALE=0.01 shrinks the fixtures, the raw read
