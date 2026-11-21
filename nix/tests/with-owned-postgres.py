@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Run a bounded test command against ONLY a new disposable provider cluster.
 No connection argument accepted: fixtures can never select a live database.
-Usage: with-owned-postgres.py [--child-timeout-seconds=N] COMMAND [ARG...]; the command is stopped after N seconds
-(default CHILD_TIMEOUT_SECONDS, at most MAX_CHILD_TIMEOUT_SECONDS) with exit EXIT_TIMEOUT.
+Usage: with-owned-postgres.py [--child-timeout-seconds=N] [--data-root=DIR] COMMAND [ARG...]; the command is stopped
+after N seconds (default CHILD_TIMEOUT_SECONDS, at most MAX_CHILD_TIMEOUT_SECONDS) with exit EXIT_TIMEOUT. --data-root
+puts the cluster's data directory in a private directory under DIR (an absolute directory of this user), removed with the
+cluster; its socket, configuration and secrets stay in the private directory under TMPDIR (short socket paths).
 """
 import contextlib
 import ctypes
@@ -10,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import shutil
 import signal
 import socket
 import subprocess
@@ -19,7 +22,8 @@ import time
 
 CHILD_TIMEOUT_SECONDS=3600
 MAX_CHILD_TIMEOUT_SECONDS=86400
-CHILD_TIMEOUT_OPTION='--child-timeout-seconds='
+CHILD_TIMEOUT_OPTION='--child-timeout-seconds'
+DATA_ROOT_OPTION='--data-root'
 EXIT_USAGE=2
 CHILD_STOP_SECONDS=15
 POLL_SECONDS=0.1
@@ -125,22 +129,33 @@ class Usage(Exception):
 
 
 def parse_arguments(arguments):
-    """(child timeout in seconds, command); a timeout outside 1..MAX_CHILD_TIMEOUT_SECONDS or no command is refused."""
-    timeout=CHILD_TIMEOUT_SECONDS
-    if arguments and arguments[0].startswith(CHILD_TIMEOUT_OPTION):
-        value=arguments[0].removeprefix(CHILD_TIMEOUT_OPTION)
-        if not (value.isascii() and value.isdecimal()) or not 1<=int(value)<=MAX_CHILD_TIMEOUT_SECONDS:
-            raise Usage(f'{CHILD_TIMEOUT_OPTION}N needs an integer N in 1..{MAX_CHILD_TIMEOUT_SECONDS}, got {value!r}')
-        timeout,arguments=int(value),arguments[1:]
+    """(child timeout in seconds, data root or None, command). Each option at most once, before the command; a timeout
+    outside 1..MAX_CHILD_TIMEOUT_SECONDS, a data root that is not an absolute directory of this user, or no command is
+    refused."""
+    timeout,data_root,seen=CHILD_TIMEOUT_SECONDS,None,set()
+    while arguments and arguments[0].startswith((CHILD_TIMEOUT_OPTION+'=',DATA_ROOT_OPTION+'=')):
+        option,value=arguments[0].split('=',1)
+        if option in seen: raise Usage(f'{option} given twice')
+        seen.add(option)
+        if option==CHILD_TIMEOUT_OPTION:
+            if not (value.isascii() and value.isdecimal()) or not 1<=int(value)<=MAX_CHILD_TIMEOUT_SECONDS:
+                raise Usage(f'{CHILD_TIMEOUT_OPTION}=N needs an integer N in 1..{MAX_CHILD_TIMEOUT_SECONDS}, got {value!r}')
+            timeout=int(value)
+        else:
+            data_root=Path(value)
+            if not data_root.is_absolute() or not data_root.is_dir() or data_root.stat().st_uid!=os.getuid():
+                raise Usage(f'{DATA_ROOT_OPTION}=DIR needs an existing absolute directory owned by this user, got {value!r}')
+        arguments=arguments[1:]
     if not arguments: raise Usage('a command is required')
-    return timeout,arguments
+    return timeout,data_root,arguments
 
 
-def main(termination,child_timeout,command):
+def main(termination,child_timeout,data_root,command):
     os.umask(0o077)
     template=json.loads(Path(os.environ['PG_POLICY']).read_text())
     pg=os.environ['PG_BIN']
-    with tempfile.TemporaryDirectory(prefix='ponygirls-owned-pg-') as name:
+    relocation=contextlib.nullcontext() if data_root is None else tempfile.TemporaryDirectory(prefix='ponygirls-owned-pg-data-',dir=data_root)
+    with tempfile.TemporaryDirectory(prefix='ponygirls-owned-pg-') as name, relocation as elsewhere:
         root=Path(name)
         (root/'.owned-test-only').write_text('ponygirls-owned-test-v1\n')
         with socket.socket() as sock:
@@ -161,6 +176,11 @@ def main(termination,child_timeout,command):
             subprocess.run(args,check=True,stdout=subprocess.DEVNULL,timeout=180)
         with termination.interruptible(): run(sys.executable,os.environ['PG_PROVIDER'],'init',str(manifest))
         data=str(root/'cluster'/'data')
+        if elsewhere is not None:
+            # The provider keeps the data directory beside the socket; before the first start it moves to the data root.
+            relocated=Path(elsewhere)/'data'
+            shutil.move(data,relocated)
+            os.symlink(relocated,data)
         try:
             env=dict(os.environ,PONYGIRLS_OWNED_FIXTURE_ROOT=str(root))
             with termination.interruptible():
@@ -196,13 +216,13 @@ def main(termination,child_timeout,command):
                 run(pg+'/pg_ctl','-D',data,'-m','fast','-w','-t','30','stop')
 
 if __name__=='__main__':
-    try: child_timeout,command=parse_arguments(sys.argv[1:])
+    try: child_timeout,data_root,command=parse_arguments(sys.argv[1:])
     except Usage as usage:
         print(f'with-owned-postgres: {usage}',file=sys.stderr)
         sys.exit(EXIT_USAGE)
     termination=Termination()
     try:
-        status=main(termination,child_timeout,command)
+        status=main(termination,child_timeout,data_root,command)
         termination.check()
     except Terminated as terminated:
         status=128+terminated.signum
