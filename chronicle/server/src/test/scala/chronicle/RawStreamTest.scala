@@ -138,7 +138,7 @@ final class RawStreamTest extends munit.FunSuite {
     (response.contentLength.get,received.result(),failed.left.toOption.map { case d: DomainError => d.code; case other => throw other })
   }
 
-  test("after the first window an append leaves the pinned bytes unchanged; a logout or a purge ends the body short of its length") { routes { (client,graph,cookie) => IO.blocking {
+  test("after the first window an append leaves the pinned bytes unchanged; a logout, a disabled account or a purge ends the body short of its length") { routes { (client,graph,cookie) => IO.blocking {
     val identity=source()
     val first=header(3)++pi("u1","s","user","first question λ🐎",1)
     val id=graph.archive.ingest("a",request(identity,0,first)).sessionId
@@ -147,6 +147,10 @@ final class RawStreamTest extends munit.FunSuite {
       (expected.length.toLong,expected,None))
     val other=graph.auth.login(LoginRequest("a","synthetic"))._2
     assertEquals(download(client,s"/api/raw/$id/1/0",other)(graph.auth.logout(graph.auth.browser(other))),(expected.length.toLong,expected.take(window),Some("unauthorized")))
+    def enabled(value: Boolean): Unit = graph.db.transaction(c => { Sql.exec(c,"UPDATE ch_users SET enabled=? WHERE id='a'",value); () })
+    val disabled=download(client,s"/api/raw/$id/1/0",cookie)(enabled(false))
+    enabled(true)
+    assertEquals(disabled,(expected.length.toLong,expected.take(window),Some("unauthorized")))
     assertEquals(download(client,s"/api/raw/$id/1/0",cookie)(graph.auth.mutate(graph.auth.browser(cookie),ClientEnvelope(UUID.randomUUID(),Operation.Purge(id)))),
       (expected.length.toLong,expected.take(window),Some("not-found")))
   }}}
