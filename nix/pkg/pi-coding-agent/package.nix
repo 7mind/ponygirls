@@ -8,6 +8,7 @@
   fd,
   makeBinaryWrapper,
   stdenvNoCC,
+  loginModelWorkaround ? false,
 }:
 buildNpmPackage (finalAttrs: {
   pname = "pi-coding-agent";
@@ -92,7 +93,7 @@ buildNpmPackage (finalAttrs: {
     # order their extensions happened to initialise. setWidget takes `order`;
     # equal orders keep first-set order across replacement.
     ./patches/widget-order.patch
-  ];
+  ] ++ lib.optional loginModelWorkaround ./patches/startup-model-refresh.patch;
 
   npmDepsHash = "sha256-uHehffbEB2uU9U9uSpfWojzxvQyqeicbh/esCwk4neQ=";
 
@@ -140,7 +141,7 @@ buildNpmPackage (finalAttrs: {
   __darwinAllowLocalNetworking = true;
   checkPhase = ''
     runHook preCheck
-    printf '%s\n' '{"extends":"./tsconfig.json","include":["packages/*/src/**/*","packages/ai/test/openai-codex-stream.test.ts","packages/ai/test/pi-messages.test.ts","packages/coding-agent/test/captured-terminal-output.test.ts","packages/coding-agent/test/retained-custom-message-ingress.test.ts","packages/coding-agent/test/sdk-stream-options.test.ts","packages/coding-agent/test/compaction-codex-transport.test.ts","packages/coding-agent/test/compaction-codex-transport-wire.test.ts"]}' > tsconfig.compaction-backport.json
+    printf '%s\n' '{"extends":"./tsconfig.json","include":["packages/*/src/**/*","packages/ai/test/openai-codex-stream.test.ts","packages/ai/test/pi-messages.test.ts","packages/coding-agent/test/captured-terminal-output.test.ts","packages/coding-agent/test/retained-custom-message-ingress.test.ts","packages/coding-agent/test/sdk-stream-options.test.ts",${lib.optionalString loginModelWorkaround ''"packages/coding-agent/test/model-runtime-startup.test.ts",''}"packages/coding-agent/test/compaction-codex-transport.test.ts","packages/coding-agent/test/compaction-codex-transport-wire.test.ts"]}' > tsconfig.compaction-backport.json
     ./node_modules/.bin/tsc --noEmit -p tsconfig.compaction-backport.json
     (cd packages/ai && ../../node_modules/.bin/vitest run \
       test/openai-codex-stream.test.ts \

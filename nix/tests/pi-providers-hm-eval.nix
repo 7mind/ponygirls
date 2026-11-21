@@ -29,6 +29,8 @@ let
   enabled = evaluate { claude-code.enable = true; } false;
   mixed = evaluate { claude-code.enable = true; xai.enable = true; ollama.enable = true; } false;
   addon = evaluate { claude-code.enable = true; } true;
+  workaround = evaluate { claude-code = { enable = true; loginModelWorkaround = true; }; } true;
+  workaroundWithoutProvider = evaluate { claude-code.loginModelWorkaround = true; } false;
   missingProvider = evaluate { } true;
   package = pkgs.callPackage ../pkg/pi-claude-code/package.nix {
     pi-coding-agent = pkgs.callPackage ../pkg/pi-coding-agent/package.nix { };
@@ -51,10 +53,20 @@ let
   catalogSolIds = builtins.concatLists (builtins.filter builtins.isList (builtins.split "\"(gpt-[0-9.]+-sol)\"" catalogText));
   solVersion = id: builtins.head (builtins.match "gpt-([0-9.]+)-sol" id);
   resolvedSol = disabled.programs.pi.historian.model.id;
+  piWithWorkaround = pkgs.callPackage ../pkg/pi-coding-agent/package.nix { loginModelWorkaround = true; };
+  piBinaryInputs = evaluated: map toString evaluated.programs.pi.package.paths;
 in
 assert lib.assertMsg (disabled.smind.hm.dev.llm.pi.providers ? claude-code) "Claude Code provider option is missing";
 assert !disabled.smind.hm.dev.llm.pi.providers.claude-code.enable;
 assert !disabled.smind.hm.dev.llm.pi.claudeCodeSubagents.enable;
+assert !enabled.smind.hm.dev.llm.pi.providers.claude-code.loginModelWorkaround;
+assert piBinaryInputs disabled == [ (toString piBase) ];
+assert piBinaryInputs enabled == piBinaryInputs disabled;
+assert piBinaryInputs workaroundWithoutProvider == piBinaryInputs disabled;
+assert workaroundWithoutProvider.programs.pi.settings.packages == disabledPackages;
+assert piWithWorkaround.drvPath != piBase.drvPath;
+assert piBinaryInputs workaround == [ (toString piWithWorkaround) ];
+assert builtins.all (entry: entry.assertion) workaround.assertions;
 assert addon.programs.pi.settings.packages == enabledPackages ++ [ (toString addonPackage) ];
 assert addon.programs.pi.settings.extensions == enabled.programs.pi.settings.extensions;
 assert builtins.elem "${extensions}/ponygirls-subagents" addon.programs.pi.settings.extensions;

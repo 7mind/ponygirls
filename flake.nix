@@ -465,6 +465,7 @@
           chronicle-collector = self.packages.${system}.chronicle-collector;
           default-models = defaultModelsCheck;
           pi-providers-hm-eval = pkgs.callPackage ./nix/tests/pi-providers-hm-eval.nix { };
+          pi-login-model-workaround = self.packages.${system}.pi-coding-agent.override { loginModelWorkaround = true; };
           general-context-hm-eval = import ./nix/tests/general-context-hm-eval.nix { inherit pkgs nixpkgs inputs; };
           notify-module = pkgs.callPackage ./nix/tests/notify-module.nix { };
           atlassian-hm-eval = import ./nix/tests/atlassian-hm-eval.nix { inherit pkgs nixpkgs inputs; };

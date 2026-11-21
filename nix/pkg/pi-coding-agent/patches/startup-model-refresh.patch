@@ -1,0 +1,280 @@
+diff --git a/packages/coding-agent/src/core/agent-session-services.ts b/packages/coding-agent/src/core/agent-session-services.ts
+index 9673ba6..c13cf6a 100644
+--- a/packages/coding-agent/src/core/agent-session-services.ts
++++ b/packages/coding-agent/src/core/agent-session-services.ts
+@@ -157,7 +157,7 @@ export async function createAgentSessionServices(
+ 	const extensionsResult = resourceLoader.getExtensions();
+ 	for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
+ 		try {
+-			modelRuntime.registerProvider(name, config);
++			modelRuntime.registerProvider(name, config, { refresh: false });
+ 		} catch (error) {
+ 			const message = error instanceof Error ? error.message : String(error);
+ 			diagnostics.push({
+@@ -169,7 +169,7 @@ export async function createAgentSessionServices(
+ 	extensionsResult.runtime.pendingProviderRegistrations = [];
+ 	for (const { provider, extensionPath } of extensionsResult.runtime.pendingNativeProviderRegistrations) {
+ 		try {
+-			modelRuntime.registerNativeProvider(provider);
++			modelRuntime.registerNativeProvider(provider, { refresh: false });
+ 		} catch (error) {
+ 			const message = error instanceof Error ? error.message : String(error);
+ 			diagnostics.push({
+@@ -181,7 +181,7 @@ export async function createAgentSessionServices(
+ 	extensionsResult.runtime.pendingNativeProviderRegistrations = [];
+ 	for (const { definition, extensionPath } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
+ 		try {
+-			modelRuntime.registerVirtualModel(definition);
++			modelRuntime.registerVirtualModel(definition, { refresh: false });
+ 		} catch (error) {
+ 			const message = error instanceof Error ? error.message : String(error);
+ 			diagnostics.push({
+diff --git a/packages/coding-agent/src/core/model-runtime.ts b/packages/coding-agent/src/core/model-runtime.ts
+index ff5f42b..edd592f 100644
+--- a/packages/coding-agent/src/core/model-runtime.ts
++++ b/packages/coding-agent/src/core/model-runtime.ts
+@@ -107,6 +107,10 @@ interface ModelRuntimeSnapshot {
+ 	auth: ReadonlyMap<string, AuthCheck | undefined>;
+ }
+ 
++interface ModelRegistrationOptions {
++	refresh?: boolean;
++}
++
+ export interface CreateModelRuntimeOptions {
+ 	/** Credential storage. Defaults to the file at authPath. */
+ 	credentials?: CredentialStore;
+@@ -925,7 +929,7 @@ export class ModelRuntime implements Models {
+ 		return { aborted: result.aborted || (options.signal?.aborted ?? false), errors };
+ 	}
+ 
+-	registerNativeProvider(provider: Provider): void {
++	registerNativeProvider(provider: Provider, options?: ModelRegistrationOptions): void {
+ 		if (!provider.id.trim()) throw new Error("Provider id must not be empty.");
+ 		this.extensionProviders.delete(provider.id);
+ 		this.nativeExtensionProviders.set(provider.id, provider);
+@@ -936,7 +940,7 @@ export class ModelRuntime implements Models {
+ 			configuredRequestAuthStatus(this.config.getProvider(provider.id), undefined),
+ 			provider.auth.oauth && !provider.auth.apiKey ? "oauth" : "api_key",
+ 		);
+-		void this.refresh({ allowNetwork: false });
++		if (options?.refresh !== false) void this.refresh({ allowNetwork: false });
+ 	}
+ 
+ 	/**
+@@ -962,7 +966,7 @@ export class ModelRuntime implements Models {
+ 		};
+ 	}
+ 
+-	registerProvider(providerId: string, config: ProviderConfigInput): void {
++	registerProvider(providerId: string, config: ProviderConfigInput, options?: ModelRegistrationOptions): void {
+ 		// Validate the incoming registration on its own, like the legacy registry:
+ 		// a broken re-registration must throw without touching the stored config.
+ 		validateExtensionProvider(providerId, this.builtins.get(providerId), this.config.getProvider(providerId), config);
+@@ -982,7 +986,7 @@ export class ModelRuntime implements Models {
+ 			configuredRequestAuthStatus(this.config.getProvider(providerId), effective),
+ 			effective.oauth && !effective.apiKey ? "oauth" : "api_key",
+ 		);
+-		void this.refresh({ allowNetwork: false });
++		if (options?.refresh !== false) void this.refresh({ allowNetwork: false });
+ 	}
+ 
+ 	unregisterProvider(providerId: string): void {
+@@ -998,7 +1002,7 @@ export class ModelRuntime implements Models {
+ 	 * several virtual models. Re-registering the same provider and id replaces the virtual model.
+ 	 * Throws when the id belongs to a physical model of that provider.
+ 	 */
+-	registerVirtualModel(definition: VirtualModelDefinition): void {
++	registerVirtualModel(definition: VirtualModelDefinition, options?: ModelRegistrationOptions): void {
+ 		const { provider: providerId, id } = definition;
+ 		if (!providerId.trim() || !id.trim()) throw new Error("Virtual model provider and id must not be empty.");
+ 		const existing = this.models.getModel(providerId, id);
+@@ -1016,7 +1020,7 @@ export class ModelRuntime implements Models {
+ 			this.snapshot = { ...this.snapshot, auth, configuredProviders };
+ 		}
+ 		this.updateModelSnapshot();
+-		void this.refresh({ allowNetwork: false });
++		if (options?.refresh !== false) void this.refresh({ allowNetwork: false });
+ 	}
+ 
+ 	unregisterVirtualModel(providerId: string, id: string): void {
+diff --git a/packages/coding-agent/test/model-runtime-startup.test.ts b/packages/coding-agent/test/model-runtime-startup.test.ts
+new file mode 100644
+index 0000000..efb4d72
+--- /dev/null
++++ b/packages/coding-agent/test/model-runtime-startup.test.ts
+@@ -0,0 +1,174 @@
++import { mkdtemp, rm } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import type { Model, Provider } from "@earendil-works/pi-ai";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { createAgentSessionFromServices, createAgentSessionServices } from "../src/core/agent-session-services.ts";
++import { AuthStorage } from "../src/core/auth-storage.ts";
++import type { ExtensionFactory } from "../src/core/extensions/index.ts";
++import { ModelRuntime } from "../src/core/model-runtime.ts";
++import { SessionManager } from "../src/core/session-manager.ts";
++import { SettingsManager } from "../src/core/settings-manager.ts";
++
++const fallback = fixtureModel("startup-fallback");
++const native = fixtureModel("startup-native");
++const virtual = { provider: "startup-router", id: "auto" };
++const offline = { allowNetwork: false };
++
++function fixtureModel(provider: string): Model<"openai-completions"> {
++	return {
++		provider,
++		id: "fixture-model",
++		name: "Fixture Model",
++		baseUrl: "https://example.test/v1",
++		api: "openai-completions",
++		input: ["text"],
++		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
++		reasoning: false,
++		contextWindow: 1024,
++		maxTokens: 128,
++	};
++}
++
++function registerModels(pi: Parameters<ExtensionFactory>[0], loggedIn: boolean): void {
++	const resolve = async () => (loggedIn ? { auth: { apiKey: "fixture" }, source: "fixture login" } : undefined);
++	const noInference = () => {
++		throw new Error("Unexpected inference in model restoration test");
++	};
++	const provider: Provider = {
++		id: native.provider,
++		name: "Native Login Fixture",
++		auth: { apiKey: { name: "Fixture Login", resolve } },
++		getModels: () => [native],
++		stream: noInference,
++		streamSimple: noInference,
++	};
++	pi.registerProvider(fallback.provider, { apiKey: "fixture", models: [fallback] });
++	pi.registerProvider(provider);
++	pi.registerVirtualModel({ ...virtual, name: "Fixture Router", route: noInference });
++}
++
++describe("startup model readiness", () => {
++	let cwd: string;
++	let credentials: AuthStorage;
++	let runtime: ModelRuntime;
++
++	beforeEach(async () => {
++		cwd = await mkdtemp(`${tmpdir()}/pi-startup-model-`);
++		credentials = AuthStorage.inMemory();
++		runtime = await ModelRuntime.create({ credentials, modelsPath: null, refreshOnCreate: false });
++	});
++
++	afterEach(async () => {
++		await rm(cwd, { recursive: true, force: true });
++	});
++
++	function createServices(factory: ExtensionFactory) {
++		return createAgentSessionServices({
++			cwd,
++			agentDir: cwd,
++			modelRuntime: runtime,
++			settingsManager: SettingsManager.inMemory({ defaultProvider: fallback.provider, defaultModel: fallback.id }),
++			resourceLoaderOptions: {
++				noExtensions: true,
++				noSkills: true,
++				noPromptTemplates: true,
++				noThemes: true,
++				extensionFactories: [factory],
++			},
++		});
++	}
++
++	function restoreSession(services: Awaited<ReturnType<typeof createServices>>, saved: typeof virtual) {
++		const sessionManager = SessionManager.inMemory(cwd);
++		sessionManager.appendModelChange(saved.provider, saved.id);
++		sessionManager.appendMessage({ role: "user", content: "Prior message", timestamp: 0 });
++		return createAgentSessionFromServices({ services, sessionManager, noTools: "all" });
++	}
++
++	it("restores a logged-in model before a competing registration refresh can publish", async () => {
++		const readyPassEntered = Promise.withResolvers<void>();
++		const competingPassEntered = Promise.withResolvers<void>();
++		const releaseCompetingPass = Promise.withResolvers<void>();
++		const runRefresh = runtime.refresh.bind(runtime);
++		let refreshesStarted = 0;
++		const refresh = vi.spyOn(runtime, "refresh").mockImplementation(async (options) => {
++			const invocation = ++refreshesStarted;
++			await Promise.resolve();
++			if (invocation !== refreshesStarted) await readyPassEntered.promise;
++			return runRefresh(options);
++		});
++		const listCredentials = credentials.list.bind(credentials);
++		let availabilityPasses = 0;
++		vi.spyOn(credentials, "list").mockImplementation(async (options) => {
++			if (++availabilityPasses === 1) {
++				readyPassEntered.resolve();
++				if (refreshesStarted > 1) await competingPassEntered.promise;
++			} else {
++				competingPassEntered.resolve();
++				await releaseCompetingPass.promise;
++			}
++			return listCredentials(options);
++		});
++
++		try {
++			const services = await createServices((pi) => registerModels(pi, true));
++			const { session, modelFallbackMessage } = await restoreSession(services, native);
++			try {
++				expect(modelFallbackMessage).toBeUndefined();
++				expect(session.model).toMatchObject({ provider: native.provider, id: native.id });
++				expect(runtime.getAvailableSnapshot()).toContainEqual(native);
++				expect(refresh.mock.calls).toEqual([[offline]]);
++			} finally {
++				session.dispose();
++			}
++		} finally {
++			releaseCompetingPass.resolve();
++			await Promise.all(refresh.mock.results.map((result) => result.value));
++		}
++	});
++
++	it.each([
++		{
++			name: "falls back when the saved provider is logged out",
++			saved: native,
++			selected: fallback,
++			warning: `Could not restore model ${native.provider}/${native.id}. Using ${fallback.provider}/${fallback.id}`,
++		},
++		{
++			name: "restores a virtual-only model without credentials",
++			saved: virtual,
++			selected: virtual,
++			warning: undefined,
++		},
++	])("$name", async ({ saved, selected, warning }) => {
++		const services = await createServices((pi) => registerModels(pi, false));
++		const { session, modelFallbackMessage } = await restoreSession(services, saved);
++		try {
++			expect(session.model).toMatchObject({ provider: selected.provider, id: selected.id });
++			expect(modelFallbackMessage).toBe(warning);
++			expect(runtime.hasConfiguredAuth(native.provider)).toBe(false);
++			expect(runtime.hasConfiguredAuth(virtual.provider)).toBe(true);
++		} finally {
++			session.dispose();
++		}
++	});
++
++	it("refreshes availability after live extension registration", async () => {
++		const services = await createServices((pi) => {
++			pi.on("session_start", () => registerModels(pi, true));
++		});
++		const { session } = await createAgentSessionFromServices({
++			services,
++			sessionManager: SessionManager.inMemory(cwd),
++		});
++		const refresh = vi.spyOn(runtime, "refresh");
++		try {
++			await session.bindExtensions({});
++			await Promise.all(refresh.mock.results.map((result) => result.value));
++			expect(runtime.getAvailableSnapshot()).toContainEqual(native);
++			expect(refresh.mock.calls).toEqual([[offline], [offline], [offline]]);
++		} finally {
++			session.dispose();
++		}
++	});
++});
