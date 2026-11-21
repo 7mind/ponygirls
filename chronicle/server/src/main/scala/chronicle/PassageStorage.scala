@@ -11,9 +11,10 @@ trait PassageReader {
 }
 /** Where a staged generation's run continues (migration 026): its phase and the first step whose rows are not all
   * written; from P2 on also the publication's counts; `invalid`: phase W discarded embedding parts since chunks were
-  * written, so they are written again. */
+  * written, so they are written again; `lineageTags`: a root whose every batch this release wrote (migration 028), so its
+  * lineage tag counts are complete (a release before 028 rewrites the resume point without it). */
 enum StagedPhase { case Passages,Pieces }
-final case class StagedGeneration(generation: UUID,phase: StagedPhase,step: Int,counts: Option[ProblemRows.Counts],invalid: Boolean=false)
+final case class StagedGeneration(generation: UUID,phase: StagedPhase,step: Int,counts: Option[ProblemRows.Counts],invalid: Boolean=false,lineageTags: Boolean=false)
 object PassageStorage {
   /** A staged generation's rows are written in committed batches of at most this many rows and bytes (spec §5.2.4). */
   val rowsPerBatch = 500
@@ -39,7 +40,7 @@ object PassageStorage {
 
   private def resumeJson(staged: StagedGeneration): String =
     io.circe.Json.obj(("step"->io.circe.Json.fromInt(staged.step))::staged.counts.toList.flatMap(value => List("steps"->io.circe.Json.fromInt(value.steps),"passages"->io.circe.Json.fromInt(value.passages),"pieces"->io.circe.Json.fromInt(value.pieces)))++
-      Option.when(staged.invalid)("invalid"->io.circe.Json.True)*).noSpaces
+      Option.when(staged.invalid)("invalid"->io.circe.Json.True)++Option.when(staged.lineageTags)("lineageTags"->io.circe.Json.True)*).noSpaces
   /** The staged generation of the job's run, locked against the sweep for the caller's transaction. */
   def staged(c: Connection,jobId: UUID,runId: UUID): Option[StagedGeneration] =
     Sql.one(c,"SELECT generation,phase,resume FROM ch_staged_generations WHERE job_id=? AND run_id=? AND run_id<>generation FOR NO KEY UPDATE",jobId,runId) { r =>
@@ -47,7 +48,7 @@ object PassageStorage {
       def field(name: String): Option[Int] = resume.get[Int](name).toOption
       val counts=for { steps <- field("steps"); passages <- field("passages"); pieces <- field("pieces") } yield ProblemRows.Counts(steps,passages,pieces)
       StagedGeneration(r.getObject(1,classOf[UUID]),StagedPhase.valueOf(r.getString(2)),field("step").getOrElse(throw DomainError("internal","invalid staged generation resume point")),counts,
-        resume.get[Boolean]("invalid").getOrElse(false))
+        resume.get[Boolean]("invalid").getOrElse(false),resume.get[Boolean]("lineageTags").getOrElse(false))
     }
   /** P0: a new staged generation of the claim's run, no row written yet. It is a root (spec §5.6.2): the first version
     * of its own lineage, whose segments hold all its own rows, invisible (`since` NULL) until its switch. */
@@ -56,7 +57,7 @@ object PassageStorage {
     Sql.exec(c,"INSERT INTO ch_generations(id,session_id,revision,profile,passage_format,passage_count,run_id,lineage) VALUES(?,?,?,?,?,0,?,?)",generation,claim.sessionId,claim.revision,claim.profile,PassageFormat.ContextAwareProblems.toString,claim.runId,generation)
     batch(c,"INSERT INTO ch_lineage_segments(lineage,origin,kind,since,until,lo_major,lo,hi_major,hi,staged_by) VALUES(?,?,?,NULL,NULL,0,0,?,?,?)",
       GenerationRows.Kind.values.toList.map(kind => List(generation,generation,kind.sql,GenerationRows.openMajor,GenerationRows.openEnd,generation)))
-    val staged=StagedGeneration(generation,StagedPhase.Passages,0,None)
+    val staged=StagedGeneration(generation,StagedPhase.Passages,0,None,lineageTags=true)
     Sql.exec(c,"INSERT INTO ch_staged_generations(generation,job_id,run_id,phase,resume) VALUES(?,?,?,'Passages',?::jsonb)",generation,claim.jobId,claim.runId,resumeJson(staged))
     staged
   }
@@ -75,10 +76,18 @@ object PassageStorage {
   }
   /** A root's switch (spec §5.6.2): version 0 of its lineage, its segments valid from it; the lineage of the generation it
     * replaces is retired afterwards (`retireLineage`). At most four segment rows change. A generation staged by a release
-    * before 028 has no lineage: it is published as it was staged, holding its own rows. */
-  def switchRoot(c: Connection,generation: UUID,previous: Option[UUID]): Unit = {
-    Sql.exec(c,"UPDATE ch_generations SET lineage_version=0 WHERE id=? AND lineage=id AND lineage_version IS NULL",generation)
-    Sql.exec(c,"UPDATE ch_lineage_segments SET since=0 WHERE lineage=? AND staged_by=? AND since IS NULL",generation,generation)
+    * before 028 has no lineage: it is published as it was staged, holding its own rows. A root that such a release wrote
+    * batches of (`lineageTags` false: its tag counts miss those batches' chunks) is published without a lineage too: its
+    * segment and lineage rows go, its tag rows are retired afterwards; it is never a parent. */
+  def switchRoot(c: Connection,generation: UUID,previous: Option[UUID],lineageTags: Boolean): Unit = {
+    if(lineageTags) {
+      Sql.exec(c,"UPDATE ch_generations SET lineage_version=0 WHERE id=? AND lineage=id AND lineage_version IS NULL",generation)
+      Sql.exec(c,"UPDATE ch_lineage_segments SET since=0 WHERE lineage=? AND staged_by=? AND since IS NULL",generation,generation)
+    } else if(Sql.exec(c,"UPDATE ch_generations SET lineage=NULL WHERE id=? AND lineage=id",generation)==1) {
+      Sql.exec(c,"DELETE FROM ch_lineage_segments WHERE lineage=? AND origin=?",generation,generation)
+      Sql.exec(c,"DELETE FROM ch_generation_lineage WHERE generation=?",generation)
+      Sql.exec(c,"INSERT INTO ch_lineage_retirements(lineage) VALUES(?) ON CONFLICT DO NOTHING",generation)
+    }
     previous.foreach(id => Sql.exec(c,"INSERT INTO ch_lineage_retirements(lineage) SELECT lineage FROM ch_generations WHERE id=? AND lineage IS NOT NULL AND lineage<>? ON CONFLICT DO NOTHING",id,generation))
   }
   /** Marks a staged generation abandoned: no run resumes it, and its rows go in bounded statements. A staged generation

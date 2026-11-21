@@ -58,12 +58,12 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     f.after.foreach { s => Check(scala.util.Try(java.time.Instant.parse(s)).isSuccess,"invalid","invalid time filter"); b += "(r.metadata->>'startedAt')::timestamptz>=?::timestamptz"; p += s }
     f.before.foreach { s => Check(scala.util.Try(java.time.Instant.parse(s)).isSuccess,"invalid","invalid time filter"); b += "(r.metadata->>'startedAt')::timestamptz<=?::timestamptz"; p += s }
     Check(f.tags.size<=32,"invalid","tag filter limit")
-    f.tags.foreach { s => Check.text(s,128); b += s"((r.metadata->'tags') @> ?::jsonb OR EXISTS(SELECT 1 FROM ${GenerationRows.tags(s"$published.id",s"$published.lineage")} tagged WHERE tagged.tag=?))"; val tag=io.circe.Json.arr(io.circe.Json.fromString(s)).noSpaces; p += tag; p += s }
+    f.tags.foreach { s => Check.text(s,128); b += s"((r.metadata->'tags') @> ?::jsonb OR EXISTS(SELECT 1 FROM ${GenerationRows.tags(s"$published.id",s"$published.lineage",s"$published.lineage_version")} tagged WHERE tagged.tag=?))"; val tag=io.circe.Json.arr(io.circe.Json.fromString(s)).noSpaces; p += tag; p += s }
     (b.result().map(" AND "+_).mkString,p.result())
   }
   private def facetCorpus(reader: String,f: SearchFilter): SearchStatement = {
     val (fs,p)=filter(f,"g")
-    SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT s.id,s.published,g.lineage,r.metadata FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.visible}$fs)",List(reader,reader,reader)++p)
+    SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT s.id,s.published,g.lineage,g.lineage_version,r.metadata FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.visible}$fs)",List(reader,reader,reader)++p)
   }
   private[chronicle] def statement(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchStatement = statement(reader,q,vector,LegPass.Index)
   private def statement(reader: String,q: SearchQuery,vector: Option[List[Double]],pass: LegPass): SearchStatement = {
@@ -183,7 +183,7 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     val corpus=source.sql
     val args=source.args
     def field(key: String): String = s"SELECT metadata->>'$key' AS value,count(DISTINCT id) AS n FROM corpus WHERE metadata->>'$key' IS NOT NULL GROUP BY value ORDER BY n DESC,value LIMIT ${SearchPolicy.facetValuesPerField}"
-    val tags=s"SELECT tag AS value,count(DISTINCT id) AS n FROM (SELECT id,jsonb_array_elements_text(metadata->'tags') COLLATE \"default\" AS tag FROM corpus UNION SELECT corpus.id,ch.tag COLLATE \"default\" FROM corpus CROSS JOIN LATERAL ${GenerationRows.tags("corpus.published","corpus.lineage")} ch) t GROUP BY tag ORDER BY n DESC,value LIMIT ${SearchPolicy.facetValuesPerField}"
+    val tags=s"SELECT tag AS value,count(DISTINCT id) AS n FROM (SELECT id,jsonb_array_elements_text(metadata->'tags') COLLATE \"default\" AS tag FROM corpus UNION SELECT corpus.id,ch.tag COLLATE \"default\" FROM corpus CROSS JOIN LATERAL ${GenerationRows.tags("corpus.published","corpus.lineage","corpus.lineage_version")} ch) t GROUP BY tag ORDER BY n DESC,value LIMIT ${SearchPolicy.facetValuesPerField}"
     val selection=corpus+s",projects AS(${field("project")}),branches AS(${field("gitBranch")}),tags AS($tags),selected AS("+
       "SELECT 0 AS kind,row_number() OVER(ORDER BY n DESC,value) AS ordinal,value,n FROM projects UNION ALL "+
       "SELECT 1 AS kind,row_number() OVER(ORDER BY n DESC,value) AS ordinal,value,n FROM branches UNION ALL "+
@@ -204,7 +204,7 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     val corpus=facetCorpus(reader,q.filter)
     val position=if(q.afterTag.nonEmpty) " AND tag COLLATE \"C\">? COLLATE \"C\"" else ""
     val selection=corpus.sql+",tag_sessions AS (SELECT id,jsonb_array_elements_text(metadata->'tags') COLLATE \"C\" AS tag FROM corpus UNION "+
-      s"SELECT corpus.id,ch.tag COLLATE \"C\" FROM corpus CROSS JOIN LATERAL ${GenerationRows.tags("corpus.published","corpus.lineage")} ch) "+
+      s"SELECT corpus.id,ch.tag COLLATE \"C\" FROM corpus CROSS JOIN LATERAL ${GenerationRows.tags("corpus.published","corpus.lineage","corpus.lineage_version")} ch) "+
       "SELECT tag AS value,count(DISTINCT id) AS n FROM tag_sessions WHERE strpos(lower(tag COLLATE pg_unicode_fast),lower(? COLLATE pg_unicode_fast))>0"+position+
       " GROUP BY tag ORDER BY tag COLLATE \"C\" LIMIT ?"
     val args=corpus.args++List[Sql.Param](q.query)++q.afterTag.toList++List(q.limit)

@@ -162,7 +162,7 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
 
   private def corpus: String = s"""corpus AS MATERIALIZED(SELECT s.id,s.owner,s.revision,s.published,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp,i.last_timestamp_order,i.message_count,g.revision AS indexed_revision,g.id AS generation,g.passage_format AS published_format,
       j.id AS job_id,j.state AS job_state,j.attempts AS job_attempts,j.error AS job_error,j.failure_stage,j.completed_windows,j.total_windows,
-      ARRAY(SELECT tag FROM (SELECT jsonb_array_elements_text(i.metadata->'tags') AS tag UNION SELECT generated.tag FROM ${GenerationRows.tags("s.published","g.lineage")} generated) tag_values ORDER BY lower(tag $unicode),tag) AS tags
+      ARRAY(SELECT tag FROM (SELECT jsonb_array_elements_text(i.metadata->'tags') AS tag UNION SELECT generated.tag FROM ${GenerationRows.tags("s.published","g.lineage","g.lineage_version")} generated) tag_values ORDER BY lower(tag $unicode),tag) AS tags
       FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision
       JOIN ch_owner_targets profile ON profile.owner=s.owner LEFT JOIN ch_generations g ON g.id=s.published
       LEFT JOIN ch_jobs j ON j.session_id=s.id AND j.revision=s.revision AND j.profile=profile.profile WHERE ${archive.visible})"""

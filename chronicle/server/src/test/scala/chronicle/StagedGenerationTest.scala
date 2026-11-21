@@ -124,6 +124,53 @@ final class StagedGenerationTest extends munit.FunSuite {
     assertEquals(new PostgresSearch(db,archive,config).tags("a",TagSearchQuery("staged",SearchFilter(None,None,None,None,Nil),None,10)).map(_.value),List("staged"))
   }}
 
+  test("a root a release before 028 continued (rollback without down-028): published by that release it reads as its own rows, published after it by this one it has no lineage; their lineage tag rows are retired") { database { (config,db,archive) =>
+    val vectors=new Ring
+    val search=new PostgresSearch(db,archive,config)
+    /** A root of `owner` staged by this release and stopped in its chunks (500 of them counted in its lineage tags). */
+    def interrupted(owner: String): (UUID,UUID) = {
+      val receipt=archive.ingest(owner,request(text))
+      stopped(db,"ch_chunks")(assert(worker(archive,config,vectors).once.unsafeRunSync()))
+      val generation=db.transaction(c => Sql.one(c,"SELECT st.generation FROM ch_staged_generations st JOIN ch_jobs j ON j.id=st.job_id WHERE j.session_id=?",receipt.sessionId)(_.getObject(1,classOf[UUID]))).get
+      (receipt.sessionId,generation)
+    }
+    def reads(owner: String,session: UUID,generation: UUID): Unit = {
+      val view=archive.session(owner,session).view
+      assertEquals(view.generationId,Some(generation))
+      assertEquals(archive.pageChunks(owner,session,0,100,None).chunks.size,100)
+      assertEquals(archive.pageChunks(owner,session,pieces-1,100,None).chunks.size,1)
+      assertEquals(archive.passages(owner,session,0,10,None).passages.map(_.pieceCount),List(pieces.toLong))
+      assertEquals(search.tags(owner,TagSearchQuery("staged",SearchFilter(None,None,None,None,Nil),None,10)).map(_.value),List("staged"))
+      assertEquals(search.search(owner,SearchQuery("staged",SearchMode.Lexical,SearchFilter(None,None,None,None,List("staged")),10,0),None).hits.map(_.session.view),List(view))
+    }
+    def lineage(generation: UUID): String = db.transaction(c => Sql.one(c,"""SELECT concat_ws('|',coalesce(lineage::text,'-'),coalesce(lineage_version::text,'-'),
+      (SELECT count(*) FROM ch_lineage_segments WHERE origin=g.id),(SELECT count(*) FROM ch_generation_lineage WHERE generation=g.id),(SELECT count(*) FROM ch_lineage_tags WHERE lineage=g.id)) FROM ch_generations g WHERE id=?""",generation)(_.getString(1))).get
+    // Published by the previous release: it wrote the remaining chunks without counting their tags and switched without
+    // activating the root (its version stays unset, its segments invisible), as this release's switch minus switchRoot.
+    val (first,root)=interrupted("a")
+    assert(worker(archive,config,vectors).once.unsafeRunSync())
+    db.transaction { c =>
+      Sql.exec(c,"UPDATE ch_generations SET lineage_version=NULL WHERE id=?",root)
+      Sql.exec(c,"UPDATE ch_lineage_segments SET since=NULL WHERE lineage=?",root)
+      Sql.exec(c,"UPDATE ch_lineage_tags SET pieces=500 WHERE lineage=?",root)
+    }
+    reads("a",first,root)
+    // Its replacement by this release retires its lineage's tag rows with its search rows.
+    archive.ingest("a",request(text+"q",Some(archive.headSnapshot("a",first).source),1))
+    assert(worker(archive,config,vectors).once.unsafeRunSync())
+    assertEquals(lineage(root),s"$root|-|4|1|0")
+    // Continued by the previous release (its batches: chunks without tag counts, a resume point without this release's
+    // mark), published by this one: without a lineage.
+    val (second,continued)=interrupted("b")
+    db.transaction { c =>
+      Sql.exec(c,"UPDATE ch_staged_generations SET resume=resume-'lineageTags' WHERE generation=?",continued)
+      Sql.exec(c,"DELETE FROM ch_lineage_tags WHERE lineage=?",continued)
+    }
+    assert(worker(archive,config,vectors).once.unsafeRunSync())
+    assertEquals(lineage(continued),"-|-|0|0|0")
+    reads("b",second,continued)
+  }}
+
   test("a superseded job's staged generation is deleted by the maintenance pass; a run that a retry makes live again deletes its abandoned staged generation before it stages a new one") { database { (config,db,archive) =>
     val vectors=new Ring
     val superseded=archive.ingest("a",request(text))

@@ -517,7 +517,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       value.spans.foreach(span => batches.add(step,ProblemRows.Passages(Vector.empty,Vector.empty,Vector(span),Vector.empty)))
       value.context.foreach(span => batches.add(step,ProblemRows.Passages(Vector.empty,Vector.empty,Vector.empty,Vector(span))))
     }
-    val next=StagedGeneration(staged.generation,StagedPhase.Pieces,0,Some(total))
+    val next=StagedGeneration(staged.generation,StagedPhase.Pieces,0,Some(total),lineageTags=staged.lineageTags)
     written(next)(batches.drain())
     next
   }
@@ -584,13 +584,14 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     else authorized && {
       // All of the switch or none: its last statement can still find the lease ended.
       val switching=c.setSavepoint()
-      val completed=Sql.exec(c,"DELETE FROM ch_staged_generations WHERE generation=? AND job_id=? AND run_id=?",generation,claim.jobId,claim.runId)==1 && {
+      val lineageTags=Sql.one(c,"DELETE FROM ch_staged_generations WHERE generation=? AND job_id=? AND run_id=? RETURNING coalesce((resume->>'lineageTags')::boolean,false)",generation,claim.jobId,claim.runId)(_.getBoolean(1))
+      val completed=lineageTags.nonEmpty && {
         val previous=Sql.one(c,"SELECT published FROM ch_sources WHERE id=?",claim.sessionId)(r => Option(r.getObject(1,classOf[UUID]))).flatten
         previous.foreach { previous =>
           Sql.exec(c,"INSERT INTO ch_generation_retirements(generation,payload) VALUES(?,false) ON CONFLICT DO NOTHING",previous)
         }
         Sql.exec(c,"UPDATE ch_generations SET passage_count=? WHERE id=?",passages.toLong,generation)
-        PassageStorage.switchRoot(c,generation,previous)
+        PassageStorage.switchRoot(c,generation,previous,lineageTags.get)
         Sql.exec(c,"UPDATE ch_sources SET published=? WHERE id=?",generation,claim.sessionId)
         ReindexCohort.published(c,claim,generation)
         Sql.exec(c,s"UPDATE ch_jobs SET state='Complete',error=NULL,failure_stage=NULL,lease_until=NULL WHERE $validJob",jobArgs(claim)*)==1

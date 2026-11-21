@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS ch_lineage_segments(
   CHECK(until IS NULL OR until>since),
   CHECK((lo_major,lo)<(hi_major,hi)));
 CREATE INDEX IF NOT EXISTS ch_lineage_segments_probe ON ch_lineage_segments(lineage,origin,kind,since);
+-- The origin's foreign key: purge deletes all of a source's generations in one statement, each delete checks the segment
+-- rows naming it as origin. Composite, so that the per-tuple probe can use it too only with lineage and origin.
+CREATE INDEX IF NOT EXISTS ch_lineage_segments_origin ON ch_lineage_segments(origin,lineage,kind,since);
 CREATE TABLE IF NOT EXISTS ch_generation_lineage(
   generation uuid PRIMARY KEY REFERENCES ch_generations(id) ON DELETE CASCADE,
   parent uuid,
