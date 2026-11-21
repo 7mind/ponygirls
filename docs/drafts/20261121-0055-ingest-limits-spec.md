@@ -6,7 +6,8 @@ earlier text). Tags: **[o F:L]** observed in code at the base, **[o Mn]** measur
 `.local/overhaul-20261117/reports/ingest-c/SPEC/evidence/`), **[m INV]**/**[m L5]** measured by the INV/SPEC-L5 units
 (evidence in their bundles), **[r X]** reported by another unit, **[i]** inferred, **[u]** not verified. Synthetic data
 only. Out of scope: S3 (legacy conversion), S4 (retiring `/api/ingest`), any back-fill or re-index of archived sessions
-(owner Q122).
+(owner Q122). Added 2026-11-21: §5.6 (the I3 design of unit SPEC-L5E), §5.7 (ANN detection as built) and §13 (the
+implemented behaviour where it differs from the text; §13 wins over the earlier sections).
 
 ## Summary
 - **L1 ranged raw read.** New cookie-authenticated HTTP endpoints `GET /api/raw/{session}[/{revision}]` (a JSON manifest:
@@ -694,6 +695,407 @@ shared host under load (load average 5–60). Details and commands: `report.md`,
 - Production shape: per piece the same DB costs; per window the real annotation latency L (unknown) replaces the stub's
   ≈ 0.36 s; HNSW insertion into the production index (940 k rows on the clone in ch-fix2 [r]) at `shared_buffers` [u].
 
+### 5.6 L5e — incremental publication (I3) (from unit SPEC-L5E; revised after advisory review rounds 1–2)
+Source: `reports/ingest-c/SPEC-L5E/{section.md,report.md,evidence/}`. Builds on §5.2 (L5a/L5b: streamed claim, phase W,
+phase P into a staged generation, migration 026) and §5.4 (L5d: window reuse, migration 027). Orchestrator 03:22Z: L5e is
+the last L5 unit; L5a→L5b→L5d ship without it; binding acceptance: work and lag per revision ∝ the addition, results
+identical to a full re-publication. Tags as in this spec; **[m E1–E7]** = this unit's synthetic measurements (§5.6.7).
+Code paths under `chronicle/server/src/main/scala/chronicle/`. Review resolutions: §5.6.10.
+
+#### 5.6.1 What a generation holds, and which part is prefix-stable
+N = the published revision (generation P), N+1 appends messages to the same epoch; K = P's last window (the only window
+of N that can end at N's end of messages, §5.4 (b)); B = the passage open when window K starts (may be none). Windows
+0..K−1 of N+1 equal N's (same messages below N's count [o migrations/024:114,138], cursor, input, and the same accepted
+decision when L5d reuses parent-first, §5.6.3), so `accept` [o ProblemPassages.scala:153-189] yields the same pieces,
+spans and Context spans for them. B is the only passage that can still change; nothing limits a passage's length today
+(it continues while the model answers `continuePrevious` [o ProblemPassages.scala:166-170]; no bound in the code; the
+U8 stub keeps one passage for the whole session [o scripts/upload-bounds.py:347-348]).
+
+| content | table / key [o] | depends on | after N+1 |
+|---|---|---|---|
+| pieces: text, spans, vector | `ch_chunks(id,generation,value,document,embedding,ordinal)` [o 001.sql:14,17-18]; ordinal = piece ordinal, dense [o Database.scala:482] | the window range (vector = `documentPrefix`+text [o Models.scala:98]) | stable below window K |
+| pieces: `summary`/`tags` in `value` and in `document` = tsvector(text, summary, tags) | same; today the passage's **final** metadata [o ProblemsPublication.scala:97-100] | today: the whole passage | today: all of B's pieces change whenever B's final metadata changes → whole-session rewrite for a session-long passage; with the horizon rule (§5.6.2) only B's pieces of windows ≥ K−H |
+| chunk id, passage id | `UUID(identity, runId, kind, ordinal)` [o ProblemPassages.scala:170,179,330; Models.scala:274] | the run | new run ⇒ new ids; ids are a ranking tie-break today (§5.6.2 "Ranking") |
+| search rows | `ch_search_chunks` [o 002.sql:3-11], HNSW + GIN [o Database.scala:57; 002.sql:12] | as pieces | as pieces; `generation`/`revision` label the writer |
+| piece links | `ch_problem_pieces` [o 008.sql:25-34] | window range | as pieces |
+| passages | `ch_problem_passages(generation,id,ordinal,…,value=PassageInfo,span_count)` [o 008.sql:3-12] | closed: fixed; B: grows | stable below B's ordinal b; B's row rewritten (1 row) |
+| spans | `ch_problem_spans(generation,passage_id,ordinal,…)` [o 008.sql:13-23] | window range; B's last span can be extended by a merge [o ProblemPassages.scala:172-176] | stable below (b, s_B−1) |
+| Context spans | `ch_context_spans(generation,ordinal,…)` [o 011.sql:7-15] | window range | stable below the count at K |
+| generation tags | `ch_generation_tags(generation,tag)` [o 006.sql:37-41] = distinct chunk tags [o Database.scala:484] | the whole session (a set) | per-lineage counted multiset, changed only by rewritten/superseded/new pieces (§5.6.2) |
+| generation row, chunk count | `ch_generations` (`passage_count`, …); `count(*)` [o Database.scala:519] | whole (counts) | new row O(1); stored piece count |
+| Related | summary of chunk 0 [o Application.scala:77] | passage 0's metadata | changes only if passage 0 is B (within the horizon) |
+| checkpoints / refs / staging | [o IndexCheckpoints.scala:25-27]; 026, 027 | window | own rows for windows ≥ K only |
+| session metadata, title, statistics | `ch_revision_info` (ingest side) | revision | not generation rows |
+
+Old generations are kept forever today (pins): a publication deletes only other generations' *search* rows
+[o Database.scala:493]; CONTRACT: a `ContentView` "identifies immutable … annotation generation", "ordinary append or
+republication preserves old full pins" [o CONTRACT.md:131,413-414]; only an explicit rebuild retires them
+[o ReindexCohort.scala:88-93], purge deletes them [o Auth.scala:343-344]. Each full re-publication of a B-size session
+adds ≈ 17 GB of `ch_chunks` (2.53 M × 6.76 KB [m L5]) and re-inserts and later vacuums every HNSW row: VACUUM after
+retiring 20,000 rows of a 640,000-row index took 21.5 min and 13.3 GB WAL [m E5].
+
+#### 5.6.2 Design: shared immutable rows, versioned membership segments, metadata horizon
+**Shape.** Rows stay labeled with the generation that wrote them (its **origin**) and are never rewritten. A **lineage**
+starts at a full publication (a **root**: first index, replacement, every L5b-path publication) and continues with
+incremental publications; published generations of a lineage get versions 0, 1, 2, … *at their switch*. Membership is
+stored as **versioned segment rows** `(lineage, origin, since, until, ranges)`: generation (L, v) contains the rows of
+`origin` inside `ranges` for every segment row with `since ≤ v < until` (until NULL = open). A switch changes O(H)
+segment rows (§ below), never copies the parent's list — so there is **no chain-length cap and no compaction**: chain
+length only adds a log factor to index probes. Options considered: lineage resolved recursively (depth grows per
+revision, recursion inside the per-tuple ANN filter: no); per-generation copied segment lists (O(chain) per publication:
+round-1 version, replaced); per-row membership (O(session) per revision: no); one "live" generation relabeled in place
+(O(tail) non-HOT relabels = HNSW re-inserts, 0 % HOT and 74 rows/s [m E6]; breaks immutable pins: no).
+
+**Metadata horizon (behaviour change for newly published content; decision E1).** Today every piece carries its
+passage's *final* summary/tags. New rule in both paths: a piece produced in window k carries its passage's metadata
+**after window min(k+H, last window of the passage)**, H = `ProblemsPublication.metadataHorizonWindows` = 16. Passages
+of ≤ H windows (≈ 1,000 fragments, ≈ 1–2 MB of transcript) are published exactly as today; in longer passages a piece's
+summary/tags are those the model held H windows after it (the passage row — GetPassages — keeps the final metadata).
+Consequence: in revision N+1 only B's pieces of windows [K−H, K) can change (their horizon reaches the re-done windows);
+all earlier pieces are fixed by windows < K. Rewrite bound in pieces: r ≤ Σ over windows k ∈ [K−H, K) of B's pieces
+in k; a window's pieces = Σ over its Problem parts of the fragments each touches ≤ 64 fragments + (parts − 1), and a
+decision holds ≤ 422 parts at `annotation.maxResponseBytes` = 64 KiB (a minimal Problem part is 155 B of JSON) [i from
+the schema]: ≤ 485 pieces per window, **r ≤ 7,760 at H = 16 in the worst case**; the measured shape has 63.2 fragments
+and ≈ 63 pieces per window [r U8H], r ≈ 1,000. Independent of session size. A piece of R whose recomputed metadata
+equals that of its current member row is not rewritten (the stub: none); see "Membership of a partly unchanged R".
+**No fingerprint change:** the profile hashes the embedding space, annotation config and `ProblemPassages.identity`
+[o IndexProfiles.scala:20-31]; H lives in `ProblemsPublication`, not in the identity; checkpoints (decisions, vectors)
+are unaffected; existing generations are untouched, nothing is re-indexed; a session re-published later uses the rule.
+The existing worker test publishing final metadata (3 windows [o test PassageWorkerTest.scala:55-80]) stays valid.
+
+**Ranking (round-1 B1).** Chunk ids enter ranking only as tie-breaks: the lexical leg `ORDER BY ts_rank_cd DESC, ch.id
+LIMIT 1000` [o Search.scala:75], the rerank `row_number() OVER(ORDER BY lex DESC,id)` / `(ORDER BY distance,id)` and
+`DISTINCT ON(session) … ORDER BY session, score DESC, id` [o shared/retrieval-core CandidateSql.scala:22-26], the
+lexical mode [o Search.scala:68], `searchLegacy` [o Search.scala:93] and Archive witnesses `ORDER BY
+distance,operand,id` [o ArchiveIndex.scala:219] (the `a$i` legs then also project `ordinal`). Retained prefix ids
+(lineage) and fresh ids (root) would order exact ties differently. Fix in both paths: tie-break on the
+generation-independent key `(session_id, ordinal NULLS LAST, id)` (search rows gain `ordinal`; rows of pre-028
+generations have NULL and fall back to id as today). `CandidateSql.rerankCtes` gains a tie-break-columns parameter
+(default `id`: Haystack's `PostgresRetrieval` [o shared/retrieval-postgres PostgresRetrieval.scala:249] unchanged).
+Effect on today's results: only the order among exactly equal keys (equal `ts_rank_cd`, equal distance, equal fused
+score) changes — which tied chunk/candidate is taken (today decided by random UUIDs). Lexical and semantic scores are
+unchanged (`lex`, `1−distance`); a **hybrid** hit's RRF score can change, because tied candidates get other ranks
+`lr`/`vr`, and with it the best chunk or order of a session — identically in both new paths; not part of any profile →
+no re-index. The HNSW leg itself has no tie-break and is approximate (CONTRACT "candidate discovery remains
+approximate"): its candidate set depends on the index's insertion history, so two full publications of the same content
+can already differ there; identity is therefore defined and tested for equal candidate sets (§5.6.6).
+
+**Migration `028_generation_lineage.sql`** (DDL + constraint redefinition; idempotent; no job rows):
+- `ch_generations` + `lineage uuid`, `lineage_version int` (nullable; NULL = classic generation of an earlier release),
+  `UNIQUE(lineage, lineage_version)` (a version is taken once: the lineage is linear).
+- `ch_lineage_segments(lineage uuid REFERENCES ch_generations ON DELETE CASCADE, origin uuid REFERENCES ch_generations
+  ON DELETE CASCADE, kind text CHECK(kind IN('piece','passage','span','context')), since int, until int, lo_major int,
+  lo bigint, hi_major int, hi bigint, staged_by uuid)` + index `(lineage, origin, kind, since)`; half-open ranges;
+  `*_major` is the passage ordinal for spans (ordered by (passage, span ordinal); only B's spans span origins), 0 else;
+  `since` NULL = written by a staged generation (`staged_by`), invisible.
+- `ch_generation_lineage(generation PRIMARY KEY REFERENCES ch_generations ON DELETE CASCADE, parent uuid, last_window
+  int, cut jsonb, pieces bigint)`: `cut` = the `ProblemPassages.State` before the last window (cursor, ordinals, open
+  passage with last span and ≤ 16 KiB tail [o ProblemPassages.scala:134-145]), Context-span count, validator frontier,
+  piece-ordinal boundaries of the last H windows — ≲ 25 KB [i].
+- `ch_lineage_tags(lineage REFERENCES ch_generations ON DELETE CASCADE, tag, pieces bigint CHECK(pieces>0), PRIMARY
+  KEY(lineage, tag))`: the tag multiset of the lineage's current published version (tags are read only for published
+  generations [o Search.scala:52,150,171; ArchiveIndex.scala:159; ExpressionHints.scala:124]); a staged root builds its
+  own lineage's rows in phase P batches (invisible: readers follow `p.lineage` of the published generation).
+  `ch_lineage_tag_deltas(generation, tag, delta)`: an incremental generation's staged tag changes.
+  `ch_lineage_retirements(lineage)`: a superseded lineage whose tag rows are deleted after the switch.
+- `ch_search_chunks` + `ordinal integer` (nullable, metadata-only); `ch_search_retirements(session_id, origin, piece_lo,
+  piece_hi)`.
+- Format discriminator: lineage generations (version ≥ 1, staged or published) are stored with `passage_format =
+  'ContextAwareProblemsLineage'`; 028 redefines 022's `ch_generations_current_format_check` to admit it (only while its
+  definition lacks it), and the release's `011_context_coverage.sql` list gains the value (011 re-creates its check at
+  every start [o 011.sql:3-4]). The wire format stays `ContextAwareProblems` (new readers map the label). Roots keep
+  `ContextAwareProblems`.
+
+**Eligibility** (claim; re-checked at the switch): the published generation P has a lineage row and `lineage_version`,
+the claim's profile, is not retired; P's revision and N+1 are epoch revisions of the same epoch with P's
+`message_count` ≤ N+1's; no reindex retirement would fire at this publication (the predicate of
+[o ReindexCohort.scala:88]); `indexing.incrementalPublication` (new key, default true; false = every publication a
+root: the operator's off switch and the acceptance oracle's). Otherwise a root (L5b path).
+
+**Job for N+1 with parent P** (one `Claim` as L5a; checkpoint keys unchanged):
+1. Restore `State` from P's `cut` with `namespace` = this run (new passages/pieces get this run's ids; B keeps its
+   stored id). Count pass and phase W start at window K's cursor (keyset reads [m L5]); window indexes and progress
+   continue at K. Window K is re-annotated or reused by L5d; nothing below K is read or replayed.
+2. Phase P (staged as §5.2.4): P0 writes G′ (label `…Lineage`, lineage = P's, version NULL), its lineage row and its own
+   segment row (since NULL). Rewrite region R = pieces from max(first piece of window K−H, first piece of B) — B's
+   pieces are a contiguous suffix before K, since a passage opened after B would have closed it — to the end. P1–P3
+   write only G′'s rows: B's row, new passages, spans from (b, s_B−1), Context spans from K, chunks/links/search rows
+   (with `ordinal`) for R ∪ new windows; R's text, spans and vectors are read from P's rows (not re-embedded), unchanged
+   pieces of R are skipped. Tag changes (+ tags of written pieces, − tags of the member rows they replace) go to
+   `ch_lineage_tag_deltas` in the same batches, committed with the resume point (so a replay applies each once). The
+   streamed validator starts from the saved frontier with the horizon rule.
+3. Switch (one short transaction): `s.published = P` (else `stale-claim`; the retry chooses again); version v′ = v_P+1;
+   segment rows changed as in "Membership of a partly unchanged R" (≤ 2H+10); one `INSERT … ON CONFLICT DO UPDATE`
+   applying the staged tag deltas (≤ 16 rows per passage the revision touches: B and the addition's new passages;
+   ≈ 20 µs per row [i]) and deleting counts that reach 0; superseded search ranges → `ch_search_retirements`;
+   `published = G′`; job `Complete` (measured 14 ms for 90 segment rows [m E5]). Delta rows are deleted afterwards.
+4. Retirement after the switch: ids of each pending range via `ch_chunks (generation, ordinal)` [o 001.sql:18] →
+   `DELETE … WHERE id IN` in ≤ 10,000-row statements; maintenance finishes leftovers. Content rows stay (pins).
+**A root** prepares everything before its switch: its segment rows (since NULL), its `ch_lineage_tags` counts and its
+`ch_generation_tags` (as L5b's P1 does today) are written in phase P batches committed with the resume point. Its switch
+only sets `since = 0` on its ≤ 4 rows (one per kind), records the previous lineage in `ch_lineage_retirements` and sets
+`published` (plus §5.2.4's tail) — O(1). Afterwards the previous lineage's tag rows are deleted in ≤ 10,000-row
+statements; a sweep of an abandoned staged root deletes its tag rows in bounded statements before its generation row.
+
+**Membership of a partly unchanged R** (round-2 advisory). Within R all pieces are B's, and all pieces of one window
+share one horizon window, so "unchanged" is decided per window. Example: B's metadata after window K differs from what
+the member rows of window K−H carry, after K+1 equals the member rows of K−H+1, after K+2 differs again → windows K−H
+and K−H+2 are rewritten into G′, window K−H+1 keeps its current member rows **and their origin** (its ids, its rows).
+The comparison is always against the current member row (a value that returns to an older origin's value is still
+rewritten if the current member differs; rows are never re-admitted). Segment rows are one per (origin, kind, range);
+piece ranges may split. Per switch: closed (`until = v′`) ≤ H+2 piece rows (≤ one per window of R, the one straddling
+R's start, P's row covering window K) and ≤ 3 rows of the other kinds (B's passage, B's last span, Context from K);
+inserted ≤ H+2 piece rows (kept runs: ≤ ⌈H/2⌉ inside R + the part before R; own runs: ≤ ⌈H/2⌉ + the tail from K) and
+≤ 3 others — ≤ 2H+10 = 42 rows at H = 16.
+
+**Readers** (one SQL helper `GenerationRows`; a classic generation reads as `(self, all)`):
+- Pages are ordinal ranges (ordinals are dense): segment rows valid at v overlapping `[offset, offset+limit)`, then
+  `ch_chunks (generation, ordinal)` ranges — 0.4–0.6 ms at any offset of a 500,000-piece, 100-origin generation vs
+  282–686 ms for today's `OFFSET` at 150,000–302,000 [m E3]; count = `pieces`; passages likewise; a passage's spans via
+  its passage row and the span ranges covering its ordinal [o PassageStorage.scala:41-47]; Related via the helper.
+- Search authorization per tuple inside the HNSW scan [o Search.scala:61-62; ArchiveIndex.scala:184]:
+  `(SELECT true FROM ch_sources s JOIN ch_generations p ON p.id=s.published JOIN ch_revision_info r ON r.session_id=s.id
+  AND r.revision=p.revision WHERE s.id=ch.session_id AND (s.published=ch.generation OR (SELECT true FROM
+  ch_lineage_segments m WHERE m.lineage=p.lineage AND m.origin=ch.generation AND m.since<=p.lineage_version AND
+  (m.until IS NULL OR m.until>p.lineage_version) AND m.kind='piece' AND ch.ordinal>=m.lo AND ch.ordinal<m.hi LIMIT 1)) AND
+  <visible> OFFSET 0)` — the metadata filter joins the **published** revision. **Scalar subquery, not `EXISTS`**:
+  written as `EXISTS` inside the `OR`, PostgreSQL 18 once planned it as a hashed `ANY` probing by origin alone (skip
+  scan) under sparse statistics: 0.72 ms per tuple, 1.18 s vs 0.51 s per query [m E7]. Cost of the scalar form (per-
+  generation variant measured): 8–10 µs vs 4–7 µs per tuple; ANN queries 316 vs 299 ms avg [m E2]; the versioned form
+  adds only range/validity filters on the same index probe [i].
+- Hit views are mapped to `(s.published, p.revision)` in `pageStatement` [o Search.scala:96,123]; Archive witnesses take
+  `page.generation`/`page.indexed_revision` [o ArchiveIndex.scala:217-219] and read the witness chunk by
+  `(id, membership)` [o ArchiveSearch.scala:65]; `matched_generation` is already published [o ArchiveIndex.scala:212];
+  `searchLegacy` joins through the segments [o Search.scala:93]. Tags: `ch_lineage_tags` of `p.lineage` when set, else
+  `ch_generation_tags` (one helper for the five sites). `select` [o Database.scala:214-228], `requireCurrentPublications`
+  [o PassageStorage.scala:33-35], `ArchiveIndex.row` [o ArchiveIndex.scala:231-232] and the start check
+  [o Database.scala:31-35] accept both labels.
+
+#### 5.6.3 What readers see; lifecycle
+- **Atomic visibility:** G′'s rows are invisible until `published = G′` (its segment row has no `since`); P's superseded
+  rows leave the membership at the same commit (validity) before they are deleted. Measured: queries near 20,000 staged
+  twin rows, after the switch, after deletion and after VACUUM all return 1,000 rows [m E5].
+- **Pins:** rows and segment rows are never changed except `until` on rows that a later version supersedes, which does
+  not change what an earlier version reads; an old pin reads exactly what it read before (test). Prefix chunk ids
+  persist across revisions (today every publication renames all) — no wire change.
+- **D22** stays unit ANN's (detection and its acceptance); L5e only bounds the exposure: invisible HNSW tuples are G′'s
+  own rows during P3 (addition + ≤ H+1 windows, the rewritten ones twins of visible rows) and the superseded ones until
+  VACUUM.
+- **Crash / lease loss:** as §5.2.5; State comes from P's `cut`. Sweep of an abandoned staged lineage generation deletes
+  its rows and its `since`-NULL segment row; staged generations are never parents or origins.
+- **Retention:** superseded content rows stay as pins (now only the tail and region R are written per revision);
+  superseded search rows deleted from `ch_search_retirements`; VACUUM ≈ 65 ms and 660 KB WAL per deleted HNSW row at
+  640 k rows [m E5] — ∝ retired rows ≤ (H+1) windows + nothing else.
+- **Explicit rebuild / purge:** eligibility makes a cohort-retiring publication a root, so `ReindexCohort.published`'s
+  payload delete [o ReindexCohort.scala:88-93] never removes a member of the published generation (asserted: `internal`
+  otherwise); purge cascades (segments via `origin`, lineage rows via `generation`).
+- **Replacement (new epoch), legacy revisions:** roots. **No re-index:** 028 is DDL; classic generations read as before;
+  the first post-L5e publication of an existing session is the root its next upload triggers anyway; profile, identity,
+  checkpoint keys, `lexicalVersion` unchanged.
+- **Requirement on L5d:** when several runs hold outputs for one window input, take the published generation's run first.
+
+#### 5.6.4 Rollback
+- **Pre-028 binaries fail closed.** The L5d and base binaries re-run their own 011 at start, which re-creates
+  `ch_generations_passage_format_check` with the three old values: with any `ContextAwareProblemsLineage` row present the
+  `ADD CONSTRAINT` fails and **the binary does not start** ("violates check constraint"; `docs/operations.md` names it).
+  Should one run anyway, its readers refuse lineage generations: `select` answers `unavailable` (not the current format)
+  for every view, search hit, Related and witness of such a session; `requireCurrentPublications` refuses facets/tags;
+  `ArchiveIndex.row` fails the listing — no partial content is served as complete. Roots stay readable by them.
+- **`chronicle/scripts/down-028-generation-lineage.sql`** (server stopped; restartable): preflight counts; `DROP INDEX
+  IF EXISTS ch_search_hnsw_d<d>`; composite FKs [o 008.sql:22,32-33] dropped `IF EXISTS`; then **one transaction per
+  source** having lineage generations: if its published generation G is a lineage generation, relabel G's member rows
+  (chunks, passages, spans, links, Context spans, search rows incl. `revision`) to G and write G's `ch_generation_tags`
+  from `ch_lineage_tags`; retire every other lineage generation and origin of the source (pins → `indexed-view-retired`,
+  as after an explicit rebuild) and delete their remaining payload; relabel every lineage generation of the source to
+  `ContextAwareProblems`; delete its 028 rows. A source without lineage-labeled rows is skipped, so an interrupted run is
+  resumed by running the script again. At the end: FKs re-added `NOT VALID` (`IF NOT EXISTS` by name), 022's constraint
+  restored, 028's tables/columns dropped, HNSW index rebuilt (before the old binary's start would build it inside its
+  start transaction [o Database.scala:57]; cf. 017 [o Database.scala:36-44]). Cost [m E6]: search-row relabel without
+  the HNSW index 5,040 rows/s, 10 KB WAL/row (with it 74 rows/s, 0 HOT); chunk relabel ≈ 28,000 rows/s; HNSW build 157 s
+  per 620,000 rows (8 workers, 8 GB).
+  Roll-forward: flattened generations are classic; next publications root, then incremental.
+
+#### 5.6.5 Cost per revision and acceptance
+a = pieces of the addition; w = pieces of the re-done window K (≤ 485, ≈
+63); r = rewritten pieces of R (≤ 7,760 at H = 16, ≈ 1,000 typical, 0 with constant metadata; §5.6.2). Per revision:
+annotation/embedding calls for the addition's windows + 1; message reads of the addition; rows written a+w+r (chunks,
+links, search rows; + B's row, new passages/spans/Context spans); segment rows ≤ 2H+10; tag delta rows ≤ 16 per touched
+passage; HNSW inserts a+w+r; retirement and VACUUM share w+r. Nothing depends on the session's size or on the number of
+earlier revisions except index depth (log). Roots remain O(session) by nature, once per event, never per append: a
+replacement (new epoch), an explicit rebuild, a legacy revision, the key set false, and the first post-L5e publication
+of an already indexed session. L5b+I2 instead: three O(session) replay passes, P rows, P HNSW inserts, P HNSW deletions.
+Measured at a 600–640 k-row index (isotropic 768-d, the hard case; `shared_buffers` 128 MB, `max_wal_size` 1 GB) [m
+E4–E5]:
+
+| per revision | I3 | L5b+I2 (whole re-publication) |
+|---|---|---|
+| search rows (1 / 4 writers) | (a+w+r) at 65 / 195 rows/s | P at the same rates (lower as the index grows) |
+| WAL of search rows | ≈ 120 KB each (≈ 21 of the run's 29 GB were full-page images) | same per row |
+| deletes + VACUUM | (w+r) × ≈ 65 ms, 660 KB | P deletions: at least a whole-graph repair [i] |
+| B-shape, +85 MB/day ≈ 48,500 pieces | ≈ 4 min of search rows (+ ≈ 5 s for a typical R, ≤ 40 s worst case), ≈ 6 GB WAL; lag = the tail's phase W (4.6 min stub; 2.1–6.4 h at L = 10–30 s [u]) + minutes | 2.53 M rows ≥ 3.6 h, ≈ 300 GB WAL, VACUUM of 2.5 M rows [u: hours], replay ≈ 28 min |
+| A (1 GiB), +1 % ≈ 6,000 pieces | ≈ 30 s (+ R) | 0.6 M rows ≈ 51 min + VACUUM |
+
+Twins (rewritten pieces, identical vectors) cost the same insert time (67/233 rows/s) and 86–91 KB WAL [m E4].
+**Acceptance H** (ACC; ≤ 5 h, ≤ 60 GB; A′'s harness and settings; stub annotator as D14; D22 not asserted here): an
+indexed 1 GiB session grows by 10 appends of 0.5–2 %; after each job: own rows per table, search rows inserted, HNSW size
+delta, rows retired, segment and tag rows written, WAL, job wall, lag (commit → published). Assert own rows ≤
+pieces(windows ≥ K) + B's pieces in windows [K−H, K), retired ≤ pieces of window K + B's pieces in [K−H, K) (counts
+from the job's own window records), and job wall ≤ c₀ + c₁·addition with c₀, c₁ fitted on appends 1–5 and
+holding for 6–10 (target ≤ 10 min per +1 %). A second leg repeats 5 appends with a scripted annotator that changes B's
+summary at every window (a session-long passage): the same assertions must hold (R bounded by H). Then the final
+revision is uploaded whole for a second owner and indexed as a root after a restart with
+`indexing.incrementalPublication=false`; compared: hashes of all logical rows (ids mapped by ordinal), every chunk,
+passage and span page, Related, lexical searches (exact: equal), Archive literal search; semantic/hybrid searches
+reported as candidate overlap only (HNSW approximate in both arms; equality is the unit test's, §5.6.6).
+
+#### 5.6.6 Proof of identical results — tests (failing first where marked)
+1. **`IncrementalPublicationDifferentialTest`** (fails first on its cost assertion: today every revision writes all
+   rows). One owner, three sources grown in parallel, plus a second owner's source (isolation); a deterministic scripted
+   annotator and embedder (vectors by text) covering: B unchanged; B with new summary/tags every window over > H windows
+   (session-long passage); B = passage 0 (Related); a passage closing in window K; B's last span extended across the cut;
+   Context-only window at the cut; an empty message at the cut; a message longer than a window across the cut; ≥ 2
+   embedding parts; **identical texts across and within the three sources** (exact `ts_rank_cd`, distance and fused-score
+   ties). Arms on the **same sessions**: after each revision r = 2..5 published incrementally, capture every answer, then
+   re-publish r as a root (`RetryJob` with the policy injected off) and capture again; the next revision grows from that
+   root (lineage after a root covered). Compared up to ids (chunk/passage ids by ordinal, generations by revision): all
+   logical rows (`value::text`, `document::text`, `embedding::text`, links, passages, spans, Context spans, tags, counts);
+   GetSession, all GetChunks pages, GetPassages, all GetPassageSpans, Related, lexical/semantic/hybrid `Search` (hits,
+   views, scores, totals, countScope, order), `Facets`, `search_tags`, Archive `ArchiveSearch` (rows, views, witnesses).
+   The corpus stays below `candidatesPerLeg`, and each arm asserts the ANN leg returned every visible row (complete
+   candidate sets), so ranking equality is decided by the tie-breaks alone. Pins of earlier revisions unchanged after
+   each step; revision 6 a replacement (roots). Cost assertions: own rows ≤ windows ≥ K + R; R ≤ H windows of pieces in
+   the session-long-passage source.
+2. **`GenerationLineageTest`**: a stopped incremental publication is invisible (search, pins); after the switch and
+   before retirement no superseded row is visible (fails with origin-only membership); retirement deletes exactly the
+   pending ranges; an abandoned staged generation's sweep leaves the parent; purge; explicit rebuild → root, lineage
+   retired; parent no longer published at the switch → `stale-claim`, retry → root; 200 incremental revisions with ≤
+   2H+10 segment rows changed per switch (no cap needed); with an injected H = 4, B's metadata changed after window K,
+   back to the member rows' value after K+1, changed after K+2: windows K−4 and K−2 rewritten, K−3 keeps its origin rows
+   and chunk ids, closed/inserted segment rows counted, content equal to a root re-publication; a root's switch changes
+   ≤ 6 rows and the previous lineage's tag rows are gone after the retirement step; `ch_lineage_tags` equals the
+   distinct tags of member chunks after each step; **plan test** of the per-tuple probe (`Index Cond` on lineage and
+   origin) both with a freshly analyzed near-empty segment table and with 10,000 analyzed rows.
+3. **Rollback**: a database holding published, unpublished and staged lineage generations; the base release's `011`
+   text fails on it (fail closed); `down-028` stopped after its first source, then run again (and a third time: no-op):
+   afterwards the base `011` succeeds, today's reader SQL (`generation=?`, `s.published=ch.generation`) returns each
+   published generation's full logical content, other lineage generations are retired.
+4. Existing guards: §5.3's differential test with its oracle builder given the horizon rule; profile/identity tests
+   unchanged; no codec change (no gate O).
+
+#### 5.6.7 Measurements (this unit; synthetic; `evidence/`)
+Own PostgreSQL 18.7 + pgvector 0.8.7 (fixture tools' build), fixture settings (`shared_buffers` 128 MB, `work_mem` 4 MB,
+fsync on) + `max_wal_size` 1 GB, autovacuum off for `ch_search_chunks`; loaded host (load 13–19). Replica DDL of
+001/002/008 + HNSW; S0 = 500,000 pieces published as a lineage generation over 100 origins (one of 302,000 rows, 99 of
+2,000), 100 sessions × 1,000 pieces, 3,000 more sources, 6,500 generations, 50,100 segment rows (round-1 per-generation
+layout); isotropic Gaussian 768-d vectors; 1.76 KB texts; HNSW bulk build of 600,000 rows 125 s (8 workers).
+- **E2** per-tuple authorization 4–7 µs (today's form, flat labels of the same rows) vs 8–10 µs (segment probe, 2 µs on
+  869 of 1,000 tuples); 60+60 alternating ANN queries near S0 299 vs 316 ms avg (p50 425/413), all 1,000 rows.
+- **E3** pages as above. **E4** fresh inserts 64.7 rows/s (1 writer, 1.21 GB WAL per 10,000) / 195 rows/s (4 writers);
+  twins 67.5 / 233 rows/s, 0.86 / 0.91 GB; HNSW +2.05 / +1.4 KB per row.
+- **E5** switch 14 ms; deleting 20,000 search rows 0.66 s, 160 MB WAL; VACUUM ≈ 21.5 min, 13.26 GB WAL, 1.78 M FPIs.
+- **E6** relabel 5,000 search rows with HNSW 67.9 s, 354 MB WAL, 0 HOT; 50,000 without it 9.9 s, 506 MB; HNSW rebuild of
+  620,000 rows 157 s; 5,000 chunk rows 0.18 s. **E7** the `EXISTS`-in-`OR` plan (above).
+Not measured: clustered embeddings (HNSW rates differ 3–5 × [m L5 run 2b]); a 2.5 M-row index; production
+`shared_buffers`; the versioned-segment probe [i]; how often production passages exceed H windows and how often a
+continuing part changes the summary (F′ can count both on the clone) [u].
+
+#### 5.6.8 Units, ownership, estimate
+| unit | goal | owns | depends | tests | gates | h |
+|---|---|---|---|---|---|---|
+| **L5e-1** lineage storage, readers, ranking | 028 (+ 011 list, 022 redefinition) and `down-028`; roots write lineage row, segment rows, lineage tags in phase P batches; `GenerationRows`; readers of §5.6.2 incl. tags, label mapping, published views; stable tie-breaks; retirement queue; ReindexCohort guard | `migrations/011_…` (one value), `migrations/028_…`, `scripts/down-028-…`, `Database.scala`, `PassageStorage.scala`, `Search.scala`, `ArchiveIndex.scala`, `ArchiveSearch.scala`, `ReindexCohort.scala`, `EpochMaintenance.scala`, `ExpressionHints.scala` (tags helper), new `GenerationRows.scala`, `shared/retrieval-core/…/CandidateSql.scala` (tie-break parameter, default unchanged), tests | L5d; unit ANN (Search/ArchiveIndex); L3-W | `GenerationLineageTest` on hand-built lineage generations: readers equal to a flat copy; visibility (fails with origin-only membership); plan test (sparse and populated statistics); a tie case whose order differs between two id assignments today (fails); rollback test 3 | B, BF, down-028 rehearsal, Haystack retrieval tests (shared file) | 14–18 |
+| **L5e-2** incremental publication | eligibility, key, State restore, phase W/P from the cut, horizon rule in both paths, region R, versioned switch, tag deltas, retirement | `Models.scala`, `Core.scala` (key), `ProblemPassages.scala` (State codec/restore only; no constant or identity change), `ProblemsPublication.scala` (horizon, validator frontier), `Database.scala` (publication), `IndexCheckpoints.scala` (parent-first lookup), `CONTRACT.md` (horizon rule; shared prefix ids; tie-breaks), `docs/operations.md`, §5.3's oracle, tests | L5e-1 | `IncrementalPublicationDifferentialTest` (fails on its cost assertion); lifecycle cases of `GenerationLineageTest` | B, BF, acceptance H | 18–26 |
+L5e runs strictly after L5d and unit ANN; nothing in parallel with them. Eval tooling that reads generation tables
+directly (`eval/relevance/workflow_v3.py`, `run_real.py` [o]) sees only own rows of lineage generations: out of scope.
+Total ≈ 32–44 h plus run H (≤ 5 h).
+
+#### 5.6.9 Decisions for the orchestrator
+| # | question | options | recommendation |
+|---|---|---|---|
+| E1 | the open passage's pieces when its metadata keeps changing | (a) metadata horizon H = 16 windows in both paths (identical results; rewrite ≤ H windows per revision; pieces deep inside a passage longer than H windows show the summary/tags of H windows later instead of the final ones; GetPassages unchanged; no profile change, no re-index); (b) keep final metadata and accept an exception: such revisions rewrite the whole passage (bound: the session; lag up to a full publication's HNSW time) | **(a)**; F′ counts passages > H windows on the clone |
+| E2 | rollback | (a) fail-closed label + restartable `down-028` flattening (server stopped; retires older lineage pins; minutes per million rows + HNSW rebuild); (b) retire and unpublish lineage generations (sessions lose their index until re-published) | **(a)** |
+| E3 | tie-breaks | `(session_id, ordinal, id)` in Chronicle's ranking (changes only the order among exact ties; Haystack unchanged); keep `id` and test only on tie-free data | **change** |
+| E4 | delivery | L5e-1 then L5e-2 (L5e-1 ships alone: every publication a root, readers lineage-aware); one unit | **split** |
+Finding for L5b/ACC (not a decision): each whole re-publication retires the previous generation's search rows; at
+≈ 65 ms and 660 KB WAL of VACUUM per deleted row at 640 k rows [m E5], re-publications of A/B-size sessions (D′,
+production growth until L5e) imply hours of VACUUM; every inserted search row cost ≈ 120 KB of WAL at `max_wal_size`
+1 GB (A′ ≈ 72 GB, B′ ≈ 300 GB of WAL volume for their first index) — ACC should record both; D18's settings matter more.
+
+#### 5.6.10 Review resolutions (advisory review, lead's reviewer)
+Round 1:
+| item | resolution | where |
+|---|---|---|
+| B1 retained chunk ids change tie order (lexical leg, rerank ranks, RRF, best chunk per session) | stable tie-break `(session_id, ordinal NULLS LAST, id)` in both paths (shared `rerankCtes` parameter; Haystack default unchanged); only exact ties change today, no profile change; ANN candidate sets stated as approximate in both arms, so the differential test asserts complete candidate sets and compares the same sessions re-published as roots, with exact ties across three sources | §5.6.2 Ranking, §5.6.6 (1), E3 |
+| B2 (i) session-long passage ⇒ whole-passage rewrite per revision | passage length is unbounded in the code; metadata horizon H = 16 windows in both paths bounds the rewrite to ≤ H windows of pieces, independent of session size; exact behaviour change, no fingerprint/re-index stated; exception (b) offered | §5.6.1, §5.6.2, E1, run H leg 2 |
+| B2 (ii) tags rebuilt per generation, O(passages) | per-lineage counted multiset `ch_lineage_tags`, updated in the switch by the written/superseded pieces' tags only | §5.6.2 |
+| B2 (iii) 1,024-origin cap ⇒ periodic whole-session root | removed: versioned segment rows (`since`/`until`, versions assigned at the switch, linear because the switch requires `published = parent`); ≤ 2H+10 segment rows per switch, chain length only adds index depth | §5.6.2, test 2 |
+| A: scalar-subquery plan regression | plan test under sparse and populated statistics | §5.6.6 (2) |
+| A: pre-028 readers must fail closed | `passage_format = 'ContextAwareProblemsLineage'`: old 011 refuses the start; old readers answer `unavailable`/fail the listing; down-028 restartable per source, tested interrupted, repeated and as a no-op | §5.6.4, §5.6.6 (3) |
+| A: D22 independent | detection and acceptance stay with unit ANN; run H does not assert D22 | §5.6.3, §5.6.5 |
+
+Round 2 (B1/B2 resolved; one blocker, three advisories):
+
+| item | resolution | where |
+|---|---|---|
+| blocker: a root's switch wrote the full tag sets and deleted the previous lineage's tag rows (unbounded, 30 s statement timeout, long locks) | a root builds its `ch_lineage_tags`, `ch_generation_tags` and segment rows in phase P batches with its resume point (invisible: readers follow the published generation's lineage); its switch sets `since = 0` on ≤ 4 rows and `published` (O(1)); the previous lineage's tag rows are queued in `ch_lineage_retirements` and deleted after the switch in ≤ 10,000-row statements; incremental tag changes are staged as deltas and applied by one statement (≤ 16 rows per touched passage); sweeps delete tag rows in bounded statements; test | §5.6.2 "A root", step 3, §5.6.6 (2) |
+| partly unchanged R | per-window decision against the current member row; kept windows keep their origin rows, ids and segment rows (rows never re-admitted); segment rows per (origin, kind, range); ≤ H+2 + 3 rows closed and ≤ H+2 + 3 inserted per switch (≤ 42 at H = 16); test with metadata changed / returned / changed at K, K+1, K+2 counting closed and inserted rows | §5.6.2 "Membership of a partly unchanged R", §5.6.6 (2) |
+| "no score changes" was wrong | lexical and semantic scores unchanged; hybrid RRF scores of tied candidates (and a session's best chunk or order) can change; both new paths agree | §5.6.2 "Ranking" |
+| bound in actual pieces | pieces per window ≤ 64 fragments + (Problem parts − 1), parts ≤ 422 at 64 KiB `maxResponseBytes` → ≤ 485 per window, r ≤ 7,760 at H = 16 worst case, ≈ 1,000 typical (63 per window); run H asserts against the job's own per-window piece counts | §5.6.2, §5.6.5 |
+
+### 5.7 ANN short-result detection and bounded second pass (D22; from unit ANN, built)
+Source: `reports/ingest-c/ANN/{design.md,report.md,evidence/}`; **[m ANN]** = that unit's synthetic measurements (owned
+PostgreSQL 18.7 + pgvector 0.8.7, production role settings: `work_mem` 4 MB, statement timeout 30 s). Orchestrator
+03:22Z: D22 must not be silent — detection, plus a bounded second pass if it costs ≤ ≈ 8 h. Built at the head of the L5
+group and shippable alone (§13 ANN). This section corrects the starvation threshold of §5.2.5/M5 and adds to D22 (a).
+- **Where the leg stops [m ANN §2.2].** The binding limit is scan memory, not `max_scan_tuples`: `work_mem` 4 MB ×
+  `scan_mem_multiplier` 4 = 16 MiB ends the strict iterative scan after ≈ 85,000 delivered index tuples (84,947 with
+  590,000 invisible rows ahead; `max_scan_tuples` 1,000,000 at the same memory returns the same 84 rows). HNSW does not
+  deliver every nearer invisible row, so the shortfall began between ≈ 85,000 (a dense cluster) and ≈ 450,000 (a spread
+  set) invisible rows ahead; the robust statement is "more than ≈ 85,000 delivered invisible tuples before the 1,000th
+  visible one". Uncommitted, rolled-back and unpublished rows cost the same (120,000 uncommitted nearest + 90,000 hidden:
+  948 rows; rolled back: 948). 5.7–8.6 µs per delivered tuple.
+- **The condition exists in production today [m ANN §2.3; r deploy4 evidence, read-only SELECTs at 00:31Z].** Without
+  any publication, through structured filters: the leg applies them per index tuple inside the bounded scan, so a
+  semantic or hybrid search whose filter keeps < ≈ 1 % of the index comes back short with no signal — on 1,000,112 rows a
+  1,000-chunk project returned 215 of 1,000 leg rows and 6 of its 10 sessions; 100 chunks: 5 or 1 rows. Production holds
+  ≈ 991,000 search rows, so any `project`/`gitBranch`/`tags`/`after`/`before` filter (MCP, CLI `search`) or Archive
+  restriction keeping < ≈ 1 % is exposed. Today's largest under-budget publication (84,000 pieces nearer than every
+  visible row) kept 1,000/1,000 rows at a leg latency of 59 → 660 ms [m ANN §2.1].
+- **VACUUM [m ANN §2.1, §2.4].** 84,000 dead rows of 1.17 M: 712 s unthrottled, almost all in the HNSW pass. When the
+  pages holding dead items are < 2 % of the heap, VACUUM bypasses index cleanup and the HNSW keeps the entries (120,000
+  aborted rows in 1.49 % of the pages: "index scan bypassed", the leg still 948 rows); at production's ≈ 11 rows per page
+  that is < ≈ 19,800 contiguous dead rows per pass [i]. Production's autovacuum (no reloptions before 026) starts at
+  ≈ 198,000 dead rows [i]. L5b keeps 026's threshold and does not force index cleanup (§13 L5B).
+- **Detection [o SemanticLeg.scala; r ANN].** Per leg (Search `ann`; Archive each operand's `a$i`) the page statement
+  carries its row count n (`ann_rows`/`ann_rows_i`, semantic and hybrid plans only). n = 1,000 → complete as today, no
+  extra work. Otherwise a probe in the same snapshot counts the leg's visible set V (visible sessions with ACL, filters or
+  the Archive corpus and restrictions, their published generation, compatible profile), bounded at 20,001; V = n →
+  complete; n < min(1,000, V) → short. No false positive: rows that exist and pass the filter were not returned. A full
+  leg stays "approximate candidate discovery" as the contract says.
+- **Second pass** (`SemanticLeg.complete`; `SemanticLegBudget.production` = 200,000 first-pass tuples, exact limit
+  20,000 = `CandidatePolicy.exactScanChunks`, 1,000,000 second-pass tuples, scan memory multiplier 64, 5,000 ms) [r ANN]:
+  V ≤ 20,000 → exact scan over the visible set from the source side (8.5 µs per visible chunk, ≤ ≈ 170 ms [m ANN §4.1]);
+  else the same leg through the index with `max_scan_tuples` 1,000,000 and 256 MiB of scan memory, in a savepoint with
+  `statement_timeout` = least(current, 5 s), the settings restored after; SQLSTATE 57014 → rollback to the savepoint.
+  Still short → `Failure("unavailable", "semantic candidates incomplete: the vector index scan ended before it reached
+  the nearest matching chunks (index entries being published or not yet vacuumed, or a narrow filter); retry later,
+  narrow the filters or use lexical mode")`; hybrid fails as a whole (no silent lexical-only answer); no partial results
+  in that residual case. Archive: the whole page comes from one execution, and every leg of the second execution below
+  the window is checked again, also one that was full in the first (gate round 2).
+- **No wire change [m ANN `compat-cli-decoder.txt`].** A new field or enum value would make the base CLIs (`66fce48e`,
+  `361ba170`) reject every search answer (WS and MCP decoders check the exact key set); `unavailable` is the contract's
+  code for semantic failures ("search modes never silently degrade"). Dashboard, both CLIs and MCP show the message with
+  unchanged code; the MCP `search_sessions` description and CONTRACT.md's search section state it.
+- **Measured on the native server** (on demand: `chronicle/scripts/test-ann-budget.sh`) [m ANN report]: 300,100 search
+  rows; 220,000 rows nearer than every visible one held uncommitted by 8 transactions: the first pass alone 1 row
+  (357 ms); MCP semantic 1.67 s, 50 sessions, top 20 = exact; hybrid 1.84 s; Archive search 2.03 s; the same rows rolled
+  back: 1.68 s, top 20 = exact. Even the baseline's project filter (1,000 of 300,100 chunks) needs the second pass
+  (0.93 s, exact).
+- **Residual and cost.** A short leg's first pass is wasted (≈ 0.6–1.7 s before the second) [r ANN]; the extended pass
+  completes up to ≈ 600,000–850,000 delivered tuples in 5 s [i ANN §4.2]; beyond that, e.g. near L5's B-scale P3
+  (2.53 M staged rows), the neighbourhood answers `unavailable` while it lasts [i]; not run at that scale (one suite case
+  at small scale). Second-pass memory ≤ 256 MiB per query, ≤ 3 GB with 12 connections [i ANN §4.2]. Not built (optional):
+  sizing the first pass's scan memory to its own tuple cap (it would change the shared `CandidatePolicy` Haystack uses).
+
 ## 6. L6 — replacement WAL and database size (from unit INV)
 Source: `reports/ingest-c/INV/section.md` and `INV/evidence/l6/` (per variant `l6-<variant>-{upload.json,walstats.txt,
 wal-relations.txt,sizes.txt}`, table `l6-summary.md`).
@@ -932,3 +1334,151 @@ independent first; L2 waits for D1; L5 last (largest, migration 026, its own rol
 | S4 (1)–(4): the fill-after-switch lifecycle had no valid authority, GC could take the published generation, deleted rows still starve the ANN until vacuum, the Archive's matched view and the rollback were wrong | design **(a)** recommended and specified: search rows written last (P3) under the job's authority, O(1) switch, retirement in bounded statements, autovacuum of `ch_search_chunks` at 100,000 dead rows (migration 026), readers and rollback unchanged (no fallback generation, nothing half-published); (b) and (c) laid out with numbers; the residual exposure measured and stated (M5): staged rows only during P3, retired rows until vacuum, starvation only above ≈ 200,000 non-duplicate invisible rows; tests: search during a stopped P3 and after retirement before vacuum | §5.2.4, §5.2.5, §5.3, §8, §10, D22, M5 |
 | S5: references lacked the source coordinates; purge and cleanup ordering | full source key in `ch_index_checkpoint_refs`; lookup only among own checkpoints in phase W; P/resume by full key; FK `NO ACTION` so purge's one job delete removes everything together; references cascade with their job; `discard` cannot hit a referenced row; tests: two outputs for one input, cross-window reuse, purge after reuse | §5.4, §10 L5d |
 
+## 13. Implementation amendments (lead, 2026-11-21; the implemented behaviour, where it differs from the text above)
+`agent/ingest-c` at `9440bb62`, rebuilt in landing order at 04:07Z, so the units' own hashes (their bundles'
+`commits.txt`) and the hashes in §4 and §10 differ from the branch's. Ranges are inclusive (`first…last`, commit count)
+on the branch, in landing order: this spec `f692ed72`; L4 + MCPX; L1 (R1, R2, R3); L3; L6; L2; merge of `main`
+(`93ef248d`); ANN; L5A; L5B; L5D; L5E1; L5E2 pending. **[r U]**/**[m U]** = reported/measured by unit U (bundle
+`.local/overhaul-20261117/reports/ingest-c/<U>/report.md` and `evidence/`); lead log `reports/ingest-c/LOG.md`. This
+section wins over the earlier ones.
+- **Decisions as taken** (orchestrator 03:22Z and ≈ 05:45Z, `reports/ingest-c/ORCH-REPLY-0322Z.md`): D1 = (A), with the
+  in-place-edit test; D10, D11 as recommended (`maxSmallJobBudgetBytes` accepted, ignored, logged once at start); D12
+  confirmed (heap measurement into the deployment notes); **D13/D20 changed: I2 (L5d) and I3 are both built**, I3 as the
+  last L5 units L5e-1/L5e-2 with their own section (§5.6) and review, L5a → L5b → L5d shippable without them; **D22: not
+  silent** — option (a) plus detection and a bounded second pass (§5.7), (b) not now; D16 yes; D4 the plain link (the
+  production gateway has no body read/write timeout, only a 60 s response-header timeout: `reports/deploy4/PREP.md`);
+  D8, D21 B′ overnight with the wrapper's timeout argument; D17 keep and state; D18 owner/paddock items; the MCP
+  text-format refusal fixed (unit MCPX). L5e (§5.6.9): E2, E3, E4 confirmed; E1 (16-window horizon, both paths)
+  confirmed on condition that a controlled relevance comparison (baseline final metadata vs horizon; unit REL) runs
+  before L5e is done.
+- **L4** (`9e10f9b4`…`52475354`, 2; §4's `cf77f7b5`, `482b5757` before the rebuild): as §4 [r L4]. With P = 64 MiB (the
+  server's page bound): WS answers ≤ 6P + 1 MiB = 403,701,760 B, MCP responses ≤ 7P + 1 MiB = 470,810,624 B, other HTTP
+  responses 8 MiB, requests unchanged; above the bound WS refuses the frame from its header (reported as a lost
+  connection or an answer above the bound, exit 6) and MCP answers `too-large` from `Content-Length`. Gate round 2 masks
+  every secret the request carried, the login password included (`RequestOptions {responseBytes, secrets}`). The MCP
+  text-format cap went to MCPX.
+- **MCPX** (`808b3d53`, 1; landed with L4): §7's optional fix [r MCPX]. Code `mcp-result-limit` and the 131,072-B cap
+  unchanged; the refusal names the cap, the tool and only that tool's working alternatives — the json/default format
+  first, then per tool a smaller `limit` with `offset` (or `afterTag`), `get_chunks` for `get_session`,
+  `read_message_context` byte windows for `get_messages` — from `Mcp.textAlternatives`; building `Mcp` fails
+  (`mcp-catalog`) for a tool without an entry. CONTRACT.md unchanged (no sentence covers the refusal). Reason: not every
+  tool takes `limit`/`offset`.
+- **R1, L1 server** (`6f43ddba`…`6d3b1cb4`, 4) [r R1]: all raw SQL in `RawStream.scala` (`RevisionContent.scala`,
+  `Database.scala` unchanged; lead's ownership change); `RawFileInfo.bytes` is a decimal string on JSON (i64), a bigint
+  in TypeScript; every path under `/api/raw` answers a `Failure` (unknown sub-paths, other methods and HEAD: 404
+  `not-found`); an applied range always answers 206, also when it covers the whole file; 416 also for `bytes=-0` and any
+  range of an empty file (RFC 9110: no `Content-Range` for zero bytes); LAST < FIRST compared exactly at any number of
+  digits → 400 (gate round 2: saturation first had made it 416); `Range` syntax is checked before `If-Range`, several
+  `Range` or `If-Range` headers → 400; check order boundary → cookie → path → `Range` → permit (503) → pin (404) →
+  `If-Range`/satisfiability (416); "bytes sent = range length" holds per window (exact length and contiguity); window
+  memory ≈ 4 × the window transiently (§1.4 said ≤ 3 × [u]); the permit is returned by the body's finalizer, which Ember
+  runs also for a client gone before the head. Measured: 1.1 GB byte-exact in 13.96 s; four concurrent downloads, live
+  heap after a full collection ≤ 57.8 MB [m R1].
+- **R2, L1 CLI** (`04615001`…`0c87fa03`, 4) [r R2]: result `path` = the absolute local destination; an old server → code
+  `version-mismatch`, exit 6, §1.5's text verbatim; **bounded 503 retry** (lead's addition, gate round 2): a range
+  answered 503 `unavailable` with a delta-seconds `Retry-After` is requested again after min(`Retry-After`, 30 s),
+  announced on stderr, at most `RAW_RANGE_ATTEMPTS` = 5 requests per range, then the download fails as before (partial
+  removed); a 503 without `Retry-After` fails at once; the manifest is not retried. `--timeout-ms` bounds the manifest
+  request and, per range, the fetch, the body and every sink write (a stalled stdout consumer ends with `deadline`); the
+  partial file is created synchronously after the SIGINT/SIGTERM/SIGHUP handlers are installed (both gate round 1);
+  `--output -` is refused on a terminal; `Accept-Encoding: identity`; an empty file is saved without a range request; a
+  minor V8 collection every 2 MiB (`--expose-gc` set at run time): peak RSS 166 MB without it, 106–110 MB with it
+  (target 128 MB) [m R2]. Reason: the review (hang, signal window) and the lead (a 503 between ranges aborted a long
+  download).
+- **R3, L1 dashboard** (`8ad15d36`…`021d5d56`, 2) [r R3]: "Download (size)" for one file, "Download file i of n" with
+  the path below it for several (unique accessible names); binary units with the exact bytes as tooltip; states as muted
+  status text (checking, not available, the server predates raw downloads, unavailable with the server's message,
+  invalid manifest); the manifest is read each time the Info pane is shown (never before, never cached). No real-server
+  browser leg in the unit; ACC's prefix run downloaded 4.44 GB through the link byte-exact at 8.1 MB page JS heap [m ACC
+  `ACCEPTANCE-prefix.md`].
+- **L3W** (`f16eb9ba`…`26e18407`, 2) [r L3W]: the head's epoch and message count are looked up per page row
+  (`ch_revisions` by primary key inside the page SELECT), not by a `LEFT JOIN` in `corpus` (`corpus`, `browse` and
+  `page.*` unchanged); operands without candidates share one scan branch; positions are a constant `int[]` in the SQL
+  text (a bound text-cast array made the planner scan the epoch: `Rows Removed by Filter: 1999`); the
+  `literal_positions_<i>` columns are excluded from the page's 64 KiB read budget (gate round 2: pages that fit on the
+  base failed `read-budget`) and bounded by construction (≤ 16 operands × 11 rows × 2). Operands with fewer than two
+  trigrams, legacy heads and non-current epochs keep the scan (a short operand: 5.6 s at 1 GiB) [m L3W]. Measured: rare
+  literal at 1 GiB, CLI 3.9–4.7 s → 0.40–0.44 s, witness ≈ 4 ms, results byte-identical for 11 queries [m L3W]; 0.42 s
+  at 1 GiB and at 4.4 GB [m ACC prefix].
+- **L6G** (`92e5e574`…`361ed9f8`, 3) [r L6G]: the 32 MiB `gin_pending_list_limit`/`work_mem` apply only while
+  `pg_class.reltuples` of `ch_epoch_fragments` ≥ `EpochWriter.fragmentIndexMergeMinimumFragments` = 400,000; below it
+  the writer keeps the base's 4 MB. Reason (lead, gate round 1): with a full 32 MiB list the planner switches lexical
+  probes to a sequential scan on small fragment tables — switch between 120,000 and 160,000 fragments, dashboard Archive
+  +0.83/+1.11 s (rare/common literal) at 120,000; 400,000 is 2.5 × the first size that kept the index [m L6G round 2].
+  WAL at production's `max_wal_size` 1 GB with an 870 MB trigram index (1.36 M fragments): **−16…−18 %** (≈ 12.0–12.3 →
+  10.0–10.1 B/B), not §6.4's −35 % and ≤ 7.5 B/B: full-page images of GIN pages dominate on a large index; below the
+  threshold (a fresh database) as the base [m L6G]. One-time ≈ +30 MB of index size accepted (+0.8 % of a 3.7 GB
+  database). The maintenance merge took 0.51–1.02 s while an upload wrote (at most 1.35 s), so no extra bound; a
+  writer's own merge ≤ 1.19 s; the settings are set to the constant (not the greater of it and the role's value).
+- **C1, L2** (`863a1e9f`…`c061b252`, 3) [r C1]: **Codex files always take the full pass** (`lastPass.reason =
+  codex-full-pass`; no Codex checkpoint, no `codex-dedup` bucket, pass 2 re-reads Codex from 0 as the base did): D2's
+  incremental dedup was built and withdrawn in gate round 2 (a lost acknowledgement plus cleanup promoted a delta-only
+  checkpoint; event keys bypassed the dedup cap; checkpoint rows outlived the scan) — a documented Codex-only limit, no
+  Codex sessions in the archive. Every fallback is the full pass, which plans a replacement only when the head's prefix
+  is not intact, with a reason in `--status --json` `sources[].lastPass {kind, reason, parsedBytes, hashedBytes, at}`
+  (`no-checkpoint`, `checkpoint-version`, `checkpoint-invalid`, `head-moved`, `upload-queued`, `policy-changed`,
+  `limits-changed`, `file-replaced`, `not-grown`, `source-prefix-changed`); only `source-prefix-changed` is also a
+  diagnostic. The full pass computes the raw digest with the resumable JS SHA-256 instead of the native one: +3–7 %
+  (§2.3 estimated +17 %) [m C1]. +5 % on 1 GB: 6.59 s CPU, 28 s wall (base 45.7 s, 65.7 s) [m C1].
+- **ANN, D22** (`19044542`…`4dfd4f48`, 4; head of the L5 group, no migration, shippable alone): §5.7. Against §5.2.5 and
+  D22 (a): detection and the bounded second pass are added; the first pass's real limit is ≈ 85,000 delivered tuples
+  (scan memory), not ≈ 199,000; the condition exists in production today through narrow filters (215 of 1,000 rows, 6 of
+  10 sessions) [m ANN]. Out of ownership: one `ChroniclePlugin` binding, `McpSourceBoundaryTest`'s expected columns.
+- **L5A** (`8627b4a5`…`01734dad`, 2) [r L5A]: values are fetched in runs of consecutive messages up to
+  `StoredMessages.runBytes` = 1 MiB of text per statement (a longer message alone; sizes first, 64 per batch) instead of
+  fetch size 1 (fewer round trips, the same one-row bound for large values); a message above 8 MiB waits for the
+  `SnapshotAdmission` permit with **no transaction open** and is read in its own transaction once admitted (gate round
+  1: the 60 s idle-in-transaction timeout); claims no longer take the permit (they decode nothing); `RevisionBinding`
+  also binds the reader's identity. Transitional, removed by L5B: the claim-time `retainedEstimate` and a re-read
+  validation before the publication transaction. Each pass reads and decodes at ≈ +45 s/GB [m L5A].
+- **L5B** (`4f55f5a4`…`894f0933`, 6; migration 026) [r L5B]: (1) **rollback needs `down-026` before the previous
+  release** (§5.3 and §8 said "no preparation"): that release publishes a job's run with plain inserts, and a staged
+  generation of the same run holds those chunk ids → 23505 → `worker-fault` on every attempt until the source's next
+  revision (rehearsed); order: stop the server, `down-026`, then `down-025`, `down-024` for older binaries; `down-026`
+  runs in one transaction. (2) P transactions do not take the job row `FOR SHARE` (four writers' overlapping share locks
+  would starve the lease renewal's `FOR UPDATE`): each checks `validJob` and locks the staged row (`FOR NO KEY UPDATE`
+  for P1/P2 batches, `FOR SHARE` for P3 writers), and checks its claim after that lock is granted (pre-review 2). (3)
+  026 also creates `ch_generation_retirements(generation, payload)`: the switch records the replaced generation; the
+  worker after the switch and the maintenance pass delete its search rows by keyset over its chunk ids, 10,000 per
+  statement (`payload`: an explicit rebuild's derived rows — `ReindexCohort.published` no longer deletes inside the
+  switch). (4) The switch is all or nothing (a savepoint rolled back unless the job's completion updates one row). (5)
+  Abandoned staged generations are marked (`run_id = generation`) under the job row's share lock, then deleted; P0
+  deletes its job's abandoned generations first (a `RetryJob` keeps its run, so its chunk ids collide). (6) A changed
+  `embeddingBatchSize` marks the staged generation `invalid`: P2 deletes and rewrites every staged chunk. (7) Validation
+  runs over the replayed windows' fragments with a carried frontier (no extra read of the messages). (8) K = 4
+  search-row writers per process (one semaphore; the pool has 8 connections), not per publication. (9) 026's autovacuum
+  threshold kept, index cleanup not forced (§5.7 VACUUM). (10) `maxSmallJobBudgetBytes` parsed (> 0 when present), no
+  effect, logged once at start; `VectorArena` deleted; `BoundedRetentionTest` folded into `OversizeGuardTest`. Measured:
+  a 1 GiB session with E = 6.57 × the default budget (refused at the claim before) indexed at the default 6.4 GiB heap
+  bound, peak live heap 34.8 MiB, 2.32 h (W 72 min, P1 ≈ 5, P2 33, P3 27 min); 026 ≈ 6 ms on 612,150 search rows [m
+  L5B].
+- **L5D, I2** (`7782fc82`…`0296ee28`, 4; migration 027) [r L5D]: (1) **a confirmed owner rebuild reuses nothing**
+  (force-fresh, final round): a run that is a rebuild-cohort member (`ch_reindex_members`) calls the models for every
+  window, also into an unchanged profile, and still resumes from its own checkpoints; **`RetryJob` of a Complete job is
+  a cached republication** (every window reused, no model call); CONTRACT.md and the rebuild confirmation
+  (`web/src/OwnerReindex.tsx`) say so. Reason: an operator must be able to replace accepted annotations. (2)
+  `ch_index_checkpoint_refs` also stores `input_hash` (the reusing run's key input): a resume under another embedding
+  grouping raises `CheckpointInputMismatch` and re-embeds. (3) The claiming run's own checkpoints are never candidates;
+  `discard` also deletes the run's references at that window. (4) Embedding parts are reused wherever the texts are
+  equal (positions may move), decisions only where source and positions are equal. (5) Lookup order: the published run's
+  accepted work — its own rows or the rows its references name (pre-review) — then the newest revision's job, then key
+  order. (6) Rollback is not DDL-only: `down-027` first copies the references of jobs that are not Complete into own
+  checkpoints; order `down-027` → `down-026` → …. (7) Read and lookup in one transaction per key. Measured: U8 run D 236
+  → 90 annotation calls; 1 GiB + 1 % append: 97 of 9,661 windows annotated, job 2.41 → 1.98 h (phase W −58 %,
+  publication +27 %: every revision is still published whole until L5E2) [m L5D].
+- **L5E1, I3 part 1** (`07008dac`…`9440bb62`, 2; migration 028): §5.6 unit "L5e-1" [r L5E1]. Roots write open-ended
+  segment rows (`[0, ∞)` per kind) and a lineage row without `last_window`/`cut` (the `State` codec is L5e-2's; a root
+  without a cut is no parent); pages are ordinal ranges for every generation; 028 re-adds 008's composite foreign keys
+  `NOT VALID` when missing; tag counts are counted per chunk inserted in P2; retiring a replaced lineage also queues its
+  generations' search rows; a generation staged by a release before 028 is published as staged (no lineage). Gate round
+  2: a generation without a version reads as its own rows and tags, and a root that a release before 028 continued (no
+  `lineageTags` mark in its resume point) is published without a lineage; index `ch_lineage_segments(origin, lineage,
+  kind, since)` for purge's foreign-key checks. `down-028` beyond §5.6.4: restores 011's check, deletes staged lineage
+  generations, commits per source and resumes, drops and rebuilds vector indexes and foreign keys only when a source
+  needs flattening. Rollback: with roots only the L5d binary starts without `down-028` (rehearsed, also with a root it
+  continued); once a lineage version exists it refuses to start until `down-028`. The plan test asserts a probe
+  correlated on lineage and origin; the `EXISTS` form is not planned as a hashed ANY in this layout (the scalar form is
+  kept). Tie-break `(session_id, ordinal, id)` (E3); Haystack's SQL byte-identical.
+- **L5E2, I3 part 2 — PLACEHOLDER (lead: report pending; pre-review "revise" at 15:57Z, `reports/ingest-c/L5E2/`).** To
+  fill: commit range; eligibility and `indexing.incrementalPublication`; `indexing.metadataHorizonWindows` (REL M1); the
+  horizon rule in both paths; deviations from §5.6; acceptance H; the REL comparison's verdict (E1's condition).
