@@ -457,9 +457,9 @@ questions with their answers when the checkpoint asked any. Comments follow the
 item they belong to. The gutter shows an accent bar beside the selected item. Invalid reports show the raw output and
 error rather than parsed fields. After the detail, effective settings and
 configuration scroll into view. The entire body (errors + detail + settings)
-scrolls independently of the table via ctrl-u/ctrl-d (half-page) and Home/End
-(top/bottom). All body lines are wrapped to the panel width so no content is
-clipped.
+scrolls independently of the table via PgUp/PgDn or ctrl-u/ctrl-d (half-page)
+and Home/End (top/bottom). All body lines are wrapped to the panel width so no
+content is clipped.
 
 **Footer:** Key hints are fixed at the bottom, always visible. The `i` key
 closes the panel and requests an immediate inquiry. While a comment is being
@@ -484,12 +484,12 @@ entry IDs in the detail header metadata (wrapped, not as separate table columns)
 | Mouse wheel | Scroll detail |
 | Left click | Select the item under the pointer |
 
-In regular mode the table and detail fit within the allocated height. Pi
-fullscreen reserves PgUp/PgDn for transcript scrolling, so detail scrolling
-uses ctrl-u/ctrl-d. RPC/plain-text output remains the complete unstyled flat
-report with all checkpoints, history attribution, and rule source/scope data.
-Theme changes regenerate colors. The border badge remains available while the
-panel is open.
+In regular mode the table and detail fit within the allocated height. In
+fullscreen, PgUp/PgDn scroll the detail while the panel has focus and return
+to scrolling the transcript when it closes. RPC/plain-text output remains the
+complete unstyled flat report with all checkpoints, history attribution, and
+rule source/scope data. Theme changes regenerate colors. The border badge remains
+available while the panel is open.
 
 ## Cadence and output
 

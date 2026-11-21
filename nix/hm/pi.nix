@@ -57,6 +57,8 @@ let
   # nixpkgs lags at 0.75.x, and its older releases have broken Codex/ChatGPT
   # subscription token exchange). Bump: edit version + rerun the two fake-hash builds in pkg/pi-coding-agent/package.nix.
   piBase = pkgs.callPackage ../pkg/pi-coding-agent/package.nix { };
+  piCatalogLib = import ../lib/pi-catalog.nix;
+  latestCodexSolModel = piCatalogLib.latestCodexSolModel piBase;
   piClaudeCode = pkgs.callPackage ../pkg/pi-claude-code/package.nix { pi-coding-agent = piBase; };
   piClaudeCodeSubagents = pkgs.callPackage ../pkg/pi-claude-code-subagents/package.nix {
     pi-coding-agent = piBase;
@@ -336,7 +338,6 @@ let
     repos = cfg.pi.subagentsRepos;
     gateBypassAllowed = cfg.pi.subagentsGateBypassAllowed;
     gateMaxRoundsCeiling = cfg.pi.subagentsGateMaxRoundsCeiling;
-    workspaceRoots = cfg.pi.subagentsWorkspaceRoots;
     workspaceOwnerCheckoutAllowed = cfg.pi.subagentsWorkspaceOwnerCheckoutAllowed;
     maxRunnable = cfg.pi.subagentsMaxRunnable;
     maxResidentWorkers = cfg.pi.subagentsMaxResidentWorkers;
@@ -357,7 +358,6 @@ let
     || cfg.pi.subagentsRepos != [ ]
     || cfg.pi.subagentsGateBypassAllowed
     || cfg.pi.subagentsGateMaxRoundsCeiling != 3
-    || cfg.pi.subagentsWorkspaceRoots != [ ]
     || cfg.pi.subagentsWorkspaceOwnerCheckoutAllowed
     || cfg.pi.subagentsMaxRunnable != 4
     || cfg.pi.subagentsMaxResidentWorkers != 8
@@ -482,11 +482,12 @@ in
           };
         };
       });
-      default = { provider = "openai-codex"; id = "gpt-6.1-sol"; thinking = "medium"; };
-      example = { provider = "openai-codex"; id = "gpt-6.1-sol"; thinking = "medium"; };
+      default = { provider = "openai-codex"; id = latestCodexSolModel; thinking = "medium"; };
+      example = { provider = "openai-codex"; id = latestCodexSolModel; thinking = "medium"; };
       description = ''
-        Managed fallback model for Historian, defaulting to Sol 6.1 with medium
-        effort via openai-codex. Null disables the managed model default.
+        Managed fallback model for Historian, defaulting to the newest Sol
+        model from Pi's pinned openai-codex catalog with medium effort via
+        openai-codex. Null disables the managed model default.
         Written with journalRoot to historian-defaults.json, never to mutable
         historian.json. Global runtime and session selections take precedence.
         Does not enable Historian or grant provider disclosure approval; use
@@ -772,27 +773,12 @@ in
       '';
     };
 
-    smind.hm.dev.llm.pi.subagentsWorkspaceRoots = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      example = [ "/home/user/worktrees" ];
-      description = ''
-        Absolute directories under which the governing session may assign a
-        git work tree it prepared itself to a subagent (`spawn_agent`
-        `workspace_path`), written as `workspaceRoots` into
-        `subagents-policy.json`. The path is compared after resolving
-        symlinks. Empty (the default) refuses every `workspace_path`.
-      '';
-    };
-
     smind.hm.dev.llm.pi.subagentsWorkspaceOwnerCheckoutAllowed = lib.mkOption {
       type = lib.types.bool;
       default = false;
       description = ''
-        Let `workspace_path` name the governing session's own checkout
-        (it must still lie inside
-        {option}`smind.hm.dev.llm.pi.subagentsWorkspaceRoots`). Written as
-        `workspaceOwnerCheckoutAllowed` into `subagents-policy.json`.
+        Let `workspace_path` name the governing session's own checkout.
+        Written as `workspaceOwnerCheckoutAllowed` into `subagents-policy.json`.
       '';
     };
 

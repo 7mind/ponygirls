@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { visibleWidth } from '@earendil-works/pi-tui';
+import { ScrollView, TuiAltScreen, VStack, visibleWidth } from '@earendil-works/pi-tui';
 import { CuckooView } from '../src/view.ts';
 import { checkpoint, REPORT_TYPE } from '../src/report.ts';
 
@@ -336,23 +336,52 @@ test('detail scroll: ctrl-u/d and Home/End scroll detail independently of table'
   panel.handleInput('\x1b'); await tick(); view.dispose(f.ctx);
 });
 
-test('detail scroll: PgDn and PgUp, the advertised keys, scroll the detail', async () => {
+test('fullscreen Page Up and Page Down scroll the focused Cuckoo detail instead of chat', async () => {
   const long = checkpoint('long-report', JSON.stringify({
-    objectives: Array.from({ length: 10 }, (_, i) => ({ objective: `Objective ${i + 1}`, progress: 'Progress '.repeat(20), issues: [], eta: 'Unknown' })),
+    objectives: Array.from({ length: 15 }, (_, i) => ({ objective: `Objective ${i + 1}`, progress: 'In progress', issues: [], eta: 'Unknown' })),
     rules: [],
   }));
-  const f = fixture(theme); f.resize(30); const view = new CuckooView(() => {});
-  view.publish(f.ctx, [long], true, null);
-  f.badge().handleMouse(click); await tick();
-  const panel = f.views[0].component;
-  const initial = panel.render(80).join('\n');
-  assert.match(initial, /PgUp\/PgDn scroll detail/);
-  panel.handleInput('\x1b[6~');
-  const down = panel.render(80).join('\n');
-  assert.notEqual(down, initial, 'PgDn must move the detail');
-  panel.handleInput('\x1b[5~');
-  assert.equal(panel.render(80).join('\n'), initial, 'PgUp must return to the start');
-  panel.handleInput('\x1b'); await tick(); view.dispose(f.ctx);
+  let sendKey;
+  const terminal = {
+    columns: 80, rows: 30, kittyProtocolActive: false,
+    start(onInput) { sendKey = onInput; }, stop() {}, write() {}, hideCursor() {}, showCursor() {},
+  };
+  const tui = new TuiAltScreen(terminal);
+  const transcript = new ScrollView({ render: () => Array.from({ length: 100 }, (_, i) => `Chat row ${i + 1}`), invalidate() {} }, { follow: 'end', primary: true });
+  const layout = new VStack([{ component: transcript, grow: 1 }]);
+  const f = fixture(theme);
+  f.ctx.ui.custom = (factory, options) => new Promise(resolve => {
+    assert.equal(options.retainEditorBorders, true);
+    const panel = factory(tui, theme, { matches: () => false }, () => {
+      layout.removeChild(panel);
+      tui.setFocus(transcript);
+      resolve();
+    });
+    layout.addChild(panel, { shrink: 0 });
+    tui.setFocus(panel);
+  });
+  const view = new CuckooView(() => {}, noComments);
+  const press = data => { sendKey(data); tui.renderNow(); return tui.getScreenLines().join('\n'); };
+  tui.setLayoutRoot(layout);
+  tui.start();
+  try {
+    const showing = view.showReports(f.ctx, [long], '');
+    tui.renderNow();
+    const initial = tui.getScreenLines().join('\n');
+    assert.match(initial, /PgUp\/PgDn scroll detail/);
+    assert.match(initial, /Objective 1\b/);
+    const down = press('\x1b[6~');
+    assert.doesNotMatch(down, /Objective 1\b/, 'PgDn must scroll past the first objective');
+    assert.equal(press('\x1b[5~'), initial, 'PgUp must return the detail to the start without moving chat');
+    const closed = press('q');
+    await showing;
+    assert.match(closed, /Chat row 100\b/);
+    assert.doesNotMatch(press('\x1b[5~'), /Chat row 100\b/, 'PgUp must scroll chat when Cuckoo closes');
+    assert.equal(press('\x1b[6~'), closed, 'PgDn must return chat to the end');
+  } finally {
+    view.dispose(f.ctx);
+    tui.stop();
+  }
 });
 
 test('empty report panel shows placeholder, still accepts i for inquiry', async () => {

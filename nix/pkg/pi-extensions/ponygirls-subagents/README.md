@@ -65,7 +65,7 @@ stricter.
 
 | `isolation` | Tool jobs | Workspace | Policy file |
 |---|---|---|---|
-| `worktree` (default) | host, as the user, with pi's environment and network | a writer gets its own Git worktree of the owner's checkout (same project-relative directory, committed base), or of the source selected by `repo_path`; readers read in place; or the Git work tree named by `workspace_path` | not needed (`workspace_path`: `workspaceRoots`) |
+| `worktree` (default) | host, as the user, with pi's environment and network | a writer gets its own Git worktree of the owner's checkout (same project-relative directory, committed base), or of the source selected by `repo_path`; readers read in place; or the Git work tree named by `workspace_path` | not needed by default |
 | `none` | host | the owner's working directory; writers edit it in place | not needed |
 | `sandbox` | bubblewrap view, no network | a registered repository (`repo_id`); writers get their own worktree | required |
 
@@ -103,8 +103,8 @@ in that source repository; uncommitted source changes are not copied.
 
 Only the governing session may select it, only for `worktree` writers.
 Readers, `none`, `sandbox`, and combinations with `repo_id` or
-`workspace_path` are refused. No repository registration or `workspaceRoots`
-grant is needed. Omitting `repo_path` preserves the usual owner-directory
+`workspace_path` are refused. No repository registration is needed.
+Omitting `repo_path` preserves the usual owner-directory
 selection, including refusal of a worktree writer from a non-Git directory.
 
 ### A workspace you prepared
@@ -116,11 +116,11 @@ removes it itself, hands it over with `workspace_path`:
 spawn_agent(task_name="impl", profile="writer", workspace_path="/home/user/worktrees/impl-1", message="...")
 ```
 
-It is refused (`POLICY_DENIED`) unless `workspaceRoots` in the policy file
-lists a directory containing it, compared after resolving symlinks. It
-must be the top-level directory of a Git work tree with a commit, apart
-from the governing checkout (unless `workspaceOwnerCheckoutAllowed`) and
-the supervisor's own storage. It works with `isolation: "worktree"` only
+No repository registration or path allowlist is needed. The absolute
+path must resolve to the top-level directory of a Git work tree with a
+commit. It must not overlap the supervisor's own storage or be the
+governing checkout (unless `workspaceOwnerCheckoutAllowed` is set).
+It works with `isolation: "worktree"` only
 (not `none`, not `sandbox`), without `base_commit`, and only from the
 governing session. The extension never creates, resets, or removes that
 directory; if you remove it, the agent's later tasks fail with
@@ -166,7 +166,6 @@ for `sandbox` children and sets nesting, model, gate, and capacity limits
   "gateMaxRoundsCeiling": 3,
   "allowedTools": ["mcp__codegraph__codegraph_explore"],
   "worktreeRoot": null,
-  "workspaceRoots": ["/home/user/worktrees"],
   "workspaceOwnerCheckoutAllowed": false,
   "maxRunnable": 4,
   "maxResidentWorkers": 8,
@@ -252,9 +251,9 @@ the file is rejected rather than carrying a limit that could never bind.
 The file is read when a session starts: a running session keeps the limits
 it started with, and an invalid file makes subagents unavailable for that
 session (reported at start and by every subagent tool).
-`workspaceRoots` (absolute paths; default none) are the only places a
-`workspace_path` is accepted; a list that is not absolute paths is an
-error.
+The former `workspaceRoots` JSON key is ignored. Remove any
+`smind.hm.dev.llm.pi.subagentsWorkspaceRoots` declaration when upgrading;
+that Home Manager option no longer exists.
 
 Children inherit their owner's selected model and thinking level.
 `spawn_agent`, `list_agents`, and `read_agent view=status` report `model` as
@@ -290,7 +289,7 @@ governing-session external tools; empty default denies all; Home Manager
 grants `mcp__codegraph__codegraph_explore` by default only when the
 `codegraph` MCP server is configured), `...WorktreeRoot` (null default keeps
 the home layout; an absolute path pools writer worktrees per session as
-above; setting it manages the file), `...WorkspaceRoots`,
+above; setting it manages the file),
 `...WorkspaceOwnerCheckoutAllowed`, `...MaxRunnable` (default 4),
 `...MaxResidentWorkers` (default 8), `...MaxOpenAgents` (default 32; the
 ordering above is asserted at evaluation).
@@ -505,6 +504,21 @@ model/provider change **does not** switch retained children.
 The capacity response separates same-model reusable IDs from checkpoint-ready
 model-switch IDs. A fresh gated/reviewed spawn still needs its reserved managed
 reviewer identities; ordinary-agent reuse is not a substitute for that panel.
+
+To give a settled writer a fresh validation gate while keeping its identity,
+model, history, and Git workspace, the governing session can pass:
+
+```text
+send_message(target="<settled-writer-id>", mode="task", message="Correct the implementation.", gate={model:{provider:"<provider>", id:"<reviewer-model>"}, thinkingLevel:"high", prompt:"Verify the correction."})
+```
+
+This starts a new task run and needs enough open slots for the whole new
+reviewer panel. The previous run's result and reviews are unchanged. Do not
+combine `gate` with a main `model` override or use it on a busy or queued agent.
+If the writer needs to reload, the gate requires a validated checkpoint of its
+latest execution generation; it will not start a fresh conversation.
+Omitting `gate` starts an ordinary follow-up. To re-review an existing frozen
+candidate without sending new work, use `manage_gate` with `retry_review`.
 
 For an explicit model/provider change, the owner or governor can pass:
 

@@ -259,6 +259,7 @@ export interface QueuedTask {
   createdAt: string;
   /** Replacement tasks link to the settled run they supersede. */
   replaces: TaskRunId | null;
+  gated?: true;
   dispatched: boolean;
 }
 

@@ -410,11 +410,18 @@ export class GateController {
 
   /** Register a task with its complete protected reviewer panel before dispatch. */
   register(agentId: AgentId, taskRunId: TaskRunId, spec: NormalizedGateSpec, taskText: string, reviewerIds: AgentId[]): void {
+    const registration = this.prepareRegistration(agentId, taskRunId, spec, taskText, reviewerIds);
+    this.host.runStore.append("gate.registered", registration.body);
+    registration.install();
+  }
+
+  prepareRegistration(agentId: AgentId, taskRunId: TaskRunId, spec: NormalizedGateSpec, taskText: string, reviewerIds: AgentId[]): { body: Record<string, unknown>; install: () => void } {
     if (this.tasks.has(taskRunId)) throw err("CONFLICT", `gate already registered for ${taskRunId}`);
-    if (reviewerIds.length !== spec.reviewers.length) throw err("INVALID", "reviewer identities do not match the panel");
+    if (reviewerIds.length === 0 || reviewerIds.length !== spec.reviewers.length || new Set(reviewerIds).size !== reviewerIds.length) {
+      throw err("INVALID", "reviewer identities do not match the panel");
+    }
     const reviewerId = reviewerIds[0]!;
-    this.host.runStore.append("gate.registered", { agentId, taskRunId, spec, taskText: taskText.slice(0, 65536), reviewerId, reviewerIds });
-    this.tasks.set(taskRunId, {
+    const state: GateTaskState = {
       agentId,
       taskRunId,
       taskText,
@@ -434,8 +441,14 @@ export class GateController {
       fingerprintHistory: [],
       stagnationWarning: null,
       linkedFrom: null,
-    });
-    for (const id of reviewerIds) this.linkReviewer(id, taskRunId, agentId);
+    };
+    return {
+      body: { agentId, taskRunId, spec, taskText: taskText.slice(0, 65536), reviewerId, reviewerIds },
+      install: () => {
+        this.tasks.set(taskRunId, state);
+        for (const id of reviewerIds) this.linkReviewer(id, taskRunId, agentId);
+      },
+    };
   }
 
   /** Called by the supervisor when an eligible gated main execution settles. */

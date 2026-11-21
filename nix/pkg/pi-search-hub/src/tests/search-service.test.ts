@@ -164,6 +164,27 @@ describe("search tool service", () => {
     expect(result.details.resultCount).toBeGreaterThan(0);
     expect(result.content[0].text).not.toMatch(/fixture-secret|credential|Authorization/);
   });
+  it("surfaces the engine error message in tool details while keeping it out of the text", async () => {
+    state.native[0].search = async () => { throw new NativeSearchError("openai native search: unsupported effort", usage); };
+    const result = await new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q", backend: "native:openai" }, undefined, ctx);
+    expect(result.details.backendStats["native:openai"]).toMatchObject({ status: "failed", error: "openai native search: unsupported effort" });
+    expect(result.content[0].text).not.toContain("unsupported effort");
+  });
+  it("bounds surfaced engine error text in tool details", async () => {
+    state.native[0].search = async () => { throw new NativeSearchError("x".repeat(500)); };
+    const result = await new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q", backend: "native:openai" }, undefined, ctx);
+    expect(result.details.backendStats["native:openai"].error).toBe("x".repeat(300));
+  });
+  it("falls back to the generic source error when the engine error carries no message", async () => {
+    state.native[0].search = async () => { throw new NativeSearchError(""); };
+    const result = await new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q", backend: "native:openai" }, undefined, ctx);
+    expect(result.details.backendStats["native:openai"].error).toBe("Source failed");
+  });
+  it("surfaces a plain string engine throw in tool details", async () => {
+    state.native[0].search = async () => { throw "fixture string failure"; };
+    const result = await new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q", backend: "native:openai" }, undefined, ctx);
+    expect(result.details.backendStats["native:openai"].error).toBe("fixture string failure");
+  });
   it("reports all-empty/failing searches as tool errors without dropping settled usage", async () => {
     state.failMain = true; state.native[0].search = async () => { throw new NativeSearchError("no grounded sources", usage); };
     const result = await new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q" }, undefined, ctx);
@@ -202,6 +223,7 @@ describe("search tool service", () => {
     expect(result.content[0].text).toBe("Search cancelled");
     expect(result.details.cancelled).toBe(true);
     expect(result.details.backendStats["native:openai"]).toMatchObject({ status: "cancelled", reason: "caller-cancelled" });
+    expect(result.details.backendStats["native:openai"]).not.toHaveProperty("error");
   });
   it("keeps explicit native failures marked as errors with their usage", async () => {
     state.native[0].search = async () => { throw new NativeSearchError("hosted tool unavailable", usage); };

@@ -173,6 +173,7 @@ export class CuckooView {
       }
 
       const panel = new (class extends PanelLayout implements Focusable {
+        readonly capturesViewportInput = true;
         private hasFocus = false;
         constructor() { super((width) => this.buildParts(width)); }
         override invalidate(): void {}

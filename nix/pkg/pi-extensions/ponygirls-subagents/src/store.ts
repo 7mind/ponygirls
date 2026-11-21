@@ -91,6 +91,8 @@ export interface JournalRecord {
   body: Record<string, unknown>;
 }
 
+export type JournalEntry = Pick<JournalRecord, "kind" | "body">;
+
 export interface Manifest {
   version: number;
   rootId: string;
@@ -133,6 +135,7 @@ export interface RunStore {
   writeFailure(): StoreFailure | null;
   onWriteFailure(listener: () => void): void;
   append(kind: JournalKind, body: Record<string, unknown>): JournalRecord;
+  appendBatch(entries: readonly JournalEntry[]): JournalRecord[];
   /** Records since (exclusive) a cursor, bounded. */
   readSince(cursor: number, limit: number): { records: JournalRecord[]; cursor: number };
   loadCommand(requestId: string): JournalRecord | null;
@@ -387,9 +390,16 @@ export class FileRunStore implements RunStore {
   }
 
   append(kind: JournalKind, body: Record<string, unknown>): JournalRecord {
+    return this.appendBatch([{ kind, body }])[0]!;
+  }
+
+  appendBatch(entries: readonly JournalEntry[]): JournalRecord[] {
     this.assertWritable();
-    const record: JournalRecord = { seq: this.seq + 1, kind, at: new Date().toISOString(), body };
-    const framed = frame(record);
+    if (entries.length === 0) return [];
+    const at = new Date().toISOString();
+    const records = entries.map(({ kind, body }, i) => ({ seq: this.seq + i + 1, kind, at, body }));
+    const lastSeq = this.seq + records.length;
+    const framed = Buffer.concat(records.map(frame));
     try {
       const fd = openSync(this.journalPath, "a");
       try {
@@ -399,7 +409,7 @@ export class FileRunStore implements RunStore {
       } finally {
         closeSync(fd);
       }
-      this.writeManifest(record.seq, this.committedBytes + framed.length);
+      this.writeManifest(lastSeq, this.committedBytes + framed.length);
     } catch (e) {
       // Bytes past the committed boundary are an uncommitted tail; the next
       // open truncates them. This process must not append behind them.
@@ -416,10 +426,10 @@ export class FileRunStore implements RunStore {
       }
       throw err("STORE_FAILED", this.failure.message);
     }
-    this.seq = record.seq;
+    this.seq = lastSeq;
     this.committedBytes += framed.length;
-    this.index(record);
-    return record;
+    for (const record of records) this.index(record);
+    return records;
   }
 
   readSince(cursor: number, limit: number): { records: JournalRecord[]; cursor: number } {
@@ -650,6 +660,18 @@ export class InMemoryRunStore implements RunStore {
     const record: JournalRecord = { seq: ++this.seq, kind, at: new Date().toISOString(), body };
     this.records.push(record);
     return record;
+  }
+
+  appendBatch(entries: readonly JournalEntry[]): JournalRecord[] {
+    const at = new Date().toISOString();
+    const records = entries.map(({ kind, body }, i) => ({ seq: this.seq + i + 1, kind, at, body }));
+    for (const record of records) {
+      this.records.push(record);
+      const requestId = record.body["requestId"];
+      if (typeof requestId === "string" && !this.commands.has(requestId)) this.commands.set(requestId, record);
+    }
+    this.seq += records.length;
+    return records;
   }
 
   readSince(cursor: number, limit: number): { records: JournalRecord[]; cursor: number } {

@@ -2,7 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Usage } from "@earendil-works/pi-ai";
 import { config, refreshConfig, getActiveBackends, recordLatency } from "./config.js";
 import { BACKEND_DEFS, runBackend } from "./backends/registry.js";
-import { selectBackendsForFallback, type AlwaysIncludeEntry } from "./dispatch.js";
+import { selectBackendsForFallback, type AlwaysIncludeEntry, type BackendStats } from "./dispatch.js";
 import { runMetasearch } from "./metasearch.js";
 import { discoverNativeEngines, NativeSearchError, NativeUsageUnavailableError, NATIVE_PROVIDERS, type NativeEngine } from "./native.js";
 import { SearchMonitor, type EngineDescriptor } from "./search-monitor.js";
@@ -13,6 +13,13 @@ import { candidateCount, sourcePolicy, validateAlwaysInclude, webProfile } from 
 import type { ResolvedProfile } from "./engine/types.js";
 import type { SearchResult } from "./types.js";
 import type { SearchPolicy } from "./search-policy.js";
+
+const MAX_SOURCE_ERROR_LENGTH = 300;
+
+function sourceErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error.trim() : "";
+  return message.trim().slice(0, MAX_SOURCE_ERROR_LENGTH) || "Source failed";
+}
 
 const DEFAULT_RESULT_COUNT = 10;
 const MAXIMUM_RESULT_COUNT = 20;
@@ -115,6 +122,7 @@ export class SearchService {
     const numResults = params.numResults ?? DEFAULT_RESULT_COUNT;
     const usages: Usage[] = [];
     const usageUnavailable = new Set<string>();
+    const sourceErrors = new Map<string, string>();
     const settledNative = new Set<string>();
     const finalizers = new Map<string, ReturnType<SearchMonitor["begin"]>>();
     const run = async (name: string, query: string, count: number, child?: AbortSignal): Promise<SearchResult[]> => {
@@ -136,6 +144,7 @@ export class SearchService {
       } catch (error) {
         if (error instanceof NativeSearchError && error.usage !== undefined) usages.push(error.usage);
         if (error instanceof NativeUsageUnavailableError) usageUnavailable.add(name);
+        sourceErrors.set(name, sourceErrorMessage(error));
         throw new Error("Search provider failed");
       } finally {
         if (native.has(name)) settledNative.add(name);
@@ -169,7 +178,7 @@ export class SearchService {
       : result.cancelled ? "Search cancelled" : "No usable search results";
     return { content: [{ type: "text" as const, text: [text, ...notes].join("\n\n") }],
       details: { backend: requested === "auto" ? "metasearch" : requested, resultCount: result.results.length, results: result.results,
-        backendStats: Object.fromEntries(result.backendStats), usageUnavailableEngines: [...usageUnavailable], cancelled: result.cancelled, timedOut: result.timedOut },
+        backendStats: Object.fromEntries([...result.backendStats].map(([source, stats]): [string, BackendStats] => { const message = sourceErrors.get(source); return [source, message !== undefined && stats.status === "failed" ? { ...stats, error: message } : stats]; })), usageUnavailableEngines: [...usageUnavailable], cancelled: result.cancelled, timedOut: result.timedOut },
       isError: result.cancelled || (result.results.length === 0 && [...result.backendStats.values()].every(stats => !stats.success)), usage: sumUsage(usages) };
   }
 }

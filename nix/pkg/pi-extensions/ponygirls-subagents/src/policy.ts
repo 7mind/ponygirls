@@ -93,8 +93,6 @@ export interface SupervisorPolicy {
    * absolute string.
    */
   worktreeRoot: string | null;
-  /** Directories a caller-prepared workspace must lie inside (absolute paths). Empty: none is accepted. */
-  workspaceRoots: string[];
   /** Whether the governing session's own checkout may be assigned as a prepared workspace. */
   workspaceOwnerCheckoutAllowed: boolean;
 }
@@ -132,7 +130,6 @@ export function defaultSupervisorPolicy(): SupervisorPolicy {
     toolNetwork: false,
     allowedTools: [],
     worktreeRoot: null,
-    workspaceRoots: [],
     workspaceOwnerCheckoutAllowed: false,
   };
 }
@@ -360,19 +357,6 @@ export function rootGrants(policy: SupervisorPolicy, rootExternalConcrete: reado
 /** Whether `path` is `root` or lies beneath it (lexical: both are resolved paths). */
 export function pathWithin(path: string, root: string): boolean {
   return path === root || path.startsWith(root.endsWith("/") ? root : `${root}/`);
-}
-
-/**
- * A caller-prepared workspace is denied unless it lies inside an allowed
- * root. Both sides are resolved by the caller (symlinks followed), so a
- * link cannot place a workspace outside the roots it appears under.
- */
-export function authorizeWorkspace(
-  allowedRoots: string[],
-  workspace: string,
-): { ok: true } | { ok: false; error: ReturnType<typeof err> } {
-  if (allowedRoots.some((root) => pathWithin(workspace, root))) return { ok: true };
-  return { ok: false, error: err("POLICY_DENIED", `workspace ${workspace} lies outside the policy's workspaceRoots`) };
 }
 
 /** Validate a proxy tool name against caller authority (post-transform). */

@@ -370,13 +370,30 @@ test("the governing model is told about gate checks and promised outputs", async
   const agentDir = mkdtempSync(join(tmpdir(), "subagents-ext-"));
   try {
     const { schemas } = await loadExtension(agentDir);
-    for (const tool of ["spawn_agent", "manage_gate"]) {
+    for (const tool of ["spawn_agent", "manage_gate", "send_message"]) {
       const gate = schemas.get(tool)!.properties!["gate"]!;
       const check = gate.properties!["checks"]!.items!;
       assert.deepEqual(Object.keys(check.properties!).sort(), ["command", "id", "timeoutMs"], tool);
       assert.ok(gate.properties!["promisedOutputs"], `${tool} lacks promisedOutputs`);
     }
   } finally {
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("the governing send_message forwards the spawn gate schema and does not expose it to children", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "subagents-followup-schema-"));
+  const { schemas, tools, handlers, ctx } = await loadExtension(agentDir);
+  try {
+    assert.deepEqual(schemas.get("send_message")!.properties!["gate"], schemas.get("spawn_agent")!.properties!["gate"]);
+    assert.equal((childToolSpec<TSchema>(Type, "send_message").parameters as Schema).properties?.["gate"], undefined);
+    const result = await tools.get("send_message")!("id", {
+      target: "missing", mode: "note", message: "not a task", gate: { model: { provider: "p", id: "m" }, thinkingLevel: "low", prompt: "rubric" },
+    }, undefined, undefined, ctx);
+    assert.equal(result.isError, true);
+    assert.match(result.content[0]!.text, /INVALID: gate requires mode=task/);
+  } finally {
+    await handlers.get("session_shutdown")!({}, ctx);
     rmSync(agentDir, { recursive: true, force: true });
   }
 });
@@ -400,38 +417,21 @@ test("review panels and advisory dispatch are exposed by the governing schemas",
   }
 });
 
-test("the policy file's workspaceRoots gate spawn_agent workspace_path; a malformed list is an error", async () => {
+test("spawn_agent validates workspace_path even with a stale workspaceRoots key in the policy file", async () => {
   const agentDir = mkdtempSync(join(tmpdir(), "subagents-ext-"));
   try {
-    const { tools, schemas, ctx } = await loadExtension(agentDir);
-    assert.ok(schemas.get("spawn_agent")!.properties!["workspace_path"], "spawn_agent lacks workspace_path");
-    const spawn = async (id: string): Promise<string> =>
-      (await tools.get("spawn_agent")!(id, { task_name: id, message: "m", profile: "writer", workspace_path: join(agentDir, "elsewhere") }, undefined, undefined, ctx)).content[0]!.text;
-    // No policy file: denied by default.
-    assert.match(await spawn("a"), /POLICY_DENIED: workspace_path is not permitted/);
+    writeFileSync(join(agentDir, "subagents-policy.json"), JSON.stringify({ workspaceRoots: ["relative/root"] }));
+    const { tools, schemas, ctx, handlers } = await loadExtension(agentDir);
+    try {
+      assert.ok(schemas.get("spawn_agent")!.properties!["workspace_path"]);
+      const res = await tools.get("spawn_agent")!("prepared", { task_name: "prepared", message: "m", profile: "writer", workspace_path: "relative/worktree" }, undefined, undefined, ctx);
+      assert.equal(res.isError, true);
+      assert.match(res.content[0]!.text, /INVALID: workspace_path must be an absolute path/);
+    } finally {
+      await handlers.get("session_shutdown")!({ reason: "quit" }, ctx);
+    }
   } finally {
     rmSync(agentDir, { recursive: true, force: true });
-  }
-  const listed = mkdtempSync(join(tmpdir(), "subagents-ext-"));
-  try {
-    mkdirSync(join(listed, "elsewhere"));
-    writeFileSync(join(listed, "subagents-policy.json"), JSON.stringify({ workspaceRoots: [join(listed, "trees")] }));
-    const { tools, ctx } = await loadExtension(listed);
-    const res = await tools.get("spawn_agent")!("b", { task_name: "b", message: "m", profile: "writer", workspace_path: join(listed, "elsewhere") }, undefined, undefined, ctx);
-    // The listed root is in force: the refusal is about this path, not about an empty list.
-    assert.match(res.content[0]!.text, /POLICY_DENIED: workspace .* lies outside the policy's workspaceRoots/);
-  } finally {
-    rmSync(listed, { recursive: true, force: true });
-  }
-  const malformed = mkdtempSync(join(tmpdir(), "subagents-ext-"));
-  try {
-    writeFileSync(join(malformed, "subagents-policy.json"), JSON.stringify({ workspaceRoots: ["relative/root"] }));
-    const { tools, ctx } = await loadExtension(malformed);
-    const res = await tools.get("list_agents")!("c", {}, undefined, undefined, ctx);
-    assert.equal(res.isError, true);
-    assert.match(res.content[0]!.text, /POLICY_DENIED: .*workspaceRoots must be a list of absolute paths/);
-  } finally {
-    rmSync(malformed, { recursive: true, force: true });
   }
 });
 
