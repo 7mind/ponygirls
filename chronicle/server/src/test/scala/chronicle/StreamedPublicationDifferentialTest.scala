@@ -8,8 +8,9 @@ import java.util.UUID
 import ProblemPassages.{Decision,Part,Point}
 
 /** The streamed publication (ingest-limits spec §5.2.4) against the in-memory publication of the release before it, the
-  * oracle (§5.3): the same claim and the job's accepted checkpoints give every generation table the same rows, up to the
-  * generation's id. Nothing an existing session published changes, so none is indexed again. */
+  * oracle (§5.3) given the metadata horizon (§5.6.2): the same claim and the job's accepted checkpoints give every
+  * generation table the same rows, up to the generation's id. Nothing an existing session published changes, so none is
+  * indexed again. */
 final class StreamedPublicationDifferentialTest extends munit.FunSuite {
   override val munitTimeout=scala.concurrent.duration.DurationInt(3).minutes
   private def database(config: Config)(f: Database => Unit): Unit = {
@@ -63,7 +64,7 @@ final class StreamedPublicationDifferentialTest extends munit.FunSuite {
   private def oracle(db: Database,claim: Claim,config: Config): ProblemsPublication = db.transaction { c =>
     def accepted(key: CheckpointKey): Json = IndexCheckpoints.read(c,claim,key).getOrElse(fail("accepted work missing"))
     val source=ProblemPassages.Source(claim.messages.reader(TestFetch.unadmitted))
-    var state=ProblemPassages.State.start(claim.sessionId,claim.runId); var builder=ProblemsPublication.empty; var index=0
+    var state=ProblemPassages.State.start(claim.sessionId,claim.runId); var builder=ProblemsPublication.empty(config.indexing.metadataHorizonWindows); var index=0
     var pending=source.next(state.nextSource)
     while(pending.nonEmpty) {
       val window=pending.get
@@ -93,7 +94,8 @@ final class StreamedPublicationDifferentialTest extends munit.FunSuite {
 
   List(RevisionLayoutPolicy.production->"an epoch",RevisionLayoutPolicy.Legacy->"a legacy revision").foreach { (layout,stored) =>
     test(s"a streamed publication of $stored, stopped in its pieces and resumed, equals the in-memory publication of the same claim and checkpoints in every generation table") {
-      val config=Fixtures.config().copy(maxBodyBytes=16*1024*1024,maxFileBytes=16*1024*1024)
+      // A horizon of 2 windows (full publications): pieces of passages longer than that carry metadata of later windows.
+      val config=Fixtures.config().copy(maxBodyBytes=16*1024*1024,maxFileBytes=16*1024*1024,indexing=IndexingCapacity.defaults.copy(incrementalPublication=false,metadataHorizonWindows=2))
       database(config) { db =>
         val archive=new PostgresArchive(db,config,layout)
         val receipt=archive.ingest("a",request())

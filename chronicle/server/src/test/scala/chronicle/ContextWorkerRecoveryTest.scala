@@ -39,6 +39,7 @@ class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
   def defer(c: Claim,total: Int): Boolean=delegate.defer(c,total)
   def progress(c: Claim,done: Int,total: Int): Boolean=delegate.progress(c,done,total)
   def publishProblems(c: Claim,p: ProblemRows): Boolean=delegate.publishProblems(c,p)
+  def publicationParent(c: Claim): Option[PublicationParent]=delegate.publicationParent(c)
   def retire(c: Claim): Unit=delegate.retire(c)
   def fail(c: Claim,code: String): Unit=delegate.fail(c,code)
   def fail(c: Claim,code: String,stage: IndexingStage): Unit=delegate.fail(c,code,stage)

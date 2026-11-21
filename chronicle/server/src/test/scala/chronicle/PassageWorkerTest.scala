@@ -27,6 +27,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     def defer(claim: Claim,total: Int): Boolean = delegate.defer(claim,total)
     def progress(claim: Claim,done: Int,total: Int): Boolean = synchronized { progressCalls+=((done,total)); delegate.progress(claim,done,total) }
     def publishProblems(claim: Claim,publication: ProblemRows): Boolean = synchronized { publications+=ProblemsPublication.collect(publication); delegate.publishProblems(claim,publication) }
+    def publicationParent(claim: Claim): Option[PublicationParent] = delegate.publicationParent(claim)
     def retire(claim: Claim): Unit = delegate.retire(claim)
     def fail(claim: Claim,code: String): Unit = synchronized { failures+=code; delegate.fail(claim,code) }
     def fail(claim: Claim,code: String,stage: IndexingStage): Unit = synchronized { failures+=code; delegate.fail(claim,code,stage) }
@@ -245,6 +246,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
           if(c.owner=="b") published.complete(()).unsafeRunSync()
           result
         }
+        def publicationParent(c: Claim)=delegate.publicationParent(c)
         def fail(c: Claim,code: String)=delegate.fail(c,code)
         def fail(c: Claim,code: String,stage: IndexingStage)=delegate.fail(c,code,stage)
         def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = delegate.reserveAnnotation(c,key)

@@ -45,11 +45,21 @@ object TokenPolicy { val maximumPerOwner = 100 }
 final case class StaticTokenConfig(id: UUID, userId: String, name: String, scopes: List[Scope], tokenFile: String)
 final case class ModelConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int, requestPolicy: AnnotationRequestPolicy)
 final case class EmbeddingConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int, dimensions: Int, queryPrefix: String, documentPrefix: String, sendDimensions: Boolean)
-final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int,embeddingBatchSize: Int) {
+/** `incrementalPublication`: an append to an indexed session publishes only its tail as the next version of the published
+  * generation's lineage (ingest-limits spec §5.6); false: every publication is a full one (a root). `metadataHorizonWindows`:
+  * the metadata horizon of both kinds of publication (ProblemRows.metadataHorizonWindows); another value than the default
+  * requires full publications, so that no lineage mixes horizons. Neither is part of the index profile. */
+final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int,embeddingBatchSize: Int,incrementalPublication: Boolean=true,metadataHorizonWindows: Int=ProblemRows.metadataHorizonWindows) {
   def validate(): Unit = {
     Check(annotationSessions>=1 && annotationSessions<=8,"config","annotation session capacity must be 1..8")
     Check(embeddingRequests>=1 && embeddingRequests<=32,"config","embedding request capacity must be 1..32")
     Check(embeddingBatchSize>=1 && embeddingBatchSize<=16,"config","embedding batch size must be 1..16")
+  }
+  /** The publication keys, checked at start (Config.validate). */
+  def validatePublication(): Unit = {
+    Check(metadataHorizonWindows>=1,"config","indexing.metadataHorizonWindows must be 1..2147483647")
+    Check(metadataHorizonWindows==ProblemRows.metadataHorizonWindows || !incrementalPublication,"config",
+      s"indexing.metadataHorizonWindows other than ${ProblemRows.metadataHorizonWindows} requires indexing.incrementalPublication=false")
   }
 }
 object IndexingCapacity {
@@ -63,6 +73,7 @@ final case class Config(listenHost: String, listenPort: Int, allowedOrigin: Stri
   def profile: String = IndexProfileCatalog.current(this).preferred.profile
   def validate(): Unit = {
     indexing.validate()
+    indexing.validatePublication()
     try jdbcConfig.validate() catch { case _: IllegalArgumentException => throw DomainError("config","invalid database configuration") }
     Check(users.map(_.id).distinct.size == users.size && users.map(_.login).distinct.size == users.size, "config", "duplicate users")
     accounts.foreach { a =>
@@ -173,7 +184,9 @@ object Config {
       annotation <- integer("annotationSessions")
       embedding <- integer("embeddingRequests")
       batch <- integer("embeddingBatchSize")
-    } yield IndexingCapacity(annotation,embedding,batch)
+      incremental <- if(cursor.downField("incrementalPublication").focus.isEmpty) Right(true) else cursor.get[Boolean]("incrementalPublication")
+      horizon <- if(cursor.downField("metadataHorizonWindows").focus.isEmpty) Right(ProblemRows.metadataHorizonWindows) else integer("metadataHorizonWindows")
+    } yield IndexingCapacity(annotation,embedding,batch,incremental,horizon)
   }
   given Decoder[JdbcLimits] = Decoder.instance { cursor => for {
     connections <- cursor.get[Int]("maxConnections")
@@ -256,6 +269,9 @@ trait SessionArchive extends IndexCheckpoints {
   /** Stages the publication's rows and switches the source to it (ingest-limits spec §5.2.4); false when the claim is no
     * longer current. */
   def publishProblems(claim: Claim, rows: ProblemRows): Boolean
+  /** The published generation the claim's publication may continue incrementally (ingest-limits spec §5.6.2, eligibility),
+    * None for a full publication (a root). */
+  def publicationParent(claim: Claim): Option[PublicationParent]
   /** Deletes the search rows of the generations the claim's publication replaced (bounded statements). */
   def retire(claim: Claim): Unit
   def fail(claim: Claim, code: String): Unit

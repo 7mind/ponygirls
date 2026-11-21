@@ -472,7 +472,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     * PassageStorage.searchRowWriters writers; then the switch. Rows are deterministic (`ON CONFLICT DO NOTHING`), so a
     * resumed run rewrites the step it stopped in. False when the claim is no longer current or the job ends superseded. */
   def publishProblems(claim: Claim,rows: ProblemRows): Boolean = try {
-    stage(claim) match {
+    stage(claim,rows.parent) match {
       case None => false
       case Some((staged,abandoned)) =>
         abandoned.foreach(PassageStorage.deleteAbandoned(db,_))
@@ -481,15 +481,36 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
         val pieces=if(written.invalid) rewritePieces(claim,written,counts) else written
         if(pieces.step<counts.steps) writePieces(claim,pieces,counts,rows)
         writeSearchRows(claim,staged.generation,counts.pieces)
-        switch(claim,staged.generation,counts.passages)
+        switch(claim,staged.generation,counts.passages,rows.parent)
     }
   } catch { case _: StaleStaging => false }
-  /** P0 under the checkpoint authority; with the job's staged generations of other runs, which it abandons. */
-  private def stage(claim: Claim): Option[(StagedGeneration,List[UUID])] = db.transaction { c =>
+  /** Whether the claim's publication may continue the source's published generation incrementally (ingest-limits spec
+    * §5.6.2, eligibility): `indexing.incrementalPublication`; the published generation is a version of a lineage with a cut
+    * under the configured horizon, of the claim's profile and not retired; its revision and the claim's are revisions of
+    * one epoch, the claim's holding at least its messages; and no explicit rebuild would retire the history at this
+    * publication. Checked again at the switch: the parent must still be published. */
+  def publicationParent(claim: Claim): Option[PublicationParent] = if(!config.indexing.incrementalPublication) None else db.transaction { c =>
+    Sql.one(c,s"""SELECT p.id,p.lineage,p.lineage_version,l.cut FROM ch_sources s JOIN ch_generations p ON p.id=s.published JOIN ch_generation_lineage l ON l.generation=p.id
+      JOIN ch_revisions pr ON pr.session_id=s.id AND pr.revision=p.revision JOIN ch_revisions cr ON cr.session_id=s.id AND cr.revision=?
+      WHERE s.id=? AND p.lineage IS NOT NULL AND p.lineage_version IS NOT NULL AND l.cut IS NOT NULL AND p.profile=? AND NOT p.retired AND p.passage_format IN ${GenerationRows.formatsSql}
+        AND p.revision<=cr.revision AND pr.epoch IS NOT NULL AND pr.epoch=cr.epoch AND pr.message_count<=cr.message_count
+        AND NOT EXISTS(SELECT 1 FROM ch_reindex_members m JOIN ch_reindex_requests q ON q.owner=m.owner AND q.request_id=m.request_id
+          WHERE m.owner=? AND m.session_id=s.id AND m.revision<=cr.revision AND m.target_epoch=? AND q.target_profile=? AND m.retirement_generation IS NULL)""",
+      claim.revision,claim.sessionId,claim.profile,claim.owner,claim.targetEpoch,claim.profile) { r =>
+      PublicationParent(r.getObject(1,classOf[UUID]),r.getObject(2,classOf[UUID]),r.getInt(3),ProblemRows.Cut.decode(Sql.json(r,"cut"),claim.sessionId,claim.runId))
+    }.filter(_.cut.horizon==config.indexing.metadataHorizonWindows)
+  }
+  /** P0 under the checkpoint authority; with the job's staged generations of other runs, which it abandons, and the run's
+    * own one if it continues another parent than this publication (or is a root where this one continues one, or the
+    * reverse). */
+  private def stage(claim: Claim,parent: Option[PublicationParent]): Option[(StagedGeneration,List[UUID])] = db.transaction { c =>
     Option.when(current(c,claim) && lockJob(c,claim) && Sql.one(c,s"SELECT 1 FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true) && revisionMatches(c,claim)) {
       PassageStorage.requirePolicy(c,claim.profile,IndexPolicy.ContextAwareProblemsV1)
       val abandoned=PassageStorage.abandonOtherRuns(c,claim)
-      (PassageStorage.staged(c,claim.jobId,claim.runId).getOrElse(PassageStorage.stage(c,claim)),abandoned)
+      val current=PassageStorage.staged(c,claim.jobId,claim.runId)
+      val other=current.filter(_.parent!=parent.map(_.generation))
+      other.foreach(value => PassageStorage.abandon(c,value.generation))
+      (current.filter(_ => other.isEmpty).getOrElse(parent.fold(PassageStorage.stage(c,claim))(PassageStorage.stageIncremental(c,claim,_))),abandoned++other.map(_.generation))
     }
   }
   /** Fills batches of rows of consecutive steps; `flush` commits one with the step a resumed run starts at. */
@@ -505,20 +526,20 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     def text(value: String): Long = 2L*value.length
     def bytes(row: ProblemRows.Passages): Long = 64+(row.opened++row.closed).map(p => 256+text(p.initialSummary)+2*text(p.summary)+p.tags.map(text).sum).sum+
       row.spans.map(span => 64+text(span.span.messageId)).sum+row.context.map((_,span) => 64+text(span.messageId)).sum
-    def written(next: StagedGeneration)(batch: Vector[ProblemRows.Passages]): Unit = staging(claim,staged.generation,StagedLock.Write) { c =>
+    def written(next: StagedGeneration,cut: Option[ProblemRows.Cut])(batch: Vector[ProblemRows.Passages]): Unit = staging(claim,staged.generation,StagedLock.Write) { c =>
       PassageStorage.writePassages(c,staged.generation,batch)
-      next.counts.foreach(counts => PassageStorage.writeLineage(c,staged.generation,counts.pieces))
+      next.counts.foreach(counts => PassageStorage.writeLineage(c,staged.generation,rows.parent.map(_.generation),cut,counts.pieces))
       Check(PassageStorage.resume(c,claim,next),"internal","staged generation resume point not recorded")
     }
-    val batches=new Batches[ProblemRows.Passages](bytes,(batch,step) => written(staged.copy(step=step))(batch))
-    val total=rows.passages(staged.step) { (step,value) =>
+    val batches=new Batches[ProblemRows.Passages](bytes,(batch,step) => written(staged.copy(step=step),None)(batch))
+    val replayed=rows.passages(staged.step) { (step,value) =>
       value.opened.foreach(p => batches.add(step,ProblemRows.Passages(Vector(p),Vector.empty,Vector.empty,Vector.empty)))
       value.closed.foreach(p => batches.add(step,ProblemRows.Passages(Vector.empty,Vector(p),Vector.empty,Vector.empty)))
       value.spans.foreach(span => batches.add(step,ProblemRows.Passages(Vector.empty,Vector.empty,Vector(span),Vector.empty)))
       value.context.foreach(span => batches.add(step,ProblemRows.Passages(Vector.empty,Vector.empty,Vector.empty,Vector(span))))
     }
-    val next=StagedGeneration(staged.generation,StagedPhase.Pieces,0,Some(total),lineageTags=staged.lineageTags)
-    written(next)(batches.drain())
+    val next=StagedGeneration(staged.generation,StagedPhase.Pieces,0,Some(replayed.counts),lineageTags=staged.lineageTags,parent=staged.parent)
+    written(next,replayed.cut)(batches.drain())
     next
   }
   /** Phase W discarded embedding parts the staged chunks may have been written from: every staged chunk (with its search
@@ -533,26 +554,34 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     next
   }
   private def writePieces(claim: Claim,staged: StagedGeneration,counts: ProblemRows.Counts,rows: ProblemRows): Unit = {
-    var finals=(0,Vector.empty[ProblemRows.Final])
-    // A passage's pieces are consecutive: one batch of final passages read at a time.
-    def passage(ordinal: Int): ProblemRows.Final = {
-      if(ordinal<finals._1 || ordinal>=finals._1+finals._2.size) finals=(ordinal,staging(claim,staged.generation,StagedLock.Share)(c => PassageStorage.finals(c,staged.generation,ordinal,PassageStorage.rowsPerBatch)))
-      finals._2.lift(ordinal-finals._1).getOrElse(throw DomainError("internal","staged passage missing"))
+    val stored=new ProblemRows.Stored {
+      private var finals=(0,Vector.empty[ProblemRows.Final])
+      // A passage's pieces are consecutive: one batch of final passages read at a time.
+      def passage(ordinal: Int): ProblemRows.Final = {
+        if(ordinal<finals._1 || ordinal>=finals._1+finals._2.size) finals=(ordinal,staging(claim,staged.generation,StagedLock.Share)(c => PassageStorage.finals(c,staged.generation,ordinal,PassageStorage.rowsPerBatch)))
+        finals._2.lift(ordinal-finals._1).getOrElse(throw DomainError("internal","staged passage missing"))
+      }
+      def members(from: Long,until: Long): Vector[ProblemRows.Piece] = {
+        val parent=rows.parent.getOrElse(throw DomainError("internal","a root publication has no parent's pieces"))
+        staging(claim,staged.generation,StagedLock.Share)(c => PassageStorage.members(c,parent.generation,claim.sessionId,claim.revision,from,until))
+      }
     }
     def bytes(piece: ProblemRows.Piece): Long = 256+6L*piece.chunk.text.length+4L*(piece.chunk.summary.length+piece.chunk.tags.map(_.length).sum)+24L*piece.vector.size
     def written(step: Int)(batch: Vector[ProblemRows.Piece]): Unit = staging(claim,staged.generation,StagedLock.Write) { c =>
       Check(batch.forall(_.vector.size==config.embedding.dimensions),"invalid","publication embedding")
-      PassageStorage.writePieces(c,staged.generation,batch)
+      PassageStorage.writePieces(c,staged.generation,batch,rows.parent)
       Check(PassageStorage.resume(c,claim,staged.copy(step=step)),"internal","staged generation resume point not recorded")
     }
     val batches=new Batches[ProblemRows.Piece](bytes,(batch,step) => written(step)(batch))
-    rows.pieces(staged.step,passage) { (step,pieces) => pieces.foreach(batches.add(step,_)) }
+    rows.pieces(staged.step,stored) { (step,pieces) => pieces.foreach(batches.add(step,_)) }
     written(counts.steps)(batches.drain())
   }
   /** P3: the search rows by ordinal ranges of PostgresArchive.searchRowsPerStatement, each statement committed, by the
     * process's search-row writers. */
   private def writeSearchRows(claim: Claim,generation: UUID,pieces: Int): Unit = {
-    val next=new java.util.concurrent.atomic.AtomicInteger(0)
+    // An incremental publication's own chunks start at its first rewritten piece.
+    val first=staging(claim,generation,StagedLock.Share)(c => Sql.one(c,"SELECT min(ordinal) FROM ch_chunks WHERE generation=?",generation)(r => Option(r.getObject(1)).map(_ => r.getInt(1))).flatten).getOrElse(pieces)
+    val next=new java.util.concurrent.atomic.AtomicInteger(first)
     val stopped=new java.util.concurrent.atomic.AtomicBoolean(false)
     def writer(): Unit = {
       var from=next.getAndAdd(PostgresArchive.searchRowsPerStatement)
@@ -563,7 +592,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
         from=next.getAndAdd(PostgresArchive.searchRowsPerStatement)
       }
     }
-    val writers=PassageStorage.searchRowWriters.min((pieces+PostgresArchive.searchRowsPerStatement-1)/PostgresArchive.searchRowsPerStatement)
+    val writers=PassageStorage.searchRowWriters.min((pieces-first+PostgresArchive.searchRowsPerStatement-1)/PostgresArchive.searchRowsPerStatement)
     if(writers<=1) writer() else {
       val pool=java.util.concurrent.Executors.newFixedThreadPool(writers)
       try {
@@ -576,22 +605,29 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     * revision ends the job superseded and leaves its staged generation to the sweep), the passage count, the staged row,
     * the published pointer, the rebuild cohort and the job. The replaced generation's search rows are retired afterwards
     * (`retire`). */
-  private def switch(claim: Claim,generation: UUID,passages: Int): Boolean = db.transaction { c =>
+  private def switch(claim: Claim,generation: UUID,passages: Int,parent: Option[PublicationParent]): Boolean = db.transaction { c =>
     val authorized=current(c,claim) && lockJob(c,claim) && Sql.one(c,s"SELECT id FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true) && revisionMatches(c,claim)
     // Publication is monotonic: a job never replaces the published generation of a newer revision; it ends superseded.
     val superseded=authorized && Sql.one(c,"SELECT g.revision>? FROM ch_sources s JOIN ch_generations g ON g.id=s.published WHERE s.id=?",claim.revision,claim.sessionId)(_.getBoolean(1)).contains(true)
+    val previous=Sql.one(c,"SELECT published FROM ch_sources WHERE id=?",claim.sessionId)(r => Option(r.getObject(1,classOf[UUID]))).flatten
     if(superseded) { Sql.exec(c,s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob",jobArgs(claim)*); false }
+    // An incremental publication whose parent is no longer published is abandoned: the job's next attempt chooses again.
+    else if(authorized && parent.exists(value => !previous.contains(value.generation))) { PassageStorage.abandon(c,generation); false }
     else authorized && {
       // All of the switch or none: its last statement can still find the lease ended.
       val switching=c.setSavepoint()
       val lineageTags=Sql.one(c,"DELETE FROM ch_staged_generations WHERE generation=? AND job_id=? AND run_id=? RETURNING coalesce((resume->>'lineageTags')::boolean,false)",generation,claim.jobId,claim.runId)(_.getBoolean(1))
       val completed=lineageTags.nonEmpty && {
-        val previous=Sql.one(c,"SELECT published FROM ch_sources WHERE id=?",claim.sessionId)(r => Option(r.getObject(1,classOf[UUID]))).flatten
-        previous.foreach { previous =>
-          Sql.exec(c,"INSERT INTO ch_generation_retirements(generation,payload) VALUES(?,false) ON CONFLICT DO NOTHING",previous)
-        }
         Sql.exec(c,"UPDATE ch_generations SET passage_count=? WHERE id=?",passages.toLong,generation)
-        PassageStorage.switchRoot(c,generation,previous,lineageTags.get)
+        parent match {
+          // The parent's rows stay members; only its superseded ranges' search rows go (ch_search_retirements).
+          case Some(value) => PassageStorage.switchIncremental(c,claim.sessionId,generation,value)
+          case None =>
+            previous.foreach { previous =>
+              Sql.exec(c,"INSERT INTO ch_generation_retirements(generation,payload) VALUES(?,false) ON CONFLICT DO NOTHING",previous)
+            }
+            PassageStorage.switchRoot(c,generation,previous,lineageTags.get)
+        }
         Sql.exec(c,"UPDATE ch_sources SET published=? WHERE id=?",generation,claim.sessionId)
         ReindexCohort.published(c,claim,generation)
         Sql.exec(c,s"UPDATE ch_jobs SET state='Complete',error=NULL,failure_stage=NULL,lease_until=NULL WHERE $validJob",jobArgs(claim)*)==1

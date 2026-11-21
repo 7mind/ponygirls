@@ -328,8 +328,9 @@ class PostgresBehaviorTest extends munit.FunSuite {
     val staged=new java.util.concurrent.CountDownLatch(1); val proceed=new java.util.concurrent.CountDownLatch(1)
     val rows=ProblemsPublication.rows(TestPublications.from(old,Nil))
     val paused=new ProblemRows {
-      def passages(from: Int)(write: (Int,ProblemRows.Passages) => Unit): ProblemRows.Counts = rows.passages(from)(write)
-      def pieces(from: Int,passage: Int => ProblemRows.Final)(write: (Int,Vector[ProblemRows.Piece]) => Unit): Unit = { staged.countDown(); proceed.await(); rows.pieces(from,passage)(write) }
+      def parent: Option[PublicationParent] = rows.parent
+      def passages(from: Int)(write: (Int,ProblemRows.Passages) => Unit): ProblemRows.Replayed = rows.passages(from)(write)
+      def pieces(from: Int,stored: ProblemRows.Stored)(write: (Int,Vector[ProblemRows.Piece]) => Unit): Unit = { staged.countDown(); proceed.await(); rows.pieces(from,stored)(write) }
     }
     try {
       pending=executor.submit(new java.util.concurrent.Callable[Boolean] { def call(): Boolean=oldArchive.publishProblems(old,paused) })

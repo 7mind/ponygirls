@@ -221,6 +221,8 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
   }
   /** Nothing to retire: the dummy archive has no search rows. */
   def retire(c: Claim): Unit = ()
+  /** Every publication of this archive is a root. */
+  def publicationParent(c: Claim): Option[PublicationParent] = None
   private def publishGeneration(c: Claim,chunks: List[IndexedChunk],policy: IndexPolicy,format: PassageFormat,problems: Option[ProblemsPublication]): Boolean = synchronized {
     if(!valid(c)) false else {
       Check(catalog.resolve(c.profile).policy==policy,"invalid","publication payload does not match profile policy")

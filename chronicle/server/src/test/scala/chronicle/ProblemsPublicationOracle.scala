@@ -52,9 +52,12 @@ final class ProblemsPublication private[chronicle] (val chunks: List[IndexedChun
       Check(expectedSpans.hasNext && expectedSpans.next()==ProblemSourceSpan(passageOrdinal,spanCount,span),"invalid","publication source span mismatch")
       spanCount+=1
     }
+    var last=Option.empty[Chunk]
     def closePassage(): Unit = if(passageOrdinal>=0) {
       flushSpan()
       val passage=passages(passageOrdinal)
+      // Under the metadata horizon a passage's last piece carries its final summary and tags.
+      Check(last.exists(chunk => chunk.summary==passage.summary && chunk.tags==passage.tags),"invalid","publication final annotations")
       Check(passage.pieceCount==pieceCount && passage.sourceBytes==sourceBytes && passage.spanCount==spanCount && passage.end==pending.get.endPoint,"invalid","publication passage extents/counts")
     }
     chunks.iterator.zip(links.iterator).foreach { (indexed,link) =>
@@ -66,13 +69,11 @@ final class ProblemsPublication private[chronicle] (val chunks: List[IndexedChun
         passageOrdinal=link.passageOrdinal; pieceCount=0; sourceBytes=0; spanCount=0; pending=None
         Check(passages(passageOrdinal).start==span.startPoint,"invalid","publication passage start")
       }
-      val passage=passages(passageOrdinal)
-      Check(chunk.summary==passage.summary && chunk.tags==passage.tags,"invalid","publication final annotations")
       pending match {
         case Some(previous) if previous.messagePosition==span.messagePosition && previous.messageId==span.messageId && previous.end==span.start => pending=Some(previous.copy(end=span.end))
         case _ => flushSpan(); pending=Some(span)
       }
-      pieceCount+=1; sourceBytes+=size
+      pieceCount+=1; sourceBytes+=size; last=Some(chunk)
     }
     closePassage()
     Check(passageOrdinal+1==passages.size && !expectedSpans.hasNext,"invalid","incomplete publication passages/spans")
@@ -80,14 +81,19 @@ final class ProblemsPublication private[chronicle] (val chunks: List[IndexedChun
 }
 object ProblemsPublication {
   private final case class SpanKey(passageId: UUID,ordinal: Long)
+  /** `windows`: per window appended, the passage open after it (its ordinal, summary and tags); `pieceWindows`: each piece's
+    * window. A piece carries its passage's metadata after the window `horizon` windows after its own, or after the last
+    * one (ingest-limits spec §5.6.2): the open passage's there, a closed passage's final one. */
   final class Builder private[ProblemsPublication] (private val metadata: Map[UUID,ProblemPassages.PassageUpdate],private val source: Map[SpanKey,ProblemPassages.SourceSpan],
-    private val pieces: Vector[(ProblemPassages.RetrievalPiece,IndexedChunk)],private val state: Option[ProblemPassages.State],private val context: Vector[ProblemPassages.SourceSpan]) {
+    private val pieces: Vector[(ProblemPassages.RetrievalPiece,IndexedChunk)],private val state: Option[ProblemPassages.State],private val context: Vector[ProblemPassages.SourceSpan],
+    private val horizon: Int,private val windows: Vector[Option[(Int,ProblemRows.Final)]],private val pieceWindows: Vector[Int]) {
     def append(delta: ProblemPassages.Delta,indexed: List[IndexedChunk]): Builder = {
       Check(!state.exists(_.finished) && state.forall(old => old.namespace==delta.state.namespace && old.sessionId==delta.state.sessionId),"invalid","publication builder state")
       Check(indexed.map(_.chunk)==delta.pieces.map(_.chunk).toList && delta.pieces.map(_.ordinal)==(pieces.size.toLong until pieces.size.toLong+indexed.size).toVector &&
         delta.state.nextPieceOrdinal==pieces.size.toLong+indexed.size,"invalid","publication indexed window mismatch")
+      val window=if(delta.state.finished) windows else windows:+delta.state.open.map(open => (open.passage.ordinal,ProblemRows.Final(open.passage.summary,open.passage.tags)))
       new Builder(metadata++delta.passages.map(update => update.passage.id->update),source++delta.spans.map(update => SpanKey(update.passageId,update.ordinal)->update.span),
-        pieces++delta.pieces.zip(indexed),Some(delta.state),context++delta.context)
+        pieces++delta.pieces.zip(indexed),Some(delta.state),context++delta.context,horizon,window,pieceWindows++Vector.fill(indexed.size)(windows.size))
     }
     def result: ProblemsPublication = {
       Check(state.exists(_.finished) && metadata.values.forall(_.closed),"invalid","publication requires finished source")
@@ -96,14 +102,16 @@ object ProblemsPublication {
       val ordinals=passages.map(p => p.id->p.ordinal).toMap
       def ordinal(id: UUID): Int = ordinals.getOrElse(id,throw DomainError("invalid","publication missing passage"))
       val spans=source.iterator.map((key,span) => ProblemSourceSpan(ordinal(key.passageId),key.ordinal,span)).toVector.sortBy(s => (s.passageOrdinal,s.ordinal))
-      val chunks=pieces.map { (piece,indexed) =>
+      val chunks=pieces.zip(pieceWindows).map { case ((piece,indexed),window) =>
         val passage=passages(ordinal(piece.passageId))
-        indexed.copy(chunk=indexed.chunk.copy(summary=passage.summary,tags=passage.tags))
+        val value=windows(math.min(window.toLong+horizon,windows.size-1L).toInt).filter(_._1==passage.ordinal).fold(ProblemRows.Final(passage.summary,passage.tags))(_._2)
+        indexed.copy(chunk=indexed.chunk.copy(summary=value.summary,tags=value.tags))
       }.toList
       new ProblemsPublication(chunks,passages,spans,pieces.map((piece,_) => ProblemPieceLink(piece.chunk.id,ordinal(piece.passageId),piece.sourceSpan)),context)
     }
   }
-  def empty: Builder = new Builder(Map.empty,Map.empty,Vector.empty,None,Vector.empty)
+  def empty: Builder = empty(ProblemRows.metadataHorizonWindows)
+  def empty(horizon: Int): Builder = new Builder(Map.empty,Map.empty,Vector.empty,None,Vector.empty,horizon,Vector.empty,Vector.empty)
   def info(passage: ProblemPassages.Passage): PassageInfo = PassageStorage.info(passage)
   /** The release's PassageStorage.persist and publication chunk loop, unchanged but for the tables' names (`prefix` + the
     * table): the generation's rows exactly as it wrote them. */
@@ -126,13 +134,14 @@ object ProblemsPublication {
   }
   /** An in-memory publication as the rows an archive stages: one step holding every row. */
   def rows(publication: ProblemsPublication): ProblemRows = new ProblemRows {
-    def passages(from: Int)(write: (Int,ProblemRows.Passages) => Unit): ProblemRows.Counts = {
+    def parent: Option[PublicationParent] = None
+    def passages(from: Int)(write: (Int,ProblemRows.Passages) => Unit): ProblemRows.Replayed = {
       if(from==0) write(0,ProblemRows.Passages(Vector.empty,publication.passages,
         publication.spans.map(span => ProblemPassages.SpanUpdate(publication.passages(span.passageOrdinal).id,span.ordinal,span.source)),
         publication.context.zipWithIndex.map((span,ordinal) => (ordinal.toLong,span))))
-      ProblemRows.Counts(1,publication.passages.size,publication.chunks.size)
+      ProblemRows.Replayed(ProblemRows.Counts(1,publication.passages.size,publication.chunks.size),None)
     }
-    def pieces(from: Int,passage: Int => ProblemRows.Final)(write: (Int,Vector[ProblemRows.Piece]) => Unit): Unit =
+    def pieces(from: Int,stored: ProblemRows.Stored)(write: (Int,Vector[ProblemRows.Piece]) => Unit): Unit =
       if(from==0) write(0,publication.chunks.zip(publication.links).zipWithIndex.map { case ((indexed,link),ordinal) =>
         ProblemRows.Piece(link.passageOrdinal,ordinal,indexed.chunk,indexed.vector,link.source)
       }.toVector)
@@ -148,7 +157,10 @@ object ProblemsPublication {
     val ordered=passages.values.toVector.sortBy(_.ordinal)
     val ordinals=ordered.map(passage => passage.id->passage.ordinal).toMap
     val pieces=Vector.newBuilder[ProblemRows.Piece]
-    rows.pieces(0,ordinal => ProblemRows.Final(ordered(ordinal).summary,ordered(ordinal).tags)) { (_,step) => pieces++=step }
+    rows.pieces(0,new ProblemRows.Stored {
+      def passage(ordinal: Int): ProblemRows.Final = ProblemRows.Final(ordered(ordinal).summary,ordered(ordinal).tags)
+      def members(from: Long,until: Long): Vector[ProblemRows.Piece] = throw new AssertionError("an in-memory publication is a root")
+    }) { (_,step) => pieces++=step }
     val values=pieces.result()
     new ProblemsPublication(values.map(piece => IndexedChunk(piece.chunk,piece.vector)).toList,ordered,
       spans.result().map(span => ProblemSourceSpan(ordinals(span.passageId),span.ordinal,span.span)).sortBy(span => (span.passageOrdinal,span.ordinal)),

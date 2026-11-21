@@ -12,9 +12,10 @@ trait PassageReader {
 /** Where a staged generation's run continues (migration 026): its phase and the first step whose rows are not all
   * written; from P2 on also the publication's counts; `invalid`: phase W discarded embedding parts since chunks were
   * written, so they are written again; `lineageTags`: a root whose every batch this release wrote (migration 028), so its
-  * lineage tag counts are complete (a release before 028 rewrites the resume point without it). */
+  * lineage tag counts are complete (a release before 028 rewrites the resume point without it); `parent`: an incremental
+  * publication's parent (spec §5.6.2), None for a root. */
 enum StagedPhase { case Passages,Pieces }
-final case class StagedGeneration(generation: UUID,phase: StagedPhase,step: Int,counts: Option[ProblemRows.Counts],invalid: Boolean=false,lineageTags: Boolean=false)
+final case class StagedGeneration(generation: UUID,phase: StagedPhase,step: Int,counts: Option[ProblemRows.Counts],invalid: Boolean=false,lineageTags: Boolean=false,parent: Option[UUID]=None)
 object PassageStorage {
   /** A staged generation's rows are written in committed batches of at most this many rows and bytes (spec §5.2.4). */
   val rowsPerBatch = 500
@@ -40,7 +41,8 @@ object PassageStorage {
 
   private def resumeJson(staged: StagedGeneration): String =
     io.circe.Json.obj(("step"->io.circe.Json.fromInt(staged.step))::staged.counts.toList.flatMap(value => List("steps"->io.circe.Json.fromInt(value.steps),"passages"->io.circe.Json.fromInt(value.passages),"pieces"->io.circe.Json.fromInt(value.pieces)))++
-      Option.when(staged.invalid)("invalid"->io.circe.Json.True)++Option.when(staged.lineageTags)("lineageTags"->io.circe.Json.True)*).noSpaces
+      Option.when(staged.invalid)("invalid"->io.circe.Json.True)++Option.when(staged.lineageTags)("lineageTags"->io.circe.Json.True)++
+      staged.parent.map(value => "parent"->io.circe.Json.fromString(value.toString))*).noSpaces
   /** The staged generation of the job's run, locked against the sweep for the caller's transaction. */
   def staged(c: Connection,jobId: UUID,runId: UUID): Option[StagedGeneration] =
     Sql.one(c,"SELECT generation,phase,resume FROM ch_staged_generations WHERE job_id=? AND run_id=? AND run_id<>generation FOR NO KEY UPDATE",jobId,runId) { r =>
@@ -48,7 +50,7 @@ object PassageStorage {
       def field(name: String): Option[Int] = resume.get[Int](name).toOption
       val counts=for { steps <- field("steps"); passages <- field("passages"); pieces <- field("pieces") } yield ProblemRows.Counts(steps,passages,pieces)
       StagedGeneration(r.getObject(1,classOf[UUID]),StagedPhase.valueOf(r.getString(2)),field("step").getOrElse(throw DomainError("internal","invalid staged generation resume point")),counts,
-        resume.get[Boolean]("invalid").getOrElse(false),resume.get[Boolean]("lineageTags").getOrElse(false))
+        resume.get[Boolean]("invalid").getOrElse(false),resume.get[Boolean]("lineageTags").getOrElse(false),resume.get[String]("parent").toOption.map(UUID.fromString))
     }
   /** P0: a new staged generation of the claim's run, no row written yet. It is a root (spec §5.6.2): the first version
     * of its own lineage, whose segments hold all its own rows, invisible (`since` NULL) until its switch. */
@@ -61,6 +63,15 @@ object PassageStorage {
     Sql.exec(c,"INSERT INTO ch_staged_generations(generation,job_id,run_id,phase,resume) VALUES(?,?,?,'Passages',?::jsonb)",generation,claim.jobId,claim.runId,resumeJson(staged))
     staged
   }
+  /** P0 of an incremental publication (spec §5.6.2): the next version of the parent's lineage, labeled as a lineage
+    * generation, without a version until its switch; its segment rows are written by its switch. */
+  def stageIncremental(c: Connection,claim: Claim,parent: PublicationParent): StagedGeneration = {
+    val generation=UUID.randomUUID()
+    Sql.exec(c,"INSERT INTO ch_generations(id,session_id,revision,profile,passage_format,passage_count,run_id,lineage) VALUES(?,?,?,?,?,0,?,?)",generation,claim.sessionId,claim.revision,claim.profile,GenerationRows.lineageFormat,claim.runId,parent.lineage)
+    val staged=StagedGeneration(generation,StagedPhase.Passages,0,None,parent=Some(parent.generation))
+    Sql.exec(c,"INSERT INTO ch_staged_generations(generation,job_id,run_id,phase,resume) VALUES(?,?,?,'Passages',?::jsonb)",generation,claim.jobId,claim.runId,resumeJson(staged))
+    staged
+  }
   /** Records where the run continues; false when the run no longer owns the staged generation (abandoned or gone). */
   def resume(c: Connection,claim: Claim,staged: StagedGeneration): Boolean =
     Sql.exec(c,"UPDATE ch_staged_generations SET phase=?,resume=?::jsonb WHERE generation=? AND job_id=? AND run_id=?",staged.phase.toString,resumeJson(staged),staged.generation,claim.jobId,claim.runId)==1
@@ -68,11 +79,14 @@ object PassageStorage {
   def invalidatePieces(c: Connection,claim: Claim): Unit = {
     Sql.exec(c,"""UPDATE ch_staged_generations SET resume=jsonb_set(resume,'{step}','0'::jsonb)||'{"invalid":true}'::jsonb WHERE job_id=? AND run_id=? AND run_id<>generation AND phase='Pieces'""",claim.jobId,claim.runId); ()
   }
-  /** A root's lineage row, written with its last passage batch: its piece count (it has no parent and no cut). A
-    * generation staged by a release before 028 (no lineage) has none. */
-  def writeLineage(c: Connection,generation: UUID,pieces: Int): Unit = {
-    Sql.exec(c,"INSERT INTO ch_generation_lineage(generation,parent,last_window,cut,pieces) SELECT ?,NULL,NULL,NULL,? WHERE EXISTS(SELECT 1 FROM ch_generations WHERE id=? AND lineage=id) ON CONFLICT(generation) DO UPDATE SET pieces=excluded.pieces",
-      generation,pieces.toLong,generation); ()
+  /** A lineage generation's lineage row, written with its last passage batch: its parent (None for a root), piece count and
+    * the cut its lineage's next version continues from (None: it is never a parent). A generation staged by a release
+    * before 028 (no lineage) has none. */
+  def writeLineage(c: Connection,generation: UUID,parent: Option[UUID],cut: Option[ProblemRows.Cut],pieces: Int): Unit = {
+    // NULLIF: an absent parent or cut is stored as NULL.
+    Sql.exec(c,"""INSERT INTO ch_generation_lineage(generation,parent,last_window,cut,pieces) SELECT ?,NULLIF(?,'')::uuid,NULLIF(?,-1),NULLIF(?,'')::jsonb,? WHERE EXISTS(SELECT 1 FROM ch_generations WHERE id=? AND lineage IS NOT NULL)
+      ON CONFLICT(generation) DO UPDATE SET parent=excluded.parent,last_window=excluded.last_window,cut=excluded.cut,pieces=excluded.pieces""",
+      generation,parent.fold("")(_.toString),cut.fold(-1)(_.window),cut.fold("")(value => ProblemRows.Cut.json(value).noSpaces),pieces.toLong,generation); ()
   }
   /** A root's switch (spec §5.6.2): version 0 of its lineage, its segments valid from it; the lineage of the generation it
     * replaces is retired afterwards (`retireLineage`). At most four segment rows change. A generation staged by a release
@@ -89,6 +103,69 @@ object PassageStorage {
       Sql.exec(c,"INSERT INTO ch_lineage_retirements(lineage) VALUES(?) ON CONFLICT DO NOTHING",generation)
     }
     previous.foreach(id => Sql.exec(c,"INSERT INTO ch_lineage_retirements(lineage) SELECT lineage FROM ch_generations WHERE id=? AND lineage IS NOT NULL AND lineage<>? ON CONFLICT DO NOTHING",id,generation))
+  }
+  /** The switch of an incremental publication (spec §5.6.2 step 3, "Membership of a partly unchanged R"): version v+1 of
+    * the parent's lineage (the parent is version v). Per kind its own ranges replace what version v held there: B's
+    * passage row and the passages after it, B's last span and the spans after it, the Context spans from the cut, and its
+    * pieces (the runs of rewritten windows before the cut and every piece from the cut's window on). Each segment row valid
+    * at v that overlaps them is closed (until = v+1) and its parts outside them are inserted again with their origin,
+    * valid from v+1 (so a window whose metadata stayed keeps its rows and ids); its own rows are valid from v+1. The
+    * parent's pieces it supersedes are queued for search-row retirement; its staged tag changes are applied to the
+    * lineage's counts (a count that reaches 0 goes). Returns the segment rows closed and inserted. */
+  def switchIncremental(c: Connection,session: UUID,generation: UUID,parent: PublicationParent): (Int,Int) = {
+    import scala.math.Ordering.Implicits.*
+    type Point=(Int,Long)
+    val cut=parent.cut; val version=parent.version; val next=version+1
+    Check(Sql.exec(c,"UPDATE ch_generations SET lineage_version=? WHERE id=? AND lineage=? AND lineage_version IS NULL",next,generation,parent.lineage)==1,"internal","an incremental publication is not a staged version of its parent's lineage")
+    val end: Point=(GenerationRows.openMajor,GenerationRows.openEnd)
+    val first=cut.state.nextPieceOrdinal
+    // Adjacent ranges merged: consecutive rewritten windows, and the last one with the pieces from the cut's window.
+    def merged(ranges: List[(Point,Point)]): List[(Point,Point)] = ranges.foldLeft(List.empty[(Point,Point)]) { (result,range) =>
+      result match { case (lo,hi)::rest if hi==range._1 => (lo,range._2)::rest; case _ => range::result }
+    }.reverse
+    val rewritten=Sql.rows(c,"SELECT ordinal FROM ch_chunks WHERE generation=? AND ordinal<? ORDER BY ordinal",generation,first)(_.getLong(1))
+      .foldLeft(List.empty[(Long,Long)]) { (runs,ordinal) => runs match { case (lo,hi)::rest if hi==ordinal => (lo,ordinal+1)::rest; case _ => (ordinal,ordinal+1)::runs } }.reverse
+    val open=cut.state.open
+    val own: List[(GenerationRows.Kind,List[(Point,Point)])]=List(
+      GenerationRows.Kind.Piece->merged(rewritten.map((lo,hi) => ((0,lo),(0,hi))):+((0,first),end)),
+      GenerationRows.Kind.Passage->List(((0,open.fold(cut.state.nextPassageOrdinal)(_.passage.ordinal).toLong),end)),
+      GenerationRows.Kind.Span->List((open.fold((cut.state.nextPassageOrdinal,0L))(value => (value.passage.ordinal,value.passage.spanCount-1)),end)),
+      GenerationRows.Kind.Context->List(((0,cut.context),end)))
+    val parentPieces=Sql.one(c,"SELECT pieces FROM ch_generation_lineage WHERE generation=?",parent.generation)(_.getLong(1)).getOrElse(throw DomainError("internal","the parent has no lineage row"))
+    var closed=0; var inserted=0
+    def insert(kind: GenerationRows.Kind,origin: UUID,lo: Point,hi: Point,stagedBy: Option[UUID]): Unit = {
+      Sql.exec(c,"INSERT INTO ch_lineage_segments(lineage,origin,kind,since,until,lo_major,lo,hi_major,hi,staged_by) VALUES(?,?,?,?,NULL,?,?,?,?,NULLIF(?,'')::uuid)",
+        parent.lineage,origin,kind.sql,next,lo._1,lo._2,hi._1,hi._2,stagedBy.fold("")(_.toString))
+      inserted+=1
+    }
+    own.foreach { (kind,ranges) =>
+      val start=ranges.head._1
+      val valid=Sql.rows(c,"""SELECT ctid::text,origin,lo_major,lo,hi_major,hi,staged_by FROM ch_lineage_segments WHERE lineage=? AND kind=? AND since<=? AND (until IS NULL OR until>?)
+        AND (hi_major,hi)>(?,?)""",parent.lineage,kind.sql,version,version,start._1,start._2) { r =>
+        (r.getString(1),r.getObject(2,classOf[UUID]),(r.getInt(3),r.getLong(4)): Point,(r.getInt(5),r.getLong(6)): Point,Option(r.getObject(7,classOf[UUID])))
+      }
+      valid.foreach { (ctid,origin,lo,hi,stagedBy) =>
+        val overlapping=ranges.filter((from,until) => from<hi && lo<until)
+        if(overlapping.nonEmpty) {
+          Sql.exec(c,"UPDATE ch_lineage_segments SET until=? WHERE ctid=?::tid",next,ctid); closed+=1
+          // The parts of the row outside this version's own ranges stay members.
+          val (kept,last)=overlapping.foldLeft((List.empty[(Point,Point)],lo)) { case ((parts,from),(ownFrom,ownUntil)) =>
+            (if(from<ownFrom) (from,ownFrom)::parts else parts,if(ownUntil>from) ownUntil else from)
+          }
+          ((if(last<hi) (last,hi)::kept else kept).reverse).foreach((from,until) => insert(kind,origin,from,until,stagedBy))
+          if(kind==GenerationRows.Kind.Piece) overlapping.foreach { (ownFrom,ownUntil) =>
+            val superseded=(math.max(lo._2,ownFrom._2),math.min(math.min(hi._2,ownUntil._2),parentPieces))
+            if(superseded._1<superseded._2) Sql.exec(c,"INSERT INTO ch_search_retirements(session_id,origin,piece_lo,piece_hi) VALUES(?,?,?,?)",session,origin,Math.toIntExact(superseded._1),Math.toIntExact(superseded._2))
+          }
+        }
+      }
+      ranges.foreach((from,until) => insert(kind,generation,from,until,Some(generation)))
+    }
+    Sql.exec(c,"""MERGE INTO ch_lineage_tags t USING (SELECT tag,delta FROM ch_lineage_tag_deltas WHERE generation=?) d ON t.lineage=? AND t.tag=d.tag
+      WHEN MATCHED AND t.pieces+d.delta=0 THEN DELETE WHEN MATCHED THEN UPDATE SET pieces=t.pieces+d.delta WHEN NOT MATCHED THEN INSERT(lineage,tag,pieces) VALUES(?,d.tag,d.delta)""",
+      generation,parent.lineage,parent.lineage)
+    Sql.exec(c,"DELETE FROM ch_lineage_tag_deltas WHERE generation=?",generation)
+    (closed,inserted)
   }
   /** Marks a staged generation abandoned: no run resumes it, and its rows go in bounded statements. A staged generation
     * whose job has none of its run's chances left (`job` absent): its job ended, was retried as another run or is gone. */
@@ -147,11 +224,13 @@ object PassageStorage {
       rows.flatMap(_.spans).map(span => List(generation,span.passageId,span.ordinal,span.span.messageId,span.span.messagePosition,span.span.start,span.span.end)))
     batch(c,"INSERT INTO ch_context_spans VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING",rows.flatMap(_.context).map((ordinal,span) => List(generation,ordinal,span.messageId,span.messagePosition,span.start,span.end)))
   }
-  /** P2 rows: chunks as the in-memory publication stored them (its JSON, document and vector text) and their pieces, and
-    * the root's lineage tag counts (pieces per tag) of the chunks this batch inserts: a resumed step writes rows again
-    * that an earlier batch committed with their counts. A generation staged by a release before 028 (no lineage) has
-    * none. */
-  def writePieces(c: Connection,generation: UUID,pieces: Seq[ProblemRows.Piece]): Unit = if(pieces.nonEmpty) {
+  /** P2 rows: chunks as the in-memory publication stored them (its JSON, document and vector text) and their pieces, the
+    * generation tags of a root (the distinct tags of its chunks, as the in-memory publication stored them), and the tag
+    * counts of the chunks this batch inserts (a resumed step writes rows again that an earlier batch committed with their
+    * counts): a root's lineage tag counts (pieces per tag), an incremental publication's staged changes of its lineage's
+    * counts (spec §5.6.2: + the tags of its pieces, - those of the parent's pieces they replace). A generation staged by a
+    * release before 028 (no lineage) has no counts. */
+  def writePieces(c: Connection,generation: UUID,pieces: Seq[ProblemRows.Piece],parent: Option[PublicationParent]): Unit = if(pieces.nonEmpty) {
     val ordinals=pieces.map(_.ordinal)
     val present=Sql.rows(c,"SELECT id FROM ch_chunks WHERE generation=? AND ordinal>=? AND ordinal<=?",generation,ordinals.min,ordinals.max)(_.getObject(1,classOf[UUID])).toSet
     batch(c,"INSERT INTO ch_chunks(id,generation,value,document,embedding,ordinal) VALUES(?,?,?::jsonb,to_tsvector('english',?),?::vector,?) ON CONFLICT DO NOTHING",pieces.map { piece =>
@@ -159,13 +238,43 @@ object PassageStorage {
       List(chunk.id,generation,Wire.encode(Chunk.codecJson,chunk).noSpaces,s"${chunk.text} ${chunk.summary} ${chunk.tags.mkString(" ")}",piece.vector.mkString("[",",","]"),piece.ordinal)
     })
     batch(c,"INSERT INTO ch_problem_pieces(generation,chunk_id,passage_ordinal,piece_ordinal) VALUES(?,?,?,?) ON CONFLICT DO NOTHING",pieces.map(piece => List(generation,piece.chunk.id,piece.passageOrdinal,piece.ordinal)))
-    val tags=pieces.filterNot(piece => present(piece.chunk.id)).flatMap(_.chunk.tags.distinct).groupMapReduce(identity)(_ => 1L)(_+_)
-    batch(c,"INSERT INTO ch_lineage_tags(lineage,tag,pieces) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM ch_generations WHERE id=? AND lineage=id) ON CONFLICT(lineage,tag) DO UPDATE SET pieces=ch_lineage_tags.pieces+excluded.pieces",
-      tags.toList.sortBy(_._1).map((tag,count) => List(generation,tag,count,generation)))
+    val inserted=pieces.filterNot(piece => present(piece.chunk.id))
+    def counts(tags: Seq[List[String]]): Map[String,Long] = tags.flatMap(_.distinct).groupMapReduce(identity)(_ => 1L)(_+_)
+    parent match {
+      case None =>
+        batch(c,"INSERT INTO ch_generation_tags(generation,tag) VALUES(?,?) ON CONFLICT DO NOTHING",pieces.flatMap(_.chunk.tags).distinct.map(tag => List(generation,tag)))
+        batch(c,"INSERT INTO ch_lineage_tags(lineage,tag,pieces) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM ch_generations WHERE id=? AND lineage=id) ON CONFLICT(lineage,tag) DO UPDATE SET pieces=ch_lineage_tags.pieces+excluded.pieces",
+          counts(inserted.map(_.chunk.tags)).toList.sortBy(_._1).map((tag,count) => List(generation,tag,count,generation)))
+      case Some(value) if inserted.nonEmpty =>
+        val replacing=inserted.map(_.ordinal).toSet
+        val replaced=Sql.rows(c,s"""SELECT ch.ordinal,ch.value->'tags' FROM (${GenerationRows.members(GenerationRows.Kind.Piece)}) m JOIN ch_chunks ch ON ch.generation=m.origin
+          AND ch.ordinal>=greatest(m.lo,?) AND ch.ordinal<least(m.hi,?)""",value.generation,replacing.min.toLong,replacing.max.toLong+1)(r => (r.getInt(1),Wire.parse(r.getString(2)).as[List[String]].getOrElse(throw DomainError("internal","invalid stored chunk tags"))))
+          .collect { case (ordinal,tags) if replacing(ordinal) => tags }
+        val delta=(counts(inserted.map(_.chunk.tags)).toList++counts(replaced).toList.map((tag,count) => (tag,-count))).groupMapReduce(_._1)(_._2)(_+_).filter(_._2!=0L)
+        batch(c,"INSERT INTO ch_lineage_tag_deltas(generation,tag,delta) VALUES(?,?,?) ON CONFLICT(generation,tag) DO UPDATE SET delta=ch_lineage_tag_deltas.delta+excluded.delta",
+          delta.toList.sortBy(_._1).map((tag,count) => List(generation,tag,count)))
+      case Some(_) => ()
+    }
   }
-  /** The root's lineage tag counts deleted, a bounded statement; false once none is left (its chunks are written again). */
+  /** The parent's pieces (its member chunks) with ordinals in [from, until), in ordinal order, with their passage ordinals,
+    * vectors and source positions (an epoch revision's message positions). */
+  def members(c: Connection,parent: UUID,session: UUID,revision: Int,from: Long,until: Long): Vector[ProblemRows.Piece] =
+    Sql.rows(c,s"""SELECT ch.ordinal,ch.value,ch.embedding::text,pc.passage_ordinal,em.position FROM (${GenerationRows.members(GenerationRows.Kind.Piece)}) m
+      JOIN ch_chunks ch ON ch.generation=m.origin AND ch.ordinal>=greatest(m.lo,?) AND ch.ordinal<least(m.hi,?)
+      JOIN ch_problem_pieces pc ON pc.generation=ch.generation AND pc.chunk_id=ch.id
+      JOIN ch_revisions r ON r.session_id=? AND r.revision=?
+      JOIN ch_epoch_messages em ON em.epoch=r.epoch AND em.message_id=ch.value->'spans'->0->>'messageId'
+      ORDER BY ch.ordinal""",parent,from,until,session,revision) { r =>
+      val chunk=Wire.decode(Chunk.codecJson,Sql.json(r,"value"))
+      val vector=r.getString(3).stripPrefix("[").stripSuffix("]").split(',').toVector.map(_.toDouble)
+      val span=chunk.spans match { case List(value) => value; case _ => throw DomainError("internal","a stored piece without its one source span") }
+      ProblemRows.Piece(r.getInt(4),r.getInt(1),chunk,vector,ProblemPassages.SourceSpan(span.messageId,r.getInt(5),span.start,span.end))
+    }.toVector
+  /** The tag counts of the staged generation's chunks deleted, a bounded statement: a root's lineage tag counts, an
+    * incremental publication's staged changes; false once none is left (its chunks are written again). */
   def deleteLineageTagsStep(c: Connection,generation: UUID): Boolean =
-    Sql.exec(c,s"DELETE FROM ch_lineage_tags WHERE ctid=ANY(ARRAY(SELECT ctid FROM ch_lineage_tags WHERE lineage=? LIMIT $rowsPerStatement))",generation)>0
+    Sql.exec(c,s"DELETE FROM ch_lineage_tags WHERE ctid=ANY(ARRAY(SELECT ctid FROM ch_lineage_tags WHERE lineage=? LIMIT $rowsPerStatement))",generation)>0 ||
+      Sql.exec(c,s"DELETE FROM ch_lineage_tag_deltas WHERE ctid=ANY(ARRAY(SELECT ctid FROM ch_lineage_tag_deltas WHERE generation=? LIMIT $rowsPerStatement))",generation)>0
   /** Final summaries and tags of the staged passages from ordinal `from` on. */
   def finals(c: Connection,generation: UUID,from: Int,limit: Int): Vector[ProblemRows.Final] =
     Sql.rows(c,"SELECT value FROM ch_problem_passages WHERE generation=? AND ordinal>=? AND ordinal<? ORDER BY ordinal",generation,from,from+limit) { r =>

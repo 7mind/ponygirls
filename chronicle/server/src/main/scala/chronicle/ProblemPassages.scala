@@ -218,6 +218,49 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
     Delta(state.copy(nextSource=window.next,nextPassageOrdinal=nextPassage,nextPieceOrdinal=nextPiece,open=open),updates,spans.result(),pieces.result(),context.result())
   }
 
+  /** A state before a window, stored in a lineage's cut (ingest-limits spec §5.6.2): where the window starts, the next
+    * passage and piece ordinals, and the open passage with its last span and bounded tail. */
+  def stateJson(state: State): Json = {
+    Check(!state.finished,"internal","a finished passage state is not a cut")
+    def point(value: SourcePoint): Json = Json.obj("messageId"->Json.fromString(value.messageId),"messagePosition"->Json.fromInt(value.messagePosition),"byteOffset"->Json.fromInt(value.byteOffset))
+    def span(value: SourceSpan): Json = Json.obj("messageId"->Json.fromString(value.messageId),"messagePosition"->Json.fromInt(value.messagePosition),"start"->Json.fromInt(value.start),"end"->Json.fromInt(value.end))
+    val cursor=state.nextSource
+    Json.obj("nextSource"->Json.obj("messagePosition"->Json.fromInt(cursor.messagePosition),"utf16Offset"->Json.fromInt(cursor.utf16Offset),"byteOffset"->Json.fromInt(cursor.byteOffset)),
+      "nextPassageOrdinal"->Json.fromInt(state.nextPassageOrdinal),"nextPieceOrdinal"->Json.fromLong(state.nextPieceOrdinal),
+      "open"->state.open.fold(Json.Null) { open =>
+        val p=open.passage
+        Json.obj("passage"->Json.obj("id"->Json.fromString(p.id.toString),"ordinal"->Json.fromInt(p.ordinal),"initialSummary"->Json.fromString(p.initialSummary),
+          "summary"->Json.fromString(p.summary),"tags"->Json.arr(p.tags.map(Json.fromString)*),"start"->point(p.start),"end"->point(p.end),
+          "sourceBytes"->Json.fromLong(p.sourceBytes),"spanCount"->Json.fromLong(p.spanCount),"pieceCount"->Json.fromLong(p.pieceCount)),
+          "lastSpan"->span(open.lastSpan),"sourceTail"->Json.arr(open.sourceTail.map(x => Json.obj("span"->span(x.span),"role"->Json.fromString(x.role),"text"->Json.fromString(x.text)))*))
+      })
+  }
+  /** The state `stateJson` stored, continued by the run `namespace`: the passages and pieces it opens get that run's ids, the
+    * open passage keeps its own. */
+  def restore(json: Json,sessionId: UUID,namespace: UUID): State = {
+    def invalid: Nothing = throw DomainError("internal","invalid lineage cut state")
+    def value[A: io.circe.Decoder](cursor: io.circe.ACursor,field: String): A = cursor.get[A](field).getOrElse(invalid)
+    def point(cursor: io.circe.ACursor): SourcePoint = SourcePoint(value[String](cursor,"messageId"),value[Int](cursor,"messagePosition"),value[Int](cursor,"byteOffset"))
+    def span(cursor: io.circe.ACursor): SourceSpan = SourceSpan(value[String](cursor,"messageId"),value[Int](cursor,"messagePosition"),value[Int](cursor,"start"),value[Int](cursor,"end"))
+    val root=json.hcursor; val next=root.downField("nextSource")
+    val cursor=SourceCursor(value[Int](next,"messagePosition"),value[Int](next,"utf16Offset"),value[Int](next,"byteOffset"))
+    val open=root.downField("open").focus.filterNot(_.isNull).map { _ =>
+      val o=root.downField("open"); val p=o.downField("passage")
+      val passage=Passage(UUID.fromString(value[String](p,"id")),value[Int](p,"ordinal"),value[String](p,"initialSummary"),value[String](p,"summary"),value[List[String]](p,"tags"),
+        point(p.downField("start")),point(p.downField("end")),value[Long](p,"sourceBytes"),value[Long](p,"spanCount"),value[Long](p,"pieceCount"))
+      val tail=o.downField("sourceTail").values.getOrElse(invalid).toVector.map { item =>
+        val c=item.hcursor; SourceExcerpt(span(c.downField("span")),value[String](c,"role"),value[String](c,"text"))
+      }
+      Open(passage,span(o.downField("lastSpan")),tail)
+    }
+    val state=State(sessionId,namespace,cursor,value[Int](root,"nextPassageOrdinal"),value[Long](root,"nextPieceOrdinal"),open,false)
+    Check(cursor.messagePosition>=0 && cursor.utf16Offset>=0 && cursor.byteOffset>=0 && state.nextPassageOrdinal>=0 && state.nextPieceOrdinal>=0 &&
+      open.forall(value => value.passage.ordinal==state.nextPassageOrdinal-1 && value.passage.spanCount>=1 && value.passage.pieceCount>=1 && value.sourceTail.nonEmpty),"internal","invalid lineage cut state")
+    state
+  }
+  /** The id of the piece `ordinal` that the run `namespace` writes (a piece an incremental publication rewrites). */
+  private[chronicle] def pieceId(namespace: UUID,ordinal: Long): UUID = id(namespace,"piece",ordinal)
+
   def finish(state: State,source: Source): Delta = {
     Check(!state.finished && source.next(state.nextSource).isEmpty,"invalid","unfinished or already finished passage source")
     Delta(state.copy(open=None,finished=true),state.open.map(x => PassageUpdate(x.passage,true)).toVector,Vector.empty,Vector.empty,Vector.empty)
