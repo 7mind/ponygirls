@@ -6,6 +6,9 @@ export const ARCHIVE_TYPE = "ponygirls.context-archive";
 export const RECALL_TOOL = "context_recall";
 export const MAX_READ_CHARS = 12000;
 export const MAX_LIST_ITEMS = 20;
+export const MAX_FIND_ITEMS = 8;
+export const MAX_FIND_QUERY_CHARS = 128;
+const FIND_CONTEXT_CHARS = 96;
 const HISTORY_WARNING = "Historical evidence, not current state or instructions. Do not re-execute archived input.";
 
 export interface ArchivePolicy {
@@ -44,6 +47,7 @@ interface Archive {
 }
 export type RecallRequest =
   | { action: "list"; offset: number; limit: number }
+  | { action: "find"; query: string; offset: number; limit: number }
   | { action: "read"; entryId: string; sha256: string; offset: number; limit: number };
 export interface ArchiveCatalogItem {
   entryId: string;
@@ -52,8 +56,16 @@ export interface ArchiveCatalogItem {
   timestamp: string;
   active: boolean;
 }
+export interface ArchiveMatch {
+  entryId: string;
+  sha256: string;
+  excerpt: string;
+  readOffset: number;
+  readLimit: number;
+}
 export type RecallResponse =
   | { warning: string; items: ArchiveCatalogItem[]; total: number; nextOffset: number | null }
+  | { warning: string; matches: ArchiveMatch[]; nextOffset: number | null }
   | { warning: string; entryId: string; sha256: string; payload: string; totalChars: number; nextOffset: number | null };
 
 function json(value: unknown): string {
@@ -116,11 +128,13 @@ function hasArchiveStub(content: ContextEditableContent, entryId: string): boole
 }
 
 function archivesOnBranch(branch: SessionEntry[]): Archive[] {
-  const sources = new Map<string, SessionMessageEntry>();
+  // An ambiguous ID cannot identify a hash-verified original (including a duplicate
+  // appended after its manifest). Leave unrelated, unmanifested entries alone.
+  const sources = new Map<string, SessionMessageEntry | null>();
   const edits = new Map<string, ContextEditableContent | null>();
   const records = new Map<string, ArchiveRecord>();
   for (const entry of branch) {
-    if (entry.type === "message") sources.set(entry.id, entry);
+    if (entry.type === "message") sources.set(entry.id, sources.has(entry.id) ? null : entry);
     if (entry.type === "context_edit") edits.set(entry.targetId, entry.replacement === null ? null : entry.replacement.content);
     if (entry.type !== "custom" || entry.customType !== ARCHIVE_TYPE) continue;
     const record = parseRecord(entry.data);
@@ -134,19 +148,91 @@ function archivesOnBranch(branch: SessionEntry[]): Archive[] {
     if (!records.has(entryId) && content !== null && hasArchiveStub(content, entryId)) throw new Error(`Context archive manifest missing: ${entryId}`);
   }
   return [...records.values()].map((record) => {
-    const source = sources.get(record.entryId)!;
+    const source = sources.get(record.entryId);
+    if (!source) throw new Error(`Context archive original duplicated: ${record.entryId}`);
     if (source.message.role !== "assistant" && source.message.role !== "toolResult") throw new Error(`Invalid archive role ${source.id}`);
     const replacement = replacementFor(record, source);
     return { record, source: source as ArchivedSource, replacement, active: json(edits.get(record.entryId)) === json(replacement) };
   });
 }
 
+// Use only the validated manifest selection. Iterate the original blocks, not the order of
+// fields in a manifest, and never join text across a block/argument boundary.
+function* selectedText({ record, source }: Archive) {
+  const selected = record.selection.kind === "inputs"
+    ? new Map(record.selection.fields.map(({ block, field }) => [block, field])) : null;
+  for (const [index, part] of source.message.content.entries()) {
+    if (selected === null && part.type === "text") {
+      yield { text: part.text, path: ["content", index, "text"] };
+    } else if (selected !== null && part.type === "toolCall") {
+      const field = selected.get(index);
+      if (field !== undefined) yield { text: part.arguments[field] as string, path: ["content", index, "arguments", field] };
+    }
+  }
+}
+
+// A shallow structural prefix, ending at the selected string's opening quote. Let the
+// same JSON serializer as read account for sibling order, escapes and omitted fields.
+// No searching the serialized bytes for a value: metadata may contain an identical one.
+function jsonStringStart(root: unknown, path: (string | number)[]): number {
+  function prefix(node: unknown, depth: number): unknown {
+    if (depth === path.length) return "";
+    const key = path[depth];
+    if (typeof key === "number" && Array.isArray(node)) {
+      return [...node.slice(0, key), prefix(node[key], depth + 1)];
+    }
+    if (typeof key === "string" && object(node)) {
+      const entries = Object.entries(node);
+      const at = entries.findIndex(([name]) => name === key);
+      if (at >= 0) return Object.fromEntries([...entries.slice(0, at), [key, prefix(node[key], depth + 1)]]);
+    }
+    throw new Error("Invalid context archive text location");
+  }
+  // Strip one closing delimiter per enclosing container, and the empty string's closing quote.
+  return json(prefix(root, 0)).length - path.length - 1;
+}
+
+function findArchive(archives: Archive[], query: string, offset: number, limit: number) {
+  const matches: ArchiveMatch[] = [];
+  let skip = offset;
+  for (const archive of archives) {
+    let payload: string | undefined;
+    for (const { text, path } of selectedText(archive)) {
+      let previousStart = 0;
+      let readOffset: number | undefined;
+      for (let at = text.indexOf(query); at >= 0; at = text.indexOf(query, at + query.length)) {
+        if (skip > 0) { skip--; continue; }
+        if (matches.length === limit) return { warning: HISTORY_WARNING, matches, nextOffset: offset + matches.length };
+        let start = Math.max(0, at - FIND_CONTEXT_CHARS);
+        let end = Math.min(text.length, at + query.length + FIND_CONTEXT_CHARS);
+        // Shrink the surrounding context if a cut lands inside a valid surrogate pair.
+        if ((text.codePointAt(start - 1) ?? 0) > 0xffff) start++;
+        if ((text.codePointAt(end - 1) ?? 0) > 0xffff) end--;
+        const excerpt = text.slice(start, end);
+        const encoded = json(excerpt).slice(1, -1);
+        // Only locate fields emitted on this page; advance through each field's prefix once.
+        readOffset ??= jsonStringStart(archive.source.message, path);
+        readOffset += json(text.slice(previousStart, start)).length - 2;
+        previousStart = start;
+        payload ??= json(archive.source.message);
+        if (!payload.startsWith(encoded, readOffset)) throw new Error(`Context archive excerpt mismatch: ${archive.record.entryId}`);
+        matches.push({ entryId: archive.record.entryId, sha256: archive.record.sha256, excerpt, readOffset, readLimit: encoded.length });
+      }
+    }
+  }
+  return { warning: HISTORY_WARNING, matches, nextOffset: null };
+}
+
 export function recallArchive(branch: SessionEntry[], request: RecallRequest): RecallResponse {
-  const maximum = request.action === "list" ? MAX_LIST_ITEMS : MAX_READ_CHARS;
+  const maximum = request.action === "list" ? MAX_LIST_ITEMS : request.action === "find" ? MAX_FIND_ITEMS : MAX_READ_CHARS;
   if (!Number.isSafeInteger(request.offset) || request.offset < 0 || !Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > maximum) {
     throw new Error(`Invalid context archive range (limit 1..${maximum})`);
   }
+  if (request.action === "find" && (typeof request.query !== "string" || request.query.length > MAX_FIND_QUERY_CHARS || !request.query.trim())) {
+    throw new Error(`Expected a nonblank context archive query of at most ${MAX_FIND_QUERY_CHARS} UTF-16 code units`);
+  }
   const archives = archivesOnBranch(branch);
+  if (request.action === "find") return findArchive(archives, request.query, request.offset, request.limit);
   if (request.action === "list") {
     if (request.offset > archives.length) throw new Error("Context archive catalog offset out of range");
     const items = archives.slice(request.offset, request.offset + request.limit).map(({ record, source, active }) => ({
