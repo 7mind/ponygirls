@@ -121,6 +121,17 @@ test("real Pi: find locates old evidence after compaction while OFF, then read v
   assert.deepEqual(f.errors, []);
 });
 
+test("real Pi: find rejects a non-string literal and fractional cursor rather than searching a coerced value", async t => {
+  const f = await fixture(t, 80000); await f.session.prompt("/context-archive on");
+  f.replies.push("First boundary"); await f.session.prompt("Archive eligible evidence");
+  for (const [id, args] of [["not-string", { query: null }], ["not-integer", { query: "OLD_OBSERVATION", offset: 1.9 }]]) {
+    f.replies.push([{ type: "toolCall", id, name: RECALL_TOOL, arguments: { action: "find", ...args } }], "Done");
+    await f.session.prompt("Attempt the requested literal search");
+  }
+  const results = f.manager.getBranch().filter(e => e.type === "message" && e.message.role === "toolResult" && e.message.toolName === RECALL_TOOL);
+  assert.deepEqual(results.map(e => e.message.isError), [true, true]);
+});
+
 test("real Pi: cached provider usage triggers archival and is invalidated after edits and compaction", { timeout: 15000 }, async (t) => {
   const f = await fixture(t, 1000000);
   await f.session.prompt("/context-archive on");

@@ -77,6 +77,18 @@ test("find is literal, case/space/normalization-sensitive, nonoverlapping and ca
   }
 });
 
+test("in-memory text is searched and addressed in its actual serialized representation", () => {
+  class Block {
+    type = "text"; text = "transient cache";
+    toJSON() { return { text: "stored receipt: AX-482", type: this.type }; }
+  }
+  const manager = SessionManager.inMemory(), message = output(); message.content.push(new Block());
+  manifest(manager, manager.appendMessage(message));
+  const branch = manager.getBranch(), found = find(branch, "AX-482");
+  assert.equal(found.matches.length, 1); checkRead(branch, found.matches[0]);
+  assert.deepEqual(find(branch, "transient cache").matches, []);
+});
+
 test("excerpt read coordinates survive escaped JSON and preserve complete astral pairs at window edges", () => {
   const escapes = '"\\\u0000\b\f\n\r\t';
   const query = "🎯".repeat(64); // exactly 128 JS UTF-16 units

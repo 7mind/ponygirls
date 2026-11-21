@@ -71,8 +71,16 @@ export type RecallResponse =
 function json(value: unknown): string {
   return JSON.stringify(value);
 }
+function payloadDigest(payload: string): string {
+  return createHash("sha256").update(payload, "utf8").digest("hex");
+}
 function digest(message: AgentMessage): string {
-  return createHash("sha256").update(json(message), "utf8").digest("hex");
+  return payloadDigest(json(message));
+}
+function verifiedPayload({ record, source }: Archive): string {
+  const payload = json(source.message);
+  if (payloadDigest(payload) !== record.sha256) throw new Error(`Context archive original changed: ${record.entryId}`);
+  return payload;
 }
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -158,7 +166,7 @@ function archivesOnBranch(branch: SessionEntry[]): Archive[] {
 
 // Use only the validated manifest selection. Iterate the original blocks, not the order of
 // fields in a manifest, and never join text across a block/argument boundary.
-function* selectedText({ record, source }: Archive) {
+function* selectedText(record: ArchiveRecord, source: ArchivedSource) {
   const selected = record.selection.kind === "inputs"
     ? new Map(record.selection.fields.map(({ block, field }) => [block, field])) : null;
   for (const [index, part] of source.message.content.entries()) {
@@ -196,8 +204,12 @@ function findArchive(archives: Archive[], query: string, offset: number, limit: 
   const matches: ArchiveMatch[] = [];
   let skip = offset;
   for (const archive of archives) {
-    let payload: string | undefined;
-    for (const { text, path } of selectedText(archive)) {
+    // In-memory tool objects may implement toJSON(). Match the bytes read will return,
+    // including field order and values, not a transient pre-serialization object.
+    const payload = verifiedPayload(archive);
+    const source: ArchivedSource = { ...archive.source, message: JSON.parse(payload) };
+    replacementFor(archive.record, source); // Validate the selected fields on the serialized form as on reload.
+    for (const { text, path } of selectedText(archive.record, source)) {
       let previousStart = 0;
       let readOffset: number | undefined;
       for (let at = text.indexOf(query); at >= 0; at = text.indexOf(query, at + query.length)) {
@@ -211,10 +223,9 @@ function findArchive(archives: Archive[], query: string, offset: number, limit: 
         const excerpt = text.slice(start, end);
         const encoded = json(excerpt).slice(1, -1);
         // Only locate fields emitted on this page; advance through each field's prefix once.
-        readOffset ??= jsonStringStart(archive.source.message, path);
+        readOffset ??= jsonStringStart(source.message, path);
         readOffset += json(text.slice(previousStart, start)).length - 2;
         previousStart = start;
-        payload ??= json(archive.source.message);
         if (!payload.startsWith(encoded, readOffset)) throw new Error(`Context archive excerpt mismatch: ${archive.record.entryId}`);
         matches.push({ entryId: archive.record.entryId, sha256: archive.record.sha256, excerpt, readOffset, readLimit: encoded.length });
       }
@@ -244,7 +255,7 @@ export function recallArchive(branch: SessionEntry[], request: RecallRequest): R
   const archive = archives.find((a) => a.record.entryId === request.entryId);
   if (!archive) throw new Error(`No context archive on this branch: ${request.entryId}`);
   if (archive.record.sha256 !== request.sha256) throw new Error("Context archive SHA-256 mismatch");
-  const payload = json(archive.source.message);
+  const payload = verifiedPayload(archive);
   if (request.offset >= payload.length) throw new Error("Context archive payload offset out of range");
   const end = Math.min(payload.length, request.offset + request.limit);
   return { warning: HISTORY_WARNING, entryId: request.entryId, sha256: request.sha256,
