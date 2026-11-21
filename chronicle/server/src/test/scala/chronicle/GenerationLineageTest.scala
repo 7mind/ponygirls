@@ -328,6 +328,91 @@ final class GenerationLineageTest extends munit.FunSuite {
     correlated(probes(),true)
   }}
 
+  /** Rows reader `a` must not find, each holding `hiddenWord` and a vector nearer `hiddenVector` than any visible row: of `s1` (a lineage at version 2) the superseded pieces of its root and version 1 (outside version 2's piece
+    * segments) and a staged version 3's pieces; of `s2`, re-published as a new root, the replaced root's pieces, marked
+    * retired and not yet purged; every row of `private` (owner `c`, grown once), 400 more of its own pieces among them, more
+    * than a first index pass meets. `s2`'s published root holds 200 more pieces. `otherOrigin`: the index's rows of a
+    * generation other than their source's published one. */
+  private final case class Hidden(s1: UUID,s2: UUID,secret: UUID,invisible: Set[UUID],otherOrigin: Long,visibleOwn: Long)
+  private val hiddenWord="hiddenword"
+  private val hiddenVector=List(0.0,0.0,1.0)
+  private def hidden(f: Fixture): Hidden = {
+    f.db.transaction(c => Sql.exec(c,"TRUNCATE ch_groups CASCADE"))
+    val s1=root(f,"a")
+    val s2=root(f,"a")
+    val replaced=published(f,s2)
+    f.archive.ingest("a",request(7,Some(f.archive.headSnapshot("a",s2).source),1))
+    val claim=f.archive.claim(Set(f.config.profile),ClaimScope.Owner("a"),300).get
+    assertEquals(claim.sessionId,s2)
+    assert(f.archive.publishProblems(claim,ProblemsPublication.rows(ProblemPublicationFixtures.build(claim,decide))))
+    val secret=root(f,"c")
+    grow(f,s1,revise(f,"a",s1,8),"revised goal","t-revised",Some(("interim goal","t-interim",7)))
+    val g2=grow(f,s1,revise(f,"a",s1,9),"final goal","t-final",Some(("epsilon goal","t-epsilon",8)))
+    val job=f.db.transaction(c => Sql.one(c,"SELECT id FROM ch_jobs WHERE session_id=? ORDER BY revision DESC LIMIT 1",s1)(uuid(_,1))).get
+    val staged=grow(f,s1,f.archive.session("a",s1).revision,"secret goal","t-secret",None,Some(job))
+    grow(f,secret,revise(f,"c",secret,8),"revised goal","t-revised",Some(("interim goal","t-interim",7)))
+    f.db.transaction { c =>
+      Sql.exec(c,"UPDATE ch_generations SET retired=true WHERE id=?",replaced)
+      List((published(f,s2),200),(f.archive.session("c",secret).view.generationId.get,400)).foreach { (generation,count) =>
+        Sql.exec(c,"""INSERT INTO ch_chunks(id,generation,value,document,embedding,ordinal) SELECT x.id,?,model.value||jsonb_build_object('id',x.id),model.document,model.embedding,1000+x.i
+          FROM (SELECT i,gen_random_uuid() AS id FROM generate_series(1,?) i) x,(SELECT value,document,embedding FROM ch_chunks WHERE generation=? ORDER BY ordinal LIMIT 1) model""",generation,count,generation)
+        Sql.exec(c,"INSERT INTO ch_search_chunks(id,generation,session_id,revision,profile,document,embedding,ordinal) SELECT ch.id,ch.generation,g.session_id,g.revision,g.profile,ch.document,ch.embedding,ch.ordinal FROM ch_chunks ch JOIN ch_generations g ON g.id=ch.generation WHERE g.id=? AND ch.ordinal>=1000",generation)
+      }
+    }
+    val (invisible,otherOrigin,visibleOwn)=f.db.transaction { c =>
+      val superseded=s"sc.session_id=? AND sc.generation NOT IN(?,?) AND NOT EXISTS(SELECT 1 FROM (${GenerationRows.members(Kind.Piece)}) m WHERE m.origin=sc.generation AND sc.ordinal>=m.lo AND sc.ordinal<m.hi)"
+      val rows=Sql.rows(c,s"SELECT sc.id,sc.generation=? AS staged,sc.generation=? AS retired,s.owner='c' AS private,$superseded AS superseded FROM ch_search_chunks sc JOIN ch_sources s ON s.id=sc.session_id",staged,replaced,s1,g2,staged,g2)(r =>
+        (uuid(r,1),List(2,3,4,5).filter(r.getBoolean(_)).map(List("","","staged","retired","private","superseded")(_))))
+      // By construction: the root's omega pieces and version 1's interim piece are outside version 2's segments; each
+      // hidden row is hidden for one reason.
+      val reasons=rows.flatMap(_._2).groupBy(identity).view.mapValues(_.size).toMap
+      assertEquals(reasons-"private",Map("staged"->1,"retired"->6,"superseded"->3))
+      assert(reasons("private")>400 && rows.forall(_._2.size<=1),reasons.toString)
+      val invisible=rows.filter(_._2.nonEmpty).map(_._1).toSet
+      // Vectors on a cone around the query (hidden rows within 0.09 rad, visible ones at 0.3-0.52), the rows re-inserted
+      // hidden first and the vector index rebuilt in that order: an HNSW graph built over interleaved groups can leave one
+      // group unreachable from the other, which no visibility rule explains.
+      Sql.exec(c,s"""CREATE TEMP TABLE marked ON COMMIT DROP AS SELECT sc.id,sc.generation,sc.session_id,sc.revision,sc.profile,sc.ordinal,h.hidden,h.k,
+        CASE WHEN h.hidden THEN sc.document||to_tsvector('english','$hiddenWord') ELSE sc.document END AS document,ARRAY[sin(h.theta)*cos(h.k*2.399),sin(h.theta)*sin(h.k*2.399),cos(h.theta)]::vector AS embedding
+        FROM ch_search_chunks sc JOIN (SELECT id,hidden,k,CASE WHEN hidden THEN 0.002+0.0002*k ELSE 0.3+0.001*k END AS theta FROM (SELECT id,hidden,row_number() OVER(PARTITION BY hidden ORDER BY id) AS k
+        FROM (SELECT sc.id,(sc.generation=? OR sc.generation=? OR s.owner='c' OR $superseded) AS hidden FROM ch_search_chunks sc JOIN ch_sources s ON s.id=sc.session_id) x) y) h ON h.id=sc.id""",
+        staged,replaced,s1,g2,staged,g2)
+      Sql.exec(c,"DELETE FROM ch_search_chunks")
+      Sql.exec(c,"INSERT INTO ch_search_chunks(id,generation,session_id,revision,profile,document,embedding,ordinal) SELECT id,generation,session_id,revision,profile,document,embedding,ordinal FROM marked ORDER BY hidden DESC,k")
+      assertEquals(Sql.rows(c,s"SELECT id FROM ch_search_chunks WHERE document @@ to_tsquery('english','$hiddenWord')")(uuid(_,1)).toSet,invisible)
+      (invisible,Sql.one(c,"SELECT count(*) FROM ch_search_chunks sc JOIN ch_sources s ON s.id=sc.session_id WHERE sc.generation<>s.published")(_.getLong(1)).get,
+        Sql.one(c,"SELECT count(*) FROM ch_search_chunks sc JOIN ch_sources s ON s.id=sc.session_id WHERE sc.generation=s.published AND s.owner='a'")(_.getLong(1)).get)
+    }
+    f.db.transaction { c => Sql.exec(c,s"REINDEX INDEX ch_search_hnsw_d${f.config.embedding.dimensions}"); Sql.exec(c,"ANALYZE") }
+    Hidden(s1,s2,secret,invisible,otherOrigin,visibleOwn)
+  }
+
+  test("visibility: no search path finds a staged, retired, superseded or unreadable row, through the index, its wider second pass or the exact one; Archive search's semantic and literal matches neither") { database { f =>
+    val h=hidden(f)
+    def chunks(result: SearchResult): Set[UUID] = result.hits.flatMap(_.chunks.map(_.id)).toSet
+    assertEquals(f.search.search("a",SearchQuery(hiddenWord,SearchMode.Lexical,emptyFilter,10,0),None).hits,Nil)
+    assertEquals(f.search.search("a",SearchQuery(hiddenWord,SearchMode.Lexical,emptyFilter.copy(tags=List("t-secret")),10,0),None).hits,Nil)
+    assertEquals(f.search.search("c",SearchQuery(hiddenWord,SearchMode.Lexical,emptyFilter,10,0),None).hits.map(_.session.id),List(h.secret))
+    // A first pass of one tuple meets only the hidden rows nearest the query: the second pass is exact (visible set within
+    // the exact limit) or the wider index scan (exact limit 0).
+    val passes=List("index"->SemanticLegBudget.production,"exact"->SemanticLegBudget(1,10000,10000,64,5000),"wider"->SemanticLegBudget(1,0,10000,64,5000))
+    for((pass,budget) <- passes; mode <- List(SearchMode.Semantic,SearchMode.Hybrid)) {
+      val result=new PostgresSearch(f.db,f.archive,f.config,budget).search("a",SearchQuery(hiddenWord,mode,emptyFilter,10,0),Some(hiddenVector))
+      assertEquals(chunks(result).intersect(h.invisible),Set.empty[UUID],s"$pass $mode")
+      assertEquals(result.hits.map(_.session.id).toSet,Set(h.s1,h.s2),s"$pass $mode")
+    }
+    for((pass,budget) <- passes; expression <- List("mode:semantic goal","goal",s"mode:lexical \"${texts.head}\"")) {
+      val parsed=ArchiveExpression.parse(expression)
+      val vectors=if(parsed.mode==SearchMode.Lexical) Nil else parsed.textOperands.map(ArchiveVector(_,hiddenVector))
+      def archive(reader: String) = new PostgresArchiveIndex(f.db,f.archive,f.config,budget).sourceSearch(reader,ArchiveQuery(expression,ArchiveSort.LastTimestamp,SortDirection.Desc,None,10,true),parsed,vectors,ReadMaterialization.unrestricted)
+      // A semantic witness is read as a piece of the row's published generation: a hidden one fails the search.
+      val found=archive("a")
+      assertEquals(found.page.rows.map(_.head.id).toSet,Set(h.s1,h.s2),s"$pass $expression")
+      assert(found.evidence.flatMap(_.matches).nonEmpty,s"$pass $expression")
+      assertEquals(archive("c").page.rows.map(_.head.id),List(h.secret),s"$pass $expression")
+    }
+  }}
+
   test("exact score ties are ordered by session and ordinal, not by chunk id: two id assignments rank alike in every mode") { database { f =>
     val sessions=List.fill(2)(f.archive.ingest("a",request(2)).sessionId).sortBy(_.toString)
     val text="tie token"
