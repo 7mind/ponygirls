@@ -4,7 +4,7 @@ import { CollectorError, object, string, type Format, type Json, type ParsedMess
 import { checkSize, closeSource, excludedPath, openSource, sameStat, verifyUnchanged, type OpenSource, type SourceFile, type SourceStat } from './discovery.ts';
 import { pathAliases, type AdmissionEvidence } from './controls.ts';
 import { hashRange, readLines, RecordOverLimitError, type Line } from './lines.ts';
-import { CodexDuplicates, messageOf, parseJson, recordOf, TranscriptState, type CodexBalance, type TranscriptIdentity, type TranscriptSnapshot } from './parsers.ts';
+import { CodexDuplicates, messageOf, parseJson, recordOf, TranscriptState, type TranscriptIdentity, type TranscriptSnapshot } from './parsers.ts';
 import { messageDigest, MessageChain, partDigest } from './chain.ts';
 import { Sha256 } from './sha256.ts';
 import type { PrivacyPolicy } from './privacy.ts';
@@ -12,7 +12,6 @@ import type { Exclusions } from './config.ts';
 import { Message, Message_JsonCodec } from '../../generated/typescript/chronicle/api/Message.js';
 import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRuntime.js';
 
-export type { CodexBalance } from './parsers.ts';
 /** Admission evidence of one file: distinct `cwd` values with their aliases (spec §6, review B2). */
 export const EVIDENCE_LIMITS = { values: 1_024, bytes: 1_048_576, valueBytes: 4_096 } as const;
 /** Recorded positions and counts are i32 on the wire. */
@@ -61,11 +60,10 @@ function withSource<T>(file: SourceFile, use: (source: OpenSource) => T): T {
   catch (error) { throw error instanceof CollectorError ? error : new CollectorError('snapshot-read-failed'); }
   finally { if (source !== null) closeSource(source); }
 }
-/** Codex drops an `event_msg` message that duplicates a `response_item` message anywhere in the file: count those of
- * [start, size) first, on top of the balances `stored` holds for the records before `start`. */
-function codexDuplicates(source: OpenSource, policy: PrivacyPolicy, cap: number, maxMessages: number, start: bigint, firstIndex: number, stored?: CodexLookup): CodexDuplicates {
-  const duplicates = new CodexDuplicates(maxMessages, stored);
-  for (const line of readLines(source.descriptor, start, source.size, firstIndex, cap)) {
+/** Codex drops an `event_msg` message that duplicates a `response_item` message anywhere in the file: count those first. */
+function codexDuplicates(source: OpenSource, policy: PrivacyPolicy, cap: number, maxMessages: number): CodexDuplicates {
+  const duplicates = new CodexDuplicates(maxMessages);
+  for (const line of readLines(source.descriptor, 0n, source.size, 0, cap)) {
     if (!line.terminated) break;
     const text = decodeLine(line); if (text === null) continue;
     let value: Json; try { value = JSON.parse(text) as Json; } catch { continue; }
@@ -81,11 +79,14 @@ function codexDuplicates(source: OpenSource, policy: PrivacyPolicy, cap: number,
 export const CHECKPOINT_VERSION = 1;
 /** The diagnostic of an incremental pass whose prefix no longer hashes to the checkpoint's: the file was edited. */
 export const SOURCE_PREFIX_CHANGED = 'source-prefix-changed';
+/** Codex files always take the full pass and keep no checkpoint: an event message is dropped when a response item
+ * anywhere in the file duplicates it, so an addition can change the prefix's messages (ingest-limits C1 round 2). */
+export const CODEX_FULL_PASS = 'codex-full-pass';
 /** Why pass 1 read the whole file (append-limits spec §2.2 item 3): no usable checkpoint, the checkpoint does not
- * describe the head or the current policy and limits, another file, a file that did not grow, an edited prefix, or a
- * Codex addition that changes the prefix's messages. */
+ * describe the head or the current policy and limits, another file, a file that did not grow, an edited prefix, or
+ * a Codex file. */
 export type FullPassReason = 'no-checkpoint' | 'checkpoint-version' | 'checkpoint-invalid' | 'head-moved' | 'upload-queued' | 'policy-changed' | 'limits-changed'
-  | 'file-replaced' | 'not-grown' | typeof SOURCE_PREFIX_CHANGED | 'codex-dedup-changed';
+  | 'file-replaced' | 'not-grown' | typeof SOURCE_PREFIX_CHANGED | typeof CODEX_FULL_PASS;
 /** Pass 1's state at the end of the file it read (append-limits spec §2.2 item 2): everything an incremental pass
  * resumes from. Sizes and offsets are decimal; `rawState` is the redacted raw's SHA-256 state (`Sha256`). */
 export interface PassState {
@@ -93,15 +94,8 @@ export interface PassState {
   recordCount: number; rawBytes: string; rawState: string; messageCount: number; messageChain: string; redacted: boolean;
   transcript: TranscriptSnapshot; excluded: boolean; exclusionOpen: boolean; evidence: EvidenceValues;
 }
-/** Codex duplicate balances `[key, credits, kept]` stored beside a checkpoint: all of the file's (`reset`), or the
- * changes of an incremental pass (a row of zeros is removed). */
-export interface CodexRows { reset: boolean; rows: [string, number, number][] }
-/** What a pass that may be uploaded leaves: the checkpoint state, the Codex rows and — for an incremental Codex pass —
- * the prefix credits pass 2 resumes from. */
-export interface PassEnd { state: PassState; codex: CodexRows | null; codexSeed: Record<string, number> | null }
-export type CodexLookup = (key: string) => CodexBalance | undefined;
-/** Resume from a checkpoint state with its stored Codex balances, or read the whole file for `reason`. */
-export type PassStart = { checkpoint: PassState; codex: CodexLookup } | { reason: FullPassReason };
+/** Resume from a checkpoint state, or read the whole file for `reason`. */
+export type PassStart = { checkpoint: PassState } | { reason: FullPassReason };
 /** `--status` per source: parsed bytes went through the line parser, hashed bytes only through the prefix check. */
 export interface PassReport { kind: 'incremental' | 'full'; reason: FullPassReason | null; parsedBytes: bigint; hashedBytes: bigint }
 
@@ -114,12 +108,12 @@ export interface StreamedTranscript extends TranscriptIdentity {
   prefix: TranscriptPrefix | null;
 }
 /** Pass 1. The outcomes keep the precedence of a whole-file read: evidence and exclusions, the partial last line, then
- * `error` (invalid UTF-8, the first invalid record, identity, messages). `transcript` and `end` are set when nothing
- * refuses it. */
+ * `error` (invalid UTF-8, the first invalid record, identity, messages). `transcript` is set when nothing refuses it,
+ * and then `end`, the checkpoint state, except for Codex. */
 export interface Preflight {
   size: bigint; stat: SourceStat; fileDigest: string;
   evidence: AdmissionEvidence; excluded: boolean; partial: boolean; error: string | null;
-  transcript: StreamedTranscript | null; pass: PassReport; end: PassEnd | null;
+  transcript: StreamedTranscript | null; pass: PassReport; end: PassState | null;
 }
 export interface PreflightInput {
   file: SourceFile; policy: PrivacyPolicy; exclusions: Exclusions; maxFileBytes: number; scanBudget: number;
@@ -141,7 +135,7 @@ export function preflight(input: PreflightInput): Preflight {
     checkSize(source.size, input.maxFileBytes, input.scanBudget);
     let reason: FullPassReason; let hashedBytes = 0n;
     if ('checkpoint' in input.start) {
-      const resumed = resume(input, source, input.start.checkpoint, input.start.codex);
+      const resumed = resume(input, source, input.start.checkpoint);
       if ('seed' in resumed) return pass(input, source, resumed.seed, { kind: 'incremental', reason: null, parsedBytes: source.size - resumed.seed.offset, hashedBytes: resumed.seed.offset });
       ({ reason, hashedBytes } = resumed);
     } else reason = input.start.reason;
@@ -150,29 +144,24 @@ export function preflight(input: PreflightInput): Preflight {
 }
 function fresh(input: PreflightInput, source: OpenSource): Seed {
   const { file, policy } = input;
-  const duplicates = file.root.format === 'codex' ? codexDuplicates(source, policy, input.recordCap, input.maxMessages, 0n, 0) : null;
+  const duplicates = file.root.format === 'codex' ? codexDuplicates(source, policy, input.recordCap, input.maxMessages) : null;
   const evidence = new EvidenceSet(); evidence.record(file.path);
   return { offset: 0n, index: 0, evidence, state: new TranscriptState(file.root.format, file.path), rawHash: new Sha256(), rawBytes: 0n, messageCount: 0, chain: new MessageChain(),
     redacted: false, excluded: false, exclusionOpen: true, fileHash: createHash('sha256'), duplicates, prefix: null };
 }
 /** The seed of an incremental pass, or why the whole file must be read and how much of it was hashed to find out. */
-function resume(input: PreflightInput, source: OpenSource, checkpoint: PassState, codex: CodexLookup): { seed: Seed } | { reason: FullPassReason; hashedBytes: bigint } {
-  const { file, policy } = input; const offset = BigInt(checkpoint.fileOffset);
+function resume(input: PreflightInput, source: OpenSource, checkpoint: PassState): { seed: Seed } | { reason: FullPassReason; hashedBytes: bigint } {
+  const { file } = input; const offset = BigInt(checkpoint.fileOffset);
+  if (file.root.format === 'codex') return { reason: CODEX_FULL_PASS, hashedBytes: 0n };
   if (checkpoint.dev !== source.stat.dev || checkpoint.ino !== source.stat.ino) return { reason: 'file-replaced', hashedBytes: 0n };
   if (source.size <= offset) return { reason: 'not-grown', hashedBytes: 0n };
   const fileHash = createHash('sha256'); hashRange(source.descriptor, 0n, offset, fileHash);
   if (fileHash.copy().digest('hex') !== checkpoint.filePrefixSha256) return { reason: SOURCE_PREFIX_CHANGED, hashedBytes: offset };
-  let duplicates: CodexDuplicates | null = null;
-  if (file.root.format === 'codex') {
-    duplicates = codexDuplicates(source, policy, input.recordCap, input.maxMessages, offset, checkpoint.recordCount, codex);
-    // Above maxMessages response items in the addition alone the file is refused anyway; the full pass measures it.
-    if (duplicates.prefixChanged || duplicates.overflowed) return { reason: 'codex-dedup-changed', hashedBytes: offset };
-  }
   const rawHash = Sha256.resume(checkpoint.rawState); const rawBytes = BigInt(checkpoint.rawBytes);
   const prefix: TranscriptPrefix = { recordCount: checkpoint.recordCount, digest: rawHash.digest(), rawBytes, messageCount: checkpoint.messageCount, messageChain: checkpoint.messageChain, fileOffset: offset };
   return { seed: { offset, index: checkpoint.recordCount, evidence: EvidenceSet.resume(file.path, checkpoint.evidence), state: new TranscriptState(file.root.format, file.path, checkpoint.transcript),
     rawHash, rawBytes, messageCount: checkpoint.messageCount, chain: new MessageChain(checkpoint.messageChain), redacted: checkpoint.redacted, excluded: checkpoint.excluded,
-    exclusionOpen: checkpoint.exclusionOpen, fileHash, duplicates, prefix } };
+    exclusionOpen: checkpoint.exclusionOpen, fileHash, duplicates: null, prefix } };
 }
 /** The per-line code of pass 1 over [seed.offset, size). */
 function pass(input: PreflightInput, source: OpenSource, seed: Seed, report: PassReport): Preflight {
@@ -239,11 +228,9 @@ function pass(input: PreflightInput, source: OpenSource, seed: Seed, report: Pas
   if (error !== null || partial || identity === null) return { ...result, error, transcript: null, end: null };
   if (snapshotAt !== null && snapshotAt === state.recordCount) prefix = snapshot(state.recordCount, source.size);
   const digest = rawHash.digest();
-  const end: PassEnd | null = duplicates?.overflowed === true ? null : {
-    state: { dev: source.stat.dev, ino: source.stat.ino, fileOffset: String(source.size), filePrefixSha256: fileDigest, recordCount: state.recordCount, rawBytes: String(rawBytes),
-      rawState: rawHash.state(), messageCount, messageChain: chain.hex, redacted, transcript: state.snapshot, excluded, exclusionOpen, evidence: evidence.stored },
-    codex: duplicates === null ? null : report.kind === 'full' ? { reset: true, rows: duplicates.rows().filter(([, credits, kept]) => credits > 0 || kept > 0) } : { reset: false, rows: duplicates.rows() },
-    codexSeed: duplicates === null || report.kind === 'full' ? null : Object.fromEntries(duplicates.seed) };
+  const end: PassState | null = format === 'codex' ? null : { dev: source.stat.dev, ino: source.stat.ino, fileOffset: String(source.size), filePrefixSha256: fileDigest,
+    recordCount: state.recordCount, rawBytes: String(rawBytes), rawState: rawHash.state(), messageCount, messageChain: chain.hex, redacted, transcript: state.snapshot, excluded,
+    exclusionOpen, evidence: evidence.stored };
   return { ...result, error, end, transcript: { ...identity, ...state.metadata(), redacted, digest, rawBytes, recordCount: state.recordCount, messageCount, messageChain: chain.hex, prefix } };
 }
 
@@ -256,9 +243,6 @@ export interface PartsInput {
   /** The first record to send and its file offset: the base of an append, or 0. */
   startRecord: number; startOffset: bigint; baseChain: string;
   partBudget: number; maxLargePartBytes: number;
-  /** Codex: the prefix's duplicate credits of an append planned from a checkpoint (pass 2 starts at the base, as for
-   * the other formats); null reads a Codex file from its start. */
-  codexSeed: Record<string, number> | null;
 }
 const codec = BaboonCodecContext.Default;
 const encodeMessage = (m: ParsedMessage): string => JSON.stringify(Message_JsonCodec.instance.encode(codec, new Message(m.id, m.parentId ?? undefined, m.role, m.text, m.timestamp ?? undefined, m.recordIndex)));
@@ -293,20 +277,17 @@ class PartPacker {
   }
 }
 /** Pass 2 — regenerates the parts from the file, from the base of an append or from the start. A Codex file is read
- * from its start unless its append carries the prefix's duplicate credits, because the messages of the delta depend on
- * the duplicates before it. */
+ * from its start, because the messages of the delta depend on the duplicates before it. */
 export function* generateParts(input: PartsInput): Generator<GeneratedPart, PartsSummary> {
   const { file, policy } = input; const format: Format = file.root.format;
   let source: OpenSource | null = null;
   try {
     source = openSource(file);
     if (!sameStat(source.stat, input.stat)) throw new CollectorError('source-changed');
-    const seed = input.codexSeed;
-    const [offset, first] = format !== 'codex' || seed !== null ? [input.startOffset, input.startRecord] : [0n, 0];
-    const duplicates = format === 'codex' ? codexDuplicates(source, policy, input.recordCap, input.maxMessages, offset, first,
-      seed === null ? undefined : key => Object.hasOwn(seed, key) ? { credits: seed[key]!, kept: 0 } : undefined) : null;
+    const duplicates = format === 'codex' ? codexDuplicates(source, policy, input.recordCap, input.maxMessages) : null;
     const packer = new PartPacker(input.partBudget, input.maxLargePartBytes);
     const chain = new MessageChain(input.baseChain); let rawBytes = 0n; let messages = 0;
+    const [offset, first] = format === 'codex' ? [0n, 0] : [input.startOffset, input.startRecord];
     for (const line of readLines(source.descriptor, offset, source.size, first, input.recordCap)) {
       const text = decodeLine(line);
       if (!line.terminated || text === null) throw new CollectorError('source-changed');

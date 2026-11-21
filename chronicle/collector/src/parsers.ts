@@ -103,51 +103,28 @@ export function recordOf(format: Format, parsed: Json, line: string, index: numb
   return { record: { value, id: string(value[format === 'claude' ? 'uuid' : 'id']) ?? (format === 'codex' ? string(payload['id']) : null), parentId: string(value[format === 'claude' ? 'parentUuid' : 'parentId']), index }, raw: cleaned.changed ? JSON.stringify(value) : line, redacted: cleaned.changed };
 }
 
-/** Response items not yet matched by an event message (`credits`) and event messages of the key that were not dropped
- * (`kept`) — at most one of them is nonzero once every event message of the file was consumed. */
-export interface CodexBalance { credits: number; kept: number }
 /** The file-wide multiset of Codex `response_item` messages whose `event_msg` duplicates are dropped, keyed by a
- * digest of role and text, consumed in file order. Above `limit` response items it stops counting (`overflowed`): such
- * a file is over maxMessages. Resumed from a checkpoint, `stored` answers the balances of the prefix (append-limits spec
- * §2.2 item 4): the counted response items are those of the addition, and `prefixChanged` is set when one of them
- * matches an event message the prefix kept — the prefix would lose that message. */
+ * digest of role and text. Above `limit` entries it stops counting (`overflowed`): such a file is over maxMessages. */
 export class CodexDuplicates {
-  private readonly balances = new Map<string, CodexBalance>();
-  private readonly stored: (key: string) => CodexBalance | undefined;
-  /** The prefix's credits of the keys this pass met: what pass 2 of an append resumes from. */
-  readonly seed = new Map<string, number>();
+  private readonly counts = new Map<string, number>();
   private entries = 0;
   overflowed = false;
-  prefixChanged = false;
-  constructor(private readonly limit: number, stored?: (key: string) => CodexBalance | undefined) { this.stored = stored ?? (() => undefined); }
+  constructor(private readonly limit: number) {}
   private static key(message: ParsedMessage): string {
     // UTF-16 code units keep lone surrogates distinct, as the role/text strings themselves are.
     return createHash('sha256').update(message.role, 'utf16le').update('\0', 'utf16le').update(message.text, 'utf16le').digest('base64');
   }
-  private balance(key: string): CodexBalance {
-    let balance = this.balances.get(key);
-    if (balance === undefined) {
-      const stored = this.stored(key); balance = { credits: stored?.credits ?? 0, kept: stored?.kept ?? 0 };
-      if (balance.credits > 0) this.seed.set(key, balance.credits);
-      this.balances.set(key, balance);
-    }
-    return balance;
-  }
   add(record: ParsedRecord): void {
     if (this.overflowed || record.value['type'] !== 'response_item') return;
     const message = normalize(record, 'codex'); if (message === null) return;
-    if (++this.entries > this.limit) { this.overflowed = true; this.balances.clear(); this.seed.clear(); return; }
-    const balance = this.balance(CodexDuplicates.key(message));
-    if (balance.kept > 0) this.prefixChanged = true;
-    balance.credits++;
+    if (++this.entries > this.limit) { this.overflowed = true; this.counts.clear(); return; }
+    const key = CodexDuplicates.key(message); this.counts.set(key, (this.counts.get(key) ?? 0) + 1);
   }
   consume(message: ParsedMessage): boolean {
-    const balance = this.balance(CodexDuplicates.key(message));
-    if (balance.credits > 0) { balance.credits--; return true; }
-    balance.kept++; return false;
+    const key = CodexDuplicates.key(message); const count = this.counts.get(key) ?? 0;
+    if (count > 0) this.counts.set(key, count - 1);
+    return count > 0;
   }
-  /** The balances of the keys this pass met, as `[key, credits, kept]`. */
-  rows(): [string, number, number][] { return [...this.balances].map(([key, { credits, kept }]) => [key, credits, kept]); }
 }
 /** The normalized, redacted message of a record; null without one or for a Codex `event_msg` duplicate. `replaced`
  * counts the unpaired surrogates of its text that became U+FFFD; an identifier with one refuses the file. */

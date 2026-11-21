@@ -7,7 +7,7 @@ import { CollectorError, hash, type CollectorReport, type Diagnostic, type Forma
 import { rejectSymlinks, type SourceStat } from './discovery.ts';
 import { decodeOrigin, type CollectionOrigin } from './admission.ts';
 import { object } from './domain.ts';
-import type { CodexBalance, CodexRows, PassReport, PassState } from './passes.ts';
+import type { PassReport, PassState } from './passes.ts';
 
 export type EntryStatus = 'pending' | 'stopped' | 'conflict';
 export interface Pending {
@@ -45,15 +45,13 @@ export interface Upload {
   status: EntryStatus; attempts: number; nextAt: number; error: string | null;
   /** The size or count the server refused, with its limit (decimal), for `upload-too-large`. */
   refused?: { measured: string; limit: string; unit: 'bytes' | 'messages' };
-  /** A Codex append planned from a checkpoint: the prefix's duplicate credits pass 2 starts from (absent: from 0). */
-  codexSeed?: Record<string, number>;
 }
 /** Pass 1's end state, stored with the upload that declares it (bucket `upload-checkpoint`, key request ID) and promoted
  * at its acknowledgement to the file's checkpoint of the committed head (append-limits spec §2.2 item 2). */
-export interface PendingCheckpoint { version: number; fileId: string; sourceKey: string; policyDigest: string; limitsDigest: string; state: PassState; codex: CodexRows | null }
+export interface PendingCheckpoint { version: number; fileId: string; sourceKey: string; policyDigest: string; limitsDigest: string; state: PassState }
 /** A file's append checkpoint (bucket `append-checkpoint`, key file ID): the state of its committed head `headRevision`
- * with digest `headDigest`; its Codex balances are rows of bucket `codex-dedup`, key `<fileId>/<key digest>`. */
-export interface AppendCheckpoint extends Omit<PendingCheckpoint, 'codex'> { headRevision: number; headDigest: string }
+ * with digest `headDigest`. Self-contained: nothing else in the spool is needed to resume from it. */
+export interface AppendCheckpoint extends PendingCheckpoint { headRevision: number; headDigest: string }
 /** The latest pass 1 over a file (bucket `last-pass`, key file ID), for `--status`. Byte counts are decimal. */
 export interface LastPass { fileId: string; rootId: string; pathId: string; sourceKey: string | null; kind: PassReport['kind']; reason: PassReport['reason']; parsedBytes: string; hashedBytes: string; at: number }
 /** A source file with a record above the record limit: not read again until its stat or a limit changes. */
@@ -103,7 +101,6 @@ export interface Spool {
   /** The receipt's revision becomes the head, with the declared base fields; the upload's checkpoint describes it. */
   ackUpload(requestId: string, revision: number): void;
   appendCheckpoint(fileId: string): AppendCheckpoint | undefined;
-  codexBalance(fileId: string, key: string): CodexBalance | undefined;
   lastPasses(): LastPass[];
   setLastPass(value: LastPass): void;
   /** Removes the upload; its source stays collectable. */
@@ -149,8 +146,6 @@ interface Storage {
   entries<T>(bucket: string): [string, T][];
   keys(bucket: string): string[];
   clear(bucket: string): void;
-  /** Removes the keys of `bucket` that start with `prefix` (ASCII). */
-  removePrefix(bucket: string, prefix: string): void;
   transaction<T>(run: () => T): T;
   readTransaction<T>(read: () => T): T;
   close(): void;
@@ -164,7 +159,6 @@ class InMemoryStorage implements Storage {
   entries<T>(bucket: string): [string, T][] { return [...this.rows].filter(([key]) => key.startsWith(`${bucket}\0`)).map(([key, value]) => [key.slice(bucket.length + 1), JSON.parse(value) as T]); }
   keys(bucket: string): string[] { return [...this.rows.keys()].filter(key => key.startsWith(`${bucket}\0`)).map(key => key.slice(bucket.length + 1)); }
   clear(bucket: string): void { for (const key of this.rows.keys()) if (key.startsWith(`${bucket}\0`)) this.rows.delete(key); }
-  removePrefix(bucket: string, prefix: string): void { for (const key of this.rows.keys()) if (key.startsWith(`${bucket}\0${prefix}`)) this.rows.delete(key); }
   transaction<T>(run: () => T): T { const before = new Map(this.rows); try { return run(); } catch (error) { this.rows = before; throw error; } }
   readTransaction<T>(read: () => T): T { return read(); }
   close(): void {}
@@ -198,10 +192,6 @@ export class SqliteStorage implements Storage {
   entries<T>(bucket: string): [string, T][] { return this.db.prepare('SELECT key, value FROM kv WHERE bucket=? ORDER BY key').all(bucket).map(row => [String(row['key']), JSON.parse(String(row['value'])) as T]); }
   keys(bucket: string): string[] { return this.db.prepare('SELECT key FROM kv WHERE bucket=? ORDER BY key').all(bucket).map(row => String(row['key'])); }
   clear(bucket: string): void { this.db.prepare('DELETE FROM kv WHERE bucket=?').run(bucket); }
-  removePrefix(bucket: string, prefix: string): void {
-    const end = prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
-    this.db.prepare('DELETE FROM kv WHERE bucket=? AND key>=? AND key<?').run(bucket, prefix, end);
-  }
   transaction<T>(run: () => T): T { this.db.exec('BEGIN IMMEDIATE'); try { const result = run(); this.db.exec('COMMIT'); return result; } catch (error) { this.db.exec('ROLLBACK'); throw error; } }
   readTransaction<T>(read: () => T): T { this.db.exec('BEGIN'); try { const result = read(); this.db.exec('COMMIT'); return result; } catch (error) { this.db.exec('ROLLBACK'); throw error; } }
   close(): void { this.db.close(); }
@@ -231,7 +221,7 @@ class DurableSpool implements Spool {
       for (const { fileId } of this.storage.list<SourceRead>('source-read')) if (!discovered.has(fileId)) this.storage.remove('source-read', fileId);
       for (const { fileId } of this.recordsOverLimit()) if (!discovered.has(fileId)) this.storage.remove('record-over-limit', fileId);
       for (const { fileId } of this.identifierRefusals()) if (!discovered.has(fileId)) this.storage.remove('identifier-refusal', fileId);
-      for (const fileId of this.storage.keys('append-checkpoint')) if (!discovered.has(fileId)) { this.storage.remove('append-checkpoint', fileId); this.storage.removePrefix('codex-dedup', `${fileId}/`); }
+      for (const fileId of this.storage.keys('append-checkpoint')) if (!discovered.has(fileId)) this.storage.remove('append-checkpoint', fileId);
       for (const fileId of this.storage.keys('last-pass')) if (!discovered.has(fileId)) this.storage.remove('last-pass', fileId);
       // Left behind when an older collector acknowledged or dropped the upload.
       for (const requestId of this.storage.keys('upload-checkpoint')) if (this.storage.get<Upload>('upload', requestId) === undefined) this.storage.remove('upload-checkpoint', requestId);
@@ -410,20 +400,11 @@ class DurableSpool implements Spool {
       if (this.head(entry.sourceKey).revision !== entry.expectedRevision) throw new CollectorError('source-head-mismatch');
       this.storage.set<Head>('head', entry.sourceKey, { revision, digest: entry.sourceDigest, tombstone: false, ...entry.declared });
       const pending = this.storage.get<PendingCheckpoint>('upload-checkpoint', requestId);
-      if (pending !== undefined) {
-        const { codex, ...checkpoint } = pending;
-        this.storage.set<AppendCheckpoint>('append-checkpoint', pending.fileId, { ...checkpoint, headRevision: revision, headDigest: entry.sourceDigest });
-        if (codex !== null && codex.reset) this.storage.removePrefix('codex-dedup', `${pending.fileId}/`);
-        for (const [key, credits, kept] of codex?.rows ?? []) {
-          if (credits === 0 && kept === 0) this.storage.remove('codex-dedup', `${pending.fileId}/${key}`);
-          else this.storage.set<CodexBalance>('codex-dedup', `${pending.fileId}/${key}`, { credits, kept });
-        }
-      }
+      if (pending !== undefined) this.storage.set<AppendCheckpoint>('append-checkpoint', pending.fileId, { ...pending, headRevision: revision, headDigest: entry.sourceDigest });
       this.removeUpload(entry);
     });
   }
   appendCheckpoint(fileId: string): AppendCheckpoint | undefined { return this.storage.get<AppendCheckpoint>('append-checkpoint', fileId); }
-  codexBalance(fileId: string, key: string): CodexBalance | undefined { return this.storage.get<CodexBalance>('codex-dedup', `${fileId}/${key}`); }
   lastPasses(): LastPass[] { return this.storage.list<LastPass>('last-pass'); }
   setLastPass(value: LastPass): void { this.storage.set<LastPass>('last-pass', value.fileId, value); }
   discardUpload(requestId: string, reason: string): void {

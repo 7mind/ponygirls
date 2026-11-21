@@ -94,7 +94,7 @@ test('UploadParts appends the delta to an unchanged prefix; a Pi v2→v3 rewrite
     assert.equal(attemptsOf(h.server, 'pi-b')[1]?.open.base, undefined);
     assert.equal(attemptsOf(h.server, 'codex-thread')[1]?.open.base, undefined);
     const passes = new Map(h.collector().status().sources.map(source => [source.pathId, source.lastPass]));
-    assert.deepEqual([a, b, c].map(path => [passes.get(hash(path))?.kind, passes.get(hash(path))?.reason]), [['incremental', null], ['full', 'source-prefix-changed'], ['full', 'codex-dedup-changed']]);
+    assert.deepEqual([a, b, c].map(path => [passes.get(hash(path))?.kind, passes.get(hash(path))?.reason]), [['incremental', null], ['full', 'source-prefix-changed'], ['full', 'codex-full-pass']]);
     // Every upload committed the collector's declaration (the server's running digest equals it), and every open was
     // decided locally: none came back as a base mismatch.
     for (const attempt of h.server.attempts.values()) assert.equal(attempt.phase, UploadPhase.Committed);
@@ -290,7 +290,7 @@ test('UploadParts regenerates parts at file offsets above 2^32 as bigint, in a s
     const file = { root: { id: 'sparse', format: 'pi' as const, path: dir, layout: 'transcripts' as const, profile: null, origin: { kind: 'explicit' as const } }, path, relativePath: 's.jsonl' };
     const parts = generateParts({ file, policy: resolveRuntimePrivacy(loadConfig({ enabled: false }), syntheticSecrets).policy, recordCap: MiB, maxMessages: 10,
       stat: { dev: String(stat.dev), ino: String(stat.ino), size: String(stat.size), mtimeNs: String(stat.mtimeNs), ctimeNs: String(stat.ctimeNs) },
-      startRecord: 5, startOffset: offset, baseChain: INITIAL_CHAIN, partBudget: 8 * MiB, maxLargePartBytes: 16 * MiB, codexSeed: null });
+      startRecord: 5, startOffset: offset, baseChain: INITIAL_CHAIN, partBudget: 8 * MiB, maxLargePartBytes: 16 * MiB });
     const generated = [...{ [Symbol.iterator]: () => parts }];
     assert.equal(stat.size, offset + BigInt(Buffer.byteLength(delta)));
     assert.equal(generated.length, 1);
@@ -511,7 +511,7 @@ test('UploadParts opens a spool written by the base release: the first append ta
     try {
       const buckets = database.prepare('SELECT DISTINCT bucket FROM kv ORDER BY bucket').all().map(row => String(row['bucket']));
       assert.deepEqual(buckets.filter(bucket => ['append-checkpoint', 'last-pass'].includes(bucket)), ['append-checkpoint', 'last-pass']);
-      database.exec("DELETE FROM kv WHERE bucket IN ('append-checkpoint', 'upload-checkpoint', 'codex-dedup', 'last-pass')");
+      database.exec("DELETE FROM kv WHERE bucket IN ('append-checkpoint', 'upload-checkpoint', 'last-pass')");
       database.prepare("UPDATE kv SET value=? WHERE bucket='observation'").run(JSON.stringify({ signature: `${hash(readFileSync(path))}:${Math.floor(statSync(path).mtimeMs)}`, since: 1 }));
     } finally { database.close(); }
     h.reopen();
@@ -524,25 +524,26 @@ test('UploadParts opens a spool written by the base release: the first append ta
   } finally { await h.close(); }
 });
 
-test('UploadParts appends to a Codex session from the base offset with the duplicate state of its prefix', async () => {
+test('UploadParts reads a Codex session whole at every upload: a lost acknowledgement, a temporary disappearance and a boundary duplicate leave the head equal to a whole read', async () => {
   const h = await harness();
   try {
-    const path = join(h.roots.codex, 'c.jsonl'); writeFileSync(path, fixture('codex').trimEnd().split('\n').slice(0, 9).join('\n') + '\n');
+    const path = join(h.roots.codex, 'c.jsonl'); const away = join(h.dir, 'away.jsonl');
+    writeFileSync(path, fixture('codex').trimEnd().split('\n').slice(0, 9).join('\n') + '\n');
     assert.equal((await h.run(1)).uploaded, 1);
     const event = (text: string) => ({ timestamp: '2026-01-01T00:01:00Z', type: 'event_msg', payload: { type: 'agent_message', message: text } });
-    // Dropped by a response item of the prefix, dropped by one of the addition, kept.
-    const delta = jsonl(event('function_call exec_command {"command":"synthetic-command"}'),
-      { timestamp: '2026-01-01T00:01:00Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'fresh reply' }] } },
-      event('fresh reply'), event('another event-only message'));
-    appendFileSync(path, delta); lineReads.bytes = 0n; const texts = h.server.texts.length;
-    assert.deepEqual(await h.run(2).then(counters => [counters.uploaded, counters.replacements]), [1, 0]);
-    // Both passes read the addition twice (response items, then records), never the prefix.
-    assert.equal(lineReads.bytes, 4n * BigInt(Buffer.byteLength(delta)));
-    assert.deepEqual(h.server.texts.slice(texts), ['fresh reply', 'another event-only message']);
-    // The head equals what a whole read of the file declares.
+    // The acknowledgement of an append is lost, and the file is out of discovery when the commit is recovered.
+    appendFileSync(path, jsonl(event('another event-only message'))); h.server.loseCommitAck = true;
+    assert.deepEqual(await h.run(2).then(counters => [counters.uploaded, counters.uploadFailures]), [0, 1]);
+    renameSync(path, away);
+    assert.equal((await h.run(3)).uploaded, 1);
+    renameSync(away, path);
+    // An event message that duplicates a response item of the prefix (the exec_command call): a whole read drops it.
+    appendFileSync(path, jsonl(event('function_call exec_command {"command":"synthetic-command"}')));
+    assert.deepEqual(await h.run(4).then(counters => [counters.uploaded, counters.uploadFailures]), [1, 0]);
     const whole = parseTranscript('codex', readFileSync(path), path, resolveRuntimePrivacy(h.settings(), syntheticSecrets).policy);
     const chain = new MessageChain(); for (const message of whole.messages) chain.extend(messageDigest(message));
     const head = [...h.server.heads.values()][0]!;
-    assert.deepEqual([head.digest, head.messageCount, head.chain], [hash(whole.raw), whole.messages.length, chain.hex]);
+    assert.deepEqual([head.revision, head.digest, head.messageCount, head.chain], [3, hash(whole.raw), whole.messages.length, chain.hex]);
+    assert.deepEqual([lastPass(h).kind, lastPass(h).reason], ['full', 'codex-full-pass']);
   } finally { await h.close(); }
 });

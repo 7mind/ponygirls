@@ -6,7 +6,7 @@ import { discoverRoots, excludedPath, readSnapshot, sameStat, scanRoots, SCAN_BU
 import { parseTranscript } from './parsers.ts';
 import { resolveRuntimePrivacy, type RuntimePrivacy, type SecretReader } from './runtime-privacy.ts';
 import { encodeSnapshot, revisionMetadata, sourceIdentity, sourceKey, UploadError, type Ingester } from './ingest.ts';
-import { CHECKPOINT_VERSION, EVIDENCE_LIMITS, EvidenceLimitError, MAX_RECORD_INDEX, preflight, SOURCE_PREFIX_CHANGED, type PassEnd, type PassStart, type StreamedTranscript, type TranscriptPrefix } from './passes.ts';
+import { CHECKPOINT_VERSION, CODEX_FULL_PASS, EVIDENCE_LIMITS, EvidenceLimitError, MAX_RECORD_INDEX, preflight, SOURCE_PREFIX_CHANGED, type PassStart, type PassState, type StreamedTranscript, type TranscriptPrefix } from './passes.ts';
 import { Sha256 } from './sha256.ts';
 import { RecordOverLimitError } from './lines.ts';
 import { IDENTIFIER_UNICODE, NORMALIZATION_VERSION, payloadPredatesNormalization } from './unicode.ts';
@@ -30,7 +30,7 @@ import type { CollectionOrigin } from './admission.ts';
 export type { Counters } from './domain.ts';
 // `read` is null for a file not read again because its stat is unchanged since a settled read. A whole read holds the
 // transcript; a preflight (parts) holds what pass 1 declared and the checkpoint state it ended with.
-type CandidateRead = { transcript: ParsedTranscript; stat: SourceStat } | { streamed: StreamedTranscript; stat: SourceStat; end: PassEnd | null };
+type CandidateRead = { transcript: ParsedTranscript; stat: SourceStat } | { streamed: StreamedTranscript; stat: SourceStat; end: PassState | null };
 interface Candidate { file: SourceFile; read: CandidateRead | null; key: string; digest: string; evidence: AdmissionEvidence }
 const controlsDigest = (controls: Controls): string => hash(JSON.stringify(controls.exclusions));
 // Overlapping roots can discover one path twice, as different sources.
@@ -110,8 +110,10 @@ export class Collector {
     return server !== null && server < BigInt(this.config.maxRecordBytes) ? { cap: Number(server), source: 'server', server: String(server) } : { cap: this.config.maxRecordBytes, source: 'collector', server: server === null ? null : String(server) };
   }
   /** Where pass 1 starts for a file: its checkpoint, when that describes the committed head of its source with nothing
-   * queued for it, under the current policy and limits (append-limits spec §2.2 item 3); otherwise the whole file. */
-  private passStart(id: string, policy: string, limits: string, queued: ReadonlySet<string>): PassStart {
+   * queued for it, under the current policy and limits (append-limits spec §2.2 item 3); otherwise the whole file.
+   * Codex files are always read whole. */
+  private passStart(id: string, format: Format, policy: string, limits: string, queued: ReadonlySet<string>): PassStart {
+    if (format === 'codex') return { reason: CODEX_FULL_PASS };
     const checkpoint = this.spool.appendCheckpoint(id);
     if (checkpoint === undefined) return { reason: 'no-checkpoint' };
     if (checkpoint.version !== CHECKPOINT_VERSION) return { reason: 'checkpoint-version' };
@@ -124,7 +126,7 @@ export class Collector {
     if (checkpoint.limitsDigest !== limits) return { reason: 'limits-changed' };
     let digest: string | null; try { digest = Sha256.resume(state.rawState).digest(); } catch { digest = null; }
     if (digest !== checkpoint.headDigest) return { reason: 'checkpoint-invalid' };
-    return { checkpoint: state, codex: key => this.spool.codexBalance(id, key) };
+    return { checkpoint: state };
   }
   async runOnce(now: number): Promise<Counters> {
     const counters = empty(this.config.enabled);
@@ -312,7 +314,7 @@ export class Collector {
           // The head this file had at its last read: pass 1 records the prefix an append would extend.
           const hint = known === undefined ? null : headBase(this.spool.head(known.sourceKey));
           const result = preflight({ file, policy, exclusions: this.config.exclusions, maxFileBytes: this.config.maxFileBytes, scanBudget: this.config.maxScanBytes - counters.scannedBytes,
-            recordCap: recordCap.cap, maxMessages: this.config.maxMessages, prefixRecords: hint?.recordCount ?? null, start: this.passStart(id, digest, limitsDigest(file.root.format), queuedKeys) });
+            recordCap: recordCap.cap, maxMessages: this.config.maxMessages, prefixRecords: hint?.recordCount ?? null, start: this.passStart(id, file.root.format, digest, limitsDigest(file.root.format), queuedKeys) });
           const size = Number(result.size);
           counters.scanned++; counters.scannedBytes += size; rootCoverage(file).scanned++; rootCoverage(file).bytes += size;
           const read = result.transcript === null ? null : { streamed: result.transcript, key: sourceKey(sourceIdentity(this.spool.namespace, file.root.id, file.root.format, result.transcript, file.path)) };
@@ -415,13 +417,12 @@ export class Collector {
         // The declaration is spooled before anything is sent; an append extends the head's base, a replacement starts over.
         const { streamed, end } = read; const prefix = appendable(head, streamed.prefix); const base = prefix === null ? undefined : new UploadBase(prefix.digest, prefix.rawBytes, prefix.messageCount, prefix.messageChain);
         const id = fileId(candidate.file);
-        const checkpoint = end === null ? null : { version: CHECKPOINT_VERSION, fileId: id, sourceKey: key, policyDigest: digest, limitsDigest: limitsDigest(candidate.file.root.format), state: end.state, codex: end.codex };
+        const checkpoint = end === null ? null : { version: CHECKPOINT_VERSION, fileId: id, sourceKey: key, policyDigest: digest, limitsDigest: limitsDigest(candidate.file.root.format), state: end };
         const open = new UploadOpen(requestId, source, head.revision, candidate.file.relativePath, base, streamed.digest, streamed.rawBytes, streamed.messageCount, streamed.messageChain, Completion.Quiescent, streamed.redacted, revisionMetadata(source, meta));
         this.spool.planUpload({ requestId, sourceKey: key, fileId: id, open: encodeOpen(open), expectedRevision: head.revision, sourceDigest: streamed.digest,
           declared: { rawBytes: String(streamed.rawBytes), recordCount: streamed.recordCount, messageCount: streamed.messageCount, messageChain: streamed.messageChain },
           uploadId: null, append: prefix !== null, baseRecordCount: prefix?.recordCount ?? 0, baseFileOffset: String(prefix?.fileOffset ?? 0n), file: read.stat,
-          partBudget: null, partsAcked: 0, lastPartSha256: null, policyDigest: digest, evidence, origin: candidate.file.root.origin, status: 'pending', attempts: 0, nextAt: 0, error: null,
-          ...(prefix !== null && end?.codexSeed != null ? { codexSeed: end.codexSeed } : {}) }, checkpoint);
+          partBudget: null, partsAcked: 0, lastPartSha256: null, policyDigest: digest, evidence, origin: candidate.file.root.origin, status: 'pending', attempts: 0, nextAt: 0, error: null }, checkpoint);
         this.spool.setUnicodeRepair(key, head.revision + 1, streamed.repairs);
       } else {
         const payload = encodeSnapshot(requestId, source, head.revision, read.transcript, candidate.file.relativePath);
