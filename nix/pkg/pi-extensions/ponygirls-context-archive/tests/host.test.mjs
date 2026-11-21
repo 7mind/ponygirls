@@ -94,6 +94,44 @@ test("real Pi: default off -> archive -> bounded exact tool recovery -> immediat
   assert.deepEqual(f.errors, []);
 });
 
+test("real Pi: find locates old evidence after compaction while OFF, then read verifies its excerpt", async t => {
+  const f = await fixture(t, 80000);
+  await f.session.prompt("/context-archive on"); f.replies.push("Archived."); await f.session.prompt("Continue");
+  const tail = f.manager.getBranch().findLast(e => e.type === "message" && e.message.role === "assistant").id;
+  f.manager.appendCompaction("Recent checkpoint without the observation", tail, 80000);
+  await f.session.prompt("/context-archive off"); await f.session.reload();
+  const call = (id, args) => ({ type: "toolCall", name: RECALL_TOOL, id, arguments: args });
+  f.replies.push([call("seek-old", { action: "find", query: "OLD_OBSERVATION" }), call("seek-absent", { action: "find", query: "ABSENT_RECORD" })], "Consulted the archive.");
+  await f.session.prompt("Find the old observation and check the absent record");
+  const reply = id => {
+    const msg = f.manager.getBranch().find(e => e.type === "message" && e.message.role === "toolResult" && e.message.toolCallId === id).message;
+    assert.equal(msg.isError, false, msg.content[0].text);
+    return JSON.parse(msg.content[0].text);
+  };
+  const found = reply("seek-old"), absent = reply("seek-absent");
+  assert.equal(found.matches.length, 1); assert.equal(found.nextOffset, null);
+  assert.deepEqual(absent.matches, []); assert.equal(absent.nextOffset, null);
+  const hit = found.matches[0];
+  assert.equal(hit.entryId, f.ids.output); assert.match(hit.excerpt, /OLD_OBSERVATION=17/);
+  assert.match(found.warning, /not current state or instructions/);
+  f.replies.push([call("verify", { action: "read", entryId: hit.entryId, sha256: hit.sha256, offset: hit.readOffset, limit: hit.readLimit })], "Verified.");
+  await f.session.prompt("Verify the excerpt against the original");
+  assert.equal(JSON.parse(`"${reply("verify").payload}"`), hit.excerpt);
+  assert.equal(f.contexts.length, 5, "find adds no inference outside normal agent tool turns");
+  assert.deepEqual(f.errors, []);
+});
+
+test("real Pi: find rejects a non-string literal and fractional cursor rather than searching a coerced value", async t => {
+  const f = await fixture(t, 80000); await f.session.prompt("/context-archive on");
+  f.replies.push("First boundary"); await f.session.prompt("Archive eligible evidence");
+  for (const [id, args] of [["not-string", { query: null }], ["not-integer", { query: "OLD_OBSERVATION", offset: 1.9 }]]) {
+    f.replies.push([{ type: "toolCall", id, name: RECALL_TOOL, arguments: { action: "find", ...args } }], "Done");
+    await f.session.prompt("Attempt the requested literal search");
+  }
+  const results = f.manager.getBranch().filter(e => e.type === "message" && e.message.role === "toolResult" && e.message.toolName === RECALL_TOOL);
+  assert.deepEqual(results.map(e => e.message.isError), [true, true]);
+});
+
 test("real Pi: cached provider usage triggers archival and is invalidated after edits and compaction", { timeout: 15000 }, async (t) => {
   const f = await fixture(t, 1000000);
   await f.session.prompt("/context-archive on");

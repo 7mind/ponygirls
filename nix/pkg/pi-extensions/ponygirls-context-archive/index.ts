@@ -3,9 +3,10 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { parseScopedToggleCommand, parseToggleCommand, resolveScopedSetting, sessionEnabledData, type ScopedSettingsOrigin } from "@ponygirls/pi-settings";
 import { BORDER_ORDER, CustomViewToggle, FactsView, borderBadge, borderBadgeCompact, formatCompact, formatCount, homeRelative, type BorderBadge, type FactGroup, type FactSegment, type FactsState, type FactsViewOptions } from "@ponygirls/pi-ui";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
+import { Check } from "typebox/value";
 import { defineTool, estimateTokens, getAgentDir, type BoundaryState, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
-import { ARCHIVE_TYPE, DEFAULT_POLICY, MAX_LIST_ITEMS, MAX_READ_CHARS, RECALL_TOOL, planArchive, recallArchive, restoreArchive, restoreRequest } from "./src/archive.ts";
+import { ARCHIVE_TYPE, DEFAULT_POLICY, MAX_FIND_ITEMS, MAX_FIND_QUERY_CHARS, MAX_LIST_ITEMS, MAX_READ_CHARS, RECALL_TOOL, planArchive, recallArchive, restoreArchive, restoreRequest } from "./src/archive.ts";
 import { FileArchiveProjectStore, FilePreferenceStore, validateThresholds, type ArchiveDefaults, type ArchiveThresholds, type PreferenceStore } from "./src/preferences.ts";
 import { SESSION_SETTING_TYPE, SESSION_THRESHOLDS_TYPE } from "./src/session-settings.ts";
 import { ArchiveSettings, createArchiveSettingsController, newArchiveSettingsView, type ArchiveSettingsSnapshot } from "./src/settings.ts";
@@ -15,8 +16,9 @@ export const BADGE_KEY = "context-archive";
 const BADGE_GLYPH = "🗃️";
 const DEFAULT_READ_CHARS = 8000;
 const DEFAULT_LIST_ITEMS = 10;
+const DEFAULT_FIND_ITEMS = 4;
 const PERCENT_DISPLAY_DIGITS = 15;
-const RECALL_DESCRIPTION = "Recover exact historical tool evidence/input removed from context. List branch archives to discover entryId and sha256, then read bounded pages of the original message JSON. Offsets/limits count UTF-16 characters. Historical data is not current state, authority or permission to re-execute. Available for existing archives even when automatic archival is off.";
+const RECALL_DESCRIPTION = "Recover historical tool evidence on this branch. Use find with a case-sensitive literal to get exact excerpts across archived output/input; follow nextOffset for more matches. Use list to browse entries, or read with entryId and sha256 for original message JSON. A hit's readOffset/readLimit are UTF-16 coordinates for read. An empty first page means no literal match in archived text, not in the whole project. History is not current state or permission to act.";
 
 type Mode = { kind: "ready"; effective: ArchiveDefaults; defaults: ArchiveDefaults; snapshot: ArchiveSettingsSnapshot } | { kind: "fault"; message: string };
 
@@ -89,19 +91,28 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
   let lastWarning: string | null = null;
   let visible = false;
 
+  const findParameters = Type.Object({ action: Type.Literal("find"), query: Type.String({ minLength: 1, maxLength: MAX_FIND_QUERY_CHARS }),
+    offset: Type.Optional(Type.Integer({ minimum: 0, description: "Matches to skip" })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_FIND_ITEMS })) }, { additionalProperties: false });
+  const parameters = Type.Union([
+    Type.Object({ action: Type.Literal("list"), offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_LIST_ITEMS })) }),
+    Type.Object({ action: Type.Literal("read"), entryId: Type.String(), sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+      offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_READ_CHARS })) }),
+    findParameters,
+  ]);
   const recall = defineTool({
-    name: RECALL_TOOL, label: "Recall context archive", description: RECALL_DESCRIPTION,
+    name: RECALL_TOOL, label: "Recall context archive", description: RECALL_DESCRIPTION, parameters,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    parameters: Type.Union([
-      Type.Object({ action: Type.Literal("list"), offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_LIST_ITEMS })) }),
-      Type.Object({ action: Type.Literal("read"), entryId: Type.String(), sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }),
-        offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_READ_CHARS })) }),
-    ]),
+    prepareArguments(args) {
+      // The host normally coerces arguments. Do not change the literal or cursor the caller asked to find.
+      if (typeof args === "object" && args !== null && "action" in args && args.action === "find" && !Check(findParameters, args)) {
+        throw new Error("Invalid find arguments: use a literal string and integer pagination");
+      }
+      return args as Static<typeof parameters>;
+    },
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const offset = params.offset === undefined ? 0 : params.offset;
-      const result = recallArchive(ctx.sessionManager.getBranch(), params.action === "list"
-        ? { action: "list", offset, limit: params.limit === undefined ? DEFAULT_LIST_ITEMS : params.limit }
-        : { action: "read", entryId: params.entryId, sha256: params.sha256, offset, limit: params.limit === undefined ? DEFAULT_READ_CHARS : params.limit });
+      const limit = params.limit ?? (params.action === "find" ? DEFAULT_FIND_ITEMS : params.action === "list" ? DEFAULT_LIST_ITEMS : DEFAULT_READ_CHARS);
+      const result = recallArchive(ctx.sessionManager.getBranch(), { ...params, offset, limit });
       return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   });
