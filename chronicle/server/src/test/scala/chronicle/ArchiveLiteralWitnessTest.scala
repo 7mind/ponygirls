@@ -13,6 +13,10 @@ class ArchiveLiteralWitnessTest extends munit.FunSuite {
   private val triple="umbra vortex"
   /** One more folded scalar than fragments overlap: its occurrences are not bounded by one fragment. */
   private val long="longword "+"y"*(ArchiveProjection.overlapScalars+1-"longword ".length)
+  /** The most distinct text operands an expression has, each on the trigram path; every padded session holds all of them. */
+  private val words=List.tabulate(16)(index => f"pad$index%02dword")
+  private val padded="padded"
+  private val pageRows=ArchiveSearchPolicy.maximumPageSize+1
   private final case class Shared(config: Config,db: Database,archive: PostgresArchive,index: PostgresArchiveIndex,epoch: UUID,legacy: UUID)
   private var opened=Option.empty[Database]
   private lazy val shared: Shared = {
@@ -28,6 +32,12 @@ class ArchiveLiteralWitnessTest extends munit.FunSuite {
     }
     val epoch=archive.ingest("a",snapshot(texts)).sessionId
     val legacy=new PostgresArchive(db,config,RevisionLayoutPolicy.Legacy).ingest("a",snapshot(List(s"legacy $triple note",s"second $triple"))).sessionId
+    // A full page of matches: legacy heads and one epoch head, titled for the page budget case.
+    val layouts=archive::List.fill(pageRows-1)(new PostgresArchive(db,config,RevisionLayoutPolicy.Legacy))
+    layouts.foreach { layout =>
+      val request=snapshot(List(words.mkString(" "),words.reverse.mkString(" ")))
+      layout.ingest("a",request.copy(metadata=request.metadata.copy(title=padded)))
+    }
     db.transaction { c =>
       assert(RevisionContent.resolve(c,epoch,1).exists(_.isInstanceOf[RevisionContent.Epoch]))
       assert(RevisionContent.resolve(c,legacy,1).exists(_.isInstanceOf[RevisionContent.Legacy]))
@@ -71,6 +81,25 @@ class ArchiveLiteralWitnessTest extends munit.FunSuite {
       val removed=node.tail.flatMap(raw"Rows Removed by Filter: ([0-9.]+)".r.findFirstMatchIn(_)).map(_.group(1).toDouble).sum
       assert(rows<=ArchiveSearchPolicy.maximumMatches && removed==0,text)
     }
+  }}
+  test("literal positions leave the page budget as it was: a page just under it with one operand passes with sixteen operands, admitting the same bytes") { database { s =>
+    def search(parsed: ParsedArchiveExpression): (ArchiveSearchResult,List[Long]) = {
+      val admitted=List.newBuilder[Long]
+      val caller=ReadMaterialization.admitted(new ReadAdmission { def consume(bytes: Long): Unit = admitted+=bytes })
+      (s.index.sourceSearch("a",query(parsed),parsed,Nil,caller),admitted.result())
+    }
+    val one=lexical(words.head)
+    // Each padded title byte is one page byte per row: fill the page to within `slack` of the source budget.
+    val slack=1024L
+    val title=(ArchiveSearchPolicy.maximumSourceBytes-slack-search(one)._2.sum)/pageRows
+    s.db.transaction(c => Sql.exec(c,"UPDATE ch_revision_info SET metadata=jsonb_set(metadata,'{title}',to_jsonb(?||repeat('t',?))) WHERE metadata->>'title'=?",padded,title.toInt,padded))
+    val (near,budget)=search(one)
+    assert(budget.sum>ArchiveSearchPolicy.maximumSourceBytes-2*slack && budget.sum<=ArchiveSearchPolicy.maximumSourceBytes,budget)
+    assertEquals(near.page.rows.size,ArchiveSearchPolicy.maximumPageSize)
+    val (all,admitted)=search(lexical(words*))
+    assertEquals(admitted,budget)
+    // The cursor binds the query text; everything else is the same page and evidence.
+    assertEquals(all.copy(page=all.page.copy(nextCursor=None)),near.copy(page=near.page.copy(nextCursor=None)))
   }}
   test("archive search evidence equals the scan's for a late rare literal, three hits, two operands, an operand longer than the overlap and a legacy head") { database { s =>
     val cases=List(

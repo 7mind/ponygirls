@@ -292,7 +292,13 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
       case Some(admission) =>
         // Keep the page in a transaction-local relation so witnesses and the count come from the same ANN execution.
         Sql.exec(c,"CREATE TEMP TABLE ch_archive_search_page ON COMMIT DROP AS "+sql.text,sql.args*)
-        val bytes=Sql.one(c,"SELECT coalesce(sum(octet_length(convert_to(to_jsonb(p)::text,'UTF8'))::numeric),0) FROM ch_archive_search_page p")(r => ReadSources.checked(r.getBigDecimal(1))).get
+        // The literal positions are bounded by construction (at most maximumMatches per row and operand), checked here
+        // before any is decoded, and not charged: the page admits the bytes it admitted before they existed.
+        val positions=literal.map(literalPositions)
+        val charged=if(positions.isEmpty) "to_jsonb(p)" else positions.map(column => s"'$column'").mkString("(to_jsonb(p)-ARRAY[",",","]::text[])")
+        val longest=if(positions.isEmpty) "0" else positions.map(column => s"coalesce(jsonb_array_length($column),0)").mkString("greatest(",",",")")
+        val (bytes,listed)=Sql.one(c,s"SELECT coalesce(sum(octet_length(convert_to($charged::text,'UTF8'))::numeric),0),coalesce(max($longest),0) FROM ch_archive_search_page p")(r => (ReadSources.checked(r.getBigDecimal(1)),r.getInt(2))).get
+        Check(listed<=ArchiveSearchPolicy.maximumMatches,"projection","invalid archive literal positions")
         admission.admit(bytes)
         Sql.rows(c,"SELECT * FROM ch_archive_search_page ORDER BY "+(if(ranked) "relevance DESC," else "")+"sort_key "+(if(ranked || query.direction==SortDirection.Desc) "DESC" else "ASC")+" NULLS LAST,id")(decode)
     }
