@@ -99,11 +99,14 @@ object PassageStorage {
 
   /** An abandoned staged generation deleted, a bounded statement per transaction. */
   def deleteAbandoned(db: Database,generation: UUID): Unit = while(db.transaction(deleteAbandonedStep(_,generation))) {}
-  /** A replaced generation's search rows deleted, a bounded statement per transaction. */
+  /** A retired generation's search rows or derived rows deleted, a bounded statement per transaction. */
   def retire(db: Database,generation: UUID): Unit = {
-    var after=Option(new UUID(0L,0L))
-    while(after.nonEmpty) after=db.transaction(retireStep(_,generation,after.get))
+    var cursor=Option(Retirement.start)
+    while(cursor.nonEmpty) cursor=db.transaction(retireStep(_,generation,cursor.get))
   }
+  /** Where a retirement continues: after chunk id `after`, valid for the kind of retirement (`payload`) it was taken in. */
+  final case class Retirement(after: UUID,payload: Boolean)
+  object Retirement { val start: Retirement = Retirement(new UUID(0L,0L),false) }
 
   /** P1 rows of a batch, in the order their references need. */
   def writePassages(c: Connection,generation: UUID,rows: Seq[ProblemRows.Passages]): Unit = {
@@ -140,21 +143,24 @@ object PassageStorage {
     case Some(id) => Sql.rows(c,"SELECT r.generation FROM ch_generation_retirements r JOIN ch_generations g ON g.id=r.generation WHERE g.session_id=? ORDER BY r.generation",id)(_.getObject(1,classOf[UUID]))
     case None => Sql.rows(c,"SELECT generation FROM ch_generation_retirements ORDER BY generation")(_.getObject(1,classOf[UUID]))
   }
-  /** One bounded statement of a retirement: the next `rowsPerStatement` chunks of the generation after chunk id `after`
-    * lose their search rows, or for an explicit rebuild's retirement (`payload`) the chunks themselves (their search rows
-    * and pieces with them); once no chunk is left, the passages' spans, the passages, Context spans and tags of a payload
-    * retirement, `rowsPerStatement` at a time. Returns where to continue, None when done (and the retirement row
-    * deleted). A generation that is published again (never by this release) or staged is not retired. */
-  def retireStep(c: Connection,generation: UUID,after: UUID): Option[UUID] =
+  /** One bounded statement of a retirement: the next `rowsPerStatement` chunks of the generation after the cursor lose
+    * their search rows, or for an explicit rebuild's retirement (`payload`) the chunks themselves (their search rows and
+    * pieces with them); once no chunk is left, the passages' spans, the passages, Context spans and tags of a payload
+    * retirement, `rowsPerStatement` at a time. A cursor taken in a search-row retirement that a rebuild has since made a
+    * payload retirement starts again from the first chunk (the chunks behind it still exist). Returns where to continue,
+    * None when done (and the retirement row deleted). A generation that is published again (never by this release) or
+    * staged is not retired. */
+  def retireStep(c: Connection,generation: UUID,cursor: Retirement): Option[Retirement] =
     Sql.one(c,"SELECT r.payload,NOT EXISTS(SELECT 1 FROM ch_sources s WHERE s.published=r.generation) AND NOT EXISTS(SELECT 1 FROM ch_staged_generations st WHERE st.generation=r.generation) FROM ch_generation_retirements r WHERE r.generation=? FOR UPDATE",generation)(r => (r.getBoolean(1),r.getBoolean(2))) match {
       case None => None
       case Some((payload,retired)) =>
         val deleted=if(payload) "DELETE FROM ch_chunks t USING batch b WHERE t.id=b.id" else "DELETE FROM ch_search_chunks t USING batch b WHERE t.id=b.id"
+        val after=if(cursor.payload==payload) cursor.after else Retirement.start.after
         val last=if(!retired) None else Sql.one(c,s"""WITH batch AS MATERIALIZED(SELECT id FROM ch_chunks WHERE generation=? AND id>? ORDER BY id LIMIT $rowsPerStatement),
           deleted AS($deleted) SELECT id FROM batch ORDER BY id DESC LIMIT 1""",generation,after)(_.getObject(1,classOf[UUID]))
         def rest: Boolean = retired && payload && List("ch_problem_spans","ch_problem_passages","ch_context_spans","ch_generation_tags").exists(table =>
           Sql.exec(c,s"DELETE FROM $table WHERE ctid=ANY(ARRAY(SELECT ctid FROM $table WHERE generation=? LIMIT $rowsPerStatement))",generation)>0)
-        last.orElse(Option.when(rest)(after)).orElse { Sql.exec(c,"DELETE FROM ch_generation_retirements WHERE generation=?",generation); None }
+        last.orElse(Option.when(rest)(after)).map(Retirement(_,payload)).orElse { Sql.exec(c,"DELETE FROM ch_generation_retirements WHERE generation=?",generation); None }
     }
 
   /** Generated tags are derived content: a visible publication that is not retired and not in the current format (a

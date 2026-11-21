@@ -450,8 +450,11 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     * for the search-row writers, which would hold share locks on it one after another; a reclaim does not wait for a
     * batch either, and a stale worker stops at its next one (the switch checks everything again). */
   private def staging[A](claim: Claim,generation: UUID,lock: StagedLock)(f: Connection => A): A = db.transaction { c =>
-    if(!(Sql.one(c,s"SELECT 1 FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true) &&
-      Sql.one(c,s"SELECT 1 FROM ch_staged_generations WHERE generation=? AND job_id=? AND run_id=? FOR ${lock.sql}",generation,claim.jobId,claim.runId)(_ => true).contains(true))) throw new StaleStaging
+    // The claim is checked after the staged row's lock is granted: a batch that waited for it while the job was claimed
+    // again (whose phase W may have invalidated the staged chunks) stops there (read committed: the check sees the
+    // claim's fence and lease as committed by then).
+    if(!(Sql.one(c,s"SELECT 1 FROM ch_staged_generations WHERE generation=? AND job_id=? AND run_id=? FOR ${lock.sql}",generation,claim.jobId,claim.runId)(_ => true).contains(true) &&
+      Sql.one(c,s"SELECT 1 FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true))) throw new StaleStaging
     f(c)
   }
   private enum StagedLock(val sql: String) { case Write extends StagedLock("NO KEY UPDATE"); case Share extends StagedLock("SHARE") }

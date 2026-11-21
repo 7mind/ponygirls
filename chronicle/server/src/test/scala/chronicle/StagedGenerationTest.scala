@@ -205,6 +205,59 @@ final class StagedGenerationTest extends munit.FunSuite {
     }
   }}
 
+  test("a search-row retirement that an explicit rebuild turns into a payload retirement midway deletes every derived row") { database { (config,db,archive) =>
+    val first=archive.ingest("a",request(text)); assert(worker(archive,config,new Ring).once.unsafeRunSync())
+    val old=archive.session("a",first.sessionId).view.generationId.get
+    def published(): Claim = {
+      val claim=archive.claim(IndexProfileCatalog.current(config).knownProfiles,ClaimScope.Owner("a"),300).get
+      assert(archive.publishProblems(claim,ProblemsPublication.rows(ProblemPublicationFixtures.oneProblem(claim)))); claim
+    }
+    archive.ingest("a",request(text+"q",Some(archive.headSnapshot("a",first.sessionId).source),1)); published()
+    // One step of the search-only retirement the switch recorded, then a rebuild's switch asks for the payload.
+    var cursor=db.transaction(PassageStorage.retireStep(_,old,PassageStorage.Retirement.start))
+    assert(cursor.nonEmpty)
+    Fixtures.rebuild(db,"a"); published()
+    while(cursor.nonEmpty) cursor=db.transaction(PassageStorage.retireStep(_,old,cursor.get))
+    db.transaction { c =>
+      List("ch_chunks","ch_problem_pieces","ch_problem_passages","ch_problem_spans","ch_generation_tags","ch_search_chunks","ch_generation_retirements").foreach(table =>
+        assertEquals(Sql.one(c,s"SELECT count(*) FROM $table WHERE generation=?",old)(_.getInt(1)),Some(0),table))
+    }
+  }}
+
+  test("a stale publication batch that waited for the staged row while its job was claimed again and its chunks invalidated writes nothing") { database { (config,db,archive) =>
+    val receipt=archive.ingest("a",request(text))
+    val claim=archive.claim(IndexProfileCatalog.current(config).knownProfiles,ClaimScope.Owner("a"),300).get
+    val rows=ProblemsPublication.rows(ProblemPublicationFixtures.oneProblem(claim))
+    val inPieces=new java.util.concurrent.CountDownLatch(1); val proceed=new java.util.concurrent.CountDownLatch(1)
+    val paused=new ProblemRows {
+      def passages(from: Int)(write: (Int,ProblemRows.Passages) => Unit): ProblemRows.Counts = rows.passages(from)(write)
+      def pieces(from: Int,passage: Int => ProblemRows.Final)(write: (Int,Vector[ProblemRows.Piece]) => Unit): Unit = { inPieces.countDown(); proceed.await(); rows.pieces(from,passage)(write) }
+    }
+    val pool=java.util.concurrent.Executors.newSingleThreadExecutor()
+    try {
+      val publishing=pool.submit(new java.util.concurrent.Callable[Boolean] { def call(): Boolean = archive.publishProblems(claim,paused) })
+      assert(inPieces.await(10,java.util.concurrent.TimeUnit.SECONDS))
+      val List((generation,"Pieces",0,0))=staged(db): @unchecked
+      db.transaction { held =>
+        // The batch's transaction waits for the staged row; meanwhile the job is claimed again and its next run's phase
+        // W discards embedding parts (the staged chunks are to be written again).
+        Sql.exec(held,"SELECT 1 FROM ch_staged_generations WHERE generation=? FOR UPDATE",generation)
+        proceed.countDown()
+        val deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+        def blocked: Boolean = db.transaction(c => Sql.one(c,"SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT 1 FROM ch_staged_generations%')")(_.getBoolean(1)).get)
+        while(!blocked && System.nanoTime()<deadline) Thread.onSpinWait()
+        assert(blocked,"the batch waits for the staged row")
+        Sql.exec(held,"UPDATE ch_jobs SET fence=fence+1 WHERE id=?",claim.jobId)
+        PassageStorage.invalidatePieces(held,claim)
+      }
+      assertEquals(publishing.get(10,java.util.concurrent.TimeUnit.SECONDS),false)
+    } finally { pool.shutdownNow(); assert(pool.awaitTermination(10,java.util.concurrent.TimeUnit.SECONDS)) }
+    db.transaction { c =>
+      assertEquals(Sql.one(c,"SELECT concat_ws('|',resume->>'step',resume->>'invalid',(SELECT count(*) FROM ch_chunks ch WHERE ch.generation=st.generation)) FROM ch_staged_generations st")(_.getString(1)),Some("0|true|0"))
+    }
+    assertEquals(archive.session("a",receipt.sessionId).indexedRevision,None)
+  }}
+
   test("down-026 deletes staged generations and the search rows still being retired, resets the autovacuum settings and drops its tables; published generations stay") { database { (config,db,archive) =>
     val vectors=new Ring
     // A retirement a crash left: a source's replaced generation still has its search rows (published without the
