@@ -9,6 +9,7 @@ import { CollectorProgressUpdate_JsonCodec, type CollectorProgressUpdate } from 
 import { CollectorProgressAck_JsonCodec, type CollectorProgressAck } from '../../generated/typescript/chronicle/api/CollectorProgressAck.js';
 import { VersionInfo_JsonCodec, type VersionInfo } from '../../generated/typescript/chronicle/api/VersionInfo.js';
 import { Failure_JsonCodec, type Failure } from '../../generated/typescript/chronicle/api/Failure.js';
+import { RawManifest_JsonCodec, type RawManifest } from '../../generated/typescript/chronicle/api/RawManifest.js';
 import { schemaData } from './schema-data.js';
 import { CliError } from './errors.js';
 import { isObject, type JsonObject } from './json.js';
@@ -46,9 +47,9 @@ function validateData(def: DataDefinition, value: unknown): void {
   if (!isObject(value) || Object.keys(value).length !== def.fields.length) invalid();
   for (const [field, type] of def.fields) { if (!Object.hasOwn(value, field)) invalid(); validateType(type, value[field]); }
 }
-interface WireTypes { Failure: Failure; Operation: Operation; Result: Result; ServerEnvelope: ServerEnvelope; ClientEnvelope: ClientEnvelope; IngestRequest: IngestRequest; IngestReceipt: IngestReceipt; CollectorProgressUpdate: CollectorProgressUpdate; CollectorProgressAck: CollectorProgressAck; VersionInfo: VersionInfo }
+interface WireTypes { Failure: Failure; Operation: Operation; Result: Result; ServerEnvelope: ServerEnvelope; ClientEnvelope: ClientEnvelope; IngestRequest: IngestRequest; IngestReceipt: IngestReceipt; CollectorProgressUpdate: CollectorProgressUpdate; CollectorProgressAck: CollectorProgressAck; VersionInfo: VersionInfo; RawManifest: RawManifest }
 interface Codec<T> { encode(ctx: BaboonCodecContext, value: T): unknown; decode(ctx: BaboonCodecContext, value: unknown): T }
-const codecs: { [K in keyof WireTypes]: Codec<WireTypes[K]> } = { Failure: Failure_JsonCodec.instance, Operation: Operation_JsonCodec.instance, Result: Result_JsonCodec.instance, ServerEnvelope: ServerEnvelope_JsonCodec.instance, ClientEnvelope: ClientEnvelope_JsonCodec.instance, IngestRequest: IngestRequest_JsonCodec.instance, IngestReceipt: IngestReceipt_JsonCodec.instance, CollectorProgressUpdate: CollectorProgressUpdate_JsonCodec.instance, CollectorProgressAck: CollectorProgressAck_JsonCodec.instance, VersionInfo: VersionInfo_JsonCodec.instance };
+const codecs: { [K in keyof WireTypes]: Codec<WireTypes[K]> } = { Failure: Failure_JsonCodec.instance, Operation: Operation_JsonCodec.instance, Result: Result_JsonCodec.instance, ServerEnvelope: ServerEnvelope_JsonCodec.instance, ClientEnvelope: ClientEnvelope_JsonCodec.instance, IngestRequest: IngestRequest_JsonCodec.instance, IngestReceipt: IngestReceipt_JsonCodec.instance, CollectorProgressUpdate: CollectorProgressUpdate_JsonCodec.instance, CollectorProgressAck: CollectorProgressAck_JsonCodec.instance, VersionInfo: VersionInfo_JsonCodec.instance, RawManifest: RawManifest_JsonCodec.instance };
 export function decodeWire<K extends keyof WireTypes>(type: K, value: unknown): WireTypes[K] {
   validateType(type, value);
   try { return codecs[type].decode(BaboonCodecContext.Default, value); } catch { return invalid(); }
@@ -62,7 +63,8 @@ export function decodeOperation(value: unknown): Operation {
     for (const [key, item] of Object.entries(v)) {
       if (['offset', 'beforeBytes', 'afterBytes', 'caretUtf16', 'start', 'end'].includes(key) && typeof item === 'number' && item < 0) invalid();
       if (key === 'limit' && (typeof item !== 'number' || item < 1 || item > maximumPage)) invalid();
-      if (key === 'revision' && (typeof item !== 'number' || item < 1)) invalid();
+      // GetRaw's revision is optional: null asks for the archive head.
+      if (key === 'revision' && item !== null && (typeof item !== 'number' || item < 1)) invalid();
       if (isObject(item)) bounds(item);
     }
   }

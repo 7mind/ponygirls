@@ -111,7 +111,7 @@ revocation and cookie lifetime, not a fabricated local TTL.
 | Public discovery | `versions` requires the sole current1.9.0 API |
 | Bearer Read/MCP | Auto with a configured token, or explicit `--auth bearer`: `whoami`, `search`, `session`, `messages`, `chunks`, `context`, `related`, `facets`, `progress`, `tags` (all ten current tools) |
 | Bearer Ingest | `ingest --file PATH\|- --yes`, `report-progress --file PATH\|- --yes` |
-| Human retrieval | `search`, `archive`, `session`, `messages`, `chunks`, `passages`, `passage-spans`, `find`, `locate`, `context`, `raw`, `related`, `facets` |
+| Human retrieval | `search`, `archive`, `session`, `messages`, `chunks`, `passages`, `passage-spans`, `find`, `locate`, `context`, `raw` (and `raw --output` over `/api/raw`), `related`, `facets` |
 | Activity/settings | `activity`, `jobs`, `usage`, `collectors`, `progress`, `settings`, `session-status`, `tokens list` |
 | Deliberate management | `jobs retry`, `retry-failed preview/apply`, `reindex preview/apply/status`, groups/invitations/membership, token mint/revoke, purge, logout |
 | Complete typed application API | `rpc help [Operation]`, `rpc --file PATH\|-` (`call` alias); every current operation has a checked effect policy. Includes expression hints, legacy Archive result, LocateMessage, MCP test catalog/start/read/cancel and durable receipt lookup. Hello/Ping/Pong are transport-owned, not a raw escape hatch. |
@@ -155,7 +155,8 @@ Null view discovers current publication or unindexed HEAD. Copy its returned
 Revision without generation explicitly selects archive-only content.
 Find/context/passages/locate require `--revision`; they never silently repin to
 HEAD. Returned pins/pages must match the request. Retired indexed views return
-`indexed-view-retired`, not newer content. Raw reads accept an explicit revision.
+`indexed-view-retired`, not newer content. Raw reads accept an explicit revision;
+without `--revision`, `raw` reads the archive head.
 
 Pages are explicit: `--offset/--limit` or returned `--cursor`, with no hidden
 all-pages traversal. Tag cursors are **exact last tag values**, including the
@@ -175,6 +176,54 @@ fails; the notice precedes that error), and prints the lexical result on stdout
 with its exit status. Any other failure is reported unchanged. Human output of a
 search starts with `mode: EFFECTIVE_MODE`; `--json` stdout is exactly the server
 result, with stderr silent unless a fallback happened.
+
+### Raw downloads
+
+`chronicle raw UUID [--revision N]` returns the revision's raw files as JSON
+(`GetRaw`) up to the server's raw read bound (`maxRawReadBytes`); above it the
+server answers `too-large` and the CLI adds the hint `use --output FILE`.
+`--output` downloads one raw file of any size, byte-exact, through the server's
+raw download API (`/api/raw`, human session only, like `GetRaw`):
+
+```bash
+chronicle raw SESSION_UUID --output ./session.jsonl            # head revision, file 0
+chronicle raw SESSION_UUID --revision 3 --file 1 --output ./b.jsonl
+chronicle raw SESSION_UUID --revision 3 --output - | sha256sum   # stdout
+```
+
+- The manifest request pins the revision (`--revision`, or the head at that
+  moment) and lists its files with size and SHA-256. A revision of several files
+  needs `--file INDEX`; without it the command fails (exit 2) listing them.
+- The file is read in sequential range requests of 64 MiB, each sent with the
+  manifest's ETag as `If-Range` and accepted only as a `206` of exactly that
+  range and ETag (else `protocol-error`). Bytes are written as they arrive and
+  hashed incrementally: memory does not grow with the file.
+- **To a file:** `PATH` must not exist (`state`, exit 6, before any request).
+  Bytes go to `.NAME.UUID.partial` (created exclusively, mode 0600) in the same
+  directory; the size and SHA-256 must equal the manifest's, then the CLI
+  fsyncs it, links it to `PATH` (never replacing a file that appeared
+  meanwhile), removes the partial name and fsyncs the directory. The saved file
+  keeps mode 0600. Any failure — and SIGINT, SIGTERM or SIGHUP — removes the
+  partial file; the message names the bytes received. There is no resume:
+  run the command again. Success prints `{sessionId, revision, file, path,
+  bytes, sha256}` (`path` the absolute path written, `bytes` a decimal string).
+- **To stdout (`-`):** bytes are written with back-pressure and nothing else
+  goes to stdout. The digest can only be checked after the last byte: a
+  mismatch exits 6 after the bytes were written, so consumers must check the
+  exit status (with a shell pipe, `set -o pipefail`). A terminal is refused as
+  stdout.
+- `--timeout-ms` bounds the manifest request and then each range request
+  (including the time a slow stdout consumer takes), not the whole download;
+  the default 30 s needs about 2.2 MB/s per range.
+- The server answers `503 unavailable` with `Retry-After` when all its download
+  slots (4, shared by every client) are taken; each range request takes one.
+  The CLI fails with that `Retry-After` in the message and does not retry. A
+  response that ends before its `Content-Length` is the server's failure signal
+  (logout, lost access, purge, server failure): `unavailable`, exit 6.
+- A server without the raw download API answers the manifest with a 404 that is
+  not a `Failure`: the CLI exits 6 with `The server at ORIGIN has no raw
+  download API (it predates it): upgrade the server; …` and writes nothing.
+  There is no fallback to `GetRaw`.
 
 ### Mutations, secrets and uncertainty
 
@@ -232,7 +281,9 @@ and never restart blindly. AuthorizationLost discards accumulated protected
 trace. Scripted tests do not establish model/semantic relevance quality.
 
 Whole-command deadlines default30s, explicitly configurable with
-`--timeout-ms`100..900000; stdin, HTTP and WS share the deadline. Requests are at
+`--timeout-ms`100..900000; stdin, HTTP and WS share the deadline. The one
+exception is `raw --output`: the deadline bounds each of its requests, not the
+download (see "Raw downloads"). Requests are at
 most 8 MiB (HTTP) and 64 KiB (WS). Answers are bounded by the server's page bound:
 a page of several messages holds at most 64 MiB of stored values, measured as
 PostgreSQL jsonb text, and the server's JSON escapes U+007F..U+009F in six bytes

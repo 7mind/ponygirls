@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
-import { CliError, embeddingFailure, uncertain } from './errors.js';
+import { CliError, embeddingFailure, RemoteError, uncertain } from './errors.js';
 import { ArgumentError, flag, searchMode, integer, makeOperation, option, parseArgs, validateInvocation, type Arguments } from './commands.js';
 import { help, helpHint } from './help.js';
 import { bearer, checkSecretDestination, exclusiveSecret, MAX_BYTES, readBounded, readStdin, SessionStore, type Environment } from './files.js';
@@ -10,6 +10,7 @@ import { decodeOperation, decodeWire, encodeWire, operationHelp, operationName, 
 import { Deadline, Http, origin, websocket } from './transport.js';
 import { accountAcknowledgement, accountIssued, login, settings } from './account.js';
 import { mcp, operationTool } from './mcp.js';
+import { download, rawDownload, withSentence } from './raw.js';
 async function input(args: Arguments, deadline: Deadline): Promise<string> {
   const file = option(args, 'file'); if (file === null) throw new CliError('usage', 'An explicit --file PATH or --file - is required.');
   if (file !== '-') return readBounded(file, MAX_BYTES, 'input');
@@ -68,7 +69,8 @@ function withoutSecret(value: unknown, args: Arguments): unknown {
   if (isObject(value) && Object.hasOwn(value, 'secret')) { if (typeof value['secret'] !== 'string' || secretOut === null) throw new CliError('protocol-error', 'Invalid issued account secret.'); exclusiveSecret(secretOut, `${value['secret']}\n`); return { token: value['token'], secretSaved: true }; }
   return value;
 }
-export interface RunResult { value: unknown; text: boolean; mode?: string }
+/** `streamed`: the command wrote its output itself (`raw --output -`); nothing more goes to stdout. */
+export interface RunResult { value: unknown; text: boolean; mode?: string; streamed?: boolean }
 // Only a defaulted hybrid search falls back (to exactly `--mode lexical`); the retry gets its own --timeout-ms budget. Explicit modes and every other failure propagate.
 // The fallback notice is emitted before the retry runs, so it is shown whether the retry succeeds or fails. A search result carries its effective mode.
 export async function run(args: Arguments, env: Environment, notify: (line: string) => Promise<void> = async () => {}): Promise<RunResult> {
@@ -91,7 +93,14 @@ async function runOnce(args: Arguments, env: Environment): Promise<RunResult> {
   const spec = validateInvocation(args);
   if (['rpc', 'call', 'ingest', 'report-progress'].includes(command) && subcommand !== 'help' && option(args, 'file') === null) throw new CliError('usage', 'An explicit --file PATH or --file - is required.');
   if ((command === 'rpc' || command === 'call') && subcommand === 'help') return { value: args.words[2] === undefined ? { version: schema.version, operations: operationNames.map(name => ({ name, effect: operationPolicy[name as keyof typeof operationPolicy] })) } : operationHelp(args.words[2]), text: false };
-  const deadline = new Deadline(integer(args, 'timeout-ms', 30000, 100, 900000));
+  const timeoutMs = integer(args, 'timeout-ms', 30000, 100, 900000); const deadline = new Deadline(timeoutMs);
+  if (command === 'raw' && option(args, 'output') !== null) {
+    family(args, env, 'session'); executionOptions(args, false, false, false); const request = rawDownload(args);
+    const endpoint = origin(option(args, 'url') ?? env['CHRONICLE_URL'] ?? null, flag(args, 'allow-insecure-http'));
+    // --timeout-ms bounds the manifest request and then each range request, not the whole download.
+    const result = await download(new Http(endpoint, deadline), new SessionStore(env, endpoint).load(), request, timeoutMs);
+    return result === null ? { value: null, text: false, streamed: true } : { value: result, text: false };
+  }
   const operation = spec.kind === 'operation' ? makeOperation(args) : command === 'rpc' || command === 'call' ? decodeOperation(parseJson(await input(args, deadline))) : null;
   const name = operation === null ? null : operationName(operation); const effect = name === null ? null : operationPolicy[name];
   if (effect === 'control') throw new CliError('usage', 'Hello/Ping/Pong are transport-owned controls.');
@@ -155,7 +164,10 @@ async function runOnce(args: Arguments, env: Environment): Promise<RunResult> {
   if (auth === 'bearer') { if (tool === null) throw new CliError('usage', 'This operation requires the independent human session.'); const token = bearer(env, option(args, 'token-file')); await current(http); const result = await mcp(http, token, tool); validateResponse(operation, result, null); return { value: encodeWire('Result', result), text: false }; }
   const requestId = option(args, 'request-id') === null ? randomUUID() : uuid(option(args, 'request-id')!);
   const sessionStore = store(); const session = sessionStore.load();
-  const result = await websocket(endpoint, session, operation, requestId, effect !== 'read', deadline);
+  const result = await websocket(endpoint, session, operation, requestId, effect !== 'read', deadline).catch((error: unknown) => {
+    if (name === 'GetRaw' && error instanceof RemoteError && error.remoteCode === 'too-large') throw withSentence(error, "The revision is above the server's raw read bound: use --output FILE (or --output -) to download it in ranges.");
+    throw error;
+  });
   try { const value = withoutSecret(encodeWire('Result', result), args); if (name === 'Logout') sessionStore.remove(session); return { value, text: false }; }
   catch (error) { if (effect === 'secret') throw uncertain(requestId); throw error; }
 }
@@ -170,7 +182,7 @@ async function write(stream: NodeJS.WriteStream, text: string): Promise<void> {
 }
 async function main(): Promise<number> {
   let args: Arguments | null = null;
-  try { args = parseArgs(process.argv.slice(2)); const result = await run(args, process.env, line => write(process.stderr, line)); const presentation = new Presentation(useColor(args.color, args.json, process.stdout.isTTY === true, process.env)); const modeLine = result.mode === undefined || args.json ? '' : `${presentation.style('muted', `mode: ${result.mode}`)}\n`; await write(process.stdout, modeLine + (result.text ? presentation.help(String(result.value)) : presentation.output(result.value, args.json))); return 0; }
+  try { args = parseArgs(process.argv.slice(2)); const result = await run(args, process.env, line => write(process.stderr, line)); if (result.streamed === true) return 0; const presentation = new Presentation(useColor(args.color, args.json, process.stdout.isTTY === true, process.env)); const modeLine = result.mode === undefined || args.json ? '' : `${presentation.style('muted', `mode: ${result.mode}`)}\n`; await write(process.stdout, modeLine + (result.text ? presentation.help(String(result.value)) : presentation.output(result.value, args.json))); return 0; }
   catch (error) {
     const failure = error instanceof CliError ? error : new CliError('unavailable', 'Operation failed; no credential or remote diagnostic was printed.');
     if (error instanceof ArgumentError) args = error.arguments_;

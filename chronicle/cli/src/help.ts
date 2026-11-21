@@ -35,7 +35,7 @@ const COMMANDS: readonly CommandSpec[] = [
   command('find', "UUID 'LITERAL' --revision N", 'Find literal source text within a pinned session.', [...VIEW, ...CURSOR], 3, 3, 'operation', `${SESSION} ${PIN}`, `chronicle find ${ID} 'failure' --revision 3`),
   command('locate', 'UUID MESSAGE_ID --revision N', 'Find a message position in a pinned session.', VIEW, 3, 3, 'operation', `${SESSION} ${PIN}`, `chronicle locate ${ID} message-id --revision 3`),
   command('context', 'UUID --revision N --message ID --start BYTE --end BYTE', 'Read source context around a half-open UTF-8 byte span.', [...VIEW, 'message', 'start', 'end', 'before-bytes', 'after-bytes'], 2, 2, 'operation', 'Offsets are UTF-8 bytes, not terminal columns or JavaScript characters.', `chronicle context ${ID} --revision 3 --message message-id --start 0 --end 12`),
-  command('raw', 'UUID [--revision N]', 'Read archived JSONL as encoded data; no implicit extraction.', ['revision'], 2, 2, 'operation', SESSION, `chronicle raw ${ID} --revision 3 --json`),
+  command('raw', 'UUID [--revision N] [--output PATH|- [--file I]]', 'Read archived JSONL as encoded data, or download one raw file byte-exact.', ['revision', 'file', 'output'], 2, 2, 'operation', `${SESSION} Without --output: GetRaw (JSON, up to the server's raw read bound; no --revision = archive head). --output: a new file (never replaced; mode 0600) or - for stdout; 64 MiB range requests, SHA-256 verified. --file I selects the file of a revision with several. --timeout-ms bounds each range request. On stdout a digest mismatch exits 6 after the bytes: check the exit status.`, `chronicle raw ${ID} --revision 3 --output ./session.jsonl`),
   command('related', 'UUID', 'Find related sessions.', ['limit'], 2, 2, 'operation', 'Auto uses a configured bearer token, otherwise the independent human session.', `chronicle related ${ID} --limit 20`),
   command('facets', '', 'Show facets for explicit search filters.', FILTER, 1, 1, 'operation', 'Repeat --tag for multiple tags.', 'chronicle facets --project example'),
   command('tags', "'QUERY'", 'Search the bearer tag catalog.', [...CURSOR, ...FILTER], 2, 2, 'direct', "Bearer only (auto selects bearer). --cursor is the exact last tag, including ''.", "chronicle tags '' --limit 100"),
@@ -111,6 +111,7 @@ Discovery and retrieval:
   context UUID --revision N --message ID --start BYTE --end BYTE
       [--generation UUID --before-bytes N --after-bytes N]
   raw UUID [--revision N]        Raw JSONL fidelity as encoded data; no implicit extraction
+  raw UUID [--revision N] --output PATH|- [--file I]   Byte-exact download of any size
   related UUID | facets         Facets/search filters: --project --branch --after --before --tag
   tags 'QUERY' [--cursor TAG]   Bearer MCP tag catalog (auto selects bearer)
 
@@ -140,7 +141,8 @@ Complete current API, including expression hints and MCP test runs:
 Global options:
   --url ORIGIN                  Or CHRONICLE_URL; exact HTTPS origin, no path/credentials/query
   --allow-insecure-http         Explicit trusted private-network HTTP opt-in (plaintext secrets!)
-  --timeout-ms N                Whole command deadline, 100..900000 (default 30000)
+  --timeout-ms N                Whole command deadline, 100..900000 (default 30000);
+                                raw --output: each request (manifest, every 64 MiB range)
   --request-id UUID             Deliberate WS receipt identity; never auto replayed
   --secret-out PATH             New 0600 file in a private 0700 directory, never stdout
   --color auto|always|never     Auto: TTY human output only; honours NO_COLOR / TERM=dumb

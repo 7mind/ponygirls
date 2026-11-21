@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -537,6 +537,89 @@ test('CLI input-budget boundary rejects held stdin without acquiring a WebSocket
     let stdout = ''; let stderr = ''; child.stdout.on('data', data => stdout += String(data)); child.stderr.on('data', data => stderr += String(data));
     try { const code = await new Promise<number | null>((done, reject) => { child.on('error', reject); child.on('close', done); }); assert.equal(code, 6, stderr); assert.equal(stdout, ''); assert.match(stderr, /^chronicle: deadline: Stdin deadline exceeded\.\n$/); assert.equal(f.requests.length, 0); }
     finally { clearTimeout(guard); child.stdin.destroy(); if (child.exitCode === null && child.signalCode === null) child.kill(); }
+  } finally { await f.close(); }
+});
+// Specified (ingest-c spec §1.5): `raw ID` without --revision asks GetRaw for the archive head; the server's too-large
+// answer names the ranged download.
+test('raw without --revision reads the archive head, and a too-large answer points to --output FILE', async () => {
+  const seen: unknown[] = []; let tooLarge = false; const content = '{"type":"session"}\n';
+  const head = { Raw: { result: { files: [{ path: 'p/a.jsonl', sha256: createHash('sha256').update(content).digest('hex'), content }], revision: 7 } } };
+  const f = await fixture((_q, r) => reply(r, 404, {}, {}), ws((socket, id, op) => { seen.push(op['GetRaw']); send(socket, id, tooLarge ? { Error: { failure: { code: 'too-large', message: 'raw files exceed the raw read bound' } } } : head); }));
+  try {
+    state(f); const read = await cli(['raw', ID, '--json'], f, {}, null); assert.equal(read.code, 0, read.stderr); assert.deepEqual(JSON.parse(read.stdout), head);
+    tooLarge = true; const refused = await cli(['raw', ID], f, {}, null); assert.equal(refused.code, 6); assert.equal(refused.stdout, ''); assert.match(refused.stderr, /^chronicle: too-large: .*Server too-large: raw files exceed the raw read bound.*use --output FILE/);
+    assert.deepEqual(seen, [{ sessionId: ID, revision: null }, { sessionId: ID, revision: null }]);
+  } finally { await f.close(); }
+});
+// A raw download server as R1 built it (/api/raw manifest and single ranges with ETag and If-Range); `fault` breaks the bytes.
+const RAW_RANGE_BYTES = 64 * 1024 * 1024;
+interface RawFile { readonly path: string; readonly content: Buffer; announced?: string }
+type RawFault = 'none' | 'short' | 'busy';
+function sha256(bytes: Buffer | string): string { return createHash('sha256').update(bytes).digest('hex'); }
+function rawServer(revision: number, files: readonly RawFile[], fault: () => RawFault): (request: IncomingMessage, response: ServerResponse) => void {
+  return (request, response) => {
+    const [, , , , pinned, index] = request.url!.split('/'); const digest = (file: RawFile): string => file.announced ?? sha256(file.content);
+    if (index === undefined) { reply(response, 200, { sessionId: ID, revision, files: files.map((file, i) => ({ index: i, path: file.path, sha256: digest(file), bytes: String(file.content.length) })) }, {}); return; }
+    if (Number(pinned) !== revision || fault() === 'busy') { reply(response, 503, { code: 'unavailable', message: 'all raw downloads are in progress' }, { 'Retry-After': '5' }); return; }
+    const file = files[Number(index)]!; const [, first, last] = /^bytes=(\d+)-(\d+)$/.exec(String(request.headers.range))!.map(Number) as [number, number, number];
+    const body = file.content.subarray(first, last + 1);
+    response.writeHead(206, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length), 'Content-Range': `bytes ${first}-${first + body.length - 1}/${file.content.length}`, 'ETag': `"sha256:${digest(file)}"` });
+    if (fault() === 'short') response.write(body.subarray(0, body.length >> 1), () => response.destroy()); else response.end(body);
+  };
+}
+// Specified (spec §1.5): the manifest pins the revision (head, or --revision); the file arrives in 64 MiB range requests, each
+// with the manifest's ETag as If-Range, into a new 0600 file (never replacing one) or on stdout; several files need --file.
+test('raw --output downloads a file in 64 MiB ranges to a new file or stdout and never replaces a file', async () => {
+  const large = randomBytes(RAW_RANGE_BYTES + 5); const small = Buffer.from('{"type":"session"}\n{"text":"\u{1f642}"}\n');
+  const f = await fixture(rawServer(3, [{ path: 'p/large.jsonl', content: large }, { path: 'p/small.jsonl', content: small }], () => 'none'), null);
+  try {
+    state(f); const out = join(f.root, 'out'); mkdirSync(out); const target = join(out, 'large.jsonl'); const etag = `"sha256:${sha256(large)}"`; const cookie = `chronicle_session=${COOKIE}`;
+    const ambiguous = await cli(['raw', ID, '--output', target], f, {}, null);
+    assert.equal(ambiguous.code, 2); assert.match(ambiguous.stderr, /--file.*0 "p\/large\.jsonl".*1 "p\/small\.jsonl"/s); assert.equal(f.requests.length, 1);
+    f.requests.length = 0; const saved = await cli(['raw', ID, '--file', '0', '--output', target, '--json'], f, {}, null);
+    assert.equal(saved.code, 0, saved.stderr); assert.deepEqual(JSON.parse(saved.stdout), { sessionId: ID, revision: 3, file: 0, path: target, bytes: String(large.length), sha256: sha256(large) });
+    assert.equal(sha256(readFileSync(target)), sha256(large)); assert.equal(lstatSync(target).mode & 0o777, 0o600); assert.deepEqual(readdirSync(out), ['large.jsonl']);
+    assert.deepEqual(f.requests.map(q => [q.path, q.headers.range, q.headers['if-range'], q.headers.cookie, q.headers.authorization]), [
+      [`/api/raw/${ID}`, undefined, undefined, cookie, undefined],
+      [`/api/raw/${ID}/3/0`, `bytes=0-${RAW_RANGE_BYTES - 1}`, etag, cookie, undefined],
+      [`/api/raw/${ID}/3/0`, `bytes=${RAW_RANGE_BYTES}-${RAW_RANGE_BYTES + 4}`, etag, cookie, undefined]]);
+    f.requests.length = 0; const again = await cli(['raw', ID, '--file', '1', '--output', target], f, {}, null);
+    assert.equal(again.code, 6); assert.match(again.stderr, /^chronicle: state: .*exists/); assert.equal(f.requests.length, 0); assert.equal(sha256(readFileSync(target)), sha256(large));
+    const piped = await cli(['raw', ID, '--revision', '3', '--file', '1', '--output', '-'], f, {}, null);
+    assert.equal(piped.code, 0, piped.stderr); assert.equal(piped.stdout, small.toString('utf8')); assert.equal(piped.stderr, '');
+    assert.deepEqual(f.requests.map(q => [q.path, q.headers.range]), [[`/api/raw/${ID}/3`, undefined], [`/api/raw/${ID}/3/1`, `bytes=0-${small.length - 1}`]]);
+  } finally { await f.close(); }
+});
+// Specified (spec §1.5): any failure removes the partial file and names the bytes received; on stdout the digest is checked
+// after the last byte, and a mismatch exits 6 after the bytes were written.
+test('a failing raw download removes its partial file and names the bytes received; on stdout a digest mismatch exits 6', async () => {
+  const file: RawFile = { path: 'p/a.jsonl', content: Buffer.from('{"line":1}\n{"line":2}\n') }; let fault: RawFault = 'none';
+  const f = await fixture(rawServer(2, [file], () => fault), null);
+  try {
+    state(f); const out = join(f.root, 'out'); mkdirSync(out); const target = join(out, 'a.jsonl');
+    file.announced = sha256('other bytes');
+    const mismatch = await cli(['raw', ID, '--output', target], f, {}, null);
+    assert.equal(mismatch.code, 6); assert.match(mismatch.stderr, /^chronicle: protocol-error: .*SHA-256.* 22 of 22 bytes were received; the partial file was removed\./); assert.deepEqual(readdirSync(out), []);
+    const piped = await cli(['raw', ID, '--output', '-'], f, {}, null);
+    assert.equal(piped.code, 6); assert.equal(piped.stdout, file.content.toString('utf8')); assert.match(piped.stderr, /^chronicle: protocol-error: .*SHA-256.*discard/);
+    delete file.announced;
+    for (const [selected, expected] of [['short', /^chronicle: unavailable: .* 11 of 22 bytes were received; the partial file was removed\./], ['busy', /^chronicle: unavailable: .*Server unavailable: all raw downloads are in progress.*Retry-After: 5 s.* 0 of 22 bytes were received; the partial file was removed\./]] as const) {
+      fault = selected; const result = await cli(['raw', ID, '--output', target], f, {}, null);
+      assert.equal(result.code, 6); assert.equal(result.stdout, ''); assert.match(result.stderr, expected); assert.deepEqual(readdirSync(out), []);
+    }
+  } finally { await f.close(); }
+});
+// Specified (spec §1.5, §8): a server without the raw download API answers 404 without a Failure body; the CLI names it and
+// writes nothing (no fallback to GetRaw).
+test('raw --output against a server without the raw download API names the missing API and writes nothing', async () => {
+  const f = await fixture((_q, r) => { r.writeHead(404, { 'Content-Type': 'text/plain' }); r.end('Not found'); }, null);
+  try {
+    state(f); const out = join(f.root, 'out'); mkdirSync(out);
+    for (const target of [join(out, 'a.jsonl'), '-']) {
+      const result = await cli(['raw', ID, '--output', target], f, {}, null);
+      assert.equal(result.code, 6); assert.equal(result.stdout, ''); assert.ok(result.stderr.includes(`The server at ${f.origin} has no raw download API (it predates it): upgrade the server;`), result.stderr);
+    }
+    assert.deepEqual(readdirSync(out), []); assert.equal(f.requests.length, 2);
   } finally { await f.close(); }
 });
 });

@@ -41,14 +41,20 @@ function answerDispatcher(): WebSocketDispatcher {
   return new (Agent as new (options: { webSocket: { maxPayloadSize: number } }) => WebSocketDispatcher)({ webSocket: { maxPayloadSize: MAX_ANSWER_BYTES } });
 }
 export interface HttpReply { data: Json; headers: Headers }
-/** `secrets`: what the body carries that shown server text must mask (a login password); the credential of `auth` always is. */
-export interface RequestOptions { readonly responseBytes?: number; readonly secrets?: readonly string[] }
+/** `secrets`: what the body carries that shown server text must mask (a login password); the credential of `auth` always is.
+  * `missingRoute`: the error of a 404 without a `Failure` body, the answer of a server that does not have the route. */
+export interface RequestOptions { readonly responseBytes?: number; readonly secrets?: readonly string[]; readonly missingRoute?: CliError }
+export const JSON_CONTENT_TYPE = /^application\/json(?:\s*;|$)/i;
+function isFailure(contentType: string, bytes: Uint8Array): boolean {
+  if (!JSON_CONTENT_TYPE.test(contentType)) return false;
+  try { decodeWire('Failure', parseJson(new TextDecoder('utf-8', { fatal: true }).decode(bytes))); return true; } catch { return false; }
+}
 interface HttpFault { readonly code: string; readonly message: string; readonly definitive: boolean }
 const HTTP_FAULT_STATUSES: Readonly<Record<string, readonly number[]>> = {
   invalid: [400], unauthorized: [401], forbidden: [403], 'not-found': [404], conflict: [409], gone: [410], 'too-large': [413], unavailable: [500, 503], 'rate-limited': [400],
 };
 const ACCOUNT_FAULT_CODES = new Set(['invalid', 'unauthorized', 'forbidden', 'not-found', 'conflict', 'rate-limited', 'too-large', 'unavailable']);
-function httpFault(path: string, data: Json, status: number): HttpFault {
+export function httpFault(path: string, data: Json, status: number): HttpFault {
   const invalid = (): never => { throw new CliError('protocol-error', 'HTTP failure does not match the current route-specific fault protocol.'); };
   let code: string; let message: string;
   if (path === '/api/account/v1' || path.startsWith('/api/account/v1/')) {
@@ -83,8 +89,9 @@ export class Http {
       if (response.body === null) throw new CliError('protocol-error', 'Missing JSON response body.');
       const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
       try { for (;;) { const result = await reader.read(); if (result.done) break; size += result.value.length; if (size > responseBytes) throw exceeded(); chunks.push(result.value); } } finally { await reader.cancel().catch(() => {}); }
-      const contentType = response.headers.get('content-type') ?? ''; if (!/^application\/json(?:\s*;|$)/i.test(contentType)) throw new CliError('protocol-error', 'Expected a JSON response.');
-      const bytes = Buffer.concat(chunks, size); chunks.length = 0;
+      const bytes = Buffer.concat(chunks, size); chunks.length = 0; const contentType = response.headers.get('content-type') ?? '';
+      if (options.missingRoute !== undefined && response.status === 404 && !isFailure(contentType, bytes)) throw options.missingRoute;
+      if (!JSON_CONTENT_TYPE.test(contentType)) throw new CliError('protocol-error', 'Expected a JSON response.');
       const data = parseJson(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
       if (!response.ok) { const failure = httpFault(path, data, response.status); if (mutation && !failure.definitive) throw uncertain(null); throw remoteFailure(failure.code, { message: failure.message, secrets }); }
       return { data, headers: response.headers };
