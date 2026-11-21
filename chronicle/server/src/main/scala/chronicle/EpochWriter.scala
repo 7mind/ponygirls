@@ -36,6 +36,11 @@ object EpochWriter {
     * much memory, instead of the 4 MB defaults (ingest-c L6: fewer posting-page rewrites, 16-34 % less upload WAL).
     * Searches through the index scan the pending list until it is merged; the maintenance pass empties it. */
   val fragmentIndexMergeBytes: Long = 32L*1024*1024
+  /** The fragment table's size (its statistics' row estimate) from which the writer batches merges; below it the 4 MB
+    * defaults stay. With a full 32 MiB list the planner prices the trigram index above a sequential scan of a small
+    * table: measured (ingest-c L6G), lexical searches read the whole table at 120,000 fragments (+0.8-1.1 s) and kept
+    * the index from 160,000 (+0.02 s); this is 2.5 times that. */
+  val fragmentIndexMergeMinimumFragments: Long = 400000
   private val batchSize = 128
   private val messageFetchSize = 32
 
@@ -185,14 +190,16 @@ object EpochWriter {
     }
     Appended(messageBytes,fragmentCount,records)
   }
-  /** For the rest of the transaction, an insert that grows the fragment trigram index's pending list past
-    * `fragmentIndexMergeBytes` merges it into the tree with as much memory: a merge rewrites every posting page it touches,
-    * so fewer, larger merges write less WAL. The index has no `gin_pending_list_limit` of its own, so the setting applies. */
-  private def batchFragmentIndexMerges(c: Connection): Unit = {
-    val size=s"${fragmentIndexMergeBytes/1024}kB"
-    Sql.exec(c,"SELECT set_config('gin_pending_list_limit',?,true),set_config('work_mem',?,true)",size,size)
-    ()
-  }
+  /** For the rest of the transaction, once the fragment table holds `fragmentIndexMergeMinimumFragments` (by its
+    * statistics: no count), an insert that grows the fragment trigram index's pending list past `fragmentIndexMergeBytes`
+    * merges it into the tree with as much memory: a merge rewrites every posting page it touches, so fewer, larger merges
+    * write less WAL. The index has no `gin_pending_list_limit` of its own, so the setting applies. */
+  private def batchFragmentIndexMerges(c: Connection): Unit =
+    if(Sql.one(c,"SELECT reltuples>=? FROM pg_class WHERE oid='ch_epoch_fragments'::regclass",fragmentIndexMergeMinimumFragments)(_.getBoolean(1)).contains(true)) {
+      val size=s"${fragmentIndexMergeBytes/1024}kB"
+      Sql.exec(c,"SELECT set_config('gin_pending_list_limit',?,true),set_config('work_mem',?,true)",size,size)
+      ()
+    }
   /** Inserts of one statement, executed every `batchSize` rows and by `flush`. */
   private final class Batch(c: Connection,sql: String) extends AutoCloseable {
     private val statement=c.prepareStatement(sql)

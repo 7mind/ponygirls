@@ -200,16 +200,24 @@ final class UploadBoundaryTest extends munit.FunSuite {
     } finally db.transaction { c => Sql.exec(c,"TRUNCATE ch_epochs CASCADE"); Sql.exec(c,"ANALYZE ch_epoch_messages") }
   }}
 
-  test("the writer's transaction merges the fragment index's pending list in fragmentIndexMergeBytes batches; the connection's settings are unchanged after it") { database { (_,db,_) =>
+  test("the writer's transaction merges the fragment index's pending list in fragmentIndexMergeBytes batches from fragmentIndexMergeMinimumFragments fragments on, below that with the defaults; the connection's settings are unchanged after it") { database { (_,db,_) =>
     def merge(c: java.sql.Connection): (Long,Long) =
       Sql.one(c,"SELECT pg_size_bytes(current_setting('gin_pending_list_limit')),pg_size_bytes(current_setting('work_mem'))")(r => (r.getLong(1),r.getLong(2))).get
-    db.transaction { c =>
-      val defaults=merge(c)
+    /** `append` of one message into a new epoch, the fragment table's statistics saying `fragments` (rolled back after). */
+    def appendAt(c: java.sql.Connection,fragments: Long): Unit = {
+      Sql.exec(c,"UPDATE pg_class SET reltuples=?::real WHERE oid='ch_epoch_fragments'::regclass",fragments)
       val epoch=UUID.randomUUID()
       Sql.exec(c,"INSERT INTO ch_epochs(id,session_id,raw_path) VALUES(?,?,'session.jsonl')",epoch,UUID.randomUUID())
       EpochWriter.append(c,epoch,0,List(Message("m",None,"user","text",None,0)),"",0,0L,0,ResumableSha256())
-      assertEquals(merge(c),(EpochWriter.fragmentIndexMergeBytes,EpochWriter.fragmentIndexMergeBytes))
-      c.commit()
+    }
+    db.transaction { c =>
+      val defaults=merge(c)
+      appendAt(c,EpochWriter.fragmentIndexMergeMinimumFragments-1)
+      assertEquals(merge(c),defaults,"below the threshold")
+      c.rollback()
+      appendAt(c,EpochWriter.fragmentIndexMergeMinimumFragments)
+      assertEquals(merge(c),(EpochWriter.fragmentIndexMergeBytes,EpochWriter.fragmentIndexMergeBytes),"at the threshold")
+      c.rollback()
       assertEquals(merge(c),defaults)
     }
   }}
