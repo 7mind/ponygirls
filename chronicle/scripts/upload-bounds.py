@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""S2 acceptance runs A, B and D of docs/drafts/20261120-1201-append-only-ingest-spec.md §11.1; started by
-test-upload-bounds.sh, whose header has the invocation. Synthetic Pi sessions only, generated here; the owned database
-of the with-service-postgres wrapper only; every process it starts is stopped on exit."""
-import base64, datetime, hashlib, http.client, json, os, random, re, resource, secrets, shlex, shutil, signal, socket, subprocess, sys, tempfile
+"""Acceptance runs A, B, D, E and G of the ingest limits (docs/drafts/20261121-0055-ingest-limits-spec.md §9; U8's runs of
+the append-only ingest extended); started by test-upload-bounds.sh, whose header has the invocation. Synthetic Pi
+sessions only, generated here; the owned database of the with-service-postgres wrapper only; every process it starts is
+stopped on exit."""
+import base64, datetime, hashlib, http.client, json, mmap, os, random, re, resource, secrets, shlex, shutil, signal, socket, subprocess, sys, tempfile
 import threading, time, urllib.error, urllib.parse, urllib.request, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,10 +34,24 @@ assert LOCATION is not None, 'owned loopback database required'
 # session fits.
 SCALE = float(os.environ.get('UPLOAD_BOUNDS_SCALE', '1'))
 EVIDENCE = Path(os.environ['UPLOAD_BOUNDS_EVIDENCE']) if os.environ.get('UPLOAD_BOUNDS_EVIDENCE') else None
+# Diagnostic only: the collector reaches the server through the logging proxy (U8's path) instead of directly.
+PROXY = os.environ.get('UPLOAD_BOUNDS_PROXY') == '1'
+# The landing stage the run accepts: `prefix` (L4, L1, L3, L6, L2) or `l5` (streamed indexing as well). Legs of a later
+# stage are listed as outside the stage; a leg of the stage that cannot run is `not run` and the run is incomplete.
+STAGES = ('prefix', 'l5')
+STAGE = os.environ.get('UPLOAD_BOUNDS_STAGE', 'prefix')
+assert STAGE in STAGES, f'UPLOAD_BOUNDS_STAGE must be one of {STAGES}'
+# B only: the JSON summary (last line of the output) of an A run of the same tree, for the Archive search comparison.
+COMPARE_A = Path(os.environ['UPLOAD_BOUNDS_COMPARE_A']) if os.environ.get('UPLOAD_BOUNDS_COMPARE_A') else None
+WEB_ROOT = Path(os.environ['CHRONICLE_WEB_ROOT']).resolve(strict=True) if os.environ.get('CHRONICLE_WEB_ROOT') else None
+CHROMIUM = Path(os.environ['CHRONICLE_CHROMIUM']).resolve(strict=True) if os.environ.get('CHRONICLE_CHROMIUM') else None
 
-# Production values (spec §4.4) and the heap they are sized for: the budget default is 2^31 - 1 of the 6.4 GiB bound.
+# Production values (spec §9): the server at the 8 GiB container's native default heap (80 %) with the default indexing
+# budget (2^31 - 1, no configuration key); PostgreSQL with production's current settings (reports/deploy4/PREP.md).
 PRODUCTION_HEAP = 6871947673
 PRODUCTION_BUDGET = 2147483647
+PRODUCTION_ROLE_SETTINGS = dict(statement_timeout='30s', lock_timeout='35s', idle_in_transaction_session_timeout='1min', work_mem='4MB')
+PRODUCTION_MAX_WAL_SIZE = '1GB'
 BODY_BYTES = 268435456
 DEPLOYMENT_FILE_BYTES = 8 * GiB
 DEPLOYMENT_MESSAGES = 2_000_000
@@ -50,7 +65,16 @@ MAX_PAGE_BYTES = 64 * MiB
 JOB_WAIT_S = 1800
 DISK_SAMPLE_S = 10
 SMOKE_BUDGET = 96 * MiB
-
+# Targets of spec §9: L3 Archive search of a rare literal, the 1 GiB and 4.4 GB runs' difference; L1 CLI download RSS;
+# the dashboard download's renderer JS heap; L2 collector CPU of the A run's +5 % append.
+ARCHIVE_RARE_SECONDS = 1.0
+ARCHIVE_SPREAD_SECONDS = 0.2
+CLI_DOWNLOAD_RSS = 128 * 10**6
+RENDERER_HEAP = 64 * 10**6
+APPEND_CPU_SECONDS = 10.0
+DOWNLOAD_MIN_RATE = 5 * 10**6  # bytes per second: the download deadlines, generous for this host
+NOT_RUN_EXIT = 3
+GROWTH_APPENDS, GROWTH_PERCENT, GROWTH_BUDGET_S = 20, 0.5, 30 * 60
 # Needles: letters the generated vocabulary never uses (j, k, q, w, x, y, z), so none occurs by chance.
 COMMON = 'kobalt needle'
 RARE = 'xyzzy quokka'
@@ -59,6 +83,7 @@ NO_HIT = 'zyzzyva kumquat'
 COMMON_EVERY, COMMON_AT = 101, 7
 
 checks, phases, servers, collectors, deferred = [], [], [], [], []
+not_run, outside_stage, clis = [], [], []
 running = []  # the server process of the current phase, for its CPU time
 
 
@@ -78,10 +103,21 @@ def note(message):
     print('#', message, flush=True)
 
 
-def scaled_budget(heap_bytes):
-    """The indexing budget of a heap bound, in the production proportion (2^31 - 1 of 6.4 GiB)."""
-    budget = heap_bytes * PRODUCTION_BUDGET // PRODUCTION_HEAP
-    return budget if SCALE == 1 else max(int(budget * SCALE), SMOKE_BUDGET)
+def skip(label, reason):
+    """A leg of this stage that cannot run with these binaries: reported, and the run ends incomplete (never passed)."""
+    not_run.append(f'{label}: {reason}')
+    print('not run -', label, '-', reason, flush=True)
+
+
+def later_stage(label, stage):
+    """A leg of a later landing stage (a hook): listed, not judged."""
+    outside_stage.append(f'{label} (stage {stage})')
+    note(f'outside stage {STAGE}: {label} (stage {stage})')
+
+
+def smoke_budget():
+    """Development scale only: an indexing budget the shrunk large session still exceeds and the small ones fit."""
+    return max(int(PRODUCTION_BUDGET * SCALE), SMOKE_BUDGET)
 
 
 def estimate(messages, message_bytes, fragments, dimensions=DIMENSIONS):
@@ -107,6 +143,26 @@ def one(query, *args):
     rows = sql(query, *args)
     assert len(rows) == 1, rows
     return rows[0] if len(rows[0]) > 1 else rows[0][0]
+
+
+def production_postgres():
+    """Applies production's current settings to the owned cluster (the service role's defaults in its database and
+    max_wal_size, as the cluster's peer-authenticated administrator over its socket) and checks that a new service-role
+    session sees exactly them."""
+    role, database = DATABASE['user'], LOCATION[2]
+    assert re.fullmatch(r'\w+', role), role
+    statements = [f"ALTER ROLE \"{role}\" IN DATABASE \"{database}\" SET {name} = '{value}'" for name, value in PRODUCTION_ROLE_SETTINGS.items()]
+    statements += [f"ALTER SYSTEM SET max_wal_size = '{PRODUCTION_MAX_WAL_SIZE}'", 'SELECT pg_reload_conf()']
+    subprocess.run(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-h', str(OWNED / 'cluster/socket'), '-p', LOCATION[1], '-d', 'postgres', '-f', '-'],
+                   input=';\n'.join(statements) + ';\n', capture_output=True, text=True, timeout=60, check=True)
+    names = [*PRODUCTION_ROLE_SETTINGS, 'max_wal_size']
+    result = subprocess.run(['psql', '-X', '-At', '-F', '|', '-h', '127.0.0.1', '-p', LOCATION[1], '-U', role, '-d', database, '-c',
+                             'SELECT ' + ', '.join(f"current_setting('{name}')" for name in names)], capture_output=True, text=True, timeout=60, check=True,
+                            env={**{k: v for k, v in os.environ.items() if k != 'PGOPTIONS'}, 'PGPASSWORD': Path(DATABASE['passwordFile']).read_text().strip()})
+    seen = dict(zip(names, result.stdout.strip().split('|')))
+    expected = {**PRODUCTION_ROLE_SETTINGS, 'max_wal_size': PRODUCTION_MAX_WAL_SIZE}
+    check(f'PostgreSQL: a new service-role session has production\'s settings {json.dumps(expected)}', seen == expected, seen)
+    return seen
 
 
 def wal_lsn():
@@ -223,7 +279,7 @@ class Fixture:
     @staticmethod
     def filled(start, size):
         """Text of exactly `size` ASCII bytes from the paragraph pool."""
-        pieces, length, j = [], 0, start
+        pieces, length, j = [], -1, start  # the joined length: one separator fewer than pieces
         while length < size:
             piece = Fixture.POOL[j % len(Fixture.POOL)]
             pieces.append(piece)
@@ -285,6 +341,25 @@ class Fixture:
                 self.needles[needle].append(i)
         assert self.bytes == target == self.path.stat().st_size, (self.bytes, target)
         return self
+
+    def edit(self, i):
+        """Changes message i's line in place without changing its length (same inode, new content in the file's prefix),
+        then re-hashes the file. Returns the line's byte offset."""
+        old = self.line(i).encode('ascii')
+        text = self.text(i)
+        at = text.index(' ', len(f'Message {i}.')) + 1
+        self.overrides[i] = text[:at] + 'EDITED' + text[at + len('EDITED'):]
+        new = self.line(i).encode('ascii')
+        assert len(new) == len(old) and new != old, (i, len(new), len(old))
+        with open(self.path, 'r+b') as file, mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as content:
+            offset = content.find(old)
+            assert offset >= 0 and content.find(old, offset + 1) < 0, f'message {i} line not found once'
+            assert os.pwrite(file.fileno(), new, offset) == len(new)
+        self.digest = hashlib.sha256()
+        with open(self.path, 'rb') as file:
+            for chunk in iter(lambda: file.read(16 * MiB), b''):
+                self.digest.update(chunk)
+        return offset
 
     def sha256(self):
         return self.digest.hexdigest()
@@ -370,6 +445,31 @@ def stop_group(process, grace=30):
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=10)
+
+
+def measured(args, env, timeout, sink=None):
+    """Runs a command to its end: (exit status, stdout bytes, stderr text, peak RSS bytes, CPU s, wall s) from its own
+    wait4 usage. `sink` consumes stdout as it arrives instead (nothing is kept)."""
+    started = time.monotonic()
+    with tempfile.TemporaryFile() as err:
+        process = subprocess.Popen(args, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err)
+        killer = threading.Timer(timeout, process.kill)
+        killer.start()
+        out = bytearray()
+        try:
+            for chunk in iter(lambda: process.stdout.read(MiB), b''):
+                if sink is None:
+                    out += chunk
+                else:
+                    sink(chunk)
+            _, status, usage = os.wait4(process.pid, 0)
+        finally:
+            killer.cancel()
+            process.stdout.close()
+        process.returncode = os.waitstatus_to_exitcode(status)
+        err.seek(0)
+        stderr = err.read().decode(errors='replace')
+    return process.returncode, bytes(out), stderr, usage.ru_maxrss * KiB, usage.ru_utime + usage.ru_stime, time.monotonic() - started
 
 
 def free_port():
@@ -581,18 +681,21 @@ class Proxy:
 
 
 class Collector:
-    """The tree's collector, `--once`, under --max-old-space-size=256 with --trace-gc, through the logging proxy."""
+    """The tree's collector, `--once`, under --max-old-space-size=256 with --trace-gc, straight to the server (through the
+    logging proxy only with UPLOAD_BOUNDS_PROXY=1). After every run its `--status --json` is read: no `report-failed`
+    diagnostic may remain (U8 finding 1), and the per-source `lastPass` of the incremental append (spec §2.2 item 6) is
+    looked up there."""
     def __init__(self, root, origin, token_file, max_file_bytes, max_messages):
         self.root, self.home = root, root / 'home'
         self.config = root / 'collector.json'
-        self.proxy = Proxy(root, origin)
-        self.config.write_text(json.dumps(dict(enabled=True, endpoint=self.proxy.origin, tokenFile=str(token_file), stateDir=str(root / 'collector-state'),
-                                               homeDir=str(self.home), discoverYolo=False, quietMs=0, uploadProtocol='parts',
-                                               maxFileBytes=max_file_bytes, maxScanBytes=max_file_bytes, maxMessages=max_messages,
+        self.proxy = Proxy(root, origin) if PROXY else None
+        self.config.write_text(json.dumps(dict(enabled=True, endpoint=self.proxy.origin if PROXY else origin, tokenFile=str(token_file),
+                                               stateDir=str(root / 'collector-state'), homeDir=str(self.home), discoverYolo=False, quietMs=0,
+                                               uploadProtocol='parts', maxFileBytes=max_file_bytes, maxScanBytes=max_file_bytes, maxMessages=max_messages,
                                                maxRecordBytes=RECORD_BYTES)))
         self.env = {k: v for k, v in os.environ.items() if not k.startswith('CHRONICLE_') and k not in ('NODE_OPTIONS', 'NODE_PATH')}
         self.env.update(HOME=str(self.home))
-        self.runs = 0
+        self.runs, self.last_status = 0, None
 
     def sessions(self, project):
         directory = self.home / '.pi/agent/sessions' / project
@@ -602,7 +705,7 @@ class Collector:
     def once(self, label):
         self.runs += 1
         out, err = self.root / f'collector-{self.runs}.out', self.root / f'collector-{self.runs}.err'
-        started, before, mark = time.monotonic(), resource.getrusage(resource.RUSAGE_CHILDREN), len(self.proxy.lines())
+        started, before, mark = time.monotonic(), resource.getrusage(resource.RUSAGE_CHILDREN), len(self.proxy.lines()) if PROXY else 0
         with out.open('x') as stdout, err.open('x') as stderr:
             code = subprocess.run([NODE, f'--max-old-space-size={COLLECTOR_HEAP_MB}', '--trace-gc', str(COLLECTOR), '--config', str(self.config), '--once'],
                                   env=self.env, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, timeout=7200).returncode
@@ -611,75 +714,116 @@ class Collector:
         text = out.read_text()
         results = [line[line.index('{"'):] for line in text.splitlines() if '{"' in line]
         gcs = [(kind, float(before), float(after)) for kind, before, _, after, _ in NODE_GC.findall(text)]
+        status = self.status()
+        reports = [d for d in status.get('diagnostics', []) if d.get('code') == 'report-failed']
         summary = dict(label=label, exit=code, wallSeconds=round(wall, 1), cpuSeconds=round(cpu, 1), heapLimitMB=COLLECTOR_HEAP_MB,
                        peakLiveHeapMB=max((after for kind, _, after in gcs if kind == 'Mark-Compact'), default=None),
                        peakHeapBeforeCollectionMB=max((before for _, before, _ in gcs), default=None),
                        fullCollections=sum(1 for kind, _, _ in gcs if kind == 'Mark-Compact'),
-                       outOfMemory='heap out of memory' in text + err.read_text(), requests=self.proxy.summary(mark))
+                       outOfMemory='heap out of memory' in text + err.read_text(), path='logging proxy' if PROXY else 'direct',
+                       requests=self.proxy.summary(mark) if PROXY else None, reportFailed=reports, reporting=status.get('reporting'))
         collectors.append(summary)
         note(json.dumps(summary))
         (self.root / f'collector-{self.runs}.result').write_text('\n'.join(line for line in text.splitlines() if not NODE_GC.search(line)) + '\n')
         if code != 0:
-            status = self.status()
             note(f'{label}: collector result {results[-1] if results else None}')
             note(f'{label}: collector queue ' + json.dumps(status.get('queue'))[:4000])
             note(f'{label}: collector diagnostics ' + json.dumps(status.get('diagnostics'))[:4000])
         check(f'{label}: the collector prints its result, no out-of-memory, within {COLLECTOR_HEAP_MB} MB of heap',
               not summary['outOfMemory'] and results, (code, err.read_text()[-2000:], text[-2000:]))
-        check(f'{label}: --once exits 0 (no upload failure, nothing left, no failed progress report)', code == 0,
+        check(f'{label}: --once exits 0 (no upload failure, nothing left, no failed progress report; collector {summary["path"]})', code == 0,
               dict(exit=code, requests=summary['requests']), defer=True)
+        check(f'{label}: no report-failed diagnostic after the run (collector {summary["path"]})', not reports, reports, defer=True)
         return json.loads(results[-1])
 
     def status(self):
         result = subprocess.run([NODE, f'--max-old-space-size={COLLECTOR_HEAP_MB}', str(COLLECTOR), '--config', str(self.config), '--status', '--json'],
                                 env=self.env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120, check=True)
-        return json.loads(result.stdout)
+        self.last_status = json.loads(result.stdout)
+        return self.last_status
+
+    def last_pass(self, fixture):
+        """The `lastPass` the collector reports for the fixture's file after the latest run, or None when it reports none
+        at all (a collector without the incremental append). Found wherever the status nests it: the entry naming the
+        file (its path or producer session id), else the only one."""
+        found = []
+
+        def walk(value):
+            if isinstance(value, dict):
+                if isinstance(value.get('lastPass'), dict):
+                    found.append(value)
+                for item in value.values():
+                    walk(item)
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item)
+        walk(self.last_status)
+        if not found:
+            return None
+        named = [entry for entry in found if str(fixture.path) in json.dumps(entry) or fixture.session_id in json.dumps(entry)]
+        chosen = named if named else found
+        assert len(chosen) == 1, f'lastPass of {fixture.path}: {json.dumps(found)[:2000]}'
+        return chosen[0]['lastPass']
+
+    def diagnostics(self, code):
+        return [d for d in self.last_status.get('diagnostics', []) if d.get('code') == code]
 
 
 class Cli:
+    """The tree's CLI; every call's peak RSS and wall time are recorded (`clis`)."""
     def __init__(self, root, origin, password_file):
         self.origin, self.env = origin, dict({k: v for k, v in os.environ.items() if not k.startswith('CHRONICLE_')}, HOME=str(root / 'home'),
                                              CHRONICLE_STATE_DIR=str(root / 'cli-state'))
         self.call('login', '--login', 'alice', '--password-file', str(password_file), expect=0)
 
+    def run(self, args, sink=None, timeout=180, json_output=True):
+        code, out, err, rss, cpu, wall = measured([str(CLI), '--url', self.origin, '--allow-insecure-http', *(['--json'] if json_output else []),
+                                                   '--timeout-ms', '120000', *args], self.env, timeout, sink)
+        clis.append(dict(command=args[0], exit=code, peakRssBytes=rss, cpuSeconds=round(cpu, 1), wallSeconds=round(wall, 2)))
+        return code, out, err, rss, wall
+
     def call(self, *args, expect=0):
-        started = time.monotonic()
-        result = subprocess.run([str(CLI), '--url', self.origin, '--allow-insecure-http', '--json', '--timeout-ms', '120000', *args], stdin=subprocess.DEVNULL,
-                                env=self.env, capture_output=True, text=True, timeout=180)
-        elapsed = time.monotonic() - started
-        assert (result.returncode == 0) == (expect == 0), f'chronicle {args[0]}: exit {result.returncode}: {result.stderr[-2000:]} {result.stdout[-2000:]}'
-        return (json.loads(result.stdout) if expect == 0 else result.stderr), elapsed
+        code, out, err, _, elapsed = self.run(args)
+        assert (code == 0) == (expect == 0), f'chronicle {args[0]}: exit {code}: {err[-2000:]} {out[-2000:].decode(errors="replace")}'
+        return (json.loads(out) if expect == 0 else err), elapsed
 
     def result(self, *args):
         value, elapsed = self.call(*args, '--auth', 'session')
         return next(iter(value.values()))['result'], elapsed
 
+    def downloads(self):
+        """Whether this CLI has `raw --output` (spec §1.5)."""
+        help_text, _ = self.call('help', 'raw')
+        return '--output' in json.dumps(help_text)
 
-class Rpc:
-    """The browser protocol over a minimal WebSocket client (cookie login, Hello, Ping/Pong): reads the CLI cannot make,
-    whose result frames exceed the CLI's 8 MiB bound, and failure messages, which the CLI replaces by its own text."""
-    def __init__(self, origin, password):
-        self.origin = origin
-        host, port = origin.removeprefix('http://').split(':')
-        request = urllib.request.Request(origin + '/api/login', method='POST', data=json.dumps(dict(login='alice', password=password)).encode(),
-                                         headers={'Content-Type': 'application/json', 'Origin': origin})
-        with urllib.request.urlopen(request, timeout=30) as response:
-            cookie = next(value.split(';')[0] for name, value in response.headers.items() if name.lower() == 'set-cookie' and value.startswith('chronicle_session='))
-        self.socket = socket.create_connection((host, int(port)), timeout=600)
+
+def login_cookie(origin, password):
+    """`chronicle_session=…` of a browser login as alice."""
+    request = urllib.request.Request(origin + '/api/login', method='POST', data=json.dumps(dict(login='alice', password=password)).encode(),
+                                     headers={'Content-Type': 'application/json', 'Origin': origin})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return next(value.split(';')[0] for name, value in response.headers.items() if name.lower() == 'set-cookie' and value.startswith('chronicle_session='))
+
+
+class WebSocket:
+    """A minimal WebSocket client: text messages, masked frames out, continuation and control frames in (pings answered)."""
+    def __init__(self, host, port, path, headers=(), timeout=600):
+        self.socket = socket.create_connection((host, int(port)), timeout=timeout)
         key = base64.b64encode(os.urandom(16)).decode()
-        self.socket.sendall((f'GET /api/ws HTTP/1.1\r\nHost: {host}:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n'
-                             f'Sec-WebSocket-Version: 13\r\nOrigin: {origin}\r\nCookie: {cookie}\r\n\r\n').encode())
+        extra = ''.join(f'{name}: {value}\r\n' for name, value in headers)
+        self.socket.sendall((f'GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n'
+                             f'Sec-WebSocket-Version: 13\r\n{extra}\r\n').encode())
         head = b''
         while b'\r\n\r\n' not in head:
-            head += self.socket.recv(1)
+            chunk = self.socket.recv(1)
+            assert chunk, f'websocket handshake: {head!r}'
+            head += chunk
         assert head.startswith(b'HTTP/1.1 101'), head
-        hello = self.call({'Hello': {'versions': ['1.9.0']}})
-        assert 'Hello' in hello, hello
 
     def exact(self, n):
         data = bytearray()
         while len(data) < n:
-            chunk = self.socket.recv(min(n - len(data), 1 << 20))
+            chunk = self.socket.recv(min(n - len(data), MiB))
             assert chunk, 'socket closed'
             data += chunk
         return bytes(data)
@@ -690,6 +834,9 @@ class Rpc:
         header = bytes([0x80 | opcode]) + (bytes([0x80 | length]) if length < 126 else bytes([0x80 | 126]) + length.to_bytes(2, 'big') if length < 65536
                                             else bytes([0x80 | 127]) + length.to_bytes(8, 'big'))
         self.socket.sendall(header + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+    def send(self, value):
+        self.frame(1, json.dumps(value).encode())
 
     def receive(self):
         message = bytearray()
@@ -709,13 +856,26 @@ class Rpc:
             if first & 0x80:
                 return json.loads(message)
 
+    def close(self):
+        self.socket.close()
+
+
+class Rpc:
+    """The browser protocol over the minimal WebSocket client (cookie login, Hello, the server's Ping answered): failure
+    messages, which the CLI replaces by its own text, and pages read both ways."""
+    def __init__(self, origin, password):
+        host, port = origin.removeprefix('http://').split(':')
+        self.socket = WebSocket(host, port, '/api/ws', [('Origin', origin), ('Cookie', login_cookie(origin, password))])
+        hello = self.call({'Hello': {'versions': ['1.9.0']}})
+        assert 'Hello' in hello, hello
+
     def call(self, operation):
         request = str(uuid.uuid4())
-        self.frame(1, json.dumps(dict(requestId=request, operation=operation)).encode())
+        self.socket.send(dict(requestId=request, operation=operation))
         while True:
-            envelope = self.receive()
+            envelope = self.socket.receive()
             if 'Ping' in envelope['result']:
-                self.frame(1, json.dumps(dict(requestId=envelope['requestId'], operation={'Pong': envelope['result']['Ping']})).encode())
+                self.socket.send(dict(requestId=envelope['requestId'], operation={'Pong': envelope['result']['Ping']}))
             elif envelope['requestId'] == request:
                 return envelope['result']
 
@@ -723,14 +883,92 @@ class Rpc:
         self.socket.close()
 
 
+class Chromium:
+    """Headless Chromium driven over the DevTools protocol (no dependency): opens the dashboard's session view with Info
+    shown, clicks the raw download link with the mouse, and samples the page's JS heap until the browser has saved the file."""
+    def __init__(self, root):
+        self.root, self.profile, self.saved = root, root / 'chromium-profile', root / 'chromium-downloads'
+        self.profile.mkdir()
+        self.saved.mkdir()
+        self.log = root / 'chromium.log'
+        with self.log.open('x') as log:
+            self.process = subprocess.Popen([str(CHROMIUM), '--headless=new', '--no-sandbox', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+                                             '--disable-extensions', '--disable-background-networking', '--disable-sync', '--window-size=1600,1000',
+                                             '--remote-debugging-port=0', f'--user-data-dir={self.profile}', 'about:blank'],
+                                            stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                                            env=dict(os.environ, HOME=str(root / 'home')))
+        active, deadline = self.profile / 'DevToolsActivePort', time.monotonic() + 60
+        while not (active.exists() and len(active.read_text().splitlines()) == 2):
+            assert self.process.poll() is None and time.monotonic() < deadline, f'chromium start: {self.log.read_text()[-2000:]}'
+            time.sleep(0.1)
+        port, path = active.read_text().splitlines()
+        self.socket = WebSocket('127.0.0.1', port, path)
+        self.sequence, self.events = 0, []
+
+    def call(self, method, params=None, session=None):
+        self.sequence += 1
+        self.socket.send(dict(id=self.sequence, method=method, params=params or {}, **({'sessionId': session} if session else {})))
+        while True:
+            message = self.socket.receive()
+            if message.get('id') == self.sequence:
+                assert 'error' not in message, f'{method}: {message["error"]}'
+                return message['result']
+            if 'method' in message:
+                self.events.append(message)
+
+    def download(self, origin, cookie, session_id, revision, timeout):
+        """(saved file, suggested name, peak JS heap of the page in bytes, heap samples, seconds from the click to the end)."""
+        target = self.call('Target.createTarget', dict(url='about:blank'))['targetId']
+        page = self.call('Target.attachToTarget', dict(targetId=target, flatten=True))['sessionId']
+        name, value = cookie.split('=', 1)
+        assert self.call('Network.setCookie', dict(name=name, value=value, url=origin + '/', httpOnly=True, sameSite='Strict'), page)['success']
+        self.call('Browser.setDownloadBehavior', dict(behavior='allow', downloadPath=str(self.saved), eventsEnabled=True))
+        self.call('Page.navigate', dict(url=f'{origin}/#/session/{session_id}?rev={revision}&pane=info'), page)
+        href = f'/api/raw/{session_id}/{revision}/0'
+        locate = ('(() => { const a = document.querySelector(\'a[download][href="' + href + '"]\'); if (!a) return null; a.scrollIntoView({block: "center"}); '
+                  'const r = a.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2, text: a.textContent}; })()')
+        deadline = time.monotonic() + 120
+        while (link := self.call('Runtime.evaluate', dict(expression=locate, returnByValue=True), page)['result'].get('value')) is None:
+            assert time.monotonic() < deadline, 'the dashboard shows no raw download link: ' + str(self.call('Runtime.evaluate', dict(
+                expression='document.body.innerText.slice(0, 2000)', returnByValue=True), page)['result'].get('value'))
+            time.sleep(0.2)
+        clicked = time.monotonic()
+        for kind in ('mouseMoved', 'mousePressed', 'mouseReleased'):
+            self.call('Input.dispatchMouseEvent', dict(type=kind, x=link['x'], y=link['y'], button='left', clickCount=1), page)
+        peak, samples, begun, state, deadline = 0, 0, None, None, time.monotonic() + timeout
+        while state not in ('completed', 'canceled'):
+            assert time.monotonic() < deadline, f'the browser download did not end within {timeout:.0f} s (state {state})'
+            peak, samples = max(peak, int(self.call('Runtime.getHeapUsage', {}, page)['usedSize'])), samples + 1
+            for event in self.events:
+                if event['method'] == 'Browser.downloadWillBegin':
+                    begun = event['params']
+                elif event['method'] == 'Browser.downloadProgress' and begun is not None and event['params']['guid'] == begun['guid']:
+                    state = event['params']['state']
+            self.events.clear()
+            if state not in ('completed', 'canceled'):
+                time.sleep(0.5)
+        elapsed = time.monotonic() - clicked
+        peak = max(peak, int(self.call('Runtime.getHeapUsage', {}, page)['usedSize']))
+        assert state == 'completed', f'the browser download ended {state}'
+        return self.saved / begun['suggestedFilename'], begun['suggestedFilename'], peak, samples + 1, elapsed, link['text']
+
+    def stop(self):
+        try:
+            self.call('Browser.close')
+        except (AssertionError, OSError):
+            pass
+        self.socket.close()
+        stop_group(self.process, 10)
+
+
 # ---------------------------------------------------------------- the server side of a run
 
 class Harness:
-    def __init__(self, root, run, heap, max_file_bytes):
-        self.root, self.run, self.heap = root, run, heap
-        self.heap_bytes = int(heap[:-1]) * (MiB if heap.endswith('m') else GiB)
-        self.budget = scaled_budget(self.heap_bytes)
-        self.max_file_bytes = max_file_bytes
+    """One run's server side at the default bounds (spec §9): the default heap and indexing budget, the deployment limits."""
+    def __init__(self, root, run):
+        self.root, self.run, self.heap = root, run, PRODUCTION_HEAP
+        self.budget = PRODUCTION_BUDGET if SCALE == 1 else smoke_budget()
+        self.max_file_bytes = max_file_bytes = DEPLOYMENT_FILE_BYTES
         (root / 'home').mkdir()
         self.password = root / 'password'
         self.password.write_text('synthetic-upload-bounds\n')
@@ -747,10 +985,11 @@ class Harness:
                       jdbcUrl=DATABASE['jdbcUrl'], databaseUser=DATABASE['user'], databasePasswordFile=DATABASE['passwordFile'], databaseLimits=DATABASE['limits'],
                       users=[dict(id='alice', login='alice', passwordHashFile=str(root / 'password-hash'), enabled=True)],
                       staticTokens=[dict(id=str(uuid.uuid4()), userId='alice', name='upload-bounds-collector', scopes=['Ingest'], tokenFile=str(self.token_file))],
-                      maxBodyBytes=BODY_BYTES, maxFiles=16, maxFileBytes=max_file_bytes, maxMessages=DEPLOYMENT_MESSAGES, maxRecordBytes=RECORD_BYTES,
-                      maxIndexingBudgetBytes=self.budget)
+                      maxBodyBytes=BODY_BYTES, maxFiles=16, maxFileBytes=max_file_bytes, maxMessages=DEPLOYMENT_MESSAGES, maxRecordBytes=RECORD_BYTES)
+        for key in ('maxIndexingBudgetBytes', 'maxSmallJobBudgetBytes', 'maxRawReadBytes'):
+            config.pop(key, None)
         if SCALE != 1:
-            config['maxRawReadBytes'] = int(BODY_BYTES * SCALE)
+            config.update(maxRawReadBytes=int(BODY_BYTES * SCALE), maxIndexingBudgetBytes=self.budget)
         config['annotation'].update(endpoint=self.stub.origin + '/v1/chat/completions', credentialFile=str(root / 'empty-credential'), model='stub-annotation',
                                     revision='upload-bounds', requestPolicy='strict-json-schema', timeoutSeconds=900, maxResponseBytes=1048576)
         config['embedding'].update(endpoint=self.stub.origin + '/v1/embeddings', credentialFile=str(root / 'empty-credential'), model='stub-embedding',
@@ -759,8 +998,9 @@ class Harness:
         self.config.write_text(json.dumps(config))
         self.server = None
         self.collector = Collector(root, self.origin, self.token_file, max_file_bytes, DEPLOYMENT_MESSAGES)
-        note(f'run {run}: server heap {heap}, indexing budget {self.budget}, maxFileBytes {max_file_bytes} (server and collector), '
-             f'maxMessages {DEPLOYMENT_MESSAGES}, maxRecordBytes {RECORD_BYTES}, collector heap {COLLECTOR_HEAP_MB} MB')
+        note(f'run {run} (stage {STAGE}): server heap {self.heap} B, indexing budget {self.budget}{" (default)" if SCALE == 1 else " (development scale)"}, '
+             f'maxFileBytes {max_file_bytes} (server and collector), maxMessages {DEPLOYMENT_MESSAGES}, maxRecordBytes {RECORD_BYTES}, '
+             f'maxBodyBytes {BODY_BYTES}, collector heap {COLLECTOR_HEAP_MB} MB, collector {"through the logging proxy" if PROXY else "direct"}')
 
     def start(self, label, binary=SERVER):
         self.server = Server(self.root, label, binary, self.config, self.heap)
@@ -863,6 +1103,27 @@ class Harness:
               counters['uploaded'] == uploaded and counters['replacements'] == replacements
               and all(counters[k] == 0 for k in ('uploadFailures', 'quarantined', 'pending', 'stopped', 'conflicts', 'deferred')), counters)
 
+    def incremental(self, label, fixture, delta):
+        """L2 (spec §2.2 item 6): the collector parsed the append incrementally, exactly the appended bytes. None (and a
+        `not run`) when the collector reports no lastPass at all."""
+        last = self.collector.last_pass(fixture)
+        if last is None:
+            skip(f'{label}: lastPass.kind = incremental with parsedBytes = the {delta:,} appended bytes', 'the collector reports no lastPass (unit C1 not in this binary)')
+            return None
+        check(f'{label}: the collector\'s lastPass is incremental and parsed exactly the {delta:,} appended bytes ({json.dumps(last)})',
+              last.get('kind') == 'incremental' and int(last.get('parsedBytes', -1)) == delta, last)
+        return last
+
+    def indexing(self, label, session, revision):
+        """The head job's verdict at the default budget: `index-budget-exceeded` on the prefix (the whole session is held);
+        streamed indexing (L5) is a later stage, whose assertions are hooks here."""
+        if STAGE == 'prefix':
+            later_stage(f'{label}: the head job completes at the default heap, published at the head; semantic and hybrid search find the session', 'l5')
+            return self.budget_verdict(label, session, revision)
+        skip(f'{label}: the head job completes at the default heap, published at the head; semantic and hybrid search find the session',
+             'the L5 assertions come with phase 3')
+        return None
+
     def budget_verdict(self, label, session, revision):
         job = self.wait(f'{label} job verdict', lambda: next((j for j in self.jobs(session) if j['revision'] == revision and j['state'] in ('Failed', 'Complete')), None))
         check(f'{label}: the job of revision {revision} ends Failed index-budget-exceeded before decoding, no attempt consumed',
@@ -897,10 +1158,10 @@ class Harness:
               got and got == expected[:len(got)] and len(got) >= min(within, len(expected)) and page['total'] == n and page['offset'] == offset
               and page['view']['revision'] == revision, dict(total=page['total'], offset=page['offset'], count=len(got), first=got[0]['id'] if got else None))
 
-    def reads(self, label, fixture, session, revision, large_pages=()):
+    def reads(self, label, fixture, session, revision, large_pages=(), targets=True):
         """Pages, locate, context, Find and Archive search answer from stored rows; GetRaw refuses with the exact size.
-        Pages holding a record above the CLI's 8 MiB frame bound are read over the browser protocol; the CLI's answer
-        for them is recorded, not asserted."""
+        Pages holding a large record are read through the CLI (L4: its bounds follow the server's page bound) and over
+        the browser protocol, both exactly. `targets`: the L3 search time is asserted (not for the rollback binary)."""
         cli = self.reader()
         n = fixture.messages
         timings, observations = {}, {}
@@ -916,10 +1177,10 @@ class Harness:
             check(f'{label}: the page at offset {offset:,} answers', 'Messages' in result, str(result)[:2000])
             self.page(label, fixture, revision, result['Messages']['result'], elapsed, offset, 'the browser protocol')
             timings[f'messages@{offset} (browser protocol)'] = round(elapsed, 2)
-            attempt = subprocess.run([str(CLI), '--url', self.origin, '--allow-insecure-http', '--json', 'messages', session, '--revision', str(revision), '--offset', str(offset),
-                                      '--limit', str(PAGE), '--auth', 'session'], env=cli.env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=300)
-            observations[f'CLI messages@{offset}'] = dict(exit=attempt.returncode, stderr=attempt.stderr.strip()[:200])
-            note(f'{label}: the CLI on the page at offset {offset:,}: exit {attempt.returncode} {attempt.stderr.strip()[:200]}')
+            page, elapsed = cli.result('messages', session, '--revision', str(revision), '--offset', str(offset), '--limit', str(PAGE))
+            self.page(label, fixture, revision, page, elapsed, offset, 'the CLI (large record)')
+            timings[f'messages@{offset} (CLI)'] = round(elapsed, 2)
+            observations[f'CLI messages@{offset} peak RSS'] = clis[-1]['peakRssBytes']
         last = fixture.message(n - 1)
         located, elapsed = cli.result('locate', session, last['id'], '--revision', str(revision))
         check(f'{label}: LocateMessage of the last message answers position {n - 1:,} of {n:,} ({elapsed:.2f} s)',
@@ -945,6 +1206,9 @@ class Harness:
                 result, elapsed = cli.result('archive', f'"{literal}" mode:lexical', '--limit', '10')
                 sessions = [row['head']['id'] for row in result['page']['rows']]
                 check(f'{label}: Archive lexical search for the {name} literal returns the session ({elapsed:.2f} s)', session in sessions, sessions)
+                if targets:
+                    check(f'{label}: that search took {elapsed:.2f} s, within the L3 target of {ARCHIVE_RARE_SECONDS} s', elapsed <= ARCHIVE_RARE_SECONDS,
+                          dict(seconds=round(elapsed, 2)), defer=True)
                 timings[f'archive {name}'] = round(elapsed, 2)
         failure, elapsed = self.reader().call('raw', session, '--revision', str(revision), '--auth', 'session', expect=1)
         check(f'{label}: the CLI\'s raw answers too-large ({elapsed:.2f} s)', 'too-large' in failure, failure)
@@ -956,14 +1220,112 @@ class Harness:
         note(f'{label}: read timings {json.dumps(timings)}')
         return dict(timings=timings, observations=observations)
 
+    def downloads(self, label, fixture, session, revision):
+        """L1 (spec §1): the revision's raw file downloaded byte-exact (SHA-256 and size of the fixture) over /api/raw by a
+        streaming cookie client (with a ranged read of its last bytes), by the CLI to a file and to stdout (`raw --output`;
+        peak RSS), and by Chromium through the dashboard's download link (renderer JS heap). Each saved copy is removed
+        once checked."""
+        timeout = max(600, fixture.bytes / DOWNLOAD_MIN_RATE)
+        cookie = login_cookie(self.origin, self.password.read_text().strip())
+        outcome = {}
+
+        def get(path, headers=()):
+            request = urllib.request.Request(self.origin + path, headers={'Cookie': cookie, **dict(headers)})
+            return urllib.request.urlopen(request, timeout=120)
+        with get(f'/api/raw/{session}/{revision}') as response:
+            manifest = json.loads(response.read())
+        files = manifest['files']
+        check(f'{label}: the raw manifest names one file of {fixture.bytes:,} bytes with the fixture\'s SHA-256',
+              manifest['revision'] == revision and len(files) == 1 and int(files[0]['bytes']) == fixture.bytes and files[0]['sha256'] == fixture.sha256(), manifest)
+        digest, received, started = hashlib.sha256(), 0, time.monotonic()
+        with get(f'/api/raw/{session}/{revision}/0') as response:
+            headers = dict(response.headers.items())
+            for chunk in iter(lambda: response.read(4 * MiB), b''):
+                digest.update(chunk)
+                received += len(chunk)
+        elapsed = time.monotonic() - started
+        check(f'{label}: GET /api/raw/…/0 with the cookie streams {received:,} bytes with the fixture\'s SHA-256 ({elapsed:.1f} s, '
+              f'{received / max(elapsed, 1e-9) / 10**6:.0f} MB/s), Content-Length and ETag as specified',
+              received == fixture.bytes and digest.hexdigest() == fixture.sha256() and int(headers['Content-Length']) == fixture.bytes
+              and headers['ETag'] == f'"sha256:{fixture.sha256()}"', dict(received=received, headers=headers))
+        outcome['http'] = dict(seconds=round(elapsed, 1), bytes=received)
+        tail = min(fixture.bytes, MiB)
+        with get(f'/api/raw/{session}/{revision}/0', [('Range', f'bytes={fixture.bytes - tail}-')]) as response:
+            status, ranged, content_range = response.status, response.read(), response.headers['Content-Range']
+        with open(fixture.path, 'rb') as file:
+            file.seek(fixture.bytes - tail)
+            expected = file.read(tail)
+        check(f'{label}: a ranged read of the last {tail:,} bytes (from offset {fixture.bytes - tail:,}) answers 206 with exactly those bytes',
+              status == 206 and ranged == expected and content_range == f'bytes {fixture.bytes - tail}-{fixture.bytes - 1}/{fixture.bytes}', (status, content_range))
+        cli = self.reader()
+        if not cli.downloads():
+            skip(f'{label}: CLI raw --output FILE and --output - (SHA-256, peak RSS ≤ {CLI_DOWNLOAD_RSS / 10**6:.0f} MB)',
+                 'this CLI has no raw --output (unit R2 not in this binary)')
+        else:
+            target = self.root / f'raw-{label.split()[0]}.jsonl'
+            code, out, err, rss, wall = cli.run(['raw', session, '--revision', str(revision), '--output', str(target), '--auth', 'session'], timeout=timeout)
+            saved = hashlib.sha256()
+            with open(target, 'rb') if code == 0 else open(os.devnull, 'rb') as file:
+                for chunk in iter(lambda: file.read(16 * MiB), b''):
+                    saved.update(chunk)
+            size = target.stat().st_size if code == 0 else None
+            check(f'{label}: chronicle raw --output FILE exits 0 and saves {size} bytes with the fixture\'s SHA-256 ({wall:.1f} s, peak RSS {rss / 10**6:.0f} MB)',
+                  code == 0 and size == fixture.bytes and saved.hexdigest() == fixture.sha256(), (code, err[-2000:], out[-2000:]))
+            check(f'{label}: raw --output FILE peak RSS {rss / 10**6:.0f} MB ≤ {CLI_DOWNLOAD_RSS / 10**6:.0f} MB', rss <= CLI_DOWNLOAD_RSS, rss, defer=True)
+            target.unlink(missing_ok=True)
+            outcome['cliFile'] = dict(seconds=round(wall, 1), peakRssBytes=rss)
+            streamed, counted = hashlib.sha256(), [0]
+
+            def consume(chunk):
+                streamed.update(chunk)
+                counted[0] += len(chunk)
+            code, _, err, rss, wall = cli.run(['raw', session, '--revision', str(revision), '--output', '-', '--auth', 'session'], sink=consume, timeout=timeout,
+                                              json_output=False)
+            check(f'{label}: chronicle raw --output - exits 0 and writes {counted[0]:,} bytes with the fixture\'s SHA-256 ({wall:.1f} s, peak RSS {rss / 10**6:.0f} MB)',
+                  code == 0 and counted[0] == fixture.bytes and streamed.hexdigest() == fixture.sha256(), (code, err[-2000:]))
+            check(f'{label}: raw --output - peak RSS {rss / 10**6:.0f} MB ≤ {CLI_DOWNLOAD_RSS / 10**6:.0f} MB', rss <= CLI_DOWNLOAD_RSS, rss, defer=True)
+            outcome['cliStdout'] = dict(seconds=round(wall, 1), peakRssBytes=rss)
+        if CHROMIUM is None or WEB_ROOT is None:
+            skip(f'{label}: dashboard download link in Chromium (SHA-256, renderer JS heap ≤ {RENDERER_HEAP / 10**6:.0f} MB)',
+                 'CHRONICLE_CHROMIUM and CHRONICLE_WEB_ROOT are required for it')
+        else:
+            browser = Chromium(self.root)
+            try:
+                path, name, heap, samples, elapsed, text = browser.download(self.origin, cookie, session, revision, timeout)
+            finally:
+                browser.stop()
+            saved = hashlib.sha256()
+            with open(path, 'rb') as file:
+                for chunk in iter(lambda: file.read(16 * MiB), b''):
+                    saved.update(chunk)
+            size = path.stat().st_size
+            path.unlink()
+            check(f'{label}: the dashboard\'s Info link ({text!r}) downloads {name} in Chromium, {size:,} bytes with the fixture\'s SHA-256 ({elapsed:.1f} s)',
+                  size == fixture.bytes and saved.hexdigest() == fixture.sha256() and name == f'chronicle-{session}-r{revision}-f0.jsonl', (name, size))
+            check(f'{label}: the page\'s JS heap stayed at most {heap / 10**6:.1f} MB ≤ {RENDERER_HEAP / 10**6:.0f} MB during the download ({samples} samples)',
+                  heap <= RENDERER_HEAP, heap, defer=True)
+            outcome['chromium'] = dict(seconds=round(elapsed, 1), peakJsHeapBytes=heap, heapSamples=samples)
+        note(f'{label}: downloads {json.dumps(outcome)}')
+        return outcome
+
 
 # ---------------------------------------------------------------- runs
 
+def wal_per_raw_byte(phase_name, raw_bytes):
+    """WAL bytes per raw byte of a phase (the replacement's), reported against L6 (spec §6.4: ≤ 7.5 B/B on the repo shape;
+    this synthetic words shape: 20.0-20.4 B/B at the base), at max_wal_size 1 GB."""
+    phase = next(p for p in phases if p['name'] == phase_name)
+    value = round(phase['walBytes'] / raw_bytes, 2)
+    note(f'{phase_name}: {value} B of WAL per raw byte ({phase["walBytes"]:,} B for {raw_bytes:,} B, max_wal_size {PRODUCTION_MAX_WAL_SIZE})')
+    return value
+
+
 def run_a(root):
-    """1 GiB: replacement of 1,000,000,000 raw bytes, +5 % append, the 1 GiB boundary, a 16 MiB session that indexes;
-    then the S2 -> S1 rollback (down-025, S1 binary with workers) and the same verdicts."""
+    """A′ (1 GiB): replacement of 1,000,000,000 raw bytes, +5 % append (incremental with L2), the maxFileBytes boundary,
+    a 16 MiB session that indexes, the head's indexing verdict, reads with the L3 search target, the L1 downloads; then the
+    S2 -> S1 rollback (down-025, the S1 binary with workers) and the same verdicts."""
     s1 = Path(os.environ['CHRONICLE_S1_SERVER']).resolve(strict=True)
-    h = Harness(root, 'A', '768m', GiB)
+    h = Harness(root, 'A')
     big = Fixture(h.collector.sessions('--u8-a--') / 'big.jsonl', 'u8-a-big')
     small = Fixture(h.collector.sessions('--u8-a-small--') / 'small.jsonl', 'u8-a-small')
     started = time.monotonic()
@@ -973,11 +1335,16 @@ def run_a(root):
     with Phase('A1 replacement upload of the 1 GB session'):
         h.uploaded('A1', h.collector.once('A1 replacement'), 1, 1)
         session, first = h.stored('A1', big, 1, False)
+    wal = wal_per_raw_byte('A1 replacement upload of the 1 GB session', big.bytes)
     with Phase('A2 +5 % append'):
-        big.write(int(50_000_000 * SCALE), RARE_APPENDED)
+        delta = int(50_000_000 * SCALE)
+        big.write(delta, RARE_APPENDED)
         h.uploaded('A2', h.collector.once('A2 append'), 1, 0)
         _, head = h.stored('A2', big, 2, True, first)
-    with Phase('A3 open at the 1 GiB boundary'):
+        if h.incremental('A2', big, delta) is not None:
+            cpu = collectors[-1]['cpuSeconds']
+            check(f'A2: the append cost the collector {cpu} s of CPU, within {APPEND_CPU_SECONDS} s', cpu <= APPEND_CPU_SECONDS, collectors[-1], defer=True)
+    with Phase('A3 open at the maxFileBytes boundary'):
         identity = json.loads(one("SELECT source FROM ch_revision_info WHERE session_id=:'arg0' AND revision=2", session))
         identity['producerSessionId'] = 'u8-a-boundary'
         metadata = dict(title='upload bounds boundary', project=None, workdir=None, gitRemote=None, gitBranch=None, gitCommit=None, producer='upload-bounds',
@@ -988,12 +1355,12 @@ def run_a(root):
                                                              digest=hashlib.sha256(b'').hexdigest(), rawBytes=str(raw_bytes), messageCount=0,
                                                              messageChain=hashlib.sha256(b'chronicle.message-chain.v1').hexdigest(), completion='Quiescent',
                                                              redacted=False, metadata=metadata))
-        status, opened = declare(GiB)
-        check('A3: an open declaring 1,073,741,824 raw bytes (= maxFileBytes) is accepted', status == 200 and opened['phase'] == 'Open', (status, opened))
+        status, opened = declare(h.max_file_bytes)
+        check(f'A3: an open declaring {h.max_file_bytes:,} raw bytes (= maxFileBytes) is accepted', status == 200 and opened['phase'] == 'Open', (status, opened))
         status, aborted = h.api('POST', f"/api/ingest/uploads/{opened['uploadId']}/abort")
         check('A3: that attempt aborts', status == 200 and aborted['phase'] == 'Aborted', (status, aborted))
-        status, refused = declare(GiB + 1)
-        check('A3: an open declaring 1,073,741,825 raw bytes is refused 413 too-large', status == 413 and refused['code'] == 'too-large', (status, refused))
+        status, refused = declare(h.max_file_bytes + 1)
+        check(f'A3: an open declaring {h.max_file_bytes + 1:,} raw bytes is refused 413 too-large', status == 413 and refused['code'] == 'too-large', (status, refused))
     with Phase('A4 a 16 MiB session indexes and publishes on the same server'):
         small.write(int(16 * MiB * SCALE))
         h.uploaded('A4', h.collector.once('A4 16 MiB session'), 1, 1)
@@ -1001,13 +1368,13 @@ def run_a(root):
         check(f'A4: the 16 MiB session\'s estimate {small_head["estimate"]:,} is within the budget {h.budget:,}', small_head['estimate'] <= h.budget, small_head)
         small_job = h.indexed('A4', small_session, 1)
     with Phase('A5 indexing verdict of the 1 GB session'):
-        check(f'A5: the 1 GB head\'s estimate {head["estimate"]:,} exceeds the budget {h.budget:,}', head['estimate'] > h.budget, head)
-        h.budget_verdict('A5', session, 2)
-        first_job = next(j for j in h.jobs(session) if j['revision'] == 1)
-        check('A5: the replacement\'s job ended index-budget-exceeded or was superseded by the append',
-              first_job['state'] == 'Failed' and first_job['error'] in ('index-budget-exceeded', 'superseded-revision'), first_job)
+        if STAGE == 'prefix':
+            check(f'A5: the 1 GB head\'s estimate {head["estimate"]:,} exceeds the budget {h.budget:,}', head['estimate'] > h.budget, head)
+        h.indexing('A5', session, 2)
     with Phase('A6 reads of the 1 GB session (S2)'):
         a6 = h.reads('A6', big, session, 2)
+    with Phase('A6 raw downloads of the 1 GB session (S2)'):
+        a6_downloads = h.downloads('A6', big, session, 2)
     s2 = h.stop()
     with Phase('A7 down-025 (S2 -> S1 rollback)'):
         env = dict(os.environ, PGPASSWORD=Path(DATABASE['passwordFile']).read_text().strip())
@@ -1023,7 +1390,7 @@ def run_a(root):
     h.start('A-S1', s1)
     with Phase('A8 S1 binary with workers: the same verdicts'):
         check('A8: the S1 binary serves the same heads', h.head(session)['revision'] == 2 and h.source_revision(small_session) == 1 and h.published(small_session) == 1)
-        a8 = h.reads('A8', big, session, 2)
+        a8 = h.reads('A8', big, session, 2, targets=False)
         job_id, fence = one("SELECT id, fence FROM ch_jobs WHERE session_id=:'arg0' AND revision=2", session)
         h.reader().call('jobs', 'retry', job_id, '--yes', '--auth', 'session')
         h.wait('A8 retried job claimed', lambda: one("SELECT state='Failed' AND fence>:'arg1'::bigint FROM ch_jobs WHERE id=:'arg0'", job_id, fence) == 't')
@@ -1031,12 +1398,14 @@ def run_a(root):
     s1_summary = h.stop()
     h.stub.stop()
     return dict(fixture=big.summary(), small=small.summary(), heads=dict(first=first, appended=head, small=small_head), smallJob=small_job,
-                jobs=h.jobs(session), budget=h.budget, reads=dict(S2=a6, S1=a8), servers=[s2, s1_summary])
+                jobs=h.jobs(session), budget=h.budget, walPerRawByte=wal, reads=dict(S2=a6, S1=a8), downloads=a6_downloads, servers=[s2, s1_summary])
 
 
 def run_b(root):
-    """≥ 4 GiB: 4,400,000,000 raw bytes with records of 9-20 MiB (large parts), appended to; other sessions index."""
-    h = Harness(root, 'B', '1g', DEPLOYMENT_FILE_BYTES)
+    """B′ (≥ 4 GiB): 4,400,000,000 raw bytes with records of 9-20 MiB (large parts), appended to, the collector direct
+    (U8 finding 1); pages holding the large records through the CLI; downloads ≥ 4 GiB byte-exact; the L3 search target
+    and its spread against an A run (UPLOAD_BOUNDS_COMPARE_A); the head's indexing verdict while other sessions index."""
+    h = Harness(root, 'B')
     sizes, total = [int(9.5 * MiB), 12 * MiB, int(16.5 * MiB), 20 * MiB], int(4_400_000_000 * SCALE)
     if total > 2 * sum(sizes):
         expected = (total - sum(sizes)) // 5200
@@ -1061,30 +1430,45 @@ def run_b(root):
         status, state = h.api('GET', f"/api/ingest/uploads/{first['upload']['id']}")
         check('B1: the committed attempt reports receivedRawBytes exactly (i64)', status == 200 and state['phase'] == 'Committed'
               and int(state['receivedRawBytes']) == big.bytes and state['receivedMessages'] == big.messages, state)
+    wal = wal_per_raw_byte('B1 replacement upload of the 4.4 GB session and four small sessions', big.bytes + sum(f.bytes for f in smalls))
     with Phase('B2 append (+44,000,000 bytes with one 10 MiB record)'):
         big.large[big.messages + 100] = 10 * MiB
+        before = big.bytes
         big.write(max(int(44_000_000 * SCALE), 24 * MiB), RARE_APPENDED)
         h.uploaded('B2', h.collector.once('B2 append'), 1, 0)
         _, head = h.stored('B2', big, 2, True, first)
         check('B2: the append carried its large record in a large part', head['upload']['largeParts'] >= 1, head['upload'])
         status, state = h.api('GET', f"/api/ingest/uploads/{head['upload']['id']}")
         check('B2: the append attempt reports its received bytes exactly', status == 200 and int(state['receivedRawBytes']) == big.bytes - first['rawBytes'], state)
-    with Phase('B3 indexing: the 4.4 GB session fails the budget, the other sessions index'):
-        check(f'B3: the head\'s estimate {head["estimate"]:,} exceeds the budget {h.budget:,}', head['estimate'] > h.budget, head)
-        h.budget_verdict('B3', session, 2)
+        h.incremental('B2', big, big.bytes - before)
+    with Phase('B3 indexing: the 4.4 GB session\'s verdict, the other sessions index'):
+        if STAGE == 'prefix':
+            check(f'B3: the head\'s estimate {head["estimate"]:,} exceeds the budget {h.budget:,}', head['estimate'] > h.budget, head)
+        h.indexing('B3', session, 2)
         small_jobs = [h.indexed(f'B3 small session {k}', h.source(fixture)[0], 1) for k, fixture in enumerate(smalls)]
     with Phase('B4 reads of the 4.4 GB session'):
         b4 = h.reads('B4', big, session, 2, large_pages=[min(big.large) - PAGE // 2, max(i for i in big.large if i < first['messages']) - 10, max(big.large) - 1])
+        if COMPARE_A is None:
+            skip(f'B4: the rare-literal Archive search within {ARCHIVE_SPREAD_SECONDS} s of the A run\'s', 'UPLOAD_BOUNDS_COMPARE_A names no A summary')
+        else:
+            a = json.loads(COMPARE_A.read_text().strip().splitlines()[-1])
+            a_seconds, b_seconds = a['outcome']['reads']['S2']['timings']['archive rare'], b4['timings']['archive rare']
+            check(f'B4: the rare-literal Archive search took {b_seconds} s here and {a_seconds} s in the A run (scale {a["scale"]}), '
+                  f'within {ARCHIVE_SPREAD_SECONDS} s of each other', abs(b_seconds - a_seconds) <= ARCHIVE_SPREAD_SECONDS and a['scale'] == SCALE,
+                  dict(a=a_seconds, b=b_seconds, aScale=a['scale']), defer=True)
+    with Phase('B5 raw downloads of the 4.4 GB session'):
+        b5 = h.downloads('B5', big, session, 2)
     s2 = h.stop()
     h.stub.stop()
-    return dict(fixture=big.summary(), heads=dict(first=first, appended=head), jobs=h.jobs(session), smallJobs=small_jobs, budget=h.budget, reads=b4, servers=[s2])
+    return dict(fixture=big.summary(), heads=dict(first=first, appended=head), jobs=h.jobs(session), smallJobs=small_jobs, budget=h.budget, walPerRawByte=wal,
+                reads=b4, downloads=b5, servers=[s2])
 
 
 def run_d(root):
     """Growth while indexing: a 2 MB session grows by appends over 6 more revisions while its jobs run; it ends indexed at
     its head. Appends come in groups, each while a job of the then head revision runs (S0-I1: the running job continues,
     the head job waits; a queued job is superseded by the next append)."""
-    h = Harness(root, 'D', '768m', DEPLOYMENT_FILE_BYTES)
+    h = Harness(root, 'D')
     grow = Fixture(h.collector.sessions('--u8-d--') / 'grow.jsonl', 'u8-d-grow')
     delay = float(os.environ.get('UPLOAD_BOUNDS_D_DELAY', '1.0'))
     h.stub.delay(delay)
@@ -1126,6 +1510,7 @@ def run_d(root):
     spent = sum(j['completedWindows'] for j in jobs)
     head_windows = jobs[-1]['totalWindows']
     note(f'D: windows completed {spent} in total, head revision {head["revision"]} has {head_windows}')
+    later_stage('D′: windows annotated ≈ the head\'s windows plus the boundary windows (I2 reuse, L5d)', 'l5')
     s2 = h.stop()
     h.stub.stop()
     return dict(revisions=[dict(revision=r['revision'], rawBytes=r['rawBytes'], messages=r['messages'], estimate=r['estimate'], parts=r['upload']['parts']) for r in revisions],
@@ -1133,7 +1518,7 @@ def run_d(root):
 
 
 def run_e(root):
-    """Gate O (test-main-collector.sh, unchanged) against this tree's server: the server's heap bounded, -XX:+PrintGC and
+    """Gate O (test-main-collector.sh, unchanged) against this tree's server: the server at the default heap, -XX:+PrintGC and
     probed every 100 ms while it runs; the old collector's heap bounded with --trace-gc."""
     node, entry = packaged(os.environ['MAIN_COLLECTOR'])
     assert shutil.which('git') is not None, 'git on PATH (the collector reads repositories)'
@@ -1145,7 +1530,7 @@ def run_e(root):
 if [[ ${{1-}} == serve || ${{1-}} == serve-standby ]]; then
   port=$({python} -c 'import json, sys; print(json.load(open(sys.argv[1]))["listenPort"])' "$2")
   setsid {python} -c {shlex.quote(PROBE)} "http://127.0.0.1:$port/api/versions" {shlex.quote(str(probe))} {PROBE_PERIOD_MS} {PROBE_TIMEOUT_S} {shlex.quote(str(probe_stop))} &
-  {shlex.quote(str(SERVER))} -XX:MaxHeapSize=768m -XX:+PrintGC "$@" > >(tee -a {shlex.quote(str(server_log))}) 2>&1 &
+  {shlex.quote(str(SERVER))} -XX:MaxHeapSize={PRODUCTION_HEAP} -XX:+PrintGC "$@" > >(tee -a {shlex.quote(str(server_log))}) 2>&1 &
   server=$!
   # Gate O stops the server with SIGTERM to the group: the stop request's time ends the server's measured interval.
   trap 'LC_ALL=C; printf "%s\\n" "$EPOCHREALTIME" > {shlex.quote(str(term))}; kill -TERM "$server" 2>/dev/null' TERM
@@ -1189,7 +1574,7 @@ exit "${{PIPESTATUS[0]}}"
                              stoppedOnRequest=stopped, stopRequestRecorded=stop_wall is not None)
     log = server_log.read_text(errors='replace')
     gcs = [(kind, float(before), float(after), float(pause)) for _, kind, before, after, pause in GC.findall(log)]
-    server = dict(label='E', binary=str(SERVER), heap='768m', mode='serve-standby (gate O)', outOfMemory=len(re.findall(r'OutOfMemoryError|Java heap space', log)),
+    server = dict(label='E', binary=str(SERVER), heap=PRODUCTION_HEAP, mode='serve-standby (gate O)', outOfMemory=len(re.findall(r'OutOfMemoryError|Java heap space', log)),
                   peakLiveHeapMB=max((after for kind, _, after, _ in gcs if kind == 'Full'), default=None),
                   peakHeapAfterAnyCollectionMB=max((after for _, _, after, _ in gcs), default=None),
                   peakHeapBeforeCollectionMB=max((before for _, before, _, _ in gcs), default=None), probe=probe_summary)
@@ -1204,12 +1589,68 @@ exit "${{PIPESTATUS[0]}}"
           f'{probe_summary.get("maxMs")} ms), none was missing for more than {probe_summary["allowedGapMs"]} ms (longest {probe_summary["maxGapMs"]} ms), '
           f'and the probe outlived the server', probe_summary['maxGapMs'] is not None and probe_ok(probe_summary), probe_summary)
     check('E: no out-of-memory on either side', server['outOfMemory'] == 0 and not collector['outOfMemory'], (server, collector))
+    compat = Path('chronicle/scripts/test-raw-compat.sh')
+    skip('E: test-raw-compat.sh (tree server × base CLI, base server × tree CLI, tree × tree byte-exact)',
+         'unit R2\'s script is not in this tree' if not compat.exists() else 'its invocation is wired when the harness is rebased onto R2')
     return dict(gateO=passed[-1], wallSeconds=round(time.monotonic() - started, 1))
 
 
-# run: (function, free space it needs, wall-time budget s, consumed-disk budget B) — the budgets of spec §11.1.
-RUNS = {'A': (run_a, 25 * GiB, 30 * 60, 25 * 10**9), 'B': (run_b, 60 * GiB, 90 * 60, 60 * 10**9), 'D': (run_d, 2 * GiB, 30 * 60, None),
-        'E': (run_e, 1 * GiB, None, None)}
+def run_g(root):
+    """G (spec §9): the 1 GiB session grows by 20 appends of +0.5 % through the collector's append path (with L2 each pass 1
+    incremental over the delta; collector CPU per append); then a same-length in-place edit of a line in the middle of the
+    file plus an append: the next upload is a replacement (L2 design (A): diagnostic `source-prefix-changed`) and the
+    archive equals the file, the edited message included."""
+    h = Harness(root, 'G')
+    grow = Fixture(h.collector.sessions('--acc-g--') / 'grow.jsonl', 'acc-g-grow')
+    started = time.monotonic()
+    grow.write(int(1_000_000_000 * SCALE), RARE)
+    note(f'fixture grow {json.dumps(grow.summary())} in {time.monotonic() - started:.1f} s')
+    h.start('G-S2')
+    with Phase('G1 replacement upload of the 1 GB session'):
+        h.uploaded('G1', h.collector.once('G1 replacement'), 1, 1)
+        session, head = h.stored('G1', grow, 1, False)
+    growth_started, appends, incremental = time.monotonic(), [], True
+    with Phase(f'G2 {GROWTH_APPENDS} appends of +{GROWTH_PERCENT} %'):
+        step = int(1_000_000_000 * SCALE * GROWTH_PERCENT / 100)
+        for k in range(1, GROWTH_APPENDS + 1):
+            previous = head
+            grow.write(step)
+            h.uploaded(f'G2.{k}', h.collector.once(f'G2.{k} append'), 1, 0)
+            _, head = h.stored(f'G2.{k}', grow, previous['revision'] + 1, True, previous)
+            run = collectors[-1]
+            last = h.incremental(f'G2.{k}', grow, step) if incremental else None
+            incremental = incremental and last is not None
+            appends.append(dict(revision=head['revision'], rawBytes=head['rawBytes'], parts=head['upload']['parts'], collectorCpuSeconds=run['cpuSeconds'],
+                                collectorWallSeconds=run['wallSeconds'], lastPass=last))
+    cpus = sorted(a['collectorCpuSeconds'] for a in appends)
+    note(f'G2: collector CPU per append of {step:,} bytes: min {cpus[0]} s, median {cpus[len(cpus) // 2]} s, max {cpus[-1]} s')
+    with Phase('G3 same-length edit of a line in the middle of the file, then an append'):
+        edited = grow.messages // 2
+        offset = grow.edit(edited)
+        note(f'G3: message {edited} edited in place at byte {offset:,} of {grow.bytes:,}')
+        grow.write(step)
+        h.uploaded('G3', h.collector.once('G3 edit and append'), 1, 1)
+        _, head = h.stored('G3', grow, head['revision'] + 1, False, head)
+        page, elapsed = h.reader().result('messages', session, '--revision', str(head['revision']), '--offset', str(edited), '--limit', '1')
+        check(f'G3: the archive\'s message {edited:,} is the edited text ({elapsed:.2f} s)', page['messages'] == [grow.message(edited)],
+              dict(got=page['messages'][0]['text'][:200] if page['messages'] else None))
+        if not incremental:
+            skip('G3: the replacement reports source-prefix-changed once', 'the collector reports no lastPass (unit C1 not in this binary)')
+        else:
+            prefix = h.collector.diagnostics('source-prefix-changed')
+            check(f'G3: the collector reports source-prefix-changed once for the file ({len(prefix)})', len(prefix) == 1, prefix)
+    growth = time.monotonic() - growth_started
+    check(f'G: the growth and the edit took {growth / 60:.1f} min, within {GROWTH_BUDGET_S / 60:.0f} min', growth <= GROWTH_BUDGET_S,
+          dict(seconds=round(growth, 1)), defer=True)
+    s2 = h.stop()
+    h.stub.stop()
+    return dict(fixture=grow.summary(), appends=appends, editedMessage=edited, editOffset=offset, head=head, growthSeconds=round(growth, 1), servers=[s2])
+
+
+# run: (function, free space it needs, wall-time budget s, consumed-disk budget B) — the budgets of spec §9 (G: the whole
+# run; its growth and edit alone GROWTH_BUDGET_S).
+RUNS = {'A': (run_a, 50 * GiB, 4 * 3600, 50 * 10**9), 'B': (run_b, 110 * GiB, 14 * 3600, 110 * 10**9), 'D': (run_d, 2 * GiB, 30 * 60, None),
+        'E': (run_e, 1 * GiB, 15 * 60, None), 'G': (run_g, 25 * GiB, 60 * 60, 25 * 10**9)}
 
 
 def main():
@@ -1218,6 +1659,7 @@ def main():
     function, space, wall_budget, disk_budget = RUNS[run]
     free = shutil.disk_usage(tempfile.gettempdir()).free
     check(f'{run}: {free / GiB:.0f} GiB free in {tempfile.gettempdir()} (needs {space * SCALE / GiB:.0f} GiB)', free >= space * SCALE)
+    settings = production_postgres()
     started, lsn = time.monotonic(), wal_lsn()
     with tempfile.TemporaryDirectory(prefix=f'upload-bounds-{run}-') as temporary:
         root = Path(temporary)
@@ -1233,7 +1675,8 @@ def main():
         finally:
             if EVIDENCE is not None:
                 EVIDENCE.mkdir(parents=True, exist_ok=True)
-                for name in [*root.glob('server-*.log'), *root.glob('probe-*.txt'), *root.glob('collector-*.err'), *root.glob('collector-*.result'), *root.glob('proxy.log')]:
+                for name in [*root.glob('server-*.log'), *root.glob('probe-*.txt'), *root.glob('collector-*.err'), *root.glob('collector-*.result'), *root.glob('proxy.log'),
+                             *root.glob('chromium.log')]:
                     shutil.copy(name, EVIDENCE / f'{run}-{name.name}')
             fixtures = du(root)
         wall = time.monotonic() - started
@@ -1246,11 +1689,17 @@ def main():
                   dict(peakBytes=consumed, samples=sampler.samples), defer=True)
         for line in deferred:
             print('not ok -', line, flush=True)
-        summary = dict(run=run, status='failed' if deferred else 'passed', failed=deferred, scale=SCALE, wallSeconds=round(wall, 1), walBytes=wal_since(lsn), disk=disk(),
-                       workDirBytesAtEnd=fixtures, peakDiskBytes=consumed, budgets=dict(wallSeconds=wall_budget, diskBytes=disk_budget), checks=len(checks), phases=phases, servers=servers, collectors=collectors, outcome=outcome,
-                       server=str(SERVER), serverSha256=hashlib.sha256(SERVER.read_bytes()).hexdigest(), collector=str(COLLECTOR), cli=str(CLI))
+        for line in not_run:
+            print('not run -', line, flush=True)
+        status = 'failed' if deferred else 'incomplete' if not_run else 'passed'
+        cli_peak = max(clis, key=lambda c: c['peakRssBytes'], default=None)
+        summary = dict(run=run, stage=STAGE, status=status, failed=deferred, notRun=not_run, outsideStage=outside_stage, scale=SCALE, wallSeconds=round(wall, 1),
+                       walBytes=wal_since(lsn), disk=disk(), workDirBytesAtEnd=fixtures, peakDiskBytes=consumed, budgets=dict(wallSeconds=wall_budget, diskBytes=disk_budget),
+                       checks=len(checks), postgres=settings, phases=phases, servers=servers, collectors=collectors, cliPeak=cli_peak, cliCalls=len(clis), outcome=outcome,
+                       server=str(SERVER), serverSha256=hashlib.sha256(SERVER.read_bytes()).hexdigest(), collector=str(COLLECTOR), cli=str(CLI),
+                       webRoot=str(WEB_ROOT) if WEB_ROOT else None, chromium=str(CHROMIUM) if CHROMIUM else None)
     print(json.dumps(summary, default=str), flush=True)
-    sys.exit(1 if deferred else 0)
+    sys.exit(1 if deferred else NOT_RUN_EXIT if not_run else 0)
 
 
 main()
