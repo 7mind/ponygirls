@@ -3,7 +3,7 @@
 the append-only ingest extended); started by test-upload-bounds.sh, whose header has the invocation. Synthetic Pi
 sessions only, generated here; the owned database of the with-service-postgres wrapper only; every process it starts is
 stopped on exit."""
-import base64, datetime, hashlib, http.client, json, mmap, os, random, re, resource, secrets, shlex, shutil, signal, socket, subprocess, sys, tempfile
+import base64, contextlib, datetime, hashlib, http.client, json, mmap, os, random, re, resource, secrets, shlex, shutil, signal, socket, subprocess, sys, tempfile
 import threading, time, urllib.error, urllib.parse, urllib.request, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -902,28 +902,47 @@ class Rpc:
 
 class Chromium:
     """Headless Chromium driven over the DevTools protocol (no dependency): opens the dashboard's session view with Info
-    shown, clicks the raw download link with the mouse, and samples the page's JS heap until the browser has saved the file."""
-    def __init__(self, root):
-        # Profile and temporary files (Chromium's singleton socket) in a short private directory under TMPDIR, the
-        # saved file in the run's directory.
-        self.short = Path(tempfile.mkdtemp(prefix='acc-chromium-'))
-        self.root, self.profile, self.saved = root, self.short / 'profile', root / 'chromium-downloads'
-        for directory in (self.profile, self.saved, self.short / 'tmp'):
-            directory.mkdir()
-        self.log = root / 'chromium.log'
-        with self.log.open('x') as log:
-            self.process = subprocess.Popen([str(CHROMIUM), '--headless=new', '--no-sandbox', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-                                             '--disable-extensions', '--disable-background-networking', '--disable-sync', '--window-size=1600,1000',
-                                             '--remote-debugging-port=0', f'--user-data-dir={self.profile}', 'about:blank'],
-                                            stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-                                            env=dict(os.environ, HOME=str(root / 'home'), TMPDIR=str(self.short / 'tmp')))
-        active, deadline = self.profile / 'DevToolsActivePort', time.monotonic() + 60
-        while not (active.exists() and len(active.read_text().splitlines()) == 2):
-            assert self.process.poll() is None and time.monotonic() < deadline, f'chromium start: {self.log.read_text()[-2000:]}'
-            time.sleep(0.1)
-        port, path = active.read_text().splitlines()
-        self.socket = WebSocket('127.0.0.1', port, path)
-        self.sequence, self.events = 0, []
+    shown, clicks the raw download link with the mouse, and samples the page's JS heap until the browser has saved the
+    file. A context manager owning its short private directory (profile, temporary files: Chromium's singleton socket),
+    its process group and its DevTools socket from creation to shutdown: whatever fails, start included, each is released
+    (browser closed, socket closed, group stopped, directory removed)."""
+    def __init__(self, root, binary=None):
+        self.root, self.binary, self.saved, self.log = root, binary or CHROMIUM, root / 'chromium-downloads', root / 'chromium.log'
+
+    def __enter__(self):
+        with contextlib.ExitStack() as stack:
+            self.short = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix='acc-chromium-')))
+            self.profile = self.short / 'profile'
+            for directory in (self.profile, self.short / 'tmp'):
+                directory.mkdir()
+            self.saved.mkdir(exist_ok=True)
+            with self.log.open('x') as log:
+                self.process = subprocess.Popen([str(self.binary), '--headless=new', '--no-sandbox', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+                                                 '--disable-extensions', '--disable-background-networking', '--disable-sync', '--window-size=1600,1000',
+                                                 '--remote-debugging-port=0', f'--user-data-dir={self.profile}', 'about:blank'],
+                                                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                                                env=dict(os.environ, HOME=str(self.root / 'home'), TMPDIR=str(self.short / 'tmp')))
+            stack.callback(stop_group, self.process, 10)
+            active, deadline = self.profile / 'DevToolsActivePort', time.monotonic() + 60
+            while not (active.exists() and len(active.read_text().splitlines()) == 2):
+                assert self.process.poll() is None and time.monotonic() < deadline, f'chromium start: {self.log.read_text()[-2000:]}'
+                time.sleep(0.1)
+            port, path = active.read_text().splitlines()
+            self.socket = WebSocket('127.0.0.1', port, path)
+            stack.callback(self.socket.close)
+            stack.callback(self.close_browser)
+            self.sequence, self.events = 0, []
+            self.release = stack.pop_all()
+        return self
+
+    def __exit__(self, kind, value, trace):
+        self.release.close()
+
+    def close_browser(self):
+        try:
+            self.call('Browser.close')
+        except (AssertionError, OSError):
+            pass
 
     def call(self, method, params=None, session=None):
         self.sequence += 1
@@ -971,15 +990,6 @@ class Chromium:
         peak = max(peak, int(self.call('Runtime.getHeapUsage', {}, page)['usedSize']))
         assert state == 'completed', f'the browser download ended {state}'
         return self.saved / begun['suggestedFilename'], begun['suggestedFilename'], peak, samples + 1, elapsed, link['text']
-
-    def stop(self):
-        try:
-            self.call('Browser.close')
-        except (AssertionError, OSError):
-            pass
-        self.socket.close()
-        stop_group(self.process, 10)
-        shutil.rmtree(self.short)
 
 
 # ---------------------------------------------------------------- the server side of a run
@@ -1307,11 +1317,8 @@ class Harness:
             skip(f'{label}: dashboard download link in Chromium (SHA-256, renderer JS heap ≤ {RENDERER_HEAP / 10**6:.0f} MB)',
                  'CHRONICLE_CHROMIUM and CHRONICLE_WEB_ROOT are required for it')
         else:
-            browser = Chromium(self.root)
-            try:
+            with Chromium(self.root) as browser:
                 path, name, heap, samples, elapsed, text = browser.download(self.origin, cookie, session, revision, timeout)
-            finally:
-                browser.stop()
             saved = hashlib.sha256()
             with open(path, 'rb') as file:
                 for chunk in iter(lambda: file.read(16 * MiB), b''):
@@ -1729,4 +1736,5 @@ def main():
     sys.exit(1 if deferred else NOT_RUN_EXIT if not_run else 0)
 
 
-main()
+if __name__ == '__main__':
+    main()
