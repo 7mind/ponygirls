@@ -103,10 +103,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     }
   }
   /** The in-memory archive keeps no work reusable across runs: every run computes its own. */
-  def reuse(claim: Claim,key: CheckpointKey): Option[io.circe.Json] = synchronized {
-    Check(valid(claim),"stale-claim","indexing claim is no longer current")
-    None
-  }
+  def windowWork(claim: Claim,key: CheckpointKey): Option[WindowWork] = checkpoint(claim,key).map(WindowWork.Accepted(_))
   def discardCheckpoints(claim: Claim,stage: IndexingStage,window: Int): Int = synchronized {
     Check(valid(claim),"stale-claim","indexing claim is no longer current")
     val slots=acceptedWork.keys.filter(slot => slot._1==claim.jobId && slot._2==claim.runId && slot._3==stage && slot._4==window).toList

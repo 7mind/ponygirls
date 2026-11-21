@@ -413,11 +413,11 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     IndexCheckpoints.write(c,claim,key,value)
     checkpointAuthority(c,claim)
   }
-  def reuse(claim: Claim,key: CheckpointKey): Option[Json] = db.transaction { c =>
+  def windowWork(claim: Claim,key: CheckpointKey): Option[WindowWork] = db.transaction { c =>
     checkpointAuthority(c,claim)
-    val value=IndexCheckpoints.reuse(c,claim,key)
+    val work=IndexCheckpoints.read(c,claim,key).map(WindowWork.Accepted(_)).orElse(IndexCheckpoints.reuse(c,claim,key).map(WindowWork.Reused(_)))
     checkpointAuthority(c,claim)
-    value
+    work
   }
   def discardCheckpoints(claim: Claim,stage: IndexingStage,window: Int): Int = db.transaction { c =>
     checkpointAuthority(c,claim)

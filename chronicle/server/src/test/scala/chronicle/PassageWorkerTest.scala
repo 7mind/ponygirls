@@ -34,7 +34,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = delegate.rejectAnnotation(c,key,attempt,reason)
     def checkpoint(c: Claim,key: CheckpointKey): Option[Json] = delegate.checkpoint(c,key)
     def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit = delegate.checkpoint(c,key,value)
-    def reuse(c: Claim,key: CheckpointKey): Option[Json] = delegate.reuse(c,key)
+    def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = delegate.windowWork(c,key)
     def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int = delegate.discardCheckpoints(c,stage,window)
   }
   private def source(texts: List[String]): IngestRequest = {
@@ -251,7 +251,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
         def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = delegate.rejectAnnotation(c,key,attempt,reason)
         def checkpoint(c: Claim,key: CheckpointKey): Option[Json] = delegate.checkpoint(c,key)
         def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit = delegate.checkpoint(c,key,value)
-        def reuse(c: Claim,key: CheckpointKey): Option[Json] = delegate.reuse(c,key)
+        def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = delegate.windowWork(c,key)
         def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int = delegate.discardCheckpoints(c,stage,window)
       }
       fiber <- new Worker(archive,model,embedder,config,catalog,admission,logstage.IzLogger(),ModelFixtures.failureBackoff,ModelFixtures.snapshots).run.start

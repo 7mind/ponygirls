@@ -44,7 +44,7 @@ class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
   def fail(c: Claim,code: String,stage: IndexingStage): Unit=delegate.fail(c,code,stage)
   def checkpoint(c: Claim,key: CheckpointKey): Option[Json]=delegate.checkpoint(c,key)
   def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit=delegate.checkpoint(c,key,value)
-  def reuse(c: Claim,key: CheckpointKey): Option[Json]=delegate.reuse(c,key)
+  def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork]=delegate.windowWork(c,key)
   def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int=delegate.discardCheckpoints(c,stage,window)
   def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation=delegate.reserveAnnotation(c,key)
   def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int=delegate.rejectAnnotation(c,key,attempt,reason)

@@ -146,12 +146,10 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       * `run`: a reused window reserves no annotation attempt and calls no model. */
     def accepted[A](key: CheckpointKey)(decode: Json => A,encode: A => Json)(run: => IO[A]): IO[A] = {
       def decoded(value: Json): IO[A] = IO(decode(value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted checkpoint payload")))
-      IO.blocking(archive.checkpoint(claim,key)).flatMap {
-        case Some(value) => decoded(value)
-        case None => IO.blocking(archive.reuse(claim,key)).flatMap {
-          case Some(value) => IO((if(key.stage==IndexingStage.Annotation) reusedDecisions else reusedParts).incrementAndGet()) *> decoded(value)
-          case None => IO.defer(run).flatTap(value => IO.blocking(archive.checkpoint(claim,key,encode(value))))
-        }
+      IO.blocking(archive.windowWork(claim,key)).flatMap {
+        case Some(WindowWork.Accepted(value)) => decoded(value)
+        case Some(WindowWork.Reused(value)) => IO((if(key.stage==IndexingStage.Annotation) reusedDecisions else reusedParts).incrementAndGet()) *> decoded(value)
+        case None => IO.defer(run).flatTap(value => IO.blocking(archive.checkpoint(claim,key,encode(value))))
       }
     }
     def report(completed: Int): IO[Unit] = IO.blocking {

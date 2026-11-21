@@ -12,6 +12,10 @@ enum IndexingStage { case Annotation,Embedding,Publication }
 final case class CheckpointKey(stage: IndexingStage,window: Int,part: Int,inputHash: String,contentHash: Option[String]=None) {
   Check(stage!=IndexingStage.Publication && window>=0 && part>=0 && inputHash.matches("[0-9a-f]{64}") && contentHash.forall(_.matches("[0-9a-f]{64}")),"internal","invalid checkpoint key")
 }
+/** What phase W finds for a key (ingest-limits spec §5.4): work the run accepted (its own checkpoint or its reference), or
+  * work another run of the source and profile accepted for the key's content hash, which the read recorded as the run's
+  * reference. */
+enum WindowWork { case Accepted(value: Json); case Reused(value: Json) }
 /** The slot of a key holds accepted work for another input, e.g. an embedding part grouped under another batch size. */
 final class CheckpointInputMismatch extends DomainError("internal","checkpoint identity mismatch")
 trait IndexCheckpoints {
@@ -20,9 +24,10 @@ trait IndexCheckpoints {
   /** The run's accepted work at the key's coordinates: its own checkpoint, or the checkpoint its reference names. */
   def checkpoint(claim: Claim,key: CheckpointKey): Option[Json]
   def checkpoint(claim: Claim,key: CheckpointKey,value: Json): Unit
-  /** Phase W on a miss (ingest-limits spec §5.4): the output another run of the claim's source and profile accepted for the
-    * key's content hash, the published generation's run first, recorded as this run's reference at the key's coordinates. */
-  def reuse(claim: Claim,key: CheckpointKey): Option[Json]
+  /** Phase W's read: the run's accepted work at the key's coordinates, else (ingest-limits spec §5.4) the output another
+    * run of the claim's source and profile accepted for the key's content hash, the published generation's run first,
+    * recorded as this run's reference at the key's coordinates. The publication never reads this way. */
+  def windowWork(claim: Claim,key: CheckpointKey): Option[WindowWork]
   /** Removes the accepted work (own checkpoints and references) of one window and stage of the claimed run while the claim is current; a corrupt part is an internal fault and keeps all. Returns the number of parts removed. */
   def discardCheckpoints(claim: Claim,stage: IndexingStage,window: Int): Int
 }
@@ -83,11 +88,10 @@ object IndexCheckpoints {
       content,stage.toString,sessionId,profile,excluded._1,excluded._2,sessionId) { row =>
       Reusable(row.getObject("job_id",classOf[UUID]),row.getObject("run_id",classOf[UUID]),stage,row.getInt("window_ordinal"),row.getInt("part"),row.getString("output_hash"),verified(row))
     }
-  /** Phase W on a miss: the reusable work for the key's content hash, recorded as the run's reference at the key's
-    * coordinates. */
+  /** Phase W on a miss (the caller found neither an own checkpoint nor a reference at the key's coordinates in the same
+    * transaction): the reusable work for the key's content hash, recorded as the run's reference there. */
   private[chronicle] def reuse(c: Connection,claim: Claim,key: CheckpointKey): Option[Json] =
     key.contentHash.flatMap(reusable(c,claim.sessionId,claim.profile,(claim.jobId,claim.runId),key.stage,_)).map { found =>
-      Check(stored(c,claim,key).isEmpty,"internal","checkpoint coordinates hold an own checkpoint")
       Sql.exec(c,"INSERT INTO ch_index_checkpoint_refs(job_id,run_id,stage,window_ordinal,part,input_hash,source_job,source_run,source_stage,source_window,source_part,output_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
         (coordinates(claim,key)++List[Sql.Param](key.inputHash,found.job,found.run,found.stage.toString,found.window,found.part,found.outputHash))*)
       found.value
