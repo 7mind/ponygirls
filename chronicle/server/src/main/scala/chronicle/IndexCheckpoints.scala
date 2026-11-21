@@ -80,15 +80,20 @@ object IndexCheckpoints {
   /** An own checkpoint another run accepted, by its full key. */
   private[chronicle] final case class Reusable(job: UUID,run: UUID,stage: IndexingStage,window: Int,part: Int,outputHash: String,value: Json)
   /** The own checkpoint of the source's jobs of `profile` under `content` and `stage` that a run other than `excluded`
-    * accepted: first one the published generation's run accepted, as its own or through its reference to it (so the next
-    * run keeps the published prefix; a legacy generation names no run), then the newest revision's. Never a reference
-    * itself, never the run's own (`discard` deletes those). */
+    * accepted: first one a run of the published generation's lineage accepted (ingest-limits spec §5.6.3), as its own or
+    * through its reference to it, the newest version's first — the published generation's own run for a generation
+    * without a lineage; a legacy generation names no run. An incremental version's windows before its cut were accepted
+    * by its lineage's earlier runs, so the next run (a full republication too) keeps the published content even after a
+    * rebuild accepted other work for the same input. Then the newest revision's. Never a reference itself, never the
+    * run's own (`discard` deletes those). Each candidate costs index probes (`ch_generations_run`), not the lineage's
+    * length. */
   private[chronicle] def reusable(c: Connection,sessionId: UUID,profile: String,excluded: (UUID,UUID),stage: IndexingStage,content: String): Option[Reusable] =
-    Sql.one(c,"""WITH published AS (SELECT g.run_id FROM ch_sources s JOIN ch_generations g ON g.id=s.published WHERE s.id=?)
+    Sql.one(c,"""WITH published AS (SELECT p.id,p.lineage,p.lineage_version FROM ch_sources s JOIN ch_generations p ON p.id=s.published WHERE s.id=?)
       SELECT k.job_id,k.run_id,k.window_ordinal,k.part,k.output_hash,k.value FROM ch_index_checkpoints k JOIN ch_jobs j ON j.id=k.job_id
       WHERE k.content_hash=? AND k.stage=? AND j.session_id=? AND j.profile=? AND (k.job_id,k.run_id)<>(?,?)
-      ORDER BY (k.run_id IN(SELECT run_id FROM published) OR EXISTS(SELECT 1 FROM ch_index_checkpoint_refs r WHERE r.run_id IN(SELECT run_id FROM published)
-        AND r.source_job=k.job_id AND r.source_run=k.run_id AND r.source_stage=k.stage AND r.source_window=k.window_ordinal AND r.source_part=k.part)) IS TRUE DESC,
+      ORDER BY (SELECT max(coalesce(g.lineage_version,0)) FROM (SELECT k.run_id AS run_id UNION SELECT r.run_id FROM ch_index_checkpoint_refs r
+          WHERE r.source_job=k.job_id AND r.source_run=k.run_id AND r.source_stage=k.stage AND r.source_window=k.window_ordinal AND r.source_part=k.part) accepted
+        JOIN ch_generations g ON g.run_id=accepted.run_id JOIN published p ON g.id=p.id OR (p.lineage_version IS NOT NULL AND g.lineage=p.lineage AND g.lineage_version<=p.lineage_version)) DESC NULLS LAST,
         j.revision DESC,k.job_id,k.run_id,k.window_ordinal,k.part LIMIT 1""",
       sessionId,content,stage.toString,sessionId,profile,excluded._1,excluded._2) { row =>
       Reusable(row.getObject("job_id",classOf[UUID]),row.getObject("run_id",classOf[UUID]),stage,row.getInt("window_ordinal"),row.getInt("part"),row.getString("output_hash"),verified(row))

@@ -478,7 +478,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
         abandoned.foreach(PassageStorage.deleteAbandoned(db,_))
         val written=if(staged.phase==StagedPhase.Passages) writePassages(claim,staged,rows) else staged
         val counts=written.counts.getOrElse(throw DomainError("internal","staged generation without its counts"))
-        val pieces=if(written.invalid) rewritePieces(claim,written,counts) else written
+        val pieces=if(written.invalid) rewritePieces(claim,written) else written
         if(pieces.step<counts.steps) writePieces(claim,pieces,counts,rows)
         writeSearchRows(claim,staged.generation,counts.pieces)
         switch(claim,staged.generation,counts.passages,rows.parent)
@@ -503,16 +503,18 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     }.filter(_.cut.horizon==config.indexing.metadataHorizonWindows)
   }
   /** P0 under the checkpoint authority; with the job's staged generations of other runs, which it abandons, and the run's
-    * own one if it continues another parent than this publication (or is a root where this one continues one, or the
-    * reverse). */
+    * own one if it was staged under another publication: continuing another parent (or a root where this one continues
+    * one, or the reverse), or under another metadata horizon (also one a release before the horizon staged, which records
+    * none): its pieces, tag counts and cut follow its own, so it starts again from nothing (ingest-limits spec §5.6.2). */
   private def stage(claim: Claim,parent: Option[PublicationParent]): Option[(StagedGeneration,List[UUID])] = db.transaction { c =>
     Option.when(current(c,claim) && lockJob(c,claim) && Sql.one(c,s"SELECT 1 FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true) && revisionMatches(c,claim)) {
       PassageStorage.requirePolicy(c,claim.profile,IndexPolicy.ContextAwareProblemsV1)
       val abandoned=PassageStorage.abandonOtherRuns(c,claim)
+      val horizon=config.indexing.metadataHorizonWindows
       val current=PassageStorage.staged(c,claim.jobId,claim.runId)
-      val other=current.filter(_.parent!=parent.map(_.generation))
+      val other=current.filter(value => value.parent!=parent.map(_.generation) || !value.horizon.contains(horizon))
       other.foreach(value => PassageStorage.abandon(c,value.generation))
-      (current.filter(_ => other.isEmpty).getOrElse(parent.fold(PassageStorage.stage(c,claim))(PassageStorage.stageIncremental(c,claim,_))),abandoned++other.map(_.generation))
+      (current.filter(_ => other.isEmpty).getOrElse(parent.fold(PassageStorage.stage(c,claim,horizon))(PassageStorage.stageIncremental(c,claim,_,horizon))),abandoned++other.map(_.generation))
     }
   }
   /** Fills batches of rows of consecutive steps; `flush` commits one with the step a resumed run starts at. */
@@ -540,16 +542,16 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       value.spans.foreach(span => batches.add(step,ProblemRows.Passages(Vector.empty,Vector.empty,Vector(span),Vector.empty)))
       value.context.foreach(span => batches.add(step,ProblemRows.Passages(Vector.empty,Vector.empty,Vector.empty,Vector(span))))
     }
-    val next=StagedGeneration(staged.generation,StagedPhase.Pieces,0,Some(replayed.counts),lineageTags=staged.lineageTags,parent=staged.parent)
+    val next=staged.copy(phase=StagedPhase.Pieces,step=0,counts=Some(replayed.counts))
     written(next,replayed.cut)(batches.drain())
     next
   }
   /** Phase W discarded embedding parts the staged chunks may have been written from: every staged chunk (with its search
     * row and piece) and the lineage tag counts of them are deleted in bounded statements, then P2 starts again at step 0. */
-  private def rewritePieces(claim: Claim,staged: StagedGeneration,counts: ProblemRows.Counts): StagedGeneration = {
-    (0 until counts.pieces by PassageStorage.rowsPerStatement).foreach { from =>
-      staging(claim,staged.generation,StagedLock.Write)(c => Sql.exec(c,"DELETE FROM ch_chunks WHERE generation=? AND ordinal>=? AND ordinal<?",staged.generation,from,from+PassageStorage.rowsPerStatement))
-    }
+  private def rewritePieces(claim: Claim,staged: StagedGeneration): StagedGeneration = {
+    // The staged chunks themselves, from the first one on (an incremental publication's start at its tail).
+    while(staging(claim,staged.generation,StagedLock.Write)(c => Sql.exec(c,"""DELETE FROM ch_chunks WHERE generation=? AND ordinal>=(SELECT min(ordinal) FROM ch_chunks WHERE generation=?)
+      AND ordinal<(SELECT min(ordinal) FROM ch_chunks WHERE generation=?)+?""",staged.generation,staged.generation,staged.generation,PassageStorage.rowsPerStatement))>0) {}
     while(staging(claim,staged.generation,StagedLock.Write)(PassageStorage.deleteLineageTagsStep(_,staged.generation))) {}
     val next=staged.copy(step=0,invalid=false)
     staging(claim,staged.generation,StagedLock.Write)(c => Check(PassageStorage.resume(c,claim,next),"internal","staged generation resume point not recorded"))

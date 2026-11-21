@@ -62,6 +62,8 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
     * window (they change in every window). Counts its calls. */
   private final class Scripted extends ProblemPassageAnnotator {
     val calls=new AtomicInteger(0)
+    /** Prefixes every summary: another run's accepted work for the same input differs. */
+    @volatile var prefix=""
     def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[Decision] = IO {
       calls.incrementAndGet()
       var open=previous.nonEmpty
@@ -72,7 +74,7 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
           case 'c' => Part.context(start,end)
           case kind =>
             val continued=open && (kind!='n' || fragment.byteStart>0); open=true
-            if(kind=='w') Part(start,end,continued,s"$label w$first",List(label,s"w$first")) else Part(start,end,continued,label,List(label))
+            if(kind=='w') Part(start,end,continued,s"$prefix$label w$first",List(label,s"w$first")) else Part(start,end,continued,prefix+label,List(label))
         }
       })
       ProblemPassages.validate(window,previous.nonEmpty,decision); decision
@@ -370,6 +372,91 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
       assertEquals((lineage(f,rebuilt).lineage,annotator.calls.get),(rebuilt,cut(f,rebuilt).window+1))
       assertEquals(intercept[DomainError](f.incremental.pageChunks("a",session,0,10,Some(ContentView(4,Some(beforeRebuild))))).code,"indexed-view-retired")
     } finally f.db.transaction(c => Sql.exec(c,"DROP TABLE ch_test_changes; DROP FUNCTION IF EXISTS ch_test_new,ch_test_old,ch_test_stop,ch_test_lease,ch_test_unpublish CASCADE"))
+  }}
+
+  test("a confirmed rebuild's accepted work stays its lineage's through incremental versions: a later full republication takes it, not the replaced run's work for the same input, and reads as the incremental version; the switch and the parent's reads examine the rows around the tail, not the lineage's history") { database { f =>
+    val annotator=new Scripted; val vectors=new Vectors
+    val incremental=ModelFixtures.worker(f.incremental,annotator,vectors,f.config,logstage.IzLogger())
+    val complete=ModelFixtures.worker(f.complete,annotator,vectors,f.full,logstage.IzLogger())
+    val session=f.incremental.ingest("a",request(long(387),None,0)).sessionId
+    annotator.prefix="first "
+    drain(incremental)
+    // The rebuild's run accepts other annotations for the same inputs; its id sorts after the first run's (the order a
+    // lookup falls back to among one job's runs).
+    Fixtures.rebuild(f.db,"a")
+    f.db.transaction { c =>
+      Sql.exec(c,"UPDATE ch_reindex_members SET run_id='ffffffff-ffff-4fff-bfff-ffffffffffff' WHERE session_id=?",session)
+      Sql.exec(c,"UPDATE ch_jobs SET run_id='ffffffff-ffff-4fff-bfff-ffffffffffff' WHERE session_id=? AND state='Queued'",session)
+    }
+    annotator.prefix="rebuilt "
+    drain(incremental)
+    f.incremental.ingest("a",request(long(453),Some(f.incremental.headSnapshot("a",session).source),1))
+    drain(incremental)
+    val version=published(f,"a",session)
+    assertEquals(lineage(f,version).version,Some(1))
+    val incrementalRows=rows(f,version)
+    assert(f.incremental.pageChunks("a",session,0,100,None).chunks.forall(_.summary.startsWith("rebuilt ")))
+    // The tail reads of the latest version: the switch's segment rows of each kind and the rewrite region's pieces.
+    val cutValue=cut(f,version)
+    val parentLineage=lineage(f,version).lineage
+    def examined(): Long = {
+      val queries=GenerationRows.Kind.values.toList.map(kind => PassageStorage.tailSegments(parentLineage,kind,(0,cutValue.firstPieces.head))):+
+        PassageStorage.membersQuery(parentLineage,session,2,cutValue.firstPieces.head,cutValue.state.nextPieceOrdinal)
+      queries.map { query =>
+        val plan=f.db.transaction(c => Sql.one(c,"EXPLAIN (ANALYZE, FORMAT JSON) "+query.sql,query.args*)(_.getString(1))).get
+        def nodes(node: io.circe.Json): List[io.circe.Json] = node :: node.hcursor.downField("Plans").values.toList.flatten.flatMap(nodes)
+        nodes(Wire.parse(plan).asArray.get.head.hcursor.downField("Plan").focus.get).filter(_.hcursor.get[String]("Relation Name").toOption.contains("ch_lineage_segments")).map { node =>
+          def value(field: String): Long = node.hcursor.get[Double](field).toOption.fold(0L)(_.toLong)
+          value("Actual Rows")*math.max(value("Actual Loops"),1L)+value("Rows Removed by Filter")+value("Rows Removed by Index Recheck")
+        }.sum
+      }.sum
+    }
+    val before=examined()
+    val base=f.db.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_lineage_segments WHERE lineage=?",parentLineage)(_.getLong(1))).get
+    // A long history: rows of earlier versions (closed) and runs of earlier origins before the tail (open), neither
+    // holding any piece the session has.
+    f.db.transaction { c =>
+      Sql.exec(c,"""INSERT INTO ch_lineage_segments(lineage,origin,kind,since,until,lo_major,lo,hi_major,hi) SELECT ?,?,k,0,1,0,1000000000+i,0,1000000001+i
+        FROM generate_series(1,2000) i CROSS JOIN unnest(ARRAY['piece','passage','span','context']) k""",parentLineage,parentLineage)
+      Sql.exec(c,"""INSERT INTO ch_lineage_segments(lineage,origin,kind,since,until,lo_major,lo,hi_major,hi) SELECT ?,?,k,0,NULL,0,-1000000001-i,0,-1000000000-i
+        FROM generate_series(1,2000) i CROSS JOIN unnest(ARRAY['piece','passage','span','context']) k""",parentLineage,parentLineage)
+      Sql.exec(c,"ANALYZE ch_lineage_segments")
+    }
+    // The rows around the tail, not the lineage's (before the history the table is small and a plan may scan it whole).
+    val after=examined()
+    assert(after<=16,s"segment rows examined: $before of the lineage's $base, with a history of 16,000 more $after")
+    // The same revision published whole takes the rebuild's accepted work (no model call): equal to the incremental version.
+    annotator.calls.set(0)
+    f.incremental.retry("a",job(f,session))
+    drain(complete)
+    assertEquals(annotator.calls.get,0)
+    assertEquals(rows(f,published(f,"a",session)),incrementalRows)
+  }}
+
+  test("a staged root continues only under the metadata horizon it was staged with: stopped after its first committed pieces under a horizon of 2147483647, it is staged again from nothing under 4") { database { f =>
+    val annotator=new Scripted; val vectors=new Vectors
+    val unbounded=f.full.copy(indexing=f.full.indexing.copy(metadataHorizonWindows=Int.MaxValue))
+    val finals=ModelFixtures.worker(new PostgresArchive(f.db,unbounded),annotator,vectors,unbounded,logstage.IzLogger())
+    val complete=ModelFixtures.worker(f.complete,annotator,vectors,f.full,logstage.IzLogger())
+    // One passage whose summary names the window, every message a piece: 64 pieces a window, 10 windows.
+    val session=f.incremental.ingest("a",request((0 until 600).map(p => message(if(p==0) "n0-long" else s"w$p-long",p,shared(p))).toList,None,0)).sessionId
+    f.db.transaction { c =>
+      Sql.exec(c,"CREATE FUNCTION ch_test_stop() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF (SELECT count(*) FROM ch_chunks WHERE generation IN(SELECT generation FROM inserted))>500 THEN RAISE EXCEPTION 'stopped'; END IF; RETURN NULL; END $$")
+      Sql.exec(c,"CREATE TRIGGER ch_test_stop AFTER INSERT ON ch_chunks REFERENCING NEW TABLE AS inserted FOR EACH STATEMENT EXECUTE FUNCTION ch_test_stop()")
+    }
+    val stopped=try {
+      assert(finals.once.unsafeRunSync())
+      f.db.transaction(c => Sql.one(c,"SELECT st.generation,st.resume->>'horizon',(SELECT count(*) FROM ch_chunks ch WHERE ch.generation=st.generation) FROM ch_staged_generations st")(r => (uuid(r,1),r.getString(2),r.getInt(3)))).get
+    } finally f.db.transaction(c => Sql.exec(c,"DROP FUNCTION ch_test_stop() CASCADE"))
+    assertEquals((stopped._2,stopped._3),(Int.MaxValue.toString,PassageStorage.rowsPerBatch))
+    drain(complete)
+    val root=published(f,"a",session)
+    // Its pieces, tag counts and cut are those of a publication under 4 from nothing (a RetryJob's).
+    val resumed=rows(f,root)
+    f.incremental.retry("a",job(f,session))
+    drain(complete)
+    assertEquals(rows(f,published(f,"a",session)),resumed)
+    assertEquals((root==stopped._1,f.db.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_generations WHERE id=?",stopped._1)(_.getInt(1))),cut(f,root).horizon),(false,Some(0),horizon))
   }}
 
   test("indexing.metadataHorizonWindows: 1..2147483647, default 16, optional; another value requires indexing.incrementalPublication=false, which defaults to true") {

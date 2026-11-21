@@ -35,6 +35,11 @@ CREATE INDEX IF NOT EXISTS ch_lineage_segments_probe ON ch_lineage_segments(line
 -- The origin's foreign key: purge deletes all of a source's generations in one statement, each delete checks the segment
 -- rows naming it as origin. Composite, so that the per-tuple probe can use it too only with lineage and origin.
 CREATE INDEX IF NOT EXISTS ch_lineage_segments_origin ON ch_lineage_segments(origin,lineage,kind,since);
+-- The rows of a lineage's latest version (the published parent of an incremental publication) whose ranges end after a
+-- point: an incremental publication reads and closes only those, however long the lineage's history.
+CREATE INDEX IF NOT EXISTS ch_lineage_segments_open ON ch_lineage_segments(lineage,kind,hi_major,hi) WHERE since IS NOT NULL AND until IS NULL;
+-- The generation of a run: the reuse lookup ranks a candidate by whether a run of the published lineage accepted it.
+CREATE INDEX IF NOT EXISTS ch_generations_run ON ch_generations(run_id);
 CREATE TABLE IF NOT EXISTS ch_generation_lineage(
   generation uuid PRIMARY KEY REFERENCES ch_generations(id) ON DELETE CASCADE,
   parent uuid,

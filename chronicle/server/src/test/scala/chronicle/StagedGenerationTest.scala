@@ -106,7 +106,7 @@ final class StagedGenerationTest extends munit.FunSuite {
     assertEquals(archive.pageChunks("a",first.sessionId,0,1,Some(previous)).total,pieces)
   }}
 
-  test("a generation a release before 028 staged (no lineage) resumes and is published as it was staged: its own rows, its generation tags") { database { (config,db,archive) =>
+  test("a generation a release before 028 staged (no lineage, no metadata horizon: its chunks carry final metadata) is staged again from nothing by its run and published as a root") { database { (config,db,archive) =>
     val vectors=new Ring
     val receipt=archive.ingest("a",request(text))
     stopped(db,"ch_chunks")(assert(worker(archive,config,vectors).once.unsafeRunSync()))
@@ -116,15 +116,17 @@ final class StagedGenerationTest extends munit.FunSuite {
       Sql.exec(c,"DELETE FROM ch_lineage_tags WHERE lineage=?",generation)
       Sql.exec(c,"DELETE FROM ch_generation_lineage WHERE generation=?",generation)
       Sql.exec(c,"UPDATE ch_generations SET lineage=NULL WHERE id=?",generation)
+      Sql.exec(c,"UPDATE ch_staged_generations SET resume=resume-'lineageTags'-'horizon' WHERE generation=?",generation)
     }
     assert(worker(archive,config,vectors).once.unsafeRunSync())
-    assertEquals(archive.session("a",receipt.sessionId).view,ContentView(1,Some(generation)))
+    val published=archive.session("a",receipt.sessionId).view.generationId.get
+    assertNotEquals(published,generation)
     assertEquals(archive.pageChunks("a",receipt.sessionId,0,1,None).total,pieces)
-    assertEquals(db.transaction(c => Sql.one(c,"SELECT concat_ws('|',lineage,lineage_version,(SELECT count(*) FROM ch_lineage_tags WHERE lineage=g.id),(SELECT count(*) FROM ch_generation_lineage WHERE generation=g.id)) FROM ch_generations g WHERE id=?",generation)(_.getString(1))),Some("0|0"))
+    assertEquals(db.transaction(c => Sql.one(c,"SELECT concat_ws('|',lineage=id,lineage_version,(SELECT count(*) FROM ch_lineage_tags WHERE lineage=g.id),(SELECT count(*) FROM ch_generations WHERE id=?)) FROM ch_generations g WHERE id=?",generation,published)(_.getString(1))),Some("t|0|1|0"))
     assertEquals(new PostgresSearch(db,archive,config).tags("a",TagSearchQuery("staged",SearchFilter(None,None,None,None,Nil),None,10)).map(_.value),List("staged"))
   }}
 
-  test("a root a release before 028 continued (rollback without down-028): published by that release it reads as its own rows, published after it by this one it has no lineage; their lineage tag rows are retired") { database { (config,db,archive) =>
+  test("a root a release before 028 continued (rollback without down-028): published by that release it reads as its own rows, and its lineage tag rows are retired; continued by that release and resumed by this one it is staged again") { database { (config,db,archive) =>
     val vectors=new Ring
     val search=new PostgresSearch(db,archive,config)
     /** A root of `owner` staged by this release and stopped in its chunks (500 of them counted in its lineage tags). */
@@ -159,16 +161,17 @@ final class StagedGenerationTest extends munit.FunSuite {
     archive.ingest("a",request(text+"q",Some(archive.headSnapshot("a",first).source),1))
     assert(worker(archive,config,vectors).once.unsafeRunSync())
     assertEquals(lineage(root),s"$root|-|4|1|0")
-    // Continued by the previous release (its batches: chunks without tag counts, a resume point without this release's
-    // mark), published by this one: without a lineage.
+    // Continued by the previous release (its batches: chunks without tag counts, final metadata, a resume point without
+    // this release's marks), then resumed by this one: staged again from nothing, a root with its lineage.
     val (second,continued)=interrupted("b")
     db.transaction { c =>
-      Sql.exec(c,"UPDATE ch_staged_generations SET resume=resume-'lineageTags' WHERE generation=?",continued)
+      Sql.exec(c,"UPDATE ch_staged_generations SET resume=resume-'lineageTags'-'horizon' WHERE generation=?",continued)
       Sql.exec(c,"DELETE FROM ch_lineage_tags WHERE lineage=?",continued)
     }
     assert(worker(archive,config,vectors).once.unsafeRunSync())
-    assertEquals(lineage(continued),"-|-|0|0|0")
-    reads("b",second,continued)
+    val restarted=archive.session("b",second).view.generationId.get
+    assertEquals((db.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_generations WHERE id=?",continued)(_.getInt(1))),lineage(restarted)),(Some(0),s"$restarted|0|4|1|1"))
+    reads("b",second,restarted)
   }}
 
   test("a superseded job's staged generation is deleted by the maintenance pass; a run that a retry makes live again deletes its abandoned staged generation before it stages a new one") { database { (config,db,archive) =>
