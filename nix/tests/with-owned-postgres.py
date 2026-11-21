@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Run a bounded test command against ONLY a new disposable provider cluster.
 No connection argument accepted: fixtures can never select a live database.
+Usage: with-owned-postgres.py [--child-timeout-seconds=N] COMMAND [ARG...]; the command is stopped after N seconds
+(default CHILD_TIMEOUT_SECONDS, at most MAX_CHILD_TIMEOUT_SECONDS) with exit EXIT_TIMEOUT.
 """
 import contextlib
 import ctypes
@@ -16,6 +18,9 @@ import tempfile
 import time
 
 CHILD_TIMEOUT_SECONDS=3600
+MAX_CHILD_TIMEOUT_SECONDS=86400
+CHILD_TIMEOUT_OPTION='--child-timeout-seconds='
+EXIT_USAGE=2
 CHILD_STOP_SECONDS=15
 POLL_SECONDS=0.1
 EXIT_TIMEOUT=124
@@ -115,7 +120,23 @@ def reap_orphans(child):
             except ChildProcessError: pass
 
 
-def main(termination):
+class Usage(Exception):
+    pass
+
+
+def parse_arguments(arguments):
+    """(child timeout in seconds, command); a timeout outside 1..MAX_CHILD_TIMEOUT_SECONDS or no command is refused."""
+    timeout=CHILD_TIMEOUT_SECONDS
+    if arguments and arguments[0].startswith(CHILD_TIMEOUT_OPTION):
+        value=arguments[0].removeprefix(CHILD_TIMEOUT_OPTION)
+        if not (value.isascii() and value.isdecimal()) or not 1<=int(value)<=MAX_CHILD_TIMEOUT_SECONDS:
+            raise Usage(f'{CHILD_TIMEOUT_OPTION}N needs an integer N in 1..{MAX_CHILD_TIMEOUT_SECONDS}, got {value!r}')
+        timeout,arguments=int(value),arguments[1:]
+    if not arguments: raise Usage('a command is required')
+    return timeout,arguments
+
+
+def main(termination,child_timeout,command):
     os.umask(0o077)
     template=json.loads(Path(os.environ['PG_POLICY']).read_text())
     pg=os.environ['PG_BIN']
@@ -161,10 +182,10 @@ def main(termination):
             # Set after pg_ctl start: the postmaster, orphaned by pg_ctl, is not part of the workload.
             if ctypes.CDLL(None,use_errno=True).prctl(PR_SET_CHILD_SUBREAPER,1,0,0,0)!=0:
                 raise OSError(ctypes.get_errno(),'prctl(PR_SET_CHILD_SUBREAPER)')
-            child=subprocess.Popen(sys.argv[1:],env=env,start_new_session=True)
+            child=subprocess.Popen(command,env=env,start_new_session=True)
             try:
                 with termination.interruptible():
-                    try: return child.wait(timeout=CHILD_TIMEOUT_SECONDS)
+                    try: return child.wait(timeout=child_timeout)
                     except subprocess.TimeoutExpired: return EXIT_TIMEOUT
             finally:
                 # Also after a normal exit: nothing of the workload may outlive the cluster.
@@ -175,9 +196,13 @@ def main(termination):
                 run(pg+'/pg_ctl','-D',data,'-m','fast','-w','-t','30','stop')
 
 if __name__=='__main__':
+    try: child_timeout,command=parse_arguments(sys.argv[1:])
+    except Usage as usage:
+        print(f'with-owned-postgres: {usage}',file=sys.stderr)
+        sys.exit(EXIT_USAGE)
     termination=Termination()
     try:
-        status=main(termination)
+        status=main(termination,child_timeout,command)
         termination.check()
     except Terminated as terminated:
         status=128+terminated.signum
