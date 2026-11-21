@@ -9,6 +9,7 @@ import java.sql.Connection
 import java.util.UUID
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicBoolean
+import scala.util.Using
 
 /** Raw downloads over HTTP (ingest limits spec §1): the manifest of a revision's raw files and the bytes of one file, any
   * size, in windows. A download pins its revision and file in one transaction, then reads each window in a short
@@ -22,7 +23,7 @@ final class RawStream(db: Database,archive: PostgresArchive,auth: Auth,logger: l
 
   def manifest(reader: Identity,id: UUID,revision: Option[Int]): IO[RawManifest] = IO.blocking(authorized(reader,id) { c =>
     val selected=revision.getOrElse(Sql.one(c,"SELECT revision FROM ch_sources WHERE id=?",id)(_.getInt(1)).get)
-    RawManifest(id,selected,RevisionContent.rawFiles(c,content(c,id,selected)))
+    RawManifest(id,selected,rawFiles(c,content(c,id,selected)))
   })
 
   /** The bytes of file `file`, all of them or the requested range (ignored unless `ifRange` is absent or the ETag). A
@@ -59,7 +60,7 @@ final class RawStream(db: Database,archive: PostgresArchive,auth: Auth,logger: l
     RevisionContent.resolve(c,id,revision).getOrElse(throw DomainError("not-found","content view not found"))
   private def pin(reader: Identity,id: UUID,revision: Int,file: Int): Pinned = authorized(reader,id) { c =>
     val stored=content(c,id,revision)
-    Pinned(stored,RevisionContent.rawFiles(c,stored).find(_.index==file).getOrElse(throw DomainError("not-found","raw file not found")))
+    Pinned(stored,rawFiles(c,stored).find(_.index==file).getOrElse(throw DomainError("not-found","raw file not found")))
   }
   private def body(reader: Identity,pinned: Pinned,from: Long,until: Long): Stream[IO,Byte] = {
     val windowBytes=pinned.content match { case _: RevisionContent.Epoch => policy.epochWindowBytes; case _: RevisionContent.Legacy => policy.legacyWindowBytes }
@@ -75,8 +76,8 @@ final class RawStream(db: Database,archive: PostgresArchive,auth: Auth,logger: l
   private def window(reader: Identity,pinned: Pinned,from: Long,until: Long): Array[Byte] = authorized(reader,pinned.content.id) { c =>
     Check(RevisionContent.resolve(c,pinned.content.id,pinned.content.revision).contains(pinned.content),"not-found","content view not found")
     pinned.content match {
-      case epoch: RevisionContent.Epoch => RevisionContent.epochRawWindow(c,epoch,from,until)
-      case legacy: RevisionContent.Legacy => RevisionContent.legacyRawWindow(c,legacy,pinned.file.index,from,until)
+      case epoch: RevisionContent.Epoch => epochWindow(c,epoch,from,until)
+      case legacy: RevisionContent.Legacy => legacyWindow(c,legacy,pinned.file.index,from,until)
     }
   }
 }
@@ -127,6 +128,45 @@ object RawStream {
   private def number(segment: String): Option[Int] = Option.when(segment.matches("0|[1-9][0-9]{0,9}"))(segment.toLong).filter(_<=Int.MaxValue).map(_.toInt)
   def revision(segment: String): Int = number(segment).filter(_>=1).getOrElse(throw DomainError("invalid","revision must be a positive integer"))
   def file(segment: String): Int = number(segment).getOrElse(throw DomainError("invalid","file must be a non-negative integer"))
+  /** Path, SHA-256 and UTF-8 size of each raw file, without building any of them: an epoch revision's one file from its
+    * columns, a legacy revision's files from its snapshot (each `sha256` was checked equal to its content at ingest). */
+  private def rawFiles(c: Connection,content: RevisionContent): List[RawFileInfo] = content match {
+    case epoch: RevisionContent.Epoch =>
+      Sql.rows(c,"SELECT e.raw_path,r.envelope->>'digest' FROM ch_revisions r JOIN ch_epochs e ON e.id=r.epoch WHERE r.session_id=? AND r.revision=?",epoch.id,epoch.revision)(r => RawFileInfo(0,r.getString(1),r.getString(2),epoch.rawBytes))
+    case legacy: RevisionContent.Legacy =>
+      Sql.rows(c,"SELECT f.n-1,f.value->>'path',f.value->>'sha256',octet_length(f.value->>'content') FROM ch_revisions r CROSS JOIN LATERAL jsonb_array_elements(r.snapshot->'files') WITH ORDINALITY f(value,n) WHERE r.session_id=? AND r.revision=? ORDER BY f.n",legacy.id,legacy.revision) { r =>
+        RawFileInfo(r.getInt(1),r.getString(2),r.getString(3),r.getLong(4))
+      }
+  }
+  /** Bytes `[from,until)` of the epoch revision's raw (`until` at most its `raw_bytes`), cut from the segments in SQL so that
+    * no segment is fetched whole: the segment holding `from` and the later ones below `until`, through the key's range
+    * (`keyOrdered`; otherwise the slices are sorted, on disk for a window above `work_mem`). The segments of a revision
+    * are contiguous whole lines, so the slices concatenate to the window; any gap fails. */
+  private def epochWindow(c: Connection,content: RevisionContent.Epoch,from: Long,until: Long): Array[Byte] = {
+    Check(0<=from && from<until && until<=content.rawBytes && until-from<=Int.MaxValue,"internal","raw window out of range")
+    RevisionContent.keyOrdered(c)
+    val window=new Array[Byte]((until-from).toInt)
+    var next=from
+    Using.resource(c.prepareStatement("""SELECT byte_offset,substring(convert_to(content,'UTF8') FROM (greatest(?-byte_offset,0)+1)::int FOR (least(?,byte_offset+octet_length(content))-greatest(?,byte_offset))::int)
+      FROM ch_epoch_raw WHERE epoch=? AND byte_offset<? AND byte_offset>=(SELECT byte_offset FROM ch_epoch_raw WHERE epoch=? AND byte_offset<=? ORDER BY byte_offset DESC LIMIT 1) ORDER BY byte_offset""")) { statement =>
+      Sql.bind(statement,List(from,until,from,content.epoch,until,content.epoch,from))
+      Using.resource(statement.executeQuery()) { rows => while(rows.next()) {
+        val slice=rows.getBytes(2)
+        Check(math.max(rows.getLong(1),from)==next && slice.length<=until-next,"internal","raw segments are not contiguous")
+        System.arraycopy(slice,0,window,(next-from).toInt,slice.length)
+        next+=slice.length
+      }}
+    }
+    Check(next==until,"internal","raw segments end before the window")
+    window
+  }
+  /** Bytes `[from,until)` of file `file` of the legacy revision: every read detoasts the snapshot, so windows are larger. */
+  private def legacyWindow(c: Connection,content: RevisionContent.Legacy,file: Int,from: Long,until: Long): Array[Byte] = {
+    Check(0<=from && from<until && until-from<=Int.MaxValue,"internal","raw window out of range")
+    val window=Sql.one(c,"SELECT substring(convert_to(snapshot->'files'->(?)->>'content','UTF8') FROM (?+1)::int FOR ?::int) FROM ch_revisions WHERE session_id=? AND revision=?",file,from,until-from,content.id,content.revision)(r => Option(r.getBytes(1))).flatten
+    Check(window.exists(_.length==until-from),"internal","raw file ends before the window")
+    window.get
+  }
   /** Strong: a session id and revision never name other bytes (revisions are immutable; a purged source takes none again). */
   def etag(sha256: String): String = "\"sha256:"+sha256+"\""
   /** RFC 9530: the digest of the whole file, also on a partial response. */
