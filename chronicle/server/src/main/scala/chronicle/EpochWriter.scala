@@ -33,8 +33,8 @@ object EpochWriter {
     * this many bytes: ceil(text bytes / fragmentTextBytes) bounds a text's fragments (the indexing budget). */
   val fragmentTextBytes: Int = ProblemPassages.maximumFragmentBytes-3
   /** The writer's transaction lets the fragment trigram index's pending list grow to this size and merges it with this
-    * much memory, instead of the 4 MB defaults (ingest-c L6: about a third less upload WAL). Searches through the index
-    * scan the pending list until it is merged; the maintenance pass empties it. */
+    * much memory, instead of the 4 MB defaults (ingest-c L6: fewer posting-page rewrites, 16-34 % less upload WAL).
+    * Searches through the index scan the pending list until it is merged; the maintenance pass empties it. */
   val fragmentIndexMergeBytes: Long = 32L*1024*1024
   private val batchSize = 128
   private val messageFetchSize = 32

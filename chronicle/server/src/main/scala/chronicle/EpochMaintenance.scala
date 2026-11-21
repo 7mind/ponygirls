@@ -40,7 +40,8 @@ final class EpochMaintenance private (db: Database,logger: logstage.IzLogger,val
   /** Writers leave up to `EpochWriter.fragmentIndexMergeBytes` of the fragment trigram index unmerged, and every search
     * through the index scans that pending list: the pass merges it (with `maintenance_work_mem`) so that the cost ends one
     * interval after the last write. It merges until the list is empty, what writers append meanwhile included; a writer
-    * whose insert crosses the limit meanwhile leaves its own merge to it. */
+    * whose insert crosses the limit meanwhile leaves its own merge to it instead of waiting. A merge the statement timeout
+    * cuts off fails the pass, and the next pass merges the list again. */
   private def mergeFragmentIndex: IO[Unit] =
     transaction(c => Sql.one(c,"SELECT gin_clean_pending_list('ch_epoch_fragments_lower_trgm')")(_.getLong(1))).void
 
