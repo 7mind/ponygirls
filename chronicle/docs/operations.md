@@ -182,17 +182,20 @@ written with its rows before it.
   passage's final summary and tags, as before incremental publication: search answers are those of a full
   re-publication. An append whose new windows change the summary or tags of the passage open at the cut writes all that
   passage's earlier pieces again (texts, spans and vectors copied, not re-embedded; a probe of one piece per window
-  decides), and nothing else before the cut: **append cost follows the addition except within a passage longer than
-  TODO(E1X-N) windows**, where each such append costs that passage's pieces (about 64 a window) in rows, HNSW insertions,
-  retired search rows and their vacuum. Passages end where the annotator closes them; nothing bounds their length.
-- **Finite metadata horizon (opt-in, behaviour change for newly published content).** With `metadataHorizonWindows` H
-  (for example 16) a piece carries its passage's summary and tags as they stood H windows after its own window (or at
-  the passage's last window): an append writes again at most the open passage's pieces of the H windows before the
-  cut. The older pieces of a passage longer than H + 1 windows show what the annotator held H windows later, not the
-  final summary and tags: lexical and hybrid search, Related, tag filters, facets and the tag catalog match those pieces by that
-  intermediate vocabulary (a query phrased with the passage's final wording can miss its early pieces; one phrased with
-  the earlier wording can find them). Vectors and passage rows (`GetPassages`) are unchanged. Both kinds of publication
-  follow the rule, so an incremental publication reads exactly as a full one of the same content.
+  decides), and nothing else before the cut: **append publication work = the addition plus the passage still open at the
+  cut (clone: p99 20 windows / 1,210 pieces, max 64 windows / 3,858 pieces)**; such an append costs that passage's
+  pieces (about 64 a window) in rows, HNSW insertions, retired search rows and their vacuum. Passages end where the
+  annotator closes them; nothing bounds their length.
+- **Finite metadata horizon (behaviour change for newly published content):** opt-in; its effect on real-model relevance
+  is not measured (scripted mechanism result only: reports/ingest-c/REL/RESULTS.md); on the clone it would save ≈ 2 % of
+  append work. With `metadataHorizonWindows` H (for example 16) a piece carries its passage's summary and tags as they
+  stood H windows after its own window (or at the passage's last window): an append writes again at most the open
+  passage's pieces of the H windows before the cut. The older pieces of a passage longer than H + 1 windows show what
+  the annotator held H windows later, not the final summary and tags: lexical and hybrid search, Related, tag filters,
+  facets and the tag catalog match those pieces by that intermediate vocabulary (a query phrased with the passage's
+  final wording can miss its early pieces; one phrased with the earlier wording can find them). Vectors and passage rows
+  (`GetPassages`) are unchanged. Both kinds of publication follow the rule, so an incremental publication reads exactly
+  as a full one of the same content.
 - **Configuration** (server JSON `indexing`, both optional, part of no profile): `incrementalPublication` (default
   true; false publishes every revision whole — the off switch, and the comparison oracle); `metadataHorizonWindows`
   (1..2147483647, default 2147483647: final metadata). A lineage continues only under the horizon it was published with:
