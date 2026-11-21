@@ -3,6 +3,8 @@
 // Behavioral-Active Blackbox / Good Communication: the real React app against scripted Chronicle servers (ChronicleFixture
 // family); no backend, database or provider runs. Every scenario owns its browser context; the script runs standalone.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
@@ -12,7 +14,15 @@ import { HistoryFixture, FIND_LITERAL } from './history-fixture.mjs';
 import { SearchFixture } from './search-fixture.mjs';
 
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Set PLAYWRIGHT_BROWSERS_PATH to the provisioned browsers; tests never download browsers.');
-const server = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), server: { host: '127.0.0.1', port: 0, watch: null }, logLevel: 'error' });
+// A browser download (`<a download>`) bypasses Playwright routing, so the Vite server answers /api/raw: through the handler a
+// scenario installs, otherwise as a server without the raw API (404, no Failure body).
+const rawServer = { handle: null };
+const rawFixture = { name: 'raw-fixture', configureServer(vite) { vite.middlewares.use((request, response, next) => {
+  if (!request.url.startsWith('/api/raw/')) { next(); return; }
+  if (rawServer.handle !== null) { rawServer.handle(request, response); return; }
+  response.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
+}); } };
+const server = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), server: { host: '127.0.0.1', port: 0, watch: null }, logLevel: 'error', plugins: [rawFixture] });
 await server.listen();
 const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
 const browser = await chromium.launch({ headless: true });
@@ -710,6 +720,44 @@ try {
       assert.equal(await infoValue(page, 'Recorded yolo profile'), index === 0 ? 'Named_1.2' : 'not recorded');
       assert.equal(await infoValue(page, 'Producer'), 'synthetic-harness'); assert.equal(await infoValue(page, 'Source format'), format); assert.equal(await infoValue(page, 'Recorded source model'), 'recorded-source-model');
     }
+  });
+  // Raw download (ingest-c spec §1.6): /api/raw answers as the server does (manifest; bytes with its headers; cookie only).
+  const RAW_FILES = [Buffer.from('{"type":"session","id":"synthetic-first"}\n'), Buffer.from(`${Array.from({ length: 64 }, (_, n) => `{"n":${n},"text":"猫🦄 synthetic raw line"}\r\n`).join('')}{"tail":"no final newline"}`)];
+  const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+  await run('Info links the raw files of the viewed revision, the browser saves their exact bytes, and a revision without raw shows a state', { before: async ({ context, fixture }) => {
+    await context.addCookies([{ name: 'chronicle_session', value: 'synthetic', url: origin, httpOnly: true, sameSite: 'Strict' }]);
+    fixture.rawRequests = [];
+    rawServer.handle = (request, response) => {
+      const url = new URL(request.url, origin), [sessionId, revision, file, ...rest] = url.pathname.split('/').slice(3);
+      fixture.rawRequests.push(`${request.method} ${url.pathname}${url.search}`);
+      const failure = (status, code, message) => response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ code, message }));
+      if (request.headers.cookie !== 'chronicle_session=synthetic') return failure(401, 'unauthorized', 'Sign in');
+      if (sessionId !== fixture.session.id || revision !== String(fixture.view.revision) || rest.length > 0) return failure(404, 'not-found', 'Raw source not found');
+      if (file === undefined) return response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ sessionId, revision: fixture.view.revision, files: RAW_FILES.map((bytes, index) => ({ index, path: `synthetic/part-${index + 1}.jsonl`, sha256: sha256(bytes), bytes: String(bytes.length) })) }));
+      const bytes = RAW_FILES[Number(file)];
+      if (bytes === undefined) return failure(404, 'not-found', 'Raw source not found');
+      response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(bytes.length), 'Content-Disposition': `attachment; filename="chronicle-${sessionId}-r${revision}-f${file}.jsonl"`, ETag: `"sha256:${sha256(bytes)}"`, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }).end(bytes);
+    };
+  } }, async ({ page, fixture }) => {
+    await ready(page);
+    assert.deepEqual(fixture.rawRequests, [], 'nothing is read before Info is shown');
+    const pinned = fixture.view.revision, base = `/api/raw/${fixture.session.id}`;
+    assert.notEqual(pinned, fixture.headRevision, 'the scene views an older revision than HEAD');
+    await showTab(page, 'Info');
+    const raw = sidePane(page).locator('dt').filter({ hasText: /^Raw$/ }).locator('xpath=following-sibling::dd[1]'), second = raw.getByRole('link', { name: 'Download file 2 of 2', exact: true });
+    await second.waitFor();
+    assert.deepEqual(await raw.getByRole('link').evaluateAll(links => links.map(link => [link.getAttribute('href'), link.hasAttribute('download')])), [[`${base}/${pinned}/0`, true], [`${base}/${pinned}/1`, true]], 'one download link per file of the pinned revision, not HEAD');
+    assert.equal(await raw.textContent(), 'Download file 1 of 2 (42 B)synthetic/part-1.jsonlDownload file 2 of 2 (2.89 KiB)synthetic/part-2.jsonl');
+    assert.equal(await raw.getByText('(2.89 KiB)', { exact: true }).getAttribute('title'), '2,961 bytes', 'the exact size is the tooltip');
+    const [download] = await Promise.all([page.waitForEvent('download'), second.click()]);
+    assert.equal(sha256(await readFile(await download.path())), sha256(RAW_FILES[1]), 'the saved file is byte-exact');
+    assert.equal(download.suggestedFilename(), `chronicle-${fixture.session.id}-r${pinned}-f1.jsonl`);
+    assert.deepEqual(fixture.rawRequests, [`GET ${base}/${pinned}`, `GET ${base}/${pinned}/1`], 'one manifest read, then the bytes, both with the session cookie');
+    await sessionMenu(page, 'Go to latest archive'); await page.locator('.session-meta').filter({ hasText: `source r${fixture.headRevision}` }).waitFor();
+    await raw.getByText('Not available for this revision', { exact: true }).waitFor();
+    assert.equal(await raw.getByRole('link').count(), 0, 'no link to a revision the server does not offer');
+    assert.equal(fixture.rawRequests.at(-1), `GET ${base}/${fixture.headRevision}`, 'the manifest follows the viewed revision');
+    rawServer.handle = null;
   });
 
   // ── Lifecycle: account, connection and background activity (was run.mjs, theme-retry.mjs, refresh-regression.mjs) ──

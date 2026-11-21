@@ -17,6 +17,7 @@ import { HashRouter, InvalidSessionAddress, formatRoute, parseFragment, routeSlo
 import { contentViewKey, requireContentView } from './source-view.ts';
 import { isAuthorityDenial, sourceFailureAffectsView } from './source-authority.ts';
 import { PASSAGE_PAGE_SIZE, validatePassages, validatePassageSpans } from './passages.ts';
+import { formatBytes, rawFileHref, useRawManifest, type RawManifestState } from './raw-download.ts';
 import './session.css';
 import { RequestFailure, type ManagerStats } from './transport/types.ts';
 const MESSAGE_PAGE_SIZE = 40;
@@ -296,12 +297,25 @@ function PositionBar({ pane, total, loading, items, goTo }: { pane: HTMLElement 
   </div>;
 }
 
+const RAW_STATE_TEXT: Readonly<Record<Exclude<RawManifestState['kind'], 'ready' | 'failed'>, string>> = { loading: 'Checking raw files…', 'not-found': 'Not available for this revision', unsupported: 'Not available: the server predates raw downloads' };
+/** One download link per raw file of the viewed revision; the browser saves the bytes (spec §1.6). Read only while shown. */
+function RawDownloads({ sessionId, revision }: { sessionId: string; revision: number }) {
+  const state = useRawManifest(sessionId, revision);
+  if (state.kind !== 'ready') return <span className="muted" role="status" aria-label="Raw download status">{state.kind === 'failed' ? `Unavailable: ${state.message}` : RAW_STATE_TEXT[state.kind]}</span>;
+  const files = state.manifest.files;
+  if (files.length === 0) return <span className="muted" role="status" aria-label="Raw download status">No raw files</span>;
+  return <ul className="stack-sm">{files.map(file => <li key={file.index}>
+    <a href={rawFileHref(sessionId, revision, file.index)} download>{files.length === 1 ? 'Download' : `Download file ${file.index + 1} of ${files.length}`}</a> <span className="muted" title={`${file.bytes.toLocaleString()} bytes`}>({formatBytes(file.bytes)})</span>{files.length > 1 && <div className="mono xs muted">{file.path}</div>}
+  </li>)}</ul>;
+}
+
 function InfoPane({ session, view, sessionId, headRevision, passages, link }: { session: SessionInfo; view: ContentView; sessionId: string; headRevision: number; passages: PassagesResult | null; link: string }) {
   const metadata = session.metadata, source = session.source;
   return <div className="info-pane">
     <section className="rail-section" aria-label="Source"><h3>Source</h3><dl className="dl dl-fixed">
       <dt>Owner</dt><dd>{session.ownerId}</dd>
       <dt>Viewing</dt><dd>source r{view.revision}</dd>
+      <dt>Raw</dt><dd><RawDownloads sessionId={sessionId} revision={view.revision}/></dd>
       <dt>Published</dt><dd>HEAD r{headRevision} / index {session.indexedRevision === undefined ? 'pending' : `r${session.indexedRevision}`}</dd>
       {session.indexedRevision !== undefined && session.indexedRevision < headRevision && <><dt>Indexing lag</dt><dd>{headRevision - session.indexedRevision} source revisions</dd></>}
       <dt>Annotations</dt><dd>{view.generationId === undefined ? 'Archive-only view · no annotations' : 'Published annotation generation'}</dd>
