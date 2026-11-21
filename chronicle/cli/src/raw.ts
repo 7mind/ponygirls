@@ -1,6 +1,5 @@
 import { createHash, randomUUID, type Hash } from 'node:crypto';
-import { constants, closeSync, fsyncSync, linkSync, lstatSync, openSync, statSync, unlinkSync } from 'node:fs';
-import { open, type FileHandle } from 'node:fs/promises';
+import { close, constants, closeSync, fsync, fsyncSync, linkSync, lstatSync, openSync, statSync, unlinkSync, write } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { setFlagsFromString } from 'node:v8';
 import { runInNewContext } from 'node:vm';
@@ -14,6 +13,13 @@ import { httpFault, JSON_CONTENT_TYPE, type Http } from './transport.js';
 import { decodeWire, sameUuid, uuid } from './wire.js';
 /** Bytes per range request of a download: at 2 MB/s one request ends well inside a 60 s gateway deadline. */
 export const RAW_RANGE_BYTES = 64 * 1024 * 1024;
+/** A range answered 503 (all of the server's downloads in use) with a Retry-After is requested again, after that many seconds
+  * capped at RAW_RETRY_WAIT_MAX_MS, up to RAW_RANGE_ATTEMPTS requests in all; then the download fails. */
+export const RAW_RANGE_ATTEMPTS = 5;
+const RAW_RETRY_WAIT_MAX_MS = 30_000;
+/** How a download waits before a retry and announces it (one stderr line); tests inject the wait. */
+export interface Pause { wait(milliseconds: number): Promise<void>; notify(line: string): Promise<void> }
+export function realPause(notify: (line: string) => Promise<void>): Pause { return { wait: milliseconds => new Promise(done => { setTimeout(done, milliseconds); }), notify }; }
 const STDOUT = '-';
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 /** Node frees the buffers of received chunks only when V8 collects their wrappers, and V8 schedules that by its own measure
@@ -68,26 +74,33 @@ export function withSentence(error: CliError, sentence: string): CliError {
 }
 interface Sink { write(chunk: Uint8Array): Promise<void>; abandon(): Promise<void>; readonly failure: (received: number, total: number) => string }
 class FileSink implements Sink {
-  private closed = false;
-  private readonly interrupted = (signal: NodeJS.Signals): void => { this.release(); try { unlinkSync(this.partial); } catch { /* Already gone. */ } process.kill(process.pid, signal); };
-  private constructor(private readonly target: string, private readonly partial: string, private readonly handle: FileHandle) { for (const signal of INTERRUPTS) process.once(signal, this.interrupted); }
-  static async create(target: string): Promise<FileSink> {
-    const partial = join(dirname(target), `.${basename(target)}.${randomUUID()}.partial`);
-    try { return new FileSink(target, partial, await open(partial, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)); }
-    catch { throw new CliError('state', `Cannot create the partial file ${partial}; nothing was written.`); }
+  private fd: number | null = null;
+  private readonly interrupted = (signal: NodeJS.Signals): void => { this.release(); try { unlinkSync(this.partial); } catch { /* Not created or already gone. */ } process.kill(process.pid, signal); };
+  private constructor(private readonly target: string, private readonly partial: string) {}
+  /** The signal handlers are installed before the partial file is created, and both happen in one synchronous step: a signal
+    * before it takes its default action while no file exists; any later one runs `interrupted`, which removes the file. */
+  static create(target: string): FileSink {
+    const sink = new FileSink(target, join(dirname(target), `.${basename(target)}.${randomUUID()}.partial`));
+    for (const signal of INTERRUPTS) process.once(signal, sink.interrupted);
+    try { sink.fd = openSync(sink.partial, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600); }
+    catch { sink.release(); throw new CliError('state', `Cannot create the partial file ${sink.partial}; nothing was written.`); }
+    return sink;
   }
   readonly failure = (received: number, total: number): string => `${received} of ${total} bytes were received; the partial file was removed.`;
   async write(chunk: Uint8Array): Promise<void> {
-    for (let at = 0; at < chunk.length;) at += (await this.handle.write(chunk, at, chunk.length - at)).bytesWritten;
+    const fd = this.fd!;
+    for (let at = 0; at < chunk.length;) at += await new Promise<number>((done, reject) => { write(fd, chunk, at, chunk.length - at, null, (error, written) => { if (error === null) done(written); else reject(error); }); });
   }
   private release(): void { for (const signal of INTERRUPTS) process.removeListener(signal, this.interrupted); }
+  private async closed(): Promise<void> { const fd = this.fd; this.fd = null; if (fd !== null) await new Promise<void>((done, reject) => { close(fd, error => { if (error === null) done(); else reject(error); }); }); }
   async abandon(): Promise<void> {
-    this.release(); if (!this.closed) { this.closed = true; await this.handle.close().catch(() => {}); }
+    await this.closed().catch(() => {}); this.release();
     try { unlinkSync(this.partial); } catch { /* Already gone. */ }
   }
-  /** The verified bytes become `target` without replacing anything: fsync, link (fails if `target` exists), unlink, directory fsync. */
+  /** The verified bytes become `target` without replacing anything: fsync, link (fails if `target` exists), unlink, directory fsync.
+    * The signal handlers stay until the link, so an interruption before it still removes the partial file. */
   async commit(): Promise<void> {
-    try { await this.handle.sync(); this.closed = true; await this.handle.close(); linkSync(this.partial, this.target); }
+    try { const fd = this.fd!; await new Promise<void>((done, reject) => { fsync(fd, error => { if (error === null) done(); else reject(error); }); }); await this.closed(); linkSync(this.partial, this.target); }
     catch (error) {
       await this.abandon();
       throw new CliError('state', isObject(error) && error['code'] === 'EEXIST' ? `${this.target} appeared during the download and was not replaced; the partial file was removed.` : `Cannot save ${this.target}; the partial file was removed.`);
@@ -105,12 +118,23 @@ class StdoutSink implements Sink {
   }
   async abandon(): Promise<void> {}
 }
-function retryAfter(headers: Headers): string { const value = headers.get('retry-after'); return value !== null && /^\d{1,9}$/.test(value) ? `Retry-After: ${value} s (all of the server's downloads are in use); no automatic retry was attempted.` : ''; }
+/** A 503 with a Retry-After in seconds: the range may be requested again after them. */
+class Busy extends RemoteError { constructor(error: RemoteError, readonly seconds: number) { super(error.code, error.message, error.remoteCode); } }
+/** `work`, or the signal's reason once it aborts: a sink that stops taking bytes (a stdout consumer that keeps the pipe open
+  * but stops reading) cannot hold a range beyond its deadline. */
+function within<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason as Error);
+  return new Promise<T>((done, reject) => {
+    const aborted = (): void => { reject(signal.reason as Error); };
+    signal.addEventListener('abort', aborted, { once: true });
+    work.then(value => { signal.removeEventListener('abort', aborted); done(value); }, (error: unknown) => { signal.removeEventListener('abort', aborted); reject(error as Error); });
+  });
+}
 /** One range request: its bytes go to `digest` and `sink` as they arrive; it must answer 206 with exactly the range and ETag. */
 async function range(http: Http, session: Session, path: string, first: number, last: number, total: number, etag: string, timeoutMs: number, digest: Hash, sink: Sink, received: { bytes: number }, collect: Collect): Promise<void> {
-  const requested = `${first}-${last}`;
+  const requested = `${first}-${last}`; const signal = AbortSignal.timeout(timeoutMs);
   let response: Response;
-  try { response = await fetch(`${http.origin}${path}`, { headers: { Accept: 'application/octet-stream', 'Accept-Encoding': 'identity', Origin: http.origin, Cookie: `chronicle_session=${session.cookie}`, Range: `bytes=${requested}`, 'If-Range': etag }, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) }); }
+  try { response = await fetch(`${http.origin}${path}`, { headers: { Accept: 'application/octet-stream', 'Accept-Encoding': 'identity', Origin: http.origin, Cookie: `chronicle_session=${session.cookie}`, Range: `bytes=${requested}`, 'If-Range': etag }, redirect: 'manual', signal }); }
   catch (error) { throw transportFailure(error, requested, timeoutMs, false); }
   if (response.status !== 206) throw await rejection(response, path, session, requested);
   const length = last - first + 1;
@@ -122,7 +146,7 @@ async function range(http: Http, session: Session, path: string, first: number, 
     for (;;) {
       const chunk = await reader.read(); if (chunk.done) break;
       read += chunk.value.length; if (read > length) throw new CliError('protocol-error', `The answer to range ${requested} carries more bytes than the range.`);
-      digest.update(chunk.value); await sink.write(chunk.value); received.bytes += chunk.value.length;
+      digest.update(chunk.value); await within(sink.write(chunk.value), signal); received.bytes += chunk.value.length;
       uncollected += chunk.value.length; if (uncollected >= RAW_COLLECT_BYTES) { uncollected = 0; collect({ type: 'minor' }); }
     }
   } catch (error) { throw error instanceof CliError ? error : transportFailure(error, requested, timeoutMs, true); }
@@ -132,7 +156,7 @@ async function range(http: Http, session: Session, path: string, first: number, 
 /** A body that ends before its Content-Length is the server's failure signal after the first byte (it never sends other bytes). */
 const ENDED_EARLY = 'The server ended the download early (lost access, a purge or a server failure).';
 function transportFailure(error: unknown, requested: string, timeoutMs: number, answered: boolean): CliError {
-  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) return new CliError('deadline', `Range ${requested} was not received within --timeout-ms (${timeoutMs} ms per range request).`);
+  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) return new CliError('deadline', `Range ${requested} was not received and written within --timeout-ms (${timeoutMs} ms per range request).`);
   return new CliError('unavailable', answered ? ENDED_EARLY : 'Transport failed; no credential or remote diagnostic was printed.');
 }
 async function rejection(response: Response, path: string, session: Session, requested: string): Promise<CliError> {
@@ -145,7 +169,8 @@ async function rejection(response: Response, path: string, session: Session, req
   if (text === null) return discarded(mismatch);
   let fault: { code: string; message: string };
   try { fault = httpFault(path, parseJson(text), response.status); } catch { return mismatch; }
-  return withSentence(remoteFailure(fault.code, { message: fault.message, secrets: [session.cookie] }), response.status === 503 ? retryAfter(response.headers) : '');
+  const failure = remoteFailure(fault.code, { message: fault.message, secrets: [session.cookie] }); const retryAfter = response.headers.get('retry-after');
+  return response.status === 503 && failure instanceof RemoteError && retryAfter !== null && /^\d{1,9}$/.test(retryAfter) ? new Busy(failure, Number(retryAfter)) : failure;
 }
 /** The body of an error answer, at most MAX_BYTES of UTF-8, else null. */
 async function failureText(response: Response): Promise<string | null> {
@@ -160,13 +185,26 @@ export interface RawResult { sessionId: string; revision: number; file: number; 
 /** Spec §1.5: the manifest pins the revision; the file arrives in RAW_RANGE_BYTES range requests (each bounded by
   * `timeoutMs`), hashed incrementally and written as it arrives; a file is saved only complete and verified, and any failure
   * removes its partial file. On stdout the digest can only be checked after the last byte: a mismatch fails after them. */
-export async function download(http: Http, session: Session, request: RawDownload, timeoutMs: number): Promise<RawResult | null> {
+export async function download(http: Http, session: Session, request: RawDownload, timeoutMs: number, pause: Pause): Promise<RawResult | null> {
   const value = await manifest(http, session, request); const file = selected(value, request.file);
   const total = Number(file.bytes); const etag = `"sha256:${file.sha256}"`; const path = `/api/raw/${request.sessionId}/${value.revision}/${file.index}`;
-  const sink = request.output === STDOUT ? new StdoutSink() : await FileSink.create(request.output);
   const digest = createHash('sha256'); const received = { bytes: 0 }; const collect = collector();
+  // Nothing may fail between the creation of the partial file and the scope that removes it on failure.
+  const sink = request.output === STDOUT ? new StdoutSink() : FileSink.create(request.output);
   try {
-    for (let first = 0; first < total; first += RAW_RANGE_BYTES) await range(http, session, path, first, Math.min(first + RAW_RANGE_BYTES, total) - 1, total, etag, timeoutMs, digest, sink, received, collect);
+    for (let first = 0; first < total; first += RAW_RANGE_BYTES) {
+      const last = Math.min(first + RAW_RANGE_BYTES, total) - 1;
+      for (let attempt = 1; ; attempt++) {
+        try { await range(http, session, path, first, last, total, etag, timeoutMs, digest, sink, received, collect); break; }
+        catch (error) {
+          if (!(error instanceof Busy)) throw error;
+          if (attempt === RAW_RANGE_ATTEMPTS) throw withSentence(error, `Retry-After: ${error.seconds} s; range ${first}-${last} was requested ${RAW_RANGE_ATTEMPTS} times.`);
+          const milliseconds = Math.min(error.seconds * 1000, RAW_RETRY_WAIT_MAX_MS);
+          await pause.notify(`chronicle: the server's downloads are all in use (503); range ${first}-${last} again in ${milliseconds / 1000} s (attempt ${attempt + 1} of ${RAW_RANGE_ATTEMPTS})\n`);
+          await pause.wait(milliseconds);
+        }
+      }
+    }
     if (received.bytes !== total || digest.digest('hex') !== file.sha256) throw new CliError('protocol-error', "The bytes received do not match the manifest's size and SHA-256.");
   } catch (error) {
     await sink.abandon();

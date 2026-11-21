@@ -10,7 +10,7 @@ import { decodeOperation, decodeWire, encodeWire, operationHelp, operationName, 
 import { Deadline, Http, origin, websocket } from './transport.js';
 import { accountAcknowledgement, accountIssued, login, settings } from './account.js';
 import { mcp, operationTool } from './mcp.js';
-import { download, rawDownload, withSentence } from './raw.js';
+import { download, rawDownload, realPause, withSentence } from './raw.js';
 async function input(args: Arguments, deadline: Deadline): Promise<string> {
   const file = option(args, 'file'); if (file === null) throw new CliError('usage', 'An explicit --file PATH or --file - is required.');
   if (file !== '-') return readBounded(file, MAX_BYTES, 'input');
@@ -75,16 +75,16 @@ export interface RunResult { value: unknown; text: boolean; mode?: string; strea
 // The fallback notice is emitted before the retry runs, so it is shown whether the retry succeeds or fails. A search result carries its effective mode.
 export async function run(args: Arguments, env: Environment, notify: (line: string) => Promise<void> = async () => {}): Promise<RunResult> {
   const isSearch = args.words[0] === 'search' && args.words.length === 2 && !flag(args, 'help');
-  try { const result = await runOnce(args, env); return isSearch ? { ...result, mode: searchMode(args) } : result; }
+  try { const result = await runOnce(args, env, notify); return isSearch ? { ...result, mode: searchMode(args) } : result; }
   catch (error) {
     const reason = isSearch && option(args, 'mode') === null ? embeddingFailure(error) : null;
     if (reason === null) throw error;
     const lexical: Arguments = { ...args, options: new Map(args.options).set('mode', ['lexical']) };
     await notify(`chronicle: hybrid search unavailable (${reason}); showing lexical results\n`);
-    return { ...await runOnce(lexical, env), mode: 'lexical' };
+    return { ...await runOnce(lexical, env, notify), mode: 'lexical' };
   }
 }
-async function runOnce(args: Arguments, env: Environment): Promise<RunResult> {
+async function runOnce(args: Arguments, env: Environment, notify: (line: string) => Promise<void>): Promise<RunResult> {
   const [command, subcommand] = args.words;
   if (flag(args, 'help') || command === undefined || command === 'help') {
     const text = help(command === 'help' ? args.words.slice(1) : args.words, command === 'help'); if (text === '') throw new CliError('usage', 'Unknown help command. Run chronicle --help.');
@@ -98,7 +98,7 @@ async function runOnce(args: Arguments, env: Environment): Promise<RunResult> {
     family(args, env, 'session'); executionOptions(args, false, false, false); const request = rawDownload(args);
     const endpoint = origin(option(args, 'url') ?? env['CHRONICLE_URL'] ?? null, flag(args, 'allow-insecure-http'));
     // --timeout-ms bounds the manifest request and then each range request, not the whole download.
-    const result = await download(new Http(endpoint, deadline), new SessionStore(env, endpoint).load(), request, timeoutMs);
+    const result = await download(new Http(endpoint, deadline), new SessionStore(env, endpoint).load(), request, timeoutMs, realPause(notify));
     return result === null ? { value: null, text: false, streamed: true } : { value: result, text: false };
   }
   const operation = spec.kind === 'operation' ? makeOperation(args) : command === 'rpc' || command === 'call' ? decodeOperation(parseJson(await input(args, deadline))) : null;

@@ -212,12 +212,15 @@ chronicle raw SESSION_UUID --revision 3 --output - | sha256sum   # stdout
   mismatch exits 6 after the bytes were written, so consumers must check the
   exit status (with a shell pipe, `set -o pipefail`). A terminal is refused as
   stdout.
-- `--timeout-ms` bounds the manifest request and then each range request
-  (including the time a slow stdout consumer takes), not the whole download;
-  the default 30 s needs about 2.2 MB/s per range.
+- `--timeout-ms` bounds the manifest request and then each range request,
+  writing its bytes included (a stdout consumer that stops reading ends the
+  command with `deadline`, exit 6), not the whole download; the default 30 s
+  needs about 2.2 MB/s per range.
 - The server answers `503 unavailable` with `Retry-After` when all its download
   slots (4, shared by every client) are taken; each range request takes one.
-  The CLI fails with that `Retry-After` in the message and does not retry. A
+  The CLI requests the same range again after `Retry-After` (at most 30 s),
+  announcing each wait on stderr, up to 5 requests of that range; then it fails
+  (`unavailable`, exit 6). A 503 without `Retry-After` fails at once. A
   response that ends before its `Content-Length` is the server's failure signal
   (logout, lost access, purge, server failure): `unavailable`, exit 6.
 - A server without the raw download API answers the manifest with a 404 that is

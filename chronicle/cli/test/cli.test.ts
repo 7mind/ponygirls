@@ -9,6 +9,8 @@ import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { decodeWire, encodeWire, operationPolicy } from '../src/wire.js';
+import { download, RAW_RANGE_ATTEMPTS } from '../src/raw.js';
+import { Deadline, Http } from '../src/transport.js';
 import { parseJson, isObject } from '../src/json.js';
 const CASE_CONCURRENCY = 16;
 const CLI = fileURLToPath(new URL('../src/main.js', import.meta.url));
@@ -554,17 +556,18 @@ test('raw without --revision reads the archive head, and a too-large answer poin
 // A raw download server as R1 built it (/api/raw manifest and single ranges with ETag and If-Range); `fault` breaks the bytes.
 const RAW_RANGE_BYTES = 64 * 1024 * 1024;
 interface RawFile { readonly path: string; readonly content: Buffer; announced?: string }
-type RawFault = 'none' | 'short' | 'busy';
+type RawFault = 'none' | 'short' | 'busy' | 'busy-unbounded' | 'hold';
 function sha256(bytes: Buffer | string): string { return createHash('sha256').update(bytes).digest('hex'); }
 function rawServer(revision: number, files: readonly RawFile[], fault: () => RawFault): (request: IncomingMessage, response: ServerResponse) => void {
   return (request, response) => {
     const [, , , , pinned, index] = request.url!.split('/'); const digest = (file: RawFile): string => file.announced ?? sha256(file.content);
     if (index === undefined) { reply(response, 200, { sessionId: ID, revision, files: files.map((file, i) => ({ index: i, path: file.path, sha256: digest(file), bytes: String(file.content.length) })) }, {}); return; }
-    if (Number(pinned) !== revision || fault() === 'busy') { reply(response, 503, { code: 'unavailable', message: 'all raw downloads are in progress' }, { 'Retry-After': '5' }); return; }
+    const selected = fault(); if (selected === 'hold') return;
+    if (Number(pinned) !== revision || selected === 'busy' || selected === 'busy-unbounded') { reply(response, 503, { code: 'unavailable', message: 'all raw downloads are in progress' }, selected === 'busy' ? { 'Retry-After': '5' } : {}); return; }
     const file = files[Number(index)]!; const [, first, last] = /^bytes=(\d+)-(\d+)$/.exec(String(request.headers.range))!.map(Number) as [number, number, number];
     const body = file.content.subarray(first, last + 1);
     response.writeHead(206, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length), 'Content-Range': `bytes ${first}-${first + body.length - 1}/${file.content.length}`, 'ETag': `"sha256:${digest(file)}"` });
-    if (fault() === 'short') response.write(body.subarray(0, body.length >> 1), () => response.destroy()); else response.end(body);
+    if (selected === 'short') response.write(body.subarray(0, body.length >> 1), () => response.destroy()); else response.end(body);
   };
 }
 // Specified (spec §1.5): the manifest pins the revision (head, or --revision); the file arrives in 64 MiB range requests, each
@@ -603,7 +606,7 @@ test('a failing raw download removes its partial file and names the bytes receiv
     const piped = await cli(['raw', ID, '--output', '-'], f, {}, null);
     assert.equal(piped.code, 6); assert.equal(piped.stdout, file.content.toString('utf8')); assert.match(piped.stderr, /^chronicle: protocol-error: .*SHA-256.*discard/);
     delete file.announced;
-    for (const [selected, expected] of [['short', /^chronicle: unavailable: .* 11 of 22 bytes were received; the partial file was removed\./], ['busy', /^chronicle: unavailable: .*Server unavailable: all raw downloads are in progress.*Retry-After: 5 s.* 0 of 22 bytes were received; the partial file was removed\./]] as const) {
+    for (const [selected, expected] of [['short', /^chronicle: unavailable: .* 11 of 22 bytes were received; the partial file was removed\./], ['busy-unbounded', /^chronicle: unavailable: .*Server unavailable: all raw downloads are in progress\. 0 of 22 bytes were received; the partial file was removed\.\n$/]] as const) {
       fault = selected; const result = await cli(['raw', ID, '--output', target], f, {}, null);
       assert.equal(result.code, 6); assert.equal(result.stdout, ''); assert.match(result.stderr, expected); assert.deepEqual(readdirSync(out), []);
     }
@@ -620,6 +623,52 @@ test('raw --output against a server without the raw download API names the missi
       assert.equal(result.code, 6); assert.equal(result.stdout, ''); assert.ok(result.stderr.includes(`The server at ${f.origin} has no raw download API (it predates it): upgrade the server;`), result.stderr);
     }
     assert.deepEqual(readdirSync(out), []); assert.equal(f.requests.length, 2);
+  } finally { await f.close(); }
+});
+// Specified (spec §1.5, D6): --timeout-ms bounds each range request including the time its bytes take to be written, so a
+// consumer that keeps stdout open but stops reading ends the command; SIGTERM during a file download removes the partial file.
+test('a stalled stdout consumer ends a download at its per-range deadline, and SIGTERM removes the partial file', async () => {
+  const content = randomBytes(4 * 1024 * 1024); let fault: RawFault = 'none'; let onRange = (): void => {};
+  const f = await fixture((q, r) => { if (q.url!.split('/').length === 6) onRange(); rawServer(1, [{ path: 'p/a.jsonl', content }], () => fault)(q, r); }, null);
+  const start = (args: string[]): { child: import('node:child_process').ChildProcessWithoutNullStreams; stderr: () => string; closed: Promise<[number | null, NodeJS.Signals | null]> } => {
+    const child = spawn(process.execPath, [CLI, '--url', f.origin, '--allow-insecure-http', 'raw', ID, ...args], { env: { PATH: process.env['PATH'], HOME: f.root, CHRONICLE_STATE_DIR: join(f.root, 'state') }, stdio: 'pipe' });
+    let stderr = ''; child.stderr.on('data', data => { stderr += String(data); }); child.stdin.end();
+    const guard = setTimeout(() => child.kill('SIGKILL'), 8000);
+    return { child, stderr: () => stderr, closed: new Promise(resolve => child.on('close', (code, signal) => { clearTimeout(guard); resolve([code, signal]); })) };
+  };
+  try {
+    state(f); const out = join(f.root, 'out'); mkdirSync(out);
+    const TIMEOUT_MS = 1000; const began = performance.now(); const stalled = start(['--output', '-', '--timeout-ms', String(TIMEOUT_MS)]); // stdout is never read
+    assert.deepEqual(await stalled.closed, [6, null]); assert.ok(performance.now() - began >= TIMEOUT_MS);
+    assert.match(stalled.stderr(), new RegExp(`^chronicle: deadline: Range 0-${content.length - 1} was not received and written within --timeout-ms \\(${TIMEOUT_MS} ms per range request\\)\\. \\d+ of ${content.length} bytes were written to stdout: discard them\\.\\n$`));
+    stalled.child.stdout.destroy();
+    fault = 'hold'; const interrupted = start(['--output', join(out, 'a.jsonl')]); onRange = () => interrupted.child.kill('SIGTERM');
+    assert.deepEqual(await interrupted.closed, [null, 'SIGTERM']); assert.deepEqual(readdirSync(out), []);
+  } finally { await f.close(); }
+});
+// Specified (lead, round 2): a 503 of a range (all download permits taken) is retried for the same range after the server's
+// Retry-After capped at 30 s, each wait announced; RAW_RANGE_ATTEMPTS attempts in all, then the download fails as before.
+// The wait is injected: it records the requested milliseconds and returns at once.
+test('a busy range is retried after Retry-After (capped, announced, bounded) without losing the bytes before it', async () => {
+  const large = randomBytes(RAW_RANGE_BYTES + 5); const small = Buffer.from('{"line":1}\n'); let busy = 0; let retryAfter = '5';
+  const f = await fixture((q, r) => {
+    if (q.headers.range?.startsWith(`bytes=${q.url!.endsWith('/0') ? RAW_RANGE_BYTES : 0}-`) && busy > 0) { busy--; reply(r, 503, { code: 'unavailable', message: 'all raw downloads are in progress' }, { 'Retry-After': retryAfter }); return; }
+    rawServer(1, [{ path: 'p/large.jsonl', content: large }, { path: 'p/small.jsonl', content: small }], () => 'none')(q, r);
+  }, null);
+  try {
+    const out = join(f.root, 'out'); mkdirSync(out); const waits: number[] = []; const notices: string[] = [];
+    const pause = { wait: async (milliseconds: number) => { waits.push(milliseconds); }, notify: async (line: string) => { notices.push(line); } };
+    const session = { origin: f.origin, cookie: COOKIE, actor: USER.actor, user: USER }; const http = new Http(f.origin, new Deadline(10000));
+    busy = 2; const saved = await download(http, session, { sessionId: ID, revision: null, file: 0, output: join(out, 'large.jsonl') }, 10000, pause);
+    assert.deepEqual(saved, { sessionId: ID, revision: 1, file: 0, path: join(out, 'large.jsonl'), bytes: String(large.length), sha256: sha256(large) }); assert.equal(sha256(readFileSync(join(out, 'large.jsonl'))), sha256(large));
+    const second = `${RAW_RANGE_BYTES}-${RAW_RANGE_BYTES + 4}`;
+    assert.deepEqual(f.requests.map(q => q.headers.range), [undefined, `bytes=0-${RAW_RANGE_BYTES - 1}`, `bytes=${second}`, `bytes=${second}`, `bytes=${second}`]);
+    assert.deepEqual(waits, [5000, 5000]);
+    assert.deepEqual(notices, [2, 3].map(attempt => `chronicle: the server's downloads are all in use (503); range ${second} again in 5 s (attempt ${attempt} of ${RAW_RANGE_ATTEMPTS})\n`));
+    busy = Infinity; retryAfter = '120'; waits.length = 0; f.requests.length = 0;
+    await assert.rejects(download(http, session, { sessionId: ID, revision: 1, file: 1, output: join(out, 'small.jsonl') }, 10000, pause),
+      (error: Error) => /^Service temporarily unavailable;.*Server unavailable: all raw downloads are in progress\. Retry-After: 120 s; range 0-10 was requested 5 times\. 0 of 11 bytes were received; the partial file was removed\.$/.test(error.message));
+    assert.equal(RAW_RANGE_ATTEMPTS, 5); assert.deepEqual(waits, [30000, 30000, 30000, 30000]); assert.equal(f.requests.length, 1 + RAW_RANGE_ATTEMPTS); assert.deepEqual(readdirSync(out), ['large.jsonl']);
   } finally { await f.close(); }
 });
 });
