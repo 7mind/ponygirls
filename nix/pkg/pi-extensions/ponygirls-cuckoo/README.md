@@ -26,12 +26,17 @@ Opt-in objective/progress and session-local rule checkpoints from the **main con
 - `/cuckoo [default|project] questions remove ID`: remove a question by the ID shown in
   the list. Without a prefix every readable store is searched; without `ID` the
   terminal UI offers a selection.
-- In a report panel, **Tab**/**Shift-Tab** (or a click) select a rule, objective or
-  answer and **`c`** comments on it; see [Commenting on a report](#commenting-on-a-report).
+- In a report panel, **Enter** focuses the report of the selected checkpoint: the
+  arrows then move through its rules, objectives and answers, and **Escape** returns
+  to the list; see [Reading the panel](#reading-the-panel).
+- **Tab**/**Shift-Tab** (or a click, or the arrows in the focused report) select a
+  rule, objective or answer and **`c`** comments on it; see
+  [Commenting on a report](#commenting-on-a-report).
 - **Ctrl+Alt+C**: toggle the report view without submitting or losing the editor draft.
 - Click the **🐦 N** border badge to toggle reports (fullscreen, or regular
   mode with Pi's `regularMouse` enabled). At 120 columns or more, when the badge
-  fits, it also shows **⌃⌥C**. Escape or `q` closes the view.
+  fits, it also shows **⌃⌥C**. Escape or `q` closes the view; from the focused
+  report they first return to the list.
 - `/cuckoo on|off|inherit`: session master override, or inherit project/global.
 - `/cuckoo default on|off`: global master default.
 - `/cuckoo project on|off|inherit`: trusted-project master override.
@@ -128,21 +133,24 @@ of a checkpoint.
 Every rule, objective and standing-question answer of a valid report is a
 selectable item in the report and history panels:
 
-1. Open the panel and scroll (`ctrl-u`/`ctrl-d`, wheel).
-2. **Tab**/**Shift-Tab** move the item cursor (accent bar in the left gutter) and
-   scroll it into view; from a cursor that is off screen, Tab takes the first
-   item on screen and Shift-Tab the last. A left click selects the item under the
-   pointer where mouse input is available.
+1. Open the panel and scroll (`ctrl-u`/`ctrl-d`, wheel), or press **Enter** to
+   focus the report and read it with the arrows.
+2. Move the item cursor (accent bar in the left gutter). In the focused report
+   the **arrows** move it; **Tab**/**Shift-Tab** move it in either state and
+   scroll it into view. From a cursor that is off screen, Down and Tab take the
+   first item on screen, Up and Shift-Tab the last. A left click selects the item
+   under the pointer where mouse input is available.
 3. **`c`** opens an editor under the report for the selected item (with no cursor,
    the first item on screen). **Enter** adds the comment, **Shift-Enter** inserts a
    newline, **Escape** discards the draft without closing the panel. While the
-   editor is open all keys, including `i`, `q` and pasted text, are text.
+   editor is open all keys, including `i`, `q` and pasted text, are text, and the
+   checkpoint table is hidden so that the report keeps its rows.
 4. New comments appear under their item marked `[new]`. **`x`** removes the last
    new comment of the selected item.
 
-When the panel closes, by any path (Escape, `q`, `i`, the badge, Ctrl+Alt+C,
-session shutdown), all new comments are saved together; text still in the
-editor is saved too rather than dropped. Saving means:
+When the panel closes, by any path (Escape or `q` in the list, `i`, the badge,
+Ctrl+Alt+C, session shutdown), all new comments are saved together; text still
+in the editor is saved too rather than dropped. Saving means:
 
 - **History.** Each comment becomes its own `cuckoo.comment` session entry holding
   the checkpoint request ID, the item, a quotation of the item, the text and a
@@ -437,55 +445,88 @@ acceptance are not new semantic-quality evidence.
 
 ## Reading the panel
 
-The terminal panel shows a selectable checkpoint table with detail beneath.
-Newest checkpoint is selected by default. Navigation and detail scrolling use
-separate key bindings so both the list and the selected content remain accessible.
+The terminal panel shows a selectable checkpoint table with the report of the
+selected checkpoint beneath. The newest checkpoint is selected by default. The
+panel has two focus states; the arrows act on the focused part:
+
+- **List** (initial). `↑`/`↓` select a checkpoint; the report scrolls with
+  PgUp/PgDn, Home/End and the wheel. **Enter** focuses the report.
+- **Report.** The table folds away and the report takes its rows. `↑`/`↓` move
+  the item cursor over rules, objectives and answers, and the view follows. The
+  cursor item is shown to its end first: at once when it fits the view, one line
+  per press when it is taller. Then the next item is taken and shown the same
+  way. While no item is on screen, before the first and after the last item,
+  and in a report without items (an invalid one), the arrows scroll one line.
+  The view never moves by more than its own height, so no line is skipped in
+  either direction, and the cursor never moves to an item that is not on
+  screen. **Escape** returns to the list; Escape there closes the panel.
+
+A focus change keeps the report where it is: its first visible line stays first
+as far as the size of the view allows, and Enter followed directly by Escape
+returns to the same view. The size matters in two places. At the end of a report
+the taller view of the focused report shows more of what precedes it. And when
+Escape does not directly follow Enter and would hide the selected item that was
+on screen, the shorter view of the list follows it, so that `c` still comments
+on that item. Enter puts the item
+cursor on the first item on screen, if there is one and the cursor is not on
+screen already; the cursor is kept until another checkpoint is selected.
 
 **Table viewport:** Shows up to 3 checkpoints newest-first (bounded dynamically
 by allocated panel height) with columns: index, request ID, objective count, and
 status (saved or invalid). Column widths adapt to the terminal; the request-ID
 column yields first in narrow layouts. Odd rows have a subtle panel-background
-stripe; the selected row has an accent marker and selected-background band.
+stripe; the selected row has an accent marker and selected-background band. When
+the list is longer than the table, the panel title says which rows are shown
+(`1–3 of 8`). The table is shown while the list is focused and no comment is
+being written.
 
-**Detail pane:** Below the table, runtime errors appear first (prominently at
-top), then the detail header, then the selected checkpoint body. The detail
-header wraps at narrow widths so all metadata (timestamp, branch, entry ID,
-qualifier, comment count) remains accessible via scrolling. The body renders
+**Report:** A fixed title line names the selected checkpoint: `Checkpoint 4`
+under the table, `Cuckoo checkpoint 4 of 8` while the table is hidden (`Answer`
+in history). When the report does not fit, the title shows the scroll position
+on the right (`↑ lines 13–30 of 65 ↓`; an arrow marks a side with hidden lines).
+At narrow widths the title keeps the checkpoint and gives up `Cuckoo` before
+the position. Under the title, runtime errors appear first, then one muted line with
+the request ID and metadata (timestamp, branch, entry ID, qualifier, comment
+count; it wraps at narrow widths), then the report body. The body renders
 inline behind a two-column gutter: rules section, then numbered objectives with
 compact labeled fields (progress, a single issues list, ETA), then standing
 questions with their answers when the checkpoint asked any. Comments follow the
 item they belong to. The gutter shows an accent bar beside the selected item. Invalid reports show the raw output and
-error rather than parsed fields. After the detail, effective settings and
-configuration scroll into view. The entire body (errors + detail + settings)
+error rather than parsed fields. After the report, effective settings and
+configuration scroll into view. The entire body (errors + report + settings)
 scrolls independently of the table via PgUp/PgDn or ctrl-u/ctrl-d (half-page)
 and Home/End (top/bottom). All body lines are wrapped to the panel width so no
 content is clipped.
 
-**Footer:** Key hints are fixed at the bottom, always visible. The `i` key
-closes the panel and requests an immediate inquiry. While a comment is being
-written the footer holds the editor and its own hints, and the commented item
-is kept in view, also across a resize.
+**Footer:** Key hints are fixed at the bottom, always visible, and list the keys
+that act in the current state: a checkpoint without items offers neither `c` nor
+`tab/shift-tab`. The `i` key closes the panel and requests an immediate inquiry.
+A notice appears above the hints in place of the count of new comments and
+keeps that line's rows. While a comment is being written the footer holds the
+editor and its own hints, and the commented item is kept in view, also across a
+resize.
 
 **History view** (`/cuckoo history`) adds timestamp, branch attribution, and
-entry IDs in the detail header metadata (wrapped, not as separate table columns).
+entry IDs to the metadata line (wrapped, not as separate table columns).
 
 **Keyboard:**
 
-| Keys | Action |
-|---|---|
-| `↑` `↓` `j` `k` | Move selection in table |
-| `PgUp` `PgDn` `ctrl-u` `ctrl-d` | Scroll detail half-page up/down |
-| `Home` `End` | Scroll detail to top/bottom |
-| `tab` `shift-tab` | Select next/previous rule, objective or answer |
-| `c` | Comment on the selected item |
-| `x` | Remove the last new comment of the selected item |
-| `i` | Close and request inquiry now |
-| `esc` `q` | Close panel |
-| Mouse wheel | Scroll detail |
-| Left click | Select the item under the pointer |
+| Keys | List focused | Report focused |
+|---|---|---|
+| `↑` `↓` `j` `k` | Select checkpoint | Next/previous item, or one line (see above) |
+| `enter` | Focus the report | — |
+| `esc` `q` | Close panel | Back to the list |
+| `PgUp` `PgDn` `ctrl-u` `ctrl-d` | Scroll report half-page up/down | same |
+| `Home` `End` | Scroll report to top/bottom | same |
+| `tab` `shift-tab` | Select next/previous rule, objective or answer | same |
+| `c` | Comment on the selected item | same |
+| `x` | Remove the last new comment of the selected item | same |
+| `i` | Close and request inquiry now | same |
+| Mouse wheel | Scroll report | same |
+| Left click | Select the item under the pointer | same |
 
-In regular mode the table and detail fit within the allocated height. In
-fullscreen, PgUp/PgDn scroll the detail while the panel has focus and return
+In regular mode the table and report fit within the allocated height. In
+fullscreen, PgUp/PgDn scroll the report while the panel has focus and return
 to scrolling the transcript when it closes. RPC/plain-text output remains the
 complete unstyled flat report with all checkpoints, history attribution, and
 rule source/scope data. Theme changes regenerate colors. The border badge remains
@@ -644,6 +685,10 @@ model-facing guidance/tool declarations, argument validation, and continued
 checkpoint tool blocking. Standing-question checks cover the file stores, trust,
 prompt composition, answer validation and history after removal; comment checks
 cover item selection, the editor, every close path, the allocated panel layout,
-branch-scoped single delivery and ordering relative to inquiries.
+branch-scoped single delivery and ordering relative to inquiries. Navigation
+checks cover both focus states, the arrow rule in both layout paths (every line
+of a report shown in both directions, also through items taller than the view),
+the folding table in a pane sized by its content, what a focus change keeps in
+view, and the report title with its scroll position.
 `tests/fixtures/tui-provider.ts` is an explicitly loaded, network-free provider
 for manual PTY validation; it is not loaded by the extension.

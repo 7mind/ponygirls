@@ -1,0 +1,56 @@
+[
+  {
+    "id": "interpose",
+    "kind": "fixed",
+    "repo": "pytoolz/toolz",
+    "revision": "d2eba0374a452c2b18fe188b04527e22bda3548c",
+    "url": "https://codeload.github.com/pytoolz/toolz/tar.gz/d2eba0374a452c2b18fe188b04527e22bda3548c",
+    "bytes": 79008,
+    "sha256": "a5bc3a75f5a97eb6d866c9089f625e666c051ef7132fbb8337f8e0b17e7c86d8"
+  },
+  {
+    "id": "interpose",
+    "kind": "base",
+    "repo": "pytoolz/toolz",
+    "revision": "55ce42dc3b6f786ed9d4e38633cc5cfe3622a526",
+    "url": "https://codeload.github.com/pytoolz/toolz/tar.gz/55ce42dc3b6f786ed9d4e38633cc5cfe3622a526",
+    "bytes": 78990,
+    "sha256": "37e93d0260d8e42e856f8caff62717ffdaa769b283473382dc123866bd8d54b5"
+  },
+  {
+    "id": "numeric-range",
+    "kind": "fixed",
+    "repo": "more-itertools/more-itertools",
+    "revision": "c629214760c78c0a2235e896d335cccfb3a64466",
+    "url": "https://codeload.github.com/more-itertools/more-itertools/tar.gz/c629214760c78c0a2235e896d335cccfb3a64466",
+    "bytes": 150305,
+    "sha256": "6f7f5f8c6b6134cbb90cca5e5f124321fe4eeb3739131bcbfc7cc5e35b7ccd37"
+  },
+  {
+    "id": "numeric-range",
+    "kind": "base",
+    "repo": "more-itertools/more-itertools",
+    "revision": "08dca284ba5446a026afdc34067b658f9da989eb",
+    "url": "https://codeload.github.com/more-itertools/more-itertools/tar.gz/08dca284ba5446a026afdc34067b658f9da989eb",
+    "bytes": 150083,
+    "sha256": "897f2423fa20f4957e9406aee9775281c38b54a724941881b3c510de0451a90d"
+  },
+  {
+    "id": "semver-index",
+    "kind": "fixed",
+    "repo": "python-semver/python-semver",
+    "revision": "9f6894daaf62d55fc37cece10948e7e1cc3dc369",
+    "url": "https://codeload.github.com/python-semver/python-semver/tar.gz/9f6894daaf62d55fc37cece10948e7e1cc3dc369",
+    "bytes": 299383,
+    "sha256": "1c999fd12870ceee8f167532881ceb022d128d626557c31b79505091191b32ec"
+  },
+  {
+    "id": "semver-index",
+    "kind": "base",
+    "repo": "python-semver/python-semver",
+    "revision": "f3c7138120d7f49e190bd7c555c6e7eb155b482d",
+    "url": "https://codeload.github.com/python-semver/python-semver/tar.gz/f3c7138120d7f49e190bd7c555c6e7eb155b482d",
+    "bytes": 299090,
+    "sha256": "853c9710bf1ae37d6b8f634e6afb3d9e69856a6ed7a9ce4601acd8c8ddee699d"
+  }
+]
