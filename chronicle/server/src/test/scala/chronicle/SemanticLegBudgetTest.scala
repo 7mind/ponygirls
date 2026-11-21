@@ -106,6 +106,17 @@ class SemanticLegBudgetTest extends munit.FunSuite {
     }
   }
 
+  test("Blackbox-GoodCommunication: every leg of the second execution is checked, also one that was full in the first") {
+    // Two Archive operands: the second is short and run again; the rerun repeats every operand, and the first, full
+    // before, comes back short (entries published between the executions): the request fails, never partial membership.
+    val s=shared; val full=SearchPolicy.candidatesPerLeg.toLong
+    s.db.transaction { c =>
+      SemanticLeg.configure(c,SemanticLegBudget.production)
+      def legs(passes: Map[Int,LegPass]): Map[Int,Long] = if(passes.isEmpty) Map(0 -> full,1 -> 0L) else Map(0 -> 0L,1 -> full)
+      unavailable(SemanticLeg.complete(c,budget,List(0,1))(legs)(identity)(_ => SemanticLeg.visibleCap(budget).toLong))
+    }
+  }
+
   test("Effectual-GoodCommunication: production semantic leg budgets") {
     assertEquals(SemanticLegBudget.production,SemanticLegBudget(200000,20000,1000000,64,5000))
     assertEquals((SemanticLegBudget.production.firstScanTuples,SemanticLegBudget.production.exactScanChunks),(CandidatePolicy.maxScanTuples,CandidatePolicy.exactScanChunks))

@@ -35,7 +35,9 @@ private[chronicle] object SemanticLeg {
   /** `execute(passes)` runs the statement (legs absent from `passes` through the index) and reports each leg's rows by
     * key; `visible(key)` counts a leg's visible set up to `visibleCap`, in the same snapshot. Short legs are run again:
     * exactly when their visible set is small, else through the index under the second pass's budget and deadline.
-    * A leg still short afterwards fails the whole request: never a silently partial window. */
+    * The second execution repeats every leg, and index entries published meanwhile can make a leg that was full come
+    * back short (the snapshot freezes rows, not the index traversal): every leg of it is checked, and one still short
+    * fails the whole request — never a silently partial window. */
   def complete[K,A](c: Connection,budget: SemanticLegBudget,legs: List[K])(execute: Map[K,LegPass] => A)(rows: A => Map[K,Long])(visible: K => Long): A = {
     val first=execute(Map.empty)
     val counted=rows(first)
@@ -45,7 +47,8 @@ private[chronicle] object SemanticLeg {
       val passes=short.map((leg,size) => leg -> (if(size<=budget.exactScanChunks) LegPass.Exact else LegPass.Index))
       val second=if(passes.values.exists(_==LegPass.Index)) secondPass(c,budget)(execute(passes)) else execute(passes)
       val recounted=rows(second)
-      if(short.exists((leg,size) => recounted(leg)<needed(size))) throw DomainError("unavailable",incompleteDetail)
+      val incomplete=legs.exists(leg => recounted(leg)<SearchPolicy.candidatesPerLeg && recounted(leg)<needed(sizes.getOrElse(leg,visible(leg))))
+      if(incomplete) throw DomainError("unavailable",incompleteDetail)
       second
     }
   }
