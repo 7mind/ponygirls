@@ -6,7 +6,7 @@ lock, the durable task registry, one PTY and POSIX process group per task, and
 completion outbox state. It talks to the extension over private
 newline-delimited JSON pipes (stdin: requests, stdout: replies and hints), or
 an authenticated reconnectable control socket after the stdout startup greeting.
-Diagnostics go to stderr. Linux only.
+Diagnostics go to stderr.
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ import secrets
 import selectors
 import signal
 import socket
+import stat
 import struct
 import sys
 import termios
@@ -86,7 +87,7 @@ NOTICE_STATUSES = (NOTICE_PENDING, NOTICE_RECEIVED, NOTICE_INLINE)
 REASONS = (
     "exit", "exit_nonzero", "signaled", "terminated", "launch_failed", "descendants_remaining",
     "output_failed", "output_drain_timeout", "session_shutdown", "owner_lost", "supervisor_lost",
-    "cleanup_unconfirmed",
+    "cleanup_unconfirmed", "group_liveness_unconfirmed",
 )
 SHUTDOWN_REASONS = ("quit", "reload", "new", "resume", "fork")
 
@@ -808,32 +809,94 @@ class ControlSocket:
     def __init__(self, address: str, owner_pid: int):
         self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.owner_pid = owner_pid
-        self.owner_uid = os.getuid()
+        self.darwin = sys.platform == "darwin"
+        self.owner_uid = os.geteuid() if self.darwin else os.getuid()
         self.owner_fd: Optional[int] = None
+        self.dir_fd: Optional[int] = None
+        self.path = address
+        self.bound_inode: Optional[tuple[int, int]] = None
         try:
-            if owner_pid != os.getppid():
+            if owner_pid != os.getppid() or (self.darwin and owner_pid <= 1):
                 raise DomainError("INVALID_REQUEST", "owner-pid must be the supervisor's direct parent")
-            self.owner_fd = os.pidfd_open(owner_pid)
-            # Do not authenticate a reused numeric PID if the parent exited
-            # between the parent check and opening its pidfd.
-            if owner_pid != os.getppid():
-                raise DomainError("INVALID_REQUEST", "owner exited during startup")
-            if not address.startswith("@") or len(address) < 2:
-                raise DomainError("INVALID_REQUEST", "control-socket must be a Linux abstract address starting with @")
-            self.listener.bind("\0" + address[1:])
+            if self.darwin:
+                self.getpeereid = ctypes.CDLL(None).getpeereid
+                self.getpeereid.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32)]
+                self.getpeereid.restype = ctypes.c_int
+                self._bind_filesystem()
+            else:
+                self.owner_fd = os.pidfd_open(owner_pid)
+                # Do not authenticate a reused numeric PID if the parent exited
+                # between the parent check and opening its pidfd.
+                if owner_pid != os.getppid():
+                    raise DomainError("INVALID_REQUEST", "owner exited during startup")
+                if not address.startswith("@") or len(address) < 2:
+                    raise DomainError("INVALID_REQUEST", "control-socket must be a Linux abstract address starting with @")
+                self.listener.bind("\0" + address[1:])
             self.listener.listen(1)
             self.listener.setblocking(False)
+            if self.darwin and owner_pid != os.getppid():
+                raise DomainError("INVALID_REQUEST", "owner exited during startup")
         except BaseException:
             self.close()
             raise
+
+    def _bind_filesystem(self) -> None:
+        directory, leaf = os.path.split(self.path)
+        if not os.path.isabs(self.path) or not leaf or len(os.fsencode(self.path)) > 103:
+            raise DomainError("INVALID_REQUEST", "control-socket must be an absolute pathname of at most 103 bytes")
+        try:
+            os.mkdir(directory, DIR_MODE)
+        except FileExistsError:
+            pass
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        identity = os.fstat(fd)
+        if identity.st_uid != self.owner_uid or stat.S_IMODE(identity.st_mode) != DIR_MODE:
+            os.close(fd)
+            raise DomainError("INVALID_REQUEST", "control-socket directory must be private and owned by the current user")
+        self.dir_fd = fd
+        try:
+            stale = os.stat(leaf, dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            if not stat.S_ISSOCK(stale.st_mode) or stale.st_uid != self.owner_uid:
+                raise DomainError("INVALID_REQUEST", "control-socket path is not an owned socket")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+                probe.setblocking(False)
+                if probe.connect_ex(self.path) != errno.ECONNREFUSED:
+                    raise DomainError("SESSION_BUSY", "control-socket address is already in use")
+            current = os.stat(leaf, dir_fd=fd, follow_symlinks=False)
+            if (current.st_dev, current.st_ino) != (stale.st_dev, stale.st_ino):
+                raise DomainError("SESSION_BUSY", "control-socket path changed during startup")
+            os.unlink(leaf, dir_fd=fd)
+        self.listener.bind(self.path)
+        bound = os.stat(leaf, dir_fd=fd, follow_symlinks=False)
+        self.bound_inode = (bound.st_dev, bound.st_ino)
+        os.chmod(self.path, FILE_MODE)
+
+    def _darwin_peer_is_owner(self, conn: socket.socket) -> bool:
+        if self.owner_pid != os.getppid():
+            return False
+        try:
+            pid = conn.getsockopt(getattr(socket, "SOL_LOCAL", 0), getattr(socket, "LOCAL_PEERPID", 2))
+        except OSError:
+            return False
+        uid, gid = ctypes.c_uint32(), ctypes.c_uint32()
+        return (pid == self.owner_pid
+                and self.getpeereid(conn.fileno(), ctypes.byref(uid), ctypes.byref(gid)) == 0
+                and uid.value == self.owner_uid and self.owner_pid == os.getppid())
 
     def accept(self) -> Optional[socket.socket]:
         try:
             conn, _ = self.listener.accept()
         except BlockingIOError:
             return None
-        pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
-        if (pid, uid) != (self.owner_pid, self.owner_uid):
+        if self.darwin:
+            is_owner = self._darwin_peer_is_owner(conn)
+        else:
+            pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
+            is_owner = (pid, uid) == (self.owner_pid, self.owner_uid)
+        if not is_owner:
             conn.close()
             return None
         conn.setblocking(False)
@@ -844,6 +907,26 @@ class ControlSocket:
         if self.owner_fd is not None:
             os.close(self.owner_fd)
             self.owner_fd = None
+        if self.dir_fd is not None:
+            fd, self.dir_fd = self.dir_fd, None
+            directory, leaf = os.path.split(self.path)
+            try:
+                if self.bound_inode is not None:
+                    bound = os.stat(leaf, dir_fd=fd, follow_symlinks=False)
+                    if (bound.st_dev, bound.st_ino) == self.bound_inode:
+                        os.unlink(leaf, dir_fd=fd)
+            except FileNotFoundError:
+                pass
+            finally:
+                try:
+                    opened, named = os.fstat(fd), os.lstat(directory)
+                    if (opened.st_dev, opened.st_ino) == (named.st_dev, named.st_ino):
+                        os.rmdir(directory)
+                except OSError as e:
+                    if e.errno not in (errno.ENOENT, errno.ENOTEMPTY, errno.EEXIST):
+                        raise
+                finally:
+                    os.close(fd)
 
 
 # --------------------------------------------------------------------------
@@ -857,9 +940,42 @@ def enable_subreaper() -> None:
         raise DomainError("PLATFORM_UNSUPPORTED", f"PR_SET_CHILD_SUBREAPER failed: {os.strerror(err)}")
 
 
-def check_capabilities() -> None:
+class DarwinGroup:
+    def __init__(self, path: str):
+        library = ctypes.CDLL(path, use_errno=True)
+        self.query = library.bg_group_observe
+        self.query.argtypes = (ctypes.c_int, ctypes.c_int)
+        self.query.restype = ctypes.c_int
+        self.observe(os.getpid(), False)
+
+    def observe(self, pgid: int, check_live: bool) -> Optional[bool]:
+        result = self.query(pgid, check_live)
+        if result < 0:
+            err = ctypes.get_errno()
+            raise OSError(err, os.strerror(err))
+        if result == 0:
+            return False
+        if result == 1:
+            return None
+        if result == 2:
+            return True
+        raise OSError(errno.EIO, f"unexpected Darwin group observation {result}")
+
+
+def check_capabilities() -> Optional[DarwinGroup]:
+    if sys.platform == "darwin":
+        for name in ("waitid", "WNOWAIT", "openpty"):
+            if not hasattr(os, name):
+                raise DomainError("PLATFORM_UNSUPPORTED", f"os.{name} is unavailable")
+        path = os.environ.get("PI_BG_TASKS_DARWIN_GROUP")
+        if not path or not os.path.isabs(path):
+            raise DomainError("PLATFORM_UNSUPPORTED", "PI_BG_TASKS_DARWIN_GROUP must name the packaged Darwin group library by absolute path")
+        try:
+            return DarwinGroup(path)
+        except (OSError, AttributeError) as e:
+            raise DomainError("PLATFORM_UNSUPPORTED", f"Darwin group observation unavailable: {e}") from e
     if not sys.platform.startswith("linux"):
-        raise DomainError("PLATFORM_UNSUPPORTED", f"background tasks require Linux, not {sys.platform}")
+        raise DomainError("PLATFORM_UNSUPPORTED", f"background tasks require Linux or macOS, not {sys.platform}")
     for name in ("pidfd_open", "waitid", "WNOWAIT", "openpty"):
         if not hasattr(os, name):
             raise DomainError("PLATFORM_UNSUPPORTED", f"os.{name} is unavailable")
@@ -869,6 +985,7 @@ def check_capabilities() -> None:
     os.close(fd)
     proc_children(os.getpid())
     enable_subreaper()
+    return None
 
 
 def proc_children(self_pid: int) -> list:
@@ -917,6 +1034,10 @@ class TaskRuntime:
     output_failed: bool = False
     terminate_requested: bool = False
     descendants_remaining: bool = False
+    unverified_group_intervention: bool = False
+    group_observation_error: Optional[str] = None
+    launch_failure: Optional[str] = None
+    launch_waiter: Optional[int] = None
     shutdown: Optional[str] = None
     shutdown_detail: Optional[str] = None
     stage: str = STAGE_NONE
@@ -929,7 +1050,9 @@ class TaskRuntime:
 class Supervisor:
     def __init__(self, registry: TaskRegistry, store: TaskStore, log_rel: Callable[[str], str], shell: str,
                  activation: str, writer: ProtocolWriter, clock: Clock, in_fd: int = 0,
-                 control_socket: Optional[ControlSocket] = None, recovered: Optional[list] = None):
+                 control_socket: Optional[ControlSocket] = None, recovered: Optional[list] = None,
+                 darwin_group: Optional[DarwinGroup] = None):
+        self.darwin_group = darwin_group
         self.registry = registry
         self.store = store
         self.log_rel = log_rel
@@ -961,7 +1084,9 @@ class Supervisor:
         self.signal_shutdown: Optional[str] = None
         self.done = False
         self.selector = selectors.DefaultSelector()
-        self.wake_r, self.wake_w = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
+        self.wake_r, self.wake_w = os.pipe()
+        os.set_blocking(self.wake_r, False)
+        os.set_blocking(self.wake_w, False)
 
     # ---- loop ----------------------------------------------------------
 
@@ -972,13 +1097,17 @@ class Supervisor:
         signal.signal(signal.SIGHUP, self._on_term_signal)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         self.selector.register(self.wake_r, selectors.EVENT_READ, ("wake", None))
+        poll_owner = False
         if self.control_socket is None:
             os.set_blocking(self.in_fd, False)
             os.set_blocking(self.writer.fd, False)
             self.selector.register(self.in_fd, selectors.EVENT_READ, ("control", None))
         else:
             self.selector.register(self.control_socket.listener, selectors.EVENT_READ, ("listen", None))
-            self.selector.register(self.control_socket.owner_fd, selectors.EVENT_READ, ("owner", None))
+            if self.control_socket.owner_fd is None:
+                poll_owner = True
+            else:
+                self.selector.register(self.control_socket.owner_fd, selectors.EVENT_READ, ("owner", None))
         while not self.done:
             want_out = self.writer.wants_write() and not self.writer.broken
             if want_out and self.out_fd is None:
@@ -988,7 +1117,13 @@ class Supervisor:
                 self.selector.unregister(self.out_fd)
                 self.out_fd = None
             timeout = self._next_timeout()
-            for key, _mask in self.selector.select(timeout):
+            if poll_owner:
+                timeout = 0.25 if timeout is None else min(timeout, 0.25)
+            events = self.selector.select(timeout)
+            if poll_owner and self.control_socket.owner_pid != os.getppid():
+                poll_owner = False
+                self._owner_lost()
+            for key, _mask in events:
                 kind, task_id = key.data
                 if kind == "wake":
                     self._drain_wake()
@@ -1255,7 +1390,7 @@ class Supervisor:
             raise DomainError("INVALID_REQUEST", "detach requires a control socket")
         if self.shutting_down is not None:
             raise DomainError("SHUTTING_DOWN", "the supervisor is shutting down")
-        if self.deferred_spawns or any(rt.waiters for rt in self.runtimes.values()):
+        if self.deferred_spawns or any(rt.waiters or rt.launch_waiter is not None for rt in self.runtimes.values()):
             raise DomainError("SESSION_BUSY", "detach requires all spawn and terminate replies to settle")
         self._reply_ok(req_id, {})
         self.detach_authorized = True
@@ -1282,7 +1417,7 @@ class Supervisor:
         if self._closing_groups():
             self.deferred_spawns.append((req_id, (label, command, cwd, notify)))
             return None
-        return self._spawn(label, command, cwd, notify)
+        return self._spawn(req_id, label, command, cwd, notify)
 
     def _unconfirmed_group(self) -> bool:
         return any(rt.sealed and not rt.group_settled and rt.stage == STAGE_UNCONFIRMED for rt in self.runtimes.values())
@@ -1290,7 +1425,7 @@ class Supervisor:
     def _closing_groups(self) -> bool:
         return any(rt.sealed and not rt.group_settled for rt in self.runtimes.values())
 
-    def _spawn(self, label: str, command: str, cwd: str, notify: bool) -> dict:
+    def _spawn(self, req_id: int, label: str, command: str, cwd: str, notify: bool) -> Optional[dict]:
         task_id = "bgt-" + secrets.token_hex(8)
         try:
             log = self.store.create_log(task_id)
@@ -1304,7 +1439,7 @@ class Supervisor:
             self.storage_failed = e.message
             raise
         try:
-            pid, master = self._launch(command, cwd)
+            pid, master, launch_failure = self._launch(command, cwd)
         except DomainError as e:
             log_bytes = self._record_launch_failure(log, task_id, e.message)
             failed = self._commit_or_mark(lambda: self.registry.finalize(
@@ -1315,6 +1450,13 @@ class Supervisor:
         self.runtimes[task_id] = rt
         self.leaders[pid] = task_id
         self.selector.register(master, selectors.EVENT_READ, ("pty", task_id))
+        if launch_failure is not None:
+            rt.launch_failure = launch_failure
+            self._set_stage(rt, STAGE_KILL)
+            self._mark_record(rt, lambda r: setattr(r, "phase", "stopping"))
+            self._signal_group(rt, signal.SIGKILL)
+            rt.launch_waiter = req_id
+            return None
         started = now_iso(self.clock)
 
         def mark_running(r: TaskRecord) -> None:
@@ -1363,8 +1505,9 @@ class Supervisor:
         try:
             master, slave = os.openpty()
             opened += [master, slave]
-            err_r, err_w = os.pipe2(os.O_CLOEXEC)
+            err_r, err_w = os.pipe()
             opened += [err_r, err_w]
+            os.set_blocking(master, False)
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", PTY_ROWS, PTY_COLS, 0, 0))
             pid = os.fork()
         except OSError as e:
@@ -1377,30 +1520,43 @@ class Supervisor:
         os.close(err_w)
         try:
             failure = self._await_exec(err_r, pid)
+        except OSError as e:
+            if self.darwin_group is None:
+                os.close(master)
+                raise
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError as kill_error:
+                print(f"bg-tasks supervisor: cannot kill child {pid} after launch failure: {kill_error}", file=sys.stderr)
+            return pid, master, str(e)
         finally:
             os.close(err_r)
         if failure is not None:
             os.close(master)
             raise DomainError("LAUNCH_FAILED", failure)
-        os.set_blocking(master, False)
-        return pid, master
+        return pid, master, None
 
     def _await_exec(self, err_r: int, pid: int) -> Optional[str]:
         deadline = self.clock.monotonic() + START_TIMEOUT_MS / 1000
         data = b""
         sel = selectors.DefaultSelector()
-        sel.register(err_r, selectors.EVENT_READ)
         try:
+            sel.register(err_r, selectors.EVENT_READ)
             while True:
                 remaining = deadline - self.clock.monotonic()
                 if remaining <= 0:
+                    message = f"the command did not start within {START_TIMEOUT_MS} ms"
+                    if self.darwin_group is not None:
+                        raise TimeoutError(message)
                     pidfd = os.pidfd_open(pid)
                     try:
                         signal.pidfd_send_signal(pidfd, signal.SIGKILL)
                     finally:
                         os.close(pidfd)
                     os.waitpid(pid, 0)
-                    return f"the command did not start within {START_TIMEOUT_MS} ms"
+                    return message
                 if not sel.select(remaining):
                     continue
                 chunk = os.read(err_r, 512)
@@ -1488,6 +1644,8 @@ class Supervisor:
         if record.finalized():
             raise DomainError("TASK_FINALIZED", f"task {record.id} already finished; its process identity is released", record)
         rt = self._runtime_of(record)
+        if rt.launch_failure is not None:
+            raise DomainError("TASK_CLOSING", f"task {record.id}'s launch failed; group signals are sealed (use terminate)", record)
         if rt.sealed:
             raise DomainError("TASK_CLOSING", f"task {record.id}'s root process exited; group signals are sealed (use terminate)", record)
         # The leader is unreaped while unsealed, so its PGID cannot have been reused.
@@ -1545,6 +1703,18 @@ class Supervisor:
         }.get(stage)
 
     def _signal_group(self, rt: TaskRuntime, sig: int) -> None:
+        if self.darwin_group is not None:
+            if rt.group_settled or rt.pending_outcome is not None or self.leaders.get(rt.pid) != rt.task_id:
+                return
+            try:
+                os.killpg(rt.pgid, sig)
+                if sig == signal.SIGTERM:
+                    os.killpg(rt.pgid, signal.SIGCONT)
+            except ProcessLookupError:
+                pass
+            except OSError as e:
+                print(f"bg-tasks supervisor: cannot signal task {rt.task_id}: {e}", file=sys.stderr)
+            return
         if not rt.sealed:
             # Numeric PGID signalling is allowed only while the leader is unreaped.
             try:
@@ -1632,6 +1802,65 @@ class Supervisor:
     # ---- process observation -------------------------------------------------
 
     def _reap_children(self) -> None:
+        if self.darwin_group is not None:
+            self._observe_darwin_leaders()
+        else:
+            self._reap_linux_children()
+        for rt in list(self.runtimes.values()):
+            if rt.pending_outcome is None and not rt.group_settled:
+                if rt.sealed:
+                    self._check_group(rt)
+                elif self.darwin_group is not None and rt.stage == STAGE_KILL:
+                    self._signal_group(rt, signal.SIGKILL)
+            self._maybe_finalize(rt)
+        if self.deferred_spawns and (not self._closing_groups() or self._unconfirmed_group()):
+            pending, self.deferred_spawns = self.deferred_spawns, []
+            for req_id, (label, command, cwd, notify) in pending:
+                try:
+                    if self._unconfirmed_group():
+                        raise DomainError("SESSION_CLOSING_GROUP", "a finished task's process group could not be confirmed settled; new launches are paused")
+                    if self.shutting_down is not None:
+                        raise DomainError("SHUTTING_DOWN", "the supervisor is shutting down")
+                    result = self._spawn(req_id, label, command, cwd, notify)
+                    if result is not None:
+                        self._reply_ok(req_id, result)
+                except DomainError as e:
+                    self._reply_err(req_id, e)
+
+    def _observe_darwin_leaders(self) -> None:
+        for pid, task_id in list(self.leaders.items()):
+            rt = self.runtimes[task_id]
+            if rt.sealed or rt.pending_outcome is not None:
+                continue
+            try:
+                info = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            except ChildProcessError as e:
+                del self.leaders[pid]
+                rt.sealed = True
+                self._mark_record(rt, lambda r: setattr(r, "phase", "stopping"))
+                self._group_observation_error(rt, f"lost wait ownership of child {pid}: {e}")
+                continue
+            except OSError as e:
+                self._group_observation_error(rt, f"cannot observe child {pid}: {e}")
+                continue
+            if info is not None:
+                rt.group_observation_error = None
+                self._seal_leader(rt, info)
+
+    def _seal_leader(self, rt: TaskRuntime, info) -> None:
+        rt.exit = ExitEvidence.from_waitid(info)
+        rt.sealed = True
+        if self.darwin_group is None:
+            os.waitpid(rt.pid, 0)
+        evidence = rt.exit
+
+        def to_closing(r: TaskRecord) -> None:
+            r.exit = evidence
+            if r.phase != "stopping":
+                r.phase = "closing"
+        self._mark_record(rt, to_closing)
+
+    def _reap_linux_children(self) -> None:
         while True:
             try:
                 info = os.waitid(os.P_ALL, 0, os.WEXITED | os.WNOHANG | os.WNOWAIT)
@@ -1642,48 +1871,53 @@ class Supervisor:
             pid = info.si_pid
             task_id = self.leaders.pop(pid, None)
             if task_id is not None:
-                rt = self.runtimes[task_id]
-                rt.exit = ExitEvidence.from_waitid(info)
-                # Seal numeric-PGID authority before releasing the leader's PID.
-                rt.sealed = True
-                os.waitpid(pid, 0)
-                evidence = rt.exit
-
-                def to_closing(r: TaskRecord) -> None:
-                    r.exit = evidence
-                    if r.phase != "stopping":
-                        r.phase = "closing"
-                self._mark_record(rt, to_closing)
+                self._seal_leader(self.runtimes[task_id], info)
             else:
                 try:
                     os.waitpid(pid, 0)
                 except ChildProcessError:
                     pass
-        for rt in list(self.runtimes.values()):
-            if rt.sealed and not rt.group_settled:
-                self._check_group(rt)
-            self._maybe_finalize(rt)
-        if self.deferred_spawns and (not self._closing_groups() or self._unconfirmed_group()):
-            pending, self.deferred_spawns = self.deferred_spawns, []
-            for req_id, (label, command, cwd, notify) in pending:
-                try:
-                    if self._unconfirmed_group():
-                        raise DomainError("SESSION_CLOSING_GROUP", "a finished task's process group could not be confirmed settled; new launches are paused")
-                    if self.shutting_down is not None:
-                        raise DomainError("SHUTTING_DOWN", "the supervisor is shutting down")
-                    self._reply_ok(req_id, self._spawn(label, command, cwd, notify))
-                except DomainError as e:
-                    self._reply_err(req_id, e)
+
+    def _group_observation_error(self, rt: TaskRuntime, detail: str) -> None:
+        if rt.group_observation_error != detail:
+            rt.group_observation_error = detail
+            print(f"bg-tasks supervisor: task {rt.task_id}: {detail}", file=sys.stderr)
+
+    def _observe_darwin_group(self, rt: TaskRuntime, check_live: bool) -> Optional[bool]:
+        if self.leaders.get(rt.pid) != rt.task_id:
+            return None
+        try:
+            observed = self.darwin_group.observe(rt.pgid, check_live)
+            rt.group_observation_error = None
+            return observed
+        except OSError as e:
+            self._group_observation_error(rt, f"cannot observe process group {rt.pgid}: {e}")
+            return None
+
+    def _settle_group(self, rt: TaskRuntime) -> None:
+        rt.group_settled = True
+        rt.stage_deadline = None
+        if not rt.pty_eof and rt.drain_deadline is None:
+            rt.drain_deadline = self.clock.monotonic() + OUTPUT_DRAIN_MS / 1000
 
     def _check_group(self, rt: TaskRuntime) -> None:
+        if self.darwin_group is not None:
+            if self._observe_darwin_group(rt, False) is False:
+                self._settle_group(rt)
+            elif rt.stage == STAGE_NONE:
+                if rt.terminate_requested or rt.shutdown is not None:
+                    self._set_stage(rt, STAGE_TERM)
+                    self._signal_group(rt, signal.SIGTERM)
+                else:
+                    self._set_stage(rt, STAGE_GRACE)
+            elif rt.stage == STAGE_KILL:
+                self._signal_group(rt, signal.SIGKILL)
+            return
         while True:
             try:
                 pid, _status = os.waitpid(-rt.pgid, os.WNOHANG)
             except ChildProcessError:
-                rt.group_settled = True
-                rt.stage_deadline = None
-                if not rt.pty_eof and rt.drain_deadline is None:
-                    rt.drain_deadline = self.clock.monotonic() + OUTPUT_DRAIN_MS / 1000
+                self._settle_group(rt)
                 return
             if pid == 0:
                 break
@@ -1709,9 +1943,18 @@ class Supervisor:
             if rt.stage_deadline is None or now < rt.stage_deadline:
                 continue
             if rt.stage == STAGE_GRACE:
-                rt.descendants_remaining = True
+                if self.darwin_group is not None:
+                    observed = self._observe_darwin_group(rt, True)
+                    if observed is False:
+                        self._settle_group(rt)
+                        self._maybe_finalize(rt)
+                        continue
+                    rt.descendants_remaining = observed is True
+                    rt.unverified_group_intervention = observed is None
+                else:
+                    rt.descendants_remaining = True
                 self._set_stage(rt, STAGE_TERM)
-                self._signal_candidates(rt, signal.SIGTERM)
+                self._signal_group(rt, signal.SIGTERM)
             elif rt.stage == STAGE_TERM:
                 self._set_stage(rt, STAGE_KILL)
                 self._signal_group(rt, signal.SIGKILL)
@@ -1726,6 +1969,7 @@ class Supervisor:
                     r.cleanup_unconfirmed = True
                 self._mark_record(rt, unconfirmed)
                 record = self.registry.get(rt.task_id)
+                self._reply_launch_failure(rt, record)
                 for waiter in rt.waiters:
                     self._reply_err(waiter, DomainError(
                         "TERMINATION_UNCONFIRMED",
@@ -1820,17 +2064,29 @@ class Supervisor:
                 rt.output_failed = True
             rt.log = None
             rt.unsynced = False
-        rt.pending_outcome = decide_outcome(
-            rt.exit, shutdown=rt.shutdown, shutdown_detail=rt.shutdown_detail,
-            terminate_requested=rt.terminate_requested, output_failed=rt.output_failed,
-            descendants_remaining=rt.descendants_remaining, drain_timed_out=rt.drain_timed_out,
-            cleanup_confirmed=cleanup_confirmed)
+        if rt.launch_failure is not None and cleanup_confirmed:
+            rt.pending_outcome = Outcome(STATE_FAILED, "launch_failed", rt.launch_failure)
+        else:
+            rt.pending_outcome = decide_outcome(
+                rt.exit, shutdown=rt.shutdown, shutdown_detail=rt.shutdown_detail,
+                terminate_requested=rt.terminate_requested, output_failed=rt.output_failed,
+                descendants_remaining=rt.descendants_remaining, drain_timed_out=rt.drain_timed_out,
+                cleanup_confirmed=cleanup_confirmed)
+            if rt.unverified_group_intervention and rt.pending_outcome.state == STATE_COMPLETED:
+                rt.pending_outcome = Outcome(STATE_FAILED, "group_liveness_unconfirmed",
+                                             "could not verify whether descendants remained when group termination began; cleanup is now confirmed")
         self._commit_outcome(rt)
+
+    def _reply_launch_failure(self, rt: TaskRuntime, record: Optional[TaskRecord]) -> None:
+        if rt.launch_waiter is not None:
+            self._reply_err(rt.launch_waiter, DomainError("LAUNCH_FAILED", rt.launch_failure, record))
+            rt.launch_waiter = None
 
     def _commit_outcome(self, rt: TaskRuntime) -> None:
         assert rt.pending_outcome is not None
         try:
-            record = self.registry.finalize(rt.task_id, rt.pending_outcome, rt.exit, rt.log_bytes, NOTICE_PENDING)
+            notice = NOTICE_INLINE if rt.launch_waiter is not None else NOTICE_PENDING
+            record = self.registry.finalize(rt.task_id, rt.pending_outcome, rt.exit, rt.log_bytes, notice)
         except StorageError as e:
             # Not durable: no terminal state and no notice; retried from the loop.
             self.storage_failed = e.message
@@ -1839,7 +2095,13 @@ class Supervisor:
             record = None
         rt.pending_outcome = None
         del self.runtimes[rt.task_id]
-        self.leaders.pop(rt.pid, None)
+        leader = self.leaders.pop(rt.pid, None)
+        if self.darwin_group is not None and leader is not None:
+            try:
+                os.waitpid(rt.pid, os.WNOHANG)
+            except ChildProcessError:
+                pass
+        self._reply_launch_failure(rt, record)
         if record is not None:
             for waiter in rt.waiters:
                 self._reply_ok(waiter, {"task": self._record_json(record)})
@@ -1907,7 +2169,7 @@ def main(argv: list, *, clock: Optional[Clock] = None) -> int:
             raise DomainError("INVALID_REQUEST", "sidecar and shell must be absolute paths")
         if not os.access(args.shell, os.X_OK):
             raise DomainError("CONFIG_MISSING", f"shell {args.shell} is not executable")
-        check_capabilities()
+        darwin_group = check_capabilities()
         store = FileTaskStore(args.sidecar, fs)
         store.init_layout()
         lock.acquire(min(args.handoff_wait_ms, OWNER_HANDOFF_WAIT_MS), clock)
@@ -1928,7 +2190,7 @@ def main(argv: list, *, clock: Optional[Clock] = None) -> int:
         # it sees ready. Only this startup greeting travels over stdout.
         emit_line({"type": "ready", "activation": args.activation, "pid": os.getpid(), "recovered": recovered})
         supervisor = Supervisor(registry, store, store.log_rel, args.shell, args.activation, ProtocolWriter(1), clock,
-                                control_socket=control_socket, recovered=recovered)
+                                control_socket=control_socket, recovered=recovered, darwin_group=darwin_group)
         supervisor.run()
     finally:
         if supervisor is not None:

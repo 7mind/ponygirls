@@ -1,6 +1,5 @@
 /** Extension wiring: the border badge follows unfinished tasks; status notices and when they ask for a turn. */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { chmodSync } from "node:fs";
 import test, { type TestContext } from "node:test";
 import { join } from "node:path";
@@ -8,6 +7,7 @@ import { BORDER_ORDER } from "@ponygirls/pi-ui";
 import { advanceStatusEpisode, type StatusEpisode } from "../index.ts";
 import { SIDECAR_SUFFIX, STATUS_CUSTOM_TYPE } from "../src/protocol.ts";
 import { defer, eventually, tempDir } from "./fixtures.ts";
+import { supervisorPid } from "./processes.ts";
 
 interface BadgeTheme { fg(color: string, text: string): string; bg(color: string, text: string): string; bold(text: string): string }
 /** As pi calls it: the TUI (unused here) and the theme the widget renders through. */
@@ -288,7 +288,7 @@ test("an outage while a task is known to be running asks for a turn, and so does
   const sidecar = `${sessionFile}${SIDECAR_SUFFIX}`;
   chmodSync(sidecar, 0o000);
   defer(t, () => chmodSync(sidecar, 0o700));
-  process.kill(Number(execFileSync("pgrep", ["-f", "--", `--sidecar ${sidecar}`], { encoding: "utf8" }).trim()), "SIGKILL");
+  process.kill(supervisorPid(sidecar), "SIGKILL");
   await eventually(async () => {
     await session.fire("turn_end");
     return statusNotices(session).length > 0 ? true : null;

@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmdirSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { SupervisorBackend, type SupervisorLaunch } from "../src/backend.ts";
+import { SupervisorBackend, supervisorSocketAddress, type SupervisorLaunch } from "../src/backend.ts";
 import { defer, eventually, PYTHON, SHELL, SUPERVISOR_SCRIPT, tempDir } from "./fixtures.ts";
 
 function launchConfig(dir: string): SupervisorLaunch {
@@ -62,7 +61,12 @@ test("a disconnected supervisor keeps final output and pending notices", async (
 test("an invalid reconnect greeting closes the rejected connection", async (t) => {
   const dir = tempDir(t, "bg-reload-greeting-");
   const launch = launchConfig(dir);
-  const address = `\0pi-bg-${createHash("sha256").update(`${process.pid}\0${launch.sidecar}`).digest("hex")}`;
+  const address = supervisorSocketAddress(launch.sidecar);
+  const socketPath = address.startsWith("@") ? `\0${address.slice(1)}` : address;
+  if (!address.startsWith("@")) {
+    mkdirSync(dirname(address), { mode: 0o700 });
+    defer(t, () => rmdirSync(dirname(address)));
+  }
   const peers = new Set<Socket>();
   let disconnected = false;
   const server = createServer((peer) => {
@@ -70,11 +74,11 @@ test("an invalid reconnect greeting closes the rejected connection", async (t) =
     peer.on("end", () => { disconnected = true; });
     peer.write('{"v":999,"type":"ready","activation":"wrong-version","pid":1,"recovered":[]}\n');
   });
-  defer(t, () => {
+  defer(t, async () => {
     for (const peer of peers) peer.destroy();
-    server.close();
+    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
   });
-  await new Promise<void>((resolve) => server.listen(address, resolve));
+  await new Promise<void>((resolve, reject) => server.once("error", reject).listen(socketPath, resolve));
   await assert.rejects(SupervisorBackend.attachOrStart(launch), /PROTOCOL_ERROR/);
   await eventually(async () => disconnected, "rejected connection to close");
 });

@@ -109,7 +109,7 @@ let
         --prefix PATH : ${ddgsPython}/bin \
         --set-default PI_SUBAGENTS_SDK_ROOT ${piBase}/lib/node_modules/pi-monorepo \
         ${lib.optionalString codegraphLocal "--set PONYGIRLS_CODEGRAPH_BIN ${lib.escapeShellArg codegraphServer.command} --set PONYGIRLS_CODEGRAPH_FLOCK_BIN ${pkgs.flock}/bin/flock"} \
-        ${pkgs.callPackage ../pkg/pi-extensions/ponygirls-bg-tasks/wrapper-args.nix { }}
+        ${(pkgs.callPackage ../pkg/pi-extensions/ponygirls-bg-tasks/wrapper-args.nix { }).args}
     '';
   };
 

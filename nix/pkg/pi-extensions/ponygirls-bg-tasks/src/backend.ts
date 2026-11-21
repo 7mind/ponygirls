@@ -5,7 +5,10 @@
  */
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { lstatSync } from "node:fs";
 import { createConnection, Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { dirname, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import type { TSchema, Static } from "typebox";
 import {
@@ -67,6 +70,18 @@ function toError(code: string, message: string, task: TaskRecord | null): BgTask
   return new BgTaskError(code as ErrorCode, message, task);
 }
 
+export function supervisorSocketAddress(sidecar: string): string {
+  const identity = `${process.pid}\0${sidecar}`;
+  if (process.platform !== "darwin") return `@pi-bg-${createHash("sha256").update(identity).digest("hex")}`;
+  const digest = createHash("sha256").update(`${process.geteuid!()}\0${identity}`).digest("hex").slice(0, 16);
+  const base = resolve(tmpdir());
+  const address = resolve(base, `b${digest}`, "s");
+  if (Buffer.byteLength(address) > 103) {
+    throw new BgTaskError("CONFIG_MISSING", `TMPDIR ${base} is too long for a Darwin control socket; set TMPDIR to a shorter writable directory`);
+  }
+  return address;
+}
+
 export class SupervisorBackend implements TaskBackend {
   private readonly transport: SupervisorTransport;
   private readonly launch: SupervisorLaunch;
@@ -125,7 +140,7 @@ export class SupervisorBackend implements TaskBackend {
 
   /** Reload replaces clients, not task ownership. The socket is scoped to this Pi process and session. */
   static async attachOrStart(launch: SupervisorLaunch): Promise<SupervisorBackend> {
-    const address = `@pi-bg-${createHash("sha256").update(`${process.pid}\0${launch.sidecar}`).digest("hex")}`;
+    const address = supervisorSocketAddress(launch.sidecar);
     let socket: Socket;
     try {
       socket = await SupervisorBackend.connect(address);
@@ -149,7 +164,18 @@ export class SupervisorBackend implements TaskBackend {
 
   private static connect(address: string): Promise<Socket> {
     return new Promise((resolve, reject) => {
-      const socket = createConnection({ path: `\0${address.slice(1)}` });
+      if (!address.startsWith("@")) {
+        const uid = process.geteuid!();
+        const directory = lstatSync(dirname(address));
+        if (!directory.isDirectory() || directory.uid !== uid || (directory.mode & 0o7777) !== 0o700) {
+          throw new BgTaskError("CONFIG_MISSING", "supervisor control-socket directory must be private and owned by the current user");
+        }
+        const entry = lstatSync(address);
+        if (!entry.isSocket() || entry.uid !== uid) {
+          throw new BgTaskError("CONFIG_MISSING", "supervisor control-socket path is not an owned socket");
+        }
+      }
+      const socket = createConnection({ path: address.startsWith("@") ? `\0${address.slice(1)}` : address });
       socket.once("error", reject);
       socket.once("connect", () => {
         socket.off("error", reject);
