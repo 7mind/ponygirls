@@ -92,7 +92,7 @@ in
     includeTmuxWindow = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "Append the originating tmux window index and name when available. Names may contain work context. Inside yolo, labels are captured at launch without exposing the host tmux socket.";
+      description = "Append the originating tmux window index and label when available. The label uses the @smind_window_label_format tmux option if nonempty, otherwise the window name. Labels may contain work context. Inside yolo, labels are captured at launch without exposing the host tmux socket.";
     };
     claude.enable = lib.mkEnableOption "Matrix agent notifications for Claude Code" // {
       default = notifyCfg.enable;

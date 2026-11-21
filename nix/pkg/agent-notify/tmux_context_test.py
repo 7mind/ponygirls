@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 from notify import FileTurnStore, Notifier, Sender, Turn
-from tmux_context import CONTEXT_ENVIRONMENT_VARIABLE, WINDOW_NAME_PREVIEW_LENGTH, TmuxWindow, capture_window, notification_window
+from tmux_context import CONTEXT_ENVIRONMENT_VARIABLE, WINDOW_LABEL_FORMAT, WINDOW_NAME_PREVIEW_LENGTH, TmuxWindow, capture_window, notification_window
 
 
 class TmuxContextTests(unittest.TestCase):
@@ -69,7 +69,8 @@ class TmuxContextTests(unittest.TestCase):
             environment = dict(os.environ, TMUX="/private-source,1,0", TMUX_PANE="%4")
             self.assertEqual(capture_window(environment, str(command)), TmuxWindow(0, "backend | 雪 next"))
             arguments = json.loads(calls.read_text())
-            self.assertEqual(arguments, ["-N", "-S", "/private-source", "display-message", "-p", "-t", "%4", "#{pane_id}|#{window_index}|#{window_name}"])
+            self.assertEqual(arguments, ["-N", "-S", "/private-source", "display-message", "-p", "-t", "%4",
+                                         "#{pane_id}|#{window_index}|" + WINDOW_LABEL_FORMAT])
 
 
 @unittest.skipUnless(os.environ.get("NOTIFY_TEST_TMUX"), "real tmux binary not configured")
@@ -89,15 +90,18 @@ class NativeTmuxContextTests(unittest.TestCase):
                 return result.stdout.strip()
 
             try:
-                bootstrap = run("new-session", "-d", "-s", "notify", "-P", "-F", "#{pane_id}",
-                                sys.executable, "-c", "import time; time.sleep(60)")
+                project = root / "ponygirls"
+                project.mkdir()
+                bootstrap = run("new-session", "-d", "-s", "notify", "-c", str(project), "-P", "-F", "#{pane_id}",
+                                "bash", "--noprofile", "--norc")
                 run("rename-window", "-t", "notify:0", "zero window")
                 self.assertEqual(capture_window(dict(environment, TMUX=f"{socket},0,0", TMUX_PANE=bootstrap), command),
                                  TmuxWindow(0, "zero window"))
                 run("move-window", "-s", "notify:0", "-t", "notify:3")
-                run("set-option", "-w", "-t", "notify:3", "automatic-rename", "off")
-                run("rename-window", "-t", "notify:3", "backend | 雪 branch")
-                source = run("split-window", "-d", "-t", bootstrap, "-P", "-F", "#{pane_id}",
+                run("set-option", "-w", "-t", "notify:3", "automatic-rename", "on")
+                run("set-option", "-gw", "@smind_window_label_format",
+                    "#{?automatic-rename,#{b:pane_current_path}:#{pane_current_command},#{window_name}}")
+                source = run("split-window", "-d", "-c", str(root), "-t", bootstrap, "-P", "-F", "#{pane_id}",
                              sys.executable, "-c", "import time; time.sleep(60)")
                 run("select-pane", "-t", source, "-T", "different pane title")
                 other = run("new-window", "-t", "notify:4", "-n", "active other window", "-P", "-F", "#{pane_id}",
@@ -108,20 +112,22 @@ class NativeTmuxContextTests(unittest.TestCase):
                 query_environment = dict(environment, TMUX=f"{socket},0,0", TMUX_PANE=source)
                 window = capture_window(query_environment, command)
                 with self.subTest(observation="captured metadata"):
-                    self.assertEqual(window, TmuxWindow(3, "backend | 雪 branch"))
+                    self.assertEqual(window, TmuxWindow(3, "ponygirls:bash"))
                 sender = Mock(spec=Sender)
                 notifier = Notifier(FileTurnStore(root / "turns"), sender, lambda: 0, 60,
                                     window_context=lambda: notification_window(query_environment, command))
                 self.assertTrue(notifier.handle("attention", Turn("pi", "session", "turn")))
                 with self.subTest(observation="emitted notification"):
-                    sender.send.assert_called_once_with("agent: input needed [pi] session [tmux window 3: backend | 雪 branch]")
+                    sender.send.assert_called_once_with("agent: input needed [pi] session [tmux window 3: ponygirls:bash]")
                 captured = subprocess.run([sys.executable, str(Path(__file__).with_name("tmux_context.py")), "--tmux", command],
                                           env=query_environment, text=True, capture_output=True, timeout=5, check=True)
                 self.assertEqual(json.loads(captured.stdout), asdict(window))
-                run("rename-window", "-t", "notify:3", "renamed")
-                snapshot_environment = dict(query_environment, SMIND_TMUX_WINDOW_CONTEXT=json.dumps(asdict(window)))
+                run("rename-window", "-t", "notify:3", "backend | 雪 branch")
+                snapshot_environment = dict(query_environment, SMIND_TMUX_WINDOW_CONTEXT=captured.stdout)
                 self.assertEqual(notification_window(snapshot_environment, command), window)
-                self.assertEqual(notification_window(query_environment, command), TmuxWindow(3, "renamed"))
+                self.assertEqual(notification_window(query_environment, command), TmuxWindow(3, "backend | 雪 branch"))
+                run("set-option", "-gw", "@smind_window_label_format", "0")
+                self.assertEqual(notification_window(query_environment, command), TmuxWindow(3, "0"))
                 run("kill-pane", "-t", source)
                 self.assertIsNone(capture_window(query_environment, command))
             finally:

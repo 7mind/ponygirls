@@ -10,6 +10,10 @@ from dataclasses import asdict, dataclass
 CONTEXT_ENVIRONMENT_VARIABLE = "SMIND_TMUX_WINDOW_CONTEXT"
 TMUX_QUERY_TIMEOUT_SECONDS = 1
 WINDOW_NAME_PREVIEW_LENGTH = 160
+WINDOW_LABEL_FORMAT = (
+    "#{?#{!=:#{@smind_window_label_format},},"
+    "#{P:#{?pane_active,#{E:@smind_window_label_format},}},#{window_name}}"
+)
 
 
 @dataclass(frozen=True)
@@ -34,7 +38,7 @@ def capture_window(environment: Mapping[str, str], tmux_command: str) -> TmuxWin
     try:
         result = subprocess.run(
             [tmux_command, "-N", "-S", socket, "display-message", "-p", "-t", target,
-             "#{pane_id}|#{window_index}|#{window_name}"],
+             "#{pane_id}|#{window_index}|" + WINDOW_LABEL_FORMAT],
             env=dict(environment), capture_output=True, encoding="utf-8",
             timeout=TMUX_QUERY_TIMEOUT_SECONDS, check=False,
         )
