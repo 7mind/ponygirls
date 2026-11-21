@@ -357,7 +357,19 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
       drain(incremental)
       val third=published(f,"a",session)
       assertEquals((lineage(f,third).lineage,f.db.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_generations WHERE id=?",abandoned)(_.getInt(1)))),(third,Some(0)))
-    } finally f.db.transaction(c => Sql.exec(c,"DROP TABLE ch_test_changes; DROP FUNCTION ch_test_new() CASCADE; DROP FUNCTION ch_test_old() CASCADE"))
+      // A confirmed owner rebuild into the same profile calls the models for every window and publishes a root, whose
+      // switch retires the history (an incremental version continuing it is never published).
+      f.incremental.ingest("a",request(values(480),Some(f.incremental.headSnapshot("a",session).source),3))
+      drain(incremental)
+      val beforeRebuild=published(f,"a",session)
+      assertEquals(lineage(f,beforeRebuild).parent,Some(third))
+      Fixtures.rebuild(f.db,"a")
+      annotator.calls.set(0)
+      drain(incremental)
+      val rebuilt=published(f,"a",session)
+      assertEquals((lineage(f,rebuilt).lineage,annotator.calls.get),(rebuilt,cut(f,rebuilt).window+1))
+      assertEquals(intercept[DomainError](f.incremental.pageChunks("a",session,0,10,Some(ContentView(4,Some(beforeRebuild))))).code,"indexed-view-retired")
+    } finally f.db.transaction(c => Sql.exec(c,"DROP TABLE ch_test_changes; DROP FUNCTION IF EXISTS ch_test_new,ch_test_old,ch_test_stop,ch_test_lease,ch_test_unpublish CASCADE"))
   }}
 
   test("indexing.metadataHorizonWindows: 1..2147483647, default 16, optional; another value requires indexing.incrementalPublication=false, which defaults to true") {

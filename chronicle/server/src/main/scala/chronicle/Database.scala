@@ -487,16 +487,18 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   /** Whether the claim's publication may continue the source's published generation incrementally (ingest-limits spec
     * §5.6.2, eligibility): `indexing.incrementalPublication`; the published generation is a version of a lineage with a cut
     * under the configured horizon, of the claim's profile and not retired; its revision and the claim's are revisions of
-    * one epoch, the claim's holding at least its messages; and no explicit rebuild would retire the history at this
-    * publication. Checked again at the switch: the parent must still be published. */
+    * one epoch, the claim's holding at least its messages; the claim's run is no confirmed owner rebuild's (which replaces
+    * the accepted work: a root), and no explicit rebuild would retire the history at this publication. Checked again at
+    * the switch: the parent must still be published. */
   def publicationParent(claim: Claim): Option[PublicationParent] = if(!config.indexing.incrementalPublication) None else db.transaction { c =>
     Sql.one(c,s"""SELECT p.id,p.lineage,p.lineage_version,l.cut FROM ch_sources s JOIN ch_generations p ON p.id=s.published JOIN ch_generation_lineage l ON l.generation=p.id
       JOIN ch_revisions pr ON pr.session_id=s.id AND pr.revision=p.revision JOIN ch_revisions cr ON cr.session_id=s.id AND cr.revision=?
       WHERE s.id=? AND p.lineage IS NOT NULL AND p.lineage_version IS NOT NULL AND l.cut IS NOT NULL AND p.profile=? AND NOT p.retired AND p.passage_format IN ${GenerationRows.formatsSql}
         AND p.revision<=cr.revision AND pr.epoch IS NOT NULL AND pr.epoch=cr.epoch AND pr.message_count<=cr.message_count
+        AND NOT EXISTS(SELECT 1 FROM ch_reindex_members m WHERE m.job_id=? AND m.run_id=?)
         AND NOT EXISTS(SELECT 1 FROM ch_reindex_members m JOIN ch_reindex_requests q ON q.owner=m.owner AND q.request_id=m.request_id
           WHERE m.owner=? AND m.session_id=s.id AND m.revision<=cr.revision AND m.target_epoch=? AND q.target_profile=? AND m.retirement_generation IS NULL)""",
-      claim.revision,claim.sessionId,claim.profile,claim.owner,claim.targetEpoch,claim.profile) { r =>
+      claim.revision,claim.sessionId,claim.profile,claim.jobId,claim.runId,claim.owner,claim.targetEpoch,claim.profile) { r =>
       PublicationParent(r.getObject(1,classOf[UUID]),r.getObject(2,classOf[UUID]),r.getInt(3),ProblemRows.Cut.decode(Sql.json(r,"cut"),claim.sessionId,claim.runId))
     }.filter(_.cut.horizon==config.indexing.metadataHorizonWindows)
   }

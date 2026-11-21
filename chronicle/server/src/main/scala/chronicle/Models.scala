@@ -437,8 +437,8 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       case Worker.Iteration.ClaimFailed => IO.sleep(failureBackoff.delay)
     }.foreverM
     val publication=IO {
-      val capacity=config.indexing
-      logger.info(s"indexing publication incrementalPublication=${capacity.incrementalPublication} metadataHorizonWindows=${capacity.metadataHorizonWindows}")
+      val incremental=config.indexing.incrementalPublication; val horizon=config.indexing.metadataHorizonWindows
+      logger.info(s"indexing publication incrementalPublication=$incremental metadataHorizonWindows=$horizon")
     }
     retired *> publication *> List.fill(config.indexing.annotationSessions)(lane).parSequence.map(_.head)
   }
