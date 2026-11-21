@@ -88,6 +88,10 @@ On demand, not part of full verification; run them when you change what they gua
   indexed, the old collector against the S2 server; bounded heaps, the `/api/versions` probe, wall time, WAL and disk):
   [`scripts/test-upload-bounds.sh`](scripts/test-upload-bounds.sh), whose header has the invocation; run it when
   uploads, their storage, the oversize guards or the collector's part uploads change;
+- semantic legs crowded by ≥ 200,000 invisible index entries (in-flight, then rolled back) on a 300,000-row archive,
+  through MCP and the browser protocol: complete windows or `unavailable`, never short:
+  [`scripts/test-ann-budget.sh`](scripts/test-ann-budget.sh), whose header has the invocation; run it when the semantic
+  legs, their budgets or their second pass change;
 - the CUDA embedding runtime: [`docs/cuda-validation.md`](docs/cuda-validation.md) (`scripts/test-cuda.sh`);
 - the relevance workflow's controlled real-server and live-provider legs: [`eval/relevance/README.md`](eval/relevance/README.md).
 
