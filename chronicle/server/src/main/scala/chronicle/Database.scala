@@ -443,14 +443,16 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   /** A run's staged generation no longer belongs to it, or its job's claim ended: the publication stops at the batch. */
   private final class StaleStaging extends RuntimeException("stale staged generation",null,false,false)
   /** A transaction of a publication's phase P (ingest-limits spec §5.2.4, §5.2.5): the claim still valid and its run still
-    * owning the staged generation, whose row it locks against the sweep. The job row is not locked: a renewal, which locks
-    * it, never waits for the search-row writers, which would hold share locks on it one after another; a reclaim does
-    * not wait for a batch either, and a stale worker stops at its next one (the switch checks everything again). */
-  private def staging[A](claim: Claim,generation: UUID)(f: Connection => A): A = db.transaction { c =>
+    * owning the staged generation, whose row it locks against the sweep (`StagedLock.Write` for a batch that records its
+    * resume step, `Share` for the search-row writers). The job row is not locked: a renewal, which locks it, never waits
+    * for the search-row writers, which would hold share locks on it one after another; a reclaim does not wait for a
+    * batch either, and a stale worker stops at its next one (the switch checks everything again). */
+  private def staging[A](claim: Claim,generation: UUID,lock: StagedLock)(f: Connection => A): A = db.transaction { c =>
     if(!(Sql.one(c,s"SELECT 1 FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true) &&
-      Sql.one(c,"SELECT 1 FROM ch_staged_generations WHERE generation=? AND job_id=? AND run_id=? FOR SHARE",generation,claim.jobId,claim.runId)(_ => true).contains(true))) throw new StaleStaging
+      Sql.one(c,s"SELECT 1 FROM ch_staged_generations WHERE generation=? AND job_id=? AND run_id=? FOR ${lock.sql}",generation,claim.jobId,claim.runId)(_ => true).contains(true))) throw new StaleStaging
     f(c)
   }
+  private enum StagedLock(val sql: String) { case Write extends StagedLock("NO KEY UPDATE"); case Share extends StagedLock("SHARE") }
   /** Streamed publication (ingest-limits spec §5.2.4): P0 finds the run's staged generation or stages a new one; P1 writes
     * the passages, their spans and Context spans, P2 the chunks and pieces, each in committed batches of at most
     * PassageStorage.rowsPerBatch rows and bytesPerBatch bytes with the step to resume at; P3 the search rows, last, by
@@ -489,7 +491,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     def text(value: String): Long = 2L*value.length
     def bytes(row: ProblemRows.Passages): Long = 64+(row.opened++row.closed).map(p => 256+text(p.initialSummary)+2*text(p.summary)+p.tags.map(text).sum).sum+
       row.spans.map(span => 64+text(span.span.messageId)).sum+row.context.map((_,span) => 64+text(span.messageId)).sum
-    def written(next: StagedGeneration)(batch: Vector[ProblemRows.Passages]): Unit = staging(claim,staged.generation) { c =>
+    def written(next: StagedGeneration)(batch: Vector[ProblemRows.Passages]): Unit = staging(claim,staged.generation,StagedLock.Write) { c =>
       PassageStorage.writePassages(c,staged.generation,batch)
       Check(PassageStorage.resume(c,claim,next),"internal","staged generation resume point not recorded")
     }
@@ -508,11 +510,11 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     var finals=(0,Vector.empty[ProblemRows.Final])
     // A passage's pieces are consecutive: one batch of final passages read at a time.
     def passage(ordinal: Int): ProblemRows.Final = {
-      if(ordinal<finals._1 || ordinal>=finals._1+finals._2.size) finals=(ordinal,staging(claim,staged.generation)(c => PassageStorage.finals(c,staged.generation,ordinal,PassageStorage.rowsPerBatch)))
+      if(ordinal<finals._1 || ordinal>=finals._1+finals._2.size) finals=(ordinal,staging(claim,staged.generation,StagedLock.Share)(c => PassageStorage.finals(c,staged.generation,ordinal,PassageStorage.rowsPerBatch)))
       finals._2.lift(ordinal-finals._1).getOrElse(throw DomainError("internal","staged passage missing"))
     }
     def bytes(piece: ProblemRows.Piece): Long = 256+6L*piece.chunk.text.length+4L*(piece.chunk.summary.length+piece.chunk.tags.map(_.length).sum)+24L*piece.vector.size
-    def written(step: Int)(batch: Vector[ProblemRows.Piece]): Unit = staging(claim,staged.generation) { c =>
+    def written(step: Int)(batch: Vector[ProblemRows.Piece]): Unit = staging(claim,staged.generation,StagedLock.Write) { c =>
       Check(batch.forall(_.vector.size==config.embedding.dimensions),"invalid","publication embedding")
       PassageStorage.writePieces(c,staged.generation,batch)
       Check(PassageStorage.resume(c,claim,staged.copy(step=step)),"internal","staged generation resume point not recorded")
@@ -530,7 +532,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       var from=next.getAndAdd(PostgresArchive.searchRowsPerStatement)
       while(from<pieces && !stopped.get) {
         PostgresArchive.searchRowWriters.acquire()
-        try staging(claim,generation)(c => PassageStorage.writeSearchRows(c,generation,from,(from+PostgresArchive.searchRowsPerStatement).min(pieces)))
+        try staging(claim,generation,StagedLock.Share)(c => PassageStorage.writeSearchRows(c,generation,from,(from+PostgresArchive.searchRowsPerStatement).min(pieces)))
         finally PostgresArchive.searchRowWriters.release()
         from=next.getAndAdd(PostgresArchive.searchRowsPerStatement)
       }
