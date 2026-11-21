@@ -9,7 +9,7 @@
 # and in each state semantic, hybrid and project-filtered searches through MCP and Archive search through the browser
 # protocol must answer the complete window (compared with the exact nearest visible chunks) or fail `unavailable`,
 # never a short one; the leg's first pass alone (production budget, by SQL) shows the shortfall it repairs. Every
-# assertion prints `ok - …`; the last line is a JSON summary. About 15 minutes and 25 GB (N = 220,000). From the
+# assertion prints `ok - …`; the last line is a JSON summary. About 5 minutes and 12 GB (N = 220,000; 2026-11). From the
 # repository root:
 #
 #   nix develop .#chronicle --command bash -c '

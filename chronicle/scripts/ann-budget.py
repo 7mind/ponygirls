@@ -342,7 +342,7 @@ COMMIT;""", user='chronicle')
     return int(count), float(values[values.index(count) + 1].split()[1])
 
 
-def measure(label, server, browser):
+def measure(label, server):
     window, rare = exact(), exact('rare')
     record = dict(exactWindowSessions=len(window), exactRareSessions=len(rare), firstPass=first_pass_rows())
     seconds, semantic = server.search('semantic')
@@ -353,7 +353,8 @@ def measure(label, server, browser):
     seconds, filtered = server.search('semantic', project='rare')
     record['rare'] = dict(seconds=seconds, **({'failure': filtered['failure']} if 'failure' in filtered else dict(total=filtered['total'],
                           sessions=sorted(h['session']['id'] for h in filtered['hits']) == sorted(rare))))
-    seconds, archive = browser.archive()
+    browser = Browser(server.origin)   # a fresh socket per phase: an idle one is closed by the server's heartbeat
+    seconds, archive = browser.archive(); browser.socket.close()
     page = archive.get('ArchiveSearch', {}).get('result', {}).get('page')
     record['archive'] = dict(seconds=seconds, **(dict(total=int(page['total'])) if page else {'failure': archive.get('Error', {}).get('failure', archive)}))
     summary['phases'][label] = record
@@ -379,14 +380,14 @@ def main():
         server = Server(stub_origin, 'template'); template = ingest_template(server); server.stop()
         t0 = time.monotonic(); background(template); summary['backgroundSeconds'] = round(time.monotonic() - t0, 1)
         summary['searchRows'] = int(psql('SELECT count(*) FROM ch_search_chunks')[0][0])
-        server = Server(stub_origin, 'search'); browser = Browser(server.origin)
-        baseline = measure('baseline', server, browser)
+        server = Server(stub_origin, 'search')
+        baseline = measure('baseline', server)
         check('baseline: the first pass alone is full', baseline['firstPass'][0] == LEG, baseline['firstPass'])
         t0 = time.monotonic(); holders = hold_invisible(); summary['insertSeconds'] = round(time.monotonic() - t0, 1)
-        crowded = measure('uncommitted', server, browser)
+        crowded = measure('uncommitted', server)
         check(f'uncommitted: {INVISIBLE} in-flight rows make the first pass alone short', crowded['firstPass'][0] < LEG, crowded['firstPass'])
         release(holders); holders = []
-        dead = measure('dead', server, browser)
+        dead = measure('dead', server)
         check(f'dead: {INVISIBLE} rolled-back rows make the first pass alone short', dead['firstPass'][0] < LEG, dead['firstPass'])
     finally:
         for process in holders:
