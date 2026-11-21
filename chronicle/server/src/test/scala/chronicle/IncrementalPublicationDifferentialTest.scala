@@ -162,6 +162,15 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
     (0 until total by 29).map(offset => encode(Result.Chunks(f.incremental.pageChunks(owner,session,offset,29,Some(view))))).toList++
       List(encode(Result.Passages(passages)))++passages.passages.map(passage => encode(Result.PassageSpans(f.incremental.passageSpans(owner,session,passage.id,0,100,Some(view)))))
   }
+  /** The rows the plan of `query` read from `relations` (EXPLAIN ANALYZE): returned and filtered out, per loop. */
+  private def rowsExamined(f: Fixture,query: ReadSources.Query,relations: Set[String]): Long = {
+    val plan=f.db.transaction(c => Sql.one(c,"EXPLAIN (ANALYZE, FORMAT JSON) "+query.sql,query.args*)(_.getString(1))).get
+    def nodes(node: io.circe.Json): List[io.circe.Json] = node :: node.hcursor.downField("Plans").values.toList.flatten.flatMap(nodes)
+    nodes(Wire.parse(plan).asArray.get.head.hcursor.downField("Plan").focus.get).filter(_.hcursor.get[String]("Relation Name").toOption.exists(relations)).map { node =>
+      def value(field: String): Long = node.hcursor.get[Double](field).toOption.fold(0L)(_.toLong)
+      (value("Actual Rows")+value("Rows Removed by Filter")+value("Rows Removed by Index Recheck"))*math.max(value("Actual Loops"),1L)
+    }.sum
+  }
   private def job(f: Fixture,session: UUID): UUID = f.db.transaction(c => Sql.one(c,"SELECT id FROM ch_jobs WHERE session_id=? ORDER BY revision DESC LIMIT 1",session)(uuid(_,1))).get
 
   test("incremental publications of three sources of one owner and one of another, from roots and from incremental parents, read exactly as full publications of the same content (every logical row and reader answer up to ids, exact ties across sources), write only the windows from the cut and the open passage's pieces within the horizon, and keep every earlier pin") { database { f =>
@@ -399,18 +408,8 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
     // The tail reads of the latest version: the switch's segment rows of each kind and the rewrite region's pieces.
     val cutValue=cut(f,version)
     val parentLineage=lineage(f,version).lineage
-    def examined(): Long = {
-      val queries=GenerationRows.Kind.values.toList.map(kind => PassageStorage.tailSegments(parentLineage,kind,(0,cutValue.firstPieces.head))):+
-        PassageStorage.membersQuery(parentLineage,session,2,cutValue.firstPieces.head,cutValue.state.nextPieceOrdinal)
-      queries.map { query =>
-        val plan=f.db.transaction(c => Sql.one(c,"EXPLAIN (ANALYZE, FORMAT JSON) "+query.sql,query.args*)(_.getString(1))).get
-        def nodes(node: io.circe.Json): List[io.circe.Json] = node :: node.hcursor.downField("Plans").values.toList.flatten.flatMap(nodes)
-        nodes(Wire.parse(plan).asArray.get.head.hcursor.downField("Plan").focus.get).filter(_.hcursor.get[String]("Relation Name").toOption.contains("ch_lineage_segments")).map { node =>
-          def value(field: String): Long = node.hcursor.get[Double](field).toOption.fold(0L)(_.toLong)
-          value("Actual Rows")*math.max(value("Actual Loops"),1L)+value("Rows Removed by Filter")+value("Rows Removed by Index Recheck")
-        }.sum
-      }.sum
-    }
+    def examined(): Long = (GenerationRows.Kind.values.toList.map(kind => PassageStorage.tailSegments(parentLineage,kind,(0,cutValue.firstPieces.head))):+
+      PassageStorage.membersQuery(parentLineage,session,2,cutValue.firstPieces.head,cutValue.state.nextPieceOrdinal)).map(rowsExamined(f,_,Set("ch_lineage_segments"))).sum
     val before=examined()
     val base=f.db.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_lineage_segments WHERE lineage=?",parentLineage)(_.getLong(1))).get
     // A long history: rows of earlier versions (closed) and runs of earlier origins before the tail (open), neither
@@ -431,6 +430,19 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
     drain(complete)
     assertEquals(annotator.calls.get,0)
     assertEquals(rows(f,published(f,"a",session)),incrementalRows)
+    // The reuse lookup of a checkpoint that 2,000 runs referenced (a recurring part across many versions) examines a
+    // bounded number of reference and generation rows, not its referrers.
+    val (checkpointJob,stage,content)=f.db.transaction(c => Sql.one(c,"""SELECT k.job_id,k.stage,k.content_hash FROM ch_index_checkpoints k JOIN ch_jobs j ON j.id=k.job_id
+      WHERE j.session_id=? AND k.content_hash IS NOT NULL AND k.stage='Embedding' ORDER BY k.job_id,k.run_id,k.window_ordinal,k.part LIMIT 1""",session)(r => (uuid(r,1),r.getString(2),r.getString(3)))).get
+    f.db.transaction { c =>
+      Sql.exec(c,"""INSERT INTO ch_index_checkpoint_refs(job_id,run_id,stage,window_ordinal,part,input_hash,source_job,source_run,source_stage,source_window,source_part,output_hash)
+        SELECT k.job_id,gen_random_uuid(),k.stage,100000+i,0,repeat('0',64),k.job_id,k.run_id,k.stage,k.window_ordinal,k.part,k.output_hash
+        FROM (SELECT * FROM ch_index_checkpoints WHERE job_id=? AND content_hash=? LIMIT 1) k CROSS JOIN generate_series(1,2000) i""",checkpointJob,content)
+      Sql.exec(c,"ANALYZE ch_index_checkpoint_refs")
+    }
+    val lookup=IndexCheckpoints.reusableQuery(session,f.config.profile,(UUID.randomUUID(),UUID.randomUUID()),IndexingStage.valueOf(stage),content)
+    val references=rowsExamined(f,lookup,Set("ch_index_checkpoint_refs","ch_generations"))
+    assert(references<=40,s"$references reference and generation rows examined")
   }}
 
   test("a staged root continues only under the metadata horizon it was staged with: stopped after its first committed pieces under a horizon of 2147483647, it is staged again from nothing under 4") { database { f =>

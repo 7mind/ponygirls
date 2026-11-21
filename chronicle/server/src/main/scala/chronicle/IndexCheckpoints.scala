@@ -80,24 +80,31 @@ object IndexCheckpoints {
   /** An own checkpoint another run accepted, by its full key. */
   private[chronicle] final case class Reusable(job: UUID,run: UUID,stage: IndexingStage,window: Int,part: Int,outputHash: String,value: Json)
   /** The own checkpoint of the source's jobs of `profile` under `content` and `stage` that a run other than `excluded`
-    * accepted: first one a run of the published generation's lineage accepted (ingest-limits spec §5.6.3), as its own or
-    * through its reference to it, the newest version's first — the published generation's own run for a generation
-    * without a lineage; a legacy generation names no run. An incremental version's windows before its cut were accepted
-    * by its lineage's earlier runs, so the next run (a full republication too) keeps the published content even after a
-    * rebuild accepted other work for the same input. Then the newest revision's. Never a reference itself, never the
-    * run's own (`discard` deletes those). Each candidate costs index probes (`ch_generations_run`), not the lineage's
-    * length. */
-  private[chronicle] def reusable(c: Connection,sessionId: UUID,profile: String,excluded: (UUID,UUID),stage: IndexingStage,content: String): Option[Reusable] =
-    Sql.one(c,"""WITH published AS (SELECT p.id,p.lineage,p.lineage_version FROM ch_sources s JOIN ch_generations p ON p.id=s.published WHERE s.id=?)
-      SELECT k.job_id,k.run_id,k.window_ordinal,k.part,k.output_hash,k.value FROM ch_index_checkpoints k JOIN ch_jobs j ON j.id=k.job_id
-      WHERE k.content_hash=? AND k.stage=? AND j.session_id=? AND j.profile=? AND (k.job_id,k.run_id)<>(?,?)
-      ORDER BY (SELECT max(coalesce(g.lineage_version,0)) FROM (SELECT k.run_id AS run_id UNION SELECT r.run_id FROM ch_index_checkpoint_refs r
-          WHERE r.source_job=k.job_id AND r.source_run=k.run_id AND r.source_stage=k.stage AND r.source_window=k.window_ordinal AND r.source_part=k.part) accepted
-        JOIN ch_generations g ON g.run_id=accepted.run_id JOIN published p ON g.id=p.id OR (p.lineage_version IS NOT NULL AND g.lineage=p.lineage AND g.lineage_version<=p.lineage_version)) DESC NULLS LAST,
-        j.revision DESC,k.job_id,k.run_id,k.window_ordinal,k.part LIMIT 1""",
-      sessionId,content,stage.toString,sessionId,profile,excluded._1,excluded._2) { row =>
+    * accepted: first one the published lineage accepted (ingest-limits spec §5.6.3) — its own run is a version of the
+    * published lineage, or the lineage's root (the published generation itself when it has no version) referenced it —,
+    * then the newest revision's. An incremental version's windows before its cut were accepted by the lineage's earlier
+    * runs, so a later run (a full republication too) keeps the published content even after a rebuild accepted other work
+    * for the same input. A version's reference needs no check of its own: it took a checkpoint the lineage had accepted
+    * by then (own run or root), or the first of an unchanged candidate set in this order. Each candidate costs two index
+    * probes (`ch_generations_run`, `ch_index_checkpoint_refs_referrer`), never its referrers or the lineage's length.
+    * Never a reference itself, never the run's own (`discard` deletes those). */
+  private[chronicle] def reusable(c: Connection,sessionId: UUID,profile: String,excluded: (UUID,UUID),stage: IndexingStage,content: String): Option[Reusable] = {
+    val query=reusableQuery(sessionId,profile,excluded,stage,content)
+    Sql.one(c,query.sql,query.args*) { row =>
       Reusable(row.getObject("job_id",classOf[UUID]),row.getObject("run_id",classOf[UUID]),stage,row.getInt("window_ordinal"),row.getInt("part"),row.getString("output_hash"),verified(row))
     }
+  }
+  /** `reusable`'s statement. */
+  private[chronicle] def reusableQuery(sessionId: UUID,profile: String,excluded: (UUID,UUID),stage: IndexingStage,content: String): ReadSources.Query =
+    ReadSources.Query("""WITH published AS (SELECT p.id,p.lineage,p.lineage_version,root.run_id AS root_run FROM ch_sources s JOIN ch_generations p ON p.id=s.published
+        JOIN ch_generations root ON root.id=CASE WHEN p.lineage_version IS NULL THEN p.id ELSE p.lineage END WHERE s.id=?)
+      SELECT k.job_id,k.run_id,k.window_ordinal,k.part,k.output_hash,k.value FROM ch_index_checkpoints k JOIN ch_jobs j ON j.id=k.job_id
+      WHERE k.content_hash=? AND k.stage=? AND j.session_id=? AND j.profile=? AND (k.job_id,k.run_id)<>(?,?)
+      ORDER BY (EXISTS(SELECT 1 FROM published p JOIN ch_generations g ON g.run_id=k.run_id AND (g.id=p.id OR (p.lineage_version IS NOT NULL AND g.lineage=p.lineage AND g.lineage_version<=p.lineage_version)))
+        OR EXISTS(SELECT 1 FROM published p JOIN ch_index_checkpoint_refs r ON r.run_id=p.root_run AND r.source_job=k.job_id AND r.source_run=k.run_id AND r.source_stage=k.stage
+          AND r.source_window=k.window_ordinal AND r.source_part=k.part)) DESC,
+        j.revision DESC,k.job_id,k.run_id,k.window_ordinal,k.part LIMIT 1""",
+      List(sessionId,content,stage.toString,sessionId,profile,excluded._1,excluded._2))
   /** A run of a confirmed owner rebuild (a member of its cohort): the operator asked for the selected revisions to be
     * annotated and embedded again, so it never takes another run's accepted work (it resumes from its own). */
   private def rebuilding(c: Connection,claim: Claim): Boolean =

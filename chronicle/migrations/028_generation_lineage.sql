@@ -38,8 +38,10 @@ CREATE INDEX IF NOT EXISTS ch_lineage_segments_origin ON ch_lineage_segments(ori
 -- The rows of a lineage's latest version (the published parent of an incremental publication) whose ranges end after a
 -- point: an incremental publication reads and closes only those, however long the lineage's history.
 CREATE INDEX IF NOT EXISTS ch_lineage_segments_open ON ch_lineage_segments(lineage,kind,hi_major,hi) WHERE since IS NOT NULL AND until IS NULL;
--- The generation of a run: the reuse lookup ranks a candidate by whether a run of the published lineage accepted it.
+-- The generation of a run, and a run's reference to a checkpoint: the reuse lookup ranks a candidate by whether the
+-- published lineage accepted it (its run a version, or the lineage's root referenced it), two probes per candidate.
 CREATE INDEX IF NOT EXISTS ch_generations_run ON ch_generations(run_id);
+CREATE INDEX IF NOT EXISTS ch_index_checkpoint_refs_referrer ON ch_index_checkpoint_refs(run_id,source_job,source_run,source_stage,source_window,source_part);
 CREATE TABLE IF NOT EXISTS ch_generation_lineage(
   generation uuid PRIMARY KEY REFERENCES ch_generations(id) ON DELETE CASCADE,
   parent uuid,

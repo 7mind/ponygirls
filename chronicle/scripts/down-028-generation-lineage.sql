@@ -210,6 +210,7 @@ DROP VIEW IF EXISTS pg_temp.down028_held;
 DROP TABLE ch_lineage_segments, ch_generation_lineage, ch_lineage_tags, ch_lineage_tag_deltas, ch_lineage_retirements, ch_search_retirements;
 DROP INDEX IF EXISTS ch_generations_lineage_version;
 DROP INDEX IF EXISTS ch_generations_run;
+DROP INDEX IF EXISTS ch_index_checkpoint_refs_referrer;
 ALTER TABLE ch_generations DROP COLUMN IF EXISTS lineage, DROP COLUMN IF EXISTS lineage_version;
 ALTER TABLE ch_search_chunks DROP COLUMN IF EXISTS ordinal;
 DELETE FROM ch_schema_migrations WHERE version = 28;
