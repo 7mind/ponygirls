@@ -11,7 +11,7 @@ export class CliError extends Error {
   }
 }
 export class RemoteError extends CliError { constructor(code: ErrorCode, message: string, readonly remoteCode: string | null = null) { super(code, message); } }
-// Server codes for a failed query embedding on a semantic/hybrid search (ModelHttp/Models.scala), with CLI-owned texts: server text is never printed.
+// Server codes for a failed query embedding on a semantic/hybrid search (ModelHttp/Models.scala), with CLI-owned texts for the fallback notice.
 const EMBEDDING_FAILURES: Record<string, string> = { 'model-transport': 'embedding service unreachable', 'model-timeout': 'embedding service timed out', 'model-http': 'embedding service returned an HTTP error' };
 export function embeddingFailure(error: unknown): string | null {
   if (!(error instanceof RemoteError) || error.remoteCode === null || !Object.hasOwn(EMBEDDING_FAILURES, error.remoteCode)) return null;
@@ -30,10 +30,34 @@ const failures: Record<string, string> = {
   'too-large': 'Request or response exceeded the size bound.',
   unavailable: 'Service temporarily unavailable; no automatic mutation retry was attempted.',
 };
-export function remoteFailure(code: unknown): CliError {
-  const remoteCode = typeof code === 'string' ? code : null;
-  if (typeof code === 'string' && Object.hasOwn(failures, code)) return new RemoteError(code as ErrorCode, failures[code]!, remoteCode);
-  return new RemoteError('unavailable', 'The service returned an unrecognized error.', remoteCode);
+const TERMINAL_UNSAFE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/gu;
+const HAS_TERMINAL_UNSAFE = new RegExp(TERMINAL_UNSAFE.source, 'u');
+/** A long text is escaped slice by slice: one replacement over a text of many controls would hold a string per match at
+  * once (4 GB for a 384 MiB answer of escaped U+007F). The class holds no surrogate, so a cut pair stays unchanged. */
+const TERMINAL_SAFE_SLICE = 65536;
+export function terminalSafe(text: string): string {
+  const escape = (c: string): string => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`;
+  if (text.length <= TERMINAL_SAFE_SLICE) return text.replace(TERMINAL_UNSAFE, escape);
+  if (!HAS_TERMINAL_UNSAFE.test(text)) return text;
+  const parts: string[] = []; for (let at = 0; at < text.length; at += TERMINAL_SAFE_SLICE) parts.push(text.slice(at, at + TERMINAL_SAFE_SLICE).replace(TERMINAL_UNSAFE, escape));
+  return parts.join('');
+}
+/** The server's failure text as the CLI shows it after its own: the request's credential masked, one terminal-safe line of
+  * at most this many characters. */
+export const SERVER_TEXT_CHARACTERS = 512;
+export interface ServerFailure { readonly message: unknown; readonly credential: string | null }
+export function serverText(code: unknown, failure: ServerFailure | null): string {
+  if (failure === null || typeof failure.message !== 'string' || failure.message === '') return '';
+  let text = `${typeof code === 'string' || typeof code === 'number' ? code : '(no code)'}: ${failure.message}`;
+  if (failure.credential !== null && failure.credential !== '') text = text.replaceAll(failure.credential, '[credential]');
+  const head = Array.from(text.slice(0, 2 * SERVER_TEXT_CHARACTERS + 2)).slice(0, SERVER_TEXT_CHARACTERS + 1).join('');
+  const safe = Array.from(terminalSafe(head).replaceAll('\t', '\\u0009').replaceAll('\n', '\\u000a'));
+  return ` Server ${safe.length > SERVER_TEXT_CHARACTERS ? `${safe.slice(0, SERVER_TEXT_CHARACTERS).join('')}…` : safe.join('')}`;
+}
+export function remoteFailure(code: unknown, failure: ServerFailure | null = null): CliError {
+  const remoteCode = typeof code === 'string' ? code : null; const shown = serverText(code, failure);
+  if (typeof code === 'string' && Object.hasOwn(failures, code)) return new RemoteError(code as ErrorCode, failures[code]! + shown, remoteCode);
+  return new RemoteError('unavailable', 'The service returned an unrecognized error.' + shown, remoteCode);
 }
 export function uncertain(requestId: string | null): CliError {
   return new CliError('uncertain', requestId === null

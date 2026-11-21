@@ -159,7 +159,15 @@ async function runOnce(args: Arguments, env: Environment): Promise<RunResult> {
   try { const value = withoutSecret(encodeWire('Result', result), args); if (name === 'Logout') sessionStore.remove(session); return { value, text: false }; }
   catch (error) { if (effect === 'secret') throw uncertain(requestId); throw error; }
 }
-async function write(stream: NodeJS.WriteStream, text: string): Promise<void> { await new Promise<void>((resolve, reject) => { stream.write(text, error => error === null || error === undefined ? resolve() : reject(error)); }); }
+/** Output is written in pieces, cut between code points, so a large answer is not encoded into one more buffer of its size. */
+const WRITE_PIECE = 1024 * 1024;
+async function write(stream: NodeJS.WriteStream, text: string): Promise<void> {
+  for (let at = 0; at < text.length;) {
+    let end = Math.min(at + WRITE_PIECE, text.length); const last = text.charCodeAt(end - 1); if (end < text.length && last >= 0xd800 && last <= 0xdbff) end--;
+    const piece = text.slice(at, end); at = end;
+    await new Promise<void>((resolve, reject) => { stream.write(piece, error => error === null || error === undefined ? resolve() : reject(error)); });
+  }
+}
 async function main(): Promise<number> {
   let args: Arguments | null = null;
   try { args = parseArgs(process.argv.slice(2)); const result = await run(args, process.env, line => write(process.stderr, line)); const presentation = new Presentation(useColor(args.color, args.json, process.stdout.isTTY === true, process.env)); const modeLine = result.mode === undefined || args.json ? '' : `${presentation.style('muted', `mode: ${result.mode}`)}\n`; await write(process.stdout, modeLine + (result.text ? presentation.help(String(result.value)) : presentation.output(result.value, args.json))); return 0; }

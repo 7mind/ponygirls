@@ -232,16 +232,29 @@ and never restart blindly. AuthorizationLost discards accumulated protected
 trace. Scripted tests do not establish model/semantic relevance quality.
 
 Whole-command deadlines default30s, explicitly configurable with
-`--timeout-ms`100..900000; stdin, HTTP and WS share the deadline. HTTP bodies and
-decoded WS application messages are at most8MiB; WS requests at most64KiB.
-Pinned Node24's native receiver additionally bounds compressed/frame assembly
-at128MiB and131072 fragments before application decoding. MCP accumulation is
-bounded to256 events/8MiB. MCP test polling does not extend the command deadline.
+`--timeout-ms`100..900000; stdin, HTTP and WS share the deadline. Requests are at
+most 8 MiB (HTTP) and 64 KiB (WS). Answers are bounded by the server's page bound:
+a page of several messages holds at most 64 MiB of stored values, measured as
+PostgreSQL jsonb text, and the server's JSON escapes U+007F..U+009F in six bytes
+where jsonb text needs one or two. A WS answer is therefore at most
+6 × 64 MiB + 1 MiB = 403,701,760 bytes, an MCP response (that JSON again as a JSON
+string: seven bytes for `\u007f`) at most 7 × 64 MiB + 1 MiB = 470,810,624 bytes, and
+every other HTTP response at most 8 MiB. The CLI raises pinned Node 24's native
+WebSocket receive limit (128 MiB) to its bound; Node refuses a larger message from
+its frame header, unread, which the CLI reports as a failed connection naming the
+bound (exit 6). A page holding one message whose stored value alone exceeds
+64 MiB (`maxRecordBytes` above 64 MiB, or a larger message sent through
+`/api/ingest`) and a `GetRaw` answer above the bound end that way. Server answers
+are single frames (native limit 131,072 fragments). MCP accumulation is bounded to
+256 events/8 MiB. MCP test polling does not extend the command deadline.
 
 Exit codes:0 success;2 usage/invalid;3 authentication/credentials/forbidden;
 4 missing/gone/retired view;5 conflict;6 transport/protocol/deadline/state/
-availability;7 uncertain mutation. Remote error bodies, credentials and stack
-traces are never printed.
+availability;7 uncertain mutation. A remote failure prints the CLI's text and then
+the server's code and message on the same line (`Server CODE: MESSAGE`): control
+and format characters escaped, at most 512 characters, the request's credential
+replaced by `[credential]`. An uncertain mutation prints only the CLI's recovery
+guidance. Credentials and stack traces are never printed.
 
 ## Build and verification
 

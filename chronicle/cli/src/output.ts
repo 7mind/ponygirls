@@ -1,5 +1,6 @@
-import { CliError } from './errors.js';
+import { CliError, terminalSafe } from './errors.js';
 import { isObject } from './json.js';
+export { terminalSafe };
 import type { Environment } from './files.js';
 export type ColorMode = 'auto' | 'always' | 'never';
 export function useColor(mode: ColorMode, json: boolean, tty: boolean, env: Environment): boolean {
@@ -16,9 +17,6 @@ export class Presentation {
   output(value: unknown, json: boolean): string {
     try { return json ? `${terminalSafe(JSON.stringify(value))}\n` : renderHuman(value, this); } catch { throw new CliError('protocol-error', 'Output was not encoded by the current generated codec.'); }
   }
-}
-export function terminalSafe(text: string): string {
-  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/gu, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 function renderHuman(value: unknown, presentation: Presentation): string {
   const lines: string[] = [];

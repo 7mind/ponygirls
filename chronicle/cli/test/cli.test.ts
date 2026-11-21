@@ -43,10 +43,14 @@ async function fixture(handler: (request: IncomingMessage, response: ServerRespo
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); const address = server.address(); assert.ok(address !== null && typeof address !== 'string');
   return { root, origin: `http://127.0.0.1:${address.port}`, requests, async close() { for (const socket of sockets) socket.destroy(); await new Promise<void>((resolve, reject) => server.close(error => error === undefined ? resolve() : reject(error))); rmSync(root, { recursive: true }); } };
 }
+function frameHeader(length: number): Buffer {
+  if (length < 126) return Buffer.from([0x81, length]);
+  if (length < 65536) { const header = Buffer.alloc(4); header[0] = 0x81; header[1] = 126; header.writeUInt16BE(length, 2); return header; }
+  const header = Buffer.alloc(10); header[0] = 0x81; header[1] = 127; header.writeBigUInt64BE(BigInt(length), 2); return header;
+}
 function send(socket: Duplex, requestId: string, result: unknown): void {
-  const data = Buffer.from(JSON.stringify({ requestId, result })); let header: Buffer;
-  if (data.length < 126) header = Buffer.from([0x81, data.length]); else { header = Buffer.alloc(4); header[0] = 0x81; header[1] = 126; header.writeUInt16BE(data.length, 2); }
-  socket.write(Buffer.concat([header, data]));
+  const data = Buffer.from(JSON.stringify({ requestId, result }));
+  socket.write(Buffer.concat([frameHeader(data.length), data]));
 }
 function ws(operation: (socket: Duplex, id: string, op: Record<string, unknown>) => void): (socket: Duplex, value: unknown) => void {
   return (socket, value) => { const envelope = decodeWire('ClientEnvelope', value); const encoded = encodeWire('Operation', envelope.operation); assert.ok(isObject(encoded)); if ('Hello' in encoded) send(socket, envelope.requestId, { Hello: { versions: VERSION, user: { id: 'alice', login: 'alice', scopes: ['Ingest', 'Read', 'Raw'] } } }); else operation(socket, envelope.requestId, encoded); };
@@ -59,7 +63,7 @@ async function cli(args: string[], f: Fixture | null, environment: Record<string
   const env: NodeJS.ProcessEnv = { PATH: process.env['PATH'], HOME: f === null ? '/nonexistent' : f.root, ...(f === null ? {} : { CHRONICLE_STATE_DIR: join(f.root, 'state') }), ...environment };
   const installed = process.env['CHRONICLE_CLI_EXECUTABLE'];
   const child = spawn(installed === undefined ? process.execPath : installed, [...(installed === undefined ? [CLI] : []), ...(f === null ? [] : ['--url', f.origin, '--allow-insecure-http']), ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] });
-  let stdout = ''; let stderr = ''; child.stdout.on('data', data => { stdout += String(data); }); child.stderr.on('data', data => { stderr += String(data); }); child.stdin.on('error', () => {}); child.stdin.end(stdin === null ? undefined : stdin);
+  let stdout = ''; let stderr = ''; child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8'); child.stdout.on('data', data => { stdout += String(data); }); child.stderr.on('data', data => { stderr += String(data); }); child.stdin.on('error', () => {}); child.stdin.end(stdin === null ? undefined : stdin);
   const timer = setTimeout(() => child.kill('SIGKILL'), 10000);
   try { const code = await new Promise<number>((resolve, reject) => { child.on('error', reject); child.on('close', (code, signal) => signal === null ? resolve(code!) : reject(new Error(`CLI terminated ${signal}`))); }); return { code, stdout, stderr }; } finally { clearTimeout(timer); }
 }
@@ -161,7 +165,7 @@ test('auto-selected bearer rejection never falls back to an available human sess
   let mcpCalls = 0; let wsCalls = 0;
   const f = await fixture((q, r) => { if (q.url === '/api/versions') { reply(r, 200, VERSION, {}); return; } mcpCalls++; reply(r, 401, { code: 'unauthorized', message: 'private-fixture-detail' }, {}); }, ws(() => { wsCalls++; }));
   try {
-    state(f); const result = await cli(['whoami'], f, { CHRONICLE_TOKEN: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+/.=-' }, null); assert.equal(result.code, 3, result.stderr); assert.equal(result.stdout, ''); assert.ok(!result.stderr.includes('private-fixture-detail')); assert.equal(mcpCalls, 1); assert.equal(wsCalls, 0);
+    state(f); const result = await cli(['whoami'], f, { CHRONICLE_TOKEN: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+/.=-' }, null); assert.equal(result.code, 3, result.stderr); assert.equal(result.stdout, ''); assert.ok(result.stderr.includes('Server unauthorized: private-fixture-detail'), result.stderr); assert.equal(mcpCalls, 1); assert.equal(wsCalls, 0);
     const missing = await cli(['whoami'], f, { CHRONICLE_TOKEN_FILE: '/unreadable' }, null); assert.equal(missing.code, 3); assert.equal(mcpCalls, 1); assert.equal(wsCalls, 0);
     const ambiguous = await cli(['whoami'], null, { CHRONICLE_TOKEN: 'unrelated', CHRONICLE_TOKEN_FILE: '/unreadable' }, null); assert.equal(ambiguous.code, 3); assert.match(ambiguous.stderr, /Ambiguous bearer/);
   } finally { await f.close(); }
@@ -236,8 +240,33 @@ test('actual WS negotiates current version, preserves exact view/page and answer
   })); let pendingId: string | null = null;
   try { state(f); const result = await cli(['messages', ID, '--revision', '4', '--generation', GENERATION, '--offset', '20', '--limit', '2'], f, {}, null); assert.equal(result.code, 0, result.stderr); assert.equal(receivedPong, true); assert.match(result.stdout, /message-full-id/); assert.match(result.stdout, /hé🙂\\u001b/); assert.ok(!result.stdout.includes('\u001b')); assert.equal(result.stderr, ''); } finally { await f.close(); }
 });
-test('server errors are sanitized and retired pins do not fall back to HEAD', async () => {
-  const f = await fixture((_q, r) => reply(r, 200, VERSION, {}), ws((socket, id) => send(socket, id, { Error: { failure: { code: 'indexed-view-retired', message: 'secret\u001b remote private body' } } }))); try { state(f); const result = await cli(['messages', ID, '--revision', '4', '--generation', GENERATION, '--json'], f, {}, null); assert.equal(result.code, 4); assert.equal(result.stdout, ''); assert.match(result.stderr, /indexed-view-retired/); assert.ok(!result.stderr.includes('secret')); assert.equal(f.requests.length, 1); } finally { await f.close(); }
+// Specified: a remote failure shows the server's code and text after the CLI's own, on one terminal-safe line of at most 512 characters.
+test('server failure text is shown sanitized and bounded, and retired pins do not fall back to HEAD', async () => {
+  const message = `remote detail\u001b]52;x\u0007\nnext line ${'x'.repeat(4096)}`;
+  const f = await fixture((_q, r) => reply(r, 200, VERSION, {}), ws((socket, id) => send(socket, id, { Error: { failure: { code: 'indexed-view-retired', message } } }))); try { state(f); const result = await cli(['messages', ID, '--revision', '4', '--generation', GENERATION, '--json'], f, {}, null); assert.equal(result.code, 4); assert.equal(result.stdout, ''); assert.match(result.stderr, /^chronicle: indexed-view-retired: The exact indexed generation was retired; choose another view explicitly\. Server indexed-view-retired: remote detail\\u001b\]52;x\\u0007\\u000anext line x+…\n$/); assert.equal(result.stderr.length, 'chronicle: indexed-view-retired: The exact indexed generation was retired; choose another view explicitly. Server '.length + 512 + '…\n'.length); assert.equal(f.requests.length, 1); } finally { await f.close(); }
+});
+// Specified: an answer is bounded by the server's 64 MiB page bound with its worst JSON escaping (U+007F: one byte in the
+// page measure, six on the wire, seven inside MCP text), not by the 8 MiB request bound; an answer announced above it fails at once.
+// The text puts surrogate pairs across the slices the output is escaped and written in.
+const WS_ANSWER_BOUND = 6 * 64 * 1024 * 1024 + 1024 * 1024; const MCP_ANSWER_BOUND = 7 * 64 * 1024 * 1024 + 1024 * 1024;
+test('a messages page above 8 MiB is read whole over WS and MCP, and an answer announced above the CLI bound fails at once', async () => {
+  const token = 'synthetic-token-0123456789-abcdefghijklmnopqrstuvwxyz-ABCDEF'; let oversized = false;
+  const page = { Messages: { result: { messages: [{ id: 'large', parentId: null, role: 'user', text: `${'x\u{1f642}'.repeat(2 * 1024 * 1024)}"\u007f`, timestamp: null, recordIndex: 0 }], total: 1, offset: 0, view: { revision: 1, generationId: null } } } };
+  const f = await fixture((q, r, body) => {
+    if (q.url === '/api/versions') { reply(r, 200, VERSION, {}); return; }
+    if (oversized) { r.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': String(MCP_ANSWER_BOUND + 1) }); r.end(); return; }
+    reply(r, 200, { jsonrpc: '2.0', id: (JSON.parse(body) as { id: string }).id, result: { isError: false, content: [{ type: 'text', text: JSON.stringify(page) }] } }, {});
+  }, ws((socket, id) => { if (oversized) socket.write(Buffer.concat([frameHeader(WS_ANSWER_BOUND + 1), Buffer.from('{')])); else send(socket, id, page); }));
+  try {
+    state(f);
+    for (const [auth, bound] of [['session', WS_ANSWER_BOUND], ['bearer', MCP_ANSWER_BOUND]] as const) {
+      const env = auth === 'bearer' ? { CHRONICLE_TOKEN: token } : {};
+      oversized = false; const read = await cli(['messages', ID, '--auth', auth, '--json'], f, env, null);
+      assert.equal(read.code, 0, read.stderr); assert.deepEqual(JSON.parse(read.stdout), page);
+      oversized = true; const refused = await cli(['messages', ID, '--auth', auth, '--json'], f, env, null);
+      assert.equal(refused.code, 6, refused.stderr); assert.equal(refused.stdout, ''); assert.ok(refused.stderr.includes(`${bound} bytes`), refused.stderr);
+    }
+  } finally { await f.close(); }
 });
 test('lost WS mutation acknowledgement is uncertain with its recoverable request UUID and no retry', async () => {
   let calls = 0; const f = await fixture((_q, r) => reply(r, 404, {}, {}), ws((socket, _id, op) => { if ('Purge' in op) { calls++; socket.destroy(); } })); try { state(f); const result = await cli(['purge', ID, '--yes', '--request-id', GENERATION, '--timeout-ms', '1000', '--json'], f, {}, null); assert.equal(result.code, 7, result.stderr); assert.equal(result.stdout, ''); assert.match(result.stderr, new RegExp(`receipt ${GENERATION}`)); assert.equal(calls, 1); } finally { await f.close(); }
@@ -257,7 +286,7 @@ test('bearer MCP uses generated results, exact pinned parameters and no cookie; 
   }, null); try { const result = await cli(['messages', ID, '--revision', '4', '--generation', GENERATION, '--auth', 'bearer', '--json'], f, { CHRONICLE_TOKEN: 'synthetic-token-0123456789-abcdefghijklmnopqrstuvwxyz-ABCDEF' }, null); assert.equal(result.code, 3, result.stderr); assert.equal(result.stdout, ''); assert.ok(!result.stderr.includes('synthetic-token-0123456789-abcdefghijklmnopqrstuvwxyz-ABCDEF')); assert.equal(calls, 1); } finally { await f.close(); }
 });
 test('HTTP mutations distinguish definitive invalid from uncertain acknowledgement loss', async () => {
-  const f = await fixture((_q, r) => reply(r, 400, { error: { code: 'invalid', message: 'secret never print' } }, {}), null); try { state(f); const result = await cli(['logout', '--yes', '--json'], f, {}, null); assert.equal(result.code, 2, result.stderr); assert.ok(!result.stderr.includes('secret')); assert.equal(f.requests.length, 1); } finally { await f.close(); }
+  const f = await fixture((_q, r) => reply(r, 400, { error: { code: 'invalid', message: 'definitive server detail' } }, {}), null); try { state(f); const result = await cli(['logout', '--yes', '--json'], f, {}, null); assert.equal(result.code, 2, result.stderr); assert.ok(result.stderr.includes('Server invalid: definitive server detail'), result.stderr); assert.equal(f.requests.length, 1); } finally { await f.close(); }
 });
 test('StartMcpTest keeps its owning socket until terminal state and returns complete bounded trace once', async () => {
   let starts = 0; let reads = 0;
@@ -338,7 +367,7 @@ for (const code of ['unauthorized', 'unavailable', 'protocol-error', 'unknown-af
 });
 for (const [code, expected] of [['invalid', 2], ['conflict', 5], ['not-found', 4], ['forbidden', 3]] as const) test(`proven WS business rejection ${code} remains definitive`, async () => {
   const f = await fixture((_q, r) => reply(r, 404, {}, {}), ws((socket, id) => send(socket, id, { Error: { failure: { code, message: 'private-rejection-canary' } } })));
-  try { state(f); const result = await cli(['groups', 'create', 'rejected-fixture', '--yes', '--request-id', GENERATION], f, {}, null); assert.equal(result.code, expected, result.stderr); assert.ok(!result.stderr.includes('chronicle receipt')); assert.ok(!result.stderr.includes('private-rejection-canary')); assert.equal(result.stdout, ''); } finally { await f.close(); }
+  try { state(f); const result = await cli(['groups', 'create', 'rejected-fixture', '--yes', '--request-id', GENERATION], f, {}, null); assert.equal(result.code, expected, result.stderr); assert.ok(!result.stderr.includes('chronicle receipt')); assert.ok(result.stderr.includes(`Server ${code}: private-rejection-canary`), result.stderr); assert.equal(result.stdout, ''); } finally { await f.close(); }
 });
 for (const [name, fault] of [
   ['code-only', { error: { code: 'invalid' } }],
@@ -353,7 +382,7 @@ for (const [name, fault] of [
 });
 for (const [status, code, expected] of [[400, 'invalid', 2], [409, 'conflict', 5], [401, 'unauthorized', 3], [503, 'unavailable', 7], [500, 'invalid', 7]] as const) test(`account current fault ${code}/${status} uses route-specific outcome semantics`, async () => {
   const f = await fixture((_q, r) => reply(r, status, { error: { code, message: 'private-fault-canary' } }, {}), null);
-  try { state(f); const result = await cli(['logout', '--yes', '--json'], f, {}, null); assert.equal(result.code, expected, result.stderr); assert.equal(result.stdout, ''); assert.ok(!result.stderr.includes('private-fault-canary')); } finally { await f.close(); }
+  try { state(f); const result = await cli(['logout', '--yes', '--json'], f, {}, null); assert.equal(result.code, expected, result.stderr); assert.equal(result.stdout, ''); assert.equal(result.stderr.includes(`Server ${code}: private-fault-canary`), expected !== 7, result.stderr); } finally { await f.close(); }
 });
 for (const [name, fault, expected] of [
   ['code-only', { code: 'invalid' }, 7],
@@ -365,7 +394,7 @@ for (const [name, fault, expected] of [
   let dispatched = 0;
   const report = { collectorId: 'owned-test', sequence: '19', runId: ID, phase: 'Idle', startedAt: '2026-11-16T00:00:00Z', counters: { discovered: 0, scanned: 0, waiting: 0, excluded: 0, unchanged: 0, enqueued: 0, uploaded: 0, uploadFailures: 0, quarantined: 0, pending: 0, stopped: 0, conflicts: 0, scannedBytes: '0' }, totalUploadBytes: '0', uploadedBytes: '0', currentUploadTotalBytes: null, error: null };
   const f = await fixture((q, r) => { if (q.url === '/api/versions') reply(r, 200, VERSION, {}); else { dispatched++; reply(r, 400, fault, {}); } }, null);
-  try { const result = await cli(['report-progress', '--file', '-', '--yes', '--json'], f, { CHRONICLE_TOKEN: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+/.=-' }, JSON.stringify(report)); assert.equal(result.code, expected, result.stderr); assert.ok(!result.stderr.includes('private-domain-canary')); assert.equal(result.stdout, ''); assert.equal(dispatched, 1); } finally { await f.close(); }
+  try { const result = await cli(['report-progress', '--file', '-', '--yes', '--json'], f, { CHRONICLE_TOKEN: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+/.=-' }, JSON.stringify(report)); assert.equal(result.code, expected, result.stderr); assert.equal(result.stderr.includes('Server invalid: private-domain-canary'), expected !== 7, result.stderr); assert.equal(result.stdout, ''); assert.equal(dispatched, 1); } finally { await f.close(); }
 });
 const ACK_REQUEST = '0193e8d5-6f5c-7a1b-8c2d-000000000077';
 const ACK_OTHER = '0193e8d5-6f5c-7a1b-8c2d-000000000078';
