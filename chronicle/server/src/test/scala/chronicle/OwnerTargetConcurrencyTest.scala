@@ -75,7 +75,7 @@ final class OwnerTargetConcurrencyTest extends munit.FunSuite {
       assert(a.renew(claim,300)); assert(a.publish(claim,Nil))
     } finally { pool.shutdownNow(); assert(pool.awaitTermination(6,TimeUnit.SECONDS)) }
   }}
-  test("Effectual GoodCommunication: expiry during generation persistence rolls back all publication side effects") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
+  test("Effectual GoodCommunication: expiry during generation persistence leaves the publication staged, which no reader reaches") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
     val out=a.ingest("a",Fixtures.snapshot()); val first=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
     def chunks(claim: Claim): List[IndexedChunk] = List(IndexedChunk(Fragments.split(claim.messages.decoded).head.copy(sessionId=claim.sessionId),List(1.0,0.0,0.0)))
     assert(a.publish(first,chunks(first))); val previous=a.session("a",out.sessionId).view
@@ -90,8 +90,9 @@ final class OwnerTargetConcurrencyTest extends munit.FunSuite {
       assert(!a.publishProblems(claim,ProblemPublicationFixtures.oneProblem(claim)))
       assertEquals(a.session("a",out.sessionId).view,previous)
       db.transaction { x =>
-        assertEquals(Sql.one(x,"SELECT count(*) FROM ch_generations WHERE session_id=?",out.sessionId)(_.getLong(1)).get,1L)
-        assertEquals(Sql.one(x,"SELECT count(*) FROM ch_chunks")(_.getLong(1)).get,1L)
+        val staged="EXISTS(SELECT 1 FROM ch_staged_generations st WHERE st.generation=g.id)"
+        assertEquals(Sql.rows(x,s"SELECT $staged FROM ch_generations g WHERE session_id=? ORDER BY 1",out.sessionId)(_.getBoolean(1)),List(false,true))
+        assertEquals(Sql.rows(x,s"SELECT $staged FROM ch_chunks ch JOIN ch_generations g ON g.id=ch.generation ORDER BY 1")(_.getBoolean(1)),List(false,true))
         assertEquals(Sql.one(x,"SELECT count(*) FROM ch_search_chunks")(_.getLong(1)).get,1L)
         assertEquals(Sql.one(x,"SELECT state FROM ch_jobs WHERE id=?",claim.jobId)(_.getString(1)).get,"Running")
       }

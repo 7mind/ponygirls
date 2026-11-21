@@ -26,7 +26,8 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     def renew(claim: Claim,lease: Int): Boolean = delegate.renew(claim,lease)
     def defer(claim: Claim,total: Int): Boolean = delegate.defer(claim,total)
     def progress(claim: Claim,done: Int,total: Int): Boolean = synchronized { progressCalls+=((done,total)); delegate.progress(claim,done,total) }
-    def publishProblems(claim: Claim,publication: ProblemsPublication,fetch: MessageFetch): Boolean = synchronized { publications+=publication; delegate.publishProblems(claim,publication,fetch) }
+    def publishProblems(claim: Claim,publication: ProblemRows): Boolean = synchronized { publications+=ProblemsPublication.collect(publication); delegate.publishProblems(claim,publication) }
+    def retire(claim: Claim): Unit = delegate.retire(claim)
     def fail(claim: Claim,code: String): Unit = synchronized { failures+=code; delegate.fail(claim,code) }
     def fail(claim: Claim,code: String,stage: IndexingStage): Unit = synchronized { failures+=code; delegate.fail(claim,code,stage) }
     def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = delegate.reserveAnnotation(c,key)
@@ -237,8 +238,9 @@ abstract class PassageWorkerContract extends munit.FunSuite {
         def defer(c: Claim,t: Int)=delegate.defer(c,t)
         def progress(c: Claim,n: Int,t: Int)=delegate.progress(c,n,t)
         def publish(c: Claim,chunks: List[IndexedChunk])=delegate.publish(c,chunks)
-        def publishProblems(c: Claim,p: ProblemsPublication,fetch: MessageFetch): Boolean = {
-          val result=delegate.publishProblems(c,p,fetch)
+        def retire(c: Claim): Unit=delegate.retire(c)
+        def publishProblems(c: Claim,p: ProblemRows): Boolean = {
+          val result=delegate.publishProblems(c,p)
           if(c.owner=="b") published.complete(()).unsafeRunSync()
           result
         }

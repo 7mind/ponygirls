@@ -98,7 +98,8 @@ class PostgresBehaviorTest extends munit.FunSuite {
     assert(!a.publish(older,Nil))
     assertEquals(a.session("a",first.sessionId).view,published)
     assertEquals(job(a,older.jobId),(JobState.Failed,Some(Jobs.supersededRevision)))
-    assertEquals(db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_generations WHERE session_id=? AND revision=1",first.sessionId)(_.getInt(1))),Some(0))
+    // Its generation stays staged, which no reader reaches, until the maintenance pass deletes it (its job ended).
+    assertEquals(db.transaction(x => Sql.rows(x,"SELECT EXISTS(SELECT 1 FROM ch_staged_generations st WHERE st.generation=g.id) FROM ch_generations g WHERE session_id=? AND revision=1",first.sessionId)(_.getBoolean(1))),List(true))
   }}
   test("BG-GoodCommunication regression: retry rejects obsolete revisions rather than acknowledging ineligible work") { database { (c,db,a,auth) =>
     val request=Fixtures.snapshot(); val old=a.ingest("a",request)
@@ -313,7 +314,7 @@ class PostgresBehaviorTest extends munit.FunSuite {
       assertEquals(archive.statuses("a",0,100).jobs.find(_.id==old.jobId).get.error,Some("superseded-revision"))
     } finally { executor.shutdownNow(); executor.awaitTermination(6,java.util.concurrent.TimeUnit.SECONDS) }
   }}
-  test("BG-GoodCommunication regression: confirmed rebuild waits behind in-flight publication and rejects its now-stale preview") { database { (c,db,a,auth) =>
+  test("BG-GoodCommunication regression: confirmed rebuild waits behind an in-flight publication's switch and rejects its now-stale preview") { database { (c,db,a,auth) =>
     val timed=c.copy(databaseLimits=c.databaseLimits.copy(statementTimeout=scala.concurrent.duration.DurationInt(5).seconds))
     val timedDb=new Database(timed,IndexProfileCatalog.current(timed)); val oldArchive=new PostgresArchive(timedDb,timed)
     val out=oldArchive.ingest("a",Fixtures.snapshot())
@@ -323,10 +324,19 @@ class PostgresBehaviorTest extends munit.FunSuite {
     val executor=java.util.concurrent.Executors.newFixedThreadPool(2)
     var pending: java.util.concurrent.Future[Boolean]=null
     var switching: java.util.concurrent.Future[OwnerReindexOutcome]=null
+    // The publication stages its rows, then waits before its pieces while the test takes the job row: its switch waits there.
+    val staged=new java.util.concurrent.CountDownLatch(1); val proceed=new java.util.concurrent.CountDownLatch(1)
+    val rows=ProblemsPublication.rows(TestPublications.from(old,Nil))
+    val paused=new ProblemRows {
+      def passages(from: Int)(write: (Int,ProblemRows.Passages) => Unit): ProblemRows.Counts = rows.passages(from)(write)
+      def pieces(from: Int,passage: Int => ProblemRows.Final)(write: (Int,Vector[ProblemRows.Piece]) => Unit): Unit = { staged.countDown(); proceed.await(); rows.pieces(from,passage)(write) }
+    }
     try {
+      pending=executor.submit(new java.util.concurrent.Callable[Boolean] { def call(): Boolean=oldArchive.publishProblems(old,paused) })
+      assert(staged.await(5,java.util.concurrent.TimeUnit.SECONDS))
       db.transaction { held =>
         Sql.one(held,"SELECT id FROM ch_jobs WHERE id=? FOR UPDATE",old.jobId)(_.getString(1))
-        pending=executor.submit(new java.util.concurrent.Callable[Boolean] { def call(): Boolean=oldArchive.publish(old,Nil) })
+        proceed.countDown()
         awaitBlocked(timedDb,"SELECT j.id FROM ch_jobs")
         switching=executor.submit(new java.util.concurrent.Callable[OwnerReindexOutcome] { def call(): OwnerReindexOutcome=service("a",UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true) })
         awaitBlocked(timedDb,"SELECT profile,epoch FROM ch_owner_targets")

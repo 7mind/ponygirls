@@ -8,9 +8,9 @@ import java.util.UUID
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.*
 
-/** The S1 oversize guards (append-only ingest spec §3.1): GetRaw's raw bound, the indexing budget before a claim decodes
-  * the revision and while its pieces are embedded (the small-job budget on the lanes without the large-job permit), the
-  * message page byte bound, and their configuration keys. */
+/** The oversize guards: GetRaw's raw bound (append-only ingest spec §3.1), the indexing budget of one window and the
+  * streamed indexing of any size within it (ingest-limits spec §5.2.7, §5.2.8), the message page byte bound, and their
+  * configuration keys. */
 final class OversizeGuardTest extends munit.FunSuite {
   override val munitTimeout=2.minutes
   private def database(config: Config)(f: (Database,PostgresArchive) => Unit): Unit = {
@@ -57,30 +57,6 @@ final class OversizeGuardTest extends munit.FunSuite {
     }
   }
 
-  test("20,000 one-word messages at 4,000 dimensions end Failed index-budget-exceeded before the claim decodes them, without an attempt, also after RetryJob; the session still pages, locates and finds") {
-    val original=Fixtures.config()
-    // 2·M + 256·n is about 8 MB here: the vectors (one per fragment, 8·4,000 bytes each) and chunks exceed the budget.
-    val config=original.copy(maxMessages=20000,maxIndexingBudgetBytes=256L*1024*1024,embedding=original.embedding.copy(dimensions=4000))
-    database(config) { (db,archive) =>
-      val stored=request((0 until 20000).map(i => s"word$i"))
-      val epoch=archive.ingest("a",stored)
-      val legacy=new PostgresArchive(db,config,RevisionLayoutPolicy.Legacy).ingest("b",stored)
-      val catalog=IndexProfileCatalog.current(config)
-      assertEquals(archive.claim(catalog.knownProfiles,ClaimScope.AllOwners,300),None)
-      List(epoch,legacy).foreach(receipt => assertEquals(job(db,receipt.jobId),JobRow("Failed",Some(IndexingBudget.exceededCode),None,0,1)))
-      assertEquals(archive.statuses("a",0,100).jobs.map(j => (j.state,j.error,j.attempts)),List((JobState.Failed,Some(IndexingBudget.exceededCode),0)))
-      archive.retry("a",epoch.jobId)
-      assertEquals(archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300),None)
-      assertEquals(job(db,epoch.jobId),JobRow("Failed",Some(IndexingBudget.exceededCode),None,0,3))
-      val view=ContentView(1,None)
-      List("a"->epoch.sessionId,"b"->legacy.sessionId).foreach { (owner,id) =>
-        assertEquals(archive.messages(owner,id,19990,100,Some(view)).messages.map(_.id),(19990 until 20000).map(i => s"m$i").toList)
-        assertEquals(archive.locateMessage(owner,id,view,"m12345").position,12345)
-        assertEquals(archive.searchSessionMessages(owner,id,view,"word12345",None,10).hits,List(MessageSearchHit("m12345",12345)))
-      }
-    }
-  }
-
   private final class Embedded(dimensions: Int) extends Embedder {
     val batches=ListBuffer.empty[List[String]]
     def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO { batches+=text; text.map(_ => List.tabulate(dimensions)(i => if(i==0) 1.0 else 0.0)) }
@@ -90,28 +66,64 @@ final class OversizeGuardTest extends munit.FunSuite {
     worker(archive,config,annotator,embedder,ModelAdmission.make(config.indexing).unsafeRunSync())
   private def worker(archive: SessionArchive,config: Config,annotator: ProblemPassageAnnotator,embedder: Embedder,admission: ModelAdmission): Worker =
     new Worker(archive,annotator,embedder,config,IndexProfileCatalog.current(config),admission,logstage.IzLogger(),ModelFixtures.failureBackoff,ModelFixtures.snapshots)
-  /** Runs a worker iteration while another lane holds the large-job permit (munit assertions stay on the test thread). */
+  /** Runs `run` while the test holds the large-job permit (munit assertions stay on the test thread). */
   private def permitTaken[A](admission: ModelAdmission)(run: IO[A]): A =
     admission.largeJob.use(taken => IO.raiseUnless(taken)(new AssertionError("the large-job permit is taken")) *> run).unsafeRunSync()
+  /** The whole-job estimate the release before the streamed one refused at the claim: 2·M + 256·n + 13,312·F and the
+    * vectors' arena (one 2 MiB block of 3-dimensional vectors here). */
+  private def oldEstimate(db: Database,id: UUID,revision: Int): Long = db.transaction(c => Sql.one(c,"SELECT 2*message_bytes+256*message_count+13312*fragment_count+2097160 FROM ch_revisions WHERE session_id=? AND revision=?",id,revision)(_.getLong(1)).get)
 
-  test("the vector arena counts in whole blocks: a one-fragment job whose budget is below one block ends Failed at the claim, before it is decoded") {
-    val config=Fixtures.config().copy(maxIndexingBudgetBytes=1024L*1024)
+  test("a session whose whole-job estimate is 50 times maxIndexingBudgetBytes indexes, publishes and is found, holding no window's pieces two windows later; RetryJob of a job ended index-budget-exceeded indexes it") {
+    // One fragment per message, 60 per window (the window's source JSON bound): 43 windows, each within the budget
+    // (64 × 13,336 B); the old estimate about 46 MB. The annotator cuts nothing (one Problem part per window).
+    val budget=900000L
+    val config=Fixtures.config().copy(maxIndexingBudgetBytes=budget,maxBodyBytes=32*1024*1024,maxFileBytes=32*1024*1024)
+    val texts=(0 until 40*ProblemPassages.maximumWindowFragments).map(i => f"needle$i%05d "+"x"*2033)
     database(config) { (db,archive) =>
-      val receipt=archive.ingest("a",request(List("one fragment")))
-      val catalog=IndexProfileCatalog.current(config)
-      assertEquals(archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300),None)
-      assertEquals(job(db,receipt.jobId),JobRow("Failed",Some(IndexingBudget.exceededCode),None,0,1))
-      archive.retry("a",receipt.jobId)
-      // The same job within a budget of two blocks (a block of 3-dimensional vectors holds 2 MiB).
-      assert(new PostgresArchive(db,config.copy(maxIndexingBudgetBytes=4L*1024*1024)).claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).nonEmpty)
+      val first=archive.ingest("a",request(texts))
+      assert(oldEstimate(db,first.sessionId,1)>50*budget)
+      // Weak references to the pieces' texts the embedder receives, by window: the publication builder held every one.
+      val windows=new java.util.concurrent.atomic.AtomicInteger(0)
+      val held=new java.util.concurrent.ConcurrentHashMap[Int,List[java.lang.ref.WeakReference[String]]]()
+      val older=ListBuffer.empty[Int]
+      val annotator=new ProblemPassageAnnotator {
+        def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
+          val index=windows.getAndIncrement()
+          if(index>=2) { System.gc(); older+=(0 to index-2).flatMap(i => Option(held.get(i)).toList.flatten).count(_.get!=null) }
+          ProblemPassages.Decision(Vector(ProblemPassages.Part(ProblemPassages.Point(0,0),window.terminal,previous.nonEmpty,"synthetic goal",List("synthetic"))))
+        }
+      }
+      val embedder=new Embedder {
+        def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO {
+          held.merge(windows.get-1,text.map(new java.lang.ref.WeakReference(_)),_++_); text.map(_ => List(1.0,0.0,0.0))
+        }
+        def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("worker queried embedding"))
+      }
+      assert(worker(archive,config,annotator,embedder).once.unsafeRunSync())
+      assertEquals((job(db,first.jobId).state,archive.session("a",first.sessionId).indexedRevision),("Complete",Some(1)))
+      assertEquals((windows.get,older.size),(43,41))
+      assert(older.max<=ProblemPassages.maximumTailFragments,s"pieces of windows two back still held: ${older.max} (the carry keeps at most ${ProblemPassages.maximumTailFragments})")
+      val search=new PostgresSearch(db,archive,config)
+      def found(term: String): List[UUID] = search.search("a",SearchQuery(term,SearchMode.Lexical,SearchFilter(None,None,None,None,Nil),10,0),None).hits.map(_.session.id)
+      assertEquals(found("needle02047"),List(first.sessionId))
+      // A job an earlier release ended index-budget-exceeded (its estimate here, the arena's block alone, is above the
+      // budget) stays so until RetryJob (no automatic retry), then indexes.
+      val ended=archive.ingest("b",request(List("needle99999 ended")))
+      assert(oldEstimate(db,ended.sessionId,1)>budget)
+      db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET state='Failed',error=?,failure_stage=NULL,fence=fence+1 WHERE id=?",IndexingBudget.exceededCode,ended.jobId))
+      assert(!worker(archive,config,annotator,embedder).once.unsafeRunSync(),"not retried automatically")
+      archive.retry("b",ended.jobId)
+      assert(worker(archive,config,annotator,embedder).once.unsafeRunSync())
+      assertEquals((job(db,ended.jobId).state,archive.session("b",ended.sessionId).indexedRevision),("Complete",Some(1)))
+      def foundBy(reader: String,term: String): List[UUID] = search.search(reader,SearchQuery(term,SearchMode.Lexical,SearchFilter(None,None,None,None,Nil),10,0),None).hits.map(_.session.id)
+      assertEquals(foundBy("b","needle99999"),List(ended.sessionId))
     }
   }
 
-  test("an annotator cutting one fragment into more pieces than the estimate ends the job Failed index-budget-exceeded before they are embedded, with the arena in whole blocks") {
-    // 4,000 dimensions: a block holds 65 vectors (2.08 MB). The estimate (one fragment, one block: about 2.1 MB) fits
-    // 4 MB; 80 one-scalar pieces need 1.07 MB of chunks and two blocks.
+  test("an annotator cutting one fragment into more pieces than the window budget holds ends the job Failed index-budget-exceeded before they are embedded") {
+    // 4,000 dimensions: 80 one-scalar pieces with their vectors take 80 × (32,000 + 13,312) bytes.
     val original=Fixtures.config()
-    val config=original.copy(maxIndexingBudgetBytes=4000000L,embedding=original.embedding.copy(dimensions=4000))
+    val config=original.copy(maxIndexingBudgetBytes=IndexingBudget.window(80,0,4000).toLong-1,embedding=original.embedding.copy(dimensions=4000))
     database(config) { (db,archive) =>
       val receipt=archive.ingest("a",request(List("AB"*40)))
       val embedder=new Embedded(4000)
@@ -122,8 +134,7 @@ final class OversizeGuardTest extends munit.FunSuite {
   }
 
   test("an annotator subdividing its fragments into one-scalar Context parts ends the job Failed index-budget-exceeded before the coverage is retained") {
-    // 12,000 scalars in six fragments: the estimate (about 2.2 MB with one arena block) fits 2.4 MB; 12,000 retained
-    // Context coverage spans do not.
+    // 12,000 scalars in six fragments, one window: 12,000 Context coverage spans of 256 bytes do not fit 2.4 MB.
     val config=Fixtures.config().copy(maxIndexingBudgetBytes=2400000L)
     database(config) { (db,archive) =>
       val receipt=archive.ingest("a",request(List("x"*12000)))
@@ -140,43 +151,20 @@ final class OversizeGuardTest extends munit.FunSuite {
     }
   }
 
-  test("a job whose estimate exceeds maxSmallJobBudgetBytes is not claimed while another lane holds the large-job permit, without an attempt or a failure, and the lane with the permit takes it") {
-    // 3 dimensions: one arena block (2.1 MB) holds every vector here. "small" is estimated at about 2.11 MB, the 20
-    // fragments of 40,000 scalars at 2.44 MB.
-    val config=Fixtures.config().copy(maxSmallJobBudgetBytes=2200000L)
+  test("maxSmallJobBudgetBytes is accepted and has no effect: a lane without the large-job permit indexes a job above it; the worker logs the retired key once") {
+    // "x"*40000 in 20 fragments, one window: the release before the streamed one estimated it at 2.44 MB.
+    val config=Fixtures.config().copy(maxSmallJobBudgetBytes=Some(2200000L),indexing=IndexingCapacity.defaults.copy(annotationSessions=1))
     database(config) { (db,archive) =>
-      val large=archive.ingest("a",request(List("x"*40000))); val small=archive.ingest("a",request(List("small")))
-      val admission=ModelAdmission.make(config.indexing).unsafeRunSync()
-      val lane=worker(archive,config,new ProblemPassageFixtures.Dummy,new Embedded(3),admission)
-      assert(permitTaken(admission)(lane.once))
-      assert(!permitTaken(admission)(lane.once),"the job above the small-job budget waits")
-      assertEquals(archive.session("a",small.sessionId).indexedRevision,Some(1))
-      assertEquals(job(db,large.jobId),JobRow("Queued",None,None,0,0))
-      assert(lane.once.unsafeRunSync())
-      assertEquals((job(db,large.jobId).state,job(db,large.jobId).attempts,archive.session("a",large.sessionId).indexedRevision),("Complete",1,Some(1)))
-    }
-  }
-
-  test("a job that outgrows maxSmallJobBudgetBytes while it runs without the large-job permit returns to the queue for the lane with the permit, without an attempt or a failure, and completes there; above maxIndexingBudgetBytes that lane ends it index-budget-exceeded") {
-    // "AB"*40: one fragment estimated at about 2.11 MB, cut by the annotator into 80 one-scalar pieces that retain 3.16 MB.
-    val config=Fixtures.config().copy(maxIndexingBudgetBytes=4000000L,maxSmallJobBudgetBytes=3000000L)
-    database(config) { (db,archive) =>
-      val outgrown=archive.ingest("a",request(List("AB"*40)))
-      val admission=ModelAdmission.make(config.indexing).unsafeRunSync()
-      val embedder=new Embedded(3)
-      val lane=worker(archive,config,new ProblemPassageFixtures.Dummy,embedder,admission)
-      assert(permitTaken(admission)(lane.once))
-      assertEquals(job(db,outgrown.jobId),JobRow("Queued",None,None,0,2))
-      assertEquals(archive.statuses("a",0,100).jobs.map(j => (j.state,j.attempts,j.error,j.completedWindows,j.totalWindows)),List((JobState.Queued,0,None,0,Some(1))))
-      assertEquals(embedder.batches.toList,Nil)
-      assert(!permitTaken(admission)(lane.once),"the deferred job waits for the lane with the permit")
-      assert(lane.once.unsafeRunSync())
-      assertEquals((job(db,outgrown.jobId).state,job(db,outgrown.jobId).attempts,archive.session("a",outgrown.sessionId).indexedRevision),("Complete",1,Some(1)))
-      assertEquals(embedder.batches.flatten.size,80)
-      val exceeded=archive.ingest("b",request(List("AB"*40)))
-      val tight=config.copy(maxIndexingBudgetBytes=3100000L)
-      assert(worker(new PostgresArchive(db,tight),tight,new ProblemPassageFixtures.Dummy,embedder).once.unsafeRunSync())
-      assertEquals(job(db,exceeded.jobId),JobRow("Failed",Some(IndexingBudget.exceededCode),Some("Embedding"),1,1))
+      val receipt=archive.ingest("a",request(List("x"*40000)))
+      val admission=ModelAdmission.make(config.indexing).unsafeRunSync(); val log=new WorkerLog
+      val published=cats.effect.Deferred.unsafe[IO,Boolean]
+      val observed=new ForwardingArchive(archive) {
+        override def publishProblems(c: Claim,p: ProblemRows): Boolean = { val result=super.publishProblems(c,p); published.complete(result).unsafeRunSync(); result }
+      }
+      val lane=new Worker(observed,new ProblemPassageFixtures.Dummy,new Embedded(3),config,IndexProfileCatalog.current(config),admission,log.logger,ModelFixtures.failureBackoff,ModelFixtures.snapshots)
+      assert(permitTaken(admission)(lane.run.start.flatMap(fiber => published.get.timeout(30.seconds).guarantee(fiber.cancel))))
+      assertEquals((job(db,receipt.jobId).state,archive.session("a",receipt.sessionId).indexedRevision),("Complete",Some(1)))
+      assertEquals(log.lines.filter(_.startsWith("retired configuration key ignored")),List("retired configuration key ignored key=maxSmallJobBudgetBytes value=2200000: a job's heap is one window, bounded by maxIndexingBudgetBytes"))
     }
   }
 
@@ -216,18 +204,17 @@ final class OversizeGuardTest extends munit.FunSuite {
     }
   }
 
-  test("configuration: maxFileBytes, maxRawReadBytes, maxIndexingBudgetBytes and maxSmallJobBudgetBytes take values above 2^31; omitted, the raw bound is maxBodyBytes, the budget 2,147,483,647 and the small-job budget the estimate of 100 windows of 64 full fragments") {
+  test("configuration: maxFileBytes, maxRawReadBytes and maxIndexingBudgetBytes take values above 2^31; omitted, the raw bound is maxBodyBytes and the budget 2,147,483,647; the retired maxSmallJobBudgetBytes is accepted when positive") {
     val example=Wire.parse(java.nio.file.Files.readString(java.nio.file.Path.of("config.example.json"))).asObject.get
     def parsed(fields: (String,Json)*): Config = Json.fromJsonObject(fields.foldLeft(example)((o,f) => o.add(f._1,f._2))).as[Config].fold(error => fail(error.toString),identity)
     val omitted=parsed()
     omitted.validate()
-    assertEquals((omitted.maxRawReadBytes,omitted.maxIndexingBudgetBytes,omitted.maxSmallJobBudgetBytes),(omitted.maxBodyBytes.toLong,Config.defaultIndexingBudgetBytes,Config.defaultSmallJobBudgetBytes(omitted.embedding.dimensions)))
+    assertEquals((omitted.maxRawReadBytes,omitted.maxIndexingBudgetBytes,omitted.maxSmallJobBudgetBytes),(omitted.maxBodyBytes.toLong,Config.defaultIndexingBudgetBytes,None))
     assertEquals(Config.defaultIndexingBudgetBytes,2147483647L)
-    assertEquals((Config.defaultSmallJobBudgetBytes(768),Config.defaultSmallJobBudgetBytes(4000)),(152856880L,318971184L))
     val large=parsed("maxFileBytes"->Json.fromLong(8589934592L),"maxRawReadBytes"->Json.fromLong(536870912L),"maxIndexingBudgetBytes"->Json.fromLong(Long.MaxValue),"maxSmallJobBudgetBytes"->Json.fromLong(4294967296L))
     large.validate()
-    assertEquals((large.maxFileBytes,large.maxRawReadBytes,large.maxIndexingBudgetBytes,large.maxSmallJobBudgetBytes),(8589934592L,536870912L,Long.MaxValue,4294967296L))
-    List(omitted.copy(maxRawReadBytes=536870913L),omitted.copy(maxRawReadBytes=0),omitted.copy(maxIndexingBudgetBytes=0),omitted.copy(maxSmallJobBudgetBytes=0)).foreach { invalid =>
+    assertEquals((large.maxFileBytes,large.maxRawReadBytes,large.maxIndexingBudgetBytes,large.maxSmallJobBudgetBytes),(8589934592L,536870912L,Long.MaxValue,Some(4294967296L)))
+    List(omitted.copy(maxRawReadBytes=536870913L),omitted.copy(maxRawReadBytes=0),omitted.copy(maxIndexingBudgetBytes=0),omitted.copy(maxSmallJobBudgetBytes=Some(0))).foreach { invalid =>
       assertEquals(intercept[DomainError](invalid.validate()).code,"config")
     }
     assert(Json.fromJsonObject(example.add("maxRawReadBytes",Json.Null)).as[Config].isLeft)

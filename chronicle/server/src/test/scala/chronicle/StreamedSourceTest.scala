@@ -111,13 +111,14 @@ final class StreamedSourceTest extends munit.FunSuite {
     }
   }
 
-  test("a message above 8 MiB waits for the snapshot admission with no transaction open, and is read once admitted: in a window and in the publication's validation") {
+  // Phase P reads the messages again through the job's fetch, as the windows do (Worker's replay): this read covers both.
+  test("a message above 8 MiB waits for the snapshot admission with no transaction open, and is read once admitted") {
     val config=Fixtures.config()
     database(config) { db =>
       val texts=List("first","z"*(SnapshotAdmission.largeBodyBytes+1))
       val archive=new PostgresArchive(db,config)
       archive.ingest("a",request(texts,raw=false))
-      val claim=claimed(archive); val publication=TestPublications.from(claim,Nil)
+      val claim=claimed(archive)
       def transactions: Int = db.transaction(c => Sql.one(c,"SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND xact_start IS NOT NULL")(_.getInt(1)).get)
       final case class Waited[A](waited: Boolean,transactions: Int,value: A)
       SnapshotAdmission.resource(logstage.IzLogger(Log.Level.Info,Nil),SnapshotAdmission.ingestWait).use { admission => Dispatcher.sequential[IO](await=true).use { dispatcher =>
@@ -133,13 +134,7 @@ final class StreamedSourceTest extends munit.FunSuite {
           _ <- release.complete(()) *> holder.joinWithNever
           value <- reader.joinWithNever
         } yield Waited(observed._1==1L,open,value)
-        for {
-          window <- held(claim.messages.reader(fetch).read(1).map(_.text))
-          published <- held(archive.publishProblems(claim,publication,fetch))
-        } yield {
-          assertEquals(window,Waited(true,0,Vector(texts(1))),"a window's read")
-          assertEquals(published,Waited(true,0,true),"the publication's validation")
-        }
+        held(claim.messages.reader(fetch).read(1).map(_.text)).map(window => assertEquals(window,Waited(true,0,Vector(texts(1))),"a window's read"))
       }}.unsafeRunSync()
     }
   }

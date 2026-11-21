@@ -57,7 +57,7 @@ object IndexingCapacity {
   /** Large jobs (LargeJobs) running at once; small jobs use every annotation session. */
   val largeJobs: Int = 1
 }
-final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Long, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits,accounts: Option[AccountsConfig],maxRawReadBytes: Long,maxIndexingBudgetBytes: Long,maxSmallJobBudgetBytes: Long,maxRecordBytes: Long=Config.defaultMaxRecordBytes) {
+final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Long, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits,accounts: Option[AccountsConfig],maxRawReadBytes: Long,maxIndexingBudgetBytes: Long,maxSmallJobBudgetBytes: Option[Long],maxRecordBytes: Long=Config.defaultMaxRecordBytes) {
   def accountsEnabled: Boolean = accounts.exists(_.enabled)
   def jdbcConfig: JdbcConfig = JdbcConfig(jdbcUrl,databaseUser,Path.of(databasePasswordFile),databaseLimits)
   def profile: String = IndexProfileCatalog.current(this).preferred.profile
@@ -83,7 +83,7 @@ final case class Config(listenHost: String, listenPort: Int, allowedOrigin: Stri
     }
     SearchPolicy.dimensions(this)
     Check(maxBodyBytes > 0 && maxBodyBytes <= Config.maximumBodyBytes && maxFileBytes > 0 && maxFiles > 0 && maxMessages > 0, "config", "invalid limits")
-    Check(maxRawReadBytes > 0 && maxRawReadBytes <= Config.maximumRawReadBytes && maxIndexingBudgetBytes > 0 && maxSmallJobBudgetBytes > 0, "config", "invalid raw read or indexing budget limits")
+    Check(maxRawReadBytes > 0 && maxRawReadBytes <= Config.maximumRawReadBytes && maxIndexingBudgetBytes > 0 && maxSmallJobBudgetBytes.forall(_ > 0), "config", "invalid raw read or indexing budget limits")
     Check(maxRecordBytes >= Config.minimumRecordBytes && maxRecordBytes <= Config.maximumRecordBytes, "config", "maxRecordBytes must be 1048576..134217728")
     Check(sessionTtlSeconds > 0 && annotation.timeoutSeconds > 0 && embedding.timeoutSeconds > 0 && annotation.maxResponseBytes > 0 && embedding.maxResponseBytes > 0, "config", "invalid timeouts")
     val origin = java.net.URI.create(allowedOrigin)
@@ -97,15 +97,9 @@ object Config {
   val maximumBodyBytes = 512*1024*1024
   /** GetRaw builds the raw in one database value and doubles it in its JSON response; PostgreSQL cannot build 1 GiB. */
   val maximumRawReadBytes: Long = 512L*1024*1024
-  /** The estimated heap one indexing job may retain (IndexingBudget); about 4.4 GB of the 6.4 GiB heap bound stay for the rest. */
+  /** The estimated heap of one window of an indexing job and of one message's decode (IndexingBudget, ingest-limits spec
+    * §5.2.7); no job is refused for its whole size. */
   val defaultIndexingBudgetBytes: Long = Int.MaxValue.toLong
-  /** The estimated heap of a job that runs without the large-job permit (LargeJobs): IndexingBudget.estimate of
-    * LargeJobs.windows windows of full fragments, one message each (0.15 GB at 768 dimensions, 0.32 GB at 4,000). The
-    * other lanes then hold at most (annotationSessions - 1) times this beside the one large job's budget. */
-  def defaultSmallJobBudgetBytes(dimensions: Int): Long = {
-    val fragments=LargeJobs.windows.toLong*ProblemPassages.maximumWindowFragments
-    IndexingBudget.estimate(fragments,fragments*ProblemPassages.maximumFragmentBytes,fragments,dimensions).toLong
-  }
   /** Part uploads: the largest raw record (one JSONL line); a record whose part exceeds the ordinary part bound travels
     * alone in a large part. The maximum keeps a message text derived from one record far below PostgreSQL's jsonb
     * string limit (256 MiB). */
@@ -215,7 +209,8 @@ object Config {
     // Omitted: everything /api/ingest can store stays readable.
     maxRawReadBytes <- optional(cursor,"maxRawReadBytes",maxBodyBytes.toLong)
     maxIndexingBudgetBytes <- optional(cursor,"maxIndexingBudgetBytes",defaultIndexingBudgetBytes)
-    maxSmallJobBudgetBytes <- optional(cursor,"maxSmallJobBudgetBytes",defaultSmallJobBudgetBytes(embedding.dimensions))
+    // Retired (ingest-limits spec §5.2.7): accepted and validated so existing configurations start, without effect.
+    maxSmallJobBudgetBytes <- present[Long](cursor,"maxSmallJobBudgetBytes")
     maxRecordBytes <- optional(cursor,"maxRecordBytes",defaultMaxRecordBytes)
   } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits,accounts,maxRawReadBytes,maxIndexingBudgetBytes,maxSmallJobBudgetBytes,maxRecordBytes) }
   def load(path: String): Config = { val c = Wire.parse(Files.readString(Path.of(path))).as[Config].fold(_ => throw DomainError("config", "invalid configuration"), identity); c.validate(); c }
@@ -232,16 +227,14 @@ final case class Identity(user: UserInfo, browser: Boolean, credentialHash: Stri
 /** `snapshot` is the claimed revision's envelope (no messages, no raw files); `messages` reads its messages by position
   * (ingest-limits spec §5.2.1). */
 final case class Claim(jobId: UUID, sessionId: UUID, revision: Int, fence: Long, profile: String, snapshot: IngestRequest, owner: String, targetEpoch: Long, runId: UUID, revisionBinding: RevisionBinding, messages: ClaimedMessages)
-/** `vector` of a running job is held until its publication: the worker stores it unboxed in a VectorArena; a job of
-  * 60k pieces would otherwise hold some 90M boxed numbers, which every full collection traverses. */
 final case class IndexedChunk(chunk: Chunk, vector: Seq[Double])
 enum ClaimScope {
   case AllOwners
   case Owner(owner: String)
 }
-/** Whether a claim may take a large job (more than LargeJobs.windows, or estimated or running above
-  * `maxSmallJobBudgetBytes`): a claim that may not passes one it knows by and defers one it finds while running; the job
-  * waits in the queue for a claim that may. */
+/** Whether a claim may take a large job (more than LargeJobs.windows): a claim that may not passes one it knows by and
+  * defers one it finds while running; the job waits in the queue for a claim that may. Large jobs share lane time, not
+  * heap: a job's heap is one window whatever its size (ingest-limits spec §5.2.7). */
 enum LargeJobs {
   case Admitted
   case Skipped
@@ -260,8 +253,11 @@ trait SessionArchive extends IndexCheckpoints {
   def defer(claim: Claim, totalWindows: Int): Boolean
   def renew(claim: Claim, leaseSeconds: Int): Boolean
   def progress(claim: Claim, completedWindows: Int, totalWindows: Int): Boolean
-  /** `fetch` is how the publication's validation reads the claimed messages (the job's admission). */
-  def publishProblems(claim: Claim, publication: ProblemsPublication, fetch: MessageFetch): Boolean
+  /** Stages the publication's rows and switches the source to it (ingest-limits spec §5.2.4); false when the claim is no
+    * longer current. */
+  def publishProblems(claim: Claim, rows: ProblemRows): Boolean
+  /** Deletes the search rows of the generations the claim's publication replaced (bounded statements). */
+  def retire(claim: Claim): Unit
   def fail(claim: Claim, code: String): Unit
   def fail(claim: Claim, code: String, stage: IndexingStage): Unit
 }

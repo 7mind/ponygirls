@@ -30,8 +30,7 @@ final class OwnerLeaseBoundaryTest extends munit.FunSuite {
               case "publish" => a.publish(claim,Nil)
               case "fail" => a.fail(claim,"late-expired-failure"); false
             } })
-            // A publication writes its generation before it locks the source row: there the held lock first stops its key-share insert.
-            val prefix=if(blocking=="job") "SELECT j.id FROM ch_jobs" else if(operation=="publish") "INSERT INTO ch_generations" else "SELECT revision FROM ch_sources"
+            val prefix=if(blocking=="job") "SELECT j.id FROM ch_jobs" else "SELECT revision FROM ch_sources"
             awaitBlocked(db,prefix)
             Thread.sleep(1200)
           }

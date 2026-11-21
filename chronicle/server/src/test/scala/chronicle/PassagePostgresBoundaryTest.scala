@@ -11,17 +11,20 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
     service("a",UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true); ()
   }
   private def claim(archive: SessionArchive,catalog: IndexProfileCatalog,lease: Int): Claim = archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),lease).get
+  /** What a reader can reach: every row but those of a staged generation (migration 026), which only its job's run
+    * continues or the maintenance pass deletes. */
   private def census(db: Database,id: UUID): List[String] = db.transaction { c =>
+    val visible="NOT EXISTS(SELECT 1 FROM ch_staged_generations st WHERE st.generation=g.id)"
     Sql.rows(c,"SELECT to_jsonb(s)::text FROM ch_sources s WHERE id=?",id)(_.getString(1))++
       Sql.rows(c,"SELECT to_jsonb(j)::text FROM ch_jobs j WHERE session_id=? ORDER BY id",id)(_.getString(1))++
-      Sql.rows(c,"SELECT to_jsonb(g)::text FROM ch_generations g WHERE session_id=? ORDER BY id",id)(_.getString(1))++
+      Sql.rows(c,s"SELECT to_jsonb(g)::text FROM ch_generations g WHERE session_id=? AND $visible ORDER BY id",id)(_.getString(1))++
       List("ch_chunks","ch_generation_tags","ch_problem_passages","ch_problem_spans","ch_problem_pieces").flatMap(table =>
-        Sql.rows(c,s"SELECT to_jsonb(item)::text FROM $table item JOIN ch_generations g ON g.id=item.generation WHERE g.session_id=? ORDER BY to_jsonb(item)::text",id)(_.getString(1)))++
-      Sql.rows(c,"SELECT to_jsonb(s)::text FROM ch_search_chunks s WHERE session_id=? ORDER BY id",id)(_.getString(1))++
+        Sql.rows(c,s"SELECT to_jsonb(item)::text FROM $table item JOIN ch_generations g ON g.id=item.generation WHERE g.session_id=? AND $visible ORDER BY to_jsonb(item)::text",id)(_.getString(1)))++
+      Sql.rows(c,s"SELECT to_jsonb(s)::text FROM ch_search_chunks s JOIN ch_generations g ON g.id=s.generation WHERE s.session_id=? AND $visible ORDER BY s.id",id)(_.getString(1))++
       Sql.rows(c,"SELECT to_jsonb(m)::text FROM ch_reindex_members m WHERE session_id=? ORDER BY request_id",id)(_.getString(1))
   }
   List("ch_problem_passages","ch_problem_spans","ch_problem_pieces").foreach { table =>
-    test(s"Effectual GoodCommunication: lease expiry during $table persistence rolls back every new artifact and preserves prior publication") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
+    test(s"Effectual GoodCommunication: lease expiry during $table persistence leaves no artifact a reader reaches and preserves prior publication") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
       val receipt=archive.ingest("a",request(List("A original"))); val prior=claim(archive,catalog,300)
       val old=Chunk(UUID.randomUUID(),receipt.sessionId,"prior publication","old",List("old-tag"),Nil,0.0)
       TestPublications.stored(db,prior,List(IndexedChunk(old,vector)))
@@ -41,7 +44,7 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
       } finally db.transaction { c => Sql.exec(c,s"DROP TRIGGER ch_test_slow_problem ON $table"); Sql.exec(c,"DROP FUNCTION ch_test_slow_problem()") }
     }}
   }
-  test("Effectual GoodCommunication: SQL failure after passage metadata insertion rolls back chunks/spans/links and permits the same valid claim to retry") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
+  test("Effectual GoodCommunication: SQL failure after passage metadata insertion leaves no artifact a reader reaches and permits the same valid claim to retry") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
     transition(db); val receipt=archive.ingest("a",request(List("A🙂"))); val current=claim(archive,catalog,300); val publication=oneProblem(current)
     db.transaction { c =>
       Sql.exec(c,"CREATE FUNCTION ch_test_reject_span() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'synthetic span rejection'; END$$")
@@ -62,7 +65,7 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
     db.transaction { c =>
       Sql.exec(c,s"CREATE ROLE $role LOGIN PASSWORD '${Fixtures.databasePassword}'")
       Sql.exec(c,s"GRANT USAGE ON SCHEMA public TO $role")
-      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_problem_passages,ch_problem_spans TO $role")
+      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_staged_generations,ch_problem_passages,ch_problem_spans TO $role")
       Sql.exec(c,s"GRANT SELECT(session_id,revision) ON ch_revisions TO $role")
     }
     try {

@@ -38,7 +38,8 @@ class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
   def renew(c: Claim,lease: Int): Boolean=delegate.renew(c,lease)
   def defer(c: Claim,total: Int): Boolean=delegate.defer(c,total)
   def progress(c: Claim,done: Int,total: Int): Boolean=delegate.progress(c,done,total)
-  def publishProblems(c: Claim,p: ProblemsPublication,fetch: MessageFetch): Boolean=delegate.publishProblems(c,p,fetch)
+  def publishProblems(c: Claim,p: ProblemRows): Boolean=delegate.publishProblems(c,p)
+  def retire(c: Claim): Unit=delegate.retire(c)
   def fail(c: Claim,code: String): Unit=delegate.fail(c,code)
   def fail(c: Claim,code: String,stage: IndexingStage): Unit=delegate.fail(c,code,stage)
   def checkpoint(c: Claim,key: CheckpointKey): Option[Json]=delegate.checkpoint(c,key)
@@ -121,7 +122,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
       def configured(batchSize: Int): Config = f.config.copy(indexing=f.config.indexing.copy(embeddingBatchSize=batchSize))
       val published=ListBuffer.empty[ProblemsPublication]
       val archive=new ForwardingArchive(f.archive()) {
-        override def publishProblems(c: Claim,p: ProblemsPublication,fetch: MessageFetch): Boolean = { published+=p; super.publishProblems(c,p,fetch) }
+        override def publishProblems(c: Claim,p: ProblemRows): Boolean = { published+=ProblemsPublication.collect(p); super.publishProblems(c,p) }
       }
       var annotations=0; var failed=false; val batches=ListBuffer.empty[List[String]]
       val model=new ProblemPassageAnnotator {
@@ -139,10 +140,9 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
       assert(worker(archive,configured(stored),model,embedding).once.unsafeRunSync()); assert(failed)
       assertEquals(f.acceptedParts(receipt.jobId,IndexingStage.Embedding),texts.indexOf(failedText)/stored)
       batches.clear(); val log=new WorkerLog
-      // Within a budget of exactly the claim's estimate: the window's pieces count once, also when the parts accepted
-      // under the other grouping are discarded and the window is embedded again.
-      val messageBytes=request(texts.map("assistant"->_)).messages.map(m => Wire.encode(Message.codecJson,m).noSpaces.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong).sum
-      val tight=configured(current).copy(maxIndexingBudgetBytes=IndexingBudget.estimate(texts.size,messageBytes,texts.size,f.config.embedding.dimensions).toLong)
+      // Within a budget of exactly the window's pieces: they count once, also when the parts accepted under the other
+      // grouping are discarded and the window is embedded again.
+      val tight=configured(current).copy(maxIndexingBudgetBytes=IndexingBudget.window(texts.size,0,f.config.embedding.dimensions).toLong)
       assert(worker(archive,tight,model,embedding,ModelFixtures.failureBackoff,log.logger).once.unsafeRunSync())
       assertEquals(batches.toList,texts.grouped(current).toList,"the window is embedded again, under the current batch size")
       assertEquals(f.acceptedParts(receipt.jobId,IndexingStage.Embedding),texts.grouped(current).size,"no part of the other grouping remains")
@@ -175,7 +175,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
           if(claims==1) throw new java.sql.SQLException("canceling statement due to statement timeout","57014")
           super.claim(profiles,scope,lease,large)
         }
-        override def publishProblems(c: Claim,p: ProblemsPublication,fetch: MessageFetch): Boolean = { val result=super.publishProblems(c,p,fetch); published.complete(()).unsafeRunSync(); result }
+        override def publishProblems(c: Claim,p: ProblemRows): Boolean = { val result=super.publishProblems(c,p); published.complete(()).unsafeRunSync(); result }
       }
       fiber <- worker(archive,config,model,embedding,ModelFixtures.failureBackoff,log.logger).run.guaranteeCase(outcome => terminated.complete(outcome).void).start
       first <- IO.race(terminated.get,published.get).timeout(10.seconds)
@@ -206,7 +206,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
       terminated <- Deferred[IO,OutcomeIO[Nothing]]
       archive=new ForwardingArchive(f.archive()) {
         override def fail(c: Claim,code: String,stage: IndexingStage): Unit = { records+=1; throw new java.sql.SQLException("canceling statement due to statement timeout","57014") }
-        override def publishProblems(c: Claim,p: ProblemsPublication,fetch: MessageFetch): Boolean = { val result=super.publishProblems(c,p,fetch); published.complete(()).unsafeRunSync(); result }
+        override def publishProblems(c: Claim,p: ProblemRows): Boolean = { val result=super.publishProblems(c,p); published.complete(()).unsafeRunSync(); result }
       }
       fiber <- worker(archive,config,model,embedding,ModelFixtures.failureBackoff,log.logger).run.guaranteeCase(outcome => terminated.complete(outcome).void).start
       first <- IO.race(terminated.get,published.get).timeout(10.seconds)
@@ -455,8 +455,8 @@ final class DummyContextWorkerRecoveryTest extends ContextWorkerRecoveryContract
           if(large==LargeJobs.Skipped && blocked.tryGet.unsafeRunSync().nonEmpty) skipped.complete(()).unsafeRunSync()
           super.claim(profiles,scope,lease,large)
         }
-        override def publishProblems(c: Claim,p: ProblemsPublication,fetch: MessageFetch): Boolean = {
-          val result=super.publishProblems(c,p,fetch)
+        override def publishProblems(c: Claim,p: ProblemRows): Boolean = {
+          val result=super.publishProblems(c,p)
           if(published.updateAndGet(_+1).unsafeRunSync()==2) both.complete(()).unsafeRunSync()
           result
         }

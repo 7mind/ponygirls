@@ -99,6 +99,46 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS ch_archive_fragments_session_candidates 
 If the build is interrupted, run `DROP INDEX CONCURRENTLY ch_archive_fragments_session_candidates;` and build it again.
 The down-script of 024 (`chronicle/scripts/down-024-epoch-layout.sql`) drops the index.
 
+## Upgrading to streamed indexing (migration 026)
+
+From this release on an indexing job holds one window of its revision at a time, whatever the revision's size
+([Oversize guards](../CONTRACT.md#oversize-guards)): it reads its messages by position, keeps each window's accepted
+annotation and embedding parts as its durable checkpoints, then publishes from them in batches of at most 500 rows and
+8 MiB into a *staged* generation (`ch_staged_generations`) that no read reaches, and switches the source to it in one
+short transaction. Search rows are written last, by at most four writers in the whole process (they share the
+connection pool), each statement of 500 rows committed.
+
+- **Nothing is indexed again.** The index profile, the checkpoint keys and the published rows are those of the previous
+  release; a job running at the deploy is claimed again after its lease and continues from its accepted windows.
+- **Configuration.** `maxIndexingBudgetBytes` keeps its default (2,147,483,647) and now bounds one window and one
+  message, not a job. `maxSmallJobBudgetBytes` is retired: a configuration that sets it still starts, the value has no
+  effect, and the server logs `retired configuration key ignored key=maxSmallJobBudgetBytes` once at start; remove it.
+- **Jobs ended `index-budget-exceeded`** by an earlier release stay so; `RetryJob` indexes them, and so does the
+  source's next upload. Each costs its annotation calls (about one per 128 KiB of source).
+- **Migration 026** (applied by the start) creates two empty tables and sets `ch_search_chunks`'
+  `autovacuum_vacuum_scale_factor = 0`, `autovacuum_vacuum_threshold = 100000`: catalog changes only, whatever the
+  archive's size (the `ALTER TABLE` takes the table's SHARE UPDATE EXCLUSIVE lock once, which waits for a running
+  vacuum of that table; reads and writes go on).
+- **Semantic search while a large session publishes.** Committed staged search rows and the replaced generation's rows
+  until they are vacuumed are index entries a query may not see; each one the HNSW scan meets costs it time, and a scan
+  that meets more of them than its budget before its first 1,000 visible rows returns fewer rows. The staged rows exist
+  only while the search rows are written (the last step of a publication); the replaced ones are deleted right after the
+  switch, 10,000 per statement, and the threshold above makes 100,000 deleted rows enough for an autovacuum within a
+  minute. The vacuum walks the whole HNSW index (minutes at a million rows). Index cleanup is not forced: when the dead
+  rows sit in less than 2 % of the table's pages, PostgreSQL skips the index and their entries stay until a later vacuum
+  crosses that line — at the production table's ≈ 11 rows per page that is fewer than ≈ 20,000 entries, below the scan
+  budget, while `vacuum_index_cleanup = on` would make every vacuum of the table (also those its inserts trigger) walk
+  the whole index.
+- **Disk.** A re-published session's staged rows exist beside its published ones until the switch (twice its index rows
+  during its publication). Earlier generations' chunk and passage rows stay, as before.
+- **Rollback.** Stop the server and run `chronicle/scripts/down-026-staged-generations.sql` (read-only preflight, then
+  `mode=apply` with the confirmation it names) **before** starting the previous release: it deletes every staged
+  generation and the search rows still being retired, resets the two autovacuum settings and drops the tables. Without
+  it the previous release fails the publication of a job whose run staged a generation (its chunk ids are the staged
+  ones) until the source's next revision. Generations published by this release are ordinary rows to the previous one;
+  jobs too large for its estimate end `index-budget-exceeded` again there. Before an older rollback (part uploads,
+  epoch layout) run this script first, then `down-025`, then `down-024`.
+
 ## Models
 
 An annotation model must honor the structured JSON contract in the server README. Source text is untrusted input, never instructions to execute tools. The model chooses semantic chunk boundaries over bounded, numbered source fragments; the server verifies complete, non-overlapping coverage and constructs the original spans itself.

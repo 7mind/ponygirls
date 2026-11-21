@@ -212,8 +212,13 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     Check(leaseSeconds>0,"invalid","invalid claim lease")
     if(!valid(c)) false else { jobs(c.jobId).lease=Instant.now().plusSeconds(leaseSeconds); true }
   }
-  def publish(c: Claim,chunks: List[IndexedChunk]): Boolean = publishProblems(c,TestPublications.from(c,chunks),TestFetch.unadmitted)
-  def publishProblems(c: Claim,publication: ProblemsPublication,fetch: MessageFetch): Boolean = publishGeneration(c,publication.chunks,IndexPolicy.ContextAwareProblemsV1,PassageFormat.ContextAwareProblems,Some(publication))
+  def publish(c: Claim,chunks: List[IndexedChunk]): Boolean = publishProblems(c,ProblemsPublication.rows(TestPublications.from(c,chunks)))
+  /** Stages in memory: the rows collected into the oracle's publication, validated by it, published at once. */
+  def publishProblems(c: Claim,rows: ProblemRows): Boolean = synchronized {
+    if(!valid(c)) false else { val publication=ProblemsPublication.collect(rows); publishGeneration(c,publication.chunks,IndexPolicy.ContextAwareProblemsV1,PassageFormat.ContextAwareProblems,Some(publication)) }
+  }
+  /** Nothing to retire: the dummy archive has no search rows. */
+  def retire(c: Claim): Unit = ()
   private def publishGeneration(c: Claim,chunks: List[IndexedChunk],policy: IndexPolicy,format: PassageFormat,problems: Option[ProblemsPublication]): Boolean = synchronized {
     if(!valid(c)) false else {
       Check(catalog.resolve(c.profile).policy==policy,"invalid","publication payload does not match profile policy")
