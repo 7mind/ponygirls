@@ -42,6 +42,10 @@ root data UploadState {
   receipt: opt[IngestReceipt] failure: opt[str]
 }
 
+data RawFileInfo { index: i32 path: str sha256: str bytes: i64 }
+
+root data RawManifest { sessionId: uid revision: i32 files: lst[RawFileInfo] }
+
 root data LoginRequest { login: str password: str }
 
 root data LoginResponse { user: UserInfo versions: VersionInfo }

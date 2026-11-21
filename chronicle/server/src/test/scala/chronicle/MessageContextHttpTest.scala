@@ -25,7 +25,7 @@ class MessageContextHttpTest extends munit.FunSuite {
       controls <- BrowserControlAdmission.resource
       snapshots <- SnapshotAdmission.resource(logstage.IzLogger(),SnapshotAdmission.ingestWait)
       gate <- Resource.eval(Semaphore[IO](2))
-      http=new Http(f.config,auth,f.app,f.archive,f.mcp,logstage.IzLogger(),Http.WebRoot(None),protocol,new BrowserRpc(f.app,runs,wire),controls,Http.SocketLiveness.production,snapshots,new Uploads(f.db,f.config,UploadPolicy.production))
+      http=new Http(f.config,auth,f.app,f.archive,f.mcp,logstage.IzLogger(),Http.WebRoot(None),protocol,new BrowserRpc(f.app,runs,wire),controls,Http.SocketLiveness.production,snapshots,new Uploads(f.db,f.config,UploadPolicy.production),new RawStream(f.db,f.archive,auth,logstage.IzLogger(),RawStream.Policy.production))
       server <- EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => http.routes(ws,gate).orNotFound).build
       client <- EmberClientBuilder.default[IO].build
     } yield (client,s"http://127.0.0.1:${server.address.getPort}/mcp")).use { (client,url) => use(client,url) }

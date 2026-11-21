@@ -119,5 +119,10 @@ class CodecFixtureTest extends munit.FunSuite {
       Vector((UploadPhase.Committed,9214364837600034814L,Some(4),None),(UploadPhase.Failed,0L,None,Some("content-mismatch"))))
     assertEquals(states.map(_.limits.maxRawBytes).distinct,Vector(Long.MaxValue))
   }
+  test("BA specified: raw manifest goldens keep 64-bit file sizes exact and the files in index order") {
+    val manifests=checkList("raw-manifest",RawManifest.codecJson)
+    assertEquals(manifests.map(manifest => (manifest.revision,manifest.files.map(file => (file.index,file.bytes)))),
+      Vector((7,List((0,9007199254740993L))),(Int.MaxValue,List((0,0L),(1,Long.MaxValue)))))
+  }
 
 }

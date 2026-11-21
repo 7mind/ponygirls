@@ -14,7 +14,7 @@ import ponygirls.auth.{AccountJson,AccountFailure,PersistentCookie,AccountCreden
 import java.nio.file.{Files,Path}
 import scala.concurrent.duration.*
 
-final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot,protocol: VersionedWire,rpc: BrowserRpc,controls: BrowserControlAdmission,liveness: Http.SocketLiveness,snapshots: SnapshotAdmission,uploads: Uploads) {
+final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot,protocol: VersionedWire,rpc: BrowserRpc,controls: BrowserControlAdmission,liveness: Http.SocketLiveness,snapshots: SnapshotAdmission,uploads: Uploads,raw: RawStream) {
   private val socketQueueCapacity = 32
   private val retryableCloseCode = 1013
   private val normalCloseCode = 1000
@@ -31,7 +31,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
   private def json(status: Status,j: io.circe.Json): Response[IO] = Response[IO](status).withEntity(j.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cache-Control"),"no-store"))
   private def sessionCookie(secret: String,maxAge: Long): ResponseCookie = ResponseCookie("chronicle_session",secret,path=Some("/"),maxAge=Some(maxAge),secure=config.secureCookies,httpOnly=true,sameSite=Some(SameSite.Strict))
   private def failure(d: DomainError): Response[IO] = {
-    val status = d.code match { case "unauthorized" | "totp-required" => Status.Unauthorized; case "forbidden" | "pending-approval" => Status.Forbidden; case "not-found" => Status.NotFound; case "conflict" | "base-mismatch" | "upload-busy" | "content-mismatch" | "upload-expired" => Status.Conflict; case "gone" => Status.Gone; case "too-large" | "record-too-large" => Status.PayloadTooLarge; case "rate-limited" => Status.TooManyRequests; case "unavailable" => Status.ServiceUnavailable; case _ => Status.BadRequest }
+    val status = d.code match { case "unauthorized" | "totp-required" => Status.Unauthorized; case "forbidden" | "pending-approval" => Status.Forbidden; case "not-found" => Status.NotFound; case "conflict" | "base-mismatch" | "upload-busy" | "content-mismatch" | "upload-expired" => Status.Conflict; case "gone" => Status.Gone; case "too-large" | "record-too-large" => Status.PayloadTooLarge; case "range-not-satisfiable" => Status.RangeNotSatisfiable; case "rate-limited" => Status.TooManyRequests; case "unavailable" => Status.ServiceUnavailable; case _ => Status.BadRequest }
     val r = json(status,Wire.encode(Failure.codecJson,Failure(d.code,d.detail)))
     if(status==Status.Unauthorized) r.putHeaders(Header.Raw(CIString("WWW-Authenticate"),"Bearer realm=\"chronicle\"")) else r
   }
@@ -228,6 +228,20 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     // Every other request under the upload API is answered with a Failure body, so that clients never mistake it for a
     // server without the API.
     case r if r.uri.path.renderString=="/api/ingest/uploads" || r.uri.path.renderString.startsWith("/api/ingest/uploads/") => handle(IO.raiseError[Response[IO]](DomainError("not-found","no such upload endpoint")))
+    case r @ GET -> Root / "api" / "raw" / session => rawManifest(r,session,None)
+    case r @ GET -> Root / "api" / "raw" / session / revision => rawManifest(r,session,Some(revision))
+    case r @ GET -> Root / "api" / "raw" / session / revision / file => rawAnswer(handle {
+      rawReader(r).flatMap { i =>
+        val range=single(r,"Range").map(RawStream.range)
+        raw.download(i,RawStream.sessionId(session),RawStream.revision(revision),RawStream.file(file),range,single(r,"If-Range"))
+      }.map {
+        case RawStream.Answer.Bytes(response) => response
+        case RawStream.Answer.Unsatisfiable(total) =>
+          failure(DomainError("range-not-satisfiable",s"the range lies beyond the file's $total bytes")).putHeaders(Header.Raw(CIString("Content-Range"),s"bytes */$total"))
+      }
+    })
+    // As under the upload API: a Failure body on every path, so that clients never mistake it for a server without the API.
+    case r if r.uri.path.renderString=="/api/raw" || r.uri.path.renderString.startsWith("/api/raw/") => handle(IO.raiseError[Response[IO]](DomainError("not-found","no such raw endpoint")))
     case r @ POST -> Root / "api" / "collector" / "progress" => handle {
       IO.blocking { noUrlSecrets(r); origin(r,false); val i=bearer(r); i.requireScope(Scope.Ingest); i }.flatMap { i =>
         boundedBody(r,math.min(config.maxBodyBytes,CollectorProgress.maxBodyBytes)).flatMap(raw => IO.blocking(app.collectorProgress(i,Wire.decode(CollectorProgressUpdate.codecJson,Wire.parse(raw)))))
@@ -253,6 +267,23 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     case r if r.method==Method.GET && !r.uri.path.renderString.startsWith("/api/") => static(r)
   }
   private def ingestBearer(r: Request[IO]): IO[Identity] = IO.blocking { noUrlSecrets(r); origin(r,false); val i=bearer(r); i.requireScope(Scope.Ingest); i }
+  /** Raw downloads take the browser session only, as `GetRaw`, at the account boundary: no query string and no
+    * Authorization header, one Cookie, Origin and Host, the Host of the configured origin, and Origin optional (a download
+    * navigation sends none) but exact when present. */
+  private def rawReader(r: Request[IO]): IO[Identity] = IO.blocking {
+    accountBoundary(r,false)
+    val i=auth.browser(cookie(r)); i.requireScope(Scope.Read); i.requireScope(Scope.Raw); i
+  }
+  private def single(r: Request[IO],name: String): Option[String] = {
+    val values=r.headers.headers.filter(_.name==CIString(name))
+    Check(values.size<=1,"invalid",s"at most one $name header")
+    values.headOption.map(_.value)
+  }
+  private def rawManifest(r: Request[IO],session: String,revision: Option[String]): IO[Response[IO]] = rawAnswer(handle {
+    rawReader(r).flatMap(i => raw.manifest(i,RawStream.sessionId(session),revision.map(RawStream.revision))).map(manifest => json(Status.Ok,Wire.encode(RawManifest.codecJson,manifest)))
+  })
+  private def rawAnswer(response: IO[Response[IO]]): IO[Response[IO]] =
+    response.map(answer => if(answer.status==Status.ServiceUnavailable) retryAfter(answer,RawStream.retryAfterSeconds) else answer)
   private def handle(io: IO[Response[IO]]): IO[Response[IO]] = IO.defer(io).handleErrorWith {
     case d: DomainError => IO.pure(failure(d))
     case _ => IO(logger.error("request failed")) *> IO.pure(json(Status.InternalServerError,Wire.encode(Failure.codecJson,Failure("unavailable","request failed"))))

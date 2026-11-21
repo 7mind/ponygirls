@@ -83,6 +83,8 @@ import { PassageSourceSpan, PassageSourceSpan_JsonCodec } from './PassageSourceS
 import { PassageSpansResult, PassageSpansResult_JsonCodec } from './PassageSpansResult.js';
 import { PassagesResult, PassagesResult_JsonCodec } from './PassagesResult.js';
 import { RawFile, RawFile_JsonCodec } from './RawFile.js';
+import { RawFileInfo, RawFileInfo_JsonCodec } from './RawFileInfo.js';
+import { RawManifest, RawManifest_JsonCodec } from './RawManifest.js';
 import { RawResult, RawResult_JsonCodec } from './RawResult.js';
 import { ReindexStatusResult, ReindexStatusResult_JsonCodec } from './ReindexStatusResult.js';
 import { RelatedResult, RelatedResult_JsonCodec } from './RelatedResult.js';
@@ -203,6 +205,8 @@ class DomainChronicleApiV1_9_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(PassageSpansResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => PassageSpansResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(PassagesResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => PassagesResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(RawFile_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RawFile_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(RawFileInfo_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RawFileInfo_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(RawManifest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RawManifest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(RawResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RawResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ReindexStatusResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ReindexStatusResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(RelatedResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RelatedResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -336,6 +340,8 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
         "chronicle.api/:#PassageSpansResult": ['1.9.0'],
         "chronicle.api/:#PassagesResult": ['1.9.0'],
         "chronicle.api/:#RawFile": ['1.9.0'],
+        "chronicle.api/:#RawFileInfo": ['1.9.0'],
+        "chronicle.api/:#RawManifest": ['1.9.0'],
         "chronicle.api/:#RawResult": ['1.9.0'],
         "chronicle.api/:#ReindexStatusResult": ['1.9.0'],
         "chronicle.api/:#RelatedResult": ['1.9.0'],
@@ -543,6 +549,8 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
         "chronicle.api/:#PassageSpansResult": { '1.9.0': 'identical' },
         "chronicle.api/:#PassagesResult": { '1.9.0': 'identical' },
         "chronicle.api/:#RawFile": { '1.9.0': 'identical' },
+        "chronicle.api/:#RawFileInfo": { '1.9.0': 'identical' },
+        "chronicle.api/:#RawManifest": { '1.9.0': 'identical' },
         "chronicle.api/:#RawResult": { '1.9.0': 'identical' },
         "chronicle.api/:#ReindexStatusResult": { '1.9.0': 'identical' },
         "chronicle.api/:#RelatedResult": { '1.9.0': 'identical' },

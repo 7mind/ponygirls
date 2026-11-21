@@ -71,6 +71,45 @@ private[chronicle] object RevisionContent {
     case legacy: Legacy => snapshot(c,legacy).files
     case epoch: Epoch => List(rawFile(c,epoch))
   }
+  /** Path, SHA-256 and UTF-8 size of each raw file, without building any of them: an epoch revision's one file from its
+    * columns, a legacy revision's files from its snapshot (each `sha256` was checked equal to its content at ingest). */
+  def rawFiles(c: Connection,content: RevisionContent): List[RawFileInfo] = content match {
+    case epoch: Epoch =>
+      Sql.rows(c,"SELECT e.raw_path,r.envelope->>'digest' FROM ch_revisions r JOIN ch_epochs e ON e.id=r.epoch WHERE r.session_id=? AND r.revision=?",epoch.id,epoch.revision)(r => RawFileInfo(0,r.getString(1),r.getString(2),epoch.rawBytes))
+    case legacy: Legacy =>
+      Sql.rows(c,"SELECT f.n-1,f.value->>'path',f.value->>'sha256',octet_length(f.value->>'content') FROM ch_revisions r CROSS JOIN LATERAL jsonb_array_elements(r.snapshot->'files') WITH ORDINALITY f(value,n) WHERE r.session_id=? AND r.revision=? ORDER BY f.n",legacy.id,legacy.revision) { r =>
+        RawFileInfo(r.getInt(1),r.getString(2),r.getString(3),r.getLong(4))
+      }
+  }
+  /** Bytes `[from,until)` of the epoch revision's raw (`until` at most its `raw_bytes`), cut from the segments in SQL so that
+    * no segment is fetched whole: the segment holding `from` and the later ones below `until`, through the key's range
+    * (`keyOrdered`; otherwise the slices are sorted, on disk for a window above `work_mem`). The segments of a revision
+    * are contiguous whole lines, so the slices concatenate to the window; any gap fails. */
+  def epochRawWindow(c: Connection,content: Epoch,from: Long,until: Long): Array[Byte] = {
+    Check(0<=from && from<until && until<=content.rawBytes && until-from<=Int.MaxValue,"internal","raw window out of range")
+    keyOrdered(c)
+    val window=new Array[Byte]((until-from).toInt)
+    var next=from
+    Using.resource(c.prepareStatement("""SELECT byte_offset,substring(convert_to(content,'UTF8') FROM (greatest(?-byte_offset,0)+1)::int FOR (least(?,byte_offset+octet_length(content))-greatest(?,byte_offset))::int)
+      FROM ch_epoch_raw WHERE epoch=? AND byte_offset<? AND byte_offset>=(SELECT byte_offset FROM ch_epoch_raw WHERE epoch=? AND byte_offset<=? ORDER BY byte_offset DESC LIMIT 1) ORDER BY byte_offset""")) { statement =>
+      Sql.bind(statement,List(from,until,from,content.epoch,until,content.epoch,from))
+      Using.resource(statement.executeQuery()) { rows => while(rows.next()) {
+        val slice=rows.getBytes(2)
+        Check(math.max(rows.getLong(1),from)==next && slice.length<=until-next,"internal","raw segments are not contiguous")
+        System.arraycopy(slice,0,window,(next-from).toInt,slice.length)
+        next+=slice.length
+      }}
+    }
+    Check(next==until,"internal","raw segments end before the window")
+    window
+  }
+  /** Bytes `[from,until)` of file `file` of the legacy revision: every read detoasts the snapshot, so windows are larger. */
+  def legacyRawWindow(c: Connection,content: Legacy,file: Int,from: Long,until: Long): Array[Byte] = {
+    Check(0<=from && from<until && until-from<=Int.MaxValue,"internal","raw window out of range")
+    val window=Sql.one(c,"SELECT substring(convert_to(snapshot->'files'->(?)->>'content','UTF8') FROM (?+1)::int FOR ?::int) FROM ch_revisions WHERE session_id=? AND revision=?",file,from,until-from,content.id,content.revision)(r => Option(r.getBytes(1))).flatten
+    Check(window.exists(_.length==until-from),"internal","raw file ends before the window")
+    window.get
+  }
   /** The revision for indexing (envelope and messages, without raw files) and its binding id. */
   def claimed(c: Connection,content: RevisionContent,fetchSize: Int): (IngestRequest,UUID) = {
     val (request,binding)=envelope(c,content)

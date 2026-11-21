@@ -81,6 +81,8 @@ export * from './PassageSourceSpan.js';
 export * from './PassageSpansResult.js';
 export * from './PassagesResult.js';
 export * from './RawFile.js';
+export * from './RawFileInfo.js';
+export * from './RawManifest.js';
 export * from './RawResult.js';
 export * from './ReindexStatusResult.js';
 export * from './RelatedResult.js';

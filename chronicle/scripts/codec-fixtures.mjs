@@ -8,6 +8,7 @@ import { CollectorProgressUpdate_JsonCodec } from '../target/codec-js/generated/
 import { UploadOpen_JsonCodec } from '../target/codec-js/generated/typescript/chronicle/api/UploadOpen.js';
 import { UploadPart_JsonCodec } from '../target/codec-js/generated/typescript/chronicle/api/UploadPart.js';
 import { UploadState_JsonCodec } from '../target/codec-js/generated/typescript/chronicle/api/UploadState.js';
+import { RawManifest_JsonCodec } from '../target/codec-js/generated/typescript/chronicle/api/RawManifest.js';
 const ctx = BaboonCodecContext.Default;
 const fixture = name => JSON.stringify(JSON.parse(readFileSync(new URL(`../server/src/test/fixtures/${name}.json`, import.meta.url), 'utf8')));
 const apiVersion = ClientEnvelope.BaboonDomainVersion;
@@ -42,5 +43,6 @@ for (const [name, codec] of [
   ['upload-open', UploadOpen_JsonCodec.instance],
   ['upload-part', UploadPart_JsonCodec.instance],
   ['upload-state', UploadState_JsonCodec.instance],
+  ['raw-manifest', RawManifest_JsonCodec.instance],
 ]) checkList(name, codec);
 console.log(`${fixtureGroups} generated TypeScript fixture groups passed; 1 API version (${apiVersion}); no conversion chain`);

@@ -52,6 +52,8 @@ object ChroniclePlugin extends PluginDef {
   make[SnapshotAdmission].fromResource[SnapshotAdmissionResource]
   make[UploadPolicy].fromValue(UploadPolicy.production)
   make[Uploads]
+  make[RawStream.Policy].fromValue(RawStream.Policy.production)
+  make[RawStream]
   make[EpochMaintenance].fromResource[EpochMaintenanceResource]
   make[BrowserRpc]
   make[Http]

@@ -97,7 +97,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
     controls <- BrowserControlAdmission.resource
     snapshots <- SnapshotAdmission.resource(logstage.IzLogger(),SnapshotAdmission.ingestWait)
     rpc=new BrowserRpc(fixture.app,fixture.runs,fixture.wire)
-    http=new Http(fixture.config,fixture.auth,fixture.app,fixture.archive,new Mcp(fixture.app),logstage.IzLogger(),Http.WebRoot(None),fixture.protocol,rpc,controls,TestLiveness,snapshots,new Uploads(fixture.db,fixture.config,UploadPolicy.production))
+    http=new Http(fixture.config,fixture.auth,fixture.app,fixture.archive,new Mcp(fixture.app),logstage.IzLogger(),Http.WebRoot(None),fixture.protocol,rpc,controls,TestLiveness,snapshots,new Uploads(fixture.db,fixture.config,UploadPolicy.production),new RawStream(fixture.db,fixture.archive,fixture.auth,logstage.IzLogger(),RawStream.Policy.production))
     server <- EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => http.routes(ws,gate).orNotFound).build
   } yield s"ws://127.0.0.1:${server.address.getPort}/api/ws"
 
