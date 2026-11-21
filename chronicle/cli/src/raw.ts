@@ -2,6 +2,8 @@ import { createHash, randomUUID, type Hash } from 'node:crypto';
 import { constants, closeSync, fsyncSync, linkSync, lstatSync, openSync, statSync, unlinkSync } from 'node:fs';
 import { open, type FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import type { RawFileInfo } from '../../generated/typescript/chronicle/api/RawFileInfo.js';
 import type { RawManifest } from '../../generated/typescript/chronicle/api/RawManifest.js';
 import { CliError, RemoteError, remoteFailure } from './errors.js';
@@ -14,6 +16,13 @@ import { decodeWire, sameUuid, uuid } from './wire.js';
 export const RAW_RANGE_BYTES = 64 * 1024 * 1024;
 const STDOUT = '-';
 const SHA256_HEX = /^[0-9a-f]{64}$/;
+/** Node frees the buffers of received chunks only when V8 collects their wrappers, and V8 schedules that by its own measure
+  * of external memory: tens of MiB of garbage, a peak RSS of 166 MB for a 1.1 GB download. A download collects the young
+  * generation (where the wrappers die; about a millisecond) after every RAW_COLLECT_BYTES instead: 105-110 MB measured. */
+const RAW_COLLECT_BYTES = 2 * 1024 * 1024;
+type Collect = (options: { type: 'minor' }) => void;
+/** V8's `gc` function, which Node exposes only with --expose-gc: set here, it holds for contexts created afterwards. */
+function collector(): Collect { setFlagsFromString('--expose-gc'); return runInNewContext('gc') as Collect; }
 /** Signals that end a download in file mode: the partial file is removed before the signal's default action. */
 const INTERRUPTS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 export interface RawDownload { readonly sessionId: string; readonly revision: number | null; readonly file: number | null; readonly output: string }
@@ -98,7 +107,7 @@ class StdoutSink implements Sink {
 }
 function retryAfter(headers: Headers): string { const value = headers.get('retry-after'); return value !== null && /^\d{1,9}$/.test(value) ? `Retry-After: ${value} s (all of the server's downloads are in use); no automatic retry was attempted.` : ''; }
 /** One range request: its bytes go to `digest` and `sink` as they arrive; it must answer 206 with exactly the range and ETag. */
-async function range(http: Http, session: Session, path: string, first: number, last: number, total: number, etag: string, timeoutMs: number, digest: Hash, sink: Sink, received: { bytes: number }): Promise<void> {
+async function range(http: Http, session: Session, path: string, first: number, last: number, total: number, etag: string, timeoutMs: number, digest: Hash, sink: Sink, received: { bytes: number }, collect: Collect): Promise<void> {
   const requested = `${first}-${last}`;
   let response: Response;
   try { response = await fetch(`${http.origin}${path}`, { headers: { Accept: 'application/octet-stream', 'Accept-Encoding': 'identity', Origin: http.origin, Cookie: `chronicle_session=${session.cookie}`, Range: `bytes=${requested}`, 'If-Range': etag }, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) }); }
@@ -108,12 +117,13 @@ async function range(http: Http, session: Session, path: string, first: number, 
   if (response.headers.get('content-range') !== `bytes ${requested}/${total}` || response.headers.get('etag') !== etag || response.headers.get('content-length') !== String(length) || response.body === null) {
     await response.body?.cancel().catch(() => {}); throw new CliError('protocol-error', `The answer to range ${requested} does not carry exactly that range of the manifest's file (Content-Range, ETag, Content-Length).`);
   }
-  const reader = response.body.getReader(); let read = 0;
+  const reader = response.body.getReader(); let read = 0; let uncollected = 0;
   try {
     for (;;) {
       const chunk = await reader.read(); if (chunk.done) break;
       read += chunk.value.length; if (read > length) throw new CliError('protocol-error', `The answer to range ${requested} carries more bytes than the range.`);
       digest.update(chunk.value); await sink.write(chunk.value); received.bytes += chunk.value.length;
+      uncollected += chunk.value.length; if (uncollected >= RAW_COLLECT_BYTES) { uncollected = 0; collect({ type: 'minor' }); }
     }
   } catch (error) { throw error instanceof CliError ? error : transportFailure(error, requested, timeoutMs, true); }
   finally { await reader.cancel().catch(() => {}); }
@@ -154,9 +164,9 @@ export async function download(http: Http, session: Session, request: RawDownloa
   const value = await manifest(http, session, request); const file = selected(value, request.file);
   const total = Number(file.bytes); const etag = `"sha256:${file.sha256}"`; const path = `/api/raw/${request.sessionId}/${value.revision}/${file.index}`;
   const sink = request.output === STDOUT ? new StdoutSink() : await FileSink.create(request.output);
-  const digest = createHash('sha256'); const received = { bytes: 0 };
+  const digest = createHash('sha256'); const received = { bytes: 0 }; const collect = collector();
   try {
-    for (let first = 0; first < total; first += RAW_RANGE_BYTES) await range(http, session, path, first, Math.min(first + RAW_RANGE_BYTES, total) - 1, total, etag, timeoutMs, digest, sink, received);
+    for (let first = 0; first < total; first += RAW_RANGE_BYTES) await range(http, session, path, first, Math.min(first + RAW_RANGE_BYTES, total) - 1, total, etag, timeoutMs, digest, sink, received, collect);
     if (received.bytes !== total || digest.digest('hex') !== file.sha256) throw new CliError('protocol-error', "The bytes received do not match the manifest's size and SHA-256.");
   } catch (error) {
     await sink.abandon();
