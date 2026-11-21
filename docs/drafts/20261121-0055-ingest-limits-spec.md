@@ -6,8 +6,10 @@ earlier text). Tags: **[o F:L]** observed in code at the base, **[o Mn]** measur
 `.local/overhaul-20261117/reports/ingest-c/SPEC/evidence/`), **[m INV]**/**[m L5]** measured by the INV/SPEC-L5 units
 (evidence in their bundles), **[r X]** reported by another unit, **[i]** inferred, **[u]** not verified. Synthetic data
 only. Out of scope: S3 (legacy conversion), S4 (retiring `/api/ingest`), any back-fill or re-index of archived sessions
-(owner Q122). Added 2026-11-21: §5.6 (the I3 design of unit SPEC-L5E), §5.7 (ANN detection as built) and §13 (the
-implemented behaviour where it differs from the text; §13 wins over the earlier sections).
+(owner Q122). Added 2026-11-21: §5.6 (the I3 design of unit SPEC-L5E as reviewed; its E1 default was changed afterwards
+to exact final metadata, §13.2 E1X), §5.7 (ANN detection as built) and §13 (the implemented behaviour where it differs
+from the text, the orchestrator's later decisions, user-visible changes, REL's outcome; §13 wins over the earlier
+sections).
 
 ## Summary
 - **L1 ranged raw read.** New cookie-authenticated HTTP endpoints `GET /api/raw/{session}[/{revision}]` (a JSON manifest:
@@ -1045,7 +1047,7 @@ Round 2 (B1/B2 resolved; one blocker, three advisories):
 Source: `reports/ingest-c/ANN/{design.md,report.md,evidence/}`; **[m ANN]** = that unit's synthetic measurements (owned
 PostgreSQL 18.7 + pgvector 0.8.7, production role settings: `work_mem` 4 MB, statement timeout 30 s). Orchestrator
 03:22Z: D22 must not be silent — detection, plus a bounded second pass if it costs ≤ ≈ 8 h. Built at the head of the L5
-group and shippable alone (§13 ANN). This section corrects the starvation threshold of §5.2.5/M5 and adds to D22 (a).
+group and shippable alone (§13.2 ANN). This section corrects the starvation threshold of §5.2.5/M5 and adds to D22 (a).
 - **Where the leg stops [m ANN §2.2].** The binding limit is scan memory, not `max_scan_tuples`: `work_mem` 4 MB ×
   `scan_mem_multiplier` 4 = 16 MiB ends the strict iterative scan after ≈ 85,000 delivered index tuples (84,947 with
   590,000 invisible rows ahead; `max_scan_tuples` 1,000,000 at the same memory returns the same 84 rows). HNSW does not
@@ -1064,7 +1066,7 @@ group and shippable alone (§13 ANN). This section corrects the starvation thres
   pages holding dead items are < 2 % of the heap, VACUUM bypasses index cleanup and the HNSW keeps the entries (120,000
   aborted rows in 1.49 % of the pages: "index scan bypassed", the leg still 948 rows); at production's ≈ 11 rows per page
   that is < ≈ 19,800 contiguous dead rows per pass [i]. Production's autovacuum (no reloptions before 026) starts at
-  ≈ 198,000 dead rows [i]. L5b keeps 026's threshold and does not force index cleanup (§13 L5B).
+  ≈ 198,000 dead rows [i]. L5b keeps 026's threshold and does not force index cleanup (§13.2 L5B).
 - **Detection [o SemanticLeg.scala; r ANN].** Per leg (Search `ann`; Archive each operand's `a$i`) the page statement
   carries its row count n (`ann_rows`/`ann_rows_i`, semantic and hybrid plans only). n = 1,000 → complete as today, no
   extra work. Otherwise a probe in the same snapshot counts the leg's visible set V (visible sessions with ACL, filters or
@@ -1335,22 +1337,81 @@ independent first; L2 waits for D1; L5 last (largest, migration 026, its own rol
 | S5: references lacked the source coordinates; purge and cleanup ordering | full source key in `ch_index_checkpoint_refs`; lookup only among own checkpoints in phase W; P/resume by full key; FK `NO ACTION` so purge's one job delete removes everything together; references cascade with their job; `discard` cannot hit a referenced row; tests: two outputs for one input, cross-window reuse, purge after reuse | §5.4, §10 L5d |
 
 ## 13. Implementation amendments (lead, 2026-11-21; the implemented behaviour, where it differs from the text above)
-`agent/ingest-c` at `9440bb62`, rebuilt in landing order at 04:07Z, so the units' own hashes (their bundles'
-`commits.txt`) and the hashes in §4 and §10 differ from the branch's. Ranges are inclusive (`first…last`, commit count)
-on the branch, in landing order: this spec `f692ed72`; L4 + MCPX; L1 (R1, R2, R3); L3; L6; L2; merge of `main`
-(`93ef248d`); ANN; L5A; L5B; L5D; L5E1; L5E2 pending. **[r U]**/**[m U]** = reported/measured by unit U (bundle
-`.local/overhaul-20261117/reports/ingest-c/<U>/report.md` and `evidence/`); lead log `reports/ingest-c/LOG.md`. This
-section wins over the earlier ones.
-- **Decisions as taken** (orchestrator 03:22Z and ≈ 05:45Z, `reports/ingest-c/ORCH-REPLY-0322Z.md`): D1 = (A), with the
-  in-place-edit test; D10, D11 as recommended (`maxSmallJobBudgetBytes` accepted, ignored, logged once at start); D12
-  confirmed (heap measurement into the deployment notes); **D13/D20 changed: I2 (L5d) and I3 are both built**, I3 as the
-  last L5 units L5e-1/L5e-2 with their own section (§5.6) and review, L5a → L5b → L5d shippable without them; **D22: not
-  silent** — option (a) plus detection and a bounded second pass (§5.7), (b) not now; D16 yes; D4 the plain link (the
-  production gateway has no body read/write timeout, only a 60 s response-header timeout: `reports/deploy4/PREP.md`);
-  D8, D21 B′ overnight with the wrapper's timeout argument; D17 keep and state; D18 owner/paddock items; the MCP
-  text-format refusal fixed (unit MCPX). L5e (§5.6.9): E2, E3, E4 confirmed; E1 (16-window horizon, both paths)
-  confirmed on condition that a controlled relevance comparison (baseline final metadata vs horizon; unit REL) runs
-  before L5e is done.
+`agent/ingest-c` at `e14f0792` (product code complete), rebuilt in landing order at 04:07Z, so the units' own hashes
+(their bundles' `commits.txt`) and the hashes in §4 and §10 differ from the branch's. Ranges are inclusive
+(`first…last`, commit count) on the branch, in landing order: this spec `f692ed72`; L4 + MCPX; L1 (R1, R2, R3); L3; L6;
+L2; merge of `main` (`93ef248d`); ANN; L5A; L5B; L5D; L5E1; L5E2; then DIAG and E1X interleaved (`c094c1ca`, `1f52b9e0`
+DIAG; `67a860de`, `cd2e8f4f` E1X; `c67dcf4b` DIAG; `90ff5cea`, `e14f0792` E1X). **[r U]**/**[m U]** = reported/measured
+by unit U (bundle `.local/overhaul-20261117/reports/ingest-c/<U>/report.md` and `evidence/`); lead log
+`reports/ingest-c/LOG.md`; orchestrator decisions `reports/ingest-c/ORCH-REPLY-0322Z.md`. This section wins over the
+earlier ones; in particular §13.2 E1X changes §5.6's E1 default.
+
+### 13.1 Orchestrator decisions after the spec (`ORCH-REPLY-0322Z.md`, all sections; binding)
+- **03:22Z.** D1 = (A), with a test: an in-place edit of an old line is detected at the next upload → replacement. D10,
+  D11 approved (`maxSmallJobBudgetBytes` accepted and ignored, CONTRACT/README, logged once at start when set). D12 "no
+  heap raise needed" into the deployment notes with the measurement. **D13/D20: build I2 (L5d) and I3** as the last unit
+  L5e (own spec section and advisory review before it starts; own acceptance: a growing ≥ 1 GiB session, work and lag
+  per revision ∝ the addition, search results identical to a full re-publication by a differential test); L5a → L5b →
+  L5d shippable without L5e. **D22 not silent:** a short ANN leg is detected and said explicitly (dashboard, CLI, MCP),
+  tested at ≥ 200 k invisible vectors; a bounded second pass (iterative or exact over the visible set) built if ≤ ≈ 8 h,
+  else numbers; plus bounded retirement and the autovacuum threshold; (b) not now; measure whether the condition exists
+  in production today. D16 yes. D4: the plain link and CLI `--output` (gateway: no body limit, 60 s upstream
+  response-header timeout, `reports/deploy4/PREP.md`), no Service Worker. D8/D21: B′ overnight with the harness timeout
+  argument, not blocking — the prefix L4, L1, L3, L6, L2 integrated and verified first as its own contiguous prefix. D17
+  keep and state in the limits with its number. D18 WAL settings as owner/paddock items; acceptance at production's
+  settings (`max_wal_size` 1 GB). The MCP 128 KiB text refusal fixed (unit MCPX).
+- **≈ 05:45Z (L5e).** E2, E3, E4 confirmed. E1 (16-window horizon) confirmed on condition that a controlled relevance
+  comparison runs before L5e is done: baseline (final summary/tags on every chunk) vs horizon on one corpus and
+  configuration, the repository's relevance workflow on isolated real servers, cases hitting passages > 16 windows plus
+  held-out ones, metrics declared first, evaluator ground truth separate from the search agent's task, the provider
+  stated; a regression beyond noise → stop and report, no tuning to development cases. Deployment notes: existing
+  published generations keep final metadata until a session's next revision (no back-fill); both forms coexist. (E1's
+  default superseded at ≈ 19:40Z.)
+- **≈ 07:20Z.** REL's local model run approved for the controlled comparison only: one GPU with no other process and no
+  allocated memory at start (`nvidia-smi` before and after), expected duration stated, cap 6 h, stop at any foreign
+  process on it; models only from a local cache or an approved internal registry; no session or clone content leaves the
+  host; no external model APIs; GPU freed and model servers removed at the end; the provider of every number stated.
+- **16:16Z.** The IndexedSearchTest failure on `9440bb62` is not accepted as load-sensitive without a diagnosis: failing
+  statement, cause and SQLSTATE from the kept log and what its 41.7 s consisted of; EXPLAIN (ANALYZE, BUFFERS) of the
+  test's production statements on `9440bb62`, `0296ee28`, `4dfd4f48`, same data, side by side; the test alone 10× idle
+  and 10× under stated comparable load per tree; only `9440bb62` degrading → regression, fix in L5E1/L5E2; `9440bb62`
+  "verification failed (open)" until resolved; final verification only on a quiet host (→ unit DIAG).
+- **≈ 18:55Z.** Conditions for the fix: (1) visibility equivalence, checked explicitly by the gate reviewer and by tests
+  — no rows of staged generations, retired generations, outside the read version's membership interval or of unreadable
+  sources, on the lexical, semantic (incl. the exact and the wider second pass) and literal paths; (2) a creep-back
+  guard: a plan-shape pin of the authorization or a buffer bound against the base in the same run, no wall clock; (3)
+  stage-file numbers on the final head: control, generic HNSW buffers, 10× under 1.7× load for `4dfd4f48`, `0296ee28`
+  and the fixed head, 10× quiet after B′; the limits list says whether the control's ≈ 16 s of 30 s is a test-data or a
+  product property.
+- **≈ 19:40Z (E1 changed).** (1) Default = exact final metadata (`indexing.metadataHorizonWindows` = MAX); a finite
+  horizon only as an explicit opt-in, the owner decides later with real numbers; spec, CONTRACT/README, DEPLOYMENT-L5
+  and the L5E2 gate adjusted, L5e acceptance at the default (→ unit E1X). (2) Quantify the default's cost on a TEMPLATE
+  clone copy (read-only): passage length in windows p50/p90/p99/max, how many > 16 windows and in how many sessions,
+  per-append publication work in exact mode at p99 and max, the degenerate case (one passage = the whole session);
+  limits list: "append cost follows the addition except within a passage longer than N windows" (→ unit CLONE). (3) REL
+  real models approved with conditions: production's annotation and embedding models established from on-disk evidence
+  first (if the manifests differ, say so and also run with production's embedder); only hash-listed downloads, verified
+  against `chronicle/model-manifests` before loading, into scratch, no token, no upload; `trust_remote_code` only for
+  the two verified files; offline loopback servers, minimal environment, the controlled corpus only; GPU conditions as
+  before; weights and servers removed; the provider per number. (4) Report per case class (E2, C, natural questions,
+  semantic control) baseline vs H = 16 with intervals, and the savings of item 2.
+- **≈ 20:30Z (REL conditional).** A real-model comparison only if the clone measurement shows that the exact default
+  costs materially (criterion stated with numbers); if passages > 16 windows are rare, the horizon is recorded as
+  "opt-in, effect on real-model relevance not measured; scripted mechanism result only" in spec, CONTRACT and limits,
+  and REL closes. Were it to run: Tokenfactory/DeepSeek + embeddinggemma-2 on the frozen synthetic corpus only, the
+  credential only through a path the relevance workflow documents and already provisioned for this user on this host,
+  never printed. The model-manifest finding goes into SUMMARY/DEPLOYMENT, no fix now (§13.4).
+- **21:45Z.** The exact second pass's leftover read of `ch_generations` per visible session (≤ 20,000 rows, +22 %
+  buffers): remove it with the same technique if contained and covered by the visibility tests, or list it with its
+  measured absolute cost — not silently (→ removed, `c67dcf4b`). One note when B′ and the quiet runs are in.
+- **22:30Z.** `IncrementalPublicationDifferentialTest:434` is a product question until shown otherwise: dump and diff
+  incremental vs full for the failing case in that grouping, or prove isolation; a defect → fix and regression;
+  isolation → fix the isolation without loosening equality; `agent/ingest-c` "verification failed (open)" until then (→
+  E1X: a plan choice, results equal, `90ff5cea`). DEPLOYMENT-L5: B′'s write volume (385 GB of WAL for one 4.4 GB
+  session) and peak disk (107.4 GB) as sizing facts next to production's WAL settings; the expected first-index time and
+  WAL of a ≈ 0.6 GB session.
+
+### 13.2 Per unit
 - **L4** (`9e10f9b4`…`52475354`, 2; §4's `cf77f7b5`, `482b5757` before the rebuild): as §4 [r L4]. With P = 64 MiB (the
   server's page bound): WS answers ≤ 6P + 1 MiB = 403,701,760 B, MCP responses ≤ 7P + 1 MiB = 470,810,624 B, other HTTP
   responses 8 MiB, requests unchanged; above the bound WS refuses the frame from its header (reported as a lost
@@ -1478,7 +1539,125 @@ section wins over the earlier ones.
   needs flattening. Rollback: with roots only the L5d binary starts without `down-028` (rehearsed, also with a root it
   continued); once a lineage version exists it refuses to start until `down-028`. The plan test asserts a probe
   correlated on lineage and origin; the `EXISTS` form is not planned as a hashed ANY in this layout (the scalar form is
-  kept). Tie-break `(session_id, ordinal, id)` (E3); Haystack's SQL byte-identical.
-- **L5E2, I3 part 2 — PLACEHOLDER (lead: report pending; pre-review "revise" at 15:57Z, `reports/ingest-c/L5E2/`).** To
-  fill: commit range; eligibility and `indexing.incrementalPublication`; `indexing.metadataHorizonWindows` (REL M1); the
-  horizon rule in both paths; deviations from §5.6; acceptance H; the REL comparison's verdict (E1's condition).
+  kept). Tie-break `(session_id, ordinal, id)` (E3); Haystack's SQL byte-identical. Its per-row authorization raised
+  search cost: DIAG below.
+- **L5E2, I3 part 2** (`b6e9e243`…`e3cb0374`, 4; no migration of its own: three indexes added to 028) [r L5E2]: §5.6
+  unit "L5e-2"; E1X changed its default afterwards (below). Eligibility (`PostgresArchive.publicationParent`, checked
+  before the count pass, at P0 and at the switch): `indexing.incrementalPublication`; the published generation has a
+  lineage, a version and a cut whose horizon equals the configured one, the claim's profile, not retired; both are epoch
+  revisions of one epoch with non-decreasing message counts; the claim's run is not a confirmed rebuild's (a rebuild
+  always publishes a root) and no rebuild retirement would fire; otherwise a root. Every lineage publication's last P1
+  batch writes the cut (window K, the `State` before K, the Context-span count, the validator's snapshot, window
+  boundaries; a few KB), so roots have one now (L5E1's cut-less roots, never deployed, are no parents). Deviations: (1)
+  the incremental generation's own segment rows are written by its switch, not staged at P0 (which windows of R are
+  rewritten is known only in P2); O(H) rows per switch, 4 closed / 6 inserted measured at H = 16. (2) P2 replays twice
+  (H windows ahead) instead of buffering pieces: one window of memory for any H (since E1X only under a finite H). (3)
+  The cut carries its horizon; a lineage continues only under the same H. (4) The reuse lookup (§13.2 L5D (5)) ranks
+  first a candidate the published lineage accepted — its run a version of that lineage, or the lineage's root referenced
+  it — by two index probes per candidate (pre-review B1; review round 3 replaced a ranking over every referrer, O(V)
+  after V versions: 2,003 → ≤ 40 rows examined). (5) The tail reads (switch, region R's members, replaced tags) go
+  through the new partial index `ch_lineage_segments_open(lineage,kind,hi_major,hi)`: ≤ 12 segment rows examined with
+  16,000 history rows (the version-validity selection: 18,402) (B2); 028 also gains `ch_generations_run` and
+  `ch_index_checkpoint_refs_referrer` (down-028 drops them). (6) A staged publication continues only under the parent
+  and horizon it was staged with; otherwise it is abandoned and restarts (B3). (7) Staged tag deltas are applied and
+  deleted inside the switch (≤ 16 rows per touched passage). (8) The keys are validated at start
+  (`IndexingCapacity.validatePublication`) and logged once: `indexing publication incrementalPublication=…
+  metadataHorizonWindows=…`. **Disclosed read limit:** page and pin readers select a version's segment rows by validity,
+  O(H·V) rows for a lineage of V versions. Measured at H = 16 (the then default; 1 GiB + 10 appends of 0.5 %, a stub
+  summary changing every window): root 9,972 s and 51.9 GB WAL; each append ≈ 4,050 chunks and search rows (R = 960),
+  0.35–1.02 GB WAL, job 78.6–92.7 s, flat over 10 versions [m L5E2].
+- **DIAG, IndexedSearchTest regression from L5E1** (`c094c1ca`, `1f52b9e0`, `c67dcf4b`, 3) [r DIAG]: the failure on
+  `9440bb62` was a regression of L5E1's per-row search authorization, which joined `ch_generations` for every candidate
+  tuple (and the page view for every ranked session). The test's index-disabled control `EXPLAIN (ANALYZE)` crossed the
+  30 s statement timeout (SQLSTATE 57014, reported `database-unavailable`; 41.7 s = corpus ≈ 11 s + plans < 0.3 s +
+  control cancelled at 30 s). Same 12,000 rows: control 15.8–16.4 s on `0296ee28`/`4dfd4f48` vs 22.0 s on `9440bb62`;
+  generic HNSW page buffers 14,747 → 23,743; a broad lexical page at 48,000 rows +78 % buffers; under ≈ 1.7× load 0/10
+  vs 10/10 [m DIAG]. **Fix** (product code, no test change): a row of the published generation itself is authorized
+  through `ch_revision_info` at (session, the row's revision) as before 028; only a row of another origin joins
+  `ch_generations` and runs the unchanged membership probe (`GenerationRows.publishedInfo`, a gated `UNION ALL`); the
+  tag filter reads the published generation's tags; the page joins the view for its ≤ limit hits only; Archive's corpus
+  carries `lineage, lineage_version`. Control 15.4 s, HNSW buffers 14,858, 10/10 under 1.7× load [m DIAG]. **Visibility
+  equivalence** (≈ 18:55Z): argued row by row (the own-row branch is equal because a search row's revision is its
+  generation's; the other-origin branch is the old join and probe verbatim) and tested in `GenerationLineageTest`: no
+  lexical, semantic (index, wider and exact second pass), hybrid or Archive (semantic, hybrid, literal) path finds a
+  staged, retired, superseded or unreadable row; it passes on `9440bb62` and on the fix, and five mutants fail it.
+  **Plan guard** (no wall clock): per-relation execution counts from EXPLAIN ANALYZE — `ch_generations` ≤ legs ×
+  other-origin rows + page limit, `ch_lineage_segments` ≤ legs × other-origin rows, Archive ≤ 2; `9440bb62` fails it
+  (634 against 32). **Exact-pass leftover removed** (21:45Z, `c67dcf4b`): the exact second pass and the visible count
+  read the published revision the same way; 124 ms / 141.7 k buffers, before 145 ms / 201.7 k, base 105 ms / 161.6 k
+  (`LOG.md` 22:22Z); the guard covers the exact pass. The control's ≈ 16 s of 30 s is a test-data property (O(rows²)
+  with index scans off: 3,000 rows 0.95 s … 24,000 rows 58.4 s); the production statements grow linearly (lexical page
+  matching every row ≈ 8 µs per readable row) [m DIAG].
+- **E1X, exact final metadata by default** (`67a860de`, `cd2e8f4f`, `90ff5cea`, `e14f0792`, 4) [r E1X]; amends §5.6.2
+  and §5.6.9 E1 (≈ 19:40Z, ≈ 20:30Z): `indexing.metadataHorizonWindows` defaults to 2,147,483,647 — every piece carries
+  its passage's final summary/tags, results identical to a full re-publication, as before ingest-c; any value
+  1..2,147,483,647 is valid with incremental publication (L5E2's "≠ 16 requires `incrementalPublication=false`" is
+  gone); a finite H is an operator **opt-in: "effect on real-model relevance not measured; scripted mechanism result
+  only"** (CONTRACT.md, README.md, `docs/operations.md`). Every lineage publication writes a cut whose window boundaries
+  cover max(K − H, the window the open passage B opened in)..K; region R = B's pieces in those windows, decided per
+  window by one probe of its first member piece; under the default an append rewrites all of B's earlier pieces when B's
+  final metadata changes, else none (texts, spans and vectors copied, not re-embedded). A changed H makes each session's
+  next publication a root (staged publications restart). P2's second replay runs only under a finite H. **The
+  open-passage limit (by design):** append publication work = the addition plus the passage still open at the cut;
+  clone: p99 20 windows / 1,210 pieces, max 64 windows / 3,858 pieces [m CLONE `PASSAGES.md`]; nothing bounds a
+  passage's length; the degenerate case (one passage = the whole session, its summary changing every window) rewrites
+  the session at every append — at 1 GiB ≈ 612,000 pieces, about a root's publication (74 min, ≈ 52 GB WAL) [i E1X, from
+  the root's measurement]; on the clone whole-session rewrites happen only in sessions ≤ 42 windows [m CLONE].
+  Pre-review: fragmented open passages made the rewrite's membership reads quadratic → bounded range scans and point
+  lookups (145 runs in 19 windows: 163 / 163 / 19 rows examined, the reviewed form 1,387 / 1,387 / 145). **Line-434
+  failure** (22:30Z): `IncrementalPublicationDifferentialTest:434` failed deterministically in `test-postgres.sh`'s
+  grouping ("first pieces 21" > 19 windows) — a plan choice, not a defect: a join order `unnest ⋈ ch_chunks` without
+  Memoize repeated the per-ordinal segment lookup for another generation's chunk at the same ordinal; every compared row
+  and reader answer dumped, incremental vs full, identical in 7 runs (1,511 = 1,511 rows, 40 = 40 answers); fix
+  `90ff5cea`: the lookups sit in materialized CTEs (19 examined in every plan), the result equality is asserted before
+  the bound, no comparison loosened. Measured at the default (1 GiB + 10 appends of 0.5 %, a stub summary changing every
+  window): 3,095–4,428 chunks per append (1.20 × the added pieces), 0.32–0.99 GB WAL, job 50–89 s (151 and 202 s with
+  gate runs on the host), nothing growing over versions; a 211-window passage whose metadata changes is rewritten whole
+  at each append (13,440–14,016 pieces, 0.56–0.83 GB WAL), only the tail once it closed [m E1X].
+
+### 13.3 User-visible changes (L5 group)
+Wording of `reports/ingest-c/DEPLOYMENT.md` "User-visible changes (L5 group)" (its paths are relative to
+`reports/ingest-c/`):
+- **Ordering among results with exactly equal scores changes** (E3 tie-break: ties now order by session, ordinal, id instead of chunk
+  id; existing rows have no ordinal, so they tie on session and id). On the production copy (clone) 2 of the top 10 differed for 1 of 4
+  hybrid queries, another query reordered ranks 7–11 inside one exact-distance tie class, and one total went 487 → 488. Why a total can
+  change: each leg keeps a fixed candidate window (LIMIT 1,000); for that query 680 lexical candidates had exactly equal scores across
+  the cutoff and only 34 fit, so the new tie order swapped 3 of them, bringing in one more session. Verified, not assumed: for that
+  query the semantic leg's candidate set and order were identical, and the lexical leg's set differed only by those 3 rows, all inside
+  the tied class at the cutoff; lexical scores and distances of common rows were identical (`CLONE/HYBRID-DIFF.md`, `compare-q1..4.txt`).
+- Large sessions (previously `index-budget-exceeded`) get indexed at their next upload or on retry; semantic/hybrid search may return
+  `unavailable` (instead of silently short results) when invisible vectors crowd the candidates beyond the bounded second pass.
+- Rebuild = fresh annotations; a retried Complete job = cached republication (no model calls).
+
+Also: semantic and hybrid searches with a narrow structured filter (`project`, `gitBranch`, `tags`, `after`, `before`,
+Archive restrictions), which before ANN could return fewer sessions without a signal (215 of 1,000 leg rows, 6 of 10
+sessions measured), are completed by the second pass (§5.7). Chunk summaries and tags are those of a full publication by
+default (§13.2 E1X); only an operator's finite `indexing.metadataHorizonWindows` changes them, for content published
+after the change.
+
+### 13.4 REL outcome and the model-manifest finding
+- **Criterion (≈ 20:30Z) and clone numbers** (`reports/ingest-c/CLONE/PASSAGES.md`, a TEMPLATE copy of production's
+  archive, read-only, derived from every published run's accepted decisions and checked against the stored rows: 939,242
+  pieces, 0 mismatches): passage length in windows p50 2, p90 6, p99 16, max 66; **passages > 16 windows 58 of 6,592
+  (0.88 %) in 44 of 2,626 sessions** (9.36 % of the pieces). Replaying the archive's 3,458 real appends in exact mode:
+  rewrite region p99 20 windows / 1,210 pieces, max 64 / 3,858; appends whose rewrite exceeds 16 windows 56 (1.62 %, 17
+  sessions); **H = 16 would save 27,267 pieces = 2.26 % of the exact append work** (3.75 % of the rewrite work) [m
+  CLONE]. Passages > 16 windows are rare, so the real-model comparison was **not run**; the horizon is recorded as
+  "opt-in, effect on real-model relevance not measured; scripted mechanism result only"; **REL is closed**.
+- **Scripted result** (`reports/ingest-c/REL/RESULTS.md`; stub annotator replacing summaries at phase boundaries, 56
+  held-out cases, session-cluster bootstrap 95 %): keyword queries needing a final-outcome term on an early chunk (class
+  E2) lose under H = 16 — lexical Recall@5 1.00 → 0.00, hybrid MRR −0.29 [−0.54, −0.07]; the mirror class C (mid-problem
+  term) gains — lexical 0.00 → 1.00, hybrid MRR +0.31 [+0.10, +0.52]; natural questions, detail/resolution/short-session
+  keywords and the semantic control unchanged. This is construction, not semantic evidence: it shows the rule is
+  implemented exactly (6,144 pieces differ, 0 violations) and the direction and upper size of the effect per query
+  class, not its real-world rate [m REL].
+- **Local real models** (≈ 07:20Z/≈ 19:40Z conditions held: one idle GPU, hash-verified downloads, offline loopback
+  servers, GPU freed and weights removed): Qwen3-4B, the manifest's annotator, could not annotate the corpus — 72 of 80
+  attempts rejected with the repository's request settings, 28 % accepted with production's, ≈ 0.2 % chance for a
+  30-window session — so the run stopped before any comparison; no relevance number comes from a real model [m REL].
+- **Model-manifest finding** (`reports/ingest-c/DEPLOYMENT.md` "Finding for the owner (no fix in this track)"):
+  `chronicle/model-manifests` pins Qwen3-4B-Instruct-2507 (annotation) + llama-nemotron-embed-1b-v2 (embedding), while production
+  runs DeepSeek-V4.1-Flash-1017 via Tokenfactory + google/embeddinggemma-2@914f7f89 (768 d) (rendered production config,
+  `reports/deploy3/`, cited in `reports/ingest-c/REL/report.md` Phase 3). The repository's pinned-model evaluation path therefore does
+  not represent production, and the pinned local annotator could not annotate the evaluation corpus at all (28 % of attempts accepted
+  with production's request settings; ≈ 0.2 % chance per 30-window session) — `reports/ingest-c/REL/RESULTS.md`.
