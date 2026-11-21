@@ -87,8 +87,8 @@ test('REPRO: detail header wraps at narrow width preserving all metadata', async
   const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments);
   const showing = view.showHistory(f.ctx, [entry], [entry]);
   await tick(); const panel = f.views[0].component;
-  // At width 40, detail header wraps across multiple lines
-  const out = panel.render(40).join('\n');
+  // At width 40, the report's metadata line wraps across multiple lines; where it breaks is not the subject
+  const out = panel.render(40).join('\n').replace(/\s+/g, ' ');
   // All metadata must be present (may span multiple wrapped lines)
   assert.match(out, /2026-11-08T12:00:00Z/, 'timestamp must be visible');
   assert.match(out, /current branch/, 'branch must be visible');

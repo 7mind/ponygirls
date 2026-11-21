@@ -1,6 +1,6 @@
 import type { ExtensionContext, SessionEntry } from '@earendil-works/pi-coding-agent';
 import { CURSOR_MARKER, Editor, matchesKey, Key, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Focusable, type TuiMouseEvent } from '@earendil-works/pi-tui';
-import { BORDER_ORDER, CustomViewToggle, HINT, KEY, borderBadge, borderBadgeCompact, fit, fitRight, frameRule, frameTitle, keyHints, PanelLayout, type BorderBadge, type KeyHint, type PanelParts, type UiTheme } from '@ponygirls/pi-ui';
+import { BORDER_ORDER, CustomViewToggle, HINT, KEY, borderBadge, borderBadgeCompact, fit, fitRight, frameRule, frameTitle, keyHints, PanelLayout, type BorderBadge, type FrameTitle, type KeyHint, type PanelParts, type UiTheme } from '@ponygirls/pi-ui';
 import type { Checkpoint } from './report.ts';
 import { checkpoints as collectCheckpoints, REPORT_TYPE } from './report.ts';
 import { checkpointBlocks, reportContent, historyContent, terminalText } from './presentation.ts';
@@ -28,8 +28,15 @@ export interface CommentHost {
 }
 
 interface LineRange { start: number; end: number }
+/** The body lines on screen: `height` lines from line `top`. */
+interface View { top: number; height: number }
 interface Geometry { headerRows: number; footerRows: number; nodes: readonly LineRange[] }
 interface EditorDraft { editor: Editor; requestId: string; node: CommentNode }
+/** What the arrows act on: the checkpoint list, or the report of the selected checkpoint. */
+type Focus = 'list' | 'report';
+/** What a table row is called in titles: a checkpoint of this branch, or a saved answer of the session. */
+type ItemNoun = 'checkpoint' | 'answer';
+const ITEM_TITLE: Readonly<Record<ItemNoun, string>> = { checkpoint: 'Checkpoint', answer: 'Answer' };
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -74,13 +81,25 @@ function tableLines(theme: UiTheme, columns: readonly Column[], rows: readonly T
   return [`  ${headerLine}`, `  ${ruleLine}`, ...dataLines];
 }
 
-function detailTitleLine(theme: UiTheme, text: string, meta: string): string {
-  return `${theme.fg('accent', theme.bold(`── ${text}`))}${meta ? theme.fg('muted', ` · ${meta}`) : ''}`;
+/**
+ * The first of `candidates` that `width` shows whole; the last one, cut, when none fits. A title rule cuts what
+ * does not fit with an ellipsis, so a candidate fits when its title and meta come out unchanged.
+ */
+function fittingTitle(theme: UiTheme, width: number, candidates: readonly FrameTitle[]): string {
+  for (const candidate of candidates) {
+    const line = frameTitle(theme, width, candidate, 'none').line;
+    if (line.includes(candidate.title) && (candidate.meta === undefined || line.includes(candidate.meta))) return line;
+  }
+  return frameTitle(theme, width, candidates[candidates.length - 1], 'none').line;
+}
+
+/** Scroll position as the usage and model-stats panes word it; an arrow marks a side with hidden lines. */
+function scrollPosition(lineCount: number, start: number, end: number): string {
+  return `${start > 0 ? '↑ ' : ''}lines ${start + 1}–${end} of ${lineCount}${end < lineCount ? ' ↓' : ''}`;
 }
 
 interface TableItem {
   checkpoint: Checkpoint;
-  label: string;
   id: string;
   meta: string;
   timestamp?: string;
@@ -102,13 +121,12 @@ export class CuckooView {
       ctx.ui.notify(terminalText(reportContent(reports, intro, this.comments.saved(ctx, 'branch')).plain), 'info');
       return;
     }
-    const items: TableItem[] = [...reports].reverse().map((r, i) => ({
+    const items: TableItem[] = [...reports].reverse().map(r => ({
       checkpoint: r,
-      label: `Checkpoint ${reports.length - i}`,
       id: terminalText(r.requestId),
       meta: r.report === null ? 'invalid' : `${r.report.objectives.length} objectives`,
     }));
-    await this.showTable(ctx, { title: 'Cuckoo objectives and progress', items, intro, emptyMessage: 'No Cuckoo reports on this branch yet.', commentScope: 'branch' });
+    await this.showTable(ctx, { title: 'Cuckoo objectives and progress', noun: 'checkpoint', items, intro, emptyMessage: 'No Cuckoo reports on this branch yet.', commentScope: 'branch' });
   }
 
   async showHistory(ctx: ExtensionContext, entries: readonly SessionEntry[], branch: readonly SessionEntry[]): Promise<void> {
@@ -118,11 +136,10 @@ export class CuckooView {
     }
     const current = new Set(branch.map(e => e.id));
     const answers = entries.filter(e => e.type === 'custom' && e.customType === REPORT_TYPE);
-    const items: TableItem[] = [...answers].reverse().map((entry, i) => {
+    const items: TableItem[] = [...answers].reverse().map(entry => {
       const cp = collectCheckpoints([entry])[0];
       return {
         checkpoint: cp,
-        label: `Answer ${answers.length - i}`,
         id: terminalText(entry.id),
         meta: `${cp.report === null ? 'invalid' : `${cp.report.objectives.length} objectives`}`,
         timestamp: entry.timestamp,
@@ -130,21 +147,21 @@ export class CuckooView {
       };
     });
     await this.showTable(ctx, {
-      title: 'Cuckoo answer history', items, intro: 'This session · all branches · newest first · saved answers, not live verification',
+      title: 'Cuckoo answer history', noun: 'answer', items, intro: 'This session · all branches · newest first · saved answers, not live verification',
       emptyMessage: 'No Cuckoo answers in this session yet.', commentScope: 'session',
     });
   }
 
   private async showTable(
     ctx: ExtensionContext,
-    opts: { title: string; items: readonly TableItem[]; intro: string; emptyMessage: string; commentScope: CommentScope },
+    opts: { title: string; noun: ItemNoun; items: readonly TableItem[]; intro: string; emptyMessage: string; commentScope: CommentScope },
   ): Promise<void> {
     if (!this.active) return;
     let requested = false;
     const host = this.comments;
     const closeReason = (): PanelClose => !this.active ? 'shutdown' : requested ? 'inquire' : 'close';
     await this.pane.toggle(ctx.ui, (tui, theme, keys, done) => {
-      const state = { selectedIndex: 0, topRow: 0, scrollOffset: 0, node: null as number | null };
+      const state = { selectedIndex: 0, topRow: 0, scrollOffset: 0, node: null as number | null, focus: 'list' as Focus };
       // Comments made in this panel; persisted together when it closes.
       const staged: CommentDraft[] = [];
       let saved: readonly SavedComment[] = [];
@@ -156,7 +173,20 @@ export class CuckooView {
       let pasting = false;
       let geometry: Geometry | null = null;
       let lastWidth = UNRENDERED_WIDTH;
-      let lastView: { top: number; height: number } | null = null;
+      let lastView: View | null = null;
+      /** Rows of the checkpoint table, as last derived from a pane height that had the table in it. */
+      let tableRows: number | null = null;
+      /** Whether the last layout pass drew the table, so that the pane height it left includes the table. */
+      let heightHasTable = false;
+      /** Where the list view stood when Enter focused the report. Escape returns there unless another input came in between. */
+      let returnTop: number | null = null;
+      /**
+       * Set by the Escape that left the report. The view gets shorter only after the key was handled, so what the
+       * list view should show is applied once, in the first frame whose view has another height than `height`, the
+       * report's. `top` is the line to return to; without one, `hold` says that the selected item was on screen and
+       * stays there. The next input ends it unapplied.
+       */
+      let leaving: { top: number | null; hold: boolean; height: number } | null = null;
 
       function maxTop(total: number, maxRows: number): number { return Math.max(0, total - maxRows); }
       function ensureVisible(total: number, maxRows: number): void {
@@ -175,7 +205,18 @@ export class CuckooView {
       const panel = new (class extends PanelLayout implements Focusable {
         readonly capturesViewportInput = true;
         private hasFocus = false;
-        constructor() { super((width) => this.buildParts(width)); }
+        constructor() {
+          super((width) => {
+            const parts = this.buildParts(width);
+            const shown = this.tableShown();
+            // The table is back with the row count kept from when it was last shown. The terminal may have changed
+            // since: ask for the frame that counts again, which nothing else requests when the report fits.
+            if (shown && !heightHasTable) tui.requestRender();
+            // The layout takes the pane's chrome from these parts: the height it reports from now on is this frame's.
+            heightHasTable = shown;
+            return parts;
+          });
+        }
         override invalidate(): void {}
 
         get focused(): boolean { return this.hasFocus; }
@@ -183,14 +224,17 @@ export class CuckooView {
 
         override render(width: number): string[] {
           const parts = this.buildParts(width);
-          const totalBody = parts.body.length;
-          const available = Math.max(1, tui.terminal.rows - PI_CHROME - parts.header.length - parts.footer.length);
-          const viewLines = Math.max(1, Math.min(totalBody, available));
-          const maxScroll = Math.max(0, totalBody - viewLines);
-          const start = Math.min(state.scrollOffset, maxScroll);
-          lastView = { top: start, height: viewLines };
-          const visible = parts.body.slice(start, start + viewLines);
-          return [...parts.header, ...visible, ...parts.footer];
+          const view = this.unallocatedView(parts.body.length, parts.header.length + parts.footer.length);
+          lastView = view;
+          // Like the layout engine's scroll view, keep the offset within the report it was drawn with.
+          if (!this.hasAllocatedHeight) state.scrollOffset = view.top;
+          return [...parts.header, ...parts.body.slice(view.top, view.top + view.height), ...parts.footer];
+        }
+
+        /** Without an allocated height the terminal bounds the pane: the rows its chrome leaves, at the kept scroll offset. */
+        private unallocatedView(bodyRows: number, chromeRows: number): View {
+          const height = Math.max(1, Math.min(bodyRows, Math.max(1, tui.terminal.rows - PI_CHROME - chromeRows)));
+          return { top: Math.min(state.scrollOffset, Math.max(0, bodyRows - height)), height };
         }
 
         /** Every close path ends here: nothing typed in this panel is dropped silently. */
@@ -209,14 +253,22 @@ export class CuckooView {
           catch (error) { ctx.ui.notify(terminalText(`Cuckoo: comments were not saved: ${String(error)}`), 'error'); }
         }
 
+        /** The table is drawn while the list is focused and no comment is being written; otherwise the report has its rows. */
+        private tableShown(): boolean { return opts.items.length > 0 && state.focus === 'list' && draft === null; }
+
         private maxTableRows(): number {
+          // A host that sizes the pane to its content lays it out shorter while the table is hidden; that height does
+          // not say how many rows the table has room for. Keep the count until a layout pass has drawn the table again.
+          if (this.hasAllocatedHeight && !heightHasTable && tableRows !== null) return tableRows;
           const footerReserve = 2;
           const minBody = 4;
-          const headerChrome = 5;
+          // Pane title, column header, its rule and the report title.
+          const headerChrome = 4;
           const total = this.hasAllocatedHeight ? this.height(24)
             : Math.max(10, tui.terminal.rows - PI_CHROME);
           const available = Math.max(1, total - footerReserve - minBody - headerChrome);
-          return clamp(Math.min(3, available), 1, 3);
+          tableRows = clamp(Math.min(3, available), 1, 3);
+          return tableRows;
         }
 
         private selectedNodes(): CommentNode[] {
@@ -227,7 +279,7 @@ export class CuckooView {
         /** Node line ranges for the current state. Recomputed on demand: keys can arrive without a frame in between. */
         private currentNodes(): readonly LineRange[] { return this.compose(lastWidth).nodes; }
 
-        private viewport(): { top: number; height: number } {
+        private viewport(): View {
           if (this.hasAllocatedHeight) return { top: this.bodyScroll.scrollTop, height: Math.max(1, this.bodyScroll.viewportHeight) };
           // Without an allocated height the viewport exists only as the last frame; keys may have scrolled since.
           this.render(lastWidth);
@@ -280,6 +332,76 @@ export class CuckooView {
           if (current === null) { notice = 'This checkpoint has no rule, objective or answer to select.'; return; }
           state.node = current === state.node ? clamp(current + direction, 0, nodes.length - 1) : current;
           this.reveal(nodes[state.node]);
+        }
+
+        private onScreen(range: LineRange, view: View): boolean { return range.end > view.top && range.start < view.top + view.height; }
+
+        /** The cursor when it is on screen, else the item on screen nearest the edge the travel starts from; null when no item is on screen. */
+        private nodeOnScreen(nodes: readonly LineRange[], view: View, direction: 1 | -1): number | null {
+          const visible = nodes.flatMap((range, index) => this.onScreen(range, view) ? [index] : []);
+          if (visible.length === 0) return null;
+          if (state.node !== null && visible.includes(state.node)) return state.node;
+          return direction > 0 ? visible[0] : visible[visible.length - 1];
+        }
+
+        /**
+         * An arrow in the focused report. The cursor item is shown to its end first: at once when it fits the view, by
+         * line when it is taller. Then the next item is taken and shown the same way. The view never moves by more than
+         * its height, so no line is skipped, and the cursor never moves to an item that is not on screen.
+         */
+        private stepItem(direction: 1 | -1): void {
+          const nodes = this.currentNodes();
+          const view = this.viewport();
+          const scrollBy = (lines: number): void => this.scrollBodyTo(view.top + lines);
+          const current = this.nodeOnScreen(nodes, view, direction);
+          if (current === null) { scrollBy(direction); return; }
+          if (current !== state.node) { state.node = current; return; }
+          // Lines of an item still hidden in the direction of travel, and how far the view can move before the item's near edge leaves it.
+          const hidden = (range: LineRange): number => direction > 0 ? range.end - (view.top + view.height) : view.top - range.start;
+          const room = (range: LineRange): number => direction > 0 ? range.start - view.top : view.top + view.height - range.end;
+          const reveal = (range: LineRange): number => Math.min(view.height, room(range) > 0 ? Math.min(hidden(range), room(range)) : 1);
+          if (hidden(nodes[current]) > 0) { scrollBy(direction * reveal(nodes[current])); return; }
+          const target = current + direction;
+          if (target < 0 || target >= nodes.length) { scrollBy(direction); return; }
+          const next = nodes[target];
+          if (hidden(next) > 0) {
+            const top = view.top + direction * reveal(next);
+            // The lines in between fill the view: read on by line; the item is taken once it is on screen.
+            if (next.end <= top || next.start >= top + view.height) { scrollBy(direction); return; }
+            scrollBy(direction * reveal(next));
+          }
+          state.node = target;
+        }
+
+        private focusReport(): void {
+          if (opts.items.length === 0) return;
+          // The item cursor starts on an item the user sees: "on screen" is the view the key was pressed in, before the table folds away.
+          const view = this.viewport();
+          const first = this.nodeOnScreen(this.currentNodes(), view, 1);
+          state.focus = 'report';
+          returnTop = view.top;
+          if (first !== null) state.node = first;
+        }
+
+        /**
+         * The view after the Escape that left the report, once the list view has its height. Nothing else was done in
+         * the report: the view Enter was pressed in, which the taller view could not keep at the end of a report.
+         * Otherwise a selected item that the shorter view puts off screen is brought back, whole when it fits, else
+         * from its first line. Applied once, so that later scrolling is never undone.
+         */
+        private viewAfterLeaving(nodes: readonly LineRange[], view: View): View {
+          if (leaving === null || view.height === leaving.height) return view;
+          const { top: returnTo, hold } = leaving;
+          leaving = null;
+          let top = view.top;
+          if (returnTo !== null) top = returnTo;
+          else if (hold) {
+            const range = state.node === null ? undefined : nodes[state.node];
+            if (range !== undefined && !this.onScreen(range, view)) top = range.start < view.top ? range.start : Math.min(range.start, range.end - view.height);
+          }
+          if (top === view.top) return view;
+          this.scrollBodyTo(top);
+          return { top, height: view.height };
         }
 
         private startComment(): void {
@@ -338,32 +460,63 @@ export class CuckooView {
               ]).lines,
             ];
           }
-          const hints: KeyHint[] = [
-            HINT.select,
-            { key: KEY.page, action: 'scroll detail' },
-            { key: 'tab/shift-tab', action: 'item' },
-            { key: 'c', action: 'comment' },
+          const count = staged.length === 0 ? [] : wrapTextWithAnsi(theme.fg('success',
+            `${staged.length} new comment${staged.length === 1 ? '' : 's'}: saved to history and sent to the model when this panel closes`), w).slice(0, MAX_INFO_ROWS);
+          if (notice === '') return [...count, ...keyHints(theme, w, this.hints()).lines];
+          // A notice stands where the count of new comments was and keeps its rows: the key that clears the notice
+          // may move the view in the same press, and the view must not lose a row under that step.
+          const info = wrapTextWithAnsi(theme.fg('warning', notice), w).slice(0, MAX_INFO_ROWS);
+          while (info.length < count.length) info.push('');
+          return [...info, ...keyHints(theme, w, this.hints()).lines];
+        }
+
+        /** The keys that act in the current state. */
+        private hints(): KeyHint[] {
+          const inquire: KeyHint = { key: 'i', action: 'inquire now' };
+          if (opts.items.length === 0) return [inquire, HINT.close];
+          const hasItems = this.selectedNodes().length > 0;
+          const comment: KeyHint[] = [
+            ...(hasItems ? [{ key: 'c', action: 'comment' }] : []),
             ...(staged.length === 0 ? [] : [{ key: 'x', action: 'remove new comment' }]),
-            { key: 'i', action: 'inquire now' },
-            HINT.close,
           ];
-          const info = notice !== '' ? theme.fg('warning', notice) : staged.length === 0 ? '' :
-            theme.fg('success', `${staged.length} new comment${staged.length === 1 ? '' : 's'}: saved to history and sent to the model when this panel closes`);
-          return [...(info === '' ? [] : wrapTextWithAnsi(info, w).slice(0, MAX_INFO_ROWS)), ...keyHints(theme, w, hints).lines];
+          if (state.focus === 'report') return [hasItems ? { key: KEY.upDown, action: 'item' } : HINT.scroll, HINT.page, ...comment, inquire, HINT.back];
+          return [
+            HINT.select, { key: KEY.enter, action: 'detail' }, { key: KEY.page, action: 'scroll detail' },
+            ...(hasItems ? [{ key: 'tab/shift-tab', action: 'item' }] : []), ...comment, inquire, HINT.close,
+          ];
         }
 
         private buildParts(width: number): PanelParts {
-          const { parts, nodes } = this.compose(width);
+          const { parts, titles, nodes } = this.compose(width);
+          if (titles.length > 0) {
+            // The report title closes the header; it shows where the body is scrolled.
+            const chromeRows = parts.header.length + 1 + parts.footer.length;
+            const view = this.viewAfterLeaving(nodes, this.hasAllocatedHeight ? { top: this.bodyScroll.scrollTop, height: Math.max(1, this.bodyScroll.viewportHeight) }
+              : this.unallocatedView(parts.body.length, chromeRows));
+            parts.header.push(this.reportTitle(titles, view, parts.body.length, Math.max(1, width)));
+          }
           geometry = { headerRows: parts.header.length, footerRows: parts.footer.length, nodes };
           this.keepCommentedNodeInView(nodes);
           return parts;
         }
 
-        private compose(width: number): { parts: PanelParts; nodes: readonly LineRange[] } {
+        /**
+         * The report's title rule, with the scroll position when the report does not fit. `titles` go from the fullest
+         * to the shortest: at narrow widths the title shortens before the position goes, and the position before the title is cut.
+         */
+        private reportTitle(titles: readonly string[], view: View, total: number, w: number): string {
+          const top = clamp(view.top, 0, Math.max(0, total - view.height));
+          const position = total > view.height ? theme.fg('dim', scrollPosition(total, top, Math.min(total, top + view.height))) : undefined;
+          return fittingTitle(theme, w, [...(position === undefined ? [] : titles.map(title => ({ title, right: position }))), ...titles.map(title => ({ title }))]);
+        }
+
+        /** Header without the report title, body and footer; `titles` are the report's titles, none when there is no checkpoint. */
+        private compose(width: number): { parts: PanelParts; titles: readonly string[]; nodes: readonly LineRange[] } {
           const w = Math.max(1, width);
+          // Another width wraps the report anew: a remembered line is no longer the same place.
+          if (w !== lastWidth) { returnTop = null; if (leaving !== null) leaving = { ...leaving, top: null }; }
           lastWidth = w;
           const total = opts.items.length;
-          const titleLine = frameTitle(theme, w, { title: opts.title }, 'none').line;
 
           // Parse intro: separate errors from status lines
           const errorLines: string[] = savedFault === null ? [] : [theme.fg('error', terminalText(savedFault))];
@@ -387,38 +540,46 @@ export class CuckooView {
             for (const line of errorLines) bodyLines.push(...wrapTextWithAnsi(line, w));
             bodyLines.push('', emptyLine);
             for (const line of statusLines) bodyLines.push(...wrapTextWithAnsi(line, w));
-            return { parts: { header: [titleLine], body: bodyLines, footer }, nodes: [] };
+            return { parts: { header: [frameTitle(theme, w, { title: opts.title }, 'none').line], body: bodyLines, footer }, titles: [], nodes: [] };
           }
 
-          // Table
+          // Table: shown while the list is focused and no comment is being written; otherwise the report has its rows.
           const maxRows = this.maxTableRows();
           ensureVisible(total, maxRows);
-          const columns = buildColumns(w);
-          const visibleEnd = Math.min(state.topRow + maxRows, total);
-          const rows: TableRow[] = [];
-          for (let i = state.topRow; i < visibleEnd && i < total; i++) {
-            const item = opts.items[i];
-            const objCount = item.checkpoint.report?.objectives.length ?? 0;
-            rows.push({
-              cells: [
-                String(total - i),
-                terminalText(item.checkpoint.requestId),
-                item.checkpoint.report === null ? '·' : String(objCount),
-                item.checkpoint.report === null ? 'invalid' : 'saved',
-              ],
-              selected: i === state.selectedIndex,
-            });
+          const ordinal = total - state.selectedIndex;
+          const header: string[] = [];
+          const titles: string[] = [];
+          if (this.tableShown()) {
+            const columns = buildColumns(w);
+            const visibleEnd = Math.min(state.topRow + maxRows, total);
+            const rows: TableRow[] = [];
+            for (let i = state.topRow; i < visibleEnd && i < total; i++) {
+              const item = opts.items[i];
+              const objCount = item.checkpoint.report?.objectives.length ?? 0;
+              rows.push({
+                cells: [
+                  String(total - i),
+                  terminalText(item.checkpoint.requestId),
+                  item.checkpoint.report === null ? '·' : String(objCount),
+                  item.checkpoint.report === null ? 'invalid' : 'saved',
+                ],
+                selected: i === state.selectedIndex,
+              });
+            }
+            // Which rows of a longer list are shown; the pane's name outlasts it at narrow widths.
+            const shownRows = total > maxRows ? [{ title: opts.title, meta: `${state.topRow + 1}–${visibleEnd} of ${total}` }] : [];
+            header.push(fittingTitle(theme, w, [...shownRows, { title: opts.title }]), ...tableLines(theme, columns, rows, w));
+            titles.push(`${ITEM_TITLE[opts.noun]} ${ordinal}`);
+          } else {
+            // The table that numbers the rows is hidden, so the title says which one of how many this is.
+            titles.push(`Cuckoo ${opts.noun} ${ordinal} of ${total}`, `${ITEM_TITLE[opts.noun]} ${ordinal} of ${total}`);
           }
-          const tblLines = tableLines(theme, columns, rows, w);
-          const navHint = total > maxRows
-            ? theme.fg('muted', `  ${state.topRow + 1}–${visibleEnd} of ${total}`)
-            : '';
 
           // Detail
           const selectedItem = opts.items[state.selectedIndex];
           const comments = shown();
           const commentCount = comments.filter(item => item.requestId === selectedItem.checkpoint.requestId).length;
-          const metaParts: string[] = [];
+          const metaParts: string[] = [terminalText(selectedItem.checkpoint.requestId)];
           if (selectedItem.timestamp) metaParts.push(terminalText(selectedItem.timestamp));
           if (selectedItem.currentBranch !== undefined) metaParts.push(selectedItem.currentBranch ? 'current branch' : 'other branch');
           if (selectedItem.id && selectedItem.id !== terminalText(selectedItem.checkpoint.requestId)) {
@@ -431,12 +592,12 @@ export class CuckooView {
             metaParts.push('invalid · saved attempt');
           }
           if (commentCount > 0) metaParts.push(`${commentCount} comment${commentCount === 1 ? '' : 's'}`);
-          const detailHdr = detailTitleLine(theme, `${selectedItem.label} (${terminalText(selectedItem.checkpoint.requestId)})`, metaParts.join(' · '));
 
-          // Body: errors first, then detail header + detail, then status
+          // Body: errors first, then the report's metadata and detail, then status
           const bodyLines: string[] = [];
           for (const line of errorLines) bodyLines.push(...wrapTextWithAnsi(line, w));
-          bodyLines.push('', ...wrapTextWithAnsi(detailHdr, w), '');
+          if (errorLines.length > 0) bodyLines.push('');
+          bodyLines.push(...wrapTextWithAnsi(theme.fg('muted', metaParts.join(' · ')), w), '');
           const nodes: LineRange[] = [];
           const contentWidth = Math.max(1, w - NODE_GUTTER);
           for (const block of checkpointBlocks(theme, selectedItem.checkpoint, Math.max(20, w - 2 * NODE_GUTTER), comments)) {
@@ -449,7 +610,7 @@ export class CuckooView {
           bodyLines.push('');
           for (const line of statusLines) bodyLines.push(...wrapTextWithAnsi(line, w));
 
-          return { parts: { header: [titleLine, '', ...tblLines, navHint], body: bodyLines, footer }, nodes };
+          return { parts: { header, body: bodyLines, footer }, titles, nodes };
         }
 
         private editorInput(data: string): void {
@@ -471,16 +632,39 @@ export class CuckooView {
 
         private onInput(data: string): void {
           notice = '';
+          const enteredAt = returnTop;
+          returnTop = null;
+          leaving = null;
           if (draft !== null) { this.editorInput(data); tui.requestRender(); return; }
           if (data === 'i') { requested = true; done(); return; }
-          if (keys.matches(data, 'tui.select.cancel') || data === 'q') { done(); return; }
+          if (keys.matches(data, 'tui.select.cancel') || data === 'q') {
+            // One level back: from the report to the list, from the list out of the pane.
+            if (state.focus === 'list') { done(); return; }
+            // Judged before the table returns: an item the user scrolled away from in the report is not brought back.
+            const selected = state.node === null ? undefined : this.currentNodes()[state.node];
+            const view = this.viewport();
+            state.focus = 'list';
+            leaving = { top: enteredAt, hold: selected !== undefined && this.onScreen(selected, view), height: view.height };
+            tui.requestRender();
+            return;
+          }
 
           const total = opts.items.length;
           const prev = state.selectedIndex;
+          const up = matchesKey(data, Key.up) || data === 'k';
+          const down = matchesKey(data, Key.down) || data === 'j';
 
-          if (matchesKey(data, Key.up) || data === 'k') {
+          if (state.focus === 'report' && (up || down)) {
+            this.stepItem(up ? -1 : 1);
+            tui.requestRender();
+            return;
+          } else if (keys.matches(data, 'tui.select.confirm')) {
+            if (state.focus === 'list') this.focusReport();
+            tui.requestRender();
+            return;
+          } else if (up) {
             if (total > 0) state.selectedIndex = clamp(state.selectedIndex - 1, 0, total - 1);
-          } else if (matchesKey(data, Key.down) || data === 'j') {
+          } else if (down) {
             if (total > 0) state.selectedIndex = clamp(state.selectedIndex + 1, 0, total - 1);
           } else if (matchesKey(data, Key.tab)) {
             this.moveNode(1);
@@ -541,6 +725,8 @@ export class CuckooView {
         handleMouse(event: TuiMouseEvent): ReturnType<PanelLayout['handleMouse']> {
           const handled = (render: boolean): NonNullable<ReturnType<PanelLayout['handleMouse']>> =>
             ({ handled: true, render, target: { component: this, originX: event.screenX - event.x, originY: event.screenY - event.y, width: event.width, height: event.height } });
+          // Like a key, a press, a click or the wheel ends what the last focus change left pending.
+          if (event.type !== 'move' && event.type !== 'release') { returnTop = null; leaving = null; }
           if (event.type === 'wheel' && event.wheelDelta) {
             if (this.hasAllocatedHeight) { this.bodyScroll.scrollBy(event.wheelDelta); state.scrollOffset = this.bodyScroll.scrollTop; }
             else state.scrollOffset = Math.max(0, state.scrollOffset + event.wheelDelta);
