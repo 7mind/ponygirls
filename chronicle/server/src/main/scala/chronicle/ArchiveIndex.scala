@@ -77,7 +77,9 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
   import ArchiveExpression.*
   private val unicode = "COLLATE \"pg_unicode_fast\""
   private val columns = "c.*"
-  private final case class PageRow(value: ArchiveRow,key: Option[String],relevanceScore: Option[String],witnesses: List[ArchiveSemanticWitness])
+  /** `literalPositions`: by text operand index, the first matching message positions of the head's epoch, for the operands
+    * whose candidates name every match (none for a legacy head). */
+  private[chronicle] final case class PageRow(value: ArchiveRow,key: Option[String],relevanceScore: Option[String],witnesses: List[ArchiveSemanticWitness],literalPositions: Map[Int,List[Int]])
   private def insensitive(column: String,value: String): ArchiveSql = ArchiveSql(s"COALESCE(lower(($column) $unicode)=lower(? $unicode),false)",List(value))
   private def predicate(value: ArchivePredicate): ArchiveSql = value match {
     case ArchivePredicate.User(user) => ArchiveSql("c.owner=?",List(user))
@@ -151,6 +153,11 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
   }
   private[chronicle] def statement(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],position: Option[ArchiveCursor]): ArchiveSql =
     compile(reader,query,parsed,vectors,position,false)
+  /** The positive text operands (indexes) whose matching fragments the page query holds (`e$i`). */
+  private def literalCandidates(parsed: ParsedArchiveExpression): List[Int] =
+    if(parsed.mode==SearchMode.Semantic) Nil
+    else positive(parsed.expression,false).distinct.map(parsed.textOperands.indexOf).filter(index => LexicalCandidates.trigrams(parsed.textOperands(index)))
+  private def literalPositions(index: Int): String = s"literal_positions_$index"
 
   private def compile(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],position: Option[ArchiveCursor],witnesses: Boolean): ArchiveSql = {
     val ranked=relevanceOrdered(query,parsed)
@@ -214,11 +221,19 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     val cursor=if(ranked) seekRelevance(position) else seek(position,numeric,query.direction)
     val direction=if(ranked || query.direction==SortDirection.Desc) "DESC" else "ASC"
     def order(alias: String): String = (if(ranked) s"$alias.relevance DESC," else "")+s"$alias.sort_key $direction NULLS LAST,$alias.id"
+    // The witnesses of a head in a current epoch read its first matching messages, which the epoch's fragments name when
+    // each occurrence of the folded literal lies inside one fragment (fragments overlap by overlapScalars).
+    val literal=if(witnesses) literalCandidates(parsed) else Nil
+    val positions=literal.map { index =>
+      s""",(SELECT CASE WHEN EXISTS(SELECT 1 FROM ch_epochs WHERE id=head.epoch AND candidates='current') AND char_length(lower(? $unicode))<=${ArchiveProjection.overlapScalars}
+        THEN (SELECT coalesce(jsonb_agg(x.position ORDER BY x.position),'[]'::jsonb) FROM (SELECT DISTINCT f.position FROM e$index f WHERE f.epoch=head.epoch AND f.position<head.message_count ORDER BY f.position LIMIT ${ArchiveSearchPolicy.maximumMatches}) x) END
+        FROM ch_revisions head WHERE head.session_id=page.id AND head.revision=page.revision) AS ${literalPositions(index)}"""
+    }.mkString
     val references=if(witnesses && semantic && positives.nonEmpty) {
       val candidates=positives.map(i => s"SELECT $i AS operand,id,revision,generation,distance FROM a$i WHERE session_id=page.id").mkString(" UNION ALL ")
       s"(SELECT coalesce(jsonb_agg(to_jsonb(w)), '[]'::jsonb) FROM (SELECT operand,id,revision,generation FROM ($candidates) candidates ORDER BY distance,operand,id LIMIT ${ArchiveSearchPolicy.maximumMatches}) w)"
     } else "'[]'::jsonb"
-    ArchiveSql("WITH "+ctes.result().mkString(",")+s" SELECT counted.total,page.*,page.sort_key::text AS sort_value,page.relevance::text AS relevance_value,$references AS witnesses FROM (SELECT count(*) AS total FROM matched) counted LEFT JOIN LATERAL(SELECT r.* FROM matched r WHERE (${cursor.text}) ORDER BY ${order("r")} LIMIT ?) page ON true ORDER BY ${order("page")}",args.result()++cursor.args++List(query.limit+1))
+    ArchiveSql("WITH "+ctes.result().mkString(",")+s" SELECT counted.total,page.*,page.sort_key::text AS sort_value,page.relevance::text AS relevance_value,$references AS witnesses$positions FROM (SELECT count(*) AS total FROM matched) counted LEFT JOIN LATERAL(SELECT r.* FROM matched r WHERE (${cursor.text}) ORDER BY ${order("r")} LIMIT ?) page ON true ORDER BY ${order("page")}",args.result()++literal.map(parsed.textOperands)++cursor.args++List(query.limit+1))
   }
   private def row(r: ResultSet): ArchiveRow = {
     val id=r.getObject("id",classOf[UUID])
@@ -244,14 +259,14 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
       Sql.exec(c,"SELECT set_config('statement_timeout',least(coalesce(nullif(setting::bigint,0),?),?)::text,true) FROM pg_settings WHERE name='statement_timeout'",ArchiveSearchPolicy.statementDeadlineMillis,ArchiveSearchPolicy.statementDeadlineMillis)
       val (page,selected)=execute(c,reader,query,parsed,vectors,Some(bounded))
       val evidence=selected.map { value =>
-        ArchiveSearchEvidence(value.value.head.id,ArchiveSearchWitnesses.read(c,archive,reader,value.value,parsed,value.witnesses,bounded))
+        ArchiveSearchEvidence(value.value.head.id,ArchiveSearchWitnesses.read(c,archive,reader,value.value,parsed,value.witnesses,value.literalPositions,bounded))
       }
       ArchiveSearchPolicy.result(ArchiveSearchResult(page,evidence))
     } catch {
       case error: SQLException if error.getSQLState=="57014" => throw DomainError("deadline","archive search statement deadline exceeded")
     }
   }
-  private def execute(c: Connection,reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],materialization: Option[ReadMaterialization]): (ArchiveResult,List[PageRow]) = {
+  private[chronicle] def execute(c: Connection,reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],materialization: Option[ReadMaterialization]): (ArchiveResult,List[PageRow]) = {
     ArchivePaging.page(query.limit)
     val bounded=parsed.mode!=SearchMode.Lexical && parsed.textOperands.nonEmpty
     if(parsed.mode!=SearchMode.Semantic && parsed.textOperands.nonEmpty)
@@ -263,10 +278,12 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     val ranked=relevanceOrdered(query,parsed)
     val position=ArchivePaging.decode(query,reader,ranked).map(resolve(c,reader,query,_,materialization))
     val sql=compile(reader,query,parsed,vectors,position,materialization.nonEmpty)
+    val literal=if(materialization.isEmpty) Nil else literalCandidates(parsed)
     def decode(r: ResultSet): (Long,Option[PageRow]) = {
       val result=Option(r.getObject("id",classOf[UUID])).map { _ =>
         val refs=if(materialization.isEmpty) Nil else ArchiveSearchWitnesses.decode(Sql.json(r,"witnesses"))
-        PageRow(row(r),Option(r.getString("sort_value")),if(ranked) Some(r.getString("relevance_value")) else None,refs)
+        val positions=literal.flatMap(index => Option(r.getString(literalPositions(index))).map(value => index -> ArchiveSearchWitnesses.positions(Wire.parse(value)))).toMap
+        PageRow(row(r),Option(r.getString("sort_value")),if(ranked) Some(r.getString("relevance_value")) else None,refs,positions)
       }
       (r.getLong("total"),result)
     }

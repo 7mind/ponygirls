@@ -40,12 +40,20 @@ private[chronicle] object ArchiveSearchWitnesses {
     val c=value.hcursor
     ArchiveSemanticWitness(c.get[Int]("operand").toTry.get,UUID.fromString(c.get[String]("id").toTry.get),ContentView(c.get[Int]("revision").toTry.get,Some(UUID.fromString(c.get[String]("generation").toTry.get))))
   }
-  def read(c: Connection,archive: PostgresArchive,reader: String,row: ArchiveRow,parsed: ParsedArchiveExpression,semantic: List[ArchiveSemanticWitness],materialization: ReadMaterialization): List[ArchiveSourceMatch] = {
+  /** A page row's first matching message positions of one literal, ascending. */
+  def positions(json: Json): List[Int] = {
+    val values=json.as[List[Int]].getOrElse(throw DomainError("projection","invalid archive literal positions"))
+    Check(values.size<=ArchiveSearchPolicy.maximumMatches && values.forall(_>=0) && values==values.distinct.sorted,"projection","invalid archive literal positions")
+    values
+  }
+  /** `literal`: by text operand index, the first matching message positions of the head's epoch (PageRow). */
+  def read(c: Connection,archive: PostgresArchive,reader: String,row: ArchiveRow,parsed: ParsedArchiveExpression,semantic: List[ArchiveSemanticWitness],literal: Map[Int,List[Int]],materialization: ReadMaterialization): List[ArchiveSourceMatch] = {
     val positives=ArchiveExpression.positiveTextOperands(parsed)
     val lexical=if(parsed.mode==SearchMode.Semantic || positives.isEmpty) Nil else {
       val (view,content)=archive.selectContent(c,reader,row.head.id,Some(row.head.view),materialization)
       val maximum=if(semantic.nonEmpty) 1 else ArchiveSearchPolicy.maximumMatches
-      val selection=literalSelection(content,positives,maximum)
+      val candidates=positives.zipWithIndex.flatMap((operand,index) => literal.get(parsed.textOperands.indexOf(operand)).map(index -> _)).toMap
+      val selection=literalSelection(content,positives,maximum,candidates)
       materialization.selected(c,selection) { json =>
         val cursor=json.hcursor
         Check(cursor.get[Boolean]("valid").contains(true),"projection","invalid archive literal coordinate projection")
@@ -76,16 +84,28 @@ private[chronicle] object ArchiveSearchWitnesses {
     lexical++annotated.result()
   }
 
-  private[chronicle] def literalSelection(content: RevisionContent,operands: List[String],maximum: Int): ReadSources.Selection = {
+  /** The first `maximum` matches of `operands` in `content`'s messages by operand and position. An operand with
+    * `candidates` (by operand index: its first matching message positions, ascending) reads only those messages; the
+    * others share one scan of every message. */
+  private[chronicle] def literalSelection(content: RevisionContent,operands: List[String],maximum: Int,candidates: Map[Int,List[Int]]): ReadSources.Selection = {
+    Check(candidates.isEmpty || content.isInstanceOf[RevisionContent.Epoch],"projection","archive literal candidates outside an epoch")
+    Check(candidates.keys.forall(operands.indices.contains),"projection","invalid archive literal operand")
     val stored=content.messages
     val values=operands.zipWithIndex.map { (_,index) => s"($index,lower(? COLLATE pg_unicode_fast))" }.mkString(",")
+    val (listed,scanned)=operands.indices.toList.partition(candidates.contains)
+    def hits(restriction: String): String =
+      s"""(SELECT operand,message_id,position,value->>'text' AS body,strpos(lower((value->>'text') COLLATE pg_unicode_fast),needle)-1 AS at,char_length(needle) AS width
+        FROM ${stored.sql} m CROSS JOIN operands WHERE $restriction strpos(lower((value->>'text') COLLATE pg_unicode_fast),needle)>0
+        ORDER BY operand,position LIMIT $maximum)"""
+    val scan=if(scanned.isEmpty) Nil else List(hits(if(listed.isEmpty) "" else scanned.mkString("operand IN(",",",") AND")) -> stored.args)
+    // The positions (integers) are a constant array: a bound one is an expression to the planner, which then may read the
+    // whole epoch through its (epoch,message_id) key and filter it instead of looking the positions up in the primary key.
+    val reads=listed.map(index => hits(s"operand=$index AND m.position=ANY('${candidates(index).mkString("{",",","}")}'::int[]) AND") -> stored.args)
+    val branches=scan++reads
     // pg_unicode_fast uses Unicode default lowercase: only U+0130 expands; contextual sigma changes value, not length.
     // Prefix *lengths*, not independently folded characters, map whole-field folded coordinates monotonically.
     val sql=s"""WITH RECURSIVE operands(operand,needle) AS (VALUES $values),
-      found AS MATERIALIZED(
-        SELECT operand,message_id,position,value->>'text' AS body,strpos(lower((value->>'text') COLLATE pg_unicode_fast),needle)-1 AS at,char_length(needle) AS width
-        FROM ${stored.sql} m CROSS JOIN operands WHERE strpos(lower((value->>'text') COLLATE pg_unicode_fast),needle)>0
-        ORDER BY operand,position LIMIT $maximum),
+      found AS MATERIALIZED(SELECT * FROM (${branches.map(_._1).mkString(" UNION ALL ")}) hits ORDER BY operand,position LIMIT $maximum),
       targets AS (SELECT f.*,edge,CASE WHEN edge=0 THEN at ELSE at+width END AS target FROM found f CROSS JOIN (VALUES(0),(1)) edges(edge)),
       search(operand,message_id,position,body,at,width,edge,target,lo,hi) AS (
         SELECT operand,message_id,position,body,at,width,edge,target,0,char_length(body) FROM targets
@@ -102,6 +122,6 @@ private[chronicle] object ArchiveSearchWitnesses {
         AND char_length(lower(left(body,first+1) COLLATE pg_unicode_fast))>at
         AND char_length(lower(left(body,last) COLLATE pg_unicode_fast))>=at+width
         AND char_length(lower(left(body,last-1) COLLATE pg_unicode_fast))<at+width) AS valid FROM spans"""
-    ReadSources.Selection(ReadSources.Query(sql,operands:::stored.args),"operand,position",maximum)
+    ReadSources.Selection(ReadSources.Query(sql,operands:::branches.flatMap(_._2)),"operand,position",maximum)
   }
 }
