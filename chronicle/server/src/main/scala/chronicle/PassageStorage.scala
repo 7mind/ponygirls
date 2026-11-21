@@ -135,9 +135,14 @@ object PassageStorage {
     def merged(ranges: List[(Point,Point)]): List[(Point,Point)] = ranges.foldLeft(List.empty[(Point,Point)]) { (result,range) =>
       result match { case (lo,hi)::rest if hi==range._1 => (lo,range._2)::rest; case _ => range::result }
     }.reverse
-    val rewritten=Sql.rows(c,"SELECT ordinal FROM ch_chunks WHERE generation=? AND ordinal<? ORDER BY ordinal",generation,first)(_.getLong(1))
-      .foldLeft(List.empty[(Long,Long)]) { (runs,ordinal) => runs match { case (lo,hi)::rest if hi==ordinal => (lo,ordinal+1)::rest; case _ => (ordinal,ordinal+1)::runs } }.reverse
     val open=cut.state.open
+    // The windows before the cut whose pieces of the open passage it wrote again, each whole (Replay.pieces): a probe of
+    // each window's first one, not a read of every rewritten piece (under the default horizon, all of the passage's).
+    val bFirst=open.fold(first)(value => first-value.passage.pieceCount)
+    val windows=cut.firstPieces.zip(cut.firstPieces.drop(1)).map((lo,hi) => (math.max(lo,bFirst),hi)).filter((lo,hi) => lo<hi)
+    val written=if(windows.isEmpty) Set.empty[Long] else Sql.rows(c,"SELECT o FROM unnest(?::int[]) o WHERE EXISTS(SELECT 1 FROM ch_chunks WHERE generation=? AND ordinal=o)",
+      windows.map(_._1).mkString("{",",","}"),generation)(_.getLong(1)).toSet
+    val rewritten=windows.filter((lo,_) => written(lo)).toList
     val own: List[(GenerationRows.Kind,List[(Point,Point)])]=List(
       GenerationRows.Kind.Piece->merged(rewritten.map((lo,hi) => ((0,lo),(0,hi))):+((0,first),end)),
       GenerationRows.Kind.Passage->List(((0,open.fold(cut.state.nextPassageOrdinal)(_.passage.ordinal).toLong),end)),
@@ -280,6 +285,16 @@ object PassageStorage {
       val span=chunk.spans match { case List(value) => value; case _ => throw DomainError("internal","a stored piece without its one source span") }
       ProblemRows.Piece(r.getInt(4),r.getInt(1),chunk,vector,ProblemPassages.SourceSpan(span.messageId,r.getInt(5),span.start,span.end))
     }.toVector
+  }
+  /** The summary and tags of the parent's pieces (its member chunks) at `ordinals`, in their order. */
+  def carried(c: Connection,parent: UUID,ordinals: Vector[Long]): Vector[ProblemRows.Final] = if(ordinals.isEmpty) Vector.empty else {
+    val (from,until)=(ordinals.min,ordinals.max+1)
+    val found=Sql.rows(c,s"""SELECT ch.ordinal,ch.value FROM ch_lineage_segments m JOIN ch_chunks ch ON ch.generation=m.origin
+      AND ch.ordinal>=greatest(m.lo,?) AND ch.ordinal<least(m.hi,?) AND ch.ordinal=ANY(?::int[]) WHERE $openSegments AND m.lo<?""",
+      from,until,ordinals.mkString("{",",","}"),latest(c,parent),GenerationRows.Kind.Piece.sql,0,from,until) { r =>
+      val chunk=Wire.decode(Chunk.codecJson,Sql.json(r,"value")); r.getLong(1) -> ProblemRows.Final(chunk.summary,chunk.tags)
+    }.toMap
+    ordinals.map(ordinal => found.getOrElse(ordinal,throw DomainError("internal","the parent's piece is not its member")))
   }
   /** `members`' statement: the latest version of `lineage`. */
   private[chronicle] def membersQuery(lineage: UUID,session: UUID,revision: Int,from: Long,until: Long): ReadSources.Query =

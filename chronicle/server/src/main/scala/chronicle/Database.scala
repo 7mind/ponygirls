@@ -565,10 +565,11 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
         if(ordinal<finals._1 || ordinal>=finals._1+finals._2.size) finals=(ordinal,staging(claim,staged.generation,StagedLock.Share)(c => PassageStorage.finals(c,staged.generation,ordinal,PassageStorage.rowsPerBatch)))
         finals._2.lift(ordinal-finals._1).getOrElse(throw DomainError("internal","staged passage missing"))
       }
-      def members(from: Long,until: Long): Vector[ProblemRows.Piece] = {
-        val parent=rows.parent.getOrElse(throw DomainError("internal","a root publication has no parent's pieces"))
+      private def parent: PublicationParent = rows.parent.getOrElse(throw DomainError("internal","a root publication has no parent's pieces"))
+      def carried(ordinals: Vector[Long]): Vector[ProblemRows.Final] =
+        staging(claim,staged.generation,StagedLock.Share)(c => PassageStorage.carried(c,parent.generation,ordinals))
+      def members(from: Long,until: Long): Vector[ProblemRows.Piece] =
         staging(claim,staged.generation,StagedLock.Share)(c => PassageStorage.members(c,parent.generation,claim.sessionId,claim.revision,from,until))
-      }
     }
     def bytes(piece: ProblemRows.Piece): Long = 256+6L*piece.chunk.text.length+4L*(piece.chunk.summary.length+piece.chunk.tags.map(_.length).sum)+24L*piece.vector.size
     def written(step: Int)(batch: Vector[ProblemRows.Piece]): Unit = staging(claim,staged.generation,StagedLock.Write) { c =>

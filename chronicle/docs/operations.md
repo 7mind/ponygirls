@@ -169,24 +169,36 @@ checkpoints and references together.
 An append to an indexed session publishes only its tail: the next *version* of the published generation's *lineage*
 (`ch_lineage_segments`). The job annotates, embeds and writes the windows from the published generation's last one on
 (its *cut*), plus the pieces of the passage open at that window whose metadata the new windows change (below); every
-other row stays the published generation's, shared by the next version and never rewritten. The switch changes at most
-2 · 16 + 10 segment rows; the replaced rows' search rows are deleted after it (`ch_search_retirements`), 10,000 per
-statement. Rows written, embedding calls, HNSW insertions and later vacuum are proportional to the addition, not to the
-session. A *root* (a full publication) starts a lineage: the first index of a session, a replacement (a new epoch), a
-legacy revision, an explicit rebuild, `incrementalPublication` false, and the first publication of a session published
-by an earlier release. A root's switch changes at most 6 rows; its tag counts are written with its rows before it.
+other row stays the published generation's, shared by the next version and never rewritten. The switch changes a number
+of segment rows proportional to the windows of that rewrite region (at most 2 · 16 + 10 under a horizon of 16); the
+replaced rows' search rows are deleted after it (`ch_search_retirements`), 10,000 per statement. Rows written, embedding
+calls, HNSW insertions and later vacuum are proportional to the addition plus the rewritten pieces, not to the session.
+A *root* (a full publication) starts a lineage: the first index of a session, a replacement (a new epoch), a legacy
+revision, an explicit rebuild, `incrementalPublication` false, the first publication of a session published by an
+earlier release or under another `metadataHorizonWindows`. A root's switch changes at most 6 rows; its tag counts are
+written with its rows before it.
 
-- **Metadata horizon (behaviour change for newly published content).** A piece carries its passage's summary and tags as
-  they stood 16 windows after its own window (or at the passage's last window), not the final ones: passages of at
-  most 16 windows (about 1,000 fragments) are published as before; deep inside a longer passage a piece shows what the
-  annotator held 16 windows later. Passage rows (`GetPassages`) keep the final metadata. Both kinds of publication
-  follow the rule, so an incremental publication reads exactly as a full one of the same content. Nothing is indexed
-  again: the rule is part of no profile; existing generations keep their rows until their sessions publish again.
+- **Metadata: final by default.** With the default `metadataHorizonWindows` (2147483647) every piece carries its
+  passage's final summary and tags, as before incremental publication: search answers are those of a full
+  re-publication. An append whose new windows change the summary or tags of the passage open at the cut writes all that
+  passage's earlier pieces again (texts, spans and vectors copied, not re-embedded; a probe of one piece per window
+  decides), and nothing else before the cut: **append cost follows the addition except within a passage longer than
+  TODO(E1X-N) windows**, where each such append costs that passage's pieces (about 64 a window) in rows, HNSW insertions,
+  retired search rows and their vacuum. Passages end where the annotator closes them; nothing bounds their length.
+- **Finite metadata horizon (opt-in, behaviour change for newly published content).** With `metadataHorizonWindows` H
+  (for example 16) a piece carries its passage's summary and tags as they stood H windows after its own window (or at
+  the passage's last window): an append writes again at most the open passage's pieces of the H windows before the
+  cut. The older pieces of a passage longer than H + 1 windows show what the annotator held H windows later, not the
+  final summary and tags: lexical and hybrid search, tag filters, facets and the tag catalog match those pieces by that
+  intermediate vocabulary (a query phrased with the passage's final wording can miss its early pieces; one phrased with
+  the earlier wording can find them). Vectors and passage rows (`GetPassages`) are unchanged. Both kinds of publication
+  follow the rule, so an incremental publication reads exactly as a full one of the same content.
 - **Configuration** (server JSON `indexing`, both optional, part of no profile): `incrementalPublication` (default
   true; false publishes every revision whole — the off switch, and the comparison oracle); `metadataHorizonWindows`
-  (1..2147483647, default 16; another value requires `incrementalPublication: false`, else the server refuses to start;
-  2147483647 gives every piece its passage's final metadata). The server logs both once at start. The NixOS module does
-  not set them.
+  (1..2147483647, default 2147483647: final metadata). A lineage continues only under the horizon it was published with:
+  after a change each session's next publication is a root (staged publications restart), and generations published
+  earlier keep their rows; nothing else is indexed again. The server logs both once at start. The NixOS module does not
+  set them.
 - **Migration 028** (applied by the start) is DDL only: lineage columns, segment, lineage, tag and retirement tables,
   `ch_search_chunks.ordinal`, the format check admitting `ContextAwareProblemsLineage` (the stored label of a version
   of 1 or more; readers answer it as `ContextAwareProblems`). Ties in ranking are ordered by session, the chunk's place

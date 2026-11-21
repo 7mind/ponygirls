@@ -47,8 +47,9 @@ final case class ModelConfig(endpoint: String, model: String, revision: String, 
 final case class EmbeddingConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int, dimensions: Int, queryPrefix: String, documentPrefix: String, sendDimensions: Boolean)
 /** `incrementalPublication`: an append to an indexed session publishes only its tail as the next version of the published
   * generation's lineage (ingest-limits spec §5.6); false: every publication is a full one (a root). `metadataHorizonWindows`:
-  * the metadata horizon of both kinds of publication (ProblemRows.metadataHorizonWindows); another value than the default
-  * requires full publications, so that no lineage mixes horizons. Neither is part of the index profile. */
+  * the metadata horizon of both kinds of publication (ProblemRows.metadataHorizonWindows; the default gives every piece its
+  * passage's final metadata). A lineage continues only under the horizon it was published with: a changed horizon makes
+  * each session's next publication a root. Neither is part of the index profile. */
 final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int,embeddingBatchSize: Int,incrementalPublication: Boolean=true,metadataHorizonWindows: Int=ProblemRows.metadataHorizonWindows) {
   def validate(): Unit = {
     Check(annotationSessions>=1 && annotationSessions<=8,"config","annotation session capacity must be 1..8")
@@ -58,8 +59,6 @@ final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int
   /** The publication keys, checked at start (Config.validate). */
   def validatePublication(): Unit = {
     Check(metadataHorizonWindows>=1,"config","indexing.metadataHorizonWindows must be 1..2147483647")
-    Check(metadataHorizonWindows==ProblemRows.metadataHorizonWindows || !incrementalPublication,"config",
-      s"indexing.metadataHorizonWindows other than ${ProblemRows.metadataHorizonWindows} requires indexing.incrementalPublication=false")
   }
 }
 object IndexingCapacity {

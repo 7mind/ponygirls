@@ -210,8 +210,9 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   /** Phase P's rows (ingest-limits spec §5.2.4): the windows replayed from the job's accepted checkpoints (a missing one is
     * an internal fault: phase W accepted every one), validated window by window (ProblemRows.Validation), from window 0 or,
     * for an incremental publication (§5.6.2), from the parent's cut. A piece carries its passage's metadata after the window
-    * `metadataHorizonWindows` after its own (or the last one): P2 replays a second time, that many windows ahead, for the
-    * open passage's metadata there (a closed passage's is its final row). An incremental publication first rewrites the
+    * `metadataHorizonWindows` after its own (or the last one): its passage's staged final row when that reaches the last
+    * window (always under the default horizon), else P2 replays a second time, that many windows ahead, for the open
+    * passage's metadata there (a closed passage's is its final row). An incremental publication first rewrites the
     * parent's pieces of the open passage B in the windows before the cut whose metadata that changes. Each pass reads the
     * source once; nothing of a window is kept after it. */
   private final class Replay(claim: Claim,total: Int,fetch: MessageFetch,val parent: Option[PublicationParent]) extends ProblemRows {
@@ -253,16 +254,22 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       }
       // Passages first seen by this publication: from the open passage B on, which an incremental one writes again.
       var seen=cut.fold(0)(value => value.state.open.fold(value.state.nextPassageOrdinal)(_.passage.ordinal))
-      val cutting=horizon<=ProblemRows.metadataHorizonWindows
+      // The first piece of each window from max(window - horizon, the window the open passage opened in): the windows a
+      // next version may write pieces of again.
       var firstPieces=cut.fold(Vector.empty[Long])(_.firstPieces.dropRight(1))
+      var openedIn=cut.fold(0)(_.firstWindow)
       var next=Option.empty[ProblemRows.Cut]
       val steps=new Steps
       while(steps.hasNext) {
-        if(cutting) {
-          firstPieces=(firstPieces:+steps.state.nextPieceOrdinal).takeRight(horizon+1)
-          if(steps.index==total-1) next=Some(ProblemRows.Cut(steps.index,horizon,steps.state,context,validation.snapshot,firstPieces))
-        }
+        val first=math.max(steps.index.toLong-horizon,openedIn.toLong)
+        firstPieces=(firstPieces:+steps.state.nextPieceOrdinal).takeRight((steps.index-first+1).toInt)
+        if(steps.index==total-1) next=Some(ProblemRows.Cut(steps.index,horizon,steps.state,context,validation.snapshot,firstPieces))
+        val open=steps.state.open.map(_.passage.id)
         val (index,window,delta)=steps.step()
+        delta.state.open.map(_.passage.id) match {
+          case None => openedIn=index+1
+          case value => if(value!=open) openedIn=index
+        }
         val released=spans.step(delta)
         validation.window(window,delta,released)
         val opened=delta.passages.filter(update => !update.closed && update.passage.ordinal>=seen).map(_.passage)
@@ -277,24 +284,29 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     }
     def pieces(from: Int,stored: ProblemRows.Stored)(write: (Int,Vector[ProblemRows.Piece]) => Unit): Unit = {
       val lead=new Steps
-      /** The summary and tags of passage `ordinal` after window min(window + horizon, last window). */
-      def metadata(ordinal: Int,window: Int): ProblemRows.Final = {
-        lead.advance(math.min(window.toLong+horizon,total-1L).toInt)
-        lead.state.open.filter(_.passage.ordinal==ordinal).fold(stored.passage(ordinal))(open => ProblemRows.Final(open.passage.summary,open.passage.tags))
-      }
+      /** The summary and tags of passage `ordinal` after window min(window + horizon, last window): from the last window
+        * on, its staged final row (a passage open after the last window keeps its metadata when the finishing step closes it). */
+      def metadata(ordinal: Int,window: Int): ProblemRows.Final =
+        if(window.toLong+horizon>=total-1L) stored.passage(ordinal) else {
+          lead.advance(window+horizon)
+          lead.state.open.filter(_.passage.ordinal==ordinal).fold(stored.passage(ordinal))(open => ProblemRows.Final(open.passage.summary,open.passage.tags))
+        }
       // The parent's pieces of B in the windows before the cut whose horizon reaches the re-done windows: a window whose
       // pieces' metadata changes is written again (its pieces under this run's ids, their texts, spans and vectors), one
-      // whose metadata stays keeps its rows.
+      // whose metadata stays keeps its rows. A window's pieces of B were written together with one metadata (as a window
+      // of a version's tail or of its rewrite region), so its first one is compared, a probe per window.
       for(value <- cut; b <- value.state.open) {
         val bFirst=value.state.nextPieceOrdinal-b.passage.pieceCount
-        value.firstPieces.zip(value.firstPieces.drop(1)).zipWithIndex.foreach { case ((first,until),i) =>
-          val window=value.firstWindow+i; val lo=math.max(first,bFirst)
-          if(window>=from && lo<until) {
-            val members=stored.members(lo,until)
-            Check(members.map(_.ordinal.toLong)==(lo until until).toVector && members.forall(_.passageOrdinal==b.passage.ordinal),"internal","the parent's pieces of the open passage are not its members")
+        val windows=value.firstPieces.zip(value.firstPieces.drop(1)).zipWithIndex.iterator.map { case ((first,until),i) => (value.firstWindow+i,math.max(first,bFirst),until) }
+          .filter((window,lo,until) => window>=from && lo<until)
+        windows.grouped(PassageStorage.rowsPerBatch).foreach { group =>
+          group.zip(stored.carried(group.map(_._2).toVector)).foreach { case ((window,lo,until),carried) =>
             val current=metadata(b.passage.ordinal,window)
-            if(members.exists(member => member.chunk.summary!=current.summary || member.chunk.tags!=current.tags))
+            if(carried!=current) {
+              val members=stored.members(lo,until)
+              Check(members.map(_.ordinal.toLong)==(lo until until).toVector && members.forall(_.passageOrdinal==b.passage.ordinal),"internal","the parent's pieces of the open passage are not its members")
               write(window,members.map(member => member.copy(chunk=member.chunk.copy(id=ProblemPassages.pieceId(claim.runId,member.ordinal.toLong),summary=current.summary,tags=current.tags))))
+            }
           }
         }
       }

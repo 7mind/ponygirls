@@ -24,11 +24,13 @@ trait ProblemRows {
 /** The published generation an incremental publication continues: its lineage, version and cut. */
 final case class PublicationParent(generation: UUID,lineage: UUID,version: Int,cut: ProblemRows.Cut)
 object ProblemRows {
-  /** A piece carries its passage's summary and tags as they stood after the window this many windows after its own, or
-    * after the passage's last window (ingest-limits spec §5.6.2, decision E1): a revision that appends to a session
-    * changes the metadata of the pieces of at most this many windows before its first re-done one. Passage rows keep the
-    * final metadata. Part of no profile (`indexing.metadataHorizonWindows` overrides it only for full publications). */
-  val metadataHorizonWindows = 16
+  /** A piece carries its passage's summary and tags as they stood after the window `indexing.metadataHorizonWindows`
+    * after its own, or after the passage's last window (ingest-limits spec §5.6.2). The default, the largest value, gives
+    * every piece its passage's final metadata (as before the horizon): a revision that appends to a session then writes
+    * again the pieces of the passage open at its first re-done window when that passage's metadata changes. A finite
+    * horizon (an operator's choice) bounds those to the pieces of that many windows before it. Passage rows keep the final
+    * metadata. Part of no profile. */
+  val metadataHorizonWindows: Int = Int.MaxValue
   /** One step's rows: passages seen for the first time and still open (stored as they stand, as their spans refer to
     * them), passages closed by the step (final), source spans that are final (an open passage's last span is not: the
     * next window may extend it) and Context spans with their ordinals. */
@@ -39,23 +41,25 @@ object ProblemRows {
   final case class Piece(passageOrdinal: Int,ordinal: Int,chunk: Chunk,vector: Seq[Double],source: ProblemPassages.SourceSpan)
   /** `steps`: the windows and the finishing step. */
   final case class Counts(steps: Int,passages: Int,pieces: Int)
-  /** P1's result: the counts and, for a publication of at least one window under a horizon of at most the default, the
-    * cut its lineage's next version continues from. */
+  /** P1's result: the counts and, for a publication of at least one window, the cut its lineage's next version continues
+    * from. */
   final case class Replayed(counts: Counts,cut: Option[Cut])
-  /** Rows phase P reads back: a staged passage's final summary and tags, and the pieces (member chunks) of the parent with
-    * ordinals in [from, until). */
+  /** Rows phase P reads back: a staged passage's final summary and tags, the summary and tags the parent's pieces at
+    * `ordinals` carry (in their order), and the pieces (member chunks) of the parent with ordinals in [from, until). */
   trait Stored {
     def passage(ordinal: Int): Final
+    def carried(ordinals: Vector[Long]): Vector[Final]
     def members(from: Long,until: Long): Vector[Piece]
   }
   /** Where the next version of a lineage continues (ingest-limits spec §5.6.2): before the generation's last window
     * `window`, the passage state, the Context spans written before it, the streamed validation, the first piece ordinal
-    * of each window from max(0, window - horizon) to `window` (the last one is the state's next piece) and the horizon its
-    * pieces' metadata follows. A horizon above the default writes no cut: a lineage never mixes horizons, and such a
-    * horizon requires full publications. */
+    * of each window from max(0, window - horizon, the window the open passage opened in) to `window` (the last one is the
+    * state's next piece: only the open passage's pieces of those windows can change) and the horizon its pieces' metadata
+    * follows (a lineage never mixes horizons). */
   final case class Cut(window: Int,horizon: Int,state: ProblemPassages.State,context: Long,validation: Validation.Snapshot,firstPieces: Vector[Long]) {
-    Check(window>=0 && horizon>=1 && context>=0 && firstPieces.size==math.min(window,horizon)+1 && firstPieces.lastOption.contains(state.nextPieceOrdinal) &&
-      firstPieces.zip(firstPieces.drop(1)).forall((a,b) => a<=b),"internal","invalid lineage cut")
+    Check(window>=0 && horizon>=1 && context>=0 && firstPieces.nonEmpty && firstPieces.size<=math.min(window,horizon)+1 && firstPieces.lastOption.contains(state.nextPieceOrdinal) &&
+      firstPieces.zip(firstPieces.drop(1)).forall((a,b) => a<=b) &&
+      (firstPieces.size==math.min(window,horizon)+1 || state.open.forall(open => state.nextPieceOrdinal-open.passage.pieceCount>=firstPieces.head)),"internal","invalid lineage cut")
     /** The first window whose first piece is known. */
     def firstWindow: Int = window-firstPieces.size+1
   }

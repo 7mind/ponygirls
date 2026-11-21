@@ -159,6 +159,7 @@ object ProblemsPublication {
     val pieces=Vector.newBuilder[ProblemRows.Piece]
     rows.pieces(0,new ProblemRows.Stored {
       def passage(ordinal: Int): ProblemRows.Final = ProblemRows.Final(ordered(ordinal).summary,ordered(ordinal).tags)
+      def carried(ordinals: Vector[Long]): Vector[ProblemRows.Final] = throw new AssertionError("an in-memory publication is a root")
       def members(from: Long,until: Long): Vector[ProblemRows.Piece] = throw new AssertionError("an in-memory publication is a root")
     }) { (_,step) => pieces++=step }
     val values=pieces.result()

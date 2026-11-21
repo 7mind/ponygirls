@@ -12,21 +12,21 @@ import GenerationRows.Kind
 
 /** Incremental publication (ingest-limits spec §5.6, unit L5e-2): an append publishes the next version of the published
   * generation's lineage, writing only the windows from the parent's cut on and the pieces of the open passage whose
-  * metadata horizon reaches them, and reads exactly as a full publication (a root) of the same content does; a window
-  * whose metadata returns to its member rows' keeps them; a stopped incremental publication is invisible and resumed;
-  * a root's switch is O(1); `indexing.metadataHorizonWindows` changes exactly the pieces beyond the horizon. */
+  * metadata changes (under the default horizon all of them, under a finite one those of the windows it reaches), and
+  * reads exactly as a full publication (a root) of the same content does; a window whose metadata returns to its member
+  * rows' keeps them; a stopped incremental publication is invisible and resumed; a root's switch is O(1);
+  * `indexing.metadataHorizonWindows` changes exactly the pieces beyond the horizon. */
 final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
   override val munitTimeout=5.minutes
-  /** An injected horizon (a configuration with incremental publication refuses any other than 16 at start). */
+  /** A finite horizon an operator may choose: sessions of a few windows reach beyond it. */
   private val horizon=4
   private final case class Fixture(config: Config,full: Config,db: Database,incremental: PostgresArchive,complete: PostgresArchive,search: PostgresSearch,index: PostgresArchiveIndex)
-  private def database(run: Fixture => Unit): Unit = {
+  private def database(horizon: Int)(run: Fixture => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val base=Fixtures.config()
     val config=base.copy(indexing=base.indexing.copy(metadataHorizonWindows=horizon))
     val full=config.copy(indexing=config.indexing.copy(incrementalPublication=false))
-    // The database starts with a configuration that start validates; the archives and workers use the injected one.
-    val db=new Database(base,IndexProfileCatalog.current(base)); db.initialize()
+    val db=new Database(config,IndexProfileCatalog.current(config)); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_epochs,ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE")
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
@@ -43,9 +43,12 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
   /** Problem texts shared by every source: exact lexical and vector ties across and within sources. */
   private def shared(position: Int): String = s"shared finding ${position%5}"
   private def context(position: Int): Message = message(s"c$position",position,s"context $position")
-  /** One passage for the whole session whose summary and tags change in every window ('w'): the open passage B is passage 0. */
-  private def long(count: Int): List[Message] =
-    (0 until count).map(p => if(p==0) message("n0-long",p,shared(p)) else if(p%8==0) message(s"w$p-long",p,shared(p)) else context(p)).toList
+  /** One passage whose summary and tags change in every window ('w'): the open passage B is passage 0, until a passage
+    * whose metadata never changes follows it from message `closing` on. */
+  private def long(count: Int,closing: Int=Int.MaxValue): List[Message] = (0 until count).map { p =>
+    if(p==0) message("n0-long",p,shared(p)) else if(p==closing) message(s"n$p-after",p,shared(p))
+    else if(p%8==0) message(if(p<closing) s"w$p-long" else s"k$p-after",p,shared(p)) else context(p)
+  }.toList
   /** One passage whose metadata never changes. */
   private def steady(count: Int): List[Message] = (0 until count).map(p => if(p%8==0) message(s"k$p-tie",p,shared(p)) else context(p)).toList
   /** alpha (windows 0-1), an empty message, a Context-only window, beta opened at the next window's start, one message of
@@ -173,14 +176,16 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
   }
   private def job(f: Fixture,session: UUID): UUID = f.db.transaction(c => Sql.one(c,"SELECT id FROM ch_jobs WHERE session_id=? ORDER BY revision DESC LIMIT 1",session)(uuid(_,1))).get
 
-  test("incremental publications of three sources of one owner and one of another, from roots and from incremental parents, read exactly as full publications of the same content (every logical row and reader answer up to ids, exact ties across sources), write only the windows from the cut and the open passage's pieces within the horizon, and keep every earlier pin") { database { f =>
+  test("under the default horizon (final metadata) incremental publications of three sources of one owner and one of another, from roots and from incremental parents, read exactly as full publications of the same content (every logical row and reader answer up to ids, exact ties across sources), write the windows from the cut and, when the open passage's metadata changes, exactly that passage's pieces, after it closed only the tail, and keep every earlier pin") { database(ProblemRows.metadataHorizonWindows) { f =>
     val annotator=new Scripted; val vectors=new Vectors
     val incremental=ModelFixtures.worker(f.incremental,annotator,vectors,f.config,logstage.IzLogger())
     val complete=ModelFixtures.worker(f.complete,annotator,vectors,f.full,logstage.IzLogger())
-    // (owner, messages of revision r at r-1): the session-long passage, the mixed one, the steady one, and the steady one
-    // of another owner. Revision 4 appends inside the last window (no new window).
+    // (owner, messages of revision r at r-1): the long passage (closed in revision 3 by one whose metadata never changes),
+    // the mixed one, the steady one, and the steady one of another owner. Revision 4 appends inside the last window (no
+    // new window).
     val counts=List(387,453,513,520)
-    val plans: List[(String,Int => List[Message],List[Int])]=List(("a",long,counts),("a",mixed,List(130,194,258,270)),("a",steady,counts),("b",steady,counts))
+    val closing=453
+    val plans: List[(String,Int => List[Message],List[Int])]=List(("a",long(_,closing),counts),("a",mixed,List(130,194,258,270)),("a",steady,counts),("b",steady,counts))
     // The mixed source's cuts: revision 2 re-does a Context-only window that an empty message precedes, revision 3 one in
     // which alpha closes (beta opens), revision 4 one starting inside a message longer than a window (beta's last span
     // is extended across the cut).
@@ -209,20 +214,24 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
         f.incremental.ingest(owner,request(messages(sizes(r)),Some(f.incremental.headSnapshot(owner,session).source),r))
       }
       drain(incremental)
-      // Each publication writes the windows from the parent's cut on and at most B's pieces in the horizon's windows
-      // before it (none where B's metadata stays), as the next version of its parent's lineage.
+      // Each publication writes the windows from the parent's cut on and at most B's pieces before it (none where B's
+      // metadata stays), as the next version of its parent's lineage.
       plans.zip(sessions).zip(parents).foreach { case (((owner,_,_),session),parent) =>
         val generation=published(f,owner,session)
         val (before,after)=(lineage(f,parent),lineage(f,generation))
+        assertEquals((after.lineage,after.version,after.format,after.parent),(before.lineage,before.version.map(_+1),GenerationRows.lineageFormat,Some(parent)),s"$owner $session r$r")
         val parentCut=cut(f,parent)
         val own=ownChunks(f,generation)
         val tail=after.pieces-parentCut.state.nextPieceOrdinal
         assert(own.size<=after.pieces-parentCut.firstPieces.head && own.size>=tail,s"$owner r$r: ${own.size} own rows of ${after.pieces}")
-        assertEquals((after.lineage,after.version,after.format,after.parent),(before.lineage,before.version.map(_+1),GenerationRows.lineageFormat,Some(parent)),s"$owner $session r$r")
         assertEquals(own.takeRight(tail.toInt),(parentCut.state.nextPieceOrdinal until after.pieces).map(_.toInt).toList)
-        // The session-long passage's summary names the window: once the revision adds windows, the pieces of the windows
-        // before the cut whose horizon reaches the new ones are written again; without a new window none is.
-        if(session==sessions(0)) assertEquals(own.size>tail,cut(f,generation).window>parentCut.window,s"r$r")
+        // The long passage's summary names the window: revision 2 adds windows to it, which writes all its pieces again
+        // (B is passage 0: every piece); in revision 3 it closes in the cut's window with the metadata it had, and
+        // revision 4 appends to the passage after it: only the tail.
+        if(session==sessions(0)) {
+          assertEquals(parentCut.state.open.map(_.passage.ordinal),Some(if(r<3) 0 else 1))
+          assertEquals(own,if(r==1) (0 until after.pieces.toInt).toList else (parentCut.state.nextPieceOrdinal until after.pieces).map(_.toInt).toList,s"r$r")
+        }
         if(session==sessions(2)) assertEquals(own.size.toLong,tail,"B's metadata stays: its pieces keep their rows")
       }
       val incrementalRows=plans.zip(sessions).map { case ((owner,_,_),session) => rows(f,published(f,owner,session)) }
@@ -257,7 +266,7 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
     pinsUnchanged()
   }}
 
-  test("with a horizon of 4 windows a window before the cut whose metadata returns to its member rows' keeps them (ids, origin) while the others are written again; an incremental publication stopped in its pieces and then by a lost lease in its search rows is invisible and resumed by its run; its switch changes the counted segment rows; a root's switch changes at most 6 rows (its tags staged before it); both equal a full publication; a horizon of 2147483647 differs exactly in the windows beyond 4") { database { f =>
+  test("with a horizon of 4 windows a window before the cut whose metadata returns to its member rows' keeps them (ids, origin) while the others are written again; an incremental publication stopped in its pieces and then by a lost lease in its search rows is invisible and resumed by its run; its switch changes the counted segment rows; a root's switch changes at most 6 rows (its tags staged before it); both equal a full publication; a horizon of 2147483647 differs exactly in the windows beyond 4") { database(horizon) { f =>
     val annotator=new Scripted; val vectors=new Vectors
     val incremental=ModelFixtures.worker(f.incremental,annotator,vectors,f.config,logstage.IzLogger())
     val complete=ModelFixtures.worker(f.complete,annotator,vectors,f.full,logstage.IzLogger())
@@ -353,7 +362,7 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
       val differing=f.incremental.pageChunks("a",session,0,100,None).chunks.zip(horizonFour).zipWithIndex.collect { case ((a,b),ordinal) if (a.summary,a.tags)!=(b.summary,b.tags) => ordinal/8 }.distinct
       assertEquals(differing,List(0,1,2))
       // An incremental publication whose parent is no longer published at its switch is abandoned and its job queued
-      // again; the next attempt publishes a root (the published generation has no cut: its horizon exceeds the default).
+      // again; the next attempt publishes a root (the published generation's cut follows another horizon).
       val unpublishable=published(f,"a",session)
       f.db.transaction(c => Sql.exec(c,"UPDATE ch_sources SET published=? WHERE id=?",replacing,session))
       f.incremental.ingest("a",request(values(470),Some(f.incremental.headSnapshot("a",session).source),2))
@@ -383,7 +392,7 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
     } finally f.db.transaction(c => Sql.exec(c,"DROP TABLE ch_test_changes; DROP FUNCTION IF EXISTS ch_test_new,ch_test_old,ch_test_stop,ch_test_lease,ch_test_unpublish CASCADE"))
   }}
 
-  test("a confirmed rebuild's accepted work stays its lineage's through incremental versions: a later full republication takes it, not the replaced run's work for the same input, and reads as the incremental version; the switch and the parent's reads examine the rows around the tail, not the lineage's history") { database { f =>
+  test("a confirmed rebuild's accepted work stays its lineage's through incremental versions: a later full republication takes it, not the replaced run's work for the same input, and reads as the incremental version; the switch and the parent's reads examine the rows around the tail, not the lineage's history") { database(horizon) { f =>
     val annotator=new Scripted; val vectors=new Vectors
     val incremental=ModelFixtures.worker(f.incremental,annotator,vectors,f.config,logstage.IzLogger())
     val complete=ModelFixtures.worker(f.complete,annotator,vectors,f.full,logstage.IzLogger())
@@ -445,7 +454,7 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
     assert(references<=40,s"$references reference and generation rows examined")
   }}
 
-  test("a staged root continues only under the metadata horizon it was staged with: stopped after its first committed pieces under a horizon of 2147483647, it is staged again from nothing under 4") { database { f =>
+  test("a staged root continues only under the metadata horizon it was staged with: stopped after its first committed pieces under a horizon of 2147483647, it is staged again from nothing under 4") { database(horizon) { f =>
     val annotator=new Scripted; val vectors=new Vectors
     val unbounded=f.full.copy(indexing=f.full.indexing.copy(metadataHorizonWindows=Int.MaxValue))
     val finals=ModelFixtures.worker(new PostgresArchive(f.db,unbounded),annotator,vectors,unbounded,logstage.IzLogger())
@@ -471,19 +480,15 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
     assertEquals((root==stopped._1,f.db.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_generations WHERE id=?",stopped._1)(_.getInt(1))),cut(f,root).horizon),(false,Some(0),horizon))
   }}
 
-  test("indexing.metadataHorizonWindows: 1..2147483647, default 16, optional; another value requires indexing.incrementalPublication=false, which defaults to true") {
+  test("indexing.metadataHorizonWindows: optional, 1..2147483647, default 2147483647 (every piece its passage's final metadata), any value with indexing.incrementalPublication, which defaults to true") {
     val config=Fixtures.config()
     import Config.given
     def capacity(fields: (String,Json)*): IndexingCapacity =
       Json.obj((List("annotationSessions"->Json.fromInt(4),"embeddingRequests"->Json.fromInt(8),"embeddingBatchSize"->Json.fromInt(16))++fields)*).as[IndexingCapacity].toOption.get
-    assertEquals(capacity(),IndexingCapacity(4,8,16,true,16))
-    assertEquals(capacity("incrementalPublication"->Json.False,"metadataHorizonWindows"->Json.fromInt(Int.MaxValue)),IndexingCapacity(4,8,16,false,Int.MaxValue))
-    config.copy(indexing=capacity("incrementalPublication"->Json.False,"metadataHorizonWindows"->Json.fromInt(4))).validate()
-    for(horizon <- List(4,0)) {
-      val refused=intercept[DomainError](config.copy(indexing=IndexingCapacity(4,8,16,horizon==4,horizon)).validate())
-      assertEquals(refused.code,"config")
-      assert(refused.detail.contains("indexing.metadataHorizonWindows"),refused.detail)
-    }
-    assert(intercept[DomainError](config.copy(indexing=IndexingCapacity(4,8,16,true,4)).validate()).detail.contains("indexing.incrementalPublication=false"))
+    assertEquals(capacity(),IndexingCapacity(4,8,16,true,Int.MaxValue))
+    assertEquals(capacity("incrementalPublication"->Json.False,"metadataHorizonWindows"->Json.fromInt(16)),IndexingCapacity(4,8,16,false,16))
+    for(horizon <- List(Int.MaxValue,16,4)) config.copy(indexing=capacity("metadataHorizonWindows"->Json.fromInt(horizon))).validate()
+    val refused=intercept[DomainError](config.copy(indexing=capacity("metadataHorizonWindows"->Json.fromInt(0))).validate())
+    assertEquals((refused.code,refused.detail),("config","indexing.metadataHorizonWindows must be 1..2147483647"))
   }
 }
