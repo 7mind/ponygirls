@@ -306,7 +306,11 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   /** Phase P and the switch (ingest-limits spec §5.2.4), then the retirement of the replaced generation's search rows: the
     * job is Complete once switched, so a failed retirement is left to the maintenance pass. */
   private def publish(claim: Claim,total: Int,fetch: MessageFetch): IO[Unit] =
-    publishStage(IO.blocking(Check(archive.publishProblems(claim,new Replay(claim,total,fetch)),"stale-claim","indexing claim is no longer current"))) *>
+    IO(logger.info(s"publication started jobId=${claim.jobId} fence=${claim.fence} totalWindows=$total")) *>
+    publishStage(IO.blocking(Check(archive.publishProblems(claim,new Replay(claim,total,fetch)),"stale-claim","indexing claim is no longer current"))).timed.flatMap { (elapsed,_) =>
+      val seconds=elapsed.toSeconds
+      IO(logger.info(s"publication switched jobId=${claim.jobId} fence=${claim.fence} totalWindows=$total seconds=$seconds"))
+    } *>
       IO.blocking(archive.retire(claim)).handleErrorWith { error =>
         val exceptionClass=error.getClass.getName; val sqlState=Worker.sqlState(error)
         IO(logger.warn(s"search row retirement left to maintenance jobId=${claim.jobId} exceptionClass=$exceptionClass sqlState=$sqlState"))

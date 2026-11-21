@@ -10,9 +10,10 @@ trait PassageReader {
   def passageSpans(reader: String,id: UUID,passageId: UUID,offset: Int,limit: Int,selector: Option[ContentView]): PassageSpansResult
 }
 /** Where a staged generation's run continues (migration 026): its phase and the first step whose rows are not all
-  * written; from P2 on also the publication's counts. */
+  * written; from P2 on also the publication's counts; `invalid`: phase W discarded embedding parts since chunks were
+  * written, so they are written again. */
 enum StagedPhase { case Passages,Pieces }
-final case class StagedGeneration(generation: UUID,phase: StagedPhase,step: Int,counts: Option[ProblemRows.Counts])
+final case class StagedGeneration(generation: UUID,phase: StagedPhase,step: Int,counts: Option[ProblemRows.Counts],invalid: Boolean=false)
 object PassageStorage {
   /** A staged generation's rows are written in committed batches of at most this many rows and bytes (spec §5.2.4). */
   val rowsPerBatch = 500
@@ -36,26 +37,33 @@ object PassageStorage {
     p.executeBatch(); ()
   }
 
-  private def resumeJson(step: Int,counts: Option[ProblemRows.Counts]): String =
-    io.circe.Json.obj(("step"->io.circe.Json.fromInt(step))::counts.toList.flatMap(value => List("steps"->io.circe.Json.fromInt(value.steps),"passages"->io.circe.Json.fromInt(value.passages),"pieces"->io.circe.Json.fromInt(value.pieces)))*).noSpaces
+  private def resumeJson(staged: StagedGeneration): String =
+    io.circe.Json.obj(("step"->io.circe.Json.fromInt(staged.step))::staged.counts.toList.flatMap(value => List("steps"->io.circe.Json.fromInt(value.steps),"passages"->io.circe.Json.fromInt(value.passages),"pieces"->io.circe.Json.fromInt(value.pieces)))++
+      Option.when(staged.invalid)("invalid"->io.circe.Json.True)*).noSpaces
   /** The staged generation of the job's run, locked against the sweep for the caller's transaction. */
   def staged(c: Connection,jobId: UUID,runId: UUID): Option[StagedGeneration] =
     Sql.one(c,"SELECT generation,phase,resume FROM ch_staged_generations WHERE job_id=? AND run_id=? AND run_id<>generation FOR NO KEY UPDATE",jobId,runId) { r =>
       val resume=Sql.json(r,"resume").hcursor
       def field(name: String): Option[Int] = resume.get[Int](name).toOption
       val counts=for { steps <- field("steps"); passages <- field("passages"); pieces <- field("pieces") } yield ProblemRows.Counts(steps,passages,pieces)
-      StagedGeneration(r.getObject(1,classOf[UUID]),StagedPhase.valueOf(r.getString(2)),field("step").getOrElse(throw DomainError("internal","invalid staged generation resume point")),counts)
+      StagedGeneration(r.getObject(1,classOf[UUID]),StagedPhase.valueOf(r.getString(2)),field("step").getOrElse(throw DomainError("internal","invalid staged generation resume point")),counts,
+        resume.get[Boolean]("invalid").getOrElse(false))
     }
   /** P0: a new staged generation of the claim's run, no row written yet. */
   def stage(c: Connection,claim: Claim): StagedGeneration = {
     val generation=UUID.randomUUID()
     Sql.exec(c,"INSERT INTO ch_generations(id,session_id,revision,profile,passage_format,passage_count,run_id) VALUES(?,?,?,?,?,0,?)",generation,claim.sessionId,claim.revision,claim.profile,PassageFormat.ContextAwareProblems.toString,claim.runId)
-    Sql.exec(c,"INSERT INTO ch_staged_generations(generation,job_id,run_id,phase,resume) VALUES(?,?,?,'Passages',?::jsonb)",generation,claim.jobId,claim.runId,resumeJson(0,None))
-    StagedGeneration(generation,StagedPhase.Passages,0,None)
+    val staged=StagedGeneration(generation,StagedPhase.Passages,0,None)
+    Sql.exec(c,"INSERT INTO ch_staged_generations(generation,job_id,run_id,phase,resume) VALUES(?,?,?,'Passages',?::jsonb)",generation,claim.jobId,claim.runId,resumeJson(staged))
+    staged
   }
   /** Records where the run continues; false when the run no longer owns the staged generation (abandoned or gone). */
   def resume(c: Connection,claim: Claim,staged: StagedGeneration): Boolean =
-    Sql.exec(c,"UPDATE ch_staged_generations SET phase=?,resume=?::jsonb WHERE generation=? AND job_id=? AND run_id=?",staged.phase.toString,resumeJson(staged.step,staged.counts),staged.generation,claim.jobId,claim.runId)==1
+    Sql.exec(c,"UPDATE ch_staged_generations SET phase=?,resume=?::jsonb WHERE generation=? AND job_id=? AND run_id=?",staged.phase.toString,resumeJson(staged),staged.generation,claim.jobId,claim.runId)==1
+  /** The run's staged chunks are written again from step 0 (phase W discarded embedding parts they may come from). */
+  def invalidatePieces(c: Connection,claim: Claim): Unit = {
+    Sql.exec(c,"""UPDATE ch_staged_generations SET resume=jsonb_set(resume,'{step}','0'::jsonb)||'{"invalid":true}'::jsonb WHERE job_id=? AND run_id=? AND run_id<>generation AND phase='Pieces'""",claim.jobId,claim.runId); ()
+  }
   /** Marks a staged generation abandoned: no run resumes it, and its rows go in bounded statements. A staged generation
     * whose job has none of its run's chances left (`job` absent): its job ended, was retried as another run or is gone. */
   def abandon(c: Connection,generation: UUID): Unit = { Sql.exec(c,"UPDATE ch_staged_generations SET run_id=generation WHERE generation=?",generation); () }
@@ -127,21 +135,27 @@ object PassageStorage {
     ()
   }
 
-  /** Generations whose search rows are being retired: of one source, or all. */
+  /** Generations being retired (ch_generation_retirements): of one source, or all. */
   def retiring(c: Connection,session: Option[UUID]): List[UUID] = session match {
-    case Some(id) => Sql.rows(c,"SELECT r.generation FROM ch_search_retirements r JOIN ch_generations g ON g.id=r.generation WHERE g.session_id=? ORDER BY r.generation",id)(_.getObject(1,classOf[UUID]))
-    case None => Sql.rows(c,"SELECT generation FROM ch_search_retirements ORDER BY generation")(_.getObject(1,classOf[UUID]))
+    case Some(id) => Sql.rows(c,"SELECT r.generation FROM ch_generation_retirements r JOIN ch_generations g ON g.id=r.generation WHERE g.session_id=? ORDER BY r.generation",id)(_.getObject(1,classOf[UUID]))
+    case None => Sql.rows(c,"SELECT generation FROM ch_generation_retirements ORDER BY generation")(_.getObject(1,classOf[UUID]))
   }
-  /** One bounded statement: the search rows of the next `rowsPerStatement` chunks of a replaced generation after chunk id
-    * `after`. Returns the last chunk id it examined, None when none was left (and the retirement is recorded done). A
-    * generation that is published again (never by this release) or staged is not retired. */
-  def retireStep(c: Connection,generation: UUID,after: UUID): Option[UUID] = {
-    val retired=Sql.one(c,"SELECT NOT EXISTS(SELECT 1 FROM ch_sources s WHERE s.published=r.generation) AND NOT EXISTS(SELECT 1 FROM ch_staged_generations st WHERE st.generation=r.generation) FROM ch_search_retirements r WHERE r.generation=?",generation)(_.getBoolean(1)).contains(true)
-    val last=if(!retired) None else Sql.one(c,s"""WITH batch AS MATERIALIZED(SELECT id FROM ch_chunks WHERE generation=? AND id>? ORDER BY id LIMIT $rowsPerStatement),
-      deleted AS(DELETE FROM ch_search_chunks s USING batch b WHERE s.id=b.id) SELECT id FROM batch ORDER BY id DESC LIMIT 1""",generation,after)(_.getObject(1,classOf[UUID]))
-    if(last.isEmpty) Sql.exec(c,"DELETE FROM ch_search_retirements WHERE generation=?",generation)
-    last
-  }
+  /** One bounded statement of a retirement: the next `rowsPerStatement` chunks of the generation after chunk id `after`
+    * lose their search rows, or for an explicit rebuild's retirement (`payload`) the chunks themselves (their search rows
+    * and pieces with them); once no chunk is left, the passages' spans, the passages, Context spans and tags of a payload
+    * retirement, `rowsPerStatement` at a time. Returns where to continue, None when done (and the retirement row
+    * deleted). A generation that is published again (never by this release) or staged is not retired. */
+  def retireStep(c: Connection,generation: UUID,after: UUID): Option[UUID] =
+    Sql.one(c,"SELECT r.payload,NOT EXISTS(SELECT 1 FROM ch_sources s WHERE s.published=r.generation) AND NOT EXISTS(SELECT 1 FROM ch_staged_generations st WHERE st.generation=r.generation) FROM ch_generation_retirements r WHERE r.generation=? FOR UPDATE",generation)(r => (r.getBoolean(1),r.getBoolean(2))) match {
+      case None => None
+      case Some((payload,retired)) =>
+        val deleted=if(payload) "DELETE FROM ch_chunks t USING batch b WHERE t.id=b.id" else "DELETE FROM ch_search_chunks t USING batch b WHERE t.id=b.id"
+        val last=if(!retired) None else Sql.one(c,s"""WITH batch AS MATERIALIZED(SELECT id FROM ch_chunks WHERE generation=? AND id>? ORDER BY id LIMIT $rowsPerStatement),
+          deleted AS($deleted) SELECT id FROM batch ORDER BY id DESC LIMIT 1""",generation,after)(_.getObject(1,classOf[UUID]))
+        def rest: Boolean = retired && payload && List("ch_problem_spans","ch_problem_passages","ch_context_spans","ch_generation_tags").exists(table =>
+          Sql.exec(c,s"DELETE FROM $table WHERE ctid=ANY(ARRAY(SELECT ctid FROM $table WHERE generation=? LIMIT $rowsPerStatement))",generation)>0)
+        last.orElse(Option.when(rest)(after)).orElse { Sql.exec(c,"DELETE FROM ch_generation_retirements WHERE generation=?",generation); None }
+    }
 
   /** Generated tags are derived content: a visible publication that is not retired and not in the current format (a
     * leftover) refuses the whole read, as Database.selectView refuses a view of it. */

@@ -130,10 +130,12 @@ connection pool), each statement of 500 rows committed.
   budget, while `vacuum_index_cleanup = on` would make every vacuum of the table (also those its inserts trigger) walk
   the whole index.
 - **Disk.** A re-published session's staged rows exist beside its published ones until the switch (twice its index rows
-  during its publication). Earlier generations' chunk and passage rows stay, as before.
+  during its publication). Earlier generations' chunk and passage rows stay, as before; those an explicit rebuild
+  retires are deleted after its switch in bounded statements (`ch_generation_retirements`), no longer inside it.
 - **Rollback.** Stop the server and run `chronicle/scripts/down-026-staged-generations.sql` (read-only preflight, then
   `mode=apply` with the confirmation it names) **before** starting the previous release: it deletes every staged
-  generation and the search rows still being retired, resets the two autovacuum settings and drops the tables. Without
+  generation, completes the retirements still running (search rows; a rebuild's retired rows), resets the two autovacuum
+  settings and drops the tables. Without
   it the previous release fails the publication of a job whose run staged a generation (its chunk ids are the staged
   ones) until the source's next revision. Generations published by this release are ordinary rows to the previous one;
   jobs too large for its estimate end `index-budget-exceeded` again there. Before an older rollback (part uploads,

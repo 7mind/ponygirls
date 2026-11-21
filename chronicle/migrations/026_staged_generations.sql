@@ -4,7 +4,9 @@
 -- published pointer does not name it and an explicit content view of it is not-found. `phase` and `resume` say where the
 -- same job and run continue after a crash. A row whose run is not its job's live run is marked abandoned (run_id =
 -- generation) and its generation deleted in bounded statements by the maintenance pass.
--- ch_search_retirements: generations a switch replaced whose search rows are still being deleted in bounded statements.
+-- ch_generation_retirements: generations a switch replaced whose search rows (`payload` false), or for an explicit
+-- rebuild every derived row (`payload` true: chunks with their search rows and pieces, passages with their spans, Context
+-- spans, tags; the retired generation row stays), are still being deleted in bounded statements.
 -- Runs at every start; idempotent; DDL only. Rollback: chronicle/scripts/down-026-staged-generations.sql.
 CREATE TABLE IF NOT EXISTS ch_staged_generations(
   generation uuid PRIMARY KEY REFERENCES ch_generations(id) ON DELETE CASCADE,
@@ -13,8 +15,9 @@ CREATE TABLE IF NOT EXISTS ch_staged_generations(
   phase text NOT NULL CHECK(phase IN('Passages','Pieces')),
   resume jsonb NOT NULL,
   UNIQUE(job_id,run_id));
-CREATE TABLE IF NOT EXISTS ch_search_retirements(
-  generation uuid PRIMARY KEY REFERENCES ch_generations(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS ch_generation_retirements(
+  generation uuid PRIMARY KEY REFERENCES ch_generations(id) ON DELETE CASCADE,
+  payload boolean NOT NULL);
 -- Deleted search rows cost the ANN scan budget until vacuumed: 100,000 dead rows make the table eligible for autovacuum
 -- whatever its size (spec §5.2.5). Set once: the start does not take the table's lock again.
 DO $$

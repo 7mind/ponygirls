@@ -415,6 +415,8 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   def discardCheckpoints(claim: Claim,stage: IndexingStage,window: Int): Int = db.transaction { c =>
     checkpointAuthority(c,claim)
     val discarded=IndexCheckpoints.discard(c,claim,stage,window)
+    // The run's staged chunks may hold vectors of the discarded parts: they are written again (spec §5.2.6).
+    if(stage==IndexingStage.Embedding) PassageStorage.invalidatePieces(c,claim)
     checkpointAuthority(c,claim)
     discarded
   }
@@ -463,8 +465,9 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       case None => false
       case Some((staged,abandoned)) =>
         abandoned.foreach(PassageStorage.deleteAbandoned(db,_))
-        val pieces=if(staged.phase==StagedPhase.Passages) writePassages(claim,staged,rows) else staged
-        val counts=pieces.counts.getOrElse(throw DomainError("internal","staged generation without its counts"))
+        val written=if(staged.phase==StagedPhase.Passages) writePassages(claim,staged,rows) else staged
+        val counts=written.counts.getOrElse(throw DomainError("internal","staged generation without its counts"))
+        val pieces=if(written.invalid) rewritePieces(claim,written,counts) else written
         if(pieces.step<counts.steps) writePieces(claim,pieces,counts,rows)
         writeSearchRows(claim,staged.generation,counts.pieces)
         switch(claim,staged.generation,counts.passages)
@@ -504,6 +507,16 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     }
     val next=StagedGeneration(staged.generation,StagedPhase.Pieces,0,Some(total))
     written(next)(batches.drain())
+    next
+  }
+  /** Phase W discarded embedding parts the staged chunks may have been written from: every staged chunk (with its search
+    * row and piece) is deleted in bounded statements, then P2 starts again at step 0. */
+  private def rewritePieces(claim: Claim,staged: StagedGeneration,counts: ProblemRows.Counts): StagedGeneration = {
+    (0 until counts.pieces by PassageStorage.rowsPerStatement).foreach { from =>
+      staging(claim,staged.generation,StagedLock.Write)(c => Sql.exec(c,"DELETE FROM ch_chunks WHERE generation=? AND ordinal>=? AND ordinal<?",staged.generation,from,from+PassageStorage.rowsPerStatement))
+    }
+    val next=staged.copy(step=0,invalid=false)
+    staging(claim,staged.generation,StagedLock.Write)(c => Check(PassageStorage.resume(c,claim,next),"internal","staged generation resume point not recorded"))
     next
   }
   private def writePieces(claim: Claim,staged: StagedGeneration,counts: ProblemRows.Counts,rows: ProblemRows): Unit = {
@@ -555,18 +568,26 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     // Publication is monotonic: a job never replaces the published generation of a newer revision; it ends superseded.
     val superseded=authorized && Sql.one(c,"SELECT g.revision>? FROM ch_sources s JOIN ch_generations g ON g.id=s.published WHERE s.id=?",claim.revision,claim.sessionId)(_.getBoolean(1)).contains(true)
     if(superseded) { Sql.exec(c,s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob",jobArgs(claim)*); false }
-    else authorized && Sql.exec(c,"DELETE FROM ch_staged_generations WHERE generation=? AND job_id=? AND run_id=?",generation,claim.jobId,claim.runId)==1 && {
-      Sql.one(c,"SELECT published FROM ch_sources WHERE id=?",claim.sessionId)(r => Option(r.getObject(1,classOf[UUID]))).flatten.foreach { previous =>
-        Sql.exec(c,"INSERT INTO ch_search_retirements(generation) VALUES(?) ON CONFLICT DO NOTHING",previous)
+    else authorized && {
+      // All of the switch or none: its last statement can still find the lease ended.
+      val switching=c.setSavepoint()
+      val completed=Sql.exec(c,"DELETE FROM ch_staged_generations WHERE generation=? AND job_id=? AND run_id=?",generation,claim.jobId,claim.runId)==1 && {
+        Sql.one(c,"SELECT published FROM ch_sources WHERE id=?",claim.sessionId)(r => Option(r.getObject(1,classOf[UUID]))).flatten.foreach { previous =>
+          Sql.exec(c,"INSERT INTO ch_generation_retirements(generation,payload) VALUES(?,false) ON CONFLICT DO NOTHING",previous)
+        }
+        Sql.exec(c,"UPDATE ch_generations SET passage_count=? WHERE id=?",passages.toLong,generation)
+        Sql.exec(c,"UPDATE ch_sources SET published=? WHERE id=?",generation,claim.sessionId)
+        ReindexCohort.published(c,claim,generation)
+        Sql.exec(c,s"UPDATE ch_jobs SET state='Complete',error=NULL,failure_stage=NULL,lease_until=NULL WHERE $validJob",jobArgs(claim)*)==1
       }
-      Sql.exec(c,"UPDATE ch_generations SET passage_count=? WHERE id=?",passages.toLong,generation)
-      Sql.exec(c,"UPDATE ch_sources SET published=? WHERE id=?",generation,claim.sessionId)
-      ReindexCohort.published(c,claim,generation)
-      Sql.exec(c,s"UPDATE ch_jobs SET state='Complete',error=NULL,failure_stage=NULL,lease_until=NULL WHERE $validJob",jobArgs(claim)*)==1
+      if(!completed) c.rollback(switching)
+      c.releaseSavepoint(switching)
+      completed
     }
   }
-  /** Deletes the search rows of the generations a switch of the claim's source replaced, in bounded statements (spec
-    * §5.2.4 retirement); the maintenance pass completes what a crash leaves. */
+  /** Deletes the search rows of the generations a switch of the claim's source replaced, and the derived rows of those an
+    * explicit rebuild retired, in bounded statements (spec §5.2.4 retirement); the maintenance pass completes what a
+    * crash leaves. */
   def retire(claim: Claim): Unit = db.transaction(c => PassageStorage.retiring(c,Some(claim.sessionId))).foreach(PassageStorage.retire(db,_))
   def fail(claim: Claim,code: String): Unit = failAt(claim,code,None)
   def fail(claim: Claim,code: String,stage: IndexingStage): Unit = failAt(claim,code,Some(stage))

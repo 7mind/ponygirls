@@ -11,13 +11,13 @@ import scala.concurrent.duration.*
   * epochs' fragments, then marks them pruned, deletes the epochs of purged sources, sweeps part uploads (expires
   * passed leases, deletes the staging of attempts that ended, deletes old terminal attempts), merges the fragment
   * trigram index's pending list, deletes the staged generations no run will continue and completes the retirement of
-  * replaced generations' search rows (ingest-limits spec §5.2.4, §5.2.5). Reads and search never depend on it (they join
-  * on the head's epoch and count, and on the published generation). Each statement touches at most `rowsPerStatement`
-  * rows, the merge the pending list, in a transaction of its own; a failed pass is logged and the next one runs an
-  * interval later, so a failure never ends the server. */
+  * replaced generations' search rows and of explicitly retired generations' derived rows (ingest-limits spec §5.2.4,
+  * §5.2.5). Reads and search never depend on it (they join on the head's epoch and count, and on the published
+  * generation). Each statement touches at most `rowsPerStatement` rows, the merge the pending list, in a transaction of
+  * its own; a failed pass is logged and the next one runs an interval later, so a failure never ends the server. */
 final class EpochMaintenance private (db: Database,logger: logstage.IzLogger,val interval: FiniteDuration) {
   import EpochMaintenance.rowsPerStatement
-  private def pass: IO[Unit] = prune *> deletePurged *> sweepUploads *> mergeFragmentIndex *> sweepStaged *> retireSearchRows
+  private def pass: IO[Unit] = prune *> deletePurged *> sweepUploads *> mergeFragmentIndex *> sweepStaged *> retireGenerations
   /** A pass whose failure is logged: it ends only that pass. */
   private def attempt: IO[Unit] = pass.handleErrorWith(error => IO(logger.warn(s"epoch maintenance pass failed, next pass in $interval: $error")))
   private def transaction[A](f: java.sql.Connection => A): IO[A] = IO.blocking(db.transaction(f))
@@ -53,7 +53,7 @@ final class EpochMaintenance private (db: Database,logger: logstage.IzLogger,val
     transaction(PassageStorage.stale).flatMap(_.traverse_(generation => transaction(PassageStorage.abandonIfStale(_,generation)))) *>
       transaction(PassageStorage.abandoned).flatMap(_.traverse_(generation => IO.blocking(PassageStorage.deleteAbandoned(db,generation))))
   /** What a crash left of a switch's retirement (the worker retires right after its switch). */
-  private def retireSearchRows: IO[Unit] =
+  private def retireGenerations: IO[Unit] =
     transaction(PassageStorage.retiring(_,None)).flatMap(_.traverse_(generation => IO.blocking(PassageStorage.retire(db,generation))))
 
   private def deletePurged: IO[Unit] =

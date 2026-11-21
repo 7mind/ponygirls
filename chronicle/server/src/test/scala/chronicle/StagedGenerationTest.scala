@@ -93,7 +93,7 @@ final class StagedGenerationTest extends munit.FunSuite {
     // The same job's run resumes the staged generation: its rows are written once.
     assert(worker(archive,config,vectors).once.unsafeRunSync())
     assertEquals(archive.session("a",first.sessionId).view,ContentView(2,Some(generation)))
-    assertEquals((staged(db),db.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_search_retirements")(_.getInt(1)))),(Nil,Some(0)))
+    assertEquals((staged(db),db.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_generation_retirements")(_.getInt(1)))),(Nil,Some(0)))
     db.transaction { c =>
       assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks WHERE generation=?",generation)(_.getInt(1)),Some(pieces))
       assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks WHERE generation=?",previous.generationId.get)(_.getInt(1)),Some(0))
@@ -135,6 +135,76 @@ final class StagedGenerationTest extends munit.FunSuite {
     assertEquals(archive.pageChunks("b",failed.sessionId,0,1,None).total,pieces)
   }}
 
+  test("a lease that ends inside the switch rolls the whole switch back: the previous publication, the staged generation, no retirement; the job's run resumes and publishes") { database { (config,db,archive) =>
+    val vectors=new Ring
+    val first=archive.ingest("a",request(text)); assert(worker(archive,config,vectors).once.unsafeRunSync())
+    val previous=archive.session("a",first.sessionId).view
+    archive.ingest("a",request(text+"q",Some(archive.headSnapshot("a",first.sessionId).source),1))
+    // The switch's own update of the published pointer ends the job's lease: its completion then updates no row.
+    db.transaction { c =>
+      Sql.exec(c,"CREATE FUNCTION ch_test_expire() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN UPDATE ch_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE session_id=NEW.id AND state='Running'; RETURN NULL; END $$")
+      Sql.exec(c,"CREATE TRIGGER ch_test_expire AFTER UPDATE OF published ON ch_sources FOR EACH ROW EXECUTE FUNCTION ch_test_expire()")
+    }
+    try assert(worker(archive,config,vectors).once.unsafeRunSync()) finally db.transaction(c => Sql.exec(c,"DROP FUNCTION ch_test_expire() CASCADE"))
+    assertEquals(archive.session("a",first.sessionId).view,previous)
+    val List((generation,"Pieces",`pieces`,`pieces`))=staged(db): @unchecked
+    db.transaction { c =>
+      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks WHERE generation=?",previous.generationId.get)(_.getInt(1)),Some(pieces),"the previous generation's search rows")
+      assertNotEquals(Sql.one(c,"SELECT state FROM ch_jobs WHERE session_id=? AND revision=2",first.sessionId)(_.getString(1)),Some("Complete"))
+    }
+    db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE session_id=? AND revision=2",first.sessionId))
+    assert(worker(archive,config,vectors).once.unsafeRunSync())
+    assertEquals((archive.session("a",first.sessionId).view,staged(db)),(ContentView(2,Some(generation)),Nil))
+  }}
+
+  test("a staged generation resumed under another embedding batch size publishes the vectors its windows accepted again, not the earlier ones") { database { (config,db,archive) =>
+    // Every call returns new vectors: a window embedded again under another grouping gets other vectors.
+    val receipt=archive.ingest("a",request(text))
+    stopped(db,"ch_search_chunks")(assert(worker(archive,config,new Ring).once.unsafeRunSync()))
+    val List((generation,"Pieces",`pieces`,500))=staged(db): @unchecked
+    val regrouped=config.copy(indexing=config.indexing.copy(embeddingBatchSize=8))
+    var shifted=0
+    val other=new Embedder {
+      def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO(text.map { _ => shifted+=1; List(1.0,0.2*math.cos(shifted*0.41),0.2*math.sin(shifted*0.41)) })
+      def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("worker queried embedding"))
+    }
+    assert(worker(archive,regrouped,other).once.unsafeRunSync())
+    assertEquals(archive.session("a",receipt.sessionId).view.generationId,Some(generation))
+    assertEquals(shifted,pieces,"the window was embedded again under the new grouping")
+    // The oracle: the job's accepted embedding parts under the current grouping, in piece order.
+    db.transaction { c =>
+      val parts=Sql.rows(c,"SELECT part,value FROM ch_index_checkpoints WHERE job_id=? AND stage='Embedding' ORDER BY window_ordinal,part",receipt.jobId)(r => (r.getInt(1),CheckpointJson.vectors(Sql.json(r,"value"))))
+      assertEquals(parts.map(_._1),(0 until pieces/8).toList)
+      val accepted=parts.flatMap(_._2).map(_.mkString("[",",","]"))
+      def stored(table: String): List[String] = Sql.rows(c,s"SELECT t.embedding::text FROM $table t JOIN ch_chunks ch ON ch.id=t.id WHERE ch.generation=? ORDER BY ch.ordinal",generation)(_.getString(1))
+      assertEquals(stored("ch_chunks").size,pieces); assertEquals(stored("ch_search_chunks").size,pieces)
+      val expected=accepted.map(v => Sql.one(c,"SELECT ?::vector::text",v)(_.getString(1)).get)
+      assertEquals(stored("ch_chunks"),expected,"chunk vectors"); assertEquals(stored("ch_search_chunks"),expected,"search row vectors")
+    }
+  }}
+
+  test("an explicit rebuild's switch retires the older generations' payload by a durable bounded cleanup, not inside the switch") { database { (config,db,archive) =>
+    val vectors=new Ring
+    val first=archive.ingest("a",request(text)); assert(worker(archive,config,vectors).once.unsafeRunSync())
+    val old=archive.session("a",first.sessionId).view
+    Fixtures.rebuild(db,"a")
+    val claim=archive.claim(IndexProfileCatalog.current(config).knownProfiles,ClaimScope.Owner("a"),300).get
+    // The archive's switch alone (the worker retires afterwards).
+    assert(archive.publishProblems(claim,ProblemsPublication.rows(ProblemPublicationFixtures.oneProblem(claim))))
+    def rows(): List[Int] = db.transaction(c => List("ch_chunks","ch_problem_passages","ch_problem_spans","ch_generation_tags").map(table =>
+      Sql.one(c,s"SELECT count(*) FROM $table WHERE generation=?",old.generationId.get)(_.getInt(1)).get))
+    assertEquals(rows(),List(pieces,1,1,1),"the switch deleted none of the older generation's rows")
+    assertEquals(intercept[DomainError](archive.pageChunks("a",first.sessionId,0,1,Some(old))).code,"indexed-view-retired")
+    assertEquals(db.transaction(c => Sql.rows(c,"SELECT generation,payload FROM ch_generation_retirements")(r => (r.getObject(1,classOf[UUID]),r.getBoolean(2)))),List((old.generationId.get,true)))
+    archive.retire(claim)
+    assertEquals(rows(),List(0,0,0,0))
+    db.transaction { c =>
+      assertEquals(Sql.one(c,"SELECT retired FROM ch_generations WHERE id=?",old.generationId.get)(_.getBoolean(1)),Some(true))
+      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks WHERE generation=?",old.generationId.get)(_.getInt(1)),Some(0))
+      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_generation_retirements")(_.getInt(1)),Some(0))
+    }
+  }}
+
   test("down-026 deletes staged generations and the search rows still being retired, resets the autovacuum settings and drops its tables; published generations stay") { database { (config,db,archive) =>
     val vectors=new Ring
     // A retirement a crash left: a source's replaced generation still has its search rows (published without the
@@ -167,7 +237,7 @@ final class StagedGenerationTest extends munit.FunSuite {
       val (appliedExit,applied)=run("mode"->"apply","apply_irreversible"->"yes","confirm_database"->name,"expect_plan"->printed("DOWN026.plan"))
       assertEquals((appliedExit,applied.last),(0,"DOWN026.result|applied"),applied.mkString("\n"))
       db.transaction { c =>
-        assertEquals(Sql.one(c,"SELECT to_regclass('ch_staged_generations') IS NULL AND to_regclass('ch_search_retirements') IS NULL")(_.getBoolean(1)),Some(true))
+        assertEquals(Sql.one(c,"SELECT to_regclass('ch_staged_generations') IS NULL AND to_regclass('ch_generation_retirements') IS NULL")(_.getBoolean(1)),Some(true))
         assertEquals(Sql.one(c,"SELECT reloptions IS NULL FROM pg_class WHERE oid='ch_search_chunks'::regclass")(_.getBoolean(1)),Some(true))
         assertEquals(Sql.one(c,"SELECT count(*) FROM ch_generations WHERE session_id=?",kept.sessionId)(_.getInt(1)),Some(1))
         assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks WHERE generation=?",replaced)(_.getInt(1)),Some(0))
