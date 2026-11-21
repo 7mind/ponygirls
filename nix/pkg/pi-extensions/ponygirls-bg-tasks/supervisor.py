@@ -1843,9 +1843,13 @@ class Supervisor:
             except OSError as e:
                 self._group_observation_error(rt, f"cannot observe child {pid}: {e}")
                 continue
-            if info is not None:
-                rt.group_observation_error = None
-                self._seal_leader(rt, info)
+            if info is None:
+                continue
+            if info.si_pid != pid or info.si_code not in (os.CLD_EXITED, os.CLD_KILLED, os.CLD_DUMPED):
+                self._group_observation_error(rt, f"ignoring non-exit wait status for child {pid}: {info!r}")
+                continue
+            rt.group_observation_error = None
+            self._seal_leader(rt, info)
 
     def _seal_leader(self, rt: TaskRuntime, info) -> None:
         rt.exit = ExitEvidence.from_waitid(info)

@@ -11,6 +11,8 @@ import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from support import FakeClock, sv
 
@@ -25,10 +27,10 @@ DARWIN = sys.platform == "darwin"
 
 
 def darwin_processes():
-    output = subprocess.check_output(["ps", "-A", "-o", "pid=", "-o", "pgid=", "-o", "stat="], text=True)
+    output = subprocess.check_output(["ps", "-A", "-o", "pid=", "-o", "pgid=", "-o", "state="], text=True)
     for row in output.splitlines():
-        pid, pgid, status = row.split()
-        if not status.startswith("Z"):
+        pid, pgid, *status = row.split(maxsplit=2)
+        if not status or not status[0].startswith("Z"):
             yield int(pid), int(pgid)
 
 
@@ -55,6 +57,38 @@ def pgroup_members(pgid):
             if state != b"Z":
                 members.append(int(name))
     return members
+
+
+class DarwinProcessObservationTest(unittest.TestCase):
+    def test_incomplete_state_column_does_not_hide_a_process(self):
+        output = "  123  123  Ss\n  124  123    \n  125  123  Z+\n  126  126  R\n"
+        with patch.object(subprocess, "check_output", return_value=output):
+            self.assertEqual(list(darwin_processes()), [(123, 123), (124, 123), (126, 126)])
+
+    def test_only_matching_terminal_status_seals_the_leader(self):
+        clock = FakeClock()
+        s = sv.Supervisor(None, None, lambda t: t, SHELL, "a", sv.ProtocolWriter(1), clock,
+                          darwin_group=object())
+        self.addCleanup(s.close)
+        pid = 4242
+        rt = sv.TaskRuntime(task_id="task", pid=pid, pgid=pid, master_fd=None, log=None, log_bytes=0)
+        s.leaders[pid] = rt.task_id
+        s.runtimes[rt.task_id] = rt
+        with patch.object(s, "_mark_record"), patch.object(os, "waitid") as waitid:
+            for reported_pid, code, status in (
+                (pid, os.CLD_STOPPED, signal.SIGSTOP),
+                (pid, os.CLD_CONTINUED, signal.SIGCONT),
+                (pid + 1, os.CLD_EXITED, 0),
+            ):
+                with self.subTest(pid=reported_pid, code=code):
+                    waitid.return_value = SimpleNamespace(si_pid=reported_pid, si_code=code, si_status=status)
+                    s._observe_darwin_leaders()
+                    self.assertEqual((rt.sealed, rt.exit), (False, None))
+            waitid.return_value = SimpleNamespace(si_pid=pid, si_code=os.CLD_EXITED, si_status=7)
+            s._observe_darwin_leaders()
+            self.assertTrue(rt.sealed)
+            self.assertEqual(rt.exit.to_json(), {"kind": "code", "code": 7})
+            self.assertEqual(s.leaders, {pid: rt.task_id})
 
 
 def wait_until(predicate, timeout=10.0, interval=0.02, what="condition"):
@@ -333,7 +367,9 @@ class SignalTest(SupervisorTestBase):
         frozen = len(c.read_all(t["id"]))
         time.sleep(0.5)
         self.assertEqual(len(c.read_all(t["id"])), frozen)
-        self.assertEqual(c.get(t["id"])["state"], "running")
+        stopped = c.get(t["id"])
+        self.assertEqual((stopped["state"], stopped["phase"], stopped["exit"]),
+                         ("running", "running", None), (stopped, c.stderr))
         c.call("signal", {"id": t["id"], "signal": "SIGCONT"})
         wait_until(lambda: len(c.read_all(t["id"])) > frozen, 5, 0.05, "progress after SIGCONT")
         done = c.call("terminate", {"id": t["id"]})["task"]
