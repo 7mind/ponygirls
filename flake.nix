@@ -210,7 +210,7 @@
             }).config;
             evalPi = evalPiWithModules [ ];
             evalWorktree = piExtra: evalPi piExtra { };
-            historianDefaultModel = { provider = "openai-codex"; id = "gpt-6.1-sol"; thinking = "medium"; };
+            historianDefaultModel = { provider = "openai-codex"; id = (import ./nix/lib/pi-catalog.nix).latestCodexSolModel (pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { }); thinking = "medium"; };
             historianOptions = { journalRoot = "/srv/pi-journals"; model = { provider = "fixture"; id = "custom"; thinking = "high"; }; };
             historianConfigured = evalPi { } historianOptions;
             historianUnconfigured = evalPi { } { model = null; };

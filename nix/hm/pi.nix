@@ -57,6 +57,8 @@ let
   # nixpkgs lags at 0.75.x, and its older releases have broken Codex/ChatGPT
   # subscription token exchange). Bump: edit version + rerun the two fake-hash builds in pkg/pi-coding-agent/package.nix.
   piBase = pkgs.callPackage ../pkg/pi-coding-agent/package.nix { };
+  piCatalogLib = import ../lib/pi-catalog.nix;
+  latestCodexSolModel = piCatalogLib.latestCodexSolModel piBase;
   piClaudeCode = pkgs.callPackage ../pkg/pi-claude-code/package.nix { pi-coding-agent = piBase; };
   piClaudeCodeSubagents = pkgs.callPackage ../pkg/pi-claude-code-subagents/package.nix {
     pi-coding-agent = piBase;
@@ -480,11 +482,12 @@ in
           };
         };
       });
-      default = { provider = "openai-codex"; id = "gpt-6.1-sol"; thinking = "medium"; };
-      example = { provider = "openai-codex"; id = "gpt-6.1-sol"; thinking = "medium"; };
+      default = { provider = "openai-codex"; id = latestCodexSolModel; thinking = "medium"; };
+      example = { provider = "openai-codex"; id = latestCodexSolModel; thinking = "medium"; };
       description = ''
-        Managed fallback model for Historian, defaulting to Sol 6.1 with medium
-        effort via openai-codex. Null disables the managed model default.
+        Managed fallback model for Historian, defaulting to the newest Sol
+        model from Pi's pinned openai-codex catalog with medium effort via
+        openai-codex. Null disables the managed model default.
         Written with journalRoot to historian-defaults.json, never to mutable
         historian.json. Global runtime and session selections take precedence.
         Does not enable Historian or grant provider disclosure approval; use
