@@ -1,11 +1,11 @@
 // Step 6: completion delivery through the actual Pi extension path — the real
 // extension and supervisor in a scripted, provider-free Pi runtime.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { contextLabels, createRuntime, customEntries, deferred, recordingUi, scriptedModel, sdk, tempDir, text, waitFor } from "./harness.mjs";
+import { supervisorPid } from "./processes.ts";
 
 const EXTENSION = resolve(import.meta.dirname, "../index.ts");
 const TYPE = "bg-task-completion";
@@ -298,9 +298,7 @@ test("a supervisor lost while idle is restarted and the lost task's outcome wake
   const [id] = taskIdsFromResults(session);
   // Quiescence: no pending status refresh or receipt poll may restart the supervisor by accident.
   await quiet();
-  const pid = execFileSync("pgrep", ["-f", "--", `--sidecar ${sidecarOf(session)}`], { encoding: "utf8" }).trim();
-  assert.match(pid, /^\d+$/, "exactly one supervisor for this session");
-  process.kill(Number(pid), "SIGKILL");
+  process.kill(supervisorPid(sidecarOf(session)), "SIGKILL");
   await receipt(session, id);
   assert.deepEqual([registry(session)[id].state, registry(session)[id].reason], ["dead", "supervisor_lost"]);
   await session.waitForIdle();

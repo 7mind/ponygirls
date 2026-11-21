@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from "node:path";
 import test from "node:test";
 import { defer, tempDir, waitFor } from "./harness.mjs";
+import { processRows, supervisorsForSidecar } from "./processes.ts";
 
 const PI = process.env.PI_BG_TASKS_PI;
 const EXTENSION = process.env.PI_BG_TASKS_EXTENSION;
@@ -29,6 +30,7 @@ function environment(dir, port) {
   // The wrapper must supply the runtime executables.
   delete env.PI_BG_TASKS_PYTHON;
   delete env.PI_BG_TASKS_SHELL;
+  delete env.PI_BG_TASKS_DARWIN_GROUP;
   return env;
 }
 
@@ -80,8 +82,7 @@ function lockReleased(sessionFile, python) {
 }
 
 function supervisorsFor(sessionFile) {
-  const r = spawnSync("ps", ["-eo", "args"], { encoding: "utf8" });
-  return r.stdout.split("\n").filter((l) => l.includes("supervisor.py") && l.includes(`${sessionFile}.bg-tasks`));
+  return supervisorsForSidecar(`${sessionFile}.bg-tasks`);
 }
 
 test("rpc: the packaged extension registers bg_task and /bg, notifies an idle session, and records the receipt", async (t) => {
@@ -123,7 +124,8 @@ test("rpc: killing pi lets the supervisor record dead and release ownership; res
   await waitFor(() => lockReleased(sessionFile, PYTHON), { message: "lock release", timeoutMs: 20000 });
   const dead = sidecarRegistry(sessionFile)[taskId];
   assert.deepEqual([dead.state, dead.reason], ["dead", "owner_lost"]);
-  assert.equal(spawnSync("sh", ["-c", `ps -eo pgid= | grep -qw ${pgid}`]).status, 1, "the owned group was cleaned up");
+  const group = processRows("pgid").filter((line) => Number(line.trim()) === pgid);
+  assert.deepEqual(group, [], "the owned group was cleaned up");
   const resumed = new Rpc(t, [...baseArgs(join(dir, "sessions")), "--session", sessionFile], env);
   await waitFor(() => sidecarRegistry(sessionFile)[taskId].event.status === "received", { message: "replayed notice receipt", timeoutMs: 20000 });
   // The receipt is recorded when Pi persists the notice, before it sends the provider request.

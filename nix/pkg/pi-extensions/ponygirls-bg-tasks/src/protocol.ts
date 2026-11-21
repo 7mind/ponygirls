@@ -91,7 +91,7 @@ export const TASK_PHASES = ["starting", "running", "closing", "stopping"] as con
 export type TaskPhase = (typeof TASK_PHASES)[number];
 export const TASK_REASONS = [
   "exit", "exit_nonzero", "signaled", "terminated", "launch_failed", "descendants_remaining", "output_failed",
-  "output_drain_timeout", "session_shutdown", "owner_lost", "supervisor_lost", "cleanup_unconfirmed",
+  "output_drain_timeout", "session_shutdown", "owner_lost", "supervisor_lost", "cleanup_unconfirmed", "group_liveness_unconfirmed",
 ] as const;
 export type TaskReason = (typeof TASK_REASONS)[number];
 export const NOTICE_STATUSES = ["pending", "received", "inline"] as const;

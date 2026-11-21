@@ -1130,21 +1130,21 @@
             let
               pi = self.packages.${system}.pi-coding-agent;
               # The same executables the Home Manager wrapper supplies (wrapper-args.nix).
+              runtime = pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-bg-tasks/wrapper-args.nix { };
+              isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
               piWrapped = pkgs.runCommand "pi-bg-tasks-wrapped" { nativeBuildInputs = [ pkgs.makeWrapper ]; } ''
-                makeWrapper ${pi}/bin/pi $out/bin/pi \
-                  ${pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-bg-tasks/wrapper-args.nix { }}
+                makeWrapper ${pi}/bin/pi $out/bin/pi ${runtime.args}
               '';
             in
-            pkgs.runCommand "ponygirls-bg-tasks-test" {
-              nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.python3 pkgs.bash pkgs.coreutils pkgs.procps ];
+            pkgs.runCommand "ponygirls-bg-tasks-test" (runtime.env // {
+              nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.python3 pkgs.bash pkgs.coreutils pkgs.unixtools.ps ];
+              __darwinAllowLocalNetworking = isDarwin;
               PI_BG_TASKS_SDK_ROOT = "${pi}/lib/node_modules/pi-monorepo";
-              PI_BG_TASKS_PYTHON = "${pkgs.python3}/bin/python3";
-              PI_BG_TASKS_SHELL = "${pkgs.bash}/bin/bash";
               PI_BG_TASKS_PI = "${piWrapped}/bin/pi";
               PI_BG_TASKS_EXTENSION = "${self.packages.${system}.ponygirls-pi-extensions}/ponygirls-bg-tasks";
               PI_OFFLINE = "1";
               PI_TELEMETRY = "0";
-            } ''
+            }) ''
               export HOME=$TMPDIR
               cp -r ${./nix/pkg/pi-extensions/ponygirls-bg-tasks} ponygirls-bg-tasks
               chmod -R u+w ponygirls-bg-tasks

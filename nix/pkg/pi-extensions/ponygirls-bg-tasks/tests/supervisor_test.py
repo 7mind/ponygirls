@@ -1,8 +1,9 @@
-"""Step 4: real PTY, process-group, and supervisor-lifetime behavior (Linux)."""
+"""Step 4: real PTY, process-group, and supervisor-lifetime behavior."""
 import base64
 import json
 import os
 import queue
+import shlex
 import signal
 import subprocess
 import sys
@@ -10,6 +11,8 @@ import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from support import FakeClock, sv
 
@@ -20,9 +23,26 @@ SHELL = os.environ.get("PI_BG_TASKS_SHELL")
 if not SHELL:
     raise RuntimeError("Set PI_BG_TASKS_SHELL to the packaged bash; real-process checks must not silently skip.")
 REPLY_TIMEOUT = 20.0
+DARWIN = sys.platform == "darwin"
+
+
+def darwin_processes():
+    output = subprocess.check_output(["ps", "-A", "-o", "pid=", "-o", "pgid=", "-o", "state="], text=True)
+    for row in output.splitlines():
+        pid, pgid, *status = row.split(maxsplit=2)
+        if not status or not status[0].startswith("Z"):
+            yield int(pid), int(pgid)
+
+
+def process_exited(pid):
+    if DARWIN:
+        return all(p != pid for p, _ in darwin_processes())
+    return sv.proc_parent_and_group(pid) is None
 
 
 def pgroup_members(pgid):
+    if DARWIN:
+        return [pid for pid, group in darwin_processes() if group == pgid]
     members = []
     for name in os.listdir("/proc"):
         if not name.isdigit():
@@ -37,6 +57,38 @@ def pgroup_members(pgid):
             if state != b"Z":
                 members.append(int(name))
     return members
+
+
+class DarwinProcessObservationTest(unittest.TestCase):
+    def test_incomplete_state_column_does_not_hide_a_process(self):
+        output = "  123  123  Ss\n  124  123    \n  125  123  Z+\n  126  126  R\n"
+        with patch.object(subprocess, "check_output", return_value=output):
+            self.assertEqual(list(darwin_processes()), [(123, 123), (124, 123), (126, 126)])
+
+    def test_only_matching_terminal_status_seals_the_leader(self):
+        clock = FakeClock()
+        s = sv.Supervisor(None, None, lambda t: t, SHELL, "a", sv.ProtocolWriter(1), clock,
+                          darwin_group=object())
+        self.addCleanup(s.close)
+        pid = 4242
+        rt = sv.TaskRuntime(task_id="task", pid=pid, pgid=pid, master_fd=None, log=None, log_bytes=0)
+        s.leaders[pid] = rt.task_id
+        s.runtimes[rt.task_id] = rt
+        with patch.object(s, "_mark_record"), patch.object(os, "waitid") as waitid:
+            for reported_pid, code, status in (
+                (pid, os.CLD_STOPPED, signal.SIGSTOP),
+                (pid, os.CLD_CONTINUED, signal.SIGCONT),
+                (pid + 1, os.CLD_EXITED, 0),
+            ):
+                with self.subTest(pid=reported_pid, code=code):
+                    waitid.return_value = SimpleNamespace(si_pid=reported_pid, si_code=code, si_status=status)
+                    s._observe_darwin_leaders()
+                    self.assertEqual((rt.sealed, rt.exit), (False, None))
+            waitid.return_value = SimpleNamespace(si_pid=pid, si_code=os.CLD_EXITED, si_status=7)
+            s._observe_darwin_leaders()
+            self.assertTrue(rt.sealed)
+            self.assertEqual(rt.exit.to_json(), {"kind": "code", "code": 7})
+            self.assertEqual(s.leaders, {pid: rt.task_id})
 
 
 def wait_until(predicate, timeout=10.0, interval=0.02, what="condition"):
@@ -224,6 +276,25 @@ class ExecutionTest(SupervisorTestBase):
 
     def test_supervisor_descriptors_are_not_inherited(self):
         c = self.client()
+        if DARWIN:
+            probe = """import errno, os
+names = os.listdir('/dev/fd')
+for name in names:
+    if name.isdecimal():
+        fd = int(name)
+        try:
+            os.fstat(fd)
+        except OSError as e:
+            if e.errno != errno.EBADF:
+                raise
+        else:
+            print(fd, os.isatty(fd))
+"""
+            command = shlex.join([sys.executable, "-c", probe])
+            t = c.spawn(f"exec {command}")
+            self.assertEqual(c.wait_final(t["id"])["state"], "completed")
+            self.assertEqual(sorted(c.read_all(t["id"]).decode().splitlines()), ["0 True", "1 True", "2 True"])
+            return
         # ls runs as a child; /proc/$$ lists the task shell's own descriptors.
         t = c.spawn("ls -l /proc/$$/fd/; true")
         c.wait_final(t["id"])
@@ -296,7 +367,9 @@ class SignalTest(SupervisorTestBase):
         frozen = len(c.read_all(t["id"]))
         time.sleep(0.5)
         self.assertEqual(len(c.read_all(t["id"])), frozen)
-        self.assertEqual(c.get(t["id"])["state"], "running")
+        stopped = c.get(t["id"])
+        self.assertEqual((stopped["state"], stopped["phase"], stopped["exit"]),
+                         ("running", "running", None), (stopped, c.stderr))
         c.call("signal", {"id": t["id"], "signal": "SIGCONT"})
         wait_until(lambda: len(c.read_all(t["id"])) > frozen, 5, 0.05, "progress after SIGCONT")
         done = c.call("terminate", {"id": t["id"]})["task"]
@@ -341,8 +414,13 @@ class GroupSettlementTest(SupervisorTestBase):
         self.assertEqual((done["state"], done["reason"], done["exit"]), ("failed", "descendants_remaining", {"kind": "code", "code": 0}))
         self.assertEqual(pgroup_members(t["pgid"]), [])
         entries = self.assert_signal_authority()
-        self.assertFalse([e for e in entries if e["op"] == "killpg" and e["pgid"] == t["pgid"]], "no numeric group signal after sealing")
-        self.assertTrue([e for e in entries if e["op"] == "pidfd_send_signal"])
+        group_signals = [e for e in entries if e["op"] == "killpg" and e["pgid"] == t["pgid"]]
+        if DARWIN:
+            self.assertTrue(group_signals, "the retained leader authorizes descendant cleanup")
+            self.assertTrue(all(e["leaderExited"] for e in group_signals), group_signals)
+        else:
+            self.assertFalse(group_signals, "no numeric group signal after sealing")
+            self.assertTrue([e for e in entries if e["op"] == "pidfd_send_signal"])
 
     def test_child_holding_the_pty_open_is_cleaned_up(self):
         c = self.instrumented()
@@ -357,9 +435,9 @@ class GroupSettlementTest(SupervisorTestBase):
         done = c.wait_final(c.spawn("sleep 30 & exit 0")["id"])
         self.assertEqual((done["state"], done["reason"]), ("completed", "exit"))
 
-    def test_multiple_descendant_generations_are_adopted_and_cleaned(self):
+    def test_multiple_descendant_generations_are_cleaned(self):
         c = self.instrumented()
-        t = c.spawn('trap "" HUP; ( (sleep 30 </dev/null >/dev/null 2>&1 &); sleep 30 </dev/null >/dev/null 2>&1 ) </dev/null >/dev/null 2>&1 & exit 0')
+        t = c.spawn('trap "" HUP; ( (sleep 30 &); exec sleep 30 ) </dev/null >/dev/null 2>&1 & exit 0')
         done = c.wait_final(t["id"], timeout=20)
         self.assertEqual((done["state"], done["reason"]), ("failed", "descendants_remaining"))
         self.assertEqual(pgroup_members(t["pgid"]), [])
@@ -432,6 +510,7 @@ class ReviewRegressionTest(SupervisorTestBase):
         self.assertIn(("fsync_dir", ".."), fs.ops, "a later start re-syncs the parent entry left by an interrupted first start")
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "Linux adopted-child pidfd signaling")
 class UnitSignalCandidateTest(unittest.TestCase):
     def test_a_settled_group_is_never_signalled_by_numeric_pgid_identity(self):
         reg = sv.TaskRegistry(None, "s", FakeClock())
@@ -476,7 +555,7 @@ class LifetimeTest(SupervisorTestBase):
         lock.release()
 
     def test_killing_pi_lets_the_isolated_supervisor_clean_up_and_record_dead(self):
-        proc, info = self.start_fake_pi("echo started; sleep 300")
+        proc, info = self.start_fake_pi("exec sleep 300")
         pgid = info["task"]["pgid"]
         self.assertEqual(len(pgroup_members(pgid)), 1)
         proc.kill()
@@ -485,7 +564,7 @@ class LifetimeTest(SupervisorTestBase):
         task = self.registry()[info["task"]["id"]]
         self.assertEqual((task["state"], task["reason"]), ("dead", "owner_lost"))
         self.assertEqual(pgroup_members(pgid), [])
-        wait_until(lambda: sv.proc_parent_and_group(info["supervisorPid"]) is None, 10, 0.05, "supervisor exit")
+        wait_until(lambda: process_exited(info["supervisorPid"]), 10, 0.05, "supervisor exit")
 
     def test_killing_pis_whole_process_group_spares_the_supervisor_session(self):
         proc, info = self.start_fake_pi("sleep 300")
@@ -619,15 +698,14 @@ class ProtocolSurfaceTest(SupervisorTestBase):
     def test_sealed_but_draining_task_reports_root_exited(self):
         c = self.client()
         # A lingering group member keeps the task in closing long after the
-        # root is reaped, so the liveness snapshot is stable, not a transient.
+        # root exits, so the liveness snapshot is stable, not a transient.
         # trap '' HUP: without it the kernel's hangup to the foreground group
         # kills the member the instant the session-leader root exits.
         t = c.spawn("trap '' HUP; sleep 30 & exit 0")
         try:
             closing = wait_until(lambda: (lambda x: x if x["phase"] == "closing" else None)(c.get(t["id"])),
                                  30, 0.05, "root exit with a lingering group member")
-            # The leader is reaped (its PID must never be probed again) while the
-            # group still drains: alive would be a lie, exited points at the group.
+
             self.assertEqual(closing["leaderAlive"], False)
             self.assertTrue(closing["observedAt"].endswith("Z"))
         finally:

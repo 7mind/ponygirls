@@ -5,6 +5,7 @@ import type { TaskBackend } from "../src/backend.ts";
 import { BgTaskError, type SessionId, type TaskId, type TaskRecord } from "../src/protocol.ts";
 import { eventually, startRealBackend } from "./fixtures.ts";
 import { MemoryTaskBackend } from "./memory-backend.ts";
+import { supervisorPid } from "./processes.ts";
 
 type Factory = (t: TestContext) => Promise<TaskBackend>;
 const factories: Record<string, Factory> = {
@@ -183,7 +184,6 @@ test("activation: missing packaged executables and --no-session fail explicitly"
 test("activation: a supervisor that exits on its own is restarted, with reported backoff while starts fail", async (t) => {
   const { chmodSync } = await import("node:fs");
   const { join } = await import("node:path");
-  const { execFileSync } = await import("node:child_process");
   const { Activation, readRuntimeConfig } = await import("../src/activation.ts");
   const { RETRY_BASE_MS } = await import("../src/protocol.ts");
   const { defer, tempDir } = await import("./fixtures.ts");
@@ -199,7 +199,7 @@ test("activation: a supervisor that exits on its own is restarted, with reported
   const sidecar = activation.sidecar!;
   chmodSync(sidecar, 0o000);
   defer(t, () => chmodSync(sidecar, 0o700));
-  process.kill(Number(execFileSync("pgrep", ["-f", "--", `--sidecar ${sidecar}`], { encoding: "utf8" }).trim()), "SIGKILL");
+  process.kill(supervisorPid(sidecar), "SIGKILL");
   await eventually(async () => failures.length > 0, "a reported restart failure");
   assert.equal(failures[0]!.retryInMs, RETRY_BASE_MS);
   assert.equal(started.length, 1, "no successor while the sidecar is unusable");

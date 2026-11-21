@@ -1,6 +1,6 @@
 # ponygirls-bg-tasks
 
-Background shell tasks for Pi 1.0.0 (Linux): one agent tool, `bg_task`, one
+Background shell tasks for Pi 1.0.0 on Linux and macOS: one agent tool, `bg_task`, one
 command, `/bg`, and completion notices that wake an idle session. Implements
 `bg-tasks-plan.md` (repository root); deviations are listed at the end.
 
@@ -15,9 +15,11 @@ the supervisor also supports pipes for its standalone contract tests.
 - **A task** is one explicitly launched shell command
   (`bash --noprofile --norc -c <command>`, packaged bash) and the process group
   it was started in. Supported commands keep their children in that group.
-- **Platform:** Linux only. The supervisor fails with `PLATFORM_UNSUPPORTED`
-  if `PR_SET_CHILD_SUBREAPER`, `waitid(WNOWAIT)`, `pidfd_open`,
-  `pidfd_send_signal`, or `/proc/<pid>/task/<pid>/children` is unavailable.
+- **Platform:** The flake check targets `x86_64-linux` and `aarch64-darwin`
+  (Apple Silicon). Both use `waitid(WNOWAIT)` and PTYs. Linux also requires
+  subreaping, pidfds, and `/proc/<pid>/task/<pid>/children`; macOS requires the
+  packaged Darwin group library. Missing process capabilities produce
+  `PLATFORM_UNSUPPORTED`.
 - **Ownership:** the native Pi session ID. Tasks are shared across branches of
   a session; a fork or a new/other session never sees them or their notices.
 - **Viewer:** "view terminals" means a **read-only** line view of the PTY
@@ -105,7 +107,7 @@ once and never starts a turn.
 |---|---|
 | `running` + phase `starting`/`running`/`closing`/`stopping` | owned and unfinished |
 | `completed` | root exit 0, process group settled, output finalized and fsynced |
-| `failed` | `exit_nonzero`, `signaled`, `terminated`, `launch_failed`, `descendants_remaining`, `output_failed`, `output_drain_timeout`, or `session_shutdown` |
+| `failed` | `exit_nonzero`, `signaled`, `terminated`, `launch_failed`, `descendants_remaining`, `group_liveness_unconfirmed`, `output_failed`, `output_drain_timeout`, or `session_shutdown` |
 | `dead` | `owner_lost` (Pi vanished), `supervisor_lost` (found stale on recovery), or `cleanup_unconfirmed` |
 
 `dead` is **not** proof that a process died and never an invented exit code;
@@ -113,23 +115,33 @@ exit evidence is kept only when it was observed. Records and logs persist
 until an explicit `clear`; reading, notices, restarts, and history size never
 remove them.
 
-### Guarantees (verified by the test suites below)
+### Guarantees covered by the test suites below
 
-- Root exit and PTY EOF alone never complete a task: after root exit the
-  supervisor seals numeric-PGID signals, reaps the leader, and requires
-  `waitpid(-pgid)` to report `ECHILD`. Surviving group members get a 1 s grace,
-  then TERM/KILL through validated pidfds of direct/adopted children
-  (subreaper), and the task fails with `descendants_remaining`.
-- No numeric group signal after sealing; no pidfd for a non-child; recovery
-  never signals saved PIDs/PGIDs (traced in the real-process tests).
-- If Pi is killed (or its whole process group), the supervisor — in its own
-  session — observes its owner's pidfd, cleans up, records `dead/owner_lost`,
-  and releases the lock. Unannounced control EOF also cleans up; only an
-  explicit reload handoff permits reconnection. The Linux abstract socket is
-  scoped to the Pi process and session sidecar, and verifies the connecting
-  process's PID and UID. A killed supervisor's unfinished records become
-  `dead/supervisor_lost` on the next start; during an activation the next
-  start is immediate (see below), so their notices need no user action.
+- Root exit and PTY EOF alone never complete a task. Surviving group members
+  get a 1 s grace, then TERM/KILL. A group that needed cleanup for live
+  descendants fails with `descendants_remaining`.
+- On Linux, the supervisor stops numeric PGID signals after root exit, reaps
+  the leader, and requires `waitpid(-pgid)` to report `ECHILD`. It can still
+  signal direct or adopted children using validated pidfds.
+- On macOS, the supervisor retains the exited task leader as an unreaped
+  child so the PGID cannot be reused while it observes or signals the group.
+  The Darwin helper uses `libproc` to check for other group members. A failed
+  PID lookup is not evidence that a descendant died; settlement requires a
+  group snapshot with no other members. If automatic cleanup confirms that the
+  group settled but could not establish whether another member was live when
+  cleanup started, an otherwise successful task fails with
+  `group_liveness_unconfirmed`. Existing failure, explicit termination, and
+  shutdown reasons are preserved. A group that cannot be confirmed settled
+  is not success.
+- If Pi or its whole process group is killed, the isolated supervisor cleans
+  up, records `dead/owner_lost`, and releases the lock. Linux watches an owner
+  pidfd and uses an abstract Unix socket; macOS checks its direct parent and
+  uses a pathname socket in a private, user-owned directory. Both check the
+  connecting process's PID and UID. Unannounced control EOF also cleans up;
+  only an explicit reload handoff permits reconnection.
+- Recovery never signals saved PIDs or PGIDs. A killed supervisor's unfinished
+  records become `dead/supervisor_lost` on the next start; during an activation
+  the next start is immediate (see below), so their notices need no user action.
 - Durable mutations: temp file → fsync → rename → fsync directory; directory
   entries for the sidecar, task directory, and log are synced before the
   admission commit; clear commits an intent, renames into `clearing/`, syncs
@@ -185,7 +197,6 @@ remove them.
 
 ## Limitations
 
-- Linux only; macOS needs an equivalent ownership backend and tests.
 - Containment covers the original process group. A descendant that calls
   `setsid`/`setpgid`, or whose parent leaves the group while it stays, escapes
   settlement and cleanup. Guaranteed containment would need cgroups.
@@ -229,17 +240,48 @@ remove them.
 
 - `nix/hm/pi.nix` loads this directory as a local extension; the pi wrapper
   sets `PI_BG_TASKS_PYTHON` and `PI_BG_TASKS_SHELL` from `wrapper-args.nix`
-  (pinned nixpkgs `python3` and `bash`). Missing variables fail tool calls
-  with `CONFIG_MISSING`; nothing is guessed.
+  (pinned nixpkgs `python3` and `bash`). On Darwin it also sets
+  `PI_BG_TASKS_DARWIN_GROUP` to the compiled `.dylib`. Missing runtime
+  configuration is reported, not guessed.
 - `checks.<system>.ponygirls-bg-tasks` runs `tsc`, the Python suites, and all
   Node suites, including the packaged-binary tests against the wrapped pi.
 
 ## Tests
 
+The Linux check runs the real process and packaged Pi suites. Darwin
+behavior must be verified on a Mac; Linux results and Nix evaluation do not
+exercise the macOS kernel, sockets, or PTYs.
+
+### Headless Apple Silicon Mac
+
+From a checkout of the GitHub repository, after the change is pushed, set
+`rev` to the full pushed commit SHA and run on the Mac:
+
+```sh
+rev='<full pushed commit SHA>'
+git fetch origin
+git switch --detach "$rev"
+nix build -L --no-link --rebuild --option builders '' \
+  "git+file://$PWD?rev=$rev#checks.aarch64-darwin.ponygirls-bg-tasks"
+```
+
+This rebuilds the check locally. It needs no GUI, Pi credentials, or remote
+model: the RPC, print, and TUI cases use a scripted loopback provider, and the
+TUI is driven through a PTY. The check must pass both the Python and Node
+suites. Only the Linux pidfd-specific probes are excluded on macOS.
+
+Outside Nix, if Pi reports that `TMPDIR` is too long for a Darwin control
+socket, set it to a shorter absolute writable path (for example `/tmp`) before
+starting Pi. The socket path must fit in 103 bytes; the session directory isn't
+part of the socket path.
+
+### Direct test commands
+
 ```sh
 # From this directory, with the pinned SDK linked into node_modules (see flake check):
 export PI_BG_TASKS_SDK_ROOT=<pi>/lib/node_modules/pi-monorepo PI_BG_TASKS_PYTHON=<python3> PI_BG_TASKS_SHELL=<bash>
 export PI_BG_TASKS_PI=<wrapped pi> PI_BG_TASKS_EXTENSION=<extension dir> PI_OFFLINE=1 PI_TELEMETRY=0
+# On macOS, also export PI_BG_TASKS_DARWIN_GROUP as the absolute path to the packaged dylib.
 python3 -m unittest discover -s tests -p '*_test.py'
 node --test tests/*.test.ts tests/*.test.mjs
 # From ponygirls/:
