@@ -67,7 +67,7 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT s.id,s.published,g.lineage,g.lineage_version,r.metadata FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.visible}$fs)",List(reader,reader,reader)++p)
   }
   private[chronicle] def statement(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchStatement = statement(reader,q,vector,LegPass.Index)
-  private def statement(reader: String,q: SearchQuery,vector: Option[List[Double]],pass: LegPass): SearchStatement = {
+  private[chronicle] def statement(reader: String,q: SearchQuery,vector: Option[List[Double]],pass: LegPass): SearchStatement = {
     val (fs,fp)=filter(q.filter,None)
     // OFFSET 0 keeps the live authorization check inside the ordered index scan, before its limit: the row is a piece of
     // the published generation, whose revision's metadata the filters read.
@@ -98,12 +98,12 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     }
   }
   /** The leg's visible set from the source side (the session index, not the vector index): pieces of the published
-    * generations of visible sessions passing the filters, of a compatible profile. Arguments: the ACL's and filters',
-    * then the space. */
+    * generations of visible sessions passing the filters (read as the authorization reads them), of a compatible
+    * profile. Arguments: the ACL's and filters', then the space. */
   private def visibleChunks(fs: String): String =
-    s"ch_sources s JOIN ch_generations p ON p.id=s.published JOIN ch_search_chunks ch ON ch.session_id=s.id AND ${GenerationRows.piece("s.published","p.lineage","p.lineage_version","ch")} JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=p.revision WHERE ${archive.visible}$fs AND ${IndexProfiles.compatibleSql("ch.profile")}"
+    s"ch_sources s JOIN ch_search_chunks ch ON ch.session_id=s.id CROSS JOIN LATERAL(${GenerationRows.publishedInfo("s.id","s.published","ch")}) r WHERE ${archive.visible}$fs AND ${IndexProfiles.compatibleSql("ch.profile")}"
   private def visibleCount(c: Connection,reader: String,q: SearchQuery): Long = {
-    val (fs,fp)=filter(q.filter,Some("p"))
+    val (fs,fp)=filter(q.filter,None)
     Sql.one(c,s"SELECT count(*) FROM (SELECT 1 FROM ${visibleChunks(fs)} AND vector_dims(ch.embedding)=${SearchPolicy.dimensions(config)} LIMIT ?) visible",
       (List[Sql.Param](reader,reader,reader)++fp++List(EmbeddingSpaceDescriptor.from(config.embedding).id,SemanticLeg.visibleCap(budget)))*)(_.getLong(1)).get
   }

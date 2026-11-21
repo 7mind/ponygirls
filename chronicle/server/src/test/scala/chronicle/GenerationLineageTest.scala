@@ -418,10 +418,19 @@ final class GenerationLineageTest extends munit.FunSuite {
     val limit=10
     // Discriminating: the own rows each leg checks outnumber the bound of both legs.
     assert(h.visibleOwn>2*h.otherOrigin+limit,h.toString)
-    def loops(sql: String,args: List[Sql.Param]): Map[String,Long] = {
+    /** Per relation, its executions (scan loops, or for a hashed scan the loops of the join probing it); and the aliases of
+      * the generation reads outside the page's view (`hp`) not under the other-origin gate (a one-time `<>` filter). */
+    def loops(sql: String,args: List[Sql.Param]): (Map[String,Long],List[String]) = {
       val plan=f.db.transaction { c =>
         SemanticLeg.configure(c,SemanticLegBudget.production)
         Sql.one(c,"EXPLAIN (ANALYZE,FORMAT JSON) "+sql,args*)(_.getString(1)).get
+      }
+      def ungated(node: io.circe.Json,gated: Boolean): List[String] = {
+        val c=node.hcursor
+        val here=gated || c.get[String]("One-Time Filter").toOption.exists(_.contains("<>"))
+        val alias=c.get[String]("Alias").getOrElse("")
+        Option.when(c.get[String]("Relation Name").toOption.contains("ch_generations") && alias!="hp" && !here)(alias).toList++
+          c.downField("Plans").values.toList.flatten.flatMap(ungated(_,here))
       }
       // A relation's executions: its scan's loops, or for a hashed scan, the loops of the join probing the hash table.
       def loops(node: io.circe.Json): Long = node.hcursor.get[Long]("Actual Loops").getOrElse(fail(plan))
@@ -432,23 +441,28 @@ final class GenerationLineageTest extends munit.FunSuite {
         c.get[String]("Relation Name").toOption.map(_ -> math.max(loops(node),probes)).toList++
           children.flatMap(child => scans(child,if(hashed && child.hcursor.get[String]("Node Type").toOption.contains("Hash")) loops(node) else if(c.get[String]("Node Type").toOption.contains("Hash")) probes else 0L))
       }
-      scans(Wire.parse(plan).asArray.get.head.hcursor.downField("Plan").focus.get,0L).groupMapReduce(_._1)(_._2)(_+_)
+      val root=Wire.parse(plan).asArray.get.head.hcursor.downField("Plan").focus.get
+      (scans(root,0L).groupMapReduce(_._1)(_._2)(_+_),ungated(root,false))
     }
-    val pages=List(SearchMode.Semantic,SearchMode.Hybrid,SearchMode.Lexical).map { mode =>
+    // The semantic leg through the index, and its exact second pass over the visible set.
+    val pages=List(SearchMode.Semantic,SearchMode.Hybrid,SearchMode.Lexical).flatMap { mode =>
       val q=SearchQuery("goal",mode,emptyFilter,limit,0)
-      mode -> f.search.pageStatement(f.search.statement("a",q,Option.when(mode!=SearchMode.Lexical)(hiddenVector)),q)
+      val passes=if(mode==SearchMode.Lexical) List(LegPass.Index) else List(LegPass.Index,LegPass.Exact)
+      passes.map(pass => s"$mode $pass" -> f.search.pageStatement(f.search.statement("a",q,Option.when(mode!=SearchMode.Lexical)(hiddenVector),pass),q))
     }
-    pages.foreach { (mode,page) =>
-      val read=loops(page.sql,page.args)
-      assert(read.getOrElse("ch_search_chunks",0L)>0,s"$mode $read")
+    pages.foreach { (name,page) =>
+      val mode=if(name.startsWith("Hybrid")) SearchMode.Hybrid else SearchMode.Semantic
+      val (read,ungated)=loops(page.sql,page.args)
+      assert(read.getOrElse("ch_search_chunks",0L)>0,s"$name $read")
+      assertEquals(ungated,Nil,name)
       // The page's hits read their view (limit); each leg's authorization reads the generation for another origin's rows.
       val legs=if(mode==SearchMode.Hybrid) 2 else 1
-      assert(read.getOrElse("ch_generations",0L)<=legs*h.otherOrigin+limit,s"$mode $read $h")
-      assert(read.getOrElse("ch_lineage_segments",0L)<=legs*h.otherOrigin,s"$mode $read $h")
+      assert(read.getOrElse("ch_generations",0L)<=legs*h.otherOrigin+limit,s"$name $read $h")
+      assert(read.getOrElse("ch_lineage_segments",0L)<=legs*h.otherOrigin,s"$name $read $h")
     }
     val parsed=ArchiveExpression.parse("mode:semantic goal")
     val archive=f.index.statement("a",ArchiveQuery("mode:semantic goal",ArchiveSort.LastTimestamp,SortDirection.Desc,None,limit,true),parsed,parsed.textOperands.map(ArchiveVector(_,hiddenVector)),None)
-    val read=loops(archive.text,archive.args)
+    val (read,_)=loops(archive.text,archive.args)
     // The corpus reads each readable source's published generation once; the semantic leg reads none.
     assert(read.getOrElse("ch_generations",0L)<=2,read.toString)
     assert(read.getOrElse("ch_lineage_segments",0L)<=h.otherOrigin,read.toString)
