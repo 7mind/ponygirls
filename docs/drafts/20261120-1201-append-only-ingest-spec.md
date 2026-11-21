@@ -1036,3 +1036,10 @@ re-annotated per revision.
 - **Unicode** (U7, orchestrator 14:53Z): the collector replaces lone surrogates in message text and readable metadata with
   U+FFFD before hashing and sending (part of message-chain v1's normalization); ids with lone surrogates are refused
   locally (`invalid-identifier-unicode`); raw bytes are never altered.
+- **Small-lane budget** (U4B): jobs without the large-job permit are held to `maxSmallJobBudgetBytes` (default: estimate of
+  100 windows × 64 fragments); over it → passed by / deferred to the large lane, never failed. Worst case
+  `budget + (lanes − 1) × small budget` (2.61 GB at defaults). Evidence: reports/ingest-b/U8H/HEAP.md.
+- **Older jobs** (U4J): a switch and the per-start reconciliation supersede only unfinished older jobs (Queued, or Running
+  without a valid lease at the switch); terminal verdicts are kept; the switch writes O(1) job rows.
+- **Collector transport** (U7 follow-up): every collector request uses a fresh connection (`Connection: close`); a failed
+  progress report records a bounded cause code.
