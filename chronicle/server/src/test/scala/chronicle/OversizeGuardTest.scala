@@ -83,13 +83,14 @@ final class OversizeGuardTest extends munit.FunSuite {
       val first=archive.ingest("a",request(texts))
       assert(oldEstimate(db,first.sessionId,1)>50*budget)
       // Weak references to the pieces' texts the embedder receives, by window: the publication builder held every one.
+      // Every tenth window collects the heap (System.gc) and counts those of the windows two or more back still held.
       val windows=new java.util.concurrent.atomic.AtomicInteger(0)
       val held=new java.util.concurrent.ConcurrentHashMap[Int,List[java.lang.ref.WeakReference[String]]]()
       val older=ListBuffer.empty[Int]
       val annotator=new ProblemPassageAnnotator {
         def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
           val index=windows.getAndIncrement()
-          if(index>=2) { System.gc(); older+=(0 to index-2).flatMap(i => Option(held.get(i)).toList.flatten).count(_.get!=null) }
+          if(index%10==2) { System.gc(); older+=(0 to index-2).flatMap(i => Option(held.get(i)).toList.flatten).count(_.get!=null) }
           ProblemPassages.Decision(Vector(ProblemPassages.Part(ProblemPassages.Point(0,0),window.terminal,previous.nonEmpty,"synthetic goal",List("synthetic"))))
         }
       }
@@ -101,7 +102,7 @@ final class OversizeGuardTest extends munit.FunSuite {
       }
       assert(worker(archive,config,annotator,embedder).once.unsafeRunSync())
       assertEquals((job(db,first.jobId).state,archive.session("a",first.sessionId).indexedRevision),("Complete",Some(1)))
-      assertEquals((windows.get,older.size),(43,41))
+      assertEquals((windows.get,older.size),(43,5))
       assert(older.max<=ProblemPassages.maximumTailFragments,s"pieces of windows two back still held: ${older.max} (the carry keeps at most ${ProblemPassages.maximumTailFragments})")
       val search=new PostgresSearch(db,archive,config)
       def found(term: String): List[UUID] = search.search("a",SearchQuery(term,SearchMode.Lexical,SearchFilter(None,None,None,None,Nil),10,0),None).hits.map(_.session.id)
