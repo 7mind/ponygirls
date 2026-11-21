@@ -72,6 +72,7 @@ SMOKE_BUDGET = 96 * MiB
 # the dashboard download's renderer JS heap; L2 collector CPU of the A run's +5 % append.
 ARCHIVE_RARE_SECONDS = 1.0
 ARCHIVE_SPREAD_SECONDS = 0.2
+ARCHIVE_SAMPLES = 3  # CLI calls per Archive search; the median is judged (one call is noisy on a loaded host)
 CLI_DOWNLOAD_RSS = 128 * 10**6
 RENDERER_HEAP = 64 * 10**6
 APPEND_CPU_SECONDS = 10.0
@@ -760,30 +761,22 @@ class Collector:
         return self.last_status
 
     def last_pass(self, fixture):
-        """The `lastPass` the collector reports for the fixture's file after the latest run, or None when it reports none
-        at all (a collector without the incremental append). Found wherever the status nests it: the entry naming the
-        file (its path or producer session id), else the only one."""
-        found = []
-
-        def walk(value):
-            if isinstance(value, dict):
-                if isinstance(value.get('lastPass'), dict):
-                    found.append(value)
-                for item in value.values():
-                    walk(item)
-            elif isinstance(value, list):
-                for item in value:
-                    walk(item)
-        walk(self.last_status)
-        if not found:
+        """The `lastPass` of the fixture's file in `--status --json` `sources` after the latest run (C1: the entry whose
+        pathId is the SHA-256 of the file's path), or None when the collector reports no `sources` (no incremental
+        append)."""
+        if 'sources' not in self.last_status:
             return None
-        named = [entry for entry in found if str(fixture.path) in json.dumps(entry) or fixture.session_id in json.dumps(entry)]
-        chosen = named if named else found
-        assert len(chosen) == 1, f'lastPass of {fixture.path}: {json.dumps(found)[:2000]}'
-        return chosen[0]['lastPass']
+        entries = [entry for entry in self.last_status['sources'] if entry['pathId'] in path_ids(fixture.path)]
+        assert len(entries) == 1, f'lastPass of {fixture.path}: {json.dumps(self.last_status["sources"])[:2000]}'
+        return entries[0]['lastPass']
 
-    def diagnostics(self, code):
-        return [d for d in self.last_status.get('diagnostics', []) if d.get('code') == code]
+    def diagnostics(self, code, fixture):
+        return [d for d in self.last_status.get('diagnostics', []) if d.get('code') == code and d.get('pathId') in path_ids(fixture.path)]
+
+
+def path_ids(path):
+    """The collector's pathId of a file (SHA-256 of its path), as given and resolved."""
+    return {hashlib.sha256(str(candidate).encode()).hexdigest() for candidate in (path, os.path.realpath(path))}
 
 
 class Cli:
@@ -1231,13 +1224,19 @@ class Harness:
             timings[f'find {name}'] = round(elapsed, 2)
         for name, literal in (('rare', RARE), ('rare in the appended part', RARE_APPENDED)):
             if fixture.needles[literal]:
-                result, elapsed = cli.result('archive', f'"{literal}" mode:lexical', '--limit', '10')
-                sessions = [row['head']['id'] for row in result['page']['rows']]
-                check(f'{label}: Archive lexical search for the {name} literal returns the session ({elapsed:.2f} s)', session in sessions, sessions)
+                samples, answers = [], []
+                for _ in range(ARCHIVE_SAMPLES):
+                    result, elapsed = cli.result('archive', f'"{literal}" mode:lexical', '--limit', '10')
+                    answers.append([row['head']['id'] for row in result['page']['rows']])
+                    samples.append(round(elapsed, 2))
+                elapsed = sorted(samples)[len(samples) // 2]
+                check(f'{label}: Archive lexical search for the {name} literal returns the session each time (CLI {samples} s, median {elapsed:.2f} s)',
+                      all(session in sessions for sessions in answers), answers)
                 if targets:
-                    check(f'{label}: that search took {elapsed:.2f} s, within the L3 target of {ARCHIVE_RARE_SECONDS} s', elapsed <= ARCHIVE_RARE_SECONDS,
-                          dict(seconds=round(elapsed, 2)), defer=True)
-                timings[f'archive {name}'] = round(elapsed, 2)
+                    check(f'{label}: that search took {elapsed:.2f} s (median), within the L3 target of {ARCHIVE_RARE_SECONDS} s', elapsed <= ARCHIVE_RARE_SECONDS,
+                          dict(seconds=samples), defer=True)
+                timings[f'archive {name}'] = elapsed
+                observations[f'archive {name} samples'] = samples
         failure, elapsed = self.reader().call('raw', session, '--revision', str(revision), '--auth', 'session', expect=1)
         check(f'{label}: the CLI\'s raw answers too-large ({elapsed:.2f} s)', 'too-large' in failure, failure)
         started = time.monotonic()
@@ -1297,8 +1296,9 @@ class Harness:
                 for chunk in iter(lambda: file.read(16 * MiB), b''):
                     saved.update(chunk)
             size = target.stat().st_size if code == 0 else None
-            check(f'{label}: chronicle raw --output FILE exits 0 and saves {size} bytes with the fixture\'s SHA-256 ({wall:.1f} s, peak RSS {rss / 10**6:.0f} MB)',
-                  code == 0 and size == fixture.bytes and saved.hexdigest() == fixture.sha256(), (code, err[-2000:], out[-2000:]))
+            check(f'{label}: chronicle raw --output FILE exits 0 and saves {size} bytes with the fixture\'s SHA-256, its result naming them ({wall:.1f} s, '
+                  f'peak RSS {rss / 10**6:.0f} MB)', code == 0 and size == fixture.bytes and saved.hexdigest() == fixture.sha256()
+                  and fixture.sha256() in out.decode() and str(fixture.bytes) in out.decode(), (code, err[-2000:], out[-2000:]))
             check(f'{label}: raw --output FILE peak RSS {rss / 10**6:.0f} MB ≤ {CLI_DOWNLOAD_RSS / 10**6:.0f} MB', rss <= CLI_DOWNLOAD_RSS, rss, defer=True)
             target.unlink(missing_ok=True)
             outcome['cliFile'] = dict(seconds=round(wall, 1), peakRssBytes=rss)
@@ -1476,11 +1476,15 @@ def run_b(root):
         if COMPARE_A is None:
             skip(f'B4: the rare-literal Archive search within {ARCHIVE_SPREAD_SECONDS} s of the A run\'s', 'UPLOAD_BOUNDS_COMPARE_A names no A summary')
         else:
-            a = json.loads(COMPARE_A.read_text().strip().splitlines()[-1])
-            a_seconds, b_seconds = a['outcome']['reads']['S2']['timings']['archive rare'], b4['timings']['archive rare']
-            check(f'B4: the rare-literal Archive search took {b_seconds} s here and {a_seconds} s in the A run (scale {a["scale"]}), '
-                  f'within {ARCHIVE_SPREAD_SECONDS} s of each other', abs(b_seconds - a_seconds) <= ARCHIVE_SPREAD_SECONDS and a['scale'] == SCALE,
-                  dict(a=a_seconds, b=b_seconds, aScale=a['scale']), defer=True)
+            last = COMPARE_A.read_text().strip().splitlines()[-1] if COMPARE_A.exists() else ''
+            if not last.startswith('{"run": "A"'):
+                check(f'B4: UPLOAD_BOUNDS_COMPARE_A={COMPARE_A} ends with the summary of an A run', False, last[:200], defer=True)
+            else:
+                a = json.loads(last)
+                a_seconds, b_seconds = a['outcome']['reads']['S2']['timings']['archive rare'], b4['timings']['archive rare']
+                check(f'B4: the rare-literal Archive search took {b_seconds} s here and {a_seconds} s in the A run (scale {a["scale"]}; medians of '
+                      f'{ARCHIVE_SAMPLES}), within {ARCHIVE_SPREAD_SECONDS} s of each other', abs(b_seconds - a_seconds) <= ARCHIVE_SPREAD_SECONDS and a['scale'] == SCALE,
+                      dict(a=a_seconds, b=b_seconds, aScale=a['scale']), defer=True)
     with Phase('B5 raw downloads of the 4.4 GB session'):
         b5 = h.downloads('B5', big, session, 2)
     s2 = h.stop()
@@ -1614,10 +1618,16 @@ exit "${{PIPESTATUS[0]}}"
           f'{probe_summary.get("maxMs")} ms), none was missing for more than {probe_summary["allowedGapMs"]} ms (longest {probe_summary["maxGapMs"]} ms), '
           f'and the probe outlived the server', probe_summary['maxGapMs'] is not None and probe_ok(probe_summary), probe_summary)
     check('E: no out-of-memory on either side', server['outOfMemory'] == 0 and not collector['outOfMemory'], (server, collector))
-    compat = Path('chronicle/scripts/test-raw-compat.sh')
-    skip('E: test-raw-compat.sh (tree server × base CLI, base server × tree CLI, tree × tree byte-exact)',
-         'unit R2\'s script is not in this tree' if not compat.exists() else 'its invocation is wired when the harness is rebased onto R2')
-    return dict(gateO=passed[-1], wallSeconds=round(time.monotonic() - started, 1))
+    # R2's raw read compatibility on the same owned database after gate O: tree server × base CLI, base server × tree
+    # CLI, tree × tree byte-exact (its own servers, serve-standby, one after the other).
+    compat_started = time.monotonic()
+    compat = subprocess.run(['bash', 'chronicle/scripts/test-raw-compat.sh'], env=dict(os.environ, CHRONICLE_CLI=str(CLI)), stdin=subprocess.DEVNULL,
+                            capture_output=True, text=True, timeout=1800)
+    print(compat.stdout, compat.stderr[-4000:], sep='\n', flush=True)
+    compat_checks = sum(1 for line in compat.stdout.splitlines() if line.startswith('ok -'))
+    check(f'E: test-raw-compat.sh passes ({compat_checks} checks, {time.monotonic() - compat_started:.1f} s)', compat.returncode == 0 and compat_checks > 0,
+          compat.returncode)
+    return dict(gateO=passed[-1], rawCompatChecks=compat_checks, wallSeconds=round(time.monotonic() - started, 1))
 
 
 def run_g(root):
@@ -1666,8 +1676,11 @@ def run_g(root):
         if not incremental:
             skip('G3: the replacement reports source-prefix-changed once', 'the collector reports no lastPass (unit C1 not in this binary)')
         else:
-            prefix = h.collector.diagnostics('source-prefix-changed')
+            prefix = h.collector.diagnostics('source-prefix-changed', grow)
             check(f'G3: the collector reports source-prefix-changed once for the file ({len(prefix)})', len(prefix) == 1, prefix)
+            last = h.collector.last_pass(grow)
+            check(f'G3: the file\'s lastPass is a full pass for source-prefix-changed ({json.dumps(last)})',
+                  last['kind'] == 'full' and last['reason'] == 'source-prefix-changed', last)
     growth = time.monotonic() - growth_started
     check(f'G: the growth and the edit took {growth / 60:.1f} min, within {GROWTH_BUDGET_S / 60:.0f} min', growth <= GROWTH_BUDGET_S,
           dict(seconds=round(growth, 1)), defer=True)

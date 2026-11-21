@@ -17,7 +17,8 @@
 # append); legs of a later stage are listed as outside the stage.
 #   A  A′ 1,000,000,000 raw bytes uploaded as a replacement (WAL per raw byte reported), +5 % as an append (incremental,
 #      parsing the delta, collector CPU ≤ 10 s), the maxFileBytes boundary (413 above it), a 16 MiB session indexing, the
-#      head's indexing verdict, reads (pages, locate, context, Find, Archive search ≤ 1.0 s, GetRaw too-large), the raw
+#      head's indexing verdict, reads (pages, locate, context, Find, Archive search ≤ 1.0 s as the median of three CLI
+#      calls, GetRaw too-large), the raw
 #      downloads (a streaming cookie client, `chronicle raw --output FILE` and `--output -` with peak RSS ≤ 128 MB, the
 #      dashboard's link in Chromium with the page's JS heap ≤ 64 MB; each byte-exact); then the S2 -> S1 rollback
 #      (down-025-uploads.sql, the S1 server CHRONICLE_S1_SERVER with workers): the same verdicts. ≤ 4 h, ≤ 50 GB.
@@ -27,7 +28,8 @@
 #      four other sessions index. ≤ 14 h, ≤ 110 GB: run it with the data root below and a long wrapper timeout.
 #   D  a 2 MB session grows by six appends while its jobs run (stub annotation delay 1 s per window) and ends indexed at
 #      its head; jobs and windows spent. ≤ 30 min.
-#   E  gate O (scripts/test-main-collector.sh) against this tree's server, heaps bounded and the server probed. ≤ 15 min.
+#   E  gate O (scripts/test-main-collector.sh) against this tree's server, heaps bounded and the server probed; then the raw
+#      read compatibility (scripts/test-raw-compat.sh: BASE_SERVER and BASE_CLI of 66fce48e) on the same database. ≤ 15 min.
 #   G  the 1 GiB session grows by 20 appends of +0.5 % (each incremental; collector CPU per append), then a same-length
 #      in-place edit of a line in the middle plus an append: a replacement (source-prefix-changed) whose archive equals the
 #      file. The initial 1 GiB upload ≤ 30 min, the growth with the edit ≤ 30 min, the run ≤ 1 h; ≤ 25 GB.
@@ -47,11 +49,13 @@
 #     CHRONICLE_WEB_ROOT="$(nix build --no-link --print-out-paths .#chronicle.web)/share/chronicle/web" \
 #     CHRONICLE_CHROMIUM="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#chromium)/bin/chromium" \
 #     MAIN_COLLECTOR="$(nix build --no-link --print-out-paths "git+file://$PWD?rev=0aedcfa8bcdbfd93610ba63b3836384240538b83#chronicle-collector")/bin/chronicle-collector" \
+#     BASE_SERVER="$(nix build --no-link --print-out-paths "git+file://$PWD?rev=66fce48e651758158e6df8bee4d6ed443160421c#chronicle.nativeArtifact")/libexec/chronicle-server" \
+#     BASE_CLI="$(nix build --no-link --print-out-paths "git+file://$PWD?rev=66fce48e651758158e6df8bee4d6ed443160421c#chronicle-cli")/bin/chronicle" \
 #     "$(nix build --no-link --print-out-paths .#service-test-fixture-tools)/bin/with-service-postgres" --child-timeout-seconds=21600 \
 #       --data-root="$UPLOAD_BOUNDS_DATA_ROOT" \
 #       nice -n 10 bash chronicle/scripts/test-upload-bounds.sh A|B|D|E|G'
 #
-# CHRONICLE_S1_SERVER is needed by A only, MAIN_COLLECTOR by E only, CHRONICLE_COLLECTOR by A, B, D and G; without
+# CHRONICLE_S1_SERVER is needed by A only, MAIN_COLLECTOR, BASE_SERVER and BASE_CLI by E only, CHRONICLE_COLLECTOR by A, B, D and G; without
 # CHRONICLE_WEB_ROOT and CHRONICLE_CHROMIUM the dashboard download of A and B is `not run`. UPLOAD_BOUNDS_STAGE=prefix
 # (default; L4, L1, L3, L6, L2) or l5 (streamed indexing as well) selects the stage the run accepts: a run of stage l5
 # reports the L5 legs whose assertions are not written yet as `not run` (incomplete), a prefix run lists them as outside it.
@@ -67,7 +71,9 @@ usage='Usage: chronicle/scripts/test-upload-bounds.sh A|B|D|E|G'
 : "${PONYGIRLS_OWNED_FIXTURE_ROOT:?run via the owned with-service-postgres wrapper}"
 case $1 in
   A) : "${CHRONICLE_S1_SERVER:?set CHRONICLE_S1_SERVER to the native server of the S1 tip 7bc75834 (the rollback binary)}" ;;
-  E) : "${MAIN_COLLECTOR:?set MAIN_COLLECTOR to the chronicle-collector executable built from main 0aedcfa8}" ;;
+  E) : "${MAIN_COLLECTOR:?set MAIN_COLLECTOR to the chronicle-collector executable built from main 0aedcfa8}"
+     : "${BASE_SERVER:?set BASE_SERVER to the server executable built from 66fce48e (test-raw-compat.sh)}"
+     : "${BASE_CLI:?set BASE_CLI to the chronicle CLI built from 66fce48e (test-raw-compat.sh)}" ;;
 esac
 [[ $1 == E ]] || : "${CHRONICLE_COLLECTOR:?set CHRONICLE_COLLECTOR to the chronicle-collector package built from this tree}"
 cd "$(dirname "$0")/../.."
