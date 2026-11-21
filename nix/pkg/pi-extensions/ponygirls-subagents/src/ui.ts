@@ -911,6 +911,10 @@ export class AgentsScreen extends VStack implements Component, Focusable {
     if (this.transcriptView) this.transcriptView.focused = value;
   }
 
+  get capturesViewportInput(): boolean {
+    return this.transcriptView !== null;
+  }
+
   get transcript(): TranscriptView | null {
     return this.transcriptView;
   }

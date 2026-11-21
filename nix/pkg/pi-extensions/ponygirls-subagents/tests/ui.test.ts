@@ -1,7 +1,7 @@
 import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BoundedVStack, VStack, visibleWidth } from "@earendil-works/pi-tui";
+import { BoundedVStack, ScrollView, TuiAltScreen, VStack, stripTerminalSequences, visibleWidth, type Terminal } from "@earendil-works/pi-tui";
 import { AgentInspector, AgentsScreen, TranscriptView, agentsBadge, chatModeFor, countTree, phaseOf, renderHeadless, sanitizeDisplay, widgetLine, type AgentDetails, type AgentsScreenDeps, type ChatMode, type InspectorAction, type TranscriptDeps } from "../src/ui.ts";
 import { PLAIN_STYLE, homeRelative, type UiStyle } from "../src/display.ts";
 import { PLAIN_THEME, borderBadge, borderBadgeCompact, type UiTheme } from "@ponygirls/pi-ui";
@@ -12,6 +12,7 @@ const DOWN = "\x1b[B";
 const ENTER = "\r";
 const ESC = "\x1b";
 const PAGE_UP = "\x1b[5~";
+const PAGE_DOWN = "\x1b[6~";
 
 function view(overrides: Partial<AgentView> = {}): AgentView {
   return {
@@ -842,6 +843,47 @@ function screenOf(views: AgentView[], rows: number, sessionText: string): Agents
   };
   return new AgentsScreen(deps);
 }
+
+test("fullscreen paging targets the subagent conversation and returns to chat on the agents list", () => {
+  let sendKey: (data: string) => void = () => assert.fail("terminal not started");
+  const terminal: Terminal = {
+    columns: 100, rows: 30, kittyProtocolActive: false,
+    start(onInput) { sendKey = onInput; }, stop() {}, async drainInput() {}, write() {},
+    moveBy() {}, hideCursor() {}, showCursor() {}, clearLine() {}, clearFromCursor() {}, clearScreen() {},
+    setTitle() {}, setProgress() {}, setProgramStatus() {},
+  };
+  const tui = new TuiAltScreen(terminal);
+  const chat = new ScrollView({
+    render: () => Array.from({ length: 100 }, (_, i) => `Governing chat row ${i + 1}`), invalidate() {},
+  }, { follow: "end", primary: true });
+  const screen = screenOf([demo], terminal.rows, session(Array.from({ length: 60 }, (_, i) => `Subagent line ${i + 1}`)));
+  tui.setLayoutRoot(new VStack([{ component: chat, basis: 5, shrink: 0 }, { component: screen, grow: 1, minSize: 0 }]));
+  tui.setFocus(screen);
+  const press = (key: string): string => {
+    sendKey(key);
+    tui.renderNow();
+    return tui.getScreenLines().map(stripTerminalSequences).join("\n");
+  };
+  tui.start();
+  try {
+    tui.renderNow();
+    const atEnd = press(ENTER);
+    assert.match(atEnd, /PgUp\/PgDn page/);
+    assert.match(atEnd, /Subagent line 60\b/);
+    const pagedUp = press(PAGE_UP);
+    assert.doesNotMatch(pagedUp, /Subagent line 60\b/, "PgUp must move off the newest subagent line");
+    assert.match(pagedUp, /more below/);
+    assert.match(pagedUp, /Governing chat row 100\b/, "paging the subagent must not scroll governing chat");
+    assert.equal(press(PAGE_DOWN), atEnd, "PgDn must return the subagent conversation to the end");
+    const list = press(ESC);
+    assert.doesNotMatch(list, /PgUp\/PgDn page/);
+    assert.match(list, /Governing chat row 100\b/);
+    assert.doesNotMatch(press(PAGE_UP), /Governing chat row 100\b/, "PgUp must return to chat on the list, which has no page binding");
+    assert.equal(press(PAGE_DOWN), list);
+  } finally {
+    tui.stop();
+  }
+});
 
 // Regression: the first frame after ⏎ was laid out for the terminal's height, not the pane's, and showed an empty body.
 test("a transcript opened from the list shows its conversation in the first frame", () => {
