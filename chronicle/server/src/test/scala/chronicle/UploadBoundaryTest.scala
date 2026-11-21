@@ -200,6 +200,26 @@ final class UploadBoundaryTest extends munit.FunSuite {
     } finally db.transaction { c => Sql.exec(c,"TRUNCATE ch_epochs CASCADE"); Sql.exec(c,"ANALYZE ch_epoch_messages") }
   }}
 
+  test("the writer's transaction merges the fragment index's pending list in fragmentIndexMergeBytes batches; the connection's settings are unchanged after it") { database { (_,db,_) =>
+    def merge(c: java.sql.Connection): (Long,Long) =
+      Sql.one(c,"SELECT pg_size_bytes(current_setting('gin_pending_list_limit')),pg_size_bytes(current_setting('work_mem'))")(r => (r.getLong(1),r.getLong(2))).get
+    db.transaction { c =>
+      val defaults=merge(c)
+      val epoch=UUID.randomUUID()
+      Sql.exec(c,"INSERT INTO ch_epochs(id,session_id,raw_path) VALUES(?,?,'session.jsonl')",epoch,UUID.randomUUID())
+      EpochWriter.append(c,epoch,0,List(Message("m",None,"user","text",None,0)),"",0,0L,0,ResumableSha256())
+      assertEquals(merge(c),(EpochWriter.fragmentIndexMergeBytes,EpochWriter.fragmentIndexMergeBytes))
+      c.commit()
+      assertEquals(merge(c),defaults)
+    }
+  }}
+
+  test("a maintenance pass empties the fragment index's pending list") { database { (_,db,archive) =>
+    archive.ingest("a",request(source(),0,header(3)++pi("u1","s","user","question",1)))
+    maintenancePass(db,EpochMaintenance.interval)
+    db.transaction(c => assertEquals(Sql.one(c,"SELECT gin_clean_pending_list('ch_epoch_fragments_lower_trgm')")(_.getLong(1)),Some(0L),"pending pages left after the pass"))
+  }}
+
   test("retention drains part receipts and pending parents in statements of at most rowsPerStatement rows before it deletes the attempt; committed attempts keep theirs") { database { (config,db,archive) =>
     val uploads=new Uploads(db,config,UploadPolicy.production)
     val head=header(3)++pi("u1","s","user","question",1)

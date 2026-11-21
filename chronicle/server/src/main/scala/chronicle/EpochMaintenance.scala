@@ -8,14 +8,14 @@ import java.util.UUID
 import scala.concurrent.duration.*
 
 /** Background upkeep of the epoch layout (append-only ingest spec §3, §4.6): clears the head-candidate mask of superseded
-  * epochs' fragments, then marks them pruned, deletes the epochs of purged sources, and sweeps part uploads (expires
-  * passed leases, deletes the staging of attempts that ended, deletes old terminal attempts). Reads and search never
-  * depend on it (they join on the head's epoch and count). Each statement touches at most `rowsPerStatement` rows in a
-  * transaction of its own; a failed pass is logged and the next one runs an interval later, so a failure never ends the
-  * server. */
+  * epochs' fragments, then marks them pruned, deletes the epochs of purged sources, sweeps part uploads (expires
+  * passed leases, deletes the staging of attempts that ended, deletes old terminal attempts), and merges the fragment
+  * trigram index's pending list. Reads and search never depend on it (they join on the head's epoch and count). Each
+  * statement touches at most `rowsPerStatement` rows, the merge the pending list, in a transaction of its own; a failed
+  * pass is logged and the next one runs an interval later, so a failure never ends the server. */
 final class EpochMaintenance private (db: Database,logger: logstage.IzLogger,val interval: FiniteDuration) {
   import EpochMaintenance.rowsPerStatement
-  private def pass: IO[Unit] = prune *> deletePurged *> sweepUploads
+  private def pass: IO[Unit] = prune *> deletePurged *> sweepUploads *> mergeFragmentIndex
   /** A pass whose failure is logged: it ends only that pass. */
   private def attempt: IO[Unit] = pass.handleErrorWith(error => IO(logger.warn(s"epoch maintenance pass failed, next pass in $interval: $error")))
   private def transaction[A](f: java.sql.Connection => A): IO[A] = IO.blocking(db.transaction(f))
@@ -36,6 +36,13 @@ final class EpochMaintenance private (db: Database,logger: logstage.IzLogger,val
     }
     from(-1,-1)
   }
+
+  /** Writers leave up to `EpochWriter.fragmentIndexMergeBytes` of the fragment trigram index unmerged, and every search
+    * through the index scans that pending list: the pass merges it (with `maintenance_work_mem`) so that the cost ends one
+    * interval after the last write. It merges until the list is empty, what writers append meanwhile included; a writer
+    * whose insert crosses the limit meanwhile leaves its own merge to it. */
+  private def mergeFragmentIndex: IO[Unit] =
+    transaction(c => Sql.one(c,"SELECT gin_clean_pending_list('ch_epoch_fragments_lower_trgm')")(_.getLong(1))).void
 
   private def deletePurged: IO[Unit] =
     transaction(c => Sql.rows(c,"SELECT e.id,s.owner,s.source_key FROM ch_epochs e JOIN ch_sources s ON s.id=e.session_id WHERE s.tombstone ORDER BY e.id")(r => (r.getObject(1,classOf[UUID]),r.getString(2),r.getString(3))))

@@ -32,6 +32,10 @@ object EpochWriter {
   /** A Problem passage fragment ends at the last scalar that fits, so each fragment of a text but its last holds at least
     * this many bytes: ceil(text bytes / fragmentTextBytes) bounds a text's fragments (the indexing budget). */
   val fragmentTextBytes: Int = ProblemPassages.maximumFragmentBytes-3
+  /** The writer's transaction lets the fragment trigram index's pending list grow to this size and merges it with this
+    * much memory, instead of the 4 MB defaults (ingest-c L6: about a third less upload WAL). Searches through the index
+    * scan the pending list until it is merged; the maintenance pass empties it. */
+  val fragmentIndexMergeBytes: Long = 32L*1024*1024
   private val batchSize = 128
   private val messageFetchSize = 32
 
@@ -166,6 +170,7 @@ object EpochWriter {
     // The written messages are read back through the key's range, not by reading the whole epoch (each S1 append and
     // each part of an upload into a large epoch would otherwise read all of it).
     RevisionContent.keyOrdered(c)
+    batchFragmentIndexMerges(c)
     Using.resource(new Batch(c,"INSERT INTO ch_epoch_fragments(epoch,position,part,value) VALUES(?,?,?,?)")) { fragments =>
       Using.resource(c.prepareStatement("SELECT position,lower(value->>'text' COLLATE pg_unicode_fast) FROM ch_epoch_messages WHERE epoch=? AND position>=? AND position<? ORDER BY position")) { statement =>
         statement.setObject(1,epoch); statement.setInt(2,firstPosition); statement.setInt(3,firstPosition+messages.size); statement.setFetchSize(messageFetchSize)
@@ -179,6 +184,14 @@ object EpochWriter {
       fragments.flush()
     }
     Appended(messageBytes,fragmentCount,records)
+  }
+  /** For the rest of the transaction, an insert that grows the fragment trigram index's pending list past
+    * `fragmentIndexMergeBytes` merges it into the tree with as much memory: a merge rewrites every posting page it touches,
+    * so fewer, larger merges write less WAL. The index has no `gin_pending_list_limit` of its own, so the setting applies. */
+  private def batchFragmentIndexMerges(c: Connection): Unit = {
+    val size=s"${fragmentIndexMergeBytes/1024}kB"
+    Sql.exec(c,"SELECT set_config('gin_pending_list_limit',?,true),set_config('work_mem',?,true)",size,size)
+    ()
   }
   /** Inserts of one statement, executed every `batchSize` rows and by `flush`. */
   private final class Batch(c: Connection,sql: String) extends AutoCloseable {
