@@ -66,6 +66,11 @@ PROBE_PERIOD_MS, PROBE_TIMEOUT_S = 100, 1.0
 PAGE = 100
 MAX_PAGE_BYTES = 64 * MiB
 JOB_WAIT_S = 1800
+# L5 legs (stage l5): the longest wait for a session's indexing (B′ ≈ 10-14 h; the run's budget is asserted separately),
+# the database sampling period, the period of the semantic probe while it publishes, the steady-state searches, the
+# probe's query and the longest query (the server's bound is 2,048 characters).
+INDEX_WAIT_S, INDEX_SAMPLE_S, ANN_PROBE_S, STEADY_SEARCHES = 20 * 3600, 15, 60, 3
+ANN_PROBE_QUERY, SEARCH_QUERY_CHARS = 'synthetic annotation of the session', 2000
 DISK_SAMPLE_S = 10
 SMOKE_BUDGET = 96 * MiB
 # Targets of spec §9: L3 Archive search of a rare literal, the 1 GiB and 4.4 GB runs' difference; L1 CLI download RSS;
@@ -419,6 +424,10 @@ def delay():
     try: return float(open(delay_file).read().strip() or "0")
     except OSError: return 0.0
 def vector(text):
+    # The server sends queryPrefix + query and documentPrefix + chunk text (config.example.json): without them a query
+    # equal to a chunk's text gets that chunk's vector.
+    for prefix in ("query: ", "passage: "):
+        if text.startswith(prefix): text = text[len(prefix):]; break
     out, i = [], 0
     while len(out) < dimensions:
         out.extend(v / 2**31 - 1.0 for v in struct.unpack(">8I", hashlib.sha256(f"{i}:{text}".encode()).digest())); i += 1
@@ -596,16 +605,17 @@ GC = re.compile(r'^\[([\d.]+)s\] GC\(\d+\) Pause (\w+) GC \(.*?\) ([\d.]+)M->([\
 
 
 class Server:
-    """The native server in `serve` (normal indexing workers) with a bounded heap and -XX:+PrintGC, probed every 100 ms."""
-    def __init__(self, root, label, binary, config, heap):
-        self.root, self.label, self.binary, self.heap = root, label, binary, heap
+    """The native server in `serve` (normal indexing workers) or `serve-standby` (no workers) with a bounded heap and
+    -XX:+PrintGC, probed every 100 ms."""
+    def __init__(self, root, label, binary, config, heap, mode='serve'):
+        self.root, self.label, self.binary, self.heap, self.mode = root, label, binary, heap, mode
         self.config = json.loads(Path(config).read_text())
         self.origin = self.config['allowedOrigin']
         self.log_path = root / f'server-{label}.log'
         log = self.log_path.open('x')
         self.probe = Probe(root, label, self.origin)
         self.started = time.monotonic()
-        self.process = subprocess.Popen([str(binary), f'-XX:MaxHeapSize={heap}', '-XX:+PrintGC', 'serve', str(config)], stdin=subprocess.DEVNULL,
+        self.process = subprocess.Popen([str(binary), f'-XX:MaxHeapSize={heap}', '-XX:+PrintGC', mode, str(config)], stdin=subprocess.DEVNULL,
                                         stdout=log, stderr=subprocess.STDOUT, start_new_session=True, env=dict(os.environ, HOME=str(root / 'home')))
         log.close()
         deadline = time.monotonic() + 300
@@ -628,6 +638,15 @@ class Server:
     def alive(self):
         return self.process.poll() is None
 
+    def gc_peaks(self, start, end):
+        """Peak heap after a full collection and before any collection (MB) among the collections between the monotonic
+        times start and end (GC lines carry seconds since the process started)."""
+        log = self.log_path.read_text(errors='replace')
+        within = [(kind, float(before), float(after)) for at, kind, before, after, _ in GC.findall(log) if start <= self.started + float(at) <= end]
+        return dict(collections=len(within), fullCollections=sum(1 for kind, _, _ in within if kind == 'Full'),
+                    peakLiveHeapMB=max((after for kind, _, after in within if kind == 'Full'), default=None),
+                    peakHeapBeforeCollectionMB=max((before for _, before, _ in within), default=None))
+
     def stop(self):
         probe = self.probe.stop(self.ready)
         alive = self.alive()
@@ -635,7 +654,7 @@ class Server:
         log = self.log_path.read_text(errors='replace')
         gcs = [(kind, float(before), float(after), float(pause)) for _, kind, before, after, pause in GC.findall(log)]
         full = sorted(pause for kind, _, _, pause in gcs if kind == 'Full')
-        summary = dict(label=self.label, binary=str(self.binary), heap=self.heap, wallSeconds=round(time.monotonic() - self.started, 1), aliveAtStop=alive,
+        summary = dict(label=self.label, mode=self.mode, binary=str(self.binary), heap=self.heap, wallSeconds=round(time.monotonic() - self.started, 1), aliveAtStop=alive,
                        outOfMemory=len(re.findall(r'OutOfMemoryError|Java heap space', log)),
                        peakLiveHeapMB=max((after for kind, _, after, _ in gcs if kind == 'Full'), default=None),
                        peakHeapAfterAnyCollectionMB=max((after for _, _, after, _ in gcs), default=None),
@@ -1015,6 +1034,8 @@ class Harness:
         (root / 'empty-credential').write_text('')
         self.token_file = root / 'collector-token'
         self.token_file.write_text(secrets.token_urlsafe(32) + '\n')
+        self.read_token_file = root / 'mcp-token'
+        self.read_token_file.write_text(secrets.token_urlsafe(32) + '\n')
         self.stub = Stub(root)
         port = free_port()
         self.origin = f'http://127.0.0.1:{port}'
@@ -1022,7 +1043,8 @@ class Harness:
         config.update(listenPort=port, allowedOrigin=self.origin, secureCookies=False, allowInsecureHttp=False,
                       jdbcUrl=DATABASE['jdbcUrl'], databaseUser=DATABASE['user'], databasePasswordFile=DATABASE['passwordFile'], databaseLimits=DATABASE['limits'],
                       users=[dict(id='alice', login='alice', passwordHashFile=str(root / 'password-hash'), enabled=True)],
-                      staticTokens=[dict(id=str(uuid.uuid4()), userId='alice', name='upload-bounds-collector', scopes=['Ingest'], tokenFile=str(self.token_file))],
+                      staticTokens=[dict(id=str(uuid.uuid4()), userId='alice', name='upload-bounds-collector', scopes=['Ingest'], tokenFile=str(self.token_file)),
+                                    dict(id=str(uuid.uuid4()), userId='alice', name='upload-bounds-mcp', scopes=['Read'], tokenFile=str(self.read_token_file))],
                       maxBodyBytes=BODY_BYTES, maxFiles=16, maxFileBytes=max_file_bytes, maxMessages=DEPLOYMENT_MESSAGES, maxRecordBytes=RECORD_BYTES)
         for key in ('maxIndexingBudgetBytes', 'maxSmallJobBudgetBytes', 'maxRawReadBytes'):
             config.pop(key, None)
@@ -1040,8 +1062,8 @@ class Harness:
              f'maxFileBytes {max_file_bytes} (server and collector), maxMessages {DEPLOYMENT_MESSAGES}, maxRecordBytes {RECORD_BYTES}, '
              f'maxBodyBytes {BODY_BYTES}, collector heap {COLLECTOR_HEAP_MB} MB, collector {"through the logging proxy" if PROXY else "direct"}')
 
-    def start(self, label, binary=SERVER):
-        self.server = Server(self.root, label, binary, self.config, self.heap)
+    def start(self, label, binary=SERVER, mode='serve'):
+        self.server = Server(self.root, label, binary, self.config, self.heap, mode)
         self.cli = None
         return self.server
 
@@ -1152,12 +1174,107 @@ class Harness:
               last.get('kind') == 'incremental' and int(last.get('parsedBytes', -1)) == delta, last)
         return last
 
-    def indexing(self, label, session, revision):
-        """The head job's verdict at the default budget: `index-budget-exceeded` on the prefix (the whole session is held);
-        streamed indexing (L5) is a later stage, whose assertions are hooks here."""
-        if hook(f'{label}: the head job completes at the default heap, published at the head; semantic and hybrid search find the session', 'l5'):
+    def indexing(self, label, fixture, session, revision):
+        """The head job at the default bounds: on the prefix it ends `index-budget-exceeded` (the whole session was held);
+        with streamed indexing (stage l5) it completes and publishes at the head (`streamed`)."""
+        if STAGE == 'prefix':
+            outside_stage.append(f'{label}: the head job completes at the default bounds and publishes; semantic and hybrid search find the session (stage l5)')
             return self.budget_verdict(label, session, revision)
-        return None
+        return self.streamed(label, fixture, session, revision)
+
+    def streamed(self, label, fixture, session, revision):
+        """L5 (spec §5, §9): the head job, at the default heap and budget, completes and publishes at the head. The job's
+        progress is sampled from the database every INDEX_SAMPLE_S (state, windows, staged phase and step, search and chunk
+        row inserts, WAL) and split into the count pass, W, P1, P2, P3 and the switch; while it publishes, a semantic search
+        runs every ANN_PROBE_S and its outcome is recorded (`unavailable` included). Then semantic and hybrid search, CLI and
+        MCP, find the session by a query equal to one of its chunks' text, and STEADY_SEARCHES more of each answer."""
+        job = one("SELECT id FROM ch_jobs WHERE session_id=:'arg0' AND revision=:'arg1'", session, revision)
+        lsn, started, samples, probes = wal_lsn(), time.monotonic(), [], []
+        next_probe = 0.0
+        while True:
+            row = one("SELECT j.state, coalesce(j.error,''), j.attempts, j.completed_windows, coalesce(j.total_windows,-1), coalesce(g.phase,''), "
+                      "coalesce(g.resume->>'step',''), (SELECT n_tup_ins FROM pg_stat_user_tables WHERE relname='ch_search_chunks'), "
+                      "(SELECT n_tup_ins FROM pg_stat_user_tables WHERE relname='ch_chunks'), pg_wal_lsn_diff(pg_current_wal_insert_lsn(), :'arg1') "
+                      "FROM ch_jobs j LEFT JOIN ch_staged_generations g ON g.job_id=j.id AND g.run_id=j.run_id WHERE j.id=:'arg0'", job, lsn)
+            now = time.monotonic()
+            sample = dict(t=round(now - started, 1), state=row[0], error=row[1], attempts=int(row[2]), completed=int(row[3]), total=int(row[4]), phase=row[5],
+                          step=row[6], searchRows=int(row[7]), chunkRows=int(row[8]), wal=int(float(row[9])))
+            samples.append(sample)
+            if sample['state'] in ('Complete', 'Failed'):
+                break
+            if sample['phase'] and now >= next_probe:
+                probes.append(dict(t=sample['t'], phase=sample['phase'], **self.search_outcome('semantic', ANN_PROBE_QUERY)))
+                next_probe = now + ANN_PROBE_S
+            assert self.server.alive(), f'{label}: the server exited during indexing: {self.server.log_path.read_text(errors="replace")[-3000:]}'
+            assert now - started < INDEX_WAIT_S, f'{label}: the job did not end within {INDEX_WAIT_S} s: {sample}'
+            time.sleep(INDEX_SAMPLE_S)
+        ended = time.monotonic()
+        (self.root / f'index-{label.split()[0]}.jsonl').write_text(''.join(json.dumps(x) + '\n' for x in samples))
+        split = phase_split(samples)
+        heap = self.server.gc_peaks(started, ended)
+        unavailable = [p for p in probes if p['outcome'] == 'unavailable']
+        log = re.sub(r'\x1b\[[0-9;]*m', '', self.server.log_path.read_text(errors='replace'))
+        # logstage lines: `I <time> (…) … publication switched jobId=claim=<id> fence=claim.1=<n> totalWindows=total=<n> seconds=seconds=<n>`
+        logged = {event: re.findall(r'^I (\S+) .*publication ' + event + r' jobId=(?:\w+=)?' + job + r' .*?totalWindows=(?:\w+=)?(\d+)(?: seconds=(?:\w+=)?(\d+))?', log, re.M)
+                  for event in ('started', 'switched')}
+        switched = [(windows, seconds) for _, windows, seconds in logged['switched']]
+        split.update(publicationLoggedAt={event: [at for at, _, _ in lines] for event, lines in logged.items()})
+        note(f'{label}: indexing {json.dumps(dict(split=split, heap=heap, switched=switched, probes=len(probes), unavailable=len(unavailable)))}')
+        check(f'{label}: the head job of revision {revision} completes at the default heap and budget ({split["windows"]:,} windows, {split["searchRows"]:,} search rows, '
+              f'{split["totalSeconds"] / 3600:.2f} h from the claim, {sample["attempts"]} attempt(s))', sample['state'] == 'Complete', sample)
+        job_row = self.indexed(label, session, revision)
+        check(f'{label}: the server logged the switch of that job ({switched})', len(switched) == 1, switched)
+        check(f'{label}: no out-of-memory; the peak live heap during indexing was {heap["peakLiveHeapMB"]} MB after a full collection, '
+              f'{heap["peakHeapBeforeCollectionMB"]} MB before one ({heap["collections"]} collections)', 'OutOfMemoryError' not in log and 'Java heap space' not in log, heap)
+        note(f'{label}: semantic searches while it published: {len(probes)}, {len(unavailable)} unavailable'
+             + (f' (from {unavailable[0]["t"]} s to {unavailable[-1]["t"]} s, phase {sorted({p["phase"] for p in unavailable})})' if unavailable else ''))
+        searches = self.searches(label, session)
+        return dict(job=job_row, split=split, heap=heap, switchedSeconds=int(switched[0][1]) if switched else None, probes=probes, searches=searches)
+
+    def search_outcome(self, mode, query):
+        """One CLI search: ok (with the result), unavailable, or another failure; its latency."""
+        code, out, err, _, elapsed = self.reader().run(['search', query, '--mode', mode, '--limit', '10', '--auth', 'session'])
+        outcome = 'ok' if code == 0 else 'unavailable' if 'unavailable' in err or 'candidates incomplete' in err else 'failed'
+        return dict(outcome=outcome, seconds=round(elapsed, 2), **({'result': json.loads(out)} if code == 0 else {'error': err.strip()[-300:]}))
+
+    def mcp_search(self, mode, query):
+        request = urllib.request.Request(self.origin + '/mcp', method='POST', data=json.dumps(dict(
+            jsonrpc='2.0', id=1, method='tools/call', params=dict(name='search_sessions', arguments=dict(query=query, mode=mode, limit=10)))).encode(),
+            headers={'Authorization': f'Bearer {self.read_token_file.read_text().strip()}', 'Content-Type': 'application/json',
+                     'Accept': 'application/json, text/event-stream'})
+        started = time.monotonic()
+        with urllib.request.urlopen(request, timeout=120) as response:
+            answer = json.loads(response.read())
+        elapsed = time.monotonic() - started
+        result = answer.get('result') or {}
+        text = ''.join(block.get('text', '') for block in result.get('content', []))
+        outcome = 'ok' if result and not result.get('isError') else 'unavailable' if 'unavailable' in text or 'candidates incomplete' in text else 'failed'
+        return dict(outcome=outcome, seconds=round(elapsed, 2), text=text)
+
+    def searches(self, label, session):
+        """Semantic and hybrid search through the CLI and MCP with a query equal to the text of a chunk in the middle of the
+        session's published generation (the stub gives it that chunk's vector): the session is the first result; then
+        STEADY_SEARCHES more of each, none `unavailable`."""
+        generation = one("SELECT published FROM ch_sources WHERE id=:'arg0'", session)
+        middle = int(one("SELECT max(ordinal) / 2 FROM ch_chunks WHERE generation=:'arg0'", generation))
+        query = one("SELECT value->>'text' FROM ch_chunks WHERE generation=:'arg0' AND ordinal >= :'arg1' AND char_length(value->>'text') BETWEEN 64 AND :'arg2' "
+                    "AND value->>'text' = btrim(value->>'text') AND position(chr(10) IN value->>'text') = 0 ORDER BY ordinal LIMIT 1", generation, middle, SEARCH_QUERY_CHARS)
+        results, outcomes = {}, []
+        sessions = [row[0] for row in sql("SELECT id FROM ch_sources")]
+        for client, run in (('CLI', lambda mode: self.search_outcome(mode, query)), ('MCP', lambda mode: self.mcp_search(mode, query))):
+            for mode in ('semantic', 'hybrid'):
+                found = run(mode)
+                text = json.dumps(found.get('result')) if client == 'CLI' else found.get('text', '')
+                order = sorted({s for s in sessions if s in text}, key=text.index)
+                check(f'{label}: {client} {mode} search by the text of chunk ≥ {middle:,} answers ({found["seconds"]} s) with the session first ({len(order)} sessions)',
+                      found['outcome'] == 'ok' and order[:1] == [session], dict(outcome=found['outcome'], order=order, detail=(found.get('error') or text)[:500]))
+                results[f'{client} {mode}'] = dict(seconds=found['seconds'], sessions=len(order))
+                for _ in range(STEADY_SEARCHES):
+                    again = run(mode)
+                    outcomes.append(dict(client=client, mode=mode, outcome=again['outcome'], seconds=again['seconds']))
+        check(f'{label}: steady state: {len(outcomes)} more semantic and hybrid searches (CLI, MCP) all answer, none unavailable '
+              f'(max {max(o["seconds"] for o in outcomes)} s)', all(o['outcome'] == 'ok' for o in outcomes), [o for o in outcomes if o['outcome'] != 'ok'])
+        return dict(queryChars=len(query), first=results, steady=outcomes)
 
     def budget_verdict(self, label, session, revision):
         job = self.wait(f'{label} job verdict', lambda: next((j for j in self.jobs(session) if j['revision'] == revision and j['state'] in ('Failed', 'Complete')), None))
@@ -1350,6 +1467,32 @@ class Harness:
 
 # ---------------------------------------------------------------- runs
 
+def phase_split(samples):
+    """The job's phases from the database samples (each boundary at the first sample showing it, so ± INDEX_SAMPLE_S):
+    count pass (claimed, windows not yet counted), W (windows), P1 (staged phase Passages), P2 (phase Pieces until search
+    rows are inserted), P3 (search rows, until the switch); HNSW rows per second over P3 and per sample."""
+    def first(predicate, default=None):
+        return next((x for x in samples if predicate(x)), default)
+    end = samples[-1]
+    claimed = first(lambda x: x['state'] == 'Running') or end
+    counted = first(lambda x: x['total'] >= 0) or end
+    windows_done = first(lambda x: x['total'] >= 0 and x['completed'] >= x['total']) or end
+    p1 = first(lambda x: x['phase'] == 'Passages') or first(lambda x: x['phase'] == 'Pieces') or end
+    p2 = first(lambda x: x['phase'] == 'Pieces') or end
+    p2_index = samples.index(p2)
+    # P3 starts after the last sample of P2 without new search rows.
+    p3 = next((previous for previous, x in zip(samples[p2_index:], samples[p2_index + 1:]) if x['searchRows'] > previous['searchRows']), end)
+    rates = sorted(round((b['searchRows'] - a['searchRows']) / max(b['t'] - a['t'], 1e-9)) for a, b in zip(samples, samples[1:]) if p3['t'] <= a['t'] and b['t'] <= end['t'])
+    rows = end['searchRows'] - p3['searchRows']
+    seconds = lambda a, b: round(b['t'] - a['t'], 1)
+    return dict(windows=end['total'], searchRows=rows, chunkRows=end['chunkRows'] - samples[0]['chunkRows'], samples=len(samples), sampleSeconds=INDEX_SAMPLE_S,
+                waitedForClaimSeconds=seconds(samples[0], claimed), countSeconds=seconds(claimed, counted), wSeconds=seconds(counted, windows_done),
+                p1Seconds=seconds(p1, p2), p2Seconds=seconds(p2, p3), p3Seconds=seconds(p3, end), switchToP1Seconds=seconds(windows_done, p1),
+                totalSeconds=seconds(claimed, end), wWindowsPerSecond=round(end['total'] / max(seconds(counted, windows_done), 1e-9), 2),
+                hnswRowsPerSecond=round(rows / max(seconds(p3, end), 1e-9)), hnswRowsPerSecondSamples=dict(min=rates[0], median=rates[len(rates) // 2], max=rates[-1]) if rates else None,
+                walBytes=end['wal'])
+
+
 def wal_per_raw_byte(phase_name, raw_bytes):
     """WAL bytes per raw byte of a phase (the replacement's), reported against L6 (spec §6.4: ≤ 7.5 B/B on the repo shape;
     this synthetic words shape: 20.0-20.4 B/B at the base), at max_wal_size 1 GB."""
@@ -1370,7 +1513,9 @@ def run_a(root):
     started = time.monotonic()
     big.write(int(1_000_000_000 * SCALE), RARE)
     note(f'fixture big {json.dumps(big.summary())} in {time.monotonic() - started:.1f} s')
-    h.start('A-S2')
+    # Stage l5: the uploads go to a server without workers, so revision 1's job is superseded by the append before any
+    # lane claims it (a running job would index revision 1 whole, then revision 2 again).
+    h.start('A-S2-uploads' if STAGE == 'l5' else 'A-S2', mode='serve-standby' if STAGE == 'l5' else 'serve')
     with Phase('A1 replacement upload of the 1 GB session'):
         h.uploaded('A1', h.collector.once('A1 replacement'), 1, 1)
         session, first = h.stored('A1', big, 1, False)
@@ -1400,44 +1545,61 @@ def run_a(root):
         check('A3: that attempt aborts', status == 200 and aborted['phase'] == 'Aborted', (status, aborted))
         status, refused = declare(h.max_file_bytes + 1)
         check(f'A3: an open declaring {h.max_file_bytes + 1:,} raw bytes is refused 413 too-large', status == 413 and refused['code'] == 'too-large', (status, refused))
+    uploads = None
+    if STAGE == 'l5':
+        uploads = h.stop()
+        h.start('A-S2')
     with Phase('A4 a 16 MiB session indexes and publishes on the same server'):
         small.write(int(16 * MiB * SCALE))
         h.uploaded('A4', h.collector.once('A4 16 MiB session'), 1, 1)
         small_session, small_head = h.stored('A4', small, 1, False)
         check(f'A4: the 16 MiB session\'s estimate {small_head["estimate"]:,} is within the budget {h.budget:,}', small_head['estimate'] <= h.budget, small_head)
         small_job = h.indexed('A4', small_session, 1)
-    with Phase('A5 indexing verdict of the 1 GB session'):
+    with Phase('A5 indexing of the 1 GB session'):
         if STAGE == 'prefix':
             check(f'A5: the 1 GB head\'s estimate {head["estimate"]:,} exceeds the budget {h.budget:,}', head['estimate'] > h.budget, head)
-        h.indexing('A5', session, 2)
+        a5 = h.indexing('A5', big, session, 2)
     with Phase('A6 reads of the 1 GB session (S2)'):
         a6 = h.reads('A6', big, session, 2)
     with Phase('A6 raw downloads of the 1 GB session (S2)'):
         a6_downloads = h.downloads('A6', big, session, 2)
     s2 = h.stop()
-    with Phase('A7 down-025 (S2 -> S1 rollback)'):
+    published = one("SELECT published FROM ch_sources WHERE id=:'arg0'", session)
+    # Stage l5: down-026 (staged generations, retirements, reloptions) before down-025, as docs/operations.md orders them.
+    downs = [('026', 'chronicle/scripts/down-026-staged-generations.sql', "to_regclass('public.ch_staged_generations') IS NULL"),
+             ('025', 'chronicle/scripts/down-025-uploads.sql', "to_regclass('public.ch_uploads') IS NULL")][0 if STAGE == 'l5' else 1:]
+    with Phase(f'A7 down-{"/down-".join(n for n, _, _ in downs)} (S2 -> S1 rollback)'):
         env = dict(os.environ, PGPASSWORD=Path(DATABASE['passwordFile']).read_text().strip())
-        base = ['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-h', '127.0.0.1', '-p', LOCATION[1], '-U', DATABASE['user'], '-d', LOCATION[2], '-f', 'chronicle/scripts/down-025-uploads.sql']
-        preflight = subprocess.run(base, capture_output=True, text=True, env=env, timeout=600, check=True).stdout
-        lines = dict(line.split('|', 1) for line in preflight.splitlines() if line.startswith('DOWN025.'))
-        note('down-025 preflight: ' + json.dumps(lines))
-        applied = subprocess.run(base[:5] + ['-v', 'mode=apply', '-v', 'apply_irreversible=yes', '-v', f'confirm_database={LOCATION[2]}', '-v', f"expect_plan={lines['DOWN025.plan']}"] + base[5:],
-                                 capture_output=True, text=True, env=env, timeout=1800, check=True).stdout
-        check('A7: down-025 applies (committed uploads kept as revisions, upload tables dropped)',
-              applied.strip().splitlines()[-1] == 'DOWN025.result|applied' and lines['DOWN025.result'] == 'preflight-complete'
-              and sql("SELECT to_regclass('public.ch_uploads') IS NULL") == [['t']], applied)
+        for number, script, gone in downs:
+            base = ['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-h', '127.0.0.1', '-p', LOCATION[1], '-U', DATABASE['user'], '-d', LOCATION[2], '-f', script]
+            preflight = subprocess.run(base, capture_output=True, text=True, env=env, timeout=600, check=True).stdout
+            lines = dict(line.split('|', 1) for line in preflight.splitlines() if line.startswith(f'DOWN{number}.'))
+            note(f'down-{number} preflight: ' + json.dumps(lines))
+            applied = subprocess.run(base[:5] + ['-v', 'mode=apply', '-v', 'apply_irreversible=yes', '-v', f'confirm_database={LOCATION[2]}', '-v',
+                                                 f"expect_plan={lines[f'DOWN{number}.plan']}"] + base[5:], capture_output=True, text=True, env=env, timeout=1800, check=True).stdout
+            check(f'A7: down-{number} applies ({script.rsplit("/", 1)[1]}: its tables dropped, committed revisions and published generations kept)',
+                  applied.strip().splitlines()[-1] == f'DOWN{number}.result|applied' and lines[f'DOWN{number}.result'] == 'preflight-complete'
+                  and sql(f"SELECT {gone}") == [['t']] and one("SELECT published FROM ch_sources WHERE id=:'arg0'", session) == published, applied)
     h.start('A-S1', s1)
     with Phase('A8 S1 binary with workers: the same verdicts'):
         check('A8: the S1 binary serves the same heads', h.head(session)['revision'] == 2 and h.source_revision(small_session) == 1 and h.published(small_session) == 1)
         a8 = h.reads('A8', big, session, 2, targets=False)
-        job_id, fence = one("SELECT id, fence FROM ch_jobs WHERE session_id=:'arg0' AND revision=2", session)
-        h.reader().call('jobs', 'retry', job_id, '--yes', '--auth', 'session')
-        h.wait('A8 retried job claimed', lambda: one("SELECT state='Failed' AND fence>:'arg1'::bigint FROM ch_jobs WHERE id=:'arg0'", job_id, fence) == 't')
-        h.budget_verdict('A8 (S1, retried)', session, 2)
+        if STAGE == 'prefix':
+            job_id, fence = one("SELECT id, fence FROM ch_jobs WHERE session_id=:'arg0' AND revision=2", session)
+            h.reader().call('jobs', 'retry', job_id, '--yes', '--auth', 'session')
+            h.wait('A8 retried job claimed', lambda: one("SELECT state='Failed' AND fence>:'arg1'::bigint FROM ch_jobs WHERE id=:'arg0'", job_id, fence) == 't')
+            h.budget_verdict('A8 (S1, retried)', session, 2)
+        else:
+            check('A8: the S1 binary keeps the streamed publication: the head job Complete, its generation published',
+                  h.jobs(session)[-1]['state'] == 'Complete' and one("SELECT published FROM ch_sources WHERE id=:'arg0'", session) == published)
+            a8_search = h.search_outcome('semantic', ANN_PROBE_QUERY)
+            check(f'A8: the S1 binary answers a semantic search with the session ({a8_search["seconds"]} s)',
+                  a8_search['outcome'] == 'ok' and session in json.dumps(a8_search.get('result')), a8_search.get('error'))
     s1_summary = h.stop()
     h.stub.stop()
-    return dict(fixture=big.summary(), small=small.summary(), heads=dict(first=first, appended=head, small=small_head), smallJob=small_job,
-                jobs=h.jobs(session), budget=h.budget, walPerRawByte=wal, reads=dict(S2=a6, S1=a8), downloads=a6_downloads, servers=[s2, s1_summary])
+    return dict(fixture=big.summary(), small=small.summary(), heads=dict(first=first, appended=head, small=small_head), smallJob=small_job, indexing=a5,
+                jobs=h.jobs(session), budget=h.budget, walPerRawByte=wal, reads=dict(S2=a6, S1=a8), downloads=a6_downloads,
+                servers=[x for x in (uploads, s2, s1_summary) if x])
 
 
 def run_b(root):
@@ -1458,7 +1620,8 @@ def run_b(root):
     for fixture in smalls:
         fixture.write(int(3 * MiB * max(SCALE, 0.1)))
     note(f'fixture big {json.dumps(big.summary())} in {time.monotonic() - started:.1f} s')
-    h.start('B-S2')
+    # Stage l5: the uploads go to a server without workers (as in A), then a server with workers indexes the head.
+    h.start('B-S2-uploads' if STAGE == 'l5' else 'B-S2', mode='serve-standby' if STAGE == 'l5' else 'serve')
     with Phase('B1 replacement upload of the 4.4 GB session and four small sessions'):
         h.uploaded('B1', h.collector.once('B1 replacement'), 5, 5)
         session, first = h.stored('B1', big, 1, False)
@@ -1480,10 +1643,14 @@ def run_b(root):
         status, state = h.api('GET', f"/api/ingest/uploads/{head['upload']['id']}")
         check('B2: the append attempt reports its received bytes exactly', status == 200 and int(state['receivedRawBytes']) == big.bytes - first['rawBytes'], state)
         h.incremental('B2', big, big.bytes - before)
+    uploads = None
+    if STAGE == 'l5':
+        uploads = h.stop()
+        h.start('B-S2')
     with Phase('B3 indexing: the 4.4 GB session\'s verdict, the other sessions index'):
         if STAGE == 'prefix':
             check(f'B3: the head\'s estimate {head["estimate"]:,} exceeds the budget {h.budget:,}', head['estimate'] > h.budget, head)
-        h.indexing('B3', session, 2)
+        b3 = h.indexing('B3', big, session, 2)
         small_jobs = [h.indexed(f'B3 small session {k}', h.source(fixture)[0], 1) for k, fixture in enumerate(smalls)]
     with Phase('B4 reads of the 4.4 GB session'):
         b4 = h.reads('B4', big, session, 2, large_pages=[min(big.large) - PAGE // 2, max(i for i in big.large if i < first['messages']) - 10, max(big.large) - 1])
@@ -1504,7 +1671,7 @@ def run_b(root):
     s2 = h.stop()
     h.stub.stop()
     return dict(fixture=big.summary(), heads=dict(first=first, appended=head), jobs=h.jobs(session), smallJobs=small_jobs, budget=h.budget, walPerRawByte=wal,
-                reads=b4, downloads=b5, servers=[s2])
+                indexing=b3, reads=b4, downloads=b5, servers=[x for x in (uploads, s2) if x])
 
 
 def run_d(root):
