@@ -28,14 +28,14 @@ export function operationTool(operation: Operation): ToolCall | null {
 }
 export async function mcp(http: Http, token: string, tool: ToolCall): Promise<Result> {
   const id = randomUUID();
-  const { data } = await http.request('/mcp', 'POST', { jsonrpc: '2.0', id, method: 'tools/call', params: tool }, { token }, false, MAX_MCP_ANSWER_BYTES);
+  const { data } = await http.request('/mcp', 'POST', { jsonrpc: '2.0', id, method: 'tools/call', params: tool }, { token }, false, { responseBytes: MAX_MCP_ANSWER_BYTES });
   if (!isObject(data) || data['jsonrpc'] !== '2.0' || data['id'] !== id) throw new CliError('protocol-error', 'Uncorrelated MCP response.');
   const rejection = data['error'];
-  if (isObject(rejection)) throw new CliError('invalid', 'MCP rejected the typed tool call.' + serverText(rejection['code'], { message: rejection['message'], credential: token }));
+  if (isObject(rejection)) throw new CliError('invalid', 'MCP rejected the typed tool call.' + serverText(rejection['code'], { message: rejection['message'], secrets: [token] }));
   const result = data['result'];
   if (!isObject(result) || typeof result['isError'] !== 'boolean' || !Array.isArray(result['content']) || result['content'].length !== 1) throw new CliError('protocol-error', 'Malformed MCP tool result.');
   const content = result['content'][0]; if (!isObject(content) || content['type'] !== 'text' || typeof content['text'] !== 'string') throw new CliError('protocol-error', 'Expected a generated MCP text result.');
   const canonical = parseJson(content['text']);
-  if (result['isError']) { throw remoteFailure(isObject(canonical) ? canonical['code'] : null, isObject(canonical) ? { message: canonical['message'], credential: token } : null); }
-  const decoded = decodeWire('Result', canonical); if (decoded instanceof Result_Error) throw remoteFailure(decoded.failure.code, { message: decoded.failure.message, credential: token }); return decoded;
+  if (result['isError']) { throw remoteFailure(isObject(canonical) ? canonical['code'] : null, isObject(canonical) ? { message: canonical['message'], secrets: [token] } : null); }
+  const decoded = decodeWire('Result', canonical); if (decoded instanceof Result_Error) throw remoteFailure(decoded.failure.code, { message: decoded.failure.message, secrets: [token] }); return decoded;
 }

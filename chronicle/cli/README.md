@@ -252,8 +252,8 @@ Exit codes:0 success;2 usage/invalid;3 authentication/credentials/forbidden;
 4 missing/gone/retired view;5 conflict;6 transport/protocol/deadline/state/
 availability;7 uncertain mutation. A remote failure prints the CLI's text and then
 the server's code and message on the same line (`Server CODE: MESSAGE`): control
-and format characters escaped, at most 512 characters, the request's credential
-replaced by `[credential]`. An uncertain mutation prints only the CLI's recovery
+and format characters escaped, at most 512 characters, every secret the request
+carried (bearer token, session cookie, login password) replaced by `[credential]`. An uncertain mutation prints only the CLI's recovery
 guidance. Credentials and stack traces are never printed.
 
 ## Build and verification

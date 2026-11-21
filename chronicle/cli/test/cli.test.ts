@@ -223,6 +223,16 @@ test('human login stores private exact-origin session without reading bearer, an
     const result = await cli(['logout', '--yes', '--json'], f, {}, null); assert.equal(result.code, 0, result.stderr); assert.ok(!existsSync(file));
   } finally { await f.close(); }
 });
+// Regression: shown server failure text masks every secret the request carried, including a login password in its body.
+test('a login failure echoing the submitted password shows the server text with the password masked', async () => {
+  const password = 'synthetic-"login"-password';
+  const f = await fixture((_q, r, body) => reply(r, 401, { error: { code: 'unauthorized', message: `rejected ${(JSON.parse(body) as { password: string }).password} in ${body}` } }, {}), null); try {
+    const file = join(f.root, 'password'); writeFileSync(file, `${password}\n`, { mode: 0o600 });
+    const result = await cli(['login', '--login', 'alice', '--password-file', file], f, {}, null);
+    assert.equal(result.code, 3, result.stderr);
+    assert.equal(result.stderr, 'chronicle: unauthorized: Authentication rejected; login again or check the selected bearer credential. Server unauthorized: rejected [credential] in {"login":"alice","password":"[credential]"}\n');
+  } finally { await f.close(); }
+});
 test('state wrong origin/permissions/symlinks and public password files are rejected before network', async () => {
   const f = await fixture((_q, r) => reply(r, 200, VERSION, {}), null); try {
     state(f); const directory = join(f.root, 'state'); const file = join(directory, readdirSync(directory)[0]!); chmodSync(file, 0o644); assert.equal((await cli(['whoami'], f, {}, null)).code, 3); chmodSync(file, 0o600);

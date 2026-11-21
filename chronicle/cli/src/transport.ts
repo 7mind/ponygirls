@@ -41,6 +41,8 @@ function answerDispatcher(): WebSocketDispatcher {
   return new (Agent as new (options: { webSocket: { maxPayloadSize: number } }) => WebSocketDispatcher)({ webSocket: { maxPayloadSize: MAX_ANSWER_BYTES } });
 }
 export interface HttpReply { data: Json; headers: Headers }
+/** `secrets`: what the body carries that shown server text must mask (a login password); the credential of `auth` always is. */
+export interface RequestOptions { readonly responseBytes?: number; readonly secrets?: readonly string[] }
 interface HttpFault { readonly code: string; readonly message: string; readonly definitive: boolean }
 const HTTP_FAULT_STATUSES: Readonly<Record<string, readonly number[]>> = {
   invalid: [400], unauthorized: [401], forbidden: [403], 'not-found': [404], conflict: [409], gone: [410], 'too-large': [413], unavailable: [500, 503], 'rate-limited': [400],
@@ -63,7 +65,9 @@ function httpFault(path: string, data: Json, status: number): HttpFault {
 }
 export class Http {
   constructor(readonly origin: string, private readonly deadline: Deadline) {}
-  async request(path: string, method: 'GET' | 'POST', body: unknown, auth: { token: string } | { session: Session; actor: boolean } | null, mutation: boolean, responseBytes: number = MAX_BYTES): Promise<HttpReply> {
+  async request(path: string, method: 'GET' | 'POST', body: unknown, auth: { token: string } | { session: Session; actor: boolean } | null, mutation: boolean, options: RequestOptions = {}): Promise<HttpReply> {
+    const responseBytes = options.responseBytes ?? MAX_BYTES;
+    const secrets = [...(options.secrets ?? []), ...(auth === null ? [] : 'token' in auth ? [auth.token] : [auth.session.cookie])];
     const headers: Record<string, string> = { 'Accept': 'application/json, text/event-stream', 'Origin': this.origin };
     if (method === 'POST') headers['Content-Type'] = 'application/json';
     if (auth !== null) { if ('token' in auth) { headers['Authorization'] = `Bearer ${auth.token}`; headers['MCP-Protocol-Version'] = '2025-11-25'; } else { headers['Cookie'] = `chronicle_session=${auth.session.cookie}`; if (auth.actor) headers['X-Account-Actor'] = auth.session.actor; } }
@@ -82,7 +86,7 @@ export class Http {
       const contentType = response.headers.get('content-type') ?? ''; if (!/^application\/json(?:\s*;|$)/i.test(contentType)) throw new CliError('protocol-error', 'Expected a JSON response.');
       const bytes = Buffer.concat(chunks, size); chunks.length = 0;
       const data = parseJson(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-      if (!response.ok) { const failure = httpFault(path, data, response.status); if (mutation && !failure.definitive) throw uncertain(null); throw remoteFailure(failure.code, { message: failure.message, credential: auth === null ? null : 'token' in auth ? auth.token : auth.session.cookie }); }
+      if (!response.ok) { const failure = httpFault(path, data, response.status); if (mutation && !failure.definitive) throw uncertain(null); throw remoteFailure(failure.code, { message: failure.message, secrets }); }
       return { data, headers: response.headers };
     } catch (error) {
       // Only validated route/status rejections are definitive; a fault-shaped body
@@ -103,7 +107,7 @@ export async function websocket(origin: string, session: Session, operation: Ope
   // receive limit (128MiB) to MAX_ANSWER_BYTES: a larger message is refused from its frame header, before it is read.
   // The server sends each answer as one text frame (native limit: 131072 fragments).
   const WebSocketClass = WebSocket as unknown as typeof import('undici-types').WebSocket; const dispatcher = answerDispatcher();
-  const serverFailure = (message: string): ServerFailure => ({ message, credential: session.cookie });
+  const serverFailure = (message: string): ServerFailure => ({ message, secrets: [session.cookie] });
   return new Promise<Result>((resolve, reject) => {
     const socket = new WebSocketClass(`${origin.replace(/^http/, 'ws')}/api/ws`, { headers: { Origin: origin, Cookie: `chronicle_session=${session.cookie}` }, dispatcher });
     let sent = false; let finished = false; let negotiated = false;

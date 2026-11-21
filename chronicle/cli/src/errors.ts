@@ -42,14 +42,17 @@ export function terminalSafe(text: string): string {
   const parts: string[] = []; for (let at = 0; at < text.length; at += TERMINAL_SAFE_SLICE) parts.push(text.slice(at, at + TERMINAL_SAFE_SLICE).replace(TERMINAL_UNSAFE, escape));
   return parts.join('');
 }
-/** The server's failure text as the CLI shows it after its own: the request's credential masked, one terminal-safe line of
-  * at most this many characters. */
+/** The server's failure text as the CLI shows it after its own: every secret of the request masked (as sent and as a JSON
+  * string body), one terminal-safe line of at most this many characters. */
 export const SERVER_TEXT_CHARACTERS = 512;
-export interface ServerFailure { readonly message: unknown; readonly credential: string | null }
+export interface ServerFailure { readonly message: unknown; readonly secrets: readonly string[] }
+function masked(text: string, secrets: readonly string[]): string {
+  const forms = secrets.filter(secret => secret !== '').flatMap(secret => [secret, JSON.stringify(secret).slice(1, -1)]);
+  return [...new Set(forms)].sort((a, b) => b.length - a.length).reduce((result, form) => result.replaceAll(form, '[credential]'), text);
+}
 export function serverText(code: unknown, failure: ServerFailure | null): string {
   if (failure === null || typeof failure.message !== 'string' || failure.message === '') return '';
-  let text = `${typeof code === 'string' || typeof code === 'number' ? code : '(no code)'}: ${failure.message}`;
-  if (failure.credential !== null && failure.credential !== '') text = text.replaceAll(failure.credential, '[credential]');
+  const text = masked(`${typeof code === 'string' || typeof code === 'number' ? code : '(no code)'}: ${failure.message}`, failure.secrets);
   const head = Array.from(text.slice(0, 2 * SERVER_TEXT_CHARACTERS + 2)).slice(0, SERVER_TEXT_CHARACTERS + 1).join('');
   const safe = Array.from(terminalSafe(head).replaceAll('\t', '\\u0009').replaceAll('\n', '\\u000a'));
   return ` Server ${safe.length > SERVER_TEXT_CHARACTERS ? `${safe.slice(0, SERVER_TEXT_CHARACTERS).join('')}…` : safe.join('')}`;

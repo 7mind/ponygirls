@@ -26,7 +26,7 @@ export function accountAcknowledgement(value: unknown): { ok: true } {
   return { ok: true };
 }
 export async function login(http: Http, store: SessionStore, name: string, password: string): Promise<unknown> {
-  const { data, headers } = await http.request('/api/account/v1/login', 'POST', { login: name, password }, null, false);
+  const { data, headers } = await http.request('/api/account/v1/login', 'POST', { login: name, password }, null, false, { secrets: [password] });
   if (!isObject(data) || Object.keys(data).join(',') !== 'user') throw new CliError('protocol-error', 'Invalid login response.'); const user = accountUser(data['user']);
   const cookies = headers.getSetCookie().filter(v => v.startsWith('chronicle_session='));
   if (cookies.length !== 1) throw new CliError('protocol-error', 'Login did not return exactly one independent session cookie.');
