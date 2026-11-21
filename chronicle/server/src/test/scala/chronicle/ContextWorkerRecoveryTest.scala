@@ -38,7 +38,7 @@ class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
   def renew(c: Claim,lease: Int): Boolean=delegate.renew(c,lease)
   def defer(c: Claim,total: Int): Boolean=delegate.defer(c,total)
   def progress(c: Claim,done: Int,total: Int): Boolean=delegate.progress(c,done,total)
-  def publishProblems(c: Claim,p: ProblemsPublication): Boolean=delegate.publishProblems(c,p)
+  def publishProblems(c: Claim,p: ProblemsPublication,fetch: MessageFetch): Boolean=delegate.publishProblems(c,p,fetch)
   def fail(c: Claim,code: String): Unit=delegate.fail(c,code)
   def fail(c: Claim,code: String,stage: IndexingStage): Unit=delegate.fail(c,code,stage)
   def checkpoint(c: Claim,key: CheckpointKey): Option[Json]=delegate.checkpoint(c,key)
@@ -121,7 +121,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
       def configured(batchSize: Int): Config = f.config.copy(indexing=f.config.indexing.copy(embeddingBatchSize=batchSize))
       val published=ListBuffer.empty[ProblemsPublication]
       val archive=new ForwardingArchive(f.archive()) {
-        override def publishProblems(c: Claim,p: ProblemsPublication): Boolean = { published+=p; super.publishProblems(c,p) }
+        override def publishProblems(c: Claim,p: ProblemsPublication,fetch: MessageFetch): Boolean = { published+=p; super.publishProblems(c,p,fetch) }
       }
       var annotations=0; var failed=false; val batches=ListBuffer.empty[List[String]]
       val model=new ProblemPassageAnnotator {
@@ -175,7 +175,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
           if(claims==1) throw new java.sql.SQLException("canceling statement due to statement timeout","57014")
           super.claim(profiles,scope,lease,large)
         }
-        override def publishProblems(c: Claim,p: ProblemsPublication): Boolean = { val result=super.publishProblems(c,p); published.complete(()).unsafeRunSync(); result }
+        override def publishProblems(c: Claim,p: ProblemsPublication,fetch: MessageFetch): Boolean = { val result=super.publishProblems(c,p,fetch); published.complete(()).unsafeRunSync(); result }
       }
       fiber <- worker(archive,config,model,embedding,ModelFixtures.failureBackoff,log.logger).run.guaranteeCase(outcome => terminated.complete(outcome).void).start
       first <- IO.race(terminated.get,published.get).timeout(10.seconds)
@@ -206,7 +206,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
       terminated <- Deferred[IO,OutcomeIO[Nothing]]
       archive=new ForwardingArchive(f.archive()) {
         override def fail(c: Claim,code: String,stage: IndexingStage): Unit = { records+=1; throw new java.sql.SQLException("canceling statement due to statement timeout","57014") }
-        override def publishProblems(c: Claim,p: ProblemsPublication): Boolean = { val result=super.publishProblems(c,p); published.complete(()).unsafeRunSync(); result }
+        override def publishProblems(c: Claim,p: ProblemsPublication,fetch: MessageFetch): Boolean = { val result=super.publishProblems(c,p,fetch); published.complete(()).unsafeRunSync(); result }
       }
       fiber <- worker(archive,config,model,embedding,ModelFixtures.failureBackoff,log.logger).run.guaranteeCase(outcome => terminated.complete(outcome).void).start
       first <- IO.race(terminated.get,published.get).timeout(10.seconds)
@@ -455,8 +455,8 @@ final class DummyContextWorkerRecoveryTest extends ContextWorkerRecoveryContract
           if(large==LargeJobs.Skipped && blocked.tryGet.unsafeRunSync().nonEmpty) skipped.complete(()).unsafeRunSync()
           super.claim(profiles,scope,lease,large)
         }
-        override def publishProblems(c: Claim,p: ProblemsPublication): Boolean = {
-          val result=super.publishProblems(c,p)
+        override def publishProblems(c: Claim,p: ProblemsPublication,fetch: MessageFetch): Boolean = {
+          val result=super.publishProblems(c,p,fetch)
           if(published.updateAndGet(_+1).unsafeRunSync()==2) both.complete(()).unsafeRunSync()
           result
         }

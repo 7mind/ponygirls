@@ -1,7 +1,12 @@
 package chronicle
 
 import chronicle.api.*
+import cats.effect.{Deferred,IO,Ref}
+import cats.effect.std.Dispatcher
+import cats.effect.unsafe.implicits.global
+import cats.syntax.all.*
 import io.circe.Json
+import izumi.logstage.api.Log
 import java.sql.DriverManager
 import java.util.UUID
 import scala.concurrent.duration.*
@@ -27,7 +32,6 @@ final class StreamedSourceTest extends munit.FunSuite {
   private def claimed(archive: PostgresArchive): Claim = archive.claim(archive.knownProfiles,ClaimScope.Owner("a"),300).get
   private def windows(source: ProblemPassages.Source): Vector[ProblemPassages.Window] =
     Iterator.unfold(ProblemPassages.SourceCursor.start)(cursor => source.next(cursor).map(window => (window,window.next))).toVector
-  private def unbounded: MessageFetch = MessageFetch(Long.MaxValue,LargeDecodes.unadmitted)
 
   test("windows read from a revision's rows are the windows of its decoded messages, in an epoch and in the legacy layout: messages longer than three windows, runs of empty messages, across size batches and fetch runs") {
     val config=Fixtures.config()
@@ -42,7 +46,7 @@ final class StreamedSourceTest extends munit.FunSuite {
         archive.ingest("a",stored.copy(source=identity.copy(producerSessionId=layout.toString)))
         val claim=claimed(archive)
         assertEquals((claim.snapshot.messages,claim.messages.count),(Nil,texts.size),layout.toString)
-        val read=windows(ProblemPassages.Source(claim.messages.reader(unbounded)))
+        val read=windows(ProblemPassages.Source(claim.messages.reader(TestFetch.unadmitted)))
         assertEquals(read.map(w => (w.start,w.next,w.sourceJson)),expected.map(w => (w.start,w.next,w.sourceJson)),layout.toString)
       }
     }
@@ -66,7 +70,7 @@ final class StreamedSourceTest extends munit.FunSuite {
         case _ => () }
         val claim=claimed(new PostgresArchive(probedDb,probed))
         assertEquals((messageValues,claim.snapshot.messages,claim.messages.count),(0,Nil,texts.size),"the claim decoded no message")
-        val read=windows(ProblemPassages.Source(claim.messages.reader(unbounded)))
+        val read=windows(ProblemPassages.Source(claim.messages.reader(TestFetch.unadmitted)))
         assertEquals(switched,Some(Right(2)),"the next revision switched while the claimed messages were read")
         assertEquals(read.flatMap(_.fragments.map(_.text)).mkString,texts.mkString,"the claimed revision is read whole")
       } finally { probedDb.close(); switchingDb.close(); DriverManager.deregisterDriver(probe) }
@@ -104,6 +108,39 @@ final class StreamedSourceTest extends munit.FunSuite {
         assertEquals(intercept[DomainError](tight.read(0)).code,IndexingBudget.exceededCode)
         assert(!probe.observations.drop(before).exists { case SourceEvent.Query(sql,_) => sql.startsWith("SELECT position,value"); case _ => false },"no value fetched")
       } finally { probedDb.close(); DriverManager.deregisterDriver(probe) }
+    }
+  }
+
+  test("a message above 8 MiB waits for the snapshot admission with no transaction open, and is read once admitted: in a window and in the publication's validation") {
+    val config=Fixtures.config()
+    database(config) { db =>
+      val texts=List("first","z"*(SnapshotAdmission.largeBodyBytes+1))
+      val archive=new PostgresArchive(db,config)
+      archive.ingest("a",request(texts,raw=false))
+      val claim=claimed(archive); val publication=TestPublications.from(claim,Nil)
+      def transactions: Int = db.transaction(c => Sql.one(c,"SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND xact_start IS NOT NULL")(_.getInt(1)).get)
+      final case class Waited[A](waited: Boolean,transactions: Int,value: A)
+      SnapshotAdmission.resource(logstage.IzLogger(Log.Level.Info,Nil),SnapshotAdmission.ingestWait).use { admission => Dispatcher.sequential[IO](await=true).use { dispatcher =>
+        val fetch=Worker.messageFetch(config,admission,dispatcher)
+        /** Runs `read` while the test holds the admission: whether it waited for it and the transactions open meanwhile. */
+        def held[A](read: => A): IO[Waited[A]] = for {
+          inside <- Deferred[IO,Unit]; release <- Deferred[IO,Unit]; done <- Ref.of[IO,Boolean](false)
+          holder <- admission.claim(inside.complete(()) *> release.get).start
+          _ <- inside.get
+          reader <- (IO.blocking(read) <* done.set(true)).start
+          observed <- (IO.cede *> (admission.waiting,done.get).tupled).iterateUntil((waiting,finished) => waiting==1L || finished).timeout(30.seconds)
+          open <- IO.blocking(transactions)
+          _ <- release.complete(()) *> holder.joinWithNever
+          value <- reader.joinWithNever
+        } yield Waited(observed._1==1L,open,value)
+        for {
+          window <- held(claim.messages.reader(fetch).read(1).map(_.text))
+          published <- held(archive.publishProblems(claim,publication,fetch))
+        } yield {
+          assertEquals(window,Waited(true,0,Vector(texts(1))),"a window's read")
+          assertEquals(published,Waited(true,0,true),"the publication's validation")
+        }
+      }}.unsafeRunSync()
     }
   }
 }

@@ -104,32 +104,36 @@ final case class MessageFetch(budgetBytes: Long,large: LargeDecodes)
 trait LargeDecodes {
   def apply[A](decode: => A): A
 }
-object LargeDecodes {
-  /** In the caller, admitted by nothing. */
-  val unadmitted: LargeDecodes = new LargeDecodes { def apply[A](decode: => A): A = decode }
-}
 /** A stored revision's messages read by position, each read a short transaction of its own (ingest-limits spec §5.2.2): the
   * stored text sizes of the next `sizeBatch` positions first (PostgreSQL detoasts, the JVM receives integers; kept for the
   * following reads), then the values of consecutive messages up to `runBytes` of text in one fetch, a longer message alone,
-  * so the driver holds at most one run. Fewer rows than the count (a purge) end the claim. */
+  * so the driver holds at most one run; a large message is admitted first, then read. Fewer rows than the count (a
+  * purge) end the claim. */
 private[chronicle] final class StoredMessages(db: Database,content: RevisionContent,val count: Int) extends ClaimedMessages {
   def reader(fetch: MessageFetch): ProblemPassages.SourceMessages = new ProblemPassages.SourceMessages {
     private var sizes=Vector.empty[Long]
     private var sizesFrom=0
     def count: Int = StoredMessages.this.count
+    private def sizedAt(from: Int): Boolean = from>=sizesFrom && from<sizesFrom+sizes.size
+    private def large(from: Int): Boolean = sizes(from-sizesFrom)>SnapshotAdmission.largeBodyBytes
+    /** The values of the run from `from`. */
+    private def run(c: Connection,from: Int): Vector[Message] = {
+      val first=from-sizesFrom
+      var end=first+1; var bytes=sizes(first)
+      while(end<sizes.size && !large(sizesFrom+end) && bytes+sizes(end)<=StoredMessages.runBytes) { bytes+=sizes(end); end+=1 }
+      values(c,from,end-first)
+    }
     def read(from: Int): Vector[Message] = {
       Check(from>=0 && from<count,"internal","stored message read outside the revision")
-      db.transaction { c =>
+      // A large message waits for its admission with no transaction open (the wait can last a whole large ingest); its
+      // value is read in a transaction of its own once admitted.
+      def admitted: Vector[Message] = fetch.large(db.transaction { c => keyed(c); values(c,from,1) })
+      if(sizedAt(from)) { if(large(from)) admitted else db.transaction { c => keyed(c); run(c,from) } }
+      else db.transaction { c =>
         keyed(c)
-        if(from<sizesFrom || from>=sizesFrom+sizes.size) { sizes=sized(c,from,fetch); sizesFrom=from }
-        val first=from-sizesFrom
-        if(sizes(first)>SnapshotAdmission.largeBodyBytes) fetch.large(values(c,from,1))
-        else {
-          var end=first+1; var bytes=sizes(first)
-          while(end<sizes.size && bytes+sizes(end)<=StoredMessages.runBytes) { bytes+=sizes(end); end+=1 }
-          values(c,from,end-first)
-        }
-      }
+        sizes=sized(c,from,fetch); sizesFrom=from
+        Option.unless(large(from))(run(c,from))
+      }.getOrElse(admitted)
     }
   }
   /** A read's transaction reads an epoch's rows in key order (`RevisionContent.keyOrdered`). */

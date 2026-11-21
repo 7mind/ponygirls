@@ -245,15 +245,10 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     }
     (total,decoded)
   }
-  /** A message above SnapshotAdmission.largeBodyBytes is fetched and decoded under the snapshot admission's permit, one
-    * at a time in the process like large ingests (ingest-limits spec §5.2.2). */
-  private def fetch(dispatcher: Dispatcher[IO]): MessageFetch = MessageFetch(config.maxIndexingBudgetBytes,new LargeDecodes {
-    def apply[A](decode: => A): A = dispatcher.unsafeRunSync(snapshots.claim(IO.blocking(decode)))
-  })
   private def passages(claim: Claim,large: LargeJobs,fetch: MessageFetch): IO[Unit] = IO.blocking(count(claim,fetch)).flatMap { (total,decoded) =>
     if(total>LargeJobs.windows && large==LargeJobs.Skipped)
       deferLarge(claim,total) *> IO(logger.info(s"large job deferred jobId=${claim.jobId} totalWindows=$total largeJobWindows=${LargeJobs.windows}"))
-    else indexWindows(claim,ProblemPassages.Source(claim.messages.reader(fetch)),total,large,decoded).recoverWith { case outgrown: SmallJobOutgrown =>
+    else indexWindows(claim,ProblemPassages.Source(claim.messages.reader(fetch)),total,large,decoded,fetch).recoverWith { case outgrown: SmallJobOutgrown =>
       val retained=outgrown.retained
       deferLarge(claim,total) *> IO(logger.info(s"job outgrew the small-job budget, deferred jobId=${claim.jobId} totalWindows=$total retainedBytes=$retained smallJobBudget=${config.maxSmallJobBudgetBytes}"))
     }
@@ -261,7 +256,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   /** Back to the queue with its window count and without the attempt: claims that skip large jobs pass it by. */
   private def deferLarge(claim: Claim,total: Int): IO[Unit] =
     IO.blocking(Check(archive.defer(claim,total),"stale-claim","indexing claim is no longer current"))
-  private def indexWindows(claim: Claim,source: ProblemPassages.Source,total: Int,large: LargeJobs,decoded: BigInt): IO[Unit] = {
+  private def indexWindows(claim: Claim,source: ProblemPassages.Source,total: Int,large: LargeJobs,decoded: BigInt,fetch: MessageFetch): IO[Unit] = {
     val windows=new Windows(claim,total,large,decoded)
     // A window reads its messages from the database.
     def loop(state: ProblemPassages.State,publication: ProblemsPublication.Builder,index: Int): IO[Unit] = IO.blocking(source.next(state.nextSource)).flatMap { pending =>
@@ -269,7 +264,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
         case None => publishStage(IO.blocking {
           Check(index==total,"internal","source window count changed")
           val finished=ProblemPassages.finish(state,source)
-          Check(archive.publishProblems(claim,publication.append(finished,Nil).result),"stale-claim","indexing claim is no longer current")
+          Check(archive.publishProblems(claim,publication.append(finished,Nil).result,fetch),"stale-claim","indexing claim is no longer current")
         })
         case Some(window) =>
           val input=Json.arr(window.sourceJson,state.carry.map(ProblemPassages.carryJson).getOrElse(Json.Null))
@@ -289,7 +284,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     windows.report(0) *> loop(ProblemPassages.State.start(claim.sessionId,claim.runId),ProblemsPublication.empty,0)
   }
   private def process(claim: Claim,large: LargeJobs): IO[Unit] = {
-    val work=Dispatcher.sequential[IO](await=true).use(dispatcher => passages(claim,large,fetch(dispatcher)))
+    val work=Dispatcher.sequential[IO](await=true).use(dispatcher => passages(claim,large,Worker.messageFetch(config,snapshots,dispatcher)))
     val renew=(IO.sleep(30.seconds) *> IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current"))).foreverM
     IO.race(work,renew).void.handleErrorWith { failure =>
       val (stage,error)=failure match { case StagedFailure(stage,error) => (Some(stage),error); case error => (None,error) }
@@ -340,6 +335,12 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
 }
 object Worker {
   private enum Iteration { case Processed,Idle,ClaimFailed }
+  /** A job's message fetching (ingest-limits spec §5.2.2): within `maxIndexingBudgetBytes` per message, and a message above
+    * SnapshotAdmission.largeBodyBytes under the snapshot admission's permit, one at a time in the process like large ingests. */
+  private[chronicle] def messageFetch(config: Config,snapshots: SnapshotAdmission,dispatcher: Dispatcher[IO]): MessageFetch =
+    MessageFetch(config.maxIndexingBudgetBytes,new LargeDecodes {
+      def apply[A](decode: => A): A = dispatcher.unsafeRunSync(snapshots.claim(IO.blocking(decode)))
+    })
   private def sqlState(error: Throwable): String = error match { case sql: java.sql.SQLException => Option(sql.getSQLState).getOrElse("unavailable"); case _ => "unavailable" }
   /** Invariant and configuration faults end the worker run (and with it the server), wherever they arise in a job. */
   private def fatal(error: DomainError): Boolean = Set("model-telemetry-invariant","internal","config").contains(error.code)

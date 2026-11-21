@@ -466,10 +466,10 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       current(c,claim) && lockJob(c,claim) && Sql.exec(c,s"UPDATE ch_jobs SET lease_until=clock_timestamp()+make_interval(secs=>?) WHERE $validJob",(List[Sql.Param](leaseSeconds)++jobArgs(claim))*)==1
     }
   }
-  /** The publication is validated against the claimed messages before its transaction: each read of them is a transaction
-    * of its own. */
-  def publishProblems(claim: Claim,publication: ProblemsPublication): Boolean = {
-    publication.validate(claim,config.embedding.dimensions,ProblemPassages.Source(claim.messages.reader(MessageFetch(config.maxIndexingBudgetBytes,LargeDecodes.unadmitted))))
+  /** The publication is validated against the claimed messages, read as `fetch` reads them, before its transaction: each
+    * read of them is a transaction of its own. */
+  def publishProblems(claim: Claim,publication: ProblemsPublication,fetch: MessageFetch): Boolean = {
+    publication.validate(claim,config.embedding.dimensions,ProblemPassages.Source(claim.messages.reader(fetch)))
     publishGeneration(claim,publication.chunks,IndexPolicy.ContextAwareProblemsV1,PassageFormat.ContextAwareProblems,publication.passages.size.toLong,
       (c,generation) => PassageStorage.persist(c,generation,publication))
   }

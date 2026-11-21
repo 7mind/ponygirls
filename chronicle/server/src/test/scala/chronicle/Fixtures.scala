@@ -2,6 +2,8 @@ package chronicle
 import chronicle.api.*
 extension (archive: SessionArchive) {
   def publish(claim: Claim,chunks: List[IndexedChunk]): Boolean = archive.publishProblems(claim,TestPublications.from(claim,chunks))
+  /** Validates against the claimed messages read without an admission. */
+  def publishProblems(claim: Claim,publication: ProblemsPublication): Boolean = archive.publishProblems(claim,publication,TestFetch.unadmitted)
   /** The head revision as it was stored (no production read materializes a whole revision). */
   def headSnapshot(reader: String,id: java.util.UUID): IngestRequest = archive match {
     case postgres: PostgresArchive => postgres.db.transaction { c =>
@@ -13,10 +15,14 @@ extension (archive: SessionArchive) {
     case other => throw new AssertionError(s"no stored head snapshot for ${other.getClass.getName}")
   }
 }
+/** Message fetching without an admission or a per-message bound (production fetching is the Worker's). */
+object TestFetch {
+  val unadmitted: MessageFetch = MessageFetch(Long.MaxValue,new LargeDecodes { def apply[A](decode: => A): A = decode })
+}
 extension (messages: ClaimedMessages) {
   /** Every claimed message, decoded at once (production reads them per window). */
   def decoded: List[Message] = {
-    val reader=messages.reader(MessageFetch(Long.MaxValue,LargeDecodes.unadmitted))
+    val reader=messages.reader(TestFetch.unadmitted)
     Iterator.unfold(0)(from => Option.when(from<reader.count)(reader.read(from)).map(read => (read,from+read.size))).flatten.toList
   }
 }

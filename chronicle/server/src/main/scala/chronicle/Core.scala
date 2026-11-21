@@ -260,7 +260,8 @@ trait SessionArchive extends IndexCheckpoints {
   def defer(claim: Claim, totalWindows: Int): Boolean
   def renew(claim: Claim, leaseSeconds: Int): Boolean
   def progress(claim: Claim, completedWindows: Int, totalWindows: Int): Boolean
-  def publishProblems(claim: Claim, publication: ProblemsPublication): Boolean
+  /** `fetch` is how the publication's validation reads the claimed messages (the job's admission). */
+  def publishProblems(claim: Claim, publication: ProblemsPublication, fetch: MessageFetch): Boolean
   def fail(claim: Claim, code: String): Unit
   def fail(claim: Claim, code: String, stage: IndexingStage): Unit
 }
