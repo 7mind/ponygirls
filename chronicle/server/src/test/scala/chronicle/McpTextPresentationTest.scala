@@ -10,6 +10,7 @@ import scala.collection.mutable.ListBuffer
 
 class McpTextPresentationTest extends munit.FunSuite {
   private def s(value: String): Json = Json.fromString(value)
+  private val noAlternatives=McpTextAlternatives("whoami",Nil)
   private def fixture: ReadSourceFixture = {
     val config=Fixtures.config(); val catalog=IndexProfileCatalog.current(config); val db=new Database(config,catalog)
     new ReadSourceFixture(config,db,new PostgresArchive(db,config),catalog,new SourceProbe,_ => IO.raiseError(new AssertionError("no embedding expected")))
@@ -120,11 +121,11 @@ class McpTextPresentationTest extends munit.FunSuite {
       val rendered=McpText.render(value,Some(sessionId.toString))
       assertEquals(rendered,McpText.render(value,Some(sessionId.toString)))
       assertEquals(parsed(rendered).fields,flattened(domain,""),canonical.noSpaces)
-      val json=McpPresentation.result(value,McpResponseFormat.Json,Some(sessionId.toString))
+      val json=McpPresentation.result(value,McpResponseFormat.Json,Some(sessionId.toString),noAlternatives)
       assertEquals(json.hcursor.downField("content").downN(0).get[String]("text").toOption,Some(canonical.noSpaces))
       assertEquals(json.asObject.get.keys.toSet,Set("content","isError"))
       if(!value.isInstanceOf[Result.Error]) {
-        val envelope=McpPresentation.result(value,McpResponseFormat.Text,Some(sessionId.toString))
+        val envelope=McpPresentation.result(value,McpResponseFormat.Text,Some(sessionId.toString),noAlternatives)
         assertEquals(envelope.hcursor.downField("structuredContent").focus,Some(canonical))
         assertEquals(McpPresentation.modelContent(Json.obj("responseFormat"->s("text"),"sessionId"->s(sessionId.toString)),envelope),rendered)
       }
@@ -143,7 +144,7 @@ class McpTextPresentationTest extends munit.FunSuite {
 
   test("BA specified: text projection rejects hidden-only, altered, duplicate and mismatched presentations") {
     val args=Json.obj("responseFormat"->s("text"))
-    val canonical=McpPresentation.result(context,McpResponseFormat.Text,None)
+    val canonical=McpPresentation.result(context,McpResponseFormat.Text,None,noAlternatives)
     val changed=List(
       canonical.mapObject(_.remove("structuredContent")),canonical.mapObject(_.add("content",Json.arr())),
       canonical.mapObject(_.add("content",Json.arr(Json.obj("type"->s("text"),"text"->s("hidden-only"))))),
@@ -167,9 +168,30 @@ class McpTextPresentationTest extends munit.FunSuite {
     assertEquals(result.hcursor.get[Boolean]("isError").toOption,Some(true))
     assertEquals(result.hcursor.downField("structuredContent").get[String]("code").toOption,Some("mcp-result-limit"))
     assert(McpRunJson.bytes(result.noSpaces)<=McpRunLimits.maximumResultBytes)
-    val accepted=McpPresentation.result(Result.Whoami(large.user.copy(login="x"*60000)),McpResponseFormat.Text,None)
+    val accepted=McpPresentation.result(Result.Whoami(large.user.copy(login="x"*60000)),McpResponseFormat.Text,None,noAlternatives)
     assert(McpRunJson.bytes(accepted.noSpaces)<=McpRunLimits.maximumResultBytes)
-    assertEquals(intercept[DomainError](McpPresentation.result(Result.Whoami(large.user),McpResponseFormat.Text,None)).code,"mcp-result-limit")
+    assertEquals(intercept[DomainError](McpPresentation.result(Result.Whoami(large.user),McpResponseFormat.Text,None,noAlternatives)).code,"mcp-result-limit")
+  }
+
+  test("BG specified: a text get_messages page over the cap is refused with the cap, the tool and its alternatives") {
+    ReadSourceFixture.withFixture(_ => IO.pure(ProblemPublicationFixtures.vector)) { f =>
+      val request=Fixtures.snapshot(); val message=request.messages.head; val half="x"*40000
+      val receipt=f.publish(request.copy(messages=List(message.copy(text=half),message.copy(id="v",parentId=Some(message.id),text=half))),"x","summary",Nil,List(Span(message.id,0,1)))
+      def call(arguments: Json): Json = {
+        val rpc=Json.obj("jsonrpc"->s("2.0"),"id"->s("page"),"method"->s("tools/call"),"params"->Json.obj("name"->s("get_messages"),"arguments"->arguments))
+        f.mcp.handle(f.identity,rpc).unsafeRunSync().get.hcursor.downField("result").focus.get
+      }
+      def isError(result: Json): Option[Boolean] = result.hcursor.get[Boolean]("isError").toOption
+      val page=Json.obj("sessionId"->s(receipt.sessionId.toString))
+      val refused=call(page.mapObject(_.add("responseFormat",s("text"))))
+      assertEquals(isError(refused),Some(true))
+      assertEquals(refused.hcursor.downField("structuredContent").focus,Some(Wire.encode(Failure.codecJson,Failure("mcp-result-limit",
+        "get_messages result exceeds the 131072-byte limit of responseFormat text (readable text plus structuredContent). Instead use: "+
+        "responseFormat json or no responseFormat (the default format, not subject to this limit); a smaller limit, continuing with offset; "+
+        "read_message_context, which reads long message text in byte windows (anchor messageId with UTF-8 byte offsets, beforeBytes/afterBytes)."))))
+      assertEquals(isError(call(page)),Some(false))
+      assertEquals(isError(call(page.mapObject(_.add("limit",Json.fromInt(1)).add("responseFormat",s("text"))))),Some(false))
+    }
   }
 
   test("BG specified: current authority is checked immediately before text rendering and delivery") {

@@ -4,6 +4,8 @@ import chronicle.api.*
 import io.circe.Json
 
 enum McpResponseFormat { case Json,Text }
+/** What a caller of `tool` can request instead of its complete text result over the cap, beside the default json format. */
+final case class McpTextAlternatives(tool: String,alternatives: List[String])
 
 object McpPresentation {
   def format(arguments: Json): McpResponseFormat = {
@@ -18,19 +20,25 @@ object McpPresentation {
   private def content(text: String,error: Boolean): Json = Json.obj(
     "content"->Json.arr(Json.obj("type"->Json.fromString("text"),"text"->Json.fromString(text))),"isError"->Json.fromBoolean(error))
 
-  def result(value: Result,selected: McpResponseFormat,sessionId: Option[String]): Json = {
+  private val jsonAlternative = "responseFormat json or no responseFormat (the default format, not subject to this limit)"
+  /** The refusal of a complete text result over the cap names the cap, the tool and what to request instead. */
+  private def textLimitDetail(instead: McpTextAlternatives): String =
+    s"${instead.tool} result exceeds the ${McpRunLimits.maximumResultBytes}-byte limit of responseFormat text (readable text plus structuredContent). Instead use: "+
+      (jsonAlternative::instead.alternatives).mkString("; ")+"."
+
+  def result(value: Result,selected: McpResponseFormat,sessionId: Option[String],instead: McpTextAlternatives): Json = {
     val canonical=Wire.encode(Result.codecJson,value)
     selected match {
       case McpResponseFormat.Json => content(canonical.noSpaces,false)
-      case McpResponseFormat.Text => bounded(content(McpText.render(value,sessionId),false).mapObject(_.add("structuredContent",canonical)))
+      case McpResponseFormat.Text => bounded(content(McpText.render(value,sessionId),false).mapObject(_.add("structuredContent",canonical)),textLimitDetail(instead))
     }
   }
   def failure(value: Failure,selected: McpResponseFormat): Json = selected match {
     case McpResponseFormat.Json => content(Wire.encode(Failure.codecJson,value).noSpaces,true)
-    case McpResponseFormat.Text => bounded(content(McpText.failure(value),true).mapObject(_.add("structuredContent",Wire.encode(Failure.codecJson,value))))
+    case McpResponseFormat.Text => bounded(content(McpText.failure(value),true).mapObject(_.add("structuredContent",Wire.encode(Failure.codecJson,value))),McpRunJson.byteLimitExceeded)
   }
-  private def bounded(value: Json): Json = {
-    McpRunJson.check(value,McpRunLimits.maximumResultBytes,"mcp-result-limit")
+  private def bounded(value: Json,byteLimitDetail: String): Json = {
+    McpRunJson.check(value,McpRunLimits.maximumResultBytes,"mcp-result-limit",byteLimitDetail)
     value
   }
 

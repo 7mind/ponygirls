@@ -43,6 +43,20 @@ final class Mcp(app: Application) {
     tool("whoami","Show the authenticated user and scopes.",Nil,Nil))
   val tools: Json = Json.arr(definitions.map(definition => Json.obj("name"->s(definition.name),"description"->s(definition.description),"inputSchema"->definition.inputSchemaJson,
     "annotations"->Json.obj("readOnlyHint"->Json.fromBoolean(definition.readOnly),"destructiveHint"->Json.False,"idempotentHint"->Json.True,"openWorldHint"->Json.False)))* )
+  private val smallerPage = "a smaller limit, continuing with offset"
+  /** Besides the default json format, what answers a tool whose text result is over the cap: its own arguments or another tool. */
+  private val textAlternatives: Map[String,List[String]] = Map(
+    "search_sessions"->List(smallerPage),
+    "get_session"->List("get_chunks, which pages the same indexed fragments with offset and limit"),
+    "get_chunks"->List(smallerPage),
+    "get_messages"->List(smallerPage,"read_message_context, which reads long message text in byte windows (anchor messageId with UTF-8 byte offsets, beforeBytes/afterBytes)"),
+    "read_message_context"->List("smaller beforeBytes/afterBytes"),
+    "related_sessions"->List("a smaller limit"),
+    "list_facets"->Nil,
+    "search_tags"->List("a smaller limit, continuing with afterTag"),
+    "ingest_status"->List(smallerPage),
+    "whoami"->Nil)
+  Check(textAlternatives.keySet==definitions.map(_.name).toSet,"mcp-catalog","every tool names its text-limit alternatives")
   private sealed trait ReadCall { def read(access: ReadAccess): IO[Result] }
   private final case class OperationRead(operation: Operation) extends ReadCall {
     def read(access: ReadAccess): IO[Result] = app.read(access,operation)
@@ -50,14 +64,14 @@ final class Mcp(app: Application) {
   private final case class TagRead(query: TagSearchQuery) extends ReadCall {
     def read(access: ReadAccess): IO[Result] = app.searchTags(access,query)
   }
-  private final case class PresentedRead(call: ReadCall,format: McpResponseFormat,sessionId: Option[String])
+  private final case class PresentedRead(call: ReadCall,format: McpResponseFormat,sessionId: Option[String],instead: McpTextAlternatives)
   private def parse(name: String,arguments: Json): PresentedRead = {
     val format=McpPresentation.format(arguments)
     val domain=arguments.mapObject(_.remove("responseFormat"))
-    PresentedRead(toReadCall(name,domain),format,domain.hcursor.get[String]("sessionId").toOption)
+    PresentedRead(toReadCall(name,domain),format,domain.hcursor.get[String]("sessionId").toOption,McpTextAlternatives(name,textAlternatives(name)))
   }
   private def toolResult(result: Result,selected: PresentedRead): Json = {
-    val content=McpPresentation.result(result,selected.format,selected.sessionId)
+    val content=McpPresentation.result(result,selected.format,selected.sessionId,selected.instead)
     result match {
       case _: Result.MessageContext => Check(JsonUtf8Size(content)<=MessageContextPolicy.maximumResultBytes,"read-budget","context MCP result exceeds byte budget")
       case _ => ()

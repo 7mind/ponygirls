@@ -31,11 +31,12 @@ object McpRunLimits {
 }
 
 object McpRunJson {
+  val byteLimitExceeded = "JSON byte limit exceeded"
   def bytes(text: String): Int = text.getBytes(UTF_8).length
   def scalar(text: String,code: String): Unit =
     Check(UTF_8.newEncoder().canEncode(text),code,"invalid Unicode")
 
-  def check(json: Json,maximumBytes: Int,code: String): Unit = {
+  def check(json: Json,maximumBytes: Int,code: String,byteLimitDetail: String = byteLimitExceeded): Unit = {
     var pending=List((json,1))
     var elements=0
     var remainingElements=McpRunLimits.maximumJsonElements-1
@@ -57,7 +58,7 @@ object McpRunJson {
         pending=fields.values.iterator.map(_ -> (depth+1)).toList ::: pending
       }
     }
-    Check(bytes(json.noSpaces)<=maximumBytes,code,"JSON byte limit exceeded")
+    Check(bytes(json.noSpaces)<=maximumBytes,code,byteLimitDetail)
   }
 }
 
