@@ -41,8 +41,10 @@ object SearchPolicy {
     CandidateSql.configureStatements.foreach(Sql.exec(c,_))
   }
 }
-private[chronicle] final case class SearchStatement(sql: String,args: List[Sql.Param])
-final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config) extends SearchIndex {
+/** `ann`: the statement holds a semantic leg (CTE `ann`) whose rows the page reports. */
+private[chronicle] final case class SearchStatement(sql: String,args: List[Sql.Param],ann: Boolean=false)
+final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config,budget: SemanticLegBudget) extends SearchIndex {
+  def this(db: Database,archive: PostgresArchive,config: Config) = this(db,archive,config,SemanticLegBudget.production)
   private def filter(f: SearchFilter): (String,List[Sql.Param]) = {
     val b = List.newBuilder[String]; val p = List.newBuilder[Sql.Param]
     List(("project",f.project),("gitBranch",f.gitBranch)).foreach { case (key,v) => v.foreach { s => Check.text(s,256); b += s"r.metadata->>'$key'=?"; p += s } }
@@ -56,7 +58,8 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     val (fs,p)=filter(f)
     SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT s.id,s.published,r.metadata FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.visible}$fs)",List(reader,reader,reader)++p)
   }
-  private[chronicle] def statement(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchStatement = {
+  private[chronicle] def statement(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchStatement = statement(reader,q,vector,LegPass.Index)
+  private def statement(reader: String,q: SearchQuery,vector: Option[List[Double]],pass: LegPass): SearchStatement = {
     val (fs,fp)=filter(q.filter)
     // OFFSET 0 keeps the live authorization check inside the ordered index scan, before its limit.
     val authorized=s"(SELECT true FROM ch_sources s JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=ch.revision WHERE s.id=ch.session_id AND s.published=ch.generation AND ${archive.visible}$fs OFFSET 0)"
@@ -69,15 +72,30 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     } else {
       val dimensions=SearchPolicy.dimensions(config)
       val queryVector=SearchPolicy.vector(vector.getOrElse(throw DomainError("unavailable","query embedding unavailable")),config)
-      val ann=s"ann AS MATERIALIZED(SELECT $fields FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND $authorized ORDER BY ${CandidateSql.annDistance(dimensions,"ch.embedding")} LIMIT ${SearchPolicy.candidatesPerLeg})"
-      val annArgs: List[Sql.Param]=List(EmbeddingSpaceDescriptor.from(config.embedding).id)++acl++List(queryVector)
+      val (ann,annArgs)=pass match {
+        case LegPass.Index =>
+          (s"ann AS MATERIALIZED(SELECT $fields FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND $authorized ORDER BY ${CandidateSql.annDistance(dimensions,"ch.embedding")} LIMIT ${SearchPolicy.candidatesPerLeg})",
+            List[Sql.Param](EmbeddingSpaceDescriptor.from(config.embedding).id)++acl++List(queryVector))
+        case LegPass.Exact =>
+          (s"ann AS MATERIALIZED(SELECT $fields FROM ${visibleChunks(fs)} AND vector_dims(ch.embedding)=$dimensions ORDER BY ch.embedding <=> ?::vector,ch.id LIMIT ${SearchPolicy.candidatesPerLeg})",
+            acl++List(EmbeddingSpaceDescriptor.from(config.embedding).id,queryVector))
+      }
       val (legs,legArgs)=if(q.mode==SearchMode.Hybrid && q.query.nonEmpty) {
         (s",lexical AS MATERIALIZED(SELECT $fields FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND $lexicalPredicate$authorized ORDER BY ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) DESC,ch.id LIMIT ${SearchPolicy.candidatesPerLeg}),candidates AS(SELECT * FROM ann UNION SELECT * FROM lexical)",List(EmbeddingSpaceDescriptor.from(config.embedding).id)++lexicalArgs++List(q.query))
       } else (",candidates AS(SELECT * FROM ann)",Nil)
       // Shared executable reranking retains the exact original-vector/RRF/entity algorithm.
       val mode=if(q.mode==SearchMode.Semantic) RetrievalMode.Semantic else RetrievalMode.Hybrid
-      SearchStatement(s"WITH $ann$legs,"+CandidateSql.rerankCtes(mode,"session_id"),annArgs++legArgs++List(q.query,q.query,queryVector))
+      SearchStatement(s"WITH $ann$legs,"+CandidateSql.rerankCtes(mode,"session_id"),annArgs++legArgs++List(q.query,q.query,queryVector),ann=true)
     }
+  }
+  /** The leg's visible set from the source side (the session index, not the vector index): published chunks of visible
+    * sessions passing the filters, of a compatible profile. Arguments: the ACL's and filters', then the space. */
+  private def visibleChunks(fs: String): String =
+    s"ch_sources s JOIN ch_search_chunks ch ON ch.session_id=s.id AND ch.generation=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=ch.revision WHERE ${archive.visible}$fs AND ${IndexProfiles.compatibleSql("ch.profile")}"
+  private def visibleCount(c: Connection,reader: String,q: SearchQuery): Long = {
+    val (fs,fp)=filter(q.filter)
+    Sql.one(c,s"SELECT count(*) FROM (SELECT 1 FROM ${visibleChunks(fs)} AND vector_dims(ch.embedding)=${SearchPolicy.dimensions(config)} LIMIT ?) visible",
+      (List[Sql.Param](reader,reader,reader)++fp++List(EmbeddingSpaceDescriptor.from(config.embedding).id,SemanticLeg.visibleCap(budget)))*)(_.getLong(1)).get
   }
   private[chronicle] def legacyStatement(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchStatement = {
     val (fs,fp)=filter(q.filter)
@@ -92,8 +110,10 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     val compatibility=if(semantic) " AND "+IndexProfiles.compatibleSql("g.profile") else ""
     SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT ch.id,ch.document,ch.embedding,s.id AS session_id,g.id AS generation,g.revision FROM ch_chunks ch JOIN ch_sources s ON s.published=ch.generation JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.visible}$fs$compatibility),ranked AS(SELECT *,ts_rank_cd(document,websearch_to_tsquery('english',?)) AS lex,$distance AS distance FROM corpus),ranked2 AS(SELECT *,row_number() OVER(ORDER BY lex DESC,id) AS lr,row_number() OVER(ORDER BY distance,id) AS vr FROM ranked),scored AS(SELECT *,$score AS score FROM ranked2 $matches),sessions AS(SELECT DISTINCT ON(session_id) * FROM scored ORDER BY session_id,score DESC,id)",List(reader,reader,reader)++fp++(if(semantic) List(EmbeddingSpaceDescriptor.from(config.embedding).id) else Nil)++List(q.query)++(if(semantic) List(SearchPolicy.vector(vector.getOrElse(throw DomainError("unavailable","query embedding unavailable")),config)) else Nil))
   }
-  private[chronicle] def pageStatement(plan: SearchStatement,q: SearchQuery): SearchStatement =
-    SearchStatement(plan.sql+",result_sessions AS MATERIALIZED(SELECT id,generation,session_id,revision,score FROM sessions) SELECT counted.total,page.id,page.generation,page.session_id,page.revision,page.score FROM (SELECT count(*) AS total FROM result_sessions) counted LEFT JOIN LATERAL(SELECT * FROM result_sessions ORDER BY score DESC,session_id LIMIT ? OFFSET ?) page ON true ORDER BY page.score DESC,page.session_id",plan.args++List(q.limit,q.offset))
+  private[chronicle] def pageStatement(plan: SearchStatement,q: SearchQuery): SearchStatement = {
+    val annRows=if(plan.ann) "(SELECT count(*) FROM ann) AS ann_rows," else ""
+    SearchStatement(plan.sql+s",result_sessions AS MATERIALIZED(SELECT id,generation,session_id,revision,score FROM sessions) SELECT counted.total,${annRows}page.id,page.generation,page.session_id,page.revision,page.score FROM (SELECT count(*) AS total FROM result_sessions) counted LEFT JOIN LATERAL(SELECT * FROM result_sessions ORDER BY score DESC,session_id LIMIT ? OFFSET ?) page ON true ORDER BY page.score DESC,page.session_id",plan.args++List(q.limit,q.offset),plan.ann)
+  }
   def search(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchResult = search(reader,q,vector,ReadMaterialization.unrestricted)
   def search(reader: String,q: SearchQuery,vector: Option[List[Double]],materialization: ReadMaterialization): SearchResult = run(reader,q,vector,false,materialization)
   def searchLegacy(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchResult = searchLegacy(reader,q,vector,ReadMaterialization.unrestricted)
@@ -113,17 +133,22 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
       val guard=ReadSources.Query("SELECT t.profile,t.epoch,p.embedding_space,e.descriptor FROM ch_users u LEFT JOIN ch_owner_targets t ON t.owner=u.id LEFT JOIN ch_index_profiles p ON p.profile=t.profile LEFT JOIN ch_embedding_spaces e ON e.id=p.embedding_space WHERE u.id=? AND u.enabled",List(reader))
       materialization.admit(ReadSources.bytes(c,guard))
       IndexProfiles.semantic(c,reader,archive.visible,EmbeddingSpaceDescriptor.from(config.embedding))
-      SearchPolicy.configure(c)
+      SemanticLeg.configure(c,budget)
     }
-    val plan=if(legacy) legacyStatement(reader,q,vector) else statement(reader,q,vector)
-    val page=pageStatement(plan,q)
-    val rows=Sql.rows(c,page.sql,page.args*) { r =>
-      // A null session ID is the LEFT JOIN padding row for an empty page, not a nullable hit.
-      val reference=Option(r.getObject("session_id",classOf[UUID])).map { id =>
-        Reference(r.getObject("id",classOf[UUID]),id,ContentView(r.getInt("revision"),Some(r.getObject("generation",classOf[UUID]))),r.getDouble("score"))
+    val semanticLeg= !legacy && q.mode!=SearchMode.Lexical
+    def execute(pass: LegPass): List[(Int,Option[Reference],Long)] = {
+      val page=pageStatement(if(legacy) legacyStatement(reader,q,vector) else statement(reader,q,vector,pass),q)
+      Sql.rows(c,page.sql,page.args*) { r =>
+        // A null session ID is the LEFT JOIN padding row for an empty page, not a nullable hit.
+        val reference=Option(r.getObject("session_id",classOf[UUID])).map { id =>
+          Reference(r.getObject("id",classOf[UUID]),id,ContentView(r.getInt("revision"),Some(r.getObject("generation",classOf[UUID]))),r.getDouble("score"))
+        }
+        (r.getInt("total"),reference,if(semanticLeg) r.getLong("ann_rows") else 0L)
       }
-      (r.getInt("total"),reference)
     }
+    val rows=if(!semanticLeg) execute(LegPass.Index).map((total,reference,_) => (total,reference)) else
+      SemanticLeg.complete(c,budget,List(()))(passes => execute(passes.getOrElse((),LegPass.Index)))(rows => Map(() -> rows.head._3))(_ => visibleCount(c,reader,q))
+        .map((total,reference,_) => (total,reference))
     materialization.admit(ReadSources.sum(rows.map((total,reference) => referenceBytes(total,reference))))
     val references=rows.flatMap(_._2)
     val checked=references.map(reference => reference.copy(view=archive.selectView(c,reader,reference.sessionId,Some(reference.view),materialization)))

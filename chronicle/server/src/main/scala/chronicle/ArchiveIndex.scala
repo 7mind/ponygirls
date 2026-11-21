@@ -73,7 +73,8 @@ private[chronicle] object LexicalCandidates {
     value.sliding(trigramWidth).filter(_.forall(ch => ch>='a' && ch<='z' || ch>='A' && ch<='Z' || ch>='0' && ch<='9')).map(_.toLowerCase(Locale.ROOT)).distinct.take(minimumTrigrams).size==minimumTrigrams
   def pattern(value: String): String = "%"+value.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%"
 }
-final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: Config) extends ArchiveIndex {
+final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: Config,budget: SemanticLegBudget) extends ArchiveIndex {
+  def this(db: Database,archive: PostgresArchive,config: Config) = this(db,archive,config,SemanticLegBudget.production)
   import ArchiveExpression.*
   private val unicode = "COLLATE \"pg_unicode_fast\""
   private val columns = "c.*"
@@ -159,14 +160,24 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     else positive(parsed.expression,false).distinct.map(parsed.textOperands.indexOf).filter(index => LexicalCandidates.trigrams(parsed.textOperands(index)))
   private def literalPositions(index: Int): String = s"literal_positions_$index"
 
-  private def compile(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],position: Option[ArchiveCursor],witnesses: Boolean): ArchiveSql = {
-    val ranked=relevanceOrdered(query,parsed)
-    val corpus=s"""corpus AS MATERIALIZED(SELECT s.id,s.owner,s.revision,s.published,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp,i.last_timestamp_order,i.message_count,g.revision AS indexed_revision,g.id AS generation,g.passage_format AS published_format,
+  private def corpus: String = s"""corpus AS MATERIALIZED(SELECT s.id,s.owner,s.revision,s.published,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp,i.last_timestamp_order,i.message_count,g.revision AS indexed_revision,g.id AS generation,g.passage_format AS published_format,
       j.id AS job_id,j.state AS job_state,j.attempts AS job_attempts,j.error AS job_error,j.failure_stage,j.completed_windows,j.total_windows,
       ARRAY(SELECT tag FROM (SELECT jsonb_array_elements_text(i.metadata->'tags') AS tag UNION SELECT tag FROM ch_generation_tags WHERE generation=s.published) tag_values ORDER BY lower(tag $unicode),tag) AS tags
       FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision
       JOIN ch_owner_targets profile ON profile.owner=s.owner LEFT JOIN ch_generations g ON g.id=s.published
       LEFT JOIN ch_jobs j ON j.session_id=s.id AND j.revision=s.revision AND j.profile=profile.profile WHERE ${archive.visible})"""
+  private def annRows(index: Int): String = s"ann_rows_$index"
+  /** The semantic operands' visible set (it is the same for every operand): published chunks of the corpus passing the
+    * metadata restrictions, of a compatible profile, counted up to the second pass's cap. */
+  private def visibleCount(c: Connection,reader: String,parsed: ParsedArchiveExpression): Long = {
+    val restrictions=expression(parsed.candidateFilter,_ => throw DomainError("query","text in candidate metadata restriction"))
+    Sql.one(c,s"WITH $corpus SELECT count(*) FROM (SELECT 1 FROM corpus c JOIN ch_search_chunks ch ON ch.session_id=c.id AND ch.generation=c.published WHERE vector_dims(ch.embedding)=${SearchPolicy.dimensions(config)} AND ${IndexProfiles.compatibleSql("ch.profile")} AND (${restrictions.text}) LIMIT ?) visible",
+      (List[Sql.Param](reader,reader,reader,EmbeddingSpaceDescriptor.from(config.embedding).id)++restrictions.args++List(SemanticLeg.visibleCap(budget)))*)(_.getLong(1)).get
+  }
+
+  /** `passes`: semantic operands (by index) evaluated otherwise than by the first pass through the index. */
+  private def compile(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],position: Option[ArchiveCursor],witnesses: Boolean,passes: Map[Int,LegPass]=Map.empty): ArchiveSql = {
+    val ranked=relevanceOrdered(query,parsed)
     val ctes=List.newBuilder[String]; ctes+=corpus
     val args=List.newBuilder[Sql.Param]; args++=List(reader,reader,reader)
     val semantic=parsed.mode!=SearchMode.Lexical
@@ -188,8 +199,14 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
         val dimensions=SearchPolicy.dimensions(config)
         val vector=vectors.find(_.operand==operand).getOrElse(throw DomainError("unavailable","query embedding unavailable"))
         val value=SearchPolicy.vector(vector.values,config)
-        ctes+=s"a$index AS MATERIALIZED(SELECT ch.id,ch.session_id,ch.revision,ch.generation,ch.embedding <=> ?::vector AS distance FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND (SELECT true FROM corpus c WHERE c.id=ch.session_id AND c.published=ch.generation AND (${restrictions.text}) OFFSET 0) ORDER BY ${CandidateSql.annDistance(dimensions,"ch.embedding")} LIMIT ${SearchPolicy.candidatesPerLeg})"
-        args+=value; args+=EmbeddingSpaceDescriptor.from(config.embedding).id; args++=restrictions.args; args+=value
+        passes.getOrElse(index,LegPass.Index) match {
+          case LegPass.Index =>
+            ctes+=s"a$index AS MATERIALIZED(SELECT ch.id,ch.session_id,ch.revision,ch.generation,ch.embedding <=> ?::vector AS distance FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND (SELECT true FROM corpus c WHERE c.id=ch.session_id AND c.published=ch.generation AND (${restrictions.text}) OFFSET 0) ORDER BY ${CandidateSql.annDistance(dimensions,"ch.embedding")} LIMIT ${SearchPolicy.candidatesPerLeg})"
+            args+=value; args+=EmbeddingSpaceDescriptor.from(config.embedding).id; args++=restrictions.args; args+=value
+          case LegPass.Exact =>
+            ctes+=s"a$index AS MATERIALIZED(SELECT ch.id,ch.session_id,ch.revision,ch.generation,ch.embedding <=> ?::vector AS distance FROM corpus c JOIN ch_search_chunks ch ON ch.session_id=c.id AND ch.generation=c.published WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND (${restrictions.text}) ORDER BY distance,ch.id LIMIT ${SearchPolicy.candidatesPerLeg})"
+            args+=value; args+=EmbeddingSpaceDescriptor.from(config.embedding).id; args++=restrictions.args
+        }
       }
     }
     def membership(operand: String): ArchiveSql = {
@@ -233,7 +250,8 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
       val candidates=positives.map(i => s"SELECT $i AS operand,id,revision,generation,distance FROM a$i WHERE session_id=page.id").mkString(" UNION ALL ")
       s"(SELECT coalesce(jsonb_agg(to_jsonb(w)), '[]'::jsonb) FROM (SELECT operand,id,revision,generation FROM ($candidates) candidates ORDER BY distance,operand,id LIMIT ${ArchiveSearchPolicy.maximumMatches}) w)"
     } else "'[]'::jsonb"
-    ArchiveSql("WITH "+ctes.result().mkString(",")+s" SELECT counted.total,page.*,page.sort_key::text AS sort_value,page.relevance::text AS relevance_value,$references AS witnesses$positions FROM (SELECT count(*) AS total FROM matched) counted LEFT JOIN LATERAL(SELECT r.* FROM matched r WHERE (${cursor.text}) ORDER BY ${order("r")} LIMIT ?) page ON true ORDER BY ${order("page")}",args.result()++literal.map(parsed.textOperands)++cursor.args++List(query.limit+1))
+    val legRows=if(semantic) parsed.textOperands.indices.map(index => s",(SELECT count(*) FROM a$index) AS ${annRows(index)}").mkString else ""
+    ArchiveSql("WITH "+ctes.result().mkString(",")+s" SELECT counted.total,page.*,page.sort_key::text AS sort_value,page.relevance::text AS relevance_value,$references AS witnesses$positions$legRows FROM (SELECT count(*) AS total FROM matched) counted LEFT JOIN LATERAL(SELECT r.* FROM matched r WHERE (${cursor.text}) ORDER BY ${order("r")} LIMIT ?) page ON true ORDER BY ${order("page")}",args.result()++literal.map(parsed.textOperands)++cursor.args++List(query.limit+1))
   }
   private def row(r: ResultSet): ArchiveRow = {
     val id=r.getObject("id",classOf[UUID])
@@ -273,11 +291,14 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
       ArchiveSearchPolicy.configureLexical(c)
     if(bounded) {
       IndexProfiles.semantic(c,reader,archive.visible,EmbeddingSpaceDescriptor.from(config.embedding))
-      SearchPolicy.configure(c)
+      SemanticLeg.configure(c,budget)
     }
     val ranked=relevanceOrdered(query,parsed)
     val position=ArchivePaging.decode(query,reader,ranked).map(resolve(c,reader,query,_,materialization))
-    val sql=compile(reader,query,parsed,vectors,position,materialization.nonEmpty)
+    val legs=if(bounded) parsed.textOperands.indices.toList else Nil
+    lazy val visible=visibleCount(c,reader,parsed)
+    def pageSql(passes: Map[Int,LegPass]): ArchiveSql = compile(reader,query,parsed,vectors,position,materialization.nonEmpty,passes)
+    def legRows(r: ResultSet): Map[Int,Long] = legs.map(index => index -> r.getLong(annRows(index))).toMap
     val literal=if(materialization.isEmpty) Nil else literalCandidates(parsed)
     def decode(r: ResultSet): (Long,Option[PageRow]) = {
       val result=Option(r.getObject("id",classOf[UUID])).map { _ =>
@@ -288,14 +309,22 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
       (r.getLong("total"),result)
     }
     val rows=materialization match {
-      case None => Sql.rows(c,sql.text,sql.args*)(decode)
+      case None =>
+        SemanticLeg.complete(c,budget,legs) { passes => val sql=pageSql(passes); Sql.rows(c,sql.text,sql.args*)(r => (decode(r),legRows(r))) }(_.head._2)(_ => visible).map(_._1)
       case Some(admission) =>
         // Keep the page in a transaction-local relation so witnesses and the count come from the same ANN execution.
-        Sql.exec(c,"CREATE TEMP TABLE ch_archive_search_page ON COMMIT DROP AS "+sql.text,sql.args*)
+        SemanticLeg.complete(c,budget,legs) { passes =>
+          val sql=pageSql(passes)
+          Sql.exec(c,"DROP TABLE IF EXISTS pg_temp.ch_archive_search_page")
+          Sql.exec(c,"CREATE TEMP TABLE ch_archive_search_page ON COMMIT DROP AS "+sql.text,sql.args*)
+          if(legs.isEmpty) Map.empty[Int,Long] else Sql.one(c,s"SELECT ${legs.map(annRows).mkString(",")} FROM ch_archive_search_page LIMIT 1")(legRows).get
+        }(identity)(_ => visible)
         // The literal positions are bounded by construction (at most maximumMatches per row and operand), checked here
-        // before any is decoded, and not charged: the page admits the bytes it admitted before they existed.
+        // before any is decoded, and not charged: the page admits the bytes it admitted before they existed (nor are the
+        // semantic legs' row counts, which only SemanticLeg reads).
         val positions=literal.map(literalPositions)
-        val charged=if(positions.isEmpty) "to_jsonb(p)" else positions.map(column => s"'$column'").mkString("(to_jsonb(p)-ARRAY[",",","]::text[])")
+        val uncharged=positions++legs.map(annRows)
+        val charged=if(uncharged.isEmpty) "to_jsonb(p)" else uncharged.map(column => s"'$column'").mkString("(to_jsonb(p)-ARRAY[",",","]::text[])")
         val longest=if(positions.isEmpty) "0" else positions.map(column => s"coalesce(jsonb_array_length($column),0)").mkString("greatest(",",",")")
         val (bytes,listed)=Sql.one(c,s"SELECT coalesce(sum(octet_length(convert_to($charged::text,'UTF8'))::numeric),0),coalesce(max($longest),0) FROM ch_archive_search_page p")(r => (ReadSources.checked(r.getBigDecimal(1)),r.getInt(2))).get
         Check(listed<=ArchiveSearchPolicy.maximumMatches,"projection","invalid archive literal positions")

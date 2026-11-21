@@ -16,6 +16,7 @@ object ChroniclePlugin extends PluginDef {
   make[SessionArchive].from[PostgresArchive]
   make[SearchIndex].from[PostgresSearch]
   make[ArchiveIndex].from[PostgresArchiveIndex]
+  make[SemanticLegBudget].fromValue(SemanticLegBudget.production)
   make[ActivityIndex].from[PostgresActivity]
   make[cats.effect.kernel.Clock[IO]].fromValue(cats.effect.Clock[IO])
   make[ModelTelemetryClock].from[JavaModelTelemetryClock]

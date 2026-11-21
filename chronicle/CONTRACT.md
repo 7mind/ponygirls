@@ -144,7 +144,7 @@ Semantic search obtains at most1000 authorized, filtered chunk candidates throug
 
 Current Hybrid recomputes lexical and full-vector ranks over the candidate union, then selects each session's best fused chunk. A candidate receives lexical RRF credit only when its document satisfies the full `@@ websearch_to_tsquery('english', query)` predicate; a positive cover-density score alone is insufficient. Nonmatching ANN candidates remain eligible for the vector term, but receive zero lexical score before lexical rank assignment. In particular, lexical exclusions are not hard semantic filters.
 
-Live ACLs, owner/reader enabled state, profile identity, published-generation equality and all structured filters apply before EACH candidate LIMIT. pgvector strict iterative scanning continues beyond rejected tuples (ef_search200, max_scan_tuples200000, scan_mem_multiplier4); the resource budget and approximate graph may still underfill selective queries. There is no unbounded application postfilter of a global topK, no unauthorized count contribution and no silent exact fallback. Full vectors remain `vector`; HNSW uses normalized `halfvec(dimensions)` expression indexing, including2048-dimensional models. Literal dimension and partial-index predicates match even under generic prepared plans.
+Live ACLs, owner/reader enabled state, profile identity, published-generation equality and all structured filters apply before EACH candidate LIMIT. pgvector strict iterative scanning continues beyond rejected tuples (ef_search200, max_scan_tuples200000, scan_mem_multiplier4), and every rejected index entry spends that budget: other owners' or filtered-out rows, and rows of generations being published or retired and not yet vacuumed. A semantic leg (Search, each Archive operand) that returns fewer chunks than min(1000, its visible set) is short: the server counts the visible set (bounded) only then and runs the leg again in the same snapshot — ranked exactly by full-precision distance when the visible set holds at most20000 chunks, otherwise by a wider iterative scan (max_scan_tuples1000000, scan_mem_multiplier64, at most5s). A leg still short then fails the request with `unavailable` and the message `semantic candidates incomplete: …` (retry later, narrow the filters or use lexical mode); Hybrid fails as a whole, never a silently partial or lexical-only window. A full leg remains approximate. There is no unbounded application postfilter of a global topK and no unauthorized count contribution. Full vectors remain `vector`; HNSW uses normalized `halfvec(dimensions)` expression indexing, including2048-dimensional models. Literal dimension and partial-index predicates match even under generic prepared plans.
 
 There is no API-version-based exact search path or compatibility fallback. MCP and the dashboard use the same current result shape, including scope metadata. The exact search oracle retained for diagnostics is not a negotiated API.
 
@@ -187,7 +187,8 @@ The explicit relevance preference is described below.
 Text membership is exact normalized HEAD literal matching in Lexical, bounded
 published ANN membership in Semantic, and the UNBOUNDED exact lexical union with
 bounded ANN in Hybrid. annChunkLimitPerOperand=1000 bounds chunks before session
-deduplication, not Archive rows. NOT excludes the retrieved set, not a proof of
+deduplication, not Archive rows. A short ANN operand is completed or fails `unavailable` as in
+Indexed search. NOT excludes the retrieved set, not a proof of
 semantic unrelatedness. Mode directives must be outer conjuncts; operators,
 field names and mode values are case-insensitive. Literal text and metadata
 strings use deterministic Unicode lowercase matching, except opaque owner IDs.

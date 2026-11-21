@@ -31,7 +31,7 @@ class McpSourceBoundaryTest extends munit.FunSuite {
       assertEquals(result.hcursor.get[Boolean]("isError").toOption,Some(false))
     }
     val statements=f.probe.observations.collect { case SourceEvent.Query(sql,columns) if sql.startsWith("WITH ann AS") => columns.toSet }
-    assertEquals(statements,List.fill(2)(Set("total","id","generation","session_id","revision","score")))
+    assertEquals(statements,List.fill(2)(Set("total","ann_rows","id","generation","session_id","revision","score")))
     assert(payloads(f).exists(_.column=="descriptor"))
   }}
   List("descriptor","profile").foreach { field =>
