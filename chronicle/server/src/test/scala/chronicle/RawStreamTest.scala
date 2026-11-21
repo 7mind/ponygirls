@@ -93,7 +93,7 @@ final class RawStreamTest extends munit.FunSuite {
     assertEquals((ignored.status,ignored.headers.get("Content-Range"),ignored.bytes.toList),(Status.Ok,None,head.toList),"If-Range of other bytes: the whole file")
     val unsatisfiable=ranged(s"bytes=$total-")
     assertEquals((unsatisfiable.status,unsatisfiable.code,unsatisfiable.headers.get("Content-Range")),(Status.RangeNotSatisfiable,"range-not-satisfiable",Some(s"bytes */$total")))
-    List("bytes=0-1,3-4","bytes=5-4","items=0-1","bytes=").foreach { range => val answer=ranged(range); assertEquals((answer.status,answer.code),(Status.BadRequest,"invalid"),range) }
+    List("bytes=0-1,3-4","bytes=5-4","bytes=9223372036854775809-9223372036854775808","items=0-1","bytes=").foreach { range => val answer=ranged(range); assertEquals((answer.status,answer.code),(Status.BadRequest,"invalid"),range) }
 
     // Two files of a legacy revision, the second without a final newline.
     val files=List(RawFile("a.jsonl",Wire.hash(contents(0).raw),contents(0).raw),RawFile("sub/b.jsonl","","""{"type":"custom","data":"λ🐎 second file"}"""))

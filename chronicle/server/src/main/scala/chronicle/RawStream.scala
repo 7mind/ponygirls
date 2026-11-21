@@ -113,14 +113,15 @@ object RawStream {
   }
   private val fromPattern="""(?i)bytes=([0-9]+)-([0-9]*)""".r
   private val suffixPattern="""(?i)bytes=-([0-9]+)""".r
-  private def bounded(digits: String): Long = BigInt(digits).min(BigInt(Long.MaxValue)).toLong
+  /** Positions above Long.MaxValue lie beyond every file: saturated, after the range's order was checked exactly. */
+  private def bounded(value: BigInt): Long = value.min(BigInt(Long.MaxValue)).toLong
   /** One range only: several ranges, other units or any other syntax are `invalid`. */
   def range(header: String): Range = header match {
     case fromPattern(firstDigits,lastDigits) =>
-      val first=bounded(firstDigits); val last=Option(lastDigits).filter(_.nonEmpty).map(bounded)
+      val first=BigInt(firstDigits); val last=Option(lastDigits).filter(_.nonEmpty).map(BigInt(_))
       Check(last.forall(_>=first),"invalid","the last byte of the range precedes its first")
-      Range.From(first,last)
-    case suffixPattern(length) => Range.Suffix(bounded(length))
+      Range.From(bounded(first),last.map(bounded))
+    case suffixPattern(length) => Range.Suffix(bounded(BigInt(length)))
     case _ => throw DomainError("invalid","one byte range bytes=FIRST-LAST, bytes=FIRST- or bytes=-SUFFIX required")
   }
   def sessionId(segment: String): UUID =
