@@ -68,5 +68,17 @@ if not DARWIN:
     os.pidfd_open = pidfd_open
     signal.pidfd_send_signal = pidfd_send_signal
 
+if os.environ.get("BG_OWNER_LOSS_DIAGNOSTIC") == "1":
+    _begin_shutdown = sv.Supervisor._begin_shutdown
+
+    def begin_shutdown(supervisor, kind, detail, waiter):
+        _begin_shutdown(supervisor, kind, detail, waiter)
+        if kind == "owner_lost" and supervisor.runtimes:
+            _trace({"op": "owner_loss_diagnostic"})
+            rt = next(iter(supervisor.runtimes.values()))
+            supervisor._group_observation_error(rt, "injected observation fault during owner loss")
+
+    sv.Supervisor._begin_shutdown = begin_shutdown
+
 if __name__ == "__main__":
     sys.exit(sv.main(sys.argv[1:]))

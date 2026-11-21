@@ -105,6 +105,13 @@ class StorageError(DomainError):
         super().__init__("STORAGE_FAILED", message)
 
 
+def diagnostic(message: str) -> None:
+    try:
+        print(message, file=sys.stderr)
+    except OSError:
+        pass
+
+
 def now_iso(clock: "Clock") -> str:
     return datetime.datetime.fromtimestamp(clock.wall(), datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -619,7 +626,7 @@ class TaskRegistry:
                 if e.code != "CLEAR_FAILED":
                     raise
                 # The committed intent stays; the record remains visible as clearing.
-                print(f"bg-tasks supervisor: {e.message}", file=sys.stderr)
+                diagnostic(f"bg-tasks supervisor: {e.message}")
         recovered = []
         ended = now_iso(self.clock)
 
@@ -1268,7 +1275,7 @@ class Supervisor:
             nl = self.in_buf.find(b"\n")
             if nl < 0:
                 if len(self.in_buf) > MAX_REQUEST_LINE_BYTES:
-                    print("bg-tasks supervisor: oversized request line dropped", file=sys.stderr)
+                    diagnostic("bg-tasks supervisor: oversized request line dropped")
                     self.in_buf.clear()
                 return
             line = bytes(self.in_buf[:nl])
@@ -1289,11 +1296,11 @@ class Supervisor:
         try:
             msg = json.loads(line)
         except (json.JSONDecodeError, UnicodeDecodeError):
-            print("bg-tasks supervisor: unparsable request dropped", file=sys.stderr)
+            diagnostic("bg-tasks supervisor: unparsable request dropped")
             return
         req_id = msg.get("id") if isinstance(msg, dict) else None
         if not isinstance(req_id, int) or isinstance(req_id, bool):
-            print("bg-tasks supervisor: request without integer id dropped", file=sys.stderr)
+            diagnostic("bg-tasks supervisor: request without integer id dropped")
             return
         try:
             if msg.get("v") != PROTOCOL_VERSION:
@@ -1318,7 +1325,7 @@ class Supervisor:
         except DomainError as e:
             self._reply_err(req_id, e)
         except Exception as e:  # noqa: BLE001 - an invariant failure: report it and tear down with cleanup
-            traceback.print_exc(file=sys.stderr)
+            diagnostic(traceback.format_exc().rstrip("\n"))
             self._reply_err(req_id, DomainError("SUPERVISOR_FAULT", f"internal supervisor failure: {e!r}; stopping owned tasks"))
             if self.shutting_down is None:
                 self._begin_shutdown("graceful", "supervisor_fault", None)
@@ -1485,7 +1492,7 @@ class Supervisor:
             return len(line)
         except OSError as e:
             self.storage_failed = f"log write failed: {e}"
-            print(f"bg-tasks supervisor: log write failed for {task_id}: {e}", file=sys.stderr)
+            diagnostic(f"bg-tasks supervisor: log write failed for {task_id}: {e}")
             return 0
         finally:
             try:
@@ -1529,7 +1536,7 @@ class Supervisor:
             except ProcessLookupError:
                 pass
             except OSError as kill_error:
-                print(f"bg-tasks supervisor: cannot kill child {pid} after launch failure: {kill_error}", file=sys.stderr)
+                diagnostic(f"bg-tasks supervisor: cannot kill child {pid} after launch failure: {kill_error}")
             return pid, master, str(e)
         finally:
             os.close(err_r)
@@ -1713,7 +1720,7 @@ class Supervisor:
             except ProcessLookupError:
                 pass
             except OSError as e:
-                print(f"bg-tasks supervisor: cannot signal task {rt.task_id}: {e}", file=sys.stderr)
+                diagnostic(f"bg-tasks supervisor: cannot signal task {rt.task_id}: {e}")
             return
         if not rt.sealed:
             # Numeric PGID signalling is allowed only while the leader is unreaped.
@@ -1734,7 +1741,7 @@ class Supervisor:
         try:
             candidates = proc_children(self.self_pid)
         except OSError as e:
-            print(f"bg-tasks supervisor: child discovery failed: {e}", file=sys.stderr)
+            diagnostic(f"bg-tasks supervisor: child discovery failed: {e}")
             return
         for pid in candidates:
             if sig == signal.SIGTERM and pid in rt.termed:
@@ -1885,7 +1892,7 @@ class Supervisor:
     def _group_observation_error(self, rt: TaskRuntime, detail: str) -> None:
         if rt.group_observation_error != detail:
             rt.group_observation_error = detail
-            print(f"bg-tasks supervisor: task {rt.task_id}: {detail}", file=sys.stderr)
+            diagnostic(f"bg-tasks supervisor: task {rt.task_id}: {detail}")
 
     def _observe_darwin_group(self, rt: TaskRuntime, check_live: bool) -> Optional[bool]:
         if self.leaders.get(rt.pid) != rt.task_id:
@@ -1995,7 +2002,7 @@ class Supervisor:
             except OSError as e:
                 if e.errno != errno.EIO:
                     # Not the Linux "no slave open" indication: an actual I/O error.
-                    print(f"bg-tasks supervisor: PTY read failed for {task_id}: {e}", file=sys.stderr)
+                    diagnostic(f"bg-tasks supervisor: PTY read failed for {task_id}: {e}")
                     rt.output_failed = True
                 self._close_pty(rt)
                 rt.pty_eof = True
@@ -2016,7 +2023,7 @@ class Supervisor:
         except OSError as e:
             rt.output_failed = True
             self.storage_failed = f"log write failed: {e}"
-            print(f"bg-tasks supervisor: log write failed for {rt.task_id}: {e}", file=sys.stderr)
+            diagnostic(f"bg-tasks supervisor: log write failed for {rt.task_id}: {e}")
 
     def _close_pty(self, rt: TaskRuntime) -> None:
         if rt.master_fd is None:

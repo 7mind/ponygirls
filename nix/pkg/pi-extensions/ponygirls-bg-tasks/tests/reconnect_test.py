@@ -221,18 +221,27 @@ class ReconnectTest(helpers.SupervisorTestBase):
                 self.assertEqual(f.read(), "not a socket")
 
     def test_owner_death_during_detached_wait_does_not_wait_for_deadline(self):
-        owner = subprocess.Popen([sys.executable, os.path.join(helpers.HERE, "socket_owner.py"), self.sidecar],
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        self.assert_detached_owner_death([])
+
+    def test_owner_death_cleanup_survives_a_closed_diagnostic_pipe(self):
+        self.assert_detached_owner_death([helpers.INSTRUMENTED],
+                                         {"BG_OWNER_LOSS_DIAGNOSTIC": "1", "BG_TRACE": self.trace})
+        self.assertIn({"op": "owner_loss_diagnostic"}, self.trace_entries())
+
+    def assert_detached_owner_death(self, supervisor_args, env=None):
+        owner = subprocess.Popen([sys.executable, os.path.join(helpers.HERE, "socket_owner.py"), self.sidecar, *supervisor_args],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+                                 env=None if env is None else {**os.environ, **env})
         self.addCleanup(lambda: (owner.poll() is None and owner.kill(), owner.wait(), owner.stdout.close(), owner.stderr.close()))
         info = json.loads(owner.stdout.readline())
         owner.kill()
         self.assertEqual(owner.wait(timeout=5), -signal.SIGKILL)
-        helpers.wait_until(lambda: self.registry()[info["task"]["id"]]["state"] != "running", timeout=15)
-        self.assertEqual(self.registry()[info["task"]["id"]]["reason"], "owner_lost")
-        self.assertEqual(helpers.pgroup_members(info["task"]["pgid"]), [])
         lock = sv.OwnerLock(self.sidecar, sv.FsOps())
-        lock.acquire(1000, sv.SystemClock())
+        lock.acquire(15000, sv.SystemClock())
         lock.release()
+        done = self.registry()[info["task"]["id"]]
+        self.assertEqual((done["state"], done["reason"]), ("dead", "owner_lost"))
+        self.assertEqual(helpers.pgroup_members(info["task"]["pgid"]), [])
         if sys.platform == "darwin":
             self.assertFalse(os.path.lexists(os.path.dirname(info["address"])))
 
