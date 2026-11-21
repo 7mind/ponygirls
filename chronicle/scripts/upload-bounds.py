@@ -1906,7 +1906,7 @@ def main():
             if EVIDENCE is not None:
                 EVIDENCE.mkdir(parents=True, exist_ok=True)
                 for name in [*root.glob('server-*.log'), *root.glob('probe-*.txt'), *root.glob('collector-*.err'), *root.glob('collector-*.result'), *root.glob('proxy.log'),
-                             *root.glob('chromium.log')]:
+                             *root.glob('chromium.log'), *root.glob('index-*.jsonl')]:
                     shutil.copy(name, EVIDENCE / f'{run}-{name.name}')
             fixtures = du(root)
         wall = time.monotonic() - started
