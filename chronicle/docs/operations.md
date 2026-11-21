@@ -147,9 +147,11 @@ A job annotates and embeds only the windows no earlier run of the same source an
 input: after an append, the windows from the previous revision's last one on (a window's input is its source fragments
 with their message positions and the passage carried into it). Each reused decision or embedding part is recorded as a
 reference to the exact checkpoint it took (`ch_index_checkpoint_refs`); the publication and a resumed job read those
-references, never a new lookup. A `RetryJob` of a Complete job, or an explicit rebuild into the same profile, reuses
-every window of its revision (no model call); a replacement reuses a decision only where the source and its positions
-are unchanged. Purge removes jobs, checkpoints and references together.
+references, never a new lookup. A `RetryJob` of a Complete job is a cached republication: its new run reuses every
+window of its revision (no model call). A confirmed owner rebuild ("Rebuild archive index") reuses no earlier run's
+work, also into an unchanged profile: it annotates and embeds every window again — use it to replace accepted
+annotations. A replacement reuses a decision only where the source and its positions are unchanged. Purge removes jobs,
+checkpoints and references together.
 
 - **Nothing is indexed again.** Profiles, checkpoint keys and published rows are unchanged; checkpoints written before
   027 have no content hash and are never reused.

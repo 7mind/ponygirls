@@ -117,6 +117,26 @@ final class WindowReuseTest extends munit.FunSuite {
     assertEquals(remaining,List(0,0,0,0))
   }}
 
+  test("a confirmed rebuild into the same profile calls the models for every window, also across its own resume; a retry of its Complete job calls none") { database { (config,db,archive) =>
+    val (annotator,vectors)=(new Annotator("goal"),new Vectors)
+    val lane=worker(archive,config,annotator,vectors)
+    val receipt=archive.ingest("a",request(messages(0,202)))
+    assertEquals(calls(annotator,vectors)(assert(lane.once.unsafeRunSync())),(4,13))
+    val auth=new Auth(db,config); val owner=auth.browser(auth.login(LoginRequest("a","synthetic"))._2)
+    val plan=auth.previewOwnerReindex(owner)
+    assertEquals(plan.targetProfile,config.profile)
+    auth.mutate(owner,ClientEnvelope(UUID.randomUUID(),Operation.ApplyOwnerReindex(plan.targetProfile,plan.selectionHash,true)))
+    // The rebuild's run stops at its first embedding part and resumes from its own window 0.
+    vectors.failing=true
+    assertEquals(calls(annotator,vectors)(assert(lane.once.unsafeRunSync())),(1,0))
+    assertEquals(calls(annotator,vectors)(assert(lane.once.unsafeRunSync())),(3,13))
+    val (rebuilt,run,state)=job(db,receipt.sessionId,1)
+    assertEquals((state,references(db,rebuilt,run)),("Complete",Map.empty))
+    archive.retry("a",rebuilt)
+    assertEquals(calls(annotator,vectors)(assert(lane.once.unsafeRunSync())),(0,0))
+    assertEquals(job(db,receipt.sessionId,1)._3,"Complete")
+  }}
+
   test("a replacement into a new epoch reuses each decision whose source and positions are unchanged, from its full source key at another window ordinal of the older run, and none where positions moved") { database { (config,db,archive) =>
     val (annotator,vectors)=(new Annotator("goal"),new Vectors)
     val lane=worker(archive,config,annotator,vectors)

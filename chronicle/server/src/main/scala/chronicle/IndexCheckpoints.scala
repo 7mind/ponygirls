@@ -26,7 +26,8 @@ trait IndexCheckpoints {
   def checkpoint(claim: Claim,key: CheckpointKey,value: Json): Unit
   /** Phase W's read: the run's accepted work at the key's coordinates, else (ingest-limits spec §5.4) the output another
     * run of the claim's source and profile accepted for the key's content hash, the published generation's run first,
-    * recorded as this run's reference at the key's coordinates. The publication never reads this way. */
+    * recorded as this run's reference at the key's coordinates; a confirmed owner rebuild's run takes no other run's work.
+    * The publication never reads this way. */
   def windowWork(claim: Claim,key: CheckpointKey): Option[WindowWork]
   /** Removes the accepted work (own checkpoints and references) of one window and stage of the claimed run while the claim is current; a corrupt part is an internal fault and keeps all. Returns the number of parts removed. */
   def discardCheckpoints(claim: Claim,stage: IndexingStage,window: Int): Int
@@ -92,10 +93,15 @@ object IndexCheckpoints {
       sessionId,content,stage.toString,sessionId,profile,excluded._1,excluded._2) { row =>
       Reusable(row.getObject("job_id",classOf[UUID]),row.getObject("run_id",classOf[UUID]),stage,row.getInt("window_ordinal"),row.getInt("part"),row.getString("output_hash"),verified(row))
     }
+  /** A run of a confirmed owner rebuild (a member of its cohort): the operator asked for the selected revisions to be
+    * annotated and embedded again, so it never takes another run's accepted work (it resumes from its own). */
+  private def rebuilding(c: Connection,claim: Claim): Boolean =
+    Sql.one(c,"SELECT 1 FROM ch_reindex_members WHERE job_id=? AND run_id=? LIMIT 1",claim.jobId,claim.runId)(_ => true).nonEmpty
   /** Phase W on a miss (the caller found neither an own checkpoint nor a reference at the key's coordinates in the same
-    * transaction): the reusable work for the key's content hash, recorded as the run's reference there. */
+    * transaction): the reusable work for the key's content hash, recorded as the run's reference there; nothing for a
+    * rebuild's run. */
   private[chronicle] def reuse(c: Connection,claim: Claim,key: CheckpointKey): Option[Json] =
-    key.contentHash.flatMap(reusable(c,claim.sessionId,claim.profile,(claim.jobId,claim.runId),key.stage,_)).map { found =>
+    key.contentHash.filterNot(_ => rebuilding(c,claim)).flatMap(reusable(c,claim.sessionId,claim.profile,(claim.jobId,claim.runId),key.stage,_)).map { found =>
       Sql.exec(c,"INSERT INTO ch_index_checkpoint_refs(job_id,run_id,stage,window_ordinal,part,input_hash,source_job,source_run,source_stage,source_window,source_part,output_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
         (coordinates(claim,key)++List[Sql.Param](key.inputHash,found.job,found.run,found.stage.toString,found.window,found.part,found.outputHash))*)
       found.value
