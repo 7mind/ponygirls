@@ -79,13 +79,17 @@ object IndexCheckpoints {
   /** An own checkpoint another run accepted, by its full key. */
   private[chronicle] final case class Reusable(job: UUID,run: UUID,stage: IndexingStage,window: Int,part: Int,outputHash: String,value: Json)
   /** The own checkpoint of the source's jobs of `profile` under `content` and `stage` that a run other than `excluded`
-    * accepted: the published generation's run first, then the newest revision's. Never a reference, never the run's own
-    * (`discard` deletes those). */
+    * accepted: first one the published generation's run accepted, as its own or through its reference to it (so the next
+    * run keeps the published prefix; a legacy generation names no run), then the newest revision's. Never a reference
+    * itself, never the run's own (`discard` deletes those). */
   private[chronicle] def reusable(c: Connection,sessionId: UUID,profile: String,excluded: (UUID,UUID),stage: IndexingStage,content: String): Option[Reusable] =
-    Sql.one(c,"""SELECT k.job_id,k.run_id,k.window_ordinal,k.part,k.output_hash,k.value FROM ch_index_checkpoints k JOIN ch_jobs j ON j.id=k.job_id
+    Sql.one(c,"""WITH published AS (SELECT g.run_id FROM ch_sources s JOIN ch_generations g ON g.id=s.published WHERE s.id=?)
+      SELECT k.job_id,k.run_id,k.window_ordinal,k.part,k.output_hash,k.value FROM ch_index_checkpoints k JOIN ch_jobs j ON j.id=k.job_id
       WHERE k.content_hash=? AND k.stage=? AND j.session_id=? AND j.profile=? AND (k.job_id,k.run_id)<>(?,?)
-      ORDER BY k.run_id IS NOT DISTINCT FROM (SELECT g.run_id FROM ch_sources s JOIN ch_generations g ON g.id=s.published WHERE s.id=?) DESC,j.revision DESC,k.job_id,k.run_id,k.window_ordinal,k.part LIMIT 1""",
-      content,stage.toString,sessionId,profile,excluded._1,excluded._2,sessionId) { row =>
+      ORDER BY (k.run_id IN(SELECT run_id FROM published) OR EXISTS(SELECT 1 FROM ch_index_checkpoint_refs r WHERE r.run_id IN(SELECT run_id FROM published)
+        AND r.source_job=k.job_id AND r.source_run=k.run_id AND r.source_stage=k.stage AND r.source_window=k.window_ordinal AND r.source_part=k.part)) IS TRUE DESC,
+        j.revision DESC,k.job_id,k.run_id,k.window_ordinal,k.part LIMIT 1""",
+      sessionId,content,stage.toString,sessionId,profile,excluded._1,excluded._2) { row =>
       Reusable(row.getObject("job_id",classOf[UUID]),row.getObject("run_id",classOf[UUID]),stage,row.getInt("window_ordinal"),row.getInt("part"),row.getString("output_hash"),verified(row))
     }
   /** Phase W on a miss (the caller found neither an own checkpoint nor a reference at the key's coordinates in the same

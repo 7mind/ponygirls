@@ -175,6 +175,34 @@ final class WindowReuseTest extends munit.FunSuite {
     assertEquals(summaries(db,published(archive,receipt.sessionId)),List("second s0","second s64","third s128","third s192"))
   }}
 
+  test("the published run's references count as its accepted work: an earlier output it references is reused before a competing output of a newer revision's run, also across a resume") { database { (config,db,archive) =>
+    val (annotator,vectors)=(new Annotator("first"),new Vectors)
+    val lane=worker(archive,config,annotator,vectors)
+    // Run 1 accepts output A; the append's run 2 references it for windows 0 and 1 and is published.
+    val receipt=archive.ingest("a",request(messages(0,138)))
+    assert(lane.once.unsafeRunSync())
+    val run1=job(db,receipt.sessionId,1)._2
+    next(archive,receipt.sessionId,messages(0,208),1)
+    assert(lane.once.unsafeRunSync())
+    val (job2,run2,_)=job(db,receipt.sessionId,2)
+    assertEquals(references(db,job2,run2).filter(_._1._1=="Annotation").map((key,source) => key._2->source._2),Map(0->run1,1->run1))
+    // Run 3 of the same revision (run 1's work hidden from it, as an earlier release's) accepts output B for window 0
+    // and stops; its job ranks before run 1's by revision. Run 2 stays published.
+    db.transaction(c => Sql.exec(c,"UPDATE ch_index_checkpoints SET content_hash='hidden:'||content_hash WHERE run_id=?",run1))
+    archive.retry("a",job2); annotator.label="second"; vectors.failing=true
+    assert(lane.once.unsafeRunSync())
+    db.transaction(c => Sql.exec(c,"UPDATE ch_index_checkpoints SET content_hash=substr(content_hash,8) WHERE run_id=?",run1))
+    assertEquals(summaries(db,published(archive,receipt.sessionId)),List("first s0","first s64","first s128","first s192"))
+    // Revision 3: run 4 takes the published prefix (A, through run 2's references), stops, resumes and publishes it.
+    next(archive,receipt.sessionId,messages(0,272),2)
+    annotator.label="third"; vectors.failing=true
+    assert(lane.once.unsafeRunSync())
+    val (job4,run4,state)=job(db,receipt.sessionId,3)
+    assertEquals((state,references(db,job4,run4).filter(_._1._1=="Annotation").map((key,source) => key._2->source._2)),("Queued",Map(0->run1,1->run1,2->run2)))
+    assert(lane.once.unsafeRunSync())
+    assertEquals(summaries(db,published(archive,receipt.sessionId)),List("first s0","first s64","first s128","third s192","third s256"))
+  }}
+
   test("down-027 copies the references of unfinished jobs into their own checkpoints and drops the references and content hashes; such a run resumes from them") { database { (config,db,archive) =>
     val (annotator,vectors)=(new Annotator("goal"),new Vectors)
     val lane=worker(archive,config,annotator,vectors)
