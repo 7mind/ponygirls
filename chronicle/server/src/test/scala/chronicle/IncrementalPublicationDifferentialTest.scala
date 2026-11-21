@@ -430,8 +430,6 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
     val replaced=ranges.map((lo,until) => examined(PassageStorage.replacedQuery(parentLineage.lineage,lo,until))).sum
     val carried=examined(PassageStorage.carriedQuery(parentLineage.lineage,ranges.map(_._1)))
     assert(ranges.size>=16 && runs>4*ranges.size,s"${ranges.size} windows, $runs runs")
-    assert(members<=runs+2*ranges.size && replaced<=runs+2*ranges.size && carried<=ranges.size,
-      s"$runs runs in ${ranges.size} windows examined: members $members, replaced tags $replaced, first pieces $carried")
     // Its metadata changes: all its pieces are written again, as a full publication of the same revision writes them.
     f.incremental.ingest("a",request(values(1340,1260),Some(f.incremental.headSnapshot("a",session).source),3))
     drain(incremental)
@@ -444,6 +442,10 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
     drain(complete)
     assertEquals(annotator.calls.get,0)
     assertEquals(rows(f,published(f,"a",session)),incrementalRows)
+    // Each lookup runs once whatever join order the planner takes for the chunks (another generation's chunk at the same
+    // ordinal must not repeat a first-piece lookup): a window's runs and one more, one row per first piece.
+    assert(members<=runs+2*ranges.size && replaced<=runs+2*ranges.size && carried<=ranges.size,
+      s"$runs runs in ${ranges.size} windows examined: members $members, replaced tags $replaced, first pieces $carried")
   }}
 
   test("an operator's horizon of 16 windows: an append writes again exactly the open passage's pieces of the 16 windows before the cut and the tail, the older pieces carry the summary and tags of 16 windows later, and it reads as a full publication under 16") { database(16) { f =>

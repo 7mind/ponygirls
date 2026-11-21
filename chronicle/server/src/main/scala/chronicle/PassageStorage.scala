@@ -35,7 +35,8 @@ object PassageStorage {
   /** The latest version's piece rows of a lineage that may overlap [from, until) (parameters: `pieceRangeArgs`): those
     * ending in (from, until] and the first one ending after `until` (it may start at or after it: filter `lo<until`), two
     * bounded range scans of ch_lineage_segments_open. A read of one window of an open passage examines the rows inside
-    * it, not every row after it (the runs an open passage whose metadata stayed accumulates, one per version). */
+    * it, not every row after it (the runs an open passage whose metadata stayed accumulates, one per version). Statements
+    * read it as a materialized CTE: the scans run once, whatever join order the planner chooses for the chunks. */
   private val pieceRanges = """(SELECT origin,lo,hi FROM ch_lineage_segments WHERE lineage=? AND kind=? AND since IS NOT NULL AND until IS NULL
     AND (hi_major,hi)>(0,?) AND (hi_major,hi)<=(0,?) UNION ALL (SELECT origin,lo,hi FROM ch_lineage_segments WHERE lineage=? AND kind=?
     AND since IS NOT NULL AND until IS NULL AND (hi_major,hi)>(0,?) ORDER BY hi_major,hi LIMIT 1))"""
@@ -303,18 +304,19 @@ object PassageStorage {
     ordinals.map(ordinal => found.getOrElse(ordinal,throw DomainError("internal","the parent's piece is not its member")))
   }
   /** `carried`'s statement: per ordinal the latest version's piece row of `lineage` holding it (the first ending after it),
-    * a point lookup each. */
+    * a point lookup each, in a materialized CTE: one lookup per ordinal, whatever join order the planner chooses for the
+    * chunks (joined first, other generations' chunks at the same ordinals would repeat it). */
   private[chronicle] def carriedQuery(lineage: UUID,ordinals: Vector[Long]): ReadSources.Query =
-    ReadSources.Query("""SELECT o,ch.value FROM unnest(?::bigint[]) o CROSS JOIN LATERAL (SELECT origin,lo FROM ch_lineage_segments
-      WHERE lineage=? AND kind=? AND since IS NOT NULL AND until IS NULL AND (hi_major,hi)>(0,o) ORDER BY hi_major,hi LIMIT 1) m
-      JOIN ch_chunks ch ON ch.generation=m.origin AND ch.ordinal=o WHERE m.lo<=o""",List(ordinals.mkString("{",",","}"),lineage,GenerationRows.Kind.Piece.sql))
+    ReadSources.Query("""WITH m AS MATERIALIZED (SELECT o,s.origin FROM unnest(?::bigint[]) o CROSS JOIN LATERAL (SELECT origin,lo FROM ch_lineage_segments
+      WHERE lineage=? AND kind=? AND since IS NOT NULL AND until IS NULL AND (hi_major,hi)>(0,o) ORDER BY hi_major,hi LIMIT 1) s WHERE s.lo<=o)
+      SELECT m.o,ch.value FROM m JOIN ch_chunks ch ON ch.generation=m.origin AND ch.ordinal=m.o""",List(ordinals.mkString("{",",","}"),lineage,GenerationRows.Kind.Piece.sql))
   /** The statement of `writePieces`' replaced tags: the tags of the latest version's pieces of `lineage` in [from, until). */
   private[chronicle] def replacedQuery(lineage: UUID,from: Long,until: Long): ReadSources.Query =
-    ReadSources.Query(s"""SELECT ch.ordinal,ch.value->'tags' FROM $pieceRanges m JOIN ch_chunks ch ON ch.generation=m.origin
+    ReadSources.Query(s"""WITH m AS MATERIALIZED $pieceRanges SELECT ch.ordinal,ch.value->'tags' FROM m JOIN ch_chunks ch ON ch.generation=m.origin
       AND ch.ordinal>=greatest(m.lo,?) AND ch.ordinal<least(m.hi,?) WHERE m.lo<?""",pieceRangeArgs(lineage,from,until)++List(from,until,until))
   /** `members`' statement: the latest version of `lineage`. */
   private[chronicle] def membersQuery(lineage: UUID,session: UUID,revision: Int,from: Long,until: Long): ReadSources.Query =
-    ReadSources.Query(s"""SELECT ch.ordinal,ch.value,ch.embedding::text,pc.passage_ordinal,em.position FROM $pieceRanges m
+    ReadSources.Query(s"""WITH m AS MATERIALIZED $pieceRanges SELECT ch.ordinal,ch.value,ch.embedding::text,pc.passage_ordinal,em.position FROM m
       JOIN ch_chunks ch ON ch.generation=m.origin AND ch.ordinal>=greatest(m.lo,?) AND ch.ordinal<least(m.hi,?)
       JOIN ch_problem_pieces pc ON pc.generation=ch.generation AND pc.chunk_id=ch.id
       JOIN ch_revisions r ON r.session_id=? AND r.revision=?
