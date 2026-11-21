@@ -174,6 +174,10 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
       (value("Actual Rows")+value("Rows Removed by Filter")+value("Rows Removed by Index Recheck"))*math.max(value("Actual Loops"),1L)
     }.sum
   }
+  private def windows(values: List[Message]): Vector[ProblemPassages.Window] = {
+    val source=ProblemPassages.Source(values)
+    Iterator.iterate(source.next(ProblemPassages.SourceCursor.start))(_.flatMap(window => source.next(window.next))).takeWhile(_.nonEmpty).flatten.toVector
+  }
   private def job(f: Fixture,session: UUID): UUID = f.db.transaction(c => Sql.one(c,"SELECT id FROM ch_jobs WHERE session_id=? ORDER BY revision DESC LIMIT 1",session)(uuid(_,1))).get
 
   test("under the default horizon (final metadata) incremental publications of three sources of one owner and one of another, from roots and from incremental parents, read exactly as full publications of the same content (every logical row and reader answer up to ids, exact ties across sources), write the windows from the cut and, when the open passage's metadata changes, exactly that passage's pieces, after it closed only the tail, and keep every earlier pin") { database(ProblemRows.metadataHorizonWindows) { f =>
@@ -189,10 +193,6 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
     // The mixed source's cuts: revision 2 re-does a Context-only window that an empty message precedes, revision 3 one in
     // which alpha closes (beta opens), revision 4 one starting inside a message longer than a window (beta's last span
     // is extended across the cut).
-    def windows(values: List[Message]): Vector[ProblemPassages.Window] = {
-      val source=ProblemPassages.Source(values)
-      Iterator.iterate(source.next(ProblemPassages.SourceCursor.start))(_.flatMap(window => source.next(window.next))).takeWhile(_.nonEmpty).flatten.toVector
-    }
     val mixedCuts=List(130,194,258,270).map(n => windows(mixed(n)).last)
     assertEquals(mixedCuts.map(window => (window.start.messagePosition,window.start.utf16Offset>0)).take(3).map(_._1),List(127,192,257))
     assert(mixedCuts(0).fragments.forall(_.messageId.startsWith("c")) && mixed(130)(128).text.isEmpty)
@@ -390,6 +390,84 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
       assertEquals((lineage(f,rebuilt).lineage,annotator.calls.get),(rebuilt,cut(f,rebuilt).window+1))
       assertEquals(intercept[DomainError](f.incremental.pageChunks("a",session,0,10,Some(ContentView(4,Some(beforeRebuild))))).code,"indexed-view-retired")
     } finally f.db.transaction(c => Sql.exec(c,"DROP TABLE ch_test_changes; DROP FUNCTION IF EXISTS ch_test_new,ch_test_old,ch_test_stop,ch_test_lease,ch_test_unpublish CASCADE"))
+  }}
+
+  test("under the default horizon an open passage whose metadata stayed over many versions (its pieces in many retained runs) is written again whole once its metadata changes, reads as a full publication, and each read of it examines the runs inside the range it reads, not every run after it") { database(ProblemRows.metadataHorizonWindows) { f =>
+    val annotator=new Scripted; val vectors=new Vectors
+    val incremental=ModelFixtures.worker(f.incremental,annotator,vectors,f.config,logstage.IzLogger())
+    val complete=ModelFixtures.worker(f.complete,annotator,vectors,f.full,logstage.IzLogger())
+    // One passage whose metadata stays ('k') until message `changing`, after which it changes in every window ('w').
+    def values(count: Int,changing: Int=Int.MaxValue): List[Message] =
+      (0 until count).map(p => if(p==0) message("n0-open",p,shared(p)) else if(p%8==0) message(if(p<changing) s"k$p-open" else s"w$p-open",p,shared(p)) else context(p)).toList
+    val session=f.incremental.ingest("a",request(values(1100),None,0)).sessionId
+    drain(incremental)
+    // Two appends keep its metadata: each version keeps its parent's pieces before its cut (a run of another origin).
+    List(1180,1260).zipWithIndex.foreach { (count,r) =>
+      f.incremental.ingest("a",request(values(count),Some(f.incremental.headSnapshot("a",session).source),r+1)); drain(incremental)
+    }
+    val parent=published(f,"a",session)
+    val parentLineage=lineage(f,parent)
+    assertEquals(parentLineage.version,Some(2))
+    // Every run of its pieces split into runs of one piece (the runs of as many versions), with a closed history the
+    // open rows' index excludes.
+    f.db.transaction { c =>
+      Sql.exec(c,"""WITH split AS (DELETE FROM ch_lineage_segments WHERE lineage=? AND kind='piece' AND since IS NOT NULL AND until IS NULL AND hi_major=0 RETURNING *)
+        INSERT INTO ch_lineage_segments(lineage,origin,kind,since,until,lo_major,lo,hi_major,hi,staged_by) SELECT lineage,origin,kind,since,NULL,0,i,0,i+1,staged_by
+        FROM split CROSS JOIN generate_series(lo,hi-1) i""",parentLineage.lineage)
+      Sql.exec(c,"""INSERT INTO ch_lineage_segments(lineage,origin,kind,since,until,lo_major,lo,hi_major,hi) SELECT ?,?,'piece',0,1,0,1000000000+i,0,1000000001+i
+        FROM generate_series(1,8000) i""",parentLineage.lineage,parentLineage.lineage)
+      Sql.exec(c,"ANALYZE ch_lineage_segments")
+    }
+    // The reads of the next version's rewrite: per window of the open passage before the cut its members and the tags
+    // they replace, and the first piece of each window.
+    val parentCut=cut(f,parent)
+    val bFirst=parentCut.state.nextPieceOrdinal-parentCut.state.open.get.passage.pieceCount
+    val ranges=parentCut.firstPieces.zip(parentCut.firstPieces.drop(1)).map((lo,until) => (math.max(lo,bFirst),until)).filter(_<_)
+    val runs=f.db.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_lineage_segments WHERE lineage=? AND kind='piece' AND since IS NOT NULL AND until IS NULL",parentLineage.lineage)(_.getLong(1))).get
+    def examined(query: ReadSources.Query): Long = rowsExamined(f,query,Set("ch_lineage_segments"))
+    val revision=f.incremental.session("a",session).view.revision
+    val members=ranges.map((lo,until) => examined(PassageStorage.membersQuery(parentLineage.lineage,session,revision,lo,until))).sum
+    val replaced=ranges.map((lo,until) => examined(PassageStorage.replacedQuery(parentLineage.lineage,lo,until))).sum
+    val carried=examined(PassageStorage.carriedQuery(parentLineage.lineage,ranges.map(_._1)))
+    assert(ranges.size>=16 && runs>4*ranges.size,s"${ranges.size} windows, $runs runs")
+    assert(members<=runs+2*ranges.size && replaced<=runs+2*ranges.size && carried<=ranges.size,
+      s"$runs runs in ${ranges.size} windows examined: members $members, replaced tags $replaced, first pieces $carried")
+    // Its metadata changes: all its pieces are written again, as a full publication of the same revision writes them.
+    f.incremental.ingest("a",request(values(1340,1260),Some(f.incremental.headSnapshot("a",session).source),3))
+    drain(incremental)
+    val changed=published(f,"a",session)
+    assertEquals(lineage(f,changed).version,Some(3))
+    assertEquals(ownChunks(f,changed),(0 until lineage(f,changed).pieces.toInt).toList)
+    val incrementalRows=rows(f,changed)
+    annotator.calls.set(0)
+    f.incremental.retry("a",job(f,session))
+    drain(complete)
+    assertEquals(annotator.calls.get,0)
+    assertEquals(rows(f,published(f,"a",session)),incrementalRows)
+  }}
+
+  test("an operator's horizon of 16 windows: an append writes again exactly the open passage's pieces of the 16 windows before the cut and the tail, the older pieces carry the summary and tags of 16 windows later, and it reads as a full publication under 16") { database(16) { f =>
+    val annotator=new Scripted; val vectors=new Vectors
+    val incremental=ModelFixtures.worker(f.incremental,annotator,vectors,f.config,logstage.IzLogger())
+    val complete=ModelFixtures.worker(f.complete,annotator,vectors,f.full,logstage.IzLogger())
+    val session=f.incremental.ingest("a",request(long(1200),None,0)).sessionId
+    drain(incremental)
+    val root=published(f,"a",session)
+    f.incremental.ingest("a",request(long(1300),Some(f.incremental.headSnapshot("a",session).source),1))
+    drain(incremental)
+    val version=published(f,"a",session)
+    val parentCut=cut(f,root)
+    assertEquals((lineage(f,version).version,parentCut.horizon,parentCut.firstWindow),(Some(1),16,parentCut.window-16))
+    // Window K-16's horizon is the re-done window K, whose summary stays: windows K-15 to K-1 and the tail are written.
+    assertEquals(ownChunks(f,version),(parentCut.firstPieces(1) until lineage(f,version).pieces).map(_.toInt).toList)
+    val sixteenth=windows(long(1300))(16).fragments.head.messagePosition
+    assertEquals(f.incremental.pageChunks("a",session,0,1,None).chunks.map(chunk => (chunk.summary,chunk.tags)),List((s"long w$sixteenth",List("long",s"w$sixteenth"))))
+    val incrementalRows=rows(f,version)
+    annotator.calls.set(0)
+    f.incremental.retry("a",job(f,session))
+    drain(complete)
+    assertEquals(annotator.calls.get,0)
+    assertEquals(rows(f,published(f,"a",session)),incrementalRows)
   }}
 
   test("a confirmed rebuild's accepted work stays its lineage's through incremental versions: a later full republication takes it, not the replaced run's work for the same input, and reads as the incremental version; the switch and the parent's reads examine the rows around the tail, not the lineage's history") { database(horizon) { f =>

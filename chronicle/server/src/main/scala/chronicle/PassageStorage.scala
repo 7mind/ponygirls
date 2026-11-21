@@ -28,10 +28,19 @@ object PassageStorage {
     * staged one). */
   val rowsPerStatement = 10000
   /** Segment rows of the latest version of a lineage (parameters: lineage, kind, major, ordinal) whose ranges end after
-    * (major, ordinal): open (`until` NULL) and switched (`since` set). Read through ch_lineage_segments_open, so an
-    * incremental publication examines the rows around its tail, never the lineage's history (closed rows, the runs
-    * before its rewrite region). */
+    * (major, ordinal): open (`until` NULL) and switched (`since` set). Read through ch_lineage_segments_open, so the switch
+    * examines the rows its own ranges (which extend to the end) overlap, never the lineage's history (closed rows, the
+    * runs before its rewrite region). */
   private val openSegments = "lineage=? AND kind=? AND since IS NOT NULL AND until IS NULL AND (hi_major,hi)>(?,?)"
+  /** The latest version's piece rows of a lineage that may overlap [from, until) (parameters: `pieceRangeArgs`): those
+    * ending in (from, until] and the first one ending after `until` (it may start at or after it: filter `lo<until`), two
+    * bounded range scans of ch_lineage_segments_open. A read of one window of an open passage examines the rows inside
+    * it, not every row after it (the runs an open passage whose metadata stayed accumulates, one per version). */
+  private val pieceRanges = """(SELECT origin,lo,hi FROM ch_lineage_segments WHERE lineage=? AND kind=? AND since IS NOT NULL AND until IS NULL
+    AND (hi_major,hi)>(0,?) AND (hi_major,hi)<=(0,?) UNION ALL (SELECT origin,lo,hi FROM ch_lineage_segments WHERE lineage=? AND kind=?
+    AND since IS NOT NULL AND until IS NULL AND (hi_major,hi)>(0,?) ORDER BY hi_major,hi LIMIT 1))"""
+  private def pieceRangeArgs(lineage: UUID,from: Long,until: Long): List[Sql.Param] =
+    List(lineage,GenerationRows.Kind.Piece.sql,from,until,lineage,GenerationRows.Kind.Piece.sql,until)
   /** The lineage of `generation`, which must be its latest version (an incremental publication's parent: one job per source,
     * and the switch requires it to be published). */
   private def latest(c: Connection,generation: UUID): UUID =
@@ -265,9 +274,8 @@ object PassageStorage {
       case Some(value) if inserted.nonEmpty =>
         val replacing=inserted.map(_.ordinal).toSet
         val (from,until)=(replacing.min.toLong,replacing.max.toLong+1)
-        val replaced=Sql.rows(c,s"""SELECT ch.ordinal,ch.value->'tags' FROM ch_lineage_segments m JOIN ch_chunks ch ON ch.generation=m.origin
-          AND ch.ordinal>=greatest(m.lo,?) AND ch.ordinal<least(m.hi,?) WHERE $openSegments AND m.lo<?""",
-          from,until,latest(c,value.generation),GenerationRows.Kind.Piece.sql,0,from,until)(r => (r.getInt(1),Wire.parse(r.getString(2)).as[List[String]].getOrElse(throw DomainError("internal","invalid stored chunk tags"))))
+        val query=replacedQuery(latest(c,value.generation),from,until)
+        val replaced=Sql.rows(c,query.sql,query.args*)(r => (r.getInt(1),Wire.parse(r.getString(2)).as[List[String]].getOrElse(throw DomainError("internal","invalid stored chunk tags"))))
           .collect { case (ordinal,tags) if replacing(ordinal) => tags }
         val delta=(counts(inserted.map(_.chunk.tags)).toList++counts(replaced).toList.map((tag,count) => (tag,-count))).groupMapReduce(_._1)(_._2)(_+_).filter(_._2!=0L)
         batch(c,"INSERT INTO ch_lineage_tag_deltas(generation,tag,delta) VALUES(?,?,?) ON CONFLICT(generation,tag) DO UPDATE SET delta=ch_lineage_tag_deltas.delta+excluded.delta",
@@ -288,22 +296,30 @@ object PassageStorage {
   }
   /** The summary and tags of the parent's pieces (its member chunks) at `ordinals`, in their order. */
   def carried(c: Connection,parent: UUID,ordinals: Vector[Long]): Vector[ProblemRows.Final] = if(ordinals.isEmpty) Vector.empty else {
-    val (from,until)=(ordinals.min,ordinals.max+1)
-    val found=Sql.rows(c,s"""SELECT ch.ordinal,ch.value FROM ch_lineage_segments m JOIN ch_chunks ch ON ch.generation=m.origin
-      AND ch.ordinal>=greatest(m.lo,?) AND ch.ordinal<least(m.hi,?) AND ch.ordinal=ANY(?::int[]) WHERE $openSegments AND m.lo<?""",
-      from,until,ordinals.mkString("{",",","}"),latest(c,parent),GenerationRows.Kind.Piece.sql,0,from,until) { r =>
+    val query=carriedQuery(latest(c,parent),ordinals)
+    val found=Sql.rows(c,query.sql,query.args*) { r =>
       val chunk=Wire.decode(Chunk.codecJson,Sql.json(r,"value")); r.getLong(1) -> ProblemRows.Final(chunk.summary,chunk.tags)
     }.toMap
     ordinals.map(ordinal => found.getOrElse(ordinal,throw DomainError("internal","the parent's piece is not its member")))
   }
+  /** `carried`'s statement: per ordinal the latest version's piece row of `lineage` holding it (the first ending after it),
+    * a point lookup each. */
+  private[chronicle] def carriedQuery(lineage: UUID,ordinals: Vector[Long]): ReadSources.Query =
+    ReadSources.Query("""SELECT o,ch.value FROM unnest(?::bigint[]) o CROSS JOIN LATERAL (SELECT origin,lo FROM ch_lineage_segments
+      WHERE lineage=? AND kind=? AND since IS NOT NULL AND until IS NULL AND (hi_major,hi)>(0,o) ORDER BY hi_major,hi LIMIT 1) m
+      JOIN ch_chunks ch ON ch.generation=m.origin AND ch.ordinal=o WHERE m.lo<=o""",List(ordinals.mkString("{",",","}"),lineage,GenerationRows.Kind.Piece.sql))
+  /** The statement of `writePieces`' replaced tags: the tags of the latest version's pieces of `lineage` in [from, until). */
+  private[chronicle] def replacedQuery(lineage: UUID,from: Long,until: Long): ReadSources.Query =
+    ReadSources.Query(s"""SELECT ch.ordinal,ch.value->'tags' FROM $pieceRanges m JOIN ch_chunks ch ON ch.generation=m.origin
+      AND ch.ordinal>=greatest(m.lo,?) AND ch.ordinal<least(m.hi,?) WHERE m.lo<?""",pieceRangeArgs(lineage,from,until)++List(from,until,until))
   /** `members`' statement: the latest version of `lineage`. */
   private[chronicle] def membersQuery(lineage: UUID,session: UUID,revision: Int,from: Long,until: Long): ReadSources.Query =
-    ReadSources.Query(s"""SELECT ch.ordinal,ch.value,ch.embedding::text,pc.passage_ordinal,em.position FROM ch_lineage_segments m
+    ReadSources.Query(s"""SELECT ch.ordinal,ch.value,ch.embedding::text,pc.passage_ordinal,em.position FROM $pieceRanges m
       JOIN ch_chunks ch ON ch.generation=m.origin AND ch.ordinal>=greatest(m.lo,?) AND ch.ordinal<least(m.hi,?)
       JOIN ch_problem_pieces pc ON pc.generation=ch.generation AND pc.chunk_id=ch.id
       JOIN ch_revisions r ON r.session_id=? AND r.revision=?
       JOIN ch_epoch_messages em ON em.epoch=r.epoch AND em.message_id=ch.value->'spans'->0->>'messageId'
-      WHERE $openSegments AND m.lo<? ORDER BY ch.ordinal""",List(from,until,session,revision,lineage,GenerationRows.Kind.Piece.sql,0,from,until))
+      WHERE m.lo<? ORDER BY ch.ordinal""",pieceRangeArgs(lineage,from,until)++List(from,until,session,revision,until))
   /** The switch's statement for the segment rows of `kind` of the latest version of `lineage` ending after `start`. */
   private[chronicle] def tailSegments(lineage: UUID,kind: GenerationRows.Kind,start: (Int,Long)): ReadSources.Query =
     ReadSources.Query(s"SELECT ctid::text,origin,lo_major,lo,hi_major,hi,staged_by FROM ch_lineage_segments WHERE $openSegments",List(lineage,kind.sql,start._1,start._2))

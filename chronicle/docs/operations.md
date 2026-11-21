@@ -189,7 +189,7 @@ written with its rows before it.
   (for example 16) a piece carries its passage's summary and tags as they stood H windows after its own window (or at
   the passage's last window): an append writes again at most the open passage's pieces of the H windows before the
   cut. The older pieces of a passage longer than H + 1 windows show what the annotator held H windows later, not the
-  final summary and tags: lexical and hybrid search, tag filters, facets and the tag catalog match those pieces by that
+  final summary and tags: lexical and hybrid search, Related, tag filters, facets and the tag catalog match those pieces by that
   intermediate vocabulary (a query phrased with the passage's final wording can miss its early pieces; one phrased with
   the earlier wording can find them). Vectors and passage rows (`GetPassages`) are unchanged. Both kinds of publication
   follow the rule, so an incremental publication reads exactly as a full one of the same content.
