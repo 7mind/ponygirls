@@ -78,6 +78,7 @@ RENDERER_HEAP = 64 * 10**6
 APPEND_CPU_SECONDS = 10.0
 DOWNLOAD_MIN_RATE = 5 * 10**6  # bytes per second: the download deadlines, generous for this host
 NOT_RUN_EXIT = 3
+GNU_TIME = '/usr/bin/time'  # the CLI's own peak RSS (spec §9: the CLI under /usr/bin/time -v)
 # G (spec §9 as amended by the lead, round 2): the initial 1 GiB replacement ≤ 30 min, the growth and the edit ≤ 30 min,
 # the whole run ≤ 60 min (RUNS).
 GROWTH_APPENDS, GROWTH_PERCENT, G_UPLOAD_BUDGET_S, GROWTH_BUDGET_S = 20, 0.5, 30 * 60, 30 * 60
@@ -466,12 +467,20 @@ def stop_group(process, grace=30):
 
 
 def measured(args, env, timeout, sink=None):
-    """Runs a command to its end: (exit status, stdout bytes, stderr text, peak RSS bytes, CPU s, wall s) from its own
-    wait4 usage. `sink` consumes stdout as it arrives instead (nothing is kept)."""
+    """Runs a command to its end under GNU time: (exit status, stdout bytes, stderr text, peak RSS bytes, CPU s, wall s).
+    `sink` consumes stdout as it arrives instead (nothing is kept). The peak RSS is the command's own, from GNU time's
+    wait4: a child this process starts directly would report this process's high-water mark instead (the RSS high-water
+    mark of the address space a vfork child execs from is carried into its ru_maxrss)."""
     started = time.monotonic()
-    with tempfile.TemporaryFile() as err:
-        process = subprocess.Popen(args, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err)
-        killer = threading.Timer(timeout, process.kill)
+    with tempfile.TemporaryFile() as err, tempfile.NamedTemporaryFile('r') as usage:
+        process = subprocess.Popen([GNU_TIME, '-f', '%M %U %S', '-o', usage.name, *args], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=err, start_new_session=True)
+        expired = threading.Event()
+
+        def expire():
+            expired.set()
+            os.killpg(process.pid, signal.SIGKILL)
+        killer = threading.Timer(timeout, expire)
         killer.start()
         out = bytearray()
         try:
@@ -480,14 +489,19 @@ def measured(args, env, timeout, sink=None):
                     out += chunk
                 else:
                     sink(chunk)
-            _, status, usage = os.wait4(process.pid, 0)
+            process.wait()
         finally:
             killer.cancel()
             process.stdout.close()
-        process.returncode = os.waitstatus_to_exitcode(status)
         err.seek(0)
         stderr = err.read().decode(errors='replace')
-    return process.returncode, bytes(out), stderr, usage.ru_maxrss * KiB, usage.ru_utime + usage.ru_stime, time.monotonic() - started
+        if expired.is_set():
+            raise AssertionError(f'{" ".join(map(str, args[:3]))}: no end within {timeout} s (stopped)')
+        lines = usage.read().splitlines()  # a 'Command terminated by signal' line precedes the format after a kill
+    fields = lines[-1].split() if lines else []
+    assert len(fields) == 3, f'{GNU_TIME} gave no usage for {args[:2]} (exit {process.returncode}): {stderr[-500:]}'
+    rss, user, system = int(fields[0]) * KiB, float(fields[1]), float(fields[2])
+    return process.returncode, bytes(out), stderr, rss, user + system, time.monotonic() - started
 
 
 def free_port():
@@ -1698,6 +1712,8 @@ RUNS = {'A': (run_a, 50 * GiB, 4 * 3600, 50 * 10**9), 'B': (run_b, 110 * GiB, 14
 
 def main():
     os.umask(0o077)
+    # The wrapper stops a run with SIGTERM: unwind (servers stopped, the run's directory under the data root removed).
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
     run = sys.argv[1]
     function, space, wall_budget, disk_budget = RUNS[run]
     data_root = DATA_ROOT or Path(tempfile.gettempdir())
