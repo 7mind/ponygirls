@@ -86,6 +86,20 @@ RENDERER_HEAP = 64 * 10**6
 APPEND_CPU_SECONDS = 10.0
 DOWNLOAD_MIN_RATE = 5 * 10**6  # bytes per second: the download deadlines, generous for this host
 NOT_RUN_EXIT = 3
+# B″'s append leg (stage l5): the generation tables a publication may write (pg_stat_user_tables tuples inserted, updated
+# and deleted from before the upload to the end of the switch's retirement, so rows removed again count too), how long
+# PostgreSQL may hold an idle backend's counters (10 s), the segment rows one switch may write, the tag rows per piece and
+# the single rows (passage, tag delta) beyond them (ACC e1e6a73a's H bounds); the append's marker (letters the vocabulary
+# never uses).
+GENERATION_TABLES = ('ch_chunks', 'ch_search_chunks', 'ch_problem_pieces', 'ch_lineage_segments', 'ch_lineage_tags', 'ch_lineage_tag_deltas',
+                     'ch_generation_tags', 'ch_problem_passages', 'ch_problem_spans', 'ch_context_spans')
+PGSTAT_FLUSH_S, SEGMENT_WRITES_PER_SWITCH, TAG_WRITES_PER_PIECE, SMALL_ROWS = 11, 32, 4, 16
+MARKER_B6 = 'wyvern jukebox'
+# B only, stage l5, with UPLOAD_BOUNDS_DATA_ROOT: KEEP keeps the indexed state after B5 (the cluster stopped cleanly and
+# copied, the run's directory, the fixture's state) in DATA_ROOT/snapshot and the final cluster in DATA_ROOT/final-<time>;
+# RESUME restores the snapshot into a new owned cluster and runs B6-B8 against it. The run's directory is DATA_ROOT/run in
+# both (the collector knows the session file by its path) and stays.
+KEEP, RESUME = os.environ.get('UPLOAD_BOUNDS_KEEP') == '1', os.environ.get('UPLOAD_BOUNDS_RESUME') == '1'
 GNU_TIME = '/usr/bin/time'  # the CLI's own peak RSS (spec §9: the CLI under /usr/bin/time -v)
 # G (spec §9 as amended by the lead, round 2): the initial 1 GiB replacement ≤ 30 min, the growth and the edit ≤ 30 min,
 # the whole run ≤ 60 min (RUNS).
@@ -290,7 +304,7 @@ class Fixture:
     def __init__(self, path, session_id, large=None):
         self.path, self.session_id, self.large = path, session_id, dict(large or {})
         self.overrides, self.messages, self.bytes, self.digest = {}, 0, 0, hashlib.sha256()
-        self.needles = {COMMON: [], RARE: [], RARE_APPENDED: []}
+        self.needles = {COMMON: [], RARE: [], RARE_APPENDED: [], MARKER_B6: []}
         if Fixture.POOL is None:
             rng = random.Random(20261120)
             words = set()
@@ -390,6 +404,22 @@ class Fixture:
 
     def sha256(self):
         return self.digest.hexdigest()
+
+    def state(self):
+        """What `restore` needs besides the file (KEEP)."""
+        return dict(path=str(self.path), sessionId=self.session_id, large=sorted(self.large.items()), overrides=sorted(self.overrides.items()),
+                    messages=self.messages, bytes=self.bytes, needles=self.needles)
+
+    @staticmethod
+    def restore(state):
+        """The fixture `state` describes, its digest from the file (RESUME)."""
+        fixture = Fixture(Path(state['path']), state['sessionId'], dict(state['large']))
+        fixture.overrides, fixture.messages, fixture.bytes, fixture.needles = dict(state['overrides']), state['messages'], state['bytes'], state['needles']
+        with open(fixture.path, 'rb') as file:
+            for chunk in iter(lambda: file.read(16 * MiB), b''):
+                fixture.digest.update(chunk)
+        assert fixture.path.stat().st_size == fixture.bytes, (fixture.path, fixture.bytes)
+        return fixture
 
     def summary(self):
         return dict(bytes=self.bytes, messages=self.messages, records=self.messages + 1, large=sorted(self.large.values()))
@@ -584,6 +614,7 @@ class Probe:
 class Stub:
     def __init__(self, root):
         self.delay_file, port_file = root / 'stub-delay', root / 'stub-port'
+        port_file.unlink(missing_ok=True)  # a resumed run's directory holds the earlier stub's
         self.delay(0)
         self.process = subprocess.Popen([sys.executable, '-c', STUB, str(DIMENSIONS), str(self.delay_file), str(port_file)], stdin=subprocess.DEVNULL,
                                         start_new_session=True)
@@ -749,7 +780,7 @@ class Collector:
                                                maxRecordBytes=RECORD_BYTES)))
         self.env = {k: v for k, v in os.environ.items() if not k.startswith('CHRONICLE_') and k not in ('NODE_OPTIONS', 'NODE_PATH')}
         self.env.update(HOME=str(self.home))
-        self.runs, self.last_status = 0, None
+        self.runs, self.last_status = len(list(root.glob('collector-*.out'))), None
 
     def sessions(self, project):
         directory = self.home / '.pi/agent/sessions' / project
@@ -1079,25 +1110,30 @@ class Harness:
         self.root, self.run, self.heap = root, run, PRODUCTION_HEAP
         self.budget = PRODUCTION_BUDGET if SCALE == 1 else smoke_budget()
         self.max_file_bytes = max_file_bytes = DEPLOYMENT_FILE_BYTES
-        (root / 'home').mkdir()
+        self.config = root / 'server.json'
+        # RESUME: the kept run's tokens, token ids and port (the collector's state names its endpoint), a new database.
+        kept = json.loads(self.config.read_text()) if RESUME else None
+        (root / 'home').mkdir(exist_ok=RESUME)
         self.password = root / 'password'
         self.password.write_text('synthetic-upload-bounds\n')
         (root / 'password-hash').write_text(subprocess.run([str(SERVER), 'password-hash'], input='synthetic-upload-bounds\n', text=True,
                                                            capture_output=True, check=True, timeout=60).stdout)
         (root / 'empty-credential').write_text('')
         self.token_file = root / 'collector-token'
-        self.token_file.write_text(secrets.token_urlsafe(32) + '\n')
         self.read_token_file = root / 'mcp-token'
-        self.read_token_file.write_text(secrets.token_urlsafe(32) + '\n')
+        if not RESUME:
+            self.token_file.write_text(secrets.token_urlsafe(32) + '\n')
+            self.read_token_file.write_text(secrets.token_urlsafe(32) + '\n')
         self.stub = Stub(root)
-        port = free_port()
+        port = kept['listenPort'] if kept else free_port()
         self.origin = f'http://127.0.0.1:{port}'
         config = json.loads(Path('chronicle/config.example.json').read_text())
         config.update(listenPort=port, allowedOrigin=self.origin, secureCookies=False, allowInsecureHttp=False,
                       jdbcUrl=DATABASE['jdbcUrl'], databaseUser=DATABASE['user'], databasePasswordFile=DATABASE['passwordFile'], databaseLimits=DATABASE['limits'],
                       users=[dict(id='alice', login='alice', passwordHashFile=str(root / 'password-hash'), enabled=True)],
-                      staticTokens=[dict(id=str(uuid.uuid4()), userId='alice', name='upload-bounds-collector', scopes=['Ingest'], tokenFile=str(self.token_file)),
-                                    dict(id=str(uuid.uuid4()), userId='alice', name='upload-bounds-mcp', scopes=['Read'], tokenFile=str(self.read_token_file))],
+                      staticTokens=kept['staticTokens'] if kept else [
+                          dict(id=str(uuid.uuid4()), userId='alice', name='upload-bounds-collector', scopes=['Ingest'], tokenFile=str(self.token_file)),
+                          dict(id=str(uuid.uuid4()), userId='alice', name='upload-bounds-mcp', scopes=['Read'], tokenFile=str(self.read_token_file))],
                       maxBodyBytes=BODY_BYTES, maxFiles=16, maxFileBytes=max_file_bytes, maxMessages=DEPLOYMENT_MESSAGES, maxRecordBytes=RECORD_BYTES)
         for key in ('maxIndexingBudgetBytes', 'maxSmallJobBudgetBytes', 'maxRawReadBytes'):
             config.pop(key, None)
@@ -1107,7 +1143,6 @@ class Harness:
                                     revision='upload-bounds', requestPolicy='strict-json-schema', timeoutSeconds=900, maxResponseBytes=1048576)
         config['embedding'].update(endpoint=self.stub.origin + '/v1/embeddings', credentialFile=str(root / 'empty-credential'), model='stub-embedding',
                                    revision='upload-bounds', dimensions=DIMENSIONS, sendDimensions=False, timeoutSeconds=60, maxResponseBytes=4 * MiB)
-        self.config = root / 'server.json'
         self.config.write_text(json.dumps(config))
         self.server = None
         self.collector = Collector(root, self.origin, self.token_file, max_file_bytes, DEPLOYMENT_MESSAGES)
@@ -1670,6 +1705,8 @@ def run_b(root):
     and its spread against an A run (UPLOAD_BOUNDS_COMPARE_A); the head's indexing verdict while other sessions index;
     stage l5: then a ≈ 1 % append to the indexed head and its incremental publication (incremental_append)."""
     h = Harness(root, 'B')
+    if RESUME:
+        return resume_b(h)
     sizes, total = [int(9.5 * MiB), 12 * MiB, int(16.5 * MiB), 20 * MiB], int(4_400_000_000 * SCALE)
     if total > 2 * sum(sizes):
         expected = (total - sum(sizes)) // 5200
@@ -1697,20 +1734,8 @@ def run_b(root):
               and int(state['receivedRawBytes']) == big.bytes and state['receivedMessages'] == big.messages, state)
     wal = wal_per_raw_byte('B1 replacement upload of the 4.4 GB session and four small sessions', big.bytes + sum(f.bytes for f in smalls))
 
-    def append(label, previous):
-        """+44,000,000 bytes (at least 24 MiB) with one 10 MiB record through the collector's incremental path."""
-        big.large[big.messages + 100] = 10 * MiB
-        before = big.bytes
-        big.write(max(int(44_000_000 * SCALE), 24 * MiB), RARE_APPENDED)
-        h.uploaded(label, h.collector.once(f'{label} append'), 1, 0)
-        _, appended = h.stored(label, big, previous['revision'] + 1, True, previous)
-        check(f'{label}: the append carried its large record in a large part', appended['upload']['largeParts'] >= 1, appended['upload'])
-        status, state = h.api('GET', f"/api/ingest/uploads/{appended['upload']['id']}")
-        check(f'{label}: the append attempt reports its received bytes exactly', status == 200 and int(state['receivedRawBytes']) == big.bytes - previous['rawBytes'], state)
-        h.incremental(label, big, big.bytes - before)
-        return appended
     with Phase('B2 append (+44,000,000 bytes with one 10 MiB record)'):
-        head = append('B2', first)
+        head = b_append(h, big, 'B2', first, RARE_APPENDED)
     uploads, watch = None, None
     if STAGE == 'l5':
         uploads = h.stop()
@@ -1739,33 +1764,182 @@ def run_b(root):
         b5 = h.downloads('B5', big, session, 2)
     if STAGE == 'prefix':
         outside_stage.append('B6-B8: a ≈ 1 % append to the indexed head publishes incrementally; semantic and hybrid search still find the session (stage l5)')
-        b6 = None
+        b6, kept, indexed = None, None, None
     else:
-        b6 = incremental_append(h, session, head, append)
+        kept = None
+        if KEEP:
+            indexed = h.stop()
+            with Phase('B5k keep the indexed state (DATA_ROOT/snapshot)'):
+                kept = keep_b(h, big, session)
+            h.start('B-S2-append')
+        b6 = incremental_append(h, big, session, head)
     s2 = h.stop()
     h.stub.stop()
     return dict(fixture=big.summary(), heads=dict(first=first, appended=head), jobs=h.jobs(session), smallJobs=small_jobs, budget=h.budget, walPerRawByte=wal,
-                indexing=b3, reads=b4, downloads=b5, append=b6, servers=[x for x in (uploads, s2) if x])
+                indexing=b3, reads=b4, downloads=b5, kept=kept, append=b6, servers=[x for x in (uploads, indexed if KEEP else None, s2) if x])
 
 
-def incremental_append(h, session, previous, append):
-    """B″ (stage l5): after the first index, a ≈ 1 % append (`append`, B2's shape) through the collector's incremental path
-    while the server with workers runs, and its publication: the kind (every attempt's logged kind incremental; the next
-    version of the first index's lineage), the rows it wrote (chunks = search rows = HNSW insertions = the tail, window K
-    and the addition, and none of the stub's one passage before the cut: its summary and tags never change), segment rows,
-    search rows retired, the HNSW index's growth, WAL of the upload and of the publication, the lag from the upload's commit
-    to the logged switch, the peak heap from the append's upload to the switch, semantic searches while it published (none
-    unavailable); then semantic and hybrid search, CLI and MCP, find the session first by a chunk the append wrote and by one
-    of the first index."""
+def b_append(h, big, label, previous, needle):
+    """+44,000,000 bytes (at least 24 MiB) with one 10 MiB record through the collector's incremental path; `needle` in its
+    last message."""
+    big.large[big.messages + 100] = 10 * MiB
+    before = big.bytes
+    big.write(max(int(44_000_000 * SCALE), 24 * MiB), needle)
+    h.uploaded(label, h.collector.once(f'{label} append'), 1, 0)
+    _, appended = h.stored(label, big, previous['revision'] + 1, True, previous)
+    check(f'{label}: the append carried its large record in a large part', appended['upload']['largeParts'] >= 1, appended['upload'])
+    status, state = h.api('GET', f"/api/ingest/uploads/{appended['upload']['id']}")
+    check(f'{label}: the append attempt reports its received bytes exactly', status == 200 and int(state['receivedRawBytes']) == big.bytes - previous['rawBytes'], state)
+    h.incremental(label, big, big.bytes - before)
+    return appended
+
+
+def postgres(action):
+    """Stops or starts the owned cluster as the wrapper does (its data directory, log and configuration file)."""
+    pg_ctl = [str(Path(os.environ['PG_BIN']) / 'pg_ctl'), '-D', str(OWNED / 'cluster/data'), '-w', '-t', '600']
+    arguments = ['-m', 'fast', 'stop'] if action == 'stop' else ['-l', str(OWNED / 'postgres.log'), '-o', f'-c config_file={OWNED}/postgresql.conf', 'start']
+    subprocess.run(pg_ctl + arguments, check=True, stdout=subprocess.DEVNULL, timeout=900)
+
+
+def keep_b(h, big, session):
+    """KEEP: the indexed state after B5 copied to DATA_ROOT/snapshot while the server is stopped: the cluster's data
+    directory (PostgreSQL stopped cleanly, then started again), the run's directory with its session files hard-linked
+    (the collector knows a file by its path and inode: a copy is a replaced file) and their sizes, the fixture's state."""
+    snapshot = DATA_ROOT / 'snapshot'
+    snapshot.mkdir()
+    postgres('stop')
+    try:
+        subprocess.run(['cp', '-a', str((OWNED / 'cluster/data').resolve(strict=True)), str(snapshot / 'data')], check=True)
+        subprocess.run(['cp', '-a', str(h.root), str(snapshot / 'run')], check=True)
+    finally:
+        postgres('start')
+    files = {}
+    for path in sorted((h.root / 'home').rglob('*.jsonl')):
+        relative = path.relative_to(h.root)
+        (snapshot / 'run' / relative).unlink()
+        os.link(path, snapshot / 'run' / relative)
+        files[str(relative)] = path.stat().st_size
+    (snapshot / 'state.json').write_text(json.dumps(dict(root=str(h.root), session=session, big=big.state(), files=files)))
+    kept = dict(path=str(snapshot), bytes=du(snapshot))
+    note(f'B5k: kept {json.dumps(kept)}')
+    return kept
+
+
+def restore_b():
+    """RESUME (before the run touches the database): the snapshot's data directory replaces this wrapper's fresh one and its
+    run directory DATA_ROOT/run, the session files linked to the kept inodes and truncated to their kept sizes (the appends
+    of the keeping run and of earlier resumes grew them); the service role gets this wrapper's password."""
+    snapshot = DATA_ROOT / 'snapshot'
+    state = json.loads((snapshot / 'state.json').read_text())
+    assert state['root'] == str(DATA_ROOT / 'run'), f'the snapshot belongs to {state["root"]}'
+    data = (OWNED / 'cluster/data').resolve(strict=True)
+    postgres('stop')
+    shutil.rmtree(data)
+    subprocess.run(['cp', '-a', str(snapshot / 'data'), str(data)], check=True)
+    shutil.rmtree(DATA_ROOT / 'run', ignore_errors=True)
+    subprocess.run(['cp', '-a', str(snapshot / 'run'), str(DATA_ROOT / 'run')], check=True)
+    for relative, size in state['files'].items():
+        (DATA_ROOT / 'run' / relative).unlink()
+        os.link(snapshot / 'run' / relative, DATA_ROOT / 'run' / relative)
+        os.truncate(DATA_ROOT / 'run' / relative, size)
+    postgres('start')
+    password = Path(DATABASE['passwordFile']).read_text().strip().replace("'", "''")
+    subprocess.run(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-h', str(OWNED / 'cluster/socket'), '-p', LOCATION[1], '-d', 'postgres', '-f', '-'],
+                   input=f'ALTER ROLE "{DATABASE["user"]}" PASSWORD \'{password}\';\n', capture_output=True, text=True, timeout=60, check=True)
+    return state
+
+
+def final_b():
+    """KEEP or RESUME, at the end: the cluster stopped and its data directory moved to DATA_ROOT/final-<UTC time>."""
+    final = DATA_ROOT / time.strftime('final-%Y%m%dT%H%M%SZ', time.gmtime())
+    final.mkdir()
+    postgres('stop')
+    os.rename((OWNED / 'cluster/data').resolve(strict=True), final / 'data')
+    note(f'the final cluster is kept in {final} (stopped)')
+
+
+def resume_b(h):
+    """RESUME: B6-B8 against the restored indexed state (head revision 2 published, the session file at that head)."""
+    state = json.loads((DATA_ROOT / 'snapshot/state.json').read_text())
+    big, session = Fixture.restore(state['big']), state['session']
+    head = h.head(session)
+    check(f'resume: the restored head is revision 2 published with the file\'s {big.bytes:,} bytes and digest',
+          head['revision'] == 2 and head['rawBytes'] == big.bytes and head['digest'] == big.sha256() and h.published(session) == 2, head)
+    h.start('B-S2-append')
+    b6 = incremental_append(h, big, session, head)
+    s2 = h.stop()
+    h.stub.stop()
+    return dict(resumed=True, fixture=big.summary(), append=b6, servers=[s2])
+
+
+def table_writes():
+    """Cumulative tuples inserted, updated and deleted per generation table (pg_stat_user_tables), once two reads 2 s apart
+    agree and at least PGSTAT_FLUSH_S passed: the server's idle backends have flushed their counters."""
+    def read():
+        rows = sql("SELECT relname, n_tup_ins, n_tup_upd, n_tup_del FROM pg_stat_user_tables WHERE relname IN (" + ','.join(f"'{t}'" for t in GENERATION_TABLES) + ")")
+        return {name: dict(ins=int(ins), upd=int(upd), dele=int(dele)) for name, ins, upd, dele in rows}
+    started, last = time.monotonic(), read()
+    while True:
+        time.sleep(2)
+        current = read()
+        if current == last and time.monotonic() - started >= PGSTAT_FLUSH_S:
+            return current
+        assert time.monotonic() - started < 120, 'pg_stat_user_tables did not settle'
+        last = current
+
+
+def writes_between(before, after):
+    return {name: {kind: after[name][kind] - before[name][kind] for kind in ('ins', 'upd', 'dele')} for name in after}
+
+
+def prefix_view(h, session, first_ordinal):
+    """What readers see of the session below window K (ordinals < first_ordinal): chunk pages at its start, middle and end,
+    and the lexical search for the first write's rare literal (its hits without the session's view)."""
+    view = {}
+    for offset in sorted({0, first_ordinal // 2, max(0, first_ordinal - PAGE)}):
+        view[f'chunks @{offset}'] = h.reader().result('chunks', session, '--offset', str(offset), '--limit', str(min(PAGE, first_ordinal - offset)))[0]['chunks']
+    hits = h.reader().result('search', RARE, '--mode', 'lexical', '--limit', '10')[0]['hits']
+    view['lexical rare'] = [dict(session=hit['session']['id'], chunks=hit['chunks'], score=hit['score']) for hit in hits]
+    return view
+
+
+def incremental_append(h, big, session, previous):
+    """B″ (stage l5): after the first index, a ≈ 1 % append (B2's shape, with MARKER_B6 in its last message) through the
+    collector's incremental path while the server with workers runs, and its publication. From before the upload to the end
+    of the switch's retirement: the tuples every generation table took (settled pg_stat counters, so rows removed again
+    count too), the model calls, the WAL. The work bound W is the tail (window K and the added pieces) plus the pieces of the
+    passage open at the cut that the append rewrote: the stub's one passage spans the session and never changes its summary
+    or tags, so none may be rewritten (H's bound, tail + the whole open passage, would be the session here). Every write and
+    model call within W; the publication incremental (every attempt's logged kind; the next version of the lineage). Readers:
+    the marker absent before and found after by lexical search with its chunk from the new tail at revision 3; the chunk page
+    at the new end equals the new generation's last pieces; the prefix (chunk pages below window K, a rare literal's hits)
+    unchanged; semantic and hybrid search, CLI and MCP, find the session first by a chunk the append wrote and by one of the
+    first index. Recorded: segment rows, retired search rows, the HNSW index's growth, the lag from the commit to the logged
+    switch, the peak heap, semantic probes while it published (none unavailable)."""
     parent = one("SELECT published FROM ch_sources WHERE id=:'arg0'", session)
+    names = ['lineage', 'version', 'parent', 'pieces', 'lastWindow', 'cutFirstOrdinal', 'cutOpenPassagePieces', 'cutWindows', 'cutBytes']
+
+    def lineage(generation):
+        return dict(zip(names, sql(
+            "SELECT coalesce(g.lineage::text,''), coalesce(g.lineage_version,-1), coalesce(l.parent::text,''), l.pieces, coalesce(l.last_window,-1), "
+            "coalesce((l.cut->'state'->>'nextPieceOrdinal')::bigint,-1), coalesce((l.cut->'state'->'open'->'passage'->>'pieceCount')::bigint,-1), "
+            "coalesce(jsonb_array_length(l.cut->'firstPieces'),0), coalesce(pg_column_size(l.cut),0) "
+            "FROM ch_generations g JOIN ch_generation_lineage l ON l.generation=g.id WHERE g.id=:'arg0'", generation)[0]))
+    old = lineage(parent)
+    first_ordinal = int(old['cutFirstOrdinal'])
     search_rows = lambda: int(one("SELECT count(*) FROM ch_search_chunks WHERE session_id=:'arg0'", session))
     hnsw = lambda: int(one(f"SELECT pg_relation_size('ch_search_hnsw_d{DIMENSIONS}')"))
-    search_before, hnsw_before, calls_before, began = search_rows(), hnsw(), h.stub.counts(), time.monotonic()
+    with Phase('B6 readers before the append'):
+        prefix_before = prefix_view(h, session, first_ordinal)
+        absent = h.reader().result('search', MARKER_B6, '--mode', 'lexical', '--limit', '10')[0]['hits']
+        check(f'B6: before the append a lexical search for its marker {MARKER_B6!r} finds nothing', not absent, absent[:1])
+    writes_before = table_writes()
+    search_before, hnsw_before, calls_before, lsn, began = search_rows(), hnsw(), h.stub.counts(), wal_lsn(), time.monotonic()
     with Phase('B6 append (+44,000,000 bytes with one 10 MiB record) to the indexed head'):
-        head = append('B6', previous)
+        head = b_append(h, big, 'B6', previous, MARKER_B6)
     revision = head['revision']
     committed = float(one("SELECT extract(epoch FROM terminal_at) FROM ch_uploads WHERE id=:'arg0'", head['upload']['id']))
-    watch = IndexWatch(h, session, revision)  # after the commit: a lane may have claimed the job already (no claim boundary)
+    watch = IndexWatch(h, session, revision)  # after the commit: samples and probes only, the work is counted from before the upload
     with Phase('B7 the append\'s incremental publication'):
         ended = watch.finish('B7')
         job, samples, probes, sample = watch.job, watch.samples, watch.probes, watch.samples[-1]
@@ -1773,15 +1947,10 @@ def incremental_append(h, session, previous, append):
         check(f'B7: the job of revision {revision} completes ({sample["attempts"]} attempt(s))', sample['state'] == 'Complete', sample)
         job_row = h.indexed('B7', session, revision)
         h.wait('B7 search row retirement', lambda: one("SELECT count(*) FROM ch_search_retirements WHERE session_id=:'arg0'", session) == '0')
+        writes = writes_between(writes_before, table_writes())
+        wal, calls = wal_since(lsn), {k: v - calls_before[k] for k, v in h.stub.counts().items()}
         generation = one("SELECT published FROM ch_sources WHERE id=:'arg0'", session)
-        names = ['lineage', 'version', 'parent', 'pieces', 'lastWindow', 'cutFirstOrdinal', 'cutOpenPassagePieces', 'cutWindows', 'cutBytes']
-        lineage = {g: dict(zip(names, sql(
-            "SELECT coalesce(g.lineage::text,''), coalesce(g.lineage_version,-1), coalesce(l.parent::text,''), l.pieces, coalesce(l.last_window,-1), "
-            "coalesce((l.cut->'state'->>'nextPieceOrdinal')::bigint,-1), coalesce((l.cut->'state'->'open'->'passage'->>'pieceCount')::bigint,-1), "
-            "coalesce(jsonb_array_length(l.cut->'firstPieces'),0), coalesce(pg_column_size(l.cut),0) "
-            "FROM ch_generations g JOIN ch_generation_lineage l ON l.generation=g.id WHERE g.id=:'arg0'", g)[0])) for g in (parent, generation)}
-        old, new = lineage[parent], lineage[generation]
-        first_ordinal = int(old['cutFirstOrdinal'])
+        new = lineage(generation)
         chunks, searches, rewritten = (int(x) for x in one(
             "SELECT count(*), count(s.id), count(*) FILTER (WHERE c.ordinal < :'arg1') FROM ch_chunks c LEFT JOIN ch_search_chunks s ON s.id=c.id AND s.generation=c.generation "
             "WHERE c.generation=:'arg0'", generation, first_ordinal))
@@ -1794,32 +1963,71 @@ def incremental_append(h, session, previous, append):
         accepted = re.findall(r'windows accepted jobId=(?:\w+=)?' + job + r' .*?totalWindows=(?:\w+=)?(\d+) reusedDecisions=(?:\w+=)?(\d+) reusedEmbeddingParts=(?:\w+=)?(\d+)', log)
         epoch = lambda at: datetime.datetime.fromisoformat(at).timestamp()  # the server logs local time, as this process reads it
         heap = h.server.gc_peaks(began, ended)
+        tail, added_windows = int(new['pieces']) - first_ordinal, int(new['lastWindow']) - int(old['lastWindow'])
+        work = tail + rewritten
+
+        def total(*tables, kinds=('ins', 'upd', 'dele')):
+            return sum(writes[table][kind] for table in tables for kind in kinds)
+        bounds = [('annotation calls (added windows + window K)', calls['annotation'], added_windows + 1),
+                  ('embedding inputs (the pieces embedded + one per semantic probe)', calls['inputs'], work + len(probes)),
+                  ('chunk inserts', total('ch_chunks', kinds=('ins',)), work), ('chunk updates and deletes', total('ch_chunks', kinds=('upd', 'dele')), work),
+                  ('search row inserts (HNSW insertions)', total('ch_search_chunks', kinds=('ins',)), work),
+                  ('search row updates and deletes (retirement)', total('ch_search_chunks', kinds=('upd', 'dele')), work),
+                  ('piece link inserts', total('ch_problem_pieces', kinds=('ins',)), work),
+                  ('piece link updates and deletes', total('ch_problem_pieces', kinds=('upd', 'dele')), work),
+                  ('segment row writes', total('ch_lineage_segments'), SEGMENT_WRITES_PER_SWITCH),
+                  ('tag row writes', total('ch_lineage_tags', 'ch_lineage_tag_deltas', 'ch_generation_tags'), TAG_WRITES_PER_PIECE * work + SMALL_ROWS),
+                  ('passage, span and Context span writes', total('ch_problem_passages', 'ch_problem_spans', 'ch_context_spans'), work + SMALL_ROWS)]
         result = dict(revision=revision, rawBytes=head['rawBytes'], addedRawBytes=head['rawBytes'] - previous['rawBytes'], job=job_row, kinds=kinds, parent=old, published=new,
-                      addedPieces=int(new['pieces']) - int(old['pieces']), addedWindows=int(new['lastWindow']) - int(old['lastWindow']),
-                      written=dict(chunks=chunks, searchRows=searches, rewrittenBeforeCut=rewritten, tail=int(new['pieces']) - first_ordinal),
+                      addedPieces=int(new['pieces']) - int(old['pieces']), addedWindows=added_windows,
+                      written=dict(chunks=chunks, searchRows=searches, rewrittenBeforeCut=rewritten, tail=tail), work=work, writes=writes, bounds=bounds,
                       segments=dict(closed=closed, inserted=inserted), searchRowsRetired=search_before + searches - search_rows(), hnswBytesDelta=hnsw() - hnsw_before,
-                      insertsSampled=dict(chunks=sample['chunkRows'] - samples[0]['chunkRows'], searchRows=sample['searchRows'] - samples[0]['searchRows']),
-                      uploadWalBytes=phases[-1]['walBytes'], publicationWalBytes=sample['wal'],
+                      walBytes=wal, uploadWalBytes=phases[-1]['walBytes'],
                       lagSeconds=round(epoch(switched[-1][0]) - committed, 1) if switched else None,
                       commitToPublicationStartSeconds=round(epoch(started_at[-1]) - committed, 1) if started_at else None,
                       publicationLoggedSeconds=int(switched[-1][1]) if switched else None, windowsAccepted=accepted,
-                      calls={k: v - calls_before[k] for k, v in h.stub.counts().items()}, heap=heap, split=phase_split(samples),
+                      calls=calls, heap=heap, split=phase_split(samples),
                       probes=dict(total=len(probes), outcomes={o: sum(1 for p in probes if p['outcome'] == o) for o in {p['outcome'] for p in probes}},
                                   maxSeconds=max((p['seconds'] for p in probes), default=None)))
         note(f'B7: {json.dumps(result, default=str)}')
         check(f'B7: the publication is incremental (logged {kinds}; version {new["version"]} of the first index\'s lineage, its parent the first index, '
               f'cut window {old["lastWindow"]})', kinds and set(kinds) == {'incremental'} and new['lineage'] == old['lineage'] and new['parent'] == parent
               and int(new['version']) == int(old['version']) + 1, result)
-        check(f'B7: it wrote {chunks:,} chunks = {searches:,} search rows (HNSW insertions) = the tail ({result["written"]["tail"]:,}: window K and the '
-              f'{result["addedPieces"]:,} added pieces), {rewritten} before the cut (the open passage\'s {old["cutOpenPassagePieces"]} pieces keep their unchanged '
-              f'summary and tags); {closed}/{inserted} segment rows closed/inserted, {result["searchRowsRetired"]:,} search rows retired',
-              chunks == searches == result['written']['tail'] and rewritten == 0, result)
+        check(f'B7: its own rows are {chunks:,} chunks = {searches:,} search rows = the tail ({tail:,}: window K and the {result["addedPieces"]:,} added pieces), '
+              f'{rewritten} before the cut (the open passage\'s {old["cutOpenPassagePieces"]} pieces keep their unchanged summary and tags)',
+              chunks == searches == tail and rewritten == 0, result)
+        over = [(what, measured, limit) for what, measured, limit in bounds if measured > limit]
+        check(f'B7: from before the upload to the end of the retirement every generation-table write and model call is within the tail ({work:,}; prefix '
+              f'{first_ordinal:,} pieces): {bounds}; WAL {wal:,} B', not over, over)
         check(f'B7: no out-of-memory; lag from the commit to the switch {result["lagSeconds"]} s (publication {result["publicationLoggedSeconds"]} s), peak live heap '
               f'{heap["peakLiveHeapMB"]} MB after a full collection, {heap["peakHeapBeforeCollectionMB"]} MB before one ({heap["collections"]} collections)',
               'OutOfMemoryError' not in log and 'Java heap space' not in log and switched, heap)
         unavailable = [p for p in probes if p['outcome'] == 'unavailable']
         check(f'B7: semantic searches while it published: {len(probes)}, {len(unavailable)} unavailable', not unavailable, unavailable[:5], defer=True)
-    with Phase('B8 searches after the append'):
+    with Phase('B8 readers after the append'):
+        marked = f'm{big.needles[MARKER_B6][-1]:07d}'
+        hits = h.reader().result('search', MARKER_B6, '--mode', 'lexical', '--limit', '10')[0]['hits']
+        evidence = [(hit['session'], chunk, sql("SELECT generation, ordinal FROM ch_chunks WHERE id=:'arg0'", chunk['id'])) for hit in hits for chunk in hit['chunks']]
+        found = [(info, chunk, rows) for info, chunk, rows in evidence if info['id'] == session and MARKER_B6 in chunk['text']]
+        check(f'B8: a lexical search for the marker finds the session by a chunk of the new tail at revision {revision} (message {marked}, ordinal ≥ {first_ordinal:,}, '
+              f'{len(hits)} hit(s))', len(hits) == 1 and found and all(
+                  rows == [[generation, rows[0][1]]] and int(rows[0][1]) >= first_ordinal and info['view']['revision'] == revision
+                  and info['view'].get('generationId') == generation and marked in {span['messageId'] for span in chunk['spans']} for info, chunk, rows in found),
+              [dict(session=info['id'], view=info['view'], chunk=chunk['id'], spans=chunk['spans'][:3], rows=rows) for info, chunk, rows in evidence][:5])
+        pieces = int(new['pieces'])
+        page = h.reader().result('chunks', session, '--offset', str(pieces - PAGE), '--limit', str(PAGE))[0]
+        last = [row[0] for row in sql("SELECT id FROM ch_chunks WHERE generation=:'arg0' AND ordinal >= :'arg1' ORDER BY ordinal", generation, pieces - PAGE)]
+        check(f'B8: the chunk page at the new end (offset {pieces - PAGE:,} of {pieces:,}) is the new generation\'s last {PAGE} pieces at revision {revision}, '
+              f'the last one in the appended last message {big.messages - 1}',
+              page['total'] == pieces and page['view']['revision'] == revision and page['view'].get('generationId') == generation
+              and [c['id'] for c in page['chunks']] == last and f'm{big.messages - 1:07d}' in {span['messageId'] for span in page['chunks'][-1]['spans']},
+              dict(total=page['total'], view=page['view'], ids=len(page['chunks']), last=page['chunks'][-1]['spans'][-1:] if page['chunks'] else None))
+        prefix_after = prefix_view(h, session, first_ordinal)
+        differing = sorted(key for key in prefix_before.keys() | prefix_after.keys() if prefix_before.get(key) != prefix_after.get(key))
+        check(f'B8: the prefix readers see is unchanged: {sorted(prefix_before)} (chunk pages below window K, the rare literal\'s hits) equal before and after'
+              f'{"; differing: " + str(differing) if differing else ""}', not differing,
+              {key: dict(before=str(prefix_before.get(key))[:500], after=str(prefix_after.get(key))[:500]) for key in differing[:2]})
+        result['readers'] = dict(markerHits=len(hits), prefixKeys=sorted(prefix_before), prefixChunks=sum(len(v) for k, v in prefix_before.items() if k.startswith('chunks')))
         result['searches'] = dict(appended=h.searches('B8 (a chunk the append wrote)', session), inherited=h.searches('B8 (a chunk of the first index)', session, parent))
     return result
 
@@ -2039,9 +2247,17 @@ def main():
     if DATA_ROOT is not None:
         data = (OWNED / 'cluster/data').resolve(strict=True)
         check(f'{run}: the cluster\'s data directory {data} is under the data root (the wrapper\'s --data-root)', data.is_relative_to(DATA_ROOT), data)
+    kept = KEEP or RESUME
+    if kept:
+        assert run == 'B' and STAGE == 'l5' and DATA_ROOT is not None and not (KEEP and RESUME), 'UPLOAD_BOUNDS_KEEP or _RESUME: run B at stage l5 with a data root'
+        if KEEP:
+            assert not (DATA_ROOT / 'snapshot').exists() and not (DATA_ROOT / 'run').exists(), f'{DATA_ROOT} already keeps a state'
+            (DATA_ROOT / 'run').mkdir()
+        else:
+            restore_b()
     settings = production_postgres()
     started, lsn = time.monotonic(), wal_lsn()
-    with tempfile.TemporaryDirectory(prefix=f'upload-bounds-{run}-', dir=DATA_ROOT) as temporary:
+    with contextlib.nullcontext(DATA_ROOT / 'run') if kept else tempfile.TemporaryDirectory(prefix=f'upload-bounds-{run}-', dir=DATA_ROOT) as temporary:
         root = Path(temporary)
         WORK.append(root)
         sampler = DiskPeak(consumed_disk)
@@ -2078,6 +2294,8 @@ def main():
                        checks=len(checks), postgres=settings, phases=phases, servers=servers, collectors=collectors, cliPeak=cli_peak, cliCalls=len(clis), outcome=outcome,
                        server=str(SERVER), serverSha256=hashlib.sha256(SERVER.read_bytes()).hexdigest(), collector=str(COLLECTOR), cli=str(CLI),
                        webRoot=str(WEB_ROOT) if WEB_ROOT else None, chromium=str(CHROMIUM) if CHROMIUM else None)
+    if kept:
+        final_b()
     print(json.dumps(summary, default=str), flush=True)
     sys.exit(1 if deferred else NOT_RUN_EXIT if not_run else 0)
 

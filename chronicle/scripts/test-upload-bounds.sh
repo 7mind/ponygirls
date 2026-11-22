@@ -25,10 +25,17 @@
 #   B  B′ 4,400,000,000 raw bytes with records of 9-20 MiB (large parts), appended to; raw_bytes > 2^32 exact; pages
 #      holding the large records through the CLI and the browser protocol; Archive search ≤ 1.0 s and within 0.2 s of an
 #      A run's (UPLOAD_BOUNDS_COMPARE_A=its output); the downloads as in A (≥ 4 GiB); the head's indexing verdict while
-#      four other sessions index; stage l5 (B″): then a ≈ 1 % append (+44,000,000 bytes with a 10 MiB record) to the
-#      indexed head, published incrementally (kind, rows and HNSW insertions = the tail, WAL, lag from the commit to the
-#      switch, peak heap, no semantic search unavailable meanwhile), and semantic and hybrid search, CLI and MCP, find the
-#      session first. ≤ 16 h, ≤ 130 GB: run it with the data root below and a long wrapper timeout.
+#      four other sessions index; stage l5 (B″): then a ≈ 1 % append (+44,000,000 bytes with a 10 MiB record and a marker)
+#      to the indexed head, published incrementally: from before the upload to the end of the retirement every generation
+#      table's inserted/updated/deleted tuples and the model calls within the tail (none of the open passage rewritten),
+#      WAL, lag from the commit to the switch, peak heap, no semantic search unavailable meanwhile; the marker found by a
+#      chunk of the new tail at the new revision, the chunk page at the new end, the prefix's pages and hits unchanged;
+#      semantic and hybrid search, CLI and MCP, find the session first. ≤ 16 h, ≤ 130 GB: run it with the data root below
+#      and a long wrapper timeout. UPLOAD_BOUNDS_KEEP=1 keeps the indexed state after B5 in the data root (snapshot/: the
+#      cluster copied while stopped, the run's directory run/ with its session files hard-linked, the fixture's state;
+#      ≈ the cluster's size again) and the final cluster (final-<time>/); UPLOAD_BOUNDS_RESUME=1 with the same data root
+#      restores the snapshot into the wrapper's new cluster (the session files truncated to their kept sizes) and runs
+#      only B6-B8.
 #   D  a 2 MB session grows by six appends while its jobs run (stub annotation delay 1 s per window) and ends indexed at
 #      its head; jobs and windows spent. ≤ 30 min.
 #   E  gate O (scripts/test-main-collector.sh) against this tree's server, heaps bounded and the server probed; then the raw
