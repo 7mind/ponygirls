@@ -87,3 +87,37 @@ test("allocated fullscreen height preserves status hints and scrolls the complet
   assert.match(shrunk, /snapshot line 39/);
   assert.match(shrunk, /esc close/);
 });
+
+for (const kind of ["status", "facts", "details"] as const) {
+  test(`fullscreen paging moves the ${kind} body instead of the transcript`, async () => {
+    const { ScrollView, TuiAltScreen, VStack, stripTerminalSequences } = await import("@earendil-works/pi-tui");
+    let input: (data: string) => void = () => assert.fail("terminal not started");
+    const tui = new TuiAltScreen({
+      columns: 64, rows: 14, kittyProtocolActive: false, start(onInput) { input = onInput; },
+      stop() {}, async drainInput() {}, write() {}, moveBy() {}, hideCursor() {}, showCursor() {},
+      clearLine() {}, clearFromCursor() {}, clearScreen() {}, setTitle() {}, setProgress() {}, setProgramStatus() {},
+    });
+    const lines = Array.from({ length: 80 }, (_, i) => `Body row ${i + 1}`);
+    const host = { title: "Status", theme: ui.PLAIN_THEME, keys: { matches: () => false }, rows: () => 14, requestRender: () => tui.requestRender(), close() {} };
+    const pane = kind === "status" ? new ui.StatusView({ ...host, text: lines.join("\n") }) : new ui.FactsView({ ...host,
+      state: { text: "off", state: "settled" }, facts: () => [lines.map(text => ({ label: "Item", value: [{ text }] }))], details: () => lines.join("\n"),
+    });
+    const chat = new ScrollView({ render: () => lines.map((_, i) => `Chat row ${i + 1}`), invalidate() {} }, { primary: true, follow: "end" });
+    tui.setLayoutRoot(new VStack([{ component: chat, basis: 3, shrink: 0 }, { component: pane, grow: 1, minSize: 0 }]));
+    tui.setFocus(pane);
+    const screen = () => { tui.renderNow(); return tui.getScreenLines().map(stripTerminalSequences).join("\n"); };
+    tui.start();
+    try {
+      if (kind === "details") input("d");
+      const initial = screen();
+      assert.match(initial, /Body row 1\b/);
+      input("\x1b[6~");
+      const next = screen();
+      assert.doesNotMatch(next, /Body row 1\b/);
+      assert.match(next, /Body row \d+/);
+      assert.match(next, /Chat row 80\b/);
+      input("\x1b[5~");
+      assert.equal(screen(), initial);
+    } finally { tui.stop(); }
+  });
+}

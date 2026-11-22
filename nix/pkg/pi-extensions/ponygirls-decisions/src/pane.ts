@@ -88,6 +88,8 @@ interface Section {
  * Ctrl+R explicitly adopts the latest revision without dropping draft text.
  */
 export class DecisionsPane extends PanelLayout implements Component, Focusable {
+  get capturesViewportInput(): boolean { return this.draft?.mode !== "confirm"; }
+
   private items: Decision[] = [];
   private selectedId: string | null;
   private all = false;

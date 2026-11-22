@@ -50,6 +50,8 @@ function formatSinceDate(ms: number): string {
 }
 
 class UsageTableView implements Component {
+	readonly capturesViewportInput = true;
+
 	private tab: TabName = "allTime";
 	private modes: Record<TabName, UsageTableMode> = { ...USAGE_TAB_DEFAULT_MODE };
 	/** Table vs distribution; distribution style. Both global, sticky across tabs. */

@@ -16,6 +16,8 @@ export interface StatusViewOptions {
 
 /** Read-only snapshot with bounded, wrapped content and keyboard/wheel scrolling. */
 export class StatusView extends PanelLayout {
+  readonly capturesViewportInput = true;
+
   private readonly options: StatusViewOptions;
   private readonly regularScroll: ScrollView;
   private readonly text: Text;

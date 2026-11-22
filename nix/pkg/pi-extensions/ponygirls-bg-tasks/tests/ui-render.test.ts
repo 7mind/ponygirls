@@ -624,3 +624,39 @@ test("background-task pagination regrows under an auto-basis editor", async (t) 
   renderLayoutFrame(root, 100, 24, () => {});
   assert.ok(pane.bodyScroll.viewportHeight > short);
 });
+
+test("fullscreen page keys target the wrapped log in detail and return to the transcript on the task list", async (t) => {
+  const { ScrollView, TuiAltScreen, stripTerminalSequences } = await import("@earendil-works/pi-tui");
+  const width = 60, height = 28;
+  let input: (data: string) => void = () => assert.fail("terminal not started");
+  const tui = new TuiAltScreen({
+    columns: width, rows: height, kittyProtocolActive: false, start(onInput) { input = onInput; },
+    stop() {}, async drainInput() {}, write() {}, moveBy() {}, hideCursor() {}, showCursor() {},
+    clearLine() {}, clearFromCursor() {}, clearScreen() {}, setTitle() {}, setProgress() {}, setProgramStatus() {},
+  });
+  const backend = new MemoryTaskBackend("paging" as SessionId);
+  const task = await backend.spawn({ label: "compiler", command: "running", cwd: "/", notify: false });
+  const rows = Array.from({ length: 45 }, (_, i) => `out-${i + 1}:`.padEnd(width, "-"));
+  backend.finish(task.id, 0, rows.join("") + "\n");
+  const view = await inspector(t, backend, PLAIN_THEME, height);
+  const chat = new ScrollView({ render: () => rows.map((_, i) => `Chat row ${i + 1}`), invalidate() {} }, { primary: true, follow: "end" });
+  tui.setLayoutRoot(new VStack([{ component: chat, basis: 4, shrink: 0 }, { component: view, grow: 1, minSize: 0 }]));
+  tui.setFocus(view);
+  const screen = () => { tui.renderNow(); return tui.getScreenLines().map(line => stripTerminalSequences(line).trimEnd()); };
+  const output = (lines: string[]) => lines.filter(line => line.startsWith("out-"));
+  const send = async (key: string) => { input(key); await view.idle(); return screen(); };
+  tui.start();
+  try {
+    assert.ok(screen().includes("Chat row 45"));
+    const tail = output(await send(ENTER));
+    assert.ok(tail.length > 1 && tail.length * 2 <= rows.length, tail.join("\n"));
+    assert.deepEqual(tail, rows.slice(-tail.length));
+    const earlier = await send(PAGE_UP);
+    assert.ok(earlier.includes("Chat row 45"), "PgUp must not move the parent transcript from detail");
+    assert.deepEqual(output(earlier), rows.slice(-2 * tail.length, -tail.length));
+    assert.deepEqual(output(await send("\x1b[6~")), tail);
+    assert.match((await send("\x1b")).join("\n"), /Background tasks/);
+    assert.ok(!(await send(PAGE_UP)).includes("Chat row 45"), "PgUp belongs to the transcript on the task list");
+    assert.ok((await send("\x1b[6~")).includes("Chat row 45"));
+  } finally { tui.stop(); }
+});

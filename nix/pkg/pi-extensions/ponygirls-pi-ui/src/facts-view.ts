@@ -141,6 +141,8 @@ interface Content {
  * like `StatusView`.
  */
 export class FactsView extends PanelLayout {
+  readonly capturesViewportInput = true;
+
   private readonly options: FactsViewOptions;
   private readonly regularScroll: ScrollView;
   private readonly detailsText: Text;

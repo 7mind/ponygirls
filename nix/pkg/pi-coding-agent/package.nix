@@ -80,6 +80,8 @@ buildNpmPackage (finalAttrs: {
     ./patches/regular-retained-viewport.patch
     ./patches/widget-registration-lifetimes.patch
     ./patches/fullscreen-capture-validity.patch
+    ./patches/extension-editor-paging.patch
+    ./patches/legacy-page-input.patch
     # Portable token-limit discovery without registering a native provider implementation.
     ./patches/model-metadata-overlay.patch
     # Pi #10781 / #11202: summaries inherit the effective Agent transport;
@@ -156,6 +158,7 @@ buildNpmPackage (finalAttrs: {
       test/interactive-mode-widget-placement.test.ts \
       test/interactive-widget-reconciliation.test.ts \
       test/interactive-mode-extension-dialogs.test.ts \
+      test/extension-editor-paging.test.ts \
       test/interactive-mode-status.test.ts \
       test/interactive-retained-viewport.test.ts \
       test/interactive-tui.test.ts \

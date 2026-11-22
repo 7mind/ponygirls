@@ -119,6 +119,8 @@ class SortPicker implements Component {
 }
 
 class StatsView implements Component {
+	readonly capturesViewportInput = true;
+
 	private readonly theme: Theme;
 	private readonly tui: TUI;
 	/** Fixed for the view lifetime. */

@@ -137,11 +137,14 @@ function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
 }
 
 export class BgInspector extends PanelLayout implements Component {
+  get capturesViewportInput(): boolean { return this.detail !== null; }
+
   private readonly deps: ViewerDeps;
   private items: TaskRecord[] = [];
   private upper: number | null = null;
   private nextAfter: number | null = null;
   private selected = 0;
+  private detailViewport: { width: number; height: number } | null = null;
   private detail: DetailState | null = null;
   private message: string | null = null;
   private busy: Promise<void> = Promise.resolve();
@@ -243,6 +246,7 @@ export class BgInspector extends PanelLayout implements Component {
   }
 
   private async openDetail(task: TaskRecord): Promise<void> {
+    this.detailViewport = null;
     this.detail = { task, start: 0, bytes: new Uint8Array(), size: 0, follow: true, scroll: 0, artifact: null };
     await this.loadDetail();
   }
@@ -451,6 +455,7 @@ export class BgInspector extends PanelLayout implements Component {
     const fit = (line: string) => truncateToWidth(line, width);
     if (t.state === "dead") out.push(fit(th.fg("warning", `dead: supervision was interrupted (${t.reason}); the process outcome is unknown${t.exit ? `, root ${formatExit(t.exit)} was observed` : ""}.`)));
     const visible = Math.max(1, this.bodyHeight(this.deps.rows() - CHROME_ROWS) - (out.length - 1));
+    if (!this.isMeasuring) this.detailViewport = { width, height: visible };
     if (d.artifact) out.push(th.fg("error", d.artifact));
     else {
       const lines = this.lines(width);
@@ -479,13 +484,13 @@ export class BgInspector extends PanelLayout implements Component {
     this.message = null;
     if (this.detail) {
       const d = this.detail;
-      const page = Math.max(1, this.bodyHeight(this.deps.rows() - CHROME_ROWS));
+      const page = this.detailViewport?.height ?? Math.max(1, this.bodyHeight(this.deps.rows() - CHROME_ROWS));
       if (matchesKey(data, Key.escape) || data === "q") {
         this.detail = null;
         void this.refresh();
       } else if (matchesKey(data, Key.up) || matchesKey(data, Key.pageUp) || data === "k") {
         const step = matchesKey(data, Key.pageUp) ? page : 1;
-        const total = this.lines(80).length;
+        const total = this.lines(this.detailViewport?.width ?? 80).length;
         d.follow = false;
         d.scroll += step;
         if (d.scroll > Math.max(0, total - page)) {
