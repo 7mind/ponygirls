@@ -48,6 +48,13 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     Check(host.exists(uri => uri.getHost!=null && uri.getRawUserInfo==null && Option(uri.getRawPath).forall(_.isEmpty) && uri.getRawQuery==null && uri.getRawFragment==null && uri.getHost.equalsIgnoreCase(configured.getHost) && port(uri)==port(configured)),"forbidden","Host not allowed")
     if(mutating) Check(count("Content-Type")==1 && r.contentType.exists(_.mediaType==MediaType.application.json),"invalid","Content-Type application/json required")
   }
+  private def profileSwitchBoundary(r: Request[IO],mutating: Boolean): Unit = {
+    accountBoundary(r,mutating)
+    // A browser's ordinary same-origin GET fetch has no Origin header. Fetch Metadata still distinguishes
+    // it from a request from a same-site sibling origin (which could carry the Strict cookie).
+    val sites=r.headers.headers.filter(_.name==CIString("Sec-Fetch-Site")).map(_.value)
+    Check((sites.isEmpty && header(r,"Origin").nonEmpty) || sites.toList==List("same-origin"),"forbidden","same-origin browser request required")
+  }
   private def accountActors(r: Request[IO]): Vector[String] = r.headers.headers.filter(_.name==CIString("X-Account-Actor")).map(_.value).toVector
   private def accountBody(r: Request[IO]): IO[io.circe.Json] = boundedBytes(r,math.min(config.maxBodyBytes,AccountJson.maxBodyBytes)).map(AccountJson.parseUtf8)
   private def accountEmpty(j: io.circe.Json): Unit = Check(j.asObject.exists(_.isEmpty),"invalid","empty object required")
@@ -172,6 +179,17 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
         val secret=cookie(r)
         auth.revokeAccountToken(auth.browser(secret),id,accountActors(r))
         accountOk.addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds))
+      }}
+    }
+    case r @ GET -> Root / "api" / "maintenance" / "v1" / "profile-switch" => handleAccount { IO.blocking {
+      profileSwitchBoundary(r,false)
+      json(Status.Ok,auth.previewOwnerProfileSwitch(auth.browser(cookie(r))).json)
+    } }
+    case r @ POST -> Root / "api" / "maintenance" / "v1" / "profile-switch" => handleAccount {
+      IO(profileSwitchBoundary(r,true)).flatMap(_ => boundedBytes(r,math.min(config.maxBodyBytes,OwnerProfileSwitch.maxBodyBytes))).flatMap { bytes => IO.blocking {
+        val request=OwnerProfileSwitch.decode(AccountJson.parseUtf8(bytes))
+        auth.applyOwnerProfileSwitch(auth.browser(cookie(r)),request,accountActors(r))
+        json(Status.Ok,request.success)
       }}
     }
     case r @ GET -> Root / "api" / "versions" => IO(json(Status.Ok,Wire.encode(VersionInfo.codecJson,Wire.versions)))

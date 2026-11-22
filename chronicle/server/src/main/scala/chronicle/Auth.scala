@@ -267,6 +267,31 @@ final class Auth(db: Database, config: Config) {
       OwnerReindexPlan(plan.currentTargetProfile,plan.targetProfile,plan.selectionHash,plan.heads,plan.alreadyCurrent,plan.replacements)
     }
   }
+  def previewOwnerProfileSwitch(i: Identity): OwnerProfileSwitch.Preview = {
+    i.requireBrowser(); i.requireScope(Scope.Read)
+    db.transaction { c =>
+      c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+      c.setReadOnly(true)
+      currentBrowser(c,i)
+      OwnerProfileSwitch.preview(c,i.user.id,db.profiles)
+    }
+  }
+  def applyOwnerProfileSwitch(i: Identity,request: OwnerProfileSwitch.Apply,actors: Vector[String]): Unit = {
+    i.requireBrowser(); i.requireScope(Scope.Read)
+    val owner=i.user.id
+    db.transaction { c =>
+      Sql.lock(c,s"mutation:$owner")
+      lockBrowser(c,i)
+      AccountJson.requireActor(actors,owner)
+      val result=withMutationReceipt(c,owner,request.requestId,request.digest) {
+        OwnerProfileSwitch(c,owner,request,db.profiles)
+        currentBrowser(c,i)
+        Result.Mutation(MutationReceipt(request.requestId,OwnerProfileSwitch.operation,None))
+      }
+      Check(result==Result.Mutation(MutationReceipt(request.requestId,OwnerProfileSwitch.operation,None)),
+        "unavailable","profile switch receipt unavailable")
+    }
+  }
   def reindexStatus(i: Identity,id: UUID): ReindexStatusResult = {
     i.requireBrowser(); i.requireScope(Scope.Read)
     db.transaction { c => c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ); currentBrowser(c,i); ReindexCohort.status(c,i.user.id,id) }
@@ -277,15 +302,19 @@ final class Auth(db: Database, config: Config) {
     Sql.lock(c,s"mutation:${i.user.id}")
     e.operation match { case _: Operation.ApplyOwnerReindex => currentBrowser(c,i); case _ => () }
     val digest = Wire.hash(Wire.canonical(Wire.encode(Operation.codecJson,e.operation)))
-    Sql.one(c,"SELECT digest,result FROM ch_mutations WHERE owner=? AND request_id=?",i.user.id,e.requestId) { r => Check(r.getString(1)==digest,"conflict","request ID bound to different payload"); Wire.decode(Result.codecJson,Sql.json(r,"result")) } match {
+    withMutationReceipt(c,i.user.id,e.requestId,digest)(mutationResult(c,i,e))
+  }}
+  /** The caller has the owner mutation mutex: a request ID cannot be rebound by a different transport. */
+  private def withMutationReceipt(c: Connection,owner: String,id: UUID,digest: String)(run: => Result): Result = {
+    Sql.one(c,"SELECT digest,result FROM ch_mutations WHERE owner=? AND request_id=?",owner,id) { r => Check(r.getString(1)==digest,"conflict","request ID bound to different payload"); Wire.decode(Result.codecJson,Sql.json(r,"result")) } match {
       case Some(r) => r
       case None =>
-        val response = mutationResult(c,i,e)
+        val response = run
         val stored = response match { case Result.Token(r) => Result.Token(r.copy(secret=None)); case other => other }
-        Sql.exec(c,"INSERT INTO ch_mutations VALUES(?,?,?,?::jsonb)",i.user.id,e.requestId,digest,Wire.encode(Result.codecJson,stored).noSpaces)
+        Sql.exec(c,"INSERT INTO ch_mutations VALUES(?,?,?,?::jsonb)",owner,id,digest,Wire.encode(Result.codecJson,stored).noSpaces)
         response
     }
-  }}
+  }
   private def mutationResult(c: Connection,i: Identity,e: ClientEnvelope): Result = e.operation match {
     case _: Operation.ApplyRetryFailed | _: Operation.ApplyOwnerReindex =>
       // Eligibility can return A→AB→A; a rejected request ID must never become executable again.

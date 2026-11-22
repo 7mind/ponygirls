@@ -59,8 +59,10 @@ object CoverageExperiment {
   )
   private def point(p: Point): Json = Json.obj("fragmentIndex"->Json.fromInt(p.fragmentIndex),"scalarOffset"->Json.fromInt(p.scalarOffset))
   private def digest(json: Json): Json = Json.fromString(Wire.hash(json.noSpaces))
-  private def request(cfg: ModelConfig,w: Window,previous: Option[Carry],mode: Mode): Json = {
-    val baseline=ProblemPassageHttp.request(cfg,w,previous)
+  private val maximumBenchmarkTokens = 32768
+  private def request(cfg: ModelConfig,w: Window,previous: Option[Carry],mode: Mode,maxTokens: Option[Int]): Json = {
+    val production=ProblemPassageHttp.request(cfg,w,previous)
+    val baseline=maxTokens.fold(production)(cap => production.mapObject(_.add("max_tokens",Json.fromInt(cap))))
     val result=mode match {
       case Mode.Baseline => baseline
       case Mode.QwenNonthinking =>
@@ -111,7 +113,7 @@ object CoverageExperiment {
     Json.obj("promptTokens"->count(usage.input),"completionTokens"->count(usage.output),
       "reasoningTokens"->count(usage.reasoningSubset),"invalid"->Json.fromBoolean(usage.invalid))
   }
-  private def evaluate(e: Example,mode: Mode,http: ModelHttp,cfg: ModelConfig,admission: ModelAdmission,results: Ref[IO,Vector[Result]],emit: Json => IO[Unit],benchmark: Boolean): IO[Unit] =
+  private def evaluate(e: Example,mode: Mode,http: ModelHttp,cfg: ModelConfig,admission: ModelAdmission,results: Ref[IO,Vector[Result]],emit: Json => IO[Unit],benchmark: Boolean,maxTokens: Option[Int]): IO[Unit] =
     admission.annotationSession.use { _ =>
       e.windows.zipWithIndex.foldLeftM(Option(State.start(new UUID(0,1),new UUID(0,2)))) { (state,entry) =>
         val (window,index)=entry
@@ -121,7 +123,7 @@ object CoverageExperiment {
         def save(attempted: Boolean,valid: Boolean,value: Json): IO[Unit] = results.update(_ :+ Result(e.id,mode,index,attempted,valid,base.deepMerge(value)))
         state match {
           case None => save(false,false,Json.obj("failure"->Json.obj("code"->Json.fromString("experiment-blocked"),"reason"->Json.fromString("previous-window-failed")))).as(None)
-          case Some(current) => IO(request(cfg,window,current.carry,mode)).attempt.flatMap {
+          case Some(current) => IO(request(cfg,window,current.carry,mode,maxTokens)).attempt.flatMap {
             case Left(error) => save(false,false,Json.obj("failure"->failure(error))).as(None)
             case Right(payload) =>
               val binding=Json.obj("requestSha256"->digest(payload),"previousSha256"->current.carry.map(c => digest(carryJson(c))).getOrElse(Json.Null))
@@ -162,14 +164,22 @@ object CoverageExperiment {
       "correctScalarsOverAllInputs"->Json.fromDoubleOrNull((scalar(0)+scalar(3)).toDouble/expectedScalars),
       "validatedOnly"->Score(scalar,bytes).json)
   }*)
-  private final case class RunConfig(annotation: ModelConfig,capacity: IndexingCapacity,client: Resource[IO,Client[IO]])
+  private final case class RunConfig(annotation: ModelConfig,capacity: IndexingCapacity,client: Resource[IO,Client[IO]],maxTokens: Option[Int])
   private def coverageConfig(path: String): RunConfig = {
     val cfg=Config.load(path)
-    RunConfig(cfg.annotation,cfg.indexing,ModelHttp.client(cfg))
+    RunConfig(cfg.annotation,cfg.indexing,ModelHttp.client(cfg),None)
+  }
+  private def benchmarkMaxTokens(config: Json,policy: AnnotationRequestPolicy): Option[Int] = {
+    val cap=config.hcursor.downField("benchmarkMaxTokens").focus.map(_.asNumber.flatMap(_.toInt)
+      .getOrElse(throw DomainError("config","invalid benchmark token cap")))
+    Check(cap.forall(n => policy==AnnotationRequestPolicy.StrictJsonSchema && n>=policy.responseTokens && n<=maximumBenchmarkTokens),
+      "config","benchmark token cap must be within strict JSON schema budget")
+    cap
   }
   private def benchmarkConfig(path: String,mode: Mode): RunConfig = {
     import Config.given
-    val cfg=Wire.parse(Files.readString(Path.of(path))).as[ModelConfig].fold(_ => throw DomainError("config","invalid annotation-only configuration"),cfg => cfg)
+    val input=Wire.parse(Files.readString(Path.of(path)))
+    val cfg=input.as[ModelConfig].fold(_ => throw DomainError("config","invalid annotation-only configuration"),cfg => cfg)
     val endpoint=java.net.URI.create(cfg.endpoint)
     Check(endpoint.getHost!=null && endpoint.getRawUserInfo==null && endpoint.getRawQuery==null && endpoint.getRawFragment==null &&
       (endpoint.getScheme=="https" || (endpoint.getScheme=="http" && Set("localhost","127.0.0.1","[::1]").contains(endpoint.getHost))),
@@ -178,7 +188,7 @@ object CoverageExperiment {
     Check(credential.isAbsolute && Files.isRegularFile(credential) && Files.isReadable(credential),"config","readable absolute credential file required")
     Check(cfg.model.nonEmpty && cfg.revision.nonEmpty && cfg.timeoutSeconds>0 && cfg.maxResponseBytes>0,"config","invalid model metadata or bounds")
     Check(mode!=Mode.QwenNonthinking || cfg.requestPolicy==AnnotationRequestPolicy.StrictJsonSchema,"config","Qwen nonthinking leg requires strict-json-schema")
-    RunConfig(cfg,benchmarkCapacity,JsonHttp.client(cfg.timeoutSeconds.seconds))
+    RunConfig(cfg,benchmarkCapacity,JsonHttp.client(cfg.timeoutSeconds.seconds),benchmarkMaxTokens(input,cfg.requestPolicy))
   }
   private def run(config: => RunConfig,out: Path,modes: Vector[Mode],benchmark: Boolean): IO[Boolean] = for {
     _ <- IO.blocking(Files.createDirectory(out))
@@ -194,7 +204,7 @@ object CoverageExperiment {
       "baselineAnnotationIdentity"->Json.fromString(ProblemPassages.identity),"timeoutSeconds"->Json.fromInt(cfg.annotation.timeoutSeconds),
       "maxResponseBytes"->Json.fromInt(cfg.annotation.maxResponseBytes),"plannedCalls"->Json.fromInt(planned),"concurrency"->Json.fromInt(cfg.capacity.annotationSessions))
     manifest=if(benchmark) baseManifest.deepMerge(Json.obj("experiment"->Json.fromString("paired-provider-first-pass"),
-      "mode"->Json.fromString(modes.head.toString),"maxTokens"->Json.fromInt(cfg.annotation.requestPolicy.responseTokens),
+      "mode"->Json.fromString(modes.head.toString),"maxTokens"->Json.fromInt(cfg.maxTokens.getOrElse(cfg.annotation.requestPolicy.responseTokens)),
       "requestOverride"->(if(modes.head==Mode.QwenNonthinking) Json.obj("chat_template_kwargs"->Json.obj("enable_thinking"->Json.False)) else Json.Null))) else baseManifest
     _ <- IO.blocking(Files.writeString(out.resolve("manifest.json"),manifest.spaces2,StandardOpenOption.CREATE_NEW))
     results <- Ref.of[IO,Vector[Result]](Vector.empty)
@@ -205,7 +215,7 @@ object CoverageExperiment {
     _ <- cfg.client.use { client =>
       val http=new ModelHttp(client,telemetry,admission)
       val jobs=Stream.emits(fixtures.flatMap(e => modes.map(m => (e,m)))).covary[IO]
-      def evaluateJob(job: (Example,Mode)): IO[Unit] = evaluate(job._1,job._2,http,cfg.annotation,admission,results,emit,benchmark)
+      def evaluateJob(job: (Example,Mode)): IO[Unit] = evaluate(job._1,job._2,http,cfg.annotation,admission,results,emit,benchmark,cfg.maxTokens)
       if(benchmark) jobs.evalMap(evaluateJob).compile.drain
       else jobs.parEvalMapUnordered(cfg.capacity.annotationSessions)(evaluateJob).compile.drain
     }.timeoutTo((planned.toLong*(cfg.annotation.timeoutSeconds.toLong+30L)+60L).seconds,emit(Json.obj("event"->Json.fromString("experiment-deadline"))))
@@ -235,7 +245,7 @@ object CoverageExperiment {
     assert(correct.scalars(1)==0 && correct.scalars(2)==0 && correct.bytes.sum>correct.scalars.sum)
     assert(score(e,w,accept(initial,w,Decision(Vector(Part.context(Point(0,0),w.terminal))))).scalars(1)>0)
     val cfg=ModelConfig("https://synthetic.invalid","synthetic","v1","/unused",900,1024,AnnotationRequestPolicy.GlmMaxReasoning)
-    val baseline=request(cfg,w,None,Mode.Baseline); val candidate=request(cfg,w,None,Mode.Candidate)
+    val baseline=request(cfg,w,None,Mode.Baseline,None); val candidate=request(cfg,w,None,Mode.Candidate,None)
     assert(baseline==ProblemPassageHttp.request(cfg,w,None))
     assert(baseline.hcursor.downField("messages").downN(0).focus==candidate.hcursor.downField("messages").downN(0).focus)
     val b=Wire.parse(baseline.hcursor.downField("messages").downN(1).get[String]("content").toOption.get)
@@ -245,11 +255,23 @@ object CoverageExperiment {
     val strict=cfg.copy(requestPolicy=AnnotationRequestPolicy.StrictJsonSchema)
     fixtures.flatMap(_.windows).foreach { window =>
       val exact=ProblemPassageHttp.request(strict,window,None)
-      val nonthinking=request(strict,window,None,Mode.QwenNonthinking)
+      val nonthinking=request(strict,window,None,Mode.QwenNonthinking,None)
       assert(nonthinking.mapObject(_.remove("chat_template_kwargs"))==exact)
       assert(nonthinking.hcursor.downField("chat_template_kwargs").focus.contains(Json.obj("enable_thinking"->Json.False)))
+      for mode <- List(Mode.Baseline,Mode.QwenNonthinking) do {
+        val expanded=request(strict,window,None,mode,Some(maximumBenchmarkTokens))
+        assert(expanded.hcursor.get[Int]("max_tokens").contains(maximumBenchmarkTokens))
+        assert(expanded.mapObject(_.remove("max_tokens"))==request(strict,window,None,mode,None).mapObject(_.remove("max_tokens")))
+      }
     }
-    try { request(cfg,w,None,Mode.QwenNonthinking); assert(false) }
+    assert(benchmarkMaxTokens(Json.obj(),strict.requestPolicy).isEmpty)
+    assert(benchmarkMaxTokens(Json.obj("benchmarkMaxTokens"->Json.fromInt(maximumBenchmarkTokens)),strict.requestPolicy).contains(maximumBenchmarkTokens))
+    for (value,policy) <- List((Json.fromInt(2047),strict.requestPolicy),(Json.fromInt(maximumBenchmarkTokens+1),strict.requestPolicy),
+      (Json.fromString(maximumBenchmarkTokens.toString),strict.requestPolicy),(Json.fromInt(maximumBenchmarkTokens),cfg.requestPolicy)) do {
+      try { benchmarkMaxTokens(Json.obj("benchmarkMaxTokens"->value),policy); assert(false) }
+      catch { case DomainError("config",_) => () }
+    }
+    try { request(cfg,w,None,Mode.QwenNonthinking,None); assert(false) }
     catch { case DomainError("config",_) => () }
     val reported=Wire.parse("""{"usage":{"prompt_tokens":42,"completion_tokens":10,"completion_tokens_details":{"reasoning_tokens":3,"text":"private"}}}""")
     assert(usageJson(reported).noSpaces=="""{"promptTokens":42,"completionTokens":10,"reasoningTokens":3,"invalid":false}""")

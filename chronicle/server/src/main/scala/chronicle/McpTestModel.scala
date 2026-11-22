@@ -82,6 +82,7 @@ object McpToolModelCodec {
 
   def metadata(config: ModelConfig): McpRunModel = McpRunModel(config.model,config.revision,config.requestPolicy.responseTokens,config.requestPolicy match {
     case AnnotationRequestPolicy.StrictJsonSchema => "configured:strict-json-schema;tool-functions"
+    case AnnotationRequestPolicy.StrictJsonSchema32k => "configured:strict-json-schema-32k;tool-functions"
     case AnnotationRequestPolicy.GlmMaxReasoning => "max"
   })
 
@@ -107,7 +108,7 @@ object McpToolModelCodec {
       "max_tokens"->Json.fromInt(config.requestPolicy.responseTokens),"stream"->Json.False,
       "tool_choice"->Json.fromString("auto"),"tools"->Json.arr(tools.map(function)*),"messages"->Json.arr(messages*))
     val result=config.requestPolicy match {
-      case AnnotationRequestPolicy.StrictJsonSchema => payload
+      case AnnotationRequestPolicy.StrictJsonSchema | AnnotationRequestPolicy.StrictJsonSchema32k => payload
       case AnnotationRequestPolicy.GlmMaxReasoning => payload.mapObject(_.add("chat_template_kwargs",Json.obj("reasoning_effort"->Json.fromString("max"))))
     }
     McpRunJson.check(result,McpRunLimits.maximumRequestBytes,"mcp-context-limit")

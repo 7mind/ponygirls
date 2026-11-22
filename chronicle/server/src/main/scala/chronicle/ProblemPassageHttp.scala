@@ -12,7 +12,7 @@ object ProblemPassageHttp {
         Json.obj("role"->Json.fromString("system"),"content"->Json.fromString(ProblemPassages.systemPrompt)),
         Json.obj("role"->Json.fromString("user"),"content"->Json.fromString(source.noSpaces))))
     val request=config.requestPolicy match {
-      case AnnotationRequestPolicy.StrictJsonSchema => payload
+      case AnnotationRequestPolicy.StrictJsonSchema | AnnotationRequestPolicy.StrictJsonSchema32k => payload
       case AnnotationRequestPolicy.GlmMaxReasoning => payload.mapObject(_.add("chat_template_kwargs",Json.obj("reasoning_effort"->Json.fromString("max"))))
     }
     val size=request.noSpaces.getBytes(UTF_8).length

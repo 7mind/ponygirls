@@ -74,6 +74,23 @@ class ProblemPassageHttpTest extends ProblemPassageContract {
     assertEquals(point.get[List[String]]("required").toOption,Some(List("fragmentIndex","scalarOffset")))
     assertEquals(point.downField("properties").downField("fragmentIndex").get[Int]("maximum").toOption,Some(value.fragments.size))
   }
+  test("BA: strict 32K policy changes only the completion cap and index identity") {
+    val legacy=AnnotationRequestPolicy.StrictJsonSchema
+    import Config.given
+    val expanded=Wire.parse("\"strict-json-schema-32k\"").as[AnnotationRequestPolicy].toOption.get
+    val base=config.copy(annotation=config.annotation.copy(requestPolicy=legacy))
+    val next=base.copy(annotation=base.annotation.copy(requestPolicy=expanded))
+    val previous=Some(accept(State.start(sessionId,namespace),window,one(window,false,"goal",Nil)).state.carry.get)
+    for carry <- List(None,previous) do {
+      val original=ProblemPassageHttp.request(base.annotation,window,carry)
+      val candidate=ProblemPassageHttp.request(next.annotation,window,carry)
+      assertEquals(original.hcursor.get[Int]("max_tokens").toOption,Some(2048))
+      assertEquals(candidate,original.mapObject(_.add("max_tokens",Json.fromInt(32768))))
+      assert(!candidate.hcursor.downField("chat_template_kwargs").succeeded)
+    }
+    assertNotEquals(IndexProfileCatalog.current(base).preferred.profile,IndexProfileCatalog.current(next).preferred.profile)
+    assertEquals(IndexProfileCatalog.current(base).preferred.embedding,IndexProfileCatalog.current(next).preferred.embedding)
+  }
   test("BA: complete encoded requests fit even maximum admitted IDs/roles, escaped source, initial+updated metadata and source tail") {
     val maximumInitial="\u0001"*summaryScalars
     val maximumUpdated="\u0002"*summaryScalars
