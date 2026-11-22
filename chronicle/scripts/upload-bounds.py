@@ -92,6 +92,15 @@ H_APPENDS, H_GROWTH, H_PASSAGE_WINDOWS, H_JOB_WAIT_S = 10, 0.005, 10, 3600
 # The server's `indexing` capacities when the key is absent (Core.scala IndexingCapacity.defaults): an explicit `indexing`
 # object must name them; the same embedding batch size keeps the checkpoints' grouping.
 INDEXING_DEFAULTS = dict(annotationSessions=4, embeddingRequests=8, embeddingBatchSize=16)
+# H's write accounting: the generation tables an append's publication may write (pg_stat_user_tables tuples inserted,
+# updated and deleted between the upload and the end of the switch's retirement, so rows removed again count too), how
+# long PostgreSQL may hold a backend's counters before an idle flush (10 s), the segment rows one switch may write
+# (constant: no growth with the versions), the tag and passage rows per piece, and the factor by which the later
+# appends' WAL, lag and writes may exceed the earlier ones' (medians of the last and first third).
+GENERATION_TABLES = ('ch_chunks', 'ch_search_chunks', 'ch_problem_pieces', 'ch_lineage_segments', 'ch_lineage_tags', 'ch_lineage_tag_deltas',
+                     'ch_generation_tags', 'ch_problem_passages', 'ch_problem_spans', 'ch_context_spans')
+PGSTAT_FLUSH_S, SEGMENT_WRITES_PER_SWITCH, TAG_WRITES_PER_PIECE, SMALL_ROWS = 11, 32, 4, 16
+GROWTH_FACTOR = 2.0
 D_BOUNDARY_WINDOWS = 2  # D′: re-annotated windows per later complete job beyond the head's (its parent's last window; one of slack)
 GNU_TIME = '/usr/bin/time'  # the CLI's own peak RSS (spec §9: the CLI under /usr/bin/time -v)
 # G (spec §9 as amended by the lead, round 2): the initial 1 GiB replacement ≤ 30 min, the growth and the edit ≤ 30 min,
@@ -2026,6 +2035,58 @@ def run_g(root):
                 servers=[s2])
 
 
+def table_writes():
+    """Cumulative tuples inserted, updated and deleted per generation table (pg_stat_user_tables), once two reads 2 s apart
+    agree and at least PGSTAT_FLUSH_S passed: the server's idle backends have flushed their counters."""
+    def read():
+        rows = sql("SELECT relname, n_tup_ins, n_tup_upd, n_tup_del FROM pg_stat_user_tables WHERE relname IN (" + ','.join(f"'{t}'" for t in GENERATION_TABLES) + ")")
+        return {name: dict(ins=int(ins), upd=int(upd), dele=int(dele)) for name, ins, upd, dele in rows}
+    started, last = time.monotonic(), read()
+    while True:
+        time.sleep(2)
+        current = read()
+        if current == last and time.monotonic() - started >= PGSTAT_FLUSH_S:
+            return current
+        assert time.monotonic() - started < 120, 'pg_stat_user_tables did not settle'
+        last = current
+
+
+def writes_between(before, after):
+    return {name: {kind: after[name][kind] - before[name][kind] for kind in ('ins', 'upd', 'dele')} for name in after}
+
+
+def append_bounds(revision):
+    """The work one append's publication may do, from its addition and the parent's cut: the tail T (window K and the added
+    pieces) plus the open passage B's pieces before the cut, never the prefix. Each entry (what, measured, limit); write
+    deltas only when the revision has them (`writes`)."""
+    tail, open_passage, cut = revision['written']['tail'], revision['parentCut']['openPassagePieces'], revision['parentCut']
+    work = tail + open_passage
+    bounds = [('annotation calls (added windows + window K)', revision['calls']['annotation'], revision['addedWindows'] + 1),
+              ('embedding inputs (the tail\'s pieces; rewritten pieces keep their vectors)', revision['calls']['inputs'], tail),
+              ('segment rows of the version (closed + inserted)', revision['segments']['closed'] + revision['segments']['inserted'], SEGMENT_WRITES_PER_SWITCH)]
+    writes = revision.get('writes')
+    if writes:
+        def total(*names, kinds=('ins', 'upd', 'dele')):
+            return sum(writes[name][kind] for name in names for kind in kinds)
+        bounds += [('chunk inserts', total('ch_chunks', kinds=('ins',)), work), ('chunk updates and deletes', total('ch_chunks', kinds=('upd', 'dele')), work),
+                   ('search row inserts (HNSW insertions)', total('ch_search_chunks', kinds=('ins',)), work),
+                   ('search row updates and deletes (retirement)', total('ch_search_chunks', kinds=('upd', 'dele')), work),
+                   ('piece link inserts', total('ch_problem_pieces', kinds=('ins',)), work), ('piece link updates and deletes', total('ch_problem_pieces', kinds=('upd', 'dele')), work),
+                   ('segment row writes', total('ch_lineage_segments'), SEGMENT_WRITES_PER_SWITCH),
+                   ('tag row writes', total('ch_lineage_tags', 'ch_lineage_tag_deltas', 'ch_generation_tags'), TAG_WRITES_PER_PIECE * work + SMALL_ROWS),
+                   ('passage, span and Context span writes', total('ch_problem_passages', 'ch_problem_spans', 'ch_context_spans'), work + SMALL_ROWS)]
+    return [(what, measured, limit) for what, measured, limit in bounds] + [('(prefix pieces, not a limit)', cut['firstOrdinal'], None)]
+
+
+def no_growth(appends, key):
+    """The medians of `key` over the first and the last third of the appends, and whether the last stays within
+    GROWTH_FACTOR of the first (no growth across versions)."""
+    third = max(1, len(appends) // 3)
+    first, last = sorted(key(a) for a in appends[:third]), sorted(key(a) for a in appends[-third:])
+    early, late = first[len(first) // 2], last[len(last) // 2]
+    return dict(early=early, late=late, ok=late <= GROWTH_FACTOR * max(early, 1))
+
+
 def run_h(root):
     """H (ACC3b, stage l5): a ≥ 1 GiB session indexed (a root), then H_APPENDS appends of +0.5 % through the collector's
     incremental path, each waiting for its publication. Per revision: the rows written (chunks = search rows = HNSW
@@ -2065,6 +2126,7 @@ def run_h(root):
         number = head['revision'] + 1
         with Phase(f'H3.{k} append {k} of +{H_GROWTH:.1%} and its publication'):
             parent = one("SELECT published FROM ch_sources WHERE id=:'arg0'", session)
+            writes_before = table_writes()
             search_before, hnsw_before, calls_before, lsn = h.search_rows(session), hnsw_bytes(), h.stub.counts(), wal_lsn()
             fixture.write(step, RARE_APPENDED)
             h.uploaded(f'H3.{k}', h.collector.once(f'H3.{k} append'), 1, 0)
@@ -2079,12 +2141,14 @@ def run_h(root):
             check(f'H3.{k}: the job of revision {number} completes and publishes at the head ({lag:.0f} s from the upload)',
                   job['state'] == 'Complete' and h.published(session) == number, job)
             h.wait(f'H3.{k} retirement', lambda: h.retired(session), period=1)
+            writes = writes_between(writes_before, table_writes())
             calls = {key: value - calls_before[key] for key, value in h.stub.counts().items()}
             rows = h.generation_rows(session, parent)
             kinds = h.publications(session).get(number)
             revision = dict(revision=number, kind=kinds, lagSeconds=round(lag, 1), uploadWalBytes=upload_wal, indexingWalBytes=wal_since(lsn),
                             searchRowsRetired=search_before + rows['written']['searchRows'] - h.search_rows(session), hnswBytesDelta=hnsw_bytes() - hnsw_before,
-                            calls=calls, collectorCpuSeconds=collectors[-1]['cpuSeconds'], **rows)
+                            calls=calls, collectorCpuSeconds=collectors[-1]['cpuSeconds'], writes=writes, **rows)
+            revision['bounds'] = append_bounds(revision)
             revisions.append(revision)
             note(f'H3.{k}: {json.dumps(revision)}')
             written, cut = rows['written'], rows['parentCut']
@@ -2094,8 +2158,17 @@ def run_h(root):
                   not rows['root'] and rows['version'] == revisions[-2]['version'] + 1 and kinds == ['incremental']
                   and written['chunks'] == written['tail'] + written['rewrittenBeforeCut'] == written['searchRows']
                   and written['rewrittenBeforeCut'] in (0, cut['openPassagePieces']), revision)
-    growth = time.monotonic() - growth_started
+            over = [(what, measured, limit) for what, measured, limit in revision['bounds'] if limit is not None and measured > limit]
+            check(f'H3.{k}: every write and model call within the addition and the open passage at the cut (tail {written["tail"]:,} + open passage '
+                  f'{cut["openPassagePieces"]:,}; prefix {cut["firstOrdinal"]:,} pieces): {[(what, measured, limit) for what, measured, limit in revision["bounds"] if limit is not None]}',
+                  not over, over)
+    growth_seconds = time.monotonic() - growth_started
     appends = revisions[1:]
+    for what, key in (('indexing WAL', lambda a: a['indexingWalBytes']), ('lag from the upload to the switch', lambda a: a['lagSeconds']),
+                      ('generation table writes', lambda a: sum(sum(kinds.values()) for kinds in a['writes'].values()))):
+        trend = no_growth(appends, key)
+        check(f'H: {what} does not grow across the versions: median {trend["late"]:,} over the last third of the appends against {trend["early"]:,} over the first '
+              f'(within {GROWTH_FACTOR}×)', trend['ok'], trend)
     lags = [r['lagSeconds'] for r in appends]
     note(f'H: lag from upload to switch per append {lags} s; chunks written {[r["written"]["chunks"] for r in appends]}')
     queries = [RARE, RARE_APPENDED, COMMON, one("SELECT value->>'text' FROM ch_chunks c JOIN ch_sources s ON c.generation=s.published WHERE s.id=:'arg0' "
@@ -2132,10 +2205,10 @@ def run_h(root):
     check(f'H6: {len(incremental)} reader answers of the incremental head equal the root republication\'s up to ids ({len(queries)} queries × 3 modes, '
           f'chunk and passage pages, the session){"; differing: " + str(differing) if differing else ""}', not differing,
           {key: dict(incremental=str(incremental.get(key))[:800], republished=str(republished.get(key))[:800]) for key in differing[:3]})
-    note(f'H: the {H_APPENDS} appends and their publications took {growth / 60:.1f} min')
+    note(f'H: the {H_APPENDS} appends and their publications took {growth_seconds / 60:.1f} min')
     full_server = h.stop()
     h.stub.stop()
-    return dict(fixture=fixture.summary(), shape=h.stub.shape_file.read_text(), rootIndexing=root_indexing, revisions=revisions, growthSeconds=round(growth, 1),
+    return dict(fixture=fixture.summary(), shape=h.stub.shape_file.read_text(), rootIndexing=root_indexing, revisions=revisions, growthSeconds=round(growth_seconds, 1),
                 republication=full, answers=len(incremental), differing=differing, servers=[uploads, incremental_server, full_server])
 
 
