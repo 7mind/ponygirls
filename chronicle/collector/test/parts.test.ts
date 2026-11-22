@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync, appendFileSync, ftruncateSync } from 'node:fs';
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync, writeSync, appendFileSync, ftruncateSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { Collector, COLLECTION_PAUSED_TEXT, policyDigest, uploadsPausedText } from '../src/collector.ts';
+import { Collector, COLLECTION_PAUSED_TEXT, policyDigest, RACY_STAT_WINDOW_MS, uploadsPausedText } from '../src/collector.ts';
 import { loadConfig } from '../src/config.ts';
 import { SqliteSpool, type Spool } from '../src/spool.ts';
 import { encodeSnapshot, HttpIngester, sourceIdentity, sourceKey } from '../src/ingest.ts';
@@ -19,7 +19,7 @@ import { parseTranscript } from '../src/parsers.ts';
 import { resolveRuntimePrivacy } from '../src/runtime-privacy.ts';
 import { formatCollectorStatus, PAUSE_NOTICE_INTERVAL_MS, PauseNotices } from '../src/status.ts';
 import { hash } from '../src/domain.ts';
-import { noGit, syntheticSecrets } from './helpers.ts';
+import { noGit, syntheticSecrets, lateWall, withCtime } from './helpers.ts';
 import { FakeChronicle } from './fake-server.ts';
 import type { ProgressReporter } from '../src/progress.ts';
 import { CollectorProgressAck } from '../../generated/typescript/chronicle/api/CollectorProgressAck.js';
@@ -46,11 +46,11 @@ async function harness(extra: Record<string, unknown> = {}) {
   let spool: Spool = new SqliteSpool(join(dir, 'state'));
   // Every credential file reads as `secret.value`: changing it rotates the runtime privacy policy.
   const secret = { value: 'synthetic-default-credential' }; const secrets = { read: (_path: string) => secret.value };
-  // The backoff jitter, in [0, 1).
-  const jitter = { value: 0 };
-  const collector = (more: Record<string, unknown> = {}) => { const config = settings(more); return new Collector(config, spool, new HttpIngester(config), () => jitter.value, noGit, reporter, secrets, new HttpUploader(config)); };
+  // The backoff jitter, in [0, 1), and the wall clock in ms (by default long after every file change).
+  const jitter = { value: 0 }; const wall = { value: lateWall() };
+  const collector = (more: Record<string, unknown> = {}) => { const config = settings(more); return new Collector(config, spool, new HttpIngester(config), () => jitter.value, () => wall.value, noGit, reporter, secrets, new HttpUploader(config)); };
   return {
-    dir, roots, server, reports, input, settings, collector, secret, jitter,
+    dir, roots, server, reports, input, settings, collector, secret, jitter, wall,
     get spool() { return spool; },
     /** A restart: the spool reopened from disk. */
     reopen() { spool.close(); spool = new SqliteSpool(join(dir, 'state')); },
@@ -256,6 +256,55 @@ test('UploadParts reads the changed file of a stopped intent as before, and of a
     assert.equal(passAt(backoff), 1);
     await h.run(1_000);
     assert.deepEqual([passAt(backoff), h.spool.dropped().map(entry => entry.reason)], [1_000, ['source-changed']]);
+  } finally { await h.close(); }
+});
+
+// Every change in the RacyStat tests lands in this ctime tick (ms since the epoch): it holds size, mtime and ctime equal.
+const RACY_TICK_MS = 1_800_000_000_000;
+const inRacyTick = <T>(body: () => Promise<T>): Promise<T> => withCtime(() => BigInt(RACY_TICK_MS) * 1_000_000n, body);
+for (const protocol of ['whole', 'parts'] as const) {
+  test(`RacyStat ${protocol}: a rewrite keeping the stat right after a settled read is read at the next cycle and archived; a file read long after its change is not read again`, async () => {
+    const h = await harness({ uploadProtocol: protocol });
+    try {
+      const path = join(h.roots.pi, 's.jsonl'); const mtime = new Date('2026-01-01T00:00:00Z');
+      const version = (text: string) => jsonl(piHeader('pi-racy'), piMessage('m1', text));
+      await inRacyTick(async () => {
+        writeFileSync(path, version('first version')); utimesSync(path, mtime, mtime);
+        h.wall.value = RACY_TICK_MS + 1;
+        assert.equal((await h.run(1)).uploaded, 1);
+        // Rewritten in place within the tick, at the same size and mtime: the stat is equal.
+        writeFileSync(path, version('other version')); utimesSync(path, mtime, mtime);
+        h.wall.value = RACY_TICK_MS + RACY_STAT_WINDOW_MS + 1;
+        assert.deepEqual(await h.run(2).then(counters => [counters.scanned, counters.uploaded]), [1, 1]);
+        assert.deepEqual([...h.server.heads.values()].map(head => head.digest), [hash(readFileSync(path))]);
+        // That read came long after the change: the unchanged file is not read again.
+        assert.deepEqual(await h.run(3).then(counters => [counters.scanned, counters.scannedBytes, counters.unchanged]), [0, 0, 1]);
+      });
+    } finally { await h.close(); }
+  });
+}
+
+test('RacyStat a file refused for an identifier or for a record over the limit, rewritten keeping its stat right after that read, is read at the next cycle and uploaded', async () => {
+  const h = await harness({ maxRecordBytes: MiB });
+  try {
+    const identifier = join(h.roots.pi, 'identifier.jsonl'), record = join(h.roots.pi, 'record.jsonl'); const mtime = new Date('2026-01-01T00:00:00Z');
+    const withId = (id: string) => `{"type":"session","version":3,"id":"pi-racy-identifier"}\n{"type":"message","id":"${id}","parentId":null,"message":{"role":"user","content":"synthetic"}}\n`;
+    // Two records under the limit, and as many bytes in one record over it (words: redaction keeps them).
+    const words = (bytes: number) => 'synthetic words '.repeat(Math.ceil(bytes / 16)).slice(0, bytes);
+    const split = jsonl(piHeader('pi-racy-record'), piMessage('a', words(0.6 * MiB)), piMessage('b', words(0.6 * MiB)));
+    const over = jsonl(piHeader('pi-racy-record'), piMessage('a', words(Buffer.byteLength(split) - Buffer.byteLength(jsonl(piHeader('pi-racy-record'), piMessage('a', ''))))));
+    assert.equal(Buffer.byteLength(over), Buffer.byteLength(split));
+    await inRacyTick(async () => {
+      writeFileSync(identifier, withId('m\\ud800')); writeFileSync(record, over);
+      for (const path of [identifier, record]) utimesSync(path, mtime, mtime);
+      h.wall.value = RACY_TICK_MS + 1;
+      assert.deepEqual(await h.run(1).then(counters => [counters.quarantined, counters.uploaded]), [2, 0]);
+      writeFileSync(identifier, withId('mabcdef')); writeFileSync(record, split);
+      for (const path of [identifier, record]) utimesSync(path, mtime, mtime);
+      h.wall.value = RACY_TICK_MS + RACY_STAT_WINDOW_MS + 1;
+      assert.deepEqual(await h.run(2).then(counters => [counters.scanned, counters.uploaded, counters.quarantined]), [2, 2, 0]);
+      assert.deepEqual([...h.server.heads.values()].map(head => head.digest).sort(), [identifier, record].map(path => hash(readFileSync(path))).sort());
+    });
   } finally { await h.close(); }
 });
 

@@ -14,7 +14,7 @@ import { Collector } from '../src/collector.ts';
 import { loadConfig } from '../src/config.ts';
 import { UploadError, type Ingester } from '../src/ingest.ts';
 import { FileSecretReader } from '../src/runtime-privacy.ts';
-import { noGit, acceptingProgress } from './helpers.ts';
+import { noGit, acceptingProgress, lateWall } from './helpers.ts';
 import { IngestReceipt } from '../../generated/typescript/chronicle/api/IngestReceipt.js';
 
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
@@ -197,7 +197,7 @@ test('GoodCommunication --clear-policy-tombstones lists, then once clears, only 
     // The dry run opens the state read-only: absent state stays absent, existing state keeps its bytes and modes.
     assert.equal(answer(), 'No collector state yet: nothing to clear.\n'); assert.equal(existsSync(state), false);
     const spool = new SqliteSpool(state);
-    const collect = (now: number) => new Collector(loadConfig(settings), spool, ingester, () => 0, noGit, acceptingProgress, new FileSecretReader()).runOnce(now);
+    const collect = (now: number) => new Collector(loadConfig(settings), spool, ingester, () => 0, lateWall, noGit, acceptingProgress, new FileSecretReader()).runOnce(now);
     try {
       // What an earlier release leaves: revision 1 acknowledged, then a policy change dropped the queued revision 2 and tombstoned its source.
       writeFileSync(transcript, raw); assert.equal((await collect(1)).uploaded, 1);

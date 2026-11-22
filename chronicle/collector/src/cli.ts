@@ -151,7 +151,7 @@ async function main(): Promise<void> {
       else print(spool.controls());
       return;
     }
-    const collector = new Collector(config, spool, new HttpIngester(config), Math.random, new LocalGitMetadata('git', 1000, 65536), new HttpProgressReporter(config), new FileSecretReader(), new HttpUploader(config));
+    const collector = new Collector(config, spool, new HttpIngester(config), Math.random, Date.now, new LocalGitMetadata('git', 1000, 65536), new HttpProgressReporter(config), new FileSecretReader(), new HttpUploader(config));
     const printStatus = (): void => {
       const status = collector.status();
       if (text) process.stdout.write(formatCollectorStatus(status));

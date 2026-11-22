@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { Collector, policyDigest } from '../src/collector.ts';
-import { noGit, acceptingProgress, syntheticSecrets } from './helpers.ts';
+import { noGit, acceptingProgress, syntheticSecrets, lateWall, withCtime } from './helpers.ts';
 import { loadConfig } from '../src/config.ts';
 import { SqliteSpool, MemorySpool } from '../src/spool.ts';
 import { UploadError, encodeSnapshot, sourceIdentity, sourceKey, type Ingester } from '../src/ingest.ts';
@@ -40,28 +40,34 @@ function setup(extra: Record<string, unknown>) {
   return { dir, source, config };
 }
 
-test('BG observed quiet evidence, same-size/mtime replacement, resumption, truncation and digest dedupe', async () => {
+test('BG observed quiet evidence, same-size/mtime rewrite in place (ctime only) and replacement (inode only), resumption, truncation and digest dedupe', async () => {
   const { dir, source, config } = setup({}); const spool = new MemorySpool(); const ingester = new DummyIngester();
   try {
-    const path = join(source, 's.jsonl'); const raw = fixture('pi'); writeFileSync(path, raw);
-    const collector = new Collector(config, spool, ingester, () => 0.5, noGit, acceptingProgress, syntheticSecrets);
-    assert.equal((await collector.runOnce(100)).waiting, 1);
-    assert.equal((await collector.runOnce(110)).uploaded, 1);
-    assert.equal((await collector.runOnce(120)).unchanged, 1);
-    const originalTime = new Date('2026-01-01T00:00:00Z'); utimesSync(path, originalTime, originalTime);
-    await collector.runOnce(130);
-    // Rewritten in place with the same size and mtime, the file would differ only in ctime, which the kernel advances in
-    // coarse ticks: within the tick of the last observation the stat is equal (seen at the next change, README). A
-    // replacement with the same size and mtime differs in its inode.
-    const replacement = `${path}.new`; writeFileSync(replacement, raw.replace('left branch', 'next branch'));
-    utimesSync(replacement, originalTime, originalTime); renameSync(replacement, path);
-    assert.equal((await collector.runOnce(140)).waiting, 1);
-    assert.equal((await collector.runOnce(150)).uploaded, 1);
-    const second = IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(ingester.payloads[1]!) as unknown);
-    assert.equal(second.expectedRevision, 1); assert.equal(second.completion, 'Quiescent'); assert.equal(second.metadata.endedAt, undefined);
-    writeFileSync(path, raw.split('\n').slice(0, 2).join('\n') + '\n');
-    await collector.runOnce(160); assert.equal((await collector.runOnce(170)).uploaded, 1);
-    assert.equal(ingester.payloads.length, 3);
+    // The ctime tick is the test's: a change advances it only where the test says so.
+    let tick = 1n;
+    await withCtime(() => tick, async () => {
+      const path = join(source, 's.jsonl'); const raw = fixture('pi'); writeFileSync(path, raw);
+      const collector = new Collector(config, spool, ingester, () => 0.5, lateWall, noGit, acceptingProgress, syntheticSecrets);
+      assert.equal((await collector.runOnce(100)).waiting, 1);
+      assert.equal((await collector.runOnce(110)).uploaded, 1);
+      assert.equal((await collector.runOnce(120)).unchanged, 1);
+      const originalTime = new Date('2026-01-01T00:00:00Z'); utimesSync(path, originalTime, originalTime); tick++;
+      await collector.runOnce(130);
+      // Rewritten in place with the same size and mtime, in the next ctime tick: only ctime differs.
+      writeFileSync(path, raw.replace('left branch', 'next branch')); utimesSync(path, originalTime, originalTime); tick++;
+      assert.equal((await collector.runOnce(140)).waiting, 1);
+      assert.equal((await collector.runOnce(150)).uploaded, 1);
+      const second = IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(ingester.payloads[1]!) as unknown);
+      assert.equal(second.expectedRevision, 1); assert.equal(second.completion, 'Quiescent'); assert.equal(second.metadata.endedAt, undefined);
+      // Replaced with the same size and mtime within the same ctime tick: only the inode differs.
+      const replacement = `${path}.new`; writeFileSync(replacement, raw.replace('left branch', 'last branch'));
+      utimesSync(replacement, originalTime, originalTime); renameSync(replacement, path);
+      assert.equal((await collector.runOnce(152)).waiting, 1);
+      assert.equal((await collector.runOnce(162)).uploaded, 1);
+      writeFileSync(path, raw.split('\n').slice(0, 2).join('\n') + '\n');
+      await collector.runOnce(170); assert.equal((await collector.runOnce(180)).uploaded, 1);
+      assert.equal(ingester.payloads.length, 4);
+    });
   } finally { spool.close(); rmSync(dir, { recursive: true }); }
 });
 
@@ -69,17 +75,17 @@ test('BG lost ACK survives SQLite restart and retries exact payload/request ID; 
   const { dir, source, config } = setup({ quietMs: 0 }); let spool = new SqliteSpool(config.stateDir); const ingester = new DummyIngester(); ingester.loseACK = true;
   try {
     writeFileSync(join(source, 's.jsonl'), fixture('pi'));
-    const first = await new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(100);
+    const first = await new Collector(config, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets).runOnce(100);
     assert.equal(first.uploadFailures, 1); assert.equal(first.pending, 1);
     const queued = spool.queue()[0]!; const namespace = spool.namespace; spool.close(); spool = new SqliteSpool(config.stateDir);
     assert.equal(spool.namespace, namespace);
-    assert.equal((await new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(101)).uploaded, 1);
+    assert.equal((await new Collector(config, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets).runOnce(101)).uploaded, 1);
     assert.equal(ingester.payloads[0], ingester.payloads[1]);
     writeFileSync(join(source, 's.jsonl'), fixture('pi').replace('left branch', 'resumed branch'));
     ingester.conflict = true;
-    const failed = await new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(102);
+    const failed = await new Collector(config, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets).runOnce(102);
     assert.equal(failed.conflicts, 1); assert.equal(spool.head(queued.sourceKey).revision, 1);
-    await new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(103);
+    await new Collector(config, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets).runOnce(103);
     assert.equal(ingester.payloads.length, 3);
   } finally { spool.close(); rmSync(dir, { recursive: true }); }
 });
@@ -90,7 +96,7 @@ test('BG Pi subagent projection preserves pre-upgrade pending bytes and acknowle
   const directory = join(dir, '.pi/agent/subagents/root/sessions', agent); mkdirSync(directory, { recursive: true }); const path = join(directory, 'session.jsonl');
   const raw = '{"type":"session","version":3,"id":"child-producer"}\n' + JSON.stringify({ type: 'message', id: 'u', message: { role: 'user', content: header + 'Task title' } }) + '\n';
   const decode = (payload: string) => IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(payload) as unknown);
-  const collect = (now: number) => new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(now);
+  const collect = (now: number) => new Collector(config, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets).runOnce(now);
   try {
     writeFileSync(path, raw); const runtime = resolveRuntimePrivacy(config, syntheticSecrets), parsed = parseTranscript('pi', Buffer.from(raw), path, runtime.policy);
     const identity = sourceIdentity(spool.namespace, 'native', 'pi', parsed, path), key = sourceKey(identity), requestId = randomUUID();
@@ -120,7 +126,7 @@ test('BG partial line waits then visible quarantine, exclusions and binary polic
     writeFileSync(join(source, 'partial.jsonl'), '{"type":"session"');
     writeFileSync(join(source, 'excluded.jsonl'), fixture('pi').replace('/synthetic/project', '/excluded/project'));
     writeFileSync(join(source, 'allowed.jsonl'), fixture('pi'));
-    const collector = new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets);
+    const collector = new Collector(config, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
     const initial = await collector.runOnce(1); assert.equal(initial.waiting, 1); assert.equal(initial.excluded, 1); assert.equal(initial.uploaded, 1);
     assert.equal((await collector.runOnce(11)).quarantined, 1);
     assert.ok(collector.status().diagnostics.some(d => d.code === 'partial-line-expired'));
@@ -133,7 +139,7 @@ test('BG copied IDs across profiles stay independent; new profiles discovered af
   const { dir, config } = setup({ quietMs: 0, discoverYolo: true, roots: [] }); const spool = new MemorySpool(); const ingester = new DummyIngester();
   try {
     const make = (profile: string, value: string) => { const path = join(dir, '.config/yolo', profile, 'pi/home/agent/sessions/project'); mkdirSync(path, { recursive: true }); writeFileSync(join(path, 's.jsonl'), value); };
-    make('one', fixture('pi')); const collector = new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets);
+    make('one', fixture('pi')); const collector = new Collector(config, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
     assert.equal((await collector.runOnce(1)).uploaded, 1);
     make('two', fixture('pi').replace('left branch', 'other branch'));
     assert.equal((await collector.runOnce(2)).uploaded, 1);
@@ -148,17 +154,17 @@ test('BG privacy change discards pending bytes without tombstoning: the next sca
   const { dir, source, config } = setup({ quietMs: 0 }); const spool = new MemorySpool(); const ingester = new DummyIngester(); ingester.loseACK = true;
   try {
     writeFileSync(join(source, 's.jsonl'), fixture('pi'));
-    await new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(1);
+    await new Collector(config, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets).runOnce(1);
     const [old] = spool.queue(); assert.ok(old !== undefined); assert.equal(ingester.payloads.length, 1);
     const altered = { ...config, redactions: { fieldNames: ['content'], textPatterns: [], secretFiles: [] } };
-    const result = await new Collector(altered, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(2);
+    const result = await new Collector(altered, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets).runOnce(2);
     assert.equal(result.quarantined, 1); assert.equal(result.enqueued, 1); assert.equal(result.uploaded, 1); assert.equal(spool.queue().length, 0);
     assert.deepEqual(spool.dropped(), [{ requestId: old.requestId, sourceKey: old.sourceKey, reason: 'privacy-or-destination-changed' }]);
     assert.equal(spool.head(old.sourceKey).tombstone, false); assert.equal(spool.head(old.sourceKey).revision, 1);
     const [before, ...after] = ingester.payloads.map(payload => IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(payload) as unknown));
     // The one upload after the change is a new request with the content re-read and redacted under the new policy.
     assert.deepEqual(after.map(request => [request.requestId === old.requestId, request.files[0]!.content === before!.files[0]!.content, request.expectedRevision]), [[false, false, 0]]);
-    const limited = new Collector({ ...config, maxFileBytes: 1 }, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets);
+    const limited = new Collector({ ...config, maxFileBytes: 1 }, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
     assert.equal((await limited.runOnce(3)).quarantined, 1);
     const size = Buffer.byteLength(fixture('pi'));
     assert.deepEqual(limited.status().diagnostics.find(d => d.code === 'snapshot-too-large'), { rootId: 'fixture', pathId: hash(join(source, 's.jsonl')), code: 'snapshot-too-large', measured: size, limit: 1 });
@@ -170,7 +176,7 @@ test('BG session exclusions match producer/subagent identity, not an arbitrary m
   const { dir, source, config } = setup({ quietMs: 0, exclusions: { sessions: ['u'] } }); const spool = new MemorySpool(); const ingester = new DummyIngester();
   try {
     writeFileSync(join(source, 's.jsonl'), fixture('pi'));
-    assert.equal((await new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(1)).uploaded, 1);
+    assert.equal((await new Collector(config, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets).runOnce(1)).uploaded, 1);
   } finally { spool.close(); rmSync(dir, { recursive: true }); }
 });
 
@@ -181,7 +187,7 @@ test('BG Pi restoration episodes preserve divergent histories and stable CAS acr
   const path = join(dir, '.pi/agent/subagents/root/sessions', agent); mkdirSync(path, { recursive: true });
   const restoredName = 'restored-12345678-abcdef01.jsonl';
   const decode = (payload: string) => IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(payload) as unknown);
-  const collect = (now: number) => new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(now);
+  const collect = (now: number) => new Collector(config, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets).runOnce(now);
   try {
     const raw = fixture('pi'); writeFileSync(join(path, '2026-01-01_original.jsonl'), raw);
     assert.equal((await collect(1)).uploaded, 1);
@@ -216,7 +222,7 @@ test('BG Pi restoration episodes preserve divergent histories and stable CAS acr
 
 test('BG a file whose stat is unchanged since an acknowledged read is not read again until its stat or the policy changes', async () => {
   const { dir, source, config } = setup({ quietMs: 0 }); let spool = new SqliteSpool(config.stateDir); const ingester = new DummyIngester();
-  const collect = (now: number, c = config) => new Collector(c, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(now);
+  const collect = (now: number, c = config) => new Collector(c, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets).runOnce(now);
   try {
     const path = join(source, 's.jsonl'); writeFileSync(path, fixture('pi'));
     const first = await collect(1); assert.equal(first.scanned, 1); assert.equal(first.uploaded, 1);
@@ -235,7 +241,7 @@ test('BG files beyond the scan budget are deferred, not too large, and read firs
   const session = (id: string, text: string) => fixture('pi').replace('pi-synthetic', id).replace('left branch', text);
   const size = Buffer.byteLength(session('pi-synthetic-a', 'left branch'));
   const { dir, source, config } = setup({ quietMs: 0, maxFileBytes: 2 * size, maxScanBytes: 2 * size }); const spool = new MemorySpool(); const ingester = new DummyIngester();
-  const collector = new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets);
+  const collector = new Collector(config, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
   const uploadedSessions = () => ingester.payloads.splice(0).map(p => IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(p) as unknown).source.producerSessionId).sort();
   const ids = ['pi-synthetic-a', 'pi-synthetic-b', 'pi-synthetic-c'];
   try {
@@ -257,7 +263,7 @@ test('BG files beyond the scan budget are deferred, not too large, and read firs
 
 test('BG a payload the server refuses as too large stops after one attempt and is reported with its size', async () => {
   const { dir, source, config } = setup({ quietMs: 0 }); const spool = new MemorySpool(); const ingester = new DummyIngester(); ingester.tooLarge = true;
-  const collector = new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets);
+  const collector = new Collector(config, spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
   try {
     writeFileSync(join(source, 's.jsonl'), fixture('pi'));
     const first = await collector.runOnce(1); assert.equal(first.uploadFailures, 1); assert.equal(first.stopped, 1);

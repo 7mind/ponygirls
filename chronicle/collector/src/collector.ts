@@ -30,11 +30,20 @@ import type { CollectionOrigin } from './admission.ts';
 export type { Counters } from './domain.ts';
 // `read` is null for a file not read again because its stat is unchanged since a settled read. A whole read holds the
 // transcript; a preflight (parts) holds what pass 1 declared and the checkpoint state it ended with.
-type CandidateRead = { transcript: ParsedTranscript; stat: SourceStat } | { streamed: StreamedTranscript; stat: SourceStat; end: PassState | null };
+// `racy` marks a read whose stat could still equal a later rewrite's (`racyStat`).
+type CandidateRead = { transcript: ParsedTranscript; stat: SourceStat; racy: boolean } | { streamed: StreamedTranscript; stat: SourceStat; end: PassState | null; racy: boolean };
 interface Candidate { file: SourceFile; read: CandidateRead | null; key: string; digest: string; evidence: AdmissionEvidence }
 const controlsDigest = (controls: Controls): string => hash(JSON.stringify(controls.exclusions));
 // Overlapping roots can discover one path twice, as different sources.
 const fileId = (file: SourceFile): string => hash(JSON.stringify([file.root.id, file.root.format, file.path]));
+/** File times advance in coarse ticks: the kernel's timer tick (at most 10 ms), whole seconds on some filesystems, 2 s for
+ * FAT. A rewrite within the tick of the last change keeps size, mtime and ctime, so a stat taken within this window after
+ * that change cannot vouch for the content read with it. 3 s covers the coarsest tick with a margin; read within it, the
+ * file is read once more at the next cycle. */
+export const RACY_STAT_WINDOW_MS = 3_000;
+/** Git's racy-clean rule on ctime, which every change sets from the kernel clock (mtime can be set into the future): the stat
+ * was taken at or after wall-clock `wallMs`, and its ctime is not older than the window before that, or is in the future. */
+const racyStat = (stat: SourceStat, wallMs: number): boolean => BigInt(stat.ctimeNs) >= BigInt(wallMs - RACY_STAT_WINDOW_MS) * 1_000_000n;
 /** The observation signature: a file is read once its stat has not changed for `quietMs` (append-limits spec §2.2 item 1). */
 const statSignature = (stat: SourceStat): string => `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
 /** The same file as at `before`, only grown or unchanged in size: same device and inode, not shorter. A file replaced
@@ -101,8 +110,9 @@ export interface UploadStatus { requestId: string; sourceKey: string; attempts: 
 interface Queued { requestId: string; sourceKey: string; status: EntryStatus; origin: CollectionOrigin; evidence: AdmissionEvidence | null }
 export class Collector {
   private readonly config: Config; private readonly spool: Spool; private readonly ingester: Ingester; private readonly random: () => number; private readonly git: GitMetadata;
-  /** `uploader` is required for `uploadProtocol: "parts"`. */
-  constructor(config: Config, spool: Spool, ingester: Ingester, random: () => number, git: GitMetadata, private readonly reporter: ProgressReporter, private readonly secrets: SecretReader, private readonly uploader?: Uploader) {
+  /** `wall` is the wall clock (ms since the epoch) that file times are compared with, next to the cycle clock
+   * `runOnce(now)`. `uploader` is required for `uploadProtocol: "parts"`. */
+  constructor(config: Config, spool: Spool, ingester: Ingester, random: () => number, private readonly wall: () => number, git: GitMetadata, private readonly reporter: ProgressReporter, private readonly secrets: SecretReader, private readonly uploader?: Uploader) {
     this.config = config; this.spool = spool; this.ingester = ingester; this.random = random; this.git = git;
     if (config.uploadProtocol === 'parts' && uploader === undefined) throw new CollectorError('uploader-required');
   }
@@ -269,7 +279,7 @@ export class Collector {
     };
     // Its content is still what the head or the queued upload holds, under the same policy and controls.
     const settled = (read: SourceRead, stat: SourceStat | null, controls: Controls): boolean => {
-      if (stat === null || !sameStat(stat, read.stat) || read.policyDigest !== digest || read.controlsDigest !== controlsDigest(controls)) return false;
+      if (stat === null || read.racy === true || !sameStat(stat, read.stat) || read.policyDigest !== digest || read.controlsDigest !== controlsDigest(controls)) return false;
       const head = this.spool.head(read.sourceKey); const queued = queuedContent.get(read.sourceKey);
       return !head.tombstone && ((head.digest === read.digest && head.revision === read.revision) || (queued?.digest === read.digest && queued.revision === read.revision));
     };
@@ -307,18 +317,21 @@ export class Collector {
       const refused = this.spool.identifierRefusal(id);
       if (refused !== undefined) {
         const stat = statSource(file);
-        if (stat !== null && sameStat(stat, refused.stat) && refused.policyDigest === digest) continue;
+        if (stat !== null && refused.racy !== true && sameStat(stat, refused.stat) && refused.policyDigest === digest) continue;
         this.spool.clearIdentifierRefusal(id);
       }
+      // Taken before the read: every stat the read records is taken at this time or later.
+      const readWall = this.wall();
+      const racy = (stat: SourceStat): { racy?: true } => racyStat(stat, readWall) ? { racy: true } : {};
       const refuse = (stat: SourceStat | null): void => {
-        if (stat !== null) this.spool.setIdentifierRefusal({ fileId: id, rootId: file.root.id, pathId, format: file.root.format, stat, policyDigest: digest });
+        if (stat !== null) this.spool.setIdentifierRefusal({ fileId: id, rootId: file.root.id, pathId, format: file.root.format, stat, policyDigest: digest, ...racy(stat) });
         diagnose(file, IDENTIFIER_UNICODE);
       };
       // A record above the record limit is reported once: the file is not read again until its stat or a limit changes.
       const over = parts ? this.spool.recordOverLimit(id) : undefined;
       if (over !== undefined) {
         const stat = statSource(file);
-        if (stat !== null && sameStat(stat, over.stat) && over.collectorLimit === this.config.maxRecordBytes && over.serverLimit === recordCap.server) continue;
+        if (stat !== null && over.racy !== true && sameStat(stat, over.stat) && over.collectorLimit === this.config.maxRecordBytes && over.serverLimit === recordCap.server) continue;
         this.spool.clearRecordOverLimit(id);
       }
       // Quiet by stat: nothing is read while the file's stat keeps changing. A file that changed between this stat and
@@ -352,7 +365,7 @@ export class Collector {
           if (this.config.exclusions.sessions.includes(streamed.producerId) || (streamed.subagentId !== null && this.config.exclusions.sessions.includes(streamed.subagentId))) { counters.excluded++; continue; }
           if (streamed.messageCount > this.config.maxMessages) { diagnose(file, 'message-limit', { measured: streamed.messageCount, limit: this.config.maxMessages }); continue; }
           if (now - since < this.config.quietMs) { counters.waiting++; rootCoverage(file).waiting++; continue; }
-          addCandidate({ file, read: { streamed, stat: result.stat, end: result.end }, key, digest: streamed.digest, evidence: result.evidence });
+          addCandidate({ file, read: { streamed, stat: result.stat, end: result.end, racy: racyStat(result.stat, readWall) }, key, digest: streamed.digest, evidence: result.evidence });
           continue;
         }
         const snapshot = readSnapshot(file, this.config.maxFileBytes, this.config.maxScanBytes - counters.scannedBytes);
@@ -371,14 +384,14 @@ export class Collector {
         if (transcript.messages.length > this.config.maxMessages) { diagnose(file, 'message-limit', { measured: transcript.messages.length, limit: this.config.maxMessages }); continue; }
         if (now - since < this.config.quietMs) { counters.waiting++; rootCoverage(file).waiting++; continue; }
         const key = sourceKey(sourceIdentity(this.spool.namespace, file.root.id, file.root.format, transcript, file.path));
-        addCandidate({ file, read: { transcript, stat: snapshot.stat }, key, digest: hash(transcript.raw), evidence });
+        addCandidate({ file, read: { transcript, stat: snapshot.stat, racy: racyStat(snapshot.stat, readWall) }, key, digest: hash(transcript.raw), evidence });
       } catch (error) {
         const stat = error instanceof RecordOverLimitError || error instanceof EvidenceLimitError ? statSource(file) : null;
         // A pass stopped by a cap has read up to the whole file: it spends that much of the scan budget.
         if (stat !== null) counters.scannedBytes += Number(stat.size);
         if (error instanceof RecordOverLimitError && stat !== null) {
           this.spool.setRecordOverLimit({ fileId: id, rootId: file.root.id, pathId, format: file.root.format, stat, recordIndex: error.recordIndex, size: String(error.size),
-            limit: error.limit, limitSource: recordCap.source, collectorLimit: this.config.maxRecordBytes, serverLimit: recordCap.server });
+            limit: error.limit, limitSource: recordCap.source, collectorLimit: this.config.maxRecordBytes, serverLimit: recordCap.server, ...racy(stat) });
           diagnose(file, error.code, { measured: Number(error.size), limit: error.limit });
         }
         else if (error instanceof CollectorError && error.code === IDENTIFIER_UNICODE) refuse(statSource(file));
@@ -401,7 +414,7 @@ export class Collector {
       const head = this.spool.head(key);
       if (head.tombstone) { counters.excluded++; continue; }
       const settle = (revision: number): void => {
-        for (const copy of copies) if (copy.read !== null) reads.push({ fileId: fileId(copy.file), stat: copy.read.stat, sourceKey: key, digest: candidate.digest, revision, policyDigest: digest, controlsDigest: controlsDigest(controls) });
+        for (const copy of copies) if (copy.read !== null) reads.push({ fileId: fileId(copy.file), stat: copy.read.stat, sourceKey: key, digest: candidate.digest, revision, policyDigest: digest, controlsDigest: controlsDigest(controls), ...(copy.read.racy ? { racy: true as const } : {}) });
       };
       if (head.digest === candidate.digest) { counters.unchanged++; settle(head.revision); continue; }
       if (queuedSources.has(key)) {

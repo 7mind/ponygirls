@@ -59,11 +59,14 @@ export interface RecordOverLimit {
   fileId: string; rootId: string; pathId: string; format: Format; stat: SourceStat;
   recordIndex: number; size: string; limit: number; limitSource: 'collector' | 'server';
   collectorLimit: number; serverLimit: string | null;
+  /** As `SourceRead.racy`: the file is read once more although its stat is unchanged. */
+  racy?: true;
 }
 /** A source whose latest upload had unpaired UTF-16 surrogates replaced with U+FFFD (message text, metadata). */
 export interface UnicodeRepair { sourceKey: string; revision: number; replaced: number }
-/** A file refused for an identifier with an unpaired surrogate: not read again until its stat or the policy changes. */
-export interface IdentifierRefusal { fileId: string; rootId: string; pathId: string; format: Format; stat: SourceStat; policyDigest: string }
+/** A file refused for an identifier with an unpaired surrogate: not read again until its stat or the policy changes
+ * (`racy`: once more, as `SourceRead.racy`). */
+export interface IdentifierRefusal { fileId: string; rootId: string; pathId: string; format: Format; stat: SourceStat; policyDigest: string; racy?: true }
 /** The latest probe of the part-upload API. */
 export interface UploadProbe { outcome: 'supported' | 'unsupported' | 'failed'; code: string | null; at: number }
 export interface Dropped { requestId: string; sourceKey: string; reason: string }
@@ -73,8 +76,10 @@ export interface Tombstone { sourceKey: string; head: Head; reasons: string[] }
 export const droppedOnlyFor = (tombstone: Tombstone, reason: string): boolean => tombstone.reasons.length === 1 && tombstone.reasons[0] === reason;
 /** `cause` classifies the latest failure (see progress.ts); absent in states saved before it existed. */
 export interface ReportingState { sequence: string; acceptedSequence: string | null; acceptedAt: number | null; error: string | null; cause?: string | null }
-/** The stat of a file when it was last read and the settled content it had: `digest` at source `revision` (acknowledged or queued). */
-export interface SourceRead { fileId: string; stat: SourceStat; sourceKey: string; digest: string; revision: number; policyDigest: string; controlsDigest: string }
+/** The stat of a file when it was last read and the settled content it had: `digest` at source `revision` (acknowledged or queued).
+ * `racy`: the stat was taken so soon after the file's last change that a rewrite in the same timestamp tick could keep it
+ * equal; the file is read once more (absent in records of earlier releases and when not racy). */
+export interface SourceRead { fileId: string; stat: SourceStat; sourceKey: string; digest: string; revision: number; policyDigest: string; controlsDigest: string; racy?: true }
 export interface Spool {
   readonly namespace: string;
   head(sourceKey: string): Head;
