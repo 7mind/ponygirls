@@ -2,7 +2,7 @@ import { evidenceFor, heldByControls, pathAliases, type AdmissionEvidence, type 
 import { randomUUID } from 'node:crypto';
 import { admissionReason, holdDiagnostic, isQueueHoldDiagnostic, ROOT_DENIED } from './admission.ts';
 import { CollectorError, hash, object, string, type CollectorReport, type Counters, type Diagnostic, type Format, type ParsedTranscript, type RootCoverage } from './domain.ts';
-import { discoverRoots, excludedPath, racyDue, racyMark, readSnapshot, sameStat, scanRoots, SCAN_BUDGET_DEFERRED, SizeLimitError, statSource, type RacyMark, type SourceFile, type SourceStat } from './discovery.ts';
+import { discoverRoots, excludedPath, racyDue, racyMark, readSnapshot, readTime, sameStat, scanRoots, SCAN_BUDGET_DEFERRED, SizeLimitError, statSource, type FileClock, type RacyMark, type SourceFile, type SourceStat } from './discovery.ts';
 import { parseTranscript } from './parsers.ts';
 import { resolveRuntimePrivacy, type RuntimePrivacy, type SecretReader } from './runtime-privacy.ts';
 import { encodeSnapshot, revisionMetadata, sourceIdentity, sourceKey, UploadError, type Ingester } from './ingest.ts';
@@ -102,9 +102,9 @@ export interface UploadStatus { requestId: string; sourceKey: string; attempts: 
 interface Queued { requestId: string; sourceKey: string; status: EntryStatus; origin: CollectionOrigin; evidence: AdmissionEvidence | null }
 export class Collector {
   private readonly config: Config; private readonly spool: Spool; private readonly ingester: Ingester; private readonly random: () => number; private readonly git: GitMetadata;
-  /** `wall` is the wall clock (ms since the epoch) that file times are compared with, next to the cycle clock
+  /** `clock` judges file times (wall clock against ctimes, monotonic clock for the racy window), next to the cycle clock
    * `runOnce(now)`. `uploader` is required for `uploadProtocol: "parts"`. */
-  constructor(config: Config, spool: Spool, ingester: Ingester, random: () => number, private readonly wall: () => number, git: GitMetadata, private readonly reporter: ProgressReporter, private readonly secrets: SecretReader, private readonly uploader?: Uploader) {
+  constructor(config: Config, spool: Spool, ingester: Ingester, random: () => number, private readonly clock: FileClock, git: GitMetadata, private readonly reporter: ProgressReporter, private readonly secrets: SecretReader, private readonly uploader?: Uploader) {
     this.config = config; this.spool = spool; this.ingester = ingester; this.random = random; this.git = git;
     if (config.uploadProtocol === 'parts' && uploader === undefined) throw new CollectorError('uploader-required');
   }
@@ -305,9 +305,9 @@ export class Collector {
       }
       const pathId = hash(file.path); const id = fileId(file); const known = this.spool.sourceRead(id);
       // Taken before any stat of this file: every stat recorded below is taken at this time or later.
-      const readWall = this.wall();
+      const readAt = readTime(this.clock);
       // A racy record stands until it is due for its one confirming read (`racyDue`).
-      const revalidate = (row: { racyAt?: number }): boolean => row.racyAt !== undefined && racyDue(row.racyAt, readWall);
+      const revalidate = (row: RacyMark): boolean => racyDue(row, readAt);
       if (known !== undefined && !revalidate(known) && settled(known, statSource(file), controls)) { addCandidate({ file, read: null, key: known.sourceKey, digest: known.digest, evidence: { paths: aliases } }); continue; }
       // An identifier with an unpaired surrogate is reported once: the file is not read again until its stat or the policy changes.
       const refused = this.spool.identifierRefusal(id);
@@ -328,7 +328,7 @@ export class Collector {
         this.spool.clearRecordOverLimit(id);
       }
       // The racy mark of what this read records, confirmed by any earlier racy record of the same stat.
-      const mark = (stat: SourceStat): RacyMark => racyMark(stat, readWall, [known, refused, over]);
+      const mark = (stat: SourceStat): RacyMark => racyMark(stat, readAt, [known, refused, over]);
       // Quiet by stat: nothing is read while the file's stat keeps changing. A file that changed between this stat and
       // the read starts its quiet period again (the observation of the read's stat below).
       const observed = statSource(file);
@@ -512,7 +512,7 @@ export class Collector {
       return current === entry.policyDigest ? 'send' : 'stop';
     };
     const engine = new PartUploads({ spool: this.spool, uploader: this.uploader, config: this.config, limits, policy, recordCap: recordCap.cap,
-      file: id => discovered.get(id), gate, sent: bytes => { uploadedBytes += bytes; }, nextAt: backoff, wall: this.wall });
+      file: id => discovered.get(id), gate, sent: bytes => { uploadedBytes += bytes; }, nextAt: backoff, clock: this.clock });
     const requeue = (entry: Upload): void => {
       queueState.delete(entry.requestId);
       const current = this.spool.uploads().find(upload => upload.sourceKey === entry.sourceKey);

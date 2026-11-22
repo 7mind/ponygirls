@@ -8,8 +8,9 @@ export const acceptingProgress: ProgressReporter = { async report(update) { retu
 import type { SecretReader } from '../src/runtime-privacy.ts';
 export const syntheticSecrets: SecretReader = { read(_path) { return 'synthetic-default-credential'; } };
 
-/** A wall clock long after every file change: no stat is racy, so a settled file is not read again. */
-export const lateWall = (): number => Number.MAX_SAFE_INTEGER;
+import type { FileClock } from '../src/discovery.ts';
+/** Clocks long after every file change: no stat is racy, so a settled file is not read again. */
+export const lateClock: FileClock = { wall: () => Number.MAX_SAFE_INTEGER, monotonic: () => 0, process: 'late' };
 
 import { fileStatus } from '../src/discovery.ts';
 /** Runs `body` while every stat of a source file reports ctime `ctimeNs()`: the kernel's coarse ctime tick, as the test

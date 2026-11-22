@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { CollectorError, hash } from './domain.ts';
-import { racyStat, sameStat, statSource, type SourceFile } from './discovery.ts';
+import { racyMark, readTime, sameStat, statSource, type FileClock, type ReadTime, type SourceFile } from './discovery.ts';
 import { UploadError } from './ingest.ts';
 import { generateParts, type GeneratedPart, type PartsSummary } from './passes.ts';
 import { INITIAL_CHAIN } from './chain.ts';
@@ -30,8 +30,8 @@ export interface PartUploadContext {
   gate(entry: Upload): Gate;
   sent(rawBytes: bigint): void;
   nextAt(attempts: number): number;
-  /** The wall clock (ms) that file times are compared with. */
-  wall(): number;
+  /** Judges file times, as for a scan's reads. */
+  clock: FileClock;
 }
 // The server's answer for an append whose base no longer matches: re-plan it once as a replacement.
 class Replan extends Error {}
@@ -77,10 +77,10 @@ export class PartUploads {
       state = opened;
     }
     if (state.phase === UploadPhase.Committed) return this.committed(entry, state);
-    const statWall = ctx.wall(); const file = ctx.file(entry.fileId); const stat = file === undefined ? null : statSource(file);
+    const statAt = readTime(ctx.clock); const file = ctx.file(entry.fileId); const stat = file === undefined ? null : statSource(file);
     if (file === undefined || stat === null || !sameStat(stat, entry.file)) return this.abandon(entry, state.uploadId, 'source-changed');
     for (let reopened = false; ; reopened = true) {
-      const sent = await this.send(entry, open, file, state, statWall);
+      const sent = await this.send(entry, open, file, state, statAt);
       if (sent.kind === 'expired') {
         if (reopened) throw new UploadError('upload-expired', true, false);
         const opened = await this.open(entry, open); if (!(opened instanceof UploadState)) return opened;
@@ -121,8 +121,8 @@ export class PartUploads {
     return state;
   }
   /** Regenerates the parts, skips those the attempt holds (checking the last one), sends the rest. */
-  /** `statWall`: the wall-clock time before the file's stat was found equal to the declaration's. */
-  private async send(entry: Upload, open: UploadOpen, file: SourceFile, start: UploadState, statWall: number): Promise<Sent> {
+  /** `statAt`: the time before the file's stat was found equal to the declaration's. */
+  private async send(entry: Upload, open: UploadOpen, file: SourceFile, start: UploadState, statAt: ReadTime): Promise<Sent> {
     const { ctx } = this; let state = start;
     const parts = generateParts({ file, policy: ctx.policy, stat: entry.file, recordCap: ctx.recordCap, maxMessages: ctx.config.maxMessages,
       startRecord: entry.baseRecordCount, startOffset: BigInt(entry.baseFileOffset), baseChain: open.base?.messageChain ?? INITIAL_CHAIN,
@@ -151,7 +151,7 @@ export class PartUploads {
           if (!(error instanceof UploadError)) throw error;
           if (error.code === 'upload-expired') return { kind: 'expired' };
           if (error.code === 'upload-conflict') throw new UploadError('upload-part-conflict', true, false);
-          if (error.code === 'record-too-large') return this.recordTooLarge(entry, file, part, state.uploadId, statWall);
+          if (error.code === 'record-too-large') return this.recordTooLarge(entry, file, part, state.uploadId, statAt);
           // Any other 413 (a proxy, another body limit) is an ordinary failure: retried, shown with its status.
           if (error.code === 'upload-too-large') throw new UploadError('http-413', true, false);
           throw error;
@@ -167,14 +167,14 @@ export class PartUploads {
   }
   /** The server refused a record over its record cap (`record-too-large`). A part of one record puts the source in
    * `record-over-limit` with the server's limit; for a part of several the next scan applies the refreshed limit. */
-  private async recordTooLarge(entry: Upload, file: SourceFile, part: GeneratedPart, uploadId: string, statWall: number): Promise<UploadOutcome> {
+  private async recordTooLarge(entry: Upload, file: SourceFile, part: GeneratedPart, uploadId: string, statAt: ReadTime): Promise<UploadOutcome> {
     const { ctx } = this;
     const abandoned = await this.abandon(entry, uploadId, 'record-over-limit');
     if (abandoned.kind !== 'discarded' || part.records !== 1) return abandoned;
     const row: RecordOverLimit = { fileId: entry.fileId, rootId: file.root.id, pathId: hash(file.path), format: file.root.format, stat: entry.file, recordIndex: part.firstRecord,
       size: String(part.rawBytes - 1n), limit: Number(ctx.limits.maxRecordBytes), limitSource: 'server', collectorLimit: ctx.config.maxRecordBytes, serverLimit: String(ctx.limits.maxRecordBytes),
-      // The refused part was read from the file at this stat: racy as a scan's read would be (`racyStat`).
-      ...(racyStat(entry.file, statWall) ? { racyAt: statWall } : {}) };
+      // The refused part was read from the file at this stat: marked as a scan's read would be, keeping an earlier mark of it.
+      ...racyMark(entry.file, statAt, [ctx.spool.sourceRead(entry.fileId), ctx.spool.recordOverLimit(entry.fileId)]) };
     ctx.spool.setRecordOverLimit(row);
     return { kind: 'over-limit', row };
   }

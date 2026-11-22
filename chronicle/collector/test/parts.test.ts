@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Collector, COLLECTION_PAUSED_TEXT, policyDigest, uploadsPausedText } from '../src/collector.ts';
-import { RACY_STAT_WINDOW_MS } from '../src/discovery.ts';
+import { RACY_STAT_WINDOW_MS, type FileClock } from '../src/discovery.ts';
 import { loadConfig } from '../src/config.ts';
 import { SqliteSpool, type Spool } from '../src/spool.ts';
 import { encodeSnapshot, HttpIngester, sourceIdentity, sourceKey } from '../src/ingest.ts';
@@ -20,7 +20,7 @@ import { parseTranscript } from '../src/parsers.ts';
 import { resolveRuntimePrivacy } from '../src/runtime-privacy.ts';
 import { formatCollectorStatus, PAUSE_NOTICE_INTERVAL_MS, PauseNotices } from '../src/status.ts';
 import { hash } from '../src/domain.ts';
-import { noGit, syntheticSecrets, lateWall, withCtime } from './helpers.ts';
+import { noGit, syntheticSecrets, lateClock, withCtime } from './helpers.ts';
 import { FakeChronicle } from './fake-server.ts';
 import type { ProgressReporter } from '../src/progress.ts';
 import { CollectorProgressAck } from '../../generated/typescript/chronicle/api/CollectorProgressAck.js';
@@ -47,11 +47,13 @@ async function harness(extra: Record<string, unknown> = {}) {
   let spool: Spool = new SqliteSpool(join(dir, 'state'));
   // Every credential file reads as `secret.value`: changing it rotates the runtime privacy policy.
   const secret = { value: 'synthetic-default-credential' }; const secrets = { read: (_path: string) => secret.value };
-  // The backoff jitter, in [0, 1), and the wall clock in ms (by default long after every file change).
-  const jitter = { value: 0 }; const wall = { value: lateWall() };
-  const collector = (more: Record<string, unknown> = {}) => { const config = settings(more); return new Collector(config, spool, new HttpIngester(config), () => jitter.value, () => wall.value, noGit, reporter, secrets, new HttpUploader(config)); };
+  // The backoff jitter, in [0, 1), and the file clocks: wall and monotonic ms (by default long after every file change), and
+  // the process the monotonic readings belong to (a restart changes it and starts again at 0).
+  const jitter = { value: 0 }; const clock = { wall: lateClock.wall(), monotonic: 0, process: 'harness' };
+  const fileClock: FileClock = { wall: () => clock.wall, monotonic: () => clock.monotonic, get process() { return clock.process; } };
+  const collector = (more: Record<string, unknown> = {}) => { const config = settings(more); return new Collector(config, spool, new HttpIngester(config), () => jitter.value, fileClock, noGit, reporter, secrets, new HttpUploader(config)); };
   return {
-    dir, roots, server, reports, input, settings, collector, secret, jitter, wall,
+    dir, roots, server, reports, input, settings, collector, secret, jitter, clock,
     get spool() { return spool; },
     /** A restart: the spool reopened from disk. */
     reopen() { spool.close(); spool = new SqliteSpool(join(dir, 'state')); },
@@ -273,11 +275,11 @@ for (const protocol of ['whole', 'parts'] as const) {
       const version = (text: string) => jsonl(piHeader('pi-racy'), piMessage('m1', text));
       await inRacyTick(async () => {
         writeFileSync(path, version('first version')); utimesSync(path, mtime, mtime);
-        h.wall.value = RACY_TICK_MS + 1;
+        Object.assign(h.clock, { wall: RACY_TICK_MS + 1, monotonic: 0 });
         assert.equal((await h.run(1)).uploaded, 1);
         // Rewritten in place within the tick, at the same size and mtime: the stat is equal.
         writeFileSync(path, version('other version')); utimesSync(path, mtime, mtime);
-        h.wall.value = RACY_TICK_MS + RACY_STAT_WINDOW_MS + 1;
+        Object.assign(h.clock, { wall: RACY_TICK_MS + RACY_STAT_WINDOW_MS + 1, monotonic: RACY_STAT_WINDOW_MS });
         assert.deepEqual(await h.run(2).then(counters => [counters.scanned, counters.uploaded]), [1, 1]);
         assert.deepEqual([...h.server.heads.values()].map(head => head.digest), [hash(readFileSync(path))]);
         // That read came long after the change: the unchanged file is not read again.
@@ -299,11 +301,11 @@ test('RacyStat a file refused for an identifier or for a record over the limit, 
     await inRacyTick(async () => {
       writeFileSync(identifier, withId('m\\ud800')); writeFileSync(record, over);
       for (const path of [identifier, record]) utimesSync(path, mtime, mtime);
-      h.wall.value = RACY_TICK_MS + 1;
+      Object.assign(h.clock, { wall: RACY_TICK_MS + 1, monotonic: 0 });
       assert.deepEqual(await h.run(1).then(counters => [counters.quarantined, counters.uploaded]), [2, 0]);
       writeFileSync(identifier, withId('mabcdef')); writeFileSync(record, split);
       for (const path of [identifier, record]) utimesSync(path, mtime, mtime);
-      h.wall.value = RACY_TICK_MS + RACY_STAT_WINDOW_MS + 1;
+      Object.assign(h.clock, { wall: RACY_TICK_MS + RACY_STAT_WINDOW_MS + 1, monotonic: RACY_STAT_WINDOW_MS });
       assert.deepEqual(await h.run(2).then(counters => [counters.scanned, counters.uploaded, counters.quarantined]), [2, 2, 0]);
       assert.deepEqual([...h.server.heads.values()].map(head => head.digest).sort(), [identifier, record].map(path => hash(readFileSync(path))).sort());
     });
@@ -321,32 +323,58 @@ test('RacyStat a record the server refuses, rewritten keeping its stat right aft
     assert.equal(Buffer.byteLength(over), Buffer.byteLength(split));
     await inRacyTick(async () => {
       writeFileSync(path, over); utimesSync(path, mtime, mtime);
-      h.wall.value = RACY_TICK_MS + 1;
+      Object.assign(h.clock, { wall: RACY_TICK_MS + 1, monotonic: 0 });
       assert.deepEqual(await h.run(1).then(counters => [counters.quarantined, counters.uploaded]), [1, 0]);
       assert.deepEqual(h.spool.recordsOverLimit().map(row => row.limitSource), ['server']);
       writeFileSync(path, split); utimesSync(path, mtime, mtime);
-      h.wall.value = RACY_TICK_MS + RACY_STAT_WINDOW_MS + 1;
+      Object.assign(h.clock, { wall: RACY_TICK_MS + RACY_STAT_WINDOW_MS + 1, monotonic: RACY_STAT_WINDOW_MS });
       assert.deepEqual(await h.run(2).then(counters => [counters.scanned, counters.uploaded, counters.quarantined]), [1, 1, 0]);
       assert.deepEqual([...h.server.heads.values()].map(head => head.digest), [hash(readFileSync(path))]);
     });
   } finally { await h.close(); }
 });
 
-test('RacyStat a ctime in the future, or a wall clock set back, costs one confirming read per stat (and one per setback), not a read every cycle', async () => {
+test('RacyStat the racy window runs on the monotonic clock: a wall clock stepped forward confirms nothing early, a restart waits a whole window, a ctime in the future costs one confirming read per stat', async () => {
   const h = await harness();
   try {
-    const path = join(h.roots.pi, 's.jsonl'); const start = 1_800_000_000_000; const back = start + 5_000 - 3_600_000;
+    const path = join(h.roots.pi, 's.jsonl'); const mtime = new Date('2026-01-01T00:00:00Z'); const start = 1_800_000_000_000;
+    const version = (text: string) => jsonl(piHeader('pi-monotonic'), piMessage('m1', text));
+    const reads: number[] = [];
+    const cycle = async (monotonic: number, wall = start): Promise<void> => { Object.assign(h.clock, { monotonic, wall }); reads.push((await h.run(reads.length + 1)).scanned); };
     // Every ctime is an hour ahead of the wall clock: a network filesystem's clock, or this host's clock set back.
     await withCtime(() => BigInt(start + 3_600_000) * 1_000_000n, async () => {
-      writeFileSync(path, jsonl(piHeader('pi-future'), piMessage('m1', 'one')));
-      const reads: number[] = [];
-      const cycle = async (wall: number): Promise<void> => { h.wall.value = wall; reads.push((await h.run(wall)).scanned); };
-      for (const wall of [start, start + 1_000, start + 3_000, start + 4_000]) await cycle(wall);
-      // A change starts another racy stat; then the wall clock goes back an hour.
-      appendFileSync(path, jsonl(piMessage('m2', 'two'))); await cycle(start + 5_000);
-      for (const wall of [back, back + 1_000, back + 3_000, back + 60_000]) await cycle(wall);
-      assert.deepEqual(reads, [1, 0, 1, 0, 1, 1, 0, 1, 0]);
-      assert.equal([...h.server.heads.values()][0]?.digest, hash(readFileSync(path)));
+      writeFileSync(path, version('first version')); utimesSync(path, mtime, mtime);
+      await cycle(0); await cycle(1_000);
+      // For one cycle the wall clock is two hours ahead: one more second of monotonic time is no window.
+      await cycle(2_000, start + 7_200_000);
+      // Rewritten in place at the same stat: the confirming read, a window after the first, finds it.
+      writeFileSync(path, version('other version')); utimesSync(path, mtime, mtime);
+      await cycle(3_000); await cycle(4_000);
+      assert.deepEqual([...h.server.heads.values()].map(head => head.digest), [hash(readFileSync(path))]);
+      // Another racy stat, then a restart: its monotonic clock starts again, and its mark waits a whole window of it.
+      appendFileSync(path, jsonl(piMessage('m2', 'two'))); await cycle(5_000);
+      Object.assign(h.clock, { process: 'restarted' }); h.reopen();
+      await cycle(1_000); await cycle(3_000); await cycle(60_000);
+      assert.deepEqual(reads, [1, 0, 0, 1, 0, 1, 0, 1, 0]);
+      assert.deepEqual([...h.server.heads.values()].map(head => head.digest), [hash(readFileSync(path))]);
+    });
+  } finally { await h.close(); }
+});
+
+test('RacyStat a record the server refuses again at an unchanged stat, its ctime in the future, costs one more attempt, not one every window', async () => {
+  const h = await harness();
+  try {
+    const path = join(h.roots.pi, 's.jsonl');
+    h.server.limits = h.server.limits.with({ maxPartBytes: 1024n }); h.server.partRecordCap = 1_500n;
+    await withCtime(() => BigInt(lateClock.wall()) * 1_000_000n, async () => {
+      writeFileSync(path, jsonl(piHeader('pi-refused'), piMessage('long', words(2_000))));
+      const opens: number[] = [];
+      for (const monotonic of [0, 1_000, 3_000, 4_000, 6_000, 9_000, 12_000]) {
+        h.clock.monotonic = monotonic; const before = h.server.count('POST /api/ingest/uploads');
+        await h.run(opens.length + 1); opens.push(h.server.count('POST /api/ingest/uploads') - before);
+      }
+      assert.deepEqual(opens, [1, 0, 1, 0, 0, 0, 0]);
+      assert.deepEqual(h.spool.recordsOverLimit().map(row => [row.limitSource, row.racy]), [['server', undefined]]);
     });
   } finally { await h.close(); }
 });

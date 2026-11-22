@@ -9,7 +9,7 @@ import { MemorySpool, SqliteSpool, type Spool } from '../src/spool.ts';
 import { Collector } from '../src/collector.ts';
 import { loadConfig } from '../src/config.ts';
 import { UploadError, type Ingester } from '../src/ingest.ts';
-import { noGit, acceptingProgress, syntheticSecrets, lateWall } from './helpers.ts';
+import { noGit, acceptingProgress, syntheticSecrets, lateClock } from './helpers.ts';
 import { CollectorPhase } from '../../generated/typescript/chronicle/api/CollectorPhase.js';
 import { IngestReceipt } from '../../generated/typescript/chronicle/api/IngestReceipt.js';
 const raw = readFileSync(new URL('fixtures/pi.jsonl', import.meta.url), 'utf8');
@@ -34,17 +34,17 @@ for (const adapter of ['memory', 'sqlite']) {
   test(`Behavioral Blackbox ${adapter}: controls retain exact queued requests, heads and reports across restart; release without re-admission`, async () => {
     const h = harness(adapter);
     try {
-      let collector = new Collector(h.config, h.spool, h.sink, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
+      let collector = new Collector(h.config, h.spool, h.sink, () => 0, lateClock, noGit, acceptingProgress, syntheticSecrets);
       await collector.runOnce(100); const queued = h.spool.queue(), report = h.spool.report(), reporting = h.spool.reporting();
       assert.equal(queued.length, 1);
       h.spool.setPaused(true); h.restart();
-      collector = new Collector(h.config, h.spool, h.sink, () => 0, lateWall, { read: async () => { throw new Error('git must not run'); } }, { report: async () => { throw new Error('report must not run'); } }, { read: () => { throw new Error('secret must not be read'); } });
+      collector = new Collector(h.config, h.spool, h.sink, () => 0, lateClock, { read: async () => { throw new Error('git must not run'); } }, { report: async () => { throw new Error('report must not run'); } }, { read: () => { throw new Error('secret must not be read'); } });
       rmSync(h.path);
       await collector.runOnce(200);
       assert.deepEqual(h.spool.queue(), queued); assert.deepEqual(h.spool.report(), report); assert.deepEqual(h.spool.reporting(), reporting);
       assert.equal(collector.status().controls.paused, true);
       h.spool.setPaused(false); h.spool.exclude('/synthetic/project'); h.restart();
-      collector = new Collector(h.config, h.spool, h.sink, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
+      collector = new Collector(h.config, h.spool, h.sink, () => 0, lateClock, noGit, acceptingProgress, syntheticSecrets);
       await collector.runOnce(300);
       assert.deepEqual(h.spool.queue(), queued); assert.deepEqual(collector.status().heldRequests, [queued[0]!.requestId]);
       assert.equal(h.sink.payloads.length, 1); assert.deepEqual(h.spool.dropped(), []); assert.equal(h.spool.head(queued[0]!.sourceKey).tombstone, false);
@@ -59,7 +59,7 @@ for (const adapter of ['memory', 'sqlite']) {
     try {
       const real = join(h.dir, 'project'); mkdirSync(real); const alias = join(h.dir, 'alias'); symlinkSync(real, alias);
       writeFileSync(h.path, raw + JSON.stringify({ type: 'other', cwd: '/synthetic/other' }) + '\n' + JSON.stringify({ type: 'other', payload: { cwd: alias } }) + '\n');
-      const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
+      const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateClock, noGit, acceptingProgress, syntheticSecrets);
       await collector.runOnce(100); const queue = h.spool.queue(); assert.equal(queue.length, 1);
       for (const path of ['/synthetic/project', '/synthetic/other', real, alias, h.source]) {
         h.spool.exclude(path); await collector.runOnce(200);
@@ -80,7 +80,7 @@ for (const adapter of ['memory', 'sqlite']) {
         if (mode === 'exclude' && update.currentUploadTotalBytes !== undefined) h.spool.exclude('/synthetic/project');
         return acceptingProgress.report(update);
       } };
-      const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateWall, { async read() { gitReads++; return { remote: null, diagnostic: null }; } }, reporter, syntheticSecrets);
+      const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateClock, { async read() { gitReads++; return { remote: null, diagnostic: null }; } }, reporter, syntheticSecrets);
       const first = await collector.runOnce(100); assert.equal(first.scanned, 0); assert.equal(gitReads, 0); assert.equal(h.sink.payloads.length, 0);
       h.spool.unexclude(h.source); mode = 'upload';
       await collector.runOnce(200); const queue = h.spool.queue(); assert.equal(queue.length, 1); assert.equal(h.sink.payloads.length, 0);
@@ -94,7 +94,7 @@ for (const adapter of ['memory', 'sqlite']) {
     const h = harness(adapter, { redactions: { textPatterns: ['/synthetic/project', '/synthetic/other'] } });
     try {
       const other = join(h.source, 'z.jsonl'); writeFileSync(other, raw.replace('/synthetic/project', '/synthetic/other'));
-      const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
+      const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateClock, noGit, acceptingProgress, syntheticSecrets);
       await collector.runOnce(100); const queue = h.spool.queue(); assert.equal(queue.length, 1);
       for (const path of [h.path, other, '/synthetic/project', '/synthetic/other']) {
         h.spool.exclude(path); assert.deepEqual(collector.status().heldRequests, [queue[0]!.requestId]);
@@ -106,7 +106,7 @@ for (const adapter of ['memory', 'sqlite']) {
     const h = harness(adapter);
     try {
       let exclude = true; const phases: CollectorPhase[] = [];
-      const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateWall, { async read() { await Promise.resolve(); if (exclude) h.spool.exclude('/synthetic/project'); return { remote: null, diagnostic: null }; } }, { async report(update) { phases.push(update.phase); return acceptingProgress.report(update); } }, syntheticSecrets);
+      const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateClock, { async read() { await Promise.resolve(); if (exclude) h.spool.exclude('/synthetic/project'); return { remote: null, diagnostic: null }; } }, { async report(update) { phases.push(update.phase); return acceptingProgress.report(update); } }, syntheticSecrets);
       await collector.runOnce(100); assert.equal(h.spool.queue().length, 0); assert.equal(h.sink.payloads.length, 0);
       exclude = false; h.spool.unexclude('/synthetic/project'); await collector.runOnce(200);
       const entry = h.spool.queue()[0]!;
@@ -124,7 +124,7 @@ for (const adapter of ['memory', 'sqlite']) {
       writeFileSync(join(h.source, 'second.jsonl'), raw.replace('pi-synthetic', 'pi-second'));
       h.sink.fail = false;
       const ingester = { async send(payload: string) { const receipt = await h.sink.send(payload); h.spool.setPaused(true); return receipt; } };
-      const collector = new Collector(h.config, h.spool, ingester, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
+      const collector = new Collector(h.config, h.spool, ingester, () => 0, lateClock, noGit, acceptingProgress, syntheticSecrets);
       assert.equal((await collector.runOnce(100)).uploaded, 1); assert.equal(h.sink.payloads.length, 1); assert.equal(h.spool.queue().length, 1);
       h.spool.setPaused(false);
       await collector.runOnce(200); assert.equal(h.sink.payloads.length, 2); assert.equal(h.spool.queue().length, 0);
@@ -134,7 +134,7 @@ for (const adapter of ['memory', 'sqlite']) {
     const h = harness(adapter);
     try {
       writeFileSync(h.path, raw.replace('/synthetic/project', 'relative-recorded-cwd'));
-      const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
+      const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateClock, noGit, acceptingProgress, syntheticSecrets);
       assert.equal((await collector.runOnce(100)).quarantined, 0); const queue = h.spool.queue(); assert.equal(queue.length, 1);
       h.spool.exclude('/unrelated'); await collector.runOnce(200); assert.deepEqual(h.spool.queue(), queue); assert.deepEqual(collector.status().heldRequests, [queue[0]!.requestId]);
       h.spool.unexclude('/unrelated'); h.sink.fail = false; await collector.runOnce(300); assert.equal(h.spool.queue().length, 0);
@@ -143,7 +143,7 @@ for (const adapter of ['memory', 'sqlite']) {
   test(`Behavioral Blackbox ${adapter}: dynamic controls cannot relax static exclusions`, async () => {
     const h = harness(adapter, { exclusions: { projects: ['/synthetic/project'] } });
     try {
-      const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
+      const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateClock, noGit, acceptingProgress, syntheticSecrets);
       h.spool.exclude('/synthetic'); h.spool.unexclude('/synthetic'); h.spool.setPaused(true); h.spool.setPaused(false);
       assert.equal((await collector.runOnce(100)).excluded, 1); assert.equal(h.sink.payloads.length, 0); assert.equal(h.spool.queue().length, 0);
     } finally { h.close(); }
@@ -151,13 +151,13 @@ for (const adapter of ['memory', 'sqlite']) {
   test(`Behavioral Blackbox ${adapter}: unknown legacy evidence held only while exclusions active`, async () => {
     const h = harness(adapter);
     try {
-      await new Collector(h.config, h.spool, h.sink, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets).runOnce(100);
+      await new Collector(h.config, h.spool, h.sink, () => 0, lateClock, noGit, acceptingProgress, syntheticSecrets).runOnce(100);
       const original = h.spool.queue()[0]!;
       // Migrate the same exact request through the public legacy enqueue contract.
       const legacy: Spool = adapter === 'memory' ? new MemorySpool() : new SqliteSpool(join(h.dir, 'legacy'));
       try {
         legacy.enqueue(original, { kind: 'explicit' }, null); legacy.exclude('/unrelated'); rmSync(h.path);
-        const collector = new Collector(h.config, legacy, h.sink, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
+        const collector = new Collector(h.config, legacy, h.sink, () => 0, lateClock, noGit, acceptingProgress, syntheticSecrets);
         await collector.runOnce(200); assert.deepEqual(legacy.queue(), [original]); assert.deepEqual(collector.status().heldRequests, [original.requestId]);
         legacy.unexclude('/unrelated'); h.sink.fail = false; await collector.runOnce(300); assert.equal(legacy.queue().length, 0); assert.equal(h.sink.payloads.at(-1), original.payload);
       } finally { legacy.close(); }
@@ -168,7 +168,7 @@ for (const adapter of ['memory', 'sqlite']) {
 test('Behavioral GoodCommunication: malformed controls/evidence fail closed; no send or destructive drops', async () => {
   const h = harness('sqlite');
   try {
-    const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
+    const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateClock, noGit, acceptingProgress, syntheticSecrets);
     await collector.runOnce(100); const queue = h.spool.queue();
     const db = new DatabaseSync(join(h.config.stateDir, 'spool.sqlite'));
     try {
@@ -218,7 +218,7 @@ test('Behavioral GoodCommunication: status retains a coherent admission snapshot
   }
   const reader = new SnapshotSpool(h.config.stateDir);
   try {
-    const collector = new Collector(h.config, reader, h.sink, () => 0, lateWall, noGit, acceptingProgress, syntheticSecrets);
+    const collector = new Collector(h.config, reader, h.sink, () => 0, lateClock, noGit, acceptingProgress, syntheticSecrets);
     await collector.runOnce(100); const entry = reader.queue()[0]!;
     reader.afterSnapshot = () => { reader.afterSnapshot = null; competitor.ack(entry.requestId, 1); };
     const status = collector.status();
@@ -239,7 +239,7 @@ test('Behavioral GoodCommunication: source alias failure after awaited scan repo
       }
       return acceptingProgress.report(update);
     } };
-    const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateWall, noGit, reporter, syntheticSecrets);
+    const collector = new Collector(h.config, h.spool, h.sink, () => 0, lateClock, noGit, reporter, syntheticSecrets);
     const counters = await collector.runOnce(100);
     assert.equal(counters.quarantined, 1); assert.equal(counters.uploaded, 1);
     assert.equal(h.sink.payloads.length, 1);

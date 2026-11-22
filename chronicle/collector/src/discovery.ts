@@ -141,19 +141,40 @@ export const sameStat = (a: SourceStat, b: SourceStat): boolean => a.dev === b.d
  * FAT, and the kernel stamps them from a clock that may lag the wall clock by a tick. A rewrite within the tick of the last
  * change keeps size, mtime and ctime. 3 s covers the coarsest tick and the lag with a margin. */
 export const RACY_STAT_WINDOW_MS = 3_000;
-/** `racyAt`: the wall-clock time (ms) of the read whose stat could still equal a later rewrite's; absent when it cannot. */
-export interface RacyMark { racyAt?: number }
+/** The clocks a read of a file is judged by. `wall` (ms since the epoch) is compared with the file's ctime, and only with it.
+ * `monotonic` (ms since this process started; never set back) measures the racy window; `process` names the process whose
+ * monotonic readings these are. */
+export interface FileClock { wall(): number; monotonic(): number; readonly process: string }
+/** When a read happened: both clocks, read before its stat. */
+export interface ReadTime { wall: number; monotonic: number; process: string }
+export const readTime = (clock: FileClock): ReadTime => ({ wall: clock.wall(), monotonic: clock.monotonic(), process: clock.process });
+/** A racy read: the process and its monotonic time. */
+export interface RacyStamp { process: string; at: number }
+/** `racy`: the read whose stat could still equal a later rewrite's; absent when it cannot. */
+export interface RacyMark { racy?: RacyStamp }
 /** Git's racy-clean rule on ctime (every change sets it from the kernel clock; mtime can be set freely): a stat taken at or
  * after wall-clock `wallMs` is racy when its ctime is not older than the window before that, or is in the future. */
 export const racyStat = (stat: SourceStat, wallMs: number): boolean => BigInt(stat.ctimeNs) >= BigInt(wallMs - RACY_STAT_WINDOW_MS) * 1_000_000n;
-/** A racy record stands until the window has passed since its read, or the wall clock went back; then the file is read once. */
-export const racyDue = (racyAt: number, wallMs: number): boolean => wallMs < racyAt || wallMs - racyAt >= RACY_STAT_WINDOW_MS;
-/** The mark of a read at `wallMs` that found `stat`. A rewrite keeping a stat happens within one tick of the change that set
- * it, so a read of a stat found unchanged since an earlier racy read at least the window before confirms the content,
- * whatever its ctime says (a ctime in the future, a clock set back): one confirming read per racy stat. Otherwise `racyStat`. */
-export function racyMark(stat: SourceStat, wallMs: number, earlier: readonly ({ stat: SourceStat } & RacyMark | undefined)[]): RacyMark {
-  const confirmed = earlier.some(row => row?.racyAt !== undefined && sameStat(row.stat, stat) && wallMs - row.racyAt >= RACY_STAT_WINDOW_MS);
-  return confirmed || !racyStat(stat, wallMs) ? {} : { racyAt: wallMs };
+/** Monotonic time from a racy read to `at`. A read of an earlier process counts from this process's start: after a restart a
+ * whole window of this process's time must pass. */
+const racyElapsed = (stamp: RacyStamp, at: ReadTime): number => at.monotonic - (stamp.process === at.process ? stamp.at : 0);
+/** A racy record stands until a window of monotonic time has passed since its read; then the file is read once. */
+export const racyDue = (row: RacyMark, at: ReadTime): boolean => row.racy !== undefined && racyElapsed(row.racy, at) >= RACY_STAT_WINDOW_MS;
+/** The mark of what a read at `at` that found `stat` records, given the file's earlier records. A record of this stat without
+ * a mark vouches for it (its read was not racy, or confirmed it). A rewrite keeping a stat happens within one tick of the change
+ * that set it, before the earlier racy read: a read a window of monotonic time later confirms the content, whatever the ctime
+ * says. A younger racy record keeps its mark, so no read or refusal renews it: one confirming read per racy stat. A stat
+ * without a record gets `racyStat`. */
+export function racyMark(stat: SourceStat, at: ReadTime, earlier: readonly ({ stat: SourceStat } & RacyMark | undefined)[]): RacyMark {
+  const stamps: RacyStamp[] = [];
+  for (const row of earlier) {
+    if (row === undefined || !sameStat(row.stat, stat)) continue;
+    if (row.racy === undefined || racyElapsed(row.racy, at) >= RACY_STAT_WINDOW_MS) return {};
+    stamps.push(row.racy);
+  }
+  const oldest = stamps.sort((a, b) => racyElapsed(b, at) - racyElapsed(a, at))[0];
+  if (oldest !== undefined) return { racy: oldest };
+  return racyStat(stat, at.wall) ? { racy: { process: at.process, at: at.monotonic } } : {};
 }
 /** The current stat of a regular source file without reading it; null when that cannot be established. */
 export function statSource(file: SourceFile): SourceStat | null {

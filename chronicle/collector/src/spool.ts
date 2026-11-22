@@ -4,7 +4,7 @@ import { chmodSync, closeSync, constants, existsSync, mkdirSync, openSync } from
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { CollectorError, hash, type CollectorReport, type Diagnostic, type Format } from './domain.ts';
-import { rejectSymlinks, type SourceStat } from './discovery.ts';
+import { rejectSymlinks, type RacyStamp, type SourceStat } from './discovery.ts';
 import { decodeOrigin, type CollectionOrigin } from './admission.ts';
 import { object } from './domain.ts';
 import type { PassReport, PassState } from './passes.ts';
@@ -59,14 +59,14 @@ export interface RecordOverLimit {
   fileId: string; rootId: string; pathId: string; format: Format; stat: SourceStat;
   recordIndex: number; size: string; limit: number; limitSource: 'collector' | 'server';
   collectorLimit: number; serverLimit: string | null;
-  /** As `SourceRead.racyAt`. */
-  racyAt?: number;
+  /** As `SourceRead.racy`. */
+  racy?: RacyStamp;
 }
 /** A source whose latest upload had unpaired UTF-16 surrogates replaced with U+FFFD (message text, metadata). */
 export interface UnicodeRepair { sourceKey: string; revision: number; replaced: number }
 /** A file refused for an identifier with an unpaired surrogate: not read again until its stat or the policy changes
- * (`racyAt`: once more, as `SourceRead.racyAt`). */
-export interface IdentifierRefusal { fileId: string; rootId: string; pathId: string; format: Format; stat: SourceStat; policyDigest: string; racyAt?: number }
+ * (`racy`: once more, as `SourceRead.racy`). */
+export interface IdentifierRefusal { fileId: string; rootId: string; pathId: string; format: Format; stat: SourceStat; policyDigest: string; racy?: RacyStamp }
 /** The latest probe of the part-upload API. */
 export interface UploadProbe { outcome: 'supported' | 'unsupported' | 'failed'; code: string | null; at: number }
 export interface Dropped { requestId: string; sourceKey: string; reason: string }
@@ -77,10 +77,10 @@ export const droppedOnlyFor = (tombstone: Tombstone, reason: string): boolean =>
 /** `cause` classifies the latest failure (see progress.ts); absent in states saved before it existed. */
 export interface ReportingState { sequence: string; acceptedSequence: string | null; acceptedAt: number | null; error: string | null; cause?: string | null }
 /** The stat of a file when it was last read and the settled content it had: `digest` at source `revision` (acknowledged or queued).
- * `racyAt` (wall-clock ms of that read): its stat was taken so soon after the file's last change, or with a ctime in the
- * future, that a rewrite in the same timestamp tick could keep it; the record stands until `racyDue`, then the file is read
- * once more (absent when not racy, and in records of earlier releases). */
-export interface SourceRead { fileId: string; stat: SourceStat; sourceKey: string; digest: string; revision: number; policyDigest: string; controlsDigest: string; racyAt?: number }
+ * `racy` (the process and monotonic time of that read): its stat was taken so soon after the file's last change, or with a
+ * ctime in the future, that a rewrite in the same timestamp tick could keep it; the record stands until `racyDue`, then the
+ * file is read once more (absent when not racy, and in records of earlier releases). */
+export interface SourceRead { fileId: string; stat: SourceStat; sourceKey: string; digest: string; revision: number; policyDigest: string; controlsDigest: string; racy?: RacyStamp }
 export interface Spool {
   readonly namespace: string;
   head(sourceKey: string): Head;

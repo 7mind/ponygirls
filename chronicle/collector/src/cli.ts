@@ -3,6 +3,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { randomUUID } from 'node:crypto';
 import { loadConfig } from './config.ts';
 import { CollectorError } from './domain.ts';
 import { pathAliases } from './controls.ts';
@@ -151,7 +152,7 @@ async function main(): Promise<void> {
       else print(spool.controls());
       return;
     }
-    const collector = new Collector(config, spool, new HttpIngester(config), Math.random, Date.now, new LocalGitMetadata('git', 1000, 65536), new HttpProgressReporter(config), new FileSecretReader(), new HttpUploader(config));
+    const collector = new Collector(config, spool, new HttpIngester(config), Math.random, { wall: Date.now, monotonic: () => performance.now(), process: randomUUID() }, new LocalGitMetadata('git', 1000, 65536), new HttpProgressReporter(config), new FileSecretReader(), new HttpUploader(config));
     const printStatus = (): void => {
       const status = collector.status();
       if (text) process.stdout.write(formatCollectorStatus(status));
