@@ -38,8 +38,8 @@ embedding model.
 - The **after** run **reuses exactly those vectors** (`--queries-from BASELINE.json`) and records their digest.
 - Why: a fixed seed over mutable, retiring row ids would resample after growth or after rows are replaced, and so confound a change
   of the index with a change of the queries.
-- The baseline also saves its exact top-100 neighbours per query (row id, session, distance), for the after run's
-  turnover diagnostic.
+- The baseline also saves its exact top-100 neighbours per query, for the after run's turnover diagnostic: row id, the
+  content hash of the stored vector, and distance.
 - **The baseline file holds derived vectors** (embeddings of the reader's content). Keep it on the operator side, with
   the same care as the database; never put it in reports or chat. The probe writes every output as a new mode-600 file renamed
   over the target, so overwriting an existing file never leaves it readable by others. Only the printed
@@ -127,7 +127,7 @@ rather than fewer queries.
 `compare` applies it per k = 10 and 100: the after run's recall below the baseline's lower 95 % bound is a defect.
 
 **Refusals.** `compare` first refuses incompatible runs (exit 3) and says why. Both runs must have:
-- probe version 3;
+- probe version 4;
 - at least 200 queries, and neither a `--trial`;
 - the same reader, owner-target profile, embedding space, dimensions, HNSW index, ANN GUCs including `work_mem`,
   candidate limit, k set, seed and N.
@@ -148,21 +148,29 @@ visible row counts, `compare` prints them, and the diagnostics below separate ne
 ## Diagnosing a "defect" verdict (not part of the rule)
 Both runs print two diagnostics, and `compare` repeats the after run's. They are reported with counts, never as a
 verdict.
-- **Recall by neighbour cohort.** recall@k split by the generation that wrote each neighbour, with the credit rule
-  above:
+- **Recall by neighbour cohort.** recall@k split slot by slot of the exact first k, by the generation that wrote the
+  slot's neighbour:
   - *root*: a generation without a lineage version, or version 0;
-  - *lineage versions*: version ≥ 1, the rows of incremental publications;
-  - the denominators are the cohort's exact neighbours.
-- **Exact top-k turnover against the baseline** (after runs only). The same query vectors are used, and neighbours are
-  matched by content (session and distance), so a row republished under a new id counts as the same neighbour.
-  - Entrants are either **new rows** (nearer than the baseline's 100th neighbour yet absent from its top 100: not
-    visible then) or **promoted** (already visible below the baseline's top k: nearer rows left).
-  - Exits are either **displaced** (still visible) or **gone** (no longer visible).
-  - Together these show how much of the answer change is new rows rather than the index.
+  - *lineage versions*: version ≥ 1, the rows of incremental publications.
+
+  A slot is credited to its own cohort when the leg found its neighbour. A slot at the cutoff distance is also credited
+  when a candidate tied at the cutoff fills it; ties are matched cohort by cohort. A tie filling a slot of the other
+  cohort is reported as *ambiguous*, and ties beyond the cutoff slots as *unassigned*. A cohort's credits never exceed its
+  slots.
+- **Exact top-k turnover against the baseline** (after runs only). The same query vectors are used.
+  - Neighbours are matched by the stored row's id, then by the stored vector's content hash with multiplicity. A piece
+    stored again under a new id is the same neighbour; distinct pieces at an equal distance stay distinct.
+  - Only provable classes are named:
+    - an entrant is *promoted* when its row was in the baseline's top 100 (visible then, below its top k);
+    - an entrant is a *new row* when its row was not in that top 100 and it is nearer than the baseline's 100th
+      neighbour (every row visible then and that near was in it);
+    - any other entrant is *unknown*;
+    - an exit is *displaced* when its row is still visible, else *gone*.
 
 **A "defect" verdict must be diagnosed with these before it is attributed to L5.**
 - Growth alone can trigger it: in the local trial, about +16 % visible rows (a new lineage version, some rows deleted)
-  fell below the interval at both k. 16 % of the exact top 10 were new entrants, of which 301 of 314 were new rows.
+  fell below the interval at both k. 325 of the 2,000 exact top-10 slots turned over: 310 new rows, 15 promoted, 0
+  unknown.
 - Neither diagnostic isolates incremental publication causally. Both cohorts share one HNSW graph, so a cohort
   difference can come from insertion order, age or content rather than from the publication path. A same-corpus
   counterfactual, the same rows published both ways, needs an offline control: H's comparison of an incremental head with

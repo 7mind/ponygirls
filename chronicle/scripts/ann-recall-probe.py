@@ -11,9 +11,9 @@ The connection is libpq's: PGHOST, PGPORT, PGDATABASE, PGUSER and a password fil
 never reads or prints credentials. It writes nothing to the database and makes no model call: its query vectors are
 stored vectors of the reader's visible rows, sampled with a fixed seed by the baseline run, which saves them in its output
 file; the after run reuses exactly those (--queries-from)."""
-import argparse, hashlib, json, os, random, re, subprocess, sys, tempfile, time
+import argparse, collections, hashlib, json, os, random, re, subprocess, sys, tempfile, time
 
-PROBE_VERSION = 3
+PROBE_VERSION = 4
 GATE_MIN_QUERIES = 200
 
 KS = (10, 100)
@@ -175,20 +175,32 @@ def write_private(path, data):
 
 
 def cohort_credits(candidates, exact, k, cohort):
-    """recall@k split by neighbour cohort (a diagnostic, not the rule): per cohort, the credited rows (the credit rule of
-    `credits`) among the candidates' first k of that cohort, and the exact first k's rows of that cohort."""
+    """recall@k split by neighbour cohort (a diagnostic, not the rule), slot by slot of the exact first k: a slot is
+    credited to its neighbour's cohort when the candidates' first k hold that neighbour, or when a slot at the cutoff
+    distance is taken by a candidate tied at the cutoff of the same cohort (matched cohort by cohort); a tie filling a
+    cutoff slot of the other cohort counts as `ambiguous`; ties beyond the cutoff slots as `unassigned`. Each cohort's
+    credits never exceed its slots."""
     top = exact[:k]
-    split = {name: [0, 0] for name in ('root', 'lineage')}
+    split = dict(root=[0, 0], lineage=[0, 0], ambiguous=0, unassigned=0)
     if not top:
         return split
-    members, cutoff, seen = {i for i, _ in top}, top[-1][1], set()
-    for row, _ in top:
+    cutoff, found = top[-1][1], {row for row, _ in candidates[:k]}
+    members = {row for row, _ in top}
+    ties = collections.Counter(cohort[row] for row in {row for row, d in candidates[:k] if row not in members and d == cutoff})
+    open_slots = collections.Counter()
+    for row, distance in top:
         split[cohort[row]][1] += 1
-    for row, distance in candidates[:k]:
-        if row not in seen:
-            seen.add(row)
-            if row in members or distance == cutoff:
-                split[cohort[row]][0] += 1
+        if row in found:
+            split[cohort[row]][0] += 1
+        elif distance == cutoff:
+            open_slots[cohort[row]] += 1
+    for name in ('root', 'lineage'):
+        same = min(open_slots[name], ties[name])
+        split[name][0] += same
+        open_slots[name] -= same
+        ties[name] -= same
+    split['ambiguous'] = min(sum(open_slots.values()), sum(ties.values()))
+    split['unassigned'] = sum(ties.values()) - split['ambiguous']
     return split
 
 
@@ -315,6 +327,8 @@ def measure(args):
         info = {r[0]: (r[1], 'lineage' if r[2] and int(r[2]) >= 1 else 'root') for r in session.run(
             f"SELECT ch.id, ch.session_id, {version} FROM ch_search_chunks ch LEFT JOIN ch_generations g ON g.id=ch.generation WHERE ch.id = ANY({ids}::uuid[])")}
         cohort = {row: value[1] for row, value in info.items()}
+        exact_ids = literal('{' + ','.join(sorted({row for rows in exact.values() for row, _ in rows})) + '}')
+        content = dict(session.run(f"SELECT ch.id, md5(ch.embedding::text) FROM ch_search_chunks ch WHERE ch.id = ANY({exact_ids}::uuid[])"))
         still_visible = set()
         if baseline is not None:
             old = literal('{' + ','.join(sorted({n[0] for rows in baseline['exactNeighbours'] for n in rows})) + '}')
@@ -325,10 +339,13 @@ def measure(args):
             total = (sum(c for c, _ in per_query), sum(d for _, d in per_query))
             low, high = bootstrap(per_query, args.seed + k)
             per_k[k] = dict(credits=total[0], of=total[1], recall=total[0] / total[1], ci95=[low, high], perQuery=per_query)
-        diagnostics = dict(cohorts={str(k): {name: [sum(cohort_credits(legs[i], exact[i], k, cohort)[name][j] for i in range(len(queries))) for j in (0, 1)]
-                                                 for name in ('root', 'lineage')} for k in KS})
+        diagnostics = dict(cohorts={})
+        for k in KS:
+            splits = [cohort_credits(legs[i], exact[i], k, cohort) for i in range(len(queries))]
+            diagnostics['cohorts'][str(k)] = {**{name: [sum(x[name][j] for x in splits) for j in (0, 1)] for name in ('root', 'lineage')},
+                                              **{name: sum(x[name] for x in splits) for name in ('ambiguous', 'unassigned')}}
         if baseline is not None:
-            diagnostics['turnover'] = turnover(baseline['exactNeighbours'], [[(row, info[row][0], d) for row, d in exact[i]] for i in range(len(queries))], still_visible)
+            diagnostics['turnover'] = turnover(baseline['exactNeighbours'], [[(row, content[row], d) for row, d in exact[i]] for i in range(len(queries))], still_visible)
         query_digest = digest([v for _, v in queries])
         result = dict(probe='ann-recall-probe', probeVersion=PROBE_VERSION, reader=args.reader, schema=schema, tieBreak=list(TIE_BREAK[schema]),
                       server=server[0], pgvector=server[1], snapshotAt=server[2], profile=profile, space=space, dimensions=dims, index=index,
@@ -339,8 +356,9 @@ def measure(args):
                       recall={str(k): v for k, v in per_k.items()}, diagnostics=diagnostics)
         if baseline is None:  # the baseline's query vectors, for the after run (--queries-from): derived data, operator side only
             result['queryVectors'] = [dict(sourceRow=row, vector=vector) for row, vector in queries]
-            # its exact top 100 per query (row id, session, distance): for the after run's turnover diagnostic; private too
-            result['exactNeighbours'] = [[(row, info[row][0], d) for row, d in exact[i]] for i in range(len(queries))]
+            # its exact top 100 per query (row id, content hash of the stored vector, distance): for the after run's
+            # turnover diagnostic; private too
+            result['exactNeighbours'] = [[(row, content[row], d) for row, d in exact[i]] for i in range(len(queries))]
         committed = True
     except Aborted as reason:
         print(f'ABORTED (rolled back, nothing measured): {reason}', file=sys.stderr)
@@ -363,23 +381,36 @@ def measure(args):
 
 
 def turnover(before, after, still_visible):
-    """Per k, how the exact top k changed between the baseline and this run for the same query vectors, by content (session
-    and distance: a row republished under a new id is the same neighbour): entrants that are new rows (nearer than the
-    baseline's 100th neighbour yet absent from its top 100: not visible then) or promoted (in the baseline's top 100 below
-    its top k, or beyond its top 100: nearer rows left), and exits still visible (displaced) or no longer visible (gone)."""
+    """Per k, how the exact top k changed between the baseline and this run for the same query vectors. Neighbours are
+    matched by the stored row's id, then by its vector's content hash with multiplicity (a piece stored again under a new
+    id is the same neighbour; equal-distance distinct pieces stay distinct). Only provable classes are named: an entrant
+    is `promoted` when its row was in the baseline's top 100 (visible then, below its top k), `new` when its row was not
+    and it is nearer than the baseline's 100th neighbour (every visible row that near was in that top 100), else
+    `unknown`; an exit is `displaced` when its row is still visible, else `gone`."""
     out = {}
     for k in KS:
-        counts = dict(of=0, entrants=0, new=0, promoted=0, exits=0, displaced=0, gone=0)
+        counts = dict(of=0, entrants=0, new=0, promoted=0, unknown=0, exits=0, displaced=0, gone=0)
         for old, new in zip(before, after):
-            old_top, new_top = {(s, d): r for r, s, d in old[:k]}, {(s, d): r for r, s, d in new[:k]}
-            known, bound = {(s, d) for _, s, d in old}, old[-1][2] if old else float('inf')
+            old_top, new_top = old[:k], new[:k]
+            old_ids, new_ids = {r for r, _, _ in old_top}, {r for r, _, _ in new_top}
+            old_rest, new_rest = [x for x in old_top if x[0] not in new_ids], [x for x in new_top if x[0] not in old_ids]
+            def unmatched(rows, others):
+                pool, left = collections.Counter(h for _, h, _ in others), []
+                for row in rows:
+                    if pool[row[1]] > 0:
+                        pool[row[1]] -= 1
+                    else:
+                        left.append(row)
+                return left
+            entrants, exits = unmatched(new_rest, old_rest), unmatched(old_rest, new_rest)
+            known, bound = {r for r, _, _ in old}, old[-1][2] if old else float('-inf')
             counts['of'] += len(new_top)
-            for key in new_top.keys() - old_top.keys():
-                counts['entrants'] += 1
-                counts['new' if key not in known and key[1] < bound else 'promoted'] += 1
-            for key in old_top.keys() - new_top.keys():
-                counts['exits'] += 1
-                counts['displaced' if old_top[key] in still_visible else 'gone'] += 1
+            counts['entrants'] += len(entrants)
+            for row, _, distance in entrants:
+                counts['promoted' if row in known else 'new' if distance < bound else 'unknown'] += 1
+            counts['exits'] += len(exits)
+            for row, _, _ in exits:
+                counts['displaced' if row in still_visible else 'gone'] += 1
         out[str(k)] = counts
     return out
 
@@ -389,10 +420,11 @@ def print_diagnostics(result):
     baseline (an after run)."""
     for k in KS:
         c = result['diagnostics']['cohorts'][str(k)]
-        line = f"  diagnostic @{k}: recall by cohort root {c['root'][0]}/{c['root'][1]}, lineage versions {c['lineage'][0]}/{c['lineage'][1]}"
+        line = (f"  diagnostic @{k}: recall by cohort root {c['root'][0]}/{c['root'][1]}, lineage versions {c['lineage'][0]}/{c['lineage'][1]}, "
+                f"ambiguous tie credits {c['ambiguous']}, unassigned ties {c['unassigned']}")
         t = result['diagnostics'].get('turnover', {}).get(str(k))
         if t:
-            line += (f"; exact top-{k} turnover against the baseline {t['entrants']}/{t['of']} (new rows {t['new']}, promoted {t['promoted']}; "
+            line += (f"; exact top-{k} turnover against the baseline {t['entrants']}/{t['of']} (new rows {t['new']}, promoted {t['promoted']}, unknown {t['unknown']}; "
                      f"exits displaced {t['displaced']}, gone {t['gone']})")
         print(line)
 
