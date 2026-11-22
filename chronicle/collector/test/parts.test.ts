@@ -224,6 +224,27 @@ test('UploadParts does not read a source again while its intent cannot be sent; 
   } finally { await h.close(); }
 });
 
+test('UploadParts reads the file of a stopped intent again once it is replaced or shortened: the other session there is planned and uploaded, the stopped intent is not retried', async () => {
+  const h = await harness();
+  try {
+    const replaced = join(h.roots.pi, 'replaced.jsonl'), shortened = join(h.roots.pi, 'shortened.jsonl');
+    // The server refuses declarations of three messages: both intents stop.
+    h.server.limits = h.server.limits.with({ maxMessages: 2 });
+    const three = (id: string) => jsonl(piHeader(id), piMessage('a', 'one'), piMessage('b', 'two'), piMessage('c', 'three'));
+    writeFileSync(replaced, three('pi-old-replaced')); writeFileSync(shortened, three('pi-old-shortened'));
+    assert.deepEqual(await h.run(1).then(counters => [counters.stopped, counters.uploadFailures]), [2, 2]);
+    const stopped = h.spool.uploads();
+    // Another session takes each path: written aside and renamed over it (another inode), or rewritten in place, shorter.
+    writeFileSync(`${replaced}.new`, jsonl(piHeader('pi-new-replaced'), piMessage('n1', 'another session'))); renameSync(`${replaced}.new`, replaced);
+    writeFileSync(shortened, jsonl(piHeader('pi-new-shortened'), piMessage('n1', 'another')));
+    const opens = h.server.count('POST /api/ingest/uploads');
+    const counters = await h.run(2);
+    assert.deepEqual([counters.scanned, counters.enqueued, counters.uploaded, counters.stopped, h.server.count('POST /api/ingest/uploads') - opens], [2, 2, 2, 2, 2]);
+    assert.deepEqual(h.spool.uploads(), stopped);
+    assert.deepEqual([...h.server.heads.values()].map(head => head.digest).sort(), [hash(readFileSync(replaced)), hash(readFileSync(shortened))].sort());
+  } finally { await h.close(); }
+});
+
 test('UploadParts opens a spool of the current release: its queued whole payload drains through /api/ingest first, then parts replace and append', async () => {
   const h = await harness();
   try {

@@ -37,6 +37,9 @@ const controlsDigest = (controls: Controls): string => hash(JSON.stringify(contr
 const fileId = (file: SourceFile): string => hash(JSON.stringify([file.root.id, file.root.format, file.path]));
 /** The observation signature: a file is read once its stat has not changed for `quietMs` (append-limits spec §2.2 item 1). */
 const statSignature = (stat: SourceStat): string => `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+/** The same file as at `before`, only grown or unchanged in size: same device and inode, not shorter. A file replaced
+ * (another inode) or shortened can hold another session and is read again to identify it. */
+const sameFileGrown = (before: SourceStat, now: SourceStat): boolean => before.dev === now.dev && before.ino === now.ino && BigInt(now.size) >= BigInt(before.size);
 /** A checkpoint read back from the spool has the fields an incremental pass resumes from. */
 const resumable = (checkpoint: AppendCheckpoint): boolean => {
   const state = object(checkpoint.state) ? checkpoint.state : null;
@@ -234,8 +237,9 @@ export class Collector {
         if (!serverUnsupported) { counters.uploadFailures++; this.spool.diagnostic({ rootId: 'server', pathId: hash('server'), code }); }
       }
     }
-    // A source whose part intent cannot be sent this cycle is not read again: without the server's limits nothing is sent,
-    // and a stopped, conflicting or backed-off intent waits. When it is sent, a changed file aborts it and is read again.
+    // A file of a source whose part intent cannot be sent this cycle is not read again while it is the same file, grown:
+    // without the server's limits nothing is sent, and a stopped, conflicting or backed-off intent waits. When the intent
+    // is sent, the changed file aborts it and is read again.
     const unsendable = new Set(intents.filter(entry => limits === null || !due(entry, now)).map(entry => entry.sourceKey));
     const recordCap = this.recordCap();
     // Everything besides the lines, the policy and the head that pass 1's result depends on.
@@ -320,7 +324,7 @@ export class Collector {
       // the read starts its quiet period again (the observation of the read's stat below).
       const observed = statSource(file);
       if (observed !== null && now - this.spool.observe(pathId, statSignature(observed), now) < this.config.quietMs) { counters.waiting++; rootCoverage(file).waiting++; continue; }
-      if (known !== undefined && unsendable.has(known.sourceKey)) { counters.waiting++; rootCoverage(file).waiting++; continue; }
+      if (known !== undefined && observed !== null && unsendable.has(known.sourceKey) && sameFileGrown(known.stat, observed)) { counters.waiting++; rootCoverage(file).waiting++; continue; }
       try {
         if (parts) {
           // The head this file had at its last read: pass 1 records the prefix an append would extend.
