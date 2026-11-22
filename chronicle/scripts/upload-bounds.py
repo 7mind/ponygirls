@@ -2204,7 +2204,7 @@ def run_h(root):
     (root / 'index-H-answers.jsonl').write_text(json.dumps(dict(incremental=incremental, republished=republished)) + '\n')
     check(f'H6: {len(incremental)} reader answers of the incremental head equal the root republication\'s up to ids ({len(queries)} queries × 3 modes, '
           f'chunk and passage pages, the session){"; differing: " + str(differing) if differing else ""}', not differing,
-          {key: dict(incremental=str(incremental.get(key))[:800], republished=str(republished.get(key))[:800]) for key in differing[:3]})
+          {key: dict(incremental=str(incremental.get(key))[:800], republished=str(republished.get(key))[:800]) for key in differing[:3]}, defer=True)
     note(f'H: the {H_APPENDS} appends and their publications took {growth_seconds / 60:.1f} min')
     full_server = h.stop()
     h.stub.stop()
