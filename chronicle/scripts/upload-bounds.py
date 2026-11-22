@@ -86,6 +86,13 @@ RENDERER_HEAP = 64 * 10**6
 APPEND_CPU_SECONDS = 10.0
 DOWNLOAD_MIN_RATE = 5 * 10**6  # bytes per second: the download deadlines, generous for this host
 NOT_RUN_EXIT = 3
+# H (ACC3b): appends of +0.5 % after the root, the stub's mean passage length in windows (E1X's bounded shape), the
+# longest wait for one append's publication.
+H_APPENDS, H_GROWTH, H_PASSAGE_WINDOWS, H_JOB_WAIT_S = 10, 0.005, 10, 3600
+# The server's `indexing` capacities when the key is absent (Core.scala IndexingCapacity.defaults): an explicit `indexing`
+# object must name them; the same embedding batch size keeps the checkpoints' grouping.
+INDEXING_DEFAULTS = dict(annotationSessions=4, embeddingRequests=8, embeddingBatchSize=16)
+D_BOUNDARY_WINDOWS = 2  # D′: re-annotated windows per later complete job beyond the head's (its parent's last window; one of slack)
 GNU_TIME = '/usr/bin/time'  # the CLI's own peak RSS (spec §9: the CLI under /usr/bin/time -v)
 # G (spec §9 as amended by the lead, round 2): the initial 1 GiB replacement ≤ 30 min, the growth and the edit ≤ 30 min,
 # the whole run ≤ 60 min (RUNS).
@@ -122,18 +129,6 @@ def skip(label, reason):
     """A leg of this stage that cannot run with these binaries: reported, and the run ends incomplete (never passed)."""
     not_run.append(f'{label}: {reason}')
     print('not run -', label, '-', reason, flush=True)
-
-
-def hook(label, stage):
-    """A leg of landing stage `stage` whose assertions come with a later phase. A run of an earlier stage lists it as
-    outside its stage (returns True: the caller asserts that stage's expectation instead); a run of that stage or a later
-    one reports it `not run`, so the run ends incomplete (returns False)."""
-    if STAGES.index(STAGE) < STAGES.index(stage):
-        outside_stage.append(f'{label} (stage {stage})')
-        note(f'outside stage {STAGE}: {label} (stage {stage})')
-        return True
-    skip(label, f'its stage-{stage} assertion comes with phase 3')
-    return False
 
 
 def smoke_budget():
@@ -421,11 +416,21 @@ lines.put("stop\n"); lines.put(None); writer.join()
 STUB = r'''
 import hashlib, json, math, struct, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-dimensions, delay_file, port_file = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+dimensions, delay_file, port_file, shape_file = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
 counts = {"annotation": 0, "embedding": 0, "inputs": 0, "errors": 0}; lock = threading.Lock()
 def delay():
     try: return float(open(delay_file).read().strip() or "0")
     except OSError: return 0.0
+def annotation(source):
+    """`default`: one session-long passage, one summary. `bounded N`: a passage ends before a window whose first message
+    position hashes to 0 mod N, and the summary names the window's first message position (an open passage's metadata
+    changes in every window it continues): the passages E1X measured."""
+    shape = open(shape_file).read().split()
+    first = source["fragments"][0]["messagePosition"]
+    if shape[0] == "bounded":
+        keep = int(hashlib.sha256(str(first).encode()).hexdigest()[:8], 16) % int(shape[1]) != 0
+        return source.get("previous") is not None and keep, "Synthetic annotation %d" % first
+    return source.get("previous") is not None, "Synthetic annotation"
 def vector(text):
     # The server sends queryPrefix + query and documentPrefix + chunk text (config.example.json): without them a query
     # equal to a chunk's text gets that chunk's vector.
@@ -450,8 +455,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/v1/chat/completions":
                 time.sleep(delay())
                 source = json.loads(request["messages"][1]["content"]); n = len(source["fragments"]); assert n > 0
+                continues, summary = annotation(source)
                 content = json.dumps({"parts": [{"kind": "Problem", "start": {"fragmentIndex": 0, "scalarOffset": 0}, "end": {"fragmentIndex": n, "scalarOffset": 0},
-                    "continuePrevious": source.get("previous") is not None, "summary": "Synthetic annotation", "tags": ["synthetic"]}]})
+                    "continuePrevious": continues, "summary": summary, "tags": ["synthetic"]}]})
                 with lock: counts["annotation"] += 1
                 return self.reply(200, {"choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}]})
             if self.path == "/v1/embeddings":
@@ -583,10 +589,11 @@ class Probe:
 
 class Stub:
     def __init__(self, root):
-        self.delay_file, port_file = root / 'stub-delay', root / 'stub-port'
+        self.delay_file, self.shape_file, port_file = root / 'stub-delay', root / 'stub-shape', root / 'stub-port'
         self.delay(0)
-        self.process = subprocess.Popen([sys.executable, '-c', STUB, str(DIMENSIONS), str(self.delay_file), str(port_file)], stdin=subprocess.DEVNULL,
-                                        start_new_session=True)
+        self.shape('default')
+        self.process = subprocess.Popen([sys.executable, '-c', STUB, str(DIMENSIONS), str(self.delay_file), str(port_file), str(self.shape_file)],
+                                        stdin=subprocess.DEVNULL, start_new_session=True)
         deadline = time.monotonic() + 30
         while not port_file.exists() or not port_file.read_text():
             assert self.process.poll() is None and time.monotonic() < deadline, 'stub model server start'
@@ -595,6 +602,10 @@ class Stub:
 
     def delay(self, seconds):
         self.delay_file.write_text(str(seconds))
+
+    def shape(self, value):
+        """The passages the stub's annotations make (STUB `annotation`): `default` or `bounded N`."""
+        self.shape_file.write_text(value)
 
     def counts(self):
         with urllib.request.urlopen(self.origin + '/counts', timeout=5) as response:
@@ -1115,8 +1126,8 @@ class Harness:
              f'maxFileBytes {max_file_bytes} (server and collector), maxMessages {DEPLOYMENT_MESSAGES}, maxRecordBytes {RECORD_BYTES}, '
              f'maxBodyBytes {BODY_BYTES}, collector heap {COLLECTOR_HEAP_MB} MB, collector {"through the logging proxy" if PROXY else "direct"}')
 
-    def start(self, label, binary=SERVER, mode='serve'):
-        self.server = Server(self.root, label, binary, self.config, self.heap, mode)
+    def start(self, label, binary=SERVER, mode='serve', config=None):
+        self.server = Server(self.root, label, binary, config or self.config, self.heap, mode)
         self.cli = None
         return self.server
 
@@ -1275,6 +1286,70 @@ class Harness:
              + (f' (from {unavailable[0]["t"]} s to {unavailable[-1]["t"]} s, phase {sorted({p["phase"] for p in unavailable})})' if unavailable else ''))
         searches = self.searches(label, session)
         return dict(job=job_row, split=split, heap=heap, switchedSeconds=int(switched[0][1]) if switched else None, probes=probes, searches=searches)
+
+    def publications(self, session):
+        """Per revision of the session, the kinds of the server's `publication started … publication=root|incremental …`
+        lines of its job (one per attempt that reached phase P)."""
+        log = re.sub(r'\x1b\[[0-9;]*m', '', self.server.log_path.read_text(errors='replace'))
+        return {int(revision): re.findall(r'publication started jobId=(?:\w+=)?' + job + r' .*?publication=(?:\w+=)?(root|incremental)', log)
+                for job, revision in sql("SELECT id, revision FROM ch_jobs WHERE session_id=:'arg0'", session)}
+
+    def generation_rows(self, session, parent):
+        """The rows the session's published generation wrote, against its parent (the generation published before;
+        None for a root) — E1X's per-revision measures: lineage version, pieces and windows, chunks / search rows / links
+        it wrote (chunks before the parent's cut = the open passage's rewritten pieces), segment rows its switch closed and
+        inserted, the parent's cut (first ordinal of window K, the open passage and its pieces before the cut)."""
+        generation = one("SELECT published FROM ch_sources WHERE id=:'arg0'", session)
+        row = sql("SELECT g.lineage=g.id, coalesce(g.lineage_version,-1), l.pieces, coalesce(l.last_window,-1), "
+                  "(SELECT count(*) FROM ch_chunks WHERE generation=g.id), (SELECT count(*) FROM ch_problem_pieces WHERE generation=g.id), "
+                  "(SELECT count(*) FROM ch_search_chunks WHERE generation=g.id), "
+                  "(SELECT count(*) FROM ch_lineage_segments WHERE lineage=g.lineage AND until=g.lineage_version), "
+                  "(SELECT count(*) FROM ch_lineage_segments WHERE lineage=g.lineage AND since=g.lineage_version), g.passage_count "
+                  "FROM ch_generations g JOIN ch_generation_lineage l ON l.generation=g.id WHERE g.id=:'arg0'", generation)[0]
+        lineage_root, version, pieces, last_window, chunks, links, search_rows, closed, inserted, passages = row
+        cut = dict(firstOrdinal=0, lastWindow=-1, pieces=0, openPassage=-1, openPassagePieces=0)
+        if parent:
+            values = sql("SELECT coalesce((l.cut->'state'->>'nextPieceOrdinal')::bigint,0), coalesce(l.last_window,-1), l.pieces, "
+                         "coalesce((l.cut->'state'->'open'->'passage'->>'ordinal')::int,-1), coalesce((l.cut->'state'->'open'->'passage'->>'pieceCount')::bigint,0) "
+                         "FROM ch_generation_lineage l WHERE l.generation=:'arg0'", parent)[0]
+            cut = dict(zip(['firstOrdinal', 'lastWindow', 'pieces', 'openPassage', 'openPassagePieces'], (int(v) for v in values)))
+        rewritten = int(one("SELECT count(*) FROM ch_chunks WHERE generation=:'arg0' AND ordinal<:'arg1'", generation, cut['firstOrdinal'])) if parent else 0
+        return dict(generation=generation, root=lineage_root == 't', version=int(version), pieces=int(pieces), windows=int(last_window) + 1, passages=int(passages),
+                    addedPieces=int(pieces) - cut['pieces'], addedWindows=int(last_window) - cut['lastWindow'], parentCut=cut,
+                    written=dict(chunks=int(chunks), searchRows=int(search_rows), links=int(links), rewrittenBeforeCut=rewritten,
+                                 tail=int(pieces) - cut['firstOrdinal'] if parent else int(pieces)),
+                    segments=dict(closed=int(closed), inserted=int(inserted)))
+
+    def search_rows(self, session):
+        return int(one("SELECT count(*) FROM ch_search_chunks WHERE session_id=:'arg0'", session))
+
+    def retired(self, session):
+        """No superseded search rows or replaced generations of the session left to retire."""
+        return int(one("SELECT (SELECT count(*) FROM ch_search_retirements WHERE session_id=:'arg0') + (SELECT count(*) FROM ch_generation_retirements r "
+                       "JOIN ch_generations g ON g.id=r.generation WHERE g.session_id=:'arg0')", session)) == 0
+
+    def reader_answers(self, session, queries):
+        """What readers see of the session's published head, normalized up to ids (every UUID but the session's replaced by
+        its rank of first appearance): lexical, semantic and hybrid search for each query, chunk pages at the start, middle
+        and end, the session's metadata, passage pages at the start and end of the published view."""
+        answers = {}
+        for query in queries:
+            for mode in ('lexical', 'semantic', 'hybrid'):
+                answers[f'search {mode} {query[:40]!r}'] = self.reader().result('search', query, '--mode', mode, '--limit', '20')[0]
+        info = self.reader().result('session', session)[0]
+        answers['session'] = info
+        total = int(one("SELECT l.pieces FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_generation_lineage l ON l.generation=g.id WHERE s.id=:'arg0'", session))
+        for offset in sorted({0, total // 2, max(0, total - PAGE)}):
+            answers[f'chunks @{offset}'] = self.reader().result('chunks', session, '--offset', str(offset), '--limit', str(PAGE))[0]
+        generation, revision = one("SELECT g.id, g.revision FROM ch_sources s JOIN ch_generations g ON g.id=s.published WHERE s.id=:'arg0'", session)
+        passages = int(one("SELECT passage_count FROM ch_generations WHERE id=:'arg0'", generation))
+        for offset in sorted({0, max(0, passages - PAGE)}):
+            answers[f'passages @{offset}'] = self.reader().result('passages', session, '--revision', str(revision), '--generation', generation, '--offset', str(offset),
+                                                                  '--limit', str(PAGE))[0]
+        ids = {}
+        text = re.sub(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+                      lambda m: m[0] if m[0] == session else ids.setdefault(m[0], f'<id{len(ids)}>'), json.dumps(answers, sort_keys=True))
+        return json.loads(text)
 
     def search_outcome(self, mode, query):
         """One CLI search: ok (with the result), unavailable, or another failure; its latency."""
@@ -1625,9 +1700,11 @@ def run_a(root):
         a6_downloads = h.downloads('A6', big, session, 2)
     s2 = h.stop()
     published = one("SELECT published FROM ch_sources WHERE id=:'arg0'", session)
-    # Stage l5: down-026 (staged generations, retirements, reloptions) before down-025, as docs/operations.md orders them.
-    downs = [('026', 'chronicle/scripts/down-026-staged-generations.sql', "to_regclass('public.ch_staged_generations') IS NULL"),
-             ('025', 'chronicle/scripts/down-025-uploads.sql', "to_regclass('public.ch_uploads') IS NULL")][0 if STAGE == 'l5' else 1:]
+    # Stage l5: down-028, down-027, down-026, then down-025, as docs/operations.md orders them.
+    downs = [('028', 'chronicle/scripts/down-028-generation-lineage.sql', "to_regclass('public.ch_lineage_segments') IS NULL"),
+             ('027', 'chronicle/scripts/down-027-window-reuse.sql', "to_regclass('public.ch_index_checkpoint_refs') IS NULL"),
+             ('026', 'chronicle/scripts/down-026-staged-generations.sql', "to_regclass('public.ch_staged_generations') IS NULL"),
+             ('025', 'chronicle/scripts/down-025-uploads.sql', "to_regclass('public.ch_uploads') IS NULL")][0 if STAGE == 'l5' else 3:]
     with Phase(f'A7 down-{"/down-".join(n for n, _, _ in downs)} (S2 -> S1 rollback)'):
         env = dict(os.environ, PGPASSWORD=Path(DATABASE['passwordFile']).read_text().strip())
         for number, script, gone in downs:
@@ -1781,11 +1858,28 @@ def run_d(root):
     spent = sum(j['completedWindows'] for j in jobs)
     head_windows = jobs[-1]['totalWindows']
     note(f'D: windows completed {spent} in total, head revision {head["revision"]} has {head_windows}')
-    hook('D′: windows annotated ≈ the head\'s windows plus the boundary windows (I2 reuse, L5d)', 'l5')
+    reuse = None
+    if STAGE == 'prefix':
+        outside_stage.append('D′: windows annotated ≈ the head\'s windows plus the boundary windows (I2 reuse); publications incremental after the first (stage l5)')
+    else:
+        # D′ (spec §9, stage l5): a later job re-annotates only the windows from its parent's last window on, so the
+        # annotation calls are the head's windows plus about one boundary window per later completed job.
+        calls, published = h.stub.counts(), h.publications(session)
+        complete = [j for j in jobs if j['state'] == 'Complete']
+        kinds = [published.get(j['revision'], []) for j in complete]
+        bound = head_windows + D_BOUNDARY_WINDOWS * (len(complete) - 1)
+        reuse = dict(annotationCalls=calls['annotation'], embeddingCalls=calls['embedding'], embeddingInputs=calls['inputs'], windowsCompleted=spent,
+                     headWindows=head_windows, completeJobs=len(complete), bound=bound, publications={j['revision']: k for j, k in zip(complete, kinds)})
+        note(f'D′: {json.dumps(reuse)}')
+        check(f'D′: {calls["annotation"]} annotation calls for a head of {head_windows} windows and {len(complete)} complete jobs ({spent} windows completed; '
+              f'U8 base 236): at most the head plus {D_BOUNDARY_WINDOWS} per later complete job ({bound}), fewer than the windows completed',
+              calls['annotation'] <= bound and calls['annotation'] < spent, reuse)
+        check(f'D′: publications of the complete jobs {kinds}: the first a root, every later one incremental',
+              kinds and kinds[0] == ['root'] and all(k and set(k) == {'incremental'} for k in kinds[1:]), kinds)
     s2 = h.stop()
     h.stub.stop()
     return dict(revisions=[dict(revision=r['revision'], rawBytes=r['rawBytes'], messages=r['messages'], estimate=r['estimate'], parts=r['upload']['parts']) for r in revisions],
-                jobs=jobs, windowsSpent=spent, headWindows=head_windows, delaySeconds=delay, budget=h.budget, servers=[s2])
+                jobs=jobs, windowsSpent=spent, headWindows=head_windows, reuse=reuse, delaySeconds=delay, budget=h.budget, servers=[s2])
 
 
 def run_e(root):
@@ -1932,10 +2026,128 @@ def run_g(root):
                 servers=[s2])
 
 
+def run_h(root):
+    """H (ACC3b, stage l5): a ≥ 1 GiB session indexed (a root), then H_APPENDS appends of +0.5 % through the collector's
+    incremental path, each waiting for its publication. Per revision: the rows written (chunks = search rows = HNSW
+    insertions; those before the parent's cut = the open passage's rewritten pieces), segment rows, search rows retired,
+    HNSW size delta, WAL of the upload and of the indexing, the lag from the upload's commit (the collector's return) to the
+    switch, the publication kind, model calls. Each append is incremental and writes exactly the tail (window K and the
+    addition) plus none or all of the passage open at the cut, so its work is bounded by the addition and that passage and
+    does not grow over the versions. Then the head is republished as a root (RetryJob of its Complete job on a second server
+    instance with indexing.incrementalPublication=false: a cached republication, no model call) and the reader answers
+    (lexical, semantic and hybrid search for a fixed query set, chunk and passage pages, the session) equal the incremental
+    head's up to ids. The stub's annotations make E1X's bounded passages (a passage ends before about every
+    H_PASSAGE_WINDOWS-th window; an open passage's summary changes in every window)."""
+    h = Harness(root, 'H')
+    h.stub.shape(f'bounded {H_PASSAGE_WINDOWS}')
+    fixture = Fixture(h.collector.sessions('--acc-h--') / 'session.jsonl', 'acc-h')
+    started = time.monotonic()
+    fixture.write(int(GiB * SCALE), RARE)
+    note(f'fixture {json.dumps(fixture.summary())} in {time.monotonic() - started:.1f} s; stub shape {h.stub.shape_file.read_text()}')
+    h.start('H-S2-upload', mode='serve-standby')
+    with Phase('H1 root upload'):
+        h.uploaded('H1', h.collector.once('H1 root upload'), 1, 1)
+        session, head = h.stored('H1', fixture, 1, False)
+    uploads = h.stop()
+    watch = IndexWatch(h, session, 1)  # sampled from before the workers start
+    h.start('H-S2')
+    with Phase('H2 root indexing'):
+        root_indexing = h.indexing('H2', fixture, session, 1, watch)
+        h.wait('H2 retirement', lambda: h.retired(session), period=1)
+        rows = h.generation_rows(session, None)
+        published = h.publications(session)
+        check(f'H2: revision 1 published as a root ({rows["pieces"]:,} pieces, {rows["windows"]:,} windows, {rows["passages"]:,} passages; log {published.get(1)})',
+              rows['root'] and rows['version'] == 0 and published.get(1) == ['root'], (rows, published.get(1)))
+    revisions = [dict(revision=1, kind='root', **rows)]
+    step = int(GiB * SCALE * H_GROWTH)
+    growth_started = time.monotonic()
+    for k in range(1, H_APPENDS + 1):
+        number = head['revision'] + 1
+        with Phase(f'H3.{k} append {k} of +{H_GROWTH:.1%} and its publication'):
+            parent = one("SELECT published FROM ch_sources WHERE id=:'arg0'", session)
+            search_before, hnsw_before, calls_before, lsn = h.search_rows(session), hnsw_bytes(), h.stub.counts(), wal_lsn()
+            fixture.write(step, RARE_APPENDED)
+            h.uploaded(f'H3.{k}', h.collector.once(f'H3.{k} append'), 1, 0)
+            committed = time.monotonic()
+            previous = head
+            _, head = h.stored(f'H3.{k}', fixture, number, True, previous)
+            h.incremental(f'H3.{k}', fixture, step)
+            upload_wal, lsn = wal_since(lsn), wal_lsn()
+            job = h.wait(f'H3.{k} publication', lambda: next((j for j in h.jobs(session) if j['revision'] == number and j['state'] in ('Complete', 'Failed')), None),
+                         timeout=H_JOB_WAIT_S, period=1)
+            lag = time.monotonic() - committed
+            check(f'H3.{k}: the job of revision {number} completes and publishes at the head ({lag:.0f} s from the upload)',
+                  job['state'] == 'Complete' and h.published(session) == number, job)
+            h.wait(f'H3.{k} retirement', lambda: h.retired(session), period=1)
+            calls = {key: value - calls_before[key] for key, value in h.stub.counts().items()}
+            rows = h.generation_rows(session, parent)
+            kinds = h.publications(session).get(number)
+            revision = dict(revision=number, kind=kinds, lagSeconds=round(lag, 1), uploadWalBytes=upload_wal, indexingWalBytes=wal_since(lsn),
+                            searchRowsRetired=search_before + rows['written']['searchRows'] - h.search_rows(session), hnswBytesDelta=hnsw_bytes() - hnsw_before,
+                            calls=calls, collectorCpuSeconds=collectors[-1]['cpuSeconds'], **rows)
+            revisions.append(revision)
+            note(f'H3.{k}: {json.dumps(revision)}')
+            written, cut = rows['written'], rows['parentCut']
+            check(f'H3.{k}: an incremental version ({rows["version"]}, log {kinds}) writing {written["chunks"]:,} chunks = search rows = the tail '
+                  f'({written["tail"]:,}: window K and the {rows["addedPieces"]:,} added pieces) + {written["rewrittenBeforeCut"]:,} rewritten before the cut '
+                  f'(0 or the open passage\'s {cut["openPassagePieces"]:,}), {rows["segments"]} segment rows',
+                  not rows['root'] and rows['version'] == revisions[-2]['version'] + 1 and kinds == ['incremental']
+                  and written['chunks'] == written['tail'] + written['rewrittenBeforeCut'] == written['searchRows']
+                  and written['rewrittenBeforeCut'] in (0, cut['openPassagePieces']), revision)
+    growth = time.monotonic() - growth_started
+    appends = revisions[1:]
+    lags = [r['lagSeconds'] for r in appends]
+    note(f'H: lag from upload to switch per append {lags} s; chunks written {[r["written"]["chunks"] for r in appends]}')
+    queries = [RARE, RARE_APPENDED, COMMON, one("SELECT value->>'text' FROM ch_chunks c JOIN ch_sources s ON c.generation=s.published WHERE s.id=:'arg0' "
+                                                "AND char_length(value->>'text') BETWEEN 64 AND :'arg1' AND value->>'text' = btrim(value->>'text') "
+                                                "AND position(chr(10) IN value->>'text') = 0 ORDER BY c.ordinal LIMIT 1", session, SEARCH_QUERY_CHARS)]
+    with Phase('H4 reader answers of the incremental head'):
+        incremental = h.reader_answers(session, queries)
+    incremental_server = h.stop()
+    config = json.loads(h.config.read_text())
+    config['indexing'] = {**config.get('indexing', INDEXING_DEFAULTS), 'incrementalPublication': False}
+    full_config = root / 'server-full.json'
+    full_config.write_text(json.dumps(config))
+    h.start('H-S2-full', config=full_config)
+    with Phase('H5 the head republished as a root (RetryJob, incrementalPublication=false)'):
+        job_id, fence = one("SELECT id, fence FROM ch_jobs WHERE session_id=:'arg0' AND revision=:'arg1'", session, head['revision'])
+        calls_before, lsn, began = h.stub.counts(), wal_lsn(), time.monotonic()
+        h.reader().call('jobs', 'retry', job_id, '--yes', '--auth', 'session')
+        h.wait('H5 republication', lambda: one("SELECT state='Complete' AND fence>:'arg1'::bigint FROM ch_jobs WHERE id=:'arg0'", job_id, fence) == 't',
+               timeout=INDEX_WAIT_S, period=5)
+        full_seconds, full_wal = time.monotonic() - began, wal_since(lsn)
+        h.wait('H5 retirement', lambda: h.retired(session), period=1)
+        calls = {key: value - calls_before[key] for key, value in h.stub.counts().items()}
+        rows = h.generation_rows(session, None)
+        kinds = h.publications(session).get(head['revision'])
+        full = dict(seconds=round(full_seconds, 1), walBytes=full_wal, calls=calls, kinds=kinds, **rows)
+        note(f'H5: {json.dumps(full)}')
+        check(f'H5: the retry republished revision {head["revision"]} as a root ({rows["pieces"]:,} pieces, {full_seconds:.0f} s, log {kinds}) reusing every window '
+              f'({calls["annotation"]} annotation calls)', rows['root'] and rows['pieces'] == revisions[-1]['pieces'] and kinds and kinds[-1] == 'root'
+              and calls['annotation'] == 0, full)
+    with Phase('H6 reader answers of the root republication'):
+        republished = h.reader_answers(session, queries)
+    differing = sorted(key for key in incremental.keys() | republished.keys() if incremental.get(key) != republished.get(key))
+    (root / 'index-H-answers.jsonl').write_text(json.dumps(dict(incremental=incremental, republished=republished)) + '\n')
+    check(f'H6: {len(incremental)} reader answers of the incremental head equal the root republication\'s up to ids ({len(queries)} queries × 3 modes, '
+          f'chunk and passage pages, the session){"; differing: " + str(differing) if differing else ""}', not differing,
+          {key: dict(incremental=str(incremental.get(key))[:800], republished=str(republished.get(key))[:800]) for key in differing[:3]})
+    note(f'H: the {H_APPENDS} appends and their publications took {growth / 60:.1f} min')
+    full_server = h.stop()
+    h.stub.stop()
+    return dict(fixture=fixture.summary(), shape=h.stub.shape_file.read_text(), rootIndexing=root_indexing, revisions=revisions, growthSeconds=round(growth, 1),
+                republication=full, answers=len(incremental), differing=differing, servers=[uploads, incremental_server, full_server])
+
+
+def hnsw_bytes():
+    return int(one("SELECT coalesce(sum(pg_relation_size(i.indexrelid)),0) FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid "
+                   "WHERE i.indrelid='ch_search_chunks'::regclass AND c.relname LIKE 'ch_search_hnsw%'"))
+
+
 # run: (function, free space it needs, wall-time budget s, consumed-disk budget B) — the budgets of spec §9 (G: the whole
 # run; its initial upload and its growth with the edit are budgeted separately, G_UPLOAD_BUDGET_S and GROWTH_BUDGET_S).
 RUNS = {'A': (run_a, 50 * GiB, 4 * 3600, 50 * 10**9), 'B': (run_b, 110 * GiB, 14 * 3600, 110 * 10**9), 'D': (run_d, 2 * GiB, 30 * 60, None),
-        'E': (run_e, 1 * GiB, 15 * 60, None), 'G': (run_g, 25 * GiB, 60 * 60, 25 * 10**9)}
+        'E': (run_e, 1 * GiB, 15 * 60, None), 'G': (run_g, 25 * GiB, 60 * 60, 25 * 10**9), 'H': (run_h, 60 * GiB, 5 * 3600, 60 * 10**9)}
 
 
 def main():

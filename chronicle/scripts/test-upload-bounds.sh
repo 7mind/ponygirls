@@ -27,9 +27,14 @@
 #      A run's (UPLOAD_BOUNDS_COMPARE_A=its output); the downloads as in A (≥ 4 GiB); the head's indexing verdict while
 #      four other sessions index. ≤ 14 h, ≤ 110 GB: run it with the data root below and a long wrapper timeout.
 #   D  a 2 MB session grows by six appends while its jobs run (stub annotation delay 1 s per window) and ends indexed at
-#      its head; jobs and windows spent. ≤ 30 min.
+#      its head; jobs and windows spent; stage l5 (D′): annotation calls at most the head's windows plus two per later
+#      complete job, the first publication a root and every later one incremental. ≤ 30 min.
 #   E  gate O (scripts/test-main-collector.sh) against this tree's server, heaps bounded and the server probed; then the raw
 #      read compatibility (scripts/test-raw-compat.sh: BASE_SERVER and BASE_CLI of 66fce48e) on the same database. ≤ 15 min.
+#   H  (stage l5) a 1 GiB session indexed as a root, then 10 appends of +0.5 % each published incrementally: per revision rows
+#      written, HNSW insertions, WAL, lag to the switch, publication kind; each append writes exactly the tail plus none or
+#      all of the passage open at the cut; then the head republished as a root (RetryJob, incrementalPublication=false on a
+#      second server) and the reader answers equal up to ids. ≤ 5 h, ≤ 60 GB.
 #   G  the 1 GiB session grows by 20 appends of +0.5 % (each incremental; collector CPU per append), then a same-length
 #      in-place edit of a line in the middle plus an append: a replacement (source-prefix-changed) whose archive equals the
 #      file. The initial 1 GiB upload ≤ 30 min, the growth with the edit ≤ 30 min, the run ≤ 1 h; ≤ 25 GB.
@@ -53,9 +58,9 @@
 #     BASE_CLI="$(nix build --no-link --print-out-paths "git+file://$PWD?rev=66fce48e651758158e6df8bee4d6ed443160421c#chronicle-cli")/bin/chronicle" \
 #     "$(nix build --no-link --print-out-paths .#service-test-fixture-tools)/bin/with-service-postgres" --child-timeout-seconds=21600 \
 #       --data-root="$UPLOAD_BOUNDS_DATA_ROOT" \
-#       nice -n 10 bash chronicle/scripts/test-upload-bounds.sh A|B|D|E|G'
+#       nice -n 10 bash chronicle/scripts/test-upload-bounds.sh A|B|D|E|G|H'
 #
-# CHRONICLE_S1_SERVER is needed by A only, MAIN_COLLECTOR, BASE_SERVER and BASE_CLI by E only, CHRONICLE_COLLECTOR by A, B, D and G; without
+# CHRONICLE_S1_SERVER is needed by A only, MAIN_COLLECTOR, BASE_SERVER and BASE_CLI by E only, CHRONICLE_COLLECTOR by A, B, D, G and H; without
 # CHRONICLE_WEB_ROOT and CHRONICLE_CHROMIUM the dashboard download of A and B is `not run`. UPLOAD_BOUNDS_STAGE=prefix
 # (default; L4, L1, L3, L6, L2) or l5 (streamed indexing as well) selects the stage the run accepts: a run of stage l5
 # reports the L5 legs whose assertions are not written yet as `not run` (incomplete), a prefix run lists them as outside it.
@@ -64,8 +69,8 @@
 # request). To try the harness (not an acceptance run): UPLOAD_BOUNDS_SCALE=0.01 shrinks the fixtures, the raw read
 # bound and the indexing budget; UPLOAD_BOUNDS_D_DELAY=0.3 shortens D's annotation delay.
 set -euo pipefail
-usage='Usage: chronicle/scripts/test-upload-bounds.sh A|B|D|E|G'
-[[ $# == 1 && $1 =~ ^[ABDEG]$ ]] || { echo "$usage" >&2; exit 2; }
+usage='Usage: chronicle/scripts/test-upload-bounds.sh A|B|D|E|G|H'
+[[ $# == 1 && $1 =~ ^[ABDEGH]$ ]] || { echo "$usage" >&2; exit 2; }
 : "${CHRONICLE_SERVER:?set CHRONICLE_SERVER to the native server executable built from this tree}"
 : "${CHRONICLE_CLI:?set CHRONICLE_CLI to the chronicle CLI built from this tree}"
 : "${PONYGIRLS_OWNED_FIXTURE_ROOT:?run via the owned with-service-postgres wrapper}"
