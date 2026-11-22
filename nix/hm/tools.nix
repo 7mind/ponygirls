@@ -51,6 +51,17 @@ let
     I have ADHD and AI generated walls of text immediately confuse me, make my head physically warm up and cause me to feel distress/despair.
     Please keep your answers short and the language simple and free of mannered prose.'';
 
+  simpleLanguage = config.smind.hm.dev.llm.useSimpleLanguage;
+  simpleLanguageText = lib.concatStringsSep "\n" (
+    [
+      "# Response style\n"
+      "- **IMPORTANT:** Use simple English."
+      "- Use standard words. Do not make up words."
+    ]
+    ++ lib.optional simpleLanguage.summaryResponses "- Keep summaries concise."
+    ++ lib.optional simpleLanguage.diffResponses "- When a task is done, briefly explain what you did. For each diff or commit, name the repository and report test and non-test changes separately, with file counts and lines added and removed for each."
+  );
+
   # Canonical llmAssets bundle from the two in-repo packages: skills from
   # llm-skills, general context from llm-contexts. Symmetric with
   # external llmAssets bundles. This base bundle has no commands or agents.
@@ -62,7 +73,7 @@ let
       ++ lib.optional (commitPolicy != "no-preference") commitPolicyText
       ++ lib.optional config.smind.hm.dev.llm.worktrees.enable
         (builtins.readFile ../pkg/llm-contexts/worktree-workflow.md)
-      ++ lib.optional config.smind.hm.dev.llm.antiWallsOfText.enable antiWallsText;
+      ++ lib.optional simpleLanguage.enable simpleLanguageText;
   };
 
   # Aggregate every contributed asset bundle into one merged view. Mirrors
@@ -109,6 +120,12 @@ in
       Pi, independent of generalContext: keep answers short and the language
       simple and free of mannered prose
     '';
+
+    smind.hm.dev.llm.useSimpleLanguage = {
+      enable = lib.mkEnableOption "the shared Response style section for Claude Code, Codex, and Pi";
+      summaryResponses = lib.mkEnableOption "concise summary guidance in the Response style section";
+      diffResponses = lib.mkEnableOption "task completion and diff reporting guidance in the Response style section";
+    };
 
     smind.hm.dev.llm.generalContext = {
       enable = lib.mkEnableOption "the shared general coding guidelines" // { default = true; };
@@ -339,7 +356,10 @@ in
       # Base context (and any other bundle context fragments) flow in via the
       # asset bundles; mkBefore keeps them ahead of host/user-specific
       # sections appended elsewhere with mkAfter.
-      smind.hm.dev.llm.memorySections = lib.mkBefore mergedContext;
+      smind.hm.dev.llm.memorySections = lib.mkMerge [
+        (lib.mkOrder 400 (lib.optional config.smind.hm.dev.llm.antiWallsOfText.enable antiWallsText))
+        (lib.mkBefore mergedContext)
+      ];
       # In-repo prompts form the base. External modules append their bundles.
       smind.hm.dev.llm.assetBundles = lib.mkBefore [ llmPromptsBundle ];
     }

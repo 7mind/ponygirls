@@ -56,10 +56,21 @@ let
   };
   worktreeConfigs = [ worktrees worktreesWithoutGeneral ];
   antiWalls = evaluateLLM { antiWallsOfText.enable = true; };
+  simpleLanguageConfigs = lib.genList (i: evaluateLLM {
+    antiWallsOfText.enable = true;
+    useSimpleLanguage = {
+      enable = true;
+      summaryResponses = lib.mod i 2 == 1;
+      diffResponses = i >= 2;
+    };
+  }) 4;
   invalidPolicy = evaluateLLM { commitPolicy = "commit-everything"; };
   noCommits = "Commit policy (no-commits): Do not create commits unless explicitly requested by the user. Only commit your own changes. This does not authorize pushing, force operations, or history rewriting.";
   commitByDefault = "Commit policy (commit-by-default): Commit completed, verified task changes by default unless the user says otherwise. Only commit your own changes. This does not authorize pushing, force operations, or history rewriting.";
   antiWallsText = "I have ADHD and AI generated walls of text immediately confuse me, make my head physically warm up and cause me to feel distress/despair.\nPlease keep your answers short and the language simple and free of mannered prose.";
+  simpleLanguageText = "# Response style\n\n- **IMPORTANT:** Use simple English.\n- Use standard words. Do not make up words.";
+  summaryText = "\n- Keep summaries concise.";
+  diffText = "\n- When a task is done, briefly explain what you did. For each diff or commit, name the repository and report test and non-test changes separately, with file counts and lines added and removed for each.";
   disabled = evaluate { enable = false; };
   withoutHammer = evaluate { sections.hammer-mode.enable = false; };
   withoutCodeNavigation = evaluate { sections.code-navigation.enable = false; };
@@ -133,8 +144,10 @@ assert !(lib.hasInfix "## Reviewer defaults" (memory defaults));
 assert defaults.smind.hm.dev.llm.commitPolicy == "no-preference";
 assert !defaults.smind.hm.dev.llm.worktrees.enable;
 assert !defaults.smind.hm.dev.llm.antiWallsOfText.enable;
+assert !defaults.smind.hm.dev.llm.useSimpleLanguage.enable;
 assert !(lib.hasInfix "## Worktree workflow" (memory defaults));
 assert !(lib.hasInfix "keep your answers short" (memory defaults));
+assert !(lib.hasInfix "Use simple English" (memory defaults));
 assert lib.all (cfg:
   lib.hasInfix "## Worktree workflow" (memory cfg)
   && lib.hasInfix "git check-ignore" (memory cfg)
@@ -144,7 +157,10 @@ assert lib.all (cfg:
   && cfg.smind.hm.dev.llm.commitPolicy == "no-preference"
 ) worktreeConfigs;
 assert !(lib.hasInfix "# Project Guidelines" (memory worktreesWithoutGeneral));
-assert memory antiWalls == general + "\n\n${antiWallsText}\n\nintegration guidance\n\nKai's instructions";
+assert memory antiWalls == "${antiWallsText}\n\n" + memory defaults;
+assert map memory simpleLanguageConfigs == map (extra:
+  "${antiWallsText}\n\n${general}\n\n${simpleLanguageText}${extra}\n\nintegration guidance\n\nKai's instructions"
+) [ "" summaryText diffText (summaryText + diffText) ];
 assert memory defaults == general + "\n\nintegration guidance\n\nKai's instructions";
 assert memory disabled == "integration guidance\n\nKai's instructions";
 assert memory policyConfigs.no-commits.enabled == general + "\n\n${noCommits}\n\nintegration guidance\n\nKai's instructions";
@@ -198,7 +214,7 @@ assert lib.all (cfg:
   && cfg.programs.pi.context == memory cfg
 ) ([ defaults disabled withoutHammer replaced reordered withoutAbrasiveLanguage withoutReproduction withoutNixStoreRule withoutDesign ]
   ++ worktreeConfigs
-  ++ [ antiWalls ]
+  ++ [ antiWalls ] ++ simpleLanguageConfigs
   ++ lib.concatMap (configs: [ configs.enabled configs.disabled ]) (lib.attrValues policyConfigs));
 pkgs.runCommandLocal "general-context-hm-eval-test" {
   passthru.testTaxonomy = {
