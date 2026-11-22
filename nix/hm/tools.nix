@@ -47,6 +47,10 @@ let
       "Commit policy (commit-by-default): Commit completed, verified task changes by default unless the user says otherwise. Only commit your own changes. This does not authorize pushing, force operations, or history rewriting."
     else "";
 
+  antiWallsText = ''
+    I have ADHD and AI generated walls of text immediately confuse me, make my head physically warm up and cause me to feel distress/despair.
+    Please keep your answers short and the language simple and free of mannered prose.'';
+
   # Canonical llmAssets bundle from the two in-repo packages: skills from
   # llm-skills, general context from llm-contexts. Symmetric with
   # external llmAssets bundles. This base bundle has no commands or agents.
@@ -57,7 +61,8 @@ let
     context = lib.optional generalContext.enable generalContextText
       ++ lib.optional (commitPolicy != "no-preference") commitPolicyText
       ++ lib.optional config.smind.hm.dev.llm.worktrees.enable
-        (builtins.readFile ../pkg/llm-contexts/worktree-workflow.md);
+        (builtins.readFile ../pkg/llm-contexts/worktree-workflow.md)
+      ++ lib.optional config.smind.hm.dev.llm.antiWallsOfText.enable antiWallsText;
   };
 
   # Aggregate every contributed asset bundle into one merged view. Mirrors
@@ -97,6 +102,12 @@ in
       of generalContext. Work under an ignored .worktrees directory, verify
       changes, and integrate safely according to the commit policy. This is
       prompt guidance, not filesystem enforcement
+    '';
+
+    smind.hm.dev.llm.antiWallsOfText.enable = lib.mkEnableOption ''
+      the anti-walls-of-text response preference for Claude Code, Codex, and
+      Pi, independent of generalContext: keep answers short and the language
+      simple and free of mannered prose
     '';
 
     smind.hm.dev.llm.generalContext = {

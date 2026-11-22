@@ -55,9 +55,11 @@ let
     generalContext.enable = false;
   };
   worktreeConfigs = [ worktrees worktreesWithoutGeneral ];
+  antiWalls = evaluateLLM { antiWallsOfText.enable = true; };
   invalidPolicy = evaluateLLM { commitPolicy = "commit-everything"; };
   noCommits = "Commit policy (no-commits): Do not create commits unless explicitly requested by the user. Only commit your own changes. This does not authorize pushing, force operations, or history rewriting.";
   commitByDefault = "Commit policy (commit-by-default): Commit completed, verified task changes by default unless the user says otherwise. Only commit your own changes. This does not authorize pushing, force operations, or history rewriting.";
+  antiWallsText = "I have ADHD and AI generated walls of text immediately confuse me, make my head physically warm up and cause me to feel distress/despair.\nPlease keep your answers short and the language simple and free of mannered prose.";
   disabled = evaluate { enable = false; };
   withoutHammer = evaluate { sections.hammer-mode.enable = false; };
   withoutCodeNavigation = evaluate { sections.code-navigation.enable = false; };
@@ -130,7 +132,9 @@ assert defaults.home.file."${defaults.programs.pi.configDir}/APPEND_SYSTEM.md".t
 assert !(lib.hasInfix "## Reviewer defaults" (memory defaults));
 assert defaults.smind.hm.dev.llm.commitPolicy == "no-preference";
 assert !defaults.smind.hm.dev.llm.worktrees.enable;
+assert !defaults.smind.hm.dev.llm.antiWallsOfText.enable;
 assert !(lib.hasInfix "## Worktree workflow" (memory defaults));
+assert !(lib.hasInfix "keep your answers short" (memory defaults));
 assert lib.all (cfg:
   lib.hasInfix "## Worktree workflow" (memory cfg)
   && lib.hasInfix "git check-ignore" (memory cfg)
@@ -140,6 +144,7 @@ assert lib.all (cfg:
   && cfg.smind.hm.dev.llm.commitPolicy == "no-preference"
 ) worktreeConfigs;
 assert !(lib.hasInfix "# Project Guidelines" (memory worktreesWithoutGeneral));
+assert memory antiWalls == general + "\n\n${antiWallsText}\n\nintegration guidance\n\nKai's instructions";
 assert memory defaults == general + "\n\nintegration guidance\n\nKai's instructions";
 assert memory disabled == "integration guidance\n\nKai's instructions";
 assert memory policyConfigs.no-commits.enabled == general + "\n\n${noCommits}\n\nintegration guidance\n\nKai's instructions";
@@ -193,6 +198,7 @@ assert lib.all (cfg:
   && cfg.programs.pi.context == memory cfg
 ) ([ defaults disabled withoutHammer replaced reordered withoutAbrasiveLanguage withoutReproduction withoutNixStoreRule withoutDesign ]
   ++ worktreeConfigs
+  ++ [ antiWalls ]
   ++ lib.concatMap (configs: [ configs.enabled configs.disabled ]) (lib.attrValues policyConfigs));
 pkgs.runCommandLocal "general-context-hm-eval-test" {
   passthru.testTaxonomy = {
