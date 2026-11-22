@@ -13,7 +13,7 @@ stored vectors of the reader's visible rows, sampled with a fixed seed by the ba
 file; the after run reuses exactly those (--queries-from)."""
 import argparse, hashlib, json, os, random, re, subprocess, sys, tempfile, time
 
-PROBE_VERSION = 2
+PROBE_VERSION = 3
 GATE_MIN_QUERIES = 200
 
 KS = (10, 100)
@@ -160,6 +160,38 @@ def bootstrap(per_query, seed, rounds=2000):
     return values[int(0.025 * rounds)], values[min(rounds - 1, int(0.975 * rounds))]
 
 
+def write_private(path, data):
+    """`data` as JSON at `path`, private whatever was there: a new file created with mode 600 (mkstemp) beside it, then
+    atomically renamed over it."""
+    fd, temporary = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), prefix='.ann-recall-probe-')
+    try:
+        with os.fdopen(fd, 'w') as out:
+            json.dump(data, out, indent=1)
+        os.replace(temporary, path)
+    except BaseException:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+        raise
+
+
+def cohort_credits(candidates, exact, k, cohort):
+    """recall@k split by neighbour cohort (a diagnostic, not the rule): per cohort, the credited rows (the credit rule of
+    `credits`) among the candidates' first k of that cohort, and the exact first k's rows of that cohort."""
+    top = exact[:k]
+    split = {name: [0, 0] for name in ('root', 'lineage')}
+    if not top:
+        return split
+    members, cutoff, seen = {i for i, _ in top}, top[-1][1], set()
+    for row, _ in top:
+        split[cohort[row]][1] += 1
+    for row, distance in candidates[:k]:
+        if row not in seen:
+            seen.add(row)
+            if row in members or distance == cutoff:
+                split[cohort[row]][0] += 1
+    return split
+
+
 def digest(vectors):
     return hashlib.sha256('\n'.join(vectors).encode()).hexdigest()
 
@@ -274,12 +306,29 @@ def measure(args):
             plain = [(r[0], float(r[1])) for r in plain_exact(queries[i][1])]
             if plain != exact[i]:
                 raise RuntimeError(f'the single exact pass differs from a plain exact scan for query {i}')
+        # Diagnostics (not the rule): each neighbour's session and cohort (root: a generation without a lineage version or
+        # version 0; lineage: a lineage version >= 1, an incremental publication's rows); for an after run, whether the
+        # baseline's exact neighbours are still visible.
+        needed = sorted({row for rows in exact.values() for row, _ in rows} | {row for leg in legs for row, _ in leg[:top]})
+        ids = literal('{' + ','.join(needed) + '}')
+        version = 'g.lineage_version' if schema == 'l5' else 'NULL'
+        info = {r[0]: (r[1], 'lineage' if r[2] and int(r[2]) >= 1 else 'root') for r in session.run(
+            f"SELECT ch.id, ch.session_id, {version} FROM ch_search_chunks ch LEFT JOIN ch_generations g ON g.id=ch.generation WHERE ch.id = ANY({ids}::uuid[])")}
+        cohort = {row: value[1] for row, value in info.items()}
+        still_visible = set()
+        if baseline is not None:
+            old = literal('{' + ','.join(sorted({n[0] for rows in baseline['exactNeighbours'] for n in rows})) + '}')
+            still_visible = {r[0] for r in session.run(f"SELECT ch.id FROM {visible_rows(schema, dims, reader, space_sql)} AND ch.id = ANY({old}::uuid[])")}
         per_k = {}
         for k in KS:
             per_query = [credits(legs[i], exact[i], k) for i in range(len(queries))]
             total = (sum(c for c, _ in per_query), sum(d for _, d in per_query))
             low, high = bootstrap(per_query, args.seed + k)
             per_k[k] = dict(credits=total[0], of=total[1], recall=total[0] / total[1], ci95=[low, high], perQuery=per_query)
+        diagnostics = dict(cohorts={str(k): {name: [sum(cohort_credits(legs[i], exact[i], k, cohort)[name][j] for i in range(len(queries))) for j in (0, 1)]
+                                                 for name in ('root', 'lineage')} for k in KS})
+        if baseline is not None:
+            diagnostics['turnover'] = turnover(baseline['exactNeighbours'], [[(row, info[row][0], d) for row, d in exact[i]] for i in range(len(queries))], still_visible)
         query_digest = digest([v for _, v in queries])
         result = dict(probe='ann-recall-probe', probeVersion=PROBE_VERSION, reader=args.reader, schema=schema, tieBreak=list(TIE_BREAK[schema]),
                       server=server[0], pgvector=server[1], snapshotAt=server[2], profile=profile, space=space, dimensions=dims, index=index,
@@ -287,9 +336,11 @@ def measure(args):
                       queryDigest=query_digest, queriesFrom=baseline['queryDigest'] if baseline else None, querySourceRows=[q[0] for q in queries],
                       visibleRows=visible, hnswScansPerLeg=[min(scans), max(scans)], legRows=[min(map(len, legs)), max(map(len, legs))],
                       shortLegs=len(short), exactPassRows=sum(len(v) for v in exact.values()), seconds=round(time.monotonic() - started, 1),
-                      recall={str(k): v for k, v in per_k.items()})
+                      recall={str(k): v for k, v in per_k.items()}, diagnostics=diagnostics)
         if baseline is None:  # the baseline's query vectors, for the after run (--queries-from): derived data, operator side only
             result['queryVectors'] = [dict(sourceRow=row, vector=vector) for row, vector in queries]
+            # its exact top 100 per query (row id, session, distance): for the after run's turnover diagnostic; private too
+            result['exactNeighbours'] = [[(row, info[row][0], d) for row, d in exact[i]] for i in range(len(queries))]
         committed = True
     except Aborted as reason:
         print(f'ABORTED (rolled back, nothing measured): {reason}', file=sys.stderr)
@@ -301,14 +352,49 @@ def measure(args):
         elif session.process.poll() is None:
             session.close(False)
     if args.out:
-        with open(os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as out:
-            json.dump(result, out, indent=1)
+        write_private(args.out, result)
     print(f"ann-recall-probe: reader {args.reader}, schema {result['schema']}, {result['queries']} queries ({'reused from the baseline' if baseline else f'seed {args.seed}'}; "
           f"digest {result['queryDigest'][:12]}) over {result['visibleRows']:,} visible rows, snapshot {result['snapshotAt']}, {result['seconds']} s; "
           f"HNSW scans per leg {result['hnswScansPerLeg']}, short legs {result['shortLegs']}")
     for k in KS:
         v = result['recall'][str(k)]
         print(f"  recall@{k}: {v['credits']}/{v['of']} = {v['recall']:.4f}  95 % interval [{v['ci95'][0]:.4f}, {v['ci95'][1]:.4f}]")
+    print_diagnostics(result)
+
+
+def turnover(before, after, still_visible):
+    """Per k, how the exact top k changed between the baseline and this run for the same query vectors, by content (session
+    and distance: a row republished under a new id is the same neighbour): entrants that are new rows (nearer than the
+    baseline's 100th neighbour yet absent from its top 100: not visible then) or promoted (in the baseline's top 100 below
+    its top k, or beyond its top 100: nearer rows left), and exits still visible (displaced) or no longer visible (gone)."""
+    out = {}
+    for k in KS:
+        counts = dict(of=0, entrants=0, new=0, promoted=0, exits=0, displaced=0, gone=0)
+        for old, new in zip(before, after):
+            old_top, new_top = {(s, d): r for r, s, d in old[:k]}, {(s, d): r for r, s, d in new[:k]}
+            known, bound = {(s, d) for _, s, d in old}, old[-1][2] if old else float('inf')
+            counts['of'] += len(new_top)
+            for key in new_top.keys() - old_top.keys():
+                counts['entrants'] += 1
+                counts['new' if key not in known and key[1] < bound else 'promoted'] += 1
+            for key in old_top.keys() - new_top.keys():
+                counts['exits'] += 1
+                counts['displaced' if old_top[key] in still_visible else 'gone'] += 1
+        out[str(k)] = counts
+    return out
+
+
+def print_diagnostics(result):
+    """The diagnostics of a result (not the rule): recall by neighbour cohort, and the exact top-k turnover against the
+    baseline (an after run)."""
+    for k in KS:
+        c = result['diagnostics']['cohorts'][str(k)]
+        line = f"  diagnostic @{k}: recall by cohort root {c['root'][0]}/{c['root'][1]}, lineage versions {c['lineage'][0]}/{c['lineage'][1]}"
+        t = result['diagnostics'].get('turnover', {}).get(str(k))
+        if t:
+            line += (f"; exact top-{k} turnover against the baseline {t['entrants']}/{t['of']} (new rows {t['new']}, promoted {t['promoted']}; "
+                     f"exits displaced {t['displaced']}, gone {t['gone']})")
+        print(line)
 
 
 def incompatible(baseline, after):
@@ -350,6 +436,8 @@ def compare(args):
         print(f"recall@{k}: baseline {b['credits']}/{b['of']} = {b['recall']:.4f} [{b['ci95'][0]:.4f}, {b['ci95'][1]:.4f}]; after {a['credits']}/{a['of']} = "
               f"{a['recall']:.4f}: {'BELOW the baseline interval' if below else 'not below the baseline interval'}")
     print('DEFECT: a drop of the after-value below the baseline\'s 95 % interval — a defect to fix' if defect else 'no defect by the rule')
+    print('diagnostics of the after run (not the rule; diagnose a defect with them before attributing it to L5):')
+    print_diagnostics(after)
     sys.exit(1 if defect else 0)
 
 

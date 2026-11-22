@@ -38,8 +38,11 @@ embedding model.
 - The **after** run **reuses exactly those vectors** (`--queries-from BASELINE.json`) and records their digest.
 - Why: a fixed seed over mutable, retiring row ids would resample after growth or after rows are replaced, and so confound a change
   of the index with a change of the queries.
+- The baseline also saves its exact top-100 neighbours per query (row id, session, distance), for the after run's
+  turnover diagnostic.
 - **The baseline file holds derived vectors** (embeddings of the reader's content). Keep it on the operator side, with
-  the same care as the database; never put it in reports or chat. The probe writes it with mode 600. Only the printed
+  the same care as the database; never put it in reports or chat. The probe writes every output as a new mode-600 file renamed
+  over the target, so overwriting an existing file never leaves it readable by others. Only the printed
   summary and the counts may be shared.
 
 **ANN leg.** For each query, the product's first semantic pass (`LegPass.Index`), mirrored from `Search.statement`:
@@ -124,7 +127,7 @@ rather than fewer queries.
 `compare` applies it per k = 10 and 100: the after run's recall below the baseline's lower 95 % bound is a defect.
 
 **Refusals.** `compare` first refuses incompatible runs (exit 3) and says why. Both runs must have:
-- probe version 2;
+- probe version 3;
 - at least 200 queries, and neither a `--trial`;
 - the same reader, owner-target profile, embedding space, dimensions, HNSW index, ANN GUCs including `work_mem`,
   candidate limit, k set, seed and N.
@@ -138,6 +141,29 @@ did resample, and its trial showed such an alarm on identical data. With the que
 unchanged data and index give exactly the baseline's values (see the trial), so the remaining false-alarm risk is the
 bootstrap interval's own.
 
-**Growth.** Data growth between the runs lowers recall by itself. In the trial, +28 % visible rows on uniform synthetic
-vectors with an unchanged index configuration fell below the interval. Both runs record their visible row counts, and
-`compare` prints them.
+**Growth.** Data growth between the runs lowers recall by itself: in the local trials, +28 % and +16 % visible rows of
+uniform synthetic vectors, with an unchanged index configuration, fell below the interval. Both runs record their
+visible row counts, `compare` prints them, and the diagnostics below separate new rows from the rest.
+
+## Diagnosing a "defect" verdict (not part of the rule)
+Both runs print two diagnostics, and `compare` repeats the after run's. They are reported with counts, never as a
+verdict.
+- **Recall by neighbour cohort.** recall@k split by the generation that wrote each neighbour, with the credit rule
+  above:
+  - *root*: a generation without a lineage version, or version 0;
+  - *lineage versions*: version ≥ 1, the rows of incremental publications;
+  - the denominators are the cohort's exact neighbours.
+- **Exact top-k turnover against the baseline** (after runs only). The same query vectors are used, and neighbours are
+  matched by content (session and distance), so a row republished under a new id counts as the same neighbour.
+  - Entrants are either **new rows** (nearer than the baseline's 100th neighbour yet absent from its top 100: not
+    visible then) or **promoted** (already visible below the baseline's top k: nearer rows left).
+  - Exits are either **displaced** (still visible) or **gone** (no longer visible).
+  - Together these show how much of the answer change is new rows rather than the index.
+
+**A "defect" verdict must be diagnosed with these before it is attributed to L5.**
+- Growth alone can trigger it: in the local trial, about +16 % visible rows (a new lineage version, some rows deleted)
+  fell below the interval at both k. 16 % of the exact top 10 were new entrants, of which 301 of 314 were new rows.
+- Neither diagnostic isolates incremental publication causally. Both cohorts share one HNSW graph, so a cohort
+  difference can come from insertion order, age or content rather than from the publication path. A same-corpus
+  counterfactual, the same rows published both ways, needs an offline control: H's comparison of an incremental head with
+  forced-full roots.
