@@ -11,10 +11,10 @@ import { FileSecretReader } from './runtime-privacy.ts';
 import { HttpProgressReporter } from './progress.ts';
 import { HttpIngester } from './ingest.ts';
 import { HttpUploader } from './uploads.ts';
-import { Collector, POLICY_CHANGED } from './collector.ts';
+import { Collector, COLLECTION_PAUSED_TEXT, POLICY_CHANGED } from './collector.ts';
 import { LocalGitMetadata } from './git.ts';
 import { DaemonLock, droppedOnlyFor, readOnlySpool, SqliteSpool, type Spool } from './spool.ts';
-import { formatCollectorStatus, formatTombstones, literal, type TombstoneReport } from './status.ts';
+import { formatCollectorStatus, formatTombstones, literal, PauseNotices, type TombstoneReport } from './status.ts';
 
 const PROGRAM = 'chronicle-collector';
 const HELP = `${PROGRAM} — uploads local Claude, Codex and Pi session histories to Chronicle
@@ -84,7 +84,7 @@ const print = (value: unknown): void => { process.stdout.write(JSON.stringify(va
 type Control = 'pause' | 'resume' | 'exclude' | 'unexclude' | 'exclusions';
 // Each control applies its change and returns the text that reports it.
 const CONTROLS: Record<Control, (spool: Spool, operand: string | null) => string> = {
-  pause: spool => { spool.setPaused(true); return 'Collection paused. Queued uploads are kept; --resume continues.'; },
+  pause: spool => { spool.setPaused(true); return COLLECTION_PAUSED_TEXT; },
   resume: spool => { spool.setPaused(false); return 'Collection resumed.'; },
   exclude: (spool, operand) => { const path = resolve(operand!); spool.exclude(path); return `Excluded ${literal(path)}.`; },
   unexclude: (spool, operand) => {
@@ -170,10 +170,14 @@ async function main(): Promise<void> {
       else if (collector.retry(arguments_.operand) === 'rebuild' && text) process.stdout.write(`Rebuilding ${literal(arguments_.operand)} from its file at the next scan: its payload predates the collector's Unicode normalization.\n`);
       printStatus(); return;
     }
+    // Every upload held back without a failure is told in the journal (stderr) too, not only in the counters line.
+    const notices = new PauseNotices(config.endpoint);
     // Keep OS signal termination: SQLite preserves pending work and releases the
     // daemon lock even while a synchronous scan cannot yield to a JS handler.
     for (;;) {
       const result = await collector.runOnce(Date.now()); print(result);
+      const notice = notices.next(result.paused, Date.now());
+      if (notice !== null) process.stderr.write(`${PROGRAM}: ${notice}\n`);
       if (arguments_.operation === 'once') {
         if (result.uploadFailures + result.quarantined + result.deferred + result.pending + result.stopped + result.conflicts > 0 || spool.diagnostics().some(d => d.rootId === 'reporting')) process.exitCode = 1;
         return;

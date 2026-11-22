@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { Collector, policyDigest, uploadsPausedText } from '../src/collector.ts';
+import { Collector, COLLECTION_PAUSED_TEXT, policyDigest, uploadsPausedText } from '../src/collector.ts';
 import { loadConfig } from '../src/config.ts';
 import { SqliteSpool, type Spool } from '../src/spool.ts';
 import { encodeSnapshot, HttpIngester, sourceIdentity, sourceKey } from '../src/ingest.ts';
@@ -17,7 +17,7 @@ import { lineReads, readerMemory, READ_BUFFER_BYTES } from '../src/lines.ts';
 import { generateParts } from '../src/passes.ts';
 import { parseTranscript } from '../src/parsers.ts';
 import { resolveRuntimePrivacy } from '../src/runtime-privacy.ts';
-import { formatCollectorStatus } from '../src/status.ts';
+import { formatCollectorStatus, PAUSE_NOTICE_INTERVAL_MS, PauseNotices } from '../src/status.ts';
 import { hash } from '../src/domain.ts';
 import { noGit, syntheticSecrets } from './helpers.ts';
 import { FakeChronicle } from './fake-server.ts';
@@ -160,25 +160,67 @@ test('UploadParts resumes after the last acknowledged part, and an expired attem
   } finally { await h.close(); }
 });
 
-test('UploadParts pauses at a server without the part-upload API with one actionable line, keeps entries unchanged and uploads after the upgrade', async () => {
+test('UploadParts pauses at a server without the part-upload API with one actionable line, in the journal at most hourly, keeps entries unchanged and uploads after the upgrade', async () => {
   const h = await harness();
   try {
     writeFileSync(join(h.roots.pi, 's.jsonl'), jsonl(piHeader('pi-probe'), piMessage('m1', 'one')));
     h.server.failOpen = true;
-    assert.equal((await h.run(1)).uploadFailures, 1);
+    const notices = new PauseNotices(h.server.url);
+    const failed = await h.run(1);
+    assert.deepEqual([failed.uploadFailures, failed.paused, notices.next(failed.paused, 1)], [1, null, null]);
     const entries = h.spool.uploads(); assert.equal(entries[0]?.attempts, 1);
     h.server.supportsUploads = false;
     const paused = await h.run(2);
-    assert.deepEqual([paused.uploadFailures, paused.pending, paused.uploaded], [0, 1, 0]);
+    assert.deepEqual([paused.uploadFailures, paused.pending, paused.uploaded, paused.paused], [0, 1, 0, 'server-upload-unsupported']);
+    assert.equal(notices.next(paused.paused, 2), `server-upload-unsupported: ${uploadsPausedText(h.server.url)}`);
+    for (const now of [3, 2 + PAUSE_NOTICE_INTERVAL_MS - 1]) assert.equal(notices.next((await h.run(now)).paused, now), null, String(now));
+    const hour = 2 + PAUSE_NOTICE_INTERVAL_MS;
+    assert.equal(notices.next((await h.run(hour)).paused, hour), `server-upload-unsupported since 1970-01-01T00:00:00.002Z: ${uploadsPausedText(h.server.url)}`);
     assert.deepEqual(h.spool.uploads(), entries);
     assert.equal(h.reports.at(-1)?.error, 'server-upload-unsupported');
     const status = formatCollectorStatus(h.collector().status());
     assert.equal(status.split('\n')[0], uploadsPausedText(h.server.url));
     assert.match(status.split('\n')[0]!, /Uploads are paused: .* uploadProtocol = "whole" .*chronicle\.collector\.uploadProtocol/);
     h.server.supportsUploads = true;
-    const resumed = await h.run(3);
-    assert.deepEqual([resumed.uploaded, resumed.pending], [1, 0]);
+    const resumed = await h.run(hour + 1);
+    assert.deepEqual([resumed.uploaded, resumed.pending, resumed.paused], [1, 0, null]);
+    assert.equal(notices.next(resumed.paused, hour + 1), 'Uploads are no longer paused: server-upload-unsupported ended (since 1970-01-01T00:00:00.002Z).');
     assert.equal(formatCollectorStatus(h.collector().status()).split('\n')[0], 'Chronicle collector: enabled (configuration)');
+    // --pause holds every upload back without a failure too: the same lines.
+    h.spool.setPaused(true);
+    const held = await h.run(hour + 2);
+    assert.deepEqual([held.paused, notices.next(held.paused, hour + 2), notices.next(held.paused, hour + 3)], ['collection-paused', `collection-paused: ${COLLECTION_PAUSED_TEXT}`, null]);
+    h.spool.setPaused(false);
+    assert.equal(notices.next((await h.run(hour + 4)).paused, hour + 4), `Uploads are no longer paused: collection-paused ended (since ${new Date(hour + 2).toISOString()}).`);
+  } finally { await h.close(); }
+});
+
+test('UploadParts does not read a source again while its intent cannot be sent; a file changed during the pause is re-planned from its current bytes after the upgrade', async () => {
+  const h = await harness();
+  try {
+    const stale = join(h.roots.pi, 'stale.jsonl'), stopped = join(h.roots.pi, 'stopped.jsonl'), fresh = join(h.roots.pi, 'fresh.jsonl');
+    const passAt = (path: string) => h.collector().status().sources.find(source => source.pathId === hash(path))?.lastPass.at;
+    // The server refuses the declaration of three messages: that intent stops.
+    h.server.limits = h.server.limits.with({ maxMessages: 2 });
+    writeFileSync(stopped, jsonl(piHeader('pi-stopped'), piMessage('s1', 'one'), piMessage('s2', 'two'), piMessage('s3', 'three')));
+    assert.deepEqual(await h.run(1).then(counters => [counters.stopped, counters.uploadFailures]), [1, 1]);
+    appendFileSync(stopped, jsonl(piMessage('s4', 'four')));
+    h.server.supportsUploads = false;
+    writeFileSync(stale, jsonl(piHeader('pi-stale'), piMessage('m1', 'planned during the pause')));
+    assert.deepEqual(await h.run(2).then(counters => [counters.scanned, counters.enqueued, counters.waiting]), [1, 1, 1]);
+    appendFileSync(stale, jsonl(piMessage('m2', 'written during the pause')));
+    writeFileSync(fresh, jsonl(piHeader('pi-fresh'), piMessage('f1', 'new during the pause')));
+    lineReads.bytes = 0n;
+    const paused = await h.run(3);
+    // Only the new source is read (once) and planned; both changed sources with a queued intent wait unread.
+    assert.deepEqual([paused.scanned, paused.enqueued, paused.waiting, paused.pending, paused.stopped, lineReads.bytes], [1, 1, 2, 2, 1, BigInt(statSync(fresh).size)]);
+    h.server.supportsUploads = true;
+    const upgraded = await h.run(4);
+    assert.deepEqual([upgraded.uploaded, upgraded.stopped], [1, 1]);
+    assert.deepEqual(h.spool.dropped().map(entry => entry.reason), ['source-changed']);
+    assert.deepEqual([(await h.run(5)).uploaded, passAt(stopped)], [1, 1]);
+    const key = sourceKey(sourceIdentity(h.spool.namespace, 'pi', 'pi', parseTranscript('pi', readFileSync(stale), stale, resolveRuntimePrivacy(h.settings(), syntheticSecrets).policy), stale));
+    assert.equal(h.server.heads.get(key)?.digest, hash(readFileSync(stale)));
   } finally { await h.close(); }
 });
 

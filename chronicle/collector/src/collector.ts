@@ -62,6 +62,9 @@ function appendable(head: Head, prefix: TranscriptPrefix | null): TranscriptPref
   return base !== null && prefix !== null && prefix.recordCount === base.recordCount && prefix.digest === head.digest && String(prefix.rawBytes) === base.rawBytes
     && prefix.messageCount === base.messageCount && prefix.messageChain === base.messageChain ? prefix : null;
 }
+/** `--pause` holds every upload back: the code of the counters line and the text of `--pause` and the journal. */
+export const COLLECTION_PAUSED = 'collection-paused';
+export const COLLECTION_PAUSED_TEXT = 'Collection paused. Queued uploads are kept; --resume continues.';
 /** The collector-level line of `--status` while the server has no part-upload API. */
 export function uploadsPausedText(endpoint: string): string {
   return `Uploads are paused: the Chronicle server at ${endpoint} has no part-upload API (it predates S2). Nothing is lost — changed sessions are uploaded once this is fixed. Fix: upgrade the server, or set uploadProtocol = "whole" in the collector configuration (Home Manager chronicle.collector.uploadProtocol) to upload through /api/ingest.`;
@@ -86,7 +89,9 @@ function excludedTranscript(bytes: Buffer, config: Config): boolean {
   return false;
 }
 const SCAN_REPORT_INTERVAL_MS = 5000;
-const empty = (enabled: boolean): Counters => ({ enabled, discovered: 0, scanned: 0, scannedBytes: 0, waiting: 0, excluded: 0, unchanged: 0, enqueued: 0, uploaded: 0, uploadFailures: 0, quarantined: 0, pending: 0, stopped: 0, conflicts: 0, deferred: 0, replacements: 0 });
+/** A queued entry is sent in a cycle at `now` only while it is pending and its backoff has passed. */
+const due = (entry: { status: EntryStatus; nextAt: number }, now: number): boolean => entry.status === 'pending' && entry.nextAt <= now;
+const empty = (enabled: boolean): Counters => ({ enabled, discovered: 0, scanned: 0, scannedBytes: 0, waiting: 0, excluded: 0, unchanged: 0, enqueued: 0, uploaded: 0, uploadFailures: 0, quarantined: 0, pending: 0, stopped: 0, conflicts: 0, deferred: 0, replacements: 0, paused: null });
 /** A part upload as `--status` shows it; sizes are decimal byte counts. */
 export interface UploadStatus { requestId: string; sourceKey: string; attempts: number; nextAt: number; status: EntryStatus; error: string | null; append: boolean; partsAcked: number; rawBytes: string; newRawBytes: string; refused?: Upload['refused'] }
 /** Old-format whole payloads and part uploads, as the queue. */
@@ -133,6 +138,7 @@ export class Collector {
     if (!this.config.enabled) return counters;
     const initiallyPaused = this.spool.controls().paused;
     if (initiallyPaused) {
+      counters.paused = COLLECTION_PAUSED;
       const queue = this.queued();
       counters.pending = queue.filter(e => e.status === 'pending').length;
       counters.stopped = queue.filter(e => e.status === 'stopped').length;
@@ -177,6 +183,7 @@ export class Collector {
       queueCounters();
       heldSources.clear();
       const controls = this.spool.controls();
+      counters.paused = controls.paused ? COLLECTION_PAUSED : serverUnsupported ? SERVER_UPLOAD_UNSUPPORTED : null;
       for (const { sourceKey, origin, evidence } of this.queued()) if (admissionReason(origin, this.config) !== null || heldByControls(controls, evidence)) heldSources.add(sourceKey);
       const admittedFailure = [...queueState.values()].some(entry => !heldSources.has(entry.sourceKey) && (entry.status === 'stopped' || entry.status === 'conflict'));
       const failed = counters.quarantined + counters.uploadFailures > 0 || admittedFailure || reportFailure || serverUnsupported;
@@ -205,7 +212,8 @@ export class Collector {
     // The content each queued source will have at its next revision.
     const queuedContent = new Map<string, { digest: string; revision: number }>();
     for (const queued of discardStale(digest)) queuedContent.set(queued.sourceKey, { digest: queued.sourceDigest, revision: queued.expectedRevision + 1 });
-    for (const upload of this.uploads()) queuedContent.set(upload.sourceKey, { digest: upload.sourceDigest, revision: upload.expectedRevision + 1 });
+    const intents = this.uploads();
+    for (const upload of intents) queuedContent.set(upload.sourceKey, { digest: upload.sourceDigest, revision: upload.expectedRevision + 1 });
     for (const { sourceKey, origin, evidence } of this.queued()) {
       const reason = admissionReason(origin, this.config);
       if (heldByControls(this.spool.controls(), evidence)) heldSources.add(sourceKey);
@@ -226,6 +234,9 @@ export class Collector {
         if (!serverUnsupported) { counters.uploadFailures++; this.spool.diagnostic({ rootId: 'server', pathId: hash('server'), code }); }
       }
     }
+    // A source whose part intent cannot be sent this cycle is not read again: without the server's limits nothing is sent,
+    // and a stopped, conflicting or backed-off intent waits. When it is sent, a changed file aborts it and is read again.
+    const unsendable = new Set(intents.filter(entry => limits === null || !due(entry, now)).map(entry => entry.sourceKey));
     const recordCap = this.recordCap();
     // Everything besides the lines, the policy and the head that pass 1's result depends on.
     const limitsDigest = (format: Format): string => hash(JSON.stringify({ format, collectorRecordBytes: this.config.maxRecordBytes, serverRecordBytes: recordCap.server,
@@ -309,6 +320,7 @@ export class Collector {
       // the read starts its quiet period again (the observation of the read's stat below).
       const observed = statSource(file);
       if (observed !== null && now - this.spool.observe(pathId, statSignature(observed), now) < this.config.quietMs) { counters.waiting++; rootCoverage(file).waiting++; continue; }
+      if (known !== undefined && unsendable.has(known.sourceKey)) { counters.waiting++; rootCoverage(file).waiting++; continue; }
       try {
         if (parts) {
           // The head this file had at its last read: pass 1 records the prefix an append would extend.
@@ -434,13 +446,13 @@ export class Collector {
       queueState.set(requestId, { sourceKey: key, status: 'pending' }); counters.enqueued++; settle(head.revision + 1);
     }
     this.spool.saveScan(new Set(scan.files.map(fileId)), reads, deferred);
-    const uploads = this.spool.queueWithOrigins().filter(({ entry, origin }) => entry.status === 'pending' && entry.nextAt <= now && admissionReason(origin, this.config) === null).map(({ entry }) => entry);
+    const uploads = this.spool.queueWithOrigins().filter(({ entry, origin }) => due(entry, now) && admissionReason(origin, this.config) === null).map(({ entry }) => entry);
     // Part uploads need the server's limits from this cycle's probe; `uploadedBytes` counts their acknowledged raw bytes.
     const partUploads = limits === null ? [] : this.uploads();
     const delta = (entry: Upload): bigint => BigInt(entry.declared.rawBytes) - (decodeOpen(entry.open).base?.rawBytes ?? 0n);
     const backoff = (attempts: number): number => now + Math.floor(this.random() * Math.min(this.config.backoffCapMs, this.config.backoffBaseMs * 2 ** Math.min(attempts, 30)));
     totalUploadBytes = uploads.reduce((sum, entry) => sum + BigInt(Buffer.byteLength(entry.payload)), 0n)
-      + partUploads.filter(entry => entry.status === 'pending' && entry.nextAt <= now).reduce((sum, entry) => sum + delta(entry), 0n);
+      + partUploads.filter(entry => due(entry, now)).reduce((sum, entry) => sum + delta(entry), 0n);
     await publish(CollectorPhase.Uploading, undefined, undefined, true);
     let sending = true;
     for (const entry of uploads) {
@@ -504,7 +516,7 @@ export class Collector {
         if (outcome?.kind === 'discarded') { this.spool.diagnostic({ rootId: 'spool', pathId: entry.sourceKey, code: POLICY_CHANGED }); counters.quarantined++; }
         requeue(entry); continue;
       }
-      if (entry.status !== 'pending' || entry.nextAt > now) continue;
+      if (!due(entry, now)) continue;
       const admitted = gate(entry); if (admitted === 'held') continue; if (admitted === 'stop') break;
       await publish(CollectorPhase.Uploading, delta(entry), undefined, true);
       const outcome = await engine.run(entry);

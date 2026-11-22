@@ -123,6 +123,9 @@ test('GoodCommunication control commands answer with a sentence by default and t
     assert.equal(answer('--exclusions'), 'No excluded directories.\n');
     assert.equal(answer('--pause'), 'Collection paused. Queued uploads are kept; --resume continues.\n');
     assert.deepEqual(JSON.parse(answer('--pause', '--json')) as unknown, { paused: true, exclusions: [] });
+    // A run while paused says so in its counters line and in one journal line with the same sentence.
+    const held = invoke(dir, undefined, ['--config', config, '--once'], project);
+    assert.deepEqual([held.status, (JSON.parse(held.stdout) as { paused: unknown }).paused, held.stderr], [0, 'collection-paused', 'chronicle-collector: collection-paused: Collection paused. Queued uploads are kept; --resume continues.\n']);
     assert.equal(answer('--resume'), 'Collection resumed.\n');
     assert.deepEqual(JSON.parse(answer('--json', '--resume')) as unknown, { paused: false, exclusions: [] });
     assert.equal(answer('--exclude', '.'), `Excluded ${project}.\n`);

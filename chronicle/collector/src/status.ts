@@ -1,10 +1,10 @@
-import { uploadsPausedText, type Collector, type SourceLocation } from './collector.ts';
+import { COLLECTION_PAUSED_TEXT, uploadsPausedText, type Collector, type SourceLocation } from './collector.ts';
 import { EVIDENCE_LIMITS } from './passes.ts';
 import type { IdentifierRefusal, RecordOverLimit } from './spool.ts';
 import { IDENTIFIER_UNICODE } from './unicode.ts';
 import { holdReason } from './admission.ts';
 import { SERVER_PAYLOAD_TOO_LARGE } from './ingest.ts';
-import type { Diagnostic } from './domain.ts';
+import type { Diagnostic, UploadsPaused } from './domain.ts';
 
 export type CollectorStatus = ReturnType<Collector['status']>;
 /** `files` and `unidentifiedFiles` are present when the sources were located (the dry run). */
@@ -81,6 +81,29 @@ export function formatTombstones(report: TombstoneReport): string {
   if (report.unattributed.length > 0) lines.push(`  no recorded drop, reason unknown: ${count(report.unattributed.length)}`, ...report.unattributed.map(key => `    ${literal(key)}`));
   if (!report.applied && cleared > 0) lines.push('Dry run, nothing changed. --apply collects these sources again at the next scan.');
   return lines.join('\n') + '\n';
+}
+
+/** While uploads stay paused, the daemon repeats its journal line at most this often. */
+export const PAUSE_NOTICE_INTERVAL_MS = 3_600_000;
+/** The text of each state that holds every upload back, as `--status` and `--pause` show it. */
+const PAUSE_TEXTS: Record<UploadsPaused, (endpoint: string) => string> = { 'server-upload-unsupported': endpoint => uploadsPausedText(literal(endpoint)), 'collection-paused': () => COLLECTION_PAUSED_TEXT };
+/** The daemon's journal lines about a state that holds every upload back without counting a failure: one when it
+ * begins, one per interval while it lasts, one when it ends. They name the server, never a path, token or session. */
+export class PauseNotices {
+  private current: { code: UploadsPaused; since: number; noticedAt: number } | null = null;
+  constructor(private readonly endpoint: string) {}
+  /** The line to write after a cycle that ended at `now` in the state `paused`, or null. */
+  next(paused: UploadsPaused | null, now: number): string | null {
+    const current = this.current;
+    if (paused === null) {
+      this.current = null;
+      return current === null ? null : `Uploads are no longer paused: ${current.code} ended (since ${new Date(current.since).toISOString()}).`;
+    }
+    if (current?.code !== paused) { this.current = { code: paused, since: now, noticedAt: now }; return `${paused}: ${PAUSE_TEXTS[paused](this.endpoint)}`; }
+    if (now - current.noticedAt < PAUSE_NOTICE_INTERVAL_MS) return null;
+    current.noticedAt = now;
+    return `${paused} since ${new Date(current.since).toISOString()}: ${PAUSE_TEXTS[paused](this.endpoint)}`;
+  }
 }
 
 export function formatCollectorStatus(status: CollectorStatus): string {
