@@ -155,6 +155,7 @@ object Config {
   } yield StaticTokenConfig(id,owner,name,scopes,file) }
   given Decoder[AnnotationRequestPolicy] = Decoder.decodeString.emap {
     case "strict-json-schema" => Right(AnnotationRequestPolicy.StrictJsonSchema)
+    case "strict-json-schema-32k" => Right(AnnotationRequestPolicy.StrictJsonSchema32k)
     case "glm-max-reasoning" => Right(AnnotationRequestPolicy.GlmMaxReasoning)
     case _ => Left("invalid annotation request policy")
   }

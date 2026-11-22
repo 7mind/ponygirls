@@ -25,13 +25,15 @@ repository root, replacing the two placeholders (paths must not contain spaces):
 nix develop .#chronicle --command bash -c '
   chronicle/scripts/sbt.sh \
     '\''set Test / unmanagedSourceDirectories += baseDirectory.value / "eval/indexing"'\'' \
+    '\''set Test / run / baseDirectory := baseDirectory.value'\'' \
     '\''Test/runMain chronicle.CoverageExperiment /path/to/local-config.json /tmp/fresh-coverage-report'\''
 '
 ```
 
 Never copy/export credentials. The runner requires its checked-in source at
-`chronicle/eval/indexing/CoverageExperiment.scala`; the sbt wrapper sets the
-working directory to `chronicle/`. An existing output directory fails without
+`chronicle/eval/indexing/CoverageExperiment.scala`; the explicit `Test / run /
+baseDirectory` setting gives the fork `chronicle/` as its working directory.
+An existing output directory fails without
 replacement. Do not interpret partially written output as a completed run.
 
 ## Paired provider benchmark (optional)
@@ -62,9 +64,11 @@ Run from the repository root with `nix develop .#chronicle --command`:
 ```bash
 nix develop .#chronicle --command chronicle/scripts/sbt.sh \
   'set Test / unmanagedSourceDirectories += baseDirectory.value / "eval/indexing"' \
+  'set Test / run / baseDirectory := baseDirectory.value' \
   'Test/runMain chronicle.CoverageExperiment --provider-baseline /abs/mimo-annotation.json /abs/fresh-mimo-report'
 nix develop .#chronicle --command chronicle/scripts/sbt.sh \
   'set Test / unmanagedSourceDirectories += baseDirectory.value / "eval/indexing"' \
+  'set Test / run / baseDirectory := baseDirectory.value' \
   'Test/runMain chronicle.CoverageExperiment --provider-qwen-nonthinking /abs/qwen-annotation.json /abs/fresh-qwen-report'
 ```
 
@@ -77,7 +81,11 @@ summary. `--provider-baseline` sends the exact production request (MiMo);
 `--provider-qwen-nonthinking` requires `strict-json-schema` and only adds the
 request-level `chat_template_kwargs: {"enable_thinking": false}`. It does not
 add the coverage reminder, change the schema/token cap, alter production
-configuration, or guarantee a provider honored the override.
+configuration, or guarantee a provider honored the override. To compare at a
+larger completion budget, put the same optional integer `benchmarkMaxTokens`
+(2,048–32,768, strict-schema benchmark legs only) in each annotation-only JSON
+file. The override changes only `max_tokens`; the effective bound is recorded
+as `maxTokens` in each manifest and does not affect production.
 
 Compare coverage and exact correctness over all 14 planned windows, including
 blocked windows, and join window records by `caseId` and `window`. Check that

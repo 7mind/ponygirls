@@ -92,6 +92,7 @@ object ModelOutput {
 }
 enum AnnotationRequestPolicy(val identity: String,val responseTokens: Int) {
   case StrictJsonSchema extends AnnotationRequestPolicy("strict-json-schema:responseTokens2048",2048)
+  case StrictJsonSchema32k extends AnnotationRequestPolicy("strict-json-schema:responseTokens32768",32768)
   case GlmMaxReasoning extends AnnotationRequestPolicy("glm-max-reasoning:responseTokens65536",65536)
 }
 final class OpenAIEmbedder(http: ModelHttp,config: Config) extends Embedder {

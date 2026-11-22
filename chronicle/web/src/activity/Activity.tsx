@@ -45,6 +45,7 @@ function OwnerActivity({ connection, stats, user, actions, routing }: ActivityPr
   if (cache === null) throw new Error('Activity requires a RouteStateContext provider');
   const section = sectionOf(routing.route), canRead = user.scopes.includes(Scope.Read), connected = stats.activeId !== null;
   const [refresh, setRefresh] = useState(0), refreshKey = `${refresh}:${actions.revision}`;
+  const [switchPending, setSwitchPending] = useState<string | null>(null);
   // Snapshots poll while the view is shown; new snapshots never move the rows being read (spec §1 principle 5).
   useEffect(() => {
     if (!routing.active || !canRead || !connected) return;
@@ -93,6 +94,6 @@ function OwnerActivity({ connection, stats, user, actions, routing }: ActivityPr
     {section === 'collectors' && <Collectors connection={connection} stats={stats} user={user} refresh={refreshKey} refreshNow={refreshNow}/>}
     {section === 'jobs' && <Jobs connection={connection} stats={stats} user={user} actions={actions} refresh={refreshKey} refreshNow={refreshNow}/>}
     {section === 'usage' && <section className="page page-narrow" aria-label="Model usage" data-view="activity-usage"><ModelUsageView usage={usage} connected={connected}/></section>}
-    {section === 'maintenance' && <Maintenance connection={connection} stats={stats} user={user} actions={actions} summary={summary.meta}/>}
+    {section === 'maintenance' && <Maintenance connection={connection} stats={stats} user={user} actions={actions} summary={summary.meta} switchPending={switchPending} setSwitchPending={setSwitchPending} refresh={refreshNow}/>}
   </main>;
 }

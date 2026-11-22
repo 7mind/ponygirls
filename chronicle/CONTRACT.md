@@ -115,6 +115,12 @@ A job run UUID persists across automatic reclaim and Failed retry; deliberate Co
 
 There is no exactly-once provider-call claim across response/commit crashes: only committed accepted work is reusable. Rejection diagnostics use typed stable reason tokens and bounded numeric/enum structural fields, never transcript text, summaries, tags or rejected values. Annotation call telemetry records provider usage before decoder validation; an HTTP-success response rejected by the annotation decoder counts as a failed annotation call while retaining observed usage. `JobInfo.failureStage` is required-present nullable Annotation/Embedding/Publication; unknown historical stages remain null. Failed retry retains the prior error/stage; supersession or lease exhaustion replaces it with an unknown stage, and completion clears it.
 
+## Explicit owner profile switch without backfill
+
+`GET /api/maintenance/v1/profile-switch` is an owner-only preview outside the unchanged WebSocket wire protocol. It requires a browser session with Read scope, the configured Host, and same-origin proof. It returns `{ownerId, actor, currentProfile, targetProfile, selectionHash, backfillJobs:0}`. A different embedding space is not switchable by this operation.
+
+`POST` to the same path requires the exact Origin, JSON, the preview's `X-Account-Actor`, and `{requestId, targetProfile, selectionHash, confirm:true}`. The selection binds the owner, old target and epoch, and deployed destination; an obsolete preview or an already-current target conflicts. Confirmation advances the owner target epoch, fences unfinished obsolete-profile jobs, and queues no new jobs. It changes no archived revision, publication, or historical view. Newly accepted source revisions use the new target; old receipts remain bound to their original outcomes. Success returns `{requestId,targetProfile,backfillJobs:0}` and is recoverable through the existing owner-bound `Receipt` operation (`owner-profile-switch`). Loss of the response never authorizes automatic resubmission.
+
 ## Explicit fixed-current owner rebuild (1.7)
 
 `PreviewOwnerReindex` and confirmed `ApplyOwnerReindex` bind an exact owner selection hash, current destination and request receipt. They force replacement of ALL selected live HEADs, including already-current and Running work: `alreadyCurrent=0`, replacements/queued equal selected heads. Each accepted intent rotates target epoch and runs; stale previews conflict. There is no unsafe global maintenance CLI, implicit boot retarget or old-model fallback.

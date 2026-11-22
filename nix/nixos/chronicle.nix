@@ -97,7 +97,7 @@ in
       embeddingBatchSize = lib.mkOption { type = lib.types.ints.between 1 16; default = 16; description = "Maximum source pieces in each indexing embedding request."; };
     };
     annotation = lib.mkOption { type = lib.types.submodule { options = endpointOptions // {
-      requestPolicy = lib.mkOption { type = lib.types.enum [ "strict-json-schema" "glm-max-reasoning" ]; description = "Required strict structured-output policy; glm-max-reasoning additionally enables the GLM-specific maximum reasoning template extension. Changes require explicit maintenance reindex."; };
+      requestPolicy = lib.mkOption { type = lib.types.enum [ "strict-json-schema" "strict-json-schema-32k" "glm-max-reasoning" ]; description = "Strict structured-output policy. strict-json-schema-32k raises the output cap to 32768 without provider-specific overrides. glm-max-reasoning enables the GLM-specific template extension. Changes require an explicit owner rebuild."; };
     }; }; description = "Annotation model endpoint and explicit profile identity."; };
     embedding = lib.mkOption {
       type = lib.types.submodule {

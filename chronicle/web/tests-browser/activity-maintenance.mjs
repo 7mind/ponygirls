@@ -54,6 +54,52 @@ const observed = (page, text) => progress(page).getByText(text, { exact: true })
 const PENDING = '0 complete · 0 superseded · 0 failed · 3 pending';
 
 try {
+  await rig.run('profile switch previews zero backfill and submits only after owner confirmation', async () => {
+    const { context, page, fixture } = await maintenanceScene({});
+    const target = 'a'.repeat(64), current = 'b'.repeat(64), selectionHash = 'c'.repeat(64), actor = 'fixture-owner-actor';
+    const ownerId = fixture.user.id;
+    const posted = [];
+    await page.route('**/api/maintenance/v1/profile-switch', async route => {
+      const request = route.request();
+      if (request.method() === 'GET') return route.fulfill({ json: { ownerId, actor, currentProfile: current, targetProfile: target, selectionHash, backfillJobs: 0 } });
+      const body = request.postDataJSON(); posted.push({ body, actor: request.headers()['x-account-actor'] });
+      return route.fulfill({ json: { requestId: body.requestId, targetProfile: target, backfillJobs: 0 } });
+    });
+    const trigger = button(page, 'Review profile switch');
+    const dialog = page.getByRole('dialog', { name: 'Switch profile without backfill?' });
+    await trigger.click(); await dialog.getByText(target, { exact: true }).waitFor();
+    assert.match(await dialog.locator('dl').innerText(), /Backfill jobs\s+0/);
+    await button(dialog, 'Cancel').click(); assert.equal(posted.length, 0);
+    await trigger.click(); await dialog.getByText(target, { exact: true }).waitFor(); await button(dialog, 'Switch without backfill').click();
+    await page.getByText('Indexing profile switched. No backfill jobs were queued.', { exact: true }).waitFor();
+    assert.equal(posted.length, 1);
+    assert.deepEqual(posted[0], { body: { requestId: posted[0].body.requestId, targetProfile: target, selectionHash, confirm: true }, actor });
+    assert.equal(calls(fixture, api.Operation_ApplyOwnerReindex).length, 0);
+    await context.close();
+  });
+  await rig.run('an unverified profile switch reply is reconciled by receipt and not posted again', async () => {
+    const { context, page, fixture } = await maintenanceScene({});
+    const targetProfile = 'a'.repeat(64);
+    let posted = 0;
+    await page.route('**/api/maintenance/v1/profile-switch', async route => {
+      const request = route.request();
+      if (request.method() === 'GET') return route.fulfill({ json: { ownerId: fixture.user.id, actor: 'fixture-owner-actor', currentProfile: 'b'.repeat(64), targetProfile, selectionHash: 'c'.repeat(64), backfillJobs: 0 } });
+      const { requestId } = request.postDataJSON(); posted++;
+      fixture.receipts.set(requestId, new api.MutationReceipt(requestId, 'owner-profile-switch', undefined));
+      return route.fulfill({ json: { requestId, targetProfile, backfillJobs: 1 } });
+    });
+    await button(page, 'Review profile switch').click();
+    const dialog = page.getByRole('dialog', { name: 'Switch profile without backfill?' });
+    await dialog.getByText(targetProfile, { exact: true }).waitFor();
+    await button(dialog, 'Switch without backfill').click();
+    await page.getByText('The switch outcome is unknown. Check its receipt before trying again.', { exact: true }).waitFor();
+    assert.equal(await button(page, 'Review profile switch').isDisabled(), true);
+    await button(page, 'Check switch receipt').click();
+    await page.getByText('Indexing profile switched. No backfill jobs were queued.', { exact: true }).waitFor();
+    assert.equal(posted, 1);
+    assert.equal(calls(fixture, api.Operation_Receipt).length, 1);
+    await context.close();
+  });
   // ── Retry failed indexing jobs ──────────────────────────────────────────
   await rig.run('the retry preview is owner-wide despite list filters, states every population with all i64 digits, and Cancel sends nothing', async () => {
     const { context, page, fixture } = await scene(rig, { route: '/activity/jobs', configure: largeFixture });
