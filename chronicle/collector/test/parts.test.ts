@@ -46,9 +46,11 @@ async function harness(extra: Record<string, unknown> = {}) {
   let spool: Spool = new SqliteSpool(join(dir, 'state'));
   // Every credential file reads as `secret.value`: changing it rotates the runtime privacy policy.
   const secret = { value: 'synthetic-default-credential' }; const secrets = { read: (_path: string) => secret.value };
-  const collector = (more: Record<string, unknown> = {}) => { const config = settings(more); return new Collector(config, spool, new HttpIngester(config), () => 0, noGit, reporter, secrets, new HttpUploader(config)); };
+  // The backoff jitter, in [0, 1).
+  const jitter = { value: 0 };
+  const collector = (more: Record<string, unknown> = {}) => { const config = settings(more); return new Collector(config, spool, new HttpIngester(config), () => jitter.value, noGit, reporter, secrets, new HttpUploader(config)); };
   return {
-    dir, roots, server, reports, input, settings, collector, secret,
+    dir, roots, server, reports, input, settings, collector, secret, jitter,
     get spool() { return spool; },
     /** A restart: the spool reopened from disk. */
     reopen() { spool.close(); spool = new SqliteSpool(join(dir, 'state')); },
@@ -195,53 +197,65 @@ test('UploadParts pauses at a server without the part-upload API with one action
   } finally { await h.close(); }
 });
 
-test('UploadParts does not read a source again while its intent cannot be sent; a file changed during the pause is re-planned from its current bytes after the upgrade', async () => {
+test('UploadParts does not read a source with a queued intent while uploads are paused: a file appended to, or rewritten in place by another session, is identified after the upgrade and its current bytes archived; a new file is read once', async () => {
   const h = await harness();
   try {
-    const stale = join(h.roots.pi, 'stale.jsonl'), stopped = join(h.roots.pi, 'stopped.jsonl'), fresh = join(h.roots.pi, 'fresh.jsonl');
-    const passAt = (path: string) => h.collector().status().sources.find(source => source.pathId === hash(path))?.lastPass.at;
-    // The server refuses the declaration of three messages: that intent stops.
-    h.server.limits = h.server.limits.with({ maxMessages: 2 });
-    writeFileSync(stopped, jsonl(piHeader('pi-stopped'), piMessage('s1', 'one'), piMessage('s2', 'two'), piMessage('s3', 'three')));
-    assert.deepEqual(await h.run(1).then(counters => [counters.stopped, counters.uploadFailures]), [1, 1]);
-    appendFileSync(stopped, jsonl(piMessage('s4', 'four')));
+    const stale = join(h.roots.pi, 'stale.jsonl'), swapped = join(h.roots.pi, 'swapped.jsonl'), fresh = join(h.roots.pi, 'fresh.jsonl');
+    const keyOf = (path: string) => sourceKey(sourceIdentity(h.spool.namespace, 'pi', 'pi', parseTranscript('pi', readFileSync(path), path, resolveRuntimePrivacy(h.settings(), syntheticSecrets).policy), path));
     h.server.supportsUploads = false;
     writeFileSync(stale, jsonl(piHeader('pi-stale'), piMessage('m1', 'planned during the pause')));
-    assert.deepEqual(await h.run(2).then(counters => [counters.scanned, counters.enqueued, counters.waiting]), [1, 1, 1]);
+    writeFileSync(swapped, jsonl(piHeader('pi-swapped-old'), piMessage('m1', 'planned during the pause')));
+    assert.deepEqual(await h.run(1).then(counters => [counters.scanned, counters.enqueued, counters.paused]), [2, 2, 'server-upload-unsupported']);
     appendFileSync(stale, jsonl(piMessage('m2', 'written during the pause')));
+    // Another session written over the file in place: same inode, not shorter.
+    const before = statSync(swapped); writeFileSync(swapped, jsonl(piHeader('pi-swapped-new'), piMessage('n1', 'another session, written in place during the pause')));
+    assert.deepEqual([statSync(swapped).ino, statSync(swapped).size >= before.size], [before.ino, true]);
     writeFileSync(fresh, jsonl(piHeader('pi-fresh'), piMessage('f1', 'new during the pause')));
     lineReads.bytes = 0n;
-    const paused = await h.run(3);
-    // Only the new source is read (once) and planned; both changed sources with a queued intent wait unread.
-    assert.deepEqual([paused.scanned, paused.enqueued, paused.waiting, paused.pending, paused.stopped, lineReads.bytes], [1, 1, 2, 2, 1, BigInt(statSync(fresh).size)]);
+    const paused = await h.run(2);
+    // Only the new source is read (once) and planned; both changed files with a queued intent wait unread.
+    assert.deepEqual([paused.scanned, paused.enqueued, paused.waiting, lineReads.bytes], [1, 1, 2, BigInt(statSync(fresh).size)]);
     h.server.supportsUploads = true;
-    const upgraded = await h.run(4);
-    assert.deepEqual([upgraded.uploaded, upgraded.stopped], [1, 1]);
-    assert.deepEqual(h.spool.dropped().map(entry => entry.reason), ['source-changed']);
-    assert.deepEqual([(await h.run(5)).uploaded, passAt(stopped)], [1, 1]);
-    const key = sourceKey(sourceIdentity(h.spool.namespace, 'pi', 'pi', parseTranscript('pi', readFileSync(stale), stale, resolveRuntimePrivacy(h.settings(), syntheticSecrets).policy), stale));
-    assert.equal(h.server.heads.get(key)?.digest, hash(readFileSync(stale)));
+    // Both changed files are read again and their intents aborted when sent; the other session is a new source, uploaded at once.
+    const upgraded = await h.run(3);
+    assert.deepEqual([upgraded.scanned, upgraded.uploaded, h.spool.dropped().map(entry => entry.reason)], [2, 2, ['source-changed', 'source-changed']]);
+    assert.equal((await h.run(4)).uploaded, 1);
+    assert.deepEqual([...h.server.heads.keys()].sort(), [stale, swapped, fresh].map(keyOf).sort());
+    for (const path of [stale, swapped, fresh]) assert.equal(h.server.heads.get(keyOf(path))?.digest, hash(readFileSync(path)), path);
   } finally { await h.close(); }
 });
 
-test('UploadParts reads the file of a stopped intent again once it is replaced or shortened: the other session there is planned and uploaded, the stopped intent is not retried', async () => {
+test('UploadParts reads the changed file of a stopped intent as before, and of a backed-off intent once its backoff ends: another session there is planned and uploaded, the stopped intent is not retried', async () => {
   const h = await harness();
   try {
-    const replaced = join(h.roots.pi, 'replaced.jsonl'), shortened = join(h.roots.pi, 'shortened.jsonl');
-    // The server refuses declarations of three messages: both intents stop.
+    const backoff = join(h.roots.pi, 'backoff.jsonl'), renamed = join(h.roots.pi, 'renamed.jsonl'), shortened = join(h.roots.pi, 'shortened.jsonl'), rewritten = join(h.roots.pi, 'rewritten.jsonl');
+    const passAt = (path: string) => h.collector().status().sources.find(source => source.pathId === hash(path))?.lastPass.at;
+    // The open answers 503 and the jitter is at its maximum: the intent backs off until 1,000.
+    writeFileSync(backoff, jsonl(piHeader('pi-backoff'), piMessage('b1', 'one')));
+    h.server.failOpen = true; h.jitter.value = 0.999;
+    assert.deepEqual(await h.run(1).then(counters => [counters.pending, counters.uploadFailures]), [1, 1]);
+    assert.equal(h.spool.uploads()[0]?.nextAt, 1_000);
+    // The server refuses declarations of three messages: these intents stop.
     h.server.limits = h.server.limits.with({ maxMessages: 2 });
     const three = (id: string) => jsonl(piHeader(id), piMessage('a', 'one'), piMessage('b', 'two'), piMessage('c', 'three'));
-    writeFileSync(replaced, three('pi-old-replaced')); writeFileSync(shortened, three('pi-old-shortened'));
-    assert.deepEqual(await h.run(1).then(counters => [counters.stopped, counters.uploadFailures]), [2, 2]);
-    const stopped = h.spool.uploads();
-    // Another session takes each path: written aside and renamed over it (another inode), or rewritten in place, shorter.
-    writeFileSync(`${replaced}.new`, jsonl(piHeader('pi-new-replaced'), piMessage('n1', 'another session'))); renameSync(`${replaced}.new`, replaced);
+    writeFileSync(renamed, three('pi-old-renamed')); writeFileSync(shortened, three('pi-old-shortened')); writeFileSync(rewritten, three('pi-old-rewritten'));
+    assert.deepEqual(await h.run(2).then(counters => [counters.stopped, counters.uploadFailures]), [3, 3]);
+    const stopped = h.spool.uploads().filter(entry => entry.status === 'stopped');
+    // Another session takes each path: renamed over it (another inode), rewritten in place shorter, rewritten in place not shorter.
+    writeFileSync(`${renamed}.new`, jsonl(piHeader('pi-new-renamed'), piMessage('n1', 'another session'))); renameSync(`${renamed}.new`, renamed);
     writeFileSync(shortened, jsonl(piHeader('pi-new-shortened'), piMessage('n1', 'another')));
+    const before = statSync(rewritten); writeFileSync(rewritten, jsonl(piHeader('pi-new-rewritten'), piMessage('n1', 'another session, written over the old one in place. '.repeat(8))));
+    assert.deepEqual([statSync(rewritten).ino, statSync(rewritten).size >= before.size], [before.ino, true]);
+    appendFileSync(backoff, jsonl(piMessage('b2', 'two')));
     const opens = h.server.count('POST /api/ingest/uploads');
-    const counters = await h.run(2);
-    assert.deepEqual([counters.scanned, counters.enqueued, counters.uploaded, counters.stopped, h.server.count('POST /api/ingest/uploads') - opens], [2, 2, 2, 2, 2]);
-    assert.deepEqual(h.spool.uploads(), stopped);
-    assert.deepEqual([...h.server.heads.values()].map(head => head.digest).sort(), [hash(readFileSync(replaced)), hash(readFileSync(shortened))].sort());
+    const flowing = await h.run(3);
+    assert.deepEqual([flowing.scanned, flowing.enqueued, flowing.uploaded, flowing.waiting, h.server.count('POST /api/ingest/uploads') - opens], [3, 3, 3, 1, 3]);
+    assert.deepEqual(h.spool.uploads().filter(entry => entry.status === 'stopped'), stopped);
+    assert.deepEqual([...h.server.heads.values()].map(head => head.digest).sort(), [renamed, shortened, rewritten].map(path => hash(readFileSync(path))).sort());
+    // Backed off, the grown file was not read; once the backoff is over it is read, and its intent aborted when sent.
+    assert.equal(passAt(backoff), 1);
+    await h.run(1_000);
+    assert.deepEqual([passAt(backoff), h.spool.dropped().map(entry => entry.reason)], [1_000, ['source-changed']]);
   } finally { await h.close(); }
 });
 

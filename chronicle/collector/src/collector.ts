@@ -237,10 +237,11 @@ export class Collector {
         if (!serverUnsupported) { counters.uploadFailures++; this.spool.diagnostic({ rootId: 'server', pathId: hash('server'), code }); }
       }
     }
-    // A file of a source whose part intent cannot be sent this cycle is not read again while it is the same file, grown:
-    // without the server's limits nothing is sent, and a stopped, conflicting or backed-off intent waits. When the intent
-    // is sent, the changed file aborts it and is read again.
-    const unsendable = new Set(intents.filter(entry => limits === null || !due(entry, now)).map(entry => entry.sourceKey));
+    // A file of a source whose part intent waits for something that ends by itself is not read again while it is the same
+    // file, grown: without the server's limits nothing is sent this cycle, and a backed-off intent is due later. When the
+    // intent is sent, the changed file aborts it and is read again. A stopped or conflicting intent waits for the operator:
+    // its changed file is read as before, so that another session written there is found.
+    const unsendable = new Set(intents.filter(entry => limits === null || (entry.status === 'pending' && entry.nextAt > now)).map(entry => entry.sourceKey));
     const recordCap = this.recordCap();
     // Everything besides the lines, the policy and the head that pass 1's result depends on.
     const limitsDigest = (format: Format): string => hash(JSON.stringify({ format, collectorRecordBytes: this.config.maxRecordBytes, serverRecordBytes: recordCap.server,
