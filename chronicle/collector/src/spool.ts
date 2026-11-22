@@ -59,14 +59,14 @@ export interface RecordOverLimit {
   fileId: string; rootId: string; pathId: string; format: Format; stat: SourceStat;
   recordIndex: number; size: string; limit: number; limitSource: 'collector' | 'server';
   collectorLimit: number; serverLimit: string | null;
-  /** As `SourceRead.racy`: the file is read once more although its stat is unchanged. */
-  racy?: true;
+  /** As `SourceRead.racyAt`. */
+  racyAt?: number;
 }
 /** A source whose latest upload had unpaired UTF-16 surrogates replaced with U+FFFD (message text, metadata). */
 export interface UnicodeRepair { sourceKey: string; revision: number; replaced: number }
 /** A file refused for an identifier with an unpaired surrogate: not read again until its stat or the policy changes
- * (`racy`: once more, as `SourceRead.racy`). */
-export interface IdentifierRefusal { fileId: string; rootId: string; pathId: string; format: Format; stat: SourceStat; policyDigest: string; racy?: true }
+ * (`racyAt`: once more, as `SourceRead.racyAt`). */
+export interface IdentifierRefusal { fileId: string; rootId: string; pathId: string; format: Format; stat: SourceStat; policyDigest: string; racyAt?: number }
 /** The latest probe of the part-upload API. */
 export interface UploadProbe { outcome: 'supported' | 'unsupported' | 'failed'; code: string | null; at: number }
 export interface Dropped { requestId: string; sourceKey: string; reason: string }
@@ -77,9 +77,10 @@ export const droppedOnlyFor = (tombstone: Tombstone, reason: string): boolean =>
 /** `cause` classifies the latest failure (see progress.ts); absent in states saved before it existed. */
 export interface ReportingState { sequence: string; acceptedSequence: string | null; acceptedAt: number | null; error: string | null; cause?: string | null }
 /** The stat of a file when it was last read and the settled content it had: `digest` at source `revision` (acknowledged or queued).
- * `racy`: the stat was taken so soon after the file's last change that a rewrite in the same timestamp tick could keep it
- * equal; the file is read once more (absent in records of earlier releases and when not racy). */
-export interface SourceRead { fileId: string; stat: SourceStat; sourceKey: string; digest: string; revision: number; policyDigest: string; controlsDigest: string; racy?: true }
+ * `racyAt` (wall-clock ms of that read): its stat was taken so soon after the file's last change, or with a ctime in the
+ * future, that a rewrite in the same timestamp tick could keep it; the record stands until `racyDue`, then the file is read
+ * once more (absent when not racy, and in records of earlier releases). */
+export interface SourceRead { fileId: string; stat: SourceStat; sourceKey: string; digest: string; revision: number; policyDigest: string; controlsDigest: string; racyAt?: number }
 export interface Spool {
   readonly namespace: string;
   head(sourceKey: string): Head;

@@ -7,7 +7,8 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { Collector, COLLECTION_PAUSED_TEXT, policyDigest, RACY_STAT_WINDOW_MS, uploadsPausedText } from '../src/collector.ts';
+import { Collector, COLLECTION_PAUSED_TEXT, policyDigest, uploadsPausedText } from '../src/collector.ts';
+import { RACY_STAT_WINDOW_MS } from '../src/discovery.ts';
 import { loadConfig } from '../src/config.ts';
 import { SqliteSpool, type Spool } from '../src/spool.ts';
 import { encodeSnapshot, HttpIngester, sourceIdentity, sourceKey } from '../src/ingest.ts';
@@ -262,6 +263,8 @@ test('UploadParts reads the changed file of a stopped intent as before, and of a
 // Every change in the RacyStat tests lands in this ctime tick (ms since the epoch): it holds size, mtime and ctime equal.
 const RACY_TICK_MS = 1_800_000_000_000;
 const inRacyTick = <T>(body: () => Promise<T>): Promise<T> => withCtime(() => BigInt(RACY_TICK_MS) * 1_000_000n, body);
+/** Text of `bytes` bytes in words: redaction keeps it, as it would not keep one long run. */
+const words = (bytes: number) => 'synthetic words '.repeat(Math.ceil(bytes / 16)).slice(0, bytes);
 for (const protocol of ['whole', 'parts'] as const) {
   test(`RacyStat ${protocol}: a rewrite keeping the stat right after a settled read is read at the next cycle and archived; a file read long after its change is not read again`, async () => {
     const h = await harness({ uploadProtocol: protocol });
@@ -289,8 +292,7 @@ test('RacyStat a file refused for an identifier or for a record over the limit, 
   try {
     const identifier = join(h.roots.pi, 'identifier.jsonl'), record = join(h.roots.pi, 'record.jsonl'); const mtime = new Date('2026-01-01T00:00:00Z');
     const withId = (id: string) => `{"type":"session","version":3,"id":"pi-racy-identifier"}\n{"type":"message","id":"${id}","parentId":null,"message":{"role":"user","content":"synthetic"}}\n`;
-    // Two records under the limit, and as many bytes in one record over it (words: redaction keeps them).
-    const words = (bytes: number) => 'synthetic words '.repeat(Math.ceil(bytes / 16)).slice(0, bytes);
+    // Two records under the limit, and as many bytes in one record over it.
     const split = jsonl(piHeader('pi-racy-record'), piMessage('a', words(0.6 * MiB)), piMessage('b', words(0.6 * MiB)));
     const over = jsonl(piHeader('pi-racy-record'), piMessage('a', words(Buffer.byteLength(split) - Buffer.byteLength(jsonl(piHeader('pi-racy-record'), piMessage('a', ''))))));
     assert.equal(Buffer.byteLength(over), Buffer.byteLength(split));
@@ -304,6 +306,47 @@ test('RacyStat a file refused for an identifier or for a record over the limit, 
       h.wall.value = RACY_TICK_MS + RACY_STAT_WINDOW_MS + 1;
       assert.deepEqual(await h.run(2).then(counters => [counters.scanned, counters.uploaded, counters.quarantined]), [2, 2, 0]);
       assert.deepEqual([...h.server.heads.values()].map(head => head.digest).sort(), [identifier, record].map(path => hash(readFileSync(path))).sort());
+    });
+  } finally { await h.close(); }
+});
+
+test('RacyStat a record the server refuses, rewritten keeping its stat right after that read, is read at the next cycle and uploaded', async () => {
+  const h = await harness();
+  try {
+    const path = join(h.roots.pi, 's.jsonl'); const mtime = new Date('2026-01-01T00:00:00Z');
+    // The server refuses records over 1,500 bytes; each record travels in a part of its own.
+    h.server.limits = h.server.limits.with({ maxPartBytes: 1024n }); h.server.partRecordCap = 1_500n;
+    const split = jsonl(piHeader('pi-racy-server'), piMessage('a', words(1_000)), piMessage('b', words(1_000)));
+    const over = jsonl(piHeader('pi-racy-server'), piMessage('a', words(Buffer.byteLength(split) - Buffer.byteLength(jsonl(piHeader('pi-racy-server'), piMessage('a', ''))))));
+    assert.equal(Buffer.byteLength(over), Buffer.byteLength(split));
+    await inRacyTick(async () => {
+      writeFileSync(path, over); utimesSync(path, mtime, mtime);
+      h.wall.value = RACY_TICK_MS + 1;
+      assert.deepEqual(await h.run(1).then(counters => [counters.quarantined, counters.uploaded]), [1, 0]);
+      assert.deepEqual(h.spool.recordsOverLimit().map(row => row.limitSource), ['server']);
+      writeFileSync(path, split); utimesSync(path, mtime, mtime);
+      h.wall.value = RACY_TICK_MS + RACY_STAT_WINDOW_MS + 1;
+      assert.deepEqual(await h.run(2).then(counters => [counters.scanned, counters.uploaded, counters.quarantined]), [1, 1, 0]);
+      assert.deepEqual([...h.server.heads.values()].map(head => head.digest), [hash(readFileSync(path))]);
+    });
+  } finally { await h.close(); }
+});
+
+test('RacyStat a ctime in the future, or a wall clock set back, costs one confirming read per stat (and one per setback), not a read every cycle', async () => {
+  const h = await harness();
+  try {
+    const path = join(h.roots.pi, 's.jsonl'); const start = 1_800_000_000_000; const back = start + 5_000 - 3_600_000;
+    // Every ctime is an hour ahead of the wall clock: a network filesystem's clock, or this host's clock set back.
+    await withCtime(() => BigInt(start + 3_600_000) * 1_000_000n, async () => {
+      writeFileSync(path, jsonl(piHeader('pi-future'), piMessage('m1', 'one')));
+      const reads: number[] = [];
+      const cycle = async (wall: number): Promise<void> => { h.wall.value = wall; reads.push((await h.run(wall)).scanned); };
+      for (const wall of [start, start + 1_000, start + 3_000, start + 4_000]) await cycle(wall);
+      // A change starts another racy stat; then the wall clock goes back an hour.
+      appendFileSync(path, jsonl(piMessage('m2', 'two'))); await cycle(start + 5_000);
+      for (const wall of [back, back + 1_000, back + 3_000, back + 60_000]) await cycle(wall);
+      assert.deepEqual(reads, [1, 0, 1, 0, 1, 1, 0, 1, 0]);
+      assert.equal([...h.server.heads.values()][0]?.digest, hash(readFileSync(path)));
     });
   } finally { await h.close(); }
 });

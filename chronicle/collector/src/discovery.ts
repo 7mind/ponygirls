@@ -137,6 +137,24 @@ export const fileStatus = {
 };
 const sourceStat = (stat: BigIntStats): SourceStat => ({ dev: String(stat.dev), ino: String(stat.ino), size: String(stat.size), mtimeNs: String(stat.mtimeNs), ctimeNs: String(stat.ctimeNs) });
 export const sameStat = (a: SourceStat, b: SourceStat): boolean => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+/** File times advance in coarse ticks: the kernel's timer tick (at most 10 ms), whole seconds on some filesystems, 2 s for
+ * FAT, and the kernel stamps them from a clock that may lag the wall clock by a tick. A rewrite within the tick of the last
+ * change keeps size, mtime and ctime. 3 s covers the coarsest tick and the lag with a margin. */
+export const RACY_STAT_WINDOW_MS = 3_000;
+/** `racyAt`: the wall-clock time (ms) of the read whose stat could still equal a later rewrite's; absent when it cannot. */
+export interface RacyMark { racyAt?: number }
+/** Git's racy-clean rule on ctime (every change sets it from the kernel clock; mtime can be set freely): a stat taken at or
+ * after wall-clock `wallMs` is racy when its ctime is not older than the window before that, or is in the future. */
+export const racyStat = (stat: SourceStat, wallMs: number): boolean => BigInt(stat.ctimeNs) >= BigInt(wallMs - RACY_STAT_WINDOW_MS) * 1_000_000n;
+/** A racy record stands until the window has passed since its read, or the wall clock went back; then the file is read once. */
+export const racyDue = (racyAt: number, wallMs: number): boolean => wallMs < racyAt || wallMs - racyAt >= RACY_STAT_WINDOW_MS;
+/** The mark of a read at `wallMs` that found `stat`. A rewrite keeping a stat happens within one tick of the change that set
+ * it, so a read of a stat found unchanged since an earlier racy read at least the window before confirms the content,
+ * whatever its ctime says (a ctime in the future, a clock set back): one confirming read per racy stat. Otherwise `racyStat`. */
+export function racyMark(stat: SourceStat, wallMs: number, earlier: readonly ({ stat: SourceStat } & RacyMark | undefined)[]): RacyMark {
+  const confirmed = earlier.some(row => row?.racyAt !== undefined && sameStat(row.stat, stat) && wallMs - row.racyAt >= RACY_STAT_WINDOW_MS);
+  return confirmed || !racyStat(stat, wallMs) ? {} : { racyAt: wallMs };
+}
 /** The current stat of a regular source file without reading it; null when that cannot be established. */
 export function statSource(file: SourceFile): SourceStat | null {
   try {
