@@ -2142,8 +2142,10 @@ def exact_answer(session, mode, query, vector, pieces=None):
     select = EXACT_SELECT_TOP % dict(top=EXACT_TOP) if pieces is None else EXACT_SELECT_PIECES
     statement = EXACT_SQL % dict(dimensions=DIMENSIONS, limit=CANDIDATES_PER_LEG, legs=EXACT_LEGS[mode] % dict(limit=CANDIDATES_PER_LEG),
                                  score=EXACT_SCORES[mode] % dict(k=RECIPROCAL_RANK_CONSTANT), select=select)
-    rows = sql(f"BEGIN; SET LOCAL enable_indexscan = off; SET LOCAL enable_indexonlyscan = off; {statement}; COMMIT", session, vector, query,
-               ','.join(str(ordinal) for ordinal in pieces or [-1]))
+    counter = HNSW_XACT_SCANS % dict(dimensions=DIMENSIONS)
+    rows, scans = scanned(sql(f"BEGIN; SET LOCAL enable_indexscan = off; SET LOCAL enable_indexonlyscan = off; {counter}; {statement}; {counter}; COMMIT",
+                              session, vector, query, ','.join(str(ordinal) for ordinal in pieces or [-1])))
+    assert scans == 0, f'the exact answer scanned the HNSW index ({scans})'
     return [dict(ordinal=int(o), score=float(sc), distance=float(d), lex=float(lx)) for o, sc, d, lx in rows]
 
 
@@ -2179,20 +2181,39 @@ ANN_LEG_SQL = """SELECT ch.ordinal, ch.embedding <=> :'arg1'::vector FROM ch_sea
 RECALL_KS = (10, 100, 1000)
 
 
+HNSW_XACT_SCANS = "SELECT 'hnsw-scans', pg_stat_get_xact_numscans(('ch_search_hnsw_d' || %(dimensions)d)::regclass)"
+
+
+def scanned(rows):
+    """Split a statement's rows from the HNSW index's scan counts of its own transaction read before and after it
+    (pg_stat_get_xact_numscans: the transaction's own counter, no flush delay): (rows, scans during the statement)."""
+    counts = [int(row[1]) for row in rows if row[0] == 'hnsw-scans']
+    assert len(counts) == 2, rows[:3]
+    return [row for row in rows if row[0] != 'hnsw-scans'], counts[1] - counts[0]
+
+
 def ann_leg(session, vector):
-    """The product's ANN leg (ANN_LEG_SQL under ANN_LEG_SETTINGS): (ordinal, original-vector distance) in its order."""
+    """The product's ANN leg (ANN_LEG_SQL under ANN_LEG_SETTINGS): ((ordinal, original-vector distance) in its order, the
+    HNSW index scans of that statement)."""
     profile = one("SELECT min(profile) FROM ch_search_chunks WHERE session_id=:'arg0' HAVING count(DISTINCT profile)=1", session)
-    statement = ANN_LEG_SQL % dict(dimensions=DIMENSIONS, limit=CANDIDATES_PER_LEG)
-    rows = sql('BEGIN; ' + '; '.join(ANN_LEG_SETTINGS) + f'; {statement}; COMMIT', session, vector, profile)
-    return [(int(o), float(d)) for o, d in rows]
+    statement, counter = ANN_LEG_SQL % dict(dimensions=DIMENSIONS, limit=CANDIDATES_PER_LEG), HNSW_XACT_SCANS % dict(dimensions=DIMENSIONS)
+    rows, scans = scanned(sql('BEGIN; ' + '; '.join(ANN_LEG_SETTINGS) + f'; {counter}; {statement}; {counter}; COMMIT', session, vector, profile))
+    return [(int(o), float(d)) for o, d in rows], scans
 
 
 def exact_leg(session, vector):
     """The exact leg (EXACT_SQL's `ann`, index scans off): (ordinal, original-vector distance) in exact order."""
     statement = EXACT_SQL % dict(dimensions=DIMENSIONS, limit=CANDIDATES_PER_LEG, legs='', score='', select='')
     statement = statement[:statement.index('  ranked AS')].rstrip().rstrip(',') + " SELECT ordinal, embedding <=> :'arg1'::vector FROM ann ORDER BY embedding <=> :'arg1'::vector, session_id, ordinal, id"
-    rows = sql(f"BEGIN; SET LOCAL enable_indexscan = off; SET LOCAL enable_indexonlyscan = off; {statement}; COMMIT", session, vector)
+    counter = HNSW_XACT_SCANS % dict(dimensions=DIMENSIONS)
+    rows, scans = scanned(sql(f"BEGIN; SET LOCAL enable_indexscan = off; SET LOCAL enable_indexonlyscan = off; {counter}; {statement}; {counter}; COMMIT", session, vector))
+    assert scans == 0, f'the exact leg scanned the HNSW index ({scans})'
     return [(int(o), float(d)) for o, d in rows]
+
+
+def at_least(a, b):
+    """Whether the ratio a = (credits, of) is at least b, by cross-multiplication (no rounding)."""
+    return a[0] * b[1] >= b[0] * a[1]
 
 
 def leg_recall(ann, exact, k):
@@ -2287,10 +2308,6 @@ def settled(read):
             return current
         assert time.monotonic() - started < 120, 'pg_stat counters did not settle'
         last = current
-
-
-def hnsw_scans():
-    return settled(lambda: int(one("SELECT coalesce(sum(idx_scan),0) FROM pg_stat_user_indexes WHERE indexrelname LIKE 'ch_search_hnsw%'")))
 
 
 def table_writes():
@@ -2441,18 +2458,16 @@ def run_h(root):
         result['stored'], result['pieces'] = stored_content(session)
         result['answers'] = h.reader_answers(session, queries)
         products = {key: h.reader().result('search', key[1], '--mode', key[0], '--limit', '20')[0] for key in vector_keys}
-        before = hnsw_scans()
+        # Each exact statement asserts no HNSW scan in its own transaction (pg_stat_get_xact_numscans).
         exact = {key: exact_answer(session, key[0], key[1], vectors[key[1]]) for key in vector_keys}
         exact_legs = {query: exact_leg(session, vectors[query]) for query in queries}
-        used = hnsw_scans() - before
-        check(f'{label}: {len(exact)} exact semantic and hybrid answers and {len(exact_legs)} exact legs (original-vector leg over every visible row), the HNSW '
-              f'index unused ({used} scans)', used == 0 and all(exact.values()) and all(exact_legs.values()), used)
-        before = hnsw_scans()
-        ann_legs = {query: ann_leg(session, vectors[query]) for query in queries}
-        used = hnsw_scans() - before
-        check(f'{label}: {len(ann_legs)} product ANN legs ran through the HNSW index ({used} index scans)', used >= len(queries), used)
+        check(f'{label}: {len(exact)} exact semantic and hybrid answers and {len(exact_legs)} exact legs (original-vector leg over every visible row), each '
+              f'without an HNSW scan in its transaction', all(exact.values()) and all(exact_legs.values()))
+        ann_runs = {query: ann_leg(session, vectors[query]) for query in queries}
+        ann_legs, scans = {q: run[0] for q, run in ann_runs.items()}, {q[:40]: run[1] for q, run in ann_runs.items()}
+        check(f'{label}: each of the {len(ann_legs)} product ANN legs scanned the HNSW index in its own transaction ({scans})', all(n > 0 for n in scans.values()), scans)
         totals = {k: [sum(leg_recall(ann_legs[q], exact_legs[q], k)[i] for q in queries) for i in (0, 1)] for k in RECALL_KS}
-        result['legRecall'] = {k: dict(credits=c, of=n, recall=round(c / n, 4) if n else None) for k, (c, n) in totals.items()}
+        result['legRecall'] = {k: dict(credits=c, of=n, recall=round(c / n, 4) if n else None) for k, (c, n) in totals.items()}  # recall: display only
         result['legRecallPerQuery'] = {query[:40]: {k: leg_recall(ann_legs[query], exact_legs[query], k) for k in RECALL_KS} for query in queries}
         result['answerShape'] = dict(hits=max(len(products[key].get('hits', [])) for key in vector_keys),
                                      piecesPerHit=max((len(hit.get('chunks', [])) for key in vector_keys for hit in products[key].get('hits', [])), default=0))
@@ -2520,16 +2535,19 @@ def run_h(root):
           f'identical on the incremental head and both roots' + (f'; DIFFERING (a product defect): {unequal}' if unequal else ''), not unequal,
           {key: {name: measured[name]['exact'] for name in heads} for key in unequal[:2]}, defer=True)
     # (3) ANN: recall of the product's answers against the exact ones (content identity or a distance tie), per head
-    recalls = {name: round(sum(1 for v in m['judged'].values() if v in CREDITED) / len(vector_keys), 4) for name, m in measured.items()}
+    hits = {name: (sum(1 for v in m['judged'].values() if v in CREDITED), len(vector_keys)) for name, m in measured.items()}
+    recalls = {name: round(c / n, 4) for name, (c, n) in hits.items()}  # display only
     shapes = {name: m['answerShape'] for name, m in measured.items()}
     leg_recalls = {name: m['legRecall'] for name, m in measured.items()}
     note(f'H7: product answer shape (hits per answer, pieces per hit) {json.dumps(shapes)}; ANN-leg recall@k (k = {list(RECALL_KS)}, {len(queries)} queries; the '
          f'hybrid\'s semantic leg is the same statement) {json.dumps(leg_recalls)}; per query {json.dumps({name: m["legRecallPerQuery"] for name, m in measured.items()})}')
     for k in RECALL_KS:
-        values = {name: leg_recalls[name][k]['recall'] for name in measured}
-        check(f'H7: ANN-leg recall@{k}: the incremental head {values["incremental"]} is not below the two roots\' range ({values["root"]}, {values["root2"]}); index '
-              f'rows no reader sees: {json.dumps({name: m["indexRows"] for name, m in measured.items()})}', values['incremental'] >= min(values['root'], values['root2']),
-              dict(recall=values, indexRows={name: m['indexRows'] for name, m in measured.items()}), defer=True)
+        ratios = {name: (leg_recalls[name][k]['credits'], leg_recalls[name][k]['of']) for name in measured}
+        check(f'H7: ANN-leg recall@{k}: the incremental head {ratios["incremental"][0]}/{ratios["incremental"][1]} is not below the two roots\' range '
+              f'({ratios["root"][0]}/{ratios["root"][1]}, {ratios["root2"][0]}/{ratios["root2"][1]}; compared unrounded); index rows no reader sees: '
+              f'{json.dumps({name: m["indexRows"] for name, m in measured.items()})}',
+              at_least(ratios['incremental'], ratios['root']) or at_least(ratios['incremental'], ratios['root2']),
+              dict(recall=ratios, indexRows={name: m['indexRows'] for name, m in measured.items()}), defer=True)
     nearer = {name: [f'{mode} {query[:40]!r}' for (mode, query), chunk in m['chunks'].items() if mode == 'semantic' and chunk
                      and chunk['distance'] < m['exact'][(mode, query)][0]['distance']] for name, m in measured.items()}
     check(f'H7: no product semantic answer is nearer than its exact answer (the exact leg sees every visible row): {nearer}', not any(nearer.values()), nearer, defer=True)
@@ -2547,7 +2565,7 @@ def run_h(root):
          f'per head {[(name, dict(collections.Counter(m["judged"].values()))) for name, m in measured.items()]}; differences between heads (ordinal, exact distance, '
          f'lexical rank) {json.dumps(differences)}; index rows no reader sees {json.dumps({name: m["indexRows"] for name, m in measured.items()})}')
     check(f'H7: the incremental head\'s answer hit@{EXACT_TOP} {recalls["incremental"]} is not below the two roots\' range ({recalls["root"]}, {recalls["root2"]}); index rows no '
-          f'reader sees: {json.dumps({name: m["indexRows"] for name, m in measured.items()})}', recalls['incremental'] >= min(recalls['root'], recalls['root2']),
+          f'reader sees: {json.dumps({name: m["indexRows"] for name, m in measured.items()})}', at_least(hits['incremental'], hits['root']) or at_least(hits['incremental'], hits['root2']),
           dict(recalls=recalls, differences=differences), defer=True)
     # (4) lexical answers, pages, session
     others = [key for key in measured['incremental']['answers'] if not key.startswith(('search semantic', 'search hybrid'))]
