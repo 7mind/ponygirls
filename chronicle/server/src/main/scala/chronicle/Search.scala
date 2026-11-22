@@ -23,6 +23,11 @@ object SearchPolicy {
   val reciprocalRankConstant = CandidatePolicy.reciprocalRankConstant
   val facetValuesPerField = 100
   val facetFields = 3
+  /** Exactly equal scores are ordered by these columns of the candidates (ascending; a chunk of an earlier release has no
+    * ordinal and comes after the ordered ones): a chunk's place in its session, not its id, which a publication assigns
+    * anew (ingest-limits spec §5.6.2 "Ranking"). */
+  val tieBreak: List[String] = List("session_id","ordinal","id")
+  def tieBreakSql(prefix: String): String = tieBreak.map(prefix+_).mkString(",")
   def rankingLimit(mode: SearchMode): Int = if(mode==SearchMode.Hybrid) candidatesPerLeg*2 else candidatesPerLeg
   def validateQuery(q: SearchQuery,legacy: Boolean): Unit = {
     Check.page(q.offset,q.limit); Check(q.query.length<=2048,"invalid","query too long")
@@ -45,30 +50,34 @@ object SearchPolicy {
 private[chronicle] final case class SearchStatement(sql: String,args: List[Sql.Param],ann: Boolean=false)
 final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config,budget: SemanticLegBudget) extends SearchIndex {
   def this(db: Database,archive: PostgresArchive,config: Config) = this(db,archive,config,SemanticLegBudget.production)
-  private def filter(f: SearchFilter): (String,List[Sql.Param]) = {
+  /** The filters of a relation with ch_sources `s`, the published revision's metadata `r.metadata` and the published
+    * ch_generations row `published` (none: the tag filter reads the generation of `s.published`). */
+  private def filter(f: SearchFilter,published: Option[String]): (String,List[Sql.Param]) = {
     val b = List.newBuilder[String]; val p = List.newBuilder[Sql.Param]
     List(("project",f.project),("gitBranch",f.gitBranch)).foreach { case (key,v) => v.foreach { s => Check.text(s,256); b += s"r.metadata->>'$key'=?"; p += s } }
     f.after.foreach { s => Check(scala.util.Try(java.time.Instant.parse(s)).isSuccess,"invalid","invalid time filter"); b += "(r.metadata->>'startedAt')::timestamptz>=?::timestamptz"; p += s }
     f.before.foreach { s => Check(scala.util.Try(java.time.Instant.parse(s)).isSuccess,"invalid","invalid time filter"); b += "(r.metadata->>'startedAt')::timestamptz<=?::timestamptz"; p += s }
     Check(f.tags.size<=32,"invalid","tag filter limit")
-    f.tags.foreach { s => Check.text(s,128); b += "((r.metadata->'tags') @> ?::jsonb OR EXISTS(SELECT 1 FROM ch_generation_tags tagged WHERE tagged.generation=s.published AND tagged.tag=?))"; val tag=io.circe.Json.arr(io.circe.Json.fromString(s)).noSpaces; p += tag; p += s }
+    val generated=published.fold(s"ch_generations tagged_g CROSS JOIN LATERAL ${GenerationRows.tags("tagged_g.id","tagged_g.lineage","tagged_g.lineage_version")} tagged WHERE tagged_g.id=s.published AND")(g => s"${GenerationRows.tags(s"$g.id",s"$g.lineage",s"$g.lineage_version")} tagged WHERE")
+    f.tags.foreach { s => Check.text(s,128); b += s"((r.metadata->'tags') @> ?::jsonb OR EXISTS(SELECT 1 FROM $generated tagged.tag=?))"; val tag=io.circe.Json.arr(io.circe.Json.fromString(s)).noSpaces; p += tag; p += s }
     (b.result().map(" AND "+_).mkString,p.result())
   }
   private def facetCorpus(reader: String,f: SearchFilter): SearchStatement = {
-    val (fs,p)=filter(f)
-    SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT s.id,s.published,r.metadata FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.visible}$fs)",List(reader,reader,reader)++p)
+    val (fs,p)=filter(f,Some("g"))
+    SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT s.id,s.published,g.lineage,g.lineage_version,r.metadata FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.visible}$fs)",List(reader,reader,reader)++p)
   }
   private[chronicle] def statement(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchStatement = statement(reader,q,vector,LegPass.Index)
-  private def statement(reader: String,q: SearchQuery,vector: Option[List[Double]],pass: LegPass): SearchStatement = {
-    val (fs,fp)=filter(q.filter)
-    // OFFSET 0 keeps the live authorization check inside the ordered index scan, before its limit.
-    val authorized=s"(SELECT true FROM ch_sources s JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=ch.revision WHERE s.id=ch.session_id AND s.published=ch.generation AND ${archive.visible}$fs OFFSET 0)"
+  private[chronicle] def statement(reader: String,q: SearchQuery,vector: Option[List[Double]],pass: LegPass): SearchStatement = {
+    val (fs,fp)=filter(q.filter,None)
+    // OFFSET 0 keeps the live authorization check inside the ordered index scan, before its limit: the row is a piece of
+    // the published generation, whose revision's metadata the filters read.
+    val authorized=s"(SELECT true FROM ch_sources s CROSS JOIN LATERAL(${GenerationRows.publishedInfo("s.id","s.published","ch")}) r WHERE s.id=ch.session_id AND ${archive.visible}$fs OFFSET 0)"
     val acl: List[Sql.Param]=List(reader,reader,reader)++fp
     val lexicalPredicate=if(q.query.nonEmpty) "ch.document @@ websearch_to_tsquery('english',?) AND " else ""
     val lexicalArgs: List[Sql.Param]=(if(q.query.nonEmpty) List(q.query) else Nil)++acl
-    val fields="ch.id,ch.generation,ch.session_id,ch.revision,ch.document,ch.embedding"
+    val fields="ch.id,ch.generation,ch.session_id,ch.revision,ch.ordinal,ch.document,ch.embedding"
     if(q.mode==SearchMode.Lexical) {
-      SearchStatement(s"WITH candidates AS(SELECT $fields,ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) AS lex FROM ch_search_chunks ch WHERE $lexicalPredicate$authorized),scored AS(SELECT *,lex AS score FROM candidates),sessions AS(SELECT DISTINCT ON(session_id) * FROM scored ORDER BY session_id,score DESC,id)",List(q.query)++lexicalArgs)
+      SearchStatement(s"WITH candidates AS(SELECT $fields,ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) AS lex FROM ch_search_chunks ch WHERE $lexicalPredicate$authorized),scored AS(SELECT *,lex AS score FROM candidates),sessions AS(SELECT DISTINCT ON(session_id) * FROM scored ORDER BY session_id,score DESC,${SearchPolicy.tieBreakSql("")})",List(q.query)++lexicalArgs)
     } else {
       val dimensions=SearchPolicy.dimensions(config)
       val queryVector=SearchPolicy.vector(vector.getOrElse(throw DomainError("unavailable","query embedding unavailable")),config)
@@ -77,28 +86,29 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
           (s"ann AS MATERIALIZED(SELECT $fields FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND $authorized ORDER BY ${CandidateSql.annDistance(dimensions,"ch.embedding")} LIMIT ${SearchPolicy.candidatesPerLeg})",
             List[Sql.Param](EmbeddingSpaceDescriptor.from(config.embedding).id)++acl++List(queryVector))
         case LegPass.Exact =>
-          (s"ann AS MATERIALIZED(SELECT $fields FROM ${visibleChunks(fs)} AND vector_dims(ch.embedding)=$dimensions ORDER BY ch.embedding <=> ?::vector,ch.id LIMIT ${SearchPolicy.candidatesPerLeg})",
+          (s"ann AS MATERIALIZED(SELECT $fields FROM ${visibleChunks(fs)} AND vector_dims(ch.embedding)=$dimensions ORDER BY ch.embedding <=> ?::vector,${SearchPolicy.tieBreakSql("ch.")} LIMIT ${SearchPolicy.candidatesPerLeg})",
             acl++List(EmbeddingSpaceDescriptor.from(config.embedding).id,queryVector))
       }
       val (legs,legArgs)=if(q.mode==SearchMode.Hybrid && q.query.nonEmpty) {
-        (s",lexical AS MATERIALIZED(SELECT $fields FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND $lexicalPredicate$authorized ORDER BY ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) DESC,ch.id LIMIT ${SearchPolicy.candidatesPerLeg}),candidates AS(SELECT * FROM ann UNION SELECT * FROM lexical)",List(EmbeddingSpaceDescriptor.from(config.embedding).id)++lexicalArgs++List(q.query))
+        (s",lexical AS MATERIALIZED(SELECT $fields FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND $lexicalPredicate$authorized ORDER BY ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) DESC,${SearchPolicy.tieBreakSql("ch.")} LIMIT ${SearchPolicy.candidatesPerLeg}),candidates AS(SELECT * FROM ann UNION SELECT * FROM lexical)",List(EmbeddingSpaceDescriptor.from(config.embedding).id)++lexicalArgs++List(q.query))
       } else (",candidates AS(SELECT * FROM ann)",Nil)
       // Shared executable reranking retains the exact original-vector/RRF/entity algorithm.
       val mode=if(q.mode==SearchMode.Semantic) RetrievalMode.Semantic else RetrievalMode.Hybrid
-      SearchStatement(s"WITH $ann$legs,"+CandidateSql.rerankCtes(mode,"session_id"),annArgs++legArgs++List(q.query,q.query,queryVector),ann=true)
+      SearchStatement(s"WITH $ann$legs,"+CandidateSql.rerankCtes(mode,"session_id",SearchPolicy.tieBreak),annArgs++legArgs++List(q.query,q.query,queryVector),ann=true)
     }
   }
-  /** The leg's visible set from the source side (the session index, not the vector index): published chunks of visible
-    * sessions passing the filters, of a compatible profile. Arguments: the ACL's and filters', then the space. */
+  /** The leg's visible set from the source side (the session index, not the vector index): pieces of the published
+    * generations of visible sessions passing the filters (read as the authorization reads them), of a compatible
+    * profile. Arguments: the ACL's and filters', then the space. */
   private def visibleChunks(fs: String): String =
-    s"ch_sources s JOIN ch_search_chunks ch ON ch.session_id=s.id AND ch.generation=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=ch.revision WHERE ${archive.visible}$fs AND ${IndexProfiles.compatibleSql("ch.profile")}"
+    s"ch_sources s JOIN ch_search_chunks ch ON ch.session_id=s.id CROSS JOIN LATERAL(${GenerationRows.publishedInfo("s.id","s.published","ch")}) r WHERE ${archive.visible}$fs AND ${IndexProfiles.compatibleSql("ch.profile")}"
   private def visibleCount(c: Connection,reader: String,q: SearchQuery): Long = {
-    val (fs,fp)=filter(q.filter)
+    val (fs,fp)=filter(q.filter,None)
     Sql.one(c,s"SELECT count(*) FROM (SELECT 1 FROM ${visibleChunks(fs)} AND vector_dims(ch.embedding)=${SearchPolicy.dimensions(config)} LIMIT ?) visible",
       (List[Sql.Param](reader,reader,reader)++fp++List(EmbeddingSpaceDescriptor.from(config.embedding).id,SemanticLeg.visibleCap(budget)))*)(_.getLong(1)).get
   }
   private[chronicle] def legacyStatement(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchStatement = {
-    val (fs,fp)=filter(q.filter)
+    val (fs,fp)=filter(q.filter,Some("g"))
     val semantic=q.mode!=SearchMode.Lexical
     val distance=if(semantic) "embedding <=> ?::vector" else "0.0"
     val score=q.mode match {
@@ -108,11 +118,14 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     }
     val matches=if(q.mode==SearchMode.Lexical && q.query.nonEmpty) "WHERE lex>0" else ""
     val compatibility=if(semantic) " AND "+IndexProfiles.compatibleSql("g.profile") else ""
-    SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT ch.id,ch.document,ch.embedding,s.id AS session_id,g.id AS generation,g.revision FROM ch_chunks ch JOIN ch_sources s ON s.published=ch.generation JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.visible}$fs$compatibility),ranked AS(SELECT *,ts_rank_cd(document,websearch_to_tsquery('english',?)) AS lex,$distance AS distance FROM corpus),ranked2 AS(SELECT *,row_number() OVER(ORDER BY lex DESC,id) AS lr,row_number() OVER(ORDER BY distance,id) AS vr FROM ranked),scored AS(SELECT *,$score AS score FROM ranked2 $matches),sessions AS(SELECT DISTINCT ON(session_id) * FROM scored ORDER BY session_id,score DESC,id)",List(reader,reader,reader)++fp++(if(semantic) List(EmbeddingSpaceDescriptor.from(config.embedding).id) else Nil)++List(q.query)++(if(semantic) List(SearchPolicy.vector(vector.getOrElse(throw DomainError("unavailable","query embedding unavailable")),config)) else Nil))
+    val ties=SearchPolicy.tieBreakSql("")
+    SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT ch.id,ch.ordinal,ch.document,ch.embedding,s.id AS session_id,g.id AS generation,g.revision FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision CROSS JOIN LATERAL(${GenerationRows.members(GenerationRows.Kind.Piece,"g.id")}) m JOIN ch_chunks ch ON ch.generation=m.origin AND ch.ordinal>=m.lo AND ch.ordinal<m.hi WHERE ${archive.visible}$fs$compatibility),ranked AS(SELECT *,ts_rank_cd(document,websearch_to_tsquery('english',?)) AS lex,$distance AS distance FROM corpus),ranked2 AS(SELECT *,row_number() OVER(ORDER BY lex DESC,$ties) AS lr,row_number() OVER(ORDER BY distance,$ties) AS vr FROM ranked),scored AS(SELECT *,$score AS score FROM ranked2 $matches),sessions AS(SELECT DISTINCT ON(session_id) * FROM scored ORDER BY session_id,score DESC,$ties)",List(reader,reader,reader)++fp++(if(semantic) List(EmbeddingSpaceDescriptor.from(config.embedding).id) else Nil)++List(q.query)++(if(semantic) List(SearchPolicy.vector(vector.getOrElse(throw DomainError("unavailable","query embedding unavailable")),config)) else Nil))
   }
   private[chronicle] def pageStatement(plan: SearchStatement,q: SearchQuery): SearchStatement = {
     val annRows=if(plan.ann) "(SELECT count(*) FROM ann) AS ann_rows," else ""
-    SearchStatement(plan.sql+s",result_sessions AS MATERIALIZED(SELECT id,generation,session_id,revision,score FROM sessions) SELECT counted.total,${annRows}page.id,page.generation,page.session_id,page.revision,page.score FROM (SELECT count(*) AS total FROM result_sessions) counted LEFT JOIN LATERAL(SELECT * FROM result_sessions ORDER BY score DESC,session_id LIMIT ? OFFSET ?) page ON true ORDER BY page.score DESC,page.session_id",plan.args++List(q.limit,q.offset),plan.ann)
+    // A hit's view is its session's published generation and revision (the chunk's row may be an earlier origin's); only the
+    // page's hits read it, not every ranked session.
+    SearchStatement(plan.sql+s",result_sessions AS MATERIALIZED(SELECT id,session_id,score FROM sessions) SELECT counted.total,${annRows}page.id,page.generation,page.session_id,page.revision,page.score FROM (SELECT count(*) AS total FROM result_sessions) counted LEFT JOIN LATERAL(SELECT hit.id,hs.published AS generation,hit.session_id,hp.revision,hit.score FROM (SELECT * FROM result_sessions ORDER BY score DESC,session_id LIMIT ? OFFSET ?) hit JOIN ch_sources hs ON hs.id=hit.session_id JOIN ch_generations hp ON hp.id=hs.published) page ON true ORDER BY page.score DESC,page.session_id",plan.args++List(q.limit,q.offset),plan.ann)
   }
   def search(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchResult = search(reader,q,vector,ReadMaterialization.unrestricted)
   def search(reader: String,q: SearchQuery,vector: Option[List[Double]],materialization: ReadMaterialization): SearchResult = run(reader,q,vector,false,materialization)
@@ -172,7 +185,7 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     val corpus=source.sql
     val args=source.args
     def field(key: String): String = s"SELECT metadata->>'$key' AS value,count(DISTINCT id) AS n FROM corpus WHERE metadata->>'$key' IS NOT NULL GROUP BY value ORDER BY n DESC,value LIMIT ${SearchPolicy.facetValuesPerField}"
-    val tags=s"SELECT tag AS value,count(DISTINCT id) AS n FROM (SELECT id,jsonb_array_elements_text(metadata->'tags') COLLATE \"default\" AS tag FROM corpus UNION SELECT corpus.id,ch.tag COLLATE \"default\" FROM corpus JOIN ch_generation_tags ch ON ch.generation=corpus.published) t GROUP BY tag ORDER BY n DESC,value LIMIT ${SearchPolicy.facetValuesPerField}"
+    val tags=s"SELECT tag AS value,count(DISTINCT id) AS n FROM (SELECT id,jsonb_array_elements_text(metadata->'tags') COLLATE \"default\" AS tag FROM corpus UNION SELECT corpus.id,ch.tag COLLATE \"default\" FROM corpus CROSS JOIN LATERAL ${GenerationRows.tags("corpus.published","corpus.lineage","corpus.lineage_version")} ch) t GROUP BY tag ORDER BY n DESC,value LIMIT ${SearchPolicy.facetValuesPerField}"
     val selection=corpus+s",projects AS(${field("project")}),branches AS(${field("gitBranch")}),tags AS($tags),selected AS("+
       "SELECT 0 AS kind,row_number() OVER(ORDER BY n DESC,value) AS ordinal,value,n FROM projects UNION ALL "+
       "SELECT 1 AS kind,row_number() OVER(ORDER BY n DESC,value) AS ordinal,value,n FROM branches UNION ALL "+
@@ -193,7 +206,7 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     val corpus=facetCorpus(reader,q.filter)
     val position=if(q.afterTag.nonEmpty) " AND tag COLLATE \"C\">? COLLATE \"C\"" else ""
     val selection=corpus.sql+",tag_sessions AS (SELECT id,jsonb_array_elements_text(metadata->'tags') COLLATE \"C\" AS tag FROM corpus UNION "+
-      "SELECT corpus.id,ch.tag COLLATE \"C\" FROM corpus JOIN ch_generation_tags ch ON ch.generation=corpus.published) "+
+      s"SELECT corpus.id,ch.tag COLLATE \"C\" FROM corpus CROSS JOIN LATERAL ${GenerationRows.tags("corpus.published","corpus.lineage","corpus.lineage_version")} ch) "+
       "SELECT tag AS value,count(DISTINCT id) AS n FROM tag_sessions WHERE strpos(lower(tag COLLATE pg_unicode_fast),lower(? COLLATE pg_unicode_fast))>0"+position+
       " GROUP BY tag ORDER BY tag COLLATE \"C\" LIMIT ?"
     val args=corpus.args++List[Sql.Param](q.query)++q.afterTag.toList++List(q.limit)

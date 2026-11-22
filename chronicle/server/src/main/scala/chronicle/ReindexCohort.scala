@@ -87,9 +87,12 @@ object ReindexCohort {
     // A superseding revision can fulfill it, but cannot grant consent to retire future ordinary history.
     val retirements=Sql.exec(c,"UPDATE ch_reindex_members m SET retirement_generation=? FROM ch_reindex_requests r WHERE r.owner=m.owner AND r.request_id=m.request_id AND m.owner=? AND m.session_id=? AND m.revision<=? AND m.target_epoch=? AND r.target_profile=? AND m.retirement_generation IS NULL",generation,claim.owner,claim.sessionId,claim.revision,claim.targetEpoch,claim.profile)
     if(retirements>0) {
-      List("ch_chunks","ch_problem_spans","ch_problem_passages","ch_context_spans","ch_generation_tags").foreach { table =>
-        Sql.exec(c,s"DELETE FROM $table WHERE generation IN(SELECT id FROM ch_generations WHERE session_id=? AND id<>? AND NOT retired)",claim.sessionId,generation)
-      }
+      // Every other generation's rows go: the publication must hold only its own rows, as a root (or a generation without
+      // a lineage) does (ingest-limits spec §5.6.3); an incremental publication is never a rebuild's.
+      Check(Sql.one(c,"SELECT lineage IS NULL OR lineage=id FROM ch_generations WHERE id=?",generation)(_.getBoolean(1)).contains(true),"internal","an explicit rebuild's publication is not a root of its lineage")
+      // Pins of the older generations answer indexed-view-retired from this commit on; their derived rows are deleted
+      // afterwards in bounded statements (ch_generation_retirements, ingest-limits spec §5.2.4 retirement).
+      Sql.exec(c,"INSERT INTO ch_generation_retirements(generation,payload) SELECT id,true FROM ch_generations WHERE session_id=? AND id<>? AND NOT retired ON CONFLICT(generation) DO UPDATE SET payload=true",claim.sessionId,generation)
       Sql.exec(c,"UPDATE ch_generations SET retired=true WHERE session_id=? AND id<>? AND NOT retired",claim.sessionId,generation)
     }
   }

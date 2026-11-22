@@ -169,7 +169,7 @@ abstract class PassagePersistenceContract extends munit.FunSuite {
   }}
   test("BG/GoodCommunication regression: forged snapshot, job identity, expired and superseded claims cannot publish valid problem payloads") { withFixture { f =>
     val original=request(List("A🙂")); val receipt=f.archive.ingest("a",original); val current=claim(f,"a"); val publication=oneProblem(current)
-    val forged=current.copy(snapshot=current.snapshot.copy(messages=current.snapshot.messages.map(_.copy(text="fabricated source"))))
+    val forged=current.copy(messages=ClaimedMessages.decoded(current.messages.decoded.map(_.copy(text="fabricated source"))))
     assert(!f.archive.publishProblems(forged,oneProblem(forged)))
     List(current.copy(owner="b"),current.copy(fence=current.fence+1),current.copy(targetEpoch=current.targetEpoch+1),current.copy(jobId=UUID.randomUUID())).foreach { bad =>
       assert(!f.archive.publishProblems(bad,publication))

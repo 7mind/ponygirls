@@ -108,8 +108,8 @@ private[chronicle] final class PostgresExpressionHintStore(db: Database,archive:
   /** Archive hint fields whose values include the generated tags of publications. */
   private val generatedTagFields: Set[HintField]=Set(HintField.Tag,HintField.Tags)
   private def archiveValues(reader: String,field: HintField): ActivitySql = {
-    val heads=s"""WITH hint_heads AS MATERIALIZED(SELECT s.owner,s.published,i.metadata,i.source,i.last_timestamp
-      FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision WHERE ${archive.visible})"""
+    val heads=s"""WITH hint_heads AS MATERIALIZED(SELECT s.owner,s.published,g.lineage,g.lineage_version,i.metadata,i.source,i.last_timestamp
+      FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision LEFT JOIN ch_generations g ON g.id=s.published WHERE ${archive.visible})"""
     val scalar=field match {
       case HintField.User => "owner"
       case HintField.Project => "metadata->>'project'"
@@ -121,7 +121,7 @@ private[chronicle] final class PostgresExpressionHintStore(db: Database,archive:
       case HintField.Tag | HintField.Tags => "jsonb_array_elements_text(metadata->'tags')"
       case _ => throw DomainError("internal","unsupported archive hint field")
     }
-    val tags=if(generatedTagFields(field)) " UNION ALL SELECT tag AS value FROM hint_heads h JOIN ch_generation_tags t ON t.generation=h.published" else ""
+    val tags=if(generatedTagFields(field)) s" UNION ALL SELECT t.tag AS value FROM hint_heads h CROSS JOIN LATERAL ${GenerationRows.tags("h.published","h.lineage","h.lineage_version")} t" else ""
     ActivitySql(heads+s", hint_universe AS (SELECT $scalar AS value FROM hint_heads$tags)",List(reader,reader,reader))
   }
   private def activityValues(reader: String,now: Instant,target: ExpressionHintTarget,field: HintField): ActivitySql = {

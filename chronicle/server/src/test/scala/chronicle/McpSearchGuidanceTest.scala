@@ -106,7 +106,8 @@ class McpSearchGuidanceTest extends munit.FunSuite {
       assertEquals(search(f,query,"lexical",Json.obj()).hits.map(_.session.id),List(matching),query)
       val hybrid=search(f,query,"hybrid",Json.obj())
       assertEquals(hybrid.hits.map(_.session.id).toSet,Set(bridge,tunnel),query)
-      val vectorRanks=hybrid.hits.sortBy(_.chunks.head.id.toString).zipWithIndex.map { (hit,index) => hit.session.id -> (index+1) }.toMap
+      // Equal distances rank by session, then by the chunk's place in it (one chunk each here).
+      val vectorRanks=hybrid.hits.sortBy(_.session.id.toString).zipWithIndex.map { (hit,index) => hit.session.id -> (index+1) }.toMap
       val bySession=hybrid.hits.map(hit => hit.session.id -> hit).toMap
       assertEqualsDouble(bySession(nonmatching).score,reciprocal(vectorRanks(nonmatching)),scoreTolerance,query)
       assertEqualsDouble(bySession(matching).score,reciprocal(vectorRanks(matching))+reciprocal(1),scoreTolerance,query)

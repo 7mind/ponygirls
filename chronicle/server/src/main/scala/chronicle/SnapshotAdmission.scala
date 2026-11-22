@@ -6,9 +6,9 @@ import izumi.distage.model.definition.Lifecycle
 import scala.concurrent.duration.*
 
 /** Large snapshots are processed one at a time: an ingest whose body is over largeBodyBytes or of unannounced size, and
-  * every indexing claim (it decodes the claimed revision's messages; a small one takes milliseconds; waiting claims are
-  * not logged: idle lanes claim every second). Each costs seconds of CPU and a heap several times the snapshot; two at
-  * once doubled the collector's stop-the-world pauses, which stop every request, /api/versions included. */
+  * every indexed message over largeBodyBytes, fetched and decoded by an indexing lane (`claim`; waiting lanes are not
+  * logged). Each costs seconds of CPU and a heap several times the snapshot; two at once doubled the collector's
+  * stop-the-world pauses, which stop every request, /api/versions included. */
 final class SnapshotAdmission private (large: Semaphore[IO],logger: logstage.IzLogger,ingestWait: FiniteDuration) {
   /** `ingest` reads the body: a large or unannounced one is admitted before it is read, so a waiting ingest holds none. */
   def ingest[A](announcedBytes: Option[Long])(ingest: IO[A]): IO[A] =

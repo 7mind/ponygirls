@@ -23,7 +23,7 @@ object TestPublications {
     Check(Sql.exec(c,"UPDATE ch_jobs SET state='Complete',error=NULL,failure_stage=NULL,lease_until=NULL WHERE id=? AND state='Running' AND run_id=?",claim.jobId,claim.runId)==1,"test","stored publication fixture job missing")
   }
   def from(claim: Claim,values: List[IndexedChunk]): ProblemsPublication = {
-    val messages=claim.snapshot.messages
+    val messages=claim.messages.decoded
     val source=values.map { indexed =>
       Check(indexed.chunk.spans.size==1,"test","fixture requires one exact source span per retrieval piece")
       val span=indexed.chunk.spans.head

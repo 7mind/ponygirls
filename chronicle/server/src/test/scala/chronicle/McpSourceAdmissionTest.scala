@@ -98,7 +98,7 @@ class McpSourceAdmissionTest extends munit.FunSuite {
     budgetFailure(invoke(f,"related_sessions",args(first.sessionId),limited(f,maximum)))
     val reads=payloads(f)
     assertEquals(reads.map(_.sql).distinct.size,1)
-    assert(reads.head.sql.startsWith("SELECT value FROM ch_chunks"))
+    assert(reads.head.sql.startsWith("SELECT ch.value FROM") && reads.head.sql.contains("JOIN ch_chunks ch"),reads.head.sql)
     assertEquals(reads.count(_.column=="value"),1)
   }}
   test("BG GoodCommunication: exact selected logical UTF8 cap succeeds and N-1 fails for escaped Unicode; unselected giant rows do not charge") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>

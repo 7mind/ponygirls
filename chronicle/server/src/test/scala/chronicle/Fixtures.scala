@@ -2,6 +2,15 @@ package chronicle
 import chronicle.api.*
 extension (archive: SessionArchive) {
   def publish(claim: Claim,chunks: List[IndexedChunk]): Boolean = archive.publishProblems(claim,TestPublications.from(claim,chunks))
+  /** An in-memory publication validated by the oracle against the claimed messages (read without an admission), staged as
+    * one step and switched to, then the replaced generation's search rows retired, as the worker publishes. */
+  def publishProblems(claim: Claim,publication: ProblemsPublication): Boolean = {
+    // The archive checks the vectors' dimensions against its configuration.
+    publication.validate(claim,publication.chunks.headOption.fold(0)(_.vector.size),ProblemPassages.Source(claim.messages.reader(TestFetch.unadmitted)))
+    val published=archive.publishProblems(claim,ProblemsPublication.rows(publication))
+    if(published) archive.retire(claim)
+    published
+  }
   /** The head revision as it was stored (no production read materializes a whole revision). */
   def headSnapshot(reader: String,id: java.util.UUID): IngestRequest = archive match {
     case postgres: PostgresArchive => postgres.db.transaction { c =>
@@ -11,6 +20,17 @@ extension (archive: SessionArchive) {
     }
     case dummy: DummyArchive => dummy.headSnapshot(reader,id)
     case other => throw new AssertionError(s"no stored head snapshot for ${other.getClass.getName}")
+  }
+}
+/** Message fetching without an admission or a per-message bound (production fetching is the Worker's). */
+object TestFetch {
+  val unadmitted: MessageFetch = MessageFetch(Long.MaxValue,new LargeDecodes { def apply[A](decode: => A): A = decode })
+}
+extension (messages: ClaimedMessages) {
+  /** Every claimed message, decoded at once (production reads them per window). */
+  def decoded: List[Message] = {
+    val reader=messages.reader(TestFetch.unadmitted)
+    Iterator.unfold(0)(from => Option.when(from<reader.count)(reader.read(from)).map(read => (read,from+read.size))).flatten.toList
   }
 }
 import java.nio.file.{Files,Path}
@@ -64,7 +84,7 @@ object Fixtures {
     val credential = dir.resolve("secret"); Files.writeString(credential,"")
     val databaseCredential = dir.resolve("database-password"); Files.writeString(databaseCredential,databasePassword+"\n")
     val hash = dir.resolve("password"); Files.writeString(hash,syntheticPasswordHash)
-    Config("127.0.0.1",8448,"http://127.0.0.1:8448",false,sys.env.getOrElse("CHRONICLE_TEST_JDBC","jdbc:postgresql://127.0.0.1:55438/postgres"),"postgres",databaseCredential.toString,List("a","b","c").map(id => UserConfig(id,id,hash.toString,true,false)),8388608,16,4194304,10000,43200,ModelConfig("http://127.0.0.1:1/chat","model","v1",credential.toString,1,65536,AnnotationRequestPolicy.StrictJsonSchema),EmbeddingConfig("http://127.0.0.1:1/embedding","embed","v1",credential.toString,1,65536,3,"query: ","passage: ",false),false,Nil,IndexingCapacity.defaults,databaseLimits,None,8388608,Config.defaultIndexingBudgetBytes,Config.defaultSmallJobBudgetBytes(3))
+    Config("127.0.0.1",8448,"http://127.0.0.1:8448",false,sys.env.getOrElse("CHRONICLE_TEST_JDBC","jdbc:postgresql://127.0.0.1:55438/postgres"),"postgres",databaseCredential.toString,List("a","b","c").map(id => UserConfig(id,id,hash.toString,true,false)),8388608,16,4194304,10000,43200,ModelConfig("http://127.0.0.1:1/chat","model","v1",credential.toString,1,65536,AnnotationRequestPolicy.StrictJsonSchema),EmbeddingConfig("http://127.0.0.1:1/embedding","embed","v1",credential.toString,1,65536,3,"query: ","passage: ",false),false,Nil,IndexingCapacity.defaults,databaseLimits,None,8388608,Config.defaultIndexingBudgetBytes,None)
   }
   def snapshot(): IngestRequest = {
     val raw = """{"type":"session","id":"session","version":3}

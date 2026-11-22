@@ -104,7 +104,7 @@ abstract class SessionMessageSearchContract extends munit.FunSuite {
   test("BG/GoodCommunication: published annotations and generated tags are excluded from selected text find") { withFixture { f =>
     val out=f.archive.ingest("a",request(List("source text")))
     val claim=f.archive.claim(f.archive.knownProfiles,ClaimScope.Owner("a"),300).get
-    val chunk=Fragments.split(claim.snapshot.messages).head.copy(sessionId=out.sessionId,summary="annotationonly",tags=List("tagonly"))
+    val chunk=Fragments.split(claim.messages.decoded).head.copy(sessionId=out.sessionId,summary="annotationonly",tags=List("tagonly"))
     assert(f.archive.publish(claim,List(IndexedChunk(chunk,List(1.0,0.0,0.0)))))
     val view=f.archive.session("a",out.sessionId).view
     List("annotationonly","tagonly").foreach { query => assertEquals(find(f,out.sessionId,view,query,None,"a",100).hits,Nil) }

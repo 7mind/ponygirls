@@ -63,10 +63,9 @@ class CheckpointSnapshotBudgetTest extends munit.FunSuite {
     archive.ingest("a",Fixtures.snapshot()); val claim=archive.claim(archive.knownProfiles,ClaimScope.Owner("a"),300).get
     val key=IndexCheckpoints.key(claim,IndexingStage.Annotation,0,0,"synthetic-policy",Json.fromInt(0))
     archive.checkpoint(claim,key,Json.fromString("accepted"))
-    val variants=List(claim.snapshot.copy(metadata=claim.snapshot.metadata.copy(title="changed metadata")),claim.snapshot.copy(messages=claim.snapshot.messages.map(_.copy(text="changed normalized source"))),claim.snapshot.copy(files=claim.snapshot.files.map(_.copy(content="changed raw source"))))
-    variants.foreach { snapshot =>
-      assertEquals(snapshot.digest,claim.snapshot.digest)
-      val forged=claim.copy(snapshot=snapshot)
+    val variants=List(claim.copy(snapshot=claim.snapshot.copy(metadata=claim.snapshot.metadata.copy(title="changed metadata"))),claim.copy(messages=ClaimedMessages.decoded(claim.messages.decoded.map(_.copy(text="changed normalized source")))),claim.copy(snapshot=claim.snapshot.copy(files=claim.snapshot.files.map(_.copy(content="changed raw source")))))
+    variants.foreach { forged =>
+      assertEquals(forged.snapshot.digest,claim.snapshot.digest)
       assertEquals(intercept[DomainError](archive.checkpoint(forged,key)).code,"stale-claim")
       assertEquals(intercept[DomainError](archive.checkpoint(forged,key,Json.fromString("replacement"))).code,"stale-claim")
     }
@@ -93,8 +92,8 @@ class CheckpointSnapshotBudgetTest extends munit.FunSuite {
         (Wire.decode(chronicle.api.IngestRequest.codecJson,Sql.json(row,"snapshot")),row.getObject("binding_id",classOf[java.util.UUID]))
       }.get
     }
-    assertEquals(snapshot.copy(files=Nil),claim.snapshot); assertEquals(id,claim.revisionBinding.id)
-    val restored=claim.copy(snapshot=snapshot,revisionBinding=RevisionBinding.captured(id,claim.sessionId,claim.revision,snapshot))
+    assertEquals(snapshot.copy(messages=Nil,files=Nil),claim.snapshot); assertEquals(id,claim.revisionBinding.id)
+    val restored=claim.copy(snapshot=snapshot,revisionBinding=RevisionBinding.captured(id,claim.sessionId,claim.revision,snapshot,claim.messages))
     val restoredKey=IndexCheckpoints.key(restored,IndexingStage.Annotation,0,0,"synthetic-policy",Json.fromInt(0))
     assertEquals(restoredKey,key); assertEquals(archive.checkpoint(restored,restoredKey),Some(value))
   }}

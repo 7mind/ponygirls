@@ -99,6 +99,119 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS ch_archive_fragments_session_candidates 
 If the build is interrupted, run `DROP INDEX CONCURRENTLY ch_archive_fragments_session_candidates;` and build it again.
 The down-script of 024 (`chronicle/scripts/down-024-epoch-layout.sql`) drops the index.
 
+## Upgrading to streamed indexing (migration 026)
+
+From this release on an indexing job holds one window of its revision at a time, whatever the revision's size
+([Oversize guards](../CONTRACT.md#oversize-guards)): it reads its messages by position, keeps each window's accepted
+annotation and embedding parts as its durable checkpoints, then publishes from them in batches of at most 500 rows and
+8 MiB into a *staged* generation (`ch_staged_generations`) that no read reaches, and switches the source to it in one
+short transaction. Search rows are written last, by at most four writers in the whole process (they share the
+connection pool), each statement of 500 rows committed.
+
+- **Nothing is indexed again.** The index profile, the checkpoint keys and the published rows are those of the previous
+  release; a job running at the deploy is claimed again after its lease and continues from its accepted windows.
+- **Configuration.** `maxIndexingBudgetBytes` keeps its default (2,147,483,647) and now bounds one window and one
+  message, not a job. `maxSmallJobBudgetBytes` is retired: a configuration that sets it still starts, the value has no
+  effect, and the server logs `retired configuration key ignored key=maxSmallJobBudgetBytes` once at start; remove it.
+- **Jobs ended `index-budget-exceeded`** by an earlier release stay so; `RetryJob` indexes them, and so does the
+  source's next upload. Each costs its annotation calls (about one per 128 KiB of source).
+- **Migration 026** (applied by the start) creates two empty tables and sets `ch_search_chunks`'
+  `autovacuum_vacuum_scale_factor = 0`, `autovacuum_vacuum_threshold = 100000`: catalog changes only, whatever the
+  archive's size (the `ALTER TABLE` takes the table's SHARE UPDATE EXCLUSIVE lock once, which waits for a running
+  vacuum of that table; reads and writes go on).
+- **Semantic search while a large session publishes.** Committed staged search rows and the replaced generation's rows
+  until they are vacuumed are index entries a query may not see; each one the HNSW scan meets costs it time, and a scan
+  that meets more of them than its budget before its first 1,000 visible rows returns fewer rows. The staged rows exist
+  only while the search rows are written (the last step of a publication); the replaced ones are deleted right after the
+  switch, 10,000 per statement, and the threshold above makes 100,000 deleted rows enough for an autovacuum within a
+  minute. The vacuum walks the whole HNSW index (minutes at a million rows). Index cleanup is not forced: when the dead
+  rows sit in less than 2 % of the table's pages, PostgreSQL skips the index and their entries stay until a later vacuum
+  crosses that line — at the production table's ≈ 11 rows per page that is fewer than ≈ 20,000 entries, below the scan
+  budget, while `vacuum_index_cleanup = on` would make every vacuum of the table (also those its inserts trigger) walk
+  the whole index.
+- **Disk.** A re-published session's staged rows exist beside its published ones until the switch (twice its index rows
+  during its publication). Earlier generations' chunk and passage rows stay, as before; those an explicit rebuild
+  retires are deleted after its switch in bounded statements (`ch_generation_retirements`), no longer inside it.
+- **Rollback.** Stop the server and run `chronicle/scripts/down-026-staged-generations.sql` (read-only preflight, then
+  `mode=apply` with the confirmation it names) **before** starting the previous release: it deletes every staged
+  generation, completes the retirements still running (search rows; a rebuild's retired rows), resets the two autovacuum
+  settings and drops the tables. Without
+  it the previous release fails the publication of a job whose run staged a generation (its chunk ids are the staged
+  ones) until the source's next revision. Generations published by this release are ordinary rows to the previous one;
+  jobs too large for its estimate end `index-budget-exceeded` again there. Before an older rollback (part uploads,
+  epoch layout) run this script first, then `down-025`, then `down-024`.
+
+## Window reuse (migration 027)
+
+A job annotates and embeds only the windows no earlier run of the same source and index profile accepted for the same
+input: after an append, the windows from the previous revision's last one on (a window's input is its source fragments
+with their message positions and the passage carried into it). Each reused decision or embedding part is recorded as a
+reference to the exact checkpoint it took (`ch_index_checkpoint_refs`); the publication and a resumed job read those
+references, never a new lookup. A `RetryJob` of a Complete job is a cached republication: its new run reuses every
+window of its revision (no model call). A confirmed owner rebuild ("Rebuild archive index") reuses no earlier run's
+work, also into an unchanged profile: it annotates and embeds every window again — use it to replace accepted
+annotations. A replacement reuses a decision only where the source and its positions are unchanged. Purge removes jobs,
+checkpoints and references together.
+
+- **Nothing is indexed again.** Profiles, checkpoint keys and published rows are unchanged; checkpoints written before
+  027 have no content hash and are never reused.
+- **Migration 027** (applied by the start) adds a nullable column and a partial index to `ch_index_checkpoints` (the
+  index build reads the table's main heap, about 40 MB for 380,000 checkpoints; the values are out of line) and creates
+  the empty reference table.
+- **Rollback.** Stop the server and run `chronicle/scripts/down-027-window-reuse.sql` (read-only preflight, then
+  `mode=apply` with the confirmation it names) **before** starting the previous release: it copies the references of
+  jobs that are not Complete into their own checkpoints (the preflight prints how many and their bytes), so such a job
+  resumes from exactly the work it accepted, then drops the reference table, the index and the column. Before an older
+  rollback run it first, then `down-026`.
+
+## Incremental publication (migration 028)
+
+An append to an indexed session publishes only its tail: the next *version* of the published generation's *lineage*
+(`ch_lineage_segments`). The job annotates, embeds and writes the windows from the published generation's last one on
+(its *cut*), plus the pieces of the passage open at that window whose metadata the new windows change (below); every
+other row stays the published generation's, shared by the next version and never rewritten. The switch changes a number
+of segment rows proportional to the windows of that rewrite region (at most 2 · 16 + 10 under a horizon of 16); the
+replaced rows' search rows are deleted after it (`ch_search_retirements`), 10,000 per statement. Rows written, embedding
+calls, HNSW insertions and later vacuum are proportional to the addition plus the rewritten pieces, not to the session.
+A *root* (a full publication) starts a lineage: the first index of a session, a replacement (a new epoch), a legacy
+revision, an explicit rebuild, `incrementalPublication` false, the first publication of a session published by an
+earlier release or under another `metadataHorizonWindows`. A root's switch changes at most 6 rows; its tag counts are
+written with its rows before it.
+
+- **Metadata: final by default.** With the default `metadataHorizonWindows` (2147483647) every piece carries its
+  passage's final summary and tags, as before incremental publication: search answers are those of a full
+  re-publication. An append whose new windows change the summary or tags of the passage open at the cut writes all that
+  passage's earlier pieces again (texts, spans and vectors copied, not re-embedded; a probe of one piece per window
+  decides), and nothing else before the cut: **append publication work = the addition plus the passage still open at the
+  cut (clone: p99 20 windows / 1,210 pieces, max 64 windows / 3,858 pieces)**; such an append costs that passage's
+  pieces (about 64 a window) in rows, HNSW insertions, retired search rows and their vacuum. Passages end where the
+  annotator closes them; nothing bounds their length.
+- **Finite metadata horizon (behaviour change for newly published content):** opt-in; its effect on real-model relevance
+  is not measured (scripted mechanism result only: reports/ingest-c/REL/RESULTS.md); on the clone it would save ≈ 2 % of
+  append work. With `metadataHorizonWindows` H (for example 16) a piece carries its passage's summary and tags as they
+  stood H windows after its own window (or at the passage's last window): an append writes again at most the open
+  passage's pieces of the H windows before the cut. The older pieces of a passage longer than H + 1 windows show what
+  the annotator held H windows later, not the final summary and tags: lexical and hybrid search, Related, tag filters,
+  facets and the tag catalog match those pieces by that intermediate vocabulary (a query phrased with the passage's
+  final wording can miss its early pieces; one phrased with the earlier wording can find them). Vectors and passage rows
+  (`GetPassages`) are unchanged. Both kinds of publication follow the rule, so an incremental publication reads exactly
+  as a full one of the same content.
+- **Configuration** (server JSON `indexing`, both optional, part of no profile): `incrementalPublication` (default
+  true; false publishes every revision whole — the off switch, and the comparison oracle); `metadataHorizonWindows`
+  (1..2147483647, default 2147483647: final metadata). A lineage continues only under the horizon it was published with:
+  after a change each session's next publication is a root (staged publications restart), and generations published
+  earlier keep their rows; nothing else is indexed again. The server logs both once at start. The NixOS module does not
+  set them.
+- **Migration 028** (applied by the start) is DDL only: lineage columns, segment, lineage, tag and retirement tables,
+  `ch_search_chunks.ordinal`, the format check admitting `ContextAwareProblemsLineage` (the stored label of a version
+  of 1 or more; readers answer it as `ContextAwareProblems`). Ties in ranking are ordered by session, the chunk's place
+  in its session and chunk ID.
+- **Rollback.** Stop the server and run `chronicle/scripts/down-028-generation-lineage.sql` (read-only preflight, then
+  `mode=apply` with the confirmation it names) **before** starting the previous release, which otherwise refuses to
+  start while a lineage version exists: per source it flattens the published version into rows of its own generation
+  (and retires the source's other lineage versions: their pins answer `indexed-view-retired`), restartable after an
+  interruption. Before an older rollback run it first, then `down-027`, then `down-026`.
+
 ## Models
 
 An annotation model must honor the structured JSON contract in the server README. Source text is untrusted input, never instructions to execute tools. The model chooses semantic chunk boundaries over bounded, numbered source fragments; the server verifies complete, non-overlapping coverage and constructs the original spans itself.

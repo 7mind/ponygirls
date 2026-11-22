@@ -26,13 +26,16 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     def renew(claim: Claim,lease: Int): Boolean = delegate.renew(claim,lease)
     def defer(claim: Claim,total: Int): Boolean = delegate.defer(claim,total)
     def progress(claim: Claim,done: Int,total: Int): Boolean = synchronized { progressCalls+=((done,total)); delegate.progress(claim,done,total) }
-    def publishProblems(claim: Claim,publication: ProblemsPublication): Boolean = synchronized { publications+=publication; delegate.publishProblems(claim,publication) }
+    def publishProblems(claim: Claim,publication: ProblemRows): Boolean = synchronized { publications+=ProblemsPublication.collect(publication); delegate.publishProblems(claim,publication) }
+    def publicationParent(claim: Claim): Option[PublicationParent] = delegate.publicationParent(claim)
+    def retire(claim: Claim): Unit = delegate.retire(claim)
     def fail(claim: Claim,code: String): Unit = synchronized { failures+=code; delegate.fail(claim,code) }
     def fail(claim: Claim,code: String,stage: IndexingStage): Unit = synchronized { failures+=code; delegate.fail(claim,code,stage) }
     def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = delegate.reserveAnnotation(c,key)
     def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = delegate.rejectAnnotation(c,key,attempt,reason)
     def checkpoint(c: Claim,key: CheckpointKey): Option[Json] = delegate.checkpoint(c,key)
     def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit = delegate.checkpoint(c,key,value)
+    def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = delegate.windowWork(c,key)
     def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int = delegate.discardCheckpoints(c,stage,window)
   }
   private def source(texts: List[String]): IngestRequest = {
@@ -237,17 +240,20 @@ abstract class PassageWorkerContract extends munit.FunSuite {
         def defer(c: Claim,t: Int)=delegate.defer(c,t)
         def progress(c: Claim,n: Int,t: Int)=delegate.progress(c,n,t)
         def publish(c: Claim,chunks: List[IndexedChunk])=delegate.publish(c,chunks)
-        def publishProblems(c: Claim,p: ProblemsPublication): Boolean = {
+        def retire(c: Claim): Unit=delegate.retire(c)
+        def publishProblems(c: Claim,p: ProblemRows): Boolean = {
           val result=delegate.publishProblems(c,p)
           if(c.owner=="b") published.complete(()).unsafeRunSync()
           result
         }
+        def publicationParent(c: Claim)=delegate.publicationParent(c)
         def fail(c: Claim,code: String)=delegate.fail(c,code)
         def fail(c: Claim,code: String,stage: IndexingStage)=delegate.fail(c,code,stage)
         def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = delegate.reserveAnnotation(c,key)
         def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = delegate.rejectAnnotation(c,key,attempt,reason)
         def checkpoint(c: Claim,key: CheckpointKey): Option[Json] = delegate.checkpoint(c,key)
         def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit = delegate.checkpoint(c,key,value)
+        def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = delegate.windowWork(c,key)
         def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int = delegate.discardCheckpoints(c,stage,window)
       }
       fiber <- new Worker(archive,model,embedder,config,catalog,admission,logstage.IzLogger(),ModelFixtures.failureBackoff,ModelFixtures.snapshots).run.start

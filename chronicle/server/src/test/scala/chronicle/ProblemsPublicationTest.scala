@@ -7,7 +7,7 @@ import ProblemPassages.*
 object ProblemPublicationFixtures {
   val vector: List[Double] = List(1.0,0.0,0.0)
   def build(claim: Claim,decide: (Window,Option[Carry]) => Decision): ProblemsPublication = {
-    val source=Source(claim.snapshot.messages)
+    val source=Source(claim.messages.decoded)
     var state=State.start(claim.sessionId,UUID.randomUUID()); var builder=ProblemsPublication.empty
     var pending=source.next(state.nextSource)
     while(pending.nonEmpty) {
@@ -18,6 +18,7 @@ object ProblemPublicationFixtures {
     }
     builder.append(finish(state,source),Nil).result
   }
+  def validate(publication: ProblemsPublication,claim: Claim,dimensions: Int): Unit = publication.validate(claim,dimensions,Source(claim.messages.decoded))
   def oneProblem(claim: Claim): ProblemsPublication = build(claim,(window,previous) => Decision(Vector(Part(Point(0,0),window.terminal,previous.nonEmpty,
     if(previous.isEmpty) "initial synthetic goal" else "updated synthetic goal",List("synthetic")))))
   def topics(claim: Claim): ProblemsPublication = build(claim,(window,previous) => ProblemPassageFixtures.plan(window.fragments.map(_.text),previous.flatMap(_.tags.headOption)))
@@ -36,29 +37,29 @@ object ProblemPublicationFixtures {
 class ProblemsPublicationTest extends munit.FunSuite {
   import ProblemPublicationFixtures.*
   private def claim(request: IngestRequest): Claim = {
-    val id=UUID.randomUUID(); val snapshot=SnapshotProjection(request)
-    Claim(UUID.randomUUID(),id,1,1,"synthetic",snapshot,"a",0,UUID.randomUUID(),RevisionBinding.captured(UUID.randomUUID(),id,1,snapshot))
+    val id=UUID.randomUUID(); val projected=SnapshotProjection(request); val snapshot=projected.copy(messages=Nil,files=Nil); val messages=ClaimedMessages.decoded(projected.messages)
+    Claim(UUID.randomUUID(),id,1,1,"synthetic",snapshot,"a",0,UUID.randomUUID(),RevisionBinding.captured(UUID.randomUUID(),id,1,snapshot,messages),messages)
   }
   test("BG: builder requires finish and matching indexed pieces, preserves embeddings and finalizes annotations separately") {
     val c=claim(request(List("A"*300000)))
     val publication=oneProblem(c)
-    publication.validate(c,3)
+    validate(publication,c,3)
     assertEquals(publication.passages.size,1); assertEquals(publication.passages.head.initialSummary,"initial synthetic goal")
     assertEquals(publication.passages.head.summary,"updated synthetic goal")
-    assertEquals(publication.chunks.map(_.chunk.text).mkString,c.snapshot.messages.head.text)
+    assertEquals(publication.chunks.map(_.chunk.text).mkString,c.messages.decoded.head.text)
     assert(publication.chunks.forall(indexed => indexed.vector==vector && indexed.chunk.summary=="updated synthetic goal"))
     assertEquals(publication.spans.size,1); assertEquals(publication.spans.head.source.end,300000)
     assertEquals(publication.links.map(_.passageOrdinal).distinct,Vector(0))
-    val source=Source(c.snapshot.messages); val window=source.next(SourceCursor.start).get
+    val source=Source(c.messages.decoded); val window=source.next(SourceCursor.start).get
     val delta=accept(State.start(c.sessionId,UUID.randomUUID()),window,Decision(Vector(Part(Point(0,0),window.terminal,false,"first",Nil))))
     assertEquals(intercept[DomainError](ProblemsPublication.empty.result).code,"invalid")
     assertEquals(intercept[DomainError](ProblemsPublication.empty.append(delta,Nil)).code,"invalid")
     assertEquals(intercept[DomainError](ProblemsPublication.empty.append(delta,delta.pieces.map(p => IndexedChunk(p.chunk,vector)).toList).result).code,"invalid")
-    assertEquals(intercept[DomainError](publication.validate(c.copy(sessionId=UUID.randomUUID()),3)).code,"invalid")
-    assertEquals(intercept[DomainError](publication.validate(c,4)).code,"invalid")
+    assertEquals(intercept[DomainError](validate(publication,c.copy(sessionId=UUID.randomUUID()),3)).code,"invalid")
+    assertEquals(intercept[DomainError](validate(publication,c,4)).code,"invalid")
   }
   test("BG: malformed final metadata ordinals fail the builder invariant through DomainError") {
-    val c=claim(request(List("A"))); val source=Source(c.snapshot.messages); val window=source.next(SourceCursor.start).get
+    val c=claim(request(List("A"))); val source=Source(c.messages.decoded); val window=source.next(SourceCursor.start).get
     val delta=accept(State.start(c.sessionId,UUID.randomUUID()),window,Decision(Vector(Part(Point(0,0),window.terminal,false,"goal",Nil))))
     val builder=ProblemsPublication.empty.append(delta,delta.pieces.map(p => IndexedChunk(p.chunk,vector)).toList)
     val closed=finish(delta.state,source)
@@ -67,10 +68,10 @@ class ProblemsPublicationTest extends munit.FunSuite {
   }
   test("BG: source-faithful validation rejects publication from a different transcript and accepts empty projected input") {
     val c=claim(request(List("A🙂BαA🙂"))); val publication=topics(c)
-    publication.validate(c,3)
+    validate(publication,c,3)
     assertEquals(publication.passages.map(_.ordinal),Vector(0,1,2)); assertEquals(publication.links.map(_.passageOrdinal),Vector(0,1,2))
-    assertEquals(intercept[DomainError](publication.validate(c.copy(snapshot=c.snapshot.copy(messages=c.snapshot.messages.map(_.copy(text="unrelated")))),3)).code,"invalid")
+    assertEquals(intercept[DomainError](validate(publication,c.copy(messages=ClaimedMessages.decoded(c.messages.decoded.map(_.copy(text="unrelated")))),3)).code,"invalid")
     val empty=claim(request(List("",""))); val result=oneProblem(empty)
-    result.validate(empty,3); assertEquals(result.passages,Vector.empty); assertEquals(result.chunks,Nil)
+    validate(result,empty,3); assertEquals(result.passages,Vector.empty); assertEquals(result.chunks,Nil)
   }
 }

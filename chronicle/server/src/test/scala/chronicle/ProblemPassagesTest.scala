@@ -316,11 +316,11 @@ class ProblemPassagesTest extends ProblemPassageContract {
     assert(!typeChecks("chronicle.ProblemPassages.State.start(new java.util.UUID(0L,1L),new java.util.UUID(0L,2L)).copy(finished=true)"))
   }
   test("BA: original goal survives arbitrarily many windows but A/B/A cannot resurrect a closed passage ID") {
-    val source=Source(List(message("long","A"*280000+"B"*280000+"A"*280000,"tool",31)))
-    val result=run(source.messages.toList,new Dummy).unsafeRunSync()
+    val messages=List(message("long","A"*280000+"B"*280000+"A"*280000,"tool",31))
+    val result=run(messages,new Dummy).unsafeRunSync()
     assertEquals(result.passages.map(_.tags),Vector(List("A"),List("B"),List("A")))
     assertEquals(result.passages.map(_.id).distinct.size,3); assert(result.deltas.count(_.pieces.nonEmpty)>=7)
-    exactSource(result,source.messages.toList)
+    exactSource(result,messages)
   }
   test("BA: scalar counts and line starts include emoji and are independent of UTF16 and UTF8 offsets") {
     val window=Source(List(message("line","🙂\nα\nlast","user",0))).next(SourceCursor.start).get

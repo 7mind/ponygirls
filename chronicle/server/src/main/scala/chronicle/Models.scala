@@ -1,6 +1,7 @@
 package chronicle
 import chronicle.api.*
 import cats.effect.{IO,Ref,Resource}
+import cats.effect.std.Dispatcher
 import cats.syntax.all.*
 import org.http4s.{Request,Method,Uri,Header}
 import org.http4s.client.Client
@@ -28,30 +29,23 @@ object Fragments {
     result.result()
   }
 }
-/** What one indexing job retains until its publication (append-only ingest spec §3.1): every decoded message, per Problem
-  * piece its chunk in the publication builder and its vector in the job's VectorArena (whole blocks), and per Context
-  * slice its coverage span. A job whose estimate exceeds `maxIndexingBudgetBytes` ends Failed with `exceededCode` before
-  * its messages are decoded; a running job whose windows outgrow the estimate ends the same way before it retains them.
-  * Without the large-job permit (LargeJobs) a job is held to `maxSmallJobBudgetBytes` instead, without failing: above it
-  * at the claim it waits for the lane with the permit, above it while running it goes back to the queue for that lane. */
+/** What one indexing job holds (ingest-limits spec §5.2.3, §5.2.7, §5.2.8): one window with its decision and one embedding
+  * part at a time (accepted work is checkpointed, not retained), the carry between windows, and while publishing one
+  * statement batch. `maxIndexingBudgetBytes` bounds one window, not the job: a window whose pieces and Context coverage
+  * spans would take more ends the job Failed with `exceededCode` before they are embedded, and so does a message whose
+  * decode would take more, before it is fetched (StoredMessages). No job is refused for its whole size. */
 object IndexingBudget {
   val exceededCode = "index-budget-exceeded"
-  /** The objects of one decoded message besides its strings. */
-  val messageObjectBytes = 256
   /** A piece's chunk: source slice (at most 4,096 B as UTF-16), summary (at most 4,000 B), tags (at most 4,096 B) and objects. */
   val chunkBytes = 13312
-  /** One retained Context coverage span with its collection slot, and what publication's validation sorts per span. */
+  /** One Context coverage span with its collection slot. */
   val coverageSpanBytes = 256
-  /** Decoded strings take at most two bytes per UTF-8 byte of the stored message values (`messageBytes`). Every fragment
-    * yields at least one piece or Context span; one piece per fragment (a span costs less than a piece) with its vector
-    * in whole arena blocks. */
-  def estimate(messages: Long,messageBytes: Long,fragments: Long,dimensions: Int): BigInt =
-    BigInt(2)*BigInt(messageBytes)+BigInt(messageObjectBytes)*BigInt(messages)+BigInt(fragments)*BigInt(chunkBytes)+VectorArena.heldBytes(dimensions,fragments)
-  /** The decoded messages' share, from their strings (two bytes per UTF-16 unit): at most the estimate's share, as a
-    * string has no more UTF-16 units than UTF-8 bytes. */
-  def decoded(messages: List[Message]): BigInt = messages.foldLeft(BigInt(0)) { (total,m) =>
-    total+BigInt(2L*(m.id.length+m.role.length+m.text.length+m.parentId.fold(0)(_.length)+m.timestamp.fold(0)(_.length))+messageObjectBytes)
-  }
+  /** One window's pieces with their vectors and its Context coverage spans. */
+  def window(pieces: Long,spans: Long,dimensions: Int): BigInt =
+    BigInt(pieces)*(BigInt(8L*dimensions)+BigInt(chunkBytes))+BigInt(spans)*BigInt(coverageSpanBytes)
+  /** Heap per byte of a message's stored text while it is fetched and decoded (ingest-limits spec §5.2.8): the driver's row,
+    * the decoded string (UTF-16), the JSON tree and the decoded Message. */
+  val messageDecodeFactor = 7
 }
 trait Embedder { def documents(owner: String,text: List[String]): IO[List[List[Double]]]; def query(owner: String,text: String): IO[List[Double]] }
 object ModelHttp {
@@ -114,9 +108,6 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   private final class AnnotationExhausted(val reason: String) extends RuntimeException(AnnotationAttempts.exhaustedCode) {
     def code: String = if(reason==AnnotationAttempts.callLimitReason) AnnotationAttempts.reservationExhaustedCode else AnnotationAttempts.exhaustedCode
   }
-  /** A job running without the large-job permit whose windows would retain more than maxSmallJobBudgetBytes: it goes back
-    * to the queue for the lane with the permit. */
-  private final class SmallJobOutgrown(val retained: BigInt) extends RuntimeException("small-job-budget")
   private def failureCode(error: Throwable): String = error match { case exhausted: AnnotationExhausted => exhausted.code; case d: DomainError => d.code; case _ => "worker-fault" }
   private def failureOrigin(error: Throwable): String = error.getStackTrace.find(frame => !Set("chronicle.DomainError","chronicle.DomainError$","chronicle.Check","chronicle.Check$").contains(frame.getClassName)).map(frame => s"${frame.getClassName}.${frame.getMethodName}:${frame.getLineNumber}").getOrElse("unavailable")
   private final case class FailureDetails(reason: String,httpStatus: String,structure: Json)
@@ -146,23 +137,20 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   }
   private final case class StagedFailure(stage: IndexingStage,error: Throwable) extends RuntimeException
   private def publishStage(run: => IO[Unit]): IO[Unit] = IO.defer(run).handleErrorWith(error => IO.raiseError(StagedFailure(IndexingStage.Publication,error)))
-  private final class Windows(claim: Claim,total: Int,large: LargeJobs) {
+  private final class Windows(claim: Claim,total: Int) {
     private val dimensions=config.embedding.dimensions
-    private val vectors=new VectorArena(dimensions)
-    private val decoded=IndexingBudget.decoded(claim.snapshot.messages)
-    /** The pieces and Context spans the publication holds once the windows so far are appended, and the vectors in the
-      * arena, counted as they are added: a part added again after an input mismatch is held twice and counted twice. */
-    private var pieces=0L
-    private var spans=0L
-    private var added=0L
-    private def within(pieces: Long,spans: Long,vectors: Long): Unit = {
-      val retained=decoded+BigInt(pieces)*BigInt(IndexingBudget.chunkBytes)+BigInt(spans)*BigInt(IndexingBudget.coverageSpanBytes)+VectorArena.heldBytes(dimensions,vectors)
-      Check(retained<=BigInt(config.maxIndexingBudgetBytes),IndexingBudget.exceededCode,s"indexing job would retain $retained bytes, above the budget of ${config.maxIndexingBudgetBytes}")
-      if(large==LargeJobs.Skipped && retained>BigInt(config.maxSmallJobBudgetBytes)) throw new SmallJobOutgrown(retained)
-    }
-    def accepted[A](key: CheckpointKey)(decode: Json => A,encode: A => Json)(run: => IO[A]): IO[A] = IO.blocking(archive.checkpoint(claim,key)).flatMap {
-      case Some(value) => IO(decode(value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted checkpoint payload")))
-      case None => IO.defer(run).flatTap(value => IO.blocking(archive.checkpoint(claim,key,encode(value))))
+    /** Decisions and embedding parts this attempt took from another run's accepted work (ingest-limits spec §5.4). */
+    val reusedDecisions=new java.util.concurrent.atomic.AtomicInteger(0)
+    val reusedParts=new java.util.concurrent.atomic.AtomicInteger(0)
+    /** The run's accepted work (its own or by reference), else the work another run accepted for an equal input, else
+      * `run`: a reused window reserves no annotation attempt and calls no model. */
+    def accepted[A](key: CheckpointKey)(decode: Json => A,encode: A => Json)(run: => IO[A]): IO[A] = {
+      def decoded(value: Json): IO[A] = IO(decode(value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted checkpoint payload")))
+      IO.blocking(archive.windowWork(claim,key)).flatMap {
+        case Some(WindowWork.Accepted(value)) => decoded(value)
+        case Some(WindowWork.Reused(value)) => IO((if(key.stage==IndexingStage.Annotation) reusedDecisions else reusedParts).incrementAndGet()) *> decoded(value)
+        case None => IO.defer(run).flatTap(value => IO.blocking(archive.checkpoint(claim,key,encode(value))))
+      }
     }
     def report(completed: Int): IO[Unit] = IO.blocking {
       Check(archive.progress(claim,completed,total),"stale-claim","indexing claim is no longer current")
@@ -195,37 +183,162 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       case staged: StagedFailure => IO.raiseError(staged)
       case error => failed(error,index,"annotation",0)
     }
-    /** Embeds the window's pieces. Before anything of the window is retained, its pieces, Context spans and vectors must
-      * fit the budget with everything retained so far; each part is checked again with the vectors the arena holds. */
-    def embed(delta: ProblemPassages.Delta,index: Int,attempt: Int): IO[List[IndexedChunk]] = {
+    /** Embeds the window's pieces part by part, each part checkpointed and dropped (phase P reads the vectors back).
+      * Before any is embedded, the window's pieces, their vectors and its Context spans must fit the budget. */
+    def embed(delta: ProblemPassages.Delta,index: Int,attempt: Int): IO[Unit] = {
       val chunks=delta.pieces.map(_.chunk).toList
       val batchSize=config.indexing.embeddingBatchSize
       val batches=chunks.grouped(batchSize).toList
       val admitted=IO {
-        within(pieces+chunks.size,spans+delta.context.size,added+chunks.size)
-        pieces+=chunks.size; spans+=delta.context.size
+        val held=IndexingBudget.window(chunks.size,delta.context.size,dimensions)
+        Check(held<=BigInt(config.maxIndexingBudgetBytes),IndexingBudget.exceededCode,s"indexing window would hold $held bytes, above the budget of ${config.maxIndexingBudgetBytes}")
       }
-      val parts=batches.zipWithIndex.traverse { (batch,part) =>
-        val key=IndexCheckpoints.key(claim,IndexingStage.Embedding,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,CheckpointJson.chunks(batch))
+      val parts=batches.zipWithIndex.traverse_ { (batch,part) =>
+        val key=IndexCheckpoints.embedding(claim,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,batch)
         def validated(vectors: List[List[Double]]): List[List[Double]] = { CheckpointJson.validateVectors(vectors,batch.size,dimensions); vectors }
-        IO(within(pieces,spans,added+batch.size)) *> accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(IO.defer(embedder.documents(claim.owner,batch.map(_.text))).map(validated))
-          .map(batchVectors => batch.zip(batchVectors).map { (chunk,vector) => added+=1; IndexedChunk(chunk,vectors.add(vector)) })
-      }.map(_.flatten)
+        accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(IO.defer(embedder.documents(claim.owner,batch.map(_.text))).map(validated))
+      }
       // A part accepted under another batch size addresses other pieces: none of the window's parts is reused.
       (admitted *> parts.recoverWith { case _: CheckpointInputMismatch =>
         IO.blocking(archive.discardCheckpoints(claim,IndexingStage.Embedding,index)).flatMap { discarded =>
           val currentParts=batches.size
           IO(logger.warn(s"accepted work discarded jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total stage=embedding discardedParts=$discarded currentParts=$currentParts embeddingBatchSize=$batchSize"))
         } *> parts
-      }).handleErrorWith {
-        case outgrown: SmallJobOutgrown => IO.raiseError(outgrown)
-        case error => failed(error,index,"embedding",attempt)
-      }
+      }).handleErrorWith(error => failed(error,index,"embedding",attempt))
     }
   }
-  private def count(source: ProblemPassages.Source): Int = {
-    var cursor=ProblemPassages.SourceCursor.start
-    var total=0
+  /** Phase P's rows (ingest-limits spec §5.2.4): the windows replayed from the job's accepted checkpoints (a missing one is
+    * an internal fault: phase W accepted every one), validated window by window (ProblemRows.Validation), from window 0 or,
+    * for an incremental publication (§5.6.2), from the parent's cut. A piece carries its passage's metadata after the window
+    * `metadataHorizonWindows` after its own (or the last one): its passage's staged final row when that reaches the last
+    * window (always under the default horizon), else P2 replays a second time, that many windows ahead, for the open
+    * passage's metadata there (a closed passage's is its final row). An incremental publication first rewrites the
+    * parent's pieces of the open passage B in the windows before the cut whose metadata that changes. Each pass reads the
+    * source once; nothing of a window is kept after it. */
+  private final class Replay(claim: Claim,total: Int,fetch: MessageFetch,val parent: Option[PublicationParent]) extends ProblemRows {
+    private val dimensions=config.embedding.dimensions
+    private val horizon=config.indexing.metadataHorizonWindows
+    private val cut=parent.map(_.cut)
+    private def accepted(key: CheckpointKey): Json = archive.checkpoint(claim,key).getOrElse(throw DomainError("internal","accepted window result missing for the publication"))
+    /** The windows from window 0 or the cut on, one at a time. */
+    private final class Steps {
+      private val source=ProblemPassages.Source(claim.messages.reader(fetch))
+      var state: ProblemPassages.State=cut.fold(ProblemPassages.State.start(claim.sessionId,claim.runId))(_.state)
+      /** The next window's index. */
+      var index: Int=cut.fold(0)(_.window)
+      private var next=source.next(state.nextSource)
+      def hasNext: Boolean = next.nonEmpty
+      def step(): (Int,ProblemPassages.Window,ProblemPassages.Delta) = {
+        val value=next.get
+        val input=Json.arr(value.sourceJson,state.carry.map(ProblemPassages.carryJson).getOrElse(Json.Null))
+        val decision=ProblemPassages.decode(value,state.carry.nonEmpty,accepted(IndexCheckpoints.annotation(claim,index,input)))
+        val delta=ProblemPassages.accept(state,value,decision)
+        val result=(index,value,delta)
+        state=delta.state; index+=1; next=source.next(state.nextSource)
+        result
+      }
+      /** Steps until the state is the one after window `window`. */
+      def advance(window: Int): Unit = while(index<=window && hasNext) step()
+      def finish(): ProblemPassages.Delta = {
+        Check(index==total,"internal","source window count changed")
+        ProblemPassages.finish(state,source)
+      }
+    }
+    def passages(from: Int)(write: (Int,ProblemRows.Passages) => Unit): ProblemRows.Replayed = {
+      val validation=new ProblemRows.Validation(claim.sessionId,cut.map(_.validation))
+      val spans=new ProblemRows.Spans(cut.toVector.flatMap(value => value.state.open.map(open => ProblemPassages.SpanUpdate(open.passage.id,open.passage.spanCount-1,open.lastSpan))))
+      var context=cut.fold(0L)(_.context)
+      def step(index: Int,delta: ProblemPassages.Delta,released: Vector[ProblemPassages.SpanUpdate],opened: Vector[ProblemPassages.Passage]): Unit = {
+        val coverage=delta.context.zipWithIndex.map((span,i) => (context+i,span)); context+=delta.context.size
+        if(index>=from) write(index,ProblemRows.Passages(opened,delta.passages.filter(_.closed).map(_.passage),released,coverage))
+      }
+      // Passages first seen by this publication: from the open passage B on, which an incremental one writes again.
+      var seen=cut.fold(0)(value => value.state.open.fold(value.state.nextPassageOrdinal)(_.passage.ordinal))
+      // The first piece of each window from max(window - horizon, the window the open passage opened in): the windows a
+      // next version may write pieces of again.
+      var firstPieces=cut.fold(Vector.empty[Long])(_.firstPieces.dropRight(1))
+      var openedIn=cut.fold(0)(_.firstWindow)
+      var next=Option.empty[ProblemRows.Cut]
+      val steps=new Steps
+      while(steps.hasNext) {
+        val first=math.max(steps.index.toLong-horizon,openedIn.toLong)
+        firstPieces=(firstPieces:+steps.state.nextPieceOrdinal).takeRight((steps.index-first+1).toInt)
+        if(steps.index==total-1) next=Some(ProblemRows.Cut(steps.index,horizon,steps.state,context,validation.snapshot,firstPieces))
+        val open=steps.state.open.map(_.passage.id)
+        val (index,window,delta)=steps.step()
+        delta.state.open.map(_.passage.id) match {
+          case None => openedIn=index+1
+          case value => if(value!=open) openedIn=index
+        }
+        val released=spans.step(delta)
+        validation.window(window,delta,released)
+        val opened=delta.passages.filter(update => !update.closed && update.passage.ordinal>=seen).map(_.passage)
+        seen=delta.state.nextPassageOrdinal
+        step(index,delta,released,opened)
+      }
+      val finished=steps.finish()
+      val released=spans.step(finished)
+      val counts=validation.finish(total+1,finished,released)
+      step(total,finished,released,Vector.empty)
+      ProblemRows.Replayed(counts,next)
+    }
+    def pieces(from: Int,stored: ProblemRows.Stored)(write: (Int,Vector[ProblemRows.Piece]) => Unit): Unit = {
+      val lead=new Steps
+      /** The summary and tags of passage `ordinal` after window min(window + horizon, last window): from the last window
+        * on, its staged final row (a passage open after the last window keeps its metadata when the finishing step closes it). */
+      def metadata(ordinal: Int,window: Int): ProblemRows.Final =
+        if(window.toLong+horizon>=total-1L) stored.passage(ordinal) else {
+          lead.advance(window+horizon)
+          lead.state.open.filter(_.passage.ordinal==ordinal).fold(stored.passage(ordinal))(open => ProblemRows.Final(open.passage.summary,open.passage.tags))
+        }
+      // The parent's pieces of B in the windows before the cut whose horizon reaches the re-done windows: a window whose
+      // pieces' metadata changes is written again (its pieces under this run's ids, their texts, spans and vectors), one
+      // whose metadata stays keeps its rows. A window's pieces of B were written together with one metadata (as a window
+      // of a version's tail or of its rewrite region), so its first one is compared, a probe per window.
+      for(value <- cut; b <- value.state.open) {
+        val bFirst=value.state.nextPieceOrdinal-b.passage.pieceCount
+        val windows=value.firstPieces.zip(value.firstPieces.drop(1)).zipWithIndex.iterator.map { case ((first,until),i) => (value.firstWindow+i,math.max(first,bFirst),until) }
+          .filter((window,lo,until) => window>=from && lo<until)
+        windows.grouped(PassageStorage.rowsPerBatch).foreach { group =>
+          group.zip(stored.carried(group.map(_._2).toVector)).foreach { case ((window,lo,until),carried) =>
+            val current=metadata(b.passage.ordinal,window)
+            if(carried!=current) {
+              val members=stored.members(lo,until)
+              Check(members.map(_.ordinal.toLong)==(lo until until).toVector && members.forall(_.passageOrdinal==b.passage.ordinal),"internal","the parent's pieces of the open passage are not its members")
+              write(window,members.map(member => member.copy(chunk=member.chunk.copy(id=ProblemPassages.pieceId(claim.runId,member.ordinal.toLong),summary=current.summary,tags=current.tags))))
+            }
+          }
+        }
+      }
+      val trail=new Steps
+      while(trail.hasNext) {
+        val (index,_,delta)=trail.step()
+        if(index>=from) {
+          val chunks=delta.pieces.map(_.chunk).toList
+          val vectors=chunks.grouped(config.indexing.embeddingBatchSize).zipWithIndex.flatMap { (batch,part) =>
+            val key=IndexCheckpoints.embedding(claim,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,batch)
+            val values=try CheckpointJson.vectors(accepted(key)) catch { case _: CheckpointInputMismatch => throw DomainError("internal","accepted embedding of another grouping for the publication") }
+            CheckpointJson.validateVectors(values,batch.size,dimensions); values
+          }.toVector
+          val ordinals=delta.passages.map(update => update.passage.id->update.passage.ordinal).toMap
+          write(index,delta.pieces.zip(vectors).map { (piece,vector) =>
+            val ordinal=ordinals.getOrElse(piece.passageId,throw DomainError("internal","publication piece without its passage"))
+            val value=metadata(ordinal,index)
+            Check(piece.ordinal<=Int.MaxValue,"internal","publication piece ordinal exceeds the chunk ordinal range")
+            ProblemRows.Piece(ordinal,piece.ordinal.toInt,piece.chunk.copy(summary=value.summary,tags=value.tags),vector,piece.sourceSpan)
+          })
+        }
+      }
+      trail.finish()
+      ()
+    }
+  }
+  /** The count pass, through the reader the windows use: the source's windows (an incremental publication's from the
+    * parent's cut on, after the windows before it). */
+  private def count(claim: Claim,fetch: MessageFetch,parent: Option[PublicationParent]): Int = {
+    val source=ProblemPassages.Source(claim.messages.reader(fetch))
+    var cursor=parent.fold(ProblemPassages.SourceCursor.start)(_.cut.state.nextSource)
+    var total=parent.fold(0)(_.cut.window)
     var next=source.next(cursor)
     while(next.nonEmpty) {
       Check(total<Int.MaxValue,"internal","source window count overflow")
@@ -233,48 +346,62 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     }
     total
   }
-  private def passages(claim: Claim,large: LargeJobs): IO[Unit] = IO.blocking {
-    val source=ProblemPassages.Source(claim.snapshot.messages)
-    (source,count(source))
-  }.flatMap { (source,total) =>
-    if(total>LargeJobs.windows && large==LargeJobs.Skipped)
-      deferLarge(claim,total) *> IO(logger.info(s"large job deferred jobId=${claim.jobId} totalWindows=$total largeJobWindows=${LargeJobs.windows}"))
-    else indexWindows(claim,source,total,large).recoverWith { case outgrown: SmallJobOutgrown =>
-      val retained=outgrown.retained
-      deferLarge(claim,total) *> IO(logger.info(s"job outgrew the small-job budget, deferred jobId=${claim.jobId} totalWindows=$total retainedBytes=$retained smallJobBudget=${config.maxSmallJobBudgetBytes}"))
+  /** A job whose published generation it may continue (ingest-limits spec §5.6.2) indexes and publishes the windows from
+    * that generation's cut on; any other one all its windows. Large is what the job indexes. */
+  private def passages(claim: Claim,large: LargeJobs,fetch: MessageFetch): IO[Unit] = IO.blocking(archive.publicationParent(claim)).flatMap { parent =>
+    IO.blocking(count(claim,fetch,parent)).flatMap { total =>
+      val indexed=total-parent.fold(0)(_.cut.window)
+      if(indexed>LargeJobs.windows && large==LargeJobs.Skipped)
+        deferLarge(claim,total) *> IO(logger.info(s"large job deferred jobId=${claim.jobId} totalWindows=$total indexedWindows=$indexed largeJobWindows=${LargeJobs.windows}"))
+      else indexWindows(claim,ProblemPassages.Source(claim.messages.reader(fetch)),total,parent) *> publish(claim,total,fetch,parent)
     }
   }
   /** Back to the queue with its window count and without the attempt: claims that skip large jobs pass it by. */
   private def deferLarge(claim: Claim,total: Int): IO[Unit] =
     IO.blocking(Check(archive.defer(claim,total),"stale-claim","indexing claim is no longer current"))
-  private def indexWindows(claim: Claim,source: ProblemPassages.Source,total: Int,large: LargeJobs): IO[Unit] = {
-    val windows=new Windows(claim,total,large)
-    def loop(state: ProblemPassages.State,publication: ProblemsPublication.Builder,index: Int): IO[Unit] = IO.defer {
-      source.next(state.nextSource) match {
-        case None => publishStage(IO.blocking {
-          Check(index==total,"internal","source window count changed")
-          val finished=ProblemPassages.finish(state,source)
-          Check(archive.publishProblems(claim,publication.append(finished,Nil).result),"stale-claim","indexing claim is no longer current")
-        })
-        case Some(window) =>
-          val input=Json.arr(window.sourceJson,state.carry.map(ProblemPassages.carryJson).getOrElse(Json.Null))
-          val key=IndexCheckpoints.key(claim,IndexingStage.Annotation,index,0,ProblemPassages.identity,input)
-          val decision=windows.accepted(key)(json => (ProblemPassages.decode(window,state.carry.nonEmpty,json),0),value => CheckpointJson.decision(value._1))(
-            windows.annotate(key,problemAnnotator.annotate(claim.owner,window,state.carry).flatTap(value => IO(ProblemPassages.validate(window,state.carry.nonEmpty,value))),index))
-          decision.flatMap { (value,attempt) =>
-            IO(ProblemPassages.accept(state,window,value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted annotation state"))).flatMap { delta =>
-              windows.embed(delta,index,attempt).flatMap { indexed =>
-                val next=publication.append(delta,indexed)
-                windows.report(index+1) *> loop(delta.state,next,index+1)
-              }
-            }
+  /** Phase W (ingest-limits spec §5.2.3): each window's decision and embedding parts accepted (checkpointed) in order;
+    * between windows only the passage state with its bounded carry is kept. A window whose input (source and carry) an
+    * earlier run of the source accepted reuses that output by reference (§5.4): after an append, the windows below the
+    * previous revision's last one. */
+  private def indexWindows(claim: Claim,source: ProblemPassages.Source,total: Int,parent: Option[PublicationParent]): IO[Unit] = {
+    val windows=new Windows(claim,total)
+    // A window reads its messages from the database.
+    def loop(state: ProblemPassages.State,index: Int): IO[Unit] = IO.blocking(source.next(state.nextSource)).flatMap {
+      case None =>
+        IO(Check(index==total,"internal","source window count changed")) *> IO {
+          val decisions=windows.reusedDecisions.get; val parts=windows.reusedParts.get
+          logger.info(s"windows accepted jobId=${claim.jobId} fence=${claim.fence} totalWindows=$total reusedDecisions=$decisions reusedEmbeddingParts=$parts")
+        }
+      case Some(window) =>
+        val input=Json.arr(window.sourceJson,state.carry.map(ProblemPassages.carryJson).getOrElse(Json.Null))
+        val key=IndexCheckpoints.annotation(claim,index,input)
+        val decision=windows.accepted(key)(json => (ProblemPassages.decode(window,state.carry.nonEmpty,json),0),value => CheckpointJson.decision(value._1))(
+          windows.annotate(key,problemAnnotator.annotate(claim.owner,window,state.carry).flatTap(value => IO(ProblemPassages.validate(window,state.carry.nonEmpty,value))),index))
+        decision.flatMap { (value,attempt) =>
+          IO(ProblemPassages.accept(state,window,value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted annotation state"))).flatMap { delta =>
+            windows.embed(delta,index,attempt) *> windows.report(index+1) *> loop(delta.state,index+1)
           }
-      }
+        }
     }
-    windows.report(0) *> loop(ProblemPassages.State.start(claim.sessionId,claim.runId),ProblemsPublication.empty,0)
+    val first=parent.fold(0)(_.cut.window)
+    windows.report(first) *> loop(parent.fold(ProblemPassages.State.start(claim.sessionId,claim.runId))(_.cut.state),first)
+  }
+  /** Phase P and the switch (ingest-limits spec §5.2.4), then the retirement of the replaced generation's search rows: the
+    * job is Complete once switched, so a failed retirement is left to the maintenance pass. */
+  private def publish(claim: Claim,total: Int,fetch: MessageFetch,parent: Option[PublicationParent]): IO[Unit] = {
+    val kind=parent.fold("root")(value => s"incremental parent=${value.generation} parentVersion=${value.version} cutWindow=${value.cut.window}")
+    IO(logger.info(s"publication started jobId=${claim.jobId} fence=${claim.fence} totalWindows=$total publication=$kind")) *>
+    publishStage(IO.blocking(Check(archive.publishProblems(claim,new Replay(claim,total,fetch,parent)),"stale-claim","indexing claim is no longer current"))).timed.flatMap { (elapsed,_) =>
+      val seconds=elapsed.toSeconds
+      IO(logger.info(s"publication switched jobId=${claim.jobId} fence=${claim.fence} totalWindows=$total seconds=$seconds"))
+    } *>
+      IO.blocking(archive.retire(claim)).handleErrorWith { error =>
+        val exceptionClass=error.getClass.getName; val sqlState=Worker.sqlState(error)
+        IO(logger.warn(s"search row retirement left to maintenance jobId=${claim.jobId} exceptionClass=$exceptionClass sqlState=$sqlState"))
+      }
   }
   private def process(claim: Claim,large: LargeJobs): IO[Unit] = {
-    val work=passages(claim,large)
+    val work=Dispatcher.sequential[IO](await=true).use(dispatcher => passages(claim,large,Worker.messageFetch(config,snapshots,dispatcher)))
     val renew=(IO.sleep(30.seconds) *> IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current"))).foreverM
     IO.race(work,renew).void.handleErrorWith { failure =>
       val (stage,error)=failure match { case StagedFailure(stage,error) => (Some(stage),error); case error => (None,error) }
@@ -306,7 +433,8 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   private def iteration: IO[Worker.Iteration] = admission.annotationSession.use { _ =>
     admission.largeJob.use { admitted =>
       val large=if(admitted) LargeJobs.Admitted else LargeJobs.Skipped
-      snapshots.claim(IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds,large))).redeemWith(claimFailed,{
+      // A claim decodes no message (ingest-limits spec §5.2.1): it waits for no snapshot admission.
+      IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds,large)).redeemWith(claimFailed,{
         case None => IO.pure(Worker.Iteration.Idle)
         case Some(claim) => process(claim,large).as(Worker.Iteration.Processed)
       })
@@ -314,16 +442,27 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   }
   def once: IO[Boolean] = iteration.map(_==Worker.Iteration.Processed)
   def run: IO[Nothing] = {
+    val retired=IO(config.maxSmallJobBudgetBytes.foreach(value => logger.warn(s"retired configuration key ignored key=maxSmallJobBudgetBytes value=$value: a job's heap is one window, bounded by maxIndexingBudgetBytes")))
     val lane: IO[Nothing]=iteration.flatMap {
       case Worker.Iteration.Processed => IO.unit
       case Worker.Iteration.Idle => IO.sleep(idleDelay)
       case Worker.Iteration.ClaimFailed => IO.sleep(failureBackoff.delay)
     }.foreverM
-    List.fill(config.indexing.annotationSessions)(lane).parSequence.map(_.head)
+    val publication=IO {
+      val incremental=config.indexing.incrementalPublication; val horizon=config.indexing.metadataHorizonWindows
+      logger.info(s"indexing publication incrementalPublication=$incremental metadataHorizonWindows=$horizon")
+    }
+    retired *> publication *> List.fill(config.indexing.annotationSessions)(lane).parSequence.map(_.head)
   }
 }
 object Worker {
   private enum Iteration { case Processed,Idle,ClaimFailed }
+  /** A job's message fetching (ingest-limits spec §5.2.2): within `maxIndexingBudgetBytes` per message, and a message above
+    * SnapshotAdmission.largeBodyBytes under the snapshot admission's permit, one at a time in the process like large ingests. */
+  private[chronicle] def messageFetch(config: Config,snapshots: SnapshotAdmission,dispatcher: Dispatcher[IO]): MessageFetch =
+    MessageFetch(config.maxIndexingBudgetBytes,new LargeDecodes {
+      def apply[A](decode: => A): A = dispatcher.unsafeRunSync(snapshots.claim(IO.blocking(decode)))
+    })
   private def sqlState(error: Throwable): String = error match { case sql: java.sql.SQLException => Option(sql.getSQLState).getOrElse("unavailable"); case _ => "unavailable" }
   /** Invariant and configuration faults end the worker run (and with it the server), wherever they arise in a job. */
   private def fatal(error: DomainError): Boolean = Set("model-telemetry-invariant","internal","config").contains(error.code)
