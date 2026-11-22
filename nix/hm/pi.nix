@@ -318,9 +318,12 @@ let
       config.programs.mcp.servers;
   };
 
+  modelPickerExtension = "${piExtensions}/ponygirls-model-picker.ts";
   piKeybindingsJson = jsonFormat.generate "pi-keybindings.json" (
     {
       "$schema" = "https://pi.dev/schemas/keybindings.schema.json";
+    } // lib.optionalAttrs (builtins.elem modelPickerExtension (piCfg.settings.extensions or [ ])) {
+      "app.model.cycleForward" = [ ];
     } // piCfg.keybindings
   );
 
@@ -956,7 +959,7 @@ in
             # Visible scope clarification after Codex's cyber-risk flag, capped at two continuations.
             "${piExtensions}/ponygirls-codex-risk-retry.ts"
             # Footer model/thinking clicks (fullscreen) plus ctrl+shift+m / ctrl+shift+e.
-            "${piExtensions}/ponygirls-model-picker.ts"
+            modelPickerExtension
             # Per-model TTFT/total/tok-per-sec distributions (JSONL log) and /perf tables.
             "${piExtensions}/ponygirls-model-stats.ts"
             # /usage table: period tabs, providers with their models indented
