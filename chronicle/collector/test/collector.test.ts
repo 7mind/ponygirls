@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, renameSync, rmSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -40,7 +40,7 @@ function setup(extra: Record<string, unknown>) {
   return { dir, source, config };
 }
 
-test('BG observed quiet evidence, same-size/mtime rewrite, resumption, truncation and digest dedupe', async () => {
+test('BG observed quiet evidence, same-size/mtime replacement, resumption, truncation and digest dedupe', async () => {
   const { dir, source, config } = setup({}); const spool = new MemorySpool(); const ingester = new DummyIngester();
   try {
     const path = join(source, 's.jsonl'); const raw = fixture('pi'); writeFileSync(path, raw);
@@ -50,7 +50,11 @@ test('BG observed quiet evidence, same-size/mtime rewrite, resumption, truncatio
     assert.equal((await collector.runOnce(120)).unchanged, 1);
     const originalTime = new Date('2026-01-01T00:00:00Z'); utimesSync(path, originalTime, originalTime);
     await collector.runOnce(130);
-    writeFileSync(path, raw.replace('left branch', 'next branch')); utimesSync(path, originalTime, originalTime);
+    // Rewritten in place with the same size and mtime, the file would differ only in ctime, which the kernel advances in
+    // coarse ticks: within the tick of the last observation the stat is equal (seen at the next change, README). A
+    // replacement with the same size and mtime differs in its inode.
+    const replacement = `${path}.new`; writeFileSync(replacement, raw.replace('left branch', 'next branch'));
+    utimesSync(replacement, originalTime, originalTime); renameSync(replacement, path);
     assert.equal((await collector.runOnce(140)).waiting, 1);
     assert.equal((await collector.runOnce(150)).uploaded, 1);
     const second = IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(ingester.payloads[1]!) as unknown);
