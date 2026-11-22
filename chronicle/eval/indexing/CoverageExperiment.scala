@@ -1,11 +1,13 @@
 package chronicle
 
 import chronicle.api.Message
-import cats.effect.{IO,Ref}
+import cats.effect.{IO,Ref,Resource}
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import fs2.Stream
 import io.circe.Json
+import org.http4s.client.Client
+import ponygirls.retrieval.JsonHttp
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files,Path,StandardOpenOption}
 import java.time.{Clock,Instant}
@@ -20,7 +22,9 @@ object CoverageExperiment {
   private val maximumPlannedCalls = 32
   private val owner = "synthetic-coverage-experiment"
   private val reminder = "Cover every supplied scalar exactly once. The final part MUST end at requiredTerminal; previous is context, not source."
-  enum Mode { case Baseline,Candidate }
+  enum Mode { case Baseline,Candidate,QwenNonthinking }
+  private val coverageModes = Vector(Mode.Baseline,Mode.Candidate)
+  private val benchmarkCapacity = IndexingCapacity(1,1,1)
   final case class Example(id: String,heldOut: Boolean,messages: List[Message],gold: Vector[Kind]) {
     def source: Source = Source(messages)
     def windows: Vector[Window] = {
@@ -59,6 +63,9 @@ object CoverageExperiment {
     val baseline=ProblemPassageHttp.request(cfg,w,previous)
     val result=mode match {
       case Mode.Baseline => baseline
+      case Mode.QwenNonthinking =>
+        Check(cfg.requestPolicy==AnnotationRequestPolicy.StrictJsonSchema,"config","Qwen nonthinking leg requires strict-json-schema")
+        baseline.mapObject(_.add("chat_template_kwargs",Json.obj("enable_thinking"->Json.False)))
       case Mode.Candidate =>
         val messages=baseline.hcursor.get[Vector[Json]]("messages").toOption.get
         val content=Wire.parse(messages(1).hcursor.get[String]("content").toOption.get)
@@ -93,11 +100,18 @@ object CoverageExperiment {
       case DomainError("model-output","noncanonical passage coordinate") => ("model-output","coordinate-noncanonical")
       case DomainError("model-output","passage gap/overlap/empty/range") => ("model-output","partition-range")
       case d: DomainError if Set("model-output","model-output/truncated","model-timeout","model-http","config","invalid").contains(d.code) => (d.code,"request-or-validation-failed")
+      case DomainError("experiment-usage",_) => ("experiment-usage","expected-config-and-fresh-output-directory")
       case _ => ("experiment-external","external-or-io-failed")
     }
     Json.obj("code"->Json.fromString(code),"reason"->Json.fromString(reason))
   }
-  private def evaluate(e: Example,mode: Mode,http: ModelHttp,cfg: ModelConfig,admission: ModelAdmission,results: Ref[IO,Vector[Result]],emit: Json => IO[Unit]): IO[Unit] =
+  private def usageJson(response: Json): Json = {
+    val usage=ProviderUsage.parse(response,ModelWorkload.IndexAnnotation)
+    def count(value: Option[Long]): Json = value.fold(Json.Null)(Json.fromLong)
+    Json.obj("promptTokens"->count(usage.input),"completionTokens"->count(usage.output),
+      "reasoningTokens"->count(usage.reasoningSubset),"invalid"->Json.fromBoolean(usage.invalid))
+  }
+  private def evaluate(e: Example,mode: Mode,http: ModelHttp,cfg: ModelConfig,admission: ModelAdmission,results: Ref[IO,Vector[Result]],emit: Json => IO[Unit],benchmark: Boolean): IO[Unit] =
     admission.annotationSession.use { _ =>
       e.windows.zipWithIndex.foldLeftM(Option(State.start(new UUID(0,1),new UUID(0,2)))) { (state,entry) =>
         val (window,index)=entry
@@ -111,17 +125,22 @@ object CoverageExperiment {
             case Left(error) => save(false,false,Json.obj("failure"->failure(error))).as(None)
             case Right(payload) =>
               val binding=Json.obj("requestSha256"->digest(payload),"previousSha256"->current.carry.map(c => digest(carryJson(c))).getOrElse(Json.Null))
-              http.post(ModelCallContext(owner,ModelWorkload.IndexAnnotation),cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,payload).attempt.flatMap {
-                case Left(error) => save(true,false,binding.deepMerge(Json.obj("failure"->failure(error)))).as(None)
-                case Right(response) => IO {
+              val posted=http.post(ModelCallContext(owner,ModelWorkload.IndexAnnotation),cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,payload).attempt
+              val observed=if(benchmark) posted.timed.map { (elapsed,result) =>
+                val usage=result.toOption.map(usageJson).getOrElse(Json.Null)
+                (binding.deepMerge(Json.obj("postElapsedMillis"->Json.fromLong(elapsed.toMillis),"usage"->usage)),result)
+              } else posted.map(result => (binding,result))
+              observed.flatMap {
+                case (observation,Left(error)) => save(true,false,observation.deepMerge(Json.obj("failure"->failure(error)))).as(None)
+                case (observation,Right(response)) => IO {
                   val decision=ProblemPassageHttp.response(window,current.carry.nonEmpty,response)
                   val delta=accept(current,window,decision)
                   val metrics=score(e,window,delta)
                   val shape=Json.arr(decision.parts.map(p => Json.obj("kind"->Json.fromString(p.kind.toString),"start"->point(p.start),"end"->point(p.end),"continuePrevious"->Json.fromBoolean(p.continuePrevious)))* )
                   (delta.state,metrics.json.deepMerge(Json.obj("shape"->shape,"carryPresent"->Json.fromBoolean(current.carry.nonEmpty))))
                 }.attempt.flatMap {
-                  case Left(error) => save(true,false,binding.deepMerge(Json.obj("responseSha256"->digest(response),"failure"->failure(error)))).as(None)
-                  case Right((next,metrics)) => save(true,true,binding.deepMerge(metrics).deepMerge(Json.obj("responseSha256"->digest(response)))).as(Some(next))
+                  case Left(error) => save(true,false,observation.deepMerge(Json.obj("responseSha256"->digest(response),"failure"->failure(error)))).as(None)
+                  case Right((next,metrics)) => save(true,true,observation.deepMerge(metrics).deepMerge(Json.obj("responseSha256"->digest(response)))).as(Some(next))
                 }
               }
           }
@@ -133,7 +152,7 @@ object CoverageExperiment {
       }}
     }
 
-  private def comparison(rows: Vector[Result],fixtures: Vector[Example]): Json = Json.arr(Mode.values.map { mode =>
+  private def comparison(rows: Vector[Result],fixtures: Vector[Example],modes: Vector[Mode]): Json = Json.arr(modes.map { mode =>
     val own=rows.filter(_.mode==mode)
     def totals(key: String): Vector[Long] = (0 until 4).map(i => own.filter(_.valid).map(_.value.hcursor.get[Vector[Long]](key).toOption.get(i)).sum).toVector
     val scalar=totals("scalarConfusion"); val bytes=totals("byteConfusion")
@@ -143,43 +162,66 @@ object CoverageExperiment {
       "correctScalarsOverAllInputs"->Json.fromDoubleOrNull((scalar(0)+scalar(3)).toDouble/expectedScalars),
       "validatedOnly"->Score(scalar,bytes).json)
   }*)
-  private def run(configPath: String,out: Path): IO[Boolean] = for {
+  private final case class RunConfig(annotation: ModelConfig,capacity: IndexingCapacity,client: Resource[IO,Client[IO]])
+  private def coverageConfig(path: String): RunConfig = {
+    val cfg=Config.load(path)
+    RunConfig(cfg.annotation,cfg.indexing,ModelHttp.client(cfg))
+  }
+  private def benchmarkConfig(path: String,mode: Mode): RunConfig = {
+    import Config.given
+    val cfg=Wire.parse(Files.readString(Path.of(path))).as[ModelConfig].fold(_ => throw DomainError("config","invalid annotation-only configuration"),cfg => cfg)
+    val endpoint=java.net.URI.create(cfg.endpoint)
+    Check(endpoint.getHost!=null && endpoint.getRawUserInfo==null && endpoint.getRawQuery==null && endpoint.getRawFragment==null &&
+      (endpoint.getScheme=="https" || (endpoint.getScheme=="http" && Set("localhost","127.0.0.1","[::1]").contains(endpoint.getHost))),
+      "config","benchmark endpoint must be HTTPS or loopback HTTP")
+    val credential=Path.of(cfg.credentialFile)
+    Check(credential.isAbsolute && Files.isRegularFile(credential) && Files.isReadable(credential),"config","readable absolute credential file required")
+    Check(cfg.model.nonEmpty && cfg.revision.nonEmpty && cfg.timeoutSeconds>0 && cfg.maxResponseBytes>0,"config","invalid model metadata or bounds")
+    Check(mode!=Mode.QwenNonthinking || cfg.requestPolicy==AnnotationRequestPolicy.StrictJsonSchema,"config","Qwen nonthinking leg requires strict-json-schema")
+    RunConfig(cfg,benchmarkCapacity,JsonHttp.client(cfg.timeoutSeconds.seconds))
+  }
+  private def run(config: => RunConfig,out: Path,modes: Vector[Mode],benchmark: Boolean): IO[Boolean] = for {
     _ <- IO.blocking(Files.createDirectory(out))
-    cfg <- IO.blocking(Config.load(configPath))
+    cfg <- IO.blocking(config)
     fixtures=corpus
-    planned=fixtures.map(_.windows.size).sum*Mode.values.length
+    planned=fixtures.map(_.windows.size).sum*modes.size
     _ <- IO(Check(planned<=maximumPlannedCalls,"experiment-bound","call count bound"))
     sourceHash <- IO.blocking(Wire.hash(Files.readString(Path.of("eval/indexing/CoverageExperiment.scala"))))
-    manifest=Json.obj("version"->Json.fromString(version),"startedAt"->Json.fromString(Instant.now().toString),"runnerSourceSha256"->Json.fromString(sourceHash),
+    baseManifest=Json.obj("version"->Json.fromString(version),"startedAt"->Json.fromString(Instant.now().toString),"runnerSourceSha256"->Json.fromString(sourceHash),
       "jsonHashEncoding"->Json.fromString("UTF-8 of Json.noSpaces; response is parsed/reserialized, not raw transport bytes"),
       "corpusSha256"->digest(Json.arr(fixtures.map(_.input)*)),"goldSha256"->digest(Json.arr(fixtures.map(e => Json.arr(e.gold.map(k => Json.fromString(k.toString))*))*)),
       "model"->Json.fromString(cfg.annotation.model),"revision"->Json.fromString(cfg.annotation.revision),"requestPolicy"->Json.fromString(cfg.annotation.requestPolicy.identity),
       "baselineAnnotationIdentity"->Json.fromString(ProblemPassages.identity),"timeoutSeconds"->Json.fromInt(cfg.annotation.timeoutSeconds),
-      "maxResponseBytes"->Json.fromInt(cfg.annotation.maxResponseBytes),"plannedCalls"->Json.fromInt(planned),"concurrency"->Json.fromInt(cfg.indexing.annotationSessions))
+      "maxResponseBytes"->Json.fromInt(cfg.annotation.maxResponseBytes),"plannedCalls"->Json.fromInt(planned),"concurrency"->Json.fromInt(cfg.capacity.annotationSessions))
+    manifest=if(benchmark) baseManifest.deepMerge(Json.obj("experiment"->Json.fromString("paired-provider-first-pass"),
+      "mode"->Json.fromString(modes.head.toString),"maxTokens"->Json.fromInt(cfg.annotation.requestPolicy.responseTokens),
+      "requestOverride"->(if(modes.head==Mode.QwenNonthinking) Json.obj("chat_template_kwargs"->Json.obj("enable_thinking"->Json.False)) else Json.Null))) else baseManifest
     _ <- IO.blocking(Files.writeString(out.resolve("manifest.json"),manifest.spaces2,StandardOpenOption.CREATE_NEW))
     results <- Ref.of[IO,Vector[Result]](Vector.empty)
-    telemetry <- ModelTelemetry.make(new JavaModelTelemetryClock(Clock.systemUTC(),cats.effect.Clock[IO]),Set(owner))
-    admission <- ModelAdmission.make(cfg.indexing)
+    telemetry <- ModelTelemetry.make(new JavaModelTelemetryClock(Clock.systemUTC(),cats.effect.Clock[IO]))
+    admission <- ModelAdmission.make(cfg.capacity)
     outputLock <- cats.effect.std.Semaphore[IO](1)
     emit=(json: Json) => outputLock.permit.use(_ => IO.blocking { Files.writeString(out.resolve("progress.jsonl"),json.noSpaces+"\n",StandardOpenOption.CREATE,StandardOpenOption.APPEND); println(json.noSpaces) }.void)
-    _ <- ModelHttp.client(cfg).use { client =>
+    _ <- cfg.client.use { client =>
       val http=new ModelHttp(client,telemetry,admission)
-      Stream.emits(fixtures.flatMap(e => Mode.values.toVector.map(m => (e,m)))).covary[IO]
-        .parEvalMapUnordered(cfg.indexing.annotationSessions)((e,m) => evaluate(e,m,http,cfg.annotation,admission,results,emit)).compile.drain
+      val jobs=Stream.emits(fixtures.flatMap(e => modes.map(m => (e,m)))).covary[IO]
+      def evaluateJob(job: (Example,Mode)): IO[Unit] = evaluate(job._1,job._2,http,cfg.annotation,admission,results,emit,benchmark)
+      if(benchmark) jobs.evalMap(evaluateJob).compile.drain
+      else jobs.parEvalMapUnordered(cfg.capacity.annotationSessions)(evaluateJob).compile.drain
     }.timeoutTo((planned.toLong*(cfg.annotation.timeoutSeconds.toLong+30L)+60L).seconds,emit(Json.obj("event"->Json.fromString("experiment-deadline"))))
     rows <- results.get
     valid=rows.count(_.valid)
     mismatches=rows.count(r => r.valid && !r.value.hcursor.get[Boolean]("classificationExact").toOption.get)
     summary=Json.obj("plannedCalls"->Json.fromInt(planned),"attemptedCalls"->Json.fromInt(rows.count(_.attempted)),"completedWindows"->Json.fromInt(rows.size),
       "coverageValid"->Json.fromInt(valid),"classificationMismatchWindows"->Json.fromInt(mismatches),"coverageValidRate"->Json.fromDoubleOrNull(valid.toDouble/planned),"coverageFailuresOrUnfinished"->Json.fromInt(planned-valid),
-      "unfinishedWindows"->Json.fromInt(planned-rows.size),"byMode"->comparison(rows,fixtures),"results"->Json.arr(rows.sortBy(r => (r.caseId,r.mode.ordinal,r.index)).map(r => r.value.deepMerge(Json.obj("coverageValid"->Json.fromBoolean(r.valid))))*))
+      "unfinishedWindows"->Json.fromInt(planned-rows.size),"byMode"->comparison(rows,fixtures,modes),"results"->Json.arr(rows.sortBy(r => (r.caseId,r.mode.ordinal,r.index)).map(r => r.value.deepMerge(Json.obj("coverageValid"->Json.fromBoolean(r.valid))))*))
     _ <- IO.blocking(Files.writeString(out.resolve("summary.json"),summary.spaces2,StandardOpenOption.CREATE_NEW))
   } yield valid==planned && mismatches==0
 
   // Behavioral-Active / Blackbox-Group, specified-origin; no provider or configuration access.
   private def selfTest(): Unit = {
     val fixtures=corpus
-    assert(fixtures.size==12 && fixtures.map(_.windows.size).sum*2==28)
+    assert(fixtures.size==12 && fixtures.map(_.windows.size).sum==14 && coverageModes.size==2)
     assert(fixtures.find(_.id=="dense-24").get.windows.head.fragments.size==24)
     val dense=fixtures.find(_.id=="dense-65").get.windows
     assert(dense.size==2 && dense.flatMap(_.fragments).forall(f => f.byteEnd-f.byteStart==maximumFragmentBytes))
@@ -200,6 +242,18 @@ object CoverageExperiment {
     val c=Wire.parse(candidate.hcursor.downField("messages").downN(1).get[String]("content").toOption.get)
     assert(c.mapObject(_.remove("requiredTerminal").remove("coverageReminder"))==b)
     assert(baseline.mapObject(_.remove("messages"))==candidate.mapObject(_.remove("messages")))
+    val strict=cfg.copy(requestPolicy=AnnotationRequestPolicy.StrictJsonSchema)
+    fixtures.flatMap(_.windows).foreach { window =>
+      val exact=ProblemPassageHttp.request(strict,window,None)
+      val nonthinking=request(strict,window,None,Mode.QwenNonthinking)
+      assert(nonthinking.mapObject(_.remove("chat_template_kwargs"))==exact)
+      assert(nonthinking.hcursor.downField("chat_template_kwargs").focus.contains(Json.obj("enable_thinking"->Json.False)))
+    }
+    try { request(cfg,w,None,Mode.QwenNonthinking); assert(false) }
+    catch { case DomainError("config",_) => () }
+    val reported=Wire.parse("""{"usage":{"prompt_tokens":42,"completion_tokens":10,"completion_tokens_details":{"reasoning_tokens":3,"text":"private"}}}""")
+    assert(usageJson(reported).noSpaces=="""{"promptTokens":42,"completionTokens":10,"reasoningTokens":3,"invalid":false}""")
+    assert(usageJson(Json.obj()).hcursor.downField("completionTokens").focus.contains(Json.Null))
     val carryCase=fixtures.find(_.id=="carry-65").get; val first=carryCase.windows.head
     val next=accept(State.start(new UUID(0,1),new UUID(0,2)),first,Decision(Vector(Part(Point(0,0),first.terminal,false,"checksum",Nil)))).state
     assert(next.carry.nonEmpty && carryCase.source.next(next.nextSource).get.fragments.size==1)
@@ -214,11 +268,16 @@ object CoverageExperiment {
     assert(failure(new RuntimeException("secret response text")).noSpaces.indexOf("secret")<0)
     println("coverage-experiment self-test: passed")
   }
+  private def benchmark(mode: Mode,configPath: String,out: String): IO[Boolean] =
+    run(benchmarkConfig(configPath,mode),Path.of(out),Vector(mode),benchmark=true)
   def main(args: Array[String]): Unit = try {
-    if(args.toList==List("--self-test")) selfTest()
-    else {
-      Check(args.length==2,"experiment-usage","CONFIG FRESH_OUTPUT_DIRECTORY required")
-      if(!run(args(0),Path.of(args(1))).unsafeRunSync()) System.exit(1)
+    def finish(result: IO[Boolean]): Unit = if(!result.unsafeRunSync()) System.exit(1)
+    args.toList match {
+      case List("--self-test") => selfTest()
+      case List("--provider-baseline",config,out) => finish(benchmark(Mode.Baseline,config,out))
+      case List("--provider-qwen-nonthinking",config,out) => finish(benchmark(Mode.QwenNonthinking,config,out))
+      case List(config,out) if !config.startsWith("--") => finish(run(coverageConfig(config),Path.of(out),coverageModes,benchmark=false))
+      case _ => throw DomainError("experiment-usage","CONFIG FRESH_OUTPUT_DIRECTORY required")
     }
   } catch {
     case NonFatal(error) => System.err.println(failure(error).noSpaces); System.exit(1)

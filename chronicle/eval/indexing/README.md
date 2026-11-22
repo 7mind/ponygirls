@@ -34,6 +34,67 @@ Never copy/export credentials. The runner requires its checked-in source at
 working directory to `chronicle/`. An existing output directory fails without
 replacement. Do not interpret partially written output as a completed run.
 
+## Paired provider benchmark (optional)
+
+Use two serial legs on the same 12 cases (14 planned windows **per provider**).
+These commands do not read a deployment config or start Chronicle. Make two
+local annotation-only JSON files of this form, replacing the placeholders with
+the respective endpoint, model/revision and existing credential **file path**:
+
+```json
+{
+  "endpoint": "https://provider.example/v1/chat/completions",
+  "model": "provider-model-id",
+  "revision": "operator-recorded-revision",
+  "credentialFile": "/absolute/path/to/existing-readable-provider-key-file",
+  "timeoutSeconds": 900,
+  "maxResponseBytes": 1048576,
+  "requestPolicy": "strict-json-schema"
+}
+```
+
+Use a full HTTPS operation URL or loopback HTTP for an owned local endpoint.
+Use matching policy, deadline and response bounds for a fair comparison; the
+values above are examples, not deployment defaults. Do not paste key material
+into JSON, copy any credential, or run as root to read a service's credentials.
+Run from the repository root with `nix develop .#chronicle --command`:
+
+```bash
+nix develop .#chronicle --command chronicle/scripts/sbt.sh \
+  'set Test / unmanagedSourceDirectories += baseDirectory.value / "eval/indexing"' \
+  'Test/runMain chronicle.CoverageExperiment --provider-baseline /abs/mimo-annotation.json /abs/fresh-mimo-report'
+nix develop .#chronicle --command chronicle/scripts/sbt.sh \
+  'set Test / unmanagedSourceDirectories += baseDirectory.value / "eval/indexing"' \
+  'Test/runMain chronicle.CoverageExperiment --provider-qwen-nonthinking /abs/qwen-annotation.json /abs/fresh-qwen-report'
+```
+
+Each leg does one case at a time, no application retries, with a whole-leg
+bound of `14 * (timeoutSeconds + 30) + 60` seconds. Separate processes may be
+run side by side if the endpoints and measurement resources are independent;
+otherwise avoid overlapping the legs. Run both even if the first reports a
+coverage/classification failure (nonzero exit); keep each exit status and
+summary. `--provider-baseline` sends the exact production request (MiMo);
+`--provider-qwen-nonthinking` requires `strict-json-schema` and only adds the
+request-level `chat_template_kwargs: {"enable_thinking": false}`. It does not
+add the coverage reminder, change the schema/token cap, alter production
+configuration, or guarantee a provider honored the override.
+
+Compare coverage and exact correctness over all 14 planned windows, including
+blocked windows, and join window records by `caseId` and `window`. Check that
+corpus/gold hashes and bounds match, and use `previousSha256` to identify any
+different accepted carry. `postElapsedMillis` measures the monotonic elapsed
+around `ModelHttp.post` (including credential read and HTTP processing, but
+not passage validation/scoring). Compare timings over like outcomes; fast
+rejections are not fast annotations. Parsed responses, even if rejected,
+include sanitized `usage` counters; missing values are null, not zero, and
+reasoning tokens are a subset of completion tokens, not additional. Transport
+failures have no parsed usage. Neither reported latency nor counters include
+blocked requests. Provider usage is self-reported and tokenization can differ.
+The usual sanitized outputs apply: no response text, accepted summaries, or
+reasoning text, and the benchmark does not assess summary quality. A single
+pass is a paired synthetic observation, not a reliability estimate or proof of
+semantic quality on real content.
+
 ## Fixed comparison
 
 - Baseline: **exact** `ProblemPassageHttp.request` output.
