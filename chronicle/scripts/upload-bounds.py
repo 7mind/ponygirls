@@ -3,7 +3,7 @@
 the append-only ingest extended); started by test-upload-bounds.sh, whose header has the invocation. Synthetic Pi
 sessions only, generated here; the owned database of the with-service-postgres wrapper only; every process it starts is
 stopped on exit."""
-import base64, contextlib, datetime, hashlib, http.client, json, mmap, os, random, re, resource, secrets, shlex, shutil, signal, socket, subprocess, sys, tempfile
+import base64, collections, contextlib, datetime, hashlib, http.client, json, math, mmap, os, random, re, resource, secrets, shlex, shutil, signal, socket, struct, subprocess, sys, tempfile
 import threading, time, urllib.error, urllib.parse, urllib.request, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -1339,11 +1339,6 @@ class Harness:
         return int(one("SELECT (SELECT count(*) FROM ch_search_retirements WHERE session_id=:'arg0') + (SELECT count(*) FROM ch_generation_retirements r "
                        "JOIN ch_generations g ON g.id=r.generation WHERE g.session_id=:'arg0')", session)) == 0
 
-    def search_answers(self, session, queries, modes):
-        """Search answers (20 hits) per mode and query, normalized up to ids."""
-        return normalized({f'search {mode} {query[:40]!r}': self.reader().result('search', query, '--mode', mode, '--limit', '20')[0]
-                           for query in queries for mode in modes}, session)
-
     def reader_answers(self, session, queries):
         """What readers see of the session's published head, normalized up to ids: lexical, semantic and hybrid search for
         each query, chunk pages at the start, middle and end, the session's metadata, passage pages at the start and end of
@@ -1363,25 +1358,6 @@ class Harness:
             answers[f'passages @{offset}'] = self.reader().result('passages', session, '--revision', str(revision), '--generation', generation, '--offset', str(offset),
                                                                   '--limit', str(PAGE))[0]
         return normalized(answers, session)
-
-    def exact_search_answers(self, label, session, queries, config):
-        """The semantic and hybrid answers of the published head with exact nearest neighbours: the same production
-        statements (visibility, ACL, filters, reranking, fusion, tie-break) on a serve-standby server whose service role
-        runs with index scans disabled, so the vector leg's ORDER BY distance LIMIT is a sequential scan and a sort (the
-        HNSW index has no bitmap scan). The HNSW index must record no scan meanwhile. The current server is stopped first
-        and none runs afterwards."""
-        summaries = [self.stop()]
-        index_scans(False)
-        try:
-            self.start(f'{label}-exact', mode='serve-standby', config=config)
-            before = hnsw_scans()
-            answers = self.search_answers(session, queries, ('semantic', 'hybrid'))
-            used = hnsw_scans() - before
-            summaries.append(self.stop())
-        finally:
-            index_scans(True)
-        check(f'{label}: {len(answers)} exact semantic and hybrid answers, the HNSW index unused ({used} scans)', used == 0, used)
-        return answers, summaries
 
     def search_outcome(self, mode, query):
         """One CLI search: ok (with the result), unavailable, or another failure; its latency."""
@@ -2119,17 +2095,95 @@ def index_rows(session):
     return dict(live=live, visible=visible, invisibleLive=live - visible, deadTuples=dead)
 
 
-def recall(ann, exact):
-    """Tie-aware recall@k of one ANN answer against the exact one (k = the exact answer's chunks): the share of the exact
-    chunks' scores (similarity, so equal distance counts) found among the ANN answer's top k."""
-    exact_scores = [chunk['score'] for hit in exact.get('hits', []) for chunk in hit.get('chunks', [])]
-    ann_scores = [chunk['score'] for hit in ann.get('hits', []) for chunk in hit.get('chunks', [])][:len(exact_scores)]
-    remaining, found = list(ann_scores), 0
-    for score in exact_scores:
-        if score in remaining:
-            remaining.remove(score)
-            found += 1
-    return found / len(exact_scores) if exact_scores else 1.0
+def query_vector(text):
+    """The stub's embedding of a query (STUB `vector`: the server's queryPrefix dropped), as the server sends it to the
+    database: `[v1,...]` of the stub's floats."""
+    out, i = [], 0
+    while len(out) < DIMENSIONS:
+        out.extend(v / 2**31 - 1.0 for v in struct.unpack('>8I', hashlib.sha256(f'{i}:{text}'.encode()).digest()))
+        i += 1
+    out = out[:DIMENSIONS]
+    norm = math.sqrt(sum(v * v for v in out))
+    return '[' + ','.join(repr(v / norm) for v in out) + ']'
+
+
+# The exact answer of the session's published head (H (2)): the production reranking (CandidateSql.rerankCtes with
+# SearchPolicy.tieBreak: session_id, ordinal, id) over an exact vector leg — every visible row (the published
+# generation's own rows and the retained origins' rows inside its piece segments, as GenerationRows.publishedInfo; one
+# owner, no filters, one profile) ordered by the ORIGINAL-vector distance with the tie-break, LIMIT candidatesPerLeg — and,
+# for hybrid, the production lexical leg (document @@ websearch_to_tsquery, ts_rank_cd DESC, tie-break, LIMIT) in a UNION.
+# Run with index scans off in its own transaction, so neither leg can use the HNSW index.
+EXACT_SQL = """WITH g AS (SELECT gg.id, gg.lineage, gg.lineage_version AS v FROM ch_sources s JOIN ch_generations gg ON gg.id=s.published WHERE s.id=:'arg0'),
+  held AS (SELECT m.origin, m.lo, m.hi FROM g JOIN ch_lineage_segments m ON m.kind='piece' AND m.lineage=g.lineage AND m.since<=g.v AND (m.until IS NULL OR m.until>g.v)),
+  visible AS (SELECT sc.id, sc.session_id, sc.ordinal, sc.document, sc.embedding FROM ch_search_chunks sc JOIN held m ON sc.generation=m.origin
+              AND sc.ordinal>=m.lo AND sc.ordinal<m.hi WHERE sc.session_id=:'arg0' AND vector_dims(sc.embedding)=%(dimensions)d),
+  ann AS MATERIALIZED (SELECT * FROM visible ORDER BY embedding <=> :'arg1'::vector, session_id, ordinal, id LIMIT %(limit)d),
+  %(legs)s
+  ranked AS (SELECT *, CASE WHEN document @@ websearch_to_tsquery('english', :'arg2') THEN ts_rank_cd(document, websearch_to_tsquery('english', :'arg2')) ELSE 0 END AS lex,
+             embedding <=> :'arg1'::vector AS distance FROM candidates),
+  ranked2 AS (SELECT *, row_number() OVER (ORDER BY lex DESC, session_id, ordinal, id) AS lr, row_number() OVER (ORDER BY distance, session_id, ordinal, id) AS vr FROM ranked),
+  scored AS (SELECT *, %(score)s AS score FROM ranked2)
+SELECT ordinal, score, distance, lex FROM scored ORDER BY score DESC, session_id, ordinal, id LIMIT %(top)d"""
+EXACT_LEGS = {'semantic': "candidates AS (SELECT * FROM ann),",
+              'hybrid': """lexical AS MATERIALIZED (SELECT * FROM visible WHERE document @@ websearch_to_tsquery('english', :'arg2')
+                           ORDER BY ts_rank_cd(document, websearch_to_tsquery('english', :'arg2')) DESC, session_id, ordinal, id LIMIT %(limit)d),
+                           candidates AS (SELECT * FROM ann UNION SELECT * FROM lexical),"""}
+EXACT_SCORES = {'semantic': '1.0-distance', 'hybrid': '(CASE WHEN lex>0 THEN 1.0/(%(k)d+lr) ELSE 0 END)+1.0/(%(k)d+vr)'}
+EXACT_TOP, CANDIDATES_PER_LEG, RECIPROCAL_RANK_CONSTANT = 5, 1000, 60  # CandidatePolicy.candidatesPerLeg / reciprocalRankConstant
+
+
+def exact_answer(session, mode, query, vector):
+    """The EXACT_TOP best rows (ordinal, score, distance, lex) of the exact answer (EXACT_SQL), index scans off."""
+    statement = EXACT_SQL % dict(dimensions=DIMENSIONS, limit=CANDIDATES_PER_LEG, top=EXACT_TOP, legs=EXACT_LEGS[mode] % dict(limit=CANDIDATES_PER_LEG),
+                                 score=EXACT_SCORES[mode] % dict(k=RECIPROCAL_RANK_CONSTANT))
+    rows = sql(f"BEGIN; SET LOCAL enable_indexscan = off; SET LOCAL enable_indexonlyscan = off; {statement}; COMMIT", session, vector, query)
+    return [dict(ordinal=int(o), score=float(sc), distance=float(d), lex=float(lx)) for o, sc, d, lx in rows]
+
+
+def answer_chunk(session, answer, vector, query):
+    """The best chunk of the session in a product search answer (its first hit's first chunk), with its content identity
+    (the piece ordinal) and its exact distance and lexical rank to the query."""
+    hit = next((h for h in answer.get('hits', []) if h['chunks'] and h['chunks'][0]['sessionId'] == session), None)
+    if hit is None:
+        return None
+    row = one("SELECT ordinal, embedding <=> :'arg1'::vector, CASE WHEN document @@ websearch_to_tsquery('english', :'arg2') "
+              "THEN ts_rank_cd(document, websearch_to_tsquery('english', :'arg2')) ELSE 0 END FROM ch_search_chunks WHERE id=:'arg0'", hit['chunks'][0]['id'], vector, query)
+    return dict(ordinal=int(row[0]), distance=float(row[1]), lex=float(row[2]), score=hit['chunks'][0]['score'])
+
+
+def judged(chunk, exact):
+    """An ANN answer's best chunk against the exact answer's best: `exact` (the same piece), `tie` (another piece at the
+    same exact distance and lexical rank: interchangeable for the ranking), `approximation` (a farther piece, the nearer one
+    not reached), or `missing`."""
+    if chunk is None:
+        return 'missing'
+    best = exact[0]
+    if chunk['ordinal'] == best['ordinal']:
+        return 'exact'
+    return 'tie' if chunk['distance'] == best['distance'] and chunk['lex'] == best['lex'] else 'approximation'
+
+
+def provenance(session):
+    """Rows of the published head whose stored revision is not their writer's: own rows (written by the published
+    generation) must carry the published revision, retained rows the revision of their origin generation."""
+    row = one("""WITH g AS (SELECT gg.id, gg.revision, gg.lineage, gg.lineage_version AS v FROM ch_sources s JOIN ch_generations gg ON gg.id=s.published WHERE s.id=:'arg0'),
+        held AS (SELECT m.origin, m.lo, m.hi FROM g JOIN ch_lineage_segments m ON m.kind='piece' AND m.lineage=g.lineage AND m.since<=g.v AND (m.until IS NULL OR m.until>g.v))
+      SELECT count(*) FILTER (WHERE sc.generation=g.id), count(*) FILTER (WHERE sc.generation=g.id AND sc.revision<>g.revision),
+             count(*) FILTER (WHERE sc.generation<>g.id), count(*) FILTER (WHERE sc.generation<>g.id AND sc.revision<>o.revision)
+      FROM g, held m JOIN ch_search_chunks sc ON sc.generation=m.origin AND sc.ordinal>=m.lo AND sc.ordinal<m.hi JOIN ch_generations o ON o.id=sc.generation
+      WHERE sc.session_id=:'arg0'""", session)
+    return dict(own=int(row[0]), ownWrongRevision=int(row[1]), retained=int(row[2]), retainedWrongRevision=int(row[3]))
+
+
+def preserve(label):
+    """A logical dump of the chronicle database as it is now (directory format, the cluster's administrator), kept outside
+    the run's directory (under the data root) for offline comparisons: never removed by the run."""
+    target = (DATA_ROOT or Path(tempfile.gettempdir())) / f'preserved-{WORK[0].name}-{label}'
+    started = time.monotonic()
+    subprocess.run(['pg_dump', '-h', str(OWNED / 'cluster/socket'), '-p', LOCATION[1], '-d', LOCATION[2], '-Fd', '-j', '4', '-Z', '1', '-f', str(target)],
+                   capture_output=True, text=True, timeout=7200, check=True)
+    note(f'preserved {label}: {target} ({du(target) / 10**9:.2f} GB, {time.monotonic() - started:.0f} s)')
+    return str(target)
 
 
 def normalized(answers, session):
@@ -2154,34 +2208,6 @@ def settled(read):
 
 def hnsw_scans():
     return settled(lambda: int(one("SELECT coalesce(sum(idx_scan),0) FROM pg_stat_user_indexes WHERE indexrelname LIKE 'ch_search_hnsw%'")))
-
-
-def index_scans(enabled):
-    """The service role's index scans in its database (new sessions), as the cluster's administrator: off for the exact
-    answers, back to the default after them."""
-    role, database = DATABASE['user'], LOCATION[2]
-    statements = [f"ALTER ROLE \"{role}\" IN DATABASE \"{database}\" {'RESET ' + name if enabled else 'SET ' + name + ' = off'}"
-                  for name in ('enable_indexscan', 'enable_indexonlyscan')]
-    subprocess.run(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-h', str(OWNED / 'cluster/socket'), '-p', LOCATION[1], '-d', 'postgres', '-f', '-'],
-                   input=';\n'.join(statements) + ';\n', capture_output=True, text=True, timeout=60, check=True)
-
-
-def scores(answer):
-    """The scores of a search answer in order: each hit's and its chunks'."""
-    return [[hit.get('score')] + [chunk.get('score') for chunk in hit.get('chunks', [])] for hit in answer.get('hits', [])]
-
-
-def classify(a_ann, a_exact, b_ann, b_exact):
-    """How two heads' ANN answers to one query differ: None (equal up to ids); `tie` (the same scores in the same order,
-    other chunks: exact ties); `approximation` (the exact answers are equal and at least one head's ANN answer is not its
-    exact answer); `content` (the exact answers differ, or two ANN answers both equal to their exact answers differ)."""
-    if a_ann == b_ann:
-        return None
-    if a_exact != b_exact:
-        return 'content'
-    if scores(a_ann) == scores(b_ann):
-        return 'tie'
-    return 'approximation' if a_ann != a_exact or b_ann != b_exact else 'content'
 
 
 def table_writes():
@@ -2238,7 +2264,7 @@ def run_h(root):
     Then the head is republished twice as a root (RetryJob of its Complete job on another server instance with
     indexing.incrementalPublication=false: a cached republication, no model call); the second root is the ANN baseline.
     The incremental head and both roots must have (1) equal stored content (stored_content, identifiers excluded by name),
-    (2) equal exact nearest-neighbour semantic and hybrid answers (exact_search_answers), (4) equal lexical answers, chunk
+    (2) equal exact nearest-neighbour semantic and hybrid answers (exact_answer), (4) equal lexical answers, chunk
     and passage pages and session; (3) every ANN difference is a tie or an approximation (scores shown) and the incremental
     head's ANN recall is not below the two roots'. The stub's annotations make E1X's bounded passages (a passage ends before
     about every H_PASSAGE_WINDOWS-th window; an open passage's summary changes in every window)."""
@@ -2320,14 +2346,33 @@ def run_h(root):
     # The needles, a chunk's text and phrases of the generator's vocabulary (a random query's nearest chunk is where an
     # approximate search differs).
     queries = [RARE, RARE_APPENDED, COMMON, chunk_text] + [' '.join(Fixture.POOL[j].split()[:4]) for j in H_POOL_QUERIES]
-    stored, pieces, invisible = {}, {}, {}
-    with Phase('H4 stored content and reader answers of the incremental head (ANN, then exact)'):
-        stored['incremental'], pieces['incremental'] = stored_content(session)
-        invisible['incremental'] = index_rows(session)
-        heads = {'incremental': h.reader_answers(session, queries)}
-        exact, servers_seen = {}, []
-        exact['incremental'], summaries = h.exact_search_answers('H4', session, queries, h.config)
-        servers_seen += summaries
+    vectors = {query: query_vector(query) for query in queries}
+    vector_keys = [(mode, query) for mode in ('semantic', 'hybrid') for query in queries]
+    measured = {}
+
+    def measure(name, label):
+        """One head: its stored content and revision provenance, the index rows no reader sees, the readers' answers
+        (normalized), each product semantic/hybrid answer's best chunk judged against the exact answer (index scans off;
+        the HNSW index must record no scan), and a preserved dump of the database."""
+        result = dict(stored=None, provenance=provenance(session), indexRows=index_rows(session))
+        result['stored'], result['pieces'] = stored_content(session)
+        result['answers'] = h.reader_answers(session, queries)
+        products = {key: h.reader().result('search', key[1], '--mode', key[0], '--limit', '20')[0] for key in vector_keys}
+        before = hnsw_scans()
+        exact = {key: exact_answer(session, key[0], key[1], vectors[key[1]]) for key in vector_keys}
+        used = hnsw_scans() - before
+        check(f'{label}: {len(exact)} exact semantic and hybrid answers (original-vector leg over every visible row), the HNSW index unused ({used} scans)',
+              used == 0 and all(exact.values()), used)
+        chunks = {key: answer_chunk(session, products[key], vectors[key[1]], key[1]) for key in vector_keys}
+        result.update(exact=exact, chunks=chunks, judged={key: judged(chunks[key], exact[key]) for key in vector_keys})
+        result['preserved'] = preserve(name)
+        measured[name] = result
+        note(f'{label}: {name}: stored {json.dumps(result["stored"])}; provenance {result["provenance"]}; index rows {result["indexRows"]}; '
+             f'judged {dict(collections.Counter(result["judged"].values()))}')
+
+    with Phase('H4 the incremental head: stored content, answers (product and exact), preserved'):
+        measure('incremental', 'H4')
+    servers_seen = [h.stop()]
     config = json.loads(h.config.read_text())
     config['indexing'] = {**config.get('indexing', INDEXING_DEFAULTS), 'incrementalPublication': False}
     full_config = root / 'server-full.json'
@@ -2335,7 +2380,7 @@ def run_h(root):
     republications = []
     for name, label in (('root', 'H5'), ('root2', 'H6')):
         h.start(f'H-S2-{name}', config=full_config)
-        with Phase(f'{label} the head republished as a root ({name}: RetryJob, incrementalPublication=false), its answers (ANN, then exact)'):
+        with Phase(f'{label} the head republished as a root ({name}: RetryJob, incrementalPublication=false): stored content, answers, preserved'):
             job_id, fence = one("SELECT id, fence FROM ch_jobs WHERE session_id=:'arg0' AND revision=:'arg1'", session, head['revision'])
             calls_before, lsn, began = h.stub.counts(), wal_lsn(), time.monotonic()
             h.reader().call('jobs', 'retry', job_id, '--yes', '--auth', 'session')
@@ -2352,54 +2397,65 @@ def run_h(root):
             check(f'{label}: the retry republished revision {head["revision"]} as a root ({rows["pieces"]:,} pieces, {full_seconds:.0f} s, log {kinds}) reusing every '
                   f'window ({calls["annotation"]} annotation calls)', rows['root'] and rows['pieces'] == revisions[-1]['pieces'] and kinds and kinds[-1] == 'root'
                   and calls['annotation'] == 0, full)
-            stored[name], pieces[name] = stored_content(session)
-            invisible[name] = index_rows(session)
-            heads[name] = h.reader_answers(session, queries)
-            exact[name], summaries = h.exact_search_answers(label, session, queries, full_config)
-            servers_seen += summaries
-    (root / 'index-H-answers.jsonl').write_text(json.dumps(dict(ann=heads, exact=exact)) + '\n')
-    note(f'H7: stored content {json.dumps(stored)}; index rows {json.dumps(invisible)}; identifiers excluded by name {list(STORED_EXCLUDED)}')
-    first = sorted(o for o in pieces['incremental'].keys() | pieces['root'].keys() if pieces['incremental'].get(o) != pieces['root'].get(o))[:5]
+            measure(name, label)
+        servers_seen.append(h.stop())
+    heads = list(measured)
+    (root / 'index-H-answers.jsonl').write_text(json.dumps({name: dict(answers=m['answers'], exact={f'{k[0]} {k[1]}': v for k, v in m['exact'].items()},
+                                                                        chunks={f'{k[0]} {k[1]}': v for k, v in m['chunks'].items()}) for name, m in measured.items()}) + '\n')
+    # (1) stored content, after the provenance that allows excluding the search rows' revision
+    stored = {name: m['stored'] for name, m in measured.items()}
+    provenances = {name: m['provenance'] for name, m in measured.items()}
+    check(f'H7: every visible search row carries its writer\'s revision (own rows the published revision, retained rows their origin\'s): {provenances}',
+          all(v['ownWrongRevision'] == 0 and v['retainedWrongRevision'] == 0 for v in provenances.values()), provenances, defer=True)
+    first = sorted(o for o in measured['incremental']['pieces'].keys() | measured['root']['pieces'].keys()
+                   if measured['incremental']['pieces'].get(o) != measured['root']['pieces'].get(o))[:5]
+    differing_fields = [f for f in stored['incremental']['pieceFields'] if stored['incremental']['pieceFields'][f] != stored['root']['pieceFields'][f]]
+    note(f'H7: stored content {json.dumps(stored)}; identifiers excluded by name {list(STORED_EXCLUDED)}')
     check(f'H7: the stored content (visible indexed rows per kind: pieces with chunk, link and search row, passages, spans, Context spans, tags) of the '
           f'incremental head equals both roots\' ({", ".join(f"{k} {v['rows']:,}" for k, v in stored["incremental"]["compared"].items())}; piece fields differing '
-          f'between the incremental head and the root: {[f for f in stored["incremental"]["pieceFields"] if stored["incremental"]["pieceFields"][f] != stored["root"]["pieceFields"][f]]})'
-          + (f'; first differing pieces {first}' if first else ''), stored['incremental']['compared'] == stored['root']['compared'] == stored['root2']['compared'],
-          dict(stored=stored, firstDifferingPieces=first), defer=True)
-    vector = [key for key in heads['incremental'] if key.startswith(('search semantic', 'search hybrid'))]
-    others = [key for key in heads['incremental'] if key not in vector]
-    plain = sorted(key for key in others if not heads['incremental'][key] == heads['root'][key] == heads['root2'][key])
+          f'between the incremental head and the root: {differing_fields})' + (f'; first differing pieces {first}' if first else ''),
+          stored['incremental']['compared'] == stored['root']['compared'] == stored['root2']['compared'], dict(stored=stored, firstDifferingPieces=first), defer=True)
+    # (2) exact answers
+    unequal = sorted(f'{mode} {query[:40]!r}' for mode, query in vector_keys
+                     if not [(r['ordinal'], r['score']) for r in measured['incremental']['exact'][(mode, query)]]
+                     == [(r['ordinal'], r['score']) for r in measured['root']['exact'][(mode, query)]]
+                     == [(r['ordinal'], r['score']) for r in measured['root2']['exact'][(mode, query)]])
+    check(f'H7: {len(vector_keys)} exact semantic and hybrid answers ({len(queries)} queries; best {EXACT_TOP} rows by content identity and score) are '
+          f'identical on the incremental head and both roots' + (f'; DIFFERING (a product defect): {unequal}' if unequal else ''), not unequal,
+          {key: {name: measured[name]['exact'] for name in heads} for key in unequal[:2]}, defer=True)
+    # (3) ANN: recall of the product's answers against the exact ones (content identity or a distance tie), per head
+    recalls = {name: round(sum(1 for v in m['judged'].values() if v in ('exact', 'tie')) / len(vector_keys), 4) for name, m in measured.items()}
+    nearer = {name: [f'{mode} {query[:40]!r}' for (mode, query), chunk in m['chunks'].items() if mode == 'semantic' and chunk
+                     and chunk['distance'] < m['exact'][(mode, query)][0]['distance']] for name, m in measured.items()}
+    check(f'H7: no product semantic answer is nearer than its exact answer (the exact leg sees every visible row): {nearer}', not any(nearer.values()), nearer, defer=True)
+    differences = {}
+    for a, b in (('incremental', 'root'), ('root', 'root2')):
+        found = {}
+        for key in vector_keys:
+            x, y = measured[a]['chunks'][key], measured[b]['chunks'][key]
+            if x and y and x['ordinal'] != y['ordinal']:
+                found[f'{key[0]} {key[1][:40]!r}'] = dict(kind='tie' if (x['distance'], x['lex']) == (y['distance'], y['lex']) else 'approximation',
+                                                          **{a: x, b: y}, exact=measured[a]['exact'][key][0])
+        differences[f'{a} vs {b}'] = found
+    note(f'H7: ANN recall (the product answer\'s best chunk is the exact one or a distance tie) over {len(vector_keys)} semantic and hybrid answers {recalls}; '
+         f'per head {[(name, dict(collections.Counter(m["judged"].values()))) for name, m in measured.items()]}; differences between heads (ordinal, exact distance, '
+         f'lexical rank) {json.dumps(differences)}; index rows no reader sees {json.dumps({name: m["indexRows"] for name, m in measured.items()})}')
+    check(f'H7: the incremental head\'s ANN recall {recalls["incremental"]} is not below the two roots\' range ({recalls["root"]}, {recalls["root2"]}); index rows no '
+          f'reader sees: {json.dumps({name: m["indexRows"] for name, m in measured.items()})}', recalls['incremental'] >= min(recalls['root'], recalls['root2']),
+          dict(recalls=recalls, differences=differences), defer=True)
+    # (4) lexical answers, pages, session
+    others = [key for key in measured['incremental']['answers'] if not key.startswith(('search semantic', 'search hybrid'))]
+    plain = sorted(key for key in others if not measured['incremental']['answers'][key] == measured['root']['answers'][key] == measured['root2']['answers'][key])
     check(f'H7: {len(others)} lexical answers, chunk and passage pages and the session are identical up to ids on the incremental head and both roots'
           + (f'; differing: {plain}' if plain else ''), not plain, plain, defer=True)
-    unequal = sorted(key for key in vector if not exact['incremental'][key] == exact['root'][key] == exact['root2'][key])
-    check(f'H7: {len(vector)} exact semantic and hybrid answers ({len(queries)} queries) are identical up to ids on the incremental head and both roots'
-          + (f'; differing: {unequal}' if unequal else ''), not unequal,
-          {key: {head: str(exact[head][key])[:600] for head in exact} for key in unequal[:3]}, defer=True)
-    kinds = {pair: {key: kind for key in vector if (kind := classify(heads[pair[0]][key], exact[pair[0]][key], heads[pair[1]][key], exact[pair[1]][key]))}
-             for pair in (('incremental', 'root'), ('root', 'root2'))}
-    distances = {key: {head: dict(ann=scores(heads[head][key]), exact=scores(exact[head][key])) for head in heads}
-                 for key in {key for found in kinds.values() for key in found}}
-    note('H7: ANN differences ' + json.dumps({f'{a} vs {b}': found for (a, b), found in kinds.items()}) + '; scores (similarity = 1 - cosine distance; '
-         'hybrid: fused) ' + json.dumps(distances))
-    semantic = [key for key in vector if key.startswith('search semantic')]
-    recalls = {head: round(sum(recall(heads[head][key], exact[head][key]) for key in semantic) / len(semantic), 4) for head in heads}
-    note(f'H7: ANN recall@k (tie-aware, k = the exact answer\'s chunks) over {len(semantic)} semantic queries {recalls}; index rows no reader sees {json.dumps(invisible)}')
-    check(f'H7: the incremental head\'s ANN recall {recalls["incremental"]} is not below the two roots\' range ({recalls["root"]}, {recalls["root2"]}); '
-          f'invisible rows in the index: {json.dumps(invisible)}', recalls['incremental'] >= min(recalls['root'], recalls['root2']),
-          dict(recalls=recalls, invisible=invisible), defer=True)
-    content = {f'{a} vs {b}': [key for key, kind in found.items() if kind == 'content'] for (a, b), found in kinds.items()}
-    check(f'H7: every ANN difference is an exact tie or an approximation (an answer that is not its head\'s exact answer): {content}',
-          not any(content.values()), content, defer=True)
-    baseline = set(kinds[('root', 'root2')].values()) | {'tie'}
-    beyond = sorted(set(kinds[('incremental', 'root')].values()) - baseline)
-    check(f'H7: the ANN differences between the incremental head and the root ({sorted(set(kinds[("incremental", "root")].values()))}, '
-          f'{len(kinds[("incremental", "root")])} answers) are no larger in kind than between the two roots ({sorted(set(kinds[("root", "root2")].values()))}, '
-          f'{len(kinds[("root", "root2")])} answers)', not beyond, kinds, defer=True)
     note(f'H: the {H_APPENDS} appends and their publications took {growth_seconds / 60:.1f} min')
     h.stub.stop()
     return dict(fixture=fixture.summary(), shape=h.stub.shape_file.read_text(), rootIndexing=root_indexing, revisions=revisions, growthSeconds=round(growth_seconds, 1),
-                republications=republications, queries=len(queries), stored=stored, indexRows=invisible, recall=recalls,
-                annDifferences={f'{a} vs {b}': found for (a, b), found in kinds.items()}, annScores=distances,
-                exactDiffering=unequal, plainDiffering=plain, servers=[uploads] + servers_seen)
+                republications=republications, queries=len(queries), stored=stored, provenance=provenances,
+                indexRows={name: m['indexRows'] for name, m in measured.items()}, recall=recalls, annDifferences=differences,
+                judged={name: {f'{k[0]} {k[1][:40]!r}': v for k, v in m['judged'].items()} for name, m in measured.items()},
+                exactDiffering=unequal, plainDiffering=plain, preserved={name: m['preserved'] for name, m in measured.items()},
+                servers=[uploads] + servers_seen)
 
 
 def hnsw_bytes():
@@ -2410,7 +2466,7 @@ def hnsw_bytes():
 # run: (function, free space it needs, wall-time budget s, consumed-disk budget B) — the budgets of spec §9 (G: the whole
 # run; its initial upload and its growth with the edit are budgeted separately, G_UPLOAD_BUDGET_S and GROWTH_BUDGET_S).
 RUNS = {'A': (run_a, 50 * GiB, 4 * 3600, 50 * 10**9), 'B': (run_b, 110 * GiB, 14 * 3600, 110 * 10**9), 'D': (run_d, 2 * GiB, 30 * 60, None),
-        'E': (run_e, 1 * GiB, 15 * 60, None), 'G': (run_g, 25 * GiB, 60 * 60, 25 * 10**9), 'H': (run_h, 60 * GiB, 8 * 3600, 60 * 10**9)}
+        'E': (run_e, 1 * GiB, 15 * 60, None), 'G': (run_g, 25 * GiB, 60 * 60, 25 * 10**9), 'H': (run_h, 60 * GiB, 9 * 3600, 60 * 10**9)}
 
 
 def main():

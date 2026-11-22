@@ -36,7 +36,8 @@
 #      lag and writes not growing across the versions; then the head republished twice as a root (RetryJob,
 #      incrementalPublication=false on another server; the second root is the ANN baseline). Against both roots: the stored
 #      content (visible indexed rows) and the exact nearest-neighbour answers (index scans disabled) are equal, lexical
-#      answers and pages too; the incremental head's ANN recall is not below the roots'. ≤ 8 h, ≤ 60 GB.
+#      answers and pages too; the incremental head's ANN recall (semantic and hybrid) is not below the roots'; each
+#      head's database is kept as a dump under the data root (not removed). ≤ 9 h, ≤ 60 GB (the dumps not counted).
 #   G  the 1 GiB session grows by 20 appends of +0.5 % (each incremental; collector CPU per append), then a same-length
 #      in-place edit of a line in the middle plus an append: a replacement (source-prefix-changed) whose archive equals the
 #      file. The initial 1 GiB upload ≤ 30 min, the growth with the edit ≤ 30 min, the run ≤ 1 h; ≤ 25 GB.
