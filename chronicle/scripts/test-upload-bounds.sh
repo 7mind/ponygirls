@@ -25,7 +25,10 @@
 #   B  B′ 4,400,000,000 raw bytes with records of 9-20 MiB (large parts), appended to; raw_bytes > 2^32 exact; pages
 #      holding the large records through the CLI and the browser protocol; Archive search ≤ 1.0 s and within 0.2 s of an
 #      A run's (UPLOAD_BOUNDS_COMPARE_A=its output); the downloads as in A (≥ 4 GiB); the head's indexing verdict while
-#      four other sessions index. ≤ 14 h, ≤ 110 GB: run it with the data root below and a long wrapper timeout.
+#      four other sessions index; stage l5 (B″): then a ≈ 1 % append (+44,000,000 bytes with a 10 MiB record) to the
+#      indexed head, published incrementally (kind, rows and HNSW insertions = the tail, WAL, lag from the commit to the
+#      switch, peak heap, no semantic search unavailable meanwhile), and semantic and hybrid search, CLI and MCP, find the
+#      session first. ≤ 16 h, ≤ 130 GB: run it with the data root below and a long wrapper timeout.
 #   D  a 2 MB session grows by six appends while its jobs run (stub annotation delay 1 s per window) and ends indexed at
 #      its head; jobs and windows spent. ≤ 30 min.
 #   E  gate O (scripts/test-main-collector.sh) against this tree's server, heaps bounded and the server probed; then the raw

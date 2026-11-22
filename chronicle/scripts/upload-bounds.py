@@ -1271,8 +1271,9 @@ class Harness:
                   abs(split['publicationSeconds'] - logged_seconds) <= PUBLICATION_TOLERANCE_S and split['hnswRowsPerSecond'] > 0, split)
         check(f'{label}: no out-of-memory; the peak live heap during indexing was {heap["peakLiveHeapMB"]} MB after a full collection, '
               f'{heap["peakHeapBeforeCollectionMB"]} MB before one ({heap["collections"]} collections)', 'OutOfMemoryError' not in log and 'Java heap space' not in log, heap)
-        note(f'{label}: semantic searches while it published: {len(probes)}, {len(unavailable)} unavailable'
-             + (f' (from {unavailable[0]["t"]} s to {unavailable[-1]["t"]} s, phase {sorted({p["phase"] for p in unavailable})})' if unavailable else ''))
+        check(f'{label}: semantic searches while it published: {len(probes)}, {len(unavailable)} unavailable'
+              + (f' (from {unavailable[0]["t"]} s to {unavailable[-1]["t"]} s, phase {sorted({p["phase"] for p in unavailable})})' if unavailable else ''),
+              not unavailable, unavailable[:5], defer=True)
         searches = self.searches(label, session)
         return dict(job=job_row, split=split, heap=heap, switchedSeconds=int(switched[0][1]) if switched else None, probes=probes, searches=searches)
 
@@ -1296,12 +1297,13 @@ class Harness:
         outcome = 'ok' if result and not result.get('isError') else 'unavailable' if 'unavailable' in text or 'candidates incomplete' in text else 'failed'
         return dict(outcome=outcome, seconds=round(elapsed, 2), text=text)
 
-    def searches(self, label, session):
+    def searches(self, label, session, generation=None):
         """Semantic and hybrid search through the CLI and MCP with a query equal to the text of a chunk in the middle of the
-        session's published generation (the stub gives it that chunk's vector): the session is the first result; then
-        STEADY_SEARCHES more of each, none `unavailable`."""
-        generation = one("SELECT published FROM ch_sources WHERE id=:'arg0'", session)
-        middle = int(one("SELECT max(ordinal) / 2 FROM ch_chunks WHERE generation=:'arg0'", generation))
+        chunks the session's published generation (or `generation`) wrote (an incremental version: its own, the tail; the
+        stub gives the query that chunk's vector): the session is the first result; then STEADY_SEARCHES more of each, none
+        `unavailable`."""
+        generation = generation or one("SELECT published FROM ch_sources WHERE id=:'arg0'", session)
+        middle = int(one("SELECT (min(ordinal) + max(ordinal)) / 2 FROM ch_chunks WHERE generation=:'arg0'", generation))
         query = one("SELECT value->>'text' FROM ch_chunks WHERE generation=:'arg0' AND ordinal >= :'arg1' AND char_length(value->>'text') BETWEEN 64 AND :'arg2' "
                     "AND value->>'text' = btrim(value->>'text') AND position(chr(10) IN value->>'text') = 0 ORDER BY ordinal LIMIT 1", generation, middle, SEARCH_QUERY_CHARS)
         results, outcomes = {}, []
@@ -1665,7 +1667,8 @@ def run_a(root):
 def run_b(root):
     """B′ (≥ 4 GiB): 4,400,000,000 raw bytes with records of 9-20 MiB (large parts), appended to, the collector direct
     (U8 finding 1); pages holding the large records through the CLI; downloads ≥ 4 GiB byte-exact; the L3 search target
-    and its spread against an A run (UPLOAD_BOUNDS_COMPARE_A); the head's indexing verdict while other sessions index."""
+    and its spread against an A run (UPLOAD_BOUNDS_COMPARE_A); the head's indexing verdict while other sessions index;
+    stage l5: then a ≈ 1 % append to the indexed head and its incremental publication (incremental_append)."""
     h = Harness(root, 'B')
     sizes, total = [int(9.5 * MiB), 12 * MiB, int(16.5 * MiB), 20 * MiB], int(4_400_000_000 * SCALE)
     if total > 2 * sum(sizes):
@@ -1693,16 +1696,21 @@ def run_b(root):
         check('B1: the committed attempt reports receivedRawBytes exactly (i64)', status == 200 and state['phase'] == 'Committed'
               and int(state['receivedRawBytes']) == big.bytes and state['receivedMessages'] == big.messages, state)
     wal = wal_per_raw_byte('B1 replacement upload of the 4.4 GB session and four small sessions', big.bytes + sum(f.bytes for f in smalls))
-    with Phase('B2 append (+44,000,000 bytes with one 10 MiB record)'):
+
+    def append(label, previous):
+        """+44,000,000 bytes (at least 24 MiB) with one 10 MiB record through the collector's incremental path."""
         big.large[big.messages + 100] = 10 * MiB
         before = big.bytes
         big.write(max(int(44_000_000 * SCALE), 24 * MiB), RARE_APPENDED)
-        h.uploaded('B2', h.collector.once('B2 append'), 1, 0)
-        _, head = h.stored('B2', big, 2, True, first)
-        check('B2: the append carried its large record in a large part', head['upload']['largeParts'] >= 1, head['upload'])
-        status, state = h.api('GET', f"/api/ingest/uploads/{head['upload']['id']}")
-        check('B2: the append attempt reports its received bytes exactly', status == 200 and int(state['receivedRawBytes']) == big.bytes - first['rawBytes'], state)
-        h.incremental('B2', big, big.bytes - before)
+        h.uploaded(label, h.collector.once(f'{label} append'), 1, 0)
+        _, appended = h.stored(label, big, previous['revision'] + 1, True, previous)
+        check(f'{label}: the append carried its large record in a large part', appended['upload']['largeParts'] >= 1, appended['upload'])
+        status, state = h.api('GET', f"/api/ingest/uploads/{appended['upload']['id']}")
+        check(f'{label}: the append attempt reports its received bytes exactly', status == 200 and int(state['receivedRawBytes']) == big.bytes - previous['rawBytes'], state)
+        h.incremental(label, big, big.bytes - before)
+        return appended
+    with Phase('B2 append (+44,000,000 bytes with one 10 MiB record)'):
+        head = append('B2', first)
     uploads, watch = None, None
     if STAGE == 'l5':
         uploads = h.stop()
@@ -1729,10 +1737,91 @@ def run_b(root):
                       dict(a=a_seconds, b=b_seconds, aScale=a['scale']), defer=True)
     with Phase('B5 raw downloads of the 4.4 GB session'):
         b5 = h.downloads('B5', big, session, 2)
+    if STAGE == 'prefix':
+        outside_stage.append('B6-B8: a ≈ 1 % append to the indexed head publishes incrementally; semantic and hybrid search still find the session (stage l5)')
+        b6 = None
+    else:
+        b6 = incremental_append(h, session, head, append)
     s2 = h.stop()
     h.stub.stop()
     return dict(fixture=big.summary(), heads=dict(first=first, appended=head), jobs=h.jobs(session), smallJobs=small_jobs, budget=h.budget, walPerRawByte=wal,
-                indexing=b3, reads=b4, downloads=b5, servers=[x for x in (uploads, s2) if x])
+                indexing=b3, reads=b4, downloads=b5, append=b6, servers=[x for x in (uploads, s2) if x])
+
+
+def incremental_append(h, session, previous, append):
+    """B″ (stage l5): after the first index, a ≈ 1 % append (`append`, B2's shape) through the collector's incremental path
+    while the server with workers runs, and its publication: the kind (every attempt's logged kind incremental; the next
+    version of the first index's lineage), the rows it wrote (chunks = search rows = HNSW insertions = the tail, window K
+    and the addition, and none of the stub's one passage before the cut: its summary and tags never change), segment rows,
+    search rows retired, the HNSW index's growth, WAL of the upload and of the publication, the lag from the upload's commit
+    to the logged switch, the peak heap from the append's upload to the switch, semantic searches while it published (none
+    unavailable); then semantic and hybrid search, CLI and MCP, find the session first by a chunk the append wrote and by one
+    of the first index."""
+    parent = one("SELECT published FROM ch_sources WHERE id=:'arg0'", session)
+    search_rows = lambda: int(one("SELECT count(*) FROM ch_search_chunks WHERE session_id=:'arg0'", session))
+    hnsw = lambda: int(one(f"SELECT pg_relation_size('ch_search_hnsw_d{DIMENSIONS}')"))
+    search_before, hnsw_before, calls_before, began = search_rows(), hnsw(), h.stub.counts(), time.monotonic()
+    with Phase('B6 append (+44,000,000 bytes with one 10 MiB record) to the indexed head'):
+        head = append('B6', previous)
+    revision = head['revision']
+    committed = float(one("SELECT extract(epoch FROM terminal_at) FROM ch_uploads WHERE id=:'arg0'", head['upload']['id']))
+    watch = IndexWatch(h, session, revision)  # after the commit: a lane may have claimed the job already (no claim boundary)
+    with Phase('B7 the append\'s incremental publication'):
+        ended = watch.finish('B7')
+        job, samples, probes, sample = watch.job, watch.samples, watch.probes, watch.samples[-1]
+        (h.root / 'index-B7.jsonl').write_text(''.join(json.dumps(x) + '\n' for x in samples))
+        check(f'B7: the job of revision {revision} completes ({sample["attempts"]} attempt(s))', sample['state'] == 'Complete', sample)
+        job_row = h.indexed('B7', session, revision)
+        h.wait('B7 search row retirement', lambda: one("SELECT count(*) FROM ch_search_retirements WHERE session_id=:'arg0'", session) == '0')
+        generation = one("SELECT published FROM ch_sources WHERE id=:'arg0'", session)
+        names = ['lineage', 'version', 'parent', 'pieces', 'lastWindow', 'cutFirstOrdinal', 'cutOpenPassagePieces', 'cutWindows', 'cutBytes']
+        lineage = {g: dict(zip(names, sql(
+            "SELECT coalesce(g.lineage::text,''), coalesce(g.lineage_version,-1), coalesce(l.parent::text,''), l.pieces, coalesce(l.last_window,-1), "
+            "coalesce((l.cut->'state'->>'nextPieceOrdinal')::bigint,-1), coalesce((l.cut->'state'->'open'->'passage'->>'pieceCount')::bigint,-1), "
+            "coalesce(jsonb_array_length(l.cut->'firstPieces'),0), coalesce(pg_column_size(l.cut),0) "
+            "FROM ch_generations g JOIN ch_generation_lineage l ON l.generation=g.id WHERE g.id=:'arg0'", g)[0])) for g in (parent, generation)}
+        old, new = lineage[parent], lineage[generation]
+        first_ordinal = int(old['cutFirstOrdinal'])
+        chunks, searches, rewritten = (int(x) for x in one(
+            "SELECT count(*), count(s.id), count(*) FILTER (WHERE c.ordinal < :'arg1') FROM ch_chunks c LEFT JOIN ch_search_chunks s ON s.id=c.id AND s.generation=c.generation "
+            "WHERE c.generation=:'arg0'", generation, first_ordinal))
+        closed, inserted = (int(x) for x in one("SELECT count(*) FILTER (WHERE until=:'arg1'::int), count(*) FILTER (WHERE since=:'arg1'::int) FROM ch_lineage_segments "
+                                                "WHERE lineage=:'arg0'", new['lineage'], new['version']))
+        log = re.sub(r'\x1b\[[0-9;]*m', '', h.server.log_path.read_text(errors='replace'))
+        kinds = re.findall(r'^I \S+ .*publication started jobId=(?:\w+=)?' + job + r' .*?publication=(?:\w+=)?(\w+)', log, re.M)
+        started_at = re.findall(r'^I (\S+) .*publication started jobId=(?:\w+=)?' + job + r' ', log, re.M)
+        switched = re.findall(r'^I (\S+) .*publication switched jobId=(?:\w+=)?' + job + r' .*?seconds=(?:\w+=)?(\d+)', log, re.M)
+        accepted = re.findall(r'windows accepted jobId=(?:\w+=)?' + job + r' .*?totalWindows=(?:\w+=)?(\d+) reusedDecisions=(?:\w+=)?(\d+) reusedEmbeddingParts=(?:\w+=)?(\d+)', log)
+        epoch = lambda at: datetime.datetime.fromisoformat(at).timestamp()  # the server logs local time, as this process reads it
+        heap = h.server.gc_peaks(began, ended)
+        result = dict(revision=revision, rawBytes=head['rawBytes'], addedRawBytes=head['rawBytes'] - previous['rawBytes'], job=job_row, kinds=kinds, parent=old, published=new,
+                      addedPieces=int(new['pieces']) - int(old['pieces']), addedWindows=int(new['lastWindow']) - int(old['lastWindow']),
+                      written=dict(chunks=chunks, searchRows=searches, rewrittenBeforeCut=rewritten, tail=int(new['pieces']) - first_ordinal),
+                      segments=dict(closed=closed, inserted=inserted), searchRowsRetired=search_before + searches - search_rows(), hnswBytesDelta=hnsw() - hnsw_before,
+                      insertsSampled=dict(chunks=sample['chunkRows'] - samples[0]['chunkRows'], searchRows=sample['searchRows'] - samples[0]['searchRows']),
+                      uploadWalBytes=phases[-1]['walBytes'], publicationWalBytes=sample['wal'],
+                      lagSeconds=round(epoch(switched[-1][0]) - committed, 1) if switched else None,
+                      commitToPublicationStartSeconds=round(epoch(started_at[-1]) - committed, 1) if started_at else None,
+                      publicationLoggedSeconds=int(switched[-1][1]) if switched else None, windowsAccepted=accepted,
+                      calls={k: v - calls_before[k] for k, v in h.stub.counts().items()}, heap=heap, split=phase_split(samples),
+                      probes=dict(total=len(probes), outcomes={o: sum(1 for p in probes if p['outcome'] == o) for o in {p['outcome'] for p in probes}},
+                                  maxSeconds=max((p['seconds'] for p in probes), default=None)))
+        note(f'B7: {json.dumps(result, default=str)}')
+        check(f'B7: the publication is incremental (logged {kinds}; version {new["version"]} of the first index\'s lineage, its parent the first index, '
+              f'cut window {old["lastWindow"]})', kinds and set(kinds) == {'incremental'} and new['lineage'] == old['lineage'] and new['parent'] == parent
+              and int(new['version']) == int(old['version']) + 1, result)
+        check(f'B7: it wrote {chunks:,} chunks = {searches:,} search rows (HNSW insertions) = the tail ({result["written"]["tail"]:,}: window K and the '
+              f'{result["addedPieces"]:,} added pieces), {rewritten} before the cut (the open passage\'s {old["cutOpenPassagePieces"]} pieces keep their unchanged '
+              f'summary and tags); {closed}/{inserted} segment rows closed/inserted, {result["searchRowsRetired"]:,} search rows retired',
+              chunks == searches == result['written']['tail'] and rewritten == 0, result)
+        check(f'B7: no out-of-memory; lag from the commit to the switch {result["lagSeconds"]} s (publication {result["publicationLoggedSeconds"]} s), peak live heap '
+              f'{heap["peakLiveHeapMB"]} MB after a full collection, {heap["peakHeapBeforeCollectionMB"]} MB before one ({heap["collections"]} collections)',
+              'OutOfMemoryError' not in log and 'Java heap space' not in log and switched, heap)
+        unavailable = [p for p in probes if p['outcome'] == 'unavailable']
+        check(f'B7: semantic searches while it published: {len(probes)}, {len(unavailable)} unavailable', not unavailable, unavailable[:5], defer=True)
+    with Phase('B8 searches after the append'):
+        result['searches'] = dict(appended=h.searches('B8 (a chunk the append wrote)', session), inherited=h.searches('B8 (a chunk of the first index)', session, parent))
+    return result
 
 
 def run_d(root):
@@ -1934,7 +2023,7 @@ def run_g(root):
 
 # run: (function, free space it needs, wall-time budget s, consumed-disk budget B) — the budgets of spec §9 (G: the whole
 # run; its initial upload and its growth with the edit are budgeted separately, G_UPLOAD_BUDGET_S and GROWTH_BUDGET_S).
-RUNS = {'A': (run_a, 50 * GiB, 4 * 3600, 50 * 10**9), 'B': (run_b, 110 * GiB, 14 * 3600, 110 * 10**9), 'D': (run_d, 2 * GiB, 30 * 60, None),
+RUNS = {'A': (run_a, 50 * GiB, 4 * 3600, 50 * 10**9), 'B': (run_b, 130 * GiB, 16 * 3600, 130 * 10**9), 'D': (run_d, 2 * GiB, 30 * 60, None),
         'E': (run_e, 1 * GiB, 15 * 60, None), 'G': (run_g, 25 * GiB, 60 * 60, 25 * 10**9)}
 
 
