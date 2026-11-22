@@ -2123,7 +2123,11 @@ EXACT_SQL = """WITH g AS (SELECT gg.id, gg.lineage, gg.lineage_version AS v FROM
              embedding <=> :'arg1'::vector AS distance FROM candidates),
   ranked2 AS (SELECT *, row_number() OVER (ORDER BY lex DESC, session_id, ordinal, id) AS lr, row_number() OVER (ORDER BY distance, session_id, ordinal, id) AS vr FROM ranked),
   scored AS (SELECT *, %(score)s AS score FROM ranked2)
-SELECT ordinal, score, distance, lex FROM scored ORDER BY score DESC, session_id, ordinal, id LIMIT %(top)d"""
+%(select)s"""
+# The exact answer's best rows; the exact scores of given pieces (an ANN answer's) in the same candidate universe, with the
+# same rank tie-breaks (none when a piece is outside it).
+EXACT_SELECT_TOP = "SELECT ordinal, score, distance, lex FROM scored ORDER BY score DESC, session_id, ordinal, id LIMIT %(top)d"
+EXACT_SELECT_PIECES = "SELECT ordinal, score, distance, lex FROM scored WHERE ordinal = ANY(string_to_array(:'arg3', ',')::int[])"
 EXACT_LEGS = {'semantic': "candidates AS (SELECT * FROM ann),",
               'hybrid': """lexical AS MATERIALIZED (SELECT * FROM visible WHERE document @@ websearch_to_tsquery('english', :'arg2')
                            ORDER BY ts_rank_cd(document, websearch_to_tsquery('english', :'arg2')) DESC, session_id, ordinal, id LIMIT %(limit)d),
@@ -2132,11 +2136,14 @@ EXACT_SCORES = {'semantic': '1.0-distance', 'hybrid': '(CASE WHEN lex>0 THEN 1.0
 EXACT_TOP, CANDIDATES_PER_LEG, RECIPROCAL_RANK_CONSTANT = 5, 1000, 60  # CandidatePolicy.candidatesPerLeg / reciprocalRankConstant
 
 
-def exact_answer(session, mode, query, vector):
-    """The EXACT_TOP best rows (ordinal, score, distance, lex) of the exact answer (EXACT_SQL), index scans off."""
-    statement = EXACT_SQL % dict(dimensions=DIMENSIONS, limit=CANDIDATES_PER_LEG, top=EXACT_TOP, legs=EXACT_LEGS[mode] % dict(limit=CANDIDATES_PER_LEG),
-                                 score=EXACT_SCORES[mode] % dict(k=RECIPROCAL_RANK_CONSTANT))
-    rows = sql(f"BEGIN; SET LOCAL enable_indexscan = off; SET LOCAL enable_indexonlyscan = off; {statement}; COMMIT", session, vector, query)
+def exact_answer(session, mode, query, vector, pieces=None):
+    """The EXACT_TOP best rows (ordinal, score, distance, lex) of the exact answer (EXACT_SQL), index scans off; with
+    `pieces` (ordinals) instead the rows of those pieces in the exact candidate universe (absent when outside it)."""
+    select = EXACT_SELECT_TOP % dict(top=EXACT_TOP) if pieces is None else EXACT_SELECT_PIECES
+    statement = EXACT_SQL % dict(dimensions=DIMENSIONS, limit=CANDIDATES_PER_LEG, legs=EXACT_LEGS[mode] % dict(limit=CANDIDATES_PER_LEG),
+                                 score=EXACT_SCORES[mode] % dict(k=RECIPROCAL_RANK_CONSTANT), select=select)
+    rows = sql(f"BEGIN; SET LOCAL enable_indexscan = off; SET LOCAL enable_indexonlyscan = off; {statement}; COMMIT", session, vector, query,
+               ','.join(str(ordinal) for ordinal in pieces or [-1]))
     return [dict(ordinal=int(o), score=float(sc), distance=float(d), lex=float(lx)) for o, sc, d, lx in rows]
 
 
@@ -2151,28 +2158,42 @@ def answer_chunk(session, answer, vector, query):
     return dict(ordinal=int(row[0]), distance=float(row[1]), lex=float(row[2]), score=hit['chunks'][0]['score'])
 
 
-def judged(chunk, exact):
-    """An ANN answer's best chunk against the exact answer's best: `exact` (the same piece), `tie` (another piece at the
-    same exact distance and lexical rank: interchangeable for the ranking), `approximation` (a farther piece, the nearer one
-    not reached), or `missing`."""
+def judged(chunk, exact, picked):
+    """An ANN answer's best piece against the exact answer: `exact` (the exact answer's best piece), `tie` (another piece
+    whose score in the exact candidate universe — production ranks with their tie-breaks: for hybrid the RRF score, not
+    equal distance and lexical rank — equals the best one's), `approximation` (a lower score there, or a piece outside it),
+    `missing` (no answer). `picked`: the piece's row in the exact universe (exact_answer with pieces), or None."""
     if chunk is None:
         return 'missing'
-    best = exact[0]
-    if chunk['ordinal'] == best['ordinal']:
+    if chunk['ordinal'] == exact[0]['ordinal']:
         return 'exact'
-    return 'tie' if chunk['distance'] == best['distance'] and chunk['lex'] == best['lex'] else 'approximation'
+    return 'tie' if picked is not None and picked['score'] == exact[0]['score'] else 'approximation'
 
 
 def provenance(session):
-    """Rows of the published head whose stored revision is not their writer's: own rows (written by the published
-    generation) must carry the published revision, retained rows the revision of their origin generation."""
-    row = one("""WITH g AS (SELECT gg.id, gg.revision, gg.lineage, gg.lineage_version AS v FROM ch_sources s JOIN ch_generations gg ON gg.id=s.published WHERE s.id=:'arg0'),
-        held AS (SELECT m.origin, m.lo, m.hi FROM g JOIN ch_lineage_segments m ON m.kind='piece' AND m.lineage=g.lineage AND m.since<=g.v AND (m.until IS NULL OR m.until>g.v))
-      SELECT count(*) FILTER (WHERE sc.generation=g.id), count(*) FILTER (WHERE sc.generation=g.id AND sc.revision<>g.revision),
-             count(*) FILTER (WHERE sc.generation<>g.id), count(*) FILTER (WHERE sc.generation<>g.id AND sc.revision<>o.revision)
-      FROM g, held m JOIN ch_search_chunks sc ON sc.generation=m.origin AND sc.ordinal>=m.lo AND sc.ordinal<m.hi JOIN ch_generations o ON o.id=sc.generation
-      WHERE sc.session_id=:'arg0'""", session)
-    return dict(own=int(row[0]), ownWrongRevision=int(row[1]), retained=int(row[2]), retainedWrongRevision=int(row[3]))
+    """From EVERY visible piece (each chunk inside a piece segment of the published head valid at its version): its search
+    row must exist and carry the chunk's origin generation, ordinal and session, and the writer's revision (the published
+    revision for own rows, the origin generation's for retained rows). `checked` counts the pieces passing all of it; it
+    must equal the visible pieces and the published piece count, and be nonzero."""
+    row = one("""WITH g AS (SELECT gg.id, gg.revision, gg.lineage, gg.lineage_version AS v, (SELECT l.pieces FROM ch_generation_lineage l WHERE l.generation=gg.id) AS pieces
+                  FROM ch_sources s JOIN ch_generations gg ON gg.id=s.published WHERE s.id=:'arg0'),
+        held AS (SELECT m.origin, m.lo, m.hi FROM g JOIN ch_lineage_segments m ON m.kind='piece' AND m.lineage=g.lineage AND m.since<=g.v AND (m.until IS NULL OR m.until>g.v)),
+        visible AS (SELECT c.id, c.generation, c.ordinal FROM held m JOIN ch_chunks c ON c.generation=m.origin AND c.ordinal>=m.lo AND c.ordinal<m.hi)
+      SELECT count(*), count(sc.id), count(*) FILTER (WHERE sc.id IS NOT NULL AND sc.generation<>v.generation),
+             count(*) FILTER (WHERE sc.id IS NOT NULL AND sc.ordinal IS DISTINCT FROM v.ordinal), count(*) FILTER (WHERE sc.id IS NOT NULL AND sc.session_id<>:'arg0'),
+             count(*) FILTER (WHERE v.generation=g.id), count(*) FILTER (WHERE v.generation=g.id AND sc.revision IS DISTINCT FROM g.revision),
+             count(*) FILTER (WHERE v.generation<>g.id), count(*) FILTER (WHERE v.generation<>g.id AND sc.revision IS DISTINCT FROM o.revision),
+             count(*) FILTER (WHERE sc.generation=v.generation AND sc.ordinal=v.ordinal AND sc.session_id=:'arg0'
+                              AND sc.revision=CASE WHEN v.generation=g.id THEN g.revision ELSE o.revision END),
+             max(g.pieces)
+      FROM g CROSS JOIN visible v JOIN ch_generations o ON o.id=v.generation LEFT JOIN ch_search_chunks sc ON sc.id=v.id""", session)
+    keys = ['visiblePieces', 'withSearchRow', 'wrongOrigin', 'wrongOrdinal', 'wrongSession', 'own', 'ownWrongRevision', 'retained', 'retainedWrongRevision',
+            'checked', 'publishedPieces']
+    return dict(zip(keys, (int(v) for v in row)))
+
+
+def provenance_ok(value):
+    return 0 < value['checked'] == value['visiblePieces'] == value['publishedPieces'] == value['withSearchRow']
 
 
 def preserve(label):
@@ -2364,7 +2385,9 @@ def run_h(root):
         check(f'{label}: {len(exact)} exact semantic and hybrid answers (original-vector leg over every visible row), the HNSW index unused ({used} scans)',
               used == 0 and all(exact.values()), used)
         chunks = {key: answer_chunk(session, products[key], vectors[key[1]], key[1]) for key in vector_keys}
-        result.update(exact=exact, chunks=chunks, judged={key: judged(chunks[key], exact[key]) for key in vector_keys})
+        picked = {key: next(iter(exact_answer(session, key[0], key[1], vectors[key[1]], [chunks[key]['ordinal']])), None) if chunks[key] else None
+                  for key in vector_keys}
+        result.update(exact=exact, chunks=chunks, picked=picked, judged={key: judged(chunks[key], exact[key], picked[key]) for key in vector_keys})
         result['preserved'] = preserve(name)
         measured[name] = result
         note(f'{label}: {name}: stored {json.dumps(result["stored"])}; provenance {result["provenance"]}; index rows {result["indexRows"]}; '
@@ -2405,8 +2428,9 @@ def run_h(root):
     # (1) stored content, after the provenance that allows excluding the search rows' revision
     stored = {name: m['stored'] for name, m in measured.items()}
     provenances = {name: m['provenance'] for name, m in measured.items()}
-    check(f'H7: every visible search row carries its writer\'s revision (own rows the published revision, retained rows their origin\'s): {provenances}',
-          all(v['ownWrongRevision'] == 0 and v['retainedWrongRevision'] == 0 for v in provenances.values()), provenances, defer=True)
+    check(f'H7: every visible piece has its search row with the chunk\'s origin, ordinal and session and its writer\'s revision (own rows the published '
+          f'revision, retained rows their origin\'s), checked = visible = published pieces > 0: {provenances}',
+          all(provenance_ok(v) for v in provenances.values()), provenances, defer=True)
     first = sorted(o for o in measured['incremental']['pieces'].keys() | measured['root']['pieces'].keys()
                    if measured['incremental']['pieces'].get(o) != measured['root']['pieces'].get(o))[:5]
     differing_fields = [f for f in stored['incremental']['pieceFields'] if stored['incremental']['pieceFields'][f] != stored['root']['pieceFields'][f]]
@@ -2434,10 +2458,11 @@ def run_h(root):
         for key in vector_keys:
             x, y = measured[a]['chunks'][key], measured[b]['chunks'][key]
             if x and y and x['ordinal'] != y['ordinal']:
-                found[f'{key[0]} {key[1][:40]!r}'] = dict(kind='tie' if (x['distance'], x['lex']) == (y['distance'], y['lex']) else 'approximation',
-                                                          **{a: x, b: y}, exact=measured[a]['exact'][key][0])
+                px, py = measured[a]['picked'][key], measured[b]['picked'][key]
+                found[f'{key[0]} {key[1][:40]!r}'] = dict(kind='tie' if px and py and px['score'] == py['score'] else 'approximation',
+                                                          **{a: x, b: y}, exactScores={a: px, b: py}, exact=measured[a]['exact'][key][0])
         differences[f'{a} vs {b}'] = found
-    note(f'H7: ANN recall (the product answer\'s best chunk is the exact one or a distance tie) over {len(vector_keys)} semantic and hybrid answers {recalls}; '
+    note(f'H7: ANN recall (the product answer\'s best piece is the exact one or ties its score in the exact universe) over {len(vector_keys)} semantic and hybrid answers {recalls}; '
          f'per head {[(name, dict(collections.Counter(m["judged"].values()))) for name, m in measured.items()]}; differences between heads (ordinal, exact distance, '
          f'lexical rank) {json.dumps(differences)}; index rows no reader sees {json.dumps({name: m["indexRows"] for name, m in measured.items()})}')
     check(f'H7: the incremental head\'s ANN recall {recalls["incremental"]} is not below the two roots\' range ({recalls["root"]}, {recalls["root2"]}); index rows no '
