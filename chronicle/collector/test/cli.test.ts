@@ -14,7 +14,7 @@ import { Collector } from '../src/collector.ts';
 import { loadConfig } from '../src/config.ts';
 import { UploadError, type Ingester } from '../src/ingest.ts';
 import { FileSecretReader } from '../src/runtime-privacy.ts';
-import { noGit, acceptingProgress } from './helpers.ts';
+import { noGit, acceptingProgress, lateClock } from './helpers.ts';
 import { IngestReceipt } from '../../generated/typescript/chronicle/api/IngestReceipt.js';
 
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
@@ -123,6 +123,9 @@ test('GoodCommunication control commands answer with a sentence by default and t
     assert.equal(answer('--exclusions'), 'No excluded directories.\n');
     assert.equal(answer('--pause'), 'Collection paused. Queued uploads are kept; --resume continues.\n');
     assert.deepEqual(JSON.parse(answer('--pause', '--json')) as unknown, { paused: true, exclusions: [] });
+    // A run while paused says so in its counters line and in one journal line with the same sentence.
+    const held = invoke(dir, undefined, ['--config', config, '--once'], project);
+    assert.deepEqual([held.status, (JSON.parse(held.stdout) as { paused: unknown }).paused, held.stderr], [0, 'collection-paused', 'chronicle-collector: collection-paused: Collection paused. Queued uploads are kept; --resume continues.\n']);
     assert.equal(answer('--resume'), 'Collection resumed.\n');
     assert.deepEqual(JSON.parse(answer('--json', '--resume')) as unknown, { paused: false, exclusions: [] });
     assert.equal(answer('--exclude', '.'), `Excluded ${project}.\n`);
@@ -194,7 +197,7 @@ test('GoodCommunication --clear-policy-tombstones lists, then once clears, only 
     // The dry run opens the state read-only: absent state stays absent, existing state keeps its bytes and modes.
     assert.equal(answer(), 'No collector state yet: nothing to clear.\n'); assert.equal(existsSync(state), false);
     const spool = new SqliteSpool(state);
-    const collect = (now: number) => new Collector(loadConfig(settings), spool, ingester, () => 0, noGit, acceptingProgress, new FileSecretReader()).runOnce(now);
+    const collect = (now: number) => new Collector(loadConfig(settings), spool, ingester, () => 0, lateClock, noGit, acceptingProgress, new FileSecretReader()).runOnce(now);
     try {
       // What an earlier release leaves: revision 1 acknowledged, then a policy change dropped the queued revision 2 and tombstoned its source.
       writeFileSync(transcript, raw); assert.equal((await collect(1)).uploaded, 1);

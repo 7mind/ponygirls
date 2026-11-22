@@ -8,7 +8,7 @@ import { loadConfig } from '../src/config.ts';
 import { discoverRoots, scanRoots } from '../src/discovery.ts';
 import { Collector } from '../src/collector.ts';
 import { MemorySpool } from '../src/spool.ts';
-import { noGit, acceptingProgress, syntheticSecrets } from './helpers.ts';
+import { noGit, acceptingProgress, syntheticSecrets, lateClock } from './helpers.ts';
 import type { Ingester } from '../src/ingest.ts';
 import { IngestRequest_JsonCodec } from '../../generated/typescript/chronicle/api/IngestRequest.js';
 import { IngestReceipt } from '../../generated/typescript/chronicle/api/IngestReceipt.js';
@@ -58,7 +58,7 @@ test('GoodCommunication specified: recorded profile roots do not alter tags, raw
     const c = config(home, { roots: [{ id: 'yolo:ExplicitClaim', format: 'pi', path: join(home, 'explicit') }] });
     const explicit = discoverRoots(c, 'linux').find(root => root.id === 'yolo:ExplicitClaim')!;
     assert.equal(explicit.profile, null);
-    const collector = new Collector(c, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets);
+    const collector = new Collector(c, spool, ingester, () => 0, lateClock, noGit, acceptingProgress, syntheticSecrets);
     assert.equal((await collector.runOnce(1)).uploaded, 4);
     const requests = ingester.payloads.map(decode);
     assert.deepEqual(new Set(requests.map(request => request.source.discoveryRootId)), new Set(['native', 'yolo:named', 'yolo:ExplicitClaim']));

@@ -129,13 +129,58 @@ export function scanRoots(roots: DiscoveredRoot[], config: Config): Scan {
   return result;
 }
 
+/** The file-status calls behind every stat of a source file. Tests replace them to decide what the kernel reports, e.g.
+ * its coarse ctime tick. */
+export const fileStatus = {
+  lstat: (path: string): BigIntStats => lstatSync(path, { bigint: true }),
+  fstat: (descriptor: number): BigIntStats => fstatSync(descriptor, { bigint: true }),
+};
 const sourceStat = (stat: BigIntStats): SourceStat => ({ dev: String(stat.dev), ino: String(stat.ino), size: String(stat.size), mtimeNs: String(stat.mtimeNs), ctimeNs: String(stat.ctimeNs) });
 export const sameStat = (a: SourceStat, b: SourceStat): boolean => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+/** File times advance in coarse ticks: the kernel's timer tick (at most 10 ms), whole seconds on some filesystems, 2 s for
+ * FAT, and the kernel stamps them from a clock that may lag the wall clock by a tick. A rewrite within the tick of the last
+ * change keeps size, mtime and ctime. 3 s covers the coarsest tick and the lag with a margin. */
+export const RACY_STAT_WINDOW_MS = 3_000;
+/** The clocks a read of a file is judged by. `wall` (ms since the epoch) is compared with the file's ctime, and only with it.
+ * `monotonic` (ms since this process started; never set back) measures the racy window; `process` names the process whose
+ * monotonic readings these are. */
+export interface FileClock { wall(): number; monotonic(): number; readonly process: string }
+/** When a read happened: both clocks, read before its stat. */
+export interface ReadTime { wall: number; monotonic: number; process: string }
+export const readTime = (clock: FileClock): ReadTime => ({ wall: clock.wall(), monotonic: clock.monotonic(), process: clock.process });
+/** A racy read: the process and its monotonic time. */
+export interface RacyStamp { process: string; at: number }
+/** `racy`: the read whose stat could still equal a later rewrite's; absent when it cannot. */
+export interface RacyMark { racy?: RacyStamp }
+/** Git's racy-clean rule on ctime (every change sets it from the kernel clock; mtime can be set freely): a stat taken at or
+ * after wall-clock `wallMs` is racy when its ctime is not older than the window before that, or is in the future. */
+export const racyStat = (stat: SourceStat, wallMs: number): boolean => BigInt(stat.ctimeNs) >= BigInt(wallMs - RACY_STAT_WINDOW_MS) * 1_000_000n;
+/** Monotonic time from a racy read to `at`. A read of an earlier process counts from this process's start: after a restart a
+ * whole window of this process's time must pass. */
+const racyElapsed = (stamp: RacyStamp, at: ReadTime): number => at.monotonic - (stamp.process === at.process ? stamp.at : 0);
+/** A racy record stands until a window of monotonic time has passed since its read; then the file is read once. */
+export const racyDue = (row: RacyMark, at: ReadTime): boolean => row.racy !== undefined && racyElapsed(row.racy, at) >= RACY_STAT_WINDOW_MS;
+/** The mark of what a read at `at` that found `stat` records, given the file's earlier records. A record of this stat without
+ * a mark vouches for it (its read was not racy, or confirmed it). A rewrite keeping a stat happens within one tick of the change
+ * that set it, before the earlier racy read: a read a window of monotonic time later confirms the content, whatever the ctime
+ * says. A younger racy record keeps its mark, so no read or refusal renews it: one confirming read per racy stat. A stat
+ * without a record gets `racyStat`. */
+export function racyMark(stat: SourceStat, at: ReadTime, earlier: readonly ({ stat: SourceStat } & RacyMark | undefined)[]): RacyMark {
+  const stamps: RacyStamp[] = [];
+  for (const row of earlier) {
+    if (row === undefined || !sameStat(row.stat, stat)) continue;
+    if (row.racy === undefined || racyElapsed(row.racy, at) >= RACY_STAT_WINDOW_MS) return {};
+    stamps.push(row.racy);
+  }
+  const oldest = stamps.sort((a, b) => racyElapsed(b, at) - racyElapsed(a, at))[0];
+  if (oldest !== undefined) return { racy: oldest };
+  return racyStat(stat, at.wall) ? { racy: { process: at.process, at: at.monotonic } } : {};
+}
 /** The current stat of a regular source file without reading it; null when that cannot be established. */
 export function statSource(file: SourceFile): SourceStat | null {
   try {
     rejectSymlinks(file.path);
-    const stat = lstatSync(file.path, { bigint: true });
+    const stat = fileStatus.lstat(file.path);
     return stat.isFile() ? sourceStat(stat) : null;
   } catch { return null; }
 }
@@ -149,15 +194,15 @@ export function openSource(file: SourceFile): OpenSource {
   if (!pathWithin(realpathSync(file.path), canonicalRoot)) throw new CollectorError('symlink-escape');
   const descriptor = openSync(file.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const before = fstatSync(descriptor, { bigint: true });
+    const before = fileStatus.fstat(descriptor);
     if (!before.isFile()) throw new CollectorError('not-regular-file');
     return { descriptor, before, size: before.size, stat: sourceStat(before) };
   } catch (error) { closeSync(descriptor); throw error; }
 }
 /** The file kept its identity, size and times while `read` bytes of it were read; otherwise `source-changed-during-read`. */
 export function verifyUnchanged(file: SourceFile, source: OpenSource, read: bigint): void {
-  const after = fstatSync(source.descriptor, { bigint: true });
-  const pathStat = lstatSync(file.path, { bigint: true });
+  const after = fileStatus.fstat(source.descriptor);
+  const pathStat = fileStatus.lstat(file.path);
   rejectSymlinks(file.path);
   const before = source.before;
   if (before.ino !== after.ino || before.dev !== after.dev || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || after.ino !== pathStat.ino || after.dev !== pathStat.dev || read !== after.size) throw new CollectorError('source-changed-during-read');

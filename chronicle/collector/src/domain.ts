@@ -20,16 +20,20 @@ export interface DiscoveryRoot { id: string; format: Format; path: string; layou
 /** `measured`/`limit` accompany a size or count limit: bytes, or messages for `message-limit`; `values` counts the
  * distinct paths of `admission-evidence-limit`. */
 export interface Diagnostic { rootId: string; pathId: string; code: string; measured?: number; limit?: number; values?: number; cause?: string }
+/** A state that holds every upload back without counting a failure: a server without the part-upload API, or `--pause`. */
+export type UploadsPaused = 'server-upload-unsupported' | 'collection-paused';
 export interface Counters {
   enabled: boolean; discovered: number; scanned: number; scannedBytes: number; waiting: number;
   excluded: number; unchanged: number; enqueued: number; uploaded: number; uploadFailures: number;
   quarantined: number; pending: number; stopped: number; conflicts: number; deferred: number;
   /** Uploads committed as a new server epoch: the whole file in parts (also counted as uploaded). */
   replacements: number;
+  /** Why no upload is sent at all while no failure is counted; null when uploads are not paused. */
+  paused: UploadsPaused | null;
 }
 export interface RootCoverage { rootId: string; pathId: string; format: Format; discovered: number; scanned: number; bytes: number; waiting: number; excluded: number; quarantined: number; deferred: number }
-// Reports saved before scan-budget deferral or part uploads existed have no deferred or replacement counts.
-type Saved<T> = Omit<T, 'deferred' | 'replacements'> & { deferred?: number; replacements?: number };
+// Reports saved before scan-budget deferral, part uploads or the paused state existed have no deferred or replacement counts and no paused state.
+type Saved<T> = Omit<T, 'deferred' | 'replacements' | 'paused'> & { deferred?: number; replacements?: number; paused?: UploadsPaused | null };
 export interface CollectorReport { at: number; counters: Saved<Counters>; roots: Saved<RootCoverage>[] }
 export class CollectorError extends Error {
   constructor(readonly code: string) { super(code); this.name = 'CollectorError'; }

@@ -2,7 +2,7 @@ import { evidenceFor, heldByControls, pathAliases, type AdmissionEvidence, type 
 import { randomUUID } from 'node:crypto';
 import { admissionReason, holdDiagnostic, isQueueHoldDiagnostic, ROOT_DENIED } from './admission.ts';
 import { CollectorError, hash, object, string, type CollectorReport, type Counters, type Diagnostic, type Format, type ParsedTranscript, type RootCoverage } from './domain.ts';
-import { discoverRoots, excludedPath, readSnapshot, sameStat, scanRoots, SCAN_BUDGET_DEFERRED, SizeLimitError, statSource, type SourceFile, type SourceStat } from './discovery.ts';
+import { discoverRoots, excludedPath, racyDue, racyMark, readSnapshot, readTime, sameStat, scanRoots, SCAN_BUDGET_DEFERRED, SizeLimitError, statSource, type FileClock, type RacyMark, type SourceFile, type SourceStat } from './discovery.ts';
 import { parseTranscript } from './parsers.ts';
 import { resolveRuntimePrivacy, type RuntimePrivacy, type SecretReader } from './runtime-privacy.ts';
 import { encodeSnapshot, revisionMetadata, sourceIdentity, sourceKey, UploadError, type Ingester } from './ingest.ts';
@@ -30,13 +30,17 @@ import type { CollectionOrigin } from './admission.ts';
 export type { Counters } from './domain.ts';
 // `read` is null for a file not read again because its stat is unchanged since a settled read. A whole read holds the
 // transcript; a preflight (parts) holds what pass 1 declared and the checkpoint state it ended with.
-type CandidateRead = { transcript: ParsedTranscript; stat: SourceStat } | { streamed: StreamedTranscript; stat: SourceStat; end: PassState | null };
+// `mark` holds the racy mark the read's record gets (`racyMark`).
+type CandidateRead = { transcript: ParsedTranscript; stat: SourceStat; mark: RacyMark } | { streamed: StreamedTranscript; stat: SourceStat; end: PassState | null; mark: RacyMark };
 interface Candidate { file: SourceFile; read: CandidateRead | null; key: string; digest: string; evidence: AdmissionEvidence }
 const controlsDigest = (controls: Controls): string => hash(JSON.stringify(controls.exclusions));
 // Overlapping roots can discover one path twice, as different sources.
 const fileId = (file: SourceFile): string => hash(JSON.stringify([file.root.id, file.root.format, file.path]));
 /** The observation signature: a file is read once its stat has not changed for `quietMs` (append-limits spec §2.2 item 1). */
 const statSignature = (stat: SourceStat): string => `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+/** The same file as at `before`, only grown or unchanged in size: same device and inode, not shorter. A file replaced
+ * (another inode) or shortened can hold another session and is read again to identify it. */
+const sameFileGrown = (before: SourceStat, now: SourceStat): boolean => before.dev === now.dev && before.ino === now.ino && BigInt(now.size) >= BigInt(before.size);
 /** A checkpoint read back from the spool has the fields an incremental pass resumes from. */
 const resumable = (checkpoint: AppendCheckpoint): boolean => {
   const state = object(checkpoint.state) ? checkpoint.state : null;
@@ -62,6 +66,9 @@ function appendable(head: Head, prefix: TranscriptPrefix | null): TranscriptPref
   return base !== null && prefix !== null && prefix.recordCount === base.recordCount && prefix.digest === head.digest && String(prefix.rawBytes) === base.rawBytes
     && prefix.messageCount === base.messageCount && prefix.messageChain === base.messageChain ? prefix : null;
 }
+/** `--pause` holds every upload back: the code of the counters line and the text of `--pause` and the journal. */
+export const COLLECTION_PAUSED = 'collection-paused';
+export const COLLECTION_PAUSED_TEXT = 'Collection paused. Queued uploads are kept; --resume continues.';
 /** The collector-level line of `--status` while the server has no part-upload API. */
 export function uploadsPausedText(endpoint: string): string {
   return `Uploads are paused: the Chronicle server at ${endpoint} has no part-upload API (it predates S2). Nothing is lost — changed sessions are uploaded once this is fixed. Fix: upgrade the server, or set uploadProtocol = "whole" in the collector configuration (Home Manager chronicle.collector.uploadProtocol) to upload through /api/ingest.`;
@@ -86,15 +93,18 @@ function excludedTranscript(bytes: Buffer, config: Config): boolean {
   return false;
 }
 const SCAN_REPORT_INTERVAL_MS = 5000;
-const empty = (enabled: boolean): Counters => ({ enabled, discovered: 0, scanned: 0, scannedBytes: 0, waiting: 0, excluded: 0, unchanged: 0, enqueued: 0, uploaded: 0, uploadFailures: 0, quarantined: 0, pending: 0, stopped: 0, conflicts: 0, deferred: 0, replacements: 0 });
+/** A queued entry is sent in a cycle at `now` only while it is pending and its backoff has passed. */
+const due = (entry: { status: EntryStatus; nextAt: number }, now: number): boolean => entry.status === 'pending' && entry.nextAt <= now;
+const empty = (enabled: boolean): Counters => ({ enabled, discovered: 0, scanned: 0, scannedBytes: 0, waiting: 0, excluded: 0, unchanged: 0, enqueued: 0, uploaded: 0, uploadFailures: 0, quarantined: 0, pending: 0, stopped: 0, conflicts: 0, deferred: 0, replacements: 0, paused: null });
 /** A part upload as `--status` shows it; sizes are decimal byte counts. */
 export interface UploadStatus { requestId: string; sourceKey: string; attempts: number; nextAt: number; status: EntryStatus; error: string | null; append: boolean; partsAcked: number; rawBytes: string; newRawBytes: string; refused?: Upload['refused'] }
 /** Old-format whole payloads and part uploads, as the queue. */
 interface Queued { requestId: string; sourceKey: string; status: EntryStatus; origin: CollectionOrigin; evidence: AdmissionEvidence | null }
 export class Collector {
   private readonly config: Config; private readonly spool: Spool; private readonly ingester: Ingester; private readonly random: () => number; private readonly git: GitMetadata;
-  /** `uploader` is required for `uploadProtocol: "parts"`. */
-  constructor(config: Config, spool: Spool, ingester: Ingester, random: () => number, git: GitMetadata, private readonly reporter: ProgressReporter, private readonly secrets: SecretReader, private readonly uploader?: Uploader) {
+  /** `clock` judges file times (wall clock against ctimes, monotonic clock for the racy window), next to the cycle clock
+   * `runOnce(now)`. `uploader` is required for `uploadProtocol: "parts"`. */
+  constructor(config: Config, spool: Spool, ingester: Ingester, random: () => number, private readonly clock: FileClock, git: GitMetadata, private readonly reporter: ProgressReporter, private readonly secrets: SecretReader, private readonly uploader?: Uploader) {
     this.config = config; this.spool = spool; this.ingester = ingester; this.random = random; this.git = git;
     if (config.uploadProtocol === 'parts' && uploader === undefined) throw new CollectorError('uploader-required');
   }
@@ -133,6 +143,7 @@ export class Collector {
     if (!this.config.enabled) return counters;
     const initiallyPaused = this.spool.controls().paused;
     if (initiallyPaused) {
+      counters.paused = COLLECTION_PAUSED;
       const queue = this.queued();
       counters.pending = queue.filter(e => e.status === 'pending').length;
       counters.stopped = queue.filter(e => e.status === 'stopped').length;
@@ -177,6 +188,7 @@ export class Collector {
       queueCounters();
       heldSources.clear();
       const controls = this.spool.controls();
+      counters.paused = controls.paused ? COLLECTION_PAUSED : serverUnsupported ? SERVER_UPLOAD_UNSUPPORTED : null;
       for (const { sourceKey, origin, evidence } of this.queued()) if (admissionReason(origin, this.config) !== null || heldByControls(controls, evidence)) heldSources.add(sourceKey);
       const admittedFailure = [...queueState.values()].some(entry => !heldSources.has(entry.sourceKey) && (entry.status === 'stopped' || entry.status === 'conflict'));
       const failed = counters.quarantined + counters.uploadFailures > 0 || admittedFailure || reportFailure || serverUnsupported;
@@ -205,7 +217,8 @@ export class Collector {
     // The content each queued source will have at its next revision.
     const queuedContent = new Map<string, { digest: string; revision: number }>();
     for (const queued of discardStale(digest)) queuedContent.set(queued.sourceKey, { digest: queued.sourceDigest, revision: queued.expectedRevision + 1 });
-    for (const upload of this.uploads()) queuedContent.set(upload.sourceKey, { digest: upload.sourceDigest, revision: upload.expectedRevision + 1 });
+    const intents = this.uploads();
+    for (const upload of intents) queuedContent.set(upload.sourceKey, { digest: upload.sourceDigest, revision: upload.expectedRevision + 1 });
     for (const { sourceKey, origin, evidence } of this.queued()) {
       const reason = admissionReason(origin, this.config);
       if (heldByControls(this.spool.controls(), evidence)) heldSources.add(sourceKey);
@@ -226,6 +239,11 @@ export class Collector {
         if (!serverUnsupported) { counters.uploadFailures++; this.spool.diagnostic({ rootId: 'server', pathId: hash('server'), code }); }
       }
     }
+    // A file of a source whose part intent waits for something that ends by itself is not read again while it is the same
+    // file, grown: without the server's limits nothing is sent this cycle, and a backed-off intent is due later. When the
+    // intent is sent, the changed file aborts it and is read again. A stopped or conflicting intent waits for the operator:
+    // its changed file is read as before, so that another session written there is found.
+    const unsendable = new Set(intents.filter(entry => limits === null || (entry.status === 'pending' && entry.nextAt > now)).map(entry => entry.sourceKey));
     const recordCap = this.recordCap();
     // Everything besides the lines, the policy and the head that pass 1's result depends on.
     const limitsDigest = (format: Format): string => hash(JSON.stringify({ format, collectorRecordBytes: this.config.maxRecordBytes, serverRecordBytes: recordCap.server,
@@ -286,29 +304,36 @@ export class Collector {
         counters.excluded++; rootCoverage(file).excluded++; continue;
       }
       const pathId = hash(file.path); const id = fileId(file); const known = this.spool.sourceRead(id);
-      if (known !== undefined && settled(known, statSource(file), controls)) { addCandidate({ file, read: null, key: known.sourceKey, digest: known.digest, evidence: { paths: aliases } }); continue; }
+      // Taken before any stat of this file: every stat recorded below is taken at this time or later.
+      const readAt = readTime(this.clock);
+      // A racy record stands until it is due for its one confirming read (`racyDue`).
+      const revalidate = (row: RacyMark): boolean => racyDue(row, readAt);
+      if (known !== undefined && !revalidate(known) && settled(known, statSource(file), controls)) { addCandidate({ file, read: null, key: known.sourceKey, digest: known.digest, evidence: { paths: aliases } }); continue; }
       // An identifier with an unpaired surrogate is reported once: the file is not read again until its stat or the policy changes.
       const refused = this.spool.identifierRefusal(id);
       if (refused !== undefined) {
         const stat = statSource(file);
-        if (stat !== null && sameStat(stat, refused.stat) && refused.policyDigest === digest) continue;
+        if (stat !== null && !revalidate(refused) && sameStat(stat, refused.stat) && refused.policyDigest === digest) continue;
         this.spool.clearIdentifierRefusal(id);
       }
       const refuse = (stat: SourceStat | null): void => {
-        if (stat !== null) this.spool.setIdentifierRefusal({ fileId: id, rootId: file.root.id, pathId, format: file.root.format, stat, policyDigest: digest });
+        if (stat !== null) this.spool.setIdentifierRefusal({ fileId: id, rootId: file.root.id, pathId, format: file.root.format, stat, policyDigest: digest, ...mark(stat) });
         diagnose(file, IDENTIFIER_UNICODE);
       };
       // A record above the record limit is reported once: the file is not read again until its stat or a limit changes.
       const over = parts ? this.spool.recordOverLimit(id) : undefined;
       if (over !== undefined) {
         const stat = statSource(file);
-        if (stat !== null && sameStat(stat, over.stat) && over.collectorLimit === this.config.maxRecordBytes && over.serverLimit === recordCap.server) continue;
+        if (stat !== null && !revalidate(over) && sameStat(stat, over.stat) && over.collectorLimit === this.config.maxRecordBytes && over.serverLimit === recordCap.server) continue;
         this.spool.clearRecordOverLimit(id);
       }
+      // The racy mark of what this read records, confirmed by any earlier racy record of the same stat.
+      const mark = (stat: SourceStat): RacyMark => racyMark(stat, readAt, [known, refused, over]);
       // Quiet by stat: nothing is read while the file's stat keeps changing. A file that changed between this stat and
       // the read starts its quiet period again (the observation of the read's stat below).
       const observed = statSource(file);
       if (observed !== null && now - this.spool.observe(pathId, statSignature(observed), now) < this.config.quietMs) { counters.waiting++; rootCoverage(file).waiting++; continue; }
+      if (known !== undefined && observed !== null && unsendable.has(known.sourceKey) && sameFileGrown(known.stat, observed)) { counters.waiting++; rootCoverage(file).waiting++; continue; }
       try {
         if (parts) {
           // The head this file had at its last read: pass 1 records the prefix an append would extend.
@@ -335,7 +360,7 @@ export class Collector {
           if (this.config.exclusions.sessions.includes(streamed.producerId) || (streamed.subagentId !== null && this.config.exclusions.sessions.includes(streamed.subagentId))) { counters.excluded++; continue; }
           if (streamed.messageCount > this.config.maxMessages) { diagnose(file, 'message-limit', { measured: streamed.messageCount, limit: this.config.maxMessages }); continue; }
           if (now - since < this.config.quietMs) { counters.waiting++; rootCoverage(file).waiting++; continue; }
-          addCandidate({ file, read: { streamed, stat: result.stat, end: result.end }, key, digest: streamed.digest, evidence: result.evidence });
+          addCandidate({ file, read: { streamed, stat: result.stat, end: result.end, mark: mark(result.stat) }, key, digest: streamed.digest, evidence: result.evidence });
           continue;
         }
         const snapshot = readSnapshot(file, this.config.maxFileBytes, this.config.maxScanBytes - counters.scannedBytes);
@@ -354,14 +379,14 @@ export class Collector {
         if (transcript.messages.length > this.config.maxMessages) { diagnose(file, 'message-limit', { measured: transcript.messages.length, limit: this.config.maxMessages }); continue; }
         if (now - since < this.config.quietMs) { counters.waiting++; rootCoverage(file).waiting++; continue; }
         const key = sourceKey(sourceIdentity(this.spool.namespace, file.root.id, file.root.format, transcript, file.path));
-        addCandidate({ file, read: { transcript, stat: snapshot.stat }, key, digest: hash(transcript.raw), evidence });
+        addCandidate({ file, read: { transcript, stat: snapshot.stat, mark: mark(snapshot.stat) }, key, digest: hash(transcript.raw), evidence });
       } catch (error) {
         const stat = error instanceof RecordOverLimitError || error instanceof EvidenceLimitError ? statSource(file) : null;
         // A pass stopped by a cap has read up to the whole file: it spends that much of the scan budget.
         if (stat !== null) counters.scannedBytes += Number(stat.size);
         if (error instanceof RecordOverLimitError && stat !== null) {
           this.spool.setRecordOverLimit({ fileId: id, rootId: file.root.id, pathId, format: file.root.format, stat, recordIndex: error.recordIndex, size: String(error.size),
-            limit: error.limit, limitSource: recordCap.source, collectorLimit: this.config.maxRecordBytes, serverLimit: recordCap.server });
+            limit: error.limit, limitSource: recordCap.source, collectorLimit: this.config.maxRecordBytes, serverLimit: recordCap.server, ...mark(stat) });
           diagnose(file, error.code, { measured: Number(error.size), limit: error.limit });
         }
         else if (error instanceof CollectorError && error.code === IDENTIFIER_UNICODE) refuse(statSource(file));
@@ -384,7 +409,7 @@ export class Collector {
       const head = this.spool.head(key);
       if (head.tombstone) { counters.excluded++; continue; }
       const settle = (revision: number): void => {
-        for (const copy of copies) if (copy.read !== null) reads.push({ fileId: fileId(copy.file), stat: copy.read.stat, sourceKey: key, digest: candidate.digest, revision, policyDigest: digest, controlsDigest: controlsDigest(controls) });
+        for (const copy of copies) if (copy.read !== null) reads.push({ fileId: fileId(copy.file), stat: copy.read.stat, sourceKey: key, digest: candidate.digest, revision, policyDigest: digest, controlsDigest: controlsDigest(controls), ...copy.read.mark });
       };
       if (head.digest === candidate.digest) { counters.unchanged++; settle(head.revision); continue; }
       if (queuedSources.has(key)) {
@@ -434,13 +459,13 @@ export class Collector {
       queueState.set(requestId, { sourceKey: key, status: 'pending' }); counters.enqueued++; settle(head.revision + 1);
     }
     this.spool.saveScan(new Set(scan.files.map(fileId)), reads, deferred);
-    const uploads = this.spool.queueWithOrigins().filter(({ entry, origin }) => entry.status === 'pending' && entry.nextAt <= now && admissionReason(origin, this.config) === null).map(({ entry }) => entry);
+    const uploads = this.spool.queueWithOrigins().filter(({ entry, origin }) => due(entry, now) && admissionReason(origin, this.config) === null).map(({ entry }) => entry);
     // Part uploads need the server's limits from this cycle's probe; `uploadedBytes` counts their acknowledged raw bytes.
     const partUploads = limits === null ? [] : this.uploads();
     const delta = (entry: Upload): bigint => BigInt(entry.declared.rawBytes) - (decodeOpen(entry.open).base?.rawBytes ?? 0n);
     const backoff = (attempts: number): number => now + Math.floor(this.random() * Math.min(this.config.backoffCapMs, this.config.backoffBaseMs * 2 ** Math.min(attempts, 30)));
     totalUploadBytes = uploads.reduce((sum, entry) => sum + BigInt(Buffer.byteLength(entry.payload)), 0n)
-      + partUploads.filter(entry => entry.status === 'pending' && entry.nextAt <= now).reduce((sum, entry) => sum + delta(entry), 0n);
+      + partUploads.filter(entry => due(entry, now)).reduce((sum, entry) => sum + delta(entry), 0n);
     await publish(CollectorPhase.Uploading, undefined, undefined, true);
     let sending = true;
     for (const entry of uploads) {
@@ -487,7 +512,7 @@ export class Collector {
       return current === entry.policyDigest ? 'send' : 'stop';
     };
     const engine = new PartUploads({ spool: this.spool, uploader: this.uploader, config: this.config, limits, policy, recordCap: recordCap.cap,
-      file: id => discovered.get(id), gate, sent: bytes => { uploadedBytes += bytes; }, nextAt: backoff });
+      file: id => discovered.get(id), gate, sent: bytes => { uploadedBytes += bytes; }, nextAt: backoff, clock: this.clock });
     const requeue = (entry: Upload): void => {
       queueState.delete(entry.requestId);
       const current = this.spool.uploads().find(upload => upload.sourceKey === entry.sourceKey);
@@ -504,7 +529,7 @@ export class Collector {
         if (outcome?.kind === 'discarded') { this.spool.diagnostic({ rootId: 'spool', pathId: entry.sourceKey, code: POLICY_CHANGED }); counters.quarantined++; }
         requeue(entry); continue;
       }
-      if (entry.status !== 'pending' || entry.nextAt > now) continue;
+      if (!due(entry, now)) continue;
       const admitted = gate(entry); if (admitted === 'held') continue; if (admitted === 'stop') break;
       await publish(CollectorPhase.Uploading, delta(entry), undefined, true);
       const outcome = await engine.run(entry);

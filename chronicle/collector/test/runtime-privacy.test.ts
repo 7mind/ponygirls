@@ -11,7 +11,7 @@ import { Collector } from '../src/collector.ts';
 import { SqliteSpool, MemorySpool } from '../src/spool.ts';
 import { UploadError } from '../src/ingest.ts';
 import { CollectorError } from '../src/domain.ts';
-import { acceptingProgress, noGit } from './helpers.ts';
+import { acceptingProgress, noGit, lateClock } from './helpers.ts';
 import { IngestReceipt } from '../../generated/typescript/chronicle/api/IngestReceipt.js';
 
 class DummySecretReader implements SecretReader {
@@ -76,13 +76,13 @@ for (const adapter of ['dummy', 'file']) {
     try {
       writeFileSync(join(f.dir, 'sessions/s.jsonl'), transcript('stdout synthetic-credential-plain-stdout'));
       const ingester = { send: async () => { sends++; throw new UploadError('network-failed', true, false); } };
-      await new Collector(f.config, spool, ingester, () => 0, noGit, acceptingProgress, f.reader).runOnce(100);
+      await new Collector(f.config, spool, ingester, () => 0, lateClock, noGit, acceptingProgress, f.reader).runOnce(100);
       const entry = spool.queue()[0]!;
       assert.ok(!entry.payload.includes('synthetic-credential-plain-stdout'));
       assert.ok(!JSON.stringify(spool.reporting()).includes('synthetic-credential'));
       spool.close(); spool = new SqliteSpool(f.config.stateDir);
       f.put(f.config.redactions.secretFiles[0]!, 'rotated-synthetic-value\n');
-      await new Collector(f.config, spool, ingester, () => 0, noGit, acceptingProgress, f.reader).runOnce(200);
+      await new Collector(f.config, spool, ingester, () => 0, lateClock, noGit, acceptingProgress, f.reader).runOnce(200);
       const [requeued] = spool.queue();
       assert.equal(sends, 2); assert.notEqual(requeued?.requestId, entry.requestId); assert.notEqual(requeued?.policyDigest, entry.policyDigest);
       assert.equal(spool.head(entry.sourceKey).tombstone, false);
@@ -100,7 +100,7 @@ for (const adapter of ['dummy', 'file']) {
         const request = JSON.parse(payload) as { requestId: string; expectedRevision: number };
         return new IngestReceipt(request.requestId, randomUUID(), request.expectedRevision + 1, randomUUID());
       } };
-      const collector = new Collector(f.config, spool, ingester, () => 0, noGit, acceptingProgress, f.reader);
+      const collector = new Collector(f.config, spool, ingester, () => 0, lateClock, noGit, acceptingProgress, f.reader);
       const rotated = await collector.runOnce(100);
       assert.deepEqual([rotated.enqueued, rotated.uploaded, sent.length, spool.queue().length], [2, 1, 1, 0]);
       const [discarded] = spool.dropped(); assert.ok(discarded !== undefined);
@@ -115,7 +115,7 @@ for (const adapter of ['dummy', 'file']) {
       const f = fixture(adapter); const spool = new MemorySpool(); let sends = 0;
       try {
         writeFileSync(join(f.dir, 'sessions/s.jsonl'), transcript('stdout synthetic-credential-plain-stdout'));
-        const collector = new Collector(f.config, spool, { send: async () => { sends++; throw new UploadError('network-failed', true, false); } }, () => 0, noGit, acceptingProgress, f.reader);
+        const collector = new Collector(f.config, spool, { send: async () => { sends++; throw new UploadError('network-failed', true, false); } }, () => 0, lateClock, noGit, acceptingProgress, f.reader);
         await collector.runOnce(100); assert.equal(sends, 1);
         const entry = spool.queue()[0]!;
         f.put(f.config.redactions.secretFiles[0]!, failure === 'missing' ? undefined : failure === 'empty' ? '\n' : 'x'.repeat(8193));
@@ -131,7 +131,7 @@ for (const adapter of ['dummy', 'file']) {
     const f = fixture(adapter); const spool = new MemorySpool(); let sends = 0;
     try {
       writeFileSync(join(f.dir, 'sessions/s.jsonl'), transcript('stdout synthetic-ingest-bearer'));
-      const collector = new Collector(f.config, spool, { send: async () => { sends++; throw new UploadError('network-failed', true, false); } }, () => 0, noGit, acceptingProgress, f.reader);
+      const collector = new Collector(f.config, spool, { send: async () => { sends++; throw new UploadError('network-failed', true, false); } }, () => 0, lateClock, noGit, acceptingProgress, f.reader);
       await collector.runOnce(100); const entry = spool.queue()[0]!;
       assert.ok(!entry.payload.includes('synthetic-ingest-bearer'));
       f.put(f.config.tokenFile, undefined); assert.equal((await collector.runOnce(200)).discovered, 0); assert.equal(sends, 1);
@@ -148,7 +148,7 @@ for (const adapter of ['dummy', 'file']) {
         const request = JSON.parse(payload) as { requestId: string; expectedRevision: number; messages: { text: string }[] };
         assert.ok(request.messages.every(message => !message.text.includes('synthetic-credential-plain-stdout')));
         return new IngestReceipt(request.requestId, randomUUID(), request.expectedRevision + 1, randomUUID());
-      } }, () => 0, noGit, acceptingProgress, f.reader);
+      } }, () => 0, lateClock, noGit, acceptingProgress, f.reader);
       assert.equal((await collector.runOnce(100)).uploaded, 1);
     } finally { spool.close(); f.close(); }
   });

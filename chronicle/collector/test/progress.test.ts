@@ -14,7 +14,7 @@ import { HttpProgressReporter, type ProgressReporter } from '../src/progress.ts'
 import { UploadError } from '../src/ingest.ts';
 import { FileSecretReader } from '../src/runtime-privacy.ts';
 import { formatCollectorStatus } from '../src/status.ts';
-import { noGit } from './helpers.ts';
+import { noGit, lateClock } from './helpers.ts';
 import { CollectorProgressUpdate, CollectorProgressUpdate_JsonCodec } from '../../generated/typescript/chronicle/api/CollectorProgressUpdate.js';
 import { CollectorProgressAck, CollectorProgressAck_JsonCodec } from '../../generated/typescript/chronicle/api/CollectorProgressAck.js';
 import { CollectorPhase } from '../../generated/typescript/chronicle/api/CollectorPhase.js';
@@ -68,14 +68,14 @@ for (const adapter of ['dummy', 'http']) {
         const request = JSON.parse(payload) as { requestId: string; expectedRevision: number };
         return new IngestReceipt(request.requestId, randomUUID(), request.expectedRevision + 1, randomUUID());
       } };
-      await new Collector(h.config, spool, ingester, () => 0, noGit, h.reporter, new FileSecretReader()).runOnce(100);
+      await new Collector(h.config, spool, ingester, () => 0, lateClock, noGit, h.reporter, new FileSecretReader()).runOnce(100);
       assert.equal(h.sink.reports.at(-1)!.phase, CollectorPhase.Failed);
       assert.ok(h.sink.reports.every(r => r.uploadedBytes === 0n));
       const bytes = BigInt(Buffer.byteLength(spool.queue()[0]!.payload));
       assert.ok(h.sink.reports.some(r => r.phase === CollectorPhase.Uploading && r.currentUploadTotalBytes === bytes));
       const prior = spool.reporting(); const namespace = spool.namespace; spool.close(); spool = new SqliteSpool(h.config.stateDir);
       const start = h.sink.reports.length;
-      const result = await new Collector(h.config, spool, ingester, () => 0, noGit, h.reporter, new FileSecretReader()).runOnce(200);
+      const result = await new Collector(h.config, spool, ingester, () => 0, lateClock, noGit, h.reporter, new FileSecretReader()).runOnce(200);
       assert.equal(result.enqueued, 0); assert.equal(result.uploaded, 1);
       const reports = h.sink.reports.slice(start); const final = reports.at(-1)!;
       assert.ok(reports[0]!.sequence > BigInt(prior.sequence));
@@ -96,7 +96,7 @@ for (const adapter of ['dummy', 'http']) {
       const result = await new Collector(h.config, spool, { send: async payload => {
         const request = JSON.parse(payload) as { requestId: string };
         return new IngestReceipt(request.requestId, randomUUID(), 99, randomUUID());
-      } }, () => 0, noGit, h.reporter, new FileSecretReader()).runOnce(100);
+      } }, () => 0, lateClock, noGit, h.reporter, new FileSecretReader()).runOnce(100);
       assert.equal(result.uploaded, 0); assert.equal(result.stopped, 1); assert.equal(result.quarantined, 1);
       assert.ok(h.sink.reports.every(r => r.uploadedBytes === 0n));
       const final = h.sink.reports.at(-1)!;
@@ -113,7 +113,7 @@ for (const adapter of ['dummy', 'http']) {
         const collector = new Collector(h.config, spool, { send: async payload => {
           const request = JSON.parse(payload) as { requestId: string; expectedRevision: number };
           return new IngestReceipt(request.requestId, randomUUID(), request.expectedRevision + 1, randomUUID());
-        } }, () => 0, noGit, h.reporter, new FileSecretReader());
+        } }, () => 0, lateClock, noGit, h.reporter, new FileSecretReader());
         assert.equal((await collector.runOnce(100)).uploaded, 1);
         assert.equal(spool.queue().length, 0); assert.equal(spool.reporting().acceptedAt, null);
         assert.equal(spool.reporting().acceptedSequence, null); assert.equal(spool.reporting().error, 'report-failed');
@@ -136,7 +136,7 @@ for (const mode of Object.keys(CAUSES) as (keyof typeof CAUSES)[]) {
     try {
       h.sink.mode = mode;
       if (mode === 'timeout') h.config.uploadTimeoutMs = 20;
-      const collector = new Collector(h.config, spool, { send: async () => { throw new Error('unused'); } }, () => 0, noGit, h.reporter, new FileSecretReader());
+      const collector = new Collector(h.config, spool, { send: async () => { throw new Error('unused'); } }, () => 0, lateClock, noGit, h.reporter, new FileSecretReader());
       await collector.runOnce(100);
       assert.equal(spool.reporting().error, 'report-failed'); assert.equal(spool.reporting().acceptedAt, null);
       const [cause, text] = CAUSES[mode];

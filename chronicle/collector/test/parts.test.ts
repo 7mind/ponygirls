@@ -1,13 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync, appendFileSync, ftruncateSync } from 'node:fs';
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync, writeSync, appendFileSync, ftruncateSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { Collector, policyDigest, uploadsPausedText } from '../src/collector.ts';
+import { Collector, COLLECTION_PAUSED_TEXT, policyDigest, uploadsPausedText } from '../src/collector.ts';
+import { RACY_STAT_WINDOW_MS, type FileClock } from '../src/discovery.ts';
 import { loadConfig } from '../src/config.ts';
 import { SqliteSpool, type Spool } from '../src/spool.ts';
 import { encodeSnapshot, HttpIngester, sourceIdentity, sourceKey } from '../src/ingest.ts';
@@ -17,9 +18,9 @@ import { lineReads, readerMemory, READ_BUFFER_BYTES } from '../src/lines.ts';
 import { generateParts } from '../src/passes.ts';
 import { parseTranscript } from '../src/parsers.ts';
 import { resolveRuntimePrivacy } from '../src/runtime-privacy.ts';
-import { formatCollectorStatus } from '../src/status.ts';
+import { formatCollectorStatus, PAUSE_NOTICE_INTERVAL_MS, PauseNotices } from '../src/status.ts';
 import { hash } from '../src/domain.ts';
-import { noGit, syntheticSecrets } from './helpers.ts';
+import { noGit, syntheticSecrets, lateClock, withCtime } from './helpers.ts';
 import { FakeChronicle } from './fake-server.ts';
 import type { ProgressReporter } from '../src/progress.ts';
 import { CollectorProgressAck } from '../../generated/typescript/chronicle/api/CollectorProgressAck.js';
@@ -46,9 +47,13 @@ async function harness(extra: Record<string, unknown> = {}) {
   let spool: Spool = new SqliteSpool(join(dir, 'state'));
   // Every credential file reads as `secret.value`: changing it rotates the runtime privacy policy.
   const secret = { value: 'synthetic-default-credential' }; const secrets = { read: (_path: string) => secret.value };
-  const collector = (more: Record<string, unknown> = {}) => { const config = settings(more); return new Collector(config, spool, new HttpIngester(config), () => 0, noGit, reporter, secrets, new HttpUploader(config)); };
+  // The backoff jitter, in [0, 1), and the file clocks: wall and monotonic ms (by default long after every file change), and
+  // the process the monotonic readings belong to (a restart changes it and starts again at 0).
+  const jitter = { value: 0 }; const clock = { wall: lateClock.wall(), monotonic: 0, process: 'harness' };
+  const fileClock: FileClock = { wall: () => clock.wall, monotonic: () => clock.monotonic, get process() { return clock.process; } };
+  const collector = (more: Record<string, unknown> = {}) => { const config = settings(more); return new Collector(config, spool, new HttpIngester(config), () => jitter.value, fileClock, noGit, reporter, secrets, new HttpUploader(config)); };
   return {
-    dir, roots, server, reports, input, settings, collector, secret,
+    dir, roots, server, reports, input, settings, collector, secret, jitter, clock,
     get spool() { return spool; },
     /** A restart: the spool reopened from disk. */
     reopen() { spool.close(); spool = new SqliteSpool(join(dir, 'state')); },
@@ -160,25 +165,217 @@ test('UploadParts resumes after the last acknowledged part, and an expired attem
   } finally { await h.close(); }
 });
 
-test('UploadParts pauses at a server without the part-upload API with one actionable line, keeps entries unchanged and uploads after the upgrade', async () => {
+test('UploadParts pauses at a server without the part-upload API with one actionable line, in the journal at most hourly, keeps entries unchanged and uploads after the upgrade', async () => {
   const h = await harness();
   try {
     writeFileSync(join(h.roots.pi, 's.jsonl'), jsonl(piHeader('pi-probe'), piMessage('m1', 'one')));
     h.server.failOpen = true;
-    assert.equal((await h.run(1)).uploadFailures, 1);
+    const notices = new PauseNotices(h.server.url);
+    const failed = await h.run(1);
+    assert.deepEqual([failed.uploadFailures, failed.paused, notices.next(failed.paused, 1)], [1, null, null]);
     const entries = h.spool.uploads(); assert.equal(entries[0]?.attempts, 1);
     h.server.supportsUploads = false;
     const paused = await h.run(2);
-    assert.deepEqual([paused.uploadFailures, paused.pending, paused.uploaded], [0, 1, 0]);
+    assert.deepEqual([paused.uploadFailures, paused.pending, paused.uploaded, paused.paused], [0, 1, 0, 'server-upload-unsupported']);
+    assert.equal(notices.next(paused.paused, 2), `server-upload-unsupported: ${uploadsPausedText(h.server.url)}`);
+    for (const now of [3, 2 + PAUSE_NOTICE_INTERVAL_MS - 1]) assert.equal(notices.next((await h.run(now)).paused, now), null, String(now));
+    const hour = 2 + PAUSE_NOTICE_INTERVAL_MS;
+    assert.equal(notices.next((await h.run(hour)).paused, hour), `server-upload-unsupported since 1970-01-01T00:00:00.002Z: ${uploadsPausedText(h.server.url)}`);
     assert.deepEqual(h.spool.uploads(), entries);
     assert.equal(h.reports.at(-1)?.error, 'server-upload-unsupported');
     const status = formatCollectorStatus(h.collector().status());
     assert.equal(status.split('\n')[0], uploadsPausedText(h.server.url));
     assert.match(status.split('\n')[0]!, /Uploads are paused: .* uploadProtocol = "whole" .*chronicle\.collector\.uploadProtocol/);
     h.server.supportsUploads = true;
-    const resumed = await h.run(3);
-    assert.deepEqual([resumed.uploaded, resumed.pending], [1, 0]);
+    const resumed = await h.run(hour + 1);
+    assert.deepEqual([resumed.uploaded, resumed.pending, resumed.paused], [1, 0, null]);
+    assert.equal(notices.next(resumed.paused, hour + 1), 'Uploads are no longer paused: server-upload-unsupported ended (since 1970-01-01T00:00:00.002Z).');
     assert.equal(formatCollectorStatus(h.collector().status()).split('\n')[0], 'Chronicle collector: enabled (configuration)');
+    // --pause holds every upload back without a failure too: the same lines.
+    h.spool.setPaused(true);
+    const held = await h.run(hour + 2);
+    assert.deepEqual([held.paused, notices.next(held.paused, hour + 2), notices.next(held.paused, hour + 3)], ['collection-paused', `collection-paused: ${COLLECTION_PAUSED_TEXT}`, null]);
+    h.spool.setPaused(false);
+    assert.equal(notices.next((await h.run(hour + 4)).paused, hour + 4), `Uploads are no longer paused: collection-paused ended (since ${new Date(hour + 2).toISOString()}).`);
+  } finally { await h.close(); }
+});
+
+test('UploadParts does not read a source with a queued intent while uploads are paused: a file appended to, or rewritten in place by another session, is identified after the upgrade and its current bytes archived; a new file is read once', async () => {
+  const h = await harness();
+  try {
+    const stale = join(h.roots.pi, 'stale.jsonl'), swapped = join(h.roots.pi, 'swapped.jsonl'), fresh = join(h.roots.pi, 'fresh.jsonl');
+    const keyOf = (path: string) => sourceKey(sourceIdentity(h.spool.namespace, 'pi', 'pi', parseTranscript('pi', readFileSync(path), path, resolveRuntimePrivacy(h.settings(), syntheticSecrets).policy), path));
+    h.server.supportsUploads = false;
+    writeFileSync(stale, jsonl(piHeader('pi-stale'), piMessage('m1', 'planned during the pause')));
+    writeFileSync(swapped, jsonl(piHeader('pi-swapped-old'), piMessage('m1', 'planned during the pause')));
+    assert.deepEqual(await h.run(1).then(counters => [counters.scanned, counters.enqueued, counters.paused]), [2, 2, 'server-upload-unsupported']);
+    appendFileSync(stale, jsonl(piMessage('m2', 'written during the pause')));
+    // Another session written over the file in place: same inode, not shorter.
+    const before = statSync(swapped); writeFileSync(swapped, jsonl(piHeader('pi-swapped-new'), piMessage('n1', 'another session, written in place during the pause')));
+    assert.deepEqual([statSync(swapped).ino, statSync(swapped).size >= before.size], [before.ino, true]);
+    writeFileSync(fresh, jsonl(piHeader('pi-fresh'), piMessage('f1', 'new during the pause')));
+    lineReads.bytes = 0n;
+    const paused = await h.run(2);
+    // Only the new source is read (once) and planned; both changed files with a queued intent wait unread.
+    assert.deepEqual([paused.scanned, paused.enqueued, paused.waiting, lineReads.bytes], [1, 1, 2, BigInt(statSync(fresh).size)]);
+    h.server.supportsUploads = true;
+    // Both changed files are read again and their intents aborted when sent; the other session is a new source, uploaded at once.
+    const upgraded = await h.run(3);
+    assert.deepEqual([upgraded.scanned, upgraded.uploaded, h.spool.dropped().map(entry => entry.reason)], [2, 2, ['source-changed', 'source-changed']]);
+    assert.equal((await h.run(4)).uploaded, 1);
+    assert.deepEqual([...h.server.heads.keys()].sort(), [stale, swapped, fresh].map(keyOf).sort());
+    for (const path of [stale, swapped, fresh]) assert.equal(h.server.heads.get(keyOf(path))?.digest, hash(readFileSync(path)), path);
+  } finally { await h.close(); }
+});
+
+test('UploadParts reads the changed file of a stopped intent as before, and of a backed-off intent once its backoff ends: another session there is planned and uploaded, the stopped intent is not retried', async () => {
+  const h = await harness();
+  try {
+    const backoff = join(h.roots.pi, 'backoff.jsonl'), renamed = join(h.roots.pi, 'renamed.jsonl'), shortened = join(h.roots.pi, 'shortened.jsonl'), rewritten = join(h.roots.pi, 'rewritten.jsonl');
+    const passAt = (path: string) => h.collector().status().sources.find(source => source.pathId === hash(path))?.lastPass.at;
+    // The open answers 503 and the jitter is at its maximum: the intent backs off until 1,000.
+    writeFileSync(backoff, jsonl(piHeader('pi-backoff'), piMessage('b1', 'one')));
+    h.server.failOpen = true; h.jitter.value = 0.999;
+    assert.deepEqual(await h.run(1).then(counters => [counters.pending, counters.uploadFailures]), [1, 1]);
+    assert.equal(h.spool.uploads()[0]?.nextAt, 1_000);
+    // The server refuses declarations of three messages: these intents stop.
+    h.server.limits = h.server.limits.with({ maxMessages: 2 });
+    const three = (id: string) => jsonl(piHeader(id), piMessage('a', 'one'), piMessage('b', 'two'), piMessage('c', 'three'));
+    writeFileSync(renamed, three('pi-old-renamed')); writeFileSync(shortened, three('pi-old-shortened')); writeFileSync(rewritten, three('pi-old-rewritten'));
+    assert.deepEqual(await h.run(2).then(counters => [counters.stopped, counters.uploadFailures]), [3, 3]);
+    const stopped = h.spool.uploads().filter(entry => entry.status === 'stopped');
+    // Another session takes each path: renamed over it (another inode), rewritten in place shorter, rewritten in place not shorter.
+    writeFileSync(`${renamed}.new`, jsonl(piHeader('pi-new-renamed'), piMessage('n1', 'another session'))); renameSync(`${renamed}.new`, renamed);
+    writeFileSync(shortened, jsonl(piHeader('pi-new-shortened'), piMessage('n1', 'another')));
+    const before = statSync(rewritten); writeFileSync(rewritten, jsonl(piHeader('pi-new-rewritten'), piMessage('n1', 'another session, written over the old one in place. '.repeat(8))));
+    assert.deepEqual([statSync(rewritten).ino, statSync(rewritten).size >= before.size], [before.ino, true]);
+    appendFileSync(backoff, jsonl(piMessage('b2', 'two')));
+    const opens = h.server.count('POST /api/ingest/uploads');
+    const flowing = await h.run(3);
+    assert.deepEqual([flowing.scanned, flowing.enqueued, flowing.uploaded, flowing.waiting, h.server.count('POST /api/ingest/uploads') - opens], [3, 3, 3, 1, 3]);
+    assert.deepEqual(h.spool.uploads().filter(entry => entry.status === 'stopped'), stopped);
+    assert.deepEqual([...h.server.heads.values()].map(head => head.digest).sort(), [renamed, shortened, rewritten].map(path => hash(readFileSync(path))).sort());
+    // Backed off, the grown file was not read; once the backoff is over it is read, and its intent aborted when sent.
+    assert.equal(passAt(backoff), 1);
+    await h.run(1_000);
+    assert.deepEqual([passAt(backoff), h.spool.dropped().map(entry => entry.reason)], [1_000, ['source-changed']]);
+  } finally { await h.close(); }
+});
+
+// Every change in the RacyStat tests lands in this ctime tick (ms since the epoch): it holds size, mtime and ctime equal.
+const RACY_TICK_MS = 1_800_000_000_000;
+const inRacyTick = <T>(body: () => Promise<T>): Promise<T> => withCtime(() => BigInt(RACY_TICK_MS) * 1_000_000n, body);
+/** Text of `bytes` bytes in words: redaction keeps it, as it would not keep one long run. */
+const words = (bytes: number) => 'synthetic words '.repeat(Math.ceil(bytes / 16)).slice(0, bytes);
+for (const protocol of ['whole', 'parts'] as const) {
+  test(`RacyStat ${protocol}: a rewrite keeping the stat right after a settled read is read at the next cycle and archived; a file read long after its change is not read again`, async () => {
+    const h = await harness({ uploadProtocol: protocol });
+    try {
+      const path = join(h.roots.pi, 's.jsonl'); const mtime = new Date('2026-01-01T00:00:00Z');
+      const version = (text: string) => jsonl(piHeader('pi-racy'), piMessage('m1', text));
+      await inRacyTick(async () => {
+        writeFileSync(path, version('first version')); utimesSync(path, mtime, mtime);
+        Object.assign(h.clock, { wall: RACY_TICK_MS + 1, monotonic: 0 });
+        assert.equal((await h.run(1)).uploaded, 1);
+        // Rewritten in place within the tick, at the same size and mtime: the stat is equal.
+        writeFileSync(path, version('other version')); utimesSync(path, mtime, mtime);
+        Object.assign(h.clock, { wall: RACY_TICK_MS + RACY_STAT_WINDOW_MS + 1, monotonic: RACY_STAT_WINDOW_MS });
+        assert.deepEqual(await h.run(2).then(counters => [counters.scanned, counters.uploaded]), [1, 1]);
+        assert.deepEqual([...h.server.heads.values()].map(head => head.digest), [hash(readFileSync(path))]);
+        // That read came long after the change: the unchanged file is not read again.
+        assert.deepEqual(await h.run(3).then(counters => [counters.scanned, counters.scannedBytes, counters.unchanged]), [0, 0, 1]);
+      });
+    } finally { await h.close(); }
+  });
+}
+
+test('RacyStat a file refused for an identifier or for a record over the limit, rewritten keeping its stat right after that read, is read at the next cycle and uploaded', async () => {
+  const h = await harness({ maxRecordBytes: MiB });
+  try {
+    const identifier = join(h.roots.pi, 'identifier.jsonl'), record = join(h.roots.pi, 'record.jsonl'); const mtime = new Date('2026-01-01T00:00:00Z');
+    const withId = (id: string) => `{"type":"session","version":3,"id":"pi-racy-identifier"}\n{"type":"message","id":"${id}","parentId":null,"message":{"role":"user","content":"synthetic"}}\n`;
+    // Two records under the limit, and as many bytes in one record over it.
+    const split = jsonl(piHeader('pi-racy-record'), piMessage('a', words(0.6 * MiB)), piMessage('b', words(0.6 * MiB)));
+    const over = jsonl(piHeader('pi-racy-record'), piMessage('a', words(Buffer.byteLength(split) - Buffer.byteLength(jsonl(piHeader('pi-racy-record'), piMessage('a', ''))))));
+    assert.equal(Buffer.byteLength(over), Buffer.byteLength(split));
+    await inRacyTick(async () => {
+      writeFileSync(identifier, withId('m\\ud800')); writeFileSync(record, over);
+      for (const path of [identifier, record]) utimesSync(path, mtime, mtime);
+      Object.assign(h.clock, { wall: RACY_TICK_MS + 1, monotonic: 0 });
+      assert.deepEqual(await h.run(1).then(counters => [counters.quarantined, counters.uploaded]), [2, 0]);
+      writeFileSync(identifier, withId('mabcdef')); writeFileSync(record, split);
+      for (const path of [identifier, record]) utimesSync(path, mtime, mtime);
+      Object.assign(h.clock, { wall: RACY_TICK_MS + RACY_STAT_WINDOW_MS + 1, monotonic: RACY_STAT_WINDOW_MS });
+      assert.deepEqual(await h.run(2).then(counters => [counters.scanned, counters.uploaded, counters.quarantined]), [2, 2, 0]);
+      assert.deepEqual([...h.server.heads.values()].map(head => head.digest).sort(), [identifier, record].map(path => hash(readFileSync(path))).sort());
+    });
+  } finally { await h.close(); }
+});
+
+test('RacyStat a record the server refuses, rewritten keeping its stat right after that read, is read at the next cycle and uploaded', async () => {
+  const h = await harness();
+  try {
+    const path = join(h.roots.pi, 's.jsonl'); const mtime = new Date('2026-01-01T00:00:00Z');
+    // The server refuses records over 1,500 bytes; each record travels in a part of its own.
+    h.server.limits = h.server.limits.with({ maxPartBytes: 1024n }); h.server.partRecordCap = 1_500n;
+    const split = jsonl(piHeader('pi-racy-server'), piMessage('a', words(1_000)), piMessage('b', words(1_000)));
+    const over = jsonl(piHeader('pi-racy-server'), piMessage('a', words(Buffer.byteLength(split) - Buffer.byteLength(jsonl(piHeader('pi-racy-server'), piMessage('a', ''))))));
+    assert.equal(Buffer.byteLength(over), Buffer.byteLength(split));
+    await inRacyTick(async () => {
+      writeFileSync(path, over); utimesSync(path, mtime, mtime);
+      Object.assign(h.clock, { wall: RACY_TICK_MS + 1, monotonic: 0 });
+      assert.deepEqual(await h.run(1).then(counters => [counters.quarantined, counters.uploaded]), [1, 0]);
+      assert.deepEqual(h.spool.recordsOverLimit().map(row => row.limitSource), ['server']);
+      writeFileSync(path, split); utimesSync(path, mtime, mtime);
+      Object.assign(h.clock, { wall: RACY_TICK_MS + RACY_STAT_WINDOW_MS + 1, monotonic: RACY_STAT_WINDOW_MS });
+      assert.deepEqual(await h.run(2).then(counters => [counters.scanned, counters.uploaded, counters.quarantined]), [1, 1, 0]);
+      assert.deepEqual([...h.server.heads.values()].map(head => head.digest), [hash(readFileSync(path))]);
+    });
+  } finally { await h.close(); }
+});
+
+test('RacyStat the racy window runs on the monotonic clock: a wall clock stepped forward confirms nothing early, a restart waits a whole window, a ctime in the future costs one confirming read per stat', async () => {
+  const h = await harness();
+  try {
+    const path = join(h.roots.pi, 's.jsonl'); const mtime = new Date('2026-01-01T00:00:00Z'); const start = 1_800_000_000_000;
+    const version = (text: string) => jsonl(piHeader('pi-monotonic'), piMessage('m1', text));
+    const reads: number[] = [];
+    const cycle = async (monotonic: number, wall = start): Promise<void> => { Object.assign(h.clock, { monotonic, wall }); reads.push((await h.run(reads.length + 1)).scanned); };
+    // Every ctime is an hour ahead of the wall clock: a network filesystem's clock, or this host's clock set back.
+    await withCtime(() => BigInt(start + 3_600_000) * 1_000_000n, async () => {
+      writeFileSync(path, version('first version')); utimesSync(path, mtime, mtime);
+      await cycle(0); await cycle(1_000);
+      // For one cycle the wall clock is two hours ahead: one more second of monotonic time is no window.
+      await cycle(2_000, start + 7_200_000);
+      // Rewritten in place at the same stat: the confirming read, a window after the first, finds it.
+      writeFileSync(path, version('other version')); utimesSync(path, mtime, mtime);
+      await cycle(3_000); await cycle(4_000);
+      assert.deepEqual([...h.server.heads.values()].map(head => head.digest), [hash(readFileSync(path))]);
+      // Another racy stat, then a restart: its monotonic clock starts again, and its mark waits a whole window of it.
+      appendFileSync(path, jsonl(piMessage('m2', 'two'))); await cycle(5_000);
+      Object.assign(h.clock, { process: 'restarted' }); h.reopen();
+      await cycle(1_000); await cycle(3_000); await cycle(60_000);
+      assert.deepEqual(reads, [1, 0, 0, 1, 0, 1, 0, 1, 0]);
+      assert.deepEqual([...h.server.heads.values()].map(head => head.digest), [hash(readFileSync(path))]);
+    });
+  } finally { await h.close(); }
+});
+
+test('RacyStat a record the server refuses again at an unchanged stat, its ctime in the future, costs one more attempt, not one every window', async () => {
+  const h = await harness();
+  try {
+    const path = join(h.roots.pi, 's.jsonl');
+    h.server.limits = h.server.limits.with({ maxPartBytes: 1024n }); h.server.partRecordCap = 1_500n;
+    await withCtime(() => BigInt(lateClock.wall()) * 1_000_000n, async () => {
+      writeFileSync(path, jsonl(piHeader('pi-refused'), piMessage('long', words(2_000))));
+      const opens: number[] = [];
+      for (const monotonic of [0, 1_000, 3_000, 4_000, 6_000, 9_000, 12_000]) {
+        h.clock.monotonic = monotonic; const before = h.server.count('POST /api/ingest/uploads');
+        await h.run(opens.length + 1); opens.push(h.server.count('POST /api/ingest/uploads') - before);
+      }
+      assert.deepEqual(opens, [1, 0, 1, 0, 0, 0, 0]);
+      assert.deepEqual(h.spool.recordsOverLimit().map(row => [row.limitSource, row.racy]), [['server', undefined]]);
+    });
   } finally { await h.close(); }
 });
 

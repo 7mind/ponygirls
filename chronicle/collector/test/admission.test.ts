@@ -19,7 +19,7 @@ import { formatCollectorStatus } from '../src/status.ts';
 import { parseTranscript } from '../src/parsers.ts';
 import { encodeSnapshot, sourceIdentity, HttpIngester, UploadError, type Ingester } from '../src/ingest.ts';
 import { resolveRuntimePrivacy, FileSecretReader } from '../src/runtime-privacy.ts';
-import { acceptingProgress, noGit, syntheticSecrets } from './helpers.ts';
+import { acceptingProgress, noGit, syntheticSecrets, lateClock } from './helpers.ts';
 import { CollectorPhase } from '../../generated/typescript/chronicle/api/CollectorPhase.js';
 import { IngestReceipt } from '../../generated/typescript/chronicle/api/IngestReceipt.js';
 import { IngestRequest_JsonCodec } from '../../generated/typescript/chronicle/api/IngestRequest.js';
@@ -40,7 +40,7 @@ class Sink implements Ingester {
     return receipt;
   }
 }
-function engine(c: Config, spool: Spool, sink: Ingester): Collector { return new Collector(c, spool, sink, () => 0, noGit, acceptingProgress, syntheticSecrets); }
+function engine(c: Config, spool: Spool, sink: Ingester): Collector { return new Collector(c, spool, sink, () => 0, lateClock, noGit, acceptingProgress, syntheticSecrets); }
 function dbFor(home: string): DatabaseSync { return new DatabaseSync(join(home, 'state/spool.sqlite')); }
 
 // Specified: policy identities are storage observations, never recorded source claims.
@@ -131,7 +131,7 @@ for (const adapter of ['memory', 'sqlite']) {
       const before = spool.queue(); const heads = before.map(entry => spool.head(entry.sourceKey));
       const restricted = { ...base, excludeDefaultProfile: true }; const phases: CollectorPhase[] = [];
       const reporter = { report: async (update: Parameters<typeof acceptingProgress.report>[0]) => { phases.push(update.phase); if (update.phase === CollectorPhase.Idle) assert.equal(update.error, undefined); return acceptingProgress.report(update); } };
-      const collector = new Collector(restricted, spool, sink, () => 0, noGit, reporter, syntheticSecrets);
+      const collector = new Collector(restricted, spool, sink, () => 0, lateClock, noGit, reporter, syntheticSecrets);
       const result = await collector.runOnce(1);
       assert.equal(phases.at(-1), CollectorPhase.Idle);
       assert.equal(result.pending, 1); assert.equal(result.stopped, 1); assert.equal(result.conflicts, 1); assert.equal(result.uploadFailures, 0);
@@ -155,7 +155,7 @@ for (const adapter of ['memory', 'sqlite']) {
       const result = await collector.runOnce(2); assert.equal(result.discovered, 0); assert.equal(result.scannedBytes, 0); assert.equal(result.uploaded, 0); assert.equal(result.uploadFailures, 0); assert.equal(result.quarantined, 0); assert.equal(result.pending, 1);
       assert.deepEqual(spool.queue(), [entry]); assert.equal(spool.head(entry.sourceKey).revision, 0); assert.deepEqual(spool.dropped(), []);
       const reports: CollectorPhase[] = []; const reporting = { report: async (value: Parameters<typeof acceptingProgress.report>[0]) => { reports.push(value.phase); assert.equal(value.error, undefined); return acceptingProgress.report(value); } };
-      await new Collector(restricted, spool, sink, () => 0, noGit, reporting, syntheticSecrets).runOnce(3); assert.equal(reports.at(-1), CollectorPhase.Idle);
+      await new Collector(restricted, spool, sink, () => 0, lateClock, noGit, reporting, syntheticSecrets).runOnce(3); assert.equal(reports.at(-1), CollectorPhase.Idle);
       assert.equal(sink.bodies.length, 1); sink.unavailable = false;
       await engine(base, spool, sink).runOnce(4); assert.deepEqual(sink.bodies, [entry.payload, entry.payload]); assert.equal(spool.head(entry.sourceKey).revision, 1);
       assert.equal(collector.status().diagnostics.filter(d => holdReason(d) !== null).length, 0); assert.deepEqual(spool.dropped(), []);
@@ -267,7 +267,7 @@ test('GoodCommunication HTTP admission sends zero snapshot POSTs while held, the
   const base = config(home, { endpoint: `http://127.0.0.1:${address.port}` }); const spool = new SqliteSpool(base.stateDir);
   try {
     put(base.tokenFile, 'synthetic-private-token'); put(join(home, '.pi/agent/sessions/p/s.jsonl'), pi);
-    const run = (c: Config, now: number) => new Collector(c, spool, new HttpIngester(c), () => 0, noGit, acceptingProgress, new FileSecretReader()).runOnce(now);
+    const run = (c: Config, now: number) => new Collector(c, spool, new HttpIngester(c), () => 0, lateClock, noGit, acceptingProgress, new FileSecretReader()).runOnce(now);
     await run(base, 1); const entry = spool.queue()[0]!; await run({ ...base, excludeDefaultProfile: true }, 2); assert.equal(bodies.length, 1); assert.deepEqual(spool.queue(), [entry]);
     const path = join(home, 'once.json'); put(path, JSON.stringify({ ...base, excludeDefaultProfile: true }));
     await new Promise<void>((resolve, reject) => execFile(process.execPath, [new URL('../src/cli.js', import.meta.url).pathname, '--config', path, '--once'], (error, stdout) => {
