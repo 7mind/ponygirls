@@ -2158,16 +2158,25 @@ def answer_chunk(session, answer, vector, query):
     return dict(ordinal=int(row[0]), distance=float(row[1]), lex=float(row[2]), score=hit['chunks'][0]['score'])
 
 
+# The labels of an ANN answer's piece that count for the recall@k (k = EXACT_TOP).
+CREDITED = ('exact', 'top-k', 'cutoff tie')
+
+
 def judged(chunk, exact, picked):
-    """An ANN answer's best piece against the exact answer: `exact` (the exact answer's best piece), `tie` (another piece
-    whose score in the exact candidate universe — production ranks with their tie-breaks: for hybrid the RRF score, not
-    equal distance and lexical rank — equals the best one's), `approximation` (a lower score there, or a piece outside it),
-    `missing` (no answer). `picked`: the piece's row in the exact universe (exact_answer with pieces), or None."""
+    """An ANN answer's best piece against the exact answer's top k (k = EXACT_TOP, `exact` holding its rows): `exact` (the
+    exact best piece), `top-k` (another piece of the exact top k), `cutoff tie` (a piece outside the top k whose score in
+    the exact candidate universe — production ranks with their tie-breaks: 1 - distance for semantic, the RRF score for
+    hybrid — equals the k-th row's, the cutoff), `approximation` (a lower score there, or a piece outside the universe),
+    `missing` (no answer). `picked`: the piece's row in the exact universe (exact_answer with pieces), or None. The first
+    three count for the recall (CREDITED)."""
     if chunk is None:
         return 'missing'
-    if chunk['ordinal'] == exact[0]['ordinal']:
+    top = exact[:EXACT_TOP]
+    if chunk['ordinal'] == top[0]['ordinal']:
         return 'exact'
-    return 'tie' if picked is not None and picked['score'] == exact[0]['score'] else 'approximation'
+    if chunk['ordinal'] in {row['ordinal'] for row in top}:
+        return 'top-k'
+    return 'cutoff tie' if picked is not None and picked['score'] == top[-1]['score'] else 'approximation'
 
 
 def provenance(session):
@@ -2448,7 +2457,7 @@ def run_h(root):
           f'identical on the incremental head and both roots' + (f'; DIFFERING (a product defect): {unequal}' if unequal else ''), not unequal,
           {key: {name: measured[name]['exact'] for name in heads} for key in unequal[:2]}, defer=True)
     # (3) ANN: recall of the product's answers against the exact ones (content identity or a distance tie), per head
-    recalls = {name: round(sum(1 for v in m['judged'].values() if v in ('exact', 'tie')) / len(vector_keys), 4) for name, m in measured.items()}
+    recalls = {name: round(sum(1 for v in m['judged'].values() if v in CREDITED) / len(vector_keys), 4) for name, m in measured.items()}
     nearer = {name: [f'{mode} {query[:40]!r}' for (mode, query), chunk in m['chunks'].items() if mode == 'semantic' and chunk
                      and chunk['distance'] < m['exact'][(mode, query)][0]['distance']] for name, m in measured.items()}
     check(f'H7: no product semantic answer is nearer than its exact answer (the exact leg sees every visible row): {nearer}', not any(nearer.values()), nearer, defer=True)
@@ -2462,7 +2471,7 @@ def run_h(root):
                 found[f'{key[0]} {key[1][:40]!r}'] = dict(kind='tie' if px and py and px['score'] == py['score'] else 'approximation',
                                                           **{a: x, b: y}, exactScores={a: px, b: py}, exact=measured[a]['exact'][key][0])
         differences[f'{a} vs {b}'] = found
-    note(f'H7: ANN recall (the product answer\'s best piece is the exact one or ties its score in the exact universe) over {len(vector_keys)} semantic and hybrid answers {recalls}; '
+    note(f'H7: ANN recall@{EXACT_TOP} (the product answer\'s best piece is in the exact top {EXACT_TOP} or ties its cutoff score in the exact universe) over {len(vector_keys)} semantic and hybrid answers {recalls}; '
          f'per head {[(name, dict(collections.Counter(m["judged"].values()))) for name, m in measured.items()]}; differences between heads (ordinal, exact distance, '
          f'lexical rank) {json.dumps(differences)}; index rows no reader sees {json.dumps({name: m["indexRows"] for name, m in measured.items()})}')
     check(f'H7: the incremental head\'s ANN recall {recalls["incremental"]} is not below the two roots\' range ({recalls["root"]}, {recalls["root2"]}); index rows no '
