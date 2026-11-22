@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""Read-only probe of Chronicle search's ANN leg: recall@10 and recall@100 of the product's semantic (HNSW) leg against an
+exact scan of the same visible rows, for one reader, in one READ ONLY REPEATABLE READ transaction. See
+ann-recall-probe.md (what it measures, how to run it before and after a deployment, the comparison rule).
+
+  ann-recall-probe.py measure --reader USER [--queries 200] [--seed 20261122] [--out FILE.json] ...
+  ann-recall-probe.py compare BASELINE.json AFTER.json
+
+The connection is libpq's: PGHOST, PGPORT, PGDATABASE, PGUSER and a password file or service (`--dsn` instead); the probe
+never reads or prints credentials. It writes nothing to the database and makes no model call: its query vectors are
+stored vectors of the reader's visible rows, sampled with a fixed seed."""
+import argparse, json, os, random, re, subprocess, sys, tempfile, time
+
+KS = (10, 100)
+CANDIDATES_PER_LEG = 1000  # CandidatePolicy.candidatesPerLeg
+# CandidateSql.configureStatements (SearchPolicy.configure) and the first pass's scan budget (SemanticLegBudget.production
+# firstScanTuples = CandidatePolicy.maxScanTuples): identical before and after L5.
+ANN_SETTINGS = ('hnsw.iterative_scan', 'strict_order'), ('hnsw.ef_search', '200'), ('hnsw.max_scan_tuples', '200000'), ('hnsw.scan_mem_multiplier', '4')
+EXECUTABLE_POLICIES = "'ContextAwareProblemsV1'"  # IndexProfiles.executablePolicies (IndexPolicy.values)
+# Database.visible (the same text before and after L5); `{reader}` a quoted literal.
+VISIBLE = ("EXISTS(SELECT 1 FROM ch_users ou WHERE ou.id=s.owner AND ou.enabled) AND EXISTS(SELECT 1 FROM ch_users ru WHERE ru.id={reader} AND ru.enabled) "
+           "AND (s.owner={reader} OR EXISTS(SELECT 1 FROM ch_members a JOIN ch_members b ON a.group_id=b.group_id WHERE a.user_id={reader} AND b.user_id=s.owner)) "
+           "AND NOT s.tombstone")
+COMPATIBLE = ("EXISTS(SELECT compatible.embedding_space FROM ch_index_profiles compatible WHERE compatible.profile=ch.profile "
+              f"AND compatible.policy IN({EXECUTABLE_POLICIES}) AND compatible.embedding_space={{space}} OFFSET 0)")  # IndexProfiles.compatibleSql
+# The search row `ch` is a piece of its session's published generation: before L5 (62714e81 Search.statement
+# `authorized`) a row of that generation itself; from L5 on (GenerationRows.publishedInfo) also a retained row of an
+# origin inside one of the published lineage version's piece segments.
+PUBLISHED_INFO = {
+    'pre-l5': "SELECT r0.metadata FROM ch_revision_info r0 WHERE r0.session_id=s.id AND r0.revision=ch.revision AND s.published=ch.generation",
+    'l5': ("SELECT own.metadata FROM ch_revision_info own WHERE s.published=ch.generation AND own.session_id=s.id AND own.revision=ch.revision "
+           "UNION ALL SELECT held.metadata FROM ch_generations p JOIN ch_revision_info held ON held.session_id=s.id AND held.revision=p.revision "
+           "WHERE p.id=s.published AND s.published<>ch.generation AND (s.published=ch.generation OR (SELECT true FROM ch_lineage_segments held_m "
+           "WHERE held_m.lineage=p.lineage AND held_m.origin=ch.generation AND held_m.since<=p.lineage_version AND (held_m.until IS NULL OR held_m.until>p.lineage_version) "
+           "AND held_m.kind='piece' AND ch.ordinal>=held_m.lo AND ch.ordinal<held_m.hi LIMIT 1))")}
+# The product's fields of the leg (Search.statement `fields`).
+FIELDS = {'pre-l5': 'ch.id,ch.generation,ch.session_id,ch.revision,ch.document,ch.embedding',
+          'l5': 'ch.id,ch.generation,ch.session_id,ch.revision,ch.ordinal,ch.document,ch.embedding'}
+
+
+def ann_sql(schema, dims, reader, space, vector):
+    """The semantic leg's first pass (LegPass.Index) as Search.statement builds it — `authorized` per row inside the
+    ordered index scan (OFFSET 0), the profile compatible with the configured space, ordered by CandidateSql.annDistance,
+    LIMIT candidatesPerLeg — and each candidate's original-vector distance (what the product reranks by)."""
+    authorized = f"(SELECT true FROM ch_sources s CROSS JOIN LATERAL({PUBLISHED_INFO[schema]}) r WHERE s.id=ch.session_id AND {VISIBLE.format(reader=reader)} OFFSET 0)"
+    if schema == 'pre-l5':  # 62714e81: the revision join and the published generation in the subquery itself
+        authorized = (f"(SELECT true FROM ch_sources s JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=ch.revision WHERE s.id=ch.session_id "
+                      f"AND s.published=ch.generation AND {VISIBLE.format(reader=reader)} OFFSET 0)")
+    return (f"WITH ann AS MATERIALIZED(SELECT {FIELDS[schema]} FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)={dims} AND {COMPATIBLE.format(space=space)} "
+            f"AND {authorized} ORDER BY l2_normalize(ch.embedding)::halfvec({dims}) <=> l2_normalize('{vector}'::vector)::halfvec({dims}) LIMIT {CANDIDATES_PER_LEG}) "
+            f"SELECT 'ann', id, embedding <=> '{vector}'::vector FROM ann")
+
+
+def visible_rows(schema, dims, reader, space):
+    """The leg's visible set from the source side (L5: Search.visibleChunks; before: the same rows as `authorized`)."""
+    return (f"ch_sources s JOIN ch_search_chunks ch ON ch.session_id=s.id CROSS JOIN LATERAL({PUBLISHED_INFO[schema]}) r "
+            f"WHERE {VISIBLE.format(reader=reader)} AND {COMPATIBLE.format(space=space)} AND vector_dims(ch.embedding)={dims}")
+
+
+def literal(text):
+    return "'" + text.replace("'", "''") + "'"
+
+
+class Aborted(Exception):
+    """A budget was reached: the transaction is rolled back and nothing is reported as a measurement."""
+
+
+class Session:
+    """One psql connection driven statement by statement (one transaction across the probe's statements)."""
+    def __init__(self, dsn, deadline):
+        self.deadline, self.sentinel, self.count = deadline, 'probe-end-' + os.urandom(8).hex(), 0
+        self.errors = tempfile.TemporaryFile(mode='w+')
+        self.process = subprocess.Popen(['psql', '-X', '-q', '-At', '-F', '|', '-v', 'ON_ERROR_STOP=1'] + ([dsn] if dsn else []),
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors, text=True, bufsize=1)
+
+    def run(self, statement):
+        if time.monotonic() > self.deadline:
+            raise Aborted('time budget reached')
+        self.count += 1
+        marker = f'{self.sentinel}-{self.count}'
+        self.process.stdin.write(statement.rstrip().rstrip(';') + ';\n\\echo ' + marker + '\n')
+        self.process.stdin.flush()
+        rows = []
+        for line in self.process.stdout:
+            line = line.rstrip('\n')
+            if line == marker:
+                return rows
+            rows.append(line.split('|'))
+        self.errors.seek(0)
+        error = self.errors.read()[-2000:]
+        if 'statement timeout' in error or 'transaction timeout' in error:
+            raise Aborted(f'server timeout: {error.strip()}')
+        raise RuntimeError(f'psql ended: {error.strip()}')
+
+    def close(self, commit):
+        try:
+            if self.process.poll() is None:
+                self.process.stdin.write(('COMMIT' if commit else 'ROLLBACK') + ';\n\\q\n')
+                self.process.stdin.flush()
+                self.process.wait(timeout=30)
+        except (BrokenPipeError, subprocess.TimeoutExpired, OSError):
+            pass
+        if self.process.poll() is None:
+            self.process.kill()  # the server aborts the read-only transaction with the connection
+
+
+def credits(candidates, exact, k):
+    """(credits, denominator) of recall@k: each distinct row among the candidates' first k (in the product's order:
+    original-vector distance, then id) counts once when it is in the exact first k or its distance equals the exact k-th's
+    (a tie at the cutoff); the denominator is k, or the exact list's size when smaller."""
+    top = exact[:k]
+    if not top:
+        return 0, 0
+    members, cutoff, seen, count = {i for i, _ in top}, top[-1][1], set(), 0
+    for row, distance in candidates[:k]:
+        if row in seen:
+            continue
+        seen.add(row)
+        count += row in members or distance == cutoff
+    return count, len(top)
+
+
+def bootstrap(per_query, seed, rounds=2000):
+    """Seeded percentile bootstrap over queries of Σ credits / Σ denominators: the 95 % interval."""
+    rng, n, values = random.Random(seed), len(per_query), []
+    for _ in range(rounds):
+        sample = [per_query[rng.randrange(n)] for _ in range(n)]
+        values.append(sum(c for c, _ in sample) / sum(d for _, d in sample))
+    values.sort()
+    return values[int(0.025 * rounds)], values[min(rounds - 1, int(0.975 * rounds))]
+
+
+def measure(args):
+    if not re.fullmatch(r'[A-Za-z0-9_.@-]{1,128}', args.reader):
+        sys.exit('--reader: an account id ([A-Za-z0-9_.@-])')
+    if args.queries < 200 and not args.trial:
+        sys.exit('--queries: at least 200 (smaller only with --trial)')
+    started, reader = time.monotonic(), literal(args.reader)
+    session = Session(args.dsn, started + args.max_seconds)
+    result, committed = None, False
+    try:
+        # Session-level backstops for the whole transaction (transaction_timeout exists from PostgreSQL 17 on).
+        session.run(f"SELECT set_config('transaction_timeout', '{int(args.max_seconds * 1000)}', false) WHERE current_setting('server_version_num')::int >= 170000")
+        session.run('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        session.run(f"SET LOCAL statement_timeout = '{int(args.statement_seconds * 1000)}'")
+        session.run(f"SET LOCAL lock_timeout = '{int(args.lock_seconds * 1000)}'")
+        session.run(f"SET LOCAL work_mem = {literal(args.work_mem)}")  # the service role's work_mem bounds the iterative scan's memory
+        server = session.run("SELECT current_setting('server_version'), (SELECT extversion FROM pg_extension WHERE extname='vector'), now(), "
+                             "to_regclass('ch_lineage_segments') IS NOT NULL, (SELECT reltuples::bigint FROM pg_class WHERE oid='ch_search_chunks'::regclass), "
+                             "current_setting('transaction_read_only')")[0]
+        schema = args.schema if args.schema != 'auto' else 'l5' if server[3] == 't' else 'pre-l5'
+        assert server[5] == 'on', 'the transaction is not read-only'
+        if int(server[4]) > args.max_table_rows:
+            raise Aborted(f'ch_search_chunks holds about {int(server[4]):,} rows, above --max-table-rows {args.max_table_rows:,}')
+        space = args.space or session.run(f"SELECT p.embedding_space FROM ch_owner_targets t JOIN ch_index_profiles p ON p.profile=t.profile WHERE t.owner={reader}")[0][0]
+        space_sql = literal(space)
+        dims = args.dimensions or int(session.run(f"SELECT DISTINCT vector_dims(ch.embedding) FROM ch_search_chunks ch WHERE {COMPATIBLE.format(space=space_sql)} "
+                                                  "AND vector_dims(ch.embedding) IS NOT NULL LIMIT 2")[0][0])
+        index = f'ch_search_hnsw_d{dims}'
+        counter = f"SELECT 'scans', pg_stat_get_xact_numscans({literal(index)}::regclass)"
+        for name, value in ANN_SETTINGS:
+            session.run(f'SET LOCAL {name} = {value}')
+        settings = {name: session.run(f"SELECT current_setting({literal(name)})")[0][0] for name, _ in ANN_SETTINGS + (('work_mem', ''), ('statement_timeout', ''), ('lock_timeout', ''))}
+        # Query vectors: stored vectors of the reader's visible rows, by a fixed seed (md5 of seed and row id).
+        sampled = session.run(f"SELECT ch.id, count(*) OVER () FROM {visible_rows(schema, dims, reader, space_sql)} "
+                              f"ORDER BY md5({literal(str(args.seed))} || ':' || ch.id::text) LIMIT {args.queries}")
+        if len(sampled) < args.queries:
+            raise Aborted(f'only {len(sampled)} visible rows for {args.reader}')
+        visible = int(sampled[0][1])
+        vectors = dict(session.run(f"SELECT id, embedding::text FROM ch_search_chunks WHERE id IN ({','.join(literal(r[0]) for r in sampled)})"))
+        queries = [(row[0], vectors[row[0]]) for row in sampled]
+        # The ANN leg per query; its HNSW use confirmed by the index's own counter of this transaction around it.
+        legs, scans = [], []
+        for _, vector in queries:
+            before = int(session.run(counter)[0][1])
+            rows = session.run(ann_sql(schema, dims, reader, space_sql, vector))
+            scans.append(int(session.run(counter)[0][1]) - before)
+            legs.append(sorted(((r[1], float(r[2])) for r in rows), key=lambda x: (x[1], x[0])))  # the product's rerank order
+        unscanned = [i for i, n in enumerate(scans) if n < 1]
+        if unscanned:
+            raise RuntimeError(f'{len(unscanned)} ANN legs did not scan {index} (query rows {[queries[i][0] for i in unscanned[:5]]}): not the product\'s plan')
+        # The exact top 100: one sequential pass over the visible rows for every query whose leg returned at least 100
+        # rows, keeping the rows within that leg's 100th original-vector distance (an upper bound of the exact 100th
+        # distance: those are visible rows), each row's vector read once; a separate exact scan for a shorter leg.
+        top = max(KS)
+        bounded = [i for i, leg in enumerate(legs) if len(leg) >= top]
+        short = [i for i in range(len(legs)) if i not in set(bounded)]
+        if len(short) > args.max_short:
+            raise Aborted(f'{len(short)} legs returned fewer than {top} rows (--max-short {args.max_short})')
+        exact = {i: [] for i in range(len(legs))}
+        before = int(session.run(counter)[0][1])
+        if bounded:
+            values = ','.join(f"({i},{literal(queries[i][1])}::vector,{legs[i][top - 1][1]!r}::float8)" for i in bounded)
+            # x: each visible row once, its vector detoasted once (subvector copies it whole); the lateral subquery (OFFSET 0:
+            # not pulled up) keeps x the outer side, so the table is read once and every query's distance computed once per row.
+            rows = session.run(f"WITH q(i, v, bound) AS MATERIALIZED (VALUES {values}) SELECT y.i, x.id, y.d FROM "
+                               f"(SELECT ch.id, subvector(ch.embedding, 1, {dims}) AS e FROM {visible_rows(schema, dims, reader, space_sql)} OFFSET 0) x "
+                               f"CROSS JOIN LATERAL (SELECT z.i, z.d FROM (SELECT q.i, x.e <=> q.v AS d, q.bound FROM q OFFSET 0) z WHERE z.d <= z.bound) y "
+                               f"LIMIT {args.max_exact_rows + 1}")
+            if len(rows) > args.max_exact_rows:
+                raise Aborted(f'the exact pass returned more than --max-exact-rows {args.max_exact_rows:,} rows')
+            for i, row, distance in rows:
+                exact[int(i)].append((row, float(distance)))
+        for i in short:
+            rows = session.run(f"SELECT ch.id, ch.embedding <=> {literal(queries[i][1])}::vector AS d FROM {visible_rows(schema, dims, reader, space_sql)} ORDER BY d, ch.id LIMIT {top}")
+            exact[i] = [(r[0], float(r[1])) for r in rows]
+        exact_scans = int(session.run(counter)[0][1]) - before
+        if exact_scans:
+            raise RuntimeError(f'the exact pass scanned {index} ({exact_scans})')
+        exact = {i: sorted(rows, key=lambda x: (x[1], x[0]))[:top] if i in set(bounded) else rows for i, rows in exact.items()}
+        incomplete = [i for i in bounded if len(exact[i]) < top]
+        if incomplete:
+            raise RuntimeError(f'exact lists below {top} rows for bounded queries {incomplete[:5]}')
+        # Optional cross-check of the single pass against a plain exact scan for the first queries.
+        for i in range(min(args.verify_exact, len(queries))):
+            rows = session.run(f"SELECT ch.id, ch.embedding <=> {literal(queries[i][1])}::vector AS d FROM {visible_rows(schema, dims, reader, space_sql)} ORDER BY d, ch.id LIMIT {top}")
+            plain = [(r[0], float(r[1])) for r in rows]
+            if [d for _, d in plain] != [d for _, d in exact[i]] or {r for r, d in plain if d < plain[-1][1]} != {r for r, d in exact[i] if d < exact[i][-1][1]}:
+                raise RuntimeError(f'the single exact pass differs from a plain exact scan for query {i}')
+        per_k = {}
+        for k in KS:
+            per_query = [credits(legs[i], exact[i], k) for i in range(len(queries))]
+            total = (sum(c for c, _ in per_query), sum(d for _, d in per_query))
+            low, high = bootstrap(per_query, args.seed + k)
+            per_k[k] = dict(credits=total[0], of=total[1], recall=total[0] / total[1], ci95=[low, high], perQuery=per_query)
+        result = dict(probe='ann-recall-probe', version=1, reader=args.reader, schema=schema, server=server[0], pgvector=server[1], snapshotAt=server[2],
+                      space=space, dimensions=dims, index=index, settings=settings, seed=args.seed, queries=len(queries), visibleRows=visible,
+                      queryRows=[q[0] for q in queries], hnswScansPerLeg=[min(scans), max(scans)], legRows=[min(map(len, legs)), max(map(len, legs))],
+                      shortLegs=len(short), exactPassRows=sum(len(v) for v in exact.values()), seconds=round(time.monotonic() - started, 1),
+                      recall={str(k): v for k, v in per_k.items()})
+        committed = True
+    except Aborted as reason:
+        print(f'ABORTED (rolled back, nothing measured): {reason}', file=sys.stderr)
+        session.close(False)
+        sys.exit(2)
+    finally:
+        if committed:
+            session.close(True)
+        elif session.process.poll() is None:
+            session.close(False)
+    if args.out:
+        with open(args.out, 'w') as out:
+            json.dump(result, out, indent=1)
+    print(f"ann-recall-probe: reader {args.reader}, schema {result['schema']}, {result['queries']} queries over {result['visibleRows']:,} visible rows, "
+          f"snapshot {result['snapshotAt']}, {result['seconds']} s; HNSW scans per leg {result['hnswScansPerLeg']}, short legs {result['shortLegs']}")
+    for k in KS:
+        v = result['recall'][str(k)]
+        print(f"  recall@{k}: {v['credits']}/{v['of']} = {v['recall']:.4f}  95 % interval [{v['ci95'][0]:.4f}, {v['ci95'][1]:.4f}]")
+
+
+def compare(args):
+    """The comparison rule (ann-recall-probe.md): a drop of the after-value below the baseline's 95 % interval at either k
+    is a defect to fix."""
+    baseline, after = (json.load(open(path)) for path in (args.baseline, args.after))
+    defect = False
+    for k in KS:
+        b, a = baseline['recall'][str(k)], after['recall'][str(k)]
+        below = a['recall'] < b['ci95'][0]
+        defect |= below
+        print(f"recall@{k}: baseline {b['credits']}/{b['of']} = {b['recall']:.4f} [{b['ci95'][0]:.4f}, {b['ci95'][1]:.4f}]; after {a['credits']}/{a['of']} = "
+              f"{a['recall']:.4f}: {'BELOW the baseline interval' if below else 'not below the baseline interval'}")
+    print('DEFECT: a drop of the after-value below the baseline\'s 95 % interval — a defect to fix' if defect else 'no defect by the rule')
+    sys.exit(1 if defect else 0)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest='command', required=True)
+    m = sub.add_parser('measure')
+    m.add_argument('--reader', required=True, help='the account whose visible rows are searched (and sampled)')
+    m.add_argument('--queries', type=int, default=200)
+    m.add_argument('--seed', type=int, default=20261122)
+    m.add_argument('--schema', choices=('auto', 'pre-l5', 'l5'), default='auto', help='auto: l5 when ch_lineage_segments exists')
+    m.add_argument('--space', help='the configured embedding space id (default: the reader\'s owner target\'s)')
+    m.add_argument('--dimensions', type=int, help='the configured dimensions (default: of the space\'s rows)')
+    m.add_argument('--work-mem', default='4MB', help='the service role\'s work_mem (production: 4MB)')
+    m.add_argument('--max-seconds', type=float, default=900, help='time budget of the whole transaction')
+    m.add_argument('--statement-seconds', type=float, default=300)
+    m.add_argument('--lock-seconds', type=float, default=5)
+    m.add_argument('--max-table-rows', type=int, default=20_000_000, help='abort before any scan when ch_search_chunks is estimated larger')
+    m.add_argument('--max-exact-rows', type=int, default=2_000_000, help='abort when the exact pass returns more rows')
+    m.add_argument('--max-short', type=int, default=5, help='abort when more legs return fewer than 100 rows (each costs an exact scan)')
+    m.add_argument('--verify-exact', type=int, default=0, help='cross-check the single exact pass against plain exact scans of the first N queries')
+    m.add_argument('--dsn', help='a libpq connection string or service (default: the PG* environment)')
+    m.add_argument('--out', help='write the result as JSON')
+    m.add_argument('--trial', action='store_true', help='allow fewer than 200 queries (development only)')
+    c = sub.add_parser('compare')
+    c.add_argument('baseline')
+    c.add_argument('after')
+    args = parser.parse_args()
+    measure(args) if args.command == 'measure' else compare(args)
+
+
+if __name__ == '__main__':
+    main()
