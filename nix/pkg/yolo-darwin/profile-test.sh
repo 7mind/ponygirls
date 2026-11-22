@@ -23,7 +23,7 @@ export YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh"
 
 FAILURES=0
 TESTS_RUN=0
-WORKDIR="$(mktemp -d)"
+WORKDIR="$(cd -P -- "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$WORKDIR"' EXIT
 TEST_SANDBOX_ENTRYPOINT="$WORKDIR/yolo-sandbox-entrypoint"
 cp "$SCRIPT_DIR/../yolo/sandbox-entrypoint.sh" "$TEST_SANDBOX_ENTRYPOINT"
@@ -263,13 +263,13 @@ assert_contains "declared SSH-key target receives read access" "$RENDERED_PATHS"
 # Seatbelt is last-match-wins, so ad-hoc CLI grants must render after every
 # declarative grant — including declarative read-write ones.
 grant_line() {
-  printf '%s\n' "$RENDERED_PATHS" | grep -n -F -- ";; Explicit $1 grant: $2" | tail -1 | cut -d: -f1
+  printf '%s\n' "$RENDERED_PATHS" | grep -n -F -- "(literal \"$1\")" | tail -1 | cut -d: -f1
 }
 assert_grant_after() {
   local desc="$1" later_access="$2" later_path="$3" earlier_access="$4" earlier_path="$5"
   local later_idx earlier_idx
-  later_idx="$(grant_line "$later_access" "$later_path")"
-  earlier_idx="$(grant_line "$earlier_access" "$earlier_path")"
+  later_idx="$(grant_line "$later_path")"
+  earlier_idx="$(grant_line "$earlier_path")"
   TESTS_RUN=$((TESTS_RUN + 1))
   if [[ -z "$later_idx" || -z "$earlier_idx" || "$later_idx" -le "$earlier_idx" ]]; then
     echo "FAIL: $desc -- expected $later_access $later_path ($later_idx) after $earlier_access $earlier_path ($earlier_idx)"
@@ -286,7 +286,7 @@ assert_grant_after "CLI read-write grant follows the CLI read-only grant that pr
 # Declarative grants outrank the profile-specific re-grants they may overlap.
 PROFILE_REGRANT_LINE="$(printf '%s\n' "$RENDERED_PATHS" \
   | grep -n -F -- '(subpath (string-append (param "HOME_DIR") "/.config/yolo/foo/pi")))' | tail -1 | cut -d: -f1)"
-DECL_RO_LINE="$(grant_line ro "$DECL_RO")"
+DECL_RO_LINE="$(grant_line "$DECL_RO")"
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ -z "$PROFILE_REGRANT_LINE" || -z "$DECL_RO_LINE" || "$DECL_RO_LINE" -le "$PROFILE_REGRANT_LINE" ]]; then
   echo "FAIL: declarative grant follows the active-profile re-grant -- expected declarative ($DECL_RO_LINE) after profile ($PROFILE_REGRANT_LINE)"
@@ -465,7 +465,7 @@ assert_contains "claude receives targeted and shared prompt fragments" "$OUT" $'
 assert_not_contains "claude excludes pi-targeted prompt fragments" "$OUT" "pi only"
 # Regression: D1 — orchestration variables must stop at the launcher boundary.
 assert_not_contains "confined child excludes orchestration variables except profile marker" \
-  "$(printf '%s\n' "$OUT" | grep -v '^YOLO_NAMED_PROFILE$')" "YOLO_"
+  "$(printf '%s\n' "$OUT" | grep -Ev '^YOLO_(NAMED_PROFILE|CLIPBOARD_SOCK)$')" "YOLO_"
 run_prompt_exec pi
 assert_zero "pi launch with custom prompt succeeds" "$STATUS"
 assert_contains "pi receives shared and targeted prompt fragments" "$OUT" $'prompt<<shared line\n\naudio line\n\npi only>>'
@@ -543,14 +543,18 @@ assert_contains "sandbox hook exports reach agent" "$OUT" "SANDBOX_HOOK=ran"
 assert_contains "agent subcommand excludes shell hooks" "$OUT" "SHELL_HOOK=<unset>"
 assert_contains "agent subcommand excludes cmd hooks" "$OUT" "CMD_HOOK=<unset>"
 assert_contains "disabled sandbox hook does not run" "$OUT" "DISABLED_HOOK=<unset>"
-assert_contains "Podman socket URI reaches Docker clients" "$OUT" "DOCKER_HOST=$PODMAN_SOCKET_URI"
-assert_contains "Podman socket URI reaches Podman clients" "$OUT" "CONTAINER_HOST=$PODMAN_SOCKET_URI"
+assert_contains "Podman canonical socket URI reaches Docker clients" "$OUT" "DOCKER_HOST=unix://$PODMAN_SOCKET_TARGET"
+assert_contains "Podman canonical socket URI reaches Podman clients" "$OUT" "CONTAINER_HOST=unix://$PODMAN_SOCKET_TARGET"
 CAPTURED_PROFILE="$(cat "$CAPTURE_PROFILE_FILE" 2>/dev/null || true)"
-assert_contains "Podman stable socket symlink receives read access" "$CAPTURED_PROFILE" "(literal \"$PODMAN_SOCKET_LINK\")"
+assert_not_contains "Podman alias is not added to the allowlist" "$CAPTURED_PROFILE" "$PODMAN_SOCKET_LINK"
+assert_contains "Podman connects to only the exact pinned path" "$CAPTURED_PROFILE" \
+  "(allow network-outbound (literal \"$PODMAN_SOCKET_TARGET\"))"
+assert_contains "Podman path is protected from substitution" "$CAPTURED_PROFILE" \
+  $'(deny file-write*\n    (literal "'"$PODMAN_SOCKET_TARGET"'"))'
 assert_contains "Podman runtime socket target receives read access" "$CAPTURED_PROFILE" "(literal \"$PODMAN_SOCKET_TARGET\")"
 assert_contains "extra package bin is prepended to PATH" "$OUT" "EXTRA_TOOL=$EXTRA_BIN/yolo-extra-tool"
 assert_not_contains "configured child excludes orchestration variables except profile marker" \
-  "$(printf '%s\n' "$OUT" | grep -v '^YOLO_NAMED_PROFILE$')" "YOLO_"
+  "$(printf '%s\n' "$OUT" | grep -Ev '^YOLO_(NAMED_PROFILE|CLIPBOARD_SOCK)$')" "YOLO_"
 assert_eq "enabled host hook runs" "host" "$(cat "$HOST_HOOK_MARKER" 2>/dev/null || true)"
 assert_eq "disabled host hook does not run" "absent" "$(if [[ -e "$DISABLED_HOST_HOOK_MARKER" ]]; then echo present; else echo absent; fi)"
 CAPTURED_ARGS="$(cat "$CAPTURE_ARGS_FILE" 2>/dev/null || true)"
@@ -913,26 +917,133 @@ OUT="$(cd "$PROJECT_DIR" && HOME="$RESHARE_HOME" PATH="$FAKE_BIN:$PATH" \
 assert_zero "default marker child launch succeeds" "$?"
 assert_eq "default marker overrides ambient and CLI env in child" 0 "$OUT"
 
-WINDOW_HELPER="$FAKE_BIN/window-context"
-printf '%s\n' "#!$_bash_path" "printf '%s\\n' '{\"index\":0,\"name\":\"backend | named\"}'" > "$WINDOW_HELPER"
-chmod +x "$WINDOW_HELPER"
-OUT="$(cd "$PROJECT_DIR" && HOME="$RESHARE_HOME" PATH="$FAKE_BIN:$PATH" \
-  YOLO_TMUX_CONTEXT_HELPER="$WINDOW_HELPER" YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
-  bash "$SCRIPT" --profile foo --env SMIND_TMUX_WINDOW_CONTEXT=wrong cmd printenv SMIND_TMUX_WINDOW_CONTEXT 2>&1)"
-assert_zero "origin window context launch succeeds" "$?"
-assert_eq "origin window snapshot reaches child and overrides caller metadata" '{"index":0,"name":"backend | named"}' "$OUT"
-OUT="$(cd "$PROJECT_DIR" && HOME="$RESHARE_HOME" PATH="$FAKE_BIN:$PATH" \
-  YOLO_TMUX_CONTEXT_HELPER="$WINDOW_HELPER" YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
-  bash "$SCRIPT" --profile foo cmd "$_bash_path" -c 'printf "%s" "${YOLO_TMUX_CONTEXT_HELPER-unset}"' 2>&1)"
-assert_zero "window helper privacy check succeeds" "$?"
-assert_eq "host-only window helper is not passed to child" unset "$OUT"
-printf '%s\n' "#!$_bash_path" 'exit 9' > "$WINDOW_HELPER"
-OUT="$(cd "$PROJECT_DIR" && HOME="$RESHARE_HOME" PATH="$FAKE_BIN:$PATH" \
-  YOLO_TMUX_CONTEXT_HELPER="$WINDOW_HELPER" YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
-  bash "$SCRIPT" --profile foo cmd printenv SMIND_TMUX_WINDOW_CONTEXT 2>&1)"
-assert_zero "unavailable window context does not block launch" "$?"
-assert_contains "window capture failure is observable" "$OUT" "warning: tmux window context unavailable"
-assert_contains "unavailable window context is explicit" "$OUT" null
+UNIX_DENY='(deny network-outbound (regex #".+"))'
+assert_eq "pathname socket denial is final after explicit file grants" "$UNIX_DENY" \
+  "$(printf '%s\n' "$RENDERED_PATHS" | tail -1)"
+
+ORIGIN_SOCKET="$PROJECT_DIR/tmux.sock"
+ORIGIN_ALIAS="$PROJECT_DIR/origin-link.sock"
+"$_python_path" - "$ORIGIN_SOCKET" <<'PY'
+import socket
+import sys
+
+with socket.socket(socket.AF_UNIX) as listener:
+    listener.bind(sys.argv[1])
+PY
+ln -s "$ORIGIN_SOCKET" "$ORIGIN_ALIAS"
+FAKE_BROKER="$FAKE_BIN/clipboard-proxy"
+printf '#!%s\n' "$_python_path" > "$FAKE_BROKER"
+cat "$SCRIPT_DIR/testdata/fake-clipboard-proxy.py" >> "$FAKE_BROKER"
+chmod +x "$FAKE_BROKER"
+mkdir "$FAKE_BIN/shim"
+printf '#!%s\nexit 0\n' "$_bash_path" > "$FAKE_BIN/shim/tmux"
+chmod +x "$FAKE_BIN/shim/tmux"
+BROKER_ARGS="$WORKDIR/clipboard-args"
+RUN_TMP="$PROJECT_DIR/tmp"
+mkdir "$RUN_TMP"
+ln -s "$RUN_TMP" "$PROJECT_DIR/tmp-link"
+
+run_broker_case() {
+  local allow="$1" pane="$2" proxy="$3" tmp="$4"; shift 4
+  rm -f "$BROKER_ARGS" "$CAPTURE_PROFILE_FILE"
+  OUT="$(cd "$PROJECT_DIR" && HOME="$FAKE_HOME" PATH="$FAKE_BIN:$PATH" \
+    TMPDIR="$tmp" FAKE_BROKER_ARGS="$BROKER_ARGS" \
+    YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+    YOLO_CLIPBOARD_PROXY="$proxy" YOLO_CLIPBOARD_SHIM_DIR="$FAKE_BIN/shim" \
+    YOLO_TMUX="$FAKE_BIN/shim/tmux" YOLO_ALLOW_TMUX_WINDOW_QUERY="$allow" \
+    TMUX="$ORIGIN_ALIAS${FIXTURE_TMUX_SUFFIX-,98765,17}" TMUX_PANE="$pane" \
+    YOLO_SESSION_VARS=$'TMUX=session\nTMUX_PANE=session\nSMIND_TMUX_COMMAND=session\nYOLO_CLIPBOARD_SOCK=session' \
+    bash "$SCRIPT" --env "CAPTURE_PROFILE_FILE=$CAPTURE_PROFILE_FILE" \
+      --env TMUX=cli --env TMUX_PANE=cli --env SMIND_TMUX_COMMAND=cli \
+      --env YOLO_CLIPBOARD_SOCK=cli "$@" cmd "$_bash_path" -c '
+        printf "TMUX=%s\nTMUX_PANE=%s\nSMIND_TMUX_COMMAND=%s\nYOLO_CLIPBOARD_SOCK=%s\n" \
+          "$TMUX" "$TMUX_PANE" "$SMIND_TMUX_COMMAND" "$YOLO_CLIPBOARD_SOCK"
+        printf "PATH=%s\n" "$PATH"
+        exit 37' 2>&1)"
+  STATUS=$?
+}
+
+run_broker_case 1 %123 "$FAKE_BROKER" "$PROJECT_DIR/tmp-link" --rw "$PROJECT_DIR" --env "PATH=/chosen:$PATH"
+assert_eq "broker launch preserves the child status" 37 "$STATUS"
+LISTENER="$(sed -n '2p' "$BROKER_ARGS" 2>/dev/null)"
+assert_contains "broker listens in canonical configured TMPDIR" "$LISTENER" "$RUN_TMP/"
+assert_contains "broker receives canonical host socket, not symlink" "$(cat "$BROKER_ARGS" 2>/dev/null)" \
+  $'--tmux-socket\n'"$ORIGIN_SOCKET"
+assert_contains "broker receives opt-in bound pane and inherited server PID" "$(cat "$BROKER_ARGS" 2>/dev/null)" \
+  $'--tmux-pane\n%123\n--tmux-server-pid\n98765'
+assert_contains "child receives synthetic TMUX" "$OUT" "TMUX=$LISTENER,0,0"
+assert_contains "child learns only the broker pathname" "$OUT" "YOLO_CLIPBOARD_SOCK=$LISTENER"
+assert_contains "child learns valid opted-in bound pane" "$OUT" 'TMUX_PANE=%123'
+assert_contains "metadata client is the pinned shim" "$OUT" "SMIND_TMUX_COMMAND=$FAKE_BIN/shim/tmux"
+assert_contains "shim precedes explicitly supplied PATH" "$OUT" "PATH=$FAKE_BIN/shim:/chosen"
+assert_not_contains "host socket alias is not in child environment" "$OUT" "$ORIGIN_ALIAS"
+assert_not_contains "host server id is not in child environment" "$OUT" '98765'
+CAPTURED_PROFILE="$(cat "$CAPTURE_PROFILE_FILE" 2>/dev/null)"
+assert_contains "only broker listen pathname is approved" "$CAPTURED_PROFILE" "(allow network-outbound (literal \"$LISTENER\"))"
+assert_not_contains "host tmux is never approved" "$CAPTURED_PROFILE" "(allow network-outbound (literal \"$ORIGIN_SOCKET\"))"
+assert_contains "host tmux pathname is protected from replacement" "$CAPTURED_PROFILE" \
+  $'(deny file-write*\n    (literal "'"$ORIGIN_SOCKET"'"))'
+assert_contains "entire broker directory is protected from writes" "$CAPTURED_PROFILE" "(subpath \"${LISTENER%/*}\"))"
+assert_eq "broker is stopped and socket directory removed" absent \
+  "$([[ -d "${LISTENER%/*}" ]] && echo present || echo absent)"
+
+for inputs in '0 %123' '1 123'; do
+  read -r allow pane <<< "$inputs"
+  run_broker_case "$allow" "$pane" "$FAKE_BROKER" "$RUN_TMP"
+  assert_eq "clipboard-only launch preserves the child status ($inputs)" 37 "$STATUS"
+  assert_not_contains "pane is never passed to broker ($inputs)" "$(cat "$BROKER_ARGS" 2>/dev/null)" '--tmux-pane'
+  assert_not_contains "server PID is never passed to broker ($inputs)" "$(cat "$BROKER_ARGS" 2>/dev/null)" '--tmux-server-pid'
+  assert_contains "pane is cleared ($inputs)" "$OUT" $'TMUX_PANE=\n'
+  assert_contains "query command is cleared ($inputs)" "$OUT" $'SMIND_TMUX_COMMAND=\n'
+done
+
+for suffix in '' ',98765' ',,17' ',0,17' ',-23,17' ',not-a-pid,17' ',2147483648,17'; do
+  FIXTURE_TMUX_SUFFIX="$suffix" run_broker_case 1 %123 "$FAKE_BROKER" "$RUN_TMP"
+  assert_eq "invalid server coordinate preserves child status ($suffix)" 37 "$STATUS"
+  LISTENER="$(sed -n '2p' "$BROKER_ARGS" 2>/dev/null)"
+  assert_contains "invalid server coordinate still starts clipboard broker ($suffix)" "$LISTENER" "$RUN_TMP/"
+  assert_contains "invalid server coordinate still publishes clipboard socket ($suffix)" "$OUT" "YOLO_CLIPBOARD_SOCK=$LISTENER"
+  assert_not_contains "invalid server coordinate omits pane flag ($suffix)" "$(cat "$BROKER_ARGS" 2>/dev/null)" '--tmux-pane'
+  assert_not_contains "invalid server coordinate omits server PID flag ($suffix)" "$(cat "$BROKER_ARGS" 2>/dev/null)" '--tmux-server-pid'
+  assert_contains "invalid server coordinate clears child metadata ($suffix)" "$OUT" $'TMUX_PANE=\nSMIND_TMUX_COMMAND=\n'
+done
+
+run_broker_case 1 %123 "$(type -P false)" "$RUN_TMP"
+assert_eq "broken broker still launches without tmux and preserves child status" 37 "$STATUS"
+assert_contains "broken broker is observable" "$OUT" 'clipboard disabled'
+assert_contains "broken broker clears child capabilities" "$OUT" $'TMUX=\nTMUX_PANE=\nSMIND_TMUX_COMMAND=\nYOLO_CLIPBOARD_SOCK='
+assert_eq "failed broker directory is removed" '' "$(find "$RUN_TMP" -mindepth 1 -maxdepth 1 -type d)"
+
+LONG_TMP="$RUN_TMP/$(printf '%105s' '' | tr ' ' x)"
+mkdir "$LONG_TMP"
+run_broker_case 1 %123 "$FAKE_BROKER" "$LONG_TMP"
+assert_eq "overlong explicit TMPDIR keeps child confined without clipboard" 37 "$STATUS"
+assert_eq "overlong explicit TMPDIR never starts a broker under any fallback" absent \
+  "$([[ -e "$BROKER_ARGS" ]] && echo present || echo absent)"
+assert_contains "overlong TMPDIR does not leak host TMUX" "$OUT" $'TMUX=\n'
+
+CONTROL_PATH="$PROJECT_DIR/"$'folded\npath'
+mkdir "$CONTROL_PATH"
+run_broker_case 0 %123 '' "$RUN_TMP" --rw "$CONTROL_PATH"
+assert_nonzero "a multiline grant path is refused" "$STATUS"
+assert_eq "invalid grant cannot launch the sandbox with a partial profile" absent \
+  "$([[ -e "$CAPTURE_PROFILE_FILE" ]] && echo present || echo absent)"
+
+BASE_FAIL="$FAKE_BIN/failed-base"
+cat > "$BASE_FAIL" <<EOF
+#!$_bash_path
+if [[ "\$1" == --write-base-profile ]]; then
+  printf '(version 1)\n'
+  exit 55
+fi
+printf ran > "$WORKDIR/partial-profile-ran"
+EOF
+chmod +x "$BASE_FAIL"
+OUT="$(cd "$PROJECT_DIR" && HOME="$FAKE_HOME" TMPDIR="$RUN_TMP" YOLO_SANDBOX_EXEC="$BASE_FAIL" \
+  bash "$SCRIPT" cmd true 2>&1)"
+assert_nonzero "nonzero upstream profile renderer is fatal even with output" "$?"
+assert_eq "partial upstream profile never launches" absent \
+  "$([[ -e "$WORKDIR/partial-profile-ran" ]] && echo present || echo absent)"
 
 echo "$TESTS_RUN assertions run, $FAILURES failed."
 [[ "$FAILURES" -eq 0 ]]

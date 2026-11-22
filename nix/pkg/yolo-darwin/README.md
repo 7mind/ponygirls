@@ -152,14 +152,19 @@ Read-only access is granted to system files required to run the agent:
 - `~/.config/gh` (GitHub CLI configuration).
 - `~/.config/direnv`, `~/.local/share/direnv`, and `~/.direnvrc` (from the pinned upstream base profile). The base profile also grants `~/.config/mcp`; yolo denies it, since no sandboxed agent reads it (pi uses its own `mcp.json` shared asset). An explicit `--ro` or `extraReadOnlyPaths` grant re-enables it.
 - Declarative `extraReadOnlyPaths` and per-invocation `--ro` paths.
-- A configured Podman/Docker Unix socket, including both a stable symlink and
-  its canonical runtime target.
+- The canonical runtime target of a configured Podman/Docker Unix socket. The
+  launcher resolves the stable symlink but does not grant access to it.
 - System configuration: `/etc`, `/var`, `/System`, and essential service files.
 
 ### What is NOT confined
 
-- **Network** — All network access is allowed (parity with `claude-code-sandbox noread.sb`). Agents can make API calls without restriction.
+- **IP networking** — Agents can still make TCP connections, including to local listeners. Outbound connections to filesystem-backed Unix sockets are denied except for the exact per-launch tmux broker and configured Podman endpoint. A filesystem grant such as `--rw` does not grant socket connections.
 - **The rest of your home directory** — Everything outside the working directory and the active profile's directories is denied. In particular, if you use the default profile, agents have read-write access to their real `~/.claude`, `~/.codex`, `~/.pi` directories but are denied all other home directories.
+
+The Unix-socket policy applies to one launch and protects that launch's broker
+and configured endpoint paths. It does not isolate separate same-UID host
+processes from each other, or peer sandboxes with overlapping writable grants
+from one another.
 
 ### Credential isolation
 
@@ -229,9 +234,13 @@ When an agent runs under `yolo-darwin`:
 - **Host variables are cleared** before the sandbox starts. Only process identity, `PATH`, terminal and locale settings, XDG paths, `TMPDIR`, selected Nix runtime variables, and editor/pager preferences are retained as a baseline; other values require explicit configuration or `--env`.
 - **Profile environment variables** (e.g., `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`) are set only for named profiles and applied **before** explicit `--env KEY=VAL` pairs, so an explicit flag overrides a profile default.
 - **Declarative session variables** and the extra-package `PATH` come from the home-manager module and apply to every subcommand.
-- **Container runtime variables** set `DOCKER_HOST` and `CONTAINER_HOST` when
-  the configured Podman socket exists. On macOS with `podman-mac-helper`, the
-  stable socket is normally `~/.local/share/containers/podman/machine/podman.sock`.
+- **Container runtime variables** set `DOCKER_HOST` and `CONTAINER_HOST` to
+  the canonical Unix socket URI when the configured Podman socket exists. On
+  macOS with `podman-mac-helper`, the stable link is normally
+  `~/.local/share/containers/podman/machine/podman.sock`.
+- **tmux integration** uses a per-launch broker instead of forwarding the host
+  tmux socket. The shim supports clipboard buffers and, where enabled, the
+  fixed read-only window metadata query.
 - **Secret session variables** are read from their configured files into one mode-0600 temporary file, loaded by the child entrypoint without placing secret values in argv, and removed after the session.
 - **Host and sandbox pre-start hooks** run for agent modes only; sandbox hooks run after secrets load and can export environment variables to the agent. Separate shell/cmd hook phases run only for their respective subcommands. All phases filter hooks by `targets` (default `["*"]`) within the phase and by `--disable` tags.
 - **CodeGraph project indexes** are initialized or synchronized before Claude/Codex launch by the same `codegraph`-tagged sandbox pre-start hook as Linux. Pi instead prepares its index asynchronously through its extension when the codegraph MCP server is registered in Pi. `--disable=codegraph` skips both the launcher bootstrap and Pi's automatic setup for one launch; it does not disable the MCP server. Setting `smind.hm.dev.llm.yolo.codegraph = null` removes yolo's package, bootstrap hook, and prompt contribution, not Pi's independent registry-driven integration.
@@ -243,9 +252,7 @@ When an agent runs under `yolo-darwin`:
 Linux-specific interface rather than translating `/dev` and PipeWire paths.
 Filesystem-backed devices can use ad-hoc `--ro`/`--rw` grants; audio or devices
 that require Mach or IOKit permissions should add a tagged policy fragment only
-after live Seatbelt denial probes identify the required operations. tmux needs
-no separate adapter while the upstream profile grants the host temporary
-directories containing its socket.
+after live Seatbelt denial probes identify the required operations.
 
 **Shell-mode proposal:** add a shell-specific Seatbelt overlay selected from
 `$SHELL`: grant only that shell's startup files read-only and redirect writable
@@ -253,11 +260,71 @@ history to a private temporary file. Verify zsh, bash, and fish startup and
 history behavior on macOS before enabling it; the Linux bind list does not by
 itself establish the corresponding Seatbelt operations.
 
+## Native tmux confinement acceptance
+
+Run `tmux-confinement-test.py` on macOS, outside the Nix build sandbox. It
+requires Python 3.9+, a real `tmux` that supports `-N`, and the candidate yolo
+launcher. For source mode it also needs Bash 4.2+ (not macOS `/bin/bash`), `jq`,
+the native `claude-sandbox` executable from the pinned `claude-code-sandbox`
+input, and the Rust clipboard proxy. Existing executables can be used read-only;
+no install, activation, credentials, or interactive tmux client is needed.
+
+Supply a short, authorized, user-owned directory (not group/world-writable),
+for example `/Users/pavel/kai-work` on the designated test Mac. The fixture
+makes a fresh private subdirectory there and sets its own `HOME`, `TMPDIR`, and
+working directory. Every tmux command outside the sandbox uses one explicit
+fixture-owned server socket; the test never uses real user tmux sessions or the
+macOS pasteboard. The other endpoints are disposable Unix listeners and an
+IPv4 TCP listener bound to `127.0.0.1` on an ephemeral port. A stable symlink
+points to a dummy listener to test the Podman exception without using the service.
+
+For a native source build, run these commands from the candidate checkout. Set
+`bash4`, `claude_sandbox`, `jq`, and `tmux` to absolute paths to the actual
+executables. If building `claude-sandbox` locally, place its output and build
+temporary files under the authorized root as well.
+
+```sh
+root=/Users/pavel/kai-work
+(
+  set -eu
+  build=$(mktemp -d "$root/ytb.XXXXXX")
+  trap 'rm -rf -- "$build"' EXIT
+  mkdir "$build/t" "$build/shim"
+  TMPDIR="$build/t" rustc --edition=2021 -O nix/pkg/yolo/clipboard-proxy/main.rs \
+    -o "$build/yolo-clipboard-proxy"
+  ln -s ../yolo-clipboard-proxy "$build/shim/tmux"
+  env BASH="$bash4" python3 -IB nix/pkg/yolo-darwin/tmux-confinement-test.py \
+    --root "$root" --tmux "$tmux" --source --sandbox-exec "$claude_sandbox" \
+    --jq "$jq" --proxy "$build/yolo-clipboard-proxy" --shim-dir "$build/shim"
+)
+```
+
+Alternatively, replace `--source` and its dependency flags with
+`--yolo /absolute/path/to/yolo`. Use a fixture package with window queries
+enabled and **no** configured credentials, hooks, extra host paths, or real
+Podman socket. Do not pass an activated personal wrapper with those settings.
+The same harness can be run from an authorized non-interactive SSH session.
+
+The fixture checks unsandboxed reachability before each launch, then verifies
+permission errors on direct, no-data connects to two distinct dummy Unix
+endpoints, a symlink spelling, and the fixture-owned tmux socket. The tmux
+socket stays denied without inherited `TMUX`, both with and without a covering
+`--rw` grant. The dummy Podman connection succeeds at the canonical URI, as
+does the TCP connect to `127.0.0.1`. An ordinary file under `--ro` is readable
+but cannot be written or renamed; both operations succeed under the neighboring
+`--rw` directory. With fixture tmux inherited, it compares the shim's approved
+window query to native `display-message`, renames the window outside the
+sandbox, and checks the result again in the same launch. It also checks an
+unapproved read-only format is rejected, placeholder tmux routing points to the
+broker, clipboard bytes round-trip, and the broker socket and runtime directory
+are removed on normal exit. Neither wrapper loading nor a generated-profile
+check alone establishes native Seatbelt behavior.
+
 ## Manual macOS verification checklist
 
 The `yolo-darwin-profile` flake check covers deterministic SBPL generation,
-CLI and declarative path grants, Podman's stable-symlink and runtime-socket
-grants, environment/secret/hook propagation through a hand-written sandbox
+CLI and declarative path grants, the canonical Podman socket grant and URI,
+and environment/secret/hook propagation through a hand-written sandbox
 adapter, profile-wide asset materialization, the per-profile directory layout,
 and the `$PWD==$HOME` guard. It also asserts that the pinned upstream base
 carries the shared MCP and direnv grants. Live Seatbelt execution must run

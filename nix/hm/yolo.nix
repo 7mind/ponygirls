@@ -22,18 +22,13 @@
 # `yolo --enable=display` binds the Wayland compositor socket plus the
 # X11/XWayland socket and auth file).
 #
-# Clipboard boundary (defects:D262, Linux): when a launch inherits a live host
-# tmux session, the wrapper starts a per-launch host broker
-# (yolo-clipboard-proxy) that grants the sandbox exactly two fixed operations
-# — set the host clipboard (`tmux load-buffer -`) and read it back
-# (`tmux save-buffer -`) — over a dedicated 0600 socket inside a 0700
-# per-launch directory; a PATH-prepended `tmux` shim inside the sandbox
-# forwards only load-buffer/save-buffer/show-buffer and rejects every other
-# verb, so sandboxed processes hold bounded clipboard read/write authority but
-# no host tmux command authority. Payloads are bounded to 1 MiB, the sandbox
-# TMUX coordinate names only the broker socket, the inherited socket is masked
-# out of every covering bind (alias-resistant raw-socket confinement), and
-# every failure fails closed (clipboard disabled, never a raw host socket).
+# Tmux boundary (defects:D262): when a launch inherits a live host tmux session,
+# the wrapper starts a per-launch host broker (yolo-clipboard-proxy). A
+# dedicated 0600 socket inside a 0700 per-launch directory and a `tmux` shim
+# give the sandbox bounded clipboard access and an optional read-only window
+# query pinned to the originating pane, but no general tmux command authority.
+# The sandbox TMUX coordinate names only the broker socket; Linux masks the
+# inherited socket out of every covering bind, and the bridge fails closed.
 # Accepted fixed invocations can still trigger host-configured tmux hooks —
 # after-load-buffer, after-save-buffer, and command-error — which belong to
 # the host server's own configuration and receive no client-supplied argv.
@@ -325,7 +320,7 @@ let
     # Device paths bound with device access (bwrap --dev-bind), e.g. GPU nodes.
     extraDevicePaths = cfg.yolo.extraDevicePaths;
     piSharedAssets = cfg.yolo.piSharedAssets;
-    captureTmuxWindowContext = cfg.yolo.captureTmuxWindowContext;
+    allowTmuxWindowQuery = cfg.yolo.allowTmuxWindowQuery;
     # Extra packages exposed ONLY inside the sandbox (not the host profile);
     # codegraph rides along here so its CLI / `init -i` work inside the sandbox.
     sandboxPackages =
@@ -482,11 +477,11 @@ in
       '';
     };
 
-    smind.hm.dev.llm.yolo.captureTmuxWindowContext = lib.mkOption {
+    smind.hm.dev.llm.yolo.allowTmuxWindowQuery = lib.mkOption {
       type = lib.types.bool;
       default = false;
       internal = true;
-      description = "Capture optional originating window labels before entering the sandbox.";
+      description = "Allow a fixed tmux window metadata query for the originating pane through the sandbox broker.";
     };
 
     smind.hm.dev.llm.yolo.piSharedAssets = lib.mkOption {
@@ -930,7 +925,7 @@ in
           extraReadOnlyPaths = cfg.yolo.extraReadOnlyPaths ++ lib.optional sshKeySet cfg.llmSshKeyPath;
           extraReadWritePaths = cfg.yolo.extraReadWritePaths;
           piSharedAssets = cfg.yolo.piSharedAssets;
-          captureTmuxWindowContext = cfg.yolo.captureTmuxWindowContext;
+          allowTmuxWindowQuery = cfg.yolo.allowTmuxWindowQuery;
           sandboxPackages = cfg.yolo.packages ++ [ tuiTmux ] ++ lib.optional codegraphSet cfg.yolo.codegraph;
           sessionVariables = cfg.yolo.sessionVariables;
           secretSessionVariables = cfg.yolo.secretSessionVariables;

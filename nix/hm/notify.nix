@@ -92,7 +92,7 @@ in
     includeTmuxWindow = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "Append the originating tmux window index and label when available. The label uses the @smind_window_label_format tmux option if nonempty, otherwise the window name. Labels may contain work context. Inside yolo, labels are captured at launch without exposing the host tmux socket.";
+      description = "Append the originating tmux window index and label at notification time when available. The label uses the @smind_window_label_format tmux option if nonempty, otherwise the window name. Labels may contain work context. Inside yolo, a restricted query retrieves these labels without exposing the host tmux socket.";
     };
     claude.enable = lib.mkEnableOption "Matrix agent notifications for Claude Code" // {
       default = notifyCfg.enable;
@@ -124,7 +124,7 @@ in
     }
     (lib.mkIf active {
       home.packages = [ notifyScript ];
-      smind.hm.dev.llm.yolo.captureTmuxWindowContext = lib.mkIf notifyCfg.includeTmuxWindow true;
+      smind.hm.dev.llm.yolo.allowTmuxWindowQuery = notifyCfg.includeTmuxWindow;
       smind.hm.dev.llm.yolo.extraReadOnlyPaths =
         lib.optional (notifyCfg.tokenFile != null) "${notifyCfg.tokenFile}"
         ++ lib.optional (transportE2EE && notifyCfg.passwordFile != null) "${notifyCfg.passwordFile}"

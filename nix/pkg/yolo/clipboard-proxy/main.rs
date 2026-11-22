@@ -1,19 +1,19 @@
 //! Bidirectional clipboard proxy for the yolo bubblewrap sandbox.
 //!
 //! Host side (`broker`): listens on a dedicated Unix socket and translates a
-//! fixed two-op protocol into fixed `tmux load-buffer` / `tmux save-buffer`
-//! invocations against the *outer* tmux server. No client-supplied command
-//! strings ever reach tmux argv.
+//! fixed protocol into buffer operations and an opt-in launch-pane label
+//! query against the *outer* tmux server. No client-supplied command strings
+//! ever reach tmux argv.
 //!
-//! Sandbox side (argv0 `tmux`, or `tmux-shim`): accepts only the buffer
-//! read/write subcommands that agent tools use for clipboard, and forwards
-//! them to the broker. Every other tmux verb (run-shell, new-window, …) is
+//! Sandbox side (argv0 `tmux`, or `tmux-shim`): accepts the clipboard
+//! subcommands and the fixed label query, and forwards them to the broker.
+//! Every other tmux verb (run-shell, new-window, …) is
 //! rejected, so a sandboxed process cannot confused-deputy the host tmux
 //! server into executing arbitrary commands.
 //!
 //! Wire protocol (length-prefixed, little-endian u32 lengths, one request per
-//! connection; any byte after a complete request is rejected unread):
-//!   request:  tag:u8 (1=SET, 2=GET) [+ u32 len + bytes for SET]
+//! connection; queued bytes after a complete request are rejected):
+//!   request:  tag:u8 (1=SET, 2=GET, 3=WINDOW_LABEL) [+ u32 len + bytes for SET]
 //!   response: tag:u8 (0=OK, 1=ERR, 2=DATA) [+ u32 len + bytes]
 //!
 //! Bounds (tasks:T1794): every payload, diagnostic, and adapter stream is
@@ -27,7 +27,7 @@ use std::env;
 use std::fs;
 use std::io::{self, ErrorKind, Read, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -44,8 +44,13 @@ const ADAPTER_DEADLINE: Duration = Duration::from_secs(10);
 /// Poll interval while waiting for the adapter.
 const ADAPTER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
+const WINDOW_LABEL_MAX_BYTES: u32 = 4096;
+const WINDOW_SERVER_PREFIX_MAX_BYTES: u32 = 11;
+const WINDOW_FORMAT_FILE: &str = include_str!("../../agent-notify/tmux-window-format.txt");
+
 const TAG_SET: u8 = 1;
 const TAG_GET: u8 = 2;
+const TAG_WINDOW_LABEL: u8 = 3;
 const TAG_OK: u8 = 0;
 const TAG_ERR: u8 = 1;
 const TAG_DATA: u8 = 2;
@@ -111,7 +116,7 @@ fn print_help() {
 yolo-clipboard-proxy — fixed-op clipboard bridge for the yolo sandbox
 
 Usage:
-  yolo-clipboard-proxy broker --listen PATH --tmux-socket PATH [--tmux BIN] [--max-bytes N] [--trace]
+  yolo-clipboard-proxy broker --listen PATH --tmux-socket PATH [--tmux BIN] [--tmux-pane %N --tmux-server-pid PID] [--max-bytes N] [--trace]
   yolo-clipboard-proxy tmux-shim [tmux-args...]
   yolo-clipboard-proxy client set|get
   (argv0 == tmux)  → tmux-shim
@@ -119,16 +124,13 @@ Usage:
 Environment (client / tmux-shim):
   YOLO_CLIPBOARD_SOCK  Unix socket path of the host broker
 
-Boundary (defects:D262): the broker grants the sandbox exactly two fixed
-operations — set the host clipboard (fixed `tmux load-buffer -`) and read it
-back (fixed `tmux save-buffer -`) — over its dedicated 0600 socket inside a
-0700 per-launch directory. Payloads are bounded to 1 MiB and every failure
-fails closed (clipboard disabled, never a raw host socket). Every other tmux
-verb is rejected by the shim and never reaches the host server. Accepted
-fixed invocations can still trigger host-configured tmux hooks —
-after-load-buffer, after-save-buffer, and command-error — which belong to
-the host server's own configuration, receive no client-supplied argv, and
-are the only tmux side effects this bridge retains.
+The broker grants fixed clipboard operations and, with --tmux-pane and
+--tmux-server-pid, a launch-pane label query over a dedicated 0600 socket in a
+0700 per-launch directory. Clipboard payloads are bounded to 1 MiB and label
+responses to 4096 bytes. The shim's display-message query requires matching
+TMUX and TMUX_PANE launch coordinates and never accesses a raw host socket.
+Other tmux commands are rejected. Fixed invocations can still trigger
+host-configured tmux hooks; no client-supplied argv reaches host tmux.
 "
     );
 }
@@ -141,9 +143,16 @@ struct BrokerConfig {
     listen: PathBuf,
     tmux_socket: PathBuf,
     tmux_bin: PathBuf,
+    window_origin: Option<WindowLabelOrigin>,
     max_bytes: u32,
     /// Announce the listening socket on stderr at startup (`yolo --trace`).
     trace: bool,
+}
+
+struct WindowLabelOrigin {
+    pane: String,
+    server_pid: i32,
+    socket_identity: Option<(u64, u64)>,
 }
 
 fn run_broker(args: &[String]) -> Result<(), String> {
@@ -202,6 +211,8 @@ fn parse_broker_args(args: &[String]) -> Result<BrokerConfig, String> {
     let mut listen: Option<PathBuf> = None;
     let mut tmux_socket: Option<PathBuf> = None;
     let mut tmux_bin = PathBuf::from("tmux");
+    let mut tmux_pane = None;
+    let mut tmux_server_pid = None;
     let mut max_bytes = CLIPBOARD_MAX_BYTES;
     let mut trace = false;
     let mut i = 0;
@@ -219,6 +230,24 @@ fn parse_broker_args(args: &[String]) -> Result<BrokerConfig, String> {
                 i += 1;
                 tmux_bin = PathBuf::from(require_arg(args, i, "--tmux")?);
             }
+            "--tmux-pane" => {
+                i += 1;
+                let pane = require_arg(args, i, "--tmux-pane")?;
+                if !is_pane_id(pane) {
+                    return Err("broker: --tmux-pane must be % followed by decimal digits".into());
+                }
+                tmux_pane = Some(pane.to_owned());
+            }
+            "--tmux-server-pid" => {
+                i += 1;
+                let raw = require_arg(args, i, "--tmux-server-pid")?;
+                tmux_server_pid = Some(
+                    raw.parse::<i32>()
+                        .ok()
+                        .filter(|pid| *pid > 0 && is_decimal(raw))
+                        .ok_or("broker: --tmux-server-pid must be a positive decimal PID")?,
+                );
+            }
             "--max-bytes" => {
                 i += 1;
                 let raw = require_arg(args, i, "--max-bytes")?;
@@ -234,10 +263,22 @@ fn parse_broker_args(args: &[String]) -> Result<BrokerConfig, String> {
         }
         i += 1;
     }
+    let listen = listen.ok_or("broker: --listen is required")?;
+    let tmux_socket = tmux_socket.ok_or("broker: --tmux-socket is required")?;
+    let window_origin = match (tmux_pane, tmux_server_pid) {
+        (Some(pane), Some(server_pid)) => Some(WindowLabelOrigin {
+            pane,
+            server_pid,
+            socket_identity: tmux_socket_identity(&tmux_socket),
+        }),
+        (None, None) => None,
+        _ => return Err("broker: --tmux-pane and --tmux-server-pid must be supplied together".into()),
+    };
     Ok(BrokerConfig {
-        listen: listen.ok_or("broker: --listen is required")?,
-        tmux_socket: tmux_socket.ok_or("broker: --tmux-socket is required")?,
+        listen,
+        tmux_socket,
         tmux_bin,
+        window_origin,
         max_bytes,
         trace,
     })
@@ -309,39 +350,42 @@ fn handle_client(mut stream: UnixStream, cfg: &BrokerConfig) -> Result<(), Strin
                 Err(e) => write_err(&mut stream, &e),
             }
         }
+        TAG_WINDOW_LABEL => {
+            if let Err(e) = reject_trailing(&mut stream) {
+                return write_err(&mut stream, &e);
+            }
+            match tmux_window_label(cfg) {
+                Ok(data) => write_data(&mut stream, &data),
+                Err(e) => write_err(&mut stream, &e),
+            }
+        }
         other => write_err(&mut stream, &format!("unknown request tag {other}")),
     }
 }
 
 /// One request per connection: any byte beyond a complete request frame is
-/// rejected and the adapter is never invoked. A peek error fails closed. The
-/// single peeked byte is consumed so the error response reaches the client
-/// before the connection closes (an unread peeked byte would RST the reply).
+/// rejected and the adapter is never invoked. The byte is consumed so the
+/// error response reaches the client before the connection is closed.
 fn reject_trailing(stream: &mut UnixStream) -> Result<(), String> {
-    use std::os::unix::io::AsRawFd;
-    // UnixStream::peek is unstable (unix_socket_peek); FFI recv with
-    // MSG_PEEK|MSG_DONTWAIT gives the same non-destructive, non-blocking probe.
-    extern "C" {
-        fn recv(fd: i32, buf: *mut u8, len: usize, flags: i32) -> isize;
-    }
-    const MSG_PEEK: i32 = 0x2;
-    const MSG_DONTWAIT: i32 = 0x40;
-    let mut byte = 0u8;
-    let n = unsafe { recv(stream.as_raw_fd(), &mut byte, 1, MSG_PEEK | MSG_DONTWAIT) };
-    let trailing = match n {
-        1 => true,
-        0 => false,
-        _ => {
-            let err = io::Error::last_os_error();
-            err.kind() != ErrorKind::WouldBlock
+    stream
+        .set_nonblocking(true)
+        .map_err(|e| format!("trailing-data probe: {e}"))?;
+    let mut byte = [0u8; 1];
+    let probed = loop {
+        match stream.read(&mut byte) {
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            result => break result,
         }
     };
-    if trailing {
-        let mut drain = [0u8; 1];
-        let _ = stream.read(&mut drain);
-        return Err("trailing frame data after a complete request".into());
+    stream
+        .set_nonblocking(false)
+        .map_err(|e| format!("restore blocking socket: {e}"))?;
+    match probed {
+        Ok(0) => Ok(()),
+        Ok(_) => Err("trailing frame data after a complete request".into()),
+        Err(e) if e.kind() == ErrorKind::WouldBlock => Ok(()),
+        Err(e) => Err(format!("trailing-data probe: {e}")),
     }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -384,17 +428,41 @@ struct ReadCapped {
     handle: thread::JoinHandle<(Vec<u8>, bool)>,
 }
 
-fn run_adapter(
-    cfg: &BrokerConfig,
-    verb: &str,
-    input: Option<&[u8]>,
-) -> Result<AdapterOutput, String> {
+enum TmuxOperation<'a> {
+    LoadBuffer(&'a [u8]),
+    SaveBuffer,
+    WindowLabel(&'a str),
+}
+
+fn run_adapter(cfg: &BrokerConfig, operation: TmuxOperation<'_>) -> Result<AdapterOutput, String> {
     // Fixed argv. Payload travels only on stdin — never in argv.
-    let mut child = Command::new(&cfg.tmux_bin)
-        .arg("-S")
-        .arg(&cfg.tmux_socket)
-        .arg(verb)
-        .arg("-")
+    let mut command = Command::new(&cfg.tmux_bin);
+    let (verb, input, stdout_bound, bound_name) = match operation {
+        TmuxOperation::LoadBuffer(payload) => (
+            "load-buffer",
+            Some(payload),
+            CLIPBOARD_MAX_BYTES,
+            "clipboard",
+        ),
+        TmuxOperation::SaveBuffer => ("save-buffer", None, CLIPBOARD_MAX_BYTES, "clipboard"),
+        TmuxOperation::WindowLabel(_) => {
+            command.arg("-N");
+            (
+                "display-message",
+                None,
+                WINDOW_LABEL_MAX_BYTES + WINDOW_SERVER_PREFIX_MAX_BYTES,
+                "window-label",
+            )
+        }
+    };
+    command.arg("-S").arg(&cfg.tmux_socket).arg(verb);
+    match operation {
+        TmuxOperation::WindowLabel(pane) => command
+            .args(["-p", "-t", pane])
+            .arg(format!("#{{pid}}|{}", window_label_format())),
+        _ => command.arg("-"),
+    };
+    let mut child = command
         .stdin(match input {
             Some(_) => Stdio::piped(),
             None => Stdio::null(),
@@ -419,7 +487,7 @@ fn run_adapter(
     let stdout_pump = child
         .stdout
         .take()
-        .map(|r| read_capped(r, CLIPBOARD_MAX_BYTES as usize + 1));
+        .map(|r| read_capped(r, stdout_bound as usize + 1));
     let stderr_pump = child
         .stderr
         .take()
@@ -462,8 +530,7 @@ fn run_adapter(
     };
     if stdout_overflow {
         return Err(format!(
-            "tmux {verb} stdout exceeds the {}-byte clipboard bound",
-            CLIPBOARD_MAX_BYTES
+            "tmux {verb} stdout exceeds the {stdout_bound}-byte {bound_name} bound"
         ));
     }
     let (stderr_raw, _) = match stderr_pump {
@@ -494,12 +561,76 @@ fn bound_diagnostic(message: String) -> String {
 }
 
 fn tmux_load_buffer(cfg: &BrokerConfig, payload: &[u8]) -> Result<(), String> {
-    run_adapter(cfg, "load-buffer", Some(payload))?;
+    run_adapter(cfg, TmuxOperation::LoadBuffer(payload))?;
     Ok(())
 }
 
 fn tmux_save_buffer(cfg: &BrokerConfig) -> Result<Vec<u8>, String> {
-    Ok(run_adapter(cfg, "save-buffer", None)?.stdout)
+    Ok(run_adapter(cfg, TmuxOperation::SaveBuffer)?.stdout)
+}
+
+fn window_label_format() -> &'static str {
+    WINDOW_FORMAT_FILE
+        .strip_suffix('\n')
+        .unwrap_or(WINDOW_FORMAT_FILE)
+}
+
+fn is_decimal(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn is_pane_id(value: &str) -> bool {
+    value.strip_prefix('%').is_some_and(is_decimal)
+}
+
+fn tmux_socket_identity(path: &Path) -> Option<(u64, u64)> {
+    let metadata = fs::metadata(path).ok()?;
+    metadata.file_type().is_socket().then(|| (metadata.dev(), metadata.ino()))
+}
+
+fn tmux_window_label(cfg: &BrokerConfig) -> Result<Vec<u8>, String> {
+    let origin = cfg
+        .window_origin
+        .as_ref()
+        .ok_or("window-label query is not enabled")?;
+    let identity = origin
+        .socket_identity
+        .ok_or("tmux window-label launch socket was unavailable")?;
+    if tmux_socket_identity(&cfg.tmux_socket) != Some(identity) {
+        return Err("tmux window-label launch socket changed".into());
+    }
+    let data = run_adapter(cfg, TmuxOperation::WindowLabel(&origin.pane))?.stdout;
+    if tmux_socket_identity(&cfg.tmux_socket) != Some(identity) {
+        return Err("tmux window-label launch socket changed".into());
+    }
+    let separator = data
+        .iter()
+        .position(|byte| *byte == b'|')
+        .ok_or("tmux window-label server identity was unavailable")?;
+    if &data[..separator] != origin.server_pid.to_string().as_bytes() {
+        return Err("tmux window-label server does not match the launch server".into());
+    }
+    let label = &data[separator + 1..];
+    if label.len() > WINDOW_LABEL_MAX_BYTES as usize {
+        return Err(format!("tmux window-label response exceeds the {WINDOW_LABEL_MAX_BYTES}-byte bound"));
+    }
+    check_window_label(label, &origin.pane)?;
+    Ok(label.to_vec())
+}
+
+fn check_window_label(data: &[u8], pane: &str) -> Result<(), String> {
+    let row =
+        std::str::from_utf8(data).map_err(|_| "invalid UTF-8 from tmux window-label query")?;
+    let mut fields = row.splitn(3, '|');
+    if fields.next() != Some(pane)
+        || !fields.next().is_some_and(is_decimal)
+        || !fields.next().is_some_and(|label| label.ends_with('\n'))
+    {
+        return Err(
+            "launch pane is unavailable or the tmux window-label response was invalid".into(),
+        );
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -586,13 +717,16 @@ fn client_set(payload: &[u8]) -> Result<(), String> {
 }
 
 fn client_get() -> Result<Vec<u8>, String> {
-    let mut stream = UnixStream::connect(clipboard_sock_path()?)
-        .map_err(|e| format!("connect broker: {e}"))?;
+    client_read_data(&clipboard_sock_path()?, TAG_GET, CLIPBOARD_MAX_BYTES)
+}
+
+fn client_read_data(socket: &Path, tag: u8, max_bytes: u32) -> Result<Vec<u8>, String> {
+    let mut stream = UnixStream::connect(socket).map_err(|e| format!("connect broker: {e}"))?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
-    write_u8(&mut stream, TAG_GET)?;
+    write_u8(&mut stream, tag)?;
     match read_u8(&mut stream)? {
-        TAG_DATA => read_payload(&mut stream, CLIPBOARD_MAX_BYTES),
+        TAG_DATA => read_payload(&mut stream, max_bytes),
         TAG_ERR => Err(read_err_message(&mut stream)?),
         other => Err(format!("unexpected response tag {other}")),
     }
@@ -600,6 +734,17 @@ fn client_get() -> Result<Vec<u8>, String> {
 
 /// Parse a subset of `tmux` argv used for clipboard and reject everything else.
 fn run_tmux_shim(args: &[String]) -> Result<(), String> {
+    if let [no_start, socket_flag, socket, verb, print, target, pane, format] = args {
+        if no_start == "-N"
+            && socket_flag == "-S"
+            && verb == "display-message"
+            && print == "-p"
+            && target == "-t"
+            && format == window_label_format()
+        {
+            return shim_window_label(socket, pane);
+        }
+    }
     let mut i = 0;
     // Skip global options. We deliberately ignore -S/-L: the shim never talks
     // to a tmux socket directly.
@@ -637,6 +782,23 @@ fn run_tmux_shim(args: &[String]) -> Result<(), String> {
              host tmux socket is intentionally unreachable)"
         )),
     }
+}
+
+fn shim_window_label(socket: &str, pane: &str) -> Result<(), String> {
+    let broker = clipboard_sock_path()?;
+    let tmux = env::var("TMUX").map_err(|_| "TMUX launch coordinate is not set")?;
+    if !socket.starts_with('/')
+        || tmux.split(',').next() != Some(socket)
+        || socket.as_bytes() != broker.as_os_str().as_bytes()
+    {
+        return Err("window-label query does not match the launch socket".into());
+    }
+    if !is_pane_id(pane) || env::var("TMUX_PANE").as_deref() != Ok(pane) {
+        return Err("window-label query does not match the launch pane".into());
+    }
+    let data = client_read_data(&broker, TAG_WINDOW_LABEL, WINDOW_LABEL_MAX_BYTES)?;
+    check_window_label(&data, pane)?;
+    write_path_or_stdout("-", &data)
 }
 
 fn shim_load_buffer(args: &[String]) -> Result<(), String> {
@@ -824,11 +986,13 @@ fn raw_getppid() -> i32 {
 /// timing-dependent sleep. Both FIFOs are opened ONCE and held for the whole
 /// arming sequence — reopening per stage would close the gate read end
 /// between stages and SIGPIPE a concurrently gating suite.
+#[cfg(target_os = "linux")]
 struct SyncFifos {
     stage: fs::File,
     gate: fs::File,
 }
 
+#[cfg(target_os = "linux")]
 fn open_sync_fifos() -> Option<SyncFifos> {
     let (Some(stage_path), Some(gate_path)) = (
         env::var_os("YOLO_CLIPBOARD_SYNC_STAGE"),
@@ -841,6 +1005,7 @@ fn open_sync_fifos() -> Option<SyncFifos> {
     Some(SyncFifos { stage, gate })
 }
 
+#[cfg(target_os = "linux")]
 fn sync_point(fifos: &mut Option<SyncFifos>, stage: u8) {
     let Some(f) = fifos.as_mut() else {
         return;
@@ -868,14 +1033,16 @@ extern "C" fn on_death_signal(_sig: i32) {
         }
         let len = CLEANUP_SOCK_LEN.load(Ordering::SeqCst);
         if len > 0 && len < 4096 {
-            let _ = unlink(CLEANUP_SOCK.as_ptr());
+            let path = std::ptr::addr_of!(CLEANUP_SOCK).cast::<u8>();
+            let _ = unlink(path);
             let mut parent_end = len;
-            while parent_end > 0 && CLEANUP_SOCK[parent_end - 1] != b'/' {
+            while parent_end > 0 && *path.add(parent_end - 1) != b'/' {
                 parent_end -= 1;
             }
             if parent_end > 1 {
-                CLEANUP_SOCK[parent_end - 1] = 0;
-                let _ = rmdir(CLEANUP_SOCK.as_ptr());
+                let mut parent = [0u8; 4096];
+                std::ptr::copy_nonoverlapping(path, parent.as_mut_ptr(), parent_end - 1);
+                let _ = rmdir(parent.as_ptr());
             }
         }
         _exit(128 + PDEATH_SIGNAL);
@@ -886,8 +1053,11 @@ fn set_cleanup_socket(path: &Path) {
     let bytes = path.as_os_str().as_bytes();
     if bytes.len() + 1 <= 4096 {
         unsafe {
-            CLEANUP_SOCK[..bytes.len()].copy_from_slice(bytes);
-            CLEANUP_SOCK[bytes.len()] = 0;
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                std::ptr::addr_of_mut!(CLEANUP_SOCK).cast::<u8>(),
+                bytes.len(),
+            );
             CLEANUP_SOCK_LEN.store(bytes.len(), Ordering::SeqCst);
         }
     }
@@ -897,27 +1067,21 @@ fn set_cleanup_socket(path: &Path) {
 /// the death signal and cleanup handler, then immediately recheck the parent
 /// identity so a death inside the fork/prctl window cannot orphan the broker.
 /// Registration failure is fatal and happens before any bind.
+#[cfg(target_os = "linux")]
 fn arm_parent_death() -> Result<(), String> {
     let original_ppid = raw_getppid();
     let mut fifos = open_sync_fifos();
     sync_point(&mut fifos, b'A');
-    #[cfg(target_os = "linux")]
-    {
-        unsafe {
-            extern "C" {
-                fn prctl(option: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> i32;
-                fn signal(signum: i32, handler: usize) -> usize;
-            }
-            const PR_SET_PDEATHSIG: i32 = 1;
-            const SIG_ERR: usize = usize::MAX;
-            if prctl(PR_SET_PDEATHSIG, PDEATH_SIGNAL as u64, 0, 0, 0) != 0 {
-                return Err("parent-death registration failed (prctl PR_SET_PDEATHSIG)".into());
-            }
-            if signal(PDEATH_SIGNAL, on_death_signal as usize) == SIG_ERR {
-                return Err("parent-death registration failed (signal SIGTERM)".into());
-            }
+    unsafe {
+        extern "C" {
+            fn prctl(option: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> i32;
+        }
+        const PR_SET_PDEATHSIG: i32 = 1;
+        if prctl(PR_SET_PDEATHSIG, PDEATH_SIGNAL as u64, 0, 0, 0) != 0 {
+            return Err("parent-death registration failed (prctl PR_SET_PDEATHSIG)".into());
         }
     }
+    install_death_signal_handler()?;
     sync_point(&mut fifos, b'B');
     // A parent that died in the fork/prctl window leaves the broker
     // reparented; the recheck turns that window into a fatal failure.
@@ -926,4 +1090,139 @@ fn arm_parent_death() -> Result<(), String> {
     }
     sync_point(&mut fifos, b'C');
     Ok(())
+}
+
+fn install_death_signal_handler() -> Result<(), String> {
+    extern "C" {
+        fn signal(signum: i32, handler: usize) -> usize;
+    }
+    const SIG_ERR: usize = usize::MAX;
+    if unsafe { signal(PDEATH_SIGNAL, on_death_signal as *const () as usize) } == SIG_ERR {
+        return Err("parent-death registration failed (signal SIGTERM)".into());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn arm_parent_death() -> Result<(), String> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::ptr::{null, null_mut};
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct Kevent64 {
+        ident: u64,
+        filter: i16,
+        flags: u16,
+        fflags: u32,
+        data: i64,
+        udata: u64,
+        ext: [u64; 2],
+    }
+
+    #[repr(C)]
+    struct Timespec {
+        tv_sec: i64,
+        tv_nsec: i64,
+    }
+
+    extern "C" {
+        fn kqueue() -> i32;
+        fn kevent64(
+            fd: i32,
+            changes: *const Kevent64,
+            nchanges: i32,
+            events: *mut Kevent64,
+            nevents: i32,
+            flags: u32,
+            timeout: *const Timespec,
+        ) -> i32;
+        fn fcntl(fd: i32, cmd: i32, ...) -> i32;
+        fn pthread_self() -> usize;
+        fn pthread_kill(thread: usize, signal: i32) -> i32;
+        fn pthread_sigmask(how: i32, set: *const u32, old: *mut u32) -> i32;
+    }
+
+    const EVFILT_PROC: i16 = -5;
+    const EV_ADD: u16 = 0x0001;
+    const NOTE_EXIT: u32 = 0x8000_0000;
+    const F_SETFD: i32 = 2;
+    const FD_CLOEXEC: i32 = 1;
+    const SIG_UNBLOCK: i32 = 2;
+
+    let parent = raw_getppid();
+    if parent <= 1 {
+        return Err("cannot arm parent-death watch without a launch parent".into());
+    }
+    install_death_signal_handler()?;
+    let sigset = 1u32 << (PDEATH_SIGNAL - 1);
+    let unmask = unsafe { pthread_sigmask(SIG_UNBLOCK, &sigset, null_mut()) };
+    if unmask != 0 {
+        return Err(format!(
+            "unblock parent-death signal: {}",
+            io::Error::from_raw_os_error(unmask)
+        ));
+    }
+
+    let fd = unsafe { kqueue() };
+    if fd < 0 {
+        return Err(format!(
+            "open parent-death watch: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    let queue = unsafe { OwnedFd::from_raw_fd(fd) };
+    if unsafe { fcntl(queue.as_raw_fd(), F_SETFD, FD_CLOEXEC) } < 0 {
+        return Err(format!(
+            "configure parent-death watch: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    let exit = Kevent64 {
+        ident: parent as u64,
+        filter: EVFILT_PROC,
+        flags: EV_ADD,
+        fflags: NOTE_EXIT,
+        ..Kevent64::default()
+    };
+    if unsafe { kevent64(queue.as_raw_fd(), &exit, 1, null_mut(), 0, 0, null()) } != 0 {
+        return Err(format!(
+            "register parent-death watch: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    let mut event = Kevent64::default();
+    let immediate = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    if raw_getppid() != parent
+        || unsafe { kevent64(queue.as_raw_fd(), null(), 0, &mut event, 1, 0, &immediate) } != 0
+    {
+        return Err(
+            "launch parent changed or parent-death watch failed during registration".into(),
+        );
+    }
+
+    let main_thread = unsafe { pthread_self() };
+    thread::Builder::new()
+        .spawn(move || {
+            let mut event = Kevent64::default();
+            loop {
+                let n = unsafe { kevent64(queue.as_raw_fd(), null(), 0, &mut event, 1, 0, null()) };
+                if n >= 0 || io::Error::last_os_error().kind() != ErrorKind::Interrupted {
+                    break;
+                }
+            }
+            if unsafe { pthread_kill(main_thread, PDEATH_SIGNAL) } != 0 {
+                on_death_signal(PDEATH_SIGNAL);
+            }
+        })
+        .map_err(|e| format!("start parent-death watcher: {e}"))?;
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn arm_parent_death() -> Result<(), String> {
+    Err("parent-death monitoring is unavailable on this platform".into())
 }

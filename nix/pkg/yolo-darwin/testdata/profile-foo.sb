@@ -1,6 +1,6 @@
 ;; yolo-darwin rules appended after claude-code-sandbox noread.sb.
 ;; Profile: foo
-;; Network remains open; filesystem grants are narrowed below.
+;; Outbound pathname sockets require an exact allow below.
 
 ;; Grant PWD, shared cache, and native homes for the default profile.
 (allow file-read* file-write* file-write-create file-read-metadata file-ioctl
@@ -45,3 +45,5 @@
 ;; reads it (pi uses its own agent/mcp.json). Configured grants may re-grant.
 (deny file-read*
     (subpath (string-append (param "HOME_DIR") "/.config/mcp")))
+
+(deny network-outbound (regex #".+"))

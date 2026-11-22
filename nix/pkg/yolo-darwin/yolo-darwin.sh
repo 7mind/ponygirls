@@ -37,6 +37,13 @@ EXTRA_RW_PATHS=()
 # order and rendered after every declarative grant: Seatbelt is last-match-wins.
 CLI_PATH_GRANTS=()
 CLEANUP_FILES=()
+CLIP_PROXY_DIR=""
+CLIP_BROKER_PID=""
+CLIP_BROKER_SOCKET=""
+CLIP_ORIGIN_SOCKET=""
+CLIP_SHIM_DIR=""
+CLIP_BOUND_PANE=""
+PODMAN_SOCKET=""
 # Feature suppression: --disable=TAG is repeatable and comma-separated.
 # shellcheck disable=SC2034
 DISABLE_TAGS=()
@@ -49,7 +56,23 @@ ENABLE_TAGS=()
 # shellcheck source=/dev/null
 source "$YOLO_CUSTOM_PROMPT"
 
+cleanup_yolo_broker() {
+  if [[ -n "$CLIP_BROKER_PID" ]]; then
+    kill "$CLIP_BROKER_PID" 2>/dev/null || true
+    wait "$CLIP_BROKER_PID" 2>/dev/null || true
+    CLIP_BROKER_PID=""
+  fi
+  if [[ -n "$CLIP_PROXY_DIR" ]]; then
+    if [[ -d "$CLIP_PROXY_DIR" && ! -L "$CLIP_PROXY_DIR" ]]; then
+      rm -f -- "$CLIP_PROXY_DIR/sock"
+      rmdir -- "$CLIP_PROXY_DIR" 2>/dev/null || true
+    fi
+    CLIP_PROXY_DIR=""
+  fi
+}
+
 cleanup_yolo_tempfiles() {
+  cleanup_yolo_broker
   local file
   for file in "${CLEANUP_FILES[@]}"; do
     [[ -n "$file" ]] && rm -f -- "$file"
@@ -383,9 +406,11 @@ if [[ -n "$PROFILE_ACTION" ]]; then
 fi
 
 # Resolve symlinks portably; stock macOS does not provide `readlink -f`.
-_canonicalize() { (cd -P -- "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"; }
+_canonicalize() { (cd -P -- "$1" 2>/dev/null && printf '%s\001' "$PWD") || printf '%s\001' "$1"; }
 _pwd_real="$(_canonicalize "${PWD}")"
+_pwd_real="${_pwd_real%$'\001'}"
 _home_real="$(_canonicalize "${HOME}")"
+_home_real="${_home_real%$'\001'}"
 if [[ "$_pwd_real" == "$_home_real" && $UNSAFE_SHARE_HOME -ne 1 ]]; then
   echo "Error: refusing to run yolo-darwin from \$HOME ($_home_real)." >&2
   echo "       \$PWD is bound read-write into the sandbox, so this would expose your" >&2
@@ -418,19 +443,6 @@ case "$SUBCMD" in
     ;;
 esac
 
-# Match Linux yolo's container-runtime contract. Seatbelt already grants
-# network*, so the socket needs only filesystem visibility; the generic path
-# renderer grants both a stable symlink and its canonical runtime target.
-if [[ -n "${YOLO_PODMAN_SOCKET_PATH:-}" && -n "${YOLO_PODMAN_SOCKET_URI:-}" ]]; then
-  if [[ -S "$YOLO_PODMAN_SOCKET_PATH" ]]; then
-    EXTRA_RO_PATHS+=("$YOLO_PODMAN_SOCKET_PATH")
-    SOCKET_ENV_PAIRS+=("DOCKER_HOST=$YOLO_PODMAN_SOCKET_URI")
-    SOCKET_ENV_PAIRS+=("CONTAINER_HOST=$YOLO_PODMAN_SOCKET_URI")
-  else
-    echo "warning: podsvc-llm Podman socket not available, skipping bind: $YOLO_PODMAN_SOCKET_PATH" >&2
-  fi
-fi
-
 profile_dir() { printf '%s/%s/%s' "${PROFILES_ROOT}" "${PROFILE}" "$1"; }
 
 # PI_CODING_AGENT_DIR relocates pi's entire per-user state for named profiles;
@@ -449,7 +461,11 @@ fi
 
 # Seatbelt profile rendering
 _sb_escape() {
-  local p="$1"
+  local p="$1" LC_ALL=C
+  if [[ "$p" == *[[:cntrl:]]* ]]; then
+    echo "Error: control character in Seatbelt path" >&2
+    return 1
+  fi
   p="${p//\\/\\\\}"
   p="${p//\"/\\\"}"
   printf '%s' "$p"
@@ -466,7 +482,100 @@ _logical_absolute_path() {
   dir="${path%/*}"
   base="${path##*/}"
   [[ -n "$dir" ]] || dir="/"
-  (cd -P -- "$dir" && printf '%s/%s' "$(pwd -P)" "$base")
+  (cd -P -- "$dir" && printf '%s/%s' "${PWD%/}" "$base")
+}
+
+_read_realpath() {
+  local p
+  p="$(realpath -- "$1" && printf '\001')" || return 1
+  p="${p%$'\n\001'}"
+  [[ "$p" == /* ]] && _sb_escape "$p" >/dev/null || return 1
+  printf '%s' "$p"
+}
+
+_clip_socket_fits() {
+  local path="$1/yolo-clip.XXXXXX/sock" LC_ALL=C
+  [[ "$path" != *,* && ${#path} -le 103 ]]
+}
+
+_clip_temp_root() {
+  local raw="${TMPDIR:-/tmp}" root os_tmp canonical_os_tmp mode
+  [[ "$raw" == /* ]] && root="$(_read_realpath "$raw")" || return 1
+  if ! _clip_socket_fits "$root"; then
+    [[ "$OSTYPE" == darwin* ]] || return 1
+    os_tmp="$(getconf DARWIN_USER_TEMP_DIR)" && canonical_os_tmp="$(_read_realpath "$os_tmp")" || return 1
+    [[ "$root" == "$canonical_os_tmp" ]] || return 1
+    root="$(_read_realpath /private/tmp)" && _clip_socket_fits "$root" || return 1
+  fi
+  [[ -d "$root" && -w "$root" ]] || return 1
+  if [[ "$root" == /private/tmp || "$root" == /tmp ]]; then
+    [[ -k "$root" ]] || return 1
+  else
+    [[ -O "$root" ]] || return 1
+    mode="$(stat -c '%a' "$root" 2>/dev/null || stat -f '%Lp' "$root")" || return 1
+    [[ "$mode" =~ ^[0-7]{3,4}$ ]] && (( (8#$mode & 0022) == 0 )) || return 1
+  fi
+  printf '%s' "$root"
+}
+
+start_clipboard_broker() {
+  local root listen shim tmux_tail="${TMUX:-}" server_pid
+  local -a pane_args=()
+  [[ -n "$CLIP_ORIGIN_SOCKET" ]] || return 0
+  [[ "${YOLO_CLIPBOARD_PROXY:-}" == /* && -x "$YOLO_CLIPBOARD_PROXY" &&
+     "${YOLO_TMUX:-}" == /* && -x "$YOLO_TMUX" &&
+     "${YOLO_CLIPBOARD_SHIM_DIR:-}" == /* ]] || return 0
+  shim="$YOLO_CLIPBOARD_SHIM_DIR"
+  [[ -x "$shim/tmux" ]] || return 0
+  if ! root="$(_clip_temp_root)" || ! CLIP_PROXY_DIR="$(umask 077; mktemp -d "${root%/}/yolo-clip.XXXXXX")"; then
+    echo "warning: no suitable temporary directory for yolo clipboard broker; clipboard disabled" >&2
+    return 0
+  fi
+  listen="$CLIP_PROXY_DIR/sock"
+  tmux_tail="${tmux_tail#*,}"
+  server_pid="${tmux_tail%%,*}"
+  if [[ "${YOLO_ALLOW_TMUX_WINDOW_QUERY:-0}" == 1 && "${TMUX_PANE:-}" =~ ^%[0-9]+$ &&
+    "$tmux_tail" == *,* && "$server_pid" =~ ^[123456789][0123456789]{0,9}$ ]] &&
+    (( 10#$server_pid <= 2147483647 )); then
+    pane_args=(--tmux-pane "$TMUX_PANE" --tmux-server-pid "$server_pid")
+  fi
+  "$YOLO_CLIPBOARD_PROXY" broker --listen "$listen" --tmux-socket "$CLIP_ORIGIN_SOCKET" \
+    --tmux "$YOLO_TMUX" "${pane_args[@]}" </dev/null >/dev/null 2>&1 &
+  CLIP_BROKER_PID=$!
+  local attempts
+  for ((attempts = 0; attempts < 100; attempts++)); do
+    kill -0 "$CLIP_BROKER_PID" 2>/dev/null || break
+    if [[ -S "$listen" ]] &&
+      YOLO_CLIPBOARD_SOCK="$listen" "$YOLO_CLIPBOARD_PROXY" client probe </dev/null >/dev/null 2>&1 &&
+      kill -0 "$CLIP_BROKER_PID" 2>/dev/null; then
+      CLIP_BROKER_SOCKET="$listen"
+      CLIP_SHIM_DIR="$shim"
+      CLIP_BOUND_PANE="${pane_args[1]:-}"
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "warning: yolo clipboard broker did not become ready; clipboard disabled" >&2
+  cleanup_yolo_broker
+}
+
+prepare_socket_policy() {
+  local host_tmux="${TMUX:-}" canonical
+  host_tmux="${host_tmux%%,*}"
+  if [[ "$host_tmux" == /* && -S "$host_tmux" ]] &&
+    canonical="$(_read_realpath "$host_tmux")" && [[ -S "$canonical" ]]; then
+    CLIP_ORIGIN_SOCKET="$canonical"
+  fi
+  if [[ -n "${YOLO_PODMAN_SOCKET_PATH:-}" && -n "${YOLO_PODMAN_SOCKET_URI:-}" ]]; then
+    if canonical="$(_read_realpath "$YOLO_PODMAN_SOCKET_PATH")" && [[ -S "$canonical" ]] &&
+      [[ "$canonical" != "$CLIP_ORIGIN_SOCKET" && ! "$canonical" -ef "$host_tmux" ]]; then
+      PODMAN_SOCKET="$canonical"
+      SOCKET_ENV_PAIRS+=("DOCKER_HOST=unix://$PODMAN_SOCKET" "CONTAINER_HOST=unix://$PODMAN_SOCKET")
+    else
+      echo "warning: podsvc-llm Podman socket not available, skipping bind: $YOLO_PODMAN_SOCKET_PATH" >&2
+    fi
+  fi
+  start_clipboard_broker
 }
 
 _render_parent_metadata_grant() {
@@ -474,8 +583,8 @@ _render_parent_metadata_grant() {
   parent="${path%/*}"
   printf '(allow file-read-metadata\n'
   while [[ -n "$parent" && "$parent" != "/" ]]; do
-    esc_parent="$(_sb_escape "$parent")"
-    printf '    (literal "%s")\n' "$esc_parent"
+    esc_parent="$(_sb_escape "$parent")" || return 1
+    printf '    (literal "%s")\n' "$esc_parent" || return 1
     parent="${parent%/*}"
   done
   printf '    (literal "/"))\n'
@@ -483,8 +592,8 @@ _render_parent_metadata_grant() {
 
 _render_path_grant() {
   local access="$1" path="$2" esc_path
-  esc_path="$(_sb_escape "$path")"
-  _render_parent_metadata_grant "$path"
+  esc_path="$(_sb_escape "$path")" || return 1
+  _render_parent_metadata_grant "$path" || return 1
   if [[ "$access" == ro ]]; then
     printf '(allow file-read* file-read-metadata\n'
   else
@@ -496,13 +605,14 @@ _render_path_grant() {
 
 _render_one_path_grant() {
   local access="$1" raw="$2" logical canonical
+  _sb_escape "$raw" >/dev/null || return 1
   [[ -e "$raw" ]] || return 0
-  logical="$(_logical_absolute_path "$raw")"
-  canonical="$(realpath "$logical" 2>/dev/null || printf '%s' "$logical")"
-  printf '\n;; Explicit %s grant: %s\n' "$access" "$logical"
-  _render_path_grant "$access" "$logical"
+  logical="$(_logical_absolute_path "$raw")" || return 1
+  canonical="$(_read_realpath "$logical")" || return 1
+  printf '\n;; Explicit %s grant\n' "$access" || return 1
+  _render_path_grant "$access" "$logical" || return 1
   if [[ "$canonical" != "$logical" ]]; then
-    _render_path_grant "$access" "$canonical"
+    _render_path_grant "$access" "$canonical" || return 1
   fi
 }
 
@@ -515,11 +625,47 @@ _render_configured_path_grants() {
       set -- "${EXTRA_RW_PATHS[@]}"
     fi
     for raw in "$@"; do
-      _render_one_path_grant "$access" "$raw"
+      _render_one_path_grant "$access" "$raw" || return 1
     done
   done
   for grant in "${CLI_PATH_GRANTS[@]}"; do
-    _render_one_path_grant "${grant%%$'\t'*}" "${grant#*$'\t'}"
+    _render_one_path_grant "${grant%%$'\t'*}" "${grant#*$'\t'}" || return 1
+  done
+}
+
+_render_pinned_path() {
+  local path="$1" kind="$2" esc_path parent esc_parent
+  esc_path="$(_sb_escape "$path")" || return 1
+  printf '(deny file-write*\n    (literal "%s")' "$esc_path" || return 1
+  if [[ "$kind" == dir ]]; then
+    printf '\n    (subpath "%s")' "$esc_path" || return 1
+  fi
+  printf ')\n' || return 1
+  parent="${path%/*}"
+  if [[ -n "$parent" && "$parent" != / ]]; then
+    printf '(deny file-write-unlink file-write-create\n' || return 1
+    while [[ -n "$parent" && "$parent" != / ]]; do
+      esc_parent="$(_sb_escape "$parent")" || return 1
+      printf '    (literal "%s")' "$esc_parent" || return 1
+      parent="${parent%/*}"
+      [[ -z "$parent" || "$parent" == / ]] || printf '\n' || return 1
+    done
+    printf ')\n' || return 1
+  fi
+}
+
+_render_socket_policy() {
+  local socket esc_socket
+  [[ -z "$CLIP_ORIGIN_SOCKET" ]] || _render_pinned_path "$CLIP_ORIGIN_SOCKET" socket || return 1
+  [[ -z "$CLIP_PROXY_DIR" ]] || _render_pinned_path "$CLIP_PROXY_DIR" dir || return 1
+  [[ -z "$PODMAN_SOCKET" ]] || _render_pinned_path "$PODMAN_SOCKET" socket || return 1
+  printf '\n(deny network-outbound (regex #".+"))\n' || return 1
+  for socket in "$CLIP_BROKER_SOCKET" "$PODMAN_SOCKET"; do
+    [[ -n "$socket" ]] || continue
+    esc_socket="$(_sb_escape "$socket")" || return 1
+    _render_parent_metadata_grant "$socket" || return 1
+    printf '(allow file-read* (literal "%s"))\n' "$esc_socket" || return 1
+    printf '(allow network-outbound (literal "%s"))\n' "$esc_socket" || return 1
   done
 }
 
@@ -527,10 +673,9 @@ _render_configured_path_grants() {
 # tool's current noread profile instead of maintaining a copy here.
 _render_base() {
   local base
-  base="$("$YOLO_SANDBOX_EXEC" --write-base-profile /dev/stdout)"
-  if [[ -z "$base" ]]; then
-    echo "Error: '$YOLO_SANDBOX_EXEC --write-base-profile' produced no output; cannot render the sandbox base profile." >&2
-    exit 1
+  if ! base="$("$YOLO_SANDBOX_EXEC" --write-base-profile /dev/stdout)" || [[ -z "$base" ]]; then
+    echo "Error: '$YOLO_SANDBOX_EXEC --write-base-profile' failed to produce the sandbox base profile." >&2
+    return 1
   fi
   printf '%s\n' "$base"
 }
@@ -541,12 +686,12 @@ _render_base() {
 _render_yolo_rules() {
   local name="$1" pwd_dir="$2"
   local esc_pwd label
-  esc_pwd="$(_sb_escape "$pwd_dir")"
+  esc_pwd="$(_sb_escape "$pwd_dir")" || return 1
   if [[ -n "$name" ]]; then label="$name"; else label="(default)"; fi
 
   printf ';; yolo-darwin rules appended after claude-code-sandbox noread.sb.\n'
   printf ';; Profile: %s\n' "$label"
-  printf ';; Network remains open; filesystem grants are narrowed below.\n\n'
+  printf ';; Outbound pathname sockets require an exact allow below.\n\n'
   printf ';; Grant PWD, shared cache, and native homes for the default profile.\n'
   printf '(allow file-read* file-write* file-write-create file-read-metadata file-ioctl\n'
   printf '    (subpath "%s")\n' "$esc_pwd"
@@ -601,13 +746,14 @@ _render_yolo_rules() {
   printf ';; reads it (pi uses its own agent/mcp.json). Configured grants may re-grant.\n'
   printf '(deny file-read*\n'
   printf '    (subpath (string-append (param "HOME_DIR") "/.config/mcp")))\n'
-  _render_configured_path_grants
+  _render_configured_path_grants || return 1
+  _render_socket_policy
 }
 
 render_sandbox_profile() {
   local name="$1" pwd_dir="$2"
-  _render_base
-  printf '\n'
+  _render_base || return 1
+  printf '\n' || return 1
   _render_yolo_rules "$name" "$pwd_dir"
 }
 
@@ -889,11 +1035,15 @@ yolo_exec_agent() {
   fi
 
   # Keep the generated policy private and remove it after the confined process.
-  local yolo_sb_profile status sandbox_entrypoint bash_executable
-  yolo_sb_profile="$(mktemp "${TMPDIR:-/tmp}/yolo-darwin-sb.XXXXXXXX")"
-  chmod 600 "$yolo_sb_profile"
+  local yolo_sb_profile status sandbox_entrypoint bash_executable rendered_profile
+  prepare_socket_policy
+  yolo_sb_profile="$(mktemp "${TMPDIR:-/tmp}/yolo-darwin-sb.XXXXXXXX")" || return 1
   CLEANUP_FILES+=("$yolo_sb_profile")
-  render_sandbox_profile "$PROFILE" "$PWD" > "$yolo_sb_profile"
+  if ! chmod 600 "$yolo_sb_profile" || ! rendered_profile="$(render_sandbox_profile "$PROFILE" "$_pwd_real")" ||
+    ! printf '%s\n' "$rendered_profile" > "$yolo_sb_profile"; then
+    echo "Error: could not write complete yolo Seatbelt policy; not launching" >&2
+    return 1
+  fi
   local sandbox_argv=("$YOLO_SANDBOX_EXEC" --use-profile "$yolo_sb_profile" --target-dir "$PWD" --)
   local child_argv=("${agent_argv[@]}" "$@")
   sandbox_entrypoint="$YOLO_SANDBOX_ENTRYPOINT"
@@ -923,15 +1073,19 @@ yolo_exec_agent() {
   fi
   local named_profile=0
   [[ -z "$PROFILE" ]] || named_profile=1
-  local -a tmux_context_env=()
-  if [[ -n "${YOLO_TMUX_CONTEXT_HELPER:-}" ]]; then
-    local window_context
-    if ! window_context="$("$YOLO_TMUX_CONTEXT_HELPER")"; then
-      echo "warning: tmux window context unavailable; notification labels will be omitted" >&2
-      window_context=null
-    fi
-    tmux_context_env=("SMIND_TMUX_WINDOW_CONTEXT=$window_context")
+  local tmux_coordinate="" tmux_command=""
+  local -a broker_env=()
+  if [[ -n "$CLIP_BROKER_SOCKET" ]]; then
+    tmux_coordinate="$CLIP_BROKER_SOCKET,0,0"
+    local child_path="$PATH" pair
+    for pair in "${SANDBOX_PACKAGE_ENV_PAIRS[@]}" "${SESSION_ENV_PAIRS[@]}" "${ENV_PAIRS[@]}"; do
+      [[ "$pair" == PATH=* ]] && child_path="${pair#PATH=}"
+    done
+    broker_env+=("PATH=$CLIP_SHIM_DIR${child_path:+:$child_path}")
+    [[ -z "$CLIP_BOUND_PANE" ]] || tmux_command="$CLIP_SHIM_DIR/tmux"
   fi
+  broker_env+=("TMUX=$tmux_coordinate" "YOLO_CLIPBOARD_SOCK=$CLIP_BROKER_SOCKET"
+    "TMUX_PANE=$CLIP_BOUND_PANE" "SMIND_TMUX_COMMAND=$tmux_command")
   env -i \
     "${base_env_pairs[@]}" \
     "${PROFILE_ENV_PAIRS[@]}" \
@@ -939,7 +1093,7 @@ yolo_exec_agent() {
     "${SANDBOX_PACKAGE_ENV_PAIRS[@]}" \
     "${SESSION_ENV_PAIRS[@]}" \
     "${ENV_PAIRS[@]}" \
-    "${tmux_context_env[@]}" \
+    "${broker_env[@]}" \
     SMIND_SANDBOXED=1 \
     CLAUDE_CODE_SANDBOXED=1 \
     "${codegraph_env[@]}" \

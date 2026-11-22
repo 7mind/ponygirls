@@ -11,7 +11,7 @@
   extraDevicePaths ? [ ],
   managedConfigHome ? null,
   piSharedAssets ? [ ],
-  captureTmuxWindowContext ? false,
+  allowTmuxWindowQuery ? false,
   promptJson ? "[]",
   prehooksJson ? "[]",
   sandboxHooksJson ? "[]",
@@ -27,22 +27,7 @@ let
   yoloScript = ./yolo.sh;
   customPromptScript = pkgs.writeText "yolo-custom-prompt.sh" (builtins.readFile ./custom-prompt.sh);
 
-  # Host↔sandbox clipboard bridge (defects:D262). std-only Rust binary that
-  # runs as a host broker (fixed tmux load-buffer/save-buffer) and as the
-  # in-sandbox `tmux` argv0 shim. Built with rustc directly — no crates.io.
-  clipboardProxy = pkgs.runCommandLocal "yolo-clipboard-proxy" {
-    nativeBuildInputs = [
-      pkgs.rustc
-      pkgs.gcc
-    ];
-  } ''
-    mkdir -p $out/bin $out/tmux-shim
-    rustc -C opt-level=2 -C debuginfo=0 -o $out/bin/yolo-clipboard-proxy \
-      ${./clipboard-proxy/main.rs}
-    # Sandbox PATH entry: only the shim name `tmux` is visible here so agent
-    # tools that shell out to `tmux load-buffer` hit the proxy, not host tmux.
-    ln -s $out/bin/yolo-clipboard-proxy $out/tmux-shim/tmux
-  '';
+  clipboardProxy = pkgs.callPackage ./clipboard-proxy/default.nix { };
 
   # The bubblewrap path-whitelisting layer yolo execs internally (see
   # llm-sandbox.sh / `exec "$YOLO_LLM_SANDBOX"`). It has no use on its own, so
@@ -160,7 +145,7 @@ pkgs.writeShellScriptBin "yolo" ''
   export YOLO_CLIPBOARD_PROXY="${clipboardProxy}/bin/yolo-clipboard-proxy"
   export YOLO_CLIPBOARD_SHIM_DIR="${clipboardProxy}/tmux-shim"
   export YOLO_TMUX="${pkgs.tmux}/bin/tmux"
-  export YOLO_TMUX_CONTEXT_HELPER=${lib.escapeShellArg (if captureTmuxWindowContext then import ../../lib/tmux-window-context.nix { inherit pkgs; } else "")}
+  export YOLO_ALLOW_TMUX_WINDOW_QUERY=${if allowTmuxWindowQuery then "1" else "0"}
   ${podmanExports}
   ${vmExports}
   ${extraRoExports}
@@ -178,8 +163,7 @@ pkgs.writeShellScriptBin "yolo" ''
   ${cmdHooksJsonExports}
   exec bash ${yoloScript} "$@"
 ''
-  # The checks (yolo-profile) drive the proxy's suites with the exact binary
-  # the wrapper ships.
+  # The broker check drives the exact binary the wrapper ships.
   // {
     passthru = { inherit clipboardProxy; };
   }

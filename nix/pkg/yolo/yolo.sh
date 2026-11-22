@@ -788,11 +788,11 @@ fi
 # outside bubblewrap (confused deputy → sandbox escape).
 #
 # Instead, when $TMUX points at a live host socket, start a per-launch broker
-# on the HOST that speaks a fixed two-op protocol (set/get clipboard) and
-# translates those into fixed `tmux load-buffer` / `tmux save-buffer` argv.
+# on the HOST for fixed `tmux load-buffer` / `tmux save-buffer` invocations
+# and, when opted in, a fixed window query pinned to the originating pane.
 # Only the broker's dedicated socket directory is bound into the sandbox, and
-# a PATH-prepending `tmux` shim forwards load-buffer/save-buffer/show-buffer
-# while rejecting every other verb. The sandbox TMUX coordinate is rewritten
+# a PATH-prepending `tmux` shim accepts only the broker's fixed invocations.
+# The sandbox TMUX coordinate is rewritten
 # to the broker socket with fixed non-host fields, and the llm-sandbox layer
 # confines every bind that would otherwise expose the inherited socket
 # (YOLO_CONFINE_TMUX_SOCKET, tasks:T1793).
@@ -800,6 +800,10 @@ TMUX_BIND_ARGS=()
 CLIP_PROXY_DIR=""
 CLIP_BROKER_PID=""
 CLIP_SHIM_DIR=""
+SANDBOX_TMUX=""
+SANDBOX_CLIP_SOCK=""
+SANDBOX_TMUX_COMMAND=""
+SANDBOX_TMUX_PANE=""
 if [[ -n "${TMUX:-}" ]]; then
   _tmux_sock="${TMUX%%,*}"
   if [[ -S "$_tmux_sock" ]]; then
@@ -817,10 +821,20 @@ if [[ -n "${TMUX:-}" ]]; then
       # The broker announces its socket only under the launch trace.
       _clip_trace_args=()
       [[ $TRACE -eq 1 ]] && _clip_trace_args=(--trace)
+      _clip_query_args=()
+      _tmux_fields="${TMUX#*,}"
+      _tmux_server_pid="${_tmux_fields%%,*}"
+      _max_tmux_server_pid=2147483647
+      if [[ "${YOLO_ALLOW_TMUX_WINDOW_QUERY:-0}" == 1 && "${TMUX_PANE:-}" =~ ^%[0-9]+$ &&
+            "$_tmux_fields" == *,* && "$_tmux_server_pid" =~ ^[123456789][0123456789]{0,9}$ &&
+            "$_tmux_server_pid" -le "$_max_tmux_server_pid" &&
+            "${YOLO_CLIPBOARD_SHIM_DIR:-}" == /* && -x "$YOLO_CLIPBOARD_SHIM_DIR/tmux" ]]; then
+        _clip_query_args=(--tmux-pane "$TMUX_PANE" --tmux-server-pid "$_tmux_server_pid")
+      fi
       "${YOLO_CLIPBOARD_PROXY}" broker \
         --listen "$_clip_sock" \
         --tmux-socket "$_tmux_sock" \
-        --tmux "$_tmux_bin" "${_clip_trace_args[@]}" &
+        --tmux "$_tmux_bin" "${_clip_trace_args[@]}" "${_clip_query_args[@]}" &
       CLIP_BROKER_PID=$!
       # Readiness requires BOTH a live child and a successful connection to
       # the freshly created socket (a connect+close probe speaking no
@@ -843,11 +857,15 @@ if [[ -n "${TMUX:-}" ]]; then
       if [[ $_clip_ready -eq 1 ]]; then
         CLIP_SHIM_DIR="${YOLO_CLIPBOARD_SHIM_DIR:-}"
         TMUX_BIND_ARGS+=(--rw "$CLIP_PROXY_DIR")
-        TMUX_BIND_ARGS+=(--env "YOLO_CLIPBOARD_SOCK=$_clip_sock")
+        SANDBOX_CLIP_SOCK="$_clip_sock"
         # The sandbox TMUX coordinate names ONLY the broker socket with fixed
         # non-host fields: clipboard detection stays active while neither the
         # raw host socket path nor the host server PID crosses the boundary.
-        TMUX_BIND_ARGS+=(--env "TMUX=$_clip_sock,0,0")
+        SANDBOX_TMUX="$_clip_sock,0,0"
+        if [[ ${#_clip_query_args[@]} -ne 0 ]]; then
+          SANDBOX_TMUX_COMMAND="$CLIP_SHIM_DIR/tmux"
+          SANDBOX_TMUX_PANE="${_clip_query_args[1]}"
+        fi
       else
         if [[ -n "$CLIP_BROKER_PID" ]]; then
           kill "$CLIP_BROKER_PID" 2>/dev/null || true
@@ -861,14 +879,7 @@ if [[ -n "${TMUX:-}" ]]; then
         else
           echo "warning: yolo clipboard broker socket never accepted a connection (stale-socket or wedged broker); clipboard disabled" >&2
         fi
-        # No broker coordinate: keep detection off rather than leak the host
-        # socket path or server PID into the sandbox.
-        TMUX_BIND_ARGS+=(--env "TMUX=")
       fi
-    else
-      # No broker available: keep detection off rather than leak the host
-      # socket path or server PID into the sandbox.
-      TMUX_BIND_ARGS+=(--env "TMUX=")
     fi
   fi
 fi
@@ -988,12 +999,19 @@ fi
 SECRET_FILE_ARGS=()
 SECRET_TMPFILE=""
 SANDBOX_SECRETS_PATH="/run/yolo-secrets.env"
+sandbox_owns_tmux_environment() {
+  case "$1" in
+    TMUX|TMUX_PANE|YOLO_CLIPBOARD_SOCK|SMIND_TMUX_COMMAND|SMIND_SANDBOXED) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 if [[ -n "${YOLO_SECRET_VARS:-}" ]]; then
   SECRET_TMPFILE="$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/yolo-secrets.XXXXXX")"
   _have_secret=0
   while IFS= read -r _line; do
     [[ -z "$_line" ]] && continue
     _name="${_line%%=*}"
+    sandbox_owns_tmux_environment "$_name" && continue
     _path="${_line#*=}"
     if [[ -r "$_path" ]]; then
       # cat strips the trailing newline (API tokens are single-line). No quoting:
@@ -1021,6 +1039,7 @@ if [[ -n "${YOLO_VALIDATED_VARS:-}" ]]; then
   while IFS= read -r _line; do
     [[ -z "$_line" ]] && continue
     _name="${_line%%=*}"
+    sandbox_owns_tmux_environment "$_name" && continue
     _path="${_line#*=}"
     token_name="$_name"
     file_transport=0
@@ -1245,13 +1264,17 @@ BASE_ARGS=(
   --ro "${HOME}/.direnvrc"
   --ro "${HOME}/.agents"
   --ro-bind "${YOLO_NIX_LD},/lib64/ld-linux-x86-64.so.2"
-  --env SMIND_SANDBOXED=1
   # Claude Code 2.1.x skips its workspace-trust dialog when this is set
   # (verdict "sandboxed"); set for every subcommand so nested claude runs too.
   --env CLAUDE_CODE_SANDBOXED=1
   "${SANDBOX_PKG_ARGS[@]}"
   "${SESSION_VAR_ARGS[@]}"
   "${ENV_ARGS[@]}"
+  --env SMIND_SANDBOXED=1
+  --env "YOLO_CLIPBOARD_SOCK=$SANDBOX_CLIP_SOCK"
+  --env "TMUX=$SANDBOX_TMUX"
+  --env "SMIND_TMUX_COMMAND=$SANDBOX_TMUX_COMMAND"
+  --env "TMUX_PANE=$SANDBOX_TMUX_PANE"
 )
 
 if [[ "$SUBCMD" == pi ]]; then
@@ -1573,14 +1596,6 @@ case "$SUBCMD" in
     exit 1
     ;;
 esac
-
-if [[ -n "${YOLO_TMUX_CONTEXT_HELPER:-}" ]]; then
-  if ! _window_context="$("$YOLO_TMUX_CONTEXT_HELPER")"; then
-    echo "warning: tmux window context unavailable; notification labels will be omitted" >&2
-    _window_context=null
-  fi
-  BASE_ARGS+=(--env "SMIND_TMUX_WINDOW_CONTEXT=$_window_context")
-fi
 
 # Launch trace switches for the two layers below this one. The entrypoint's is
 # an environment variable like its other inputs, and is added only on the

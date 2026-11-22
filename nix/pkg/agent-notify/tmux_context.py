@@ -1,19 +1,14 @@
-import argparse
-import json
 import os
 import re
 import subprocess
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
+from pathlib import Path
 
 
-CONTEXT_ENVIRONMENT_VARIABLE = "SMIND_TMUX_WINDOW_CONTEXT"
 TMUX_QUERY_TIMEOUT_SECONDS = 1
 WINDOW_NAME_PREVIEW_LENGTH = 160
-WINDOW_LABEL_FORMAT = (
-    "#{?#{!=:#{@smind_window_label_format},},"
-    "#{P:#{?pane_active,#{E:@smind_window_label_format},}},#{window_name}}"
-)
+WINDOW_QUERY_FORMAT = Path(__file__).with_name("tmux-window-format.txt").read_text(encoding="utf-8").removesuffix("\n")
 
 
 @dataclass(frozen=True)
@@ -30,7 +25,11 @@ class TmuxWindow:
         object.__setattr__(self, "name", " ".join(name.split())[:WINDOW_NAME_PREVIEW_LENGTH])
 
 
-def capture_window(environment: Mapping[str, str], tmux_command: str) -> TmuxWindow | None:
+def notification_window(environment: Mapping[str, str], tmux_command: str) -> TmuxWindow | None:
+    if environment.get("SMIND_SANDBOXED") == "1":
+        tmux_command = environment.get("SMIND_TMUX_COMMAND", "")
+        if not os.path.isabs(tmux_command):
+            return None
     target = environment.get("TMUX_PANE", "")
     socket = environment.get("TMUX", "").partition(",")[0]
     if not re.fullmatch(r"%[0-9]+", target) or not socket.startswith("/"):
@@ -38,7 +37,7 @@ def capture_window(environment: Mapping[str, str], tmux_command: str) -> TmuxWin
     try:
         result = subprocess.run(
             [tmux_command, "-N", "-S", socket, "display-message", "-p", "-t", target,
-             "#{pane_id}|#{window_index}|" + WINDOW_LABEL_FORMAT],
+             WINDOW_QUERY_FORMAT],
             env=dict(environment), capture_output=True, encoding="utf-8",
             timeout=TMUX_QUERY_TIMEOUT_SECONDS, check=False,
         )
@@ -49,33 +48,8 @@ def capture_window(environment: Mapping[str, str], tmux_command: str) -> TmuxWin
     parts = result.stdout.rstrip("\n").split("|", 2)
     if len(parts) != 3 or parts[0] != target or not re.fullmatch(r"[0-9]+", parts[1]):
         return None
-    return TmuxWindow(int(parts[1]), parts[2])
-
-
-def notification_window(environment: Mapping[str, str], tmux_command: str) -> TmuxWindow | None:
-    snapshot = environment.get(CONTEXT_ENVIRONMENT_VARIABLE)
-    if snapshot is not None:
-        try:
-            value = json.loads(snapshot)
-        except (ValueError, TypeError):
-            raise ValueError("Invalid captured tmux window context") from None
-        if value is None:
-            return None
-        if not isinstance(value, dict) or set(value) != {"index", "name"}:
-            raise ValueError("Invalid captured tmux window context fields")
-        return TmuxWindow(value["index"], value["name"])
-    if environment.get("SMIND_SANDBOXED") == "1":
+    try:
+        index = int(parts[1])
+    except ValueError:
         return None
-    return capture_window(environment, tmux_command)
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Capture the originating tmux window labels without exposing its socket")
-    parser.add_argument("--tmux", required=True)
-    arguments = parser.parse_args()
-    window = capture_window(os.environ, arguments.tmux)
-    print(json.dumps(None if window is None else asdict(window)))
-
-
-if __name__ == "__main__":
-    main()
+    return TmuxWindow(index, parts[2])

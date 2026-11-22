@@ -83,6 +83,16 @@ def adapters(real: bool):
             server.server_close()
 
 
+def recording_tmux(root: Path, wire: str | None) -> tuple[Path, Path]:
+    command = root / "tmux"
+    calls = root / "tmux-calls"
+    response = "raise SystemExit(1)" if wire is None else f"print({wire!r})"
+    command.write_text(f"#!{sys.executable}\nfrom pathlib import Path\n"
+                       f"with Path({str(calls)!r}).open('a') as stream: stream.write('called\\n')\n{response}\n")
+    command.chmod(0o700)
+    return command, calls
+
+
 class NotificationTests(unittest.TestCase):
     def test_notifications_contain_only_metadata(self):
         for real in (False, True):
@@ -136,8 +146,8 @@ class NotificationTests(unittest.TestCase):
 
     def test_client_callbacks_include_originating_tmux_window(self):
         for harness in ("claude", "codex", "pi"):
-            for index, name, suffix in ((0, "backend", " [tmux window 0: backend]"), (7, "", " [tmux window 7]"), (None, "", "")):
-                with self.subTest(harness=harness, index=index):
+            for wire, suffix in (("%4|0|backend", " [tmux window 0: backend]"), ("%4|7|", " [tmux window 7]"), (None, "")):
+                with self.subTest(harness=harness, wire=wire):
                     with adapters(True) as (_store, sender, messages), tempfile.TemporaryDirectory() as directory:
                         root = Path(directory)
                         config = root / "config.json"
@@ -149,13 +159,15 @@ class NotificationTests(unittest.TestCase):
                             "includeTmuxWindow": True,
                             "tmuxCommand": str(root / "must-not-run-tmux"),
                         }))
-                        environment = dict(os.environ, XDG_CACHE_HOME=str(root),
-                                           SMIND_TMUX_WINDOW_CONTEXT=json.dumps(None if index is None else {"index": index, "name": name}))
+                        shim, calls = recording_tmux(root, wire)
+                        environment = dict(os.environ, XDG_CACHE_HOME=str(root), SMIND_SANDBOXED="1",
+                                           SMIND_TMUX_COMMAND=str(shim), TMUX="/source,1,0", TMUX_PANE="%4")
                         payload = json.dumps({"session_id": "session", "turn_id": "turn"})
                         for action in (["--start"], [], ["--attention"]):
                             command = [sys.executable, str(Path(__file__).with_name("notify.py")), str(config), harness, *action, payload]
                             result = subprocess.run(command, text=True, capture_output=True, env=environment, timeout=5)
                             self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(calls.read_text().splitlines(), ["called", "called"])
                         self.assertEqual(messages, [
                             f"agent: turn complete [{harness}] session{suffix}",
                             f"agent: input needed [{harness}] session{suffix}",
@@ -184,7 +196,7 @@ class NotificationTests(unittest.TestCase):
                     self.assertFalse(notifier.handle("complete", turn))
                 self.assertEqual(messages, [])
 
-    def test_disabled_tmux_metadata_does_not_parse_context(self):
+    def test_disabled_tmux_metadata_does_not_invoke_selected_command(self):
         with adapters(True) as (_store, sender, messages), tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = root / "config.json"
@@ -193,12 +205,15 @@ class NotificationTests(unittest.TestCase):
                 "tokenFile": str(sender.token_file), "minTurnSeconds": 0,
                 "includeTmuxWindow": False,
             }))
-            environment = dict(os.environ, XDG_CACHE_HOME=str(root), SMIND_TMUX_WINDOW_CONTEXT="invalid")
+            shim, calls = recording_tmux(root, "%4|0|private window")
+            environment = dict(os.environ, XDG_CACHE_HOME=str(root), SMIND_SANDBOXED="1",
+                               SMIND_TMUX_COMMAND=str(shim), TMUX="/source,1,0", TMUX_PANE="%4")
             result = subprocess.run([sys.executable, str(Path(__file__).with_name("notify.py")), str(config),
                                      "pi", "--attention", '{"session_id":"session"}'],
                                     text=True, capture_output=True, env=environment, timeout=5)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(messages, ["agent: input needed [pi] session"])
+            self.assertFalse(calls.exists())
 
     def test_completion_policy_across_harnesses_and_adapters(self):
         for real in (False, True):
@@ -384,19 +399,21 @@ class E2EESelectionTests(unittest.TestCase):
 
     def test_window_metadata_reaches_e2ee_sender_without_network(self):
         for harness in ("claude", "codex", "pi"):
-            for snapshot, suffix in (({"index": 3, "name": "backend | 雪\nbranch"}, " [tmux window 3: backend | 雪 branch]"),
-                                     ({"index": 0, "name": ""}, " [tmux window 0]"), (None, "")):
-                with self.subTest(harness=harness, snapshot=snapshot), tempfile.TemporaryDirectory() as directory:
+            for wire, suffix in (("%4|3|backend | 雪\nbranch", " [tmux window 3: backend | 雪 branch]"),
+                                 ("%4|0|", " [tmux window 0]"), ("%5|3|wrong pane", "")):
+                with self.subTest(harness=harness, wire=wire), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
+                    command, calls = recording_tmux(root, wire)
                     config = root / "config.json"
                     config.write_text(json.dumps(dict(self.base_config(), transport="e2ee", includeTmuxWindow=True,
-                                                      tmuxCommand="/must-not-run")))
-                    environment = {"XDG_CACHE_HOME": directory, "SMIND_SANDBOXED": "1",
-                                   "SMIND_TMUX_WINDOW_CONTEXT": json.dumps(snapshot)}
+                                                      tmuxCommand=str(command))))
+                    environment = {"XDG_CACHE_HOME": directory, "SMIND_SANDBOXED": "0",
+                                   "SMIND_TMUX_COMMAND": "/must-not-run", "TMUX": "/source,1,0", "TMUX_PANE": "%4"}
                     arguments = ["notify", str(config), harness, "--attention", '{"session_id":"session"}']
                     with mock.patch.dict(os.environ, environment), mock.patch.object(sys, "argv", arguments), \
                             mock.patch("matrix_e2ee.NioMatrixSender.send") as send:
                         main()
+                    self.assertEqual(calls.read_text().splitlines(), ["called"])
                     send.assert_called_once_with(f"agent: input needed [{harness}] session{suffix}")
 
     def test_unprovisioned_e2ee_send_without_password_fails_closed(self):

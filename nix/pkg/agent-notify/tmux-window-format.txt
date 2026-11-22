@@ -1,0 +1,1 @@
+#{pane_id}|#{window_index}|#{?#{!=:#{@smind_window_label_format},},#{P:#{?pane_active,#{E:@smind_window_label_format},}},#{window_name}}

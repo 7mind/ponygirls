@@ -1176,6 +1176,17 @@
             bash sandbox-entrypoint-test.sh
             touch $out
           '';
+          yolo-tmux-broker = pkgs.runCommand "yolo-tmux-broker-test" {
+            nativeBuildInputs = [ pkgs.python3 ];
+            __darwinAllowLocalNetworking = pkgs.stdenv.hostPlatform.isDarwin;
+          } ''
+            install -Dm644 ${./nix/pkg/yolo/clipboard-proxy-tmux-test.py} yolo/clipboard-proxy-tmux-test.py
+            install -Dm644 ${./nix/pkg/agent-notify/tmux-window-format.txt} agent-notify/tmux-window-format.txt
+            python3 yolo/clipboard-proxy-tmux-test.py \
+              ${self.packages.${system}.yolo.passthru.clipboardProxy}/bin/yolo-clipboard-proxy \
+              ${pkgs.tmux}/bin/tmux
+            touch $out
+          '';
           yolo-managed-config-eval = import ./nix/tests/yolo-managed-config-eval.nix {
             inherit pkgs nixpkgs;
           };

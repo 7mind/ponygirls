@@ -14,7 +14,7 @@
 , extraReadWritePaths ? [ ]
 , managedConfigHome ? null
 , piSharedAssets ? [ ]
-, captureTmuxWindowContext ? false
+, allowTmuxWindowQuery ? false
 , promptJson ? "[]"
 , prehooksJson ? "[]"
 , sandboxHooksJson ? "[]"
@@ -29,6 +29,7 @@
 
 let
   yoloDarwinScript = ./yolo-darwin.sh;
+  clipboardProxy = pkgs.callPackage ../yolo/clipboard-proxy/default.nix { };
   # Read through the source-tree symlink and materialize a regular store file;
   # copying the yolo-darwin directory alone would preserve a dangling link.
   customPromptScript = writeText "yolo-custom-prompt.sh" (builtins.readFile ./custom-prompt.sh);
@@ -93,7 +94,10 @@ let
     export YOLO_SQLITE="${sqlite}/bin/sqlite3"
     export YOLO_CUSTOM_PROMPT="${customPromptScript}"
     export YOLO_MANAGED_CONFIG_HOME=${lib.escapeShellArg (if managedConfigHome == null then "" else managedConfigHome)}
-    export YOLO_TMUX_CONTEXT_HELPER=${lib.escapeShellArg (if captureTmuxWindowContext then import ../../lib/tmux-window-context.nix { inherit pkgs; } else "")}
+    export YOLO_CLIPBOARD_PROXY="${clipboardProxy}/bin/yolo-clipboard-proxy"
+    export YOLO_CLIPBOARD_SHIM_DIR="${clipboardProxy}/tmux-shim"
+    export YOLO_TMUX="${pkgs.tmux}/bin/tmux"
+    export YOLO_ALLOW_TMUX_WINDOW_QUERY=${if allowTmuxWindowQuery then "1" else "0"}
     export YOLO_SANDBOX_ENTRYPOINT="${sandboxEntrypoint}/bin/yolo-sandbox-entrypoint"
     ${podmanExports}
     ${extraRoExports}
@@ -113,4 +117,7 @@ let
     exec ${runtimeShell} ${yoloDarwinScript} "$@"
   '';
 in
-bin // { meta = bin.meta // { platforms = lib.platforms.darwin; }; }
+bin // {
+  meta = bin.meta // { platforms = lib.platforms.darwin; };
+  passthru = { inherit clipboardProxy; };
+}

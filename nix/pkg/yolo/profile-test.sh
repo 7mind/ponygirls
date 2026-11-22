@@ -230,21 +230,6 @@ run_yolo() {
 
 run_yolo_cmd() { run_yolo "$@" --profile foo cmd true; }
 
-WINDOW_HELPER="$FAKE_BIN/window-context"
-printf '%s\n' "#!$_bash_path" "printf '%s\\n' '{\"index\":0,\"name\":\"backend | named\"}'" > "$WINDOW_HELPER"
-chmod +x "$WINDOW_HELPER"
-OUT="$(YOLO_TMUX_CONTEXT_HELPER="$WINDOW_HELPER" run_yolo --profile foo --env SMIND_TMUX_WINDOW_CONTEXT=wrong cmd true)"
-assert_eq "origin window context launch succeeds" "0" "$?"
-assert_eq "origin window snapshot overrides caller metadata" 'SMIND_TMUX_WINDOW_CONTEXT={"index":0,"name":"backend | named"}' \
-  "$(printf '%s\n' "$OUT" | grep '^SMIND_TMUX_WINDOW_CONTEXT=' | tail -1)"
-OUT="$(YOLO_TMUX_CONTEXT_HELPER= run_yolo --profile foo cmd true)"
-assert_not_contains "disabled window capture does not forward metadata" "$OUT" "SMIND_TMUX_WINDOW_CONTEXT="
-printf '%s\n' "#!$_bash_path" 'exit 9' > "$WINDOW_HELPER"
-OUT="$(YOLO_TMUX_CONTEXT_HELPER="$WINDOW_HELPER" run_yolo --profile foo cmd true)"
-assert_eq "unavailable window context does not block launch" "0" "$?"
-assert_contains "window capture failure is observable" "$OUT" "warning: tmux window context unavailable"
-assert_contains "unavailable window context is explicit" "$OUT" "SMIND_TMUX_WINDOW_CONTEXT=null"
-
 TARGETED_HOST_HOOKS='[{"command":"printf host-target-marker","tags":["codegraph"],"targets":["claude","codex"]}]'
 TARGETED_HOOKS='[{"command":"printf codegraph-target-marker","tags":["codegraph"],"targets":["claude","codex"]},{"command":"printf shared-hook-marker","tags":[]}]'
 for agent in claude codex pi shell cmd; do
@@ -1084,6 +1069,85 @@ run_usage_yolo --trace cmd true >/dev/null
 assert_contains "--trace reaches the broker" "$(cat "$USAGE_BROKER_LOG")" "--tmux-socket $USAGE_TMUX_SOCKET"
 assert_eq "--trace reaches the broker as its own flag" "1" "$(grep -c -- ' --trace$' "$USAGE_BROKER_LOG")"
 launch_side_effects >/dev/null
+
+TMUX_SHIM_DIR="$WORKDIR/tmux-shim"
+mkdir -p "$TMUX_SHIM_DIR"
+printf '#!%s\nexit 0\n' "$_bash_path" > "$TMUX_SHIM_DIR/tmux"
+chmod +x "$TMUX_SHIM_DIR/tmux"
+TMUX_SCOPE_LOG="$WORKDIR/tmux-scope.log"
+TMUX_SCOPE_BROKER="$FAKE_BIN/tmux-scope-broker"
+cat > "$TMUX_SCOPE_BROKER" <<EOF
+#!$_bash_path
+case "\$1" in
+  client) [[ \$2 == probe ]]; exit ;;
+  broker)
+    printf '%s\n' "\$@" > '$TMUX_SCOPE_LOG'
+    [[ \${FAIL_TMUX_BROKER:-0} != 1 ]] || exit 1
+    exec '$_python_path' -c 'import socket, sys, time; s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(); time.sleep(60)' "\$3"
+    ;;
+esac
+EOF
+chmod +x "$TMUX_SCOPE_BROKER"
+run_tmux_scope() {
+  TMUX="$USAGE_TMUX_SOCKET${TMUX_SCOPE_SUFFIX-,1234,42}" YOLO_TMUX="$_bash_path" \
+    YOLO_CLIPBOARD_PROXY="$TMUX_SCOPE_BROKER" YOLO_CLIPBOARD_SHIM_DIR="$TMUX_SHIM_DIR" \
+    SMIND_TMUX_COMMAND=/ambient-tmux YOLO_CLIPBOARD_SOCK=/ambient-socket \
+    YOLO_SESSION_VARS=$'SMIND_TMUX_COMMAND=/configured-tmux\nTMUX_PANE=%43' \
+    run_yolo --env TMUX=/caller-socket,1,1 --env TMUX_PANE=%44 \
+      --env SMIND_TMUX_COMMAND=/caller-tmux --env YOLO_CLIPBOARD_SOCK=/caller-broker-sock \
+      "$@" cmd true
+}
+last_sandbox_env() { sandbox_options "$1" | grep "^$2=" | tail -1; }
+
+OUT="$(YOLO_ALLOW_TMUX_WINDOW_QUERY=1 TMUX_PANE=%17 run_tmux_scope)"
+assert_eq "opt-in launch succeeds" 0 "$?"
+assert_contains "broker pins the inherited pane and server PID" "$(cat "$TMUX_SCOPE_LOG")" $'--tmux-pane\n%17\n--tmux-server-pid\n1234'
+assert_eq "child notifier uses the shim, overriding CLI and settings" \
+  "SMIND_TMUX_COMMAND=$TMUX_SHIM_DIR/tmux" "$(last_sandbox_env "$OUT" SMIND_TMUX_COMMAND)"
+assert_eq "child sees the pinned pane" TMUX_PANE=%17 "$(last_sandbox_env "$OUT" TMUX_PANE)"
+BROKER_SOCK="$(sed -n '3p' "$TMUX_SCOPE_LOG")"
+assert_eq "child sees the broker coordinate, not the host coordinate" "TMUX=$BROKER_SOCK,0,0" "$(last_sandbox_env "$OUT" TMUX)"
+assert_eq "the shim uses the same broker socket" "YOLO_CLIPBOARD_SOCK=$BROKER_SOCK" "$(last_sandbox_env "$OUT" YOLO_CLIPBOARD_SOCK)"
+assert_not_contains "launch no longer publishes a window snapshot" "$OUT" SMIND_TMUX_WINDOW_CONTEXT=
+
+assert_tmux_metadata_off() {
+  local desc="$1" out="$2"
+  assert_eq "$desc: no notifier tmux command" SMIND_TMUX_COMMAND= "$(last_sandbox_env "$out" SMIND_TMUX_COMMAND)"
+  assert_eq "$desc: no origin pane" TMUX_PANE= "$(last_sandbox_env "$out" TMUX_PANE)"
+}
+assert_tmux_clipboard_only() {
+  local desc="$1" out="$2" status="$3" args socket_path
+  args="$(cat "$TMUX_SCOPE_LOG")"
+  socket_path="$(sed -n '3p' <<< "$args")"
+  assert_eq "$desc: launch succeeds" 0 "$status"
+  assert_not_contains "$desc: broker does not pin a pane" "$args" --tmux-pane
+  assert_not_contains "$desc: broker does not pin a server PID" "$args" --tmux-server-pid
+  assert_tmux_metadata_off "$desc" "$out"
+  assert_eq "$desc: clipboard still works" "YOLO_CLIPBOARD_SOCK=$socket_path" "$(last_sandbox_env "$out" YOLO_CLIPBOARD_SOCK)"
+}
+for pane in '%17' '%17invalid' ''; do
+  allow=1
+  [[ "$pane" == '%17' ]] && allow=0
+  OUT="$(YOLO_ALLOW_TMUX_WINDOW_QUERY="$allow" TMUX_PANE="$pane" run_tmux_scope)"
+  assert_tmux_clipboard_only "without a gated origin ($allow/$pane)" "$OUT" "$?"
+done
+for suffix in '' ',1234' ',,42' ',bogus,42' ',0,42' ',2147483648,42'; do
+  OUT="$(YOLO_ALLOW_TMUX_WINDOW_QUERY=1 TMUX_PANE=%17 TMUX_SCOPE_SUFFIX="$suffix" run_tmux_scope)"
+  assert_tmux_clipboard_only "invalid server PID (coordinate suffix [$suffix])" "$OUT" "$?"
+done
+
+OUT="$(FAIL_TMUX_BROKER=1 YOLO_ALLOW_TMUX_WINDOW_QUERY=1 TMUX_PANE=%17 run_tmux_scope)"
+assert_eq "unavailable broker does not block launch" 0 "$?"
+assert_tmux_metadata_off "unavailable broker" "$OUT"
+assert_eq "unavailable broker disables clipboard" YOLO_CLIPBOARD_SOCK= "$(last_sandbox_env "$OUT" YOLO_CLIPBOARD_SOCK)"
+assert_eq "unavailable broker disables TMUX" TMUX= "$(last_sandbox_env "$OUT" TMUX)"
+
+rm -f "$TMUX_SCOPE_LOG"
+OUT="$(YOLO_ALLOW_TMUX_WINDOW_QUERY=1 TMUX_PANE=%17 run_tmux_scope --cowboy-ride)"
+assert_eq "cowboy ride launch succeeds" 0 "$?"
+assert_eq "cowboy ride does not start a broker" 0 "$([[ -e "$TMUX_SCOPE_LOG" ]] && echo 1 || echo 0)"
+assert_eq "cowboy ride does not override native command configuration" SMIND_TMUX_COMMAND=/caller-tmux "$(last_sandbox_env "$OUT" SMIND_TMUX_COMMAND)"
+assert_not_contains "cowboy ride is not marked as sandboxed" "$OUT" SMIND_SANDBOXED=1
 
 HELP_OUT="$(run_yolo --help)"
 assert_contains "--help documents --trace" "$HELP_OUT" $'\n      --trace  '

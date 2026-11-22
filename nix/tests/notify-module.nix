@@ -30,7 +30,7 @@ let
             type = lib.types.listOf lib.types.str;
             default = [ ];
           };
-          smind.hm.dev.llm.yolo.captureTmuxWindowContext = lib.mkOption {
+          smind.hm.dev.llm.yolo.allowTmuxWindowQuery = lib.mkOption {
             type = lib.types.bool;
             default = false;
           };
@@ -75,8 +75,8 @@ let
   }).config;
   enabled = evaluate { };
   disabled = evaluate { notify.enable = false; };
-  noToken = evaluate { notify.tokenFile = null; };
-  noHarness = evaluate { enable = false; };
+  noToken = evaluate { notify.tokenFile = null; notify.includeTmuxWindow = true; };
+  noHarness = evaluate { enable = false; notify.includeTmuxWindow = true; };
   e2ee = evaluate { notify.transport = "e2ee"; };
   e2eeRecovery = evaluate {
     notify.transport = "e2ee";
@@ -94,9 +94,11 @@ let
   bodyOnE2EE = evaluate { notify.transport = "e2ee"; notify.includeMessageBody = true; };
 in
 assert lib.all (assertion: assertion.assertion) enabled.assertions;
-assert !enabled.smind.hm.dev.llm.yolo.captureTmuxWindowContext;
-assert tmuxMetadata.smind.hm.dev.llm.yolo.captureTmuxWindowContext;
-assert !tmuxDisabled.smind.hm.dev.llm.yolo.captureTmuxWindowContext;
+assert !enabled.smind.hm.dev.llm.yolo.allowTmuxWindowQuery;
+assert tmuxMetadata.smind.hm.dev.llm.yolo.allowTmuxWindowQuery;
+assert !tmuxDisabled.smind.hm.dev.llm.yolo.allowTmuxWindowQuery;
+assert !noToken.smind.hm.dev.llm.yolo.allowTmuxWindowQuery;
+assert !noHarness.smind.hm.dev.llm.yolo.allowTmuxWindowQuery;
 assert builtins.elem tokenFile enabled.smind.hm.dev.llm.yolo.extraReadOnlyPaths;
 assert builtins.elem existingPath enabled.smind.hm.dev.llm.yolo.extraReadOnlyPaths;
 assert disabled.smind.hm.dev.llm.yolo.extraReadOnlyPaths == [ existingPath ];
