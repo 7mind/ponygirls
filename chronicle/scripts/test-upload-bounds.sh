@@ -32,9 +32,11 @@
 #   E  gate O (scripts/test-main-collector.sh) against this tree's server, heaps bounded and the server probed; then the raw
 #      read compatibility (scripts/test-raw-compat.sh: BASE_SERVER and BASE_CLI of 66fce48e) on the same database. ≤ 15 min.
 #   H  (stage l5) a 1 GiB session indexed as a root, then 10 appends of +0.5 % each published incrementally: per revision rows
-#      written, HNSW insertions, WAL, lag to the switch, publication kind; each append writes exactly the tail plus none or
-#      all of the passage open at the cut; then the head republished as a root (RetryJob, incrementalPublication=false on a
-#      second server) and the reader answers equal up to ids. ≤ 5 h, ≤ 60 GB.
+#      written, every generation-table write and model call bounded by the addition and the passage open at the cut, WAL,
+#      lag and writes not growing across the versions; then the head republished twice as a root (RetryJob,
+#      incrementalPublication=false on another server; the second root is the ANN baseline). Against both roots: the stored
+#      content (visible indexed rows) and the exact nearest-neighbour answers (index scans disabled) are equal, lexical
+#      answers and pages too; the incremental head's ANN recall is not below the roots'. ≤ 8 h, ≤ 60 GB.
 #   G  the 1 GiB session grows by 20 appends of +0.5 % (each incremental; collector CPU per append), then a same-length
 #      in-place edit of a line in the middle plus an append: a replacement (source-prefix-changed) whose archive equals the
 #      file. The initial 1 GiB upload ≤ 30 min, the growth with the edit ≤ 30 min, the run ≤ 1 h; ≤ 25 GB.
