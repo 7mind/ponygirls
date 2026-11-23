@@ -19,7 +19,14 @@ object JdbcConnectionFactory {
 private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: JdbcConnectionFactory) {
   config.validate()
   Class.forName("org.postgresql.Driver")
-  def transaction[A](f: Connection => A): A = {
+  def transaction[A](f: Connection => A): A = run(None)(f)
+  /** The configured bounds, except a transaction-local statement timeout of `timeout` (also above a stricter role
+    * setting) with a network timeout of `timeout` plus the socket timeout. */
+  def extendedTransaction[A](timeout: FiniteDuration)(f: Connection => A): A = {
+    require(timeout >= 1.millis && timeout <= 1.hour, "invalid JDBC timeout")
+    run(Some(timeout))(f)
+  }
+  private def run[A](extended: Option[FiniteDuration])(f: Connection => A): A = {
       try {
         val c = connect()
         // Using may suppress close errors onto the primary error: wrap close first so
@@ -33,6 +40,7 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
           configure(c)
           c.setAutoCommit(false)
           try {
+            extended.foreach(extend(c, _))
             val result = f(c)
             c.commit()
             result
@@ -76,6 +84,15 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
     }
   }
 
+  /** Inside the transaction: its own statement timeout and the network timeout after it. */
+  private def extend(c: Connection, timeout: FiniteDuration): Unit = {
+    Using.resource(c.prepareStatement("SELECT set_config('statement_timeout',?::text,true)")) { p =>
+      p.setLong(1, timeout.toMillis)
+      Using.resource(p.executeQuery()) { r => while (r.next()) () }
+    }
+    c.setNetworkTimeout(JdbcTransactionEngine.direct, (timeout + config.limits.socketTimeout).toMillis.toInt)
+  }
+
   private def connect(): Connection = {
     val limits = config.limits
     JdbcTransactionEngine.connect(config, factory, JdbcTransactionEngine.seconds(limits.connectTimeout), limits.connectTimeout, limits.socketTimeout)
@@ -101,4 +118,5 @@ private[runtime] object JdbcTransactionEngine {
     props.setProperty("tcpKeepAlive", "true")
     factory.open(config.jdbcUrl, props)
   }
+  private val direct: java.util.concurrent.Executor = (work: Runnable) => work.run()
 }

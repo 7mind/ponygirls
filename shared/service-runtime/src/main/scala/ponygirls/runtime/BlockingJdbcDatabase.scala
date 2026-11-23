@@ -2,6 +2,7 @@ package ponygirls.runtime
 
 import java.sql.Connection
 import java.util.concurrent.{Semaphore, TimeUnit}
+import scala.concurrent.duration.FiniteDuration
 
 /** Bounded blocking facade for existing synchronous JDBC domains. Call from blocking
   * threads, never http4s compute. No IORuntime, bridge, worker threads or connection pool.
@@ -24,7 +25,11 @@ final class BlockingJdbcDatabase private (config: JdbcConfig, factory: JdbcConne
     admitted -= 1
     if (closed && admitted == 0) notifyAll()
   }
-  def transaction[A](f: Connection => A): A = {
+  def transaction[A](f: Connection => A): A = admitted(engine.transaction(f))
+  /** A transaction whose statements may run up to `timeout` (restart-robustness spec §4, publication), above the
+    * configured statement timeout and a stricter role setting; lock and idle-in-transaction timeouts stay configured. */
+  def extendedTransaction[A](timeout: FiniteDuration)(f: Connection => A): A = admitted(engine.extendedTransaction(timeout)(f))
+  private def admitted[A](work: => A): A = {
     reserve()
     var acquired = false
     try {
@@ -32,7 +37,7 @@ final class BlockingJdbcDatabase private (config: JdbcConfig, factory: JdbcConne
       catch { case _: InterruptedException => Thread.currentThread().interrupt(); throw RuntimeFailure("admission-interrupted") }
       if (!acquired) throw RuntimeFailure("admission-timeout")
       synchronized { if (closed) throw RuntimeFailure("runtime-closed") }
-      engine.transaction(f)
+      work
     } finally {
       if (acquired) permits.release()
       release()

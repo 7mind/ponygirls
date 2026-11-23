@@ -108,6 +108,12 @@ claimed interruptible/cancelable or rolled back merely because callers disconnec
 explicit trusted real-driver probe seam; ordinary production construction always
 uses DriverManager and the same strict config and connection properties.
 
+`extendedTransaction(timeout)` (restart-robustness spec §4) is a blocking transaction whose statement timeout is
+raised transaction-locally to `timeout` (also above a stricter role setting; Chronicle's publication batches), with the
+network timeout at `timeout` plus `socketTimeoutMs`; lock and idle-in-transaction timeouts stay configured.
+`JdbcTransient.job(error)` names a job's failures that a later attempt outlives: the `connection` states above, 57014
+(a statement timeout), `admission-full` and `admission-timeout`.
+
 `JdbcFailure` is now a sanitized `SQLException` subtype so synchronous SQLState
 matching remains valid, with the existing `(code, sqlState: Option[String])` API.
 There is no raw driver diagnostic or cause. Safe secondary failure semantics are
