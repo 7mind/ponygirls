@@ -19,16 +19,23 @@ object JdbcConnectionFactory {
 private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: JdbcConnectionFactory) {
   config.validate()
   Class.forName("org.postgresql.Driver")
-  def transaction[A](f: Connection => A): A = run(None)(f)
+  import JdbcTransactionEngine.Bounds
+  def transaction[A](f: Connection => A): A = run(Bounds.Configured)(f)
   /** The configured bounds, except a transaction-local statement timeout of `timeout` (also above a stricter role
     * setting) with a network timeout of `timeout` plus the socket timeout. */
   def extendedTransaction[A](timeout: FiniteDuration)(f: Connection => A): A = {
     require(timeout >= 1.millis && timeout <= 1.hour, "invalid JDBC timeout")
-    run(Some(timeout))(f)
+    run(Bounds.Extended(timeout))(f)
   }
-  private def run[A](extended: Option[FiniteDuration])(f: Connection => A): A = {
+  /** Every wait within `bound`: the login (login, connect and socket timeouts at most `bound`), each statement's lock wait
+    * and execution (transaction-local statement and lock timeouts, tightened to `bound`) and each network read. */
+  def boundedTransaction[A](bound: FiniteDuration)(f: Connection => A): A = {
+    require(bound.toMillis >= 1 && bound <= 1.hour, "invalid JDBC bound")
+    run(Bounds.Bounded(bound))(f)
+  }
+  private def run[A](bounds: Bounds)(f: Connection => A): A = {
       try {
-        val c = connect()
+        val c = connect(bounds)
         // Using may suppress close errors onto the primary error: wrap close first so
         // even that secondary failure cannot retain raw server diagnostics.
         val owner = new AutoCloseable {
@@ -40,7 +47,7 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
           configure(c)
           c.setAutoCommit(false)
           try {
-            extended.foreach(extend(c, _))
+            limit(c, bounds)
             val result = f(c)
             c.commit()
             result
@@ -84,18 +91,31 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
     }
   }
 
-  /** Inside the transaction: its own statement timeout and the network timeout after it. */
-  private def extend(c: Connection, timeout: FiniteDuration): Unit = {
-    Using.resource(c.prepareStatement("SELECT set_config('statement_timeout',?::text,true)")) { p =>
-      p.setLong(1, timeout.toMillis)
-      Using.resource(p.executeQuery()) { r => while (r.next()) () }
-    }
-    c.setNetworkTimeout(JdbcTransactionEngine.direct, (timeout + config.limits.socketTimeout).toMillis.toInt)
+  /** Inside the transaction: its own statement (and lock) timeout and the network timeout after it. */
+  private def limit(c: Connection, bounds: Bounds): Unit = bounds match {
+    case Bounds.Configured => ()
+    case Bounds.Extended(timeout) =>
+      Using.resource(c.prepareStatement("SELECT set_config('statement_timeout',?::text,true)")) { p =>
+        p.setLong(1, timeout.toMillis)
+        Using.resource(p.executeQuery()) { r => while (r.next()) () }
+      }
+      c.setNetworkTimeout(JdbcTransactionEngine.direct, (timeout + config.limits.socketTimeout).toMillis.toInt)
+    case Bounds.Bounded(bound) =>
+      Using.resource(c.prepareStatement("SELECT set_config(name,least(coalesce(nullif(setting::bigint,0),?),?)::text,true) FROM pg_settings WHERE name IN('statement_timeout','lock_timeout')")) { p =>
+        p.setLong(1, bound.toMillis); p.setLong(2, bound.toMillis)
+        Using.resource(p.executeQuery()) { r => while (r.next()) () }
+      }
+      c.setNetworkTimeout(JdbcTransactionEngine.direct, bound.toMillis.toInt)
   }
 
-  private def connect(): Connection = {
+  private def connect(bounds: Bounds): Connection = {
     val limits = config.limits
-    JdbcTransactionEngine.connect(config, factory, JdbcTransactionEngine.seconds(limits.connectTimeout), limits.connectTimeout, limits.socketTimeout)
+    bounds match {
+      case Bounds.Bounded(bound) =>
+        val login = limits.connectTimeout.min(bound)
+        JdbcTransactionEngine.connect(config, factory, java.math.BigDecimal.valueOf(login.toMillis, 3).toPlainString, login, limits.socketTimeout.min(bound))
+      case _ => JdbcTransactionEngine.connect(config, factory, JdbcTransactionEngine.seconds(limits.connectTimeout), limits.connectTimeout, limits.socketTimeout)
+    }
   }
 }
 private[runtime] object JdbcTransactionEngine {
@@ -119,4 +139,9 @@ private[runtime] object JdbcTransactionEngine {
     factory.open(config.jdbcUrl, props)
   }
   private val direct: java.util.concurrent.Executor = (work: Runnable) => work.run()
+  private enum Bounds {
+    case Configured
+    case Extended(timeout: FiniteDuration)
+    case Bounded(bound: FiniteDuration)
+  }
 }

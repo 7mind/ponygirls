@@ -291,9 +291,10 @@ trait SessionArchive extends IndexCheckpoints {
   def retire(claim: Claim): Unit
   def fail(claim: Claim, code: String): Unit
   def fail(claim: Claim, code: String, stage: IndexingStage): Unit
-  /** Records a transient database failure of the attempt (restart-robustness spec §4) in the fenced transaction of `fail`:
-    * the job held Queued with back-off and its attempt refunded, or Failed after the consecutive limit. */
-  def holdTransient(claim: Claim, stage: Option[IndexingStage]): TransientOutcome
+  /** Records a transient database failure of the attempt (restart-robustness spec §4) in the fenced transaction of `fail`,
+    * each of its waits within `bound`: the job held Queued with back-off and its attempt refunded, or Failed after the
+    * consecutive limit. */
+  def holdTransient(claim: Claim, stage: Option[IndexingStage], bound: FiniteDuration): TransientOutcome
 }
 object SnapshotProjection {
   def text(value: String): String = value.replace("\u0000", "\\u0000")

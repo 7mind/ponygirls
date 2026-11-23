@@ -111,6 +111,9 @@ uses DriverManager and the same strict config and connection properties.
 `extendedTransaction(timeout)` (restart-robustness spec §4) is a blocking transaction whose statement timeout is
 raised transaction-locally to `timeout` (also above a stricter role setting; Chronicle's publication batches), with the
 network timeout at `timeout` plus `socketTimeoutMs`; lock and idle-in-transaction timeouts stay configured.
+`boundedTransaction(bound)` ends each of its waits within `bound`: the admission wait, the login (login, connect and
+socket timeouts at most `bound`), each statement's lock wait and execution (transaction-local statement and lock timeouts
+tightened to `bound`) and each network read (Chronicle's transient failure record).
 `JdbcTransient.job(error)` names a job's failures that a later attempt outlives: the `connection` states above, 57014
 (a statement timeout), `admission-full` and `admission-timeout`.
 

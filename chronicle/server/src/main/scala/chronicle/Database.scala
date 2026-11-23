@@ -13,6 +13,7 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
   def this(config: Config, profiles: IndexProfileCatalog) = this(config,profiles,Database.runtimes(config,new ponygirls.runtime.BlockingJdbcDatabase(_)))
   def transaction[A](f: Connection => A): A = runtime.transaction(f)
   def extendedTransaction[A](timeout: FiniteDuration)(f: Connection => A): A = runtime.extendedTransaction(timeout)(f)
+  def boundedTransaction[A](bound: FiniteDuration)(f: Connection => A): A = runtime.boundedTransaction(bound)(f)
   /** Lease renewals (restart-robustness spec §4, D3): an admission of their own, so they never wait behind publication
     * statements, failure records or any other transaction for a connection (one-connection mode: the one admission). */
   def control[A](f: Connection => A): A = controlRuntime.transaction(f)
@@ -764,9 +765,10 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     }
   }
   /** The transient branch of the failure record (restart-robustness spec §4), fenced as `failAt`: the claim's Running job
-    * with a valid lease. Held, its claim's attempt refunded, until `delay(k)` from now, or Failed at the limit; the count
-    * restarts at 1 when the attempt committed progress. */
-  def holdTransient(claim: Claim,stage: Option[IndexingStage]): TransientOutcome = db.transaction { c =>
+    * with a valid lease, each wait of the transaction within `bound`. Held, its claim's attempt refunded, until `delay(k)`
+    * from now, or Failed at the limit; the count restarts at 1 when the attempt committed progress. Only a row the fenced
+    * UPDATE returns is reported held or failed: a lease that ended after the read leaves the job as it was (gate r1 F2). */
+  def holdTransient(claim: Claim,stage: Option[IndexingStage],bound: FiniteDuration): TransientOutcome = db.boundedTransaction(bound) { c =>
     head(c,claim).filter(_ => lockJob(c,claim)).flatMap(head => Sql.one(c,s"SELECT transient_failures FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_.getInt(1)).map(head -> _)) match {
       // A record of this attempt that committed although its acknowledgement was lost: the row still carries the claim's
       // fence and run (any later claim, retry or supersession changes the fence), so it is reported, not written again.
@@ -775,16 +777,19 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       case Some((head,_)) if head>claim.revision => Sql.exec(c,s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob",jobArgs(claim)*); TransientOutcome.Ended
       case Some((_,previous)) =>
         val consecutive=if(claim.attempt.progressed) 1 else previous+1
-        val values=List[Sql.Param](Jobs.transientCode,stage.fold("")(_.toString),consecutive,claim.attempt.stoppedRange.getOrElse(-1))
-        if(consecutive>=Jobs.transientBackoff.limit) {
-          Sql.exec(c,s"UPDATE ch_jobs SET state='Failed',attempts=attempts-1,error=?,failure_stage=NULLIF(?,''),lease_until=NULL,transient_failures=?,transient_range=NULLIF(?,-1) WHERE $validJob",(values++jobArgs(claim))*)
-          TransientOutcome.Exhausted(consecutive)
-        } else {
+        // The range this attempt stopped in; without one, the job's earlier range stays unless this attempt committed
+        // progress (gate r1 F3: a P0 that met a leftover stopped in no range).
+        val stopped=claim.attempt.stoppedRange
+        val values=List[Sql.Param](Jobs.transientCode,stage.fold("")(_.toString),consecutive,stopped.nonEmpty,stopped.getOrElse(0),claim.attempt.progressed)
+        val recorded="error=?,failure_stage=NULLIF(?,''),transient_failures=?,transient_range=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE transient_range END"
+        if(consecutive>=Jobs.transientBackoff.limit)
+          Sql.one(c,s"UPDATE ch_jobs SET state='Failed',attempts=attempts-1,lease_until=NULL,$recorded WHERE $validJob RETURNING transient_failures",(values++jobArgs(claim))*)(r => TransientOutcome.Exhausted(r.getInt(1)))
+            .getOrElse(TransientOutcome.Ended)
+        else {
           val delay=Jobs.transientBackoff.delay(consecutive).toSeconds.toInt
-          Sql.one(c,s"""UPDATE ch_jobs SET state='Queued',attempts=attempts-1,error=?,failure_stage=NULLIF(?,''),transient_failures=?,transient_range=NULLIF(?,-1),
-            lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL WHERE $validJob RETURNING lease_until""",(values++List[Sql.Param](delay)++jobArgs(claim))*) { r =>
-            TransientOutcome.Held(consecutive,r.getTimestamp(1).toInstant)
-          }.getOrElse(throw DomainError("internal","held job row changed under its lock"))
+          Sql.one(c,s"""UPDATE ch_jobs SET state='Queued',attempts=attempts-1,$recorded,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
+            WHERE $validJob RETURNING transient_failures,lease_until""",(values++List[Sql.Param](delay)++jobArgs(claim))*)(r => TransientOutcome.Held(r.getInt(1),r.getTimestamp(2).toInstant))
+            .getOrElse(TransientOutcome.Ended)
         }
     }
   }

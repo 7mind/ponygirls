@@ -131,10 +131,17 @@ tries, lead addition ≈04:40Z).** R-a ships in two parts. **SMALL** (with R-c a
   hold (same fence and run). While the database refuses the record (`JdbcTransient.job`), the worker tries it again every
   `Worker.FailureBackoff` (2 s) while the attempt's lease has time left as the worker tracks it (its monotonic clock
   from before the claim or the last successful renewal, + 300 s − 5 s skew margin); then, as today, "job failure not
-  recorded" and the job keeps its lease. Each try re-checks the claim's ownership inside its transaction (a claim
-  reclaimed, retried or superseded meanwhile writes nothing); cancellation (server stop) ends the tries at once; no model
-  call is made or repeated meanwhile (the lane does nothing else). A renewal's transient failure still ends the attempt
-  (today), which is then held by this record.
+  recorded" and the job keeps its lease. (r2, gate r1 F1) Every try is `BlockingJdbcDatabase.boundedTransaction(b)` with
+  b = min(`Worker.Leases.recordTry` 5 s, the tracked lease left): admission wait, login (login, connect and socket
+  timeouts), each statement's lock wait and execution (transaction-local `statement_timeout`/`lock_timeout` tightened to
+  b) and each network read end within b; a try that ran out of b on a lock wait (55P03) is tried again too. Each try
+  re-checks the claim's ownership inside its transaction (a claim reclaimed, retried or superseded meanwhile writes
+  nothing); cancellation (server stop) schedules no further try and the one in flight ends within b; no model call is
+  made or repeated meanwhile (the lane does nothing else). (r2, F2) Only a row the fenced UPDATE returns is reported
+  held or failed: a lease that ends between the record's read and its write leaves the job as it was ("not held", the
+  job keeps its lease). (r2, F3) Without a new stopping range and without committed progress (e.g. P0 met a leftover),
+  the hold keeps the job's `transient_range`. A renewal's transient failure still ends the attempt (today), which is then
+  held by this record.
 - **Leftover rule (55P03).** P3 writers keep today's failure handling: the first failing writer's error is reported while
   siblings may still run their statements (up to the publication timeout), so the next attempt can meet them. Every
   staging transaction (P1–P3, `rewritePieces`) takes the job's advisory staging lock (`staging:<job id>`, 64-bit
@@ -158,12 +165,14 @@ retry and cutoff (`transactionWithin`, `loginWithin`, the login-helper bound, th
 `connection-unavailable`, `login-helpers-full` and `LeaseLost`, a failure record after the lease, drain-then-abort of
 the P3 writers, and the `client_connection_check_interval` tightening. The bullets below marked "R-a2" describe them.
 
-**SMALL's guarantee:** a PostgreSQL restart that ends before the in-flight job's lease ends charges no attempt; longer
-outages charge one attempt through reclaim and can lose one paid model answer; crashed jobs resume as today. Slow
-statements while the database is up (the deploy5/deploy6 cold window: 57014 on P3) are held, not charged, and publish
-once a statement fits the 5-min publication timeout. As today, a model answer whose checkpoint write the outage cuts
-is lost whatever the outage's length (its window's reservation stays charged, at most one per lane; the next attempt
-calls the model again).
+**SMALL's guarantee:** a PostgreSQL restart that ends at least 10 s before the in-flight job's lease ends charges no attempt (the hold is then recorded); longer outages charge one attempt through reclaim and can lose one paid model answer; crashed jobs resume as today. Why 10 s: the worker stops trying 5 s (skew margin) before the stored lease end, and
+a try needs up to 5 s (its bound); a database back ≥ 10 s before the lease end leaves ≥ 5 s of tracked lease, i.e. at
+least one try after it (tries come every 2 s and fail at once while PostgreSQL refuses connections: 08001/57P03). A
+database back inside the last 10 s may still be recorded; inside the last 5 s it is charged as today. Slow statements
+while the database is up (the deploy5/deploy6 cold window: 57014 on P3) are held, not charged, and publish once a
+statement fits the 5-min publication timeout. As today, a model answer whose uncommitted checkpoint write the outage
+cuts is lost whatever the outage's length (its window's reservation stays charged, at most one per lane; the next
+attempt calls the model again; a committed but unacknowledged one is reused).
 
 **Full R-a design** (SMALL above is the part that ships first; the R-a2 parts are marked).
 **Decision (D1 confirmed):** transient database failures are not charged to `attempts`; they hold the job with back-off;
@@ -372,7 +381,9 @@ calls the model again).
 
 ## 7. Tests (fail before for the stated reason; real PostgreSQL; no test sleeps: short intervals via configuration or injected clocks, production defaults asserted — AGENTS.md Timing rule)
 SMALL (RA-S) runs A1, A2, A3, A6, A9, A10 and its own cases: control connection (with one-connection mode), 55P03
-leftover vs live writer, the record's tries (refused then taken, claim taken over, lease end, cancellation), down-029.
+leftover vs live writer, the leftover barrier keeping the range, the record's tries (refused then taken, claim taken
+over, recovery in the final lease interval, cancellation during a record blocked in PostgreSQL), a lease ending between
+the record's read and write, down-029.
 A4 and A5 belong to R-a2; A7 (the purge limit stays documented) and A8 (covered by A1's network-timeout check) are not
 run in SMALL.
 | id | where | asserts | fails before because |

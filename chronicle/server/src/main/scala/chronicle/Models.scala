@@ -435,16 +435,21 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   }
   /** A transient database failure (restart-robustness spec §4): the job held with back-off, or failed at the consecutive
     * limit. The record is the fenced transaction of `fail`, tried again every failure back-off while the database cannot
-    * take it and the lease has time left; then, as any failure not recorded, the job keeps its lease. A try writes only
-    * while the claim still holds the job; cancellation ends the tries at once; no model is called meanwhile. */
+    * take it (or a try's lock wait ran out of its bound) and the lease has time left, each try's waits within
+    * min(`leases.recordTry`, the lease left); then, as any failure not recorded, the job keeps its lease. A try writes
+    * only while the claim still holds the job; cancellation schedules no further try (the one in flight ends within its
+    * bound); no model is called meanwhile. */
   private def holdTransient(claim: Claim,stage: Option[IndexingStage],error: Throwable,lease: AttemptLease): IO[Unit] = {
     val sqlState=error match { case sql: java.sql.SQLException => Option(sql.getSQLState).getOrElse("none"); case _ => "none" }
     val errorClass=error.getClass.getSimpleName; val failureStage=stage.fold("none")(_.toString); val code=Jobs.transientCode
-    def record: IO[TransientOutcome] = IO.blocking(archive.holdTransient(claim,stage)).handleErrorWith {
-      case refused if JdbcTransient.job(refused) && lease.timeLeft>Duration.Zero => IO.sleep(failureBackoff.delay.min(lease.timeLeft.max(Duration.Zero))) *> IO(lease.timeLeft>Duration.Zero).ifM(record,IO.raiseError(refused))
-      case other => IO.raiseError(other)
+    def record(last: Throwable): IO[TransientOutcome] = IO(lease.timeLeft).flatMap { left =>
+      if(left.toMillis<1) IO.raiseError(last)
+      else IO.blocking(archive.holdTransient(claim,stage,leases.recordTry.min(left))).handleErrorWith {
+        case refused if JdbcTransient.job(refused) || Worker.lockTimeout(refused) => IO.sleep(failureBackoff.delay.min(lease.timeLeft.max(Duration.Zero))) *> record(refused)
+        case other => IO.raiseError(other)
+      }
     }
-    record.flatMap {
+    record(error).flatMap {
       case TransientOutcome.Held(consecutive,nextAttemptAt) =>
         IO(logger.warn(s"job held jobId=${claim.jobId} code=$code sqlState=$sqlState class=$errorClass stage=$failureStage consecutive=$consecutive nextAttemptAt=$nextAttemptAt"))
       case TransientOutcome.Exhausted(consecutive) =>
@@ -506,10 +511,11 @@ object Worker {
   object FailureBackoff {
     val production: FailureBackoff = FailureBackoff(2.seconds)
   }
-  /** An attempt's lease (restart-robustness spec §4): `lease` long, renewed every `renewal`, its end tracked less `skewMargin`. */
-  final case class Leases(lease: FiniteDuration,renewal: FiniteDuration,skewMargin: FiniteDuration)
+  /** An attempt's lease (restart-robustness spec §4): `lease` long, renewed every `renewal`, its end tracked less `skewMargin`;
+    * a try of a transient failure's record waits at most `recordTry` (and never past the tracked end). */
+  final case class Leases(lease: FiniteDuration,renewal: FiniteDuration,skewMargin: FiniteDuration,recordTry: FiniteDuration)
   object Leases {
-    val production: Leases = Leases(300.seconds,30.seconds,5.seconds)
+    val production: Leases = Leases(300.seconds,30.seconds,5.seconds,5.seconds)
   }
   /** Not charged to the attempts (restart-robustness spec §4): a transient database failure (JdbcTransient.job), and P0's
     * lock timeout on the staging lock of its job, held by an earlier attempt's staging transaction still in PostgreSQL. */
@@ -517,4 +523,9 @@ object Worker {
     case JdbcFailure(PostgresArchive.leftoverStaging,_) => true
     case _ => false
   })
+  /** A record try's lock wait that ran out of the try's bound (its lock timeout): tried again like a refused record. */
+  private def lockTimeout(error: Throwable): Boolean = error match {
+    case JdbcFailure(_,Some(PostgresArchive.lockTimeout)) => true
+    case _ => false
+  }
 }

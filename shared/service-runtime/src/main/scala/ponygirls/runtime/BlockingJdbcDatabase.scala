@@ -25,15 +25,18 @@ final class BlockingJdbcDatabase private (config: JdbcConfig, factory: JdbcConne
     admitted -= 1
     if (closed && admitted == 0) notifyAll()
   }
-  def transaction[A](f: Connection => A): A = admitted(engine.transaction(f))
+  def transaction[A](f: Connection => A): A = admitted(policy.queueTimeout)(engine.transaction(f))
   /** A transaction whose statements may run up to `timeout` (restart-robustness spec §4, publication), above the
     * configured statement timeout and a stricter role setting; lock and idle-in-transaction timeouts stay configured. */
-  def extendedTransaction[A](timeout: FiniteDuration)(f: Connection => A): A = admitted(engine.extendedTransaction(timeout)(f))
-  private def admitted[A](work: => A): A = {
+  def extendedTransaction[A](timeout: FiniteDuration)(f: Connection => A): A = admitted(policy.queueTimeout)(engine.extendedTransaction(timeout)(f))
+  /** A transaction each of whose waits ends within `bound` (restart-robustness spec §4, the transient failure record): the
+    * admission wait, the login, each statement's lock wait and execution, each network read. */
+  def boundedTransaction[A](bound: FiniteDuration)(f: Connection => A): A = admitted(policy.queueTimeout.min(bound))(engine.boundedTransaction(bound)(f))
+  private def admitted[A](wait: FiniteDuration)(work: => A): A = {
     reserve()
     var acquired = false
     try {
-      try acquired = permits.tryAcquire(policy.queueTimeout.toNanos, TimeUnit.NANOSECONDS)
+      try acquired = permits.tryAcquire(wait.toNanos, TimeUnit.NANOSECONDS)
       catch { case _: InterruptedException => Thread.currentThread().interrupt(); throw RuntimeFailure("admission-interrupted") }
       if (!acquired) throw RuntimeFailure("admission-timeout")
       synchronized { if (closed) throw RuntimeFailure("runtime-closed") }

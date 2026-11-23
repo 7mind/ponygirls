@@ -37,7 +37,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit = delegate.checkpoint(c,key,value)
     def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = delegate.windowWork(c,key)
     def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int = delegate.discardCheckpoints(c,stage,window)
-    def holdTransient(c: Claim,stage: Option[IndexingStage]): TransientOutcome = delegate.holdTransient(c,stage)
+    def holdTransient(c: Claim,stage: Option[IndexingStage],bound: FiniteDuration): TransientOutcome = delegate.holdTransient(c,stage,bound)
   }
   private def source(texts: List[String]): IngestRequest = {
     val messages=texts.zipWithIndex.map((text,index) => Message(s"m$index",None,"assistant",text,None,index))
@@ -256,7 +256,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
         def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit = delegate.checkpoint(c,key,value)
         def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = delegate.windowWork(c,key)
         def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int = delegate.discardCheckpoints(c,stage,window)
-        def holdTransient(c: Claim,stage: Option[IndexingStage]): TransientOutcome = delegate.holdTransient(c,stage)
+        def holdTransient(c: Claim,stage: Option[IndexingStage],bound: FiniteDuration): TransientOutcome = delegate.holdTransient(c,stage,bound)
       }
       fiber <- new Worker(archive,model,embedder,config,catalog,admission,logstage.IzLogger(),ModelFixtures.failureBackoff,ModelFixtures.snapshots).run.start
       _ <- blocked.get.timeout(3.seconds)
