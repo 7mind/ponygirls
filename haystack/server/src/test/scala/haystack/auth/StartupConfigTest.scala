@@ -3,11 +3,15 @@ package haystack.auth
 import cats.effect.ExitCode
 import cats.effect.unsafe.implicits.global
 import haystack.{Config, Main}
-import haystack.domain.Fault
-import haystack.storage.MigrationRefused
+import haystack.storage.TestSupport
 import io.circe.Json
+import java.io.{ByteArrayOutputStream, PrintStream}
+import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files, Path}
+import java.sql.DriverManager
+import ponygirls.runtime.CredentialFile
 import scala.concurrent.duration.*
+import scala.util.Using
 
 /** BA/BG + owned filesystem: characterize the actual configuration/startup
   * rejection path. Subprocess/SIGTERM is transport-owned.
@@ -44,6 +48,22 @@ class StartupConfigTest extends munit.FunSuite {
   }
   private def file(dir: Path, json: Json): Path = {
     val path = dir.resolve("service.json"); Files.writeString(path, json.noSpaces); path
+  }
+  /** Runs one command in process and keeps its exit code and the failure lines it printed on stderr. */
+  private def failureLines(command: String, path: Path): (ExitCode, List[String]) = {
+    val captured = new ByteArrayOutputStream(); val original = System.err
+    val exit = try { System.setErr(new PrintStream(captured, true, UTF_8)); Main.run(List(command, path.toString)).unsafeRunSync() } finally System.setErr(original)
+    (exit, captured.toString(UTF_8).linesIterator.filter(_.startsWith("haystack failure")).toList)
+  }
+  /** A disposable database on the owned test cluster, dropped afterwards. */
+  private def freshDatabase[A](body: String => A): A = {
+    val config = TestSupport.databaseConfig
+    val name = "haystack_start_" + java.util.UUID.randomUUID().toString.replace("-", "")
+    def admin(sql: String): Unit = Using.resource(DriverManager.getConnection(config.jdbcUrl, config.user, CredentialFile.read(config.passwordFile))) { c =>
+      Using.resource(c.createStatement())(_.execute(sql)); ()
+    }
+    admin("CREATE DATABASE " + name)
+    try body(config.jdbcUrl.take(config.jdbcUrl.lastIndexOf('/') + 1) + name) finally admin("DROP DATABASE " + name + " WITH (FORCE)")
   }
   test("complete current config loads exactly and check-config validates auth without DB access") { directory { dir =>
     val path = file(dir, valid(dir)); val loaded = Config.load(path)
@@ -107,13 +127,20 @@ class StartupConfigTest extends munit.FunSuite {
       }
     } }
   }
-  test("the start-up failure line names the cause of a migration refusal only; every other failure keeps the fixed generic line") {
-    val generic = "haystack: startup or runtime failure"
-    assertEquals(Main.failureLine(MigrationRefused("0007-node-replay-retired", "2 rows")), "haystack: startup refused: migration 0007-node-replay-retired: 2 rows")
-    Vector(Fault("config", "unknown database migration"), new java.sql.SQLException("jdbc:postgresql://db.invalid/secret"), new IllegalStateException("x")).foreach { other =>
-      assertEquals(Main.failureLine(other), generic)
+  test("an unreachable database fails the migrate stage with its SQLSTATE and without the URL") { directory { dir =>
+    assertEquals(failureLines("migrate", file(dir, valid(dir))),
+      (ExitCode.Error, List("""haystack failure stage=migrate code=jdbc-08001 error=JdbcFailure message="database-unavailable"""")))
+  } }
+  test("serve on an occupied listen port fails the bind stage with address in use and the port") { directory { dir => freshDatabase { url =>
+    Using.resource(new java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))) { occupied =>
+      val port = occupied.getLocalPort
+      val database = TestSupport.databaseConfig
+      val json = Vector("listenPort" -> Json.fromInt(port), "database/jdbcUrl" -> Json.fromString(url), "database/user" -> Json.fromString(database.user),
+        "database/passwordFile" -> Json.fromString(database.passwordFile.toString)).foldLeft(valid(dir)) { case (json, (path, value)) => set(json, path, value) }
+      assertEquals(failureLines("serve", file(dir, json)),
+        (ExitCode.Error, List(s"""haystack failure stage=bind code=address-in-use error=BindException message="address in use" port=$port""")))
     }
-  }
+  } } }
   test("missing, malformed and duplicate-key config inputs fail closed") { directory { dir =>
     assertEquals(Main.run(List("check-config", dir.resolve("missing.json").toString)).unsafeRunSync(), ExitCode.Error)
     Vector("{", "{\"listenPort\":1,\"listenPort\":2}", "{\"x\":\"\\uD800\"}").zipWithIndex.foreach { case (raw, i) =>

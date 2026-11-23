@@ -8,7 +8,7 @@ import distage.*
 import manure.plugins.{ManurePlugin,RuntimeServices}
 import manure.storage.{ConfinedDirectory,RelativeName,RootLease,RootLocked}
 import ponygirls.auth.CredentialGate
-import ponygirls.runtime.{CatsIOInjector,JdbcDatabase,Migration}
+import ponygirls.runtime.{CatsIOInjector,JdbcDatabase,Migration,StartFailure}
 import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry}
 import org.http4s.ember.server.EmberServerBuilder
 import scala.concurrent.duration.*
@@ -20,8 +20,8 @@ object Main extends IOApp:
   def run(args: List[String]): IO[ExitCode] = args match
     case List("check-casefold") => IO.blocking(UnicodeCaseFoldProbe.main(Array.empty[String])).as(ExitCode.Success).handleErrorWith(safeFailure)
     case List("serve",path) => runServer(Path.of(path)).as(ExitCode.Success).handleErrorWith(safeFailure)
-    case List("check-config",path) => IO.blocking(Config.load(Path.of(path))).flatMap(_ => IO.println("MANURE_CONFIG_OK")).as(ExitCode.Success).handleErrorWith(safeFailure)
-    case List("migrate",path) => IO.blocking(Config.load(Path.of(path))).flatMap(config => buildResources(config,false,config.rootAuthority.map(RootAuthorityProvider.kubernetes)).use(_ => IO.unit)).as(ExitCode.Success).handleErrorWith(safeFailure)
+    case List("check-config",path) => stage("config",IO.blocking(Config.load(Path.of(path)))).flatMap(_ => IO.println("MANURE_CONFIG_OK")).as(ExitCode.Success).handleErrorWith(safeFailure)
+    case List("migrate",path) => stage("config",IO.blocking(Config.load(Path.of(path)))).flatMap(config => buildResources(config,false,config.rootAuthority.map(RootAuthorityProvider.kubernetes)).use(_ => IO.unit)).as(ExitCode.Success).handleErrorWith(safeFailure)
     case List("plan-root-identity",path,output,evidence) => stage("plan-root-identity",for
       config <- IO.blocking(Config.load(Path.of(path)))
       plan <- RootIdentityMigration.prepare(config,RootAuthorityProvider.configured(config),evidence)
@@ -36,46 +36,33 @@ object Main extends IOApp:
     yield ExitCode.Success).handleErrorWith(safeFailure)
     case List("--config",path) => runServer(Path.of(path)).as(ExitCode.Success).handleErrorWith(safeFailure)
     case _ => IO.println("usage: manure-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json | --config CONFIG.json | plan-root-identity CONFIG.json PRIVATE_PLAN.json PRIOR_VOLUME_EVIDENCE | migrate-root-identity CONFIG.json PRIVATE_PLAN.json EXPECTED_SHA256").as(ExitCode.Error)
-  private final case class StartupFailure(stage: String,code: String) extends RuntimeException(code)
-  private def safeCode(error: Throwable): String = category(error).orElse(deep(error)).getOrElse {
-    if error.getClass.getName.startsWith("izumi.") then "wiring" else "internal"
-  }
-  /** Enumerated category by exact failure type only; never message, path or cause detail. */
-  private def category(error: Throwable): Option[String] = error match
-    case s: StartupFailure => Some(s.code)
-    case a: ponygirls.auth.AccountFailure if a.code.matches("[a-z][a-z-]{0,63}") => Some(a.code)
-    case d: DomainError if d.code.matches("[a-z][a-z-]{0,63}") => Some(d.code)
-    case r: ponygirls.runtime.RuntimeFailure if r.code.matches("[a-z][a-z-]{0,63}") => Some(r.code)
-    case j: ponygirls.runtime.JdbcFailure => Some("jdbc-" + j.sqlState.getOrElse("unknown"))
-    case n: manure.storage.NativeFailure => Some("posix-" + n.errno())
-    case _: RootLocked => Some("root-locked")
-    case _: java.nio.file.FileSystemException => Some("filesystem")
-    case _: java.io.IOException => Some("io")
-    case _: IllegalArgumentException => Some("configuration")
-    case _ => None
-  /** distage wraps any provisioning-step failure into izumi.* (ProvisioningException)
-    * with no cause and the actual failure attached only as a SUPPRESSED exception
-    * (FailedProvision.toThrowable). A constructor-time credential failure must
-    * classify by its own category, never as "wiring": a misprovisioned password
-    * hash file is a config failure even though it surfaces during graph acquire.
+  private final case class StageFailure(stage: String,port: Option[Int],error: Throwable) extends RuntimeException(stage,error)
+  /** Enumerated category by exact failure type only; never message, path or cause detail. StartFailure walks causes and
+    * suppressed exceptions: distage wraps any provisioning-step failure into izumi.* (ProvisioningException) with no
+    * cause and the actual failure attached only as a SUPPRESSED exception (FailedProvision.toThrowable). A
+    * constructor-time credential failure must classify by its own category, never as "wiring": a misprovisioned
+    * password hash file is a config failure even though it surfaces during graph acquire.
     */
-  private def deep(error: Throwable): Option[String] =
-    val seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap[Throwable,java.lang.Boolean]())
-    def loop(pending: List[Throwable]): Option[String] = pending match
-      case Nil => None
-      case head :: rest =>
-        if !seen.add(head) then loop(rest)
-        else category(head) match
-          case some @ Some(_) => some
-          case None => loop(rest ++ Option(head.getCause).toList ++ head.getSuppressed.toList)
-    loop(Option(error.getCause).toList ++ error.getSuppressed.toList)
-  private def stage[A](name: String,work: IO[A]): IO[A] = work.handleErrorWith(error => IO.raiseError(StartupFailure(name,safeCode(error))))
+  private val category: StartFailure.Known =
+    case a: ponygirls.auth.AccountFailure => (a.code,a.code)
+    case d: DomainError => (d.code,d.code)
+    case n: manure.storage.NativeFailure => ("posix-" + n.errno(),"native call failed")
+    case _: RootLocked => ("root-locked","root locked")
+    case _: java.nio.file.FileSystemException => ("filesystem","file system failure")
+    case _: java.io.IOException => ("io","input/output failure")
+    case _: IllegalArgumentException => ("configuration","invalid configuration")
+  /** Names the start step that failed; the innermost stage wins, a failure outside every stage is `start`. */
+  private def staged(name: String,port: Option[Int] = None): PartialFunction[Throwable,Throwable] =
+    case error if !error.isInstanceOf[StageFailure] => StageFailure(name,port,error)
+  private def stage[A](name: String,work: => IO[A],port: Option[Int] = None): IO[A] = IO.defer(work).adaptError(staged(name,port))
   private def safeFailure(error: Throwable): IO[ExitCode] =
-    val label = error match
-      case s: StartupFailure => s.stage
-      case _ => "serve"
-    // Enumerated stage/category ONLY. No stack/cause/SQL/path/provider detail.
-    IO(System.err.println("manure failure stage=" + label + " code=" + safeCode(error))).as(ExitCode.Error)
+    val (label,port,cause) = error match
+      case s: StageFailure => (s.stage,s.port,s.error)
+      case other => ("start",None,other)
+    val classified = StartFailure.classify(cause,category)
+    val failure = if classified.code == StartFailure.Internal && cause.getClass.getName.startsWith("izumi.") then classified.copy(code = "wiring") else classified
+    // Enumerated stage/category and fixed text ONLY. No stack/cause/SQL/path/provider detail.
+    IO(System.err.println(StartFailure.line("manure",label,failure,port))).as(ExitCode.Error)
   private def schema: String =
     val input = getClass.getResourceAsStream("/001_metadata.sql")
     Require(input != null, "unavailable")
@@ -94,7 +81,7 @@ object Main extends IOApp:
     directory=files.payload
     lease=files.lease
     control=files.control
-    database <- JdbcDatabase.resource(config.database)
+    database <- JdbcDatabase.resource(config.database).adaptError(staged("database"))
     models <- if recover then embedding(config) else Resource.pure[IO,Option[EmbeddingClient]](None)
     gate <- Resource.eval(Semaphore[IO](1L))
     credentials <- CredentialGate.resource
@@ -180,14 +167,14 @@ object Main extends IOApp:
     Vector("dashboard-dir-missing" -> config.dashboardDir,"unlock-shell-dir-missing" -> config.unlockShellDir,"viewer-dir-missing" -> config.viewerDir)
       .foreach((code,directory) => directory.foreach(path => Require(Files.isDirectory(path),code)))
   }
-  def runServer(path: Path): IO[Unit] = IO.blocking(Config.load(path)).flatMap { config => stage("assets",requireAssetDirectories(config)) *> resources(config).use { services =>
+  def runServer(path: Path): IO[Unit] = stage("config",IO.blocking(Config.load(path))).flatMap { config => stage("assets",requireAssetDirectories(config)) *> resources(config).use { services =>
     val sweeper = (IO.sleep(config.sweepInterval) *> services.artifacts.sweep().void.handleErrorWith(_ => IO.unit)).foreverM
     val indexer = services.worker.run
     // Count admitted requests THROUGH response-stream finalization using the
     // standard http4s cancellation-safe middleware, not just response creation.
     // One additional transport slot is reserved for immediate bounded rejection.
     org.http4s.server.middleware.MaxActiveRequests.httpApp[IO](config.maxConnections.toLong,services.http.overloaded).flatMap { admission =>
-    EmberServerBuilder.default[IO]
+    stage("bind",EmberServerBuilder.default[IO]
       .withHost(Host.fromString(config.listenAddress).getOrElse(throw DomainError("bad-envelope")))
       .withPort(Port.fromInt(config.port).getOrElse(throw DomainError("bad-envelope")))
       .withMaxConnections(math.min(Int.MaxValue.toLong,config.maxConnections.toLong+1).toInt).withMaxHeaderSize(16384)
@@ -201,7 +188,7 @@ object Main extends IOApp:
         else config.apiOrigin.value
         IO(services.http.setBoundPort(port)) *>
           IO.println("MANURE_READY " + Json.obj("apiOrigin" -> Json.fromString(effective),"port" -> Json.fromInt(port),"pid" -> Json.fromLong(ProcessHandle.current().pid())).noSpaces) *>
-          (sweeper,indexer).parTupled.void
-      }
+          stage("serve",(sweeper,indexer).parTupled.void)
+      },Some(config.port))
     }
   }}

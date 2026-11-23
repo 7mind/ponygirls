@@ -39,7 +39,8 @@ are `manure/web/dashboard`, `manure/web/unlock` relative to launch cwd.
 `manure/web/viewer/dist` (build first, see that directory's README). Explicit
 `null` disables formatted viewers without disabling raw content. `serve` refuses to start when a
 configured directory, default or explicit, does not exist (`manure failure stage=assets
-code=dashboard-dir-missing`, `unlock-shell-dir-missing` or `viewer-dir-missing`); `check-config` does not look.
+code=dashboard-dir-missing error=DomainError message="dashboard-dir-missing"`, `unlock-shell-dir-missing` or
+`viewer-dir-missing`); `check-config` does not look.
 Renderer assets
 and raw bytes use the same artifact authorization checks; no render service is
 contacted. The generic Manure icon at `/__manure/viewer/favicon.svg` (prefixed by
@@ -108,7 +109,8 @@ root must already exist on the mounted `/data` and, as everywhere, have no symli
 `dashboard_dir` and `unlock_shell_dir`. Its `viewer_dir` was unset, so it defaulted to the relative
 `manure/web/viewer/dist` (`/data/manure/web/viewer/dist` in the image), which does not exist; the service started and
 every viewable file opened in a browser answered 404 `not-found`. `serve` now checks the configured directories
-before it acquires any resource and exits with `manure failure stage=assets code=viewer-dir-missing` (likewise
+before it acquires any resource and exits with `manure failure stage=assets code=viewer-dir-missing error=DomainError
+message="viewer-dir-missing"` (likewise
 `dashboard-dir-missing`, `unlock-shell-dir-missing`). Such a configuration must gain the `viewer_dir` line above (or
 `null`) **before** a server built from this tree replaces the old one. `check-config` (and therefore a deployment's
 configuration check) does not look at the directories; start `serve` once against the mounted configuration to see

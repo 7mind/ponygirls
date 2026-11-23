@@ -66,7 +66,7 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
       val (exit,stderr) = runCommand("migrate",config)
       assertEquals(exit,1)
       val lines = stderr.linesIterator.filter(_.startsWith("manure ")).toList
-      assertEquals(lines,List("manure failure stage=wiring code=config"))
+      assertEquals(lines,List("""manure failure stage=wiring code=config error=AccountFailure message="config""""))
     finally cleanup(root)
   }
 
@@ -80,7 +80,7 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
       // Wiring succeeds; startup proceeds to the schema stage and fails only on
       // the deliberately unreachable database.
       assert(!lines.exists(_.contains("stage=wiring")),stderr)
-      assert(lines.exists(_.startsWith("manure failure stage=serve code=jdbc-")),stderr)
+      assert(lines.exists(_.startsWith("manure failure stage=start code=jdbc-")),stderr)
     finally cleanup(root)
   }
 
@@ -93,9 +93,28 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
           disabled.deepMerge(Json.obj(setting -> Json.fromString(root.resolve("absent-assets").toString))))
         val (exit,stderr) = runCommand("serve",config)
         assertEquals(exit,1,setting)
-        assertEquals(stderr.linesIterator.filter(_.startsWith("manure ")).toList,List(s"manure failure stage=assets code=$code"),setting)
+        assertEquals(stderr.linesIterator.filter(_.startsWith("manure ")).toList,List(s"""manure failure stage=assets code=$code error=DomainError message="$code""""),setting)
       finally cleanup(root)
     }
+  }
+
+  test("serve on an occupied listen port fails the bind stage with address in use and the port") {
+    BackendFixture.configuration.use { (fixture,_,_) => IO.blocking {
+      val root = Files.createTempDirectory("manure-wiring-diagnostic-")
+      try Using.resource(new java.net.ServerSocket(0,1,java.net.InetAddress.getByName("127.0.0.1"))) { occupied =>
+        val port = occupied.getLocalPort
+        val config = deploymentConfig(root,Password.hash("fixture-password".toCharArray)+"\n",Json.obj(
+          "port" -> Json.fromInt(port),"api_origin" -> Json.fromString(s"http://127.0.0.1:$port"),
+          "dashboard_dir" -> Json.Null,"unlock_shell_dir" -> Json.Null,"viewer_dir" -> Json.Null,
+          "database" -> Json.obj("jdbcUrl" -> Json.fromString(fixture.database.jdbcUrl),"user" -> Json.fromString(fixture.database.user),
+            "passwordFile" -> Json.fromString(fixture.database.passwordFile.toString))))
+        val (exit,stderr) = runCommand("serve",config)
+        assertEquals(exit,1)
+        assertEquals(stderr.linesIterator.filter(_.startsWith("manure ")).toList,
+          List(s"""manure failure stage=bind code=address-in-use error=BindException message="address in use" port=$port"""))
+      }
+      finally cleanup(root)
+    }}.unsafeRunSync()
   }
 
   test("password readHash rejects token digests and accepts the pbkdf2 encoding") {

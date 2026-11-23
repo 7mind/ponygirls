@@ -7,8 +7,8 @@ The native binary has the same CLI; there is no Node fallback. `migrate` applies
 again before accepting requests, then initializes/rebuilds approved retrieval
 projections on disposable/offline migration runs. It never rewrites history.
 Migration 0007 refuses to apply while a replay row has a `digest_format` other than
-`haystack-op-scala-v1` (Node era): the process prints `haystack: startup refused:
-migration 0007-node-replay-retired: … count N …`, exits 1 and changes nothing. Once
+`haystack-op-scala-v1` (Node era): the process prints `haystack failure stage=migrate code=migration-refused
+error=MigrationRefused message="migration 0007-node-replay-retired: … count N …"`, exits 1 and changes nothing. Once
 0007 is applied, binaries that do not list it refuse that database
 ("unknown database migration").
 
