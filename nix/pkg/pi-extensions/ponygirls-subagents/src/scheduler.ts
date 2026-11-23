@@ -22,8 +22,8 @@ export interface SchedulerLimits {
 }
 
 export const DEFAULT_LIMITS: SchedulerLimits = {
-  maxRunnable: 4,
-  maxResidentWorkers: 8,
+  maxRunnable: 16,
+  maxResidentWorkers: 24,
   maxOpenAgents: 32,
 };
 
