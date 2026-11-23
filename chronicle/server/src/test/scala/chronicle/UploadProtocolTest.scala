@@ -50,6 +50,9 @@ final class UploadProtocolTest extends munit.FunSuite {
   private def raw(archive: PostgresArchive,id: UUID,revision: Int): String = archive.raw("a",id,Some(revision)).files.map(_.content).mkString
   private def stored(content: Content): List[Message] = content.messages.map(m => m.copy(text=SnapshotProjection.text(m.text)))
   private val mebibyte=1024*1024
+  private def verdict(f: => Any): String = try { f; "accepted" } catch {
+    case error: DomainError => error.code; case error: java.sql.SQLException => s"SQLSTATE ${error.getSQLState}"; case error: ArithmeticException => error.toString
+  }
 
   test("a new source, an append on the head's epoch, an /api/ingest append after it and a replacement commit through parts and read back whole") { database { (config,db,archive) =>
     val uploads=new Uploads(db,config,UploadPolicy.production)
@@ -214,12 +217,12 @@ final class UploadProtocolTest extends munit.FunSuite {
     assertEquals(verdicts,scenarios.map(_._1).map(name => name -> (if(name=="unreferenced") ("accepted","accepted") else ("invalid","content-mismatch"))))
   }}
 
-  test("a part that would take the revision's records (its base included) or the attempt's parts past their 32-bit maximum is too-large before anything of it is written; a revision of exactly the maximum commits") { database { (config,db,archive) =>
-    val uploads=new Uploads(db,config,UploadPolicy.production)
+  test("a part that would take the revision's records (its base included), its raw bytes or the attempt's parts past their maximum is too-large before anything of it is written; a revision of exactly the maximum commits") { database { (config,db,archive) =>
+    // 4 GiB, the smallest maxFileBytes that holds 2^31 two-byte records.
+    val uploads=new Uploads(db,config.copy(maxFileBytes=4L*1024*1024*1024),UploadPolicy.production)
     val maximum=Int.MaxValue
-    def verdict(f: => Any): String = try { f; "accepted" } catch { case error: DomainError => error.code; case error: java.sql.SQLException => s"SQLSTATE ${error.getSQLState}" }
     // The counts 2^31 records or parts would reach (at least 4 GiB of two-byte records), injected into the attempt.
-    def inject(id: UUID,column: String,value: Int): Unit = { db.transaction(c => Sql.exec(c,s"UPDATE ch_uploads SET $column=? WHERE id=?",value,id)); () }
+    def inject(id: UUID,column: String,value: Sql.Param): Unit = { db.transaction(c => Sql.exec(c,s"UPDATE ch_uploads SET $column=? WHERE id=?",value,id)); () }
     /** What a refused part leaves as it was: the attempt's state, its part receipts, its epoch's rows and their least record index. */
     def staged(uploads: Uploads,id: UUID): (UploadState,List[Long]) = (uploads.status("a",id).copy(expiresInSeconds=0),db.transaction { c =>
       val epoch=Sql.one(c,"SELECT epoch FROM ch_uploads WHERE id=?",id)(_.getObject(1,classOf[UUID])).get
@@ -245,14 +248,54 @@ final class UploadProtocolTest extends munit.FunSuite {
     val vast=new Uploads(db,config.copy(maxFileBytes=1L<<62),UploadPolicy.production)
     val parts=vast.open("a",declaration(source(),0,header(3),None)).uploadId
     inject(parts,"parts",maximum)
+    // A raw end just below a maxFileBytes near Long.MaxValue: with a part of 1 MiB it passes Long.MaxValue.
+    val wide=new Uploads(db,config.copy(maxFileBytes=Long.MaxValue-mebibyte+1),UploadPolicy.production)
+    val blob=Content(List(s"""{"type":"blob","text":"${"x"*mebibyte}"}"""),Nil)
+    val wideSource=source()
+    archive.ingest("a",request(wideSource,0,head))
+    val wideAppend=wide.open("a",declaration(wideSource,1,head++blob,Some(head))).uploadId
+    inject(wideAppend,"base_raw_bytes",Long.MaxValue-mebibyte)
     assertEquals(List[(String,Any)]("a revision of exactly the maximum" -> (atMaximum,committed),
       "an append past it through its base" -> refused(uploads,appending,part(0,more)),
       "an upload past it through its accepted records" -> refused(uploads,fresh,part(1,pi("u1","s","user","question",1)++answer)),
       "a part past the largest ordinal" -> refused(vast,parts,part(maximum,header(3))),
+      "an append past the raw-byte maximum through its base" -> refused(wide,wideAppend,part(0,blob)),
       "the part bound of the largest maxFileBytes" -> UploadPolicy.maxParts(config.copy(maxFileBytes=Long.MaxValue))),
       List[(String,Any)]("a revision of exactly the maximum" -> ("accepted",Some(maximum)),"an append past it through its base" -> ("too-large",true),
         "an upload past it through its accepted records" -> ("too-large",true),"a part past the largest ordinal" -> ("too-large",true),
-        "the part bound of the largest maxFileBytes" -> maximum.toLong))
+        "an append past the raw-byte maximum through its base" -> ("too-large",true),"the part bound of the largest maxFileBytes" -> maximum.toLong))
+  }}
+
+  test("a source at the largest revision takes no further one through /api/ingest, an open or the commit of an attempt opened at it before, and an attempt an earlier server staged past the record maximum does not commit: each is refused before anything is written, a commit ends its attempt Failed") { database { (config,db,archive) =>
+    val uploads=new Uploads(db,config,UploadPolicy.production)
+    val maximum=Int.MaxValue
+    val head=header(3)++pi("u1","s","user","question",1)
+    val answer=pi("a1","u1","assistant","answer",2)
+    /** Makes revision `maximum` the head of source `id`: its revision 1 stored again under that number, as 2^31-2 appends would leave it. */
+    def atMaximum(id: UUID): Unit = db.transaction { c =>
+      Sql.exec(c,"""INSERT INTO ch_revisions(session_id,revision,epoch,envelope,message_count,record_count,raw_bytes,message_bytes,fragment_count,raw_state,message_chain,message_time)
+        SELECT session_id,?,epoch,envelope,message_count,record_count,raw_bytes,message_bytes,fragment_count,raw_state,message_chain,message_time FROM ch_revisions WHERE session_id=? AND revision=1""",maximum,id)
+      Sql.exec(c,"UPDATE ch_sources SET revision=? WHERE id=?",maximum,id)
+    }
+    /** The source's head, its revision rows and its upload attempts. */
+    def stored(id: UUID): List[Long] = db.transaction(c => Sql.one(c,"SELECT (SELECT revision FROM ch_sources WHERE id=?),(SELECT count(*) FROM ch_revisions WHERE session_id=?),(SELECT count(*) FROM ch_uploads WHERE session_id=?)",id,id,id)(r =>
+      List(r.getLong(1),r.getLong(2),r.getLong(3))).get)
+    def ingested(identity: SourceIdentity): UUID = archive.ingest("a",request(identity,0,head)).sessionId
+    def staged(identity: SourceIdentity): UUID = { val attempt=uploads.open("a",declaration(identity,1,head++answer,Some(head))).uploadId; send(uploads,"a",attempt,part(0,answer)); attempt }
+    val whole=source(); val wholeId=ingested(whole); atMaximum(wholeId)
+    val opening=source(); val openingId=ingested(opening); atMaximum(openingId)
+    // Attempts as an earlier server left them: opened at the largest revision; its record end past the maximum.
+    val opened=source(); val openedId=ingested(opened); val openedAttempt=staged(opened); atMaximum(openedId)
+    db.transaction(c => Sql.exec(c,"UPDATE ch_uploads SET declaration=jsonb_set(declaration,'{expectedRevision}',to_jsonb(?::integer)) WHERE id=?",maximum,openedAttempt))
+    val over=source(); val overId=ingested(over); val overAttempt=staged(over)
+    db.transaction(c => Sql.exec(c,"UPDATE ch_uploads SET base_records=? WHERE id=?",maximum,overAttempt))
+    assertEquals(List[(String,Any)]("/api/ingest" -> (verdict(archive.ingest("a",request(whole,maximum,head++answer))),stored(wholeId)),
+      "an open" -> (verdict(uploads.open("a",declaration(opening,maximum,head++answer,Some(head)))),stored(openingId)),
+      "the commit of an attempt opened at it" -> (verdict(uploads.commit("a",openedAttempt)),uploads.status("a",openedAttempt).phase,stored(openedId)),
+      "the commit of an attempt staged past the record maximum" -> (verdict(uploads.commit("a",overAttempt)),uploads.status("a",overAttempt).phase,stored(overId))),
+      List[(String,Any)]("/api/ingest" -> ("too-large",List(maximum.toLong,2L,0L)),"an open" -> ("too-large",List(maximum.toLong,2L,0L)),
+        "the commit of an attempt opened at it" -> ("too-large",UploadPhase.Failed,List(maximum.toLong,2L,1L)),
+        "the commit of an attempt staged past the record maximum" -> ("content-mismatch",UploadPhase.Failed,List(1L,1L,1L))))
   }}
 
   test("records are the lines linesIterator splits, also at a bare CR: a CRLF record of exactly maxRecordBytes is accepted, two records on one LF line do not make a large part") { database { (_,db,archive) =>

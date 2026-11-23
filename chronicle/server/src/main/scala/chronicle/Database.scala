@@ -191,6 +191,10 @@ object Sql {
   def json(r: ResultSet, col: String): Json = Wire.parse(r.getString(col))
 }
 object PostgresArchive {
+  /** Revisions are 32-bit (`ch_sources.revision`, `ch_revisions.revision`, `expectedRevision`): a source at this one takes
+    * no further revision. */
+  val maxRevision: Int = Int.MaxValue
+  val revisionLimit: String = s"a source has at most $maxRevision revisions"
   /** Search rows per insertion statement. A row's vector-index insertion measured 1.5-3.1 ms on the full-size archive copy. */
   val searchRowsPerStatement = 500
   /** The permits of the process's search-row writers (PassageStorage.searchRowWriters), shared by its publications. */
@@ -305,6 +309,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
           // to the new revision, not while a large snapshot is projected (indexing claims lock that row on every write),
           // and NO KEY UPDATE does not wait for a publication that is writing its generation.
           val (id,head) = source("")
+          Check(head<PostgresArchive.maxRevision,"too-large",PostgresArchive.revisionLimit)
           val next = head+1
           val written=EpochWriter.write(c,layout,id,head,next,SnapshotProjection(r),() => source(""))
           source(" FOR NO KEY UPDATE")

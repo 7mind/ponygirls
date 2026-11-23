@@ -82,7 +82,7 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
         } else {
           Check(part.ordinal==attempt.parts,"conflict",s"part ${part.ordinal} is ahead of the next expected part ${attempt.parts}")
           Check(attempt.parts<UploadPolicy.maxParts(config),"too-large",s"an upload has at most ${UploadPolicy.maxParts(config)} parts")
-          Check(attempt.rawEnd+content.rawBytes<=UploadPolicy.maxRawBytes(config) && attempt.messageEnd.toLong+content.messages.size<=config.maxMessages,
+          Check(content.rawBytes<=UploadPolicy.maxRawBytes(config)-attempt.rawEnd && attempt.messageEnd.toLong+content.messages.size<=config.maxMessages,
             "too-large",s"an upload stays within ${UploadPolicy.maxRawBytes(config)} raw bytes and ${config.maxMessages} messages")
           Check(attempt.recordEnd+content.records<=UploadPolicy.maxRecords,"too-large",
             s"a revision has at most ${UploadPolicy.maxRecords} records, its base included; part ${part.ordinal} would take it to ${attempt.recordEnd+content.records}")
@@ -139,6 +139,7 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
     unpurged()
     val revision=source.fold(0)(_._2)
     Check(revision==open.expectedRevision,"conflict",s"expected revision mismatch; current=$revision")
+    Check(revision<PostgresArchive.maxRevision,"too-large",PostgresArchive.revisionLimit)
     val session=source.fold(UUID.randomUUID())(_._1)
     val id=UUID.randomUUID()
     val base=open.base.map { declared =>
@@ -242,11 +243,17 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
       "message count"->(a.messageEnd==open.messageCount),
       "message chain"->(EpochWriter.hex(a.chain)==open.messageChain),
       "every parentId resolved"->(pending==0),
-      "every recordIndex below the record count"->(a.maxRecordIndex<a.recordEnd)).collect { case (name,false) => name }
-    if(mismatches.nonEmpty) {
-      Sql.exec(c,"UPDATE ch_uploads SET phase='Failed',failure=?,terminal_at=clock_timestamp() WHERE id=?",contentMismatch,a.id)
-      Left(DomainError(contentMismatch,s"the uploaded content differs from the declaration: ${mismatches.mkString(", ")}"))
-    } else {
+      "every recordIndex below the record count"->(a.maxRecordIndex<a.recordEnd),
+      // Only an attempt an earlier server staged can hold more.
+      s"at most ${UploadPolicy.maxRecords} records"->(a.recordEnd<=UploadPolicy.maxRecords)).collect { case (name,false) => name }
+    def failed(code: String,detail: String): Either[DomainError,IngestReceipt] = {
+      Sql.exec(c,"UPDATE ch_uploads SET phase='Failed',failure=?,terminal_at=clock_timestamp() WHERE id=?",code,a.id)
+      Left(DomainError(code,detail))
+    }
+    if(mismatches.nonEmpty) failed(contentMismatch,s"the uploaded content differs from the declaration: ${mismatches.mkString(", ")}")
+    // An open refuses a source at the largest revision: only an attempt an earlier server opened can declare it.
+    else if(open.expectedRevision>=PostgresArchive.maxRevision) failed("too-large",PostgresArchive.revisionLimit)
+    else {
       val target=OwnerTargets.read(c,owner,true)
       db.profiles.resolve(target.profile)
       Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key) VALUES(?,?,?) ON CONFLICT(owner,source_key) DO NOTHING",a.sessionId,owner,a.key)
