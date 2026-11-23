@@ -36,9 +36,11 @@ let
   tests = [ "chronicle/server/src/test" "chronicle/tests" "chronicle/models" "chronicle/config.example.json"
     "chronicle/scripts/test-postgres.sh" "chronicle/scripts/test-fast.sh" "chronicle/scripts/fast-suites.txt" "chronicle/scripts/sbt.sh"
     # LegacyFreeCheckTest runs the retained post-deployment check, EpochDownScriptTest the S1 down-script, UploadBoundaryTest the S2 one,
-    # StagedGenerationTest the streamed publication's, WindowReuseTest the window reuse's, GenerationLineageTest the lineage's.
+    # StagedGenerationTest the streamed publication's, WindowReuseTest the window reuse's, GenerationLineageTest the lineage's,
+    # TransientPublicationTest the transient failures'.
     "chronicle/scripts/check-legacy-free.sql" "chronicle/scripts/down-024-epoch-layout.sql" "chronicle/scripts/down-025-uploads.sql"
-    "chronicle/scripts/down-026-staged-generations.sql" "chronicle/scripts/down-027-window-reuse.sql" "chronicle/scripts/down-028-generation-lineage.sql" ];
+    "chronicle/scripts/down-026-staged-generations.sql" "chronicle/scripts/down-027-window-reuse.sql" "chronicle/scripts/down-028-generation-lineage.sql"
+    "chronicle/scripts/down-029-transient-failures.sql" ];
   sharedModuleTests = [ "shared/lossless-json/src/test"
     "shared/service-runtime/src/test" "shared/service-auth/src/test" "shared/model-http/src/test"
     "shared/retrieval-core/src/test" "shared/retrieval-postgres/src/test" ];
