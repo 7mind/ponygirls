@@ -9,16 +9,16 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SERVICES = ('chronicle', 'haystack', 'manure')
-SETS = ('SMALL', 'POOL', 'FULL')
+SETS = ('SMALL', 'POOL')
 # The pre-registered rule set this script applies (the ACC bundle's PASS-RULES.md); named in every run's output.
 RULE_SET = 'r7'
 ORDER = ('1', '2b', '2', '5', '6', '4', '3a', '3b', '3')  # the 3s last: they restart the cluster; 6 before them: its workers idle
 # Rule set r4 (scope change, ORCH-REPLY-0430Z item 3): SMALL ships R-a reduced; its case-3 guarantee is 3a and 3b. Rule set
-# r7: POOL lands without R-a2, so the full design's case 3 is judged only on FULL (the tree containing POOL and R-a2). A case
-# not in the set's list runs only when named, and does not count.
-CASES_OF = dict(SMALL=('1', '2b', '2', '5', '6', '4', '3a', '3b'), POOL=('1', '2b', '2', '5', '6', '4', '3a', '3b'), FULL=ORDER)
+# r7 rev 4 (scope change, ORCH-REPLY-1507Z item 3): R-a2 is reduced to M1, so POOL is the final set of this batch; the full
+# design's case 3 is retired (in no set). A case not in the set's list runs only when named, and does not count.
+CASES_OF = dict(SMALL=('1', '2b', '2', '5', '6', '4', '3a', '3b'), POOL=('1', '2b', '2', '5', '6', '4', '3a', '3b'))
 # The sets whose tree contains POOL: case 4's fenced response contract and case 6's pool rule are judged there.
-POOL_JUDGED = ('POOL', 'FULL')
+POOL_JUDGED = ('POOL',)
 # Supplementary only (orchestrator 06:59Z), never part of a counted run: case 3b keeps PostgreSQL stopped this many seconds
 # between the immediate shutdown and the start. Default 0 = the counted rule set's restart, unchanged.
 SUPPLEMENT_3B_DOWN_S = float(os.environ.get('RESTART_ACC_SUPPLEMENT_3B_DOWN_SECONDS', '0'))
@@ -57,7 +57,7 @@ FENCE_S, RECOVER_WITHIN_S, ANSWER_MARGIN_S = 30, 15, 1                  # 4: ans
 BIND_EXIT_S = 60                                                        # 5
 REQUESTS, PGSTAT_FLUSH_S, IDLE_S, BACKEND_SAMPLE_S = 1000, 11, 30, 1    # 6
 SAMPLE_SPAN_S = 2.0  # 6 (r7): the longest span from one backend sample's query start to the next one's completion
-# The calibration rule set r7 registered for POOL and FULL (FIRST's counted SMALL run, rule set r6): a counted run loads
+# The calibration rule set r7 registered for POOL (FIRST's counted SMALL run, rule set r6): a counted run loads
 # exactly this file, checked by resolved path and SHA-256, and reports both.
 REGISTERED_CALIBRATION = dict(path='/home/pavel/work/flakes/ponygirls/.local/overhaul-20261117/reports/robust/FIRST/acceptance/run-20261123T074816Z/report.json',
                               sha256='5400b8ccf74d32c5b3a7ee3b4ad4f663c951bcc35aee212ac79e6f6032e84e80')
@@ -1581,7 +1581,7 @@ def case_4(run):
                           '`LOGIN` -> while fenced: REST/HTTP 503 (Chronicle REST, Haystack, Manure), Chronicle WS `unavailable`, MCP tool error '
                           '`unavailable` (or bearer phase 503), each within queueTimeout + connectTimeout + 1 s; 200 within 15 s after `LOGIN`; PIDs '
                           'unchanged. [review r1: termination, fencing and recovery without a restart on every set; the fenced response '
-                          f'contract on POOL and FULL only (r7); this run: {run.set_name}]')
+                          f'contract on POOL only (r7); this run: {run.set_name}]')
     run.cluster.primary()
     trio, clients = started_trio(run, case, '4')
     try:
@@ -1620,7 +1620,7 @@ def case_4(run):
                 if pool:
                     case.check(f'{role} fenced: every {kind} answer is unavailable within {bound:.0f} s', passed, summary)
                 else:
-                    case.record(f'{role} fenced: {kind} answers (SMALL: recorded, the contract is judged on POOL and FULL)', summary)
+                    case.record(f'{role} fenced: {kind} answers (SMALL: recorded, the contract is judged on POOL)', summary)
             recovered, wanted = clients.recovered((role,), unfenced)
             case.check(f'{role}: every probe of the service answers ok within {RECOVER_WITHIN_S} s after LOGIN (no restart)', len(recovered) == len(wanted), recovered)
         case.check('PIDs unchanged: the three processes started for the case are still running',
@@ -2007,7 +2007,7 @@ def case_3(run):
     case = Case(run, '3', 'Restart under indexing load, publication slower than requests: 20 synthetic sessions; `statementTimeoutMs` 2000, '
                           '`publicationStatementTimeoutMs` 10000; trigger on `ch_search_chunks` 3 s per statement, 12 s for 2 min (57014); in that '
                           'window `pg_ctl restart -m fast` twice, `-m immediate` once -> 0 Failed of the 20, all Complete within 20 min after the last '
-                          f'restart, >= 1 `job held` line (else INVALID), PIDs unchanged, all three 200 afterwards. [full design: set FULL, the tree containing POOL and R-a2, rule set {RULE_SET}]')
+                          f'restart, >= 1 `job held` line (else INVALID), PIDs unchanged, all three 200 afterwards. [full design: retired for this batch (r7 rev 4), in no set; runs only when named and never counts, rule set {RULE_SET}]')
     work = Cohort(run, case, '3')
     try:
         if not work.ready or not work.first_publication():
@@ -2372,10 +2372,10 @@ def self_check():
         root.remove()
     small = ('1', '2b', '2', '5', '6', '4', '3a', '3b')
     for label, held in ((f'rule set {RULE_SET} = r7', RULE_SET == 'r7'),
-                        (f'sets {SETS} = the set table\'s {tuple(CASES_OF)}', SETS == tuple(CASES_OF) == ('SMALL', 'POOL', 'FULL')),
-                        (f'SMALL = POOL = {" ".join(small)} (no case 3)', CASES_OF['SMALL'] == CASES_OF['POOL'] == small),
-                        (f'FULL = POOL + 3 = {" ".join(CASES_OF["FULL"])}', CASES_OF['FULL'] == CASES_OF['POOL'] + ('3',) == ORDER),
-                        (f'case 4\'s fenced contract and case 6\'s pool rule judged on {POOL_JUDGED} only', POOL_JUDGED == ('POOL', 'FULL'))):
+                        (f'sets {SETS} = the set table\'s {tuple(CASES_OF)} (no FULL: rev 4)', SETS == tuple(CASES_OF) == ('SMALL', 'POOL')),
+                        (f'SMALL = POOL = {" ".join(small)} (case 3 retired, in no set)', CASES_OF['SMALL'] == CASES_OF['POOL'] == small),
+                        (f'case 4\'s fenced contract and case 6\'s pool rule judged on {POOL_JUDGED} only', POOL_JUDGED == ('POOL',)),
+                        ('a run naming FULL is a usage error (exit 2)', main(['FULL']) == 2)):
         print(f'{"ok" if held else "not ok"} - set table: {label}', flush=True)
         if not held:
             failures.append(f'set table: {label}')
@@ -2589,7 +2589,7 @@ def terminated(signum, frame):
 
 
 def main(argv):
-    usage = 'usage: restart-acceptance.py SMALL|POOL|FULL [CASE...] | self-check | reparse RUN-DIR   (cases: ' + ' '.join(ORDER) + ')'
+    usage = 'usage: restart-acceptance.py SMALL|POOL [CASE...] | self-check | reparse RUN-DIR   (cases: ' + ' '.join(ORDER) + ')'
     if argv == ['self-check']:
         return self_check()
     if len(argv) == 2 and argv[0] == 'reparse':
