@@ -10,7 +10,8 @@ JdbcLimits(maxConnections: Int, maxQueued: Int, queueTimeout: FiniteDuration,
   lockTimeout: FiniteDuration, idleTransactionTimeout: FiniteDuration,
   socketTimeout: FiniteDuration)
 JdbcDatabase.resource(config): Resource[IO, JdbcDatabase]                       // compatible pool
-JdbcDatabase.resource(config, sizing: JdbcPoolSizing): Resource[IO, JdbcDatabase] // services' pool
+JdbcDatabase.resource(config, sizing: JdbcPoolSizing): Resource[IO, JdbcDatabase] // a pool of `sizing`
+JdbcDatabase.service(config, sizing): Resource[IO, JdbcDatabase]                 // the process's one service pool
 db.transaction[A](f: java.sql.Connection => A): IO[A]
 db.background: JdbcDatabase                                                     // background admission
 db.migrate(namespace: String, migrations: List[Migration]): IO[Unit]
@@ -36,7 +37,7 @@ Each runtime owns one bounded pool (HikariCP, restart-robustness spec §5) of ph
 production login (password file read for each new connection: a rotated file serves the next login, existing
 connections stay authenticated until retired). JDBC is on `IO.blocking`; a connection serves one transaction at a time.
 Admission bounds active transactions plus queued callers, rejects overflow, times out waiting and releases reservations
-on cancellation. Closing rejects new calls in both admissions, then drains both, then closes the pool (a blocking
+on cancellation. Closing rejects new calls in every admission, then drains them, then closes the pool (a blocking
 closer's interrupt is restored after the pool has closed). PostgreSQL receives finite
 connect/login/socket, statement, lock and idle-in-transaction timeouts. Driver second-resolution timeouts round up.
 
@@ -48,7 +49,18 @@ services' sizing from their optional `requestConnections` and `backgroundConnect
 omitted, `maxConnections` − `headroom` (2) halved, background the smaller half (12 → 5 + 5, 8 → 3 + 3), below
 `partitionedMinimum` (8) the compatible sizing; set, request ≥ 1, background ≥ `minimumBackground` and together ≤
 `maxConnections` − 2. A partitioned pool opens all its connections at once and keeps them; Left names the invalid key.
-Each admission keeps `maxQueued` and `queueTimeoutMs`.
+Each admission keeps `maxQueued` and `queueTimeoutMs`. `new BlockingJdbcDatabase(config, sizing, reserve)` carves
+`reserve` connections out of the background admission (out of the one admission without one) into a reserved admission of
+their own over the same pool, its view `reserved` (Chronicle's lease renewals, spec §5 deviation A: 12 → background 4 +
+reserved 1; compatible 8 → 7 + 1); none when that would leave the admission empty (one connection: one admission for
+everything). Closing rejects new work in every admission before any drains.
+
+**One service pool per process.** Each service's production wiring builds its pool with `JdbcDatabase.service(config,
+sizing)` or `BlockingJdbcDatabase.service(config, sizing, reserve)`, which take a process-wide claim before the pool is
+built and release it after the pool closed: another service pool in the same process meanwhile fails
+`RuntimeFailure("pool-already-open")` without opening a connection (Chronicle `serve`/`migrate`, Haystack and Manure
+`serve`/`migrate`; sequential in-process servers in tests work). The other constructors (rites, ontology, test fixtures,
+which build many runtimes in one JVM) take no claim, so a pool built through them is not counted.
 
 **Borrow.** After admission one monotonic deadline `now + A`, A = `connectTimeoutMs` in whole seconds rounded up (the
 login bound as before; a `boundedTransaction(b)` uses min(A, b)), bounds the acquisition: at most one try more than the

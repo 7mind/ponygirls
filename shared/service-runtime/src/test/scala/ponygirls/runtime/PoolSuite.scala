@@ -325,9 +325,9 @@ final class PoolSuite extends FunSuite {
     assert(async.opened.get <= sizing.connections && async.physical.asScala.forall(_.isClosed))
   } }
 
-  test("D6 closing rejects work in both admissions before draining either, drains latched work, then closes the pool; an interrupted blocking closer completes the shutdown") { configured { config =>
-    val limits = config.limits.copy(maxConnections = 4, maxQueued = 1)
-    val sizing = JdbcPoolSizing.partitioned(limits, Some(1), Some(1), 0).toOption.get
+  test("D6 closing rejects work in every admission (request, background, reserved) before draining any, drains latched work, then closes the pool; an interrupted blocking closer completes the shutdown") { configured { config =>
+    val limits = config.limits.copy(maxConnections = 5, maxQueued = 1)
+    val sizing = JdbcPoolSizing.partitioned(limits, Some(1), Some(2), 0).toOption.get
     val executor = Executors.newFixedThreadPool(2)
     def holding(background: (Connection => Int) => Int): (CountDownLatch, java.util.concurrent.Future[Int]) = {
       val held = new CountDownLatch(1); val release = new CountDownLatch(1)
@@ -342,7 +342,7 @@ final class PoolSuite extends FunSuite {
       val closeStarted = new CountDownLatch(1); val closeable = new CountDownLatch(1)
       val blocking = new Counting((_, c) => proxy(classOf[Connection], c) { (m, _) =>
         if (m.getName == "close") { closeStarted.countDown(); closeable.await(10, TimeUnit.SECONDS); c.close(); Some(null) } else None })
-      val db = BlockingJdbcDatabase.withConnectionFactory(config.copy(limits = limits), blocking, sizing)
+      val db = BlockingJdbcDatabase.withConnectionFactory(config.copy(limits = limits), blocking, sizing, 1)
       val (release, holder) = holding(f => db.background.transaction(f))
       val after = new AtomicReference[(Boolean, Boolean)]()
       val closer = new Thread(() => { db.close(); after.set((Thread.currentThread().isInterrupted, blocking.physical.asScala.forall(_.isClosed))) })
@@ -350,6 +350,7 @@ final class PoolSuite extends FunSuite {
       eventually("the closer drains")(closer.getState == Thread.State.WAITING)
       assertEquals(intercept[RuntimeFailure](db.transaction(_ => 0)).code, "runtime-closed")
       assertEquals(intercept[RuntimeFailure](db.background.transaction(_ => 0)).code, "runtime-closed")
+      assertEquals(intercept[RuntimeFailure](db.reserved.transaction(_ => 0)).code, "runtime-closed")
       closer.interrupt()
       assert(!holder.isDone && blocking.physical.asScala.exists(!_.isClosed))
       release.countDown(); assertEquals(holder.get(10, TimeUnit.SECONDS), 1)
@@ -369,6 +370,53 @@ final class PoolSuite extends FunSuite {
       scala.concurrent.Await.result(closing, 10.seconds)
       assert(async.physical.asScala.forall(_.isClosed))
     } finally { executor.shutdownNow(); executor.awaitTermination(5, TimeUnit.SECONDS) }
+  } }
+
+  test("a reserved admission (Chronicle's renewals) is served while the background admission it is carved from is latched full; small budgets") { configured { config =>
+    // Background 3 = a background admission of 2 + the reserved 1 (max 7: 2 + 3 ≤ 7 − 2), the background admission latched.
+    val limits = config.limits.copy(maxConnections = 7)
+    val sizing = JdbcPoolSizing.partitioned(limits, Some(2), Some(3), 0).toOption.get
+    val executor = Executors.newFixedThreadPool(2)
+    def latched(db: BlockingJdbcDatabase, holders: Int, hold: (Connection => Int) => Int): Unit = {
+      val held = new CountDownLatch(holders); val release = new CountDownLatch(1)
+      val running = (1 to holders).map(_ => executor.submit(new Callable[Int] { def call(): Int = hold { c => held.countDown(); release.await(); integer(c, "SELECT 1") } }))
+      try {
+        assert(held.await(10, TimeUnit.SECONDS))
+        assertEquals(intercept[RuntimeFailure](db.background.transaction(_ => fail("the latched admission is full"))).code, "admission-timeout")
+        assertEquals(db.reserved.transaction(c => integer(c, "SELECT 2")), 2)
+      } finally release.countDown()
+      running.foreach(holder => assertEquals(holder.get(10, TimeUnit.SECONDS), 1))
+    }
+    try {
+      Using.resource(BlockingJdbcDatabase.withConnectionFactory(config.copy(limits = limits), new Counting(), sizing, 1))(db => latched(db, 2, f => db.background.transaction(f)))
+      // Compatible, 2 connections: one admission of 1 (requests and background) + the reserved 1.
+      val two = config.limits.copy(maxConnections = 2)
+      Using.resource(BlockingJdbcDatabase.withConnectionFactory(config.copy(limits = two), new Counting(), JdbcPoolSizing.compatible(two), 1))(db => latched(db, 1, f => db.transaction(f)))
+      // One connection: one admission for everything, the reserved view included.
+      val one = config.limits.copy(maxConnections = 1)
+      Using.resource(BlockingJdbcDatabase.withConnectionFactory(config.copy(limits = one), new Counting(), JdbcPoolSizing.compatible(one), 1)) { db =>
+        val held = new CountDownLatch(1); val release = new CountDownLatch(1)
+        val holder = executor.submit(new Callable[Int] { def call(): Int = db.transaction { c => held.countDown(); release.await(); integer(c, "SELECT 1") } })
+        try {
+          assert(held.await(10, TimeUnit.SECONDS))
+          assertEquals(intercept[RuntimeFailure](db.reserved.transaction(_ => fail("one admission"))).code, "admission-timeout")
+        } finally release.countDown()
+        assertEquals(holder.get(10, TimeUnit.SECONDS), 1)
+      }
+    } finally { executor.shutdownNow(); executor.awaitTermination(5, TimeUnit.SECONDS) }
+  } }
+
+  test("one service pool per process: another service pool fails pool-already-open until the first has closed; other constructors take no claim") { configured { config =>
+    val sizing = JdbcPoolSizing.compatible(config.limits)
+    val first = BlockingJdbcDatabase.service(config, sizing, 0)
+    try {
+      assertEquals(intercept[RuntimeFailure](BlockingJdbcDatabase.service(config, sizing, 0)).code, ServicePool.AlreadyOpen)
+      assertEquals(JdbcDatabase.service(config, sizing).use(_ => IO.unit).attempt.unsafeRunSync(), Left(RuntimeFailure(ServicePool.AlreadyOpen)))
+      Using.resource(new BlockingJdbcDatabase(config, sizing))(db => assertEquals(db.transaction(c => integer(c, "SELECT 1")), 1))
+      assertEquals(first.transaction(c => integer(c, "SELECT 1")), 1)
+    } finally first.close()
+    assertEquals(JdbcDatabase.service(config, sizing).use(db => db.transaction(c => integer(c, "SELECT 1"))).unsafeRunSync(), 1)
+    Using.resource(BlockingJdbcDatabase.service(config, sizing, 0))(db => assertEquals(db.transaction(c => integer(c, "SELECT 1")), 1))
   } }
 
   test("D10 a compatible pool opens no connection before its first transaction") { configured { config =>

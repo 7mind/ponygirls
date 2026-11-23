@@ -19,30 +19,43 @@ sealed trait BlockingJdbcTransactions {
   * threads, never http4s compute. No IORuntime, bridge or worker threads; one bounded pool.
   * Each instance is owned and closed; close rejects new work, drains admitted calls, then closes the pool.
   */
-final class BlockingJdbcDatabase private (config: JdbcConfig, factory: JdbcConnectionFactory, sizing: JdbcPoolSizing)
+final class BlockingJdbcDatabase private (config: JdbcConfig, factory: JdbcConnectionFactory, sizing: JdbcPoolSizing, reserve: Int, claim: AutoCloseable)
     extends BlockingJdbcTransactions with AutoCloseable {
-  def this(config: JdbcConfig) = this(config, JdbcConnectionFactory.driverManager, JdbcPoolSizing.compatible(config.limits))
-  /** The services' pool (restart-robustness spec §5): request and background admissions over one pool of `sizing`. */
-  def this(config: JdbcConfig, sizing: JdbcPoolSizing) = this(config, JdbcConnectionFactory.driverManager, sizing)
+  def this(config: JdbcConfig) = this(config, JdbcConnectionFactory.driverManager, JdbcPoolSizing.compatible(config.limits), 0, ServicePool.unclaimed)
+  /** A pool of `sizing` (restart-robustness spec §5): request and background admissions over one pool. */
+  def this(config: JdbcConfig, sizing: JdbcPoolSizing) = this(config, JdbcConnectionFactory.driverManager, sizing, 0, ServicePool.unclaimed)
+  /** With `reserve` connections of the background admission (of the one admission without one) as a reserved admission
+    * of their own (spec §5 deviation A: Chronicle's lease renewals); none when that would leave the admission they come
+    * from empty. A service's production wiring uses [[BlockingJdbcDatabase.service]]. */
+  def this(config: JdbcConfig, sizing: JdbcPoolSizing, reserve: Int) = this(config, JdbcConnectionFactory.driverManager, sizing, reserve, ServicePool.unclaimed)
+  require(reserve >= 0, "invalid reserved connections")
   private val engine = new JdbcTransactionEngine(config, factory, sizing)
-  private val requests = new BlockingAdmission(config.limits.admission.copy(maxActive = sizing.request), engine)
-  private val backgroundWork = if (sizing.background == 0) requests else new BlockingAdmission(config.limits.admission.copy(maxActive = sizing.background), engine)
+  private def admission(connections: Int) = new BlockingAdmission(config.limits.admission.copy(maxActive = connections), engine)
+  private val carved = if (reserve < (if (sizing.background == 0) sizing.request else sizing.background)) reserve else 0
+  private val requests = admission(if (sizing.background == 0) sizing.request - carved else sizing.request)
+  private val backgroundWork = if (sizing.background == 0) requests else admission(sizing.background - carved)
+  private val reservedWork = if (carved == 0) backgroundWork else admission(carved)
+  private val admissions = List(requests, backgroundWork, reservedWork).distinct
   def transaction[A](f: Connection => A): A = requests.transaction(f)
   def extendedTransaction[A](timeout: FiniteDuration)(f: Connection => A): A = requests.extendedTransaction(timeout)(f)
   def boundedTransaction[A](bound: FiniteDuration)(f: Connection => A): A = requests.boundedTransaction(bound)(f)
   /** The background view: the same pool through the background admission (the request admission without background
     * connections). */
   def background: BlockingJdbcTransactions = backgroundWork
+  /** The reserved view: the same pool through the reserved admission, with its own `maxQueued` and `queueTimeoutMs`
+    * bounds; without a reservation the background view. */
+  def reserved: BlockingJdbcTransactions = reservedWork
   def migrate(namespace: String, migrations: List[Migration]): Unit = {
     Migration.validate(namespace, migrations)
     transaction(c => Migration.applyAll(c, namespace, migrations))
   }
-  /** Both admissions reject new work before either drains; the pool closes after the drain. An interrupt of the closer
-    * neither shortens the drain nor the pool's shutdown: it is restored when both are complete. */
+  /** Every admission rejects new work before any drains; the pool closes after the drains, then a service pool's claim
+    * is released. An interrupt of the closer neither shortens the drains nor the pool's shutdown: it is restored when both
+    * are complete. */
   def close(): Unit = {
-    requests.reject(); backgroundWork.reject()
-    val interrupted = requests.drain() | backgroundWork.drain()
-    engine.close()
+    admissions.foreach(_.reject())
+    val interrupted = admissions.map(_.drain()).contains(true)
+    try engine.close() finally claim.close()
     if (interrupted) Thread.currentThread().interrupt()
   }
 }
@@ -52,9 +65,16 @@ object BlockingJdbcDatabase {
     * admitting custom/credential-bearing production JDBC URL syntaxes.
     */
   def withConnectionFactory(config: JdbcConfig, factory: JdbcConnectionFactory): BlockingJdbcDatabase =
-    new BlockingJdbcDatabase(config, factory, JdbcPoolSizing.compatible(config.limits))
-  def withConnectionFactory(config: JdbcConfig, factory: JdbcConnectionFactory, sizing: JdbcPoolSizing): BlockingJdbcDatabase =
-    new BlockingJdbcDatabase(config, factory, sizing)
+    new BlockingJdbcDatabase(config, factory, JdbcPoolSizing.compatible(config.limits), 0, ServicePool.unclaimed)
+  def withConnectionFactory(config: JdbcConfig, factory: JdbcConnectionFactory, sizing: JdbcPoolSizing, reserve: Int = 0): BlockingJdbcDatabase =
+    new BlockingJdbcDatabase(config, factory, sizing, reserve, ServicePool.unclaimed)
+  /** The service's one pool of the process ([[ServicePool]]): fails `pool-already-open`, opening nothing, while another
+    * service pool of the process is open; closing it releases the claim. */
+  def service(config: JdbcConfig, sizing: JdbcPoolSizing, reserve: Int): BlockingJdbcDatabase = {
+    val claim = ServicePool.claim()
+    try new BlockingJdbcDatabase(config, JdbcConnectionFactory.driverManager, sizing, reserve, claim)
+    catch { case error: Throwable => claim.close(); throw error }
+  }
 }
 
 /** Finite fair semaphore admission. Queued interruption frees the reservation and restores the interrupt flag; once
