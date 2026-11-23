@@ -135,7 +135,7 @@ final class PoolWiringTest extends munit.FunSuite {
     }
   }
 
-  test("D9 database unavailable (a lost connection, a fenced role, a saturated admission): REST 503 unavailable with Retry-After 5, WS error unavailable, MCP 503 in the bearer phase or tool error unavailable in 200; recovered, 200") {
+  test("D9 database unavailable (a lost connection, a fenced role, a saturated admission): REST and the account plane 503 unavailable with Retry-After 5, WS error unavailable, MCP 503 in the bearer phase or tool error unavailable in 200; recovered, 200") {
     CurrentIndexDatabase.withDatabase { (fixture,_,_) =>
       val port=Using.resource(new java.net.ServerSocket(0))(_.getLocalPort)
       // Two connections, one admission (a probe runtime); queue 1 s; connect 2 s: a fenced borrow waits its whole 2 s
@@ -196,6 +196,17 @@ final class PoolWiringTest extends munit.FunSuite {
           }
           def mcp(): (HttpResponse[String],FiniteDuration) =
             post("/mcp",read,"""{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"ingest_status","arguments":{"offset":0,"limit":5}}}""","Accept"->"application/json, text/event-stream")
+          // The account plane (its own handler): the account of the browser session.
+          def account(): (HttpResponse[String],FiniteDuration) = {
+            val started=System.nanoTime()
+            val response=Using.resource(JClient.newHttpClient())(_.send(HttpRequest.newBuilder(URI.create(base+Http.accountPrefix)).header("Cookie",s"chronicle_session=$cookie").GET().build(),HttpResponse.BodyHandlers.ofString()))
+            (response,(System.nanoTime()-started).nanos)
+          }
+          def accountUnavailable(what: String): Unit = {
+            val (answer,took)=account()
+            assertEquals((answer.statusCode,answer.headers.firstValue("Retry-After").orElse(null),answer.body.contains("unavailable")),(503,"5",true),s"$what: ${answer.body}")
+            assert(took<=bound,s"$what answered after $took")
+          }
           def code(body: String): Option[String] = Wire.parse(body).hcursor.get[String]("code").toOption
           def unavailable(response: (HttpResponse[String],FiniteDuration),what: String): Unit = {
             val (answer,took)=response
@@ -214,7 +225,7 @@ final class PoolWiringTest extends munit.FunSuite {
             while(rest()._1.statusCode!=200) assert(System.nanoTime()<deadline,"REST did not recover within 15 s")
           }
           def ok(): Unit = {
-            assertEquals(rest()._1.statusCode,200)
+            assertEquals((rest()._1.statusCode,account()._1.statusCode),(200,200))
             val (answer,_)=mcp()
             assertEquals((answer.statusCode,Wire.parse(answer.body).hcursor.downField("result").get[Boolean]("isError").toOption),(200,Some(false)),answer.body)
           }
@@ -232,13 +243,14 @@ final class PoolWiringTest extends munit.FunSuite {
             lost.set(false); ok(); wsOk()
             // The fence: logins refused (28000), the sessions gone.
             fenced.set(true)
-            unavailable(rest(),"REST, fenced"); wsUnavailable("WS, fenced"); unavailable(mcp(),"MCP bearer phase, fenced")
+            unavailable(rest(),"REST, fenced"); wsUnavailable("WS, fenced"); unavailable(mcp(),"MCP bearer phase, fenced"); accountUnavailable("account plane, fenced")
             fenced.set(false); recovered(); ok(); wsOk()
             // The admission saturated: both connections held.
             val executor=Executors.newCachedThreadPool(); val release=new CountDownLatch(1)
             try {
               latched(executor,release,2)(f => db.transaction(f))
               unavailable(rest(),"REST, admission saturated"); wsUnavailable("WS, admission saturated"); unavailable(mcp(),"MCP bearer phase, admission saturated")
+              accountUnavailable("account plane, admission saturated")
             } finally { release.countDown(); executor.shutdown() }
             ok(); wsOk()
           }

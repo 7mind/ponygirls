@@ -69,6 +69,8 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
   private def handleAccount(io: IO[Response[IO]]): IO[Response[IO]] = IO.defer(io).handleErrorWith {
     case d: DomainError => IO.pure(json(failure(d).status,AccountJson.failure(d.code)))
     case a: AccountFailure => IO.pure(json(failure(DomainError(a.code,"")).status,AccountJson.failure(a.code)))
+    case error if Http.databaseUnavailable(error) => IO(logger.warn("account request refused: database unavailable")) *>
+      IO.pure(retryAfter(json(Status.ServiceUnavailable,AccountJson.failure("unavailable")),Http.unavailableRetryAfterSeconds))
     case _ => IO(logger.error("account request failed")) *> IO.pure(json(Status.ServiceUnavailable,AccountJson.failure("unavailable")))
   }
   // The socket peer, or the right-most X-Forwarded-For element when that peer is the local reverse proxy.
