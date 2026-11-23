@@ -24,18 +24,9 @@ import { CancellableLoader, matchesKey, parseKey, type Component, type TUI, type
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { formatCount, type InlinePane } from "@ponygirls/pi-ui";
 
-import { DEFAULT_VIEWPORT_BUDGET, WHEEL_LINES, VIEWPORT_BUDGET_STEP, clampScrollTop, clampViewportBudget } from "./scroll-state.ts";
+import { TableViewport } from "./table-viewport.ts";
 import { collectUsageData, TAB_ORDER, type CollectProgress, type TabName, type UsageData } from "./ponygirls-usage-data.ts";
 import { renderUsagePane, USAGE_TAB_DEFAULT_MODE, type InputDistStyle, type UsageTableMode, type UsageView } from "./ponygirls-usage-state.ts";
-
-/** View chrome around the scrollable content: frame title with tabs, rule, one key-hint line. */
-const USAGE_CHROME_LINES = 3;
-
-/** Half the terminal height for content, less the view chrome. */
-function defaultBudget(rows: number | undefined): number {
-	if (typeof rows !== "number" || !Number.isFinite(rows)) return DEFAULT_VIEWPORT_BUDGET;
-	return clampViewportBudget(Math.floor(rows / 2) - USAGE_CHROME_LINES);
-}
 
 /** "14:32" if the timestamp is today, otherwise "16 Jul" (with year if not this year). */
 function formatSinceDate(ms: number): string {
@@ -57,22 +48,16 @@ class UsageTableView implements Component {
 	/** Table vs distribution; distribution style. Both global, sticky across tabs. */
 	private view: UsageView = "table";
 	private distStyle: InputDistStyle = "chart";
-	private scrollTop = 0;
-	private budget = DEFAULT_VIEWPORT_BUDGET;
-	private budgetTouched = false;
-	/** Content lines from the last render; the data is fixed for the view lifetime. */
-	private lineCount = 0;
+	private readonly viewport: TableViewport;
 
 	constructor(
 		private readonly theme: Theme,
-		private readonly tui: TUI,
+		tui: TUI,
 		private readonly data: UsageData,
 		private readonly onClose: () => void,
 		private readonly requestRender: () => void,
-	) {}
-
-	private effectiveBudget(): number {
-		return this.budgetTouched ? this.budget : defaultBudget(this.tui.terminal?.rows);
+	) {
+		this.viewport = new TableViewport(() => tui.terminal?.rows, requestRender);
 	}
 
 	invalidate(): void {}
@@ -82,10 +67,9 @@ class UsageTableView implements Component {
 			this.theme,
 			width,
 			this.data[this.tab],
-			{ tab: this.tab, mode: this.modes[this.tab], view: this.view, distStyle: this.distStyle, scrollTop: this.scrollTop, budget: this.effectiveBudget() },
+			{ tab: this.tab, mode: this.modes[this.tab], view: this.view, distStyle: this.distStyle, scrollTop: this.viewport.scrollTop, budget: this.viewport.budget },
 		);
-		this.lineCount = pane.lineCount;
-		this.scrollTop = pane.scrollTop;
+		this.viewport.reconcile(pane);
 		return pane.lines;
 	}
 
@@ -104,74 +88,33 @@ class UsageTableView implements Component {
 		}
 		if (matchesKey(data, "m") && this.view === "table") {
 			this.modes[this.tab] = this.modes[this.tab] === "models" ? "aggregates" : "models";
-			this.scrollTop = 0;
+			this.viewport.reset();
 			this.requestRender();
 			return;
 		}
 		if (matchesKey(data, "v")) {
 			this.view = this.view === "table" ? "dist" : "table";
-			this.scrollTop = 0;
+			this.viewport.reset();
 			this.requestRender();
 			return;
 		}
 		if (matchesKey(data, "c") && this.view === "dist") {
 			this.distStyle = this.distStyle === "chart" ? "table" : "chart";
-			this.scrollTop = 0;
+			this.viewport.reset();
 			this.requestRender();
 			return;
 		}
-		if (matchesKey(data, "up") || matchesKey(data, "down") || parseKey(data) === "k" || parseKey(data) === "j") {
-			const delta = matchesKey(data, "up") || parseKey(data) === "k" ? -1 : 1;
-			this.scrollTo(this.scrollTop + delta);
-			return;
-		}
-		if (matchesKey(data, "pageUp") || matchesKey(data, "pageDown")) {
-			this.scrollTo(this.scrollTop + (matchesKey(data, "pageUp") ? -this.effectiveBudget() : this.effectiveBudget()));
-			return;
-		}
-		if (matchesKey(data, "home") || matchesKey(data, "end")) {
-			this.scrollTo(matchesKey(data, "home") ? 0 : Number.MAX_SAFE_INTEGER);
-			return;
-		}
-		const typed = parseKey(data);
-		if (typed === "+" || typed === "=") {
-			this.growBudget(VIEWPORT_BUDGET_STEP);
-			return;
-		}
-		if (typed === "-" || typed === "_") {
-			this.growBudget(-VIEWPORT_BUDGET_STEP);
-			return;
-		}
+		this.viewport.handleInput(data);
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-		if (event.type === "wheel" && event.wheelDelta) {
-			this.scrollTo(this.scrollTop + (event.wheelDelta < 0 ? -WHEEL_LINES : WHEEL_LINES));
-			return { handled: true };
-		}
-		return undefined;
+		return this.viewport.handleMouse(event);
 	}
 
 	private switchTab(direction: 1 | -1): void {
 		const index = TAB_ORDER.indexOf(this.tab);
 		this.tab = TAB_ORDER[(index + direction + TAB_ORDER.length) % TAB_ORDER.length]!;
-		this.scrollTop = 0;
-		this.requestRender();
-	}
-
-	private scrollTo(target: number): void {
-		const next = clampScrollTop(target, this.lineCount, this.effectiveBudget());
-		if (next === this.scrollTop) return;
-		this.scrollTop = next;
-		this.requestRender();
-	}
-
-	private growBudget(delta: number): void {
-		const next = clampViewportBudget(this.effectiveBudget() + delta);
-		if (next === this.effectiveBudget()) return;
-		this.budget = next;
-		this.budgetTouched = true;
-		this.scrollTop = clampScrollTop(this.scrollTop, this.lineCount, next);
+		this.viewport.reset();
 		this.requestRender();
 	}
 }

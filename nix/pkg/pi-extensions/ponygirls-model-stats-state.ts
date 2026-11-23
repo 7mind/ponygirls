@@ -718,14 +718,7 @@ export const STATS_BUDGET_STEP = VIEWPORT_BUDGET_STEP;
 export const clampStatsBudget = clampViewportBudget;
 export const clampStatsScrollTop = clampScrollTop;
 export const statsVisibleRange = visibleRange;
-/** View chrome around the scrollable content: frame title, rule, one key-hint line. */
-export const STATS_CHROME_LINES = 3;
-
-/** Half the terminal height for content, less the view chrome. Falls back to the default when the size is unknown (a stub TUI, no tty). */
-export function defaultStatsBudget(rows: number | undefined): number {
-	if (typeof rows !== "number" || !Number.isFinite(rows)) return STATS_DEFAULT_BUDGET;
-	return clampStatsBudget(Math.floor(rows / 2) - STATS_CHROME_LINES);
-}
+export { TABLE_CHROME_LINES as STATS_CHROME_LINES, defaultTableBudget as defaultStatsBudget } from "./scroll-state.ts";
 
 /**
  * One window's table in a layout from {@link layoutWindow}. Columns are
