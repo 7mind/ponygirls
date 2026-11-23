@@ -54,11 +54,15 @@ Each admission keeps `maxQueued` and `queueTimeoutMs`.
 login bound as before; a `boundedTransaction(b)` uses min(A, b)), bounds the acquisition: at most one try more than the
 pool's connections, each a borrow that waits at most until the deadline, then the reset `DISCARD ALL; <configured
 bounds>` in one execution under a network timeout and a watchdog that aborts the physical connection at min(deadline,
-now + max(250 ms, A/4)). The pool never validates on borrow (its alive-bypass window is disabled when it is built): the
-reset is the liveness check, so any budget of at least 1 ms is usable and no validation runs past the deadline; idle
-connections are validated in the background by the keepalive with V = max(250 ms, min(1 s, A/4)). The reset owns the
-connection from the borrow to the handoff: the watchdog owns it until the reset disarms it (exactly one of the two
-happens), and a reset that fails, is aborted or throws (an interruption included) evicts it, never hands it out. The
+now + max(250 ms, A/4)) (the cap): a reset that ends after the cap is not accepted even when the watchdog's alarm comes
+late. The pool never validates on borrow (its alive-bypass window, a JVM-global system property, is disabled only while
+the engine builds a pool, under one lock, and restored afterwards; a Hikari pool built elsewhere in the process meanwhile
+would lose its own validation — none is, and each service builds one pool): the reset is the liveness check, so no
+validation runs past the deadline and every positive budget reaches the pool (a remainder below the pool's millisecond
+borrows without waiting: an idle connection or none). Idle connections are validated in the background by the keepalive
+with V = max(250 ms, min(1 s, A/4)). The reset owns the connection from the borrow to the handoff: the watchdog owns it
+until the reset disarms it (exactly one of the two happens), and a reset that fails, is aborted, throws (an
+interruption included) or ends after its cap evicts it, never hands it out. The
 reset then installs the transaction's network timeout (socket timeout; extended timeout + socket timeout; the bound)
 before the transaction's first statement. A borrower that finds no connection by the deadline fails
 `JdbcFailure("connection-unavailable", last SQLSTATE)` (e.g. 28000 for a role without LOGIN, none when the pool timed

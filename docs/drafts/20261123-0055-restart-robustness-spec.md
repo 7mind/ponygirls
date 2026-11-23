@@ -383,6 +383,18 @@ cancellation across admission then SQL wait are a REQUIRED item of R-a2 (orchest
   recovers within the lease margin. `DatabaseWait`'s start rules and every other SQL classification are unchanged. Test
   (RD-CORE): TransientPublicationTest "connection-unavailable without a SQLSTATE …" (no-SQLSTATE pool timeouts in the
   work and a record try, then recovery: fenced hold, one refund).
+  (C) *No validation on borrow* (RD-CORE gate r1 blocker 1; r2 scope; RD-WIRE step 0). Supersedes "stop if `r ≤ V`;
+  `pool.getConnection(r − V)` (≤ r including Hikari's own validation)" above and D5 (a)'s "Hikari validates": a borrow
+  waits at most the remainder `r` (a remainder below Hikari's millisecond borrows without waiting, so every positive
+  budget reaches the pool), and the reset is the only liveness check; V stays the keepalive's background validation. A
+  reset that ends after its cap `min(D, start + resetCap)` is never handed out (evicted and retried within D, or returned
+  when D passed), also when the watchdog's alarm is delivered late. Hikari skips borrow validation through its JVM-global
+  `com.zaxxer.hikari.aliveBypassWindowMs`, which the engine sets only while it builds a pool, under one lock, and restores
+  afterwards (Hikari 7.1.0 reads it into the pool instance): sound for every pool built by the engine; a Hikari pool built
+  elsewhere in the same process at that moment would lose its own borrow validation (none exists). One pool per process
+  is the production target, enforced at each service's production wiring (RD-WIRE: a second claim fails
+  `pool-already-open`). Limit: after a restart with black-holed sockets each stale connection can stall a full reset cap,
+  so the first borrow is not guaranteed to recover within one budget; later borrows do (restart acceptance judges it).
 
 ## 6. Configuration keys (all optional; existing files keep working; chart unchanged)
 | key | services | default | valid | item |

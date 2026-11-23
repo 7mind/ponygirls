@@ -59,9 +59,9 @@ final class PoolSuite extends FunSuite {
     def close(): Unit = try holder.rollback() finally holder.close()
   }
   private def engine(config: JdbcConfig, connectTimeout: FiniteDuration, factory: JdbcConnectionFactory,
-      watchdog: JdbcTransactionEngine.Watchdog = JdbcTransactionEngine.scheduledWatchdog): JdbcTransactionEngine = {
+      watchdog: JdbcTransactionEngine.Watchdog = JdbcTransactionEngine.scheduledWatchdog, nanoTime: () => Long = () => System.nanoTime()): JdbcTransactionEngine = {
     val limits = config.limits.copy(maxConnections = 1, connectTimeout = connectTimeout)
-    new JdbcTransactionEngine(config.copy(limits = limits), factory, JdbcPoolSizing.compatible(limits), watchdog)
+    new JdbcTransactionEngine(config.copy(limits = limits), factory, JdbcPoolSizing.compatible(limits), watchdog, nanoTime)
   }
   /** Waits (no fixed time) until `condition` holds; the bound only keeps a broken run from hanging. */
   private def eventually(what: String)(condition: => Boolean): Unit = {
@@ -228,6 +228,34 @@ final class PoolSuite extends FunSuite {
       assertEquals(raced.opened.get, 2)
       assert(raced.physical.asScala.head.isClosed)
       assertEquals(pool.transaction(pid), handed._1)
+    }
+  } }
+
+  test("D5 a reset that ends after its cap is not handed over although its alarm comes late; a remainder below a millisecond borrows without waiting") { configured { config =>
+    import JdbcTransactionEngine.{Acquisition, Watchdog, acquisitionBudget}
+    val arms = new AtomicInteger
+    // Every alarm arrives too late to abort anything.
+    val late = new Watchdog { def arm(delay: FiniteDuration, fire: () => Unit): () => Unit = { arms.incrementAndGet(); () => () } }
+    // (a) On the engine's clock the first connection's reset ends 1 ms after its cap (A 2 s: cap 500 ms), long before the
+    // deadline: evicted, the transaction runs on a second connection.
+    val skew = new java.util.concurrent.atomic.AtomicLong(0)
+    val cap = Acquisition(acquisitionBudget(2.seconds)).resetCap
+    val slow = new Counting((n, c) => if (n == 1) afterReset(c, () => { skew.addAndGet((cap + 1.milli).toNanos); () }) else c)
+    Using.resource(engine(config, 2.seconds, slow, late, () => System.nanoTime() + skew.get)) { pool =>
+      assertEquals(pool.transaction(c => integer(c, "SELECT 1")), 1)
+      assertEquals(slow.opened.get, 2)
+      eventually("the over-cap connection is closed")(slow.physical.asScala.head.isClosed)
+    }
+    // (b) A 1 ms bound whose remainder is 0.5 ms at the borrow (the engine's clock) takes the idle connection without
+    // waiting and resets it (the bound's statements may then time out at 1 ms: not asserted).
+    val idle = new Counting()
+    val start = new java.util.concurrent.atomic.AtomicLong(0); val reads = new AtomicInteger
+    val halfway = () => if (start.get == 0) System.nanoTime() else if (reads.getAndIncrement() == 0) start.get else start.get + 500.micros.toNanos
+    Using.resource(engine(config, 2.seconds, idle, late, halfway)) { pool =>
+      pool.transaction(pid)
+      arms.set(0); start.set(System.nanoTime())
+      scala.util.Try(pool.boundedTransaction(1.milli)(_ => 0))
+      assertEquals((arms.get, idle.opened.get), (1, 1))
     }
   } }
 
