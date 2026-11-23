@@ -252,6 +252,13 @@ rebuild reset it. Every other failure is charged as before.
   job at once. To drop them, stop the server and run `chronicle/scripts/down-029-transient-failures.sql` (read-only
   preflight, then `mode=apply` with the confirmation it names): it clears the holds and drops the columns. Before an
   older rollback run it first, then `down-028`.
+- **Migration 030** (applied by the start) adds `ch_tokens.operate_jobs` and `ch_mutations.token` (metadata-only, no
+  rewrite): the OperateJobs grant of a token and the token that executed a mutation first (job operations for tokens,
+  CONTRACT.md).
+- **Rollback past OPS.** Remove `"OperateJobs"` from configured tokens' `scopes` (the earlier release refuses a configuration
+  that names it), then deploy the earlier release. No data step and no down script: the earlier release ignores both
+  columns. Issued tokens with OperateJobs act with their typed scopes and regain OperateJobs if OPS returns; revoke them
+  first if that is unwanted. For an older rollback, 030 needs nothing: run `down-029`, then `down-028`.
 
 ## Models
 
