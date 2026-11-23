@@ -9,13 +9,16 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SERVICES = ('chronicle', 'haystack', 'manure')
-SETS = ('SMALL', 'POOL')
+SETS = ('SMALL', 'POOL', 'FULL')
 # The pre-registered rule set this script applies (the ACC bundle's PASS-RULES.md); named in every run's output.
-RULE_SET = 'r6'
+RULE_SET = 'r7'
 ORDER = ('1', '2b', '2', '5', '6', '4', '3a', '3b', '3')  # the 3s last: they restart the cluster; 6 before them: its workers idle
-# Rule set r4 (scope change, ORCH-REPLY-0430Z item 3): SMALL ships R-a reduced; its case-3 guarantee is 3a and 3b, the full
-# design's case 3 is judged on the POOL/R-a2 run. A case not in the set's list runs only when named, and does not count.
-CASES_OF = dict(SMALL=('1', '2b', '2', '5', '6', '4', '3a', '3b'), POOL=ORDER)
+# Rule set r4 (scope change, ORCH-REPLY-0430Z item 3): SMALL ships R-a reduced; its case-3 guarantee is 3a and 3b. Rule set
+# r7: POOL lands without R-a2, so the full design's case 3 is judged only on FULL (the tree containing POOL and R-a2). A case
+# not in the set's list runs only when named, and does not count.
+CASES_OF = dict(SMALL=('1', '2b', '2', '5', '6', '4', '3a', '3b'), POOL=('1', '2b', '2', '5', '6', '4', '3a', '3b'), FULL=ORDER)
+# The sets whose tree contains POOL: case 4's fenced response contract and case 6's pool rule are judged there.
+POOL_JUDGED = ('POOL', 'FULL')
 # Supplementary only (orchestrator 06:59Z), never part of a counted run: case 3b keeps PostgreSQL stopped this many seconds
 # between the immediate shutdown and the start. Default 0 = the counted rule set's restart, unchanged.
 SUPPLEMENT_3B_DOWN_S = float(os.environ.get('RESTART_ACC_SUPPLEMENT_3B_DOWN_SECONDS', '0'))
@@ -1292,6 +1295,8 @@ def case_6(run):
     offset = run.cluster.log_offset()
     sampler = Sampler(lambda: backends(run), BACKEND_SAMPLE_S)
     snapshots, trio = [], None
+    # This run's own sessions to each service database inside the cold count (pg_stat_database counts every session; r7).
+    harness = {name: 0 for name in SERVICES}
     try:
         time.sleep(PGSTAT_FLUSH_S)
         snapshots.append(snapshot(run, 'beforeStart'))
@@ -1300,6 +1305,7 @@ def case_6(run):
             return case.result()
         clients.ensure_item()
         busy = run.cluster.sql('chronicle', "SELECT count(*) FROM ch_jobs WHERE state IN ('Queued','Running')")[0][0]
+        harness['chronicle'] += 1
         case.valid('workers idle: no Chronicle job Queued or Running', busy == '0', busy)
         time.sleep(PGSTAT_FLUSH_S)
         snapshots.append(snapshot(run, 'ready'))
@@ -1321,6 +1327,8 @@ def case_6(run):
     derived = dict(startup={name: dict(sessions=delta(ready, start, name), transactions=delta(ready, start, name, 'transactions')) for name in SERVICES},
                    backgroundSessionsPerSecond={name: round(rate[name], 3) for name in SERVICES},
                    coldFromStart={name: delta(cold, start, name) for name in SERVICES})
+    derived['harnessSessions'] = harness
+    derived['coldFromStartServices'] = {name: derived['coldFromStart'][name] - harness[name] for name in SERVICES}
     calibration = run.calibration or {}
     for phase, before, after in (('cold', idle, cold), ('warm', cold, warm)):
         derived[phase] = {}
@@ -1329,7 +1337,7 @@ def case_6(run):
             background = rate[name] * (after['t'] - before['t'])
             row = dict(sessions=sessions, transactions=delta(after, before, name, 'transactions'), backgroundSessions=round(background, 1),
                        requestSessions=round(sessions - background, 1), **runs[phase].get(name, dict(outcomes={}, seconds=None)))
-            denominator = calibration.get(phase, {}).get(name) if run.set_name == 'POOL' else row['requestSessions']
+            denominator = calibration.get(phase, {}).get(name) if run.set_name in POOL_JUDGED else row['requestSessions']
             row['calibratedTransactions'] = denominator
             row['sessionsPer1000Transactions'] = round(row['requestSessions'] * 1000 / denominator, 1) if denominator and denominator > 0 else None
             derived[phase][name] = row
@@ -1341,20 +1349,21 @@ def case_6(run):
                 **({'timeWaitRightAfterRequests': s['timeWaitRightAfterRequests']} if 'timeWaitRightAfterRequests' in s else {})) for s in snapshots]
     case.measurements = dict(workload=WORKLOAD, snapshots=raw, derived=derived, backendsPeak=peaks, backendSamples=len(samples),
                              sampleErrors=sum(1 for _, v in samples if 'error' in v), rejections53300=rejected[:20],
-                             calibrationSource=os.environ.get('RESTART_ACC_CALIBRATION') if run.set_name == 'POOL' else 'this run (T = its own background-corrected sessions)')
+                             calibrationSource=os.environ.get('RESTART_ACC_CALIBRATION') if run.set_name in POOL_JUDGED else 'this run (T = its own background-corrected sessions)')
     case.valid(f'backends sampled every {BACKEND_SAMPLE_S} s from before the start, without error', samples and not any('error' in v for _, v in samples), len(samples))
     case.valid('background measured over the idle window', idle['t'] - ready['t'] >= IDLE_S, round(idle['t'] - ready['t'], 1))
     note('case 6 measurements: ' + json.dumps(dict(derived=derived, timeWait=[(s['label'], s['timeWait']) for s in raw], backendsPeak=peaks)))
-    if run.set_name == 'POOL':
+    if run.set_name in POOL_JUDGED:
         for name in SERVICES:
             warm_delta = delta(warm, cold, name)
             case.check(f'{name}: warm sessions delta 0', warm_delta == 0, warm_delta)
-            case.check(f'{name}: cold sessions (from before the start through the cold run) <= P + {START_PROBES} (R-b start probe) = {POOL_SIZE[name] + START_PROBES}',
-                       derived['coldFromStart'][name] <= POOL_SIZE[name] + START_PROBES,
-                       dict(coldFromStart=derived['coldFromStart'][name], startup=derived['startup'][name]['sessions'], coldRun=derived['cold'][name]['sessions']))
+            case.check(f'{name}: cold sessions (from before the start through the cold run, minus this run\'s own) <= P + {START_PROBES} (R-b start probe) = '
+                       f'{POOL_SIZE[name] + START_PROBES}', derived['coldFromStartServices'][name] <= POOL_SIZE[name] + START_PROBES,
+                       dict(coldFromStartServices=derived['coldFromStartServices'][name], coldFromStart=derived['coldFromStart'][name], harness=harness[name],
+                            startup=derived['startup'][name]['sessions'], coldRun=derived['cold'][name]['sessions']))
             case.check(f'{name}: backends of its role <= P = {POOL_SIZE[name]} at every sample', peaks[name] is not None and peaks[name] <= POOL_SIZE[name], peaks[name])
         case.check('no 53300 (server log, service output)', not rejected, rejected[:5])
-    return case.result(baseline=run.set_name != 'POOL')
+    return case.result(baseline=run.set_name not in POOL_JUDGED)
 
 
 # ---------------------------------------------------------------- case 4
@@ -1487,12 +1496,12 @@ def terminate_latched(run, case, clients, roles, label, fence=None):
 
 
 def case_4(run):
-    pool = run.set_name == 'POOL'
+    pool = run.set_name in POOL_JUDGED
     case = Case(run, '4', 'Terminate, fence, unfence: terminate all three roles\' sessions; then per role the §10 fence procedure for 30 s, then '
                           '`LOGIN` -> while fenced: REST/HTTP 503 (Chronicle REST, Haystack, Manure), Chronicle WS `unavailable`, MCP tool error '
                           '`unavailable` (or bearer phase 503), each within queueTimeout + connectTimeout + 1 s; 200 within 15 s after `LOGIN`; PIDs '
-                          'unchanged. [review r1: termination, fencing and recovery without a restart on SMALL and POOL; the fenced response '
-                          f'contract on POOL only; this run: {run.set_name}]')
+                          'unchanged. [review r1: termination, fencing and recovery without a restart on every set; the fenced response '
+                          f'contract on POOL and FULL only (r7); this run: {run.set_name}]')
     run.cluster.primary()
     trio, clients = started_trio(run, case, '4')
     try:
@@ -1534,7 +1543,7 @@ def case_4(run):
                 if pool:
                     case.check(f'{role} fenced: every {kind} answer is unavailable within {bound:.0f} s', mine and not wrong, summary)
                 else:
-                    case.record(f'{role} fenced: {kind} answers (SMALL: recorded, the contract is POOL-only)', summary)
+                    case.record(f'{role} fenced: {kind} answers (SMALL: recorded, the contract is judged on POOL and FULL)', summary)
             recovered, wanted = clients.recovered((role,), unfenced)
             case.check(f'{role}: every probe of the service answers ok within {RECOVER_WITHIN_S} s after LOGIN (no restart)', len(recovered) == len(wanted), recovered)
         case.check('PIDs unchanged: the three processes started for the case are still running',
@@ -1921,7 +1930,7 @@ def case_3(run):
     case = Case(run, '3', 'Restart under indexing load, publication slower than requests: 20 synthetic sessions; `statementTimeoutMs` 2000, '
                           '`publicationStatementTimeoutMs` 10000; trigger on `ch_search_chunks` 3 s per statement, 12 s for 2 min (57014); in that '
                           'window `pg_ctl restart -m fast` twice, `-m immediate` once -> 0 Failed of the 20, all Complete within 20 min after the last '
-                          f'restart, >= 1 `job held` line (else INVALID), PIDs unchanged, all three 200 afterwards. [full design: the POOL/R-a2 run, rule set {RULE_SET}]')
+                          f'restart, >= 1 `job held` line (else INVALID), PIDs unchanged, all three 200 afterwards. [full design: set FULL, the tree containing POOL and R-a2, rule set {RULE_SET}]')
     work = Cohort(run, case, '3')
     try:
         if not work.ready or not work.first_publication():
@@ -2021,8 +2030,8 @@ def parse(line):
 
 
 def self_check():
-    """The interlocks refuse what this run does not own, PostgreSQL tools get no inherited override, and the line
-    patterns take the spec's formats and nothing near them. No packages, no cluster; seconds."""
+    """The interlocks refuse what this run does not own, PostgreSQL tools get no inherited override, the set table is rule
+    set r7's, and the line patterns take the spec's formats and nothing near them. No packages, no cluster; seconds."""
     failures = []
 
     def refused(label, action):
@@ -2089,6 +2098,15 @@ def self_check():
         shutil.rmtree(foreign)
         other.remove()
         root.remove()
+    small = ('1', '2b', '2', '5', '6', '4', '3a', '3b')
+    for label, held in ((f'rule set {RULE_SET} = r7', RULE_SET == 'r7'),
+                        (f'sets {SETS} = the set table\'s {tuple(CASES_OF)}', SETS == tuple(CASES_OF) == ('SMALL', 'POOL', 'FULL')),
+                        (f'SMALL = POOL = {" ".join(small)} (no case 3)', CASES_OF['SMALL'] == CASES_OF['POOL'] == small),
+                        (f'FULL = POOL + 3 = {" ".join(CASES_OF["FULL"])}', CASES_OF['FULL'] == CASES_OF['POOL'] + ('3',) == ORDER),
+                        (f'case 4\'s fenced contract and case 6\'s pool rule judged on {POOL_JUDGED} only', POOL_JUDGED == ('POOL', 'FULL'))):
+        print(f'{"ok" if held else "not ok"} - set table: {label}', flush=True)
+        if not held:
+            failures.append(f'set table: {label}')
     for line in SAMPLE_LINES:
         text, parsed = parse(line)
         if len(parsed) != 1:
@@ -2281,7 +2299,7 @@ def reverdict(case, evaluated, set_name):
     late = [after for check, after, _ in evaluated if check['kind'] == 'late']
     if 'harnessError' in case or not all(mechanics):
         return 'INVALID'
-    if case['case'] == '6' and set_name != 'POOL':
+    if case['case'] == '6' and set_name not in POOL_JUDGED:
         return 'BASELINE'
     if not all(checks):
         return 'FAIL'
@@ -2295,7 +2313,7 @@ def terminated(signum, frame):
 
 
 def main(argv):
-    usage = 'usage: restart-acceptance.py SMALL|POOL [CASE...] | self-check | reparse RUN-DIR   (cases: ' + ' '.join(ORDER) + ')'
+    usage = 'usage: restart-acceptance.py SMALL|POOL|FULL [CASE...] | self-check | reparse RUN-DIR   (cases: ' + ' '.join(ORDER) + ')'
     if argv == ['self-check']:
         return self_check()
     if len(argv) == 2 and argv[0] == 'reparse':
@@ -2305,13 +2323,13 @@ def main(argv):
         return 2
     set_name, selected = argv[0], [case for case in ORDER if case in (argv[1:] or CASES_OF[argv[0]])]
     calibration = None
-    if set_name == 'POOL' and '6' in selected:
+    if set_name in POOL_JUDGED and '6' in selected:
         path = os.environ.get('RESTART_ACC_CALIBRATION')
         try:
             assert path, 'RESTART_ACC_CALIBRATION is not set'
             calibration = load_calibration(path)
         except (OSError, ValueError, KeyError, AssertionError, StopIteration) as error:
-            print(f'POOL case 6 needs RESTART_ACC_CALIBRATION=<a SMALL run\'s report.json with a BASELINE case 6 of this workload>: {error}', file=sys.stderr)
+            print(f'{set_name} case 6 needs RESTART_ACC_CALIBRATION=<a SMALL run\'s report.json with a BASELINE case 6 of this workload>: {error}', file=sys.stderr)
             return 2
     out = Path(os.environ['RESTART_ACC_OUT'])
     if not out.is_absolute() or (out.exists() and any(out.iterdir())):
@@ -2328,9 +2346,9 @@ def main(argv):
     started_at, results, run = datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'), [], None
     try:
         run = Run(set_name, out, packages, calibration)
+        note(f'restart acceptance, rule set {RULE_SET}, set {set_name}, cases {" ".join(selected)}, packages {json.dumps({k: str(v) for k, v in packages.items()})}, root {run.root.path}')
         if SUPPLEMENT_3B_DOWN_S:
             note(f'SUPPLEMENTARY run (not counted): case 3b keeps PostgreSQL down {SUPPLEMENT_3B_DOWN_S} s')
-        note(f'restart acceptance, rule set {RULE_SET}, set {set_name}, cases {" ".join(selected)}, packages {json.dumps({k: str(v) for k, v in packages.items()})}, root {run.root.path}')
         run.setup()
         for ident in selected:
             try:

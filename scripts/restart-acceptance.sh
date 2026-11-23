@@ -37,12 +37,13 @@
 #      `ingest_status`, Haystack item GET, Manure list); SMALL's `pg_stat_database.sessions` delta calibrates the
 #      transaction count T; report cold and warm runs separately, sessions × 1000 / T and TIME_WAIT to the PostgreSQL port.
 #      POOL pass: warm delta 0, cold ≤ P (10/6/6), backends per role ≤ P at every 1 s sample, no 53300.
-# Rule set r5 (focused reviews r1-r4 and a SCOPE CHANGE; before any counted run; history in the ACC bundle's
-# PASS-RULES.md): case 4's fenced response contract (503 / WS / MCP unavailable within the bound) is judged on POOL only;
-# on SMALL those answers are recorded; termination, fencing, recovery and unchanged PIDs are judged on both sets. SCOPE
-# CHANGE (orchestrator, ORCH-REPLY-0430Z item 3): SMALL ships R-a reduced (no reclaim/exhaustion graces, paid-write retry,
-# drain/abort: deferred to R-a2 after POOL), so SMALL's case 3 guarantee is 3a and 3b below; rule 3 (the full design) is
-# judged on the POOL/R-a2 run. Default cases: SMALL 1 2b 2 5 6 4 3a 3b; POOL 1 2b 2 5 6 4 3a 3b 3.
+# Rule set r7 (focused reviews r1-r5, a SCOPE CHANGE, and r7 before the POOL run; history in the ACC bundle's
+# PASS-RULES.md): case 4's fenced response contract (503 / WS / MCP unavailable within the bound) and case 6's pool rule
+# are judged on POOL and FULL; on SMALL those answers are recorded and case 6 is a BASELINE; termination, fencing,
+# recovery and unchanged PIDs are judged on every set. SCOPE CHANGE (orchestrator, ORCH-REPLY-0430Z item 3): SMALL ships
+# R-a reduced (no reclaim/exhaustion graces, paid-write retry, drain/abort: deferred to R-a2 after POOL), so the case 3
+# guarantee of SMALL and POOL is 3a and 3b below; rule 3 (the full design) is judged on FULL, the tree containing POOL and
+# R-a2 (r7). Default cases: SMALL 1 2b 2 5 6 4 3a 3b; POOL 1 2b 2 5 6 4 3a 3b; FULL 1 2b 2 5 6 4 3a 3b 3.
 # How the rules are judged (verdict: INVALID if a mechanics condition failed, i.e. the case did not exercise its path;
 # else FAIL if a pass condition failed; else PASS; case 3 is INVALID instead of PASS without its late mechanics; case 6 on
 # SMALL is BASELINE, a measurement that POOL judges). Times are monotonic, from the script's spawn of each process and the
@@ -66,19 +67,20 @@
 #      from before the start; a 30 s idle window. Raw pg_stat_database (sessions, xact) and TIME_WAIT snapshots: before
 #      the start, at ready (+11 s flush), after the idle window, after the cold and the warm run (+11 s each). Background
 #      sessions/s from the idle window; request sessions = delta − background. T = SMALL's request sessions per run kind;
-#      a POOL run needs RESTART_ACC_CALIBRATION = a SMALL report.json whose case 6 is a BASELINE of the same workload with
-#      positive T (else usage error, before anything starts). POOL pass: warm sessions delta 0; cold = sessions from
-#      before the start through the cold run ≤ P + 1 (R-b's start probe precedes the pool, spec §3); backends per role ≤ P
-#      at every sample; no 53300 (server log, service output).
+#      a POOL or FULL run needs RESTART_ACC_CALIBRATION = a SMALL report.json whose case 6 is a BASELINE of the same
+#      workload with positive T (else usage error, before anything starts). POOL/FULL pass: warm sessions delta 0; cold =
+#      sessions from before the start through the cold run, minus this run's own (r7: the workers-idle query, 1 on
+#      chronicle), ≤ P + 1 (R-b's start probe precedes the pool, spec §3); backends per role ≤ P at every sample; no 53300
+#      (server log, service output).
 #   4  mechanics: every probe ok first; "terminate": every role's database latched (a superuser transaction holding
 #      ACCESS EXCLUSIVE on its tables) so a probe of each service waits with a live backend, every backend of the roles
 #      terminated (pg_terminate_backend true for each latched one) and gone, latches released; per role the §10 fence:
 #      latch, NOLOGIN, terminate until none remains (≤ 30 s), release, a new login refused 28000. Probes every 1 s for the
 #      30 s from NOLOGIN's confirmed commit (rolcanlogin read back false): Chronicle REST = GET /api/ingest/uploads (Ingest bearer), MCP = tools/call ingest_status, WS = a
 #      new /api/ws socket (Hello, IngestStatus); Haystack item GET = POST /api/v1/get of a seeded item; Manure =
-#      ListArtifacts. Pass (SMALL and POOL): every probe ok ≤ 15 s after the terminations and ≤ 15 s after each LOGIN; the
-#      three processes alive with their PIDs at the end. Pass (POOL only): every fenced answer unavailable within
-#      queueTimeout + connectTimeout + 1 s of the process's own configuration (11 s here).
+#      ListArtifacts. Pass (every set): every probe ok ≤ 15 s after the terminations and ≤ 15 s after each LOGIN; the
+#      three processes alive with their PIDs at the end. Pass (POOL and FULL): ≥ 1 fenced answer of every probe type and
+#      every one unavailable within queueTimeout + connectTimeout + 1 s of the process's own configuration (11 s here).
 #   3a, 3b, 3 share the workload: Chronicle request statement timeout 2 s, publication 10 s; triggers (function-scoped
 #      log level) log each publication statement's start, 57014 cancellation and completion with its sessions, sleep and
 #      statement_timeout on ch_search_chunks (sleep = control table: 3 s, 12 s in case 3's window), and each ingest's
@@ -103,7 +105,7 @@
 #      INVALID; or a cohort job already Failed). Pass: common + attempts = 1 for every cohort job except Running ones with
 #      margin < 10 s (out of scope) + every in-scope interrupted job held for its publication (a fully parsed `job held`
 #      line of it, stage Publication, sqlState 08xxx or 57P01-57P03, between the shutdown request and readiness + 30 s).
-#   3  (full design, the POOL/R-a2 run) the window of 12 s sleeps opens at the first cohort publication; restarts fast in
+#   3  (full design, set FULL) the window of 12 s sleeps opens at the first cohort publication; restarts fast in
 #      [20, 45] s, immediate in [50, 80] s, fast in [85, 110] s of the 120 s window, each when a cohort publication sleeps;
 #      mechanics: each restart's markers inside the window, a sampled cohort publication interrupted (or a cohort job
 #      already Failed), ≥ 1 cohort publication cancelled by 57014 at 12 s inside the window. Pass: common. Late mechanics:
@@ -120,13 +122,13 @@
 #     RESTART_ACC_HAYSTACK=$(nix build --no-link --print-out-paths .#haystack) \
 #     RESTART_ACC_MANURE=$(nix build --no-link --print-out-paths .#manure) \
 #     RESTART_ACC_OUT=/absolute/new/directory \
-#     timeout --signal=TERM --kill-after=300 3600 scripts/restart-acceptance.sh SMALL|POOL [CASE...] 2>&1 | tee "$RESTART_ACC_OUT.log"'
+#     timeout --signal=TERM --kill-after=300 3600 scripts/restart-acceptance.sh SMALL|POOL|FULL [CASE...] 2>&1 | tee "$RESTART_ACC_OUT.log"'
 #
 # RESTART_ACC_OUT receives report.json (verdicts, checks, measurements), postgres.log, every service process's output
 # (case<id>-<service>.log, seconds since the run's start) and case 3's 1 s timeline. RESTART_ACC_CALIBRATION=<a SMALL
-# run's report.json> gives a POOL run SMALL's T for case 6 (required there). Exit 0: every case PASS (or BASELINE);
+# run's report.json> gives a POOL or FULL run SMALL's T for case 6 (required there). Exit 0: every case PASS (or BASELINE);
 # 1: a case FAILed; 3: a case INVALID and none FAILed; 2: usage. `scripts/restart-acceptance.sh self-check` runs the
-# interlock refusals, the environment sanitizing and the line patterns against the spec's formats and near misses (no
+# interlock refusals, the environment sanitizing, the set table and the line patterns against the spec's formats and near misses (no
 # packages, no cluster, seconds). `scripts/restart-acceptance.sh reparse RUN-DIR` re-evaluates a stored run's log-derived
 # checks with e66d4736's patterns and the current ones (offline; database data only as report.json recorded it).
 set -euo pipefail
