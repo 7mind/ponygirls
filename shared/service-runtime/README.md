@@ -36,7 +36,8 @@ Each runtime owns one bounded pool (HikariCP, restart-robustness spec §5) of ph
 production login (password file read for each new connection: a rotated file serves the next login, existing
 connections stay authenticated until retired). JDBC is on `IO.blocking`; a connection serves one transaction at a time.
 Admission bounds active transactions plus queued callers, rejects overflow, times out waiting and releases reservations
-on cancellation. Closing rejects new calls, drains admitted calls, then closes the pool. PostgreSQL receives finite
+on cancellation. Closing rejects new calls in both admissions, then drains both, then closes the pool (a blocking
+closer's interrupt is restored after the pool has closed). PostgreSQL receives finite
 connect/login/socket, statement, lock and idle-in-transaction timeouts. Driver second-resolution timeouts round up.
 
 **Sizing.** `JdbcPoolSizing` divides one pool into the request admission's and the background admission's connections
@@ -50,18 +51,23 @@ omitted, `maxConnections` − `headroom` (2) halved, background the smaller half
 Each admission keeps `maxQueued` and `queueTimeoutMs`.
 
 **Borrow.** After admission one monotonic deadline `now + A`, A = `connectTimeoutMs` in whole seconds rounded up (the
-login bound as before), bounds the acquisition: at most one try more than the pool's connections, each a borrow that
-leaves the pool's validation time V = max(250 ms, min(1 s, A/4)) before the deadline, then the reset `DISCARD ALL;
-<configured bounds>` in one execution under a network timeout and a watchdog that aborts the physical connection at
-min(deadline, now + max(250 ms, A/4)). The watchdog owns the connection until the reset disarms it; exactly one of the two
-happens, and a connection whose reset fails or is aborted is evicted, never handed out. A borrower that finds no
-connection by the deadline fails `JdbcFailure("connection-unavailable", last SQLSTATE)` (e.g. 28000 for a role without
-LOGIN, none when the pool timed out). The reset returns every session state (role, settings including `search_path`,
-temp tables, session advisory locks, LISTEN, cursors, prepared statements) to the login's; the pool resets isolation,
-read-only, auto-commit and network timeout on return. A pooled connection lives 22.5 to 30 min (`maximumLifetime`), an
-idle one is checked every 2 min (`keepaliveTime`; server `idle_session_timeout` must be 0 or at least 3 min); failed
-logins are retried in the background with a back-off up to 5 s. The pool logs through SLF4J without a provider: nothing
-(a provider added later must silence `com.zaxxer.hikari`).
+login bound as before; a `boundedTransaction(b)` uses min(A, b)), bounds the acquisition: at most one try more than the
+pool's connections, each a borrow that waits at most until the deadline, then the reset `DISCARD ALL; <configured
+bounds>` in one execution under a network timeout and a watchdog that aborts the physical connection at min(deadline,
+now + max(250 ms, A/4)). The pool never validates on borrow (its alive-bypass window is disabled when it is built): the
+reset is the liveness check, so any budget of at least 1 ms is usable and no validation runs past the deadline; idle
+connections are validated in the background by the keepalive with V = max(250 ms, min(1 s, A/4)). The reset owns the
+connection from the borrow to the handoff: the watchdog owns it until the reset disarms it (exactly one of the two
+happens), and a reset that fails, is aborted or throws (an interruption included) evicts it, never hands it out. The
+reset then installs the transaction's network timeout (socket timeout; extended timeout + socket timeout; the bound)
+before the transaction's first statement. A borrower that finds no connection by the deadline fails
+`JdbcFailure("connection-unavailable", last SQLSTATE)` (e.g. 28000 for a role without LOGIN, none when the pool timed
+out). The reset returns every session state (role, settings including `search_path`, temp tables, session advisory
+locks, LISTEN, cursors, prepared statements, an `application_name` the driver set after login) to the login's; the pool
+resets isolation, read-only, auto-commit and network timeout on return. A pooled connection lives 22.5 to 30 min
+(`maximumLifetime`), an idle one is checked every 2 min (`keepaliveTime`; server `idle_session_timeout` must be 0 or at
+least 3 min); failed logins are retried in the background with a back-off up to 5 s. The pool logs through SLF4J without
+a provider: nothing (a provider added later must silence `com.zaxxer.hikari`).
 
 Callbacks are narrow **trusted synchronous JDBC code**. They must terminate, close
 statements/results, not escape a connection, not commit/rollback/close it, and not

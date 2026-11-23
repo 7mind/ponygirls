@@ -37,10 +37,14 @@ final class BlockingJdbcDatabase private (config: JdbcConfig, factory: JdbcConne
     Migration.validate(namespace, migrations)
     transaction(c => Migration.applyAll(c, namespace, migrations))
   }
-  def close(): Unit = try {
+  /** Both admissions reject new work before either drains; the pool closes after the drain. An interrupt of the closer
+    * neither shortens the drain nor the pool's shutdown: it is restored when both are complete. */
+  def close(): Unit = {
     requests.reject(); backgroundWork.reject()
-    requests.drain(); backgroundWork.drain()
-  } finally engine.close()
+    val interrupted = requests.drain() | backgroundWork.drain()
+    engine.close()
+    if (interrupted) Thread.currentThread().interrupt()
+  }
 }
 object BlockingJdbcDatabase {
   /** Explicit trusted factory injection, with the same validated production config and
@@ -54,7 +58,7 @@ object BlockingJdbcDatabase {
 }
 
 /** Finite fair semaphore admission. Queued interruption frees the reservation and restores the interrupt flag; once
-  * rejecting, new work fails `runtime-closed` and `drain` waits for admitted calls. */
+  * rejecting, new work fails `runtime-closed` and `drain` waits for admitted calls, reporting (not restoring) an interrupt. */
 private final class BlockingAdmission(policy: AdmissionConfig, engine: JdbcTransactionEngine) extends BlockingJdbcTransactions {
   policy.validate()
   private val permits = new Semaphore(policy.maxActive, true)
@@ -88,11 +92,11 @@ private final class BlockingAdmission(policy: AdmissionConfig, engine: JdbcTrans
     }
   }
   def reject(): Unit = synchronized { closed = true }
-  def drain(): Unit = synchronized {
-    var interrupted = false
+  def drain(): Boolean = synchronized {
+    var interrupted = Thread.interrupted()
     while (admitted != 0) {
       try wait() catch { case _: InterruptedException => interrupted = true }
     }
-    if (interrupted) Thread.currentThread().interrupt()
+    interrupted
   }
 }

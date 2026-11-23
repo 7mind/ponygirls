@@ -27,16 +27,17 @@ final class JdbcDatabase private (engine: JdbcTransactionEngine, gate: Admission
 object JdbcDatabase {
   /** One admission of `maxConnections` over a pool opened on first use (rites, ontology, fixtures). */
   def resource(config: JdbcConfig): Resource[IO, JdbcDatabase] = resource(config, JdbcPoolSizing.compatible(config.limits))
-  /** The services' pool: request and background admissions over one pool of `sizing`. Closing drains both admissions,
-    * then closes the pool. */
+  /** The services' pool: request and background admissions over one pool of `sizing`. Closing rejects new work in both
+    * admissions, then drains both, then closes the pool. */
   def resource(config: JdbcConfig, sizing: JdbcPoolSizing): Resource[IO, JdbcDatabase] =
     resource(config, sizing, JdbcConnectionFactory.driverManager)
   private[runtime] def resource(config: JdbcConfig, sizing: JdbcPoolSizing, factory: JdbcConnectionFactory): Resource[IO, JdbcDatabase] =
     Resource.make(IO.blocking(new JdbcTransactionEngine(config, factory, sizing)))(engine => IO.blocking(engine.close())).flatMap { engine =>
-      for {
-        gate <- Admission.resource(config.limits.admission.copy(maxActive = sizing.request))
-        backgroundGate <- if (sizing.background == 0) Resource.pure[IO, Admission](gate)
-          else Admission.resource(config.limits.admission.copy(maxActive = sizing.background))
-      } yield new JdbcDatabase(engine, gate, backgroundGate)
+      val admissions = for {
+        gate <- Admission.create(config.limits.admission.copy(maxActive = sizing.request))
+        backgroundGate <- if (sizing.background == 0) IO.pure(gate) else Admission.create(config.limits.admission.copy(maxActive = sizing.background))
+      } yield (gate, backgroundGate)
+      Resource.make(admissions) { case (gate, backgroundGate) => gate.reject *> backgroundGate.reject *> gate.drain *> backgroundGate.drain }
+        .map { case (gate, backgroundGate) => new JdbcDatabase(engine, gate, backgroundGate) }
     }
 }

@@ -165,10 +165,14 @@ class McpSourceBoundaryTest extends munit.FunSuite {
       assertEquals(result.hcursor.downField("result").get[Boolean]("isError").toOption,Some(false))
     }
     val statements=f.probe.observations.collect { case SourceEvent.Statement(_,sql) => sql }
-    // Account every statement, including the fixed shared-runtime reset that starts each borrow of a pooled connection;
-    // ordinary domain reads still add no source-budget or SET LOCAL deadline work.
-    val byConnection=f.probe.observations.collect { case SourceEvent.Statement(id,sql) => (id,sql) }.groupBy(_._1)
-    byConnection.values.foreach(events => assertEquals(events.head._2,Fixtures.runtimeSetupSql))
+    // Account every statement, including the fixed shared-runtime reset: executed exactly once before each transaction on
+    // its connection, never inside one; ordinary domain reads still add no source-budget or SET LOCAL deadline work.
+    val boundaries=f.probe.observations.collect {
+      case SourceEvent.Executed(id,sql) if sql==Fixtures.runtimeSetupSql => (id,"reset")
+      case SourceEvent.Transaction(id,started) => (id,if(started) "begin" else "end")
+    }.groupBy(_._1).values.toList
+    assert(boundaries.nonEmpty)
+    boundaries.foreach(events => assert(events.map(_._2).grouped(3).forall(_==List("reset","begin","end")),events.toString))
     statements.foreach { sql =>
       if(sql==Fixtures.runtimeSetupSql) assert(sql.contains("FROM pg_settings"))
       else assert(!sql.contains(" AS source_bytes") && !sql.startsWith("DECLARE") && !sql.startsWith("FETCH") && !sql.contains("statement_timeout"))

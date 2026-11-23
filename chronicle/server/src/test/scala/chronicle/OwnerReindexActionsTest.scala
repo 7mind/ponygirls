@@ -172,7 +172,8 @@ final class OwnerReindexActionsTest extends munit.FunSuite {
           Proxy.newProxyInstance(classOf[PreparedStatement].getClassLoader,Array(classOf[PreparedStatement]),(_,operation,parameters) => {
             val values=if(parameters==null) Array.empty[Object] else parameters
             val result=try operation.invoke(statement,values*) catch { case e: InvocationTargetException => throw e.getCause }
-            if(Set("executeUpdate","executeLargeUpdate","executeQuery").contains(operation.getName)) after(sql,connection)
+            // The runtime's reset runs by `execute` (one execution of DISCARD ALL and the bounds).
+            if(Set("executeUpdate","executeLargeUpdate","executeQuery").contains(operation.getName) || (operation.getName=="execute" && sql==Fixtures.runtimeSetupSql)) after(sql,connection)
             result
           })
         } else try method.invoke(connection,arguments*) catch { case e: InvocationTargetException => throw e.getCause }
@@ -195,10 +196,14 @@ final class OwnerReindexActionsTest extends munit.FunSuite {
   test("Effectual GoodCommunication: preview authenticates and selects on one repeatable-read connection without mutation") { database { c =>
     c.archive.ingest("a",Fixtures.snapshot()); val before=ownerRows(c,"a"); val receipts=rows(c,"ch_mutations")
     var observedConnection: Option[Connection]=None; val authenticated=new AtomicBoolean(false); var setups=0
-    // The pool's reset (DISCARD ALL, which no transaction block admits) is prepared before the domain transaction.
-    observed(c,sql => if(sql==Fixtures.runtimeSetupSql) { setups+=1; assert(!authenticated.get()) },(sql,connection) => {
-      assert(sql.startsWith("SELECT"))
-      assertEquals(setups,1); assertEquals(connection.getTransactionIsolation,Connection.TRANSACTION_REPEATABLE_READ)
+    observed(c,_ => (),(sql,connection) => {
+      assert(sql.startsWith("SELECT") || sql==Fixtures.runtimeSetupSql)
+      if(sql==Fixtures.runtimeSetupSql) {
+        setups+=1; assert(connection.getAutoCommit,"bounded session setup must precede the domain transaction")
+        assert(!authenticated.get())
+      } else {
+        assertEquals(setups,1); assertEquals(connection.getTransactionIsolation,Connection.TRANSACTION_REPEATABLE_READ)
+      }
       observedConnection match { case None => observedConnection=Some(connection); case Some(first) => assert(first eq connection) }
       if(sql.startsWith("SELECT u.id,u.login FROM ch_sessions")) authenticated.set(true)
     },ConnectionFault.None) { auth =>

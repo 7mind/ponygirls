@@ -14,6 +14,10 @@ import java.time.Clock
 private[chronicle] enum SourceEvent {
   case Statement(connection: Int,sql: String)
   case Isolation(connection: Int,level: Int)
+  /** A prepared statement's `execute` (the runtime's reset, one execution of `DISCARD ALL; <bounds>`). */
+  case Executed(connection: Int,sql: String)
+  /** A transaction's start (auto-commit off) or end (commit or rollback) on the physical connection. */
+  case Transaction(connection: Int,started: Boolean)
   case Query(sql: String,columns: List[String])
   case Payload(sql: String,column: String)
   case Closed(sql: String,exhausted: Boolean)
@@ -41,12 +45,15 @@ private[chronicle] final class SourceProbe extends Driver {
           val result=call(connection,method,args)
           // A transaction's isolation, not the pool's reset of a returned connection (after auto-commit is back on).
           if(method.getName=="setTransactionIsolation" && !connection.getAutoCommit) events.add(SourceEvent.Isolation(connectionId,args(0).asInstanceOf[Integer].intValue))
+          if(method.getName=="setAutoCommit" && args(0)==java.lang.Boolean.FALSE) events.add(SourceEvent.Transaction(connectionId,true))
+          if(Set("commit","rollback")(method.getName) && (args==null || args.isEmpty)) events.add(SourceEvent.Transaction(connectionId,false))
           if(method.getName!="prepareStatement") result else {
             val sql=args(0).asInstanceOf[String]
             events.add(SourceEvent.Statement(connectionId,sql))
             Proxy.newProxyInstance(getClass.getClassLoader,Array(classOf[PreparedStatement]),new InvocationHandler {
               def invoke(proxy: AnyRef,method: Method,args: Array[AnyRef]): AnyRef = {
                 val result=call(resultStatement,method,args)
+                if(method.getName=="execute") events.add(SourceEvent.Executed(connectionId,sql))
                 if(method.getName!="executeQuery") result else {
                   val rows=result.asInstanceOf[ResultSet]; val metadata=rows.getMetaData
                   events.add(SourceEvent.Query(sql,(1 to metadata.getColumnCount).map(metadata.getColumnLabel).toList))

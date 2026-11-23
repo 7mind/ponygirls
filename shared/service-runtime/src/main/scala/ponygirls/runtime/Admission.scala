@@ -45,15 +45,19 @@ final class Admission private (
     }
   }
 
-  private[runtime] def close: IO[Unit] = state.modify { case (_, count) =>
-    ((true, count), count == 0)
-  }.flatMap(empty => if (empty) IO.unit else drained.get)
+  /** New work fails `runtime-closed`; admitted work continues. */
+  private[runtime] def reject: IO[Unit] = state.update { case (_, count) => (true, count) }
+  /** After [[reject]]: completes once no admitted work is left. */
+  private[runtime] def drain: IO[Unit] = state.get.flatMap { case (_, count) => if (count == 0) IO.unit else drained.get }
+  private[runtime] def close: IO[Unit] = reject *> drain
 }
 object Admission {
-  def resource(config: AdmissionConfig): Resource[IO, Admission] = Resource.make(for {
+  def resource(config: AdmissionConfig): Resource[IO, Admission] = Resource.make(create(config))(_.close)
+  /** An admission whose owner closes it ([[reject]], then [[drain]]). */
+  private[runtime] def create(config: AdmissionConfig): IO[Admission] = for {
     _ <- IO(config.validate())
     state <- Ref.of[IO, (Boolean, Int)]((false, 0))
     permits <- Semaphore[IO](config.maxActive.toLong)
     drained <- Deferred[IO, Unit]
-  } yield new Admission(config, state, permits, drained))(_.close)
+  } yield new Admission(config, state, permits, drained)
 }

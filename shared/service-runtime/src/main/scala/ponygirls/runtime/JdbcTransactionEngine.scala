@@ -31,7 +31,7 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
   Class.forName("org.postgresql.Driver")
   import JdbcTransactionEngine.*
   private val budget = acquisitionBudget(config.limits.connectTimeout)
-  private val pool = new HikariPool(poolConfig(new LoginSource(config, factory), sizing, Acquisition(budget)))
+  private val pool = newPool(poolConfig(new LoginSource(config, factory), sizing, Acquisition(budget)))
   def transaction[A](f: Connection => A): A = run(Bounds.Configured)(f)
   /** The configured bounds, except a transaction-local statement timeout of `timeout` (also above a stricter role
     * setting) with a network timeout of `timeout` plus the socket timeout. */
@@ -40,19 +40,25 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
     run(Bounds.Extended(timeout))(f)
   }
   /** Every wait within `bound`: the acquisition (its budget at most `bound`), each statement's lock wait and execution
-    * (transaction-local statement and lock timeouts, tightened to `bound`) and each network read. */
+    * (transaction-local statement and lock timeouts, tightened to `bound`) and each network read, the setup's included. */
   def boundedTransaction[A](bound: FiniteDuration)(f: Connection => A): A = {
     require(bound.toMillis >= 1 && bound <= 1.hour, "invalid JDBC bound")
     run(Bounds.Bounded(bound))(f)
   }
-  /** Closes every pooled connection; the facades drain their admissions first. */
-  def close(): Unit = try pool.shutdown() catch { case _: InterruptedException => Thread.currentThread().interrupt() }
+  /** Closes every pooled connection; the facades drain their admissions first. The shutdown completes whatever interrupts
+    * the caller: an interrupt is remembered and restored once the pool is closed. */
+  def close(): Unit = {
+    var interrupted = Thread.interrupted()
+    var closed = false
+    while (!closed) {
+      try { pool.shutdown(); closed = true }
+      catch { case _: InterruptedException => interrupted = true }
+    }
+    if (interrupted) Thread.currentThread().interrupt()
+  }
   private def run[A](bounds: Bounds)(f: Connection => A): A = {
       try {
-        val c = acquire(bounds match {
-          case Bounds.Bounded(bound) => budget.min(bound)
-          case _ => budget
-        })
+        val c = acquire(bounds)
         // Using may suppress close errors onto the primary error: wrap close first so
         // even that secondary failure cannot retain raw server diagnostics.
         val owner = new AutoCloseable {
@@ -81,19 +87,25 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
       }
   }
 
-  /** One deadline `now + budget` bounds the borrows, the pool's validation, the resets and their retries (at most one
-    * more than the pool's connections); a connection whose reset fails or is aborted is evicted, never handed out. */
-  private def acquire(budget: FiniteDuration): Connection = {
-    val timing = Acquisition(budget)
-    val deadline = System.nanoTime() + budget.toNanos
+  /** One deadline `now + budget` bounds the borrows, the resets and their retries (at most one more than the pool's
+    * connections). The pool does not validate on borrow (see [[newPool]]): a borrow waits at most until the deadline, so
+    * any budget of at least `minimumWait` is usable; the reset is the liveness check. A connection whose reset fails, is
+    * aborted or throws is evicted, never handed out. */
+  private def acquire(bounds: Bounds): Connection = {
+    val budgeted = bounds match {
+      case Bounds.Bounded(bound) => budget.min(bound)
+      case _ => budget
+    }
+    val timing = Acquisition(budgeted)
+    val deadline = System.nanoTime() + budgeted.toNanos
     @annotation.tailrec def attempt(tries: Int, last: Option[String]): Connection = {
       val remaining = deadline - System.nanoTime()
-      if (tries > sizing.connections || remaining <= timing.validation.toNanos || Thread.currentThread().isInterrupted) throw JdbcFailure(UnavailableCode, last)
-      val borrowed = try Right(pool.getConnection(math.max(1L, TimeUnit.NANOSECONDS.toMillis(remaining - timing.validation.toNanos))))
+      if (tries > sizing.connections || remaining < minimumWait.toNanos || Thread.currentThread().isInterrupted) throw JdbcFailure(UnavailableCode, last)
+      val borrowed = try Right(pool.getConnection(TimeUnit.NANOSECONDS.toMillis(remaining)))
         catch { case e: SQLException => Left(sqlState(e)) }
       borrowed match {
         case Left(state) => attempt(tries + 1, state.orElse(last))
-        case Right(c) => reset(c, deadline, timing) match {
+        case Right(c) => handOver(c, deadline, timing, bounds) match {
           case Reset.Ready => c
           case Reset.Failed(state) => attempt(tries + 1, state.orElse(last))
           case Reset.Late => throw JdbcFailure(UnavailableCode, last)
@@ -103,31 +115,48 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
     attempt(0, None)
   }
 
+  /** Owns a borrowed connection until the caller gets it: on every other exit (a failed, aborted or late reset, or any
+    * throwable, an interruption included) it goes back, evicted, or to the pool only when its reset succeeded too late. */
+  private def handOver(c: Connection, deadline: Long, timing: Acquisition, bounds: Bounds): Reset = {
+    var outcome: Option[Reset] = None
+    try {
+      outcome = Some(reset(c, deadline, timing, bounds))
+      outcome.get
+    } finally outcome match {
+      case Some(Reset.Ready) => ()
+      case Some(Reset.Late) => c.close()
+      case _ => pool.evictConnection(c)
+    }
+  }
+
   /** `DISCARD ALL` and the configured bounds in one execution, ended by the watchdog at min(deadline, now + reset cap)
-    * whatever it waits for; the watchdog owns the connection until the reset disarms it. */
-  private def reset(c: Connection, deadline: Long, timing: Acquisition): Reset = {
+    * whatever it waits for; the watchdog owns the connection until the reset disarms it. Then the transaction's own
+    * network timeout, before any of its statements. */
+  private def reset(c: Connection, deadline: Long, timing: Acquisition, bounds: Bounds): Reset = {
     val started = System.nanoTime()
     val until = math.min(deadline, started + timing.resetCap.toNanos)
     val watch = new Watch(c)
-    val cancel = watchdog.arm((until - started).nanos, () => watch.abort())
-    val failure = try {
-      c.setNetworkTimeout(direct, millisUntil(until))
-      configure(c)
-      if (!watch.disarm()) Some(None)
-      else {
-        c.setNetworkTimeout(direct, (wholeSeconds(config.limits.socketTimeout) * 1000L).toInt)
-        None
-      }
-    } catch {
-      case e: SQLException => Some(sqlState(e))
-      case scala.util.control.NonFatal(error) => pool.evictConnection(c); throw error
-    } finally cancel()
-    failure match {
-      case Some(state) => pool.evictConnection(c); Reset.Failed(state)
-      case None if System.nanoTime() - deadline > 0 => c.close(); Reset.Late
-      case None => Reset.Ready
-    }
+    try {
+      val cancel = watchdog.arm((until - started).nanos, () => watch.abort())
+      try {
+        c.setNetworkTimeout(direct, millisUntil(until))
+        configure(c)
+        if (!watch.disarm()) Reset.Failed(None)
+        else {
+          c.setNetworkTimeout(direct, networkTimeout(bounds))
+          if (System.nanoTime() - deadline > 0) Reset.Late else Reset.Ready
+        }
+      } finally cancel()
+    } catch { case e: SQLException => Reset.Failed(sqlState(e)) }
   }
+
+  /** The network timeout of a transaction's every read: the socket timeout (whole seconds, as the login's), the extended
+    * statement timeout plus it, or the bound. */
+  private def networkTimeout(bounds: Bounds): Int = (bounds match {
+    case Bounds.Configured => (wholeSeconds(config.limits.socketTimeout) * 1000L).millis
+    case Bounds.Extended(timeout) => timeout + config.limits.socketTimeout
+    case Bounds.Bounded(bound) => bound
+  }).toMillis.toInt
 
   private def sqlState(error: Throwable): Option[String] = error match {
     case e: SQLException => Option(e.getSQLState).filter(_.matches("[A-Z0-9]{5}"))
@@ -156,7 +185,7 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
     }
   }
 
-  /** Inside the transaction: its own statement (and lock) timeout and the network timeout after it. */
+  /** Inside the transaction, under its network timeout (set by the reset): its own statement (and lock) timeout. */
   private def limit(c: Connection, bounds: Bounds): Unit = bounds match {
     case Bounds.Configured => ()
     case Bounds.Extended(timeout) =>
@@ -164,13 +193,11 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
         p.setLong(1, timeout.toMillis)
         Using.resource(p.executeQuery()) { r => while (r.next()) () }
       }
-      c.setNetworkTimeout(JdbcTransactionEngine.direct, (timeout + config.limits.socketTimeout).toMillis.toInt)
     case Bounds.Bounded(bound) =>
       Using.resource(c.prepareStatement("SELECT set_config(name,least(coalesce(nullif(setting::bigint,0),?),?)::text,true) FROM pg_settings WHERE name IN('statement_timeout','lock_timeout')")) { p =>
         p.setLong(1, bound.toMillis); p.setLong(2, bound.toMillis)
         Using.resource(p.executeQuery()) { r => while (r.next()) () }
       }
-      c.setNetworkTimeout(JdbcTransactionEngine.direct, bound.toMillis.toInt)
   }
 }
 private[runtime] object JdbcTransactionEngine {
@@ -184,6 +211,19 @@ private[runtime] object JdbcTransactionEngine {
   val idleTimeout: FiniteDuration = 10.minutes
   /** The validation and reset waits are never shorter (the pool's own floor). */
   private val WaitFloor = 250.millis
+  /** A borrow starts only with this much of the acquisition budget left (the pool waits in whole milliseconds). */
+  val minimumWait: FiniteDuration = 1.milli
+  /** Hikari validates a connection idle for 500 ms before handing it out, up to its validation timeout, outside any
+    * caller's deadline; with this window it never does (it reads the window once, when a pool is built). Idle connections
+    * are still validated in the background by the keepalive. */
+  private val AliveBypassWindow = "com.zaxxer.hikari.aliveBypassWindowMs"
+  private object PoolConstruction
+  private def newPool(config: HikariConfig): HikariPool = PoolConstruction.synchronized {
+    val previous = Option(System.getProperty(AliveBypassWindow))
+    System.setProperty(AliveBypassWindow, Long.MaxValue.toString)
+    try new HikariPool(config)
+    finally previous.fold(System.clearProperty(AliveBypassWindow))(System.setProperty(AliveBypassWindow, _))
+  }
   private val ValidationCeiling = 1.second
   /** The per-borrow reset (restart-robustness spec §5): every session state back to the login's, then the configured
     * bounds, tighten-only. One execution with bound parameters; pgjdbc re-prepares its statements after `DISCARD ALL`. */
@@ -195,7 +235,8 @@ private[runtime] object JdbcTransactionEngine {
   def seconds(d: FiniteDuration): String = wholeSeconds(d).toString
   /** The acquisition budget A: the connect timeout in whole seconds, as the driver's login timeout always was. */
   def acquisitionBudget(connectTimeout: FiniteDuration): FiniteDuration = wholeSeconds(connectTimeout).seconds
-  /** The pool's validation of a borrowed idle connection (V) and the reset's cap, from the acquisition budget. */
+  /** The pool's background validation of an idle connection (V, keepalive) and the reset's cap, from the acquisition
+    * budget. */
   final case class Acquisition(budget: FiniteDuration) {
     val validation: FiniteDuration = (budget / 4).min(ValidationCeiling).max(WaitFloor)
     val resetCap: FiniteDuration = (budget / 4).max(WaitFloor)
