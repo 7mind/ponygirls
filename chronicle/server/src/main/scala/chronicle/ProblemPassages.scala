@@ -8,6 +8,9 @@ import java.util.UUID
 
 trait ProblemPassageAnnotator {
   def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision]
+  /** Whether the request for the window's fragments from `covered` on, with `previous`, is within the request bounds
+    * (ANNOT2): an answer stopped at `covered` is kept only then. */
+  def tailRequestFits(window: ProblemPassages.Window,covered: Int,previous: Option[ProblemPassages.Carry]): Boolean
 }
 
 object ProblemPassages {
@@ -49,8 +52,9 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
   final case class SourceCursor private[ProblemPassages](messagePosition: Int,utf16Offset: Int,byteOffset: Int)
   object SourceCursor { val start: SourceCursor = SourceCursor(0,0,0) }
 
-  final class Fragment private[ProblemPassages](val messageId: String,val messagePosition: Int,val role: String,val byteStart: Int,val text: String,
+  final class Fragment private[ProblemPassages](val messageId: String,val messagePosition: Int,val role: String,val byteStart: Int,private val utf16Start: Int,val text: String,
     private val charOffsets: Vector[Int],private val byteOffsets: Vector[Int],val lineStarts: Vector[Int]) {
+    private[ProblemPassages] def start: SourceCursor = SourceCursor(messagePosition,utf16Start,byteStart)
     val scalarCount: Int = charOffsets.size-1
     val byteEnd: Int = byteStart+byteOffsets.last
     private[ProblemPassages] def slice(first: Int,last: Int): SourceExcerpt =
@@ -133,7 +137,7 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
             chars+=end-charStart; offsets+=size
             if(cp=='\n') lines+=count
           }
-          val fragment=new Fragment(message.id,position,message.role,byteStart,message.text.substring(charStart,end),chars.result(),offsets.result(),lines.result())
+          val fragment=new Fragment(message.id,position,message.role,byteStart,charStart,message.text.substring(charStart,end),chars.result(),offsets.result(),lines.result())
           val encoded=fragment.json(fragments.size).noSpaces
           val separator=if(fragments.isEmpty) 0 else 1
           val nextSourceBytes=sourceBytes+separator+bytes(encoded)
@@ -183,9 +187,17 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
   def accept(state: State,window: Window,decision: Decision): Delta = {
     Check(!state.finished && state.nextSource==window.start,"invalid","out-of-order passage window")
     validate(window,state.open.nonEmpty,decision)
+    val parts=applied(state,window,decision.parts)
+    val updates=parts.passages.groupBy(_.passage.id).values.map(_.last).toVector.sortBy(_.passage.ordinal)
+    Delta(state.copy(nextSource=window.next,nextPassageOrdinal=parts.nextPassage,nextPieceOrdinal=parts.nextPiece,open=parts.open),updates,parts.spans,parts.pieces,parts.context)
+  }
+  /** The open passage's carry after a window's kept parts (ANNOT2): the `previous` of the request for the rest of it. */
+  def carryAfter(state: State,window: Window,kept: Vector[Part]): Option[Carry] = applied(state,window,kept).open.map(_.carry)
+  private final case class Applied(open: Option[Open],nextPassage: Int,nextPiece: Long,passages: Vector[PassageUpdate],spans: Vector[SpanUpdate],pieces: Vector[RetrievalPiece],context: Vector[SourceSpan])
+  private def applied(state: State,window: Window,parts: Vector[Part]): Applied = {
     val passages=Vector.newBuilder[PassageUpdate]; val spans=Vector.newBuilder[SpanUpdate]; val pieces=Vector.newBuilder[RetrievalPiece]; val context=Vector.newBuilder[SourceSpan]
     var nextPassage=state.nextPassageOrdinal; var nextPiece=state.nextPieceOrdinal; var open=state.open
-    decision.parts.foreach { part =>
+    parts.foreach { part =>
       val source=window.slices(part)
       if(part.kind==Kind.Context) context++=source.map(_.span)
       else {
@@ -214,8 +226,7 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
       open=Some(Open(passage,updatedRanges.last,tail))
       }
     }
-    val updates=passages.result().groupBy(_.passage.id).values.map(_.last).toVector.sortBy(_.passage.ordinal)
-    Delta(state.copy(nextSource=window.next,nextPassageOrdinal=nextPassage,nextPieceOrdinal=nextPiece,open=open),updates,spans.result(),pieces.result(),context.result())
+    Applied(open,nextPassage,nextPiece,passages.result(),spans.result(),pieces.result(),context.result())
   }
 
   /** A state before a window, stored in a lineage's cut (ingest-limits spec §5.6.2): where the window starts, the next
@@ -267,6 +278,12 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
   }
 
   def validate(window: Window,hasPrevious: Boolean,decision: Decision): Unit = {
+    val stop=coverage(window,hasPrevious,decision)
+    if(stop!=window.terminal) throw incomplete(window,stop)
+  }
+  /** Where a decision's parts, valid by every other rule, stop (ANNOT2): the terminal, or a fragment boundary (k,0) an
+    * answer may be kept up to; any other stop is `annotation-partition-incomplete`. */
+  def coverage(window: Window,hasPrevious: Boolean,decision: Decision): Point = {
     import ModelRejectionReason as Reason
     import ModelRejectionLocation as Location
     import ModelRejectionDetail as Detail
@@ -290,8 +307,70 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
       }
       next=part.end
     }
-    if(next!=window.terminal) throw ModelRejection.at(Reason.PartitionIncomplete,Location.Coverage,
-      Detail.Coordinate(next.fragmentIndex,next.scalarOffset),Detail.ExpectedCoordinate(window.terminal.fragmentIndex,window.terminal.scalarOffset),Detail.Window(window.fragments.size,window.scalarCount))
+    if(next.scalarOffset!=0) throw incomplete(window,next)
+    next
+  }
+  private def incomplete(window: Window,stop: Point): ModelRejection =
+    ModelRejection.at(ModelRejectionReason.PartitionIncomplete,ModelRejectionLocation.Coverage,ModelRejectionDetail.Coordinate(stop.fragmentIndex,stop.scalarOffset),
+      ModelRejectionDetail.ExpectedCoordinate(window.terminal.fragmentIndex,window.terminal.scalarOffset),ModelRejectionDetail.Window(window.fragments.size,window.scalarCount))
+  /** The window's fragments from `covered` on, re-indexed from 0 (ANNOT2): the request for the rest of a window whose
+    * parts before `covered` are kept. */
+  def tail(window: Window,covered: Int): Window = {
+    Check(covered>=1 && covered<window.fragments.size,"internal","invalid window tail")
+    new Window(window.fragments(covered).start,window.next,window.fragments.drop(covered))
+  }
+  /** The kept parts followed by an answer for the rest of the window from `covered` on, shifted to window coordinates
+    * (ANNOT2); with nothing kept, the answer itself. */
+  def merge(covered: Int,kept: Vector[Part],answer: Decision): Decision =
+    if(covered==0 && kept.isEmpty) answer
+    else {
+      def shifted(point: Point): Point = point.copy(fragmentIndex=point.fragmentIndex+covered)
+      Decision(kept++answer.parts.map(part => part.copy(start=shifted(part.start),end=shifted(part.end))))
+    }
+  /** Why a stored partial is not resumed (ANNOT2): the first of the checks V1-V10 it fails, in order. */
+  enum PartialDiscard(val code: String) {
+    case Format extends PartialDiscard("format")
+    case Profile extends PartialDiscard("profile")
+    case ContentHash extends PartialDiscard("content-hash")
+    case KeptHash extends PartialDiscard("kept-hash")
+    case WindowShape extends PartialDiscard("window-shape")
+    case Range extends PartialDiscard("range")
+    case KeptDecode extends PartialDiscard("kept-decode")
+    case Boundary extends PartialDiscard("boundary")
+    case Carry extends PartialDiscard("carry")
+    case Provenance extends PartialDiscard("provenance")
+  }
+  /** A stored partial of `window` (before which the passages are `state`) validated for resuming (ANNOT2): total, every
+    * non-fatal throwable of a check is that check's failure. `fits` is the request bound of the rest of the window. */
+  def resumable(state: State,window: Window,profile: String,key: CheckpointKey,found: PartialLoad.Found,fits: (Window,Int,Option[Carry]) => Boolean): Either[PartialDiscard,AnnotationPartial] = {
+    val row=found.partial
+    def check(reason: PartialDiscard)(holds: => Boolean): Either[PartialDiscard,Unit] =
+      Either.cond(try holds catch { case scala.util.control.NonFatal(_) => false },(),reason)
+    def prefix(kept: Decision,stop: Int): Decision = Decision(kept.parts.takeWhile(part => part.end.fragmentIndex<stop || part.end==Point(stop,0)))
+    for {
+      _ <- check(PartialDiscard.Format)(row.format==AnnotationPartials.format)
+      _ <- check(PartialDiscard.Profile)(row.profile==profile)
+      _ <- check(PartialDiscard.ContentHash)(key.contentHash.contains(row.contentHash))
+      _ <- check(PartialDiscard.KeptHash)(row.keptHash==IndexCheckpoints.hash(row.kept))
+      _ <- check(PartialDiscard.WindowShape)(row.windowFragments==window.fragments.size)
+      _ <- check(PartialDiscard.Range)(row.coveredFragments>=1 && row.coveredFragments<row.windowFragments && row.continuations>=1 && row.continuations<=AnnotationAttempts.continuationLimit)
+      kept <- try Right(fields(row.kept)) catch { case scala.util.control.NonFatal(_) => Left(PartialDiscard.KeptDecode) }
+      _ <- check(PartialDiscard.Boundary)(coverage(window,state.carry.nonEmpty,kept)==Point(row.coveredFragments,0))
+      _ <- check(PartialDiscard.Carry) {
+        val carry=carryAfter(state,window,kept.parts)
+        carry.foreach(carryJson)
+        fits(window,row.coveredFragments,carry)
+      }
+      _ <- check(PartialDiscard.Provenance) {
+        val chain=found.ledger.filter(entry => entry.chain.contains(row.chain) && entry.reason.contains(AnnotationAttempts.continuedReason))
+        val earlier=found.ledger.count(entry => entry.reason.nonEmpty && entry.attempt<row.attempt)
+        row.inputHash==key.inputHash && row.attempt<=found.ledger.size && found.activeChain.contains(row.chain) &&
+          chain.size==row.continuations && chain.lastOption.exists(_.attempt==row.attempt) && earlier<AnnotationAttempts.continuationLimit &&
+          row.stops.size==row.continuations && row.stops.headOption.exists(_>=1) && row.stops.zip(row.stops.drop(1)).forall((a,b) => a<b) &&
+          row.stops.lastOption.contains(row.coveredFragments) && row.stops.forall(stop => kept.parts.exists(_.end==Point(stop,0))) &&
+          chain.zip(row.stops).forall((entry,stop) => entry.keptHash.contains(IndexCheckpoints.hash(CheckpointJson.decision(prefix(kept,stop)))))
+      }
+    } yield AnnotationPartial(kept,row.windowFragments,row.coveredFragments,row.continuations,row.stops,row.chain)
   }
 
   /** A stored decision (a checkpoint): canonical points only. */
@@ -299,9 +378,10 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
     val decision=fields(json); validate(window,hasPrevious,decision); decision
   }
   /** A provider's answer: a point written at a fragment's scalar count is read as the next fragment's offset 0 (the
-    * terminal after the last fragment), so the decision it returns is canonical. */
-  def ingress(window: Window,hasPrevious: Boolean,json: Json): Decision = {
-    val decision=canonical(window,fields(json)); validate(window,hasPrevious,decision); decision
+    * terminal after the last fragment), so the decision it returns is canonical. It covers the window to its terminal or
+    * to a fragment boundary (ANNOT2: kept up to there). */
+  def ingressCovered(window: Window,hasPrevious: Boolean,json: Json): Decision = {
+    val decision=canonical(window,fields(json)); coverage(window,hasPrevious,decision); decision
   }
   private def canonical(window: Window,decision: Decision): Decision = {
     def point(value: Point): Point =

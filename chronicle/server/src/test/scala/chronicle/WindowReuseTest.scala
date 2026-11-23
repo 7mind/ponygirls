@@ -44,7 +44,7 @@ final class WindowReuseTest extends munit.FunSuite {
     }.getOrElse(fail("no filler length ends a window"))
   /** A window that starts with a filler message is Context; any other is a new problem named by the label and its first
     * message. Counts its calls. */
-  private final class Annotator(@volatile var label: String) extends ProblemPassageAnnotator {
+  private final class Annotator(@volatile var label: String) extends ScriptedAnnotator {
     val calls=new AtomicInteger(0)
     def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[Decision] = IO {
       calls.incrementAndGet()

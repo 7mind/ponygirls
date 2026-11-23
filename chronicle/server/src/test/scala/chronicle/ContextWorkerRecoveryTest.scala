@@ -47,8 +47,12 @@ class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
   def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit=delegate.checkpoint(c,key,value)
   def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork]=delegate.windowWork(c,key)
   def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int=delegate.discardCheckpoints(c,stage,window)
-  def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation=delegate.reserveAnnotation(c,key)
-  def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int=delegate.rejectAnnotation(c,key,attempt,reason)
+  def reserveAnnotation(c: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation=delegate.reserveAnnotation(c,key,prefix)
+  def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String,prefix: Boolean): Int=delegate.rejectAnnotation(c,key,attempt,reason,prefix)
+  def loadPartial(c: Claim,key: CheckpointKey): PartialLoad=delegate.loadPartial(c,key)
+  def discardPartial(c: Claim,key: CheckpointKey): Unit=delegate.discardPartial(c,key)
+  def continueAnnotation(c: Claim,key: CheckpointKey,attempt: Int,partial: AnnotationPartial): Int=delegate.continueAnnotation(c,key,attempt,partial)
+  def acceptAnnotation(c: Claim,key: CheckpointKey,attempt: Int,continuations: Int,value: Json): Unit=delegate.acceptAnnotation(c,key,attempt,continuations,value)
   def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome=delegate.holdTransient(c,stage,deadline)
 }
 abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
@@ -74,7 +78,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
       override def fail(c: Claim,code: String,stage: IndexingStage): Unit = { super.fail(c,code,stage); recordedAt=System.nanoTime() }
     }
     val receipt=recording.ingest("a",request(List("user"->"synthetic task")))
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.raiseError(DomainError("model-timeout","model deadline exceeded"))
     }
     val embedding=new Embedder {
@@ -91,7 +95,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
       val archive=f.archive()
       val values=(0 until 160).map(i => "user"->s"${if(i<64) 'a' else if(i<128) 'b' else 'c'}$i").toList
       val receipt=archive.ingest("a",request(values)); val annotations=ListBuffer.empty[Char]; val embedded=ListBuffer.empty[String]; var failed=false
-      val model=new ProblemPassageAnnotator {
+      val model=new ScriptedAnnotator {
         def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
           val label=window.fragments.head.text.head; annotations+=label
           if(failureStage==IndexingStage.Annotation && label=='b' && !failed) { failed=true; throw DomainError("model-timeout","model deadline exceeded") }
@@ -128,7 +132,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
         override def publishProblems(c: Claim,p: ProblemRows): Boolean = { published+=ProblemsPublication.collect(p); super.publishProblems(c,p) }
       }
       var annotations=0; var failed=false; val batches=ListBuffer.empty[List[String]]
-      val model=new ProblemPassageAnnotator {
+      val model=new ScriptedAnnotator {
         def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO { annotations+=1; one(window,previous) }
       }
       val embedding=new Embedder {
@@ -162,7 +166,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
     val config=f.config.copy(indexing=f.config.indexing.copy(annotationSessions=1)); val log=new WorkerLog
     val receipt=f.archive().ingest("a",request(List("user"->"synthetic task")))
     @volatile var claims=0
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO(one(window,previous))
     }
     val embedding=new Embedder {
@@ -196,7 +200,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
     val failing=f.archive().ingest("a",request(List("user"->"synthetic failing task")))
     val healthy=f.archive().ingest("b",request(List("user"->"synthetic task")))
     @volatile var records=0
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] =
         if(owner=="a") IO.raiseError(DomainError("model-timeout","model deadline exceeded")) else IO(one(window,previous))
     }
@@ -226,7 +230,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   test("BG/GoodCommunication regression: a model-telemetry invariant still ends the worker run instead of being contained") { withFixture { f =>
     val config=f.config.copy(indexing=f.config.indexing.copy(annotationSessions=1))
     val receipt=f.archive().ingest("a",request(List("user"->"synthetic task")))
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.raiseError(DomainError("model-telemetry-invariant","synthetic telemetry invariant"))
     }
     val embedding=new Embedder {
@@ -243,7 +247,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
     val archive=new ForwardingArchive(f.archive()) {
       override def fail(c: Claim,code: String,stage: IndexingStage): Unit = throw DomainError("internal","synthetic invariant while recording")
     }
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.raiseError(DomainError("model-timeout","model deadline exceeded"))
     }
     val embedding=new Embedder {
@@ -256,7 +260,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   test("BG/GoodCommunication: partial embedding batches commit individually and only the failed batch is recomputed") { withFixture { f =>
     val archive=f.archive(); val receipt=archive.ingest("a",request((0 until 40).map(i => "assistant"->s"source-$i").toList))
     var annotations=0; var failed=false; val embedded=ListBuffer.empty[String]
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO { annotations+=1; one(window,previous) }
     }
     val failedText=s"source-${f.config.indexing.embeddingBatchSize}"
@@ -277,11 +281,11 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
     val archive=f.archive(); val windows=7
     val receipt=archive.ingest("a",request((0 until windows*ProblemPassages.maximumWindowFragments).map(i => "user"->s"synthetic source $i").toList))
     val calls=scala.collection.mutable.Map.empty[Int,Int]
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
         val ordinal=window.fragments.head.messagePosition/ProblemPassages.maximumWindowFragments
         val count=calls.getOrElse(ordinal,0)+1; calls(ordinal)=count
-        if(count==1) ProblemPassages.Decision(Vector(ProblemPassages.Part.context(ProblemPassages.Point(0,0),ProblemPassages.Point(1,0))))
+        if(count==1) ProblemPassages.Decision(Vector(ProblemPassages.Part.context(ProblemPassages.Point(0,0),ProblemPassages.Point(0,1))))
         else one(window,previous)
       }
     }
@@ -299,7 +303,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   }}
   test("BG/GoodCommunication regression: annotation attempts are bounded across fresh workers, not multiplied by job claims") { withFixture { f =>
     val archive=f.archive(); val receipt=archive.ingest("a",request(List("user"->"synthetic task"))); var calls=0
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO { calls+=1; throw DomainError("model-output/truncated","synthetic truncation") }
     }
     val embedding=new Embedder {
@@ -316,7 +320,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   }}
   test("BG/GoodCommunication regression: supersession during invalid output prevents another authorization or provider call") { withFixture { f =>
     val archive=f.archive(); val original=request(List("user"->"synthetic task")); val receipt=archive.ingest("a",original); var calls=0
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
         calls+=1; f.rebuild("a")
         ProblemPassages.Decision(Vector(ProblemPassages.Part.context(ProblemPassages.Point(0,0),ProblemPassages.Point(0,1))))
@@ -338,7 +342,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
     val corrupt=ProblemPassages.Decision(Vector(ProblemPassages.Part.context(ProblemPassages.Point(0,0),ProblemPassages.Point(0,1))))
     archive.checkpoint(claim,key,CheckpointJson.decision(corrupt)); archive.fail(claim,"model-timeout",IndexingStage.Annotation)
     var calls=0
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO { calls+=1; one(window,previous) }
     }
     val embedding=new Embedder {
@@ -353,18 +357,18 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
     test(s"BG/GoodCommunication regression: an unknown ${if(reservationFailure) "reservation" else "rejection"} commit outcome releases the claim instead of locally replaying") { withFixture { f =>
       val archive=f.archive(); val receipt=archive.ingest("a",request(List("user"->"synthetic task"))); var interrupted=false; var calls=0
       val uncertain=new ForwardingArchive(archive) {
-        override def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = {
-          val result=super.reserveAnnotation(c,key)
+        override def reserveAnnotation(c: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = {
+          val result=super.reserveAnnotation(c,key,prefix)
           if(reservationFailure && !interrupted) { interrupted=true; throw new java.sql.SQLException("synthetic unknown commit outcome") }
           result
         }
-        override def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = {
-          val result=super.rejectAnnotation(c,key,attempt,reason)
+        override def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String,prefix: Boolean): Int = {
+          val result=super.rejectAnnotation(c,key,attempt,reason,prefix)
           if(!reservationFailure && !interrupted) { interrupted=true; throw new java.sql.SQLException("synthetic unknown commit outcome") }
           result
         }
       }
-      val model=new ProblemPassageAnnotator {
+      val model=new ScriptedAnnotator {
         def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
           calls+=1
           if(!reservationFailure && calls==1) ProblemPassages.Decision(Vector(ProblemPassages.Part.context(ProblemPassages.Point(0,0),ProblemPassages.Point(0,1))))
@@ -387,7 +391,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   test("BG/GoodCommunication specified: Historian role and normalized summary reach the unchanged annotation and embedding pipeline") { withFixture { f =>
     val archive=f.archive(); val original=HistorianFixtures.snapshot(); val receipt=archive.ingest("a",original)
     var annotations=0; val embedded=ListBuffer.empty[String]
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
         annotations+=1; assertEquals(window.fragments.map(_.role).distinct,Vector("historian"))
         assertEquals(window.fragments.map(_.text).mkString,original.messages.head.text)
@@ -405,7 +409,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   test("BG/GoodCommunication: long bootstrap and context-only source publish truthfully without any embedding call") { withFixture { f =>
     val archive=f.archive(); val receipt=archive.ingest("a",request(List.fill(130)("system"->"synthetic runtime context")))
     var annotations=0
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
         annotations+=1; assertEquals(previous,None)
         ProblemPassages.Decision(Vector(ProblemPassages.Part.context(ProblemPassages.Point(0,0),window.terminal)))
@@ -420,7 +424,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   }}
   test("BG/GoodCommunication: five exact truncations remain local attempts and the persisted failure stage is annotation") { withFixture { f =>
     val archive=f.archive(); val receipt=archive.ingest("a",request(List("developer"->"genuine task"))); var calls=0
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO { calls+=1; throw DomainError("model-output/truncated","synthetic truncation") }
     }
     val embedding=new Embedder {
@@ -464,7 +468,7 @@ final class DummyContextWorkerRecoveryTest extends ContextWorkerRecoveryContract
           result
         }
       }
-      model=new ProblemPassageAnnotator {
+      model=new ScriptedAnnotator {
         def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] =
           (if(previous.isEmpty) blocked.complete(()) *> release.get else IO.unit).as(one(window,previous))
       }
@@ -499,7 +503,7 @@ final class PostgresContextWorkerRecoveryTest extends ContextWorkerRecoveryContr
   }
   test("BG/GoodCommunication regression: a corrupt accepted embedding part stays an internal fault that ends the worker run and is never discarded with its window") { CurrentIndexDatabase.withDatabase { (config,db,archive) =>
     val texts=(0 until 40).map(i => s"source-$i").toList; var failed=false; var calls=0
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO(one(window,previous))
     }
     val embedding=new Embedder {

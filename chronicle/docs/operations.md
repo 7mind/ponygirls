@@ -298,6 +298,39 @@ rebuild reset it. Every other failure is charged as before.
   columns. Issued tokens with OperateJobs act with their typed scopes and regain OperateJobs if OPS returns; revoke them
   first if that is unwanted. For an older rollback, 030 needs nothing: run `down-029`, then `down-028`.
 
+## Resumable annotation continuations (migration 031)
+
+An annotation answer that stops at a fragment boundary of its window (instead of covering the window) keeps its parts:
+the next request asks only for the rest of the window, from that fragment on, with the carry after the kept parts, and
+the window is stored as one complete decision as before (Replay and publication are unchanged). A kept answer counts
+among the window's five non-final answers (reason `annotation-partition-continued`); the fifth non-final answer ends the
+window `annotation-attempts-exhausted` even when it stops at a boundary, and an answer whose rest would exceed the request
+bounds is rejected `annotation-continuation-unrequestable`. The ten authorizations per window and retry epoch are
+unchanged, across claims and restarts. The kept parts are committed (with their authorization) before the rest is asked,
+so a re-claim, crash, transient hold or deploy resumes the window with only its rest; the next claim validates the stored
+parts against the window's own authorization rows and its active chain, and discards anything that does not match (then
+the whole window is asked). A window whose authorization rows were reserved for another input (its source or carry changed
+under the run) fails the job `annotation-input-changed` (retry starts a new epoch) instead of stopping the server.
+
+- **Migration 031** (applied by the start) adds `ch_annotation_attempts.accepted_continuations`, `.continued_kept_hash`
+  and `.chain_id`, and the tables `ch_annotation_partials` (the kept parts of unfinished windows: at most one row per job,
+  run, retry epoch and window; deleted when the window is accepted, discarded, by RetryJob or with the job) and
+  `ch_annotation_active_chains` (DDL only, no rewrite).
+- **Logs** (ids and numbers only): `annotation answer continued jobId=… fence=… windowOrdinal=… totalWindows=… attempt=…
+  coveredFragments=… windowFragments=…`; `annotation partial resumed … coveredFragments=… windowFragments=…
+  continuations=…`; `annotation partial discarded … reason=<format|profile|content-hash|kept-hash|window-shape|range|
+  kept-decode|boundary|carry|provenance>` (warn; product-written rows pass every check, so a discard from production data
+  is a defect to report); `windows accepted … continuedWindows=… resumedWindows=…`.
+- **Counts** (read-only, per job set, in each job's current run and retry epoch): `psql -X -q -v ON_ERROR_STOP=1 -v
+  jobs=<uuid>[,<uuid>...] -f chronicle/scripts/annotation-counts.sql` prints windows accepted in one answer and after kept
+  answers, kept, abandoned and rejected answers (per reason), authorizations without an answer, open and stale partials,
+  reused and legacy windows, and R = rejected / answers.
+- **Rollback.** The previous release starts on a database migrated to 031: it neither reads nor writes the new columns
+  and tables, annotates an unfinished window in full and counts kept answers among its five non-final answers (a window
+  with many of them has fewer re-asks left). To drop them, stop the server and run
+  `chronicle/scripts/down-031-annotation-partials.sql` (read-only preflight, then `mode=apply` with the confirmation it
+  names). Before an older rollback run it first; then 030 needs nothing: `down-029`, then `down-028`.
+
 ## Models
 
 An annotation model must honor the structured JSON contract in the server README. Source text is untrusted input, never instructions to execute tools. The model chooses semantic chunk boundaries over bounded, numbered source fragments; the server verifies complete, non-overlapping coverage and constructs the original spans itself.

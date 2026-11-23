@@ -40,7 +40,7 @@ object ProblemPassageHttp {
       Shape(ModelValueShape.of(message.downField("content").focus))),identity)
     if(content.isEmpty) throw ModelRejection.at(ContentEmpty,Location.Content,TextUnits(0))
     val decoded=io.circe.parser.parse(content).fold(_ => throw ModelRejection.at(ModelJsonInvalid,Location.Content),identity)
-    ProblemPassages.ingress(window,hasPrevious,decoded)
+    ProblemPassages.ingressCovered(window,hasPrevious,decoded)
   }
 }
 
@@ -50,4 +50,7 @@ final class OpenAIProblemPassageAnnotator(http: ModelHttp,config: Config) extend
     val request=ProblemPassageHttp.request(cfg,window,previous)
     http.postDecoded(ModelCallContext(owner,ModelWorkload.IndexAnnotation),cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,request)(ProblemPassageHttp.response(window,previous.nonEmpty,_))
   }
+  override def tailRequestFits(window: ProblemPassages.Window,covered: Int,previous: Option[ProblemPassages.Carry]): Boolean =
+    try { ProblemPassageHttp.request(config.annotation,ProblemPassages.tail(window,covered),previous); true }
+    catch { case _: DomainError => false }
 }

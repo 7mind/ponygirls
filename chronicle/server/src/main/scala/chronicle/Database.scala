@@ -88,6 +88,7 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     migrate(c,"028_generation_lineage.sql")
     migrate(c,"029_transient_failures.sql")
     migrate(c,"030_operate_jobs.sql")
+    migrate(c,"031_annotation_provenance.sql")
     val dimensions=SearchPolicy.dimensions(config)
     Sql.exec(c,s"CREATE INDEX IF NOT EXISTS ch_search_hnsw_d$dimensions ON ch_search_chunks USING hnsw ((l2_normalize(embedding)::halfvec($dimensions)) halfvec_cosine_ops) WHERE vector_dims(embedding)=$dimensions")
     profiles.register(c)
@@ -261,6 +262,8 @@ object Jobs {
     Check(revision==head,"conflict","job superseded by a newer archive revision")
     Check(profile==target,"conflict","job superseded by the target model profile")
     Sql.exec(c,"UPDATE ch_jobs SET state='Queued',attempts=0,lease_until=NULL,transient_failures=0,transient_range=NULL,fence=fence+1,annotation_retry_epoch=annotation_retry_epoch+1,run_id=CASE WHEN state='Complete' THEN gen_random_uuid() ELSE run_id END,error=CASE WHEN state='Complete' THEN NULL ELSE error END,failure_stage=CASE WHEN state='Complete' THEN NULL ELSE failure_stage END,completed_windows=0,total_windows=NULL WHERE id=?",id)
+    // The new epoch starts every window afresh (ANNOT2): no partial of an earlier epoch is kept.
+    Sql.exec(c,"DELETE FROM ch_annotation_partials WHERE job_id=?",id)
   }
   /** The jobs of a source whose head just switched to revision `next`: older unfinished jobs end superseded (a leased
     * Running one keeps its claim; Complete and Failed ones are not written) and the new head's job is queued; returns its id. */
@@ -512,17 +515,70 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     Check(current(c,claim) && lockJob(c,claim) && Sql.one(c,s"SELECT 1 FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true) &&
       revisionMatches(c,claim),"stale-claim","indexing claim is no longer current")
   }
-  def reserveAnnotation(claim: Claim,key: CheckpointKey): AnnotationReservation = db.transaction { c =>
+  /** While a window has committed kept parts (ANNOT2), its writes also need the claim's revision to be the head: a claim of
+    * an older revision, which keeps its other writes while leased, never loads, extends or accepts a prefix. */
+  private def prefixAuthority(c: Connection,claim: Claim): Unit = {
     checkpointAuthority(c,claim)
+    Check(head(c,claim).contains(claim.revision),"stale-claim","indexing claim is no longer current")
+  }
+  private def annotationAuthority(c: Connection,claim: Claim,prefix: Boolean): Unit = if(prefix) prefixAuthority(c,claim) else checkpointAuthority(c,claim)
+  def reserveAnnotation(claim: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = db.transaction { c =>
+    annotationAuthority(c,claim,prefix)
     val attempt=AnnotationAttempts.reserve(c,claim,key)
-    checkpointAuthority(c,claim)
+    attempt match {
+      case AnnotationReservation.Reserved(_) if !prefix => AnnotationPartials.clear(c,claim,AnnotationAttempts.epoch(c,claim),key.window)
+      case _ => ()
+    }
+    annotationAuthority(c,claim,prefix)
     attempt
   }
-  def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = db.transaction { c =>
-    checkpointAuthority(c,claim)
+  def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String,prefix: Boolean): Int = db.transaction { c =>
+    annotationAuthority(c,claim,prefix)
     val rejected=AnnotationAttempts.reject(c,claim,key,attempt,reason)
-    checkpointAuthority(c,claim)
+    annotationAuthority(c,claim,prefix)
     rejected
+  }
+  def loadPartial(claim: Claim,key: CheckpointKey): PartialLoad = db.transaction { c =>
+    checkpointAuthority(c,claim)
+    val (epoch,ledger)=AnnotationAttempts.ledger(c,claim,key)
+    val load=AnnotationAttempts.exhaustion(ledger) match {
+      case Some((reason,attempts)) => PartialLoad.Exhausted(reason,attempts)
+      case None => AnnotationPartials.read(c,claim,epoch,key.window) match {
+        case None => PartialLoad.Missing(ledger.count(_.reason.nonEmpty))
+        case Some(partial) =>
+          prefixAuthority(c,claim)
+          PartialLoad.Found(partial,ledger,AnnotationPartials.activeChain(c,claim,epoch,key.window))
+      }
+    }
+    checkpointAuthority(c,claim)
+    load
+  }
+  def discardPartial(claim: Claim,key: CheckpointKey): Unit = db.transaction { c =>
+    prefixAuthority(c,claim)
+    AnnotationAttempts.validate(key)
+    AnnotationPartials.discard(c,claim,AnnotationAttempts.epoch(c,claim),key.window)
+    prefixAuthority(c,claim)
+  }
+  def continueAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,partial: AnnotationPartial): Int = {
+    val rejected=db.transaction { c =>
+      prefixAuthority(c,claim)
+      val rejected=AnnotationAttempts.continued(c,claim,key,attempt,partial.keptHash,partial.chain)
+      AnnotationPartials.write(c,claim,key,AnnotationAttempts.epoch(c,claim),attempt,partial)
+      prefixAuthority(c,claim)
+      rejected
+    }
+    claim.attempt.advance()
+    rejected
+  }
+  def acceptAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,continuations: Int,value: Json): Unit = {
+    db.transaction { c =>
+      annotationAuthority(c,claim,continuations>0)
+      IndexCheckpoints.write(c,claim,key,value)
+      AnnotationAttempts.accept(c,claim,key,attempt,continuations)
+      AnnotationPartials.accepted(c,claim,key.window)
+      annotationAuthority(c,claim,continuations>0)
+    }
+    claim.attempt.advance()
   }
   def checkpoint(claim: Claim,key: CheckpointKey): Option[Json] = db.transaction { c =>
     checkpointAuthority(c,claim)

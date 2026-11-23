@@ -146,16 +146,30 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     /** Decisions and embedding parts this attempt took from another run's accepted work (ingest-limits spec §5.4). */
     val reusedDecisions=new java.util.concurrent.atomic.AtomicInteger(0)
     val reusedParts=new java.util.concurrent.atomic.AtomicInteger(0)
+    /** Windows this attempt accepted after kept answers, and windows it resumed from a stored partial (ANNOT2). */
+    val continuedWindows=new java.util.concurrent.atomic.AtomicInteger(0)
+    val resumedWindows=new java.util.concurrent.atomic.AtomicInteger(0)
     /** The run's accepted work (its own or by reference), else the work another run accepted for an equal input, else
       * `run`: a reused window reserves no annotation attempt and calls no model. */
-    def accepted[A](key: CheckpointKey)(decode: Json => A,encode: A => Json)(run: => IO[A]): IO[A] = {
+    private def work[A](key: CheckpointKey)(decode: Json => A)(run: => IO[A]): IO[A] = {
       def decoded(value: Json): IO[A] = IO(decode(value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted checkpoint payload")))
       IO.blocking(archive.windowWork(claim,key)).flatMap {
         case Some(WindowWork.Accepted(value)) => decoded(value)
         case Some(WindowWork.Reused(value)) => IO((if(key.stage==IndexingStage.Annotation) reusedDecisions else reusedParts).incrementAndGet()) *> decoded(value)
-        case None => IO.defer(run).flatTap(value => IO.blocking(archive.checkpoint(claim,key,encode(value))))
+        case None => IO.defer(run)
       }
     }
+    /** `work`, whose `run` result is checkpointed. */
+    def accepted[A](key: CheckpointKey)(decode: Json => A,encode: A => Json)(run: => IO[A]): IO[A] =
+      work(key)(decode)(IO.defer(run).flatTap(value => IO.blocking(archive.checkpoint(claim,key,encode(value)))))
+    /** A window's decision and the authorization that accepted it (0: accepted earlier): its accepted work, else the
+      * annotation chain's complete decision, stored with the accepting authorization's continuations (`acceptAnnotation`,
+      * a paid write as the checkpoint it replaces). */
+    def decision(key: CheckpointKey,window: ProblemPassages.Window,state: ProblemPassages.State,index: Int): IO[(ProblemPassages.Decision,Int)] =
+      work(key)(json => (ProblemPassages.decode(window,state.carry.nonEmpty,json),0))(annotate(key,window,state,index).flatMap { (merged,attempt,continuations) =>
+        IO.blocking(archive.acceptAnnotation(claim,key,attempt,continuations,CheckpointJson.decision(merged))) *>
+          IO { if(continuations>0) { continuedWindows.incrementAndGet(); () } }.as((merged,attempt))
+      })
     def report(completed: Int): IO[Unit] = IO.blocking {
       Check(archive.progress(claim,completed,total),"stale-claim","indexing claim is no longer current")
     }
@@ -171,22 +185,81 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       val annotationAttempt=if(attempt==0) "checkpoint" else attempt.toString
       IO(logger.warn(s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total stage=$stage annotationAttempt=$annotationAttempt annotationRejectionLimit=${AnnotationAttempts.rejectionLimit} code=$code exceptionClass=$exceptionClass origin=$origin reason=$reason httpStatus=$httpStatus structure=$structure")) *> IO.raiseError(StagedFailure(failureStage,error))
     }
-    def annotate[A](key: CheckpointKey,run: => IO[A],index: Int): IO[(A,Int)] = IO.blocking(archive.reserveAnnotation(claim,key)).flatMap {
-      case AnnotationReservation.Exhausted(reason,attempts) => failed(new AnnotationExhausted(reason),index,"annotation",attempts)
-      case AnnotationReservation.Reserved(attempt) => IO.defer(run).map(value => (value,attempt)).handleErrorWith {
-        case error: DomainError if Set("model-output","model-output/truncated").contains(error.code) =>
-          val details=failureDetails(error); val reason=details.reason; val structure=details.structure.noSpaces; val code=error.code
-          IO.blocking(archive.rejectAnnotation(claim,key,attempt,reason)).flatMap { rejected =>
-            IO(logger.warn(s"annotation attempt failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total attempt=$attempt rejected=$rejected rejectionLimit=${AnnotationAttempts.rejectionLimit} reservationLimit=${AnnotationAttempts.reservationLimit} code=$code reason=$reason structure=$structure")) *>
-              (if(rejected==AnnotationAttempts.rejectionLimit) failed(new AnnotationExhausted(reason),index,"annotation",attempt)
-              else IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current")) *> annotate(key,run,index))
-          }
-        case error => failed(error,index,"annotation",attempt)
-      }
-    }.handleErrorWith {
-      case staged: StagedFailure => IO.raiseError(staged)
-      case error => failed(error,index,"annotation",0)
+    /** The kept parts of the window's chain (ANNOT2; window coordinates, committed as its partial) and the epoch's
+      * non-final answers (rows with a reason) so far. */
+    private final case class Chain(partial: Option[AnnotationPartial],reasons: Int) {
+      def prefix: Boolean = partial.nonEmpty
+      def covered: Int = partial.fold(0)(_.covered)
+      def kept: Vector[ProblemPassages.Part] = partial.fold(Vector.empty[ProblemPassages.Part])(_.kept.parts)
+      def continuations: Int = partial.fold(0)(_.continuations)
     }
+    /** The window's complete decision, its accepting authorization and the kept answers before it (ANNOT2): from its
+      * validated partial (only the rest of the window is asked) or from the full request; a stored partial that fails
+      * validation is discarded, never an internal fault. */
+    private def annotate(key: CheckpointKey,window: ProblemPassages.Window,state: ProblemPassages.State,index: Int): IO[(ProblemPassages.Decision,Int,Int)] =
+      IO.blocking(archive.loadPartial(claim,key)).flatMap {
+        case PartialLoad.Exhausted(reason,attempts) => failed(new AnnotationExhausted(reason),index,"annotation",attempts)
+        case PartialLoad.Missing(reasons) => ask(key,window,state,index,Chain(None,reasons))
+        case found: PartialLoad.Found =>
+          val reasons=found.ledger.count(_.reason.nonEmpty)
+          IO(ProblemPassages.resumable(state,window,claim.profile,key,found,problemAnnotator.tailRequestFits)).flatMap {
+            case Left(discarded) =>
+              val reason=discarded.code
+              IO.blocking(archive.discardPartial(claim,key)) *>
+                IO(logger.warn(s"annotation partial discarded jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total reason=$reason")) *>
+                ask(key,window,state,index,Chain(None,reasons))
+            case Right(partial) =>
+              val covered=partial.covered; val fragments=window.fragments.size; val continuations=partial.continuations
+              IO(resumedWindows.incrementAndGet()) *>
+                IO(logger.info(s"annotation partial resumed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total coveredFragments=$covered windowFragments=$fragments continuations=$continuations")) *>
+                ask(key,window,state,index,Chain(Some(partial),reasons))
+          }
+      }.handleErrorWith {
+        case staged: StagedFailure => IO.raiseError(staged)
+        case error => failed(error,index,"annotation",0)
+      }
+    /** One authorization: the full window, or the rest of it after the kept parts, with the carry after them. The answer,
+      * appended to the kept parts, is checked as the window's decision: complete, it is accepted; stopped at a fragment
+      * boundary, it is kept (committed before the rest is asked); otherwise it is rejected and the same request asked again. */
+    private def ask(key: CheckpointKey,window: ProblemPassages.Window,state: ProblemPassages.State,index: Int,chain: Chain): IO[(ProblemPassages.Decision,Int,Int)] =
+      IO((chain.partial.fold(window)(value => ProblemPassages.tail(window,value.covered)),chain.partial.fold(state.carry)(value => ProblemPassages.carryAfter(state,window,value.kept.parts)))).flatMap { (request,previous) =>
+        IO.blocking(archive.reserveAnnotation(claim,key,chain.prefix)).flatMap {
+          case AnnotationReservation.Exhausted(reason,attempts) => failed(new AnnotationExhausted(reason),index,"annotation",attempts)
+          case AnnotationReservation.Reserved(attempt) =>
+            IO.defer(problemAnnotator.annotate(claim.owner,request,previous)).flatMap { answer =>
+              IO { val merged=ProblemPassages.merge(chain.covered,chain.kept,answer); (merged,ProblemPassages.coverage(window,state.carry.nonEmpty,merged)) }
+            }.attempt.flatMap {
+              case Right((merged,stop)) if stop==window.terminal => IO.pure((merged,attempt,chain.continuations))
+              case Right((merged,stop)) => keep(key,window,state,index,chain,attempt,merged,stop.fragmentIndex)
+              case Left(error: DomainError) if Set("model-output","model-output/truncated").contains(error.code) =>
+                val details=failureDetails(error)
+                rejected(key,window,state,index,chain,attempt,details.reason,error.code,details.structure.noSpaces)
+              case Left(error) => failed(error,index,"annotation",attempt)
+            }
+        }
+      }
+    /** A boundary stop: kept unless it is the epoch's fifth non-final answer (then recorded as such, and the window is
+      * exhausted) or the request for the rest of the window would exceed the request bounds (a rejection). */
+    private def keep(key: CheckpointKey,window: ProblemPassages.Window,state: ProblemPassages.State,index: Int,chain: Chain,attempt: Int,merged: ProblemPassages.Decision,stop: Int): IO[(ProblemPassages.Decision,Int,Int)] =
+      if(chain.reasons>=AnnotationAttempts.continuationLimit) rejected(key,window,state,index,chain,attempt,AnnotationAttempts.continuedReason,"model-output","{}")
+      else IO(problemAnnotator.tailRequestFits(window,stop,ProblemPassages.carryAfter(state,window,merged.parts))).flatMap { fits =>
+        if(!fits) rejected(key,window,state,index,chain,attempt,AnnotationAttempts.unrequestableReason,"model-output","{}")
+        else {
+          val partial=AnnotationPartial(merged,window.fragments.size,stop,chain.continuations+1,chain.partial.fold(Vector.empty[Int])(_.stops):+stop,chain.partial.fold(UUID.randomUUID())(_.chain))
+          val fragments=window.fragments.size
+          IO.blocking(archive.continueAnnotation(claim,key,attempt,partial)).handleErrorWith(failed(_,index,"annotation",attempt)).flatMap { reasons =>
+            IO(logger.info(s"annotation answer continued jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total attempt=$attempt coveredFragments=$stop windowFragments=$fragments")) *>
+              renewed *> ask(key,window,state,index,Chain(Some(partial),reasons))
+          }
+        }
+      }
+    private def rejected(key: CheckpointKey,window: ProblemPassages.Window,state: ProblemPassages.State,index: Int,chain: Chain,attempt: Int,reason: String,code: String,structure: String): IO[(ProblemPassages.Decision,Int,Int)] =
+      IO.blocking(archive.rejectAnnotation(claim,key,attempt,reason,chain.prefix)).flatMap { reasons =>
+        IO(logger.warn(s"annotation attempt failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total attempt=$attempt rejected=$reasons rejectionLimit=${AnnotationAttempts.rejectionLimit} reservationLimit=${AnnotationAttempts.reservationLimit} code=$code reason=$reason structure=$structure")) *>
+          (if(reasons==AnnotationAttempts.rejectionLimit) failed(new AnnotationExhausted(reason),index,"annotation",attempt)
+          else renewed *> ask(key,window,state,index,chain.copy(reasons=reasons)))
+      }
+    private def renewed: IO[Unit] = IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current"))
     /** Embeds the window's pieces part by part, each part checkpointed and dropped (phase P reads the vectors back).
       * Before any is embedded, the window's pieces, their vectors and its Context spans must fit the budget. */
     def embed(delta: ProblemPassages.Delta,index: Int,attempt: Int): IO[Unit] = {
@@ -373,15 +446,13 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     def loop(state: ProblemPassages.State,index: Int): IO[Unit] = IO.blocking(source.next(state.nextSource)).flatMap {
       case None =>
         IO(Check(index==total,"internal","source window count changed")) *> IO {
-          val decisions=windows.reusedDecisions.get; val parts=windows.reusedParts.get
-          logger.info(s"windows accepted jobId=${claim.jobId} fence=${claim.fence} totalWindows=$total reusedDecisions=$decisions reusedEmbeddingParts=$parts")
+          val decisions=windows.reusedDecisions.get; val parts=windows.reusedParts.get; val continued=windows.continuedWindows.get; val resumed=windows.resumedWindows.get
+          logger.info(s"windows accepted jobId=${claim.jobId} fence=${claim.fence} totalWindows=$total reusedDecisions=$decisions reusedEmbeddingParts=$parts continuedWindows=$continued resumedWindows=$resumed")
         }
       case Some(window) =>
         val input=Json.arr(window.sourceJson,state.carry.map(ProblemPassages.carryJson).getOrElse(Json.Null))
         val key=IndexCheckpoints.annotation(claim,index,input)
-        val decision=windows.accepted(key)(json => (ProblemPassages.decode(window,state.carry.nonEmpty,json),0),value => CheckpointJson.decision(value._1))(
-          windows.annotate(key,problemAnnotator.annotate(claim.owner,window,state.carry).flatTap(value => IO(ProblemPassages.validate(window,state.carry.nonEmpty,value))),index))
-        decision.flatMap { (value,attempt) =>
+        windows.decision(key,window,state,index).flatMap { (value,attempt) =>
           IO(ProblemPassages.accept(state,window,value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted annotation state"))).flatMap { delta =>
             windows.embed(delta,index,attempt) *> windows.report(index+1) *> loop(delta.state,index+1)
           }

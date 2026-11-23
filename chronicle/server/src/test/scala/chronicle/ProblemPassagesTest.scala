@@ -39,7 +39,7 @@ object ProblemPassageFixtures {
     output+=Part(start,Point(texts.size,0),first && continued,s"problem $topic",List(topic))
     Decision(output.result())
   }
-  final class Dummy extends ProblemPassageAnnotator {
+  final class Dummy extends ScriptedAnnotator {
     def annotate(owner: String,window: Window,previous: Option[Carry]): IO[Decision] = IO {
       val decision=plan(window.fragments.map(_.text),previous.flatMap(_.tags.headOption))
       validate(window,previous.nonEmpty,decision); decision
@@ -136,7 +136,7 @@ abstract class ProblemPassageContract extends munit.FunSuite {
   }
   test("BG: empty-only transcripts and empty lists do not invoke a model or hallucinate a passage") {
     List(Nil,List(message("empty","","tool",0),message("alsoempty","","user",1))).foreach { messages =>
-      val forbidden=new ProblemPassageAnnotator { def annotate(owner: String,window: Window,previous: Option[Carry]): IO[Decision] = IO.raiseError(new AssertionError("empty source called model")) }
+      val forbidden=new ScriptedAnnotator { def annotate(owner: String,window: Window,previous: Option[Carry]): IO[Decision] = IO.raiseError(new AssertionError("empty source called model")) }
       val result=run(messages,forbidden).unsafeRunSync()
       assertEquals(result.passages,Vector.empty); assertEquals(result.pieces,Vector.empty); assert(result.deltas.last.state.finished)
     }
@@ -150,7 +150,7 @@ abstract class ProblemPassageContract extends munit.FunSuite {
       for {
         calls <- Ref.of[IO,Int](0)
         embedded <- Ref.of[IO,Vector[RetrievalPiece]](Vector.empty)
-        checked=new ProblemPassageAnnotator {
+        checked=new ScriptedAnnotator {
           def annotate(owner: String,window: Window,previous: Option[Carry]): IO[Decision] = calls.getAndUpdate(_+1).flatMap { index =>
             if(index==0) base.annotate(owner,window,previous)
             else embedded.get.flatMap { prefix =>

@@ -14,7 +14,7 @@ import scala.jdk.CollectionConverters.*
   * and its count, the record's tries until the lease end, the control connection, an earlier attempt's leftover staging
   * transaction, and down-029. */
 final class TransientPublicationTest extends munit.FunSuite {
-  private final class Annotator extends ProblemPassageAnnotator {
+  private final class Annotator extends ScriptedAnnotator {
     val calls=new AtomicInteger(0)
     def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] =
       IO(calls.incrementAndGet()).as(ProblemPassages.Decision(Vector(ProblemPassages.Part(ProblemPassages.Point(0,0),window.terminal,previous.nonEmpty,"synthetic goal",Nil))))
@@ -296,8 +296,8 @@ final class TransientPublicationTest extends munit.FunSuite {
       val tries=new AtomicInteger(0); val answerLost=new AtomicBoolean(true)
       val wrapper=new ForwardingArchive(archive) {
         // The model's answer is written while the database goes away.
-        override def checkpoint(c: Claim,key: CheckpointKey,value: io.circe.Json): Unit =
-          if(key.stage==IndexingStage.Annotation && answerLost.getAndSet(false)) throw JdbcFailure("database-unavailable",Some("08006")) else super.checkpoint(c,key,value)
+        override def acceptAnnotation(c: Claim,key: CheckpointKey,attempt: Int,continuations: Int,value: io.circe.Json): Unit =
+          if(answerLost.getAndSet(false)) throw JdbcFailure("database-unavailable",Some("08006")) else super.acceptAnnotation(c,key,attempt,continuations,value)
         // Refused twice; the third try commits but its acknowledgement is lost; the fourth finds it recorded.
         override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = tries.incrementAndGet() match {
           case 1 | 2 => throw unavailable

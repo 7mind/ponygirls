@@ -163,6 +163,30 @@ class ProblemPassageHttpTest extends ProblemPassageContract {
       assertEquals(result.swap.toOption.map(_.asInstanceOf[DomainError].code),Some("model-output"))
     }
   }
+  test("G2-T6: an answer stopped at a fragment boundary is returned as a complete call; one stopped inside a fragment is partition-incomplete, a failed call") {
+    val value=window; val part=one(value,false,"summary",Nil).parts.head
+    (for {
+      real <- ModelTelemetry.make(new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]))
+      outcomes <- Ref.of[IO,List[ModelCallOutcome]](Nil)
+      telemetry=new ModelTelemetry {
+        def begin(context: ModelCallContext): IO[ModelCallTicket] = real.begin(context)
+        def finish(ticket: ModelCallTicket,outcome: ModelCallOutcome,usage: ProviderUsage): IO[Unit] = outcomes.update(_:+outcome) *> real.finish(ticket,outcome,usage)
+        def snapshot(owner: String): IO[ModelUsageSnapshot] = real.snapshot(owner)
+      }
+      admission <- ModelAdmission.make(config.indexing)
+      answer=(decision: Decision) => {
+        val app: HttpApp[IO]=cats.data.Kleisli(_ => IO(Response[IO](Status.Ok).withEntity(envelope(json(decision).noSpaces,"stop").noSpaces)))
+        new OpenAIProblemPassageAnnotator(new ModelHttp(Client.fromHttpApp(app),telemetry,admission),config).annotate("a",value,None).attempt
+      }
+      boundary <- answer(Decision(Vector(part.copy(end=Point(1,0)))))
+      inside <- answer(Decision(Vector(part.copy(end=Point(0,2)))))
+      seen <- outcomes.get
+    } yield {
+      assertEquals(boundary,Right(Decision(Vector(part.copy(end=Point(1,0))))))
+      assertEquals(inside.left.map { case error: ModelRejection => error.reason; case error => error },Left(ModelRejectionReason.PartitionIncomplete))
+      assertEquals(seen,List(ModelCallOutcome.Complete,ModelCallOutcome.Failed))
+    }).unsafeRunSync()
+  }
   test("BG: HTTP and outer model JSON failures propagate existing classifications without own retries") {
     List((Status.TooManyRequests,"{}","model-http"),(Status.Ok,"not-json","model-output")).foreach { (status,response,code) =>
       val requests=new java.util.concurrent.atomic.AtomicInteger()

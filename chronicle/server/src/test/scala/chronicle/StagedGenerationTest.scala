@@ -31,7 +31,7 @@ final class StagedGenerationTest extends munit.FunSuite {
   /** One window of one fragment cut into `pieces` pieces of one passage: more than one search-row statement. */
   private val pieces=600
   private val text="p"*pieces
-  private object Cut extends ProblemPassageAnnotator {
+  private object Cut extends ScriptedAnnotator {
     def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[Decision] = IO {
       Decision((0 until pieces).map(i => Part(Point(0,i),if(i+1==pieces) window.terminal else Point(0,i+1),i>0,"staged goal",List("staged"))).toVector)
     }

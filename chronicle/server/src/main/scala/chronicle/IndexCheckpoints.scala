@@ -19,8 +19,23 @@ enum WindowWork { case Accepted(value: Json); case Reused(value: Json) }
 /** The slot of a key holds accepted work for another input, e.g. an embedding part grouped under another batch size. */
 final class CheckpointInputMismatch extends DomainError("internal","checkpoint identity mismatch")
 trait IndexCheckpoints {
-  def reserveAnnotation(claim: Claim,key: CheckpointKey): AnnotationReservation
-  def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String): Int
+  /** An authorization for one annotation call of the window; `prefix`: the window has committed kept parts (ANNOT2), so
+    * the claim's revision must be the head. A request for the whole window ends any earlier chain of it. */
+  def reserveAnnotation(claim: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation
+  final def reserveAnnotation(claim: Claim,key: CheckpointKey): AnnotationReservation = reserveAnnotation(claim,key,false)
+  def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String,prefix: Boolean): Int
+  final def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = rejectAnnotation(claim,key,attempt,reason,false)
+  /** Before a window's first authorization (ANNOT2): the ledger's exhaustion, else the window's partial with what
+    * validates it, else none. A ledger reserved for another input fails `annotation-input-changed`. */
+  def loadPartial(claim: Claim,key: CheckpointKey): PartialLoad
+  /** Deletes the window's partial and clears its active chain. */
+  def discardPartial(claim: Claim,key: CheckpointKey): Unit
+  /** Records the reservation's answer as kept and stores the window's kept parts; returns the epoch's non-final answers.
+    * Committed, it is progress of the attempt. */
+  def continueAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,partial: AnnotationPartial): Int
+  /** Stores the window's complete decision with the accepting reservation's continuations and deletes the window's
+    * partials. Committed, it is progress of the attempt. */
+  def acceptAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,continuations: Int,value: Json): Unit
   /** The run's accepted work at the key's coordinates: its own checkpoint, or the checkpoint its reference names. */
   def checkpoint(claim: Claim,key: CheckpointKey): Option[Json]
   def checkpoint(claim: Claim,key: CheckpointKey,value: Json): Unit

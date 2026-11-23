@@ -34,7 +34,7 @@ final class StreamedPublicationDifferentialTest extends munit.FunSuite {
   /** Windows 0 and 1 continue one problem across their boundary inside the long message; 2 is A, Context, A again (one
     * passage); 3 is Context only; 4 is A, B, C inside the long message; later windows split at a scalar inside a
     * fragment, alternate continuing and new passages and change the open passage's tags. */
-  private final class Scripted extends ProblemPassageAnnotator {
+  private final class Scripted extends ScriptedAnnotator {
     private var window=0
     def annotate(owner: String,value: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[Decision] = IO {
       val index=window; window+=1

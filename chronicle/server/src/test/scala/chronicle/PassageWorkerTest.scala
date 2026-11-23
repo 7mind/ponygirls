@@ -31,8 +31,12 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     def retire(claim: Claim): Unit = delegate.retire(claim)
     def fail(claim: Claim,code: String): Unit = synchronized { failures+=code; delegate.fail(claim,code) }
     def fail(claim: Claim,code: String,stage: IndexingStage): Unit = synchronized { failures+=code; delegate.fail(claim,code,stage) }
-    def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = delegate.reserveAnnotation(c,key)
-    def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = delegate.rejectAnnotation(c,key,attempt,reason)
+    def reserveAnnotation(c: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = delegate.reserveAnnotation(c,key,prefix)
+    def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String,prefix: Boolean): Int = delegate.rejectAnnotation(c,key,attempt,reason,prefix)
+    def loadPartial(c: Claim,key: CheckpointKey): PartialLoad = delegate.loadPartial(c,key)
+    def discardPartial(c: Claim,key: CheckpointKey): Unit = delegate.discardPartial(c,key)
+    def continueAnnotation(c: Claim,key: CheckpointKey,attempt: Int,partial: AnnotationPartial): Int = delegate.continueAnnotation(c,key,attempt,partial)
+    def acceptAnnotation(c: Claim,key: CheckpointKey,attempt: Int,continuations: Int,value: Json): Unit = delegate.acceptAnnotation(c,key,attempt,continuations,value)
     def checkpoint(c: Claim,key: CheckpointKey): Option[Json] = delegate.checkpoint(c,key)
     def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit = delegate.checkpoint(c,key,value)
     def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = delegate.windowWork(c,key)
@@ -62,7 +66,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     val receipt=archive.ingest("a",request)
     val embedding=new Embeddings
     var calls=0
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
         assertEquals(owner,"a")
         if(calls>0) { assert(embedding.batches.nonEmpty); assertEquals(previous.get.initialSummary,"status 1") }
@@ -166,7 +170,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     val archive=new Recording(delegate); val request=source((0 until 160).map(i => s"A substep $i").toList); archive.ingest("a",request)
     var calls=0; var invalidated=false
     val base=new ProblemPassageFixtures.Dummy
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = { calls+=1; base.annotate(owner,window,previous) }
     }
     val embedder=new Embedder {
@@ -185,7 +189,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     val annotations=ListBuffer.empty[Int]; val embedded=ListBuffer.empty[String]; var failed=false
     val failedPiece=config.indexing.embeddingBatchSize
     val base=new ProblemPassageFixtures.Dummy
-    val model=new ProblemPassageAnnotator {
+    val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = {
         annotations+=window.fragments.head.messagePosition; base.annotate(owner,window,previous)
       }
@@ -210,7 +214,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
   test("BG/GoodCommunication: an unconfigured old target cannot call the sole current model under an old identity") { withArchive { (config,catalog,delegate,retain) =>
     val archive=new Recording(delegate); val receipt=archive.ingest("a",source(List.fill(12)("A substep")))
     retain("a","unconfigured-old-policy")
-    val forbidden=new ProblemPassageAnnotator {
+    val forbidden=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.raiseError(new AssertionError("unconfigured claim called current model"))
     }
     assert(!new Worker(archive,forbidden,new Embeddings,config,catalog,ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger(),ModelFixtures.failureBackoff,ModelFixtures.snapshots).once.unsafeRunSync())
@@ -223,7 +227,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
       blocked <- Deferred[IO,Unit]
       published <- Deferred[IO,Unit]
       admission <- ModelAdmission.make(config.indexing)
-      model=new ProblemPassageAnnotator {
+      model=new ScriptedAnnotator {
         def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] =
           if(owner=="a") blocked.complete(()).void *> IO.never else IO.pure(ProblemPassageFixtures.one(window,false,"ready",Nil))
       }
@@ -250,8 +254,12 @@ abstract class PassageWorkerContract extends munit.FunSuite {
         def publicationParent(c: Claim)=delegate.publicationParent(c)
         def fail(c: Claim,code: String)=delegate.fail(c,code)
         def fail(c: Claim,code: String,stage: IndexingStage)=delegate.fail(c,code,stage)
-        def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = delegate.reserveAnnotation(c,key)
-        def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = delegate.rejectAnnotation(c,key,attempt,reason)
+        def reserveAnnotation(c: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = delegate.reserveAnnotation(c,key,prefix)
+        def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String,prefix: Boolean): Int = delegate.rejectAnnotation(c,key,attempt,reason,prefix)
+        def loadPartial(c: Claim,key: CheckpointKey): PartialLoad = delegate.loadPartial(c,key)
+        def discardPartial(c: Claim,key: CheckpointKey): Unit = delegate.discardPartial(c,key)
+        def continueAnnotation(c: Claim,key: CheckpointKey,attempt: Int,partial: AnnotationPartial): Int = delegate.continueAnnotation(c,key,attempt,partial)
+        def acceptAnnotation(c: Claim,key: CheckpointKey,attempt: Int,continuations: Int,value: Json): Unit = delegate.acceptAnnotation(c,key,attempt,continuations,value)
         def checkpoint(c: Claim,key: CheckpointKey): Option[Json] = delegate.checkpoint(c,key)
         def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit = delegate.checkpoint(c,key,value)
         def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = delegate.windowWork(c,key)

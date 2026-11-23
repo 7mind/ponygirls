@@ -49,9 +49,11 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
   private val jobs=mutable.LinkedHashMap.empty[UUID,Job]
   private val acceptedWork=mutable.Map.empty[(UUID,UUID,IndexingStage,Int,Int),(String,io.circe.Json)]
   private val annotationEpochs=mutable.Map.empty[UUID,Long]
-  private final case class Attempt(inputHash: String,fence: Long,reason: Option[String])
+  private final case class Attempt(inputHash: String,fence: Long,reason: Option[String],keptHash: Option[String]=None,chain: Option[UUID]=None,accepted: Option[Int]=None)
   private val annotationAttempts=mutable.Map.empty[(UUID,UUID,Long,Int,Int),Attempt]
   private val failedStages=mutable.Map.empty[UUID,IndexingStage]
+  private val partials=mutable.Map.empty[(UUID,UUID,Long,Int),(Int,AnnotationPartial)]
+  private val activeChains=mutable.Map.empty[(UUID,UUID,Long,Int),Option[UUID]]
   def failureStage(jobId: UUID): Option[IndexingStage] = synchronized(failedStages.get(jobId))
   def acceptedParts(jobId: UUID,stage: IndexingStage): Int = synchronized(acceptedWork.keys.count(slot => slot._1==jobId && slot._3==stage))
   def workerEvidence(jobId: UUID): WorkerEvidence = synchronized {
@@ -64,36 +66,85 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     if(job.state==JobState.Complete) { job.claim=job.claim.copy(runId=UUID.randomUUID()); failedStages.remove(jobId) }
     job.state=JobState.Queued; job.attempts=0; job.claim=job.claim.copy(fence=job.claim.fence+1); job.lease=Instant.EPOCH
     annotationEpochs(jobId)=annotationEpochs.getOrElse(jobId,0L)+1
+    partials.filterInPlace((slot,_) => slot._1!=jobId)
   }
-  def reserveAnnotation(claim: Claim,key: CheckpointKey): AnnotationReservation = synchronized {
-    Check(valid(claim),"stale-claim","indexing claim is no longer current"); AnnotationAttempts.validate(key)
+  private def authorized(claim: Claim,prefix: Boolean): Unit =
+    Check(valid(claim) && (!prefix || headRevision(claim)==claim.revision),"stale-claim","indexing claim is no longer current")
+  private def ledger(claim: Claim,key: CheckpointKey): (Long,Vector[(Int,Attempt)]) = {
+    AnnotationAttempts.validate(key)
     val epoch=annotationEpochs.getOrElse(claim.jobId,0L)
     val previous=annotationAttempts.iterator.collect {
       case ((job,run,e,window,attempt),value) if job==claim.jobId && run==claim.runId && e==epoch && window==key.window => (attempt,value)
-    }.toList.sortBy(_._1)
-    Check(previous.size<=AnnotationAttempts.reservationLimit && previous.map(_._1)==(1 to previous.size).toList && previous.forall(_._2.inputHash==key.inputHash),"internal","annotation attempt input identity mismatch")
-    val rejected=previous.flatMap(_._2.reason)
-    Check(rejected.size<=AnnotationAttempts.rejectionLimit,"internal","invalid annotation rejection count")
-    if(rejected.size==AnnotationAttempts.rejectionLimit) AnnotationReservation.Exhausted(rejected.last,previous.size)
-    else if(previous.size>=AnnotationAttempts.reservationLimit) AnnotationReservation.Exhausted(AnnotationAttempts.callLimitReason,previous.size)
-    else {
-      val attempt=previous.size+1
-      annotationAttempts((claim.jobId,claim.runId,epoch,key.window,attempt))=Attempt(key.inputHash,claim.fence,None)
-      AnnotationReservation.Reserved(attempt)
+    }.toVector.sortBy(_._1)
+    Check(previous.size<=AnnotationAttempts.reservationLimit && previous.map(_._1)==(1 to previous.size).toVector,"internal","annotation attempt input identity mismatch")
+    if(!previous.forall(_._2.inputHash==key.inputHash)) throw DomainError(AnnotationAttempts.inputChangedCode,"annotation window input changed")
+    Check(previous.count(_._2.reason.nonEmpty)<=AnnotationAttempts.rejectionLimit,"internal","invalid annotation rejection count")
+    (epoch,previous)
+  }
+  private def rows(previous: Vector[(Int,Attempt)]): Vector[AnnotationLedgerRow] = previous.map((attempt,value) => AnnotationLedgerRow(attempt,value.reason,value.keptHash,value.chain))
+  def reserveAnnotation(claim: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = synchronized {
+    authorized(claim,prefix)
+    val (epoch,previous)=ledger(claim,key)
+    AnnotationAttempts.exhaustion(rows(previous)) match {
+      case Some((reason,attempts)) => AnnotationReservation.Exhausted(reason,attempts)
+      case None =>
+        val attempt=previous.size+1
+        annotationAttempts((claim.jobId,claim.runId,epoch,key.window,attempt))=Attempt(key.inputHash,claim.fence,None)
+        if(!prefix) activeChains.updateWith((claim.jobId,claim.runId,epoch,key.window))(_.map(_ => None))
+        AnnotationReservation.Reserved(attempt)
     }
   }
-  def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = synchronized {
-    Check(valid(claim),"stale-claim","indexing claim is no longer current"); AnnotationAttempts.validate(key); AnnotationAttempts.validateReason(reason)
+  private def record(claim: Claim,key: CheckpointKey,attempt: Int,update: Attempt => Option[Attempt]): Int = {
     Check(attempt>=1 && attempt<=AnnotationAttempts.reservationLimit,"internal","invalid annotation reservation")
     val slot=(claim.jobId,claim.runId,annotationEpochs.getOrElse(claim.jobId,0L),key.window,attempt)
     val stored=annotationAttempts.getOrElse(slot,throw DomainError("internal","annotation rejection reservation mismatch"))
-    Check(stored.inputHash==key.inputHash && stored.fence==claim.fence && stored.reason.forall(_==reason),"internal","annotation rejection reservation mismatch")
+    Check(stored.inputHash==key.inputHash && stored.fence==claim.fence,"internal","annotation rejection reservation mismatch")
+    annotationAttempts(slot)=update(stored).getOrElse(throw DomainError("internal","annotation rejection reservation mismatch"))
     val rejected=annotationAttempts.iterator.count { case ((job,run,epoch,window,_),value) =>
       job==claim.jobId && run==claim.runId && epoch==slot._3 && window==key.window && value.reason.nonEmpty
-    }+(if(stored.reason.isEmpty) 1 else 0)
+    }
     Check(rejected<=AnnotationAttempts.rejectionLimit,"internal","invalid annotation rejection count")
-    annotationAttempts(slot)=stored.copy(reason=Some(reason))
     rejected
+  }
+  def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String,prefix: Boolean): Int = synchronized {
+    authorized(claim,prefix); AnnotationAttempts.validate(key); AnnotationAttempts.validateReason(reason)
+    record(claim,key,attempt,stored => Option.when(stored.reason.forall(_==reason))(stored.copy(reason=Some(reason))))
+  }
+  def loadPartial(claim: Claim,key: CheckpointKey): PartialLoad = synchronized {
+    authorized(claim,false)
+    val (epoch,previous)=ledger(claim,key); val slot=(claim.jobId,claim.runId,epoch,key.window)
+    AnnotationAttempts.exhaustion(rows(previous)) match {
+      case Some((reason,attempts)) => PartialLoad.Exhausted(reason,attempts)
+      case None => partials.get(slot) match {
+        case None => PartialLoad.Missing(previous.count(_._2.reason.nonEmpty))
+        case Some((attempt,partial)) =>
+          authorized(claim,true)
+          PartialLoad.Found(StoredPartial(AnnotationPartials.format,claim.profile,key.contentHash.get,key.inputHash,attempt,partial.windowFragments,partial.covered,partial.continuations,
+            partial.stops,partial.chain,partial.keptJson,partial.keptHash),rows(previous),activeChains.get(slot).flatten)
+      }
+    }
+  }
+  def discardPartial(claim: Claim,key: CheckpointKey): Unit = synchronized {
+    authorized(claim,true)
+    val slot=(claim.jobId,claim.runId,annotationEpochs.getOrElse(claim.jobId,0L),key.window)
+    partials-=slot; activeChains.updateWith(slot)(_.map(_ => None)); ()
+  }
+  def continueAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,partial: AnnotationPartial): Int = synchronized {
+    authorized(claim,true); AnnotationAttempts.validate(key)
+    val slot=(claim.jobId,claim.runId,annotationEpochs.getOrElse(claim.jobId,0L),key.window)
+    Check(partials.get(slot).forall((_,stored) => stored.covered<partial.covered && stored.continuations==partial.continuations-1) && (partials.contains(slot) || partial.continuations==1),"internal","annotation partial does not extend its chain")
+    val kept=Attempt(key.inputHash,claim.fence,Some(AnnotationAttempts.continuedReason),Some(partial.keptHash),Some(partial.chain))
+    val rejected=record(claim,key,attempt,stored => Option.when(stored.reason.isEmpty || stored==kept)(kept))
+    partials(slot)=(attempt,partial); activeChains(slot)=Some(partial.chain)
+    claim.attempt.advance()
+    rejected
+  }
+  def acceptAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,continuations: Int,value: io.circe.Json): Unit = synchronized {
+    authorized(claim,continuations>0)
+    checkpoint(claim,key,value)
+    record(claim,key,attempt,stored => Option.when(stored.reason.isEmpty && stored.accepted.forall(_==continuations))(stored.copy(accepted=Some(continuations))))
+    partials.filterInPlace((slot,_) => !(slot._1==claim.jobId && slot._4==key.window)); activeChains.filterInPlace((slot,_) => !(slot._1==claim.jobId && slot._4==key.window))
+    claim.attempt.advance()
   }
   def checkpoint(claim: Claim,key: CheckpointKey): Option[io.circe.Json] = synchronized {
     Check(valid(claim),"stale-claim","indexing claim is no longer current")

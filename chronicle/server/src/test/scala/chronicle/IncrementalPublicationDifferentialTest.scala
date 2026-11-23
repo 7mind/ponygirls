@@ -63,7 +63,7 @@ final class IncrementalPublicationDifferentialTest extends munit.FunSuite {
   /** Per fragment a part directed by its message's id: `c` Context, `n` a new passage (continued by the message's later
     * fragments), `k` continues with the id's label as summary and tag, `w` continues with a summary and tag naming the
     * window (they change in every window). Counts its calls. */
-  private final class Scripted extends ProblemPassageAnnotator {
+  private final class Scripted extends ScriptedAnnotator {
     val calls=new AtomicInteger(0)
     /** Prefixes every summary: another run's accepted work for the same input differs. */
     @volatile var prefix=""

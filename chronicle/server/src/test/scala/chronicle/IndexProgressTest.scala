@@ -64,7 +64,7 @@ class IndexProgressTest extends munit.FunSuite {
     val request=original.copy(messages=List(Message("u",None,"user",text,None,0)),files=List(RawFile("session.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
     val out=a.ingest("a",request)
     var annotationCalls=0; var embeddingCalls=0
-    val annotator=new ProblemPassageAnnotator {
+    val annotator=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
         assertEquals(counters(a,out.jobId),(annotationCalls,Some(3)))
         annotationCalls+=1
@@ -91,7 +91,7 @@ class IndexProgressTest extends munit.FunSuite {
     val request=Fixtures.snapshot().copy(messages=messages,files=List(RawFile("session.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
     val out=a.ingest("a",request)
     val calls=scala.collection.mutable.ListBuffer.empty[Char]; var embeddings=0
-    val annotator=new ProblemPassageAnnotator {
+    val annotator=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
         calls += window.fragments.head.text.head
         if(calls.size==2) throw DomainError("model-output/truncated","synthetic")
@@ -113,7 +113,7 @@ class IndexProgressTest extends munit.FunSuite {
   test("worker records a known zero total for an empty source") { database { (c,db,a) =>
     val request=Fixtures.snapshot().copy(messages=Nil)
     val out=a.ingest("a",request)
-    val annotator=new ProblemPassageAnnotator { def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.raiseError(new Exception("unexpected annotation")) }
+    val annotator=new ScriptedAnnotator { def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.raiseError(new Exception("unexpected annotation")) }
     val embedder=new Embedder {
       def query(owner: String,text: String): IO[List[Double]] = IO.pure(Nil)
       def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.raiseError(new Exception("unexpected embedding"))

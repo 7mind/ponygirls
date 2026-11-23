@@ -1740,11 +1740,13 @@ def run_a(root):
         a6_downloads = h.downloads('A6', big, session, 2)
     s2 = h.stop()
     published = one("SELECT published FROM ch_sources WHERE id=:'arg0'", session)
-    # Stage l5: down-028, down-027, down-026, then down-025, as docs/operations.md orders them.
-    downs = [('028', 'chronicle/scripts/down-028-generation-lineage.sql', "to_regclass('public.ch_lineage_segments') IS NULL"),
+    # Stage l5: down-031, down-028, down-027, down-026, then down-025, as docs/operations.md orders them; 029's columns, which
+    # the earlier release ignores, stay (down-029 drops them, between down-031 and down-028).
+    downs = [('031', 'chronicle/scripts/down-031-annotation-partials.sql', "to_regclass('public.ch_annotation_partials') IS NULL"),
+             ('028', 'chronicle/scripts/down-028-generation-lineage.sql', "to_regclass('public.ch_lineage_segments') IS NULL"),
              ('027', 'chronicle/scripts/down-027-window-reuse.sql', "to_regclass('public.ch_index_checkpoint_refs') IS NULL"),
              ('026', 'chronicle/scripts/down-026-staged-generations.sql', "to_regclass('public.ch_staged_generations') IS NULL"),
-             ('025', 'chronicle/scripts/down-025-uploads.sql', "to_regclass('public.ch_uploads') IS NULL")][0 if STAGE == 'l5' else 3:]
+             ('025', 'chronicle/scripts/down-025-uploads.sql', "to_regclass('public.ch_uploads') IS NULL")][0 if STAGE == 'l5' else 4:]
     with Phase(f'A7 down-{"/down-".join(n for n, _, _ in downs)} (S2 -> S1 rollback)'):
         env = dict(os.environ, PGPASSWORD=Path(DATABASE['passwordFile']).read_text().strip())
         for number, script, gone in downs:

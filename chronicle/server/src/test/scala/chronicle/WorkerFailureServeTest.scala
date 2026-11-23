@@ -25,7 +25,7 @@ final class WorkerFailureServeTest extends munit.FunSuite {
         recordFailed <- Deferred[IO,Unit]
         claimedAgain <- Deferred[IO,Unit]
         terminated <- Deferred[IO,OutcomeIO[Nothing]]
-        annotator=new ProblemPassageAnnotator {
+        annotator=new ScriptedAnnotator {
           def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] =
             annotating.complete(()) *> annotated.get.as(ProblemPassages.Decision(Vector(ProblemPassages.Part(ProblemPassages.Point(0,0),window.terminal,false,"synthetic goal",Nil))))
         }

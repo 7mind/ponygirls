@@ -87,7 +87,7 @@ final class OversizeGuardTest extends munit.FunSuite {
       val windows=new java.util.concurrent.atomic.AtomicInteger(0)
       val held=new java.util.concurrent.ConcurrentHashMap[Int,List[java.lang.ref.WeakReference[String]]]()
       val older=ListBuffer.empty[Int]
-      val annotator=new ProblemPassageAnnotator {
+      val annotator=new ScriptedAnnotator {
         def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
           val index=windows.getAndIncrement()
           if(index%10==2) { System.gc(); older+=(0 to index-2).flatMap(i => Option(held.get(i)).toList.flatten).count(_.get!=null) }
@@ -139,7 +139,7 @@ final class OversizeGuardTest extends munit.FunSuite {
     val config=Fixtures.config().copy(maxIndexingBudgetBytes=2400000L)
     database(config) { (db,archive) =>
       val receipt=archive.ingest("a",request(List("x"*12000)))
-      val scalars=new ProblemPassageAnnotator {
+      val scalars=new ScriptedAnnotator {
         def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
           val starts=window.fragments.zipWithIndex.flatMap((fragment,index) => (0 until fragment.scalarCount).map(ProblemPassages.Point(index,_)))
           ProblemPassages.Decision(starts.zip(starts.drop(1):+window.terminal).map((start,end) => ProblemPassages.Part.context(start,end)))

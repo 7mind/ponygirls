@@ -4,6 +4,10 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import org.http4s.client.Client
 
+/** A test annotator that builds no request: the request for the rest of a window (ANNOT2) always fits. */
+trait ScriptedAnnotator extends ProblemPassageAnnotator {
+  def tailRequestFits(window: ProblemPassages.Window,covered: Int,previous: Option[ProblemPassages.Carry]): Boolean = true
+}
 object ModelFixtures {
   // Tests do not wait out the production back-off after a failed job.
   val failureBackoff: Worker.FailureBackoff = Worker.FailureBackoff(scala.concurrent.duration.DurationInt(10).millis)
