@@ -55,7 +55,7 @@ import {
 	type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 
-import { frameTitle, hintAt, KEY, keyHints, type KeyHint, type Span } from "@ponygirls/pi-ui";
+import { frameTitle, hintAt, KEY, keyHints, type InlinePane, type KeyHint, type Span } from "@ponygirls/pi-ui";
 
 import {
 	type BreakdownSummaries,
@@ -344,7 +344,7 @@ export default function (pi: ExtensionAPI): void {
 			const now = Date.now();
 			const summaries: BreakdownSummaries = { model: summarize(records, now, "model"), effort: summarize(records, now, "effort") };
 			// In place, replacing the editor, as /usage does. An overlay is a popup.
-			await ctx.ui.custom<void>((tui, theme, _kb, done) => new StatsView(theme, tui, summaries, () => done(), () => tui.requestRender()));
+			await ctx.ui.custom<void>((tui, theme, _kb, done): InlinePane => new StatsView(theme, tui, summaries, () => done(), () => tui.requestRender()));
 		},
 	});
 }

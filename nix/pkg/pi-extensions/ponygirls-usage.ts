@@ -22,7 +22,7 @@
 
 import { CancellableLoader, matchesKey, parseKey, type Component, type TUI, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
-import { formatCount } from "@ponygirls/pi-ui";
+import { formatCount, type InlinePane } from "@ponygirls/pi-ui";
 
 import { DEFAULT_VIEWPORT_BUDGET, WHEEL_LINES, VIEWPORT_BUDGET_STEP, clampScrollTop, clampViewportBudget } from "./scroll-state.ts";
 import { collectUsageData, TAB_ORDER, type CollectProgress, type TabName, type UsageData } from "./ponygirls-usage-data.ts";
@@ -218,7 +218,7 @@ export default function (pi: ExtensionAPI): void {
 			});
 			if (!data) return;
 			// In place, replacing the editor, as /perf does. An overlay is a popup.
-			await ctx.ui.custom<void>((tui, theme, _kb, done) => new UsageTableView(theme, tui, data, () => done(), () => tui.requestRender()));
+			await ctx.ui.custom<void>((tui, theme, _kb, done): InlinePane => new UsageTableView(theme, tui, data, () => done(), () => tui.requestRender()));
 		},
 	});
 }

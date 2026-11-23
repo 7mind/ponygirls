@@ -1,4 +1,5 @@
-import { Key, matchesKey, truncateToWidth, type Component, type TUI } from '@earendil-works/pi-tui';
+import { Key, matchesKey, truncateToWidth, type TUI } from '@earendil-works/pi-tui';
+import type { InlinePane } from './custom-view.ts';
 import { PanelLayout, type PanelParts } from './panel-layout.ts';
 import { frameTitle, keyHints } from './frame.ts';
 import { HINT, KEY } from './keys.ts';
@@ -10,7 +11,7 @@ export interface OperatorTextContext {
   readonly hasUI: boolean;
   readonly mode: string;
   readonly ui: {
-    custom<T>(factory: (tui: TUI, theme: UiTheme, keys: TransferKeys, done: (value: T) => void) => Component | Promise<Component>,
+    custom<T>(factory: (tui: TUI, theme: UiTheme, keys: TransferKeys, done: (value: T) => void) => InlinePane | Promise<InlinePane>,
       options: { retainEditorBorders: boolean; blocked: { kind: 'permission' | 'question'; message: string } }): Promise<T>;
   };
 }

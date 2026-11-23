@@ -38,10 +38,11 @@ implements the pane parts; use it instead of formatting by hand.
   the pane is in.
 - Show only keys that apply to the current selection and state.
 - Aliases (`q`, `j`/`k`, Home/End) may stay bound; they are not advertised.
-- An inline pane with page controls sets `capturesViewportInput` on the
-  component that receives focus. If only its detail view pages, expose that
-  mode through a getter. A handler on a child alone does not keep fullscreen
-  PgUp/PgDn from scrolling the transcript. Focused overlays already own them.
+- Return an `InlinePane` from an extension-owned inline pane factory. Its
+  `capturesViewportInput` is `true` for local paging, `false` for transcript
+  paging, or a getter when it depends on the current mode. Set it on the
+  component Pi focuses, not on a layout child. Focused overlays already own
+  viewport input.
 
 ## Commands
 

@@ -1,7 +1,8 @@
-import { Key, matchesKey, ScrollView, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { matchesKey, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { frameRule, frameTitle, keyHints, type KeyHint } from "./frame.ts";
 import { HINT } from "./keys.ts";
-import { PanelLayout, type PanelParts } from "./panel-layout.ts";
+import type { PanelParts } from "./panel-layout.ts";
+import { ReadOnlyBodyPager, type BodyPagerHost } from "./read-only-body-pager.ts";
 import { MARKER_WIDTH } from "./rows.ts";
 import { stateColor, type UiState, type UiTheme } from "./theme.ts";
 
@@ -26,7 +27,7 @@ export interface FactsState {
   state: UiState;
 }
 
-export interface FactsViewOptions {
+export interface FactsViewOptions extends BodyPagerHost {
   /** The thing's name, without "status". */
   title: string;
   state: FactsState;
@@ -35,10 +36,6 @@ export interface FactsViewOptions {
   /** Complete text behind `d`, read like `facts`; `null` when there is nothing more to show. */
   details: ((width: number) => string) | null;
   theme: UiTheme;
-  keys: { matches(data: string, action: "tui.select.cancel"): boolean };
-  rows(): number;
-  requestRender(): void;
-  close(): void;
 }
 
 const DETAILS_KEY = "d";
@@ -140,25 +137,12 @@ interface Content {
  * facts below, and optionally the complete text behind `d`. Scrolls and closes
  * like `StatusView`.
  */
-export class FactsView extends PanelLayout {
-  readonly capturesViewportInput = true;
-
-  private readonly options: FactsViewOptions;
-  private readonly regularScroll: ScrollView;
-  private readonly detailsText: Text;
+export class FactsView extends ReadOnlyBodyPager<FactsViewOptions> {
+  private readonly detailsText = new Text("", 0, 0);
   private content: Content | null = null;
   private showingDetails = false;
 
-  constructor(options: FactsViewOptions) {
-    super((width) => this.renderParts(width));
-    this.options = options;
-    this.detailsText = new Text("", 0, 0);
-    this.regularScroll = new ScrollView({ render: (width) => this.body(width), invalidate() {} }, { overscroll: "contain" });
-  }
-
   override invalidate(): void { this.content = null; this.detailsText.invalidate(); }
-
-  private get scroll(): ScrollView { return this.hasAllocatedHeight ? this.bodyScroll : this.regularScroll; }
 
   private body(width: number): string[] {
     const { theme, facts, details } = this.options;
@@ -175,7 +159,7 @@ export class FactsView extends PanelLayout {
     return content.facts;
   }
 
-  private renderParts(width: number): PanelParts {
+  protected override renderParts(width: number): PanelParts {
     const { theme, title, state, details } = this.options;
     const toggle = details === null ? [] : [this.showingDetails ? SHOW_FACTS : SHOW_DETAILS];
     return {
@@ -185,35 +169,13 @@ export class FactsView extends PanelLayout {
     };
   }
 
-  override render(width: number): string[] {
-    const { header, body, footer } = this.renderParts(width);
-    const height = Math.min(body.length, Math.max(1, this.options.rows() - header.length - footer.length));
-    // Flat rendering is also used for intrinsic measurement; never mutate the allocated body viewport here.
-    this.regularScroll.updateLayout(body.length, height, this.options.requestRender);
-    const start = Math.min(this.scroll.scrollTop, Math.max(0, body.length - height));
-    return [...header, ...body.slice(start, start + height), ...footer];
-  }
-
-  handleInput(data: string): void {
-    if (this.options.keys.matches(data, "tui.select.cancel") || data === "q") { this.options.close(); return; }
+  protected override handleBodyInput(data: string): void {
     if (matchesKey(data, DETAILS_KEY)) {
       if (this.options.details === null) return;
       this.showingDetails = !this.showingDetails;
       this.scroll.scrollToStart();
       return;
     }
-    const page = Math.max(1, this.scroll.viewportHeight - 1);
-    if (matchesKey(data, Key.up)) this.scroll.scrollBy(-1);
-    else if (matchesKey(data, Key.down)) this.scroll.scrollBy(1);
-    else if (matchesKey(data, Key.pageUp)) this.scroll.scrollBy(-page);
-    else if (matchesKey(data, Key.pageDown)) this.scroll.scrollBy(page);
-    else if (matchesKey(data, Key.home)) this.scroll.scrollToStart();
-    else if (matchesKey(data, Key.end)) this.scroll.scrollToEnd();
-  }
-
-  handleMouse(event: TuiMouseEvent): ReturnType<PanelLayout["handleMouse"]> {
-    if (event.type !== "wheel" || !event.wheelDelta) return undefined;
-    this.scroll.scrollBy(event.wheelDelta);
-    return { handled: true, target: { component: this, originX: event.screenX - event.x, originY: event.screenY - event.y, width: event.width, height: event.height } };
+    super.handleBodyInput(data);
   }
 }

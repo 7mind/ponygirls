@@ -7,7 +7,7 @@ export { BORDER_ORDER } from "./border.ts";
 export { borderBadge, borderBadgeCompact, type BorderBadge } from "./badge.ts";
 export { HINT, KEY, ctrlKey } from "./keys.ts";
 export { formatAgo, formatBytes, formatCompact, formatCount, homeRelative, shortId } from "./format.ts";
-export { CustomViewToggle, type CustomViewFactory, type CustomViewUI } from "./custom-view.ts";
+export { CustomViewToggle, type CustomViewFactory, type CustomViewUI, type InlinePane } from "./custom-view.ts";
 export { completeArgument, type ArgumentChoice, type CompletionItem } from "./complete.ts";
 
 export { StatusView, type StatusViewOptions } from "./status-view.ts";
