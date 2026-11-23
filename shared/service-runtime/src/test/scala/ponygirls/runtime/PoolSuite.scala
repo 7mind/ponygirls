@@ -677,7 +677,7 @@ final class PoolSuite extends FunSuite {
     }
   } }
 
-  test("M1 T1h a failure keeps its SQLSTATE: a P0001 whose ROLLBACK hangs is ended by the abort at D (P0001, evicted); one raised after D sends no ROLLBACK") { configured { base =>
+  test("M1 T1h a failure keeps its SQLSTATE: a P0001 whose ROLLBACK hangs is ended by the abort at D (P0001, evicted); one raised after D sends no ROLLBACK; after D no statement is prepared or executed, through any handle; unguarded handles refused") { configured { base =>
     val config = m1(base)
     // (a) The first connection's ROLLBACK waits until the connection is aborted (at most 10 s), then reaches the driver.
     val aborted = new CountDownLatch(1); val rollbacks = new AtomicInteger
@@ -697,13 +697,16 @@ final class PoolSuite extends FunSuite {
       assertNotEquals(pool.transaction(pid), first.get)
     }
     // (b) The callback moves the engine's clock past D, its watch never firing: (1) its own error, thrown then, is kept; (2) a
-    // statement it prepares after D and (3) one it prepared before D never reach the driver (deadline-expired); no
-    // ROLLBACK; each connection evicted.
+    // statement it prepares after D and (3) one it prepared before D never reach the driver (deadline-expired); (4) neither
+    // does one prepared after D through a handle obtained before D (its result set's statement's connection); no
+    // ROLLBACK; each connection evicted. The driver's proxy counts the marked statements prepared and executed.
     val marker = "m1_after_deadline"
-    val skew = new java.util.concurrent.atomic.AtomicLong(0); val rolled = new AtomicInteger; val executed = new AtomicInteger
+    val skew = new java.util.concurrent.atomic.AtomicLong(0); val rolled = new AtomicInteger
+    val preparations = new AtomicInteger; val executed = new AtomicInteger
     val counted = new Counting((_, c) => proxy(classOf[Connection], c) { (m, a) => m.getName match {
       case "rollback" => rolled.incrementAndGet(); None
       case "prepareStatement" if String.valueOf(a(0)).contains(marker) =>
+        preparations.incrementAndGet()
         val prepared = m.invoke(c, a*).asInstanceOf[PreparedStatement]
         Some(proxy(classOf[PreparedStatement], prepared) { (e, _) => if (e.getName.startsWith("execute")) executed.incrementAndGet(); None })
       case _ => None
@@ -720,8 +723,28 @@ final class PoolSuite extends FunSuite {
       val own = evicting { _ => pastDeadline(); throw new java.sql.SQLException("synthetic permanent failure", "P0001") }
       val prepared = evicting { c => pastDeadline(); Using.resource(c.prepareStatement(s"SELECT '$marker'"))(_.executeQuery()); () }
       val executedLate = evicting { c => Using.resource(c.prepareStatement(s"SELECT '$marker'")) { p => pastDeadline(); p.executeQuery() }; () }
+      val escaped = evicting { c =>
+        Using.resource(c.createStatement()) { s =>
+          val read = s.executeQuery("SELECT 1"); pastDeadline()
+          Using.resource(read.getStatement.getConnection.prepareStatement(s"SELECT '$marker'"))(_.executeQuery())
+        }; ()
+      }
       assertEquals((own.code, own.sqlState), ("database-unavailable", Some("P0001")))
-      assertEquals((prepared, executedLate, executed.get, rolled.get), (JdbcFailure("deadline-expired", None), JdbcFailure("deadline-expired", None), 0, 0))
+      assertEquals(List(prepared, executedLate, escaped), List.fill(3)(JdbcFailure("deadline-expired", None)))
+      assertEquals((preparations.get, executed.get, rolled.get), (1, 0, 0))
+      // (c) Handles that would reach the server unguarded are refused before D, nothing sent: the database metadata, the
+      // driver's connection, statement and result set.
+      val refused = JdbcFailure("deadline-unsupported", None)
+      val kept = pool.transactionWithin(Deadline.now + within) { c =>
+        Using.resource(c.createStatement()) { s =>
+          Using.resource(s.executeQuery("SELECT 1")) { read =>
+            (List(scala.util.Try(c.getMetaData), scala.util.Try(c.unwrap(classOf[org.postgresql.PGConnection])),
+              scala.util.Try(s.unwrap(classOf[org.postgresql.PGStatement])), scala.util.Try(read.unwrap(classOf[org.postgresql.jdbc.PgResultSet])),
+              scala.util.Try(read.getMetaData)).map(_.failed.toOption), c.isWrapperFor(classOf[org.postgresql.PGConnection]))
+          }
+        }
+      }
+      assertEquals(kept, (List.fill(5)(Some(refused)), false))
     }
     trace.floors()
   } }
@@ -792,13 +815,14 @@ final class PoolSuite extends FunSuite {
         terminated.foreach(p => assertEquals(scalar(admin, s"SELECT pg_terminate_backend($p, 5000)"), "t"))
         assertEquals(backends(admin, s"pid IN (${terminated.mkString(",")})"), 0)
         val start = Deadline.now
-        val tried = attempt(executor)(pool.transactionWithin(start + within)(c => (pid(c), factory.physical.asScala.toList.indexWhere(_ eq c.unwrap(classOf[org.postgresql.PGConnection])) + 1)))
+        val tried = attempt(executor)(pool.transactionWithin(start + within)(pid))
         eventually("the stale connections are evicted")(stale.forall(_.isClosed))
         assert(Deadline.now - start < cap, s"evicted ${Deadline.now - start} after the start")
         assert(!tried.isDone)
         refill.countDown()
         val (outcome, _) = tried.get(30, TimeUnit.SECONDS)
-        val (served, index) = outcome.get
+        val served = outcome.get
+        val index = factory.physical.asScala.toList.indexWhere(p => !p.isClosed && pid(p) == served) + 1
         assert(!terminated.contains(served) && index > sizing.connections, (served, index, terminated).toString)
         trace.floors()
       } finally refill.countDown()

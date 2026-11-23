@@ -186,7 +186,9 @@ supersedes SMALL's guarantee, its shutdown bound and `boundedTransaction` above;
   admission waits ≤ min(queueTimeout, D − now), read right before its semaphore; the acquisition ends by min(D, its
   start + A) (a remainder below 1 ms makes one non-waiting borrow, the last), a reset by min(that, its start + cap); a
   transaction watch armed at the handoff aborts the connection at D; D is checked before the setup, the callback, every
-  statement the callback creates or executes (M1 gate r1) and COMMIT; the setup tightens statement and lock timeouts to
+  call of the callback that may reach the server (M1 gate r1/r2: a guarded connection whose statements, result sets and
+  `getConnection`/`getStatement` handles stay guarded; metadata, `unwrap` to the driver, large objects and the engine's
+  own connection controls are refused, `deadline-unsupported`) and COMMIT; the setup tightens statement and lock timeouts to
   D − now; after D or the abort no ROLLBACK or other I/O, the connection is evicted. The engine raises
   `JdbcFailure("deadline-expired", sqlState)` exactly for a refusal at a boundary or a connection error (class 08, no SQLSTATE) caught after the watch aborted; the recorder retries
   it (`JdbcTransient.deadline`) as it retries `JdbcTransient.job` and 55P03; every other error keeps its classification

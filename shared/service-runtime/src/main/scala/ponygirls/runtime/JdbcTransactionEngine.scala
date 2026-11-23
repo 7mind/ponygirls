@@ -43,8 +43,8 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
   }
   /** The whole transaction by `deadline` D (R-a2 M1), converted once to the engine's clock: the acquisition ends by
     * min(D, its start + the budget), each reset by min(that, its start + the reset cap); from the handoff the transaction
-    * watch aborts the connection at D; D is checked before the setup, the callback, each statement the callback creates or
-    * executes ([[GuardedConnection]]) and COMMIT (a refusal aborts through the watch); the setup tightens the statement
+    * watch aborts the connection at D; D is checked before the setup, the callback, each call of the callback that may
+    * reach the server ([[GuardedConnection]]) and COMMIT (a refusal aborts through the watch); the setup tightens the statement
     * and lock timeouts to the time left; after D or the abort nothing more is sent (no ROLLBACK): the connection is evicted.
     * Fails `deadline-expired` for a refusal at a boundary and for a connection error caught after the watch aborted (an
     * unknown outcome once COMMIT was sent); every other error keeps its own SQLSTATE, also when it arrives after D. */

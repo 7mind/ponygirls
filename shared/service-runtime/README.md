@@ -170,9 +170,16 @@ converted once to the engine's clock. With less than `BlockingJdbcDatabase.minim
 reservation, right before the semaphore; the acquisition ends by min(D, its start + A) (a remainder below 1 ms makes
 one borrow without waiting and no further borrow), each reset by min(that, its start + the cap). From the handoff a
 transaction watch (the reset's watchdog, a second one-CAS watch) aborts the physical connection at D; D is checked before
-the setup, the callback, every statement the callback creates or executes and every savepoint, commit, rollback or
-autocommit change it makes (the callback's connection is a `GuardedConnection`), and COMMIT: past D, also with a late
-watchdog, nothing more starts (a refusal aborts through the watch); the setup tightens the statement and lock timeouts to the time
+the setup, the callback, every call of the callback that may reach the server, and COMMIT: past D, also with a late
+watchdog, nothing more starts (a refusal aborts through the watch). The callback's connection is a `GuardedConnection`:
+statement creation and execution, result-set cursor moves, savepoints, `setObject`/`setNull`, `getObject` and the
+connection reads that query the server are guarded; every statement and result set it hands out is guarded the same way
+and leads back only to the guarded connection (`getConnection`, `getStatement`). Calls that would hand out an unguarded
+server-talking handle or change what the engine or the session owns are refused before anything is sent with
+`JdbcFailure("deadline-unsupported")`: `getMetaData` (database, statement, parameter, result set), `unwrap` to the
+driver's objects, `prepareCall`, large objects, arrays, refs and structs, `commit`/`rollback()`/`setAutoCommit`/`close`/
+`abort`/`setNetworkTimeout`, session settings (read-only, isolation, schema, catalog, client info, holdability, type
+map), an updatable or scrollable result set, a statement's query timeout and `cancel`. The setup tightens the statement and lock timeouts to the time
 left. After D or the abort nothing more is sent (no ROLLBACK): the connection is evicted; it returns to the pool only
 when the watch was disarmed and the transaction committed or rolled back before D. It fails
 `JdbcFailure("deadline-expired", driver SQLSTATE)` exactly for a refusal at a boundary and for a connection error (class
