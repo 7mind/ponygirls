@@ -11,9 +11,20 @@ import scala.util.Using
 final class StartFailureLineTest extends munit.FunSuite {
   /** A failed start exits within seconds; the bound only stops a hung child. */
   private val childExitBound = 50.seconds
-  /** Lines a fresh JVM prints on stderr that are not the service's: the JDK's own warnings (a block ending in an empty line), SLF4J's no-binding notice and
-    * cats-effect's CPU-starvation warning on a loaded host. */
-  private val unrelatedJvmLines = Vector("WARNING: ","SLF4J: ","SLF4J(","[WARNING] Your app's responsiveness")
+  /** The known notices a fresh JVM prints on stderr that are not the service's, matched exactly: the JDK's warning about
+    * Scala's LazyVals, SLF4J's no-binding notices and cats-effect's CPU-starvation warning on a loaded host. */
+  private val knownJvmNotices = Vector(
+    """WARNING: A terminally deprecated method in sun\.misc\.Unsafe has been called""",
+    """WARNING: sun\.misc\.Unsafe::objectFieldOffset has been called by scala\.runtime\.LazyVals\$ \(file:[^)]+\)""",
+    """WARNING: Please consider reporting this to the maintainers of class scala\.runtime\.LazyVals\$""",
+    """WARNING: sun\.misc\.Unsafe::objectFieldOffset will be removed in a future release""",
+    """SLF4J: Failed to load class "org\.slf4j\.impl\.StaticLoggerBinder"\.""",
+    """SLF4J: Defaulting to no-operation \(NOP\) logger implementation""",
+    """SLF4J: See http://www\.slf4j\.org/codes\.html#StaticLoggerBinder for further details\.""",
+    """SLF4J: Failed to load class "org\.slf4j\.impl\.StaticMDCBinder"\.""",
+    """SLF4J: Defaulting to no-operation MDCAdapter implementation\.""",
+    """SLF4J: See http://www\.slf4j\.org/codes\.html#no_static_mdc_binder for further details\.""",
+    """.+ \[WARNING\] Your app's responsiveness to a new asynchronous event \(such as a new connection, an upstream response, or a timer\) was in excess of .+\. Your CPU is probably starving\. .+""")
   test("serve on an occupied listen port fails the bind stage with address in use and the port") {
     val c = Fixtures.config()
     val dir = Files.createTempDirectory("chronicle-start-")
@@ -37,7 +48,7 @@ final class StartFailureLineTest extends munit.FunSuite {
           .redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null"))).redirectError(err.toFile).redirectOutput(out.toFile).start()
         try assert(process.waitFor(childExitBound.toSeconds,TimeUnit.SECONDS),"the child did not exit")
         finally { process.destroyForcibly(); process.waitFor() }
-        assertEquals((process.exitValue,Files.readString(err).linesIterator.filterNot(line => line.isEmpty || unrelatedJvmLines.exists(line.startsWith)).toList,Files.readString(out)),
+        assertEquals((process.exitValue,Files.readString(err).linesIterator.filterNot(line => knownJvmNotices.exists(line.matches)).toList,Files.readString(out)),
           (1,List(s"chronicle failure stage=bind code=address-in-use error=BindException message=\"address in use\" port=$port"),""))
       } finally List(path,err,out,dir).foreach(Files.deleteIfExists)
     }

@@ -17,10 +17,10 @@ import scala.util.Using
 import io.circe.Json
 
 object Main extends IOApp:
-  def run(args: List[String]): IO[ExitCode] = IO.defer(args match
+  def run(args: List[String]): IO[ExitCode] = IO.defer { unobserved.start(); args match
     case List("check-casefold") => IO.blocking(UnicodeCaseFoldProbe.main(Array.empty[String])).as(ExitCode.Success)
     case List("serve",path) => runServer(path).as(ExitCode.Success)
-    case List("check-config",path) => stage("config",IO.blocking(listener(Config.load(Path.of(path))))).flatMap(_ => IO.println("MANURE_CONFIG_OK")).as(ExitCode.Success)
+    case List("check-config",path) => stage("config",IO.blocking(Config.load(Path.of(path)))).flatMap(_ => IO.println("MANURE_CONFIG_OK")).as(ExitCode.Success)
     case List("migrate",path) => stage("config",IO.blocking(Config.load(Path.of(path)))).flatMap(config => buildResources(config,false,config.rootAuthority.map(RootAuthorityProvider.kubernetes)).use(_ => IO.unit)).as(ExitCode.Success)
     case List("plan-root-identity",path,output,evidence) => stage("plan-root-identity",for
       config <- IO.blocking(Config.load(Path.of(path)))
@@ -36,7 +36,7 @@ object Main extends IOApp:
     yield ExitCode.Success)
     case List("--config",path) => runServer(path).as(ExitCode.Success)
     case _ => IO.println("usage: manure-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json | --config CONFIG.json | plan-root-identity CONFIG.json PRIVATE_PLAN.json PRIOR_VOLUME_EVIDENCE | migrate-root-identity CONFIG.json PRIVATE_PLAN.json EXPECTED_SHA256").as(ExitCode.Error)
-  ).handleErrorWith(safeFailure)
+  }.flatTap(_ => IO(unobserved.settle(None))).handleErrorWith(safeFailure)
   private final case class StageFailure(stage: String,port: Option[Int],error: Throwable) extends RuntimeException(stage,error)
   /** Enumerated category by exact failure type only; never message, path or cause detail. StartFailure walks causes and
     * suppressed exceptions: distage wraps any provisioning-step failure into izumi.* (ProvisioningException) with no
@@ -59,19 +59,21 @@ object Main extends IOApp:
   private def safeFailure(error: Throwable): IO[ExitCode] =
     val (label,port,cause) = error match
       case s: StageFailure => (s.stage,s.port,s.error)
-      // Unstaged database work is buildResources' root-ownership transactions (the first database use among them). Their
-      // domain refusals stay raw for Main.resources callers; their JDBC failures are the database's.
+      // The other unstaged database work is buildResources' initialization transaction after `schema`; its domain
+      // refusals stay raw for Main.resources callers, its JDBC failures are the database's.
       case jdbc: JdbcFailure => ("database",None,jdbc)
       case other => ("start",None,other)
     val classified = StartFailure.classify(cause,category)
     val failure = if classified.code == StartFailure.Internal && cause.getClass.getName.startsWith("izumi.") then classified.copy(code = "wiring") else classified
     // Enumerated stage/category and fixed text ONLY. No stack/cause/SQL/path/provider detail.
-    IO(System.err.println(StartFailure.line("manure",label,failure,port))).as(ExitCode.Error)
-  /** cats-effect reports here a failure no fiber observed (the listener's background fiber); IOApp's default prints its
-    * stack trace. One sanitized line instead, and a bind failure, which the bind stage reports, is not printed twice. */
-  override protected def reportFailure(error: Throwable): IO[Unit] =
-    val failure = StartFailure.classify(error,category)
-    IO.unlessA(failure.code == StartFailure.AddressInUse || failure.code == StartFailure.Bind)(IO(System.err.println(StartFailure.line("manure","background",failure,None))))
+    IO { unobserved.settle(Some(cause)); System.err.println(StartFailure.line("manure",label,failure,port)) }.as(ExitCode.Error)
+  /** IOApp's default prints the stack trace of a failure no fiber observed; one sanitized `background` line instead. */
+  private val unobserved = StartFailure.Unobserved(error => System.err.println(StartFailure.line("manure","background",StartFailure.classify(error,category),None)))
+  override protected def reportFailure(error: Throwable): IO[Unit] = IO(unobserved.report(error))
+  /** The first database use: its JDBC, credential and admission failures are the database stage's, while its domain
+    * refusals stay raw (Main.resources callers match them). */
+  private val firstUse: PartialFunction[Throwable,Throwable] =
+    case error if !error.isInstanceOf[DomainError] && !error.isInstanceOf[StageFailure] => StageFailure("database",None,error)
   private def schema: String =
     val input = getClass.getResourceAsStream("/001_metadata.sql")
     Require(input != null, "unavailable")
@@ -110,7 +112,7 @@ object Main extends IOApp:
       // Read-only observation: no root-owner adoption or artifact mutation may
       // precede complete imported payload verification.
       RootOwnership.read(c)
-    })
+    }.adaptError(firstUse))
     ownership <- Resource.eval(RootOwnership.verify(config,files,observation,provider))
     _ <- Resource.eval(IO.blocking {
       ownership.revalidate(directory)
@@ -198,7 +200,7 @@ object Main extends IOApp:
           config.apiOrigin.scheme + "://" + uri.getHost + ":" + port
         else config.apiOrigin.value
         IO(services.http.setBoundPort(port)) *>
-          IO.println("MANURE_READY " + Json.obj("apiOrigin" -> Json.fromString(effective),"port" -> Json.fromInt(port),"pid" -> Json.fromLong(ProcessHandle.current().pid())).noSpaces) *>
+          IO(unobserved.settle(None)) *> IO.println("MANURE_READY " + Json.obj("apiOrigin" -> Json.fromString(effective),"port" -> Json.fromInt(port),"pid" -> Json.fromLong(ProcessHandle.current().pid())).noSpaces) *>
           stage("serve",(sweeper,indexer).parTupled.void)
       },Some(config.port))
     }

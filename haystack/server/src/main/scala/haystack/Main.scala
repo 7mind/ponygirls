@@ -22,17 +22,17 @@ import scala.concurrent.duration.*
 
 final class Services(val http:Http,val retrieval:HaystackRetrieval)
 object Main extends IOApp {
-  def run(args:List[String]):IO[ExitCode]=IO.defer(args match{
+  def run(args:List[String]):IO[ExitCode]=IO.defer { unobserved.start(); args match{
     case List(command,path) if Set("serve","migrate","check-config").contains(command)=>
-      stage("config",IO.blocking { val file=Path.of(path);val c=Config.load(file);Auth.load(c.auth);(file,c,listener(c)) }).flatMap { (file,config,address)=>
+      stage("config",IO.blocking { val file=Path.of(path);val c=Config.load(file);Auth.load(c.auth);(file,c,Option.when(command=="serve")(listener(c))) }).flatMap { (file,config,address)=>
         if(command=="check-config")IO.unit
         else JdbcDatabase.resource(config.database).adaptError(staged("database")).use { database=>
           stage("migrate",Migrations.initialize(database,config.auth.activityProjectId)) *>
-          (if(command=="migrate")IO.unit else serve(config,file,database,address))
+          address.fold(IO.unit)(serve(config,file,database,_))
         }
       }.as(ExitCode.Success)
     case _=>IO.println("usage: haystack-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json").as(ExitCode.Error)
-  }).handleErrorWith(failure)
+  }}.flatTap(_=>IO(unobserved.settle(None))).handleErrorWith(failure)
 
   private final case class StageFailure(stage:String,port:Option[Int],error:Throwable) extends RuntimeException(stage,error)
   /** Names the start step that failed; the innermost stage wins, a failure outside every stage is `start`. */
@@ -50,14 +50,11 @@ object Main extends IOApp {
       case failed:StageFailure=>(failed.stage,failed.port,failed.error)
       case other=>("start",None,other)
     }
-    IO(System.err.println(StartFailure.line("haystack",name,StartFailure.classify(cause,known),port))).as(ExitCode.Error)
+    IO { unobserved.settle(Some(cause)); System.err.println(StartFailure.line("haystack",name,StartFailure.classify(cause,known),port)) }.as(ExitCode.Error)
   }
-  /** cats-effect reports here a failure no fiber observed (the listener's background fiber); IOApp's default prints its
-    * stack trace. One sanitized line instead, and a bind failure, which the bind stage reports, is not printed twice. */
-  override protected def reportFailure(error:Throwable):IO[Unit]={
-    val failure=StartFailure.classify(error,known)
-    IO.unlessA(failure.code==StartFailure.AddressInUse || failure.code==StartFailure.Bind)(IO(System.err.println(StartFailure.line("haystack","background",failure,None))))
-  }
+  /** IOApp's default prints the stack trace of a failure no fiber observed; one sanitized `background` line instead. */
+  private val unobserved=new StartFailure.Unobserved(error=>System.err.println(StartFailure.line("haystack","background",StartFailure.classify(error,known),None)))
+  override protected def reportFailure(error:Throwable):IO[Unit]=IO(unobserved.report(error))
 
   private def listener(config:Config):(Host,Port)=
     (Host.fromString(config.listenHost).getOrElse(throw Fault("config","invalid listen host")),Port.fromInt(config.listenPort).getOrElse(throw Fault("config","invalid port")))
@@ -92,7 +89,7 @@ object Main extends IOApp {
       _<-stage("wiring",CatsIOInjector().produceGet[Services](graph).use { services=>
         stage("bind",EmberServerBuilder.default[IO].withHost(address._1).withPort(address._2)
           .withShutdownTimeout(2.seconds).withMaxConnections(128).withMaxHeaderSize(16384).withMaxWebSocketMessageSize(1024*1024).withHttpWebSocketApp(ws=>services.http.routes(ws).orNotFound).build.use { _=>
-            IO.println("haystack: ready") *> stage("serve",(reload,services.retrieval.run(event=>IO.println("haystack: "+event.line))).parTupled.void)
+            IO(unobserved.settle(None)) *> IO.println("haystack: ready") *> stage("serve",(reload,services.retrieval.run(event=>IO.println("haystack: "+event.line))).parTupled.void)
           },Some(config.listenPort))
       })
     }yield()}

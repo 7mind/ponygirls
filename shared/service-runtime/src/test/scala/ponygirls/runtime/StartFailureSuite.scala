@@ -24,10 +24,15 @@ final class StartFailureSuite extends FunSuite {
     val line = StartFailure.line("svc", "migrate", StartFailure.classify(new IllegalStateException(secret, new java.sql.SQLException(secret)), none), None)
     assertEquals(line, """svc failure stage=migrate code=internal error=IllegalStateException message="unexpected failure"""")
   }
-  test("the walk visits a bounded number of throwables and then reports internal") {
-    val wrapper = new IllegalStateException("wide")
-    (1 until StartFailure.MaxCauses).foreach(_ => wrapper.addSuppressed(new IllegalStateException("unknown")))
-    wrapper.addSuppressed(new BindException("Address already in use"))
-    assertEquals(StartFailure.classify(wrapper, none), StartFailure("internal", "IllegalStateException", "unexpected failure"))
+  test("the walk visits a bounded number of throwables and edges and then reports internal") {
+    val internal = StartFailure("internal", "IllegalStateException", "unexpected failure")
+    val wide = new IllegalStateException("wide")
+    (1 until StartFailure.MaxCauses).foreach(_ => wide.addSuppressed(new IllegalStateException("unknown")))
+    wide.addSuppressed(new BindException("Address already in use"))
+    assertEquals(StartFailure.classify(wide, none), internal)
+    val repeated = new IllegalStateException("repeated"); val same = new IllegalStateException("unknown")
+    (1 to StartFailure.MaxEdges).foreach(_ => repeated.addSuppressed(same))
+    repeated.addSuppressed(new BindException("Address already in use"))
+    assertEquals(StartFailure.classify(repeated, none), internal)
   }
 }

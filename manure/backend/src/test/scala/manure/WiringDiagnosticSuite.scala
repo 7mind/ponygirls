@@ -19,9 +19,23 @@ import scala.util.Using
 final class WiringDiagnosticSuite extends munit.FunSuite:
   /** A failed start exits within seconds; the bound only stops a hung child. */
   private val childExitBound = 50L
-  /** Lines a fresh JVM prints on stderr that are not the service's: the JDK's own warnings (a block ending in an empty line), SLF4J's no-binding notice and
+  /** The known notices a fresh JVM prints on stderr that are not the service's, matched exactly: the JDK's warnings about
+    * the native library load (a block ending in an empty line) and Scala's LazyVals, SLF4J's no-binding notice and
     * cats-effect's CPU-starvation warning on a loaded host. */
-  private val unrelatedJvmLines = Vector("WARNING: ","SLF4J: ","SLF4J(","[WARNING] Your app's responsiveness")
+  private val knownJvmNotices = Vector(
+    """WARNING: A restricted method in java\.lang\.System has been called""",
+    """WARNING: java\.lang\.System::load has been called by manure\.storage\.PosixNative in an unnamed module \(file:[^)]+\)""",
+    """WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module""",
+    """WARNING: Restricted methods will be blocked in a future release unless native access is enabled""",
+    "",
+    """WARNING: A terminally deprecated method in sun\.misc\.Unsafe has been called""",
+    """WARNING: sun\.misc\.Unsafe::objectFieldOffset has been called by scala\.runtime\.LazyVals\$ \(file:[^)]+\)""",
+    """WARNING: Please consider reporting this to the maintainers of class scala\.runtime\.LazyVals\$""",
+    """WARNING: sun\.misc\.Unsafe::objectFieldOffset will be removed in a future release""",
+    """SLF4J: Failed to load class "org\.slf4j\.impl\.StaticLoggerBinder"\.""",
+    """SLF4J: Defaulting to no-operation \(NOP\) logger implementation""",
+    """SLF4J: See http://www\.slf4j\.org/codes\.html#StaticLoggerBinder for further details\.""",
+    """.+ \[WARNING\] Your app's responsiveness to a new asynchronous event \(such as a new connection, an upstream response, or a timer\) was in excess of .+\. Your CPU is probably starving\. .+""")
   private def cleanup(path: Path): Unit =
     val _ = try
       Using.resource(Files.walk(path))(_.iterator().asScala.toVector.sortBy(_.getNameCount).reverse.foreach(Files.deleteIfExists(_)))
@@ -39,7 +53,7 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
     assertEquals(output.toString(java.nio.charset.StandardCharsets.UTF_8),"",command)
     (exit.code,captured.toString(java.nio.charset.StandardCharsets.UTF_8))
   /** Runs `manure.Main` as deployed (IOApp's own runtime and failure reporter) in a child JVM: exit code, the stderr
-    * lines other than unrelatedJvmLines, and stdout. */
+    * lines other than knownJvmNotices, and stdout. */
   private def child(root: Path,arguments: String*): (Int,List[String],String) =
     val (err,out) = (root.resolve("child.err"),root.resolve("child.out"))
     val classpath = sys.props.getOrElse("manure.test.childClasspath",throw new IllegalArgumentException("explicit manure.test.childClasspath required"))
@@ -48,7 +62,7 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
     try assert(process.waitFor(childExitBound,java.util.concurrent.TimeUnit.SECONDS),"the child did not exit")
     finally
       process.destroyForcibly(); process.waitFor()
-    (process.exitValue,Files.readString(err).linesIterator.filterNot(line => line.isEmpty || unrelatedJvmLines.exists(line.startsWith)).toList,Files.readString(out))
+    (process.exitValue,Files.readString(err).linesIterator.filterNot(line => knownJvmNotices.exists(line.matches)).toList,Files.readString(out))
   /** Deployment-shaped config: a human with login/passwordHashFile plus a token
     * and a token-only agent, never a live database. */
   private def deploymentConfig(root: Path,passwordHash: String,settings: Json): Path =
@@ -92,8 +106,10 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
     try
       val config = deploymentConfig(root,Password.hash("fixture-password".toCharArray)+"\n",Json.obj())
       // Wiring succeeds; startup proceeds to the first database use and fails only on
-      // the deliberately unreachable database.
+      // the deliberately unreachable database, or before it on an absent database credential.
       assertEquals(runCommand("migrate",config.toString),(1,"manure failure stage=database code=jdbc-08001 error=JdbcFailure message=\"database-unavailable\"\n"))
+      Files.delete(root.resolve("dbpass"))
+      assertEquals(runCommand("migrate",config.toString),(1,"manure failure stage=database code=credential-file error=RuntimeFailure message=\"credential-file\"\n"))
     finally cleanup(root)
   }
 

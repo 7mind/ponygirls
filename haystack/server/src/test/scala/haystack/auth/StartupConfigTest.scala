@@ -20,9 +20,17 @@ class StartupConfigTest extends munit.FunSuite {
   override val munitTimeout = 30.seconds
   /** A failed start exits within seconds; the bound only stops a hung child. */
   private val ChildExitBound = 25.seconds
-  /** Lines a fresh JVM prints on stderr that are not the service's: the JDK's own warnings (a block ending in an empty line), SLF4J's no-binding notice and
-    * cats-effect's CPU-starvation warning on a loaded host. */
-  private val UnrelatedJvmLines = Vector("WARNING: ", "SLF4J: ", "SLF4J(", "[WARNING] Your app's responsiveness")
+  /** The known notices a fresh JVM prints on stderr that are not the service's, matched exactly: the JDK's warning about
+    * Scala's LazyVals, SLF4J's no-binding notice and cats-effect's CPU-starvation warning on a loaded host. */
+  private val KnownJvmNotices = Vector(
+    """WARNING: A terminally deprecated method in sun\.misc\.Unsafe has been called""",
+    """WARNING: sun\.misc\.Unsafe::objectFieldOffset has been called by scala\.runtime\.LazyVals\$ \(file:[^)]+\)""",
+    """WARNING: Please consider reporting this to the maintainers of class scala\.runtime\.LazyVals\$""",
+    """WARNING: sun\.misc\.Unsafe::objectFieldOffset will be removed in a future release""",
+    """SLF4J: Failed to load class "org\.slf4j\.impl\.StaticLoggerBinder"\.""",
+    """SLF4J: Defaulting to no-operation \(NOP\) logger implementation""",
+    """SLF4J: See http://www\.slf4j\.org/codes\.html#StaticLoggerBinder for further details\.""",
+    """.+ \[WARNING\] Your app's responsiveness to a new asynchronous event \(such as a new connection, an upstream response, or a timer\) was in excess of .+\. Your CPU is probably starving\. .+""")
   import AuthFixtures.*
   private def valid(dir: Path): Json = {
     val auth = config(dir)
@@ -63,20 +71,20 @@ class StartupConfigTest extends munit.FunSuite {
     } finally { System.setErr(originalErr); System.setOut(originalOut) }
     (exit, err.toString(UTF_8), out.toString(UTF_8))
   }
-  /** Runs `haystack.Main` as deployed (IOApp's own runtime and failure reporter) in a child JVM: exit code, the stderr
-    * lines other than [[UnrelatedJvmLines]], and stdout. */
-  private def child(dir: Path, arguments: String*): (Int, List[String], String) = {
+  /** Runs `haystack.Main` as deployed (IOApp's own runtime and failure reporter) in a child JVM with the given JVM options:
+    * exit code, the stderr lines other than [[KnownJvmNotices]], and stdout. */
+  private def child(dir: Path, options: Vector[String], arguments: String*): (Int, List[String], String) = {
     val (err, out) = (dir.resolve("child.err"), dir.resolve("child.out"))
     val launcher = Path.of(System.getProperty("java.home"), "bin", "java").toString
     val classpath = classOf[Main.type].getClassLoader match {
       case loader: java.net.URLClassLoader => loader.getURLs.map(url => Path.of(url.toURI).toString).mkString(java.io.File.pathSeparator)
       case other => fail("the child needs the URL class loader of sbt's forked test JVM, got " + other)
     }
-    val process = new ProcessBuilder((Vector(launcher, "-cp", classpath, "haystack.Main") ++ arguments)*)
+    val process = new ProcessBuilder((Vector(launcher) ++ options ++ Vector("-cp", classpath, "haystack.Main") ++ arguments)*)
       .redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null"))).redirectError(err.toFile).redirectOutput(out.toFile).start()
     try assert(process.waitFor(ChildExitBound.toSeconds, java.util.concurrent.TimeUnit.SECONDS), "the child did not exit")
     finally { process.destroyForcibly(); process.waitFor() }
-    (process.exitValue, Files.readString(err).linesIterator.filterNot(line => line.isEmpty || UnrelatedJvmLines.exists(line.startsWith)).toList, Files.readString(out))
+    (process.exitValue, Files.readString(err).linesIterator.filterNot(line => KnownJvmNotices.exists(line.matches)).toList, Files.readString(out))
   }
   /** A disposable database on the owned test cluster, dropped afterwards. */
   private def freshDatabase[A](body: String => A): A = {
@@ -154,20 +162,24 @@ class StartupConfigTest extends munit.FunSuite {
     assertEquals(captured("migrate", file(dir, valid(dir)).toString),
       (ExitCode.Error, "haystack failure stage=migrate code=jdbc-08001 error=JdbcFailure message=\"database-unavailable\"\n", ""))
   } }
-  test("an unusable config path or listen host fails the config stage before anything starts") { directory { dir =>
+  test("an unusable config path or serve's listen host fails the config stage before anything starts") { directory { dir =>
     assertEquals(captured("serve", "config\u0000.json"),
       (ExitCode.Error, "haystack failure stage=config code=internal error=InvalidPathException message=\"unexpected failure\"\n", ""))
-    assertEquals(captured("check-config", file(dir, set(valid(dir), "listenHost", Json.fromString("not a host"))).toString),
+    assertEquals(captured("serve", file(dir, set(valid(dir), "listenHost", Json.fromString("not a host"))).toString),
       (ExitCode.Error, "haystack failure stage=config code=config error=Fault message=\"invalid listen host\"\n", ""))
   } }
-  test("serve on an occupied listen port fails the bind stage with address in use and the port") { directory { dir => freshDatabase { url =>
+  test("serve on an occupied listen port, or a listen host it cannot resolve, prints the bind stage's line once") { directory { dir => freshDatabase { url =>
     Using.resource(new java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))) { occupied =>
       val port = occupied.getLocalPort
       val database = TestSupport.databaseConfig
       val json = Vector("listenPort" -> Json.fromInt(port), "database/jdbcUrl" -> Json.fromString(url), "database/user" -> Json.fromString(database.user),
         "database/passwordFile" -> Json.fromString(database.passwordFile.toString)).foldLeft(valid(dir)) { case (json, (path, value)) => set(json, path, value) }
-      assertEquals(child(dir, "serve", file(dir, json).toString),
+      assertEquals(child(dir, Vector.empty, "serve", file(dir, json).toString),
         (1, List(s"haystack failure stage=bind code=address-in-use error=BindException message=\"address in use\" port=$port"), ""))
+      // A non-bind failure of the listener's acquisition: the name resolves through an empty hosts file only.
+      val hosts = dir.resolve("hosts"); Files.writeString(hosts, "")
+      assertEquals(child(dir, Vector("-Djdk.net.hosts.file=" + hosts), "serve", file(dir, set(json, "listenHost", Json.fromString("listener.invalid"))).toString),
+        (1, List("haystack failure stage=bind code=internal error=UnknownHostException message=\"unexpected failure\""), ""))
     }
   } } }
   test("missing, malformed and duplicate-key config inputs fail closed") { directory { dir =>

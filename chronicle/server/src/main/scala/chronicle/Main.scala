@@ -11,7 +11,7 @@ import scala.concurrent.duration.*
 
 final class RuntimeServices(val database: Database,val http: Http,val worker: Worker,val archive: PostgresArchive,val logger: logstage.IzLogger)
 object Main extends IOApp {
-  def run(args: List[String]): IO[ExitCode] = IO.defer(args match {
+  def run(args: List[String]): IO[ExitCode] = IO.defer { unobserved.start(); args match {
     case List("password-hash") => stage("password-hash",IO.blocking {
       val console=System.console()
       val chars=if(console!=null) console.readPassword() else { val line=scala.io.StdIn.readLine(); Check(line!=null,"invalid","password required on stdin"); line.toCharArray }
@@ -38,7 +38,7 @@ object Main extends IOApp {
         })
       }.as(ExitCode.Success)
     case _ => IO.println("usage: chronicle-server serve CONFIG.json | serve-standby CONFIG.json (writable API, no background workers) | migrate CONFIG.json | password-hash (stdin)").as(ExitCode.Error)
-  }).handleErrorWith(failure)
+  }}.flatTap(_ => IO(unobserved.settle(None))).handleErrorWith(failure)
   private final case class StageFailure(stage: String,port: Option[Int],error: Throwable) extends RuntimeException(stage,error)
   /** Names the start step that failed; the innermost stage wins, a failure outside every stage is `start`. */
   private def stage[A](name: String,work: => IO[A],port: Option[Int] = None): IO[A] = IO.defer(work).adaptError {
@@ -56,14 +56,11 @@ object Main extends IOApp {
       case failed: StageFailure => (failed.stage,failed.port,failed.error)
       case other => ("start",None,other)
     }
-    IO.blocking(System.err.println(StartFailure.line("chronicle",name,StartFailure.classify(cause,known),port))).as(ExitCode.Error)
+    IO.blocking { unobserved.settle(Some(cause)); System.err.println(StartFailure.line("chronicle",name,StartFailure.classify(cause,known),port)) }.as(ExitCode.Error)
   }
-  /** cats-effect reports here a failure no fiber observed (the listener's background fiber); IOApp's default prints its
-    * stack trace. One sanitized line instead, and a bind failure, which the bind stage reports, is not printed twice. */
-  override protected def reportFailure(error: Throwable): IO[Unit] = {
-    val failure = StartFailure.classify(error,known)
-    IO.unlessA(failure.code==StartFailure.AddressInUse || failure.code==StartFailure.Bind)(IO.blocking(System.err.println(StartFailure.line("chronicle","background",failure,None))))
-  }
+  /** IOApp's default prints the stack trace of a failure no fiber observed; one sanitized `background` line instead. */
+  private val unobserved = new StartFailure.Unobserved(error => System.err.println(StartFailure.line("chronicle","background",StartFailure.classify(error,known),None)))
+  override protected def reportFailure(error: Throwable): IO[Unit] = IO.blocking(unobserved.report(error))
   private def initialize(database: Database): IO[Unit] = stage("migrate",IO.blocking(database.initialize()))
   /** The listen address; the config stage validates it before anything starts. */
   private def listener(config: Config): (Host,Port) =
@@ -83,7 +80,7 @@ object Main extends IOApp {
     gate <- Semaphore[IO](2)
     (host,port) = listener(config)
     _ <- stage("bind",EmberServerBuilder.default[IO].withHost(host).withPort(port).withMaxConnections(128).withMaxHeaderSize(16384).withHttpWebSocketApp(ws => s.http.routes(ws,gate,accounts).orNotFound).build.use { server =>
-      IO(s.logger.info(s"chronicle listening address=${server.address} workersEnabled=$workersEnabled")) *> stage("serve",background(workersEnabled,s.worker.run))
+      IO(unobserved.settle(None)) *> IO(s.logger.info(s"chronicle listening address=${server.address} workersEnabled=$workersEnabled")) *> stage("serve",background(workersEnabled,s.worker.run))
     },Some(config.listenPort))
     never <- IO.never[Nothing]
   } yield never })
