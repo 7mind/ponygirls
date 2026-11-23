@@ -1,15 +1,24 @@
 package chronicle
 import java.sql.{Connection, PreparedStatement, ResultSet}
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.util.Using
 import java.util.UUID
 import chronicle.api.*
 import io.circe.Json
 import ponygirls.auth.{AccountFailure,ImperativeAccountSql}
 
-final class Database private (config: Config,val profiles: IndexProfileCatalog,runtime: ponygirls.runtime.BlockingJdbcDatabase) extends AutoCloseable {
-  def this(config: Config, profiles: IndexProfileCatalog) = this(config,profiles,new ponygirls.runtime.BlockingJdbcDatabase(config.jdbcConfig))
+final class Database private (config: Config,val profiles: IndexProfileCatalog,runtime: ponygirls.runtime.BlockingJdbcDatabase,controlRuntime: ponygirls.runtime.BlockingJdbcDatabase) extends AutoCloseable {
+  private def this(config: Config,profiles: IndexProfileCatalog,runtimes: (ponygirls.runtime.BlockingJdbcDatabase,ponygirls.runtime.BlockingJdbcDatabase)) =
+    this(config,profiles,runtimes._1,runtimes._2)
+  def this(config: Config, profiles: IndexProfileCatalog) = this(config,profiles,Database.runtimes(config,new ponygirls.runtime.BlockingJdbcDatabase(_)))
   def transaction[A](f: Connection => A): A = runtime.transaction(f)
-  def close(): Unit = runtime.close()
+  def extendedTransaction[A](timeout: FiniteDuration)(f: Connection => A): A = runtime.extendedTransaction(timeout)(f)
+  /** Lease renewals (restart-robustness spec §4, D3): an admission of their own, so they never wait behind publication
+    * statements, failure records or any other transaction for a connection (one-connection mode: the one admission). */
+  def control[A](f: Connection => A): A = controlRuntime.transaction(f)
+  /** The connections of every other transaction: `databaseLimits.maxConnections` less the control connection. */
+  val ordinaryConnections: Int = Database.split(config).fold(config.databaseLimits.maxConnections)(_._1.limits.maxConnections)
+  def close(): Unit = try runtime.close() finally if(controlRuntime ne runtime) controlRuntime.close()
   private def migrate(c: Connection,name: String): Unit = {
     val stream=getClass.getResourceAsStream(s"/$name")
     Check(stream!=null,"config","missing migration resource")
@@ -56,6 +65,7 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     migrate(c,"026_staged_generations.sql")
     migrate(c,"027_window_reuse.sql")
     migrate(c,"028_generation_lineage.sql")
+    migrate(c,"029_transient_failures.sql")
     val dimensions=SearchPolicy.dimensions(config)
     Sql.exec(c,s"CREATE INDEX IF NOT EXISTS ch_search_hnsw_d$dimensions ON ch_search_chunks USING hnsw ((l2_normalize(embedding)::halfvec($dimensions)) halfvec_cosine_ops) WHERE vector_dims(embedding)=$dimensions")
     profiles.register(c)
@@ -104,9 +114,24 @@ object Database {
     * is off, and the rows whose TOTP secret was sealed with a key other than `keyId`. */
   def activeImperativeAccounts(c: Connection): Int = Sql.one(c,"SELECT count(*) FROM ponygirls_imperative_users WHERE status='active'")(_.getInt(1)).getOrElse(0)
   def imperativeAccountsSealedByAnotherKey(c: Connection,keyId: String): Int = Sql.one(c,"SELECT count(*) FROM ponygirls_imperative_users WHERE totp_key_id<>?",keyId)(_.getInt(1)).getOrElse(0)
-  /** Explicit runtime injection for trusted JDBC probes; ownership transfers to Database. */
+  /** Explicit runtime injection for trusted JDBC probes; ownership transfers to Database. The given runtime is the only
+    * admission (one-connection mode: renewals share it). */
   def withRuntime(config: Config, profiles: IndexProfileCatalog, runtime: ponygirls.runtime.BlockingJdbcDatabase): Database =
-    new Database(config,profiles,runtime)
+    new Database(config,profiles,runtime,runtime)
+  /** Its runtimes from `open`: with more than one connection the ordinary and the control admission (`split`), else one. */
+  def runtimes(config: Config,open: ponygirls.runtime.JdbcConfig => ponygirls.runtime.BlockingJdbcDatabase): (ponygirls.runtime.BlockingJdbcDatabase,ponygirls.runtime.BlockingJdbcDatabase) =
+    split(config).fold { val one=open(config.jdbcConfig); (one,one) }((ordinary,control) => (open(ordinary),open(control)))
+  def withRuntimes(config: Config, profiles: IndexProfileCatalog, runtimes: (ponygirls.runtime.BlockingJdbcDatabase,ponygirls.runtime.BlockingJdbcDatabase)): Database =
+    new Database(config,profiles,runtimes._1,runtimes._2)
+  /** Connections kept, out of `databaseLimits.maxConnections`, for lease renewals. */
+  val controlConnections = 1
+  /** The ordinary and the control admission's limits; None with one connection (one admission for everything, as before:
+    * a long statement then also delays renewals). */
+  def split(config: Config): Option[(ponygirls.runtime.JdbcConfig,ponygirls.runtime.JdbcConfig)] = {
+    val limits=config.databaseLimits
+    Option.when(limits.maxConnections>controlConnections)((config.jdbcConfig.copy(limits=limits.copy(maxConnections=limits.maxConnections-controlConnections)),
+      config.jdbcConfig.copy(limits=limits.copy(maxConnections=controlConnections))))
+  }
 }
 object Sql {
   type Param = String | Int | Long | Boolean | UUID
@@ -129,21 +154,63 @@ object PostgresArchive {
   val messagePageBytes: Long = 64L*1024*1024
   /** Messages fetched per round trip while a whole revision's messages are decoded one at a time (`RevisionContent.request`). */
   val claimedMessagesPerFetch = 64
+  /** The advisory lock key of a job's publication (restart-robustness spec §4): every staging transaction holds it shared;
+    * P0 takes it exclusively, before anything else, so it waits only for staging transactions of the job's earlier attempts
+    * (the attempt's own start after it; a later attempt exists only once this claim is stale). */
+  def stagingLock(claim: Claim): String = s"staging:${claim.jobId}"
+  /** P0's lock timeout on [[stagingLock]] (SQLSTATE 55P03): an earlier attempt's staging transaction still runs. */
+  val leftoverStaging = "leftover-staging"
+  val lockTimeout = "55P03"
+}
+/** One claimed attempt (restart-robustness spec §4): the first search-row range of the statement its job's last transient
+  * failure stopped in (`transient_range`), the range it stops in itself, and whether it committed work that ends a run of
+  * consecutive transient failures: a model answer's checkpoint, a staged resume step or that range. */
+final class ClaimAttempt(val transientRange: Option[Int]) {
+  private val advanced=new java.util.concurrent.atomic.AtomicBoolean(false)
+  private val stopped=new java.util.concurrent.atomic.AtomicReference[Option[Int]](None)
+  def advance(): Unit = advanced.set(true)
+  def progressed: Boolean = advanced.get
+  def stoppedAt(range: Int): Unit = { stopped.compareAndSet(None,Some(range)); () }
+  def stoppedRange: Option[Int] = stopped.get
+  override def toString: String = s"ClaimAttempt($transientRange)"
+}
+object ClaimAttempt {
+  /** The attempt of a claim built without a claim transaction (tests). */
+  def unclaimed(): ClaimAttempt = new ClaimAttempt(None)
+}
+enum TransientOutcome {
+  /** Queued until `nextAttempt`, after the `consecutive`-th transient failure in a row. */
+  case Held(consecutive: Int,nextAttempt: java.time.Instant)
+  /** Failed `database-transient` at the consecutive limit. */
+  case Exhausted(consecutive: Int)
+  /** Nothing held: the claim ended (superseded by a newer revision, or no longer current). */
+  case Ended
 }
 object Jobs {
   val attemptLimit=5
   val supersededRevision = "superseded-revision"
+  /** A transient database failure (restart-robustness spec §4): not charged to the attempts; the job waits Queued until
+    * `lease_until` (the next attempt), `delay(k)` after its k-th consecutive one, and fails after `limit` of them. */
+  val transientCode = "database-transient"
+  final case class TransientBackoff(base: FiniteDuration,factor: Int,cap: FiniteDuration,limit: Int) {
+    def delay(consecutive: Int): FiniteDuration = Iterator.iterate(base.min(cap))(value => (value*factor.toLong).min(cap)).drop(consecutive-1).next()
+  }
+  /** 1, 2, 4, 8, 15, 15, 15, 15, 15 minutes; the tenth fails the job: exhaustion takes at least 90 minutes. */
+  val transientBackoff = TransientBackoff(60.seconds,2,15.minutes,10)
   /** A Running job with a valid lease keeps its claim when its source gets a newer revision, and the head job of its
     * source and profile waits for it; every other unfinished job of an older revision ends superseded. */
   def leased(job: String): String = s"$job.state='Running' AND $job.lease_until>clock_timestamp()"
   val superseding = s"state='Failed',error='$supersededRevision',failure_stage=NULL,fence=fence+1,lease_until=NULL"
+  /** A job a claim may take: Queued and not held (no next attempt, or its time has come), or Running with an ended lease. */
+  def claimable(job: String): String =
+    s"(($job.state='Queued' AND ($job.lease_until IS NULL OR $job.lease_until<=clock_timestamp())) OR ($job.state='Running' AND $job.lease_until<clock_timestamp()))"
   def retry(c: Connection,owner: String,id: UUID): Unit = {
     val target=OwnerTargets.read(c,owner,true).profile
     val head=Sql.one(c,"SELECT s.revision FROM ch_sources s JOIN ch_jobs j ON j.session_id=s.id WHERE j.id=? AND s.owner=? AND NOT s.tombstone FOR UPDATE OF s",id,owner)(_.getInt(1)).getOrElse(throw DomainError("not-found","job not found"))
     val (revision,profile)=Sql.one(c,"SELECT revision,profile FROM ch_jobs WHERE id=? FOR UPDATE",id)(r => (r.getInt(1),r.getString(2))).get
     Check(revision==head,"conflict","job superseded by a newer archive revision")
     Check(profile==target,"conflict","job superseded by the target model profile")
-    Sql.exec(c,"UPDATE ch_jobs SET state='Queued',attempts=0,lease_until=NULL,fence=fence+1,annotation_retry_epoch=annotation_retry_epoch+1,run_id=CASE WHEN state='Complete' THEN gen_random_uuid() ELSE run_id END,error=CASE WHEN state='Complete' THEN NULL ELSE error END,failure_stage=CASE WHEN state='Complete' THEN NULL ELSE failure_stage END,completed_windows=0,total_windows=NULL WHERE id=?",id)
+    Sql.exec(c,"UPDATE ch_jobs SET state='Queued',attempts=0,lease_until=NULL,transient_failures=0,transient_range=NULL,fence=fence+1,annotation_retry_epoch=annotation_retry_epoch+1,run_id=CASE WHEN state='Complete' THEN gen_random_uuid() ELSE run_id END,error=CASE WHEN state='Complete' THEN NULL ELSE error END,failure_stage=CASE WHEN state='Complete' THEN NULL ELSE failure_stage END,completed_windows=0,total_windows=NULL WHERE id=?",id)
   }
   /** The jobs of a source whose head just switched to revision `next`: older unfinished jobs end superseded (a leased
     * Running one keeps its claim; Complete and Failed ones are not written) and the new head's job is queued; returns its id. */
@@ -343,16 +410,17 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
         // deferred to the lane with it (Queued with its window count: only a deferral records one while it is queued) and
         // a large one whose lease ended. No job is refused for its size (ingest-limits spec §5.2.7).
         val source=Sql.one(c,s"""SELECT s.id,s.revision FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
-          SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.attempts<${Jobs.attemptLimit} AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp())))
+          SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.attempts<${Jobs.attemptLimit} AND ${Jobs.claimable("j")})
           AND NOT EXISTS(SELECT 1 FROM ch_jobs o WHERE o.session_id=s.id AND o.revision<s.revision AND o.profile=? AND o.state='Running')
           AND (? OR NOT EXISTS(SELECT 1 FROM ch_jobs d WHERE d.session_id=s.id AND d.revision=s.revision AND d.profile=? AND (d.total_windows>? OR (d.state='Queued' AND d.total_windows IS NOT NULL))))
           ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",owner,target.profile,target.profile,large==LargeJobs.Admitted,target.profile,LargeJobs.windows)(r => (r.getObject(1,classOf[UUID]),r.getInt(2)))
         source.flatMap { (id,revision) =>
           Sql.one(c,s"""UPDATE ch_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
-            WHERE id=(SELECT id FROM ch_jobs WHERE session_id=? AND revision=? AND profile=? AND attempts<${Jobs.attemptLimit} AND (state='Queued' OR (state='Running' AND lease_until<clock_timestamp())) FOR UPDATE SKIP LOCKED LIMIT 1)
-            RETURNING id,fence,run_id""",leaseSeconds,id,revision,target.profile) { row =>
+            WHERE id=(SELECT id FROM ch_jobs WHERE session_id=? AND revision=? AND profile=? AND attempts<${Jobs.attemptLimit} AND ${Jobs.claimable("ch_jobs")} FOR UPDATE SKIP LOCKED LIMIT 1)
+            RETURNING id,fence,run_id,transient_range""",leaseSeconds,id,revision,target.profile) { row =>
+            val range=Option(row.getObject("transient_range",classOf[java.lang.Integer])).map(_.intValue)
             val (snap,binding,messages)=claimedSnapshot(c,id,revision)
-            Claim(row.getObject("id",classOf[UUID]),id,revision,row.getLong("fence"),target.profile,snap,owner,target.epoch,row.getObject("run_id",classOf[UUID]),binding,messages)
+            Claim(row.getObject("id",classOf[UUID]),id,revision,row.getLong("fence"),target.profile,snap,owner,target.epoch,row.getObject("run_id",classOf[UUID]),binding,messages,new ClaimAttempt(range))
           }
         }
       }
@@ -409,10 +477,14 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     checkpointAuthority(c,claim)
     value
   }
-  def checkpoint(claim: Claim,key: CheckpointKey,value: Json): Unit = db.transaction { c =>
-    checkpointAuthority(c,claim)
-    IndexCheckpoints.write(c,claim,key,value)
-    checkpointAuthority(c,claim)
+  /** A model answer's checkpoint: committed, it is progress of the attempt (restart-robustness spec §4). */
+  def checkpoint(claim: Claim,key: CheckpointKey,value: Json): Unit = {
+    db.transaction { c =>
+      checkpointAuthority(c,claim)
+      IndexCheckpoints.write(c,claim,key,value)
+      checkpointAuthority(c,claim)
+    }
+    claim.attempt.advance()
   }
   def windowWork(claim: Claim,key: CheckpointKey): Option[WindowWork] = db.transaction { c =>
     checkpointAuthority(c,claim)
@@ -444,10 +516,13 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       }
     }
   }
+  /** On the control admission (restart-robustness spec §4). An attempt that committed progress restarts its job's count of
+    * consecutive transient failures. */
   def renew(claim: Claim,leaseSeconds: Int): Boolean = {
     Check(leaseSeconds>0,"invalid","invalid claim lease")
-    db.transaction { c =>
-      current(c,claim) && lockJob(c,claim) && Sql.exec(c,s"UPDATE ch_jobs SET lease_until=clock_timestamp()+make_interval(secs=>?) WHERE $validJob",(List[Sql.Param](leaseSeconds)++jobArgs(claim))*)==1
+    val progressed=claim.attempt.progressed
+    db.control { c =>
+      current(c,claim) && lockJob(c,claim) && Sql.exec(c,s"UPDATE ch_jobs SET lease_until=clock_timestamp()+make_interval(secs=>?),transient_failures=CASE WHEN ? THEN 0 ELSE transient_failures END WHERE $validJob",(List[Sql.Param](leaseSeconds,progressed)++jobArgs(claim))*)==1
     }
   }
   /** A run's staged generation no longer belongs to it, or its job's claim ended: the publication stops at the batch. */
@@ -456,8 +531,10 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     * owning the staged generation, whose row it locks against the sweep (`StagedLock.Write` for a batch that records its
     * resume step, `Share` for the search-row writers). The job row is not locked: a renewal, which locks it, never waits
     * for the search-row writers, which would hold share locks on it one after another; a reclaim does not wait for a
-    * batch either, and a stale worker stops at its next one (the switch checks everything again). */
-  private def staging[A](claim: Claim,generation: UUID,lock: StagedLock)(f: Connection => A): A = db.transaction { c =>
+    * batch either, and a stale worker stops at its next one (the switch checks everything again). Its statements run under
+    * the publication timeout, and it holds its job's staging lock (`PostgresArchive.stagingLock`) shared until its end. */
+  private def staging[A](claim: Claim,generation: UUID,lock: StagedLock)(f: Connection => A): A = db.extendedTransaction(config.indexing.publicationTimeout(config.databaseLimits)) { c =>
+    Sql.exec(c,"SELECT pg_advisory_xact_lock_shared(hashtextextended(?,0))",PostgresArchive.stagingLock(claim))
     // The claim is checked after the staged row's lock is granted: a batch that waited for it while the job was claimed
     // again (whose phase W may have invalidated the staged chunks) stops there (read committed: the check sees the
     // claim's fence and lease as committed by then).
@@ -474,13 +551,13 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   def publishProblems(claim: Claim,rows: ProblemRows): Boolean = try {
     stage(claim,rows.parent) match {
       case None => false
-      case Some((staged,abandoned)) =>
+      case Some((staged,abandoned,resumed)) =>
         abandoned.foreach(PassageStorage.deleteAbandoned(db,_))
         val written=if(staged.phase==StagedPhase.Passages) writePassages(claim,staged,rows) else staged
         val counts=written.counts.getOrElse(throw DomainError("internal","staged generation without its counts"))
         val pieces=if(written.invalid) rewritePieces(claim,written) else written
         if(pieces.step<counts.steps) writePieces(claim,pieces,counts,rows)
-        writeSearchRows(claim,staged.generation,counts.pieces)
+        writeSearchRows(claim,staged.generation,counts.pieces,resumed)
         switch(claim,staged.generation,counts.passages,rows.parent)
     }
   } catch { case _: StaleStaging => false }
@@ -505,8 +582,15 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   /** P0 under the checkpoint authority; with the job's staged generations of other runs, which it abandons, and the run's
     * own one if it was staged under another publication: continuing another parent (or a root where this one continues
     * one, or the reverse), or under another metadata horizon (also one a release before the horizon staged, which records
-    * none): its pieces, tag counts and cut follow its own, so it starts again from nothing (ingest-limits spec §5.6.2). */
-  private def stage(claim: Claim,parent: Option[PublicationParent]): Option[(StagedGeneration,List[UUID])] = db.transaction { c =>
+    * none): its pieces, tag counts and cut follow its own, so it starts again from nothing (ingest-limits spec §5.6.2). First
+    * it takes its job's staging lock exclusively (`PostgresArchive.stagingLock`), before any other lock: it waits for the
+    * staging transactions of the job's earlier attempts still in PostgreSQL, and a lock timeout there is
+    * `PostgresArchive.leftoverStaging` (restart-robustness spec §4), transient. Whether the run's staged generation is
+    * resumed comes with it. */
+  private def stage(claim: Claim,parent: Option[PublicationParent]): Option[(StagedGeneration,List[UUID],Boolean)] = db.transaction { c =>
+    try Sql.lock(c,PostgresArchive.stagingLock(claim)) catch {
+      case timeout: java.sql.SQLException if timeout.getSQLState==PostgresArchive.lockTimeout => throw ponygirls.runtime.JdbcFailure(PostgresArchive.leftoverStaging,Some(PostgresArchive.lockTimeout))
+    }
     Option.when(current(c,claim) && lockJob(c,claim) && Sql.one(c,s"SELECT 1 FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true) && revisionMatches(c,claim)) {
       PassageStorage.requirePolicy(c,claim.profile,IndexPolicy.ContextAwareProblemsV1)
       val abandoned=PassageStorage.abandonOtherRuns(c,claim)
@@ -514,7 +598,8 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       val current=PassageStorage.staged(c,claim.jobId,claim.runId)
       val other=current.filter(value => value.parent!=parent.map(_.generation) || !value.horizon.contains(horizon))
       other.foreach(value => PassageStorage.abandon(c,value.generation))
-      (current.filter(_ => other.isEmpty).getOrElse(parent.fold(PassageStorage.stage(c,claim,horizon))(PassageStorage.stageIncremental(c,claim,_,horizon))),abandoned++other.map(_.generation))
+      val resumed=current.filter(_ => other.isEmpty)
+      (resumed.getOrElse(parent.fold(PassageStorage.stage(c,claim,horizon))(PassageStorage.stageIncremental(c,claim,_,horizon))),abandoned++other.map(_.generation),resumed.nonEmpty)
     }
   }
   /** Fills batches of rows of consecutive steps; `flush` commits one with the step a resumed run starts at. */
@@ -530,10 +615,13 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     def text(value: String): Long = 2L*value.length
     def bytes(row: ProblemRows.Passages): Long = 64+(row.opened++row.closed).map(p => 256+text(p.initialSummary)+2*text(p.summary)+p.tags.map(text).sum).sum+
       row.spans.map(span => 64+text(span.span.messageId)).sum+row.context.map((_,span) => 64+text(span.messageId)).sum
-    def written(next: StagedGeneration,cut: Option[ProblemRows.Cut])(batch: Vector[ProblemRows.Passages]): Unit = staging(claim,staged.generation,StagedLock.Write) { c =>
-      PassageStorage.writePassages(c,staged.generation,batch)
-      next.counts.foreach(counts => PassageStorage.writeLineage(c,staged.generation,rows.parent.map(_.generation),cut,counts.pieces))
-      Check(PassageStorage.resume(c,claim,next),"internal","staged generation resume point not recorded")
+    def written(next: StagedGeneration,cut: Option[ProblemRows.Cut])(batch: Vector[ProblemRows.Passages]): Unit = {
+      staging(claim,staged.generation,StagedLock.Write) { c =>
+        PassageStorage.writePassages(c,staged.generation,batch)
+        next.counts.foreach(counts => PassageStorage.writeLineage(c,staged.generation,rows.parent.map(_.generation),cut,counts.pieces))
+        Check(PassageStorage.resume(c,claim,next),"internal","staged generation resume point not recorded")
+      }
+      claim.attempt.advance()
     }
     val batches=new Batches[ProblemRows.Passages](bytes,(batch,step) => written(staged.copy(step=step),None)(batch))
     val replayed=rows.passages(staged.step) { (step,value) =>
@@ -572,32 +660,45 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
         staging(claim,staged.generation,StagedLock.Share)(c => PassageStorage.members(c,parent.generation,claim.sessionId,claim.revision,from,until))
     }
     def bytes(piece: ProblemRows.Piece): Long = 256+6L*piece.chunk.text.length+4L*(piece.chunk.summary.length+piece.chunk.tags.map(_.length).sum)+24L*piece.vector.size
-    def written(step: Int)(batch: Vector[ProblemRows.Piece]): Unit = staging(claim,staged.generation,StagedLock.Write) { c =>
-      Check(batch.forall(_.vector.size==config.embedding.dimensions),"invalid","publication embedding")
-      PassageStorage.writePieces(c,staged.generation,batch,rows.parent)
-      Check(PassageStorage.resume(c,claim,staged.copy(step=step)),"internal","staged generation resume point not recorded")
+    def written(step: Int)(batch: Vector[ProblemRows.Piece]): Unit = {
+      staging(claim,staged.generation,StagedLock.Write) { c =>
+        Check(batch.forall(_.vector.size==config.embedding.dimensions),"invalid","publication embedding")
+        PassageStorage.writePieces(c,staged.generation,batch,rows.parent)
+        Check(PassageStorage.resume(c,claim,staged.copy(step=step)),"internal","staged generation resume point not recorded")
+      }
+      claim.attempt.advance()
     }
     val batches=new Batches[ProblemRows.Piece](bytes,(batch,step) => written(step)(batch))
     rows.pieces(staged.step,stored) { (step,pieces) => pieces.foreach(batches.add(step,_)) }
     written(counts.steps)(batches.drain())
   }
   /** P3: the search rows by ordinal ranges of PostgresArchive.searchRowsPerStatement, each statement committed, by the
-    * process's search-row writers. */
-  private def writeSearchRows(claim: Claim,generation: UUID,pieces: Int): Unit = {
+    * process's search-row writers. The range the job's last transient failure stopped in (its staged generation resumed,
+    * on the same range grid) is written alone first: once it commits, the attempt got past that failure (restart-
+    * robustness spec §4). The range of the first statement that fails is the attempt's stopping range. */
+  private def writeSearchRows(claim: Claim,generation: UUID,pieces: Int,resumed: Boolean): Unit = {
     // An incremental publication's own chunks start at its first rewritten piece.
     val first=staging(claim,generation,StagedLock.Share)(c => Sql.one(c,"SELECT min(ordinal) FROM ch_chunks WHERE generation=?",generation)(r => Option(r.getObject(1)).map(_ => r.getInt(1))).flatten).getOrElse(pieces)
+    val size=PostgresArchive.searchRowsPerStatement
+    def write(from: Int): Unit = {
+      PostgresArchive.searchRowWriters.acquire()
+      try staging(claim,generation,StagedLock.Share)(c => PassageStorage.writeSearchRows(c,generation,from,(from+size).min(pieces)))
+      catch { case failed: java.sql.SQLException => claim.attempt.stoppedAt(from); throw failed }
+      finally PostgresArchive.searchRowWriters.release()
+    }
+    val stoppedBefore=claim.attempt.transientRange.filter(range => resumed && range>=first && range<pieces && (range-first)%size==0)
+    stoppedBefore.foreach { range => write(range); claim.attempt.advance() }
     val next=new java.util.concurrent.atomic.AtomicInteger(first)
     val stopped=new java.util.concurrent.atomic.AtomicBoolean(false)
     def writer(): Unit = {
-      var from=next.getAndAdd(PostgresArchive.searchRowsPerStatement)
+      var from=next.getAndAdd(size)
       while(from<pieces && !stopped.get) {
-        PostgresArchive.searchRowWriters.acquire()
-        try staging(claim,generation,StagedLock.Share)(c => PassageStorage.writeSearchRows(c,generation,from,(from+PostgresArchive.searchRowsPerStatement).min(pieces)))
-        finally PostgresArchive.searchRowWriters.release()
-        from=next.getAndAdd(PostgresArchive.searchRowsPerStatement)
+        if(!stoppedBefore.contains(from)) write(from)
+        from=next.getAndAdd(size)
       }
     }
-    val writers=PassageStorage.searchRowWriters.min((pieces-first+PostgresArchive.searchRowsPerStatement-1)/PostgresArchive.searchRowsPerStatement)
+    // At most the connections other transactions may hold: no writer waits for one behind its siblings' statements.
+    val writers=PassageStorage.searchRowWriters.min(db.ordinaryConnections).min((pieces-first+size-1)/size)
     if(writers<=1) writer() else {
       val pool=java.util.concurrent.Executors.newFixedThreadPool(writers)
       try {
@@ -659,9 +760,38 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       // A job of an older revision is never queued again: where it would be, it ends superseded.
       val superseded=head>claim.revision && Sql.one(c,s"SELECT attempts<${Jobs.attemptLimit} AND NOT ? FROM ch_jobs WHERE $validJob",(List[Sql.Param](exhausted)++jobArgs(claim))*)(_.getBoolean(1)).contains(true)
       if(superseded) Sql.exec(c,s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob",jobArgs(claim)*)
-      else Sql.exec(c,s"UPDATE ch_jobs SET state=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN 'Failed' ELSE 'Queued' END,error=?,failure_stage=NULLIF(?,''),lease_until=NULL,completed_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN completed_windows ELSE 0 END,total_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN total_windows ELSE NULL END WHERE $validJob",(List[Sql.Param](exhausted,code.take(64),stage.fold("")(_.toString),exhausted,exhausted)++jobArgs(claim))*)
+      else Sql.exec(c,s"UPDATE ch_jobs SET state=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN 'Failed' ELSE 'Queued' END,error=?,failure_stage=NULLIF(?,''),lease_until=NULL,transient_failures=0,transient_range=NULL,completed_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN completed_windows ELSE 0 END,total_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN total_windows ELSE NULL END WHERE $validJob",(List[Sql.Param](exhausted,code.take(64),stage.fold("")(_.toString),exhausted,exhausted)++jobArgs(claim))*)
     }
   }
+  /** The transient branch of the failure record (restart-robustness spec §4), fenced as `failAt`: the claim's Running job
+    * with a valid lease. Held, its claim's attempt refunded, until `delay(k)` from now, or Failed at the limit; the count
+    * restarts at 1 when the attempt committed progress. */
+  def holdTransient(claim: Claim,stage: Option[IndexingStage]): TransientOutcome = db.transaction { c =>
+    head(c,claim).filter(_ => lockJob(c,claim)).flatMap(head => Sql.one(c,s"SELECT transient_failures FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_.getInt(1)).map(head -> _)) match {
+      // A record of this attempt that committed although its acknowledgement was lost: the row still carries the claim's
+      // fence and run (any later claim, retry or supersession changes the fence), so it is reported, not written again.
+      case None => recordedTransient(c,claim).getOrElse(TransientOutcome.Ended)
+      // A job of an older revision is never queued again: it ends superseded.
+      case Some((head,_)) if head>claim.revision => Sql.exec(c,s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob",jobArgs(claim)*); TransientOutcome.Ended
+      case Some((_,previous)) =>
+        val consecutive=if(claim.attempt.progressed) 1 else previous+1
+        val values=List[Sql.Param](Jobs.transientCode,stage.fold("")(_.toString),consecutive,claim.attempt.stoppedRange.getOrElse(-1))
+        if(consecutive>=Jobs.transientBackoff.limit) {
+          Sql.exec(c,s"UPDATE ch_jobs SET state='Failed',attempts=attempts-1,error=?,failure_stage=NULLIF(?,''),lease_until=NULL,transient_failures=?,transient_range=NULLIF(?,-1) WHERE $validJob",(values++jobArgs(claim))*)
+          TransientOutcome.Exhausted(consecutive)
+        } else {
+          val delay=Jobs.transientBackoff.delay(consecutive).toSeconds.toInt
+          Sql.one(c,s"""UPDATE ch_jobs SET state='Queued',attempts=attempts-1,error=?,failure_stage=NULLIF(?,''),transient_failures=?,transient_range=NULLIF(?,-1),
+            lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL WHERE $validJob RETURNING lease_until""",(values++List[Sql.Param](delay)++jobArgs(claim))*) { r =>
+            TransientOutcome.Held(consecutive,r.getTimestamp(1).toInstant)
+          }.getOrElse(throw DomainError("internal","held job row changed under its lock"))
+        }
+    }
+  }
+  private def recordedTransient(c: Connection,claim: Claim): Option[TransientOutcome] =
+    Sql.one(c,"SELECT state,transient_failures,lease_until FROM ch_jobs WHERE id=? AND session_id=? AND revision=? AND profile=? AND fence=? AND run_id=? AND state IN('Queued','Failed') AND error=?",(jobArgs(claim):+Jobs.transientCode)*) { r =>
+      if(r.getString(1)=="Queued") TransientOutcome.Held(r.getInt(2),r.getTimestamp(3).toInstant) else TransientOutcome.Exhausted(r.getInt(2))
+    }
   private def chunkSourceBytes(c: Connection,view: ContentView,offset: Int,limit: Int): Long = view.generationId.map(generation => ReadSources.bytes(c,GenerationRows.chunks(generation,offset,limit))).getOrElse(0L)
   private def chunkCount(c: Connection,view: ContentView): Int = view.generationId.map(GenerationRows.pieceCount(c,_)).getOrElse(0)
   private def chunkCountBytes(view: ContentView,total: Int): Long = if(view.generationId.isDefined) JsonUtf8Size(Json.obj("count"->Json.fromInt(total))) else 0L

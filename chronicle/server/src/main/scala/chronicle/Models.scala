@@ -12,6 +12,7 @@ import java.util.UUID
 import java.nio.charset.StandardCharsets.UTF_8
 import scala.concurrent.duration.*
 import ponygirls.retrieval.{JsonHttp,EmbeddingCodec,RetrievalError}
+import ponygirls.runtime.{JdbcFailure,JdbcTransient}
 
 object Fragments {
   val maxBytes = 2048
@@ -103,8 +104,10 @@ final class OpenAIEmbedder(http: ModelHttp,config: Config) extends Embedder {
     }
   }
 }
-final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger,failureBackoff: Worker.FailureBackoff,snapshots: SnapshotAdmission) {
-  private val leaseSeconds = 300
+final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger,failureBackoff: Worker.FailureBackoff,snapshots: SnapshotAdmission,leases: Worker.Leases) {
+  def this(archive: SessionArchive,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger,failureBackoff: Worker.FailureBackoff,snapshots: SnapshotAdmission) =
+    this(archive,problemAnnotator,embedder,config,profiles,admission,logger,failureBackoff,snapshots,Worker.Leases.production)
+  private val leaseSeconds = leases.lease.toSeconds.toInt
   private val idleDelay = 1.second
   private final class AnnotationExhausted(val reason: String) extends RuntimeException(AnnotationAttempts.exhaustedCode) {
     def code: String = if(reason==AnnotationAttempts.callLimitReason) AnnotationAttempts.reservationExhaustedCode else AnnotationAttempts.exhaustedCode
@@ -401,13 +404,21 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
         IO(logger.warn(s"search row retirement left to maintenance jobId=${claim.jobId} exceptionClass=$exceptionClass sqlState=$sqlState"))
       }
   }
-  private def process(claim: Claim,large: LargeJobs): IO[Unit] = {
+  /** The end of an attempt's lease as the worker knows it (restart-robustness spec §4): on this process's monotonic clock,
+    * from before the claim or the last renewal that set it, less the skew margin; never later than the stored end. */
+  private final class AttemptLease(claimed: Deadline) {
+    @volatile private var end=claimed+leases.lease-leases.skewMargin
+    def renewed(at: Deadline): Unit = end=at+leases.lease-leases.skewMargin
+    def timeLeft: FiniteDuration = end.timeLeft
+  }
+  private def process(claim: Claim,large: LargeJobs,lease: AttemptLease): IO[Unit] = {
     val work=Dispatcher.sequential[IO](await=true).use(dispatcher => passages(claim,large,Worker.messageFetch(config,snapshots,dispatcher)))
-    val renew=(IO.sleep(30.seconds) *> IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current"))).foreverM
+    val renew=(IO.sleep(leases.renewal) *> IO(Deadline.now).flatMap(at => IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current")) *> IO(lease.renewed(at)))).foreverM
     IO.race(work,renew).void.handleErrorWith { failure =>
       val (stage,error)=failure match { case StagedFailure(stage,error) => (Some(stage),error); case error => (None,error) }
       error match {
         case error: DomainError if Worker.fatal(error) => IO.raiseError(error)
+        case _ if Worker.transient(error) => holdTransient(claim,stage,error,lease)
         case _ =>
           val code=failureCode(error)
           val exceptionClass=error.getClass.getName
@@ -422,6 +433,29 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       }
     }
   }
+  /** A transient database failure (restart-robustness spec §4): the job held with back-off, or failed at the consecutive
+    * limit. The record is the fenced transaction of `fail`, tried again every failure back-off while the database cannot
+    * take it and the lease has time left; then, as any failure not recorded, the job keeps its lease. A try writes only
+    * while the claim still holds the job; cancellation ends the tries at once; no model is called meanwhile. */
+  private def holdTransient(claim: Claim,stage: Option[IndexingStage],error: Throwable,lease: AttemptLease): IO[Unit] = {
+    val sqlState=error match { case sql: java.sql.SQLException => Option(sql.getSQLState).getOrElse("none"); case _ => "none" }
+    val errorClass=error.getClass.getSimpleName; val failureStage=stage.fold("none")(_.toString); val code=Jobs.transientCode
+    def record: IO[TransientOutcome] = IO.blocking(archive.holdTransient(claim,stage)).handleErrorWith {
+      case refused if JdbcTransient.job(refused) && lease.timeLeft>Duration.Zero => IO.sleep(failureBackoff.delay.min(lease.timeLeft.max(Duration.Zero))) *> IO(lease.timeLeft>Duration.Zero).ifM(record,IO.raiseError(refused))
+      case other => IO.raiseError(other)
+    }
+    record.flatMap {
+      case TransientOutcome.Held(consecutive,nextAttemptAt) =>
+        IO(logger.warn(s"job held jobId=${claim.jobId} code=$code sqlState=$sqlState class=$errorClass stage=$failureStage consecutive=$consecutive nextAttemptAt=$nextAttemptAt"))
+      case TransientOutcome.Exhausted(consecutive) =>
+        IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code sqlState=$sqlState class=$errorClass stage=$failureStage consecutive=$consecutive nextAttemptAt=none"))
+      case TransientOutcome.Ended =>
+        IO(logger.info(s"job not held jobId=${claim.jobId} code=$code sqlState=$sqlState class=$errorClass stage=$failureStage: the claim ended"))
+    }.handleErrorWith {
+      case fatal: DomainError if Worker.fatal(fatal) => IO.raiseError(fatal)
+      case recording => failureNotRecorded(claim,code,recording)
+    } *> IO.sleep(failureBackoff.delay)
+  }
   /** The job keeps its lease: it is claimed again once the lease expires, or ends lease-exhausted. */
   private def failureNotRecorded(claim: Claim,failureCode: String,error: Throwable): IO[Unit] = {
     val code=this.failureCode(error); val exceptionClass=error.getClass.getName; val origin=failureOrigin(error); val sqlState=Worker.sqlState(error)
@@ -435,10 +469,10 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     admission.largeJob.use { admitted =>
       val large=if(admitted) LargeJobs.Admitted else LargeJobs.Skipped
       // A claim decodes no message (ingest-limits spec §5.2.1): it waits for no snapshot admission.
-      IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds,large)).redeemWith(claimFailed,{
+      IO(Deadline.now).flatMap(claimed => IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds,large)).redeemWith(claimFailed,{
         case None => IO.pure(Worker.Iteration.Idle)
-        case Some(claim) => process(claim,large).as(Worker.Iteration.Processed)
-      })
+        case Some(claim) => process(claim,large,new AttemptLease(claimed)).as(Worker.Iteration.Processed)
+      }))
     }
   }
   def once: IO[Boolean] = iteration.map(_==Worker.Iteration.Processed)
@@ -467,9 +501,20 @@ object Worker {
   private def sqlState(error: Throwable): String = error match { case sql: java.sql.SQLException => Option(sql.getSQLState).getOrElse("unavailable"); case _ => "unavailable" }
   /** Invariant and configuration faults end the worker run (and with it the server), wherever they arise in a job. */
   private def fatal(error: DomainError): Boolean = Set("model-telemetry-invariant","internal","config").contains(error.code)
-  /** How long a worker lane stays idle after recording a failed job. */
+  /** How long a worker lane stays idle after recording a failed job; also the interval of a transient failure's record tries. */
   final case class FailureBackoff(delay: FiniteDuration)
   object FailureBackoff {
     val production: FailureBackoff = FailureBackoff(2.seconds)
   }
+  /** An attempt's lease (restart-robustness spec §4): `lease` long, renewed every `renewal`, its end tracked less `skewMargin`. */
+  final case class Leases(lease: FiniteDuration,renewal: FiniteDuration,skewMargin: FiniteDuration)
+  object Leases {
+    val production: Leases = Leases(300.seconds,30.seconds,5.seconds)
+  }
+  /** Not charged to the attempts (restart-robustness spec §4): a transient database failure (JdbcTransient.job), and P0's
+    * lock timeout on the staging lock of its job, held by an earlier attempt's staging transaction still in PostgreSQL. */
+  private def transient(error: Throwable): Boolean = JdbcTransient.job(error) || (error match {
+    case JdbcFailure(PostgresArchive.leftoverStaging,_) => true
+    case _ => false
+  })
 }

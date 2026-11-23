@@ -69,12 +69,13 @@ object Fixtures {
     val canonicalUrl = config.jdbcUrl.substring(offset).takeWhile(_ != '?')
     if (canonicalUrl == config.jdbcUrl) new Database(config,profiles)
     else {
-      val physical = BlockingJdbcDatabase.withConnectionFactory(config.copy(jdbcUrl=canonicalUrl).jdbcConfig,new JdbcConnectionFactory {
+      val probe = new JdbcConnectionFactory {
         def open(url: String,properties: Properties): java.sql.Connection = DriverManager.getConnection(config.jdbcUrl,properties)
-      })
+      }
+      val canonical = config.copy(jdbcUrl=canonicalUrl)
       // The decorated URL belongs only to the explicit transport probe. Domain
       // initialization still validates an ordinary production-shaped configuration.
-      Database.withRuntime(config.copy(jdbcUrl=canonicalUrl),profiles,physical)
+      Database.withRuntimes(canonical,profiles,Database.runtimes(canonical,BlockingJdbcDatabase.withConnectionFactory(_,probe)))
     }
   }
   // PBKDF2 at the production iteration count costs ~150 ms: once per JVM, not once per config().

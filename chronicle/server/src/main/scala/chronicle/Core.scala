@@ -49,20 +49,29 @@ final case class EmbeddingConfig(endpoint: String, model: String, revision: Stri
   * generation's lineage (ingest-limits spec §5.6); false: every publication is a full one (a root). `metadataHorizonWindows`:
   * the metadata horizon of both kinds of publication (ProblemRows.metadataHorizonWindows; the default gives every piece its
   * passage's final metadata). A lineage continues only under the horizon it was published with: a changed horizon makes
-  * each session's next publication a root. Neither is part of the index profile. */
-final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int,embeddingBatchSize: Int,incrementalPublication: Boolean=true,metadataHorizonWindows: Int=ProblemRows.metadataHorizonWindows) {
+  * each session's next publication a root. Neither is part of the index profile. `publicationStatementTimeout`: the statement
+  * timeout of a publication's staging transactions (restart-robustness spec §4), `publicationTimeout`. */
+final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int,embeddingBatchSize: Int,incrementalPublication: Boolean=true,metadataHorizonWindows: Int=ProblemRows.metadataHorizonWindows,publicationStatementTimeout: Option[FiniteDuration]=None) {
   def validate(): Unit = {
     Check(annotationSessions>=1 && annotationSessions<=8,"config","annotation session capacity must be 1..8")
     Check(embeddingRequests>=1 && embeddingRequests<=32,"config","embedding request capacity must be 1..32")
     Check(embeddingBatchSize>=1 && embeddingBatchSize<=16,"config","embedding batch size must be 1..16")
   }
   /** The publication keys, checked at start (Config.validate). */
-  def validatePublication(): Unit = {
+  def validatePublication(limits: JdbcLimits): Unit = {
     Check(metadataHorizonWindows>=1,"config","indexing.metadataHorizonWindows must be 1..2147483647")
+    Check(publicationStatementTimeout.forall(value => value>=limits.statementTimeout && value<=IndexingCapacity.maximumPublicationStatementTimeout),"config","indexing.publicationStatementTimeoutMs must be databaseLimits.statementTimeoutMs..3600000")
   }
+  /** The configured publication statement timeout; omitted, the default, or the configured statement timeout where that
+    * is longer (a configuration valid before the key stays valid). */
+  def publicationTimeout(limits: JdbcLimits): FiniteDuration =
+    publicationStatementTimeout.getOrElse(IndexingCapacity.publicationStatementTimeout.max(limits.statementTimeout))
 }
 object IndexingCapacity {
   val defaults = IndexingCapacity(4,8,16)
+  /** A publication's statements (P1-P3) run up to this long: after a database restart the vector index is read from disk. */
+  val publicationStatementTimeout: FiniteDuration = 5.minutes
+  val maximumPublicationStatementTimeout: FiniteDuration = 1.hour
   /** Large jobs (LargeJobs) running at once; small jobs use every annotation session. */
   val largeJobs: Int = 1
 }
@@ -73,7 +82,7 @@ final case class Config(listenHost: String, listenPort: Int, allowedOrigin: Stri
   def profile: String = IndexProfileCatalog.current(this).preferred.profile
   def validate(): Unit = {
     indexing.validate()
-    indexing.validatePublication()
+    indexing.validatePublication(databaseLimits)
     try jdbcConfig.validate() catch { case _: IllegalArgumentException => throw DomainError("config","invalid database configuration") }
     Check(DatabaseWait.startWait(databaseStartWaitMs).nonEmpty,"config",s"databaseLimits.startWaitMs must be ${DatabaseWait.minimumBound.toMillis}..${DatabaseWait.maximumBound.toMillis}")
     Check(users.map(_.id).distinct.size == users.size && users.map(_.login).distinct.size == users.size, "config", "duplicate users")
@@ -188,7 +197,8 @@ object Config {
       batch <- integer("embeddingBatchSize")
       incremental <- if(cursor.downField("incrementalPublication").focus.isEmpty) Right(true) else cursor.get[Boolean]("incrementalPublication")
       horizon <- if(cursor.downField("metadataHorizonWindows").focus.isEmpty) Right(ProblemRows.metadataHorizonWindows) else integer("metadataHorizonWindows")
-    } yield IndexingCapacity(annotation,embedding,batch,incremental,horizon)
+      publication <- present[Long](cursor,"publicationStatementTimeoutMs")
+    } yield IndexingCapacity(annotation,embedding,batch,incremental,horizon,publication.map(_.millis))
   }
   given Decoder[JdbcLimits] = Decoder.instance { cursor => for {
     connections <- cursor.get[Int]("maxConnections")
@@ -244,7 +254,7 @@ final case class Identity(user: UserInfo, browser: Boolean, credentialHash: Stri
 }
 /** `snapshot` is the claimed revision's envelope (no messages, no raw files); `messages` reads its messages by position
   * (ingest-limits spec §5.2.1). */
-final case class Claim(jobId: UUID, sessionId: UUID, revision: Int, fence: Long, profile: String, snapshot: IngestRequest, owner: String, targetEpoch: Long, runId: UUID, revisionBinding: RevisionBinding, messages: ClaimedMessages)
+final case class Claim(jobId: UUID, sessionId: UUID, revision: Int, fence: Long, profile: String, snapshot: IngestRequest, owner: String, targetEpoch: Long, runId: UUID, revisionBinding: RevisionBinding, messages: ClaimedMessages, attempt: ClaimAttempt = ClaimAttempt.unclaimed())
 final case class IndexedChunk(chunk: Chunk, vector: Seq[Double])
 enum ClaimScope {
   case AllOwners
@@ -281,6 +291,9 @@ trait SessionArchive extends IndexCheckpoints {
   def retire(claim: Claim): Unit
   def fail(claim: Claim, code: String): Unit
   def fail(claim: Claim, code: String, stage: IndexingStage): Unit
+  /** Records a transient database failure of the attempt (restart-robustness spec §4) in the fenced transaction of `fail`:
+    * the job held Queued with back-off and its attempt refunded, or Failed after the consecutive limit. */
+  def holdTransient(claim: Claim, stage: Option[IndexingStage]): TransientOutcome
 }
 object SnapshotProjection {
   def text(value: String): String = value.replace("\u0000", "\\u0000")

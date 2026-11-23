@@ -32,6 +32,7 @@ object ChroniclePlugin extends PluginDef {
   make[ProblemPassageAnnotator].from[OpenAIProblemPassageAnnotator]
   make[Embedder].from[OpenAIEmbedder]
   make[Worker.FailureBackoff].fromValue(Worker.FailureBackoff.production)
+  make[Worker.Leases].fromValue(Worker.Leases.production)
   make[Worker]
   make[java.time.Clock].fromValue(java.time.Clock.systemUTC())
   make[CollectorProgressStore].from[PostgresCollectorProgressStore]

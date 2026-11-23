@@ -116,6 +116,8 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     acceptedWork.get(slot).foreach { (input,stored) => Check(input==key.inputHash && IndexCheckpoints.hash(stored)==IndexCheckpoints.hash(value),"internal","immutable checkpoint output mismatch") }
     acceptedWork(slot)=(key.inputHash,value)
   }
+  /** No database: no transient database failure occurs. */
+  def holdTransient(claim: Claim,stage: Option[IndexingStage]): TransientOutcome = throw new UnsupportedOperationException("the in-memory archive has no database")
   private val published = mutable.Map.empty[UUID,(ContentView,IngestRequest,String)]
   private final case class Publication(sessionId: UUID,view: ContentView,format: Option[PassageFormat],chunks: List[IndexedChunk],problems: Option[ProblemsPublication])
   private val revisions=mutable.Map.empty[(UUID,Int),IngestRequest]
