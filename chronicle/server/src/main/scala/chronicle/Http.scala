@@ -273,6 +273,9 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
         boundedBody(r,math.min(config.maxBodyBytes,CollectorProgress.maxBodyBytes)).flatMap(raw => IO.blocking(app.collectorProgress(i,Wire.decode(CollectorProgressUpdate.codecJson,Wire.parse(raw)))))
       }.map(ack => json(Status.Ok,Wire.encode(CollectorProgressAck.codecJson,ack)))
     }
+    case r @ POST -> Root / "api" / "jobs" / "v1" => handle(jobOperation(r))
+    // As under the upload API: a Failure body on every path, so that clients never mistake it for a server without the API.
+    case r if r.uri.path.renderString==Http.jobsPath || r.uri.path.renderString.startsWith(Http.jobsPath+"/") => handle(IO.raiseError[Response[IO]](DomainError("not-found","no such job operations endpoint")))
     case r @ GET -> Root / "api" / "ws" => handle {
       IO { noUrlSecrets(r); origin(r,true); Check(header(r,"Authorization").isEmpty,"forbidden","browser cookie transport only") } *> socket(r,ws)
     }
@@ -293,6 +296,46 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     case r if r.method==Method.GET && !r.uri.path.renderString.startsWith("/api/") => static(r)
   }
   private def ingestBearer(r: Request[IO]): IO[Identity] = IO.blocking { noUrlSecrets(r); origin(r,false); val i=bearer(r); i.requireScope(Scope.Ingest); i }
+  /** The job operations of a token with OperateJobs (CONTRACT.md "Job operations for tokens"): any other credential is
+    * refused before the body is read; a request holds one of the process's permits; an operation outside the allow-list is
+    * refused before dispatch; the owner's budget is charged before any effect (a mutation's only when it executes). */
+  private def jobOperation(r: Request[IO]): IO[Response[IO]] = IO.blocking {
+    noUrlSecrets(r); origin(r,false); val i=bearer(r)
+    Check(r.contentType.exists(_.mediaType==MediaType.application.json),"invalid","Content-Type application/json required")
+    i.requireJobOperator(); i
+  }.flatMap { i =>
+    val jobs=auth.jobs
+    Resource.make(IO(jobs.admit()))(admitted => IO.whenA(admitted)(IO(jobs.release()))).use { admitted =>
+      if(!admitted) IO.pure(retryAfter(failure(DomainError("unavailable","job operations busy")),JobLimits.busyRetryAfterSeconds))
+      else boundedBody(r,math.min(config.maxBodyBytes,Http.jobBodyBytes)).flatMap { raw =>
+        IO { val e=Wire.decode(ClientEnvelope.codecJson,Wire.parse(raw)); i.requireOperator(e.operation); e }.flatMap { e =>
+          val operation=JobOperations.admitted(e.operation)
+          val result=operation match {
+            case Some(read @ (JobOperation.ActivityJobs | JobOperation.PreviewRetryFailed)) => IO.blocking(jobs.charge(i.user.id,read)) *> app.operation(i,e)
+            case Some(mutation @ (JobOperation.RetryJob | JobOperation.ApplyRetryFailed)) => IO.blocking(auth.operateJob(i,e)).flatTap(receipted => IO(jobLog(mutation,i,e,receipted))).map(_.result)
+            case None => IO.raiseError(DomainError("forbidden","browser session required"))
+          }
+          result.map { value =>
+            val answer=json(Status.Ok,Wire.encode(ServerEnvelope.codecJson,ServerEnvelope(e.requestId,value)))
+            // The preview counts its jobs (eligibleCurrentFailed), not the windows they still have to annotate: a Failed job
+            // keeps its last run's window count only (none when it failed before counting), and which windows reuse accepted
+            // work is known only once their content is windowed again.
+            if(operation.contains(JobOperation.PreviewRetryFailed)) answer.putHeaders(Header.Raw(CIString(Http.windowsToAnnotateHeader),Http.unknownWindows)) else answer
+          }
+        }
+      }.recover { case JobLimitReached(remaining) => retryAfter(failure(DomainError("rate-limited","job operation limit reached")),Http.retryAfterSeconds(remaining)) }
+    }
+  }
+  private def jobLog(operation: JobOperation,i: Identity,e: ClientEnvelope,receipted: Receipted): Unit = {
+    val outcome=receipted.result match {
+      case Result.RetryFailed(result) => s"retried=${result.retried}"
+      case Result.Error(failure) => failure.code
+      case _ => "receipt"
+    }
+    val fields=List("operation"->operation.toString,"owner"->i.user.id,"caller"->i.token.fold("browser")(_.id.toString),"request"->e.requestId.toString,
+      "replay"->receipted.replayed.toString,"actor"->receipted.actor.fold("browser")(_.toString),"outcome"->outcome).map((name,value) => s"$name=$value").mkString(" ")
+    logger.info(s"jobs operation ${fields -> "fields" -> null}")
+  }
   /** Raw downloads take the browser session only, as `GetRaw`, at the account boundary: no query string and no
     * Authorization header, one Cookie, Origin and Host, the Host of the configured origin, and Origin optional (a download
     * navigation sends none) but exact when present. */
@@ -470,6 +513,11 @@ object Http {
   val sessionTtlHeader = "X-Chronicle-Session-Ttl-Seconds"
   val loginBodyBytes = 16*1024
   val mcpBodyBytes = 64*1024
+  val jobsPath = "/api/jobs/v1"
+  val jobBodyBytes = 64*1024
+  /** On a job-route preview of Retry failed: the windows its selection still has to annotate, which is not known. */
+  val windowsToAnnotateHeader = "X-Chronicle-Windows-To-Annotate"
+  val unknownWindows = "unknown"
   val socketFrameBytes = 64*1024
   val accountPrefix = "/api/account/v1"
   val accountScopesHeader = "X-Account-Scopes"

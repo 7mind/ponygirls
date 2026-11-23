@@ -246,9 +246,19 @@ object Password {
   def hash(chars: Array[Char]): String = ponygirls.auth.Password.hash(chars)
   def verify(chars: Array[Char],encoded: String): Boolean = ponygirls.auth.Password.verify(chars,encoded)
 }
-final case class Identity(user: UserInfo, browser: Boolean, credentialHash: String) {
+/** A bearer identity's token: its id and whether it has the account-plane scope OperateJobs (JobOperations). */
+final case class TokenAuthority(id: UUID, operateJobs: Boolean)
+final case class Identity(user: UserInfo, browser: Boolean, credentialHash: String, token: Option[TokenAuthority] = None) {
   def requireScope(s: Scope): Unit = Check(user.scopes.contains(s), "forbidden", "scope required")
   def requireBrowser(): Unit = Check(browser, "forbidden", "browser session required")
+  /** A token with OperateJobs; any other credential is refused exactly as `requireBrowser` refuses a bearer. */
+  def requireJobOperator(): Unit = Check(token.exists(_.operateJobs), "forbidden", "browser session required")
+  /** Before `operation` runs: a browser session passes; a bearer only for an operation of the allow-list
+    * (JobOperations.admitted) with OperateJobs and Read, and is otherwise refused exactly as `requireBrowser` refuses it. */
+  def requireOperator(operation: Operation): Unit = if(!browser) {
+    Check(JobOperations.admitted(operation).nonEmpty && token.exists(_.operateJobs), "forbidden", "browser session required")
+    requireScope(Scope.Read)
+  }
 }
 /** `snapshot` is the claimed revision's envelope (no messages, no raw files); `messages` reads its messages by position
   * (ingest-limits spec §5.2.1). */

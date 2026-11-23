@@ -107,7 +107,13 @@ private object AccountStore {
   def exactlyOne(count: Int): Unit = if(count!=1) throw AccountFailure("unavailable")
 }
 
-final class Auth(db: Database, config: Config) {
+/** A mutation's outcome under its receipt: `replayed` when an earlier execution's stored result is returned; `actor` the
+  * token that executed it first (None: a browser session). */
+final case class Receipted(result: Result,replayed: Boolean,actor: Option[UUID])
+
+/** `jobs`: the budget of job operations by tokens (JobOperations). */
+final class Auth(db: Database, config: Config, val jobs: JobBudget) {
+  def this(db: Database,config: Config) = this(db,config,new JobBudget(JobLimits.production,java.time.Clock.systemUTC()))
   private val allScopes = List(Scope.Ingest,Scope.Read,Scope.Raw)
   /** Present exactly while the master switch is on. */
   val accounts: Option[ImperativeAccess] = ImperativeAccess.load(config)
@@ -178,8 +184,8 @@ final class Auth(db: Database, config: Config) {
     current
   }
   def bearer(secret: String): Identity = db.transaction { c =>
-    Sql.one(c,"SELECT u.id,u.login,t.info FROM ch_tokens t JOIN ch_users u ON u.id=t.owner WHERE t.hash=? AND NOT t.revoked AND u.enabled",Wire.hash(secret)) { r =>
-      val t = Wire.decode(TokenInfo.codecJson,Sql.json(r,"info")); Identity(UserInfo(r.getString(1),r.getString(2),t.scopes),false,Wire.hash(secret))
+    Sql.one(c,"SELECT u.id,u.login,t.info,t.id,t.operate_jobs FROM ch_tokens t JOIN ch_users u ON u.id=t.owner WHERE t.hash=? AND NOT t.revoked AND u.enabled",Wire.hash(secret)) { r =>
+      val t = Wire.decode(TokenInfo.codecJson,Sql.json(r,"info")); Identity(UserInfo(r.getString(1),r.getString(2),t.scopes),false,Wire.hash(secret),Some(TokenAuthority(r.getObject(4,classOf[UUID]),r.getBoolean(5))))
     }.getOrElse(throw DomainError("unauthorized","invalid agent credential"))
   }
   def logout(i: Identity): Unit = db.transaction { c => lockBrowser(c,i); Sql.exec(c,"DELETE FROM ch_sessions WHERE hash=? AND owner=?",i.credentialHash,i.user.id); () }
@@ -256,7 +262,7 @@ final class Auth(db: Database, config: Config) {
   }}
   def receipt(i: Identity,id: UUID): Result = { i.requireBrowser(); db.transaction(c => Sql.one(c,"SELECT result FROM ch_mutations WHERE owner=? AND request_id=?",i.user.id,id)(r => Wire.decode(Result.codecJson,Sql.json(r,"result"))).getOrElse(throw DomainError("not-found","receipt not found"))) }
   def previewRetryFailed(i: Identity): RetryFailedPlan = {
-    i.requireBrowser(); i.requireScope(Scope.Read)
+    i.requireOperator(Operation.PreviewRetryFailed()); i.requireScope(Scope.Read)
     db.transaction { c =>
       c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
       db.profiles.resolve(OwnerTargets.read(c,i.user.id,false).profile)
@@ -288,11 +294,11 @@ final class Auth(db: Database, config: Config) {
       Sql.lock(c,s"mutation:$owner")
       lockBrowser(c,i)
       AccountJson.requireActor(actors,owner)
-      val result=withMutationReceipt(c,owner,request.requestId,request.digest) {
+      val result=withMutationReceipt(c,owner,request.requestId,request.digest,None) {
         OwnerProfileSwitch(c,owner,request,db.profiles)
         currentBrowser(c,i)
         Result.Mutation(MutationReceipt(request.requestId,OwnerProfileSwitch.operation,None))
-      }
+      }.result
       Check(result==Result.Mutation(MutationReceipt(request.requestId,OwnerProfileSwitch.operation,None)),
         "unavailable","profile switch receipt unavailable")
     }
@@ -301,23 +307,41 @@ final class Auth(db: Database, config: Config) {
     i.requireBrowser(); i.requireScope(Scope.Read)
     db.transaction { c => c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ); currentBrowser(c,i); ReindexCohort.status(c,i.user.id,id) }
   }
-  def mutate(i: Identity,e: ClientEnvelope): Result = { i.requireBrowser()
+  def mutate(i: Identity,e: ClientEnvelope): Result = receipted(i,e).result
+  /** A token's job mutation (POST /api/jobs/v1): `mutate` with its receipt's outcome. */
+  def operateJob(i: Identity,e: ClientEnvelope): Receipted = receipted(i,e)
+  private def receipted(i: Identity,e: ClientEnvelope): Receipted = { i.requireOperator(e.operation)
     e.operation match { case _: Operation.ApplyRetryFailed | _: Operation.ApplyOwnerReindex => i.requireScope(Scope.Read); case _ => () }
     db.transaction { c =>
     Sql.lock(c,s"mutation:${i.user.id}")
+    if(!i.browser) currentToken(c,i)
     e.operation match { case _: Operation.ApplyOwnerReindex => currentBrowser(c,i); case _ => () }
     val digest = Wire.hash(Wire.canonical(Wire.encode(Operation.codecJson,e.operation)))
-    withMutationReceipt(c,i.user.id,e.requestId,digest)(mutationResult(c,i,e))
+    withMutationReceipt(c,i.user.id,e.requestId,digest,i.token.map(_.id)) {
+      // A token's fresh execution is charged before any effect; a replay of a stored result is not.
+      if(!i.browser) JobOperations.admitted(e.operation).foreach(jobs.charge(i.user.id,_))
+      mutationResult(c,i,e)
+    }
   }}
-  /** The caller has the owner mutation mutex: a request ID cannot be rebound by a different transport. */
-  private def withMutationReceipt(c: Connection,owner: String,id: UUID,digest: String)(run: => Result): Result = {
-    Sql.one(c,"SELECT digest,result FROM ch_mutations WHERE owner=? AND request_id=?",owner,id) { r => Check(r.getString(1)==digest,"conflict","request ID bound to different payload"); Wire.decode(Result.codecJson,Sql.json(r,"result")) } match {
+  /** After the owner mutation mutex: the token is still unrevoked, with OperateJobs and an enabled owner, and stays so
+    * until commit (revocation takes the same mutex, disabling waits for the row locks). */
+  private def currentToken(c: Connection,i: Identity): Unit = {
+    val current=Sql.one(c,"SELECT t.id FROM ch_tokens t JOIN ch_users u ON u.id=t.owner WHERE t.hash=? AND t.owner=? AND NOT t.revoked AND t.operate_jobs AND u.enabled FOR SHARE OF t,u",i.credentialHash,i.user.id)(_.getObject(1,classOf[UUID]))
+    Check(current.nonEmpty && current==i.token.map(_.id),"unauthorized","invalid agent credential")
+  }
+  /** The caller has the owner mutation mutex: a request ID cannot be rebound by a different transport. `token`, the
+    * executing token, is recorded by the first execution only. */
+  private def withMutationReceipt(c: Connection,owner: String,id: UUID,digest: String,token: Option[UUID])(run: => Result): Receipted = {
+    Sql.one(c,"SELECT digest,result,token FROM ch_mutations WHERE owner=? AND request_id=?",owner,id) { r => Check(r.getString(1)==digest,"conflict","request ID bound to different payload"); Receipted(Wire.decode(Result.codecJson,Sql.json(r,"result")),true,Option(r.getObject("token",classOf[UUID]))) } match {
       case Some(r) => r
       case None =>
         val response = run
-        val stored = response match { case Result.Token(r) => Result.Token(r.copy(secret=None)); case other => other }
-        Sql.exec(c,"INSERT INTO ch_mutations VALUES(?,?,?,?::jsonb)",owner,id,digest,Wire.encode(Result.codecJson,stored).noSpaces)
-        response
+        val stored = Wire.encode(Result.codecJson,response match { case Result.Token(r) => Result.Token(r.copy(secret=None)); case other => other }).noSpaces
+        token match {
+          case Some(actor) => Sql.exec(c,"INSERT INTO ch_mutations(owner,request_id,digest,result,token) VALUES(?,?,?,?::jsonb,?)",owner,id,digest,stored,actor)
+          case None => Sql.exec(c,"INSERT INTO ch_mutations VALUES(?,?,?,?::jsonb)",owner,id,digest,stored)
+        }
+        Receipted(response,false,token)
     }
   }
   private def mutationResult(c: Connection,i: Identity,e: ClientEnvelope): Result = e.operation match {

@@ -73,15 +73,16 @@ class StaticTokenTest extends munit.FunSuite {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped") }
     val c=Fixtures.config(); val db=new Database(c,IndexProfileCatalog.current(c)); db.initialize()
     db.transaction(x => { Sql.exec(x,"TRUNCATE ch_tokens,ch_mutations,ch_sessions CASCADE"); () })
-    val file=token("a",Wire.secret()).tokenFile
+    val secret=Wire.secret(); val file=token("a",secret).tokenFile
     def start(t: StaticTokenConfig): (Boolean,String) = {
       val managed=c.copy(staticTokens=List(t)); val started=new Database(managed,IndexProfileCatalog.current(managed))
       try started.initialize() finally started.close()
       db.transaction(x => Sql.one(x,"SELECT operate_jobs,info->>'createdAt' FROM ch_tokens WHERE id=?",t.id)(r => (r.getBoolean(1),r.getString(2))).get)
     }
     val (operating,created)=start(granted.copy(tokenFile=file))
-    assert(operating)
+    assert(operating); new Auth(db,c).bearer(secret).requireJobOperator()
     assertEquals(start(configured("""["Read"]""").get.copy(id=granted.id,tokenFile=file)),(false,created))
+    assertEquals(intercept[DomainError](new Auth(db,c).bearer(secret).requireJobOperator()),DomainError("forbidden","browser session required"))
     db.close()
   }
 }

@@ -10,6 +10,7 @@ object ChroniclePlugin extends PluginDef {
   make[logstage.IzLogger].fromValue(logstage.IzLogger())
   make[IndexProfileCatalog].from { (config: Config) => IndexProfileCatalog.current(config) }
   make[Database].fromResource[DatabaseResource]
+  make[JobBudget].from { (clock: java.time.Clock) => new JobBudget(JobLimits.production,clock) }
   make[Auth]
   make[RevisionLayoutPolicy].fromValue(RevisionLayoutPolicy.production)
   make[PostgresArchive]
