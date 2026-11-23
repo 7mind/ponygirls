@@ -8,7 +8,7 @@ import distage.*
 import manure.plugins.{ManurePlugin,RuntimeServices}
 import manure.storage.{ConfinedDirectory,RelativeName,RootLease,RootLocked}
 import ponygirls.auth.CredentialGate
-import ponygirls.runtime.{CatsIOInjector,JdbcDatabase,Migration,StartFailure}
+import ponygirls.runtime.{CatsIOInjector,JdbcDatabase,JdbcFailure,Migration,StartFailure}
 import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry}
 import org.http4s.ember.server.EmberServerBuilder
 import scala.concurrent.duration.*
@@ -17,25 +17,26 @@ import scala.util.Using
 import io.circe.Json
 
 object Main extends IOApp:
-  def run(args: List[String]): IO[ExitCode] = args match
-    case List("check-casefold") => IO.blocking(UnicodeCaseFoldProbe.main(Array.empty[String])).as(ExitCode.Success).handleErrorWith(safeFailure)
-    case List("serve",path) => runServer(Path.of(path)).as(ExitCode.Success).handleErrorWith(safeFailure)
-    case List("check-config",path) => stage("config",IO.blocking(Config.load(Path.of(path)))).flatMap(_ => IO.println("MANURE_CONFIG_OK")).as(ExitCode.Success).handleErrorWith(safeFailure)
-    case List("migrate",path) => stage("config",IO.blocking(Config.load(Path.of(path)))).flatMap(config => buildResources(config,false,config.rootAuthority.map(RootAuthorityProvider.kubernetes)).use(_ => IO.unit)).as(ExitCode.Success).handleErrorWith(safeFailure)
+  def run(args: List[String]): IO[ExitCode] = IO.defer(args match
+    case List("check-casefold") => IO.blocking(UnicodeCaseFoldProbe.main(Array.empty[String])).as(ExitCode.Success)
+    case List("serve",path) => runServer(path).as(ExitCode.Success)
+    case List("check-config",path) => stage("config",IO.blocking(listener(Config.load(Path.of(path))))).flatMap(_ => IO.println("MANURE_CONFIG_OK")).as(ExitCode.Success)
+    case List("migrate",path) => stage("config",IO.blocking(Config.load(Path.of(path)))).flatMap(config => buildResources(config,false,config.rootAuthority.map(RootAuthorityProvider.kubernetes)).use(_ => IO.unit)).as(ExitCode.Success)
     case List("plan-root-identity",path,output,evidence) => stage("plan-root-identity",for
       config <- IO.blocking(Config.load(Path.of(path)))
       plan <- RootIdentityMigration.prepare(config,RootAuthorityProvider.configured(config),evidence)
       _ <- IO.blocking(RootMigrationPlan.writeNew(plan,Path.of(output)))
       _ <- IO.println(Json.obj("status" -> Json.fromString("planned-not-applied"),"planSha256" -> Json.fromString(plan.sha256)).noSpaces)
-    yield ExitCode.Success).handleErrorWith(safeFailure)
+    yield ExitCode.Success)
     case List("migrate-root-identity",path,input,expected) => stage("migrate-root-identity",for
       config <- IO.blocking(Config.load(Path.of(path)))
       plan <- IO.blocking(RootMigrationPlan.read(Path.of(input)))
       result <- RootIdentityMigration.applyPlan(config,RootAuthorityProvider.configured(config),plan,expected,RootMigrationCheckpoints.quiet)
       _ <- IO.println(Json.obj("status" -> Json.fromString(if result.replayed then "replayed" else "applied"),"planSha256" -> Json.fromString(result.planSha256),"contextRefreshed" -> Json.fromBoolean(result.contextRefreshed)).noSpaces)
-    yield ExitCode.Success).handleErrorWith(safeFailure)
-    case List("--config",path) => runServer(Path.of(path)).as(ExitCode.Success).handleErrorWith(safeFailure)
+    yield ExitCode.Success)
+    case List("--config",path) => runServer(path).as(ExitCode.Success)
     case _ => IO.println("usage: manure-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json | --config CONFIG.json | plan-root-identity CONFIG.json PRIVATE_PLAN.json PRIOR_VOLUME_EVIDENCE | migrate-root-identity CONFIG.json PRIVATE_PLAN.json EXPECTED_SHA256").as(ExitCode.Error)
+  ).handleErrorWith(safeFailure)
   private final case class StageFailure(stage: String,port: Option[Int],error: Throwable) extends RuntimeException(stage,error)
   /** Enumerated category by exact failure type only; never message, path or cause detail. StartFailure walks causes and
     * suppressed exceptions: distage wraps any provisioning-step failure into izumi.* (ProvisioningException) with no
@@ -58,11 +59,19 @@ object Main extends IOApp:
   private def safeFailure(error: Throwable): IO[ExitCode] =
     val (label,port,cause) = error match
       case s: StageFailure => (s.stage,s.port,s.error)
+      // Unstaged database work is buildResources' root-ownership transactions (the first database use among them). Their
+      // domain refusals stay raw for Main.resources callers; their JDBC failures are the database's.
+      case jdbc: JdbcFailure => ("database",None,jdbc)
       case other => ("start",None,other)
     val classified = StartFailure.classify(cause,category)
     val failure = if classified.code == StartFailure.Internal && cause.getClass.getName.startsWith("izumi.") then classified.copy(code = "wiring") else classified
     // Enumerated stage/category and fixed text ONLY. No stack/cause/SQL/path/provider detail.
     IO(System.err.println(StartFailure.line("manure",label,failure,port))).as(ExitCode.Error)
+  /** cats-effect reports here a failure no fiber observed (the listener's background fiber); IOApp's default prints its
+    * stack trace. One sanitized line instead, and a bind failure, which the bind stage reports, is not printed twice. */
+  override protected def reportFailure(error: Throwable): IO[Unit] =
+    val failure = StartFailure.classify(error,category)
+    IO.unlessA(failure.code == StartFailure.AddressInUse || failure.code == StartFailure.Bind)(IO(System.err.println(StartFailure.line("manure","background",failure,None))))
   private def schema: String =
     val input = getClass.getResourceAsStream("/001_metadata.sql")
     Require(input != null, "unavailable")
@@ -167,7 +176,10 @@ object Main extends IOApp:
     Vector("dashboard-dir-missing" -> config.dashboardDir,"unlock-shell-dir-missing" -> config.unlockShellDir,"viewer-dir-missing" -> config.viewerDir)
       .foreach((code,directory) => directory.foreach(path => Require(Files.isDirectory(path),code)))
   }
-  def runServer(path: Path): IO[Unit] = stage("config",IO.blocking(Config.load(path))).flatMap { config => stage("assets",requireAssetDirectories(config)) *> resources(config).use { services =>
+  /** The listen address; the config stage validates it before anything starts. */
+  private def listener(config: Config): (Host,Port) =
+    (Host.fromString(config.listenAddress).getOrElse(throw DomainError("bad-envelope")),Port.fromInt(config.port).getOrElse(throw DomainError("bad-envelope")))
+  def runServer(path: String): IO[Unit] = stage("config",IO.blocking { val config=Config.load(Path.of(path)); (config,listener(config)) }).flatMap { (config,address) => stage("assets",requireAssetDirectories(config)) *> resources(config).use { services =>
     val sweeper = (IO.sleep(config.sweepInterval) *> services.artifacts.sweep().void.handleErrorWith(_ => IO.unit)).foreverM
     val indexer = services.worker.run
     // Count admitted requests THROUGH response-stream finalization using the
@@ -175,8 +187,7 @@ object Main extends IOApp:
     // One additional transport slot is reserved for immediate bounded rejection.
     org.http4s.server.middleware.MaxActiveRequests.httpApp[IO](config.maxConnections.toLong,services.http.overloaded).flatMap { admission =>
     stage("bind",EmberServerBuilder.default[IO]
-      .withHost(Host.fromString(config.listenAddress).getOrElse(throw DomainError("bad-envelope")))
-      .withPort(Port.fromInt(config.port).getOrElse(throw DomainError("bad-envelope")))
+      .withHost(address._1).withPort(address._2)
       .withMaxConnections(math.min(Int.MaxValue.toLong,config.maxConnections.toLong+1).toInt).withMaxHeaderSize(16384)
       .withRequestHeaderReceiveTimeout(config.requestTimeout).withIdleTimeout(config.requestTimeout)
       .withShutdownTimeout(config.requestTimeout+5.seconds)

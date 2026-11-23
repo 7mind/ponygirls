@@ -18,6 +18,11 @@ import scala.util.Using
   */
 class StartupConfigTest extends munit.FunSuite {
   override val munitTimeout = 30.seconds
+  /** A failed start exits within seconds; the bound only stops a hung child. */
+  private val ChildExitBound = 25.seconds
+  /** Lines a fresh JVM prints on stderr that are not the service's: the JDK's own warnings (a block ending in an empty line), SLF4J's no-binding notice and
+    * cats-effect's CPU-starvation warning on a loaded host. */
+  private val UnrelatedJvmLines = Vector("WARNING: ", "SLF4J: ", "SLF4J(", "[WARNING] Your app's responsiveness")
   import AuthFixtures.*
   private def valid(dir: Path): Json = {
     val auth = config(dir)
@@ -49,11 +54,29 @@ class StartupConfigTest extends munit.FunSuite {
   private def file(dir: Path, json: Json): Path = {
     val path = dir.resolve("service.json"); Files.writeString(path, json.noSpaces); path
   }
-  /** Runs one command in process and keeps its exit code and the failure lines it printed on stderr. */
-  private def failureLines(command: String, path: Path): (ExitCode, List[String]) = {
-    val captured = new ByteArrayOutputStream(); val original = System.err
-    val exit = try { System.setErr(new PrintStream(captured, true, UTF_8)); Main.run(List(command, path.toString)).unsafeRunSync() } finally System.setErr(original)
-    (exit, captured.toString(UTF_8).linesIterator.filter(_.startsWith("haystack failure")).toList)
+  /** Runs one command in process; keeps its exit code, its complete stderr and its complete stdout. */
+  private def captured(command: String, path: String): (ExitCode, String, String) = {
+    val err = new ByteArrayOutputStream(); val out = new ByteArrayOutputStream(); val (originalErr, originalOut) = (System.err, System.out)
+    val exit = try {
+      System.setErr(new PrintStream(err, true, UTF_8)); System.setOut(new PrintStream(out, true, UTF_8))
+      Main.run(List(command, path)).unsafeRunSync()
+    } finally { System.setErr(originalErr); System.setOut(originalOut) }
+    (exit, err.toString(UTF_8), out.toString(UTF_8))
+  }
+  /** Runs `haystack.Main` as deployed (IOApp's own runtime and failure reporter) in a child JVM: exit code, the stderr
+    * lines other than [[UnrelatedJvmLines]], and stdout. */
+  private def child(dir: Path, arguments: String*): (Int, List[String], String) = {
+    val (err, out) = (dir.resolve("child.err"), dir.resolve("child.out"))
+    val launcher = Path.of(System.getProperty("java.home"), "bin", "java").toString
+    val classpath = classOf[Main.type].getClassLoader match {
+      case loader: java.net.URLClassLoader => loader.getURLs.map(url => Path.of(url.toURI).toString).mkString(java.io.File.pathSeparator)
+      case other => fail("the child needs the URL class loader of sbt's forked test JVM, got " + other)
+    }
+    val process = new ProcessBuilder((Vector(launcher, "-cp", classpath, "haystack.Main") ++ arguments)*)
+      .redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null"))).redirectError(err.toFile).redirectOutput(out.toFile).start()
+    try assert(process.waitFor(ChildExitBound.toSeconds, java.util.concurrent.TimeUnit.SECONDS), "the child did not exit")
+    finally { process.destroyForcibly(); process.waitFor() }
+    (process.exitValue, Files.readString(err).linesIterator.filterNot(line => line.isEmpty || UnrelatedJvmLines.exists(line.startsWith)).toList, Files.readString(out))
   }
   /** A disposable database on the owned test cluster, dropped afterwards. */
   private def freshDatabase[A](body: String => A): A = {
@@ -128,8 +151,14 @@ class StartupConfigTest extends munit.FunSuite {
     } }
   }
   test("an unreachable database fails the migrate stage with its SQLSTATE and without the URL") { directory { dir =>
-    assertEquals(failureLines("migrate", file(dir, valid(dir))),
-      (ExitCode.Error, List("""haystack failure stage=migrate code=jdbc-08001 error=JdbcFailure message="database-unavailable"""")))
+    assertEquals(captured("migrate", file(dir, valid(dir)).toString),
+      (ExitCode.Error, "haystack failure stage=migrate code=jdbc-08001 error=JdbcFailure message=\"database-unavailable\"\n", ""))
+  } }
+  test("an unusable config path or listen host fails the config stage before anything starts") { directory { dir =>
+    assertEquals(captured("serve", "config\u0000.json"),
+      (ExitCode.Error, "haystack failure stage=config code=internal error=InvalidPathException message=\"unexpected failure\"\n", ""))
+    assertEquals(captured("check-config", file(dir, set(valid(dir), "listenHost", Json.fromString("not a host"))).toString),
+      (ExitCode.Error, "haystack failure stage=config code=config error=Fault message=\"invalid listen host\"\n", ""))
   } }
   test("serve on an occupied listen port fails the bind stage with address in use and the port") { directory { dir => freshDatabase { url =>
     Using.resource(new java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))) { occupied =>
@@ -137,8 +166,8 @@ class StartupConfigTest extends munit.FunSuite {
       val database = TestSupport.databaseConfig
       val json = Vector("listenPort" -> Json.fromInt(port), "database/jdbcUrl" -> Json.fromString(url), "database/user" -> Json.fromString(database.user),
         "database/passwordFile" -> Json.fromString(database.passwordFile.toString)).foldLeft(valid(dir)) { case (json, (path, value)) => set(json, path, value) }
-      assertEquals(failureLines("serve", file(dir, json)),
-        (ExitCode.Error, List(s"""haystack failure stage=bind code=address-in-use error=BindException message="address in use" port=$port""")))
+      assertEquals(child(dir, "serve", file(dir, json).toString),
+        (1, List(s"haystack failure stage=bind code=address-in-use error=BindException message=\"address in use\" port=$port"), ""))
     }
   } } }
   test("missing, malformed and duplicate-key config inputs fail closed") { directory { dir =>

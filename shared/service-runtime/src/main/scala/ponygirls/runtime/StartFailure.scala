@@ -1,6 +1,6 @@
 package ponygirls.runtime
 
-import java.util.{Collections, IdentityHashMap, Locale}
+import java.util.{ArrayDeque, Collections, IdentityHashMap, Locale}
 
 /** The printable cause of a failed start or run: a code, the simple class name of the chosen cause and a fixed message.
   * It never holds an exception message of its own, a cause chain, a stack trace, a path, SQL, a URL or a config value.
@@ -12,15 +12,20 @@ object StartFailure {
   type Known = PartialFunction[Throwable, (String, String)]
 
   val Internal = "internal"
+  val AddressInUse = "address-in-use"
+  val Bind = "bind"
+  /** Throwables the walk visits at most; a deeper or wider graph ends as `internal`. */
+  private[runtime] val MaxCauses = 64
   private val Unexpected = "unexpected failure"
+  private val AddressInUseWordings = List("address already in use", "address in use")
   private val SafeCode = "[a-z][a-z0-9-]{0,63}"
   private val SqlState = "[A-Z0-9]{5}"
   private val JdbcCode = s"jdbc-$SqlState"
 
   private val runtime: Known = {
-    case bind: java.net.BindException if Option(bind.getMessage).exists(_.toLowerCase(Locale.ROOT).contains("address already in use")) =>
-      ("address-in-use", "address in use")
-    case _: java.net.BindException => ("bind", "bind failed")
+    case bind: java.net.BindException if Option(bind.getMessage).map(_.toLowerCase(Locale.ROOT)).exists(text => AddressInUseWordings.exists(text.contains)) =>
+      (AddressInUse, "address in use")
+    case _: java.net.BindException => (Bind, "bind failed")
     case jdbc: JdbcFailure if jdbc.code.matches(SafeCode) => ("jdbc-" + jdbc.sqlState.filter(_.matches(SqlState)).getOrElse("unknown"), jdbc.code)
     case failure: RuntimeFailure => (failure.code, failure.code)
     case _: java.net.ConnectException => ("connect", "connection refused")
@@ -28,28 +33,34 @@ object StartFailure {
   }
 
   /** The first known failure, breadth-first over causes AND suppressed exceptions (distage keeps a provisioning failure
-    * only as a suppressed exception of an izumi.* wrapper whose cause is null); otherwise `internal`.
+    * only as a suppressed exception of an izumi.* wrapper whose cause is null); otherwise `internal`. Each throwable is
+    * queued once and at most [[MaxCauses]] are visited.
     */
   def classify(error: Throwable, known: Known): StartFailure = {
-    val seen = Collections.newSetFromMap(new IdentityHashMap[Throwable, java.lang.Boolean]())
+    val queued = Collections.newSetFromMap(new IdentityHashMap[Throwable, java.lang.Boolean]())
+    val pending = new ArrayDeque[Throwable]()
+    def enqueue(next: Throwable): Unit = if (next != null && queued.size < MaxCauses && queued.add(next)) pending.add(next)
     val chosen = runtime.orElse(known)
-    @annotation.tailrec def loop(pending: List[Throwable]): StartFailure = pending match {
-      case Nil => StartFailure(Internal, className(error), Unexpected)
-      case head :: rest if !seen.add(head) => loop(rest)
-      case head :: rest => chosen.lift(head).filter((code, _) => code.matches(SafeCode) || code.matches(JdbcCode)) match {
+    @annotation.tailrec def loop(): StartFailure = Option(pending.poll()) match {
+      case None => StartFailure(Internal, className(error), Unexpected)
+      case Some(head) => chosen.lift(head).filter((code, _) => code.matches(SafeCode) || code.matches(JdbcCode)) match {
         case Some((code, message)) => StartFailure(code, className(head), message)
-        case None => loop(rest ++ Option(head.getCause).toList ++ head.getSuppressed.toList)
+        case None =>
+          enqueue(head.getCause); head.getSuppressed.foreach(enqueue)
+          loop()
       }
     }
-    loop(List(error))
+    enqueue(error)
+    loop()
   }
 
-  /** One line: `<service> failure stage=<stage> code=<code> error=<Class> message="<text>"` and, for a stage that binds
-    * the listen port, ` port=<port>`.
+  /** One line: `<service> failure stage=<stage> code=<code> error=<Class> message="<text>"`, and ` port=<port>` when the
+    * failure is the listener's bind (`port` is the listen port of the stage that binds; other failures never print it).
     */
   def line(service: String, stage: String, failure: StartFailure, port: Option[Int]): String = {
     val message = failure.message.map(c => if (c == '"') '\'' else if (c.isControl) ' ' else c)
-    s"""$service failure stage=$stage code=${failure.code} error=${failure.errorClass} message="$message"""" + port.fold("")(" port=" + _)
+    val bound = port.filter(_ => failure.code == AddressInUse || failure.code == Bind)
+    s"""$service failure stage=$stage code=${failure.code} error=${failure.errorClass} message="$message"""" + bound.fold("")(" port=" + _)
   }
 
   private def className(error: Throwable): String = {

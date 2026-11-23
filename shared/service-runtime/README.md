@@ -53,11 +53,11 @@ codes `database-rollback-failed` / `database-close-failed` (no raw cause). A fai
 during commit is an uncertain outcome, not proof of rollback or a retry invitation.
 
 `StartFailure.classify(error, known)` reduces a start or run failure to a code, the simple class name of the chosen
-cause and a fixed message: breadth-first over causes and suppressed exceptions (distage wrappers), the first
-`BindException` (`address-in-use`), `JdbcFailure` (`jdbc-<SQLSTATE>`), `RuntimeFailure`, connect failure or timeout,
-or a type of the service's `known` partial function; otherwise `internal`. No exception message is printed.
-`StartFailure.line(service, stage, failure, port)` is the services' one stderr line
-`<service> failure stage=… code=… error=… message="…"` (` port=…` for the listener's bind).
+cause and a fixed message: breadth-first over causes and suppressed exceptions (distage wrappers; each queued once, at
+most `MaxCauses` = 64), the first `BindException` (`address-in-use`, else `bind`), `JdbcFailure` (`jdbc-<SQLSTATE>`),
+`RuntimeFailure`, connect failure or timeout, or a type of the service's `known` partial function; otherwise
+`internal`. No exception message is printed. `StartFailure.line(service, stage, failure, port)` is the services' one
+stderr line `<service> failure stage=… code=… error=… message="…"`, with ` port=…` only for a bind failure.
 
 Migrations are append-only, namespace-scoped, ordered positive versions. The
 per-database ledger `ponygirls_runtime_migrations` records name and SHA256 of exact

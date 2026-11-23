@@ -22,14 +22,13 @@ import scala.concurrent.duration.*
 
 final class Services(val http:Http,val retrieval:HaystackRetrieval)
 object Main extends IOApp {
-  def run(args:List[String]):IO[ExitCode]=(args match{
+  def run(args:List[String]):IO[ExitCode]=IO.defer(args match{
     case List(command,path) if Set("serve","migrate","check-config").contains(command)=>
-      val file=Path.of(path)
-      stage("config",IO.blocking { val c=Config.load(file);Auth.load(c.auth);c }).flatMap { config=>
+      stage("config",IO.blocking { val file=Path.of(path);val c=Config.load(file);Auth.load(c.auth);(file,c,listener(c)) }).flatMap { (file,config,address)=>
         if(command=="check-config")IO.unit
         else JdbcDatabase.resource(config.database).adaptError(staged("database")).use { database=>
           stage("migrate",Migrations.initialize(database,config.auth.activityProjectId)) *>
-          (if(command=="migrate")IO.unit else serve(config,file,database))
+          (if(command=="migrate")IO.unit else serve(config,file,database,address))
         }
       }.as(ExitCode.Success)
     case _=>IO.println("usage: haystack-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json").as(ExitCode.Error)
@@ -53,9 +52,17 @@ object Main extends IOApp {
     }
     IO(System.err.println(StartFailure.line("haystack",name,StartFailure.classify(cause,known),port))).as(ExitCode.Error)
   }
+  /** cats-effect reports here a failure no fiber observed (the listener's background fiber); IOApp's default prints its
+    * stack trace. One sanitized line instead, and a bind failure, which the bind stage reports, is not printed twice. */
+  override protected def reportFailure(error:Throwable):IO[Unit]={
+    val failure=StartFailure.classify(error,known)
+    IO.unlessA(failure.code==StartFailure.AddressInUse || failure.code==StartFailure.Bind)(IO(System.err.println(StartFailure.line("haystack","background",failure,None))))
+  }
 
-  private def serve(config:Config,file:Path,database:JdbcDatabase):IO[Unit]=GracefulShutdown.resource.use(stop=>serveOwned(config,file,database).race(stop).void)
-  private def serveOwned(config:Config,file:Path,database:JdbcDatabase):IO[Unit]={
+  private def listener(config:Config):(Host,Port)=
+    (Host.fromString(config.listenHost).getOrElse(throw Fault("config","invalid listen host")),Port.fromInt(config.listenPort).getOrElse(throw Fault("config","invalid port")))
+  private def serve(config:Config,file:Path,database:JdbcDatabase,address:(Host,Port)):IO[Unit]=GracefulShutdown.resource.use(stop=>serveOwned(config,file,database,address).race(stop).void)
+  private def serveOwned(config:Config,file:Path,database:JdbcDatabase,address:(Host,Port)):IO[Unit]={
     val client:Resource[IO,Option[EmbeddingClient]]=config.retrieval.embedding match{
       case None=>Resource.pure(None)
       case Some(endpoint)=>EmbeddingClient.resource(endpoint,config.retrieval.maxConcurrent,config.retrieval.maxQueued,EmbeddingTelemetry.noop).map(Some(_))
@@ -83,8 +90,7 @@ object Main extends IOApp {
         make[Services]
       }
       _<-stage("wiring",CatsIOInjector().produceGet[Services](graph).use { services=>
-        stage("bind",EmberServerBuilder.default[IO].withHost(Host.fromString(config.listenHost).getOrElse(throw haystack.domain.Fault("config","invalid listen host")))
-          .withPort(Port.fromInt(config.listenPort).getOrElse(throw haystack.domain.Fault("config","invalid port")))
+        stage("bind",EmberServerBuilder.default[IO].withHost(address._1).withPort(address._2)
           .withShutdownTimeout(2.seconds).withMaxConnections(128).withMaxHeaderSize(16384).withMaxWebSocketMessageSize(1024*1024).withHttpWebSocketApp(ws=>services.http.routes(ws).orNotFound).build.use { _=>
             IO.println("haystack: ready") *> stage("serve",(reload,services.retrieval.run(event=>IO.println("haystack: "+event.line))).parTupled.void)
           },Some(config.listenPort))

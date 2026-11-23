@@ -17,18 +17,38 @@ import scala.util.Using
   * PBKDF2 password-hash codec and the service reported `stage=wiring code=wiring`.
   */
 final class WiringDiagnosticSuite extends munit.FunSuite:
+  /** A failed start exits within seconds; the bound only stops a hung child. */
+  private val childExitBound = 50L
+  /** Lines a fresh JVM prints on stderr that are not the service's: the JDK's own warnings (a block ending in an empty line), SLF4J's no-binding notice and
+    * cats-effect's CPU-starvation warning on a loaded host. */
+  private val unrelatedJvmLines = Vector("WARNING: ","SLF4J: ","SLF4J(","[WARNING] Your app's responsiveness")
   private def cleanup(path: Path): Unit =
     val _ = try
       Using.resource(Files.walk(path))(_.iterator().asScala.toVector.sortBy(_.getNameCount).reverse.foreach(Files.deleteIfExists(_)))
     catch case _: Exception => ()
-  private def runCommand(command: String,config: Path): (Int,String) =
-    val captured = new ByteArrayOutputStream()
-    val original = System.err
+  /** Runs one command in process; its exit code and complete stderr, and that it printed nothing on stdout. */
+  private def runCommand(command: String,config: String): (Int,String) =
+    val captured = new ByteArrayOutputStream(); val output = new ByteArrayOutputStream()
+    val (original,originalOut) = (System.err,System.out)
     val exit = try
       System.setErr(new PrintStream(captured,true,java.nio.charset.StandardCharsets.UTF_8))
-      Main.run(List(command,config.toString)).unsafeRunSync()
-    finally System.setErr(original)
+      System.setOut(new PrintStream(output,true,java.nio.charset.StandardCharsets.UTF_8))
+      Main.run(List(command,config)).unsafeRunSync()
+    finally
+      System.setErr(original); System.setOut(originalOut)
+    assertEquals(output.toString(java.nio.charset.StandardCharsets.UTF_8),"",command)
     (exit.code,captured.toString(java.nio.charset.StandardCharsets.UTF_8))
+  /** Runs `manure.Main` as deployed (IOApp's own runtime and failure reporter) in a child JVM: exit code, the stderr
+    * lines other than unrelatedJvmLines, and stdout. */
+  private def child(root: Path,arguments: String*): (Int,List[String],String) =
+    val (err,out) = (root.resolve("child.err"),root.resolve("child.out"))
+    val classpath = sys.props.getOrElse("manure.test.childClasspath",throw new IllegalArgumentException("explicit manure.test.childClasspath required"))
+    val process = new ProcessBuilder((Vector(Path.of(System.getProperty("java.home"),"bin","java").toString,"-cp",classpath,"manure.Main") ++ arguments)*)
+      .redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null"))).redirectError(err.toFile).redirectOutput(out.toFile).start()
+    try assert(process.waitFor(childExitBound,java.util.concurrent.TimeUnit.SECONDS),"the child did not exit")
+    finally
+      process.destroyForcibly(); process.waitFor()
+    (process.exitValue,Files.readString(err).linesIterator.filterNot(line => line.isEmpty || unrelatedJvmLines.exists(line.startsWith)).toList,Files.readString(out))
   /** Deployment-shaped config: a human with login/passwordHashFile plus a token
     * and a token-only agent, never a live database. */
   private def deploymentConfig(root: Path,passwordHash: String,settings: Json): Path =
@@ -63,10 +83,7 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
     try
       // The token digest codec (64 hex chars) is NOT the password hash codec.
       val config = deploymentConfig(root,SecretCodec.sha256("deployment-password")+"\n",Json.obj())
-      val (exit,stderr) = runCommand("migrate",config)
-      assertEquals(exit,1)
-      val lines = stderr.linesIterator.filter(_.startsWith("manure ")).toList
-      assertEquals(lines,List("""manure failure stage=wiring code=config error=AccountFailure message="config""""))
+      assertEquals(runCommand("migrate",config.toString),(1,"manure failure stage=wiring code=config error=AccountFailure message=\"config\"\n"))
     finally cleanup(root)
   }
 
@@ -74,13 +91,9 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
     val root = Files.createTempDirectory("manure-wiring-diagnostic-")
     try
       val config = deploymentConfig(root,Password.hash("fixture-password".toCharArray)+"\n",Json.obj())
-      val (exit,stderr) = runCommand("migrate",config)
-      assertEquals(exit,1)
-      val lines = stderr.linesIterator.filter(_.startsWith("manure ")).toList
-      // Wiring succeeds; startup proceeds to the schema stage and fails only on
+      // Wiring succeeds; startup proceeds to the first database use and fails only on
       // the deliberately unreachable database.
-      assert(!lines.exists(_.contains("stage=wiring")),stderr)
-      assert(lines.exists(_.startsWith("manure failure stage=start code=jdbc-")),stderr)
+      assertEquals(runCommand("migrate",config.toString),(1,"manure failure stage=database code=jdbc-08001 error=JdbcFailure message=\"database-unavailable\"\n"))
     finally cleanup(root)
   }
 
@@ -91,11 +104,13 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
         val disabled = Json.obj("dashboard_dir" -> Json.Null,"unlock_shell_dir" -> Json.Null,"viewer_dir" -> Json.Null)
         val config = deploymentConfig(root,Password.hash("fixture-password".toCharArray)+"\n",
           disabled.deepMerge(Json.obj(setting -> Json.fromString(root.resolve("absent-assets").toString))))
-        val (exit,stderr) = runCommand("serve",config)
-        assertEquals(exit,1,setting)
-        assertEquals(stderr.linesIterator.filter(_.startsWith("manure ")).toList,List(s"""manure failure stage=assets code=$code error=DomainError message="$code""""),setting)
+        assertEquals(runCommand("serve",config.toString),(1,s"manure failure stage=assets code=$code error=DomainError message=\"$code\"\n"),setting)
       finally cleanup(root)
     }
+  }
+
+  test("an unusable config path fails the config stage instead of escaping the handler") {
+    assertEquals(runCommand("serve","config\u0000.json"),(1,"manure failure stage=config code=configuration error=InvalidPathException message=\"invalid configuration\"\n"))
   }
 
   test("serve on an occupied listen port fails the bind stage with address in use and the port") {
@@ -108,10 +123,7 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
           "dashboard_dir" -> Json.Null,"unlock_shell_dir" -> Json.Null,"viewer_dir" -> Json.Null,
           "database" -> Json.obj("jdbcUrl" -> Json.fromString(fixture.database.jdbcUrl),"user" -> Json.fromString(fixture.database.user),
             "passwordFile" -> Json.fromString(fixture.database.passwordFile.toString))))
-        val (exit,stderr) = runCommand("serve",config)
-        assertEquals(exit,1)
-        assertEquals(stderr.linesIterator.filter(_.startsWith("manure ")).toList,
-          List(s"""manure failure stage=bind code=address-in-use error=BindException message="address in use" port=$port"""))
+        assertEquals(child(root,"serve",config.toString),(1,List(s"manure failure stage=bind code=address-in-use error=BindException message=\"address in use\" port=$port"),""))
       }
       finally cleanup(root)
     }}.unsafeRunSync()
