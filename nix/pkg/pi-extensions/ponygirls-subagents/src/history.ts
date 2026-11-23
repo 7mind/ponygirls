@@ -17,7 +17,7 @@ export interface HistoryFeed {
   subscribe(listener: () => void): () => void;
 }
 export interface HistoryRequest { rootSessionId: string; respond(feed: HistoryFeed): void }
-export interface RegisteredHistorySource extends HistorySource { sessionFile: string; gaps: string[] }
+export interface RegisteredHistorySource extends HistorySource { installedInstructionHash?: string; sessionFile: string; gaps: string[] }
 export function historyPath(rootDir: string, source: Pick<RegisteredHistorySource, "agentId" | "sessionFile">): string {
   if (!source.agentId || /[\\/]/.test(source.agentId) || source.agentId === "." || source.agentId === "..") throw err("RECOVERY_CORRUPT", "invalid history agent identity");
   const directory = resolve(rootDir, "sessions", source.agentId);

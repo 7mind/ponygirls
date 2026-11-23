@@ -9,9 +9,10 @@
 
 import { Type, type TSchema } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { defineTool } from "@earendil-works/pi-coding-agent";
+import { defineTool, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { BORDER_ORDER, CustomViewToggle, borderBadge, borderBadgeCompact } from "@ponygirls/pi-ui";
 import { FileRunStore } from "./src/store.ts";
+import { INVENTORY_CHANNEL, requestAdmission, type Admission, type BridgeRequest, type InventoryRow } from "../context-rules/bridge.ts";
 import { HISTORY_CHANNEL, type HistoryRequest } from "./src/history.ts";
 import { CUSTOM_NOTICE, NoticeDelivery, type NoticeSink } from "./src/notice-delivery.ts";
 import { renderNotice, renderSpawnCall, renderSpawnResult } from "./src/render.ts";
@@ -30,7 +31,6 @@ import { AgentsScreen, agentsBadge, fileSessionReader, renderHeadless, sanitizeD
 import { themeStyle } from "./src/display.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -41,10 +41,6 @@ const SCREEN_POLL_MS = 500;
 const STATUS_THROTTLE_MS = 250;
 export const RELOAD_HANDOFF_TIMEOUT_MS = 30_000;
 const WORKER_PATH = join(dirname(fileURLToPath(import.meta.url)), "src", "worker.ts");
-
-function agentBaseDir(): string {
-  return process.env["PI_CODING_AGENT_DIR"] ?? join(homedir(), ".pi", "agent");
-}
 
 /** What the user-owned policy file configures: root authority and admission capacity. */
 export interface LoadedPolicy {
@@ -58,7 +54,7 @@ export interface LoadedPolicy {
  */
 export function loadPolicy(): LoadedPolicy {
   const policy = defaultSupervisorPolicy();
-  const path = join(agentBaseDir(), "subagents-policy.json");
+  const path = join(getAgentDir(), "subagents-policy.json");
   if (!existsSync(path)) return { policy, schedulerLimits: { ...DEFAULT_LIMITS } };
   let raw: Partial<SupervisorPolicy> & Partial<Record<keyof SchedulerLimits, unknown>>;
   try {
@@ -118,6 +114,7 @@ interface SessionBinding {
   /** Binding active until session shutdown (revokes external dispatch). */
   governingActive: boolean;
   historyAbort: AbortController;
+  admission(): Admission | undefined;
   /** Parent-provider registry remains usable during a bounded reload handoff. */
   providerActive: boolean;
   /** The governing session's model at its latest tool call (what children inherit). */
@@ -196,6 +193,13 @@ export default function (pi: ExtensionAPI): void {
   const bindings = new Map<string, SessionBinding>();
   const durableBindings = processRuntime().bindings;
   let currentBinding: SessionBinding | null = null;
+  const stopInventory = pi.events.on(INVENTORY_CHANNEL, value => {
+    const request = value as Partial<BridgeRequest<InventoryRow[]>> | null;
+    const binding = currentBinding;
+    if (!request || !binding?.governingActive || binding.currentCtx?.sessionManager.getSessionId() !== binding.sessionId ||
+        request.rootSessionId !== binding.sessionId || request.cwd !== binding.currentCtx.cwd || typeof request.respond !== "function") return;
+    request.respond(binding.supervisor.instructionInventory());
+  });
   pi.events.on(HISTORY_CHANNEL, (value) => {
     const request = value as Partial<HistoryRequest> | null;
     const binding = currentBinding;
@@ -227,8 +231,8 @@ export default function (pi: ExtensionAPI): void {
   }
 
   function attach(binding: SessionBinding, ctx: ExtensionContext): SessionBinding {
-    if (!(binding.historyAbort instanceof AbortController) || typeof binding.supervisor.historyFeed !== "function") {
-      throw new Error("UPGRADE_RESTART_REQUIRED: retained subagent runtime predates the history bridge; restart Pi before using the upgraded extension");
+    if (!(binding.historyAbort instanceof AbortController) || typeof binding.supervisor.instructionInventory !== "function") {
+      throw new Error("UPGRADE_RESTART_REQUIRED: retained subagent runtime predates the instruction inventory; restart Pi before using the upgraded extension");
     }
     if (binding.retiring) throw new Error("NOT_RUNNING: detached supervisor retirement is still in progress");
     if (binding.handoffTimer) clearTimeout(binding.handoffTimer);
@@ -247,6 +251,8 @@ export default function (pi: ExtensionAPI): void {
     currentBinding = binding;
     binding.governingActive = true;
     binding.providerActive = true;
+    binding.admission = () => binding === currentBinding && binding.governingActive && binding.currentCtx?.sessionManager.getSessionId() === binding.sessionId
+      ? requestAdmission(pi.events, { rootSessionId: binding.sessionId, cwd: binding.currentCtx.cwd }) : undefined;
     binding.prepareDelegatedCall = (call) => prepareThroughEventBus(pi.events, call);
     finishHandoff?.();
     binding.onSupervisorChange = () => {
@@ -289,6 +295,7 @@ export default function (pi: ExtensionAPI): void {
 
   function beginReloadHandoff(binding: SessionBinding): void {
     const ready = new Promise<void>((resolve) => { binding.finishHandoff = resolve; });
+    binding.admission = () => undefined;
     binding.prepareDelegatedCall = (call) => ready.then(async () => {
       const prepared = binding.prepareDelegatedCall(call);
       return prepared === null ? call.args : await prepared;
@@ -310,7 +317,7 @@ export default function (pi: ExtensionAPI): void {
       existing.currentCtx = ctx;
       return existing;
     }
-    const rootDir = join(agentBaseDir(), "subagents", sessionId);
+    const rootDir = join(getAgentDir(), "subagents", sessionId);
     const durable = durableBindings.get(rootDir);
     if (durable) return attach(durable, ctx);
     const sdkRoot = process.env["PI_SUBAGENTS_SDK_ROOT"];
@@ -321,7 +328,7 @@ export default function (pi: ExtensionAPI): void {
       ui: ctx.ui, statusTimer: null, currentCtx: ctx, pane: new CustomViewToggle(), governingBaseCtx: null, governingActive: true, providerActive: true,
       prepareDelegatedCall: (call) => prepareThroughEventBus(pi.events, call),
       onSupervisorChange: () => {}, handoffTimer: null, finishHandoff: null,
-      policyFingerprint: "", retiring: null, historyAbort: new AbortController(),
+      admission: () => undefined, policyFingerprint: "", retiring: null, historyAbort: new AbortController(),
       // Start at the journal end: history from an earlier attachment is not redelivered.
       notices: new NoticeDelivery(
         { noticesSince: (cursor, limit) => binding.supervisor.noticesSince(cursor, limit) },
@@ -375,7 +382,8 @@ export default function (pi: ExtensionAPI): void {
       workerPath: WORKER_PATH,
       sdkRoot,
       deterministic: false,
-      hostAgentDir: agentBaseDir(),
+      hostAgentDir: getAgentDir(),
+      discovery: () => binding.admission(),
       onChange: () => binding.onSupervisorChange(),
     });
     durableBindings.set(rootDir, binding);
@@ -415,7 +423,7 @@ export default function (pi: ExtensionAPI): void {
       name: "spawn_agent",
       label: "Spawn subagent",
       description:
-        "Start a subagent on a task and return immediately with its agent id, path, task-run id, generation, and workdir (it does not wait for completion; use wait_agent). Includes model, requestedThinkingLevel, and effective thinkingLevel (unresolved until confirmed by the worker). By default (isolation worktree) a writer edits its own git worktree of your checkout; its changes stay in workdir until you bring them over (e.g. git -C <workdir> diff). repo_path selects a committed Git top-level at or below your working directory as the source for a managed worktree writer; it never edits that source in place. workspace_path instead puts the child in a git work tree you prepared and keep. isolation none edits your working directory in place. The child sees only its task text plus the skills and context files you pass. It inherits your model unless `model` names an allowlisted one. The default 48-agent cap counts open identities, including nested agents and reviewers; close_agent frees their slots without deleting history. Optional gate requires unanimous reviewer validation (single model or panel), with deterministic checks for writers. Alternatively review runs one-shot advisory reviewers without gating or automatic repairs. Both return all feedback through read_agent view=reviews.",
+        "Start a subagent on a task and return immediately with its agent id, path, task-run id, generation, and workdir (it does not wait for completion; use wait_agent). Includes model, requestedThinkingLevel, and effective thinkingLevel (unresolved until confirmed by the worker). By default (isolation worktree) a writer edits its own git worktree of your checkout; its changes stay in workdir until you bring them over (e.g. git -C <workdir> diff). repo_path selects a committed Git top-level at or below your working directory as the source for a managed worktree writer; it never edits that source in place. workspace_path instead puts the child in a git work tree you prepared and keep. isolation none edits your working directory in place. The parent conversation is not passed. Skills and owner context files require explicit selection; enabled AGENTS.md discovery may add rules independently. It inherits your model unless `model` names an allowlisted one. The default 48-agent cap counts open identities, including nested agents and reviewers; close_agent frees their slots without deleting history. Optional gate requires unanimous reviewer validation (single model or panel), with deterministic checks for writers. Alternatively review runs one-shot advisory reviewers without gating or automatic repairs. Both return all feedback through read_agent view=reviews.",
       promptGuidelines: [...DELEGATION_GUIDELINES.spawn_agent],
       parameters: spawnParameters<TSchema>(Type, {
         model: Type.Optional(Type.Object({ provider: Type.String(), id: Type.String(), thinkingLevel: Type.Optional(Type.String()) })),
@@ -449,7 +457,7 @@ export default function (pi: ExtensionAPI): void {
             model: p.model ?? null,
             gate: p.gate ?? null,
             review: p.review ?? null,
-          }, `tool:${toolCallId}`));
+          }, `tool:${toolCallId}`, _signal));
         } catch (e) {
           return failed(e);
         }
@@ -776,7 +784,7 @@ export default function (pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     try {
       const sessionId = ctx.sessionManager.getSessionId();
-      const retiring = sessionId ? durableBindings.get(join(agentBaseDir(), "subagents", sessionId))?.retiring : null;
+      const retiring = sessionId ? durableBindings.get(join(getAgentDir(), "subagents", sessionId))?.retiring : null;
       if (retiring) await retiring;
       bindingFor(ctx);
     } catch (e) {
@@ -804,6 +812,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async (event, ctx) => {
+    stopInventory();
     stopBackendHost();
     const sessionId = ctx.sessionManager.getSessionId();
     const binding = bindings.get(sessionId);

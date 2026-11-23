@@ -19,8 +19,9 @@
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 import { err } from "./errors.ts";
+import type { AccessDirectory } from "../../context-rules/rules.ts";
 
 /** The restricted filesystem view of one sandboxed tool job. */
 export interface SandboxView {
@@ -72,11 +73,21 @@ export interface ToolJobSpec {
   stdin: string | null;
   timeoutMs: number;
   maxOutputBytes: number;
+  trackAccess?: boolean;
   /** Restricted view of a sandboxed job; null runs the job directly on the host. */
   view: SandboxView | null;
 }
 
+function decodeAccessDirectory(bytes: Buffer): AccessDirectory | undefined {
+  try {
+    const target = JSON.parse(bytes.toString("utf8"));
+    if (typeof target?.path === "string" && isAbsolute(target.path) && [target.dev, target.ino, target.birth].every(v => typeof v === "string" && /^\d+$/.test(v))) return target;
+  } catch { return undefined; }
+  return undefined;
+}
+
 export interface ToolJobResult {
+  accessDirectory?: AccessDirectory;
   operationId: string;
   exitCode: number | null;
   signal: string | null;
@@ -197,7 +208,7 @@ function runJob(
       cwd: spawnOpts.cwd,
       env: spawnOpts.env,
       detached: processGroup,
-      stdio: [spec.stdin === null ? "ignore" : "pipe", "pipe", "pipe"],
+      stdio: [spec.stdin === null ? "ignore" : "pipe", "pipe", "pipe", ...(spec.trackAccess ? ["pipe" as const] : [])],
     });
     running.set(spec.operationId, child);
     if (spec.stdin !== null) {
@@ -205,6 +216,10 @@ function runJob(
       child.stdin?.on("error", () => {});
       child.stdin?.end(spec.stdin);
     }
+    let access = Buffer.alloc(0);
+    child.stdio[3]?.on("data", (chunk: Buffer) => {
+      if (access.length <= 65536) access = Buffer.concat([access, chunk]).subarray(0, 65537);
+    });
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
     let truncated = false;
@@ -231,6 +246,7 @@ function runJob(
       running.delete(spec.operationId);
       resolve({
         operationId: spec.operationId,
+        ...(exitCode === 0 && access.length && access.length <= 65536 ? { accessDirectory: decodeAccessDirectory(access) } : {}),
         exitCode,
         signal,
         stdout: stdout.toString("utf8"),

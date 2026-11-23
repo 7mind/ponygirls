@@ -14,7 +14,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { newerModelIn, type ModelIdentity } from "../../model-generations.ts";
@@ -25,7 +25,10 @@ import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { BackendSlot, type BackendRegistry } from "./backends.ts";
 import { parseParentModel, parseProviderRequestAuth, type ParentModels } from "./parent-models.ts";
 import { GateController, fingerprintSummary, restoreGateSpec, type CandidateRecord, type GateDecisionInput, type GateFinding, type GateHost, type GateSpecInput, type GateTerminalOutcome, type NormalizedGateCheck, type NormalizedGateSpec, type NormalizedReviewerSpec, type ReviewFeedback, type ReviewSpecInput, type WorkspaceFingerprint } from "./gate.ts";
-import { EMPTY_INSTRUCTIONS, instructionHash, parseSelection, selectInstructions } from "./instructions.ts";
+import { PROJECT_CONTEXT_FILE_NAMES } from "@earendil-works/pi-coding-agent";
+import type { Admission, InventoryRow } from "../../context-rules/bridge.ts";
+import { DISCOVERY_OFF, DISCOVERY_KEYS, renderProjectContextFile } from "../../context-rules/rules.ts";
+import { EMPTY_INSTRUCTIONS, discoveryGrants, instructionHash, mergeInstructions, ownerSource, trustedInstruction, type DiscoveryState, type InstructionSource, parseSelection, selectInstructions } from "./instructions.ts";
 import { ISOLATION_LEVELS } from "./types.ts";
 import { intersectGrants, pathWithin, resolveAllowedConcrete, rootGrants, type RegisteredRepo, type SupervisorPolicy } from "./policy.ts";
 import { GoverningToolDispatcher, type GoverningRegistry } from "./external-dispatcher.ts";
@@ -38,6 +41,7 @@ import { InMemoryRunStore, RootLock, checkpointSha256, fsyncDir, fsyncFile, type
 import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, FILE_TOOLS, GATE_DECISION_TOOL, RESULT_TEXT_HARD_MAX, RESULT_TEXT_MAX, SHELL_TOOL, WRITE_TOOLS } from "./tools.ts";
 import type {
   AgentId,
+  ContextFile,
   AgentRecord,
   GrantSet,
   InstructionSet,
@@ -65,7 +69,8 @@ import { validateToolArguments } from "@earendil-works/pi-ai";
 import type { Tool as AiTool, ToolCall as AiToolCall } from "@earendil-works/pi-ai";
 import type { InitializeResponse, IpcEnvelope, ProviderAdmissionPayload, ProviderAdmissionResponse, WorkerEvent } from "./protocol.ts";
 import { MAX_PAYLOAD_BYTES } from "./protocol.ts";
-import { GitWorkspaceManager, encodeWorktreeLeaf, fingerprintWorktree, realDirectory, type CheckoutInfo, type WorkspaceManager, type WorktreeAllocation } from "./workspace.ts";
+import { allocationIntent, releaseAllocationIntent, type AllocationIntent, pendingWorkspace, publicationCheck, releasePendingWorkspace, unlockPublishedWorkspace, type PendingWorkspace } from "./pending-workspace.ts";
+import { worktreeClaim, GitWorkspaceManager, encodeWorktreeLeaf, fingerprintWorktree, realDirectory, type BeforeWorktreeAdd, type CheckoutInfo, type WorkspaceManager, type WorktreeAllocation } from "./workspace.ts";
 
 export type CallerId = AgentId | "governor" | "user";
 
@@ -278,6 +283,7 @@ interface ActiveRun {
 
 interface AgentRuntime {
   record: AgentRecord;
+  pendingInstructions: Map<number, { taskRunId: TaskRunId; generation?: number; files: ContextFile[] }>;
   thinkingLevel: ObservedThinkingLevel;
   parentModel: Model<Api> | null;
   backend: BackendSlot | null;
@@ -374,6 +380,7 @@ export interface SupervisorOptions {
   deterministic?: boolean;
   /** Host agent dir whose credential store workers open live (no copies). */
   hostAgentDir?: string;
+  discovery?: () => Admission | undefined;
   /** Live governing-session tool registry (revoked on reload/replacement/disposal). */
   governingRegistry?: () => GoverningRegistry | null;
   /** Governing-session extension preparation of delegated calls (see delegated-call.ts). */
@@ -435,6 +442,7 @@ function modelView(rt: AgentRuntime): ModelView {
 function newRuntime(record: AgentRecord): AgentRuntime {
   return {
     record,
+    pendingInstructions: new Map(),
     thinkingLevel: "unresolved",
     parentModel: null,
     backend: null,
@@ -552,6 +560,8 @@ export class Supervisor implements GateHost {
   private gate!: GateController;
   private externalDispatcher!: GoverningToolDispatcher;
   private chain: Promise<void> = Promise.resolve();
+  private readonly pendingSpawns = new Set<{ caller: CallerId; workspace: PendingWorkspace; cancel(): Promise<void> }>();
+  private readonly spawnCommands = new Map<string, { digest: string; result: Promise<SpawnResult> }>();
   private cumulativeUsage: UsageTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: null, cost: 0, unknown: false };
   // Definite-assignment: the constructor assigns these exactly once through
   // constructOwned (post-lease construction); `!` carries that invariant.
@@ -672,13 +682,42 @@ export class Supervisor implements GateHost {
       evidence: Array<{ round: number; id: string; exitCode: number | null; output: string }>;
     }
     const gates = new Map<TaskRunId, GateDraft>();
+    const allocating = new Map<AgentId, AllocationIntent>();
+    const unpublished = new Map<AgentId, PendingWorkspace>();
+    const publishedClaims = new Map<AgentId, PendingWorkspace>();
 
     for (const r of records) {
       const b = r.body as Record<string, unknown>;
       switch (r.kind) {
+        case "workspace.allocating":
+          allocating.set(b["agentId"] as AgentId, b["intent"] as AllocationIntent);
+          break;
+        case "workspace.staged":
+          allocating.delete(b["agentId"] as AgentId);
+          unpublished.set(b["agentId"] as AgentId, b["workspace"] as PendingWorkspace);
+          break;
+        case "workspace.released":
+          allocating.delete(b["agentId"] as AgentId);
+          publishedClaims.delete(b["agentId"] as AgentId);
+          unpublished.delete(b["agentId"] as AgentId);
+          break;
+        case "agent.instructions_added": {
+          const rt = this.agents.get(b["agentId"] as string);
+          if (!rt?.record.discovery) throw err("RECOVERY_CORRUPT", "Nested instruction record lacks discovery state");
+          rt.pendingInstructions.set(r.seq, { taskRunId: b["taskRunId"] as TaskRunId, files: b["files"] as ContextFile[] });
+          break;
+        }
+        case "agent.instructions_accepted": {
+          const rt = this.agents.get(b["agentId"] as string);
+          if (!rt || !this.acceptNested(rt, b["revision"], b["taskRunId"], false)) throw err("RECOVERY_CORRUPT", "Nested instruction acknowledgment has no matching offer");
+          break;
+        }
         case "agent.spawned": {
           const agentId = b["agentId"] as string;
           const path = b["path"] as string;
+          const claim = unpublished.get(agentId);
+          if (claim?.worktree?.allocation.stagingId === agentId) publishedClaims.set(agentId, claim);
+          unpublished.delete(agentId);
           if (!agentId || this.agents.has(agentId) || !path) break;
           this.paths.reserve(path);
           const replayGrants = b["grants"] as GrantSet;
@@ -697,6 +736,7 @@ export class Supervisor implements GateHost {
             grants: replayGrants,
             // Journals written before prepared workspaces carry no flag: extension-made.
             allocation: { ...(b["allocation"] as WorkspaceAllocation), external: (b["allocation"] as { external?: unknown } | undefined)?.external === true },
+            discovery: b["discovery"] as DiscoveryState | undefined,
             instructions: b["instructions"] as InstructionSet,
             instructionHash: instructionHash(b["instructions"] as InstructionSet),
             policyRevision: this.policy.revision,
@@ -1105,6 +1145,20 @@ export class Supervisor implements GateHost {
     for (const rt of this.agents.values()) {
       if (rt.queue.some((q) => q.gated && !q.dispatched)) rt.held = true;
     }
+    for (const [agentId, workspace] of publishedClaims) {
+      unlockPublishedWorkspace(workspace, agentId);
+      this.store.append("workspace.released", { agentId });
+    }
+    for (const [agentId, intent] of allocating) {
+      if (this.agents.has(agentId)) throw err("RECOVERY_CORRUPT", "Published agent has an unbound allocation intent");
+      releaseAllocationIntent(this.workspace, intent, this.rootDir, agentId);
+      this.store.append("workspace.released", { agentId });
+    }
+    for (const [agentId, workspace] of unpublished) {
+      if (this.agents.has(agentId)) throw err("RECOVERY_CORRUPT", "Published agent also has an unclaimed workspace");
+      releasePendingWorkspace(this.workspace, workspace, this.rootDir, agentId);
+      this.store.append("workspace.released", { agentId });
+    }
     this.scheduler.restoreSnapshot({ created: spawned, openAgentIds: [...this.agents.values()].filter((rt) => rt.record.desiredLifecycle === "open").map((rt) => rt.record.id) });
     // A discarded uncommitted tail means a previous owner may have acted on
     // appends that never committed: require one explicit recover() before
@@ -1201,8 +1255,10 @@ export class Supervisor implements GateHost {
     // behind whoever acquires the root next. cancelJobs records below are
     // unaffected (direct, pre-close appends).
     this.toolBroker.dispose();
+    const lookupFailures = this.toolBroker.cancelInstructionJobs().then((): unknown[] => [], (error: unknown) => [error]);
     return this.serialized(async () => {
-      const failures: unknown[] = [];
+      const failures = await lookupFailures;
+      try { await this.cancelPendingSpawns(); } catch (e) { failures.push(e); }
       const attempt = (cleanup: () => void): void => {
         try { cleanup(); } catch (e) { failures.push(e); }
       };
@@ -1316,17 +1372,22 @@ export class Supervisor implements GateHost {
   // -- serialized controller transitions ------------------------------------
 
   async serialized<T>(fn: () => Promise<T> | T): Promise<T> {
-    const prev = this.chain;
-    let release!: () => void;
-    this.chain = new Promise<void>((r) => {
-      release = r;
-    });
-    await prev;
-    try {
-      return await fn();
-    } finally {
-      release();
-    }
+    const slot = this.queueTransition();
+    await slot.previous;
+    try { return await fn(); } finally { slot.release(); }
+  }
+
+  private queueTransition(): { previous: Promise<void>; release: () => void } {
+    const previous = this.chain;
+    const next = Promise.withResolvers<void>();
+    this.chain = next.promise;
+    return { previous, release: next.resolve };
+  }
+
+  private async spawnTransition(prepare: () => Promise<{ result: SpawnResult | Promise<SpawnResult> }>): Promise<SpawnResult> {
+    const slot = this.queueTransition();
+    await slot.previous;
+    try { return (await prepare()).result; } finally { slot.release(); }
   }
 
   /** Run a controller transition from a callback; failures are journaled, never unhandled. */
@@ -1382,7 +1443,7 @@ export class Supervisor implements GateHost {
     }
   }
 
-  private registerHistory(rt: AgentRuntime, sessionId: unknown, sessionFile: unknown, kind: "agent" | "review", taskRunId: string | null, copiedFrom: string | null | undefined, reconstructedPrefixBytes: number | undefined): void {
+  private registerHistory(rt: AgentRuntime, sessionId: unknown, sessionFile: unknown, kind: "agent" | "review", taskRunId: string | null, copiedFrom: string | null | undefined, reconstructedPrefixBytes: number | undefined, installedInstructionHash?: string): void {
     if (typeof sessionFile !== "string") return;
     if (typeof sessionId !== "string" || !sessionId) throw err("RECOVERY_CORRUPT", "worker omitted native session identity");
     const existing = [...this.historySources.values()].find(source => source.sessionFile === sessionFile);
@@ -1392,6 +1453,7 @@ export class Supervisor implements GateHost {
       return;
     }
     const source: RegisteredHistorySource = {
+      ...(typeof installedInstructionHash === "string" ? { installedInstructionHash } : {}),
       sourceId: randomUUID(), rootSessionId: this.rootId, agentId: rt.record.id, agentPath: rt.record.path, sessionId,
       parentAgentId: rt.record.parentId, taskRunId, kind, copiedFrom: copiedFrom ?? null, reconstructedPrefixBytes: reconstructedPrefixBytes ?? 0, sessionFile,
       gaps: ["Native outer tool calls/results only; complete internal nested-tool inputs/results are not captured",
@@ -1510,16 +1572,28 @@ export class Supervisor implements GateHost {
 
   // -- spawn -----------------------------------------------------------------
 
-  async spawn(caller: CallerId, params: SpawnParams, requestId: string): Promise<SpawnResult> {
-    return this.serialized(async () => {
-      const digest = payloadDigest({ caller, params });
+  private async cancelPendingSpawns(caller?: CallerId): Promise<void> {
+    const pending = [...this.pendingSpawns].filter(p => caller === undefined || p.caller === caller);
+    const cancelled = await Promise.allSettled(pending.map(p => p.cancel()));
+    for (const outcome of cancelled) if (outcome.status === "rejected") throw outcome.reason;
+  }
+
+  async spawn(caller: CallerId, params: SpawnParams, requestId: string, signal?: AbortSignal): Promise<SpawnResult> {
+    const digest = payloadDigest({ caller, params });
+    const inFlight = this.spawnCommands.get(requestId);
+    if (inFlight) {
+      if (digest !== inFlight.digest) throw err("DUPLICATE_REQUEST", `conflicting reuse of requestId ${requestId}`);
+      return inFlight.result;
+    }
+    const ownerRun = this.agents.get(caller)?.activeRun;
+    const result = this.spawnTransition(async () => {
       const prior = this.store.loadCommand(requestId);
       if (prior) {
         const b = prior.body as { agentId?: string; path?: string; taskRunId?: string; profile?: string; digest?: string };
         if (prior.kind === "agent.spawned" && b.digest === digest && typeof b.agentId === "string" && this.agents.has(b.agentId)) {
           const rt = this.agents.get(b.agentId)!;
           const prev = rt.record;
-          return { agentId: b.agentId, path: b.path ?? "", taskRunId: b.taskRunId ?? "", generation: 1, profile: b.profile ?? "", isolation: prev.grants.isolation, workdir: prev.allocation.workdir, status: prev.observed, ...modelView(rt) };
+          return { result: { agentId: b.agentId, path: b.path ?? "", taskRunId: b.taskRunId ?? "", generation: 1, profile: b.profile ?? "", isolation: prev.grants.isolation, workdir: prev.allocation.workdir, status: prev.observed, ...modelView(rt) } };
         }
         throw err("DUPLICATE_REQUEST", `conflicting reuse of requestId ${requestId}`);
       }
@@ -1585,7 +1659,30 @@ export class Supervisor implements GateHost {
       if (this.paths.isTaken(path)) throw err("CONFLICT", `task path ${path} already used`);
       const reg = params.repoId ? this.policy.repos.find((r) => r.repoId === params.repoId) : undefined;
       if (params.repoId && !reg) throw err("POLICY_DENIED", `repository ${params.repoId} not registered`);
-      const instructions = selectInstructions(parentRt ? parentRt.record.instructions : governor!.instructions, params.skills ?? null, params.contextFiles ?? null);
+      const admission = this.opts.discovery?.();
+      const mainFiles = parentRt ? [] : admission?.mainFiles ?? [];
+      const base = governor?.instructions;
+      const available = parentRt ? this.heldInstructions(parentRt.record) : base && mainFiles.length
+        ? { ...base, contextFiles: [...base.contextFiles, ...mainFiles.filter(f => !base.contextFiles.some(b => b.path === f.path))] } : base ?? null;
+      const discovery = discoveryGrants(admission?.grants ?? DISCOVERY_OFF, parentRt ? parentRt.record.discovery?.grants ?? DISCOVERY_OFF : null);
+      if (discovery.worktree && parentRt && (parentRt.activeRun !== ownerRun || ownerRun?.interruptRequested)) throw err("STALE_GENERATION", "spawn owner generation changed");
+      const selection = params.contextFiles ?? null;
+      const localNames = discovery.worktree && Array.isArray(selection) ? selection.filter(name => !available?.contextFiles.some(f => f.path === name)) : [];
+      const ownerNames = localNames.length && Array.isArray(selection) ? selection.filter(name => !localNames.includes(name)) : selection;
+      let instructions = selectInstructions(available, params.skills ?? null, localNames.length && !ownerNames?.length ? null : ownerNames);
+      const sources: Record<string, InstructionSource> = {};
+      const classify = (path: string) => parentRt ? parentRt.record.discovery?.sources[path] : mainFiles.some(f => f.path === path) ? "project" : ownerSource(path, governor!.cwd, this.opts.hostAgentDir, PROJECT_CONTEXT_FILE_NAMES);
+      const automatic: ContextFile[] = [];
+      for (const source of ["global", "project"] as const) {
+        if (!discovery[source === "project" ? "parent" : source]) continue;
+        const files = !parentRt && source !== "project"
+          ? trustedInstruction(this.requireInstructionDirectory(), PROJECT_CONTEXT_FILE_NAMES)
+          : (available?.contextFiles ?? []).filter(f => classify(f.path) === source);
+        for (const file of files) { automatic.push(file); sources[file.path] = source; }
+      }
+      for (const file of instructions.contextFiles) { const source = classify(file.path); if (source) sources[file.path] = source; }
+      const selected = instructions;
+      const admitted = Object.values(discovery).some(Boolean) ? { grants: discovery, sources, nestedFiles: [] } : undefined;
       const ownerWorkdir = parentRt ? parentRt.record.allocation.workdir : governor!.cwd;
       const prepared = workspacePath !== null ? this.prepareWorkspace(workspacePath, ownerWorkdir) : null;
       const selectedCheckout = repoPath !== null ? this.selectSourceRepository(repoPath, ownerWorkdir) : null;
@@ -1616,91 +1713,186 @@ export class Supervisor implements GateHost {
       }
       const agentId = randomUUID();
       let resident: LeaseTicket | null = null;
+      let allocated: WorkspaceAllocation | null = null;
+      let staged: PendingWorkspace | null = null;
+      let intent: AllocationIntent | null = null;
+      const beforeAdd: BeforeWorktreeAdd = destination => {
+        const tmp = join(this.rootDir, "tmp", agentId);
+        mkdirSync(dirname(tmp), { recursive: true });
+        mkdirSync(tmp);
+        try { intent = allocationIntent(tmp, destination); }
+        catch (error) { rmdirSync(tmp); throw error; }
+        this.store.append("workspace.allocating", { agentId, intent });
+      };
+      let publishing = false;
+      const ownedWorktree = (allocation: WorkspaceAllocation): WorktreeAllocation | null => {
+        const git = allocation.git;
+        return git && !allocation.external && isolation !== "none" ? { repoId: allocation.repoId ?? basename(git.workTree), checkoutPath: reg?.checkoutPath ?? checkout!.workTree, worktreePath: git.workTree, gitDir: git.gitDir, baseCommit: git.baseCommit, baseDirty: false, ...(discovery.worktree ? { stagingId: agentId } : {}) } : null;
+      };
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        this.scheduler.cancelAgentCreation(charged.reservation);
+        if (this.scheduler.isAgentOpen(agentId)) return;
+        if (resident) this.scheduler.release(resident);
+        this.paths.release(path);
+        if (publishing && this.store.writeFailure()) return;
+        if (intent && !staged) {
+          if (!this.store.writeFailure()) {
+            releaseAllocationIntent(this.workspace, intent, this.rootDir, agentId);
+            this.store.append("workspace.released", { agentId });
+          }
+          return;
+        }
+        if (!allocated) return;
+        if (staged) {
+          releasePendingWorkspace(this.workspace, staged, this.rootDir, agentId);
+          this.store.append("workspace.released", { agentId });
+          return;
+        }
+        const wt = ownedWorktree(allocated), cleanup = wt ? this.releaseQuietly(wt) : "";
+        rmSync(allocated.tmpDir, { force: true, recursive: true });
+        if (cleanup) throw err("WORKSPACE_UNAVAILABLE", cleanup);
+      };
       try {
+        this.paths.reserve(path);
         resident = this.acquireResident(agentId);
         if (!resident) {
           throw err("CAPACITY_EXCEEDED", `${this.residentSaturation()} (not open-agent exhaustion); wait for running workers/checkpoints to settle so idle workers can be evicted automatically; closing an agent also releases its capacity but does not resolve uncertain or background-owned effects`, { capacity: "resident_workers", ...this.scheduler.snapshot() });
         }
-        // Bind the concrete workspace after grant intersection. A nested
-        // writer gets its own worktree; parent mounts are never an allowlist.
-        const allocation = this.bindWorkspace(agentId, params.profile, isolation, { ownerWorkdir, sourceWorkdir, checkout, prepared, reg: reg ?? null, baseCommit: params.baseCommit ?? null, instructions });
-        this.paths.reserve(path);
-        const taskRunId = randomUUID();
-        const record: AgentRecord = {
-          id: agentId,
-          path,
-          rootId: this.rootId,
-          parentId: parentRt ? parentRt.record.id : null,
-          depth,
-          profile: params.profile,
-          createdEntryId: requestId,
-          nativeSessionPath: null,
-          grants: granted.grants,
-          allocation,
-          instructions,
-          instructionHash: instructionHash(instructions),
-          policyRevision: this.policy.revision,
-          model,
-          resultLimit,
-          currentTaskRunId: taskRunId,
-          executionGeneration: 1,
-          pendingTaskIds: [],
-          pendingMessageIds: [],
-          lastEventSeq: 0,
-          desiredLifecycle: "open",
-          observed: "queued",
-          outcome: null,
-          taskPhase: "working",
-          taskOutcome: null,
-          residency: "unloaded",
-          detail: "spawn accepted",
-          lastActivityAt: this.now(),
-          activeDescendants: 0,
+        const allocation = this.bindWorkspace(agentId, params.profile, isolation, { ownerWorkdir, sourceWorkdir, checkout, prepared, reg: reg ?? null, baseCommit: params.baseCommit ?? null, instructions, stagingId: discovery.worktree ? agentId : undefined, beforeAdd: discovery.worktree ? beforeAdd : undefined });
+        allocated = allocation;
+        const reused = new Set(allocation.readRoots);
+        if (!ownedWorktree(allocation) && allocation.workdir !== allocation.tmpDir) reused.add(allocation.workdir);
+        this.assertReusableDirectories(reused);
+        mkdirSync(allocation.tmpDir, { recursive: true });
+        const publishSpawn = async (local: ContextFile[]): Promise<SpawnResult> => {
+          if (admitted) {
+            for (const file of local) sources[file.path] = "project";
+            const selectedPaths = new Set(selected.contextFiles.map(f => f.path));
+            const localPaths = new Set(local.map(f => f.path));
+            instructions = mergeInstructions(selected.skills, [...automatic.filter(f => !localPaths.has(f.path) && !selectedPaths.has(f.path)), ...selected.contextFiles, ...local.filter(f => !selectedPaths.has(f.path))]);
+          }
+          const taskRunId = randomUUID();
+          const record: AgentRecord = {
+            id: agentId,
+            path,
+            rootId: this.rootId,
+            parentId: parentRt ? parentRt.record.id : null,
+            depth,
+            profile: params.profile,
+            createdEntryId: requestId,
+            nativeSessionPath: null,
+            grants: granted.grants,
+            allocation,
+            ...(admitted ? { discovery: admitted } : {}),
+            instructions,
+            instructionHash: instructionHash(instructions),
+            policyRevision: this.policy.revision,
+            model,
+            resultLimit,
+            currentTaskRunId: taskRunId,
+            executionGeneration: 1,
+            pendingTaskIds: [],
+            pendingMessageIds: [],
+            lastEventSeq: 0,
+            desiredLifecycle: "open",
+            observed: "queued",
+            outcome: null,
+            taskPhase: "working",
+            taskOutcome: null,
+            residency: "unloaded",
+            detail: "spawn accepted",
+            lastActivityAt: this.now(),
+            activeDescendants: 0,
+          };
+          publishing = true;
+          const spawnedRecord = this.store.append("agent.spawned", {
+            agentId,
+            path,
+            parentId: record.parentId,
+            depth,
+            profile: params.profile,
+            taskRunId,
+            requestId,
+            digest,
+            grants: granted.grants,
+            allocation,
+            ...(admitted ? { discovery: admitted } : {}),
+            instructions,
+            model,
+            resultLimit,
+            gated: gateSpec !== null,
+          });
+          this.scheduler.commitAgentCreation(charged.reservation, agentId);
+          const rt = newRuntime(record);
+          rt.residentLease = resident;
+          this.agents.set(agentId, rt);
+          if (parentRt) parentRt.record.activeDescendants++;
+          this.store.recordCommand(requestId, spawnedRecord);
+          record.lastEventSeq = spawnedRecord.seq;
+          if (gateSpec) {
+            // Every panel identity exists before the main agent is dispatched.
+            rt.gateTaskRunId = taskRunId;
+            const reviewerIds = gateSpec.reviewers.map((spec, index) => this.createManagedReviewer(agentId, taskRunId, spec, index, charged.reservation));
+            this.gate.register(agentId, taskRunId, gateSpec, params.message, reviewerIds);
+          }
+          try {
+            if (staged?.worktree) {
+              unlockPublishedWorkspace(staged, agentId);
+              this.store.append("workspace.released", { agentId });
+            }
+            await this.startWorker(rt, params.message);
+          } catch (e) {
+            this.startupFailed(rt, taskRunId, e as Error);
+            throw e;
+          }
+          return { agentId, path, taskRunId, generation: 1, profile: params.profile, isolation, workdir: allocation.workdir, status: record.observed, ...modelView(rt) };
         };
-        const spawnedRecord = this.store.append("agent.spawned", {
-          agentId,
-          path,
-          parentId: record.parentId,
-          depth,
-          profile: params.profile,
-          taskRunId,
-          requestId,
-          digest,
-          grants: granted.grants,
-          allocation,
-          instructions,
-          model,
-          resultLimit,
-          gated: gateSpec !== null,
+        if (!discovery.worktree) {
+          try { return { result: await publishSpawn([]) }; } finally { release(); }
+        }
+        const root = allocation.git?.workTree ?? prepared?.path ?? checkout?.workTree ?? this.workspace.describeCheckout(allocation.workdir)?.workTree ?? allocation.workdir;
+        const sandbox = this.sandboxOf({ grants: granted.grants, allocation }, allocation.readRoots);
+        const controller = new AbortController();
+        const lifetime = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+        const workspace = pendingWorkspace(allocation.tmpDir, ownedWorktree(allocation));
+        this.store.append("workspace.staged", { agentId, workspace });
+        staged = workspace;
+        const checkWorkspace = publicationCheck(workspace, allocation.workdir, agentId);
+        const lookup = this.broker.instructionFiles({ ...allocation, agentId, sandbox }, root, localNames, null, [], lifetime);
+        const pending = { caller, workspace, cancel: async () => { controller.abort(); await lookup.catch(() => {}); release(); } };
+        const epoch = this.epoch, generation = parentRt?.record.executionGeneration, revision = this.policy.revision;
+        this.pendingSpawns.add(pending);
+        const finish = (read: { files: ContextFile[] } | { error: unknown }) => this.serialized(async () => {
+          try {
+            lifetime.throwIfAborted();
+            if ("error" in read) throw read.error;
+            const hold = this.admissionHoldError();
+            if (hold) throw hold;
+            if (released || !this.pendingSpawns.has(pending) || epoch !== this.epoch || revision !== this.policy.revision || this.store.loadCommand(requestId)) throw err("CONFLICT", "spawn reservation superseded during discovery");
+            if (parentRt && (parentRt.record.executionGeneration !== generation || parentRt.activeRun !== ownerRun || ownerRun?.interruptRequested || parentRt.record.desiredLifecycle !== "open" || parentRt.record.grants !== ownerGrants)) throw err("STALE_GENERATION", "spawn owner no longer admitted");
+            if (parentRt && this.isPhaseLocked(parentRt) && params.profile === "writer") throw err("CONFLICT", "owner workspace is locked for review");
+            const latest = this.opts.discovery?.();
+            const current = discoveryGrants(latest?.grants ?? DISCOVERY_OFF, parentRt ? parentRt.record.discovery?.grants ?? DISCOVERY_OFF : null);
+            if (DISCOVERY_KEYS.some(key => discovery[key] && !current[key])) throw err("POLICY_DENIED", "AGENTS.md discovery settings narrowed before spawn");
+            if (!parentRt && mainFiles.some(f => (selected.contextFiles.includes(f) || automatic.includes(f)) && !latest?.mainFiles.some(current => current.path === f.path && current.content === f.content))) throw err("POLICY_DENIED", "Parent context changed before spawn");
+            const external = new Set(this.governingExternalConcrete());
+            if (granted.grants.externalTools.some(name => !external.has(name))) throw err("POLICY_DENIED", "delegated tools changed before spawn");
+            this.assertLatestModel(model);
+            checkWorkspace();
+            this.assertReusableDirectories(reused);
+            return await publishSpawn(read.files);
+          } finally { this.pendingSpawns.delete(pending); release(); }
         });
-        this.scheduler.commitAgentCreation(charged.reservation, agentId);
-        const rt = newRuntime(record);
-        rt.residentLease = resident;
-        this.agents.set(agentId, rt);
-        if (parentRt) parentRt.record.activeDescendants++;
-        this.store.recordCommand(requestId, spawnedRecord);
-        record.lastEventSeq = spawnedRecord.seq;
-        if (gateSpec) {
-          // Every panel identity exists before the main agent is dispatched.
-          rt.gateTaskRunId = taskRunId;
-          const reviewerIds = gateSpec.reviewers.map((spec, index) => this.createManagedReviewer(agentId, taskRunId, spec, index, charged.reservation));
-          this.gate.register(agentId, taskRunId, gateSpec, params.message, reviewerIds);
-        }
-        try {
-          await this.startWorker(rt, params.message);
-        } catch (e) {
-          this.startupFailed(rt, taskRunId, e as Error);
-          throw e;
-        }
-        return { agentId, path, taskRunId, generation: 1, profile: params.profile, isolation, workdir: allocation.workdir, status: record.observed, ...modelView(rt) };
-      } finally {
-        this.scheduler.cancelAgentCreation(charged.reservation);
-        if (!this.scheduler.isAgentOpen(agentId)) {
-          if (resident !== null) this.scheduler.release(resident);
-          this.paths.release(path);
-        }
-      }
+        return { result: lookup.then(files => finish({ files }), error => finish({ error })) };
+      } catch (error) { release(); throw error; }
     });
+    const clear = () => { this.spawnCommands.delete(requestId); };
+    void result.then(clear, clear);
+    this.spawnCommands.set(requestId, { digest, result });
+    return result;
   }
 
   /** Explicit override, else the owner's resolved model (never an informal alias). */
@@ -1723,10 +1915,70 @@ export class Supervisor implements GateHost {
     if (denial !== undefined) throw denial;
   }
 
-  private agentTmp(agentId: AgentId): string {
-    const dir = join(this.rootDir, "tmp", agentId);
-    mkdirSync(dir, { recursive: true });
-    return dir;
+  private requireInstructionDirectory(): string {
+    if (!this.opts.hostAgentDir) throw err("INVALID", "Agent directory unavailable for instruction discovery");
+    return this.opts.hostAgentDir;
+  }
+
+  private heldInstructions(record: AgentRecord): InstructionSet {
+    return record.discovery?.nestedFiles.length
+      ? { skills: record.instructions.skills, contextFiles: [...record.instructions.contextFiles, ...record.discovery.nestedFiles] }
+      : record.instructions;
+  }
+
+  instructionInventory(): InventoryRow[] {
+    const rows: InventoryRow[] = [];
+    for (const rt of this.agents.values()) {
+      const record = rt.record;
+      if (this.gate.isReviewer(record.id)) continue;
+      const sources = [...this.historySources.values()].filter(s => s.agentId === record.id && s.kind === "agent");
+      const confirmed = sources.filter(s => s.installedInstructionHash === record.instructionHash);
+      const files = [...(confirmed.length ? record.instructions.contextFiles : []), ...(record.discovery?.nestedFiles ?? [])];
+      rows.push({ agentId: record.id, parentId: record.parentId, label: basename(record.path),
+        state: record.desiredLifecycle === "closed" ? "closed" : record.observed, paths: [...new Set(files.map(f => f.path))],
+        complete: confirmed.length > 0 && confirmed.length === sources.length && rt.pendingInstructions.size === 0 && !this.storageFailure });
+    }
+    return rows;
+  }
+
+  private acceptNested(rt: AgentRuntime, revision: unknown, taskRunId: unknown, persist: boolean): boolean {
+    const pending = typeof revision === "number" ? rt.pendingInstructions.get(revision) : undefined;
+    if (!pending || pending.taskRunId !== taskRunId || typeof revision !== "number" || (persist && pending.generation !== rt.activeRun?.generation)) return false;
+    const { record } = rt, files = pending.files;
+    if (persist) this.store.append("agent.instructions_accepted", { agentId: record.id, taskRunId, revision });
+    rt.pendingInstructions.delete(revision);
+    const state = record.discovery!;
+    record.discovery = { ...state, sources: { ...state.sources, ...Object.fromEntries(files.map(f => [f.path, "project" as const])) }, nestedFiles: [...state.nestedFiles, ...files] };
+    return true;
+  }
+
+  private async nativeTool(caller: BrokerCaller, request: Parameters<ToolBroker["execute"]>[1]): Promise<Awaited<ReturnType<ToolBroker["execute"]>> & { instructionRevision?: number }> {
+    const track = this.agents.get(caller.agentId)?.record.discovery?.grants.nested === true;
+    const result = await this.broker.execute(caller, request, track);
+    const rt = this.agents.get(caller.agentId);
+    const record = rt?.record;
+    const access = result.accessDirectory;
+    if (!rt || !caller.taskRunId || caller.generation === null || !record?.discovery?.grants.nested || !access || request.tool === "bash" || result.exitCode !== 0 || result.timedOut) return result;
+    const current = () => !this.disposed && !this.suspended && !request.signal?.aborted && rt?.activeRun?.taskRunId === caller.taskRunId && rt?.activeRun?.generation === caller.generation && !rt?.activeRun?.interruptRequested;
+    if (!current()) return result;
+    try {
+      const liveOffers = () => [...rt.pendingInstructions.values()].filter(p => p.generation === caller.generation && p.taskRunId === caller.taskRunId).flatMap(p => p.files);
+      const known = [...this.heldInstructions(record).contextFiles, ...liveOffers()].map(f => f.path);
+      const found = await this.broker.instructionFiles(caller, null, [], access, known);
+      const held = this.heldInstructions(record);
+      const outstanding = liveOffers();
+      const seen = new Set([...held.contextFiles, ...outstanding].map(f => f.path));
+      const files = found.filter(f => !seen.has(f.path));
+      if (!current() || files.length === 0) return result;
+      const prefix = files.map(renderProjectContextFile).join("\n\n");
+      if (prefix.length > TOOL_RESULT_MAX / 2) throw err("PAYLOAD_TOO_LARGE", "Nested instruction text exceeds the tool response limit");
+      mergeInstructions(held.skills, [...held.contextFiles, ...outstanding, ...files]);
+      const revision = this.store.append("agent.instructions_added", { agentId: caller.agentId, taskRunId: caller.taskRunId, files }).seq;
+      rt.pendingInstructions.set(revision, { taskRunId: caller.taskRunId, generation: caller.generation, files });
+      return { ...result, instructionRevision: revision, stdout: `${prefix}\n\n${result.stdout}` };
+    } catch {
+      return { ...result, stdout: `[Instruction discovery failed after ${request.tool} succeeded]\n${result.stdout}` };
+    }
   }
 
   private selectSourceRepository(path: string, ownerWorkdir: string): CheckoutInfo {
@@ -1771,6 +2023,23 @@ export class Supervisor implements GateHost {
     return { path: resolved, checkout };
   }
 
+  private assertReusableDirectories(reused: Iterable<string>): void {
+    const checked = new Set<string>();
+    for (const path of reused) {
+      const resolved = realDirectory(path);
+      if (resolved === null) continue;
+      for (const { workspace } of this.pendingSpawns) {
+        if (workspace.worktree && pathWithin(resolved, workspace.worktree.tree.path)) throw err("CONFLICT", `cannot reuse a staged workspace before its spawn is published: ${resolved}`);
+      }
+      for (let dir = resolved; !checked.has(dir); dir = dirname(dir)) {
+        checked.add(dir);
+        if (!existsSync(join(dir, ".git"))) continue;
+        const checkout = this.workspace.describeCheckout(dir);
+        if (checkout && worktreeClaim(checkout.gitDir)) throw err("CONFLICT", `cannot reuse a staged workspace before its spawn is published: ${resolved}`);
+      }
+    }
+  }
+
   /** A prepared workspace must still be present when a worker is loaded into it again. */
   private assertPreparedWorkspace(allocation: WorkspaceAllocation): void {
     if (realDirectory(allocation.workdir) === null) throw err("WORKSPACE_UNAVAILABLE", `workspace ${allocation.workdir} no longer exists; its owner removed it`);
@@ -1788,9 +2057,9 @@ export class Supervisor implements GateHost {
     agentId: AgentId,
     profile: "reader" | "writer",
     isolation: Isolation,
-    from: { ownerWorkdir: string; sourceWorkdir: string; checkout: CheckoutInfo | null; prepared: PreparedWorkspace | null; reg: RegisteredRepo | null; baseCommit: string | null; instructions: InstructionSet },
+    from: { ownerWorkdir: string; sourceWorkdir: string; checkout: CheckoutInfo | null; prepared: PreparedWorkspace | null; reg: RegisteredRepo | null; baseCommit: string | null; instructions: InstructionSet; stagingId?: string; beforeAdd?: BeforeWorktreeAdd },
   ): WorkspaceAllocation {
-    const tmpDir = this.agentTmp(agentId);
+    const tmpDir = join(this.rootDir, "tmp", agentId);
     // The pool namespace new worktree allocations land under, carried from
     // the allocator wrapper (present for pooled allocations only, keeping
     // default records byte-identical).
@@ -1812,11 +2081,11 @@ export class Supervisor implements GateHost {
       if (!from.reg) return { kind: profile, workdir: tmpDir, readRoots: skillDirs, writableRoot: null, git: null, repoId: null, tmpDir, external: false };
       const readRoots = [...from.reg.readRoots, ...skillDirs];
       if (profile === "reader") return { kind: "reader", workdir: from.reg.readRoots[0] ?? tmpDir, readRoots, writableRoot: null, git: null, repoId: from.reg.repoId, tmpDir, external: false };
-      const wt = this.allocateWorktree(from.reg.repoId, from.reg.checkoutPath, from.baseCommit, "");
+      const wt = this.allocateWorktree(from.reg.repoId, from.reg.checkoutPath, from.baseCommit, "", from.stagingId, from.beforeAdd);
       return { kind: "writer", workdir: wt.worktreePath, readRoots, writableRoot: wt.worktreePath, git: { workTree: wt.worktreePath, gitDir: wt.gitDir, baseCommit: wt.baseCommit }, repoId: from.reg.repoId, tmpDir, external: false, ...birthPool(wt) };
     }
     const checkout = from.checkout!;
-    const wt = this.allocateWorktree(basename(checkout.workTree), checkout.workTree, from.baseCommit, ", or use isolation none to edit the checkout in place");
+    const wt = this.allocateWorktree(basename(checkout.workTree), checkout.workTree, from.baseCommit, ", or use isolation none to edit the checkout in place", from.stagingId, from.beforeAdd);
     const workdir = join(wt.worktreePath, relative(checkout.workTree, from.sourceWorkdir));
     if (!existsSync(workdir)) {
       this.workspace.releaseAllocation(wt, { prune: true });
@@ -1843,8 +2112,9 @@ export class Supervisor implements GateHost {
   }
 
   /** A writer worktree from a committed base; a dirty checkout needs an explicit base. */
-  private allocateWorktree(label: string, checkoutPath: string, baseCommit: string | null, alternative: string): WorktreeAllocation {
-    const wt = this.workspace.allocateWriter(label, checkoutPath, baseCommit ?? "HEAD", this.worktreesDir());
+  private allocateWorktree(label: string, checkoutPath: string, baseCommit: string | null, alternative: string, stagingId?: string, beforeAdd?: BeforeWorktreeAdd): WorktreeAllocation {
+    this.assertReusableDirectories([checkoutPath]);
+    const wt = this.workspace.allocateWriter(label, checkoutPath, baseCommit ?? "HEAD", this.worktreesDir(), stagingId, beforeAdd);
     if (wt.baseDirty && !baseCommit) {
       // Actionable precondition: an agreed committed base is required.
       this.workspace.releaseAllocation(wt, { prune: true });
@@ -2147,7 +2417,7 @@ export class Supervisor implements GateHost {
    * exclusion across reconfigures (see pooledHideRoots): changing the
    * option never unhides a recorded pool.
    */
-  private sandboxOf(record: AgentRecord, readRoots: string[], readOnlyRoots: string[] = []): CallerSandbox | null {
+  private sandboxOf(record: Pick<AgentRecord, "grants" | "allocation">, readRoots: string[], readOnlyRoots: string[] = []): CallerSandbox | null {
     if (record.grants.isolation !== "sandbox") return null;
     return {
       readRoots,
@@ -2725,7 +2995,7 @@ export class Supervisor implements GateHost {
       const res = (await worker.request("initialize", init, { taskRunId: record.currentTaskRunId ?? undefined, generation: record.executionGeneration })) as InitializeResponse;
       if (!res || res.ok !== true) throw err("INVALID", `worker initialize rejected: ${res?.message ?? "unknown"}`);
       rt.thinkingLevel = observedThinkingLevel(res.thinkingLevel);
-      this.registerHistory(rt, res.sessionId, res.sessionFile, "agent", null, undefined, undefined);
+      this.registerHistory(rt, res.sessionId, res.sessionFile, "agent", null, undefined, undefined, res.installedInstructionHash);
       record.nativeSessionPath = typeof res.sessionFile === "string" ? res.sessionFile : record.nativeSessionPath;
     } catch (e) {
       rt.activeRun = null;
@@ -2770,6 +3040,9 @@ export class Supervisor implements GateHost {
       return;
     }
     switch (event.kind) {
+      case "instructions_accepted":
+        this.acceptNested(rt, event.detail["revision"], event.taskRunId, true);
+        break;
       case "started":
         rt.streaming = null;
         if (rt.activeRun) {
@@ -2809,6 +3082,7 @@ export class Supervisor implements GateHost {
     rt.leaseWaitCancel?.();
     rt.leaseWaitCancel = null;
     this.cancelCallerWaits(rt.record.id);
+    await this.cancelPendingSpawns(rt.record.id);
     const why = `worker exited (code ${info.code ?? "-"}, signal ${info.signal ?? "-"})`;
     const run = rt.activeRun;
     if (this.gate.isReviewer(rt.record.id)) {
@@ -3021,6 +3295,7 @@ export class Supervisor implements GateHost {
       return denial === undefined ? owned : { ok: false, code: denial.code, error: denial.message };
     };
     const admission = check();
+    if (admission.ok && payload.reason === "stream" && rt.record.discovery?.nestedFiles.length) return { ...admission, nestedFiles: rt.record.discovery.nestedFiles };
     if (!admission.ok || rt.parentModel === null || rt.backend !== null || payload.reason !== "auth") return admission;
     const source = this.opts.parentModels;
     if (source === undefined) return { ok: false, code: "MODEL_UNAVAILABLE", error: "parent model authentication source is unavailable" };
@@ -3145,12 +3420,12 @@ export class Supervisor implements GateHost {
       const billingHold = this.admissionHoldError();
       if (billingHold) return { content: `${billingHold.code}: ${billingHold.message}`, isError: true };
       if (([...FILE_TOOLS, ...WRITE_TOOLS, SHELL_TOOL] as readonly string[]).includes(payload.tool)) {
-        const result = await this.broker.execute(caller, { tool: payload.tool, args: payload.args });
+        const result = await this.nativeTool(caller, { tool: payload.tool, args: payload.args });
         const text = result.timedOut
           ? `tool timed out${result.stdout ? `\n${result.stdout.slice(0, 4000)}` : ""}`
           : `${result.stdout}${result.stderr ? `\n[stderr]\n${result.stderr.slice(0, 2000)}` : ""}${result.truncated ? "\n[output truncated by the sandbox]" : ""}`;
         const exit = result.exitCode !== 0 ? `\n[exit ${result.exitCode ?? result.signal}]` : "";
-        return { content: `${boundedText(text)}${exit}`, isError: result.exitCode !== 0 || result.timedOut };
+        return { ...(result.instructionRevision !== undefined ? { instructionRevision: result.instructionRevision } : {}), content: `${boundedText(text)}${exit}`, isError: result.exitCode !== 0 || result.timedOut };
       }
       // Generic external route: fail closed without an authenticated
       // envelope, then live re-authorization (current binding/identity/
@@ -4513,6 +4788,7 @@ export class Supervisor implements GateHost {
   private async interruptSubtree(rt: AgentRuntime): Promise<void> {
     const record = rt.record;
     if (rt.activeRun) rt.activeRun.interruptRequested = true;
+    await this.cancelPendingSpawns(record.id);
     if (rt.worker !== null) this.backendSessions.get(rt.worker)?.cancel();
     const queuedGate = rt.queue.find((q) => q.gated && !q.dispatched);
     const taskRunId = rt.activeRun?.taskRunId ?? queuedGate?.id ?? record.currentTaskRunId;
@@ -4739,7 +5015,7 @@ export class Supervisor implements GateHost {
         // Exclude their final, verified prefix before dispatching new inference.
         const reconstructedPrefix = await reconstructedHistoryPrefix(this.rootDir, source);
         if (reconstructedPrefix < initializedPrefix) throw err("RECOVERY_CORRUPT", "restored history shrank during mailbox replay");
-        this.registerHistory(rt, res.sessionId, res.sessionFile, "agent", null, checkpoint.ref.historySourceId ?? null, reconstructedPrefix);
+        this.registerHistory(rt, res.sessionId, res.sessionFile, "agent", null, checkpoint.ref.historySourceId ?? null, reconstructedPrefix, res.installedInstructionHash);
       } else {
         const reconstructed = await this.reconcileMailbox(rt, worker);
         let prefix = 0;
@@ -4751,7 +5027,7 @@ export class Supervisor implements GateHost {
             throw err("RECOVERY_OWNER_UNCONFIRMED", `mailbox reconstruction has no verified materialized history boundary: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
-        this.registerHistory(rt, res.sessionId, res.sessionFile, "agent", null, undefined, prefix);
+        this.registerHistory(rt, res.sessionId, res.sessionFile, "agent", null, undefined, prefix, res.installedInstructionHash);
       }
       rt.record.nativeSessionPath = typeof res.sessionFile === "string" ? res.sessionFile : rt.record.nativeSessionPath;
     } catch (e) {
@@ -4910,6 +5186,7 @@ export class Supervisor implements GateHost {
       // uncertainty and native workspace quarantine are preserved below.
       this.suspended = true;
       const failures: unknown[] = [];
+      try { await this.cancelPendingSpawns(); } catch (e) { failures.push(e); }
       const attempt = (cleanup: () => void): void => {
         try { cleanup(); } catch (e) { failures.push(e); }
       };

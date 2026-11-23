@@ -80,9 +80,9 @@ test("sandboxed callers run in a view on the sandbox executor; host callers run 
 
 test("[bwrap] brokered file tools follow pi's argument shapes inside the sandbox", async (t) => {
   const { BwrapToolExecutor } = await import("../src/sandbox.ts");
-  const { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } = await import("node:fs");
+  const { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
-  const { join } = await import("node:path");
+  const { dirname, join } = await import("node:path");
   const exec = new BwrapToolExecutor();
   if (!exec.probe().ok) {
     t.diagnostic("NOT-EXECUTED: bwrap unavailable; tool semantics skipped, not passed");
@@ -99,7 +99,15 @@ test("[bwrap] brokered file tools follow pi's argument shapes inside the sandbox
   writeFileSync(join(wt, "src", "x_ts"), "not a ts file\n");
   const broker = new ToolBroker({ sandbox: exec, host: new DummyToolExecutor() }, new InMemoryRunStore("r"), [], { PATH: wt }, { PATH: wt });
   const writer = caller({ workdir: wt, writableRoot: wt, sandbox: { readRoots: [wt], tmpDir: join(dir, "tmp"), hidePaths: [] } });
-  const run = (tool: string, args: Record<string, unknown>) => broker.execute(writer, { tool, args });
+  const run = async (tool: string, args: Record<string, unknown>) => {
+    const result = await broker.execute(writer, { tool, args }, true);
+    if (result.exitCode === 0) {
+      const target = join(wt, typeof args.path === "string" ? args.path : ".");
+      assert.equal(result.accessDirectory?.path, statSync(target).isDirectory() ? target : dirname(target));
+      assert.equal(result.stderr, "");
+    }
+    return result;
+  };
 
   const edit = await run("edit", { path: "src/a.ts", edits: [{ oldText: "const b = 2", newText: "const b = 3" }] });
   assert.equal(edit.exitCode, 0, edit.stderr);

@@ -17,7 +17,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { parseParentModel, type ProviderRequestAuth } from "./parent-models.ts";
 import { parseInstructionSet } from "./instructions.ts";
 import { RESULT_TEXT_HARD_MAX, RESULT_TEXT_MAX } from "./tools.ts";
-import { PROTOCOL_VERSION, type InstructionSet } from "./types.ts";
+import { PROTOCOL_VERSION, type ContextFile, type InstructionSet } from "./types.ts";
 
 export const MAX_PAYLOAD_BYTES = 256 * 1024;
 export const MAX_TEXT_BYTES = 64 * 1024;
@@ -234,6 +234,7 @@ export interface ProviderAdmissionPayload {
 export interface ProviderAdmissionResponse {
   ok: boolean;
   auth?: ProviderRequestAuth;
+  nestedFiles?: ContextFile[];
   /** Visible denial code on ok:false (hold/fence errors). */
   code?: string;
   /** Visible denial message on ok:false. */
@@ -273,6 +274,7 @@ export interface InitializePayload {
 }
 
 export interface InitializeResponse {
+  installedInstructionHash?: string;
   ok?: boolean;
   sessionId?: string;
   sessionFile?: string | null;
@@ -378,7 +380,8 @@ export type WorkerEventKind =
   | "tool_start"
   | "tool_end"
   | "preview"
-  | "usage_late";
+  | "usage_late"
+  | "instructions_accepted";
 
 export interface WorkerEvent {
   kind: WorkerEventKind;
