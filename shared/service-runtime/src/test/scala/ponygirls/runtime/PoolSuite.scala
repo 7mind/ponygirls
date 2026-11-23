@@ -502,6 +502,35 @@ final class PoolSuite extends FunSuite {
     }
   } }
 
+  test("a fixed pool opens its connections at start, before any transaction; with one login fewer left to its role (another session holds it) it opens the rest, serves, retries the refused login (53300) in the background and is full once that session ends") { configured { config =>
+    val limits = config.limits.copy(maxConnections = 8)
+    val sizing = JdbcPoolSizing.partitioned(limits, None, None, 0).toOption.get
+    val password = Files.createTempFile("pool-limit-", ".txt")
+    Using.resource(plain(config)) { admin =>
+      execute(admin, s"DROP ROLE IF EXISTS pool_limited; CREATE ROLE pool_limited LOGIN PASSWORD 'limited-pool-password' CONNECTION LIMIT ${sizing.connections}")
+      try {
+        Files.writeString(password, "limited-pool-password\n")
+        val login = config.copy(user = "pool_limited", passwordFile = password, limits = limits)
+        val counting = new Counting()
+        val refused = new ConcurrentLinkedQueue[String]
+        val factory = new JdbcConnectionFactory {
+          def open(url: String, properties: Properties): Connection =
+            try counting.open(url, properties) catch { case e: java.sql.SQLException => refused.add(e.getSQLState); throw e }
+        }
+        def sessions: Int = backends(admin, "usename = 'pool_limited'")
+        val held = plain(login)
+        try Using.resource(BlockingJdbcDatabase.withConnectionFactory(login, factory, sizing)) { db =>
+          eventually("the logins left are open and the last one was refused twice")(counting.opened.get == sizing.connections - 1 && refused.size >= 2)
+          assertEquals((sizing.fixed, refused.asScala.toSet, sessions), (true, Set("53300"), sizing.connections))
+          assertEquals(db.transaction(c => integer(c, "SELECT 1")), 1)
+          held.close()
+          eventually("the pool is full")(counting.opened.get == sizing.connections)
+          assertEquals(sessions, sizing.connections)
+        } finally held.close()
+      } finally { execute(admin, "DROP ROLE IF EXISTS pool_limited"); Files.deleteIfExists(password) }
+    }
+  } }
+
   // R-a2 M1 (RA2-SPEC section-r5 §3): one deadline D per try. Budgets: A 8 s (reset cap 2 s); statement, lock, socket and
   // idle-in-transaction waits 30 s; D = start + 2.5 s unless stated; a phase holds H = 1 s; each case checks its phase's
   // bound + 0.5 s. The order of events is forced by latches, the `Trace` or the engine's clock; H only spends budget.
