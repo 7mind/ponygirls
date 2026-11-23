@@ -3,21 +3,24 @@ package ponygirls.runtime
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import java.lang.reflect.{InvocationTargetException, Proxy}
+import java.net.{InetAddress, ServerSocket, Socket, URI}
 import java.nio.file.Files
 import java.sql.{Connection, DriverManager, SQLException, Statement}
 import java.util.Properties
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
 import munit.FunSuite
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.*
 import scala.util.Using
 
-// Behavioral/Active: the wait's own loop on a virtual monotonic clock and sleeper; logins, refusals and the stalled
-// probe on real PostgreSQL.
+// Behavioral/Active: the wait's own loop on a virtual monotonic clock and sleeper; logins, refusals and the stalled or
+// late probe on real PostgreSQL.
 final class DatabaseWaitSuite extends FunSuite {
   private def withConfig[A](body: JdbcConfig => A): A = PostgresFixture.config.use(c => IO.blocking(body(c))).unsafeRunSync()
   /** Virtual time from 0: sleeps advance it, and each must end at or before the deadline. */
   private final class Time(bound: FiniteDuration) {
-    var now = 0L
+    @volatile var now = 0L
     val sleeps = ListBuffer.empty[FiniteDuration]
     val clock: () => Long = () => now
     val sleep: FiniteDuration => Unit = { pause =>
@@ -41,6 +44,42 @@ final class DatabaseWaitSuite extends FunSuite {
         try method.invoke(target, Option(arguments).getOrElse(Array.empty[AnyRef])*) catch { case e: InvocationTargetException => throw e.getCause })
     ).asInstanceOf[A]
   private def timedOut(state: Option[String]) = JdbcFailure("database-wait-timeout", state)
+  /** A real-time wait with a bound that is not whole seconds (the rounded socket timeout, 2 s, would end it late): it must
+    * end with the timeout, no wait line and one login, at the bound and not later. */
+  private def cutAtBound(config: JdbcConfig, logins: Logins): Unit = {
+    val (bound, lines) = (1500.millis, ListBuffer.empty[String])
+    val started = System.nanoTime()
+    val failure = intercept[JdbcFailure](DatabaseWait.await(config, bound, lines += _, logins, DatabaseWait.systemNanos, DatabaseWait.threadSleep))
+    val elapsed = (System.nanoTime() - started).nanos
+    assertEquals((failure, lines.toList, logins.timeouts.size), (timedOut(None), Nil, 1))
+    assert(elapsed >= bound && elapsed < bound + 300.millis, s"elapsed ${elapsed.toMillis} ms")
+  }
+  /** A TCP relay to the test database. Once `paced`, server bytes reach the client one per `pace`: an answer that keeps
+    * making progress. */
+  private final class Relay(database: URI, pace: FiniteDuration) extends AutoCloseable {
+    @volatile var paced = false
+    val pacedBytes = new AtomicInteger
+    private val listener = new ServerSocket(0, 1, InetAddress.getLoopbackAddress)
+    private val sockets = new ConcurrentLinkedQueue[Socket]
+    val url: String = s"jdbc:postgresql://127.0.0.1:${listener.getLocalPort}${database.getPath}"
+    private def daemon(body: => Unit): Unit = { Thread.ofPlatform().daemon().start(() => try body catch { case _: java.io.IOException => () }); () }
+    daemon(while (true) {
+      val client = listener.accept()
+      val server = new Socket(database.getHost, database.getPort)
+      sockets.add(client); sockets.add(server)
+      daemon { client.getInputStream.transferTo(server.getOutputStream); () }
+      daemon {
+        val (in, out) = (server.getInputStream, client.getOutputStream)
+        var next = in.read()
+        while (next >= 0) {
+          if (paced) { Thread.sleep(pace.toMillis); pacedBytes.incrementAndGet() }
+          out.write(next)
+          next = in.read()
+        }
+      }
+    })
+    def close(): Unit = { listener.close(); sockets.forEach(_.close()) }
+  }
 
   test("production defaults; the smallest accepted bound starts at once against a healthy database") {
     assertEquals((DatabaseWait.defaultBound, DatabaseWait.interval, DatabaseWait.minimumAttempt), (120.seconds, 1.second, 100.millis))
@@ -111,23 +150,29 @@ final class DatabaseWaitSuite extends FunSuite {
 
   test("a probe that stalls server-side after an authenticated login ends at the bound") {
     withConfig { config =>
-      val lines = ListBuffer.empty[String]
       // The server ends the stalled backend once the client has gone (client_connection_check_interval).
-      val stalled = Logins { (url, properties) =>
+      cutAtBound(config, Logins { (url, properties) =>
         val connection = DriverManager.getConnection(url, properties)
         Using.resource(connection.createStatement())(_.execute("SET client_connection_check_interval='100ms'"))
         proxy(classOf[Connection], connection)({ case "createStatement" =>
           val statement = connection.createStatement()
           proxy(classOf[Statement], statement)({ case "executeQuery" => statement.executeQuery("SELECT 1 FROM pg_sleep(30)") })
         })
+      })
+    }
+  }
+
+  test("a probe answer that keeps arriving, byte by byte, past the deadline ends at the bound") {
+    withConfig { config =>
+      Using.resource(Relay(URI.create(config.jdbcUrl.stripPrefix("jdbc:")), 100.millis)) { relay =>
+        // Every read gets a byte within 100 ms: no socket timeout fires, the whole answer needs seconds.
+        cutAtBound(config.copy(jdbcUrl = relay.url), Logins { (url, properties) =>
+          val connection = DriverManager.getConnection(url, properties)
+          relay.paced = true
+          connection
+        })
+        assert(relay.pacedBytes.get > 1, "the answer made progress")
       }
-      // Not whole seconds: the socket timeout rounds up to 2 s, so only the probe's own network timeout ends it in time.
-      val bound = 1500.millis
-      val started = System.nanoTime()
-      val failure = intercept[JdbcFailure](DatabaseWait.await(config, bound, lines += _, stalled, DatabaseWait.systemNanos, DatabaseWait.threadSleep))
-      val elapsed = (System.nanoTime() - started).nanos
-      assertEquals((failure, lines.toList, stalled.timeouts.size), (timedOut(Some("08006")), List("database-wait code=jdbc-08006"), 1))
-      assert(elapsed >= bound && elapsed < bound + 300.millis, s"elapsed ${elapsed.toMillis} ms")
     }
   }
 }

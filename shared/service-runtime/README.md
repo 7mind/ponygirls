@@ -61,10 +61,14 @@ stderr line `<service> failure stage=… code=… error=… message="…"`, with
 
 `DatabaseWait.await(config, bound, report)` holds a start until PostgreSQL accepts queries: a new connection through
 the engine's own login (same properties, password file read per attempt) runs `SELECT 1`. One monotonic deadline
-`start + bound` caps every phase: an attempt starts only with `minimumAttempt` (100 ms) left, `loginTimeout` is the
-remaining time in milliseconds (at most `connectTimeout`), the whole-second connect/socket timeouts round up to at least
-1 s, the probe's network timeout is the remaining time, and the pause between attempts (`interval`, 1 s) never passes
-the deadline. `JdbcTransient.connection(sqlState)` names the states waited out: class 08, 57P01, 57P02, 57P03, 53300.
+`start + bound` caps every phase. Each attempt (credential read, login, probe) runs on its own daemon thread; the caller
+waits for it until the deadline, and at the deadline or when interrupted (a cancelled start) aborts its connection
+(`Connection.abort` closes the socket whatever the driver is blocked in) and stops waiting; an answer that arrives after
+the deadline does not count. A login starts only with `minimumAttempt` (100 ms) left after the credential read,
+`loginTimeout` is that remaining time in milliseconds (at most `connectTimeout`), the whole-second connect/socket
+timeouts round up to at least 1 s, the probe starts only with 1 ms left, and the pause between attempts (`interval`,
+1 s) never passes the deadline. `JdbcTransient.connection(sqlState)` names the states waited out: class 08, 57P01, 57P02,
+57P03, 53300.
 Any other SQLSTATE or a credential-file failure throws at once (`JdbcFailure("database-unavailable", state)`,
 `RuntimeFailure`); at the deadline it throws `JdbcFailure("database-wait-timeout", last waited state)`. `report` gets
 `database-wait code=jdbc-<SQLSTATE>` for the first waited failure and `database-wait ready seconds=<n>` after a wait.

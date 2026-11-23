@@ -20,6 +20,8 @@ import scala.util.Using
 final class WiringDiagnosticSuite extends munit.FunSuite:
   /** A failed start exits within seconds; the bound only stops a hung child. */
   private val childExitBound = 50L
+  /** A cancelled start unwinds within seconds; the bound stays below the suite's 30 s test timeout. */
+  private val terminationBound = 20L
   /** The known notices a fresh JVM prints on stderr that are not the service's, matched exactly: the JDK's warnings about
     * the native library load (a block ending in an empty line) and Scala's LazyVals, SLF4J's no-binding notice and
     * cats-effect's CPU-starvation warning on a loaded host. */
@@ -55,12 +57,16 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
     (exit.code,captured.toString(java.nio.charset.StandardCharsets.UTF_8))
   /** Runs `manure.Main` as deployed (IOApp's own runtime and failure reporter) in a child JVM: exit code, the stderr
     * lines other than knownJvmNotices, and stdout. */
-  private def child(root: Path,arguments: String*): (Int,List[String],String) =
+  private def child(root: Path,arguments: String*): (Int,List[String],String) = signalled(root,_ => (),arguments*)
+  /** As [[child]], acting on the running process (`whileRunning`) before it waits for its exit. */
+  private def signalled(root: Path,whileRunning: Process => Unit,arguments: String*): (Int,List[String],String) =
     val (err,out) = (root.resolve("child.err"),root.resolve("child.out"))
     val classpath = sys.props.getOrElse("manure.test.childClasspath",throw new IllegalArgumentException("explicit manure.test.childClasspath required"))
     val process = new ProcessBuilder((Vector(Path.of(System.getProperty("java.home"),"bin","java").toString,"-cp",classpath,"manure.Main") ++ arguments)*)
       .redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null"))).redirectError(err.toFile).redirectOutput(out.toFile).start()
-    try assert(process.waitFor(childExitBound,java.util.concurrent.TimeUnit.SECONDS),"the child did not exit")
+    try
+      whileRunning(process)
+      assert(process.waitFor(childExitBound,java.util.concurrent.TimeUnit.SECONDS),"the child did not exit")
     finally
       process.destroyForcibly(); process.waitFor()
     (process.exitValue,Files.readString(err).linesIterator.filterNot(line => knownJvmNotices.exists(line.matches)).toList,Files.readString(out))
@@ -92,6 +98,30 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
           "connectTimeoutMs" -> Json.fromInt(5000),"statementTimeoutMs" -> Json.fromInt(30000),"lockTimeoutMs" -> Json.fromInt(5000),
           "idleTransactionTimeoutMs" -> Json.fromInt(30000),"socketTimeoutMs" -> Json.fromInt(30000)))).deepMerge(settings).noSpaces)
     config
+  /** A TCP relay to the fixture database that withholds every server byte once the client has sent the readiness probe
+    * (`SELECT 1`): an authenticated login whose probe stalls. `probed` opens when the probe has been sent. */
+  private final class StallingRelay(database: java.net.URI) extends AutoCloseable:
+    val probed = new java.util.concurrent.CountDownLatch(1)
+    private val listener = new java.net.ServerSocket(0,1,java.net.InetAddress.getLoopbackAddress)
+    private val sockets = new java.util.concurrent.ConcurrentLinkedQueue[java.net.Socket]()
+    val url: String = s"jdbc:postgresql://127.0.0.1:${listener.getLocalPort}${database.getPath}"
+    private def daemon(body: => Unit): Unit =
+      val _ = Thread.ofPlatform().daemon().start(() => try body catch case _: java.io.IOException => ())
+    private def pump(from: java.net.Socket,to: java.net.Socket,request: Boolean): Unit =
+      val buffer = new Array[Byte](8192)
+      var read = from.getInputStream.read(buffer)
+      while read >= 0 do
+        if request && new String(buffer,0,read,java.nio.charset.StandardCharsets.ISO_8859_1).contains("SELECT 1") then probed.countDown()
+        if request || probed.getCount > 0 then to.getOutputStream.write(buffer,0,read)
+        read = from.getInputStream.read(buffer)
+    daemon {
+      while true do
+        val client = listener.accept()
+        val server = new java.net.Socket(database.getHost,database.getPort)
+        sockets.add(client); sockets.add(server)
+        daemon(pump(client,server,true)); daemon(pump(server,client,false))
+    }
+    def close(): Unit = (listener +: sockets.asScala.toVector).foreach(_.close())
   /** The fixture's database and runtime role in place of the unreachable one: the start waits for the database before wiring. */
   private def reachable(database: ponygirls.runtime.JdbcConfig): Json = Json.obj("database" -> Json.obj("jdbcUrl" -> Json.fromString(database.jdbcUrl),
     "user" -> Json.fromString(database.user),"passwordFile" -> Json.fromString(database.passwordFile.toString)))
@@ -131,6 +161,24 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
       Files.writeString(config,Files.readString(config).replace("\"startWaitMs\":1000","\"startWaitMs\":999"))
       assertEquals(runCommand("check-config",config.toString),(1,"manure failure stage=config code=bad-envelope error=DomainError message=\"bad-envelope\"\n"))
     finally cleanup(root)
+  }
+
+  test("SIGTERM ends a start whose readiness probe stalls after an authenticated login") {
+    BackendFixture.configuration.use { (fixture,_,_) => IO.blocking {
+      val root = Files.createTempDirectory("manure-wiring-diagnostic-")
+      try Using.resource(StallingRelay(java.net.URI.create(fixture.database.jdbcUrl.stripPrefix("jdbc:")))) { relay =>
+        // A wait budget far beyond the child's exit bound: only the cancellation can end the probe in time.
+        val config = deploymentConfig(root,Password.hash("fixture-password".toCharArray)+"\n",reachable(fixture.database).deepMerge(Json.obj(
+          "database" -> Json.obj("jdbcUrl" -> Json.fromString(relay.url),"limits" -> Json.obj("startWaitMs" -> Json.fromInt(600000))))))
+        val terminated = signalled(root,{ process =>
+          assert(relay.probed.await(childExitBound,java.util.concurrent.TimeUnit.SECONDS),"the child sent no probe")
+          process.destroy()
+          assert(process.waitFor(terminationBound,java.util.concurrent.TimeUnit.SECONDS),"SIGTERM did not end the start")
+        },"migrate",config.toString)
+        assertEquals(terminated,(143,Nil,""))
+      }
+      finally cleanup(root)
+    }}.unsafeRunSync()
   }
 
   test("serve refuses a configured asset directory that does not exist at startup, before it touches the database") {

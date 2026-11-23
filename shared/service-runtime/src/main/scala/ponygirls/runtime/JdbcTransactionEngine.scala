@@ -84,12 +84,17 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
 private[runtime] object JdbcTransactionEngine {
   /** Whole seconds rounded up, never below 1: the driver reads 0 as no limit. */
   def seconds(d: FiniteDuration): String = math.max(1L, (d.toMillis + 999L) / 1000L).toString
-  /** The production login: configured user, the password file read now, bounded driver timeouts, keep-alive.
-    * `loginTimeout` is the driver's text value in seconds (fractions allowed); connect and socket timeouts round up. */
-  def connect(config: JdbcConfig, factory: JdbcConnectionFactory, loginTimeout: String, connectTimeout: FiniteDuration, socketTimeout: FiniteDuration): Connection = {
+  /** The production login with the password file read now (see [[login]]). */
+  def connect(config: JdbcConfig, factory: JdbcConnectionFactory, loginTimeout: String, connectTimeout: FiniteDuration, socketTimeout: FiniteDuration): Connection =
+    login(config, factory, CredentialFile.read(config.passwordFile), loginTimeout, connectTimeout, socketTimeout)
+  /** The production login: configured user, the password its caller read from the password file, bounded driver timeouts,
+    * keep-alive. `loginTimeout` is the driver's text value in seconds (fractions allowed); connect and socket timeouts
+    * round up. */
+  def login(config: JdbcConfig, factory: JdbcConnectionFactory, password: String, loginTimeout: String, connectTimeout: FiniteDuration,
+      socketTimeout: FiniteDuration): Connection = {
     val props = new Properties
     props.setProperty("user", config.user)
-    props.setProperty("password", CredentialFile.read(config.passwordFile))
+    props.setProperty("password", password)
     props.setProperty("connectTimeout", seconds(connectTimeout))
     props.setProperty("loginTimeout", loginTimeout)
     props.setProperty("socketTimeout", seconds(socketTimeout))
