@@ -310,7 +310,9 @@ rebuild reset it. Every other failure is charged as before.
 change takes effect only after a restart. A configuration may set only this key in its `indexing` section: every key of
 the section is optional and an omitted one keeps its default; a value that is not a boolean refuses the start
 (`config: indexing.annotationContinuations must be true or false`). The switch is not part of the index profile (no
-rebuild, no reuse change).
+rebuild, no reuse change). Write the section in full — `"indexing":{"annotationSessions":4,"embeddingRequests":8,
+"embeddingBatchSize":16,"annotationContinuations":true}` (the defaults; NixOS renders it so): a release before the switch
+ignores the key but refuses an `indexing` section without the three capacities.
 
 - **Off** (the default): annotation behaves as before 031. An answer that does not cover its window, also one that stops
   at a fragment boundary, is rejected `annotation-partition-incomplete` and the whole window is asked again; nothing of it
@@ -331,7 +333,7 @@ rebuild, no reuse change).
   server (off: the internal fault it was before).
 - **Turning it on** needs nothing else (no migration step); windows accepted while it was off stay accepted and are
   reused. **Turning it off** again: see above. Either way a job's partial rows are deleted when the job ends superseded
-  (a newer revision, an owner profile switch or rebuild).
+  (a newer revision, also one the start finds left by the previous process; an owner profile switch or rebuild).
 
 - **Migration 031** (applied by the start, whatever the switch) adds `ch_annotation_attempts.accepted_continuations`,
   `.continued_kept_hash` and `.chain_id`, and the tables `ch_annotation_partials` (the kept parts of unfinished windows: at
@@ -344,23 +346,27 @@ rebuild, no reuse change).
   kept-decode|boundary|carry|provenance>` (warn; product-written rows pass every check, so a discard from production data
   is a defect to report); `windows accepted … continuedWindows=… resumedWindows=…` (off: the line without the last two).
 - **Counts** (read-only, per job set; accepted windows in each job's current run, answers and authorizations in its
-  current retry epoch): `psql -X -q -v ON_ERROR_STOP=1 -v jobs=<uuid>[,<uuid>...] -f
-  chronicle/scripts/annotation-counts.sql` prints the accepted windows by the marker of their accepting authorization —
+  current retry epoch): `psql -X -q -v ON_ERROR_STOP=1 -v jobs=<uuid>[,<uuid>...] -v continuations=<on|off> -f
+  chronicle/scripts/annotation-counts.sql`, with `continuations` the serving release's switch (required; the script cannot
+  read the configuration), prints it, then the accepted windows by the marker of their accepting authorization —
   `windows.one_answer` (0), `windows.after_continuation` (≥ 1), `windows.accepted_unmarked` (none: accepted with the
   switch off, or by an earlier release) — then kept, abandoned and rejected answers (per stored reason, e.g.
   `answers.rejected.annotation-partition-incomplete`), authorizations without an answer, reused windows, R = rejected /
-  answers, and the partials in three disjoint counts: `stale` (the next claim never reads them), `open` (it would load
-  them and they pass every loader check the database can evaluate: format, profile, ranges, the window's active chain, the
-  chain's kept rows, their count, latest attempt and latest hash, the earlier non-final answers, the stops),
-  `invalid_or_inactive` (it would load and discard them). The script cannot evaluate what needs the window's source, carry
+  answers, and the partials in four disjoint counts: `stale` (the next claim never reads them), `open` (switch on: it
+  would load them and they pass every loader check the database can evaluate: format, profile, ranges, the window's active
+  chain, the chain's kept rows, their count, latest attempt and latest hash, the earlier non-final answers, the stops),
+  `invalid_or_inactive` (switch on: it would load and discard them), `ignored_switch_off` (switch off: the rows it would
+  load with the switch on; never loaded, deleted when their window is accepted; their kept answers count as abandoned). The script cannot evaluate what needs the window's source, carry
   or the product's canonical JSON hash (content hash, recomputed kept and prefix hashes before the last stop, fragment
   count, the kept decision against the window, the rest's request bound, a changed input); product-written rows pass
-  those, so on unaltered data `open` is what the next claims resume. Its header lists every check. With the switch off
+  those, so on unaltered data `open` is what the next claims resume (switch on; off they resume nothing). Its header lists every check. With the switch off
   every acceptance is `accepted_unmarked`; once it is on, new acceptances carry a marker (`one_answer` or
   `after_continuation`): that is how to see that the switch took effect.
 - **Rollback.** The previous release starts on a database migrated to 031: it neither reads nor writes the new columns
   and tables, annotates an unfinished window in full and counts kept answers among its five non-final answers (a window
-  with many of them has fewer re-asks left). Turning the switch off is the lighter rollback (a restart, above). To drop the
+  with many of them has fewer re-asks left). Its loader refuses an `indexing` section without the three capacities: before
+  rolling the image back, restore that JSON (the full form above, or no `indexing` section). Turning the switch off is the
+  lighter rollback (a restart, above). To drop the
   031 objects, stop the server and run `chronicle/scripts/down-031-annotation-partials.sql` (read-only preflight, then
   `mode=apply` with the confirmation it names). Before an older rollback run it first; then 030 needs nothing:
   `down-029`, then `down-028` (the connection pool adds no migration).

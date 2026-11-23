@@ -356,17 +356,19 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     assertEquals((full.seen.map(a => (a.position,a.fragments)),job(db,failed.jobId).state),(List((0,64)),"Complete"))
   }}
 
-  /** The counts script's lines for the jobs `ids`, without the `ANNOTATION.` prefix and the result line. */
-  private def counts(config: Config,ids: List[UUID]): List[String] = {
+  /** The counts script's lines for the jobs `ids` with the serving switch `continuations`, without the `ANNOTATION.` prefix,
+    * the switch line and the result line. */
+  private def counts(config: Config,ids: List[UUID],continuations: Boolean): List[String] = {
     val name=config.jdbcUrl.drop(config.jdbcUrl.lastIndexOf('/')+1)
     val psql=java.nio.file.Path.of(sys.env.getOrElse("POSTGRES_HOME",throw DomainError("test","POSTGRES_HOME required (nix develop .#chronicle)")),"bin","psql").toString
     val address=config.jdbcUrl.stripPrefix("jdbc:postgresql://").takeWhile(_!='/')
     val connection=Map("PGHOST"->address.takeWhile(_!=':'),"PGPORT"->address.dropWhile(_!=':').drop(1),"PGUSER"->config.databaseUser,"PGPASSWORD"->Fixtures.databasePassword,"PGDATABASE"->name)
-    val ran=CheckChild.run(List(psql,"-X","-q","-v","ON_ERROR_STOP=1","-v",s"jobs=${ids.mkString(",")}","-f",java.nio.file.Path.of("scripts","annotation-counts.sql").toString),sys.env,connection,CheckChild.limit)
+    val mode=if(continuations) "on" else "off"
+    val ran=CheckChild.run(List(psql,"-X","-q","-v","ON_ERROR_STOP=1","-v",s"jobs=${ids.mkString(",")}","-v",s"continuations=$mode","-f",java.nio.file.Path.of("scripts","annotation-counts.sql").toString),sys.env,connection,CheckChild.limit)
     assertEquals(ran.exit,0,ran.err)
     val lines=ran.out.linesIterator.toList
-    assertEquals(lines.lastOption,Some("ANNOTATION.result|complete"))
-    lines.dropRight(1).map(_.stripPrefix("ANNOTATION."))
+    assertEquals((lines.headOption,lines.lastOption),(Some(s"ANNOTATION.continuations|$mode"),Some("ANNOTATION.result|complete")))
+    lines.drop(1).dropRight(1).map(_.stripPrefix("ANNOTATION."))
   }
   test("G2-T7: the counts script reports one-answer, continued, abandoned, rejected, no-outcome, open, invalid-or-inactive, stale, reused and unmarked windows exactly; a failed continuation write leaves nothing") { database { (config,db,archive) =>
     def run(owner: String,request: IngestRequest,script: (Int,Window,Option[Carry]) => IO[Decision],settings: Config=config): IngestReceipt = { val receipt=archive.ingest(owner,request); once(archive,settings,new Provider(script)); receipt }
@@ -393,10 +395,10 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     val ids=List(oneAnswer,continued,open,abandoned,invalid,inactive,unmarked,next,unwritten).map(_.jobId)
     assertEquals(job(db,next.jobId).state,"Complete"); assert(reused.jobId!=next.jobId)
     assertEquals((ledger(db,unmarked.jobId),job(db,unmarked.jobId).state),(List("annotation-partition-incomplete","none"),"Complete"))
-    assertEquals(counts(config,ids),List(
+    assertEquals(counts(config,ids,true),List(
       "jobs|9","windows.one_answer|3","windows.after_continuation|1","windows.accepted_unmarked|1","answers.continued|5","answers.abandoned|3",
       "answers.rejected|2","answers.rejected.annotation-partition-incomplete|2","authorizations.no_outcome|5",
-      "chains.open|1","chains.invalid_or_inactive|2","chains.stale|0","windows.reused|1","answers|12","r|0.1667"))
+      "chains.open|1","chains.invalid_or_inactive|2","chains.ignored_switch_off|0","chains.stale|0","windows.reused|1","answers|12","r|0.1667"))
   }}
 
   test("G2-T8: paid writes on SMALL's path: a transient or ambiguous acceptance, an ambiguous continuation and a write after a re-claim; no rest before its kept answer commits") { database { (config,db,archive) =>
@@ -803,7 +805,14 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     assertEquals((ledger(db,receipt.jobId),chains(db,receipt.jobId),partials(db,receipt.jobId),markers(db,receipt.jobId)),(List("annotation-partition-incomplete","annotation-partition-incomplete","none"),Nil,Nil,Nil))
     assertEquals(job(db,receipt.jobId).state,"Complete"); searchRowsAreChunks(db,receipt.sessionId)
   }}
-  test("SWITCH off: a window whose input changed under its ledger is the internal fault it was before ANNOT2: no call, every row kept") { database { (config,db,archive) =>
+  /** The `window failed`/`job failed` warnings of a log, ids and fences elided, and of each origin its source line (the
+    * build's own: the class and method are compared). */
+  private def warnings(log: WorkerLog): List[String] = log.lines.filter(line => line.startsWith("window failed") || line.startsWith("job failed"))
+    .map(_.replaceAll("jobId=\\S+","jobId=J").replaceAll("fence=\\d+","fence=F").replaceAll("(origin=\\S+):\\d+","$1:N"))
+  /** The `window failed` warning of an internal fault raised at `origin` (the expected text: the pool tip's). */
+  private def internalAt(window: Int,total: Int,stage: String,origin: String): String =
+    s"window failed jobId=J fence=F windowOrdinal=$window totalWindows=$total stage=$stage annotationAttempt=checkpoint annotationRejectionLimit=5 code=internal exceptionClass=chronicle.DomainError origin=$origin:N reason=unknown httpStatus=unavailable structure={}"
+  test("SWITCH off: a window whose input changed under its ledger is the internal fault it was before ANNOT2: no call, every row kept, the pool tip's warning (origin AnnotationAttempts.reserve)") { database { (config,db,archive) =>
     val off=ModelFixtures.continuations(config,false); val receipt=archive.ingest("a",source(texts(128)))
     once(archive,off,new Provider((n,window,previous) => if(window.fragments.head.messagePosition==0) IO.pure(whole(window,previous)) else if(n==1) IO.pure(upTo(10,true)) else interrupted))
     val rows=(ledger(db,receipt.jobId,0),ledger(db,receipt.jobId,1))
@@ -811,12 +820,56 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     val other=CheckpointJson.decision(Decision(Vector(problem(Point(0,0),Point(64,0),false,"another goal"))))
     db.transaction(c => Sql.exec(c,"UPDATE ch_index_checkpoints SET value=?,output_hash=? WHERE job_id=? AND stage='Annotation' AND window_ordinal=0",other.noSpaces,IndexCheckpoints.hash(other),receipt.jobId))
     due(db,receipt.jobId)
-    val none=new Provider((_,_,_) => IO.raiseError(new AssertionError("no call under a changed input")))
-    assertEquals(intercept[DomainError](worker(archive,off,none).once.unsafeRunSync()).code,"internal")
+    val none=new Provider((_,_,_) => IO.raiseError(new AssertionError("no call under a changed input"))); val log=new WorkerLog
+    assertEquals(intercept[DomainError](worker(archive,off,none,log).once.unsafeRunSync()).code,"internal")
     assertEquals((none.seen,(ledger(db,receipt.jobId,0),ledger(db,receipt.jobId,1))),(Nil,rows))
+    assertEquals(warnings(log),List(internalAt(1,2,"annotation","chronicle.AnnotationAttempts$.reserve")))
+  }}
+  test("SWITCH off: the warnings of the whole-window path's other failures are the pool tip's, origin included: five rejections, a corrupt or undecodable accepted embedding part, a rejection count above the limit") { database { (config,db,archive) =>
+    val off=ModelFixtures.continuations(config,false)
+    def raised(annotator: ProblemPassageAnnotator,embedding: Embedder,id: UUID): List[String] = {
+      val log=new WorkerLog
+      assertEquals(worker(archive,off,annotator,log,embedding).once.attempt.unsafeRunSync().left.map { case error: DomainError => error.code; case error => error.toString },Left("internal"))
+      expire(db,id); db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET state='Failed' WHERE id=?",id))
+      warnings(log)
+    }
+    val five=archive.ingest("a",source(texts(64))); val exhausted=new WorkerLog
+    once(archive,off,new Provider((_,_,_) => IO.pure(upTo(10,false))),exhausted)
+    val origin="chronicle.Worker$Windows.annotate$$anonfun$2$$anonfun$2$$anonfun$2:N"
+    assertEquals(warnings(exhausted),List(
+      s"window failed jobId=J fence=F windowOrdinal=0 totalWindows=1 stage=annotation annotationAttempt=5 annotationRejectionLimit=5 code=annotation-attempts-exhausted exceptionClass=chronicle.Worker$$AnnotationExhausted origin=$origin reason=annotation-partition-incomplete httpStatus=unavailable structure={}",
+      s"job failed jobId=J code=annotation-attempts-exhausted exceptionClass=chronicle.Worker$$AnnotationExhausted sqlState=unavailable origin=$origin reason=annotation-partition-incomplete httpStatus=unavailable"))
+    // An accepted embedding part rewritten: without its hash (the read refuses it) and with it (its decoding refuses it).
+    var failedOnce=false
+    val failing=new Embedder {
+      def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("no query embedding"))
+      def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO {
+        if(text.head=="source-32" && !failedOnce) { failedOnce=true; throw DomainError("model-timeout","model deadline exceeded") }
+        text.map(_ => List(1.0,0.0,0.0))
+      }
+    }
+    val wrong=Json.arr(Json.arr(Json.fromDouble(1.0).get,Json.fromDouble(2.0).get,Json.fromDouble(3.0).get))
+    List(("chronicle.IndexCheckpoints$.verified",IndexCheckpoints.hash(Json.arr())),("chronicle.Worker.decoded$1$$anonfun$2",IndexCheckpoints.hash(wrong))).foreach { (origin,hash) =>
+      val parts=archive.ingest("a",source((0 until 40).map(i => s"source-$i"))); failedOnce=false
+      assert(worker(archive,off,new Provider((_,window,previous) => IO.pure(whole(window,previous))),embedding=failing).once.unsafeRunSync() && failedOnce)
+      db.transaction(c => Sql.exec(c,"UPDATE ch_index_checkpoints SET value=?,output_hash=? WHERE job_id=? AND stage='Embedding' AND part=1",wrong.noSpaces,hash,parts.jobId))
+      assertEquals(raised(new Provider((_,window,previous) => IO.pure(whole(window,previous))),failing,parts.jobId),List(internalAt(0,1,"embedding",origin)))
+    }
+    // Five rejections recorded while the answer is asked: the count after its rejection is above the limit.
+    val count=archive.ingest("a",source(texts(64)))
+    val adding=new Provider((_,_,_) => IO.blocking(db.transaction { c =>
+      Sql.exec(c,"""INSERT INTO ch_annotation_attempts(job_id,run_id,retry_epoch,window_ordinal,attempt,input_hash,fence,rejection_reason)
+        SELECT a.job_id,a.run_id,a.retry_epoch,a.window_ordinal,a.attempt+k,a.input_hash,a.fence,'annotation-partition-incomplete' FROM ch_annotation_attempts a CROSS JOIN generate_series(1,5) k WHERE a.job_id=?""",count.jobId); ()
+    }).as(upTo(10,false)))
+    assertEquals(raised(adding,embedder,count.jobId),List(internalAt(0,1,"annotation","chronicle.AnnotationAttempts$.reject")))
   }}
   test("SWITCH (i) on then off: kept parts written with continuations on are never loaded with them off; the whole window is asked, its kept answer counts among the five; the acceptance deletes the partial and the marker and leaves its row unmarked") { database { (config,db,archive) =>
     val receipt=kept(db,archive,config,"a",List(upTo(10,false)))
+    // A valid partial of a held head job: open with continuations on; with them off never loaded, its kept answer abandoned.
+    def live(open: Int,ignored: Int,abandoned: Int): List[String] = List("jobs|1","windows.one_answer|0","windows.after_continuation|0","windows.accepted_unmarked|0",
+      "answers.continued|1",s"answers.abandoned|$abandoned","answers.rejected|0","authorizations.no_outcome|1",s"chains.open|$open","chains.invalid_or_inactive|0",
+      s"chains.ignored_switch_off|$ignored","chains.stale|0","windows.reused|0","answers|1","r|0.0000")
+    assertEquals((counts(config,List(receipt.jobId),true),counts(config,List(receipt.jobId),false)),(live(1,0,0),live(0,1,1)))
     val log=new WorkerLog; val guarded=new WholeWindowOnly(archive)
     val provider=new Provider((n,window,previous) => IO.pure(if(n==0) upTo(10,false) else whole(window,previous)))
     once(guarded,ModelFixtures.continuations(config,false),provider,log)
@@ -845,11 +898,32 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     once(archive,ModelFixtures.continuations(config,false),appending)
     assertEquals((whileLeased,job(db,leased.jobId).error,partials(db,leased.jobId),markers(db,leased.jobId)),((1,1),Some(Jobs.supersededRevision),Nil,Nil))
   }}
+  test("SWITCH (ii) at start: an older-revision job the previous process left Running (kept at (10,0), a newer revision arrived while its rest was asked, the process ended there) is ended superseded by the start, on or off, with its partial and chain marker; a head job keeps both") { database { (config,db,archive) =>
+    /** Queued jobs wait (their next attempt an hour away): only the job ingested next is claimed. */
+    def parked(): Unit = db.transaction { c => Sql.exec(c,"UPDATE ch_jobs SET lease_until=clock_timestamp()+interval '1 hour' WHERE state='Queued'"); () }
+    def leftRunning(owner: String): IngestReceipt = {
+      val request=source(texts(64)); val receipt=archive.ingest(owner,request); val asked=Deferred.unsafe[IO,Unit]
+      val provider=new Provider((n,_,_) => if(n==0) IO.pure(upTo(10,false)) else IO.blocking(archive.ingest(owner,append(request,texts(65),1))) *> asked.complete(()) *> IO.never)
+      val fiber=worker(archive,config,provider).once.start.unsafeRunSync()
+      asked.get.timeout(30.seconds).unsafeRunSync(); fiber.cancel.timeout(30.seconds).unsafeRunSync()
+      assertEquals((job(db,receipt.jobId).state,partials(db,receipt.jobId).size,markers(db,receipt.jobId).flatten.size),("Running",1,1))
+      receipt
+    }
+    val head=kept(db,archive,config,"c",List(upTo(10,false))); parked()
+    List(true,false).foreach { on =>
+      val left=leftRunning(if(on) "a" else "b")
+      val restarted=new Database(ModelFixtures.continuations(config,on),IndexProfileCatalog.current(config))
+      try restarted.initialize() finally restarted.close()
+      assertEquals((job(db,left.jobId).error,partials(db,left.jobId),markers(db,left.jobId)),(Some(Jobs.supersededRevision),Nil,Nil),s"annotationContinuations=$on")
+      assertEquals((job(db,head.jobId).state,partials(db,head.jobId).map(_.covered),markers(db,head.jobId).flatten.size),("Queued",List(10),1))
+      parked()
+    }
+  }}
   test("SWITCH (iii) off then on: nothing to migrate; a window accepted with continuations off is reused with no call and counted unmarked, a new acceptance carries its marker") { database { (config,db,archive) =>
     val earlier=archive.ingest("a",source(texts(64)))
     once(archive,ModelFixtures.continuations(config,false),new Provider((n,window,previous) => IO.pure(if(n==0) upTo(10,false) else whole(window,previous))))
-    assertEquals(counts(config,List(earlier.jobId)),List("jobs|1","windows.one_answer|0","windows.after_continuation|0","windows.accepted_unmarked|1","answers.continued|0","answers.abandoned|0",
-      "answers.rejected|1","answers.rejected.annotation-partition-incomplete|1","authorizations.no_outcome|0","chains.open|0","chains.invalid_or_inactive|0","chains.stale|0","windows.reused|0","answers|2","r|0.5000"))
+    assertEquals(counts(config,List(earlier.jobId),false),List("jobs|1","windows.one_answer|0","windows.after_continuation|0","windows.accepted_unmarked|1","answers.continued|0","answers.abandoned|0",
+      "answers.rejected|1","answers.rejected.annotation-partition-incomplete|1","authorizations.no_outcome|0","chains.open|0","chains.invalid_or_inactive|0","chains.ignored_switch_off|0","chains.stale|0","windows.reused|0","answers|2","r|0.5000"))
     archive.retry("a",earlier.jobId)
     val root=config.copy(indexing=config.indexing.copy(incrementalPublication=false))
     val none=new Provider((_,_,_) => IO.raiseError(new AssertionError("a call for a window accepted with continuations off")))
@@ -857,8 +931,8 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     val later=archive.ingest("a",source(texts(64)))
     once(archive,config,new Provider((n,window,previous) => IO.pure(if(n==0) upTo(10,false) else whole(window,previous))))
     assertEquals((none.seen,job(db,earlier.jobId).state,ledger(db,later.jobId),job(db,later.jobId).state),(Nil,"Complete",List("continued","accepted(1)"),"Complete"))
-    assertEquals(counts(config,List(earlier.jobId,later.jobId)),List("jobs|2","windows.one_answer|0","windows.after_continuation|1","windows.accepted_unmarked|0","answers.continued|1","answers.abandoned|0",
-      "answers.rejected|0","authorizations.no_outcome|0","chains.open|0","chains.invalid_or_inactive|0","chains.stale|0","windows.reused|1","answers|2","r|0.0000"))
+    assertEquals(counts(config,List(earlier.jobId,later.jobId),true),List("jobs|2","windows.one_answer|0","windows.after_continuation|1","windows.accepted_unmarked|0","answers.continued|1","answers.abandoned|0",
+      "answers.rejected|0","authorizations.no_outcome|0","chains.open|0","chains.invalid_or_inactive|0","chains.ignored_switch_off|0","chains.stale|0","windows.reused|1","answers|2","r|0.0000"))
   }}
 
   /** A failure class of a window's paid-answer write: the throwable injected and what the job meets (held: SMALL's
