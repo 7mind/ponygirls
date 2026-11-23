@@ -224,12 +224,24 @@ first). An attempt that commits progress — a model answer's checkpoint, a stag
 range the previous attempt stopped in (written alone, first) — starts the count again; any other failure, a retry and a
 rebuild reset it. Every other failure is charged as before.
 
-- **Restarts.** The hold is written by the job's fenced failure record; while the database refuses it, the worker tries
-  again every 2 s until the attempt's lease ends (300 s after its claim or last renewal, less a 5 s margin), each try
-  checking that the claim still holds the job and each of its waits (connection, lock, statement, network) bounded by
-  5 s and by the lease left. So a PostgreSQL restart that ends at least 10 s before the in-flight job's lease ends charges no attempt, provided the hold's write obtains a connection and the row lock within that margin; longer outages charge one attempt through reclaim and can lose one paid model answer; crashed jobs resume as today. As before, a model answer whose uncommitted checkpoint write a restart cuts
-  is lost (its reservation stays charged, at most one per lane). Stopping the server stops scheduling at once; an in-flight recording try ends within about 10 s (each of
-  its waits is bounded separately; one deadline per try is an R-a2 item); the job keeps its lease, as before.
+- **Restarts.** The hold is written by the job's fenced failure record; while the database refuses it, or a try reached
+  its deadline, the worker tries again 2 s after each failed try until the attempt's lease ends (300 s after its claim or
+  last renewal, less a 5 s margin; no try starts with less than 100 ms of it left). Each try checks that the claim still
+  holds the job and ends by one deadline, 4.5 s after its start and never after that tracked end: its wait for a
+  permit, the connection, its locks, statements and COMMIT all spend from it; at the deadline its connection is cut and
+  dropped from the pool, and the try fails `deadline-expired`. A try cut during COMMIT may have committed: the next try
+  reads the job again under the claim's fence and reports that hold without writing it twice. Any other failure of a try
+  (e.g. a permission error) is reported at once (`job failure not recorded`), also when it arrives after the deadline.
+  So a PostgreSQL restart that ends at least 45 s before the in-flight job's lease ends charges no attempt, provided no
+  other transaction holds that job's rows; longer outages charge one attempt through reclaim and can lose one paid model
+  answer; crashed jobs resume as today. Why 45 s: the 5 s margin + at most 5 s of the pool's back-off before its next
+  login + the 2 s after a failed try + under 1 s for the login and the record ≈ 13 s, plus up to one 30 s renewal
+  interval when a renewal committed but the restart cut its reply. This assumes PostgreSQL in the same pod (logins
+  before it is ready fail at once; a hanging login to a remote or black-holed database is outside it) and records not
+  queued behind long work on the shared background connections (right after a restart the interrupted publications are
+  themselves held for at least 1 min). As before, a model answer whose uncommitted checkpoint write a restart cuts is
+  lost (its reservation stays charged, at most one per lane). Stopping the server stops scheduling at once; an in-flight
+  recording try ends within 5 s of its start; the job keeps its lease, as before.
 - **Logs** (warn, ids and codes only): `job held jobId=… code=database-transient sqlState=<s|none> class=<class>
   stage=<stage|none> consecutive=<k> nextAttemptAt=<ISO>`; at the limit `job failed … consecutive=10 nextAttemptAt=none`.
 - **Visible state.** Activity and the dashboard show a held job as `Queued`, Lease **Waiting** (title "Next attempt

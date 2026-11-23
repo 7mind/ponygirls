@@ -63,7 +63,7 @@ built and release it after the pool closed: another service pool in the same pro
 which build many runtimes in one JVM) take no claim, so a pool built through them is not counted.
 
 **Borrow.** After admission one monotonic deadline `now + A`, A = `connectTimeoutMs` in whole seconds rounded up (the
-login bound as before; a `boundedTransaction(b)` uses min(A, b)), bounds the acquisition: at most one try more than the
+login bound as before; a `transactionWithin(D)` uses min(D, now + A)), bounds the acquisition: at most one try more than the
 pool's connections, each a borrow that waits at most until the deadline, then the reset `DISCARD ALL; <configured
 bounds>` in one execution under a network timeout and a watchdog that aborts the physical connection at min(deadline,
 now + max(250 ms, A/4)) (the cap): a reset that ends after the cap is not accepted even when the watchdog's alarm comes
@@ -75,8 +75,8 @@ borrows without waiting: an idle connection or none). Idle connections are valid
 with V = max(250 ms, min(1 s, A/4)). The reset owns the connection from the borrow to the handoff: the watchdog owns it
 until the reset disarms it (exactly one of the two happens), and a reset that fails, is aborted, throws (an
 interruption included) or ends after its cap evicts it, never hands it out. The
-reset then installs the transaction's network timeout (socket timeout; extended timeout + socket timeout; the bound)
-before the transaction's first statement. A borrower that finds no connection by the deadline fails
+reset then installs the transaction's network timeout (socket timeout; extended timeout + socket timeout; the time left
+to D) before the transaction's first statement, and the deadline is checked once more after it. A borrower that finds no connection by the deadline fails
 `JdbcFailure("connection-unavailable", last SQLSTATE)` (e.g. 28000 for a role without LOGIN, none when the pool timed
 out). The reset returns every session state (role, settings including `search_path`, temp tables, session advisory
 locks, LISTEN, cursors, prepared statements, an `application_name` the driver set after login) to the login's; the pool
@@ -151,7 +151,7 @@ here, so apps must not copy their own QuasiIO/QuasiAsync adapter implementation.
 
 `new BlockingJdbcDatabase(config)` (compatible pool) or `new BlockingJdbcDatabase(config, sizing)` is a bounded, owned
 `AutoCloseable` synchronous facade for existing synchronous JDBC APIs; `background` is its background view
-(`BlockingJdbcTransactions`: `transaction`, `extendedTransaction`, `boundedTransaction` through the background admission). Call only on blocking threads; close
+(`BlockingJdbcTransactions`: `transaction`, `extendedTransaction`, `transactionWithin` through the background admission). Call only on blocking threads; close
 rejects new calls and drains admitted work without any cats runtime or unsafe IO
 bridge. It and async `JdbcDatabase` delegate to the **same** physical transaction
 engine. The blocking gate uses finite fair semaphore admission; queued interruption
@@ -164,9 +164,20 @@ uses DriverManager and the same strict config and connection properties.
 `extendedTransaction(timeout)` (restart-robustness spec §4) is a blocking transaction whose statement timeout is
 raised transaction-locally to `timeout` (also above a stricter role setting; Chronicle's publication batches), with the
 network timeout at `timeout` plus `socketTimeoutMs`; lock and idle-in-transaction timeouts stay configured.
-`boundedTransaction(bound)` ends each of its waits within `bound`: the admission wait, the acquisition (its budget
-min(A, `bound`)), each statement's lock wait and execution (transaction-local statement and lock timeouts tightened to
-`bound`) and each network read (Chronicle's transient failure record).
+`transactionWithin(deadline)` (R-a2 M1, Chronicle's transient failure record) is one try by one monotonic deadline D,
+converted once to the engine's clock. With less than `BlockingJdbcDatabase.minimumTry` (100 ms) left it is refused
+`admission-timeout` before its admission; the admission waits at most min(`queueTimeoutMs`, D − now); the acquisition
+ends by min(D, its start + A), each reset by min(that, its start + the cap). From the handoff a transaction watch (the
+reset's watchdog, a second one-CAS watch) aborts the physical connection at D; D is checked before the setup, the
+callback and COMMIT (a refusal aborts through the watch); the setup tightens the statement and lock timeouts to the time
+left. After D or the abort nothing more is sent (no ROLLBACK): the connection is evicted; it returns to the pool only
+when the watch was disarmed and the transaction committed or rolled back before D. It fails
+`JdbcFailure("deadline-expired", driver SQLSTATE)` exactly for a refusal at a boundary and for a connection error (class
+08 or no SQLSTATE) caught after its watch aborted; a COMMIT cut that way has an unknown outcome. Every other error keeps
+its SQLSTATE even when it arrives after D (a P0001 whose ROLLBACK the abort cut stays P0001); expiry in admission or
+acquisition stays `admission-timeout` / `connection-unavailable`. `JdbcTransient.deadline(error)` names that failure
+(`JdbcTransient.job` is unchanged). The server ends a cut backend's work only by its own timeouts set at the setup (a
+backend waiting in a statement or COMMIT keeps its locks until then).
 `JdbcTransient.job(error)` names a job's failures that a later attempt outlives: the `connection` states above, 57014
 (a statement timeout), `admission-full`, `admission-timeout` and `connection-unavailable` with or without a SQLSTATE
 (a pool wait can end before any login failed). `DatabaseWait` keeps its own start rules (`connection` states only).

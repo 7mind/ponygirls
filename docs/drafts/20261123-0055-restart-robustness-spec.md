@@ -131,7 +131,7 @@ tries, lead addition ≈04:40Z).** R-a ships in two parts. **SMALL** (with R-c a
   hold (same fence and run). While the database refuses the record (`JdbcTransient.job`), the worker tries it again every
   `Worker.FailureBackoff` (2 s) while the attempt's lease has time left as the worker tracks it (its monotonic clock
   from before the claim or the last successful renewal, + 300 s − 5 s skew margin); then, as today, "job failure not
-  recorded" and the job keeps its lease. (r2, gate r1 F1) Every try is `BlockingJdbcDatabase.boundedTransaction(b)` with
+  recorded" and the job keeps its lease. (r2, gate r1 F1; replaced by M1's `transactionWithin(D)` below) Every try is `BlockingJdbcDatabase.boundedTransaction(b)` with
   b = min(`Worker.Leases.recordTry` 5 s, the tracked lease left): admission wait, login (login, connect and socket
   timeouts), each statement's lock wait and execution (transaction-local `statement_timeout`/`lock_timeout` tightened to
   b) and each network read end within b; a try that ran out of b on a lock wait (55P03) is tried again too. Each try
@@ -176,6 +176,40 @@ attempt calls the model again; a committed but unacknowledged one is reused).
 **SMALL's shutdown bound:** the recorder stops scheduling at once; an in-flight recording try ends within about 10 s
 (each of its waits is bounded separately). One deadline per try (remaining = deadline − now before each step) and a test of
 cancellation across admission then SQL wait are a REQUIRED item of R-a2 (orchestrator decision 2026-11-23 06:11Z).
+
+**R-a2 M1 amendment (2026-11-23; reports/robust/RA2-SPEC/section-r5.md, orchestrator ORCH-REPLY-1507Z/1536Z/1556Z;
+supersedes SMALL's guarantee, its shutdown bound and `boundedTransaction` above; M2–M4 of R-a2 are not built).**
+- *One deadline per try.* The worker computes D = min(now + `Worker.Leases.recordTry` 4.5 s, the tracked lease end T) and
+  passes it unchanged: `SessionArchive.holdTransient(claim, stage, D)` → `Database.transactionWithin(D)` → the background
+  view's `transactionWithin(D)` (never the renewal permit) → the engine. No try starts with less than
+  `BlockingJdbcDatabase.minimumTry` (100 ms) left to T (worker) or to D (`admission-timeout`, before the admission). The
+  admission waits ≤ min(queueTimeout, D − now); the acquisition ends by min(D, its start + A), a reset by min(that, its
+  start + cap); a transaction watch armed at the handoff aborts the connection at D; D is checked before the setup, the
+  callback and COMMIT; the setup tightens statement and lock timeouts to D − now; after D or the abort no ROLLBACK or
+  other I/O, the connection is evicted. The engine raises `JdbcFailure("deadline-expired", sqlState)` exactly for a
+  refusal at a boundary or a connection error (class 08, no SQLSTATE) caught after the watch aborted; the recorder retries
+  it (`JdbcTransient.deadline`) as it retries `JdbcTransient.job` and 55P03; every other error keeps its classification
+  also when delivered after D (a P0001 is reported at once). A COMMIT cut at D has an unknown outcome: the next try reads
+  the job under the claim's fence (`recordedTransient`) and reports a committed hold without writing it again, so the
+  refund and the count happen once.
+- *Guarantee (ORCH-REPLY-1536Z, option A):* a PostgreSQL restart that ends at least 45 s before the in-flight job's lease
+  ends charges no attempt, provided no other transaction holds that job's rows; longer outages charge one attempt through
+  reclaim and can lose one paid model answer; crashed jobs resume as today.
+- *Derivation.* With E the stored `lease_until` and R the new postmaster's readiness, the record must commit by the
+  tracked end T = E − 5 s − δ (δ: the claim's or last renewal's own SQL time, ms when healthy). The recorder is reached at
+  once and tries through the outage; each try waits in the pool's bag until its D, followed by the 2-s post-failure sleep.
+  Logins fail fast before readiness, so the pool's adder sleeps at most 5 s after a failed login (a cap, not a measured
+  time); its next login starts ≤ 5 s after R; a waiting try takes that connection at once, or the next try follows after
+  the 2-s sleep; the login plus the record take < 1 s. So the record commits by R + 5 + 2 + 1 s ≤ T when E − R ≥ 5 + 5 +
+  2 + 1 ≈ 13 s. If the outage cut the reply of a renewal whose COMMIT took effect, the worker tracks the previous end, up
+  to one 30-s renewal interval earlier: ≥ 43 s; hence 45 s (≈ 2 s left for δ, the 100-ms try floor and scheduling).
+- *Assumptions (stated with their reasons, not provisos):* (i) PostgreSQL runs in the same pod: logins before readiness
+  fail fast (refused, 57P03) and stale sockets fail at once; a login that hangs against a remote or black-holed database
+  is outside the guarantee (with black-holed sockets each stale connection can stall a reset cap, RD-CORE's stated limit).
+  (ii) Shared admission: right after a restart the publication gate is empty, because the interrupted publications are
+  themselves held for ≥ 1 min, so records (ms each) do not queue behind long work on the shared background permits.
+- *Shutdown:* cancellation schedules no further try and ends a post-failure sleep at once; the try in flight ends by its
+  D plus the abort (≤ 0.5 s), i.e. within 5 s of its start (4.5 s + 0.5 s). The job keeps its lease.
 
 **Full R-a design** (SMALL above is the part that ships first; the R-a2 parts are marked).
 **Decision (D1 confirmed):** transient database failures are not charged to `attempts`; they hold the job with back-off;
