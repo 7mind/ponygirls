@@ -214,6 +214,47 @@ final class UploadProtocolTest extends munit.FunSuite {
     assertEquals(verdicts,scenarios.map(_._1).map(name => name -> (if(name=="unreferenced") ("accepted","accepted") else ("invalid","content-mismatch"))))
   }}
 
+  test("a part that would take the revision's records (its base included) or the attempt's parts past their 32-bit maximum is too-large before anything of it is written; a revision of exactly the maximum commits") { database { (config,db,archive) =>
+    val uploads=new Uploads(db,config,UploadPolicy.production)
+    val maximum=Int.MaxValue
+    def verdict(f: => Any): String = try { f; "accepted" } catch { case error: DomainError => error.code; case error: java.sql.SQLException => s"SQLSTATE ${error.getSQLState}" }
+    // The counts 2^31 records or parts would reach (at least 4 GiB of two-byte records), injected into the attempt.
+    def inject(id: UUID,column: String,value: Int): Unit = { db.transaction(c => Sql.exec(c,s"UPDATE ch_uploads SET $column=? WHERE id=?",value,id)); () }
+    /** What a refused part leaves as it was: the attempt's state, its part receipts, its epoch's rows and their least record index. */
+    def staged(uploads: Uploads,id: UUID): (UploadState,List[Long]) = (uploads.status("a",id).copy(expiresInSeconds=0),db.transaction { c =>
+      val epoch=Sql.one(c,"SELECT epoch FROM ch_uploads WHERE id=?",id)(_.getObject(1,classOf[UUID])).get
+      Sql.one(c,"SELECT count(*) FROM ch_upload_parts WHERE upload=?",id)(_.getLong(1)).toList++List("ch_epoch_messages","ch_epoch_raw","ch_epoch_records").flatMap(table =>
+        Sql.one(c,s"SELECT count(*) FROM $table WHERE epoch=?",epoch)(_.getLong(1)))++Sql.one(c,"SELECT coalesce(min(record_index),0) FROM ch_epoch_records WHERE epoch=?",epoch)(_.getLong(1))
+    })
+    def refused(uploads: Uploads,id: UUID,part: UploadPart): (String,Boolean) = { val before=staged(uploads,id); (verdict(send(uploads,"a",id,part)),staged(uploads,id)==before) }
+
+    val identity=source()
+    val head=header(3)++pi("u1","s","user","question",1)
+    val answer=pi("a1","u1","assistant","answer",2)
+    val more=pi("u2","a1","user","next",3)++pi("a2","u2","assistant","next answer",4)
+    val id=archive.ingest("a",request(identity,0,head)).sessionId
+    val filling=uploads.open("a",declaration(identity,1,head++answer,Some(head))).uploadId
+    inject(filling,"base_records",maximum-1)
+    send(uploads,"a",filling,part(0,answer))
+    val atMaximum=verdict(uploads.commit("a",filling))
+    val committed=db.transaction(c => Sql.one(c,"SELECT record_count FROM ch_revisions WHERE session_id=? AND revision=2",id)(_.getInt(1)))
+    val appending=uploads.open("a",declaration(identity,2,head++answer++more,Some(head++answer))).uploadId
+    val fresh=uploads.open("a",declaration(source(),0,head++answer,None)).uploadId
+    send(uploads,"a",fresh,part(0,header(3)))
+    inject(fresh,"records",maximum-1)
+    val vast=new Uploads(db,config.copy(maxFileBytes=1L<<62),UploadPolicy.production)
+    val parts=vast.open("a",declaration(source(),0,header(3),None)).uploadId
+    inject(parts,"parts",maximum)
+    assertEquals(List[(String,Any)]("a revision of exactly the maximum" -> (atMaximum,committed),
+      "an append past it through its base" -> refused(uploads,appending,part(0,more)),
+      "an upload past it through its accepted records" -> refused(uploads,fresh,part(1,pi("u1","s","user","question",1)++answer)),
+      "a part past the largest ordinal" -> refused(vast,parts,part(maximum,header(3))),
+      "the part bound of the largest maxFileBytes" -> UploadPolicy.maxParts(config.copy(maxFileBytes=Long.MaxValue))),
+      List[(String,Any)]("a revision of exactly the maximum" -> ("accepted",Some(maximum)),"an append past it through its base" -> ("too-large",true),
+        "an upload past it through its accepted records" -> ("too-large",true),"a part past the largest ordinal" -> ("too-large",true),
+        "the part bound of the largest maxFileBytes" -> maximum.toLong))
+  }}
+
   test("records are the lines linesIterator splits, also at a bare CR: a CRLF record of exactly maxRecordBytes is accepted, two records on one LF line do not make a large part") { database { (_,db,archive) =>
     val cap=5*mebibyte
     val config=Fixtures.config().copy(maxRecordBytes=cap.toLong,maxFileBytes=64*mebibyte)

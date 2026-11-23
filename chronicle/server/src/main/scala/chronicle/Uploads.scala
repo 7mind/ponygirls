@@ -25,8 +25,11 @@ object UploadPolicy {
   /** A part of one record: its line JSON-escaped (at most twice its bytes) and its messages, whose text derives from the
     * line (at most twice more), and 1 MiB of envelope. */
   def maxLargePartBytes(c: Config): Long = 4*c.maxRecordBytes+mebibyte
-  /** Bounds the rows of tiny parts; collectors pack parts of about `maxPartBytes`. */
-  def maxParts(c: Config): Long = (maxRawBytes(c)+mebibyte-1)/mebibyte+1024
+  /** Bounds the rows of tiny parts; collectors pack parts of about `maxPartBytes`. Part ordinals and counts are 32-bit. */
+  def maxParts(c: Config): Long = math.min((maxRawBytes(c)-1)/mebibyte+1+1024,Int.MaxValue)
+  /** The records of a revision, its base included: record counts and indexes are 32-bit (`recordIndex`, `record_count`).
+    * Unreachable below 4 GiB of raw: a record takes at least two bytes. */
+  val maxRecords: Long = Int.MaxValue
   def limits(c: Config): UploadLimits = UploadLimits(maxPartBytes.toLong,maxLargePartBytes(c),c.maxRecordBytes,maxRawBytes(c),c.maxMessages)
 }
 
@@ -81,6 +84,8 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
           Check(attempt.parts<UploadPolicy.maxParts(config),"too-large",s"an upload has at most ${UploadPolicy.maxParts(config)} parts")
           Check(attempt.rawEnd+content.rawBytes<=UploadPolicy.maxRawBytes(config) && attempt.messageEnd.toLong+content.messages.size<=config.maxMessages,
             "too-large",s"an upload stays within ${UploadPolicy.maxRawBytes(config)} raw bytes and ${config.maxMessages} messages")
+          Check(attempt.recordEnd+content.records<=UploadPolicy.maxRecords,"too-large",
+            s"a revision has at most ${UploadPolicy.maxRecords} records, its base included; part ${part.ordinal} would take it to ${attempt.recordEnd+content.records}")
           write(c,owner,attempt,part,content)
           state(reread(c,id))
         }
@@ -195,7 +200,7 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
     * and records the part's receipt and the attempt's new state, renewing its lease. */
   private def write(c: Connection,owner: String,a: Attempt,part: UploadPart,content: Received): Unit = {
     val digest=ResumableSha256.resume(a.rawState)
-    val appended=try EpochWriter.append(c,a.epoch,a.messageEnd,content.messages,part.raw,0,a.rawEnd,a.recordEnd,digest) catch {
+    val appended=try EpochWriter.append(c,a.epoch,a.messageEnd,content.messages,part.raw,0,a.rawEnd,Math.toIntExact(a.recordEnd),digest) catch {
       case error: SQLException if uniqueViolation(error) => throw DomainError("invalid","duplicate message IDs")
     }
     Check(appended.records==content.records,"internal","written records differ from the validated part")
@@ -210,7 +215,7 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
     }
     val messages=a.messages+content.messages.size
     val rawBytes=a.rawBytes+content.rawBytes
-    val records=a.records+content.records
+    val records=Math.addExact(a.records,content.records)
     Sql.exec(c,"INSERT INTO ch_upload_parts(upload,ordinal,sha256,messages_end,raw_end,records_end) VALUES(?,?,?,?,?,?)",a.id,part.ordinal,part.sha256,messages,rawBytes,records)
     val messageTime=(content.messageTime++a.messageTime.map(Instant.parse)).maxOption
     // The lease passed since the attempt was read once an open, counting under the owner's upload lock, could see it
@@ -258,7 +263,7 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
       val messageTime=a.messageTime.map(Instant.parse)
       Using.resource(c.prepareStatement("INSERT INTO ch_revisions(session_id,revision,epoch,envelope,message_count,record_count,raw_bytes,message_bytes,fragment_count,raw_state,message_chain,message_time) VALUES(?,?,?,?::jsonb,?,?,?,?,?,?,?,?)")) { s =>
         s.setObject(1,a.sessionId); s.setInt(2,next); s.setObject(3,a.epoch); s.setString(4,EpochWriter.envelope(envelope))
-        s.setInt(5,a.messageEnd); s.setInt(6,a.recordEnd); s.setLong(7,a.rawEnd); s.setLong(8,a.baseMessageBytes+a.messageBytes); s.setLong(9,a.baseFragments+a.fragments)
+        s.setInt(5,a.messageEnd); s.setInt(6,Math.toIntExact(a.recordEnd)); s.setLong(7,a.rawEnd); s.setLong(8,a.baseMessageBytes+a.messageBytes); s.setLong(9,a.baseFragments+a.fragments)
         s.setBytes(10,a.rawState); s.setBytes(11,a.chain)
         messageTime.fold(s.setNull(12,Types.VARCHAR))(time => s.setString(12,time.toString))
         s.executeUpdate()
@@ -292,7 +297,7 @@ object Uploads {
     receipt: Option[IngestReceipt],failure: Option[String],lastPart: Option[String],expiresIn: Int,expired: Boolean) {
     def messageEnd: Int = baseCount+messages
     def rawEnd: Long = baseRawBytes+rawBytes
-    def recordEnd: Int = baseRecords+records
+    def recordEnd: Long = baseRecords.toLong+records
   }
   /** A validated part: its stored messages, raw bytes and records, the SHA-256 keys (hex) of the ids it introduces, its
     * parentIds that are not its own (with their keys), its largest recordIndex and latest message time. */
