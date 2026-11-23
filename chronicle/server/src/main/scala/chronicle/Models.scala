@@ -143,6 +143,9 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     FailureDetails(reason,status.fold("unavailable")(_.toString),rejection.map(_.safeDetails).getOrElse(Json.obj()))
   }
   private final case class StagedFailure(stage: IndexingStage,error: Throwable) extends RuntimeException
+  /** A failure of `continueAnnotation`, the window's paid-answer write while it continues (ANNOT2): it leaves the chain
+    * unstaged, as a failure of `acceptAnnotation` and of the checkpoint write does (G2 D4 reversed per orchestrator 20:46Z). */
+  private final class PaidWriteFailure(val error: Throwable) extends RuntimeException
   private def publishStage(run: => IO[Unit]): IO[Unit] = IO.defer(run).handleErrorWith(error => IO.raiseError(StagedFailure(IndexingStage.Publication,error)))
   private final class Windows(claim: Claim,total: Int) {
     private val dimensions=config.embedding.dimensions
@@ -240,6 +243,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
           }
       }.handleErrorWith {
         case staged: StagedFailure => IO.raiseError(staged)
+        case paid: PaidWriteFailure => IO.raiseError(paid.error)
         case error => failed(error,index,"annotation",0)
       }
     /** One authorization: the full window, or the rest of it after the kept parts, with the carry after them. The answer,
@@ -271,7 +275,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
         else {
           val partial=AnnotationPartial(merged,window.fragments.size,stop,chain.continuations+1,chain.partial.fold(Vector.empty[Int])(_.stops):+stop,chain.partial.fold(UUID.randomUUID())(_.chain))
           val fragments=window.fragments.size
-          IO.blocking(archive.continueAnnotation(claim,key,attempt,partial)).handleErrorWith(failed(_,index,"annotation",attempt)).flatMap { reasons =>
+          IO.blocking(archive.continueAnnotation(claim,key,attempt,partial)).handleErrorWith(error => IO.raiseError(new PaidWriteFailure(error))).flatMap { reasons =>
             IO(logger.info(s"annotation answer continued jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total attempt=$attempt coveredFragments=$stop windowFragments=$fragments")) *>
               renewed *> ask(key,window,state,index,Chain(Some(partial),reasons))
           }
