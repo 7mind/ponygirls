@@ -89,6 +89,28 @@ final class CheckConfigSuite extends FunSuite:
       Files.deleteIfExists(directory.resolve("config.json"));Files.deleteIfExists(fifo);Files.deleteIfExists(directory)
   }
 
+  test("D10 database.limits pool keys: omitted, one admission below 8 connections and 3 + 3 at 8; set, together within maxConnections - 2") {
+    val directory=Files.createTempDirectory("manure-pool-config-")
+    val path=directory.resolve("config.json")
+    def pool(limits: (String,Int)*): Option[(Int,Int,Boolean)] =
+      val bounds=Vector("queueTimeoutMs","connectTimeoutMs","statementTimeoutMs","lockTimeoutMs","idleTransactionTimeoutMs","socketTimeoutMs").map(_ -> 5000)
+      val user=Json.obj("id" -> Json.fromString("operator"),"type" -> Json.fromString("human"),"login" -> Json.fromString("operator"),
+        "passwordHashFile" -> Json.fromString("/run/secrets/operator"))
+      Files.writeString(path,Json.obj("data_dir" -> Json.fromString("/var/lib/manure"),"api_origin" -> Json.fromString("https://artifacts.example.test"),
+        "content_mode" -> Json.fromString("path"),"users" -> Json.arr(user),"database" -> Json.obj("jdbcUrl" -> Json.fromString("jdbc:postgresql://127.0.0.1:1/x"),
+          "user" -> Json.fromString("manure"),"passwordFile" -> Json.fromString("/run/secrets/db"),
+          "limits" -> Json.obj((("maxQueued" -> 1) +: (bounds ++ limits)).map((key,value) => key -> Json.fromInt(value))*))).noSpaces)
+      try Some(Config.load(path).databasePool).map(p => (p.request,p.background,p.fixed)) catch case _: DomainError => None
+    try
+      assertEquals(pool("maxConnections" -> 1),Some((1,0,false)))
+      assertEquals(pool("maxConnections" -> 8),Some((3,3,true)))
+      assertEquals(pool("maxConnections" -> 8,"requestConnections" -> 2,"backgroundConnections" -> 4),Some((2,4,true)))
+      assertEquals(pool("maxConnections" -> 8,"requestConnections" -> 3,"backgroundConnections" -> 4),None)
+      assertEquals(pool("maxConnections" -> 8,"backgroundConnections" -> 4),None)
+    finally
+      Files.deleteIfExists(path);Files.deleteIfExists(directory)
+  }
+
   test("accounts and users[].admin are closed key sets; creation flags never imply the master switch") {
     val directory=Files.createTempDirectory("manure-accounts-config-")
     val path=directory.resolve("config.json")

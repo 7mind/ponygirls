@@ -27,6 +27,19 @@ class CoreTest extends munit.FunSuite {
       assert(io.circe.Json.fromJsonObject(remote.add("allowInsecureHttp",value)).as[Config].isLeft)
     }
   }
+  test("D10: databaseLimits pool keys: omitted, 8 connections give 6 = 3 requests + 3 background; set, background keeps the publication gate and the control reserve") {
+    val example=Wire.parse(java.nio.file.Files.readString(java.nio.file.Path.of("config.example.json"))).asObject.get
+    def pool(keys: (String,Int)*): Config = {
+      val limits=example("databaseLimits").get.asObject.get
+      io.circe.Json.fromJsonObject(example.add("databaseLimits",io.circe.Json.fromJsonObject(keys.foldLeft(limits)((l,k) => l.add(k._1,io.circe.Json.fromInt(k._2)))))).as[Config].toOption.get
+    }
+    val omitted=pool().databasePool
+    assertEquals((omitted.request,omitted.background,omitted.fixed),(3,3,true))
+    val set=pool("requestConnections"->2,"backgroundConnections"->4); set.validate()
+    assertEquals((set.databasePool.request,set.databasePool.background),(2,4))
+    assertEquals(intercept[DomainError](pool("requestConnections"->4,"backgroundConnections"->2).validate()).detail,"databaseLimits.backgroundConnections must be at least 3")
+    assertEquals(intercept[DomainError](pool("backgroundConnections"->3).validate()).detail,"databaseLimits.requestConnections and backgroundConnections must be set together")
+  }
   test("BA: credential-file relocation does not change model profile identity") {
     val c=Fixtures.config(); assertEquals(c.profile,c.copy(annotation=c.annotation.copy(credentialFile="/relocated",timeoutSeconds=99),embedding=c.embedding.copy(credentialFile="/relocated",timeoutSeconds=99)).profile)
   }

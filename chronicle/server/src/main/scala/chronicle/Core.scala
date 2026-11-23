@@ -7,7 +7,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files, Path}
 import java.security.{MessageDigest, SecureRandom}
 import java.util.{UUID, Base64}
-import ponygirls.runtime.{BoundedSecretFile, DatabaseWait, JdbcConfig, JdbcLimits}
+import ponygirls.runtime.{BoundedSecretFile, DatabaseWait, JdbcConfig, JdbcLimits, JdbcPoolSizing}
 import scala.concurrent.duration.*
 
 case class DomainError(code: String, detail: String) extends RuntimeException(code)
@@ -76,16 +76,21 @@ object IndexingCapacity {
   /** Large jobs (LargeJobs) running at once; small jobs use every annotation session. */
   val largeJobs: Int = 1
 }
-final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Long, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits,accounts: Option[AccountsConfig],maxRawReadBytes: Long,maxIndexingBudgetBytes: Long,maxSmallJobBudgetBytes: Option[Long],maxRecordBytes: Long=Config.defaultMaxRecordBytes,databaseStartWaitMs: Long=DatabaseWait.defaultBound.toMillis) {
+final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Long, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits,accounts: Option[AccountsConfig],maxRawReadBytes: Long,maxIndexingBudgetBytes: Long,maxSmallJobBudgetBytes: Option[Long],maxRecordBytes: Long=Config.defaultMaxRecordBytes,databaseStartWaitMs: Long=DatabaseWait.defaultBound.toMillis,databaseRequestConnections: Option[Int]=None,databaseBackgroundConnections: Option[Int]=None) {
   def accountsEnabled: Boolean = accounts.exists(_.enabled)
   def jdbcConfig: JdbcConfig = JdbcConfig(jdbcUrl,databaseUser,Path.of(databasePasswordFile),databaseLimits)
   def databaseStartWait: FiniteDuration = databaseStartWaitMs.millis
+  /** The pool (restart-robustness spec §5) from `databaseLimits.requestConnections` and `backgroundConnections`. */
+  def databasePool: JdbcPoolSizing =
+    JdbcPoolSizing.partitioned(databaseLimits,databaseRequestConnections,databaseBackgroundConnections,Config.minimumBackgroundConnections)
+      .fold(invalid => throw DomainError("config",s"databaseLimits.$invalid"),identity)
   def profile: String = IndexProfileCatalog.current(this).preferred.profile
   def validate(): Unit = {
     indexing.validate()
     indexing.validatePublication(databaseLimits)
     try jdbcConfig.validate() catch { case _: IllegalArgumentException => throw DomainError("config","invalid database configuration") }
     Check(DatabaseWait.startWait(databaseStartWaitMs).nonEmpty,"config",s"databaseLimits.startWaitMs must be ${DatabaseWait.minimumBound.toMillis}..${DatabaseWait.maximumBound.toMillis}")
+    databasePool
     Check(users.map(_.id).distinct.size == users.size && users.map(_.login).distinct.size == users.size, "config", "duplicate users")
     accounts.foreach { a =>
       Check(a.enabled || !(a.signup.enabled || a.enrollment.enabled),"config","accounts.signup and accounts.enrollment require accounts.enabled")
@@ -128,6 +133,10 @@ object Config {
   val defaultMaxRecordBytes: Long = 32L*1024*1024
   val minimumRecordBytes: Long = 1024L*1024
   val maximumRecordBytes: Long = 128L*1024*1024
+  /** Background connections of a partitioned pool kept for short indexing work whatever long work holds. */
+  val controlReserve = 2
+  /** The publication gate's one permit and the [[controlReserve]]. */
+  val minimumBackgroundConnections: Int = 1+controlReserve
   // An omitted member is absent; an explicit null is rejected, as for the other optional members.
   private def present[A: Decoder](cursor: io.circe.HCursor,field: String): Decoder.Result[Option[A]] =
     if(cursor.downField(field).focus.isEmpty) Right(None) else cursor.get[A](field).map(Some(_))
@@ -210,6 +219,11 @@ object Config {
   } yield JdbcLimits(connections,queued,queue.millis,connect.millis,statement.millis,lock.millis,idle.millis,socket.millis) }
   /** Optional beside the eight required limits: how long a start waits for the database to accept queries. */
   private val startWaitMs: Decoder[Long] = Decoder.instance(optional(_,"startWaitMs",DatabaseWait.defaultBound.toMillis))
+  /** Optional beside the eight required limits: the pool's request and background connections. */
+  private val poolKeys: Decoder[(Option[Int],Option[Int])] = Decoder.instance(cursor => for {
+    request <- present[Int](cursor,"requestConnections")
+    background <- present[Int](cursor,"backgroundConnections")
+  } yield (request,background))
   given Decoder[Config] = Decoder.instance { cursor => for {
     listenHost <- cursor.get[String]("listenHost")
     listenPort <- cursor.get[Int]("listenPort")
@@ -220,6 +234,7 @@ object Config {
     databasePasswordFile <- cursor.get[String]("databasePasswordFile")
     databaseLimits <- cursor.get[JdbcLimits]("databaseLimits")
     databaseStartWaitMs <- cursor.downField("databaseLimits").as(using startWaitMs)
+    pooled <- cursor.downField("databaseLimits").as(using poolKeys)
     users <- cursor.get[List[UserConfig]]("users")
     staticTokens <- if(cursor.downField("staticTokens").focus.isEmpty) Right(Nil) else cursor.get[List[StaticTokenConfig]]("staticTokens")
     maxBodyBytes <- cursor.get[Int]("maxBodyBytes")
@@ -238,7 +253,7 @@ object Config {
     // Retired (ingest-limits spec §5.2.7): accepted and validated so existing configurations start, without effect.
     maxSmallJobBudgetBytes <- present[Long](cursor,"maxSmallJobBudgetBytes")
     maxRecordBytes <- optional(cursor,"maxRecordBytes",defaultMaxRecordBytes)
-  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits,accounts,maxRawReadBytes,maxIndexingBudgetBytes,maxSmallJobBudgetBytes,maxRecordBytes,databaseStartWaitMs) }
+  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits,accounts,maxRawReadBytes,maxIndexingBudgetBytes,maxSmallJobBudgetBytes,maxRecordBytes,databaseStartWaitMs,pooled._1,pooled._2) }
   def load(path: String): Config = { val c = Wire.parse(Files.readString(Path.of(path))).as[Config].fold(_ => throw DomainError("config", "invalid configuration"), identity); c.validate(); c }
   def credential(path: String): String = BoundedSecretFile.read(Path.of(path),16384).stripTrailing()
 }

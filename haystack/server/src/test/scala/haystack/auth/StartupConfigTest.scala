@@ -9,7 +9,7 @@ import java.io.{ByteArrayOutputStream, PrintStream}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files, Path}
 import java.sql.DriverManager
-import ponygirls.runtime.CredentialFile
+import ponygirls.runtime.{CredentialFile, JdbcPoolSizing}
 import scala.concurrent.duration.*
 import scala.util.Using
 
@@ -107,6 +107,9 @@ class StartupConfigTest extends munit.FunSuite {
     assertEquals(loaded.listenHost, "127.0.0.1"); assertEquals(loaded.listenPort, 8765)
     assertEquals(loaded.authReloadMs, 1000); assertEquals(loaded.auth.users.map(_.userType), Vector("human", "agent"))
     assertEquals(loaded.databaseStartWait, 120.seconds)
+    assertEquals(loaded.databasePool, JdbcPoolSizing.compatible(loaded.database.limits))
+    val pool = Config.load(file(dir, set(set(valid(dir), "database/limits/requestConnections", Json.fromInt(1)), "database/limits/backgroundConnections", Json.fromInt(1)))).databasePool
+    assertEquals((pool.request, pool.background, pool.fixed), (1, 1, true))
     assertEquals(loaded.retrieval.embedding, None); assertEquals(loaded.retrieval.policy.approvedFieldPrefixes, Vector("/public"))
     assertEquals(Auth.load(loaded.auth).authenticate(AliceToken).map(_.userId), Some("alice"))
     assertEquals(Main.run(List("check-config", path.toString)).unsafeRunSync(), ExitCode.Success)
@@ -134,6 +137,7 @@ class StartupConfigTest extends munit.FunSuite {
     "database/limits/maxConnections" -> Json.fromInt(0), "database/limits/maxQueued" -> Json.fromInt(-1),
     "database/limits/queueTimeoutMs" -> Json.fromInt(0), "database/limits/socketTimeoutMs" -> Json.fromInt(3600001),
     "database/limits/startWaitMs" -> Json.fromInt(999), "database/limits/startWaitMs" -> Json.fromInt(3600001),
+    "database/limits/requestConnections" -> Json.fromInt(1), "database/limits/backgroundConnections" -> Json.fromInt(3),
     "retrieval/approvedFieldPrefixes" -> Json.arr(Json.fromString("not-a-pointer")), "retrieval/approvedFieldPrefixes" -> Json.arr(Json.fromString("/bad~2")),
     "retrieval/approvedFieldPrefixes" -> Json.arr(Json.fromString("/a"), Json.fromString("/a")), "retrieval/maxChunkBytes" -> Json.fromInt(3),
     "retrieval/maxConcurrent" -> Json.fromInt(0), "retrieval/maxConcurrent" -> Json.fromInt(33), "retrieval/maxQueued" -> Json.fromInt(1025),
