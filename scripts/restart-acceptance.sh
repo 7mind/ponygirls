@@ -48,7 +48,7 @@
 # SMALL is BASELINE, a measurement that POOL judges). Times are monotonic, from the script's spawn of each process and the
 # arrival of each output line; "ready" = the service's ready line (`chronicle listening`, `haystack: ready`,
 # `MANURE_READY`); "a line" = a complete stdout or stderr line in the spec's format (§1, §3, §4), every field validated,
-# optionally behind Chronicle's logger prefix and with its `label=name=value` rendering of R-b/R-a fields, counted per
+# optionally behind Chronicle's logger prefix (its columns padded by any number of spaces) and with its `label=name=value` rendering of R-b/R-a fields, counted per
 # process. A probe is "ok" only for its decoded success branch (the request's own id where the protocol has one) and
 # "unavailable" only for the decoded structured code (HTTP 503 + Failure `unavailable`; Manure `Unavailable` with the
 # request's or the nil id; MCP tool error `unavailable`; WS Error `unavailable`, close 1013 or a 503 upgrade).
@@ -127,10 +127,11 @@
 # run's report.json> gives a POOL run SMALL's T for case 6 (required there). Exit 0: every case PASS (or BASELINE);
 # 1: a case FAILed; 3: a case INVALID and none FAILed; 2: usage. `scripts/restart-acceptance.sh self-check` runs the
 # interlock refusals, the environment sanitizing and the line patterns against the spec's formats and near misses (no
-# packages, no cluster, seconds).
+# packages, no cluster, seconds). `scripts/restart-acceptance.sh reparse RUN-DIR` re-evaluates a stored run's log-derived
+# checks with e66d4736's patterns and the current ones (offline; database data only as report.json recorded it).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-if [[ ${1:-} != self-check ]]; then
+if [[ ${1:-} != self-check && ${1:-} != reparse ]]; then
   : "${PG_BIN:?run inside nix develop .#chronicle (PostgreSQL 18 with pgvector)}"
   : "${RESTART_ACC_CHRONICLE:?set RESTART_ACC_CHRONICLE to the .#chronicle package of this tree}"
   : "${RESTART_ACC_HAYSTACK:?set RESTART_ACC_HAYSTACK to the .#haystack package of this tree}"

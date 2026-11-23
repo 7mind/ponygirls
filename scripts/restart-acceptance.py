@@ -10,6 +10,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 SERVICES = ('chronicle', 'haystack', 'manure')
 SETS = ('SMALL', 'POOL')
+# The pre-registered rule set this script applies (the ACC bundle's PASS-RULES.md); named in every run's output.
+RULE_SET = 'r6'
 ORDER = ('1', '2b', '2', '5', '6', '4', '3a', '3b', '3')  # the 3s last: they restart the cluster; 6 before them: its workers idle
 # Rule set r4 (scope change, ORCH-REPLY-0430Z item 3): SMALL ships R-a reduced; its case-3 guarantee is 3a and 3b, the full
 # design's case 3 is judged on the POOL/R-a2 run. A case not in the set's list runs only when named, and does not count.
@@ -68,21 +70,33 @@ PG_CTL_S, STOP_GRACE_S, KILL_WAIT_S, SQL_S = 60, 30, 10, 60
 PROBE_PERIOD_S, POLL_S, SAMPLE_S, RESTART_POLL_S = 1.0, 0.5, 1.0, 0.2
 JOB_POLL_S = 5
 
-# Lines. Chronicle's logger prefixes a line (`W 2026-… (Models.scala:416)  chronicle.Worker.process [thread] `) and renders
-# an interpolated value as `label=name=value` (`code=code=worker-fault`): LOGGER and N= are those optional parts.
-LOGGER = r'(?:[A-Z] \S+ \(\S+\)\s+\S+ \[[^\]]*\] )?'
+# Lines. Chronicle's logger prefixes a line (`W 2026-… (Models.scala:416)  chronicle.Worker.process [thread] `), padding its
+# columns by a varying number of spaces (`07:03:47.864          (Models.scala:454)`), and renders an interpolated value as
+# `label=name=value` (`code=code=worker-fault`): LOGGER and N= are those optional parts. OLD_LOGGER is e66d4736's (one space
+# per column gap), kept only for `reparse`.
+LOGGER = r'(?:[A-Z]\s+\S+\s+\(\S+\)\s+\S+\s+\[[^\]]*\]\s+)?'
+OLD_LOGGER = r'(?:[A-Z] \S+ \(\S+\)\s+\S+ \[[^\]]*\] )?'
 N = r'(?:[A-Za-z_][\w.]*=)?'
 SQLSTATE, CODE = r'[0-9A-Z]{5}', r'(?:jdbc-[0-9A-Z]{5}|[a-z][a-z0-9-]{0,63})'
 UUID_TEXT = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
-READY = dict(chronicle=re.compile(rf'^{LOGGER}chronicle listening address='), haystack=re.compile(r'^haystack: ready$'),
-             manure=re.compile(r'^MANURE_READY \{.*\}$'))
-WAIT = re.compile(rf'^{LOGGER}(chronicle|haystack|manure) database-wait code={N}({CODE})$')
-WAIT_READY = re.compile(rf'^{LOGGER}(chronicle|haystack|manure) database-wait ready seconds={N}(\d+)$')
+
+
+def line_patterns(logger):
+    """The patterns of the services' lines behind an optional logger prefix `logger` (FAILURE is printed raw)."""
+    return dict(
+        READY=dict(chronicle=re.compile(rf'^{logger}chronicle listening address='), haystack=re.compile(r'^haystack: ready$'),
+                   manure=re.compile(r'^MANURE_READY \{.*\}$')),
+        WAIT=re.compile(rf'^{logger}(chronicle|haystack|manure) database-wait code={N}({CODE})$'),
+        WAIT_READY=re.compile(rf'^{logger}(chronicle|haystack|manure) database-wait ready seconds={N}(\d+)$'),
+        HELD=re.compile(rf'^{logger}job held jobId={N}({UUID_TEXT}) code={N}database-transient sqlState={N}({SQLSTATE}|none) class={N}([A-Za-z_$][\w$.]*) '
+                        rf'stage={N}([A-Za-z][\w-]*) consecutive={N}([1-9]\d*) nextAttemptAt={N}(\S+)$'),
+        TERMINAL=re.compile(rf'^{logger}job failed jobId={N}({UUID_TEXT}) code={N}database-transient sqlState={N}({SQLSTATE}|none) class={N}([A-Za-z_$][\w$.]*) '
+                            rf'stage={N}([A-Za-z][\w-]*) consecutive={N}([1-9]\d*) nextAttemptAt={N}none$'))
+
+
+PATTERNS, OLD_PATTERNS = line_patterns(LOGGER), line_patterns(OLD_LOGGER)
+READY, WAIT, WAIT_READY, HELD, TERMINAL = (PATTERNS[k] for k in ('READY', 'WAIT', 'WAIT_READY', 'HELD', 'TERMINAL'))
 FAILURE = re.compile(rf'^(chronicle|haystack|manure) failure stage=([a-z][a-z0-9-]*) code=({CODE}) error=([A-Za-z_$][\w$]*) message="([^"]*)"(?: port=(\d+))?$')
-HELD = re.compile(rf'^{LOGGER}job held jobId={N}({UUID_TEXT}) code={N}database-transient sqlState={N}({SQLSTATE}|none) class={N}([A-Za-z_$][\w$.]*) '
-                  rf'stage={N}([A-Za-z][\w-]*) consecutive={N}([1-9]\d*) nextAttemptAt={N}(\S+)$')
-TERMINAL = re.compile(rf'^{LOGGER}job failed jobId={N}({UUID_TEXT}) code={N}database-transient sqlState={N}({SQLSTATE}|none) class={N}([A-Za-z_$][\w$.]*) '
-                      rf'stage={N}([A-Za-z][\w-]*) consecutive={N}([1-9]\d*) nextAttemptAt={N}none$')
 ANSI = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
 # The trigger functions' server-log events (case 3), log_line_prefix '%m [%p] %q%u@%d ' with log_timezone UTC.
 EVENT = re.compile(r'^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}) UTC \[(\d+)\] chronicle@chronicle LOG:  restart-acc (start|cancelled|done|request) '
@@ -1812,7 +1826,7 @@ def collections_count(values):
 
 
 def case_3a(run):
-    case = Case(run, '3a', 'SMALL scope (R-a reduced, rule set r4): publication slower than the request timeout after a PostgreSQL restart with the database '
+    case = Case(run, '3a', f'SMALL scope (R-a reduced, rule set {RULE_SET}): publication slower than the request timeout after a PostgreSQL restart with the database '
                            'up -> 0 jobs terminally Failed and 0 attempts charged for the transient class. [workload of case 3: 20 sessions, '
                            '`statementTimeoutMs` 2000, `publicationStatementTimeoutMs` 10000; one `restart -m fast` right after the ingest, the database '
                            'up afterwards; r5: the trigger sleeps 12 s until the first cohort publication after the restart is cancelled (57014, a '
@@ -1856,7 +1870,7 @@ def case_3a(run):
 
 
 def case_3b(run):
-    case = Case(run, '3b', 'SMALL scope (R-a reduced, rule set r5): a PostgreSQL restart that ends at least 10 s before the in-flight job\'s lease ends '
+    case = Case(run, '3b', f'SMALL scope (R-a reduced, rule set {RULE_SET}): a PostgreSQL restart that ends at least 10 s before the in-flight job\'s lease ends '
                            'charges no attempt (the job held, later Complete); longer outages charge one attempt through reclaim and can lose one paid model '
                            'answer (out of the case); crashed jobs resume as today. [workload of case 3, trigger 3 s; one `restart -m immediate` while '
                            'cohort publications sleep in the trigger; restart duration and each job\'s lease margin measured]')
@@ -1899,7 +1913,7 @@ def case_3(run):
     case = Case(run, '3', 'Restart under indexing load, publication slower than requests: 20 synthetic sessions; `statementTimeoutMs` 2000, '
                           '`publicationStatementTimeoutMs` 10000; trigger on `ch_search_chunks` 3 s per statement, 12 s for 2 min (57014); in that '
                           'window `pg_ctl restart -m fast` twice, `-m immediate` once -> 0 Failed of the 20, all Complete within 20 min after the last '
-                          'restart, >= 1 `job held` line (else INVALID), PIDs unchanged, all three 200 afterwards. [full design: the POOL/R-a2 run, rule set r4]')
+                          f'restart, >= 1 `job held` line (else INVALID), PIDs unchanged, all three 200 afterwards. [full design: the POOL/R-a2 run, rule set {RULE_SET}]')
     work = Cohort(run, case, '3')
     try:
         if not work.ready or not work.first_publication():
@@ -2076,6 +2090,149 @@ def self_check():
     return 0 if not failures else 1
 
 
+# ---------------------------------------------------------------- reparse (offline, stored logs only)
+
+STORED_LINE = re.compile(r'^\s*(-?\d+\.\d+) (out|err) (.*)$')
+LOGGER_TIME = re.compile(r'^[A-Z]\s+(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?)\s')
+LATE_LABELS = ('every Complete job published through', 'a correlated hold')
+TZ_TOLERANCE_S = 3.0  # startedAt has whole seconds and precedes the run's clock origin by milliseconds
+
+
+def stored_lines(path):
+    """(seconds since the run's start, stream, text) of a stored per-process log (Service.read's format)."""
+    found = []
+    for raw in path.read_text(errors='replace').splitlines():
+        match = STORED_LINE.match(raw)
+        if match:
+            found.append((float(match[1]), match[2], match[3]))
+    return found
+
+
+def logger_wall(text):
+    """The wall time Chronicle's logger printed in the line's prefix (local time of the host), or None."""
+    match = LOGGER_TIME.match(text)
+    if not match:
+        return None
+    return datetime.datetime.fromisoformat(match[1]).replace(tzinfo=datetime.UTC).timestamp()
+
+
+def reparse(run_dir):
+    """Re-evaluates a stored run's log-derived checks with e66d4736's patterns (OLD_PATTERNS) and the fixed ones (PATTERNS):
+    every line the old parser skipped that the fixed one takes, and per case whether a log-derived check's outcome and the
+    verdict change. Database data that was not stored is taken from report.json as recorded; nothing is re-queried."""
+    run_dir = Path(run_dir)
+    report = json.loads((run_dir / 'report.json').read_text())
+    started = datetime.datetime.fromisoformat(report['startedAt']).timestamp()
+    out = [f'# reparse of {run_dir}', '', f'set {report["set"]}, rule set {report.get("ruleSet", "not recorded (before r6 naming)")}, '
+           f'supplementary {report.get("supplementary")}, verdicts in report.json {report["verdicts"]}', '']
+    changed_verdicts = []
+    for case in report['cases']:
+        ident = case['case']
+        logs = {name: stored_lines(run_dir / f'case{ident}-{name}.log') for name in SERVICES if (run_dir / f'case{ident}-{name}.log').exists()}
+        out.append(f'## case {ident}: verdict before {case["verdict"]}')
+        skipped = []
+        for name, lines in logs.items():
+            for key in ('READY', 'WAIT', 'WAIT_READY', 'HELD', 'TERMINAL'):
+                old, new = (OLD_PATTERNS[key][name] if key == 'READY' else OLD_PATTERNS[key]), (PATTERNS[key][name] if key == 'READY' else PATTERNS[key])
+                for t, stream, text in lines:
+                    o, n = bool(old.search(ANSI.sub('', text))), bool(new.search(ANSI.sub('', text)))
+                    if o != n:
+                        skipped.append((name, key, t, stream, text, 'old skipped, fixed takes' if n else 'old takes, fixed skips'))
+        out.append(f'- lines the two parsers disagree on: {len(skipped)}')
+        out += [f'  - {name} {key} t={t:.3f} {stream} ({how}): `{text}`' for name, key, t, stream, text, how in skipped]
+        checks = [dict(c, kind='check') for c in case.get('checks', [])] + [dict(v, kind='late' if v['label'].startswith(LATE_LABELS) else 'mechanics')
+                                                                            for v in case.get('validity', [])]
+        evaluated = []
+        for check in checks:
+            after, how = check['ok'], 'not log-derived (SQL, probes, processes or the cluster): as recorded'
+            label = check['label']
+            name = label.split(':', 1)[0]
+            if 'database-wait code=' in label and 'exactly one' in label and name in logs:
+                code = label.split('code=')[1].split('`')[0]
+                for parser, patterns in (('old', OLD_PATTERNS), ('fixed', PATTERNS)):
+                    waits = [text for _, _, text in logs[name] if patterns['WAIT'].search(ANSI.sub('', text))]
+                    result = len(waits) == 1 and patterns['WAIT'].search(ANSI.sub('', waits[0]))[2] == code
+                    how = f'WAIT over {name}\'s output: old {len([1 for _, _, x in logs[name] if OLD_PATTERNS["WAIT"].search(ANSI.sub("", x))])}, ' \
+                          f'fixed {len([1 for _, _, x in logs[name] if PATTERNS["WAIT"].search(ANSI.sub("", x))])} line(s)'
+                    if parser == 'fixed':
+                        after = result
+            elif label.startswith(f'{name}: ready after') and name in logs:
+                first = {parser: next((t for t, _, text in logs[name] if patterns['READY'][name].search(ANSI.sub('', text))), None)
+                         for parser, patterns in (('old', OLD_PATTERNS), ('fixed', PATTERNS))}
+                shift = None if None in first.values() else first['fixed'] - first['old']
+                after = check['ok'] if shift == 0 or (first['old'] is None and first['fixed'] is None) else None
+                how = f'first READY line t: old {first["old"]}, fixed {first["fixed"]}' + ('' if after is not None else ' — the bounds need re-judging (UNDETERMINED)')
+            elif 'ready lines within' in label:
+                missing = [n for n, lines in logs.items() if not any(PATTERNS['READY'][n].search(ANSI.sub('', x)) for _, _, x in lines)]
+                old_missing = [n for n, lines in logs.items() if not any(OLD_PATTERNS['READY'][n].search(ANSI.sub('', x)) for _, _, x in lines)]
+                after = check['ok'] or not missing and None
+                how = f'READY over each process: old missing {old_missing}, fixed missing {missing}' + ('' if after is not None else ' (timing UNDETERMINED)')
+            elif 'stage=database-wait' in label or 'exactly one failure line' in label:
+                how = 'FAILURE (raw R-c line, no logger prefix): pattern unchanged'
+            elif label.startswith('no 53300'):
+                how = 'substring 53300 in the services\' output and the server log: pattern unchanged'
+            elif 'held for' in label and 'chronicle' in logs:
+                after, how = held_again(case, check, logs['chronicle'], started)
+            evaluated.append((check, after, how))
+        for check, after, how in evaluated:
+            if after != check['ok']:
+                out.append(f'- **outcome changes** ({check["kind"]}): {check["label"]}: {check["ok"]} -> {after} ({how})')
+        log_derived = [(check, after, how) for check, after, how in evaluated if not how.startswith('not log-derived')]
+        out += [f'- log-derived ({check["kind"]}): {check["label"]}: before {check["ok"]}, after {after} — {how}' for check, after, how in log_derived]
+        verdict = reverdict(case, evaluated, report['set'])
+        out.append(f'- verdict before {case["verdict"]}, after {verdict}')
+        out.append('')
+        if verdict != case['verdict']:
+            changed_verdicts.append((ident, case['verdict'], verdict))
+    head = (f'VERDICT CHANGE: {", ".join(f"case {i}: {b} -> {a}" for i, b, a in changed_verdicts)}' if changed_verdicts
+            else 'No verdict changes with the fixed parser.')
+    print('\n'.join([head, ''] + out), flush=True)
+    return 0
+
+
+def held_again(case, check, lines, started):
+    """3a/3b's hold checks with the fixed HELD: the required jobs (as report.json recorded them) against the holds the fixed
+    parser takes, stage Publication and the case's SQLSTATE, inside the case's window by the hold's own logger timestamp
+    (local time; checked against the run's start within TZ_TOLERANCE_S)."""
+    detail, measured = check['detail'], case.get('measurements', {})
+    required = set(detail.get('inScope') or detail.get('cancelledJobs') or [])
+    holds = []
+    for t, _, text in lines:
+        match = HELD.search(ANSI.sub('', text))
+        if match:
+            holds.append(dict(t=t, wall=logger_wall(ANSI.sub('', text)), jobId=match[1], sqlState=match[2], stage=match[4]))
+    offsets = [h['wall'] - (started + h['t']) for h in holds if h['wall'] is not None]
+    if offsets and max(abs(o) for o in offsets) > TZ_TOLERANCE_S:
+        return None, f'the logger timestamps differ from the run\'s clock by up to {max(offsets, key=abs):.1f} s: UNDETERMINED'
+    if 'inScope' in detail:
+        restart = measured.get('restart', {})
+        start, ready = restart.get('shutdownMarker'), restart.get('readyMarker')
+        if start is None or ready is None:
+            return None, 'restart markers not recorded: UNDETERMINED'
+        held = {h['jobId'] for h in holds if h['stage'] == 'Publication' and RESTART_SQLSTATE.match(h['sqlState']) and start - 0.5 <= h['wall'] <= ready + CORRELATE_S}
+        return bool(required) and required <= held, (f'fixed HELD: {len(holds)} line(s); in the window [shutdown request − 0.5 s, readiness + {CORRELATE_S} s] by '
+                                                    f'the logger timestamp (0.5 s: the logger stamps emission, the script stamped arrival): '
+                                                    f'{sorted(held)}; required (report.json inScope) {sorted(required)}')
+    if check['ok']:
+        return True, f'presence check passed with the old parser; the fixed parser takes {len(holds)} hold line(s), a superset: stays True'
+    return None, 'the cancellation times per job (sessions to jobs) were not stored: UNDETERMINED'
+
+
+def reverdict(case, evaluated, set_name):
+    if any(after is None for _, after, _ in evaluated):
+        return 'UNDETERMINED'
+    mechanics = [after for check, after, _ in evaluated if check['kind'] == 'mechanics']
+    checks = [after for check, after, _ in evaluated if check['kind'] == 'check']
+    late = [after for check, after, _ in evaluated if check['kind'] == 'late']
+    if 'harnessError' in case or not all(mechanics):
+        return 'INVALID'
+    if case['case'] == '6' and set_name != 'POOL':
+        return 'BASELINE'
+    if not all(checks):
+        return 'FAIL'
+    return 'PASS' if all(late) else 'INVALID'
+
+
 # ---------------------------------------------------------------- main
 
 def terminated(signum, frame):
@@ -2083,9 +2240,11 @@ def terminated(signum, frame):
 
 
 def main(argv):
-    usage = 'usage: restart-acceptance.py SMALL|POOL [CASE...] | self-check   (cases: ' + ' '.join(ORDER) + ')'
+    usage = 'usage: restart-acceptance.py SMALL|POOL [CASE...] | self-check | reparse RUN-DIR   (cases: ' + ' '.join(ORDER) + ')'
     if argv == ['self-check']:
         return self_check()
+    if len(argv) == 2 and argv[0] == 'reparse':
+        return reparse(argv[1])
     if not argv or argv[0] not in SETS or any(case not in CASES for case in argv[1:]):
         print(usage, file=sys.stderr)
         return 2
@@ -2116,7 +2275,7 @@ def main(argv):
         run = Run(set_name, out, packages, calibration)
         if SUPPLEMENT_3B_DOWN_S:
             note(f'SUPPLEMENTARY run (not counted): case 3b keeps PostgreSQL down {SUPPLEMENT_3B_DOWN_S} s')
-        note(f'restart acceptance, set {set_name}, cases {" ".join(selected)}, packages {json.dumps({k: str(v) for k, v in packages.items()})}, root {run.root.path}')
+        note(f'restart acceptance, rule set {RULE_SET}, set {set_name}, cases {" ".join(selected)}, packages {json.dumps({k: str(v) for k, v in packages.items()})}, root {run.root.path}')
         run.setup()
         for ident in selected:
             try:
@@ -2130,7 +2289,7 @@ def main(argv):
         if run is not None:
             run.cleanup()
     verdicts = {r['case']: r['verdict'] for r in results}
-    summary = dict(set=set_name, startedAt=started_at, wallSeconds=round(now() - run.t0, 1), verdicts=verdicts, cases=results)
+    summary = dict(set=set_name, ruleSet=RULE_SET, startedAt=started_at, wallSeconds=round(now() - run.t0, 1), verdicts=verdicts, cases=results)
     if SUPPLEMENT_3B_DOWN_S:
         summary['supplementary'] = dict(case3bDownSeconds=SUPPLEMENT_3B_DOWN_S, counted=False)
     (out / 'report.json').write_text(json.dumps(summary, indent=1))
