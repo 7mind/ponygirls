@@ -14,6 +14,9 @@ ORDER = ('1', '2b', '2', '5', '6', '4', '3a', '3b', '3')  # the 3s last: they re
 # Rule set r4 (scope change, ORCH-REPLY-0430Z item 3): SMALL ships R-a reduced; its case-3 guarantee is 3a and 3b, the full
 # design's case 3 is judged on the POOL/R-a2 run. A case not in the set's list runs only when named, and does not count.
 CASES_OF = dict(SMALL=('1', '2b', '2', '5', '6', '4', '3a', '3b'), POOL=ORDER)
+# Supplementary only (orchestrator 06:59Z), never part of a counted run: case 3b keeps PostgreSQL stopped this many seconds
+# between the immediate shutdown and the start. Default 0 = the counted rule set's restart, unchanged.
+SUPPLEMENT_3B_DOWN_S = float(os.environ.get('RESTART_ACC_SUPPLEMENT_3B_DOWN_SECONDS', '0'))
 
 # The cluster: PostgreSQL 18 + pgvector, the spec's connection budget and roles (§5, §9).
 SHORT_TMP, ROOT_PREFIX, MARKER = '/tmp', 'restart-acc.', '.restart-acceptance-owned'
@@ -370,9 +373,12 @@ exec '{self.bin / 'psql'}' "${{args[@]}}"
         os.close(self.pidfd)
         self.pidfd = self.postmaster = None
 
-    def restart(self, mode):
-        """pg_ctl restart's two steps: the shutdown through the captured identity, then a start with the same options."""
+    def restart(self, mode, down=0.0):
+        """pg_ctl restart's two steps: the shutdown through the captured identity, then a start with the same options;
+        `down` > 0 (supplementary runs only) keeps the cluster stopped that many seconds between the two."""
         self.stop(mode)
+        if down > 0:
+            time.sleep(down)
         self.start(self.standby)
 
     def promote(self):
@@ -1695,7 +1701,7 @@ class Cohort:
         return self.case.valid(f'a cohort publication reached the trigger within {FIRST_PUBLICATION_S} s' + (' after the restart' if after else ''), first is not None,
                                None if first is None else dict(sessions=sorted(first['sessions']), seconds=first['seconds'], statementTimeout=first['timeout']))
 
-    def restart(self, mode, earliest, latest, origin):
+    def restart(self, mode, earliest, latest, origin, down=0.0):
         """One restart in its slot [origin + earliest, origin + latest]: at the first instant a cohort publication sleeps in the
         trigger, at the slot's end otherwise; the stop and the start through the captured postmaster identity. Returns the
         restart's record: sampled and interrupted publications (`interrupted_by`), markers, the sampled leases."""
@@ -1711,7 +1717,7 @@ class Cohort:
         leases = {job: float(until) for job, until in run.cluster.sql('chronicle', 'SELECT id, extract(epoch FROM lease_until) FROM ch_jobs WHERE id IN ('
                                                                      + ','.join(f"'{j}'" for j in self.jobs) + ") AND state = 'Running' AND lease_until IS NOT NULL")}
         postmaster, started, started_wall = run.cluster.postmaster, now(), time.time()
-        run.cluster.restart(mode)
+        run.cluster.restart(mode, down)
         marker, interrupted = interrupted_by(run, self.offset, progress, postmaster, mode, started_wall - 1, time.time())
         ready = run.cluster.marker(self.offset, run.cluster.postmaster, READY_TO_ACCEPT, started_wall - 1)
         record = dict(mode=mode, atSeconds=round(started - origin, 1), endSeconds=round(now() - origin, 1), triggerSeconds=seconds_set,
@@ -1858,7 +1864,7 @@ def case_3b(run):
     try:
         if not work.ready or not work.first_publication():
             return case.result()
-        record = work.restart('immediate', 0, RESTART_SLOT_S, now())
+        record = work.restart('immediate', 0, RESTART_SLOT_S, now(), SUPPLEMENT_3B_DOWN_S)
         work.replaced(record)
         work.interrupted(record)
         session_jobs = {session: job for job, session in work.job_sessions.items()}
@@ -2093,6 +2099,8 @@ def main(argv):
     started_at, results, run = datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'), [], None
     try:
         run = Run(set_name, out, packages, calibration)
+        if SUPPLEMENT_3B_DOWN_S:
+            note(f'SUPPLEMENTARY run (not counted): case 3b keeps PostgreSQL down {SUPPLEMENT_3B_DOWN_S} s')
         note(f'restart acceptance, set {set_name}, cases {" ".join(selected)}, packages {json.dumps({k: str(v) for k, v in packages.items()})}, root {run.root.path}')
         run.setup()
         for ident in selected:
@@ -2108,6 +2116,8 @@ def main(argv):
             run.cleanup()
     verdicts = {r['case']: r['verdict'] for r in results}
     summary = dict(set=set_name, startedAt=started_at, wallSeconds=round(now() - run.t0, 1), verdicts=verdicts, cases=results)
+    if SUPPLEMENT_3B_DOWN_S:
+        summary['supplementary'] = dict(case3bDownSeconds=SUPPLEMENT_3B_DOWN_S, counted=False)
     (out / 'report.json').write_text(json.dumps(summary, indent=1))
     print(json.dumps(dict(set=set_name, wallSeconds=summary['wallSeconds'], verdicts=verdicts)), flush=True)
     values = set(verdicts.values())
