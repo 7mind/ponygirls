@@ -158,6 +158,12 @@ scripts/verify all
 What each level proves, and the on-demand checks, are in the "Validation" section of
 [`AGENTS.md`](AGENTS.md).
 
+Restart acceptance (on demand, not part of verify): [`scripts/restart-acceptance.sh`](scripts/restart-acceptance.sh)
+runs the three service packages of the tree against a PostgreSQL cluster of its own and stops, restarts, fences and
+occupies around them (a start before PostgreSQL and during "starting up", restarts under indexing load, terminated and
+fenced roles, an occupied port, connections per 1,000 transactions); its header has the invocation and the pass rules.
+Run it when service start-up, database connection handling or job recovery after database failures change.
+
 Shared modules provide one compiled Baboon runtime, bounded JDBC transactions
 and credential reads, lossless JSON, model HTTP transport, and fenced
 PostgreSQL retrieval/publication. Domain authorization, document policies and
