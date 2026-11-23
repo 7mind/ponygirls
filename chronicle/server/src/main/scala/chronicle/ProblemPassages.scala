@@ -384,8 +384,12 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
     val decision=fields(json); validate(window,hasPrevious,decision); decision
   }
   /** A provider's answer: a point written at a fragment's scalar count is read as the next fragment's offset 0 (the
-    * terminal after the last fragment), so the decision it returns is canonical. It covers the window to its terminal or
-    * to a fragment boundary (ANNOT2: kept up to there). */
+    * terminal after the last fragment), so the decision it returns is canonical. */
+  def ingress(window: Window,hasPrevious: Boolean,json: Json): Decision = {
+    val decision=canonical(window,fields(json)); validate(window,hasPrevious,decision); decision
+  }
+  /** `ingress` for annotation continuations (ANNOT2): the answer covers the window to its terminal or to a fragment
+    * boundary (kept up to there). */
   def ingressCovered(window: Window,hasPrevious: Boolean,json: Json): Decision = {
     val decision=canonical(window,fields(json)); coverage(window,hasPrevious,decision); decision
   }

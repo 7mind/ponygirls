@@ -56,16 +56,18 @@ object AnnotationAttempts {
     Check(value>=0,"internal","invalid annotation retry epoch")
     value
   }
-  /** The window's rows in the job's current retry epoch, in attempt order, with that epoch. */
-  private[chronicle] def ledger(c: Connection,claim: Claim,key: CheckpointKey): (Long,Vector[AnnotationLedgerRow]) = {
+  /** The window's rows in the job's current retry epoch, in attempt order, with that epoch. Rows reserved for another
+    * input: with `continuations` (ANNOT2) the job's terminal `annotation-input-changed`, else an internal fault. */
+  private[chronicle] def ledger(c: Connection,claim: Claim,key: CheckpointKey,continuations: Boolean): (Long,Vector[AnnotationLedgerRow]) = {
     validate(key)
     val currentEpoch=epoch(c,claim)
     val previous=Sql.rows(c,"""SELECT attempt,input_hash,rejection_reason,continued_kept_hash,chain_id FROM ch_annotation_attempts
       WHERE job_id=? AND run_id=? AND retry_epoch=? AND window_ordinal=? ORDER BY attempt""",claim.jobId,claim.runId,currentEpoch,key.window) { r =>
       (AnnotationLedgerRow(r.getInt(1),Option(r.getString(3)),Option(r.getString(4)),Option(r.getObject(5,classOf[UUID]))),r.getString(2))
     }
-    Check(previous.size<=reservationLimit && previous.map(_._1.attempt)==(1 to previous.size).toList,"internal","annotation attempt input identity mismatch")
-    if(!previous.forall(_._2==key.inputHash)) throw DomainError(inputChangedCode,"annotation window input changed")
+    val inputs=previous.forall(_._2==key.inputHash)
+    Check(previous.size<=reservationLimit && previous.map(_._1.attempt)==(1 to previous.size).toList && (continuations || inputs),"internal","annotation attempt input identity mismatch")
+    if(!inputs) throw DomainError(inputChangedCode,"annotation window input changed")
     val rows=previous.map(_._1).toVector
     val rejected=rows.flatMap(_.reason)
     rejected.foreach(validateReason)
@@ -79,8 +81,8 @@ object AnnotationAttempts {
     else if(rows.size>=reservationLimit) Some((callLimitReason,rows.size))
     else None
   }
-  private[chronicle] def reserve(c: Connection,claim: Claim,key: CheckpointKey): AnnotationReservation = {
-    val (currentEpoch,previous)=ledger(c,claim,key)
+  private[chronicle] def reserve(c: Connection,claim: Claim,key: CheckpointKey,continuations: Boolean): AnnotationReservation = {
+    val (currentEpoch,previous)=ledger(c,claim,key,continuations)
     exhaustion(previous) match {
       case Some((reason,attempts)) => AnnotationReservation.Exhausted(reason,attempts)
       case None =>

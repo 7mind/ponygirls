@@ -59,7 +59,7 @@ object ReindexCohort {
       Check(epoch>current.epoch,"internal","owner target epoch overflow")
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=? WHERE owner=?",profile,epoch,owner)
       val invalidated=Sql.one(c,"SELECT count(*) FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id WHERE s.owner=? AND NOT s.tombstone AND j.state='Running'",owner)(_.getLong(1)).get
-      Sql.exec(c,"UPDATE ch_jobs j SET state='Failed',error='explicit-rebuild-superseded',failure_stage=NULL,fence=j.fence+1,lease_until=NULL FROM ch_sources s WHERE j.session_id=s.id AND s.owner=? AND NOT s.tombstone AND j.state IN('Queued','Running')",owner)
+      Sql.exec(c,Jobs.superseded("UPDATE ch_jobs j SET state='Failed',error='explicit-rebuild-superseded',failure_stage=NULL,fence=j.fence+1,lease_until=NULL FROM ch_sources s WHERE j.session_id=s.id AND s.owner=? AND NOT s.tombstone AND j.state IN('Queued','Running') RETURNING j.id"),owner)
       Sql.exec(c,"CREATE TEMP TABLE ch_rebuild_heads ON COMMIT DROP AS SELECT id,revision,published FROM ch_sources WHERE owner=? AND NOT tombstone",owner)
       Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile) SELECT gen_random_uuid(),id,revision,? FROM pg_temp.ch_rebuild_heads ON CONFLICT(session_id,revision,profile) DO UPDATE SET state='Queued',attempts=0,fence=ch_jobs.fence+1,run_id=gen_random_uuid(),lease_until=NULL,transient_failures=0,transient_range=NULL,error=NULL,failure_stage=NULL,completed_windows=0,total_windows=NULL",profile)
       val result=OwnerReindexResult(id,profile,selected.heads,selected.heads,selected.alreadyCurrent,invalidated)

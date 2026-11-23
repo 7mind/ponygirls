@@ -11,6 +11,8 @@ trait ScriptedAnnotator extends ProblemPassageAnnotator {
 object ModelFixtures {
   // Tests do not wait out the production back-off after a failed job.
   val failureBackoff: Worker.FailureBackoff = Worker.FailureBackoff(scala.concurrent.duration.DurationInt(10).millis)
+  /** `config` with `indexing.annotationContinuations` (ANNOT2) `on`; the default configuration has it off. */
+  def continuations(config: Config,on: Boolean=true): Config = config.copy(indexing=config.indexing.copy(annotationContinuations=on))
   def http(client: Client[IO],config: Config): ModelHttp = {
     val clock=new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO])
     (for {

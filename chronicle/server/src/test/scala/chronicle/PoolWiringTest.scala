@@ -78,7 +78,7 @@ final class PoolWiringTest extends munit.FunSuite {
             override def defer(c: Claim,total: Int): Boolean = observed(super.defer(c,total))
             override def progress(c: Claim,done: Int,total: Int): Boolean = observed(super.progress(c,done,total))
             override def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = observed(super.windowWork(c,key))
-            override def reserveAnnotation(c: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = observed(super.reserveAnnotation(c,key,prefix))
+            override def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = observed(super.reserveAnnotation(c,key))
             override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = observed(super.holdTransient(c,stage,deadline))
           }
           def renewed: Boolean = jobs.forall(id => Option(renewals.get(id)).exists(_.get>=20))

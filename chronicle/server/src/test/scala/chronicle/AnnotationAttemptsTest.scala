@@ -23,7 +23,10 @@ abstract class AnnotationAttemptsContract extends munit.FunSuite {
     assertEquals(intercept[DomainError](f.archive.rejectAnnotation(first,selected,1,reason)).code,"stale-claim")
     val next=claim(f); assertEquals(next.runId,first.runId)
     assertEquals(intercept[DomainError](f.archive.rejectAnnotation(next,selected,1,reason)).code,"internal","new claims must not label another fence's unknown outcome")
-    assertEquals(intercept[DomainError](f.archive.reserveAnnotation(next,selected.copy(inputHash=Wire.hash("other input")))).code,AnnotationAttempts.inputChangedCode)
+    // A ledger reserved for another input: an internal fault for the whole-window reservation (continuations off, as before
+    // ANNOT2); the terminal annotation-input-changed for the reservation of the continuation path (ANNOT2).
+    assertEquals(intercept[DomainError](f.archive.reserveAnnotation(next,selected.copy(inputHash=Wire.hash("other input")))).code,"internal")
+    assertEquals(intercept[DomainError](f.archive.reserveAnnotation(next,selected.copy(inputHash=Wire.hash("other input")),false)).code,AnnotationAttempts.inputChangedCode)
     assertEquals(f.archive.reserveAnnotation(next,key(next,0)),AnnotationReservation.Reserved(2))
     assertEquals(f.archive.rejectAnnotation(next,key(next,0),2,reason),2)
     assertEquals(f.archive.reserveAnnotation(next,key(next,1)),AnnotationReservation.Reserved(1))

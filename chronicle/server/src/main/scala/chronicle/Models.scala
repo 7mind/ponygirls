@@ -108,6 +108,9 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   def this(archive: SessionArchive,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger,failureBackoff: Worker.FailureBackoff,snapshots: SnapshotAdmission) =
     this(archive,problemAnnotator,embedder,config,profiles,admission,logger,failureBackoff,snapshots,Worker.Leases.production)
   private val leaseSeconds = leases.lease.toSeconds.toInt
+  /** `indexing.annotationContinuations` (ANNOT2), read once from the process's configuration: the one switch between the
+    * annotation chain and the whole-window path every annotation of this worker takes. */
+  private val annotationContinuations = config.indexing.annotationContinuations
   private val idleDelay = 1.second
   private final class AnnotationExhausted(val reason: String) extends RuntimeException(AnnotationAttempts.exhaustedCode) {
     def code: String = if(reason==AnnotationAttempts.callLimitReason) AnnotationAttempts.reservationExhaustedCode else AnnotationAttempts.exhaustedCode
@@ -162,14 +165,17 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     /** `work`, whose `run` result is checkpointed. */
     def accepted[A](key: CheckpointKey)(decode: Json => A,encode: A => Json)(run: => IO[A]): IO[A] =
       work(key)(decode)(IO.defer(run).flatTap(value => IO.blocking(archive.checkpoint(claim,key,encode(value)))))
-    /** A window's decision and the authorization that accepted it (0: accepted earlier): its accepted work, else the
-      * annotation chain's complete decision, stored with the accepting authorization's continuations (`acceptAnnotation`,
-      * a paid write as the checkpoint it replaces). */
+    /** A window's decision and the authorization that accepted it (0: accepted earlier): its accepted work, else, with
+      * `indexing.annotationContinuations` (ANNOT2), the annotation chain's complete decision, stored with the accepting
+      * authorization's continuations (`acceptAnnotation`, a paid write as the checkpoint it replaces); off, the answer to a
+      * request for the whole window, validated in full, checkpointed. */
     def decision(key: CheckpointKey,window: ProblemPassages.Window,state: ProblemPassages.State,index: Int): IO[(ProblemPassages.Decision,Int)] =
-      work(key)(json => (ProblemPassages.decode(window,state.carry.nonEmpty,json),0))(annotate(key,window,state,index).flatMap { (merged,attempt,continuations) =>
+      if(annotationContinuations) work(key)(json => (ProblemPassages.decode(window,state.carry.nonEmpty,json),0))(annotate(key,window,state,index).flatMap { (merged,attempt,continuations) =>
         IO.blocking(archive.acceptAnnotation(claim,key,attempt,continuations,CheckpointJson.decision(merged))) *>
           IO { if(continuations>0) { continuedWindows.incrementAndGet(); () } }.as((merged,attempt))
       })
+      else accepted(key)(json => (ProblemPassages.decode(window,state.carry.nonEmpty,json),0),value => CheckpointJson.decision(value._1))(
+        annotate(key,problemAnnotator.annotate(claim.owner,window,state.carry).flatTap(value => IO(ProblemPassages.validate(window,state.carry.nonEmpty,value))),index))
     def report(completed: Int): IO[Unit] = IO.blocking {
       Check(archive.progress(claim,completed,total),"stale-claim","indexing claim is no longer current")
     }
@@ -184,6 +190,24 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       val origin=failureOrigin(error); val details=failureDetails(error); val reason=details.reason; val httpStatus=details.httpStatus; val structure=details.structure.noSpaces
       val annotationAttempt=if(attempt==0) "checkpoint" else attempt.toString
       IO(logger.warn(s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total stage=$stage annotationAttempt=$annotationAttempt annotationRejectionLimit=${AnnotationAttempts.rejectionLimit} code=$code exceptionClass=$exceptionClass origin=$origin reason=$reason httpStatus=$httpStatus structure=$structure")) *> IO.raiseError(StagedFailure(failureStage,error))
+    }
+    /** One authorization of the whole window and its answer (continuations off): a `model-output` rejection is recorded
+      * and the same request asked again, up to the rejection limit. */
+    def annotate[A](key: CheckpointKey,run: => IO[A],index: Int): IO[(A,Int)] = IO.blocking(archive.reserveAnnotation(claim,key)).flatMap {
+      case AnnotationReservation.Exhausted(reason,attempts) => failed(new AnnotationExhausted(reason),index,"annotation",attempts)
+      case AnnotationReservation.Reserved(attempt) => IO.defer(run).map(value => (value,attempt)).handleErrorWith {
+        case error: DomainError if Set("model-output","model-output/truncated").contains(error.code) =>
+          val details=failureDetails(error); val reason=details.reason; val structure=details.structure.noSpaces; val code=error.code
+          IO.blocking(archive.rejectAnnotation(claim,key,attempt,reason)).flatMap { rejected =>
+            IO(logger.warn(s"annotation attempt failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total attempt=$attempt rejected=$rejected rejectionLimit=${AnnotationAttempts.rejectionLimit} reservationLimit=${AnnotationAttempts.reservationLimit} code=$code reason=$reason structure=$structure")) *>
+              (if(rejected==AnnotationAttempts.rejectionLimit) failed(new AnnotationExhausted(reason),index,"annotation",attempt)
+              else IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current")) *> annotate(key,run,index))
+          }
+        case error => failed(error,index,"annotation",attempt)
+      }
+    }.handleErrorWith {
+      case staged: StagedFailure => IO.raiseError(staged)
+      case error => failed(error,index,"annotation",0)
     }
     /** The kept parts of the window's chain (ANNOT2; window coordinates, committed as its partial) and the epoch's
       * non-final answers (rows with a reason) so far. */
@@ -446,8 +470,11 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     def loop(state: ProblemPassages.State,index: Int): IO[Unit] = IO.blocking(source.next(state.nextSource)).flatMap {
       case None =>
         IO(Check(index==total,"internal","source window count changed")) *> IO {
-          val decisions=windows.reusedDecisions.get; val parts=windows.reusedParts.get; val continued=windows.continuedWindows.get; val resumed=windows.resumedWindows.get
-          logger.info(s"windows accepted jobId=${claim.jobId} fence=${claim.fence} totalWindows=$total reusedDecisions=$decisions reusedEmbeddingParts=$parts continuedWindows=$continued resumedWindows=$resumed")
+          val decisions=windows.reusedDecisions.get; val parts=windows.reusedParts.get
+          if(annotationContinuations) {
+            val continued=windows.continuedWindows.get; val resumed=windows.resumedWindows.get
+            logger.info(s"windows accepted jobId=${claim.jobId} fence=${claim.fence} totalWindows=$total reusedDecisions=$decisions reusedEmbeddingParts=$parts continuedWindows=$continued resumedWindows=$resumed")
+          } else logger.info(s"windows accepted jobId=${claim.jobId} fence=${claim.fence} totalWindows=$total reusedDecisions=$decisions reusedEmbeddingParts=$parts")
         }
       case Some(window) =>
         val input=Json.arr(window.sourceJson,state.carry.map(ProblemPassages.carryJson).getOrElse(Json.Null))

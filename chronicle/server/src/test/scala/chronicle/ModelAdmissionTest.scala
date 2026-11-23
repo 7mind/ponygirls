@@ -13,14 +13,16 @@ class ModelAdmissionTest extends munit.FunSuite {
     assertEquals(json.as[Config].toOption.get.indexing,IndexingCapacity(4,8,16))
     val capacity=Json.obj("annotationSessions"->Json.fromInt(2),"embeddingRequests"->Json.fromInt(3),"embeddingBatchSize"->Json.fromInt(5))
     assertEquals(json.mapObject(_.add("indexing",capacity)).as[Config].toOption.get.indexing,IndexingCapacity(2,3,5))
-    List(Json.Null,Json.obj(),Json.fromString("invalid"),capacity.mapObject(_.add("embeddingRequests",Json.fromString("3")))).foreach { value =>
+    // SWITCH: an omitted capacity keeps its default, so an empty section is the defaults.
+    assertEquals(json.mapObject(_.add("indexing",Json.obj())).as[Config].toOption.get.indexing,IndexingCapacity.defaults)
+    List(Json.Null,Json.fromString("invalid"),capacity.mapObject(_.add("embeddingRequests",Json.fromString("3")))).foreach { value =>
       assert(json.mapObject(_.add("indexing",value)).as[Config].isLeft,s"malformed capacity accepted: ${value.noSpaces}")
     }
   }
   test("BA specified: execution knobs validate independently and never alter either semantic profile") {
     val base=Fixtures.config()
     val original=IndexProfileCatalog.current(base)
-    List(IndexingCapacity(1,1,1),IndexingCapacity(8,32,16),IndexingCapacity(4,8,7)).foreach { capacity =>
+    List(IndexingCapacity(1,1,1),IndexingCapacity(8,32,16),IndexingCapacity(4,8,7),IndexingCapacity(4,8,16,annotationContinuations=true)).foreach { capacity =>
       val config=base.copy(indexing=capacity); config.validate()
       assertEquals(config.profile,base.profile)
       assertEquals(IndexProfileCatalog.current(config).profiles,original.profiles)
@@ -29,6 +31,26 @@ class ModelAdmissionTest extends munit.FunSuite {
       assertEquals(intercept[DomainError](base.copy(indexing=capacity).validate()).code,"config")
       assert(ModelAdmission.make(capacity).attempt.unsafeRunSync().isLeft)
     }
+  }
+  test("SWITCH: the server's loader on a file: indexing.annotationContinuations alone keeps every other indexing default; omitted or false is off; not a boolean refuses the start naming the key, not the value") {
+    val example=Wire.parse(Files.readString(Path.of("config.example.json"))).asObject.get
+    val directory=Files.createTempDirectory("chronicle-config"); val file=directory.resolve("server.json")
+    def load(indexing: Option[Json]): Config = {
+      Files.writeString(file,Json.fromJsonObject(indexing.fold(example.remove("indexing"))(example.add("indexing",_))).noSpaces)
+      Config.load(file.toString)
+    }
+    try {
+      assert(!IndexingCapacity.defaults.annotationContinuations)
+      assertEquals(load(Some(Json.obj("annotationContinuations"->Json.True))).indexing,IndexingCapacity.defaults.copy(annotationContinuations=true))
+      assertEquals(load(None).indexing,IndexingCapacity.defaults)
+      assertEquals(load(Some(Json.obj("annotationContinuations"->Json.False))).indexing,IndexingCapacity.defaults)
+      List(Json.fromString("synthetic-value"),Json.fromInt(1),Json.Null).foreach { value =>
+        val refused=intercept[DomainError](load(Some(Json.obj("annotationContinuations"->value))))
+        assertEquals((refused.code,refused.detail),("config","indexing.annotationContinuations must be true or false"))
+      }
+      // A present capacity of another type still refuses the start as before.
+      assertEquals(intercept[DomainError](load(Some(Json.obj("annotationSessions"->Json.fromString("4"),"annotationContinuations"->Json.True)))).detail,"invalid configuration")
+    } finally { Files.deleteIfExists(file); Files.delete(directory) }
   }
   test("BA specified: session and annotation HTTP permits are distinct, not a recursive gate") {
     (for {

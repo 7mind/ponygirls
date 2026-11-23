@@ -1,16 +1,23 @@
 -- How the windows of a set of indexing jobs were annotated (R-g part 2, ANNOT2; docs/operations.md "Migration 031"), in
--- each job's current run and retry epoch. Read-only; the tables have no timestamps, so a caller scopes by job set.
+-- each job's current run (accepted windows) and retry epoch (answers and authorizations). Read-only; the tables have no
+-- timestamps, so a caller scopes by job set.
 --   psql -X -q -v ON_ERROR_STOP=1 -v jobs=<uuid>[,<uuid>...] -f chronicle/scripts/annotation-counts.sql
 -- Prints `ANNOTATION.<key>|<count>` lines (ids and counts only; reasons are the stored reason codes), then
 -- `ANNOTATION.result|complete`:
---   windows.one_answer / windows.after_continuation: windows accepted in one answer / after kept answers;
+--   windows.one_answer / windows.after_continuation / windows.accepted_unmarked: the run's accepted windows (own
+--     checkpoints), each by the marker its accepting authorization carries: 0 (accepted in one answer), >= 1 (after kept
+--     answers), none (accepted with indexing.annotationContinuations off, or by a release before 031); with the switch off
+--     every acceptance is unmarked, after it is turned on new acceptances carry a marker;
 --   answers.continued: kept answers (reason annotation-partition-continued), of which answers.abandoned are neither in an
 --     accepted window nor in an open chain; answers.rejected (and per reason): other non-final answers;
---   authorizations.no_outcome: authorizations without an answer (cancelled, crashed, transport failures);
+--   authorizations.no_outcome: authorizations without an answer (cancelled, crashed, transport failures): no reason, no
+--     marker, and not the last authorization of a window accepted unmarked in the epoch (that one is its accepting answer);
 --   chains.open, chains.invalid_or_inactive, chains.stale: the job set's partial rows, each in exactly one of them.
 --     A row is loaded by the next claim when it is of the job's current run and epoch, the job is Queued or Running at its
 --     source's head revision under its owner's target profile, its window is neither accepted nor referenced, and its
---     window's ledger is not exhausted; the other rows are stale (never read). A loaded row is open when it passes every
+--     window's ledger is not exhausted; the other rows are stale (never read; a job's rows are deleted when it ends
+--     superseded, so stale rows are of Failed jobs, earlier runs or epochs, or windows accepted without them). A loaded
+--     row is open when it passes every
 --     check of the loader the database can evaluate, else invalid_or_inactive (the loader discards it): format, profile,
 --     coverage and continuation ranges (V1, V2, V6); provenance (V10): the window's ledger rows all carry the row's input
 --     hash, the row's attempt is at most their count, the window's active chain is the row's chain, the chain's kept rows
@@ -22,8 +29,8 @@
 --     bound of its rest (V7-V9), and a changed window input (the loader then fails the job annotation-input-changed).
 --     Rows the product wrote pass those by construction: on unaltered data open counts what the loader resumes.
 --   windows.reused: windows taken from another run's accepted work (a reference, no authorization);
---   windows.legacy: windows accepted without a recorded acceptance (by a release before 031);
---   answers: rows with a reason or an acceptance; r: answers.rejected / answers (none without answers).
+--   answers: rows with a reason or a marker and the accepting rows of windows accepted unmarked; r: answers.rejected /
+--     answers (none without answers).
 -- Tested by chronicle/server/src/test/scala/chronicle/AnnotationContinuationTest.scala.
 \set ON_ERROR_STOP on
 \pset pager off
@@ -64,28 +71,35 @@ WITH scope AS (SELECT j.id,j.run_id,j.annotation_retry_epoch AS epoch,j.state,j.
           OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.kept->'parts')='array' THEN p.kept->'parts' ELSE '[]'::jsonb END) part
             WHERE part->'end'->'fragmentIndex'=to_jsonb(p.stops[i]) AND part->'end'->'scalarOffset'='0'::jsonb))
         ELSE false END),
+  accepted AS (SELECT k.job_id,k.run_id,k.window_ordinal,(SELECT a.accepted_continuations FROM ch_annotation_attempts a
+      WHERE a.job_id=k.job_id AND a.run_id=k.run_id AND a.window_ordinal=k.window_ordinal AND a.accepted_continuations IS NOT NULL
+      ORDER BY a.retry_epoch DESC,a.attempt DESC LIMIT 1) AS marker
+    FROM ch_index_checkpoints k JOIN scope s ON k.job_id=s.id AND k.run_id=s.run_id WHERE k.stage='Annotation'),
+  unmarked AS (SELECT a.* FROM attempts a JOIN accepted w ON (w.job_id,w.run_id,w.window_ordinal)=(a.job_id,a.run_id,a.window_ordinal) AND w.marker IS NULL
+    WHERE a.rejection_reason IS NULL AND a.accepted_continuations IS NULL
+      AND a.attempt=(SELECT max(b.attempt) FROM attempts b WHERE b.job_id=a.job_id AND b.window_ordinal=a.window_ordinal)),
   counts(position,key,value) AS (
     SELECT 1,'jobs',count(*)::text FROM scope
-    UNION ALL SELECT 2,'windows.one_answer',count(*)::text FROM attempts WHERE accepted_continuations=0
-    UNION ALL SELECT 3,'windows.after_continuation',count(*)::text FROM attempts WHERE accepted_continuations>=1
-    UNION ALL SELECT 4,'answers.continued',count(*)::text FROM attempts WHERE rejection_reason='annotation-partition-continued'
-    UNION ALL SELECT 5,'answers.abandoned',((SELECT count(*) FROM attempts WHERE rejection_reason='annotation-partition-continued')
+    UNION ALL SELECT 2,'windows.one_answer',count(*)::text FROM accepted WHERE marker=0
+    UNION ALL SELECT 3,'windows.after_continuation',count(*)::text FROM accepted WHERE marker>=1
+    UNION ALL SELECT 4,'windows.accepted_unmarked',count(*)::text FROM accepted WHERE marker IS NULL
+    UNION ALL SELECT 5,'answers.continued',count(*)::text FROM attempts WHERE rejection_reason='annotation-partition-continued'
+    UNION ALL SELECT 6,'answers.abandoned',((SELECT count(*) FROM attempts WHERE rejection_reason='annotation-partition-continued')
       -(SELECT coalesce(sum(accepted_continuations),0) FROM attempts)-(SELECT coalesce(sum(continuations),0) FROM open))::text
-    UNION ALL SELECT 6,'answers.rejected',count(*)::text FROM attempts WHERE rejection_reason<>'annotation-partition-continued'
-    UNION ALL SELECT 7,'answers.rejected.'||rejection_reason,count(*)::text FROM attempts WHERE rejection_reason<>'annotation-partition-continued' GROUP BY rejection_reason
-    UNION ALL SELECT 8,'authorizations.no_outcome',count(*)::text FROM attempts WHERE rejection_reason IS NULL AND accepted_continuations IS NULL
-    UNION ALL SELECT 9,'chains.open',count(*)::text FROM open
-    UNION ALL SELECT 10,'chains.invalid_or_inactive',count(*)::text FROM loaded p
+    UNION ALL SELECT 7,'answers.rejected',count(*)::text FROM attempts WHERE rejection_reason<>'annotation-partition-continued'
+    UNION ALL SELECT 8,'answers.rejected.'||rejection_reason,count(*)::text FROM attempts WHERE rejection_reason<>'annotation-partition-continued' GROUP BY rejection_reason
+    UNION ALL SELECT 9,'authorizations.no_outcome',count(*)::text FROM attempts a WHERE a.rejection_reason IS NULL AND a.accepted_continuations IS NULL
+      AND NOT EXISTS(SELECT 1 FROM unmarked u WHERE (u.job_id,u.window_ordinal,u.attempt)=(a.job_id,a.window_ordinal,a.attempt))
+    UNION ALL SELECT 10,'chains.open',count(*)::text FROM open
+    UNION ALL SELECT 11,'chains.invalid_or_inactive',count(*)::text FROM loaded p
       WHERE NOT EXISTS(SELECT 1 FROM open o WHERE (o.job_id,o.run_id,o.retry_epoch,o.window_ordinal)=(p.job_id,p.run_id,p.retry_epoch,p.window_ordinal))
-    UNION ALL SELECT 11,'chains.stale',count(*)::text FROM ch_annotation_partials p JOIN scope s ON p.job_id=s.id
+    UNION ALL SELECT 12,'chains.stale',count(*)::text FROM ch_annotation_partials p JOIN scope s ON p.job_id=s.id
       WHERE NOT EXISTS(SELECT 1 FROM loaded l WHERE (l.job_id,l.run_id,l.retry_epoch,l.window_ordinal)=(p.job_id,p.run_id,p.retry_epoch,p.window_ordinal))
-    UNION ALL SELECT 12,'windows.reused',count(*)::text FROM ch_index_checkpoint_refs r JOIN scope s ON r.job_id=s.id AND r.run_id=s.run_id
+    UNION ALL SELECT 13,'windows.reused',count(*)::text FROM ch_index_checkpoint_refs r JOIN scope s ON r.job_id=s.id AND r.run_id=s.run_id
       WHERE r.stage='Annotation' AND NOT EXISTS(SELECT 1 FROM attempts a WHERE a.job_id=r.job_id AND a.window_ordinal=r.window_ordinal)
-    UNION ALL SELECT 13,'windows.legacy',count(*)::text FROM ch_index_checkpoints k JOIN scope s ON k.job_id=s.id AND k.run_id=s.run_id
-      WHERE k.stage='Annotation' AND NOT EXISTS(SELECT 1 FROM ch_annotation_attempts a WHERE a.job_id=k.job_id AND a.run_id=k.run_id AND a.window_ordinal=k.window_ordinal AND a.accepted_continuations IS NOT NULL)
-    UNION ALL SELECT 14,'answers',count(*)::text FROM attempts WHERE rejection_reason IS NOT NULL OR accepted_continuations IS NOT NULL
-    UNION ALL SELECT 15,'r',coalesce(round((count(*) FILTER (WHERE rejection_reason<>'annotation-partition-continued'))::numeric
-      /nullif(count(*) FILTER (WHERE rejection_reason IS NOT NULL OR accepted_continuations IS NOT NULL),0),4)::text,'none') FROM attempts)
+    UNION ALL SELECT 14,'answers',((SELECT count(*) FROM attempts WHERE rejection_reason IS NOT NULL OR accepted_continuations IS NOT NULL)+(SELECT count(*) FROM unmarked))::text
+    UNION ALL SELECT 15,'r',coalesce(round((SELECT count(*) FROM attempts WHERE rejection_reason<>'annotation-partition-continued')::numeric
+      /nullif((SELECT count(*) FROM attempts WHERE rejection_reason IS NOT NULL OR accepted_continuations IS NOT NULL)+(SELECT count(*) FROM unmarked),0),4)::text,'none'))
 SELECT 'ANNOTATION.'||key,value FROM counts ORDER BY position,key;
 ROLLBACK;
 \echo ANNOTATION.result|complete

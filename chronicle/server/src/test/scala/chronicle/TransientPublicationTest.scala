@@ -290,14 +290,18 @@ final class TransientPublicationTest extends munit.FunSuite {
     }
   }
 
-  test("record: refused while the database is unavailable, tried again until it is taken before the lease end: held once, attempts unchanged, no model call repeated") {
-    CurrentIndexDatabase.withDatabase { (config,db,archive) =>
+  // The answer's write: the checkpoint with annotation continuations off, acceptAnnotation with them on (ANNOT2).
+  List(false,true).foreach { on => test(s"record: refused while the database is unavailable, tried again until it is taken before the lease end: held once, attempts unchanged, no model call repeated (annotationContinuations=$on)") {
+    CurrentIndexDatabase.withDatabase { (fixture,db,archive) =>
+      val config=ModelFixtures.continuations(fixture,on)
       val log=new WorkerLog; val annotator=new Annotator
       val tries=new AtomicInteger(0); val answerLost=new AtomicBoolean(true)
       val wrapper=new ForwardingArchive(archive) {
         // The model's answer is written while the database goes away.
+        override def checkpoint(c: Claim,key: CheckpointKey,value: io.circe.Json): Unit =
+          if(!on && key.stage==IndexingStage.Annotation && answerLost.getAndSet(false)) throw JdbcFailure("database-unavailable",Some("08006")) else super.checkpoint(c,key,value)
         override def acceptAnnotation(c: Claim,key: CheckpointKey,attempt: Int,continuations: Int,value: io.circe.Json): Unit =
-          if(answerLost.getAndSet(false)) throw JdbcFailure("database-unavailable",Some("08006")) else super.acceptAnnotation(c,key,attempt,continuations,value)
+          if(on && answerLost.getAndSet(false)) throw JdbcFailure("database-unavailable",Some("08006")) else super.acceptAnnotation(c,key,attempt,continuations,value)
         // Refused twice; the third try commits but its acknowledgement is lost; the fourth finds it recorded.
         override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = tries.incrementAndGet() match {
           case 1 | 2 => throw unavailable
@@ -311,7 +315,7 @@ final class TransientPublicationTest extends munit.FunSuite {
       assertEquals((tries.get,annotator.calls.get),(4,1))
       assertEquals(log.lines.filter(_.startsWith("job ")),List(s"job held jobId=${receipt.jobId} code=database-transient sqlState=08006 class=JdbcFailure stage=none consecutive=1 nextAttemptAt=${nextAttempt(db,receipt.jobId)}"))
     }
-  }
+  }}
 
   test("connection-unavailable without a SQLSTATE (a pool that gets no connection by its deadline) is transient: the failure and a refused record try, then a fenced hold and one refund") {
     CurrentIndexDatabase.withDatabase { (config,db,archive) =>

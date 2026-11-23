@@ -31,6 +31,8 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     def retire(claim: Claim): Unit = delegate.retire(claim)
     def fail(claim: Claim,code: String): Unit = synchronized { failures+=code; delegate.fail(claim,code) }
     def fail(claim: Claim,code: String,stage: IndexingStage): Unit = synchronized { failures+=code; delegate.fail(claim,code,stage) }
+    def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = delegate.reserveAnnotation(c,key)
+    def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = delegate.rejectAnnotation(c,key,attempt,reason)
     def reserveAnnotation(c: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = delegate.reserveAnnotation(c,key,prefix)
     def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String,prefix: Boolean): Int = delegate.rejectAnnotation(c,key,attempt,reason,prefix)
     def loadPartial(c: Claim,key: CheckpointKey): PartialLoad = delegate.loadPartial(c,key)
@@ -254,6 +256,8 @@ abstract class PassageWorkerContract extends munit.FunSuite {
         def publicationParent(c: Claim)=delegate.publicationParent(c)
         def fail(c: Claim,code: String)=delegate.fail(c,code)
         def fail(c: Claim,code: String,stage: IndexingStage)=delegate.fail(c,code,stage)
+        def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = delegate.reserveAnnotation(c,key)
+        def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = delegate.rejectAnnotation(c,key,attempt,reason)
         def reserveAnnotation(c: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = delegate.reserveAnnotation(c,key,prefix)
         def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String,prefix: Boolean): Int = delegate.rejectAnnotation(c,key,attempt,reason,prefix)
         def loadPartial(c: Claim,key: CheckpointKey): PartialLoad = delegate.loadPartial(c,key)

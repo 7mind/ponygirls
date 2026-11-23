@@ -39,7 +39,8 @@ let
       inherit (token) id userId name scopes;
       tokenFile = "${credentialDir}/${staticTokenName token.id}";
     }) cfg.staticTokens;
-    inherit (cfg) indexing;
+    # The switch is written only when on: off, server.json is what it was before the option existed.
+    indexing = if cfg.indexing.annotationContinuations then cfg.indexing else builtins.removeAttrs cfg.indexing [ "annotationContinuations" ];
     inherit (cfg.limits) maxBodyBytes maxFiles maxFileBytes maxMessages sessionTtlSeconds;
     annotation = endpointJson "annotation" cfg.annotation // { inherit (cfg.annotation) requestPolicy; };
     embedding = endpointJson "embedding" cfg.embedding // {
@@ -95,6 +96,7 @@ in
       annotationSessions = lib.mkOption { type = lib.types.ints.between 1 8; default = 4; description = "Concurrent indexing sessions and maximum concurrent annotation-model requests (including MCP testing). Execution capacity does not change semantic profile identity."; };
       embeddingRequests = lib.mkOption { type = lib.types.ints.between 1 32; default = 8; description = "Shared concurrent embedding requests across indexing and search, independent of annotation-session admission."; };
       embeddingBatchSize = lib.mkOption { type = lib.types.ints.between 1 16; default = 16; description = "Maximum source pieces in each indexing embedding request."; };
+      annotationContinuations = lib.mkOption { type = lib.types.bool; default = false; description = "Keep an annotation answer that stops at a fragment boundary and ask only the rest of its window (migration 031); off, such an answer is rejected and the whole window asked again. Read at start; not part of the profile identity."; };
     };
     annotation = lib.mkOption { type = lib.types.submodule { options = endpointOptions // {
       requestPolicy = lib.mkOption { type = lib.types.enum [ "strict-json-schema" "strict-json-schema-32k" "glm-max-reasoning" ]; description = "Strict structured-output policy. strict-json-schema-32k raises the output cap to 32768 without provider-specific overrides. glm-max-reasoning enables the GLM-specific template extension. Changes require an explicit owner rebuild."; };

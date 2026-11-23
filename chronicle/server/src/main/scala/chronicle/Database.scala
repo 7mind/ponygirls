@@ -252,6 +252,10 @@ object Jobs {
     * source and profile waits for it; every other unfinished job of an older revision ends superseded. */
   def leased(job: String): String = s"$job.state='Running' AND $job.lease_until>clock_timestamp()"
   val superseding = s"state='Failed',error='$supersededRevision',failure_stage=NULL,fence=fence+1,lease_until=NULL"
+  /** `update`, an UPDATE of ch_jobs that ends jobs superseded and returns their ids (`RETURNING … id`), with the deletion of
+    * those jobs' annotation partials and chain markers (ANNOT2) in the same statement: no claim reads them again. */
+  def superseded(update: String): String =
+    s"WITH ended AS ($update),partials AS (DELETE FROM ch_annotation_partials p USING ended WHERE p.job_id=ended.id) DELETE FROM ch_annotation_active_chains m USING ended WHERE m.job_id=ended.id"
   /** A job a claim may take: Queued and not held (no next attempt, or its time has come), or Running with an ended lease. */
   def claimable(job: String): String =
     s"(($job.state='Queued' AND ($job.lease_until IS NULL OR $job.lease_until<=clock_timestamp())) OR ($job.state='Running' AND $job.lease_until<clock_timestamp()))"
@@ -269,7 +273,7 @@ object Jobs {
     * Running one keeps its claim; Complete and Failed ones are not written) and the new head's job is queued; returns its id. */
   def switched(c: Connection,id: UUID,next: Int,profile: String): UUID = {
     val job=UUID.randomUUID()
-    Sql.exec(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} WHERE j.session_id=? AND j.revision<? AND j.state IN('Queued','Running') AND (${Jobs.leased("j")}) IS NOT TRUE",id,next)
+    Sql.exec(c,Jobs.superseded(s"UPDATE ch_jobs j SET ${Jobs.superseding} WHERE j.session_id=? AND j.revision<? AND j.state IN('Queued','Running') AND (${Jobs.leased("j")}) IS NOT TRUE RETURNING j.id"),id,next)
     Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile) VALUES(?,?,?,?)",job,id,next,profile)
     job
   }
@@ -442,7 +446,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       WHERE t.profile IN(${profiles.toList.map(_ => "?").mkString(",")})$scoped AND NOT s.tombstone AND EXISTS(SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.profile=t.profile AND $ended)
       ORDER BY s.id FOR NO KEY UPDATE OF s SKIP LOCKED""",(profiles.toList.sorted++owner)*)(r => (r.getObject(1,classOf[UUID]),r.getString(2)))
     sources.foreach { (id,profile) =>
-      Sql.exec(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} FROM ch_sources s WHERE s.id=j.session_id AND j.session_id=? AND j.profile=? AND $ended",id,profile)
+      Sql.exec(c,Jobs.superseded(s"UPDATE ch_jobs j SET ${Jobs.superseding} FROM ch_sources s WHERE s.id=j.session_id AND j.session_id=? AND j.profile=? AND $ended RETURNING j.id"),id,profile)
     }
   }
   private def claimHead(profiles: Set[String],scope: ClaimScope,leaseSeconds: Int,large: LargeJobs): Option[Claim] = db.transaction { c =>
@@ -522,9 +526,16 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     Check(head(c,claim).contains(claim.revision),"stale-claim","indexing claim is no longer current")
   }
   private def annotationAuthority(c: Connection,claim: Claim,prefix: Boolean): Unit = if(prefix) prefixAuthority(c,claim) else checkpointAuthority(c,claim)
+  def reserveAnnotation(claim: Claim,key: CheckpointKey): AnnotationReservation = db.transaction { c =>
+    checkpointAuthority(c,claim)
+    val attempt=AnnotationAttempts.reserve(c,claim,key,false)
+    checkpointAuthority(c,claim)
+    attempt
+  }
+  def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = rejectAnnotation(claim,key,attempt,reason,false)
   def reserveAnnotation(claim: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = db.transaction { c =>
     annotationAuthority(c,claim,prefix)
-    val attempt=AnnotationAttempts.reserve(c,claim,key)
+    val attempt=AnnotationAttempts.reserve(c,claim,key,true)
     attempt match {
       case AnnotationReservation.Reserved(_) if !prefix => AnnotationPartials.clear(c,claim,AnnotationAttempts.epoch(c,claim),key.window)
       case _ => ()
@@ -540,7 +551,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   }
   def loadPartial(claim: Claim,key: CheckpointKey): PartialLoad = db.transaction { c =>
     checkpointAuthority(c,claim)
-    val (epoch,ledger)=AnnotationAttempts.ledger(c,claim,key)
+    val (epoch,ledger)=AnnotationAttempts.ledger(c,claim,key,true)
     val load=AnnotationAttempts.exhaustion(ledger) match {
       case Some((reason,attempts)) => PartialLoad.Exhausted(reason,attempts)
       case None => AnnotationPartials.read(c,claim,epoch,key.window) match {
@@ -591,6 +602,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     db.transaction { c =>
       checkpointAuthority(c,claim)
       IndexCheckpoints.write(c,claim,key,value)
+      if(key.stage==IndexingStage.Annotation) AnnotationPartials.accepted(c,claim,key.window)
       checkpointAuthority(c,claim)
     }
     claim.attempt.advance()
@@ -620,7 +632,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     db.transaction { c =>
       head(c,claim).filter(_ => lockJob(c,claim)).exists { head =>
         // A job of an older revision is never queued again: it ends superseded instead.
-        if(head>claim.revision) { Sql.exec(c,s"UPDATE ch_jobs SET ${Jobs.superseding},total_windows=? WHERE $validJob",(List[Sql.Param](totalWindows)++jobArgs(claim))*); false }
+        if(head>claim.revision) { Sql.exec(c,Jobs.superseded(s"UPDATE ch_jobs SET ${Jobs.superseding},total_windows=? WHERE $validJob RETURNING id"),(List[Sql.Param](totalWindows)++jobArgs(claim))*); false }
         else Sql.exec(c,s"UPDATE ch_jobs SET state='Queued',attempts=attempts-1,lease_until=NULL,fence=fence+1,completed_windows=0,total_windows=? WHERE $validJob",(List[Sql.Param](totalWindows)++jobArgs(claim))*)==1
       }
     }
@@ -826,7 +838,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     // Publication is monotonic: a job never replaces the published generation of a newer revision; it ends superseded.
     val superseded=authorized && Sql.one(c,"SELECT g.revision>? FROM ch_sources s JOIN ch_generations g ON g.id=s.published WHERE s.id=?",claim.revision,claim.sessionId)(_.getBoolean(1)).contains(true)
     val previous=Sql.one(c,"SELECT published FROM ch_sources WHERE id=?",claim.sessionId)(r => Option(r.getObject(1,classOf[UUID]))).flatten
-    if(superseded) { Sql.exec(c,s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob",jobArgs(claim)*); false }
+    if(superseded) { Sql.exec(c,Jobs.superseded(s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob RETURNING id"),jobArgs(claim)*); false }
     // An incremental publication whose parent is no longer published is abandoned: the job's next attempt chooses again.
     else if(authorized && parent.exists(value => !previous.contains(value.generation))) { PassageStorage.abandon(c,generation); false }
     else authorized && {
@@ -869,7 +881,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     head(c,claim).filter(_ => lockJob(c,claim)).foreach { head =>
       // A job of an older revision is never queued again: where it would be, it ends superseded.
       val superseded=head>claim.revision && Sql.one(c,s"SELECT attempts<${Jobs.attemptLimit} AND NOT ? FROM ch_jobs WHERE $validJob",(List[Sql.Param](exhausted)++jobArgs(claim))*)(_.getBoolean(1)).contains(true)
-      if(superseded) Sql.exec(c,s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob",jobArgs(claim)*)
+      if(superseded) Sql.exec(c,Jobs.superseded(s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob RETURNING id"),jobArgs(claim)*)
       else Sql.exec(c,s"UPDATE ch_jobs SET state=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN 'Failed' ELSE 'Queued' END,error=?,failure_stage=NULLIF(?,''),lease_until=NULL,transient_failures=0,transient_range=NULL,completed_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN completed_windows ELSE 0 END,total_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN total_windows ELSE NULL END WHERE $validJob",(List[Sql.Param](exhausted,code.take(64),stage.fold("")(_.toString),exhausted,exhausted)++jobArgs(claim))*)
     }
   }
@@ -883,7 +895,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       // fence and run (any later claim, retry or supersession changes the fence), so it is reported, not written again.
       case None => recordedTransient(c,claim).getOrElse(TransientOutcome.Ended)
       // A job of an older revision is never queued again: it ends superseded.
-      case Some((head,_)) if head>claim.revision => Sql.exec(c,s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob",jobArgs(claim)*); TransientOutcome.Ended
+      case Some((head,_)) if head>claim.revision => Sql.exec(c,Jobs.superseded(s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob RETURNING id"),jobArgs(claim)*); TransientOutcome.Ended
       case Some((_,previous)) =>
         val consecutive=if(claim.attempt.progressed) 1 else previous+1
         // The range this attempt stopped in; without one, the job's earlier range stays unless this attempt committed

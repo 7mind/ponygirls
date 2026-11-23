@@ -70,30 +70,33 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
   }
   private def authorized(claim: Claim,prefix: Boolean): Unit =
     Check(valid(claim) && (!prefix || headRevision(claim)==claim.revision),"stale-claim","indexing claim is no longer current")
-  private def ledger(claim: Claim,key: CheckpointKey): (Long,Vector[(Int,Attempt)]) = {
+  private def ledger(claim: Claim,key: CheckpointKey,continuations: Boolean): (Long,Vector[(Int,Attempt)]) = {
     AnnotationAttempts.validate(key)
     val epoch=annotationEpochs.getOrElse(claim.jobId,0L)
     val previous=annotationAttempts.iterator.collect {
       case ((job,run,e,window,attempt),value) if job==claim.jobId && run==claim.runId && e==epoch && window==key.window => (attempt,value)
     }.toVector.sortBy(_._1)
-    Check(previous.size<=AnnotationAttempts.reservationLimit && previous.map(_._1)==(1 to previous.size).toVector,"internal","annotation attempt input identity mismatch")
-    if(!previous.forall(_._2.inputHash==key.inputHash)) throw DomainError(AnnotationAttempts.inputChangedCode,"annotation window input changed")
+    val inputs=previous.forall(_._2.inputHash==key.inputHash)
+    Check(previous.size<=AnnotationAttempts.reservationLimit && previous.map(_._1)==(1 to previous.size).toVector && (continuations || inputs),"internal","annotation attempt input identity mismatch")
+    if(!inputs) throw DomainError(AnnotationAttempts.inputChangedCode,"annotation window input changed")
     Check(previous.count(_._2.reason.nonEmpty)<=AnnotationAttempts.rejectionLimit,"internal","invalid annotation rejection count")
     (epoch,previous)
   }
   private def rows(previous: Vector[(Int,Attempt)]): Vector[AnnotationLedgerRow] = previous.map((attempt,value) => AnnotationLedgerRow(attempt,value.reason,value.keptHash,value.chain))
-  def reserveAnnotation(claim: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = synchronized {
+  private def reserve(claim: Claim,key: CheckpointKey,continuations: Boolean,prefix: Boolean): AnnotationReservation = {
     authorized(claim,prefix)
-    val (epoch,previous)=ledger(claim,key)
+    val (epoch,previous)=ledger(claim,key,continuations)
     AnnotationAttempts.exhaustion(rows(previous)) match {
       case Some((reason,attempts)) => AnnotationReservation.Exhausted(reason,attempts)
       case None =>
         val attempt=previous.size+1
         annotationAttempts((claim.jobId,claim.runId,epoch,key.window,attempt))=Attempt(key.inputHash,claim.fence,None)
-        if(!prefix) activeChains.updateWith((claim.jobId,claim.runId,epoch,key.window))(_.map(_ => None))
+        if(continuations && !prefix) activeChains.updateWith((claim.jobId,claim.runId,epoch,key.window))(_.map(_ => None))
         AnnotationReservation.Reserved(attempt)
     }
   }
+  def reserveAnnotation(claim: Claim,key: CheckpointKey): AnnotationReservation = synchronized(reserve(claim,key,false,false))
+  def reserveAnnotation(claim: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = synchronized(reserve(claim,key,true,prefix))
   private def record(claim: Claim,key: CheckpointKey,attempt: Int,update: Attempt => Option[Attempt]): Int = {
     Check(attempt>=1 && attempt<=AnnotationAttempts.reservationLimit,"internal","invalid annotation reservation")
     val slot=(claim.jobId,claim.runId,annotationEpochs.getOrElse(claim.jobId,0L),key.window,attempt)
@@ -106,13 +109,14 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     Check(rejected<=AnnotationAttempts.rejectionLimit,"internal","invalid annotation rejection count")
     rejected
   }
+  def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = rejectAnnotation(claim,key,attempt,reason,false)
   def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String,prefix: Boolean): Int = synchronized {
     authorized(claim,prefix); AnnotationAttempts.validate(key); AnnotationAttempts.validateReason(reason)
     record(claim,key,attempt,stored => Option.when(stored.reason.forall(_==reason))(stored.copy(reason=Some(reason))))
   }
   def loadPartial(claim: Claim,key: CheckpointKey): PartialLoad = synchronized {
     authorized(claim,false)
-    val (epoch,previous)=ledger(claim,key); val slot=(claim.jobId,claim.runId,epoch,key.window)
+    val (epoch,previous)=ledger(claim,key,true); val slot=(claim.jobId,claim.runId,epoch,key.window)
     AnnotationAttempts.exhaustion(rows(previous)) match {
       case Some((reason,attempts)) => PartialLoad.Exhausted(reason,attempts)
       case None => partials.get(slot) match {
@@ -144,7 +148,6 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     authorized(claim,continuations>0)
     checkpoint(claim,key,value)
     record(claim,key,attempt,stored => Option.when(stored.reason.isEmpty && stored.accepted.forall(_==continuations))(stored.copy(accepted=Some(continuations))))
-    partials.filterInPlace((slot,_) => !(slot._1==claim.jobId && slot._4==key.window)); activeChains.filterInPlace((slot,_) => !(slot._1==claim.jobId && slot._4==key.window))
     claim.attempt.advance()
   }
   def checkpoint(claim: Claim,key: CheckpointKey): Option[io.circe.Json] = synchronized {
@@ -167,6 +170,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     val slot=(claim.jobId,claim.runId,key.stage,key.window,key.part)
     acceptedWork.get(slot).foreach { (input,stored) => Check(input==key.inputHash && IndexCheckpoints.hash(stored)==IndexCheckpoints.hash(value),"internal","immutable checkpoint output mismatch") }
     acceptedWork(slot)=(key.inputHash,value)
+    if(key.stage==IndexingStage.Annotation) { partials.filterInPlace((slot,_) => !(slot._1==claim.jobId && slot._4==key.window)); activeChains.filterInPlace((slot,_) => !(slot._1==claim.jobId && slot._4==key.window)) }
   }
   /** No database: no transient database failure occurs. */
   def holdTransient(claim: Claim,stage: Option[IndexingStage],deadline: scala.concurrent.duration.Deadline): TransientOutcome = throw new UnsupportedOperationException("the in-memory archive has no database")

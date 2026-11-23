@@ -51,8 +51,11 @@ final case class EmbeddingConfig(endpoint: String, model: String, revision: Stri
   * the metadata horizon of both kinds of publication (ProblemRows.metadataHorizonWindows; the default gives every piece its
   * passage's final metadata). A lineage continues only under the horizon it was published with: a changed horizon makes
   * each session's next publication a root. Neither is part of the index profile. `publicationStatementTimeout`: the statement
-  * timeout of a publication's staging transactions (restart-robustness spec §4), `publicationTimeout`. */
-final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int,embeddingBatchSize: Int,incrementalPublication: Boolean=true,metadataHorizonWindows: Int=ProblemRows.metadataHorizonWindows,publicationStatementTimeout: Option[FiniteDuration]=None) {
+  * timeout of a publication's staging transactions (restart-robustness spec §4), `publicationTimeout`.
+  * `annotationContinuations` (ANNOT2, read at start): an annotation answer that stops at a fragment boundary keeps its parts
+  * and the rest of the window is asked; off, it is rejected `annotation-partition-incomplete` and the whole window asked
+  * again. Not part of the index profile. */
+final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int,embeddingBatchSize: Int,incrementalPublication: Boolean=true,metadataHorizonWindows: Int=ProblemRows.metadataHorizonWindows,publicationStatementTimeout: Option[FiniteDuration]=None,annotationContinuations: Boolean=false) {
   def validate(): Unit = {
     Check(annotationSessions>=1 && annotationSessions<=8,"config","annotation session capacity must be 1..8")
     Check(embeddingRequests>=1 && embeddingRequests<=32,"config","embedding request capacity must be 1..32")
@@ -70,6 +73,8 @@ final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int
 }
 object IndexingCapacity {
   val defaults = IndexingCapacity(4,8,16)
+  /** The start failure of a present `indexing.annotationContinuations` that is not a boolean (names the key, not the value). */
+  val continuationsInvalid = "indexing.annotationContinuations must be true or false"
   /** A publication's statements (P1-P3) run up to this long: after a database restart the vector index is read from disk. */
   val publicationStatementTimeout: FiniteDuration = 5.minutes
   val maximumPublicationStatementTimeout: FiniteDuration = 1.hour
@@ -195,17 +200,22 @@ object Config {
     documentPrefix <- cursor.get[String]("documentPrefix")
     sendDimensions <- if(cursor.downField("sendDimensions").focus.isEmpty) Right(omittedSendDimensions) else cursor.get[Boolean]("sendDimensions")
   } yield EmbeddingConfig(endpoint,model,revision,credential,timeout,bound,dimensions,queryPrefix,documentPrefix,sendDimensions) }
+  /** Every key of the section is optional: an omitted capacity takes its default (a section may set only the switch). */
   given Decoder[IndexingCapacity] = Decoder.instance { cursor =>
     def integer(field: String): Decoder.Result[Int] = cursor.downField(field).focus.flatMap(_.asNumber).flatMap(_.toInt)
       .toRight(io.circe.DecodingFailure("expected capacity integer",cursor.downField(field).history))
+    def capacity(field: String,omitted: Int): Decoder.Result[Int] = if(cursor.downField(field).focus.isEmpty) Right(omitted) else integer(field)
+    val continuations=cursor.downField("annotationContinuations")
     for {
-      annotation <- integer("annotationSessions")
-      embedding <- integer("embeddingRequests")
-      batch <- integer("embeddingBatchSize")
+      _ <- Either.cond(cursor.value.isObject,(),io.circe.DecodingFailure("expected indexing object",cursor.history))
+      annotation <- capacity("annotationSessions",IndexingCapacity.defaults.annotationSessions)
+      embedding <- capacity("embeddingRequests",IndexingCapacity.defaults.embeddingRequests)
+      batch <- capacity("embeddingBatchSize",IndexingCapacity.defaults.embeddingBatchSize)
       incremental <- if(cursor.downField("incrementalPublication").focus.isEmpty) Right(true) else cursor.get[Boolean]("incrementalPublication")
       horizon <- if(cursor.downField("metadataHorizonWindows").focus.isEmpty) Right(ProblemRows.metadataHorizonWindows) else integer("metadataHorizonWindows")
       publication <- present[Long](cursor,"publicationStatementTimeoutMs")
-    } yield IndexingCapacity(annotation,embedding,batch,incremental,horizon,publication.map(_.millis))
+      continued <- continuations.focus.fold(Right(IndexingCapacity.defaults.annotationContinuations))(_.asBoolean.toRight(io.circe.DecodingFailure(IndexingCapacity.continuationsInvalid,continuations.history)))
+    } yield IndexingCapacity(annotation,embedding,batch,incremental,horizon,publication.map(_.millis),continued)
   }
   given Decoder[JdbcLimits] = Decoder.instance { cursor => for {
     connections <- cursor.get[Int]("maxConnections")
@@ -254,7 +264,9 @@ object Config {
     maxSmallJobBudgetBytes <- present[Long](cursor,"maxSmallJobBudgetBytes")
     maxRecordBytes <- optional(cursor,"maxRecordBytes",defaultMaxRecordBytes)
   } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits,accounts,maxRawReadBytes,maxIndexingBudgetBytes,maxSmallJobBudgetBytes,maxRecordBytes,databaseStartWaitMs,pooled._1,pooled._2) }
-  def load(path: String): Config = { val c = Wire.parse(Files.readString(Path.of(path))).as[Config].fold(_ => throw DomainError("config", "invalid configuration"), identity); c.validate(); c }
+  /** The server's configuration file. A decoding failure is `invalid configuration`, except a failure that names its key
+    * (never a value). */
+  def load(path: String): Config = { val c = Wire.parse(Files.readString(Path.of(path))).as[Config].fold(failure => throw DomainError("config", if(failure.message==IndexingCapacity.continuationsInvalid) failure.message else "invalid configuration"), identity); c.validate(); c }
   def credential(path: String): String = BoundedSecretFile.read(Path.of(path),16384).stripTrailing()
 }
 object Password {

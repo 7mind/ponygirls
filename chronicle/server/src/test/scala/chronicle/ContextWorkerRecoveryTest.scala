@@ -47,6 +47,8 @@ class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
   def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit=delegate.checkpoint(c,key,value)
   def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork]=delegate.windowWork(c,key)
   def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int=delegate.discardCheckpoints(c,stage,window)
+  def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation=delegate.reserveAnnotation(c,key)
+  def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int=delegate.rejectAnnotation(c,key,attempt,reason)
   def reserveAnnotation(c: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation=delegate.reserveAnnotation(c,key,prefix)
   def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String,prefix: Boolean): Int=delegate.rejectAnnotation(c,key,attempt,reason,prefix)
   def loadPartial(c: Claim,key: CheckpointKey): PartialLoad=delegate.loadPartial(c,key)
@@ -277,15 +279,18 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
     assertEquals(archive.session("a",receipt.sessionId).indexedRevision,Some(1)); assertEquals(annotations,1)
     assertEquals(embedded.count(_=="source-0"),1); assertEquals(embedded.count(_==failedText),2)
   }}
-  test("BG/GoodCommunication regression: independent invalid windows do not spend a session-wide five-failure budget") { withFixture { f =>
-    val archive=f.archive(); val windows=7
+  // Each window's first answer stops short: at a fragment boundary with annotation continuations off (rejected as before
+  // ANNOT2), inside its first fragment with them on (a boundary stop would be kept).
+  List(false,true).foreach { continuations => test(s"BG/GoodCommunication regression: independent invalid windows do not spend a session-wide five-failure budget (annotationContinuations=$continuations)") { withFixture { f =>
+    val archive=f.archive(); val windows=7; val config=ModelFixtures.continuations(f.config,continuations)
+    val stop=if(continuations) ProblemPassages.Point(0,1) else ProblemPassages.Point(1,0)
     val receipt=archive.ingest("a",request((0 until windows*ProblemPassages.maximumWindowFragments).map(i => "user"->s"synthetic source $i").toList))
     val calls=scala.collection.mutable.Map.empty[Int,Int]
     val model=new ScriptedAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
         val ordinal=window.fragments.head.messagePosition/ProblemPassages.maximumWindowFragments
         val count=calls.getOrElse(ordinal,0)+1; calls(ordinal)=count
-        if(count==1) ProblemPassages.Decision(Vector(ProblemPassages.Part.context(ProblemPassages.Point(0,0),ProblemPassages.Point(0,1))))
+        if(count==1) ProblemPassages.Decision(Vector(ProblemPassages.Part.context(ProblemPassages.Point(0,0),stop)))
         else one(window,previous)
       }
     }
@@ -294,13 +299,13 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
       def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("unexpected query"))
       def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO { embedded++=text; text.map(_ => List(1.0,0.0,0.0)) }
     }
-    (0 until windows+1).foreach(_ => worker(f,model,embedding).once.unsafeRunSync())
+    (0 until windows+1).foreach(_ => worker(f.archive(),config,model,embedding).once.unsafeRunSync())
     assertEquals(archive.session("a",receipt.sessionId).indexedRevision,Some(1),"a progressing source must not fail after five independent invalid windows")
     assertEquals(calls.values.toList.sorted,List.fill(windows)(2))
     assertEquals(f.evidence(receipt.jobId),WorkerEvidence(1,windows*2,windows))
     assertEquals(embedded.toList.distinct.size,windows*ProblemPassages.maximumWindowFragments)
     assertEquals(embedded.size,embedded.distinct.size,"accepted prefix embeddings must not be repeated")
-  }}
+  }}}
   test("BG/GoodCommunication regression: annotation attempts are bounded across fresh workers, not multiplied by job claims") { withFixture { f =>
     val archive=f.archive(); val receipt=archive.ingest("a",request(List("user"->"synthetic task"))); var calls=0
     val model=new ScriptedAnnotator {
@@ -357,13 +362,13 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
     test(s"BG/GoodCommunication regression: an unknown ${if(reservationFailure) "reservation" else "rejection"} commit outcome releases the claim instead of locally replaying") { withFixture { f =>
       val archive=f.archive(); val receipt=archive.ingest("a",request(List("user"->"synthetic task"))); var interrupted=false; var calls=0
       val uncertain=new ForwardingArchive(archive) {
-        override def reserveAnnotation(c: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = {
-          val result=super.reserveAnnotation(c,key,prefix)
+        override def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = {
+          val result=super.reserveAnnotation(c,key)
           if(reservationFailure && !interrupted) { interrupted=true; throw new java.sql.SQLException("synthetic unknown commit outcome") }
           result
         }
-        override def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String,prefix: Boolean): Int = {
-          val result=super.rejectAnnotation(c,key,attempt,reason,prefix)
+        override def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = {
+          val result=super.rejectAnnotation(c,key,attempt,reason)
           if(!reservationFailure && !interrupted) { interrupted=true; throw new java.sql.SQLException("synthetic unknown commit outcome") }
           result
         }

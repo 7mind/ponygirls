@@ -21,7 +21,10 @@ object ProblemPassageHttp {
     request
   }
 
-  def response(window: ProblemPassages.Window,hasPrevious: Boolean,json: Json): ProblemPassages.Decision = {
+  def response(window: ProblemPassages.Window,hasPrevious: Boolean,json: Json): ProblemPassages.Decision = response(window,hasPrevious,json,false)
+  /** `continuations` (`indexing.annotationContinuations`, ANNOT2): an answer that stops at a fragment boundary is returned;
+    * otherwise it is `annotation-partition-incomplete` as any answer that does not cover the window. */
+  def response(window: ProblemPassages.Window,hasPrevious: Boolean,json: Json,continuations: Boolean): ProblemPassages.Decision = {
     import ModelRejectionReason.*
     import ModelRejectionLocation as Location
     import ModelRejectionDetail.*
@@ -40,15 +43,16 @@ object ProblemPassageHttp {
       Shape(ModelValueShape.of(message.downField("content").focus))),identity)
     if(content.isEmpty) throw ModelRejection.at(ContentEmpty,Location.Content,TextUnits(0))
     val decoded=io.circe.parser.parse(content).fold(_ => throw ModelRejection.at(ModelJsonInvalid,Location.Content),identity)
-    ProblemPassages.ingressCovered(window,hasPrevious,decoded)
+    if(continuations) ProblemPassages.ingressCovered(window,hasPrevious,decoded) else ProblemPassages.ingress(window,hasPrevious,decoded)
   }
 }
 
 final class OpenAIProblemPassageAnnotator(http: ModelHttp,config: Config) extends ProblemPassageAnnotator {
+  private val continuations=config.indexing.annotationContinuations
   def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.defer {
     val cfg=config.annotation
     val request=ProblemPassageHttp.request(cfg,window,previous)
-    http.postDecoded(ModelCallContext(owner,ModelWorkload.IndexAnnotation),cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,request)(ProblemPassageHttp.response(window,previous.nonEmpty,_))
+    http.postDecoded(ModelCallContext(owner,ModelWorkload.IndexAnnotation),cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,request)(ProblemPassageHttp.response(window,previous.nonEmpty,_,continuations))
   }
   override def tailRequestFits(window: ProblemPassages.Window,covered: Int,previous: Option[ProblemPassages.Carry]): Boolean =
     try { ProblemPassageHttp.request(config.annotation,ProblemPassages.tail(window,covered),previous); true }
