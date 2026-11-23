@@ -12,9 +12,11 @@ object JdbcTransient {
   def connection(sqlState: String): Boolean = sqlState.startsWith(ConnectionClass) || ServerStates.contains(sqlState)
 
   /** A job's transient database failure (restart-robustness spec §4), not charged to its attempts: a connection state
-    * above, a cancelled statement (57014: only statement timeouts cancel statements) and a full or timed-out admission.
-    * Lock timeouts, serialization failures and every other error are not transient. */
+    * above, a cancelled statement (57014: only statement timeouts cancel statements), a full or timed-out admission, and a
+    * connection the pool could not supply by its deadline, with or without a SQLSTATE (spec §5 deviation B: a pool wait
+    * can end before any login failed). Lock timeouts, serialization failures and every other error are not transient. */
   def job(error: Throwable): Boolean = error match {
+    case JdbcFailure(JdbcTransactionEngine.UnavailableCode, _) => true
     case JdbcFailure(_, sqlState) => sqlState.exists(state => state == StatementCancelled || connection(state))
     case RuntimeFailure(code) => AdmissionBusy.contains(code)
     case _ => false

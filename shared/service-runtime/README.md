@@ -152,7 +152,8 @@ network timeout at `timeout` plus `socketTimeoutMs`; lock and idle-in-transactio
 min(A, `bound`)), each statement's lock wait and execution (transaction-local statement and lock timeouts tightened to
 `bound`) and each network read (Chronicle's transient failure record).
 `JdbcTransient.job(error)` names a job's failures that a later attempt outlives: the `connection` states above, 57014
-(a statement timeout), `admission-full` and `admission-timeout`.
+(a statement timeout), `admission-full`, `admission-timeout` and `connection-unavailable` with or without a SQLSTATE
+(a pool wait can end before any login failed). `DatabaseWait` keeps its own start rules (`connection` states only).
 
 `JdbcFailure` is now a sanitized `SQLException` subtype so synchronous SQLState
 matching remains valid, with the existing `(code, sqlState: Option[String])` API.

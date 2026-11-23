@@ -201,7 +201,8 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
   }
 }
 private[runtime] object JdbcTransactionEngine {
-  private val UnavailableCode = "connection-unavailable"
+  /** A connection the pool could not supply by the acquisition deadline (with the last SQLSTATE seen, if any). */
+  private[runtime] val UnavailableCode = "connection-unavailable"
   private val PoolName = "jdbc"
   /** A pooled connection lives 22.5 to 30 minutes (the pool's variance), then a new login replaces it. */
   val maximumLifetime: FiniteDuration = 30.minutes

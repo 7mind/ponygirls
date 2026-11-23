@@ -252,6 +252,38 @@ final class TransientPublicationTest extends munit.FunSuite {
     }
   }
 
+  test("connection-unavailable without a SQLSTATE (a pool that gets no connection by its deadline) is transient: the failure and a refused record try, then a fenced hold and one refund") {
+    CurrentIndexDatabase.withDatabase { (config,db,archive) =>
+      // The work and its record run on a runtime with no connection yet whose logins take longer than its 1 s budget, so
+      // each borrow ends at the deadline with no login failure recorded; the second record try lets the logins through.
+      val logins=new java.util.concurrent.CountDownLatch(1)
+      val slow=config.copy(databaseLimits=config.databaseLimits.copy(connectTimeout=1.second))
+      val factory=new ponygirls.runtime.JdbcConnectionFactory {
+        def open(url: String,properties: java.util.Properties): java.sql.Connection = { logins.await(30,java.util.concurrent.TimeUnit.SECONDS); java.sql.DriverManager.getConnection(url,properties) }
+      }
+      val stalled=Database.withRuntimes(slow,db.profiles,Database.runtimes(slow,ponygirls.runtime.BlockingJdbcDatabase.withConnectionFactory(_,factory)))
+      try {
+        val stalledArchive=new PostgresArchive(stalled,slow)
+        val failures=new ConcurrentLinkedQueue[Throwable]; val tries=new AtomicInteger(0); val log=new WorkerLog
+        val wrapper=new ForwardingArchive(archive) {
+          override def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] =
+            try stalledArchive.windowWork(c,key) catch { case error: Throwable => failures.add(error); throw error }
+          override def holdTransient(c: Claim,stage: Option[IndexingStage],bound: FiniteDuration): TransientOutcome = {
+            if(tries.incrementAndGet()==2) logins.countDown()
+            try stalledArchive.holdTransient(c,stage,bound) catch { case error: Throwable => failures.add(error); throw error }
+          }
+        }
+        val receipt=archive.ingest("a",Fixtures.snapshot())
+        assert(lane(wrapper,config,log.logger,Worker.Leases.production).once.unsafeRunSync())
+        assertEquals(failures.asScala.toList,List.fill(2)(JdbcFailure("connection-unavailable",None)))
+        val held=job(db,receipt.jobId)
+        assertEquals((held.state,held.attempts,held.error,held.transient,tries.get),("Queued",0,Some(Jobs.transientCode),1,2))
+        assert(held.heldSeconds.exists(_>0),held.toString)
+        assert(log.lines.exists(_.startsWith(s"job held jobId=${receipt.jobId} code=database-transient sqlState=none class=JdbcFailure ")),log.lines.mkString("\n"))
+      } finally { logins.countDown(); stalled.close() }
+    }
+  }
+
   test("record: a claim taken over between tries writes nothing") {
     CurrentIndexDatabase.withDatabase { (config,db,archive) =>
       val log=new WorkerLog; val tries=new AtomicInteger(0)

@@ -369,6 +369,21 @@ cancellation across admission then SQL wait are a REQUIRED item of R-a2 (orchest
   timeout shorter than a statement (not in today's config; prevented for R-a by the network-timeout rule). With the pool,
   (b)/(c) fit the 2-slot margin; Hikari refills in the background.
 
+- **Deviations (orchestrator-accepted, 2026-11-23, RD gate r1; reasoning: reports/robust/RD/gate-core-r1.md advisories).**
+  (A) *Renewal permit.* Chronicle's background partition (12 → B 5) is a background admission of B − 1 = 4, which the
+  publication gate (L = B − 2 = 3) is taken before, plus a 1-permit renewal-only admission over the same pool; short work
+  (claims, checkpoints, failure records, P0, switch) keeps ≥ 1 permit, renewals their own. Budgets < 8 keep SMALL's
+  max − 1 shared + 1 renewal permit, one admission at max = 1. Why: a shared 2-permit reserve can be taken entirely by
+  slow claims; SMALL's renewal isolation stays, and gate holders never reacquire admission (no permit cycle). Limit: the
+  one short-work permit can still be held past `queueTimeout` by a slow claim or a P0 waiting on an earlier staging
+  transaction. Test D7 (RD-WIRE): full gate latched, excess staging queued outside admission, four lanes' short work and
+  renewals progress independently. (B) *`connection-unavailable` is a transient job failure*, with or without a
+  SQLSTATE, in the initial failure and in the failure record's retries (`JdbcTransient.job`). Why: a pool wait can end
+  before the pool records a failed login; else a restart could charge a job or stop its recorder although PostgreSQL
+  recovers within the lease margin. `DatabaseWait`'s start rules and every other SQL classification are unchanged. Test
+  (RD-CORE): TransientPublicationTest "connection-unavailable without a SQLSTATE …" (no-SQLSTATE pool timeouts in the
+  work and a record try, then recovery: fenced hold, one refund).
+
 ## 6. Configuration keys (all optional; existing files keep working; chart unchanged)
 | key | services | default | valid | item |
 |---|---|---|---|---|
