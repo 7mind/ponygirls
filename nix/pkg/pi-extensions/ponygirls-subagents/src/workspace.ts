@@ -39,6 +39,7 @@ export interface WorktreeAllocation {
    * the backends): present for pooled allocations, absent otherwise.
    */
   poolRoot?: string | null;
+  stagingId?: string;
 }
 
 /** A git checkout as found from a working directory. */
@@ -66,12 +67,15 @@ export interface WorkspaceDiff {
   truncated: boolean;
 }
 
+export interface WriterDestination { checkoutPath: string; commonDir: string; worktreePath: string; baseCommit: string }
+export type BeforeWorktreeAdd = (destination: WriterDestination) => void;
+
 export interface WorkspaceManager {
   readonly backend: string;
   /** The checkout containing `dir`, or null when it is not in a git checkout with a commit. */
   describeCheckout(dir: string): CheckoutInfo | null;
-  allocateWriter(repoId: string, checkoutPath: string, baseCommit: string, destDir: string): WorktreeAllocation;
-  releaseAllocation(allocation: WorktreeAllocation, opts?: { prune?: boolean }): void;
+  allocateWriter(repoId: string, checkoutPath: string, baseCommit: string, destDir: string, stagingId?: string, beforeAdd?: BeforeWorktreeAdd): WorktreeAllocation;
+  releaseAllocation(allocation: WorktreeAllocation, opts?: { prune?: boolean; exact?: boolean }): void;
   workspaceStatus(allocation: WorktreeAllocation): { dirty: boolean; changedFiles: string[] };
   diff(allocation: WorktreeAllocation, maxBytes: number): WorkspaceDiff;
 }
@@ -130,6 +134,24 @@ function worktreeGit(worktreePath: string, gitDir: string, args: string[]): { ok
   return runGit(["--git-dir", gitDir, "--work-tree", worktreePath, ...args], worktreePath);
 }
 
+const STAGING_REASON = "ponygirls-subagents pending ";
+
+export function stagingReason(agentId: string): string {
+  return `${STAGING_REASON}${agentId}`;
+}
+
+export function worktreeClaim(gitDir: string): string | null {
+  let fd: number;
+  try { fd = openSync(join(gitDir, "locked"), constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+  try {
+    if (!fstatSync(fd).isFile()) throw err("WORKSPACE_UNAVAILABLE", "Worktree lock is not a regular file");
+    const bytes = Buffer.alloc(256), n = readSync(fd, bytes, 0, bytes.length, 0);
+    const reason = bytes.toString("utf8", 0, n).trimEnd();
+    return reason.startsWith(STAGING_REASON) ? reason : null;
+  } finally { closeSync(fd); }
+}
+
 export class GitWorkspaceManager implements WorkspaceManager {
   readonly backend = "git-worktree";
 
@@ -142,7 +164,7 @@ export class GitWorkspaceManager implements WorkspaceManager {
     return { workTree, gitDir, head: head.out };
   }
 
-  allocateWriter(repoId: string, checkoutPath: string, baseCommit: string, destDir: string): WorktreeAllocation {
+  allocateWriter(repoId: string, checkoutPath: string, baseCommit: string, destDir: string, stagingId?: string, beforeAdd?: BeforeWorktreeAdd): WorktreeAllocation {
     if (!existsSync(join(checkoutPath, ".git")) && !existsSync(checkoutPath)) {
       throw err("WORKSPACE_UNAVAILABLE", `checkout missing: ${checkoutPath}`);
     }
@@ -153,38 +175,41 @@ export class GitWorkspaceManager implements WorkspaceManager {
     const baseDirty = status.ok && status.out.length > 0;
     mkdirSync(destDir, { recursive: true });
     const worktreePath = join(destDir, encodeWorktreeLeaf(repoId, resolved.slice(0, 12), Date.now()));
-    const add = git(checkoutPath, ["worktree", "add", "--detach", worktreePath, resolved]);
+    const commonDir = git(checkoutPath, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    if (!commonDir.ok) throw err("WORKSPACE_UNAVAILABLE", commonDir.message);
+    beforeAdd?.({ checkoutPath, commonDir: commonDir.out, worktreePath, baseCommit: resolved });
+    const add = git(checkoutPath, ["worktree", "add", ...(stagingId ? ["--lock", "--reason", stagingReason(stagingId)] : []), "--detach", worktreePath, resolved]);
     if (!add.ok) {
       // Roll back only artifacts created by this startup.
-      rmSync(worktreePath, { recursive: true, force: true });
+      if (!beforeAdd) rmSync(worktreePath, { recursive: true, force: true });
       throw err("WORKSPACE_UNAVAILABLE", `worktree creation failed: ${add.message}`);
     }
     // Record the git dir now, before any agent can rewrite the .git file.
-    const commonDir = git(checkoutPath, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
     const pointer = /^gitdir: (.+)$/m.exec(readFileSync(join(worktreePath, ".git"), "utf8"));
     const gitDir = pointer?.[1]?.trim() ?? "";
-    if (!commonDir.ok || !isAbsolute(gitDir) || relative(commonDir.out, gitDir).startsWith("..")) {
-      git(checkoutPath, ["worktree", "remove", "--force", worktreePath]);
+    if (!isAbsolute(gitDir) || relative(commonDir.out, gitDir).startsWith("..")) {
+      git(checkoutPath, ["worktree", "remove", "--force", ...(stagingId ? ["--force"] : []), worktreePath]);
       rmSync(worktreePath, { recursive: true, force: true });
       throw err("WORKSPACE_UNAVAILABLE", `cannot determine the git dir of ${worktreePath}`);
     }
-    return { repoId, checkoutPath, worktreePath, gitDir, baseCommit: resolved, baseDirty };
+    return { repoId, checkoutPath, worktreePath, gitDir, baseCommit: resolved, baseDirty, ...(stagingId ? { stagingId } : {}) };
   }
 
-  releaseAllocation(allocation: WorktreeAllocation, opts?: { prune?: boolean }): void {
+  releaseAllocation(allocation: WorktreeAllocation, opts?: { prune?: boolean; exact?: boolean }): void {
     if (!opts?.prune) return; // Retained files need an explicit user action.
     const st = this.workspaceStatus(allocation);
     if (st.dirty) {
       throw err("CONFLICT", "refusing to prune a dirty worktree without explicit user action");
     }
-    const rm = git(allocation.checkoutPath, ["worktree", "remove", "--force", allocation.worktreePath]);
+    if (allocation.stagingId && worktreeClaim(allocation.gitDir) !== stagingReason(allocation.stagingId)) throw err("CONFLICT", `Pending worktree claim changed: ${allocation.worktreePath}`);
+    const rm = git(allocation.checkoutPath, ["worktree", "remove", "--force", ...(allocation.stagingId ? ["--force"] : []), allocation.worktreePath]);
     if (!rm.ok) throw err("WORKSPACE_UNAVAILABLE", `worktree remove failed: ${rm.message}`);
-    git(allocation.checkoutPath, ["worktree", "prune"]);
+    if (!opts.exact) git(allocation.checkoutPath, ["worktree", "prune"]);
   }
 
   workspaceStatus(allocation: WorktreeAllocation): { dirty: boolean; changedFiles: string[] } {
     if (!existsSync(allocation.worktreePath)) throw err("NOT_FOUND", `workspace missing: ${allocation.worktreePath}`);
-    const status = worktreeGit(allocation.worktreePath, allocation.gitDir, ["status", "--porcelain=v1", "-z", "--no-renames"]);
+    const status = worktreeGit(allocation.worktreePath, allocation.gitDir, ["status", "--porcelain=v1", "-z", "--no-renames", ...(allocation.stagingId ? ["--ignored", "--untracked-files=all", "--ignore-submodules=none"] : [])]);
     if (!status.ok) throw err("WORKSPACE_UNAVAILABLE", status.message);
     const changedFiles = parsePorcelainZ(status.out).map((e) => e.path);
     return { dirty: changedFiles.length > 0, changedFiles };
@@ -270,7 +295,7 @@ export class DummyWorkspaceManager implements WorkspaceManager {
     return this.checkout;
   }
 
-  allocateWriter(repoId: string, checkoutPath: string, baseCommit: string, destDir: string): WorktreeAllocation {
+  allocateWriter(repoId: string, checkoutPath: string, baseCommit: string, destDir: string, stagingId?: string): WorktreeAllocation {
     if (this.failAllocate) throw err("WORKSPACE_UNAVAILABLE", "dummy allocation failure");
     // Same physical naming contract as the git backend (single safe leaf),
     // so derivation and retention behave identically on both. The dummy
@@ -284,7 +309,7 @@ export class DummyWorkspaceManager implements WorkspaceManager {
       // rows carry provable identity (backlink + birth). Unpinned ("HEAD")
       // bases stay unpinned, exactly as the git backend records them.
       mkdirSync(destDir, { recursive: true });
-      const add = spawnSync("git", ["-C", this.gitRepoDir, "worktree", "add", "--detach", worktreePath, baseCommit], { encoding: "utf8" });
+      const add = spawnSync("git", ["-C", this.gitRepoDir, "worktree", "add", ...(stagingId ? ["--lock", "--reason", stagingReason(stagingId)] : []), "--detach", worktreePath, baseCommit], { encoding: "utf8" });
       if (add.status !== 0) throw err("WORKSPACE_UNAVAILABLE", `dummy real-backing worktree add failed: ${add.stderr}`);
       const dotGit = readFileSync(join(worktreePath, ".git"), "utf8");
       const pointer = /^gitdir: (.+)$/m.exec(dotGit);
@@ -296,6 +321,7 @@ export class DummyWorkspaceManager implements WorkspaceManager {
         gitDir: pointer[1].trim(),
         baseCommit,
         baseDirty: false,
+        ...(stagingId ? { stagingId } : {}),
       };
       this.allocations.push(allocation);
       return allocation;
@@ -305,18 +331,20 @@ export class DummyWorkspaceManager implements WorkspaceManager {
       checkoutPath,
       worktreePath: join(destDir, leaf),
       gitDir: join(destDir, `${leaf}.git`),
+      ...(stagingId ? { stagingId } : {}),
       baseCommit,
       baseDirty: false,
     };
     mkdirSync(allocation.worktreePath, { recursive: true });
     mkdirSync(allocation.gitDir, { recursive: true });
+    if (stagingId) writeFileSync(join(allocation.gitDir, "locked"), stagingReason(stagingId));
     writeFileSync(join(allocation.worktreePath, ".git"), `gitdir: ${allocation.gitDir}\n`);
     writeFileSync(join(allocation.gitDir, "gitdir"), `${realpathSync(allocation.worktreePath)}/.git\n`);
     this.allocations.push(allocation);
     return allocation;
   }
 
-  releaseAllocation(allocation: WorktreeAllocation, opts?: { prune?: boolean }): void {
+  releaseAllocation(allocation: WorktreeAllocation, opts?: { prune?: boolean; exact?: boolean }): void {
     if (!opts?.prune) return;
     rmSync(allocation.worktreePath, { recursive: true, force: true });
   }

@@ -58,6 +58,7 @@ buildNpmPackage (finalAttrs: {
   # is PR #10614 applied on top of the border-widgets patch; drop when a
   # released pi version includes it.
   patches = [
+    ./patches/context-file-names.patch
     ./patches/oauth-refresh-on-401.patch
     ./patches/captured-terminal-output.patch
     ./patches/surface-settings-write-errors.patch

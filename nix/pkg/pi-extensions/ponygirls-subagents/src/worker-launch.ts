@@ -57,6 +57,7 @@ export interface ToolRequest {
  * untyped catchall: external blocks carry the parent tool's actual content.
  */
 export interface ToolResponse {
+  instructionRevision?: number;
   content: string | Array<Record<string, unknown>>;
   isError: boolean;
   details?: unknown;
@@ -483,7 +484,7 @@ export class WorkerHandle {
       operation: "provider.admission",
       taskRunId: env.taskRunId,
       executionGeneration: env.executionGeneration,
-      payload: { ok: result.ok, ...(result.code !== undefined ? { code: result.code } : {}), ...(result.error !== undefined ? { error: result.error } : {}), ...(result.ok && result.auth !== undefined ? { auth: result.auth } : {}) },
+      payload: { ok: result.ok, ...(result.code !== undefined ? { code: result.code } : {}), ...(result.error !== undefined ? { error: result.error } : {}), ...(result.ok && result.auth !== undefined ? { auth: result.auth } : {}), ...(result.ok && result.nestedFiles !== undefined ? { nestedFiles: result.nestedFiles } : {}) },
     };
     this.send(response);
   }
@@ -503,6 +504,7 @@ export class WorkerHandle {
       payload: {
         ok: !result.isError,
         content: result.content,
+        ...(result.instructionRevision !== undefined ? { instructionRevision: result.instructionRevision } : {}),
         ...(result.details !== undefined ? { details: result.details } : {}),
         ...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
         ...(result.usage !== undefined ? { usage: result.usage } : {}),

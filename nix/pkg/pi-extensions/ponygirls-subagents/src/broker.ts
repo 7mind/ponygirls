@@ -12,11 +12,17 @@
  * between effect and confirmation stays `uncertain` — never replayed.
  */
 
+import { readFileSync, realpathSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { PROJECT_CONTEXT_FILE_NAMES } from "@earendil-works/pi-coding-agent";
+import { MAX_INSTRUCTION_BYTES, parseInstructionSet } from "./instructions.ts";
+import type { ContextFile } from "./types.ts";
 import { randomUUID } from "node:crypto";
 import { err } from "./errors.ts";
 import { resolveExe } from "./sandbox.ts";
-import { authorizeTool } from "./policy.ts";
+import { authorizeTool, pathWithin } from "./policy.ts";
 import { TOOL_SCRIPTS, bashTimeoutMs, validateToolArgs } from "./tools.ts";
+import { directoryIdentity, type AccessDirectory } from "../../context-rules/rules.ts";
 import type { SandboxView, ToolExecutor, ToolJobResult, ToolJobSpec } from "./sandbox.ts";
 import type { RunStore } from "./store.ts";
 import type { AgentId, GrantSet, OperationId } from "./types.ts";
@@ -97,6 +103,13 @@ export class ToolBroker {
    * (manifest rewind on reopen). Entry paths fail closed via the store.
    */
   private disposed = false;
+  private readonly instructionJobs = new Map<string, { job: OwnedJob; cancel: () => Promise<void> }>();
+
+  async cancelInstructionJobs(agentId?: AgentId): Promise<void> {
+    const jobs = [...this.instructionJobs.values()].filter(({ job }) => agentId === undefined || job.agentId === agentId);
+    const outcomes = await Promise.allSettled(jobs.map(({ cancel }) => cancel()));
+    for (const outcome of outcomes) if (outcome.status === "rejected") throw outcome.reason;
+  }
 
   /** Retire journal ownership: late detached writes are fenced from here on. */
   dispose(): void {
@@ -136,7 +149,7 @@ export class ToolBroker {
 
   /** Active (unfinished) owned jobs for an agent. */
   activeJobs(agentId: AgentId): OwnedJob[] {
-    return [...this.jobs.values()].filter((j) => j.agentId === agentId && !j.done);
+    return [...this.jobs.values(), ...[...this.instructionJobs.values()].map(entry => entry.job)].filter(j => j.agentId === agentId && !j.done);
   }
 
   /**
@@ -176,8 +189,9 @@ export class ToolBroker {
   /** Cancel owned tool jobs (best effort) and mark them done-uncertain. */
   async cancelJobs(agentId: AgentId): Promise<string[]> {
     this.flushReceipts();
-    const active = this.activeJobs(agentId);
+    const active = [...this.jobs.values()].filter(j => j.agentId === agentId && !j.done);
     const failures: unknown[] = [];
+    const lookups = this.cancelInstructionJobs(agentId).catch((error: unknown) => { failures.push(error); });
     // Own the entire batch before awaiting: cancelling the first backend
     // can settle any of these jobs. None may publish ordinary success.
     for (const job of active) job.done = true;
@@ -206,6 +220,7 @@ export class ToolBroker {
     }
     // Persistence is not a prerequisite for stopping the remaining jobs.
     // Preserve the original error/code rather than reporting clean cleanup.
+    await lookups;
     if (failures.length > 0) throw failures[0];
     return active.map((j) => j.operationId);
   }
@@ -284,7 +299,7 @@ export class ToolBroker {
     }
   }
 
-  async execute(caller: BrokerCaller, request: ToolRequest): Promise<ToolJobResult> {
+  async execute(caller: BrokerCaller, request: ToolRequest, trackAccess = false): Promise<ToolJobResult> {
     this.flushReceipts();
     // Fail-closed authority: a retained commit fault means the journal may
     // be unable to record this effect — refuse the new admission visibly
@@ -370,7 +385,7 @@ export class ToolBroker {
     signal?.addEventListener("abort", onAbort, { once: true });
 
     try {
-      const result = await this.runTool(caller, operationId, request.tool, args);
+      const result = await this.runTool(caller, operationId, request.tool, args, trackAccess);
       // A cancelled job's outcome was recorded at cancellation; its partial
       // effects stay uncertain whatever the killed process reported. The
       // exit code is forced non-success: a cooperative backend reporting 0
@@ -400,7 +415,56 @@ export class ToolBroker {
     }
   }
 
-  private async runTool(caller: BrokerCaller, operationId: string, tool: string, args: Record<string, unknown>): Promise<ToolJobResult> {
+  async instructionFiles(caller: Pick<BrokerCaller, "agentId" | "sandbox" | "writableRoot" | "workdir">, root: string | null, names: string[], access: AccessDirectory | null, known: string[], signal?: AbortSignal): Promise<ContextFile[]> {
+    signal?.throwIfAborted();
+    if (this.disposed) throw err("NOT_RUNNING", "Instruction lookup cannot start after shutdown");
+    const script = readFileSync(new URL("../../context-rules/instruction-reader.cjs", import.meta.url), "utf8");
+    const checkoutAncestors = [];
+    if (root !== null && caller.sandbox) {
+      const top = realpathSync.native(root), cwd = realpathSync.native(caller.workdir);
+      if (!pathWithin(cwd, top)) throw err("WORKSPACE_UNAVAILABLE", "Instruction checkout does not contain the allocated cwd");
+      const roots = [...caller.sandbox.readRoots, ...(caller.sandbox.readOnlyRoots ?? []), caller.sandbox.tmpDir];
+      if (caller.writableRoot) roots.push(caller.writableRoot);
+      const mounts = [...new Set(roots)].flatMap(view => {
+        try { return [{ view, source: realpathSync.native(view) }]; } catch { return []; }
+      });
+      for (let dir = cwd; ; dir = dirname(dir)) {
+        const paths = mounts.filter(m => pathWithin(dir, m.source)).map(m => ({
+          path: join(m.view, relative(m.source, dir)),
+          scope: pathWithin(top, m.source) ? join(m.view, relative(m.source, top)) : m.view,
+        }));
+        checkoutAncestors.push({ identity: directoryIdentity(dir), paths });
+        if (dir === top) break;
+        if (checkoutAncestors.length > 128) throw err("INVALID", "Instruction path too deep");
+      }
+    }
+    const stdin = JSON.stringify({ workdir: caller.workdir, root, checkoutAncestors, names, access, known, limit: MAX_INSTRUCTION_BYTES, ruleNames: PROJECT_CONTEXT_FILE_NAMES });
+    const spec = this.jobSpec(caller.sandbox, caller.writableRoot, randomUUID(), [process.execPath, "--input-type=commonjs", "-e", script], caller.workdir, stdin, TOOL_TIMEOUT_MS);
+    const executor = this.executorFor(spec);
+    if (!executor.cancel) throw err("INVALID", "Instruction lookup requires a cancellable executor");
+    const running = executor.exec(spec);
+    let cancelling: Promise<void> | null = null;
+    const cancel = (): Promise<void> => cancelling ??= (async () => {
+      await executor.cancel!(spec.operationId);
+      await running.catch(() => {});
+    })();
+    const onAbort = () => { void cancel().catch(() => {}); };
+    const job: OwnedJob = { backend: spec.view === null ? "host" : "sandbox", operationId: spec.operationId, agentId: caller.agentId, tool: "AGENTS.md", done: false, startedAt: new Date().toISOString() };
+    this.instructionJobs.set(spec.operationId, { job, cancel });
+    signal?.addEventListener("abort", onAbort, { once: true });
+    let result: ToolJobResult;
+    try {
+      result = await running;
+      if (cancelling !== null) { await cancelling; throw err("NOT_RUNNING", "Instruction lookup cancelled"); }
+    } finally {
+      this.instructionJobs.delete(spec.operationId);
+      signal?.removeEventListener("abort", onAbort);
+    }
+    if (result.exitCode !== 0 || result.timedOut || result.truncated) throw err("INVALID", "Instruction lookup failed: files unavailable, changed or exceed limits");
+    return parseInstructionSet({ contextFiles: JSON.parse(result.stdout), skills: [] }).contextFiles;
+  }
+
+  private async runTool(caller: BrokerCaller, operationId: string, tool: string, args: Record<string, unknown>, trackAccess: boolean): Promise<ToolJobResult> {
     let spec: ToolJobSpec;
     switch (tool) {
       case "read":
@@ -421,6 +485,7 @@ export class ToolBroker {
       default:
         throw err("POLICY_DENIED", `no implementation for tool ${tool}`);
     }
+    if (trackAccess && tool !== "bash") { spec.trackAccess = true; spec.argv.push("track-access"); }
     return this.executorFor(spec).exec(spec);
   }
 
