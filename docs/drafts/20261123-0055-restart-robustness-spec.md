@@ -116,9 +116,58 @@ Chronicle before the graph for `serve`, `serve-standby`, `migrate`). No defect f
 - **With R-d.** The probe connection exists only before the pool is created: never concurrent with pooled connections.
 
 ## 4. R-a — publication after a database restart
+
+**SMALL amendment (2026-11-23 ≈05:30Z; unit RA-S; orchestrator ORCH-REPLY-0430Z and its acceptance of the record
+tries, lead addition ≈04:40Z).** R-a ships in two parts. **SMALL** (with R-c and R-b) contains exactly:
+- migration 029 + `down-029` (below); the transient class `JdbcTransient.job` (57014, class 08, 57P01/02/03, 53300,
+  `RuntimeFailure` `admission-timeout`/`admission-full`) plus the **leftover rule** below; refund, holds 1, 2, 4, 8,
+  15 … min, `database-transient` at the 10th consecutive one, the count restarted by committed progress
+  (`transient_range`), a retry or a rebuild; claims skip held jobs (all 23 paths of evidence/claim-paths.md, re-verified
+  in the RA-S report). No reclaim or exhaustion grace: a Running job is claimable once its lease ended and
+  `lease-exhausted` is unchanged (rows 6–8, 11 of claim-paths.md keep today's lease conditions).
+- **Recording:** the hold is written by the failure record's fenced transaction (`holdTransient`, the transient branch of
+  `failAt`: head, `lockJob`, `claimedJob` with a valid lease, all inside the transaction). Refund and hold are one UPDATE
+  that matches only the claim's Running row, so a try after an uncertain commit writes nothing and reports the recorded
+  hold (same fence and run). While the database refuses the record (`JdbcTransient.job`), the worker tries it again every
+  `Worker.FailureBackoff` (2 s) while the attempt's lease has time left as the worker tracks it (its monotonic clock
+  from before the claim or the last successful renewal, + 300 s − 5 s skew margin); then, as today, "job failure not
+  recorded" and the job keeps its lease. Each try re-checks the claim's ownership inside its transaction (a claim
+  reclaimed, retried or superseded meanwhile writes nothing); cancellation (server stop) ends the tries at once; no model
+  call is made or repeated meanwhile (the lane does nothing else). A renewal's transient failure still ends the attempt
+  (today), which is then held by this record.
+- **Leftover rule (55P03).** P3 writers keep today's failure handling: the first failing writer's error is reported while
+  siblings may still run their statements (up to the publication timeout), so the next attempt can meet them. Every
+  staging transaction (P1–P3, `rewritePieces`) takes the job's advisory staging lock (`staging:<job id>`, 64-bit
+  `hashtextextended`) shared as its first statement and holds it to its end; P0 (`stage`) takes it exclusively as its first
+  statement, before any other lock (no job-row or source-row lock held while it waits), under the configured lock
+  timeout. P0 runs before any staging transaction of its attempt, and a later attempt exists only once this claim is
+  stale; so what P0 can wait for is a staging transaction of an EARLIER attempt of the same job still in PostgreSQL (a
+  held attempt's sibling, or a killed process's statement). A lock timeout (55P03) of that statement is
+  `JdbcFailure("leftover-staging", 55P03)`, transient: held, not charged (if the claim went stale meanwhile, the record
+  matches no row). Every other 55P03 — a staging or request statement waiting for any other transaction's lock, e.g. a
+  live writer of another party on the job's staged rows — is charged as today. (If the lock timeout exceeds the
+  statement timeout, P0's wait ends with 57014, also transient.) Not covered: phase W's rare `discardCheckpoints`
+  (embedding batch size changed) meeting a leftover is charged.
+- the publication timeout (staging transactions only, `extendedTransaction`, transaction-local, network timeout = timeout
+  + socket timeout); the control connection (renewals only; 1 of `databaseLimits.maxConnections` ≥ 2; one admission for
+  everything at 1); P3 writers ≤ the ordinary connections; the visible hold, logs, CONTRACT/README/operations docs.
+
+**Deferred to R-a2** (own spec and deterministic interleaving tests, after POOL; starts from branch
+`keep/robust-ra-full`): the reclaim grace (180 s) and exhaustion grace (15 min), the owner deadline, the paid-write
+retry and cutoff (`transactionWithin`, `loginWithin`, the login-helper bound, the watchdog), the classes
+`connection-unavailable`, `login-helpers-full` and `LeaseLost`, a failure record after the lease, drain-then-abort of
+the P3 writers, and the `client_connection_check_interval` tightening. The bullets below marked "R-a2" describe them.
+
+**SMALL's guarantee:** a PostgreSQL restart that ends before the in-flight job's lease ends charges no attempt; longer
+outages charge one attempt through reclaim and can lose one paid model answer; crashed jobs resume as today. Slow
+statements while the database is up (the deploy5/deploy6 cold window: 57014 on P3) are held, not charged, and publish
+once a statement fits the 5-min publication timeout. As today, a model answer whose checkpoint write the outage cuts
+is lost whatever the outage's length (its window's reservation stays charged, at most one per lane; the next attempt
+calls the model again).
 **Decision (D1 confirmed):** transient database failures are not charged to `attempts`; they hold the job with back-off;
 10 consecutive ones end it `database-transient`. Charging cannot meet the rule for jobs with earlier charged attempts.
-- **Transient class** `JdbcTransient.job(error)`: `JdbcFailure` with SQLSTATE 57014 (no code cancels statements:
+- **Transient class** (SMALL: without `connection-unavailable` and `LeaseLost`, with the leftover rule above)
+  `JdbcTransient.job(error)`: `JdbcFailure` with SQLSTATE 57014 (no code cancels statements:
   evidence/grep-session-state.txt), class 08, 57P01/02/03, 53300, or code `connection-unavailable` (R-d, any SQLSTATE incl.
   28000); `RuntimeFailure("admission-timeout"|"admission-full")`; the worker's `LeaseLost` (below). Any stage. Not:
   55P03, 40001/40P01, `DomainError`, model errors (charged as today).
@@ -149,12 +198,12 @@ Chronicle before the graph for `serve`, `serve-standby`, `migrate`). No defect f
   8, 15, 15, 15, 15, 15 min. **Proof:** exhaustion by this rule needs 10 consecutive recorded failures with ≥ delay(k)
   between failure k and k+1 (claims refuse holds), i.e. ≥ Σ_{k=1..9} = 90 min > 15 min; refunds keep `attempts`
   unchanged; the lease path is covered by the grace below. Cold window (≈5 min): failures at 0, ≈1, ≈3 min → publishes ≈7 min.
-- **Claims honour the hold (D2).** Both claim predicates (:346,:352) become `((state='Queued' AND (lease_until IS NULL OR
+- **Claims honour the hold (D2).** (SMALL: without `−reclaimGrace`, i.e. Running when `lease_until<clock_timestamp()`.) Both claim predicates (:346,:352) become `((state='Queued' AND (lease_until IS NULL OR
   lease_until<=clock_timestamp())) OR (state='Running' AND lease_until<clock_timestamp()-reclaimGrace))` (index `ch_jobs_claim`,
   migrations/001.sql:15). All 23 paths that read or write job state/lease are listed with their effect on a held job in
   evidence/claim-paths.md (supersede, retry, defer, rebuild, profile switch, staged sweep, Activity, start sweep): every
   other path either ignores Queued jobs' leases or clears them. The previous binary claims a held job at once (harmless).
-- **One fenced owner deadline (B1, B2, r2 N1).** Per attempt `ownerDeadline = lease end + Jobs.reclaimGrace` (180 s),
+- **R-a2 — One fenced owner deadline (B1, B2, r2 N1).** Per attempt `ownerDeadline = lease end + Jobs.reclaimGrace` (180 s),
   tracked on the worker's monotonic clock from the remaining lease that the claim and `renew` return (DB clock, minus
   a 5 s skew margin). Database side: (i) `claimHead` reclaims an expired Running job (attempts < 5) only when
   `lease_until < clock_timestamp() − reclaimGrace` (:346,:352); (ii) `renew` and the paid writes (the checkpoint of a
@@ -181,7 +230,7 @@ Chronicle before the graph for `serve`, `serve-standby`, `migrate`). No defect f
   a committed one counts on the next read and an uncommitted one is lost. No new model call meanwhile:
   the lane does not advance and every call starts after a database transaction (§1). A transient recording failure is
   retried the same way until `lease end + exhaustionGrace − 60 s`.
-- **Exact residual (owner, DEPLOYMENT.md).** A paid answer is kept iff a fenced write COMMITS before the cutoff;
+- **R-a2 — Exact residual (owner, DEPLOYMENT.md).** A paid answer is kept iff a fenced write COMMITS before the cutoff;
   otherwise it is lost and its reservation stays charged. Renewals succeed every 30 s while the database answers, so for
   an outage starting at t₀, `lease_until ≥ t₀ + 270 s` and `ownerDeadline ≥ t₀ + 445 s`: the retry budget is 150 s after
   the answer, and the answer survives only if one of its tries (every 2 s) commits before that cutoff. Under healthy
@@ -201,7 +250,7 @@ Chronicle before the graph for `serve`, `serve-standby`, `migrate`). No defect f
   `databaseLimits.statementTimeoutMs`..3,600,000, only for `staging` transactions (P1–P3, `rewritePieces`; Database.scala:
   460-467) through `BlockingJdbcDatabase.extendedTransaction(timeout)(f)`: after `configure()`/`setAutoCommit(false)` the
   engine sets `statement_timeout` transaction-locally (P7; deliberately above the role's 30 s) and `setNetworkTimeout(
-  timeout + socketTimeout)` (P11). Lock (35 s) and idle-in-transaction timeouts unchanged. `configure()` also tightens
+  timeout + socketTimeout)` (P11). Lock (35 s) and idle-in-transaction timeouts unchanged. (R-a2:) `configure()` also tightens
   `client_connection_check_interval` to 5 s (P12/P14). P0, switch, retire and request paths keep 30 s.
 - **Purge vs publication (B3): no interlock; known limit, proven by a test.** P18: purge (Auth.scala:369-374) deletes
   chunks/generations of the source; a running P3 statement of the same source holds FK key-share locks
@@ -320,6 +369,10 @@ Chronicle before the graph for `serve`, `serve-standby`, `migrate`). No defect f
   unchanged; defaults apply (rendered `maxConnections` 8 → P 6). Override options are a follow-up.
 
 ## 7. Tests (fail before for the stated reason; real PostgreSQL; no test sleeps: short intervals via configuration or injected clocks, production defaults asserted — AGENTS.md Timing rule)
+SMALL (RA-S) runs A1, A2, A3, A6, A9, A10 and its own cases: control connection (with one-connection mode), 55P03
+leftover vs live writer, the record's tries (refused then taken, claim taken over, lease end, cancellation), down-029.
+A4 and A5 belong to R-a2; A7 (the purge limit stays documented) and A8 (covered by A1's network-timeout check) are not
+run in SMALL.
 | id | where | asserts | fails before because |
 |---|---|---|---|
 | B1 | shared `DatabaseWaitSuite` (new); `startWaitMs` 1000 (smallest accepted) against a healthy database → returns after one attempt, 0 sleeps; 999 rejected (r3 P3) | virtual clock/sleeper: 57P03, 08001, 53300 then real login → returns, wait + ready lines, sleeps never exceed the remaining time, no attempt starts below 100 ms and no driver timeout is 0 (r2 A2); always 57P03 → `database-wait-timeout` exactly at the bound; 28P01, 3D000 → 0 sleeps; real 2 s bound with an authenticated connection whose `SELECT 1` stalls server-side (factory proxy, `pg_sleep`) → ends within bound + 0.3 s; defaults 120 s / 1 s | API absent |
@@ -408,6 +461,9 @@ INVALID):
   3) verify `SELECT count(*) FROM pg_stat_activity WHERE usename='<r>'` = 0, repeating 2–3 until it is (orphaned
   statements end within ~5 s); 4) roll back; 5) `ALTER ROLE <r> LOGIN` only after the verification. POOL is not
   deployable until the paddock inventory of NOLOGIN fencing (lead/owner) is settled.
+- **SMALL residuals:** §4 "SMALL's guarantee"; the purge limit below; with `maxConnections` ≥ 2 one connection serves
+  renewals only (production 12 → 11 for everything else). The paid-answer, `lease-exhausted` and reclaim residuals in
+  the next item belong to R-a2.
 - **Residuals for the owner:** a paid answer is lost (its reservation stays charged) unless a fenced write commits
   within the 150 s retry budget after the answer and before `lease_until + 180 s` (§4 exact residual; the ~3 s margin
   before the cutoff is a healthy-conditions estimate only); purge of a source whose publication is mid-statement fails with `unavailable` until that statement ends

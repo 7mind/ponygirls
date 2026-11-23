@@ -212,6 +212,46 @@ written with its rows before it.
   (and retires the source's other lineage versions: their pins answer `indexed-view-retired`), restartable after an
   interruption. Before an older rollback run it first, then `down-027`, then `down-026`.
 
+## Publication after a database restart (migration 029)
+
+A transient database failure of an indexing job — a statement cut by its timeout (57014), a connection the server lost or
+refused while it starts, stops or is full (class 08, 57P01-03, 53300), a full or timed-out admission — is not charged to
+the job's five attempts, and neither is a lock timeout at the start of a publication while a statement of an earlier
+attempt of the same job still runs in PostgreSQL. The job is **held**: `Queued` with error `database-transient`, its
+failure stage, and `lease_until` = its next attempt, 1, 2, 4, 8, then 15 minutes after its 1st, 2nd, … consecutive such
+failure (no claim takes it before); the 10th in a row fails it `database-transient` (at least 90 minutes after the
+first). An attempt that commits progress — a model answer's checkpoint, a staged publication step, or the search-row
+range the previous attempt stopped in (written alone, first) — starts the count again; any other failure, a retry and a
+rebuild reset it. Every other failure is charged as before.
+
+- **Restarts.** The hold is written by the job's fenced failure record; while the database refuses it, the worker tries
+  again every 2 s until the attempt's lease ends (300 s after its claim or last renewal, less a 5 s margin), each try
+  checking that the claim still holds the job. So a PostgreSQL restart that ends before the in-flight job's lease ends charges no attempt; longer outages charge one attempt through reclaim and can lose one paid model answer; crashed jobs resume as today. As before, a model answer whose
+  checkpoint write a restart cuts is lost (its reservation stays charged, at most one per lane). Stopping the server ends
+  the tries at once; the job keeps its lease, as before.
+- **Logs** (warn, ids and codes only): `job held jobId=… code=database-transient sqlState=<s|none> class=<class>
+  stage=<stage|none> consecutive=<k> nextAttemptAt=<ISO>`; at the limit `job failed … consecutive=10 nextAttemptAt=none`.
+- **Visible state.** Activity and the dashboard show a held job as `Queued`, Lease **Waiting** (title "Next attempt
+  <time>"), reason `Prior: database-transient`; the lease filter value of a held job is `inactive`. `chronicle jobs`
+  shows it Queued with its error. Retry starts it at once.
+- **Publication timeout.** The publication's batches and search-row statements (P1-P3) run under
+  `indexing.publicationStatementTimeoutMs` (server JSON, optional; default 300000, or `databaseLimits.statementTimeoutMs`
+  when that is larger; valid `databaseLimits.statementTimeoutMs`..3600000), set per transaction above the role's
+  setting, with the network timeout following it. Every other transaction keeps `databaseLimits`; lock and
+  idle-in-transaction timeouts are unchanged.
+- **Connections.** With `databaseLimits.maxConnections` of 2 or more one connection is kept for lease renewals, so they
+  never wait behind publication statements or other transactions; a publication's search-row writers use at most the
+  other connections. With 1 everything shares that connection, as before (a long publication statement then delays
+  renewals: not a production budget).
+- **Known limit.** A purge of a source whose publication statement is running waits for it and fails `unavailable`
+  at its own statement timeout (30 s); it succeeds once that statement ends (at most the publication timeout).
+- **Migration 029** (applied by the start) adds `ch_jobs.transient_failures` and `ch_jobs.transient_range`
+  (metadata-only, no rewrite).
+- **Rollback.** The previous release starts on a database migrated to 029: it ignores both columns and claims a held
+  job at once. To drop them, stop the server and run `chronicle/scripts/down-029-transient-failures.sql` (read-only
+  preflight, then `mode=apply` with the confirmation it names): it clears the holds and drops the columns. Before an
+  older rollback run it first, then `down-028`.
+
 ## Models
 
 An annotation model must honor the structured JSON contract in the server README. Source text is untrusted input, never instructions to execute tools. The model chooses semantic chunk boundaries over bounded, numbered source fragments; the server verifies complete, non-overlapping coverage and constructs the original spans itself.

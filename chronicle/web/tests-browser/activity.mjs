@@ -17,6 +17,7 @@ const sourceReads = fixture => fixture.calls.filter(call => [api.Operation_GetSe
 async function poll(page) { await advanceClock(page, ACTIVITY_POLL_INTERVAL_MS); }
 async function expand(page, kind, id) { await button(row(page, kind, id), 'Details').click(); await detail(page, kind, id).waitFor(); return detail(page, kind, id); }
 // The overview's lease/failure fixture of ux.mjs: one current failure, three Running jobs (active, expired, unleased), 58 historical failures, 120 collectors without a report.
+const HELD = '00000000-0000-4000-8000-000000093001', NEXT_ATTEMPT = '2030-01-01T00:05:00Z';
 const CURRENT_FAILED = '00000000-0000-4000-8000-000000090001', runningId = index => `00000000-0000-4000-8000-${String(90002 + index).padStart(12, '0')}`;
 function leaseFixture(fixture) {
   const zero = new api.JobCounts(0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n);
@@ -229,8 +230,11 @@ try {
       leaseFixture(fixture);
       const extra = stages.map((stage, index) => { const job = fixture.jobs[0].with({ id: stageIds[index], state: index === 1 ? api.JobState.Running : api.JobState.Failed, error: `retained-${index}`, failureStage: stage, completedWindows: 2, totalWindows: 3 }); return new api.ActivityJob(job, fixture.targetProfile, api.ActivityJobClass.Current, undefined, false, index !== 1, fixture.source.collectorNamespace, fixture.jobSession(job), '2026-10-24T09:31:00Z'); });
       const queued = fixture.jobs[0].with({ id: '00000000-0000-4000-8000-000000093000', state: api.JobState.Queued, attempts: 0, error: undefined, completedWindows: 0, totalWindows: undefined });
+      // Held after a transient database failure (restart-robustness spec §4): Queued, its lease the next attempt.
+      const held = fixture.jobs[0].with({ id: HELD, state: api.JobState.Queued, attempts: 0, error: 'database-transient', failureStage: api.IndexingFailureStage.Publication, completedWindows: 0, totalWindows: undefined });
       fixture.publishedRevision = fixture.headRevision;
-      fixture.activityJobs = [...fixture.activityJobs, ...extra, new api.ActivityJob(queued, fixture.targetProfile, api.ActivityJobClass.Current, undefined, false, false, fixture.source.collectorNamespace, fixture.jobSession(queued), '2026-10-22T09:31:00Z')];
+      fixture.activityJobs = [...fixture.activityJobs, ...extra, new api.ActivityJob(queued, fixture.targetProfile, api.ActivityJobClass.Current, undefined, false, false, fixture.source.collectorNamespace, fixture.jobSession(queued), '2026-10-22T09:31:00Z'),
+        new api.ActivityJob(held, fixture.targetProfile, api.ActivityJobClass.Current, NEXT_ATTEMPT, false, false, fixture.source.collectorNamespace, fixture.jobSession(held), '2026-10-22T09:32:00Z')];
       scriptJobs(fixture, 'lease:"unleased"', item => item.leaseExpiresAt === undefined && item.classification === api.ActivityJobClass.Current);
     } });
     await idle(page, 'jobs');
@@ -249,6 +253,9 @@ try {
       const text = await (index === 0 ? failure : await expand(page, 'jobs', stageIds[index])).innerText();
       assert.match(text, new RegExp(`${index === 1 ? 'prior-attempt failure stage' : 'failure stage'} ${stage === undefined ? 'unknown \\(not recorded\\)' : stage}`));
     }
+    const heldLease = cell(page, 'jobs', HELD, 'LeaseState');
+    assert.deepEqual([await heldLease.innerText(), await heldLease.getAttribute('title'), await cell(page, 'jobs', HELD, 'Reason').innerText()], ['Waiting', `Next attempt ${NEXT_ATTEMPT}`, 'Prior: database-transient']);
+    assert.match(await (await expand(page, 'jobs', HELD)).innerText(), new RegExp(`Lease\\s+Waiting · next attempt ${NEXT_ATTEMPT}`)); await button(row(page, 'jobs', HELD), 'Details').click();
     const queuedDetail = await expand(page, 'jobs', '00000000-0000-4000-8000-000000093000');
     assert.match(await queuedDetail.innerText(), /0 \/ unknown windows processed · job not Complete at this snapshot/); assert.doesNotMatch(await queuedDetail.innerText(), /not published by this job/i, 'the Activity data cannot attribute publication to this job');
     const running = await expand(page, 'jobs', stageIds[1]); assert.match(await running.innerText(), /2 \/ 3 windows processed · job not Complete at this snapshot/);

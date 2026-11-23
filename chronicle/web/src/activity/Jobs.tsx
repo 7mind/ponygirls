@@ -38,8 +38,10 @@ function classificationLabel(classification: ActivityJobClass): string {
     case ActivityJobClass.SupersededRevisionAndProfile: return 'Both: superseded revision + obsolete profile';
   }
 }
-type Lease = 'Active' | 'Expired' | 'Unleased' | 'Inactive';
-function lease(row: ActivityJob): Lease { return row.leaseExpiresAt === undefined ? 'Unleased' : row.job.state !== JobState.Running ? 'Inactive' : row.leaseActive ? 'Active' : 'Expired'; }
+// A Queued job with a lease waits for its next attempt (a transient database failure's back-off); the lease filter calls it inactive.
+type Lease = 'Active' | 'Expired' | 'Unleased' | 'Inactive' | 'Waiting';
+function lease(row: ActivityJob): Lease { return row.leaseExpiresAt === undefined ? 'Unleased' : row.job.state === JobState.Queued ? 'Waiting' : row.job.state !== JobState.Running ? 'Inactive' : row.leaseActive ? 'Active' : 'Expired'; }
+const waiting = (row: ActivityJob) => row.job.state === JobState.Queued && row.leaseExpiresAt !== undefined;
 function LeaseCell({ row }: { row: ActivityJob }) {
   const value = lease(row), running = row.job.state === JobState.Running;
   return value === 'Active' ? <span className="status status-ok">Active</span> : running ? <span className="status status-warn">{value}</span> : <span className="muted">{value}</span>;
@@ -60,17 +62,18 @@ const columns: readonly Column<ActivityJob, ActivityJobSort>[] = [
   { sort: ActivityJobSort.Revision, label: 'Revision', cell: undefined, width: { min: 72, ideal: 88, max: 120 }, compact: true, medium: true, narrow: false, required: false, title: row => `Current HEAD is r${row.session.revision}`, render: row => `r${row.job.revision}` },
   { sort: ActivityJobSort.Attempts, label: 'Attempts', cell: 'col-num', width: { min: 80, ideal: 92, max: 120 }, compact: true, medium: true, narrow: false, required: false, title: () => undefined, render: row => row.job.attempts.toString() },
   { sort: ActivityJobSort.CompletedWindows, label: 'Windows', cell: undefined, width: { min: 170, ideal: 180, max: 240 }, compact: true, medium: true, narrow: false, required: false, title: row => windowProgress(row.job), render: row => <Progress row={row}/> },
-  { sort: ActivityJobSort.LeaseState, label: 'Lease', cell: undefined, width: { min: 120, ideal: 128, max: 160 }, compact: true, medium: true, narrow: false, required: false, title: row => row.leaseExpiresAt === undefined ? 'No lease expiry' : `Lease expires ${row.leaseExpiresAt}`, render: row => <LeaseCell row={row}/> },
+  { sort: ActivityJobSort.LeaseState, label: 'Lease', cell: undefined, width: { min: 120, ideal: 128, max: 160 }, compact: true, medium: true, narrow: false, required: false, title: row => row.leaseExpiresAt === undefined ? 'No lease expiry' : waiting(row) ? `Next attempt ${row.leaseExpiresAt}` : `Lease expires ${row.leaseExpiresAt}`, render: row => <LeaseCell row={row}/> },
   { sort: ActivityJobSort.Reason, label: 'Reason', cell: undefined, width: { min: 110, ideal: 200, max: 280 }, compact: true, medium: false, narrow: false, required: false, title: row => row.job.error, render: row => row.job.error === undefined ? <span className="muted">—</span> : <span className="activity-reason">{row.job.state !== JobState.Failed && 'Prior: '}{row.job.error}</span> },
   { sort: ActivityJobSort.Collector, label: 'Collector', cell: 'col-mono', width: { min: 120, ideal: 180, max: 480 }, compact: false, medium: false, narrow: false, required: false, title: row => row.collectorId, render: row => row.collectorId },
   { sort: ActivityJobSort.Profile, label: 'Profile', cell: 'col-mono', width: { min: 120, ideal: 180, max: 480 }, compact: false, medium: false, narrow: false, required: false, title: row => row.profile, render: row => row.profile },
   { sort: ActivityJobSort.TotalWindows, label: 'Windows total', cell: 'col-num', width: { min: 112, ideal: 120, max: 160 }, compact: false, medium: false, narrow: false, required: false, title: () => undefined, render: row => row.job.totalWindows === undefined ? 'Unknown' : row.job.totalWindows.toString() },
-  { sort: ActivityJobSort.LeaseExpiresAt, label: 'Lease expiry', cell: undefined, width: { min: 140, ideal: 160, max: 200 }, compact: false, medium: false, narrow: false, required: false, title: row => row.leaseExpiresAt, render: (row, now) => <When value={row.leaseExpiresAt} now={now} relative="none" missing="—"/> },
+  { sort: ActivityJobSort.LeaseExpiresAt, label: 'Lease expiry / next attempt', cell: undefined, width: { min: 140, ideal: 160, max: 200 }, compact: false, medium: false, narrow: false, required: false, title: row => row.leaseExpiresAt, render: (row, now) => <When value={row.leaseExpiresAt} now={now} relative="none" missing="—"/> },
   { sort: ActivityJobSort.Classification, label: 'Classification', cell: undefined, width: { min: 120, ideal: 180, max: 320 }, compact: false, medium: false, narrow: false, required: false, title: row => classificationLabel(row.classification), render: row => classificationLabel(row.classification) },
   { sort: ActivityJobSort.JobId, label: 'Job ID', cell: 'col-mono', width: { min: 120, ideal: 290, max: 320 }, compact: false, medium: false, narrow: false, required: false, title: row => row.job.id, render: row => row.job.id },
   { sort: ActivityJobSort.SessionId, label: 'Source ID', cell: 'col-mono', width: { min: 120, ideal: 290, max: 320 }, compact: false, medium: false, narrow: false, required: false, title: row => row.job.sessionId, render: row => row.job.sessionId },
 ];
 function leaseText(item: ActivityJob): string {
+  if (waiting(item)) return `Waiting · next attempt ${item.leaseExpiresAt}`;
   const label = item.leaseActive ? 'Active lease at snapshot' : item.leaseExpiresAt === undefined ? 'Unleased' : item.job.state === JobState.Running ? 'Expired lease at snapshot' : 'Inactive lease';
   return `${label}${item.leaseExpiresAt === undefined ? item.leaseActive ? ' · expiry unknown' : ' · no lease expiry' : ` · expires ${item.leaseExpiresAt}`}`;
 }
@@ -146,7 +149,7 @@ export function Jobs({ connection, stats, user, actions, refresh, refreshNow }: 
     </div>
     <FilterBar expression={draft} change={setDraft} input={input} fields={fields} presets={presets} metadata={true} trailing={<div className="sortline">
       {chip !== null && <span className="chip chip-accent activity-chip">collector: {chip.collector}<button type="button" className="link-button" aria-label={`Remove collector filter ${chip.collector}`} onClick={() => { setDraft(chip.rest); submit(chip.rest); }}><Icon name="x" small={true}/></button></span>}
-      <MetadataHelp><p>user (opaque owner ID), tag, project, branch, producer, format, model, status, after, before, collector, profile, classification, reason, lease. Metadata and activity dates belong to the job revision. producer is the recorded harness; format is the source format; model is the recorded source model, not the annotator model; profile is the exact index hash. agent:main means no recorded subagent ID; agent:subagent means an ID is present, not title or parent-link inference, cryptographic lineage or legacy backfill. Job states exclude unscheduled. Lease: active / expired / unleased / inactive.</p></MetadataHelp>
+      <MetadataHelp><p>user (opaque owner ID), tag, project, branch, producer, format, model, status, after, before, collector, profile, classification, reason, lease. Metadata and activity dates belong to the job revision. producer is the recorded harness; format is the source format; model is the recorded source model, not the annotator model; profile is the exact index hash. agent:main means no recorded subagent ID; agent:subagent means an ID is present, not title or parent-link inference, cryptographic lineage or legacy backfill. Job states exclude unscheduled. Lease: active / expired / unleased / inactive (inactive includes a queued job waiting for its next attempt).</p></MetadataHelp>
     </div>}/>
     {failed && <div className="page activity-notice"><div className="notice notice-danger" role="alert"><Glyph name="alert"/><div><div className="notice-title">Jobs could not be loaded</div>{resource.error}<div className="notice-actions"><button type="button" className="btn btn-sm" onClick={refreshNow}>Retry</button></div></div></div></div>}
     {resource.updateAvailable && <div className="update-pill"><button type="button" onClick={resource.applyUpdates}><Icon name="arrow-up" small={true}/>Updated jobs · show latest</button></div>}
