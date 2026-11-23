@@ -59,6 +59,21 @@ most `MaxCauses` = 64), the first `BindException` (`address-in-use`, else `bind`
 `internal`. No exception message is printed. `StartFailure.line(service, stage, failure, port)` is the services' one
 stderr line `<service> failure stage=… code=… error=… message="…"`, with ` port=…` only for a bind failure.
 
+`DatabaseWait.await(config, bound, report)` holds a start until PostgreSQL accepts queries: a new connection through
+the engine's own login (same properties, password file read per attempt) runs `SELECT 1`. One monotonic deadline
+`start + bound` caps every phase: an attempt starts only with `minimumAttempt` (100 ms) left, `loginTimeout` is the
+remaining time in milliseconds (at most `connectTimeout`), the whole-second connect/socket timeouts round up to at least
+1 s, the probe's network timeout is the remaining time, and the pause between attempts (`interval`, 1 s) never passes
+the deadline. `JdbcTransient.connection(sqlState)` names the states waited out: class 08, 57P01, 57P02, 57P03, 53300.
+Any other SQLSTATE or a credential-file failure throws at once (`JdbcFailure("database-unavailable", state)`,
+`RuntimeFailure`); at the deadline it throws `JdbcFailure("database-wait-timeout", last waited state)`. `report` gets
+`database-wait code=jdbc-<SQLSTATE>` for the first waited failure and `database-wait ready seconds=<n>` after a wait.
+Each service runs it as its `database-wait` stage before it creates its database runtime and before any other start
+step that uses the database (operator commands such as `check-config` do not wait). Its bound is the optional
+`startWaitMs` beside the required limits (Chronicle `databaseLimits.startWaitMs`, Haystack and Manure
+`database.limits.startWaitMs`): default `DatabaseWait.defaultBound` 120000, accepted 1000..3600000
+(`DatabaseWait.startWait`), anything else is a configuration error.
+
 Migrations are append-only, namespace-scoped, ordered positive versions. The
 per-database ledger `ponygirls_runtime_migrations` records name and SHA256 of exact
 SQL bytes. A transaction advisory lock serializes ledger bootstrap and application;
@@ -110,7 +125,8 @@ configuration, without constructing HTTP, model clients or workers.
 Chronicle config keeps `jdbcUrl`, `databaseUser`, `databasePasswordFile` and requires
 all eight fields under **`databaseLimits`**: `maxConnections`, `maxQueued`,
 `queueTimeoutMs`, `connectTimeoutMs`, `statementTimeoutMs`, `lockTimeoutMs`,
-`idleTransactionTimeoutMs`, `socketTimeoutMs`. No omitted-field fallback. Effective
+`idleTransactionTimeoutMs`, `socketTimeoutMs`. No omitted-field fallback; the start wait `startWaitMs` beside them is
+optional (see `DatabaseWait` above). Effective
 PostgreSQL statement/lock/idle timeouts are the minimum of required policy and any
 stricter existing role/database setting, applied by one fully consumed bound
 `pg_settings` setup query before the caller transaction. This fixed setup is
