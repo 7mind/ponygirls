@@ -169,7 +169,7 @@ for `sandbox` children and sets nesting, model, gate, and capacity limits
   "workspaceOwnerCheckoutAllowed": false,
   "maxRunnable": 16,
   "maxResidentWorkers": 24,
-  "maxOpenAgents": 32
+  "maxOpenAgents": 48
 }
 ```
 
@@ -241,7 +241,7 @@ A sandboxed writer without a registered repository is denied
 the admission scheduler has none.
 
 `maxRunnable` (default 16, at most 64), `maxResidentWorkers` (default 24, at
-most 128), and `maxOpenAgents` (default 32, at most 1024) set the capacity
+most 128), and `maxOpenAgents` (default 48, at most 1024) set the capacity
 limits described under [Capacity recovery](#capacity-recovery-and-retained-models).
 An absent key keeps its default; a value that is not an integer in range
 fails with `INVALID` naming the key. They must satisfy
@@ -294,7 +294,7 @@ grants `mcp__codegraph__codegraph_explore` by default only when the
 the home layout; an absolute path pools writer worktrees per session as
 above; setting it manages the file),
 `...WorkspaceOwnerCheckoutAllowed`, `...MaxRunnable` (default 16),
-`...MaxResidentWorkers` (default 24), `...MaxOpenAgents` (default 32; the
+`...MaxResidentWorkers` (default 24), `...MaxOpenAgents` (default 48; the
 ordering above is asserted at evaluation).
 
 Built-in and declarative `models.json` providers retain live access to the
@@ -479,7 +479,7 @@ the same `capacity`, and `CAPACITY_EXCEEDED` errors name the exhausted limit
 and carry it in their details. The three limits are independent and shared by
 the whole tree:
 
-- **Open identities** (`maxOpenAgents`, default 32) include ordinary agents,
+- **Open identities** (`maxOpenAgents`, default 48) include ordinary agents,
   nested agents, and managed reviewers, even when idle or unloaded. A complete
   main/reviewer panel is reserved atomically. `close_agent` releases each newly
   closed identity's slot after cleanup and durable closure; waiting, eviction,

@@ -350,7 +350,7 @@ let
   });
 
   # Must match DEFAULT_LIMITS in ponygirls-subagents/src/scheduler.ts.
-  subagentsLimitDefaults = { maxRunnable = 16; maxResidentWorkers = 24; maxOpenAgents = 32; };
+  subagentsLimitDefaults = { maxRunnable = 16; maxResidentWorkers = 24; maxOpenAgents = 48; };
 
   # The managed subagents-policy.json is complete, so emit it as soon as any
   # subagents option diverges from the extension defaults; otherwise leave a

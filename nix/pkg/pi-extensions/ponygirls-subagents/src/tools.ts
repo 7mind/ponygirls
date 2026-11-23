@@ -190,7 +190,7 @@ export function childToolSpec<S>(T: TypeBuilder<S>, name: string): ToolSpec<S> {
       return { description: "Read status, a result, all reviewer feedback (view=reviews after task settlement), or bounded events. Status includes model, requestedThinkingLevel, and effective thinkingLevel (unresolved until confirmed). Result/review text is paged with offset and nextOffset.", parameters: readParameters(T) };
     case "spawn_agent":
       return {
-        description: "Delegate a task to a new child agent in your subtree. Returns immediately with its id, task-run id, model, requestedThinkingLevel, and effective thinkingLevel (unresolved until confirmed); use wait_agent to join it. You must wait for (or close) your children before finishing. The default 32-agent cap counts open identities, including nested agents and reviewers; close_agent releases slots. A child is never less isolated than you; it can receive only skills and context files you have.",
+        description: "Delegate a task to a new child agent in your subtree. Returns immediately with its id, task-run id, model, requestedThinkingLevel, and effective thinkingLevel (unresolved until confirmed); use wait_agent to join it. You must wait for (or close) your children before finishing. The default 48-agent cap counts open identities, including nested agents and reviewers; close_agent releases slots. A child is never less isolated than you; it can receive only skills and context files you have.",
         parameters: spawnParameters(T, {}),
       };
     case "interrupt_agent":

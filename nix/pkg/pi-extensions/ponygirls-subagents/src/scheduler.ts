@@ -24,7 +24,7 @@ export interface SchedulerLimits {
 export const DEFAULT_LIMITS: SchedulerLimits = {
   maxRunnable: 16,
   maxResidentWorkers: 24,
-  maxOpenAgents: 32,
+  maxOpenAgents: 48,
 };
 
 /** Current admission use against the effective limits (list_agents, close_agent, CAPACITY_EXCEEDED details). */
