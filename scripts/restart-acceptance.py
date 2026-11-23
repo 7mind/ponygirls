@@ -71,10 +71,10 @@ PROBE_PERIOD_S, POLL_S, SAMPLE_S, RESTART_POLL_S = 1.0, 0.5, 1.0, 0.2
 JOB_POLL_S = 5
 
 # Lines. Chronicle's logger prefixes a line (`W 2026-… (Models.scala:416)  chronicle.Worker.process [thread] `), padding its
-# columns by a varying number of spaces (`07:03:47.864          (Models.scala:454)`), and renders an interpolated value as
+# columns by a varying number of spaces (spaces only: a tab or another separator is not the logger's) (`07:03:47.864          (Models.scala:454)`), and renders an interpolated value as
 # `label=name=value` (`code=code=worker-fault`): LOGGER and N= are those optional parts. OLD_LOGGER is e66d4736's (one space
 # per column gap), kept only for `reparse`.
-LOGGER = r'(?:[A-Z]\s+\S+\s+\(\S+\)\s+\S+\s+\[[^\]]*\]\s+)?'
+LOGGER = r'(?:[A-Z] +\S+ +\(\S+\) +\S+ +\[[^\]]*\] +)?'
 OLD_LOGGER = r'(?:[A-Z] \S+ \(\S+\)\s+\S+ \[[^\]]*\] )?'
 N = r'(?:[A-Za-z_][\w.]*=)?'
 SQLSTATE, CODE = r'[0-9A-Z]{5}', r'(?:jdbc-[0-9A-Z]{5}|[a-z][a-z0-9-]{0,63})'
@@ -1662,8 +1662,16 @@ def interrupted_by(run, offset, sampled, postmaster, mode, after, until):
 
 def strict_holds(service, job_sessions):
     """`job held` lines parsed in full (every field, nextAttemptAt an ISO-8601 instant) for a cohort job: (wall, fields)."""
+    return strict_holds_of([(wall, text) for _, wall, _, text, _ in service.find(HELD)], job_sessions)
+
+
+def strict_holds_of(entries, job_sessions):
+    """strict_holds over (arrival wall time, text) pairs: the one parser of the live run and of `reparse`."""
     found = []
-    for _, wall, _, text, match in service.find(HELD):
+    for wall, text in entries:
+        match = HELD.search(text)
+        if not match:
+            continue
         try:
             datetime.datetime.fromisoformat(match[6])
         except ValueError:
@@ -1997,6 +2005,11 @@ NEAR_MISSES = (  # lines no pattern may take: today's charged failure (the base'
     'code=code=worker-fault exceptionClass=exception_class=ponygirls.runtime.JdbcFailure sqlState=sql_state=57014',
     'W 2026-11-23T07:03:47.864          (Models.scala:454)  chronicle.Worker.holdTransient [1:io-compute-1] job held jobId=claim=316c672d-85c6-4c33-95b3-d55528d8cbf7 '
     'code=code=database-transient sqlState=sql_state=08006 class=error_class=JdbcFailure stage=failure_stage=Publication consecutive=k=1',
+    # tab-delimited, logger-shaped imitations: the logger pads with spaces only
+    'W\t2026-11-23T07:03:47.864\t(Models.scala:454)\tchronicle.Worker.holdTransient\t[1:io-compute-1]\tjob held '
+    'jobId=claim=316c672d-85c6-4c33-95b3-d55528d8cbf7 code=code=database-transient sqlState=sql_state=08006 class=error_class=JdbcFailure '
+    'stage=failure_stage=Publication consecutive=k=1 nextAttemptAt=next=2026-11-23T07:04:47.864Z',
+    'I 2026-11-23T07:03:47.8\t(DatabaseWait.scala:1)  ponygirls.runtime.DatabaseWait [1:io-compute-1] chronicle database-wait code=code=jdbc-57P03',
 )
 
 
@@ -2093,134 +2106,176 @@ def self_check():
 # ---------------------------------------------------------------- reparse (offline, stored logs only)
 
 STORED_LINE = re.compile(r'^\s*(-?\d+\.\d+) (out|err) (.*)$')
-LOGGER_TIME = re.compile(r'^[A-Z]\s+(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?)\s')
 LATE_LABELS = ('every Complete job published through', 'a correlated hold')
-TZ_TOLERANCE_S = 3.0  # startedAt has whole seconds and precedes the run's clock origin by milliseconds
+# The stored per-line seconds count from the run's clock origin t0 (Run.__init__), whose wall time is not stored: report.json's
+# startedAt is the wall second (truncated) taken just before; T0_SLACK_S bounds the gap (generous: it only widens the
+# uncertainty, so more outcomes become UNDETERMINED, none easier).
+T0_SLACK_S = 1.0
+# The patterns each log-derived check reads: (processes, pattern keys). FAILURE, the 53300 substring and the server-log
+# patterns are the same in both parsers and are not listed.
+UNDETERMINED = 'UNDETERMINED'
 
 
 def stored_lines(path):
-    """(seconds since the run's start, stream, text) of a stored per-process log (Service.read's format)."""
+    """(seconds since the run's clock origin, stream, text) of a stored per-process log (Service.read's format)."""
     found = []
     for raw in path.read_text(errors='replace').splitlines():
         match = STORED_LINE.match(raw)
         if match:
-            found.append((float(match[1]), match[2], match[3]))
+            found.append((float(match[1]), match[2], ANSI.sub('', match[3])))
     return found
 
 
-def logger_wall(text):
-    """The wall time Chronicle's logger printed in the line's prefix (local time of the host), or None."""
-    match = LOGGER_TIME.match(text)
-    if not match:
-        return None
-    return datetime.datetime.fromisoformat(match[1]).replace(tzinfo=datetime.UTC).timestamp()
+def check_dependency(label):
+    """(service or None for all three, pattern key, rule) of a check the logger-prefixed patterns feed, else None."""
+    name = label.split(':', 1)[0] if label.split(':', 1)[0] in SERVICES else None
+    if 'database-wait code=' in label and 'exactly one' in label:
+        return name, 'WAIT', 'wait'
+    if name and label.startswith(f'{name}: ready after'):
+        return name, 'READY', 'ready-after'
+    if 'print their ready lines within' in label:
+        return None, 'READY', 'ready-startup'
+    if 'held for' in label or label.startswith('a correlated hold'):
+        return 'chronicle', 'HELD', 'hold'
+    return None
+
+
+def pattern_of(patterns, key, name):
+    return patterns[key][name] if key == 'READY' else patterns[key]
 
 
 def reparse(run_dir):
-    """Re-evaluates a stored run's log-derived checks with e66d4736's patterns (OLD_PATTERNS) and the fixed ones (PATTERNS):
-    every line the old parser skipped that the fixed one takes, and per case whether a log-derived check's outcome and the
-    verdict change. Database data that was not stored is taken from report.json as recorded; nothing is re-queried."""
+    """Re-evaluates a stored run's checks that the logger-prefixed patterns feed, with e66d4736's patterns (OLD_PATTERNS) and
+    the current ones: the lines the two disagree on, and per check: unchanged when both take exactly the same lines of
+    every log the check reads (the live run evaluated that same input), else re-evaluated by the live rule from stored data,
+    else UNDETERMINED (a needed log or correlation datum not stored). Nothing is re-queried."""
     run_dir = Path(run_dir)
     report = json.loads((run_dir / 'report.json').read_text())
     started = datetime.datetime.fromisoformat(report['startedAt']).timestamp()
     out = [f'# reparse of {run_dir}', '', f'set {report["set"]}, rule set {report.get("ruleSet", "not recorded (before r6 naming)")}, '
            f'supplementary {report.get("supplementary")}, verdicts in report.json {report["verdicts"]}', '']
-    changed_verdicts = []
+    changed = []
     for case in report['cases']:
         ident = case['case']
-        logs = {name: stored_lines(run_dir / f'case{ident}-{name}.log') for name in SERVICES if (run_dir / f'case{ident}-{name}.log').exists()}
+        logs = {name: stored_lines(run_dir / f'case{ident}-{name}.log') if (run_dir / f'case{ident}-{name}.log').exists() else None for name in SERVICES}
         out.append(f'## case {ident}: verdict before {case["verdict"]}')
-        skipped = []
+        out.append(f'- process logs missing: {[n for n, lines in logs.items() if lines is None] or "none"}')
+        disagree = {}
         for name, lines in logs.items():
             for key in ('READY', 'WAIT', 'WAIT_READY', 'HELD', 'TERMINAL'):
-                old, new = (OLD_PATTERNS[key][name] if key == 'READY' else OLD_PATTERNS[key]), (PATTERNS[key][name] if key == 'READY' else PATTERNS[key])
-                for t, stream, text in lines:
-                    o, n = bool(old.search(ANSI.sub('', text))), bool(new.search(ANSI.sub('', text)))
-                    if o != n:
-                        skipped.append((name, key, t, stream, text, 'old skipped, fixed takes' if n else 'old takes, fixed skips'))
-        out.append(f'- lines the two parsers disagree on: {len(skipped)}')
-        out += [f'  - {name} {key} t={t:.3f} {stream} ({how}): `{text}`' for name, key, t, stream, text, how in skipped]
-        checks = [dict(c, kind='check') for c in case.get('checks', [])] + [dict(v, kind='late' if v['label'].startswith(LATE_LABELS) else 'mechanics')
-                                                                            for v in case.get('validity', [])]
+                for t, stream, text in lines or ():
+                    old, new = bool(pattern_of(OLD_PATTERNS, key, name).search(text)), bool(pattern_of(PATTERNS, key, name).search(text))
+                    if old != new:
+                        disagree.setdefault((name, key), []).append((t, stream, text, 'old skipped, fixed takes' if new else 'old takes, fixed skips'))
+        out.append(f'- lines the two parsers disagree on: {sum(len(v) for v in disagree.values())}')
+        out += [f'  - {name} {key} t={t:.3f} {stream} ({how}): `{text}`' for (name, key), items in disagree.items() for t, stream, text, how in items]
         evaluated = []
-        for check in checks:
-            after, how = check['ok'], 'not log-derived (SQL, probes, processes or the cluster): as recorded'
-            label = check['label']
-            name = label.split(':', 1)[0]
-            if 'database-wait code=' in label and 'exactly one' in label and name in logs:
-                code = label.split('code=')[1].split('`')[0]
-                for parser, patterns in (('old', OLD_PATTERNS), ('fixed', PATTERNS)):
-                    waits = [text for _, _, text in logs[name] if patterns['WAIT'].search(ANSI.sub('', text))]
-                    result = len(waits) == 1 and patterns['WAIT'].search(ANSI.sub('', waits[0]))[2] == code
-                    how = f'WAIT over {name}\'s output: old {len([1 for _, _, x in logs[name] if OLD_PATTERNS["WAIT"].search(ANSI.sub("", x))])}, ' \
-                          f'fixed {len([1 for _, _, x in logs[name] if PATTERNS["WAIT"].search(ANSI.sub("", x))])} line(s)'
-                    if parser == 'fixed':
-                        after = result
-            elif label.startswith(f'{name}: ready after') and name in logs:
-                first = {parser: next((t for t, _, text in logs[name] if patterns['READY'][name].search(ANSI.sub('', text))), None)
-                         for parser, patterns in (('old', OLD_PATTERNS), ('fixed', PATTERNS))}
-                shift = None if None in first.values() else first['fixed'] - first['old']
-                after = check['ok'] if shift == 0 or (first['old'] is None and first['fixed'] is None) else None
-                how = f'first READY line t: old {first["old"]}, fixed {first["fixed"]}' + ('' if after is not None else ' — the bounds need re-judging (UNDETERMINED)')
-            elif 'ready lines within' in label:
-                missing = [n for n, lines in logs.items() if not any(PATTERNS['READY'][n].search(ANSI.sub('', x)) for _, _, x in lines)]
-                old_missing = [n for n, lines in logs.items() if not any(OLD_PATTERNS['READY'][n].search(ANSI.sub('', x)) for _, _, x in lines)]
-                after = check['ok'] or not missing and None
-                how = f'READY over each process: old missing {old_missing}, fixed missing {missing}' + ('' if after is not None else ' (timing UNDETERMINED)')
-            elif 'stage=database-wait' in label or 'exactly one failure line' in label:
-                how = 'FAILURE (raw R-c line, no logger prefix): pattern unchanged'
-            elif label.startswith('no 53300'):
-                how = 'substring 53300 in the services\' output and the server log: pattern unchanged'
-            elif 'held for' in label and 'chronicle' in logs:
-                after, how = held_again(case, check, logs['chronicle'], started)
-            evaluated.append((check, after, how))
+        for check in [dict(c, kind='check') for c in case.get('checks', [])] + [dict(v, kind='late' if v['label'].startswith(LATE_LABELS) else 'mechanics')
+                                                                                 for v in case.get('validity', [])]:
+            dependency = check_dependency(check['label'])
+            if dependency is None:
+                evaluated.append((check, check['ok'], 'not fed by a logger-prefixed pattern (SQL, probes, processes, the cluster, raw R-c lines, '
+                                                      'the 53300 substring or the server log): as recorded'))
+                continue
+            name, key, rule = dependency
+            names = [name] if name else list(SERVICES)
+            if any(logs[n] is None for n in names):
+                evaluated.append((check, UNDETERMINED, f'needed process log(s) missing: {[n for n in names if logs[n] is None]}'))
+            elif not any((n, key) in disagree for n in names):
+                evaluated.append((check, check['ok'], f'{key} takes exactly the same lines of {names} under both parsers: the live input, unchanged'))
+            else:
+                after, how = reevaluate(rule, check, case, logs, names, key, started)
+                evaluated.append((check, after, how))
         for check, after, how in evaluated:
             if after != check['ok']:
                 out.append(f'- **outcome changes** ({check["kind"]}): {check["label"]}: {check["ok"]} -> {after} ({how})')
-        log_derived = [(check, after, how) for check, after, how in evaluated if not how.startswith('not log-derived')]
-        out += [f'- log-derived ({check["kind"]}): {check["label"]}: before {check["ok"]}, after {after} — {how}' for check, after, how in log_derived]
+        out += [f'- fed by a logger-prefixed pattern ({check["kind"]}): {check["label"]}: before {check["ok"]}, after {after} — {how}'
+                for check, after, how in evaluated if not how.startswith('not fed')]
         verdict = reverdict(case, evaluated, report['set'])
-        out.append(f'- verdict before {case["verdict"]}, after {verdict}')
-        out.append('')
+        out += [f'- verdict before {case["verdict"]}, after {verdict}', '']
         if verdict != case['verdict']:
-            changed_verdicts.append((ident, case['verdict'], verdict))
-    head = (f'VERDICT CHANGE: {", ".join(f"case {i}: {b} -> {a}" for i, b, a in changed_verdicts)}' if changed_verdicts
-            else 'No verdict changes with the fixed parser.')
+            changed.append((ident, case['verdict'], verdict))
+    head = (f'VERDICT CHANGE: {", ".join(f"case {i}: {b} -> {a}" for i, b, a in changed)}' if changed else 'No verdict changes with the fixed parser.')
     print('\n'.join([head, ''] + out), flush=True)
     return 0
 
 
-def held_again(case, check, lines, started):
-    """3a/3b's hold checks with the fixed HELD: the required jobs (as report.json recorded them) against the holds the fixed
-    parser takes, stage Publication and the case's SQLSTATE, inside the case's window by the hold's own logger timestamp
-    (local time; checked against the run's start within TZ_TOLERANCE_S)."""
-    detail, measured = check['detail'], case.get('measurements', {})
-    required = set(detail.get('inScope') or detail.get('cancelledJobs') or [])
-    holds = []
-    for t, _, text in lines:
-        match = HELD.search(ANSI.sub('', text))
-        if match:
-            holds.append(dict(t=t, wall=logger_wall(ANSI.sub('', text)), jobId=match[1], sqlState=match[2], stage=match[4]))
-    offsets = [h['wall'] - (started + h['t']) for h in holds if h['wall'] is not None]
-    if offsets and max(abs(o) for o in offsets) > TZ_TOLERANCE_S:
-        return None, f'the logger timestamps differ from the run\'s clock by up to {max(offsets, key=abs):.1f} s: UNDETERMINED'
-    if 'inScope' in detail:
-        restart = measured.get('restart', {})
-        start, ready = restart.get('shutdownMarker'), restart.get('readyMarker')
-        if start is None or ready is None:
-            return None, 'restart markers not recorded: UNDETERMINED'
-        held = {h['jobId'] for h in holds if h['stage'] == 'Publication' and RESTART_SQLSTATE.match(h['sqlState']) and start - 0.5 <= h['wall'] <= ready + CORRELATE_S}
-        return bool(required) and required <= held, (f'fixed HELD: {len(holds)} line(s); in the window [shutdown request − 0.5 s, readiness + {CORRELATE_S} s] by '
-                                                    f'the logger timestamp (0.5 s: the logger stamps emission, the script stamped arrival): '
-                                                    f'{sorted(held)}; required (report.json inScope) {sorted(required)}')
-    if check['ok']:
-        return True, f'presence check passed with the old parser; the fixed parser takes {len(holds)} hold line(s), a superset: stays True'
-    return None, 'the cancellation times per job (sessions to jobs) were not stored: UNDETERMINED'
+def first_t(lines, pattern):
+    return next((t for t, _, text in lines if pattern.search(text)), None)
+
+
+def reevaluate(rule, check, case, logs, names, key, started):
+    """A check whose input the parsers disagree on, by the live rule from stored data, or UNDETERMINED."""
+    detail = check['detail'] if isinstance(check['detail'], dict) else {}
+    if rule == 'wait':
+        name = names[0]
+        code = check['label'].split('code=')[1].split('`')[0]
+        waits = [text for _, _, text in logs[name] if WAIT.search(text)]
+        return len(waits) == 1 and WAIT.search(waits[0])[2] == code, f'WAIT over {name}\'s output takes {len(waits)} line(s)'
+    if rule == 'ready-after':
+        name = names[0]
+        old, new = first_t(logs[name], OLD_PATTERNS['READY'][name]), first_t(logs[name], READY[name])
+        recorded = [detail.get(k) for k in ('readyAfterPgStartSeconds', 'readyAfterPromoteSeconds') if detail.get(k) is not None]
+        accepting = [detail.get(k) for k in ('readyAfterAcceptingSeconds', 'readyAfterRecoveryEndSeconds') if detail.get(k) is not None]
+        if old is None or new is None or not recorded or not accepting:
+            return UNDETERMINED, f'first READY t old {old}, fixed {new}; the bounds need the recorded offsets of the old first line: not all stored'
+        shift, bound = new - old, READY_AFTER_PG_S if 'readyAfterPgStartSeconds' in detail else READY_AFTER_PROMOTE_S
+        # Both offsets were taken from the old first line on the same clock; the fixed first line moves them by `shift`
+        # (the stored seconds are rounded to 1 ms, the recorded offsets to 10 ms or 1 ms: a margin below that is UNDETERMINED).
+        after_start, after_accepting = recorded[0] + shift, accepting[0] + shift
+        if abs(after_accepting) < 0.011 or abs(after_start - bound) < 0.011:
+            return UNDETERMINED, f'shifted by {shift:.3f} s the readiness is within rounding of a bound'
+        return after_accepting > 0 and after_start <= bound, f'first READY line moves by {shift:.3f} s'
+    if rule == 'ready-startup':
+        seconds = detail if all(isinstance(detail.get(n), (int, float)) for n in names) else None
+        if seconds is None:
+            return UNDETERMINED, 'the recorded start-to-ready seconds are not stored for every process'
+        moved = {}
+        for name in names:
+            old, new = first_t(logs[name], OLD_PATTERNS['READY'][name]), first_t(logs[name], READY[name])
+            if old is None or new is None:
+                return UNDETERMINED, f'{name}: first READY t old {old}, fixed {new}'
+            moved[name] = seconds[name] + new - old
+        return all(value <= START_READY_S for value in moved.values()), f'start-to-ready seconds with the fixed first lines: {moved}'
+    if rule == 'hold':
+        return held_again(check, case, logs['chronicle'], started)
+    return UNDETERMINED, f'no offline rule for {rule}'
+
+
+def held_again(check, case, lines, started):
+    """Case 3b's hold check by the live rule: strict_holds() over the stored Chronicle lines (the same parser, nextAttemptAt
+    validated), the required jobs as report.json recorded them (inScope), stage Publication, a RESTART_SQLSTATE, arrival
+    inside [shutdown request, readiness + CORRELATE_S]. A line's arrival wall time is known only within [startedAt + t,
+    startedAt + 1 + T0_SLACK_S + t] (t0's wall time is not stored): a line straddling a bound is UNDETERMINED. The 3a and
+    case-3 holds need the cancellation times per job (sessions to jobs), which were not stored: UNDETERMINED."""
+    detail = check['detail'] if isinstance(check['detail'], dict) else {}
+    if 'inScope' not in detail:
+        return UNDETERMINED, 'the cancellation times per job (the sessions-to-jobs map) were not stored'
+    restart = case.get('measurements', {}).get('restart', {})
+    start, ready = restart.get('shutdownMarker'), restart.get('readyMarker')
+    if start is None or ready is None:
+        return UNDETERMINED, 'restart markers not recorded'
+    required = set(detail['inScope'])
+    holds = strict_holds_of([((started + t, started + 1 + T0_SLACK_S + t), text) for t, _, text in lines], {job: None for job in required})
+    inside, unsure = set(), []
+    for hold in holds:
+        if hold['stage'] != 'Publication' or not RESTART_SQLSTATE.match(hold['sqlState']):
+            continue
+        low, high = hold['wall']
+        if start <= low and high <= ready + CORRELATE_S:
+            inside.add(hold['jobId'])
+        elif high >= start and low <= ready + CORRELATE_S:
+            unsure.append(hold['jobId'])
+    if required <= inside:
+        return bool(required), f'strict_holds over the stored lines: in-scope jobs held inside the window {sorted(inside)} of {sorted(required)}'
+    if unsure:
+        return UNDETERMINED, f'holds of {sorted(unsure)} straddle a window bound within the stored clock uncertainty'
+    return False, f'in-scope jobs held inside the window: {sorted(inside)} of {sorted(required)}'
 
 
 def reverdict(case, evaluated, set_name):
-    if any(after is None for _, after, _ in evaluated):
-        return 'UNDETERMINED'
+    if any(after == UNDETERMINED for _, after, _ in evaluated):
+        return UNDETERMINED
     mechanics = [after for check, after, _ in evaluated if check['kind'] == 'mechanics']
     checks = [after for check, after, _ in evaluated if check['kind'] == 'check']
     late = [after for check, after, _ in evaluated if check['kind'] == 'late']
