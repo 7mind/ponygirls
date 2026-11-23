@@ -43,7 +43,7 @@ final class PoolWiringTest extends munit.FunSuite {
     running
   }
 
-  test("D7 production sizing: the publication gate full and a staging transaction queued outside admission, four lanes' claims, renewals and transient failure records complete; renewals also with every shared permit held") {
+  test("D7 production sizing: the publication gate full and a staging transaction queued outside admission, four lanes' claims, renewals and transient failure records complete; a claim's renewal also with every shared permit held") {
     CurrentIndexDatabase.withDatabase { (fixture,fixtureDb,archive) =>
       // maxConnections 12, keys omitted: R 5, B 5 = a background admission of 4 + the renewal permit, the gate L 3.
       val config=fixture.copy(databaseLimits=fixture.databaseLimits.copy(maxConnections=12))
@@ -97,12 +97,15 @@ final class PoolWiringTest extends munit.FunSuite {
             assertEquals(row,Some(("Queued",0,Jobs.transientCode,"Annotation",1)))
           }
           assert(!entered.get && holders.forall(!_.isDone),"the gate stayed full; the queued staging transaction never ran")
-          // Every shared permit held (the fourth by a slow claim): short work times out, a renewal is served.
+          // Every shared permit held (the fourth by a slow claim, after a lane claimed a job on it): short work times out,
+          // the lane's renewal of its claim is served on the renewal permit.
+          archive.ingest("b",Fixtures.snapshot())
+          val claimed=background.claim(background.knownProfiles,ClaimScope.Owner("b"),300,LargeJobs.Admitted).getOrElse(fail("a claim"))
           val slow=new CountDownLatch(1)
           val claimHolder=latched(executor,slow,1)(f => db.background.transaction(f))
           try {
             assertEquals(intercept[RuntimeFailure](db.background.boundedTransaction(200.millis)(_ => ())).code,"admission-timeout")
-            assertEquals(db.control(c => Sql.one(c,"SELECT 1")(_.getInt(1))),Some(1))
+            assert(background.renew(claimed,300),"renewed while every shared permit is held")
           } finally slow.countDown()
           claimHolder.foreach(_.get(10,TimeUnit.SECONDS))
         } finally { release.countDown(); executor.shutdown() }
