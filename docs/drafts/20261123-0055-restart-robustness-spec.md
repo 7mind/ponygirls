@@ -164,6 +164,8 @@ statements while the database is up (the deploy5/deploy6 cold window: 57014 on P
 once a statement fits the 5-min publication timeout. As today, a model answer whose checkpoint write the outage cuts
 is lost whatever the outage's length (its window's reservation stays charged, at most one per lane; the next attempt
 calls the model again).
+
+**Full R-a design** (SMALL above is the part that ships first; the R-a2 parts are marked).
 **Decision (D1 confirmed):** transient database failures are not charged to `attempts`; they hold the job with back-off;
 10 consecutive ones end it `database-transient`. Charging cannot meet the rule for jobs with earlier charged attempts.
 - **Transient class** (SMALL: without `connection-unavailable` and `LeaseLost`, with the leftover rule above)
