@@ -163,7 +163,7 @@ def main():
                     raise TimeoutError('owned native server readiness')
                 time.sleep(.1)
 
-            def call(label, args, user='alice', expected=0, document=None, token_file=None):
+            def call(label, args, user='alice', expected=0, document=None, token_file=None, diagnostic=None):
                 assert process.poll() is None, 'owned native process exited'
                 selected = dict(env, CHRONICLE_STATE_DIR=str(root / (user + '-state')),
                                 CHRONICLE_TOKEN_FILE=str(token_files[user] if token_file is None else token_file))
@@ -178,6 +178,7 @@ def main():
                     assert result.stderr == '', f'{label}: success diagnostics'
                     return json.loads(result.stdout)
                 assert result.stdout == '', f'{label}: failure polluted stdout'
+                assert diagnostic is None or diagnostic in result.stderr, f'{label}: expected diagnostic missing; {result.stderr}'
                 return None
 
             def rpc(label, name, body, user='alice', expected=0, extra=None):
@@ -242,6 +243,18 @@ def main():
             retried = call('confirmed empty failed retry', ['retry-failed', 'apply', '--target-profile', failed_plan['targetProfile'], '--selection-hash', failed_plan['selectionHash'], '--yes'])['RetryFailed']['result']
             recovered_retry = call('retry receipt lookup binds its historical request', ['receipt', retried['requestId']])['RetryFailed']['result']
             assert recovered_retry == retried
+            operator_file = root / 'operator-token'
+            operator = call('account token mint with OperateJobs', ['tokens', 'mint', '--name', 'acceptance-operator', '--scopes', 'Read,OperateJobs', '--secret-out', str(operator_file), '--yes'])
+            assert operator['token']['scopes'] == ['Read', 'OperateJobs']
+            listed = call('token lists the owner\'s jobs', ['jobs', '--auth', 'bearer'], token_file=operator_file)['ActivityJobs']['result']
+            assert [j['job']['id'] for j in listed['jobs']] == [job_id]
+            call('token retries one job', ['jobs', 'retry', job_id, '--auth', 'bearer', '--yes'], token_file=operator_file)
+            token_preview = call('token previews retry failed', ['retry-failed', 'preview', '--auth', 'bearer'], token_file=operator_file)
+            assert token_preview['selection'] == dict(jobs='0', windowsToAnnotate='unknown')
+            token_plan = token_preview['RetryFailedPreview']['result']
+            call('token applies retry failed', ['retry-failed', 'apply', '--target-profile', token_plan['targetProfile'], '--selection-hash', token_plan['selectionHash'], '--auth', 'bearer', '--yes'], token_file=operator_file)
+            call('token without OperateJobs refused job operations', ['jobs', '--auth', 'bearer'], expected=3,
+                 diagnostic='The token lacks the OperateJobs scope (with Read) needed for jobs, jobs retry and retry-failed')
             plan = call('owner reindex preview', ['reindex', 'preview'])['OwnerReindexPreview']['result']
             rebuilt = call('confirmed owner reindex apply', ['reindex', 'apply', '--target-profile', plan['targetProfile'], '--selection-hash', plan['selectionHash'], '--yes'])['OwnerReindexed']['result']
             recovered_reindex = call('owner reindex receipt lookup binds its historical request', ['receipt', rebuilt['requestId']])['OwnerReindexed']['result']

@@ -9,8 +9,9 @@ export function accountUser(value: unknown): Session['user'] {
   if (!/^[\x21-\x7e]+$/.test(value['actor'] as string)) throw new CliError('protocol-error', 'Invalid account owner binding.');
   return value as unknown as Session['user'];
 }
+/** OperateJobs is the account-plane scope of job operations for tokens; like Raw it requires Read. */
 function accountScopes(value: unknown): void {
-  if (!Array.isArray(value) || value.length === 0 || new Set(value).size !== value.length || value.some(v => !['Ingest', 'Read', 'Raw'].includes(v as string)) || (value.includes('Raw') && !value.includes('Read'))) throw new CliError('protocol-error', 'Invalid account scopes.');
+  if (!Array.isArray(value) || value.length === 0 || new Set(value).size !== value.length || value.some(v => !['Ingest', 'Read', 'Raw', 'OperateJobs'].includes(v as string)) || ((value.includes('Raw') || value.includes('OperateJobs')) && !value.includes('Read'))) throw new CliError('protocol-error', 'Invalid account scopes.');
 }
 function accountToken(value: unknown): void {
   if (!isObject(value) || Object.keys(value).sort().join(',') !== 'createdAt,id,name,revoked,scopes,source' || typeof value['id'] !== 'string' || typeof value['name'] !== 'string' || !['configured', 'issued'].includes(value['source'] as string) || typeof value['revoked'] !== 'boolean' || !(value['createdAt'] === null || typeof value['createdAt'] === 'string')) throw new CliError('protocol-error', 'Invalid account token metadata.');

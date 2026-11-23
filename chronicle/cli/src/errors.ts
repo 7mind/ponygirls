@@ -62,6 +62,12 @@ export function remoteFailure(code: unknown, failure: ServerFailure | null = nul
   if (typeof code === 'string' && Object.hasOwn(failures, code)) return new RemoteError(code as ErrorCode, failures[code]! + shown, remoteCode);
   return new RemoteError('unavailable', 'The service returned an unrecognized error.' + shown, remoteCode);
 }
+/** A recognized remote failure that settles a mutation's outcome (not applied, or applied and stored as this failure). */
+export function definiteFailure(code: string): boolean { return Object.hasOwn(failures, code) && code !== 'unavailable'; }
+/** A job operation of a token whose outcome is unknown: its request ID reads the stored outcome again (CONTRACT.md). */
+export function jobUncertain(requestId: string): CliError {
+  return new CliError('uncertain', `Outcome unknown: run the same command with --request-id ${requestId} to read the stored outcome; it is never applied twice.`);
+}
 export function uncertain(requestId: string | null): CliError {
   return new CliError('uncertain', requestId === null
     ? 'Mutation acknowledgement lost. Inspect account token/session state before another action; do not automatically retry.'

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ClientEnvelope } from '../../generated/typescript/chronicle/api/ClientEnvelope.js';
 import { Operation_Hello, Operation_Pong, Operation_StartMcpTest, Operation_CancelMcpTest, Operation_ReadMcpTest, type Operation } from '../../generated/typescript/chronicle/api/Operation.js';
 import { Result_Error, Result_Hello, Result_Ping, Result_McpTestRun, type Result } from '../../generated/typescript/chronicle/api/Result.js';
-import { CliError, RemoteError, remoteFailure, uncertain, type ServerFailure } from './errors.js';
+import { CliError, definiteFailure, jobUncertain, RemoteError, remoteFailure, uncertain, type ServerFailure } from './errors.js';
 import { MAX_BYTES, type Session } from './files.js';
 import { isObject, parseJson, type Json } from './json.js';
 import { decodeWire, encodeWire, schema, sameUuid, validateResponse } from './wire.js';
@@ -42,8 +42,18 @@ function answerDispatcher(): WebSocketDispatcher {
 }
 export interface HttpReply { data: Json; headers: Headers }
 /** `secrets`: what the body carries that shown server text must mask (a login password); the credential of `auth` always is.
-  * `missingRoute`: the error of a 404 without a `Failure` body, the answer of a server that does not have the route. */
-export interface RequestOptions { readonly responseBytes?: number; readonly secrets?: readonly string[]; readonly missingRoute?: CliError }
+  * `missingRoute`: the error of a 404 without a `Failure` body, the answer of a server that does not have the route.
+  * `pinnedRefusal`: the error of a 403 whose `Failure` is exactly the job route's refusal of a token without OperateJobs. */
+export interface RequestOptions { readonly responseBytes?: number; readonly secrets?: readonly string[]; readonly missingRoute?: CliError; readonly pinnedRefusal?: CliError }
+/** Job operations for tokens (CONTRACT.md "Job operations for tokens"). */
+export const JOBS_PATH = '/api/jobs/v1';
+const ACCOUNT_PATH = '/api/account/v1';
+/** Sent with every account request: the answers then name every account scope, OperateJobs included. */
+const ACCOUNT_SCOPES_HEADER = 'X-Account-Scopes';
+/** On a job-route preview of Retry failed: the windows its selection still has to annotate (`unknown` or a count). */
+const WINDOWS_TO_ANNOTATE_HEADER = 'X-Chronicle-Windows-To-Annotate';
+const UNKNOWN_WINDOWS = 'unknown';
+const PINNED_REFUSAL = { code: 'forbidden', message: 'browser session required' };
 export const JSON_CONTENT_TYPE = /^application\/json(?:\s*;|$)/i;
 function isFailure(contentType: string, bytes: Uint8Array): boolean {
   if (!JSON_CONTENT_TYPE.test(contentType)) return false;
@@ -57,17 +67,20 @@ const ACCOUNT_FAULT_CODES = new Set(['invalid', 'unauthorized', 'forbidden', 'no
 export function httpFault(path: string, data: Json, status: number): HttpFault {
   const invalid = (): never => { throw new CliError('protocol-error', 'HTTP failure does not match the current route-specific fault protocol.'); };
   let code: string; let message: string;
-  if (path === '/api/account/v1' || path.startsWith('/api/account/v1/')) {
+  const jobs = path === JOBS_PATH;
+  if (path === ACCOUNT_PATH || path.startsWith(`${ACCOUNT_PATH}/`)) {
     if (!isObject(data) || Object.keys(data).join(',') !== 'error') return invalid();
     const failure = data['error'];
     if (!isObject(failure) || Object.keys(failure).sort().join(',') !== 'code,message' || typeof failure['code'] !== 'string' || typeof failure['message'] !== 'string' || !ACCOUNT_FAULT_CODES.has(failure['code'])) return invalid();
     code = failure['code']; message = failure['message'];
   } else {
     try { ({ code, message } = decodeWire('Failure', data)); } catch { return invalid(); }
-    if (code === 'rate-limited') return invalid();
+    if (code === 'rate-limited' && !jobs) return invalid();
   }
-  if (!Object.hasOwn(HTTP_FAULT_STATUSES, code) || !HTTP_FAULT_STATUSES[code]!.includes(status)) return invalid();
-  return { code, message, definitive: code !== 'unavailable' && code !== 'rate-limited' };
+  // The job route's spent budget is a 429 that settles the request: nothing ran.
+  const statuses = jobs && code === 'rate-limited' ? [429] : Object.hasOwn(HTTP_FAULT_STATUSES, code) ? HTTP_FAULT_STATUSES[code]! : [];
+  if (!statuses.includes(status)) return invalid();
+  return { code, message, definitive: code !== 'unavailable' && (code !== 'rate-limited' || jobs) };
 }
 export class Http {
   constructor(readonly origin: string, private readonly deadline: Deadline) {}
@@ -77,6 +90,7 @@ export class Http {
     const headers: Record<string, string> = { 'Accept': 'application/json, text/event-stream', 'Origin': this.origin };
     if (method === 'POST') headers['Content-Type'] = 'application/json';
     if (auth !== null) { if ('token' in auth) { headers['Authorization'] = `Bearer ${auth.token}`; headers['MCP-Protocol-Version'] = '2025-11-25'; } else { headers['Cookie'] = `chronicle_session=${auth.session.cookie}`; if (auth.actor) headers['X-Account-Actor'] = auth.session.actor; } }
+    if (path === ACCOUNT_PATH || path.startsWith(`${ACCOUNT_PATH}/`)) headers[ACCOUNT_SCOPES_HEADER] = 'all';
     let sent = false;
     try {
       const text = method === 'POST' ? JSON.stringify(body) : undefined;
@@ -93,17 +107,52 @@ export class Http {
       if (options.missingRoute !== undefined && response.status === 404 && !isFailure(contentType, bytes)) throw options.missingRoute;
       if (!JSON_CONTENT_TYPE.test(contentType)) throw new CliError('protocol-error', 'Expected a JSON response.');
       const data = parseJson(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-      if (!response.ok) { const failure = httpFault(path, data, response.status); if (mutation && !failure.definitive) throw uncertain(null); throw remoteFailure(failure.code, { message: failure.message, secrets }); }
+      if (!response.ok) {
+        const failure = httpFault(path, data, response.status);
+        if (options.pinnedRefusal !== undefined && response.status === 403 && isObject(data) && Object.keys(data).sort().join(',') === 'code,message' && failure.code === PINNED_REFUSAL.code && failure.message === PINNED_REFUSAL.message) throw options.pinnedRefusal;
+        if (mutation && !failure.definitive) throw uncertain(null);
+        if (failure.code === 'rate-limited' && path === JOBS_PATH) { const seconds = response.headers.get('retry-after'); throw new RemoteError('unavailable', `Job operation limit reached; retry after ${seconds !== null && /^\d{1,9}$/.test(seconds) ? `${seconds} s` : 'the limit window'}.`, failure.code); }
+        throw remoteFailure(failure.code, { message: failure.message, secrets });
+      }
       return { data, headers: response.headers };
     } catch (error) {
       // Only validated route/status rejections are definitive; a fault-shaped body
       // or an availability failure does not establish that a mutation rolled back.
-      if (error instanceof RemoteError) throw error;
+      if (error instanceof RemoteError || (options.missingRoute !== undefined && error === options.missingRoute)) throw error;
       if (sent && mutation) throw uncertain(null);
       if (error instanceof CliError) throw error;
       if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) throw new CliError('deadline', 'Command deadline exceeded.');
       throw new CliError('unavailable', 'Transport failed; no credential or remote diagnostic was printed.');
     }
+  }
+}
+/** A job operation's result; `windowsToAnnotate` is the preview's statement of the windows its selection still has to annotate. */
+export interface JobAnswer { readonly result: Result; readonly windowsToAnnotate: string }
+/** One job operation of a token with OperateJobs (`POST /api/jobs/v1`, generated envelopes). A server without the route, a
+  * refused token, a spent budget and a correlated failure the CLI recognizes are definitive; any other answer to a mutation
+  * after sending leaves its outcome unknown, recoverable with the same request ID. */
+export async function jobOperation(http: Http, token: string, operation: Operation, requestId: string, mutation: boolean): Promise<JobAnswer> {
+  const missingRoute = new CliError('version-mismatch', 'This server predates job operations for tokens; use --auth session or upgrade the server.');
+  const pinnedRefusal = new RemoteError('forbidden', 'The token lacks the OperateJobs scope (with Read) needed for jobs, jobs retry and retry-failed: give it in Settings or mint one with --scopes Read,OperateJobs, or use --auth session.', 'forbidden');
+  let reply: HttpReply;
+  try { reply = await http.request(JOBS_PATH, 'POST', encodeWire('ClientEnvelope', new ClientEnvelope(requestId, operation)), { token }, mutation, { missingRoute, pinnedRefusal }); }
+  catch (error) { if (error instanceof CliError && error.code === 'uncertain') throw jobUncertain(requestId); throw error; }
+  try {
+    const envelope = decodeWire('ServerEnvelope', reply.data); const result = envelope.result;
+    if (!sameUuid(envelope.requestId, requestId)) throw new CliError('protocol-error', 'Uncorrelated job operation reply.');
+    if (result instanceof Result_Error) {
+      if (mutation && !definiteFailure(result.failure.code)) throw new CliError('protocol-error', 'Unrecognized job operation failure.');
+      throw remoteFailure(result.failure.code, { message: result.failure.message, secrets: [token] });
+    }
+    validateResponse(operation, result, requestId);
+    const windows = reply.headers.get(WINDOWS_TO_ANNOTATE_HEADER) ?? UNKNOWN_WINDOWS;
+    if (windows !== UNKNOWN_WINDOWS && !/^\d{1,18}$/.test(windows)) throw new CliError('protocol-error', 'Invalid count of windows to annotate.');
+    return { result, windowsToAnnotate: windows };
+  } catch (error) {
+    if (error instanceof RemoteError) throw error;
+    if (mutation) throw jobUncertain(requestId);
+    if (error instanceof CliError && error.code === 'protocol-error') throw error;
+    throw new CliError('protocol-error', 'Server response does not match the current application protocol.');
   }
 }
 export async function websocket(origin: string, session: Session, operation: Operation, requestId: string, mutation: boolean, deadline: Deadline): Promise<Result> {

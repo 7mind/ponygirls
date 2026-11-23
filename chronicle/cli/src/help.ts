@@ -14,6 +14,7 @@ function command(path: string, arguments_: string, description: string, options:
   return { path, usage: `chronicle ${path}${arguments_ === '' ? '' : ` ${arguments_}`}`, description, options, minimum, maximum, kind, notes, example };
 }
 const SESSION = 'Human session only. Use chronicle login first.';
+const JOBS = 'Human session by default; --auth bearer uses a token with the OperateJobs scope (with Read).';
 const PIN = 'Copy revision and generationId from the cited ContentView; no silent HEAD repinning.';
 const ID = '11111111-1111-4111-8111-111111111111';
 const COMMANDS: readonly CommandSpec[] = [
@@ -23,7 +24,7 @@ const COMMANDS: readonly CommandSpec[] = [
   ...['settings', 'session-status'].map(path => command(path, '', 'Show the current human owner and account token metadata.', [], 1, 1, 'direct', SESSION, `chronicle ${path}`)),
   command('tokens', 'SUBCOMMAND', 'Manage independent account tokens.', [], 1, 1, 'group', 'Subcommands: list, mint, revoke. Run chronicle tokens SUBCOMMAND --help.', 'chronicle tokens list'),
   command('tokens list', '', 'List account token metadata, never secrets.', [], 2, 2, 'direct', SESSION, 'chronicle tokens list'),
-  command('tokens mint', '--name NAME --scopes Read,Raw --secret-out NEW_PATH --yes', 'Issue a token, saving its one-time secret only to a new private file.', ['name', 'scopes'], 2, 2, 'direct', `${SESSION} Distinct Ingest,Read,Raw scopes; Raw requires Read.`, 'chronicle tokens mint --name reader --scopes Read --secret-out /private/new-token --yes'),
+  command('tokens mint', '--name NAME --scopes Read,Raw --secret-out NEW_PATH --yes', 'Issue a token, saving its one-time secret only to a new private file.', ['name', 'scopes'], 2, 2, 'direct', `${SESSION} Distinct Ingest,Read,Raw,OperateJobs scopes; Raw and OperateJobs require Read.`, 'chronicle tokens mint --name reader --scopes Read --secret-out /private/new-token --yes'),
   command('tokens revoke', 'TOKEN_UUID --yes', 'Revoke an issued account token.', [], 3, 3, 'direct', SESSION, `chronicle tokens revoke ${ID} --yes`),
   command('whoami', '', 'Show the identity of the selected credential.', [], 1, 1, 'operation', 'Auto uses a configured bearer token, otherwise the independent human session.', 'chronicle whoami'),
   command('search', "'TEXT'", 'Search indexed sessions; hybrid is the default mode.', ['mode', ...FILTER, ...PAGE], 2, 2, 'operation', 'Without --mode, hybrid is sent; if the embedding service fails, one lexical retry runs with a stderr notice. An explicit --mode is never substituted. Counts retain ExactMatches/CandidateWindow and ranking limits.', "chronicle search 'deployment failure' --limit 20 --json"),
@@ -40,14 +41,14 @@ const COMMANDS: readonly CommandSpec[] = [
   command('facets', '', 'Show facets for explicit search filters.', FILTER, 1, 1, 'operation', 'Repeat --tag for multiple tags.', 'chronicle facets --project example'),
   command('tags', "'QUERY'", 'Search the bearer tag catalog.', [...CURSOR, ...FILTER], 2, 2, 'direct', "Bearer only (auto selects bearer). --cursor is the exact last tag, including ''.", "chronicle tags '' --limit 100"),
   command('activity', "['EXPRESSION']", 'Read collector activity using the expression language.', [...CURSOR, 'sort', 'ascending'], 1, 2, 'operation', `${SESSION} Sorting defaults to CollectorId.`, "chronicle activity '' --limit 20"),
-  command('jobs', "['EXPRESSION']", 'Read collection jobs using the expression language.', [...CURSOR, 'sort', 'ascending', 'scope', 'collector'], 1, 2, 'operation', `${SESSION} --scope Current|Historical|All. Mutation: jobs retry JOB_UUID --yes.`, "chronicle jobs '' --scope Current --limit 20"),
-  command('jobs retry', 'JOB_UUID --yes', 'Deliberately retry the selected job.', [], 3, 3, 'operation', SESSION, `chronicle jobs retry ${ID} --yes`),
+  command('jobs', "['EXPRESSION']", 'Read collection jobs using the expression language.', [...CURSOR, 'sort', 'ascending', 'scope', 'collector'], 1, 2, 'operation', `${JOBS} --scope Current|Historical|All. Mutation: jobs retry JOB_UUID --yes.`, "chronicle jobs '' --scope Current --limit 20"),
+  command('jobs retry', 'JOB_UUID --yes', 'Deliberately retry the selected job.', [], 3, 3, 'operation', JOBS, `chronicle jobs retry ${ID} --yes`),
   ...['usage', 'collectors'].map(path => command(path, '', path === 'usage' ? 'Show model usage.' : 'Show collection status.', [], 1, 1, 'operation', SESSION, `chronicle ${path}`)),
   command('progress', '', 'Read a page of ingestion progress.', PAGE, 1, 1, 'operation', 'Auto uses a configured bearer token, otherwise the independent human session.', 'chronicle progress --offset 0 --limit 20'),
   ...['reindex', 'retry-failed'].flatMap(path => [
-    command(path, 'SUBCOMMAND', 'Review an exact owner-wide selection before applying it.', [], 1, 1, 'group', `Subcommands: preview, apply${path === 'reindex' ? ', status' : ''}. All require a human session.`, `chronicle ${path} preview`),
-    command(`${path} preview`, '', 'Preview the exact target profile and selection hash.', [], 2, 2, 'operation', SESSION, `chronicle ${path} preview --json`),
-    command(`${path} apply`, '--target-profile PROFILE --selection-hash HASH --yes', 'Apply a previously reviewed exact selection.', ['target-profile', 'selection-hash'], 2, 2, 'operation', `${SESSION} No automatic preview/apply or mutation retry.`, `chronicle ${path} apply --target-profile PROFILE --selection-hash HASH --yes`),
+    command(path, 'SUBCOMMAND', 'Review an exact owner-wide selection before applying it.', [], 1, 1, 'group', `Subcommands: preview, apply${path === 'reindex' ? ', status' : ''}. ${path === 'reindex' ? 'All require a human session.' : JOBS}`, `chronicle ${path} preview`),
+    command(`${path} preview`, '', 'Preview the exact target profile and selection hash.', [], 2, 2, 'operation', path === 'reindex' ? SESSION : `${JOBS} With --auth bearer the answer adds selection: jobs (to retry) and windowsToAnnotate (unknown: the server does not count them).`, `chronicle ${path} preview --json`),
+    command(`${path} apply`, '--target-profile PROFILE --selection-hash HASH --yes', 'Apply a previously reviewed exact selection.', ['target-profile', 'selection-hash'], 2, 2, 'operation', `${path === 'reindex' ? SESSION : JOBS} No automatic preview/apply or mutation retry.`, `chronicle ${path} apply --target-profile PROFILE --selection-hash HASH --yes`),
   ]),
   command('reindex status', 'REQUEST_UUID', 'Inspect an existing reindex request.', [], 3, 3, 'operation', SESSION, `chronicle reindex status ${ID}`),
   command('receipt', 'REQUEST_UUID', 'Recover durable WS mutation metadata after uncertainty.', [], 2, 2, 'operation', `${SESSION} Token secrets are not recoverable; never blindly replay.`, `chronicle receipt ${ID} --json`),
@@ -92,7 +93,7 @@ Authentication (independent credentials; no conversion or fallback):
   login --login NAME (--password-file PATH | --password-stdin)
   logout --yes                  Revoke this independent human session
   session-status | settings     Check cookie owner and account token metadata
-  tokens list | mint --name NAME --scopes Read,Raw --secret-out PATH --yes
+  tokens list | mint --name NAME --scopes Read,Raw[,OperateJobs] --secret-out PATH --yes
   tokens revoke TOKEN_UUID --yes
   --auth auto                   Default: configured bearer for supported reads; else session
   --auth session | bearer       Explicit credential family; no fallback on failure
@@ -115,9 +116,10 @@ Discovery and retrieval:
   related UUID | facets         Facets/search filters: --project --branch --after --before --tag
   tags 'QUERY' [--cursor TAG]   Bearer MCP tag catalog (auto selects bearer)
 
-Activity and management (session only except progress):
+Activity and management (session only except progress and the job operations):
   activity ['EXPRESSION'] | jobs ['EXPRESSION'] [--cursor CURSOR --limit N]
   jobs retry JOB_UUID --yes
+      jobs, jobs retry, retry-failed: also --auth bearer with an OperateJobs token
   usage | collectors | progress [--offset N --limit N]
   reindex preview | retry-failed preview
   reindex apply | retry-failed apply --target-profile P --selection-hash H --yes
@@ -143,7 +145,7 @@ Global options:
   --allow-insecure-http         Explicit trusted private-network HTTP opt-in (plaintext secrets!)
   --timeout-ms N                Whole command deadline, 100..900000 (default 30000);
                                 raw --output: each request (manifest, every 64 MiB range)
-  --request-id UUID             Deliberate WS receipt identity; never auto replayed
+  --request-id UUID             Deliberate WS or job-operation receipt identity; never auto replayed
   --secret-out PATH             New 0600 file in a private 0700 directory, never stdout
   --color auto|always|never     Auto: TTY human output only; honours NO_COLOR / TERM=dumb
   --json | --help               JSON is always plain; help is local, with no credentials

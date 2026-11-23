@@ -7,7 +7,7 @@ import { bearer, checkSecretDestination, exclusiveSecret, MAX_BYTES, readBounded
 import { Presentation, useColor } from './output.js';
 import { isObject, parseJson, type JsonObject } from './json.js';
 import { decodeOperation, decodeWire, encodeWire, operationHelp, operationName, operationNames, operationPolicy, schema, uuid, sameUuid, validateResponse } from './wire.js';
-import { Deadline, Http, origin, websocket } from './transport.js';
+import { Deadline, Http, jobOperation, origin, websocket } from './transport.js';
 import { accountAcknowledgement, accountIssued, login, settings } from './account.js';
 import { mcp, operationTool } from './mcp.js';
 import { download, rawDownload, realPause, withSentence } from './raw.js';
@@ -28,7 +28,9 @@ async function timedStdin(maximum: number, deadline: Deadline): Promise<string> 
   finally { if (timer !== null) clearTimeout(timer); }
 }
 function confirm(args: Arguments): void { if (!flag(args, 'yes')) throw new CliError('usage', 'Mutation requires explicit --yes after reviewing its exact target and effect.'); }
-type Support = 'public' | 'session' | 'bearer' | 'either';
+/** `jobs`: a job operation, run by the human session unless --auth bearer selects a token with OperateJobs. */
+type Support = 'public' | 'session' | 'bearer' | 'either' | 'jobs';
+const JOB_OPERATIONS: readonly string[] = ['ActivityJobs', 'RetryJob', 'PreviewRetryFailed', 'ApplyRetryFailed'];
 function family(args: Arguments, env: Environment, support: Support): 'session' | 'bearer' {
   const selected = option(args, 'auth') ?? 'auto'; if (selected !== 'auto' && selected !== 'session' && selected !== 'bearer') throw new CliError('usage', '--auth must be auto, session or bearer.');
   if (support === 'public' && option(args, 'auth') !== null) throw new CliError('usage', '--auth is not used by public versions.');
@@ -50,7 +52,7 @@ function executionOptions(args: Arguments, mutation: boolean, secret: boolean, w
 }
 function mintScopes(args: Arguments): string[] {
   const scopes = option(args, 'scopes'); if (option(args, 'name') === null || scopes === null) throw new CliError('usage', 'Mint requires --name, --scopes and --secret-out.');
-  const requested = scopes.split(','); if (new Set(requested).size !== requested.length || requested.some(s => !['Ingest', 'Read', 'Raw'].includes(s)) || (requested.includes('Raw') && !requested.includes('Read'))) throw new CliError('usage', 'Scopes are distinct Ingest,Read,Raw; Raw requires Read.');
+  const requested = scopes.split(','); if (new Set(requested).size !== requested.length || requested.some(s => !['Ingest', 'Read', 'Raw', 'OperateJobs'].includes(s)) || ((requested.includes('Raw') || requested.includes('OperateJobs')) && !requested.includes('Read'))) throw new CliError('usage', 'Scopes are distinct Ingest,Read,Raw,OperateJobs; Raw and OperateJobs require Read.');
   return requested;
 }
 async function current(http: Http): Promise<unknown> {
@@ -105,11 +107,11 @@ async function runOnce(args: Arguments, env: Environment, notify: (line: string)
   const name = operation === null ? null : operationName(operation); const effect = name === null ? null : operationPolicy[name];
   if (effect === 'control') throw new CliError('usage', 'Hello/Ping/Pong are transport-owned controls.');
   const tool = operation === null ? null : operationTool(operation);
-  const support: Support = command === 'versions' ? 'public' : command === 'ingest' || command === 'report-progress' || command === 'tags' ? 'bearer' : tool === null ? 'session' : 'either';
+  const support: Support = command === 'versions' ? 'public' : command === 'ingest' || command === 'report-progress' || command === 'tags' ? 'bearer' : name !== null && JOB_OPERATIONS.includes(name) ? 'jobs' : tool === null ? 'session' : 'either';
   const auth = family(args, env, support);
   const mutation = effect === 'mutation' || effect === 'secret' || command === 'logout' || command === 'ingest' || command === 'report-progress' || (command === 'tokens' && (subcommand === 'mint' || subcommand === 'revoke'));
   const secret = effect === 'secret' || (command === 'tokens' && subcommand === 'mint');
-  executionOptions(args, mutation, secret, operation !== null && auth === 'session');
+  executionOptions(args, mutation, secret, operation !== null && (auth === 'session' || support === 'jobs'));
   if (mutation) confirm(args);
   if (secret && option(args, 'secret-out') === null) throw new CliError('usage', 'Mint requires --secret-out to a new private file; secrets are never printed.');
   if (command === 'login' && (option(args, 'login') === null || ((option(args, 'password-file') === null) === !flag(args, 'password-stdin')))) throw new CliError('usage', 'Login requires --login and exactly one --password-file/--password-stdin.');
@@ -161,6 +163,14 @@ async function runOnce(args: Arguments, env: Environment, notify: (line: string)
   }
   if (operation === null) throw new CliError('usage', 'Unknown command or subcommand. Run chronicle --help.');
   if (effect === 'secret') checkSecretDestination(option(args, 'secret-out')!);
+  if (auth === 'bearer' && support === 'jobs') {
+    const token = bearer(env, option(args, 'token-file')); await current(http);
+    const requestId = option(args, 'request-id') === null ? randomUUID() : uuid(option(args, 'request-id')!);
+    const answer = await jobOperation(http, token, operation, requestId, effect !== 'read'); const value = encodeWire('Result', answer.result);
+    // The preview names its job count and states the windows they still have to annotate (unknown unless the server counts them).
+    const preview = isObject(value) && isObject(value['RetryFailedPreview']) && isObject(value['RetryFailedPreview']['result']) ? value['RetryFailedPreview']['result'] : null;
+    return { value: isObject(value) && preview !== null && isObject(preview['counts']) ? { ...value, selection: { jobs: preview['counts']['eligibleCurrentFailed']!, windowsToAnnotate: answer.windowsToAnnotate } } : value, text: false };
+  }
   if (auth === 'bearer') { if (tool === null) throw new CliError('usage', 'This operation requires the independent human session.'); const token = bearer(env, option(args, 'token-file')); await current(http); const result = await mcp(http, token, tool); validateResponse(operation, result, null); return { value: encodeWire('Result', result), text: false }; }
   const requestId = option(args, 'request-id') === null ? randomUUID() : uuid(option(args, 'request-id')!);
   const sessionStore = store(); const session = sessionStore.load();

@@ -671,4 +671,96 @@ test('a busy range is retried after Retry-After (capped, announced, bounded) wit
     assert.equal(RAW_RANGE_ATTEMPTS, 5); assert.deepEqual(waits, [30000, 30000, 30000, 30000]); assert.equal(f.requests.length, 1 + RAW_RANGE_ATTEMPTS); assert.deepEqual(readdirSync(out), ['large.jsonl']);
   } finally { await f.close(); }
 });
+// Specified (R-f): job operations of a token with OperateJobs over POST /api/jobs/v1.
+const JOB_TOKEN = 'synthetic-token-0123456789-abcdefghijklmnopqrstuvwxyz-ABCDEF';
+const JOB_REQUEST = '0193e8d5-6f5c-7a1b-8c2d-000000000099';
+const JOB_COMMANDS: readonly (readonly string[])[] = [['jobs'], ['jobs', 'retry', ID, '--yes'], ['retry-failed', 'preview'], ['retry-failed', 'apply', '--target-profile', 'selected-profile', '--selection-hash', 'a'.repeat(64), '--yes']];
+function jobResult(operation: Record<string, unknown>, requestId: string): unknown {
+  if ('ActivityJobs' in operation) return { ActivityJobs: { result: { observedAt: '2026-11-23T00:00:00Z', jobs: [], total: '0', nextCursor: null } } };
+  if ('RetryJob' in operation) return { Mutation: { receipt: { requestId, operation: 'RetryJob', entityId: ID } } };
+  if ('PreviewRetryFailed' in operation) return { RetryFailedPreview: { result: { targetProfile: 'selected-profile', selectionHash: 'a'.repeat(64), counts: RETRY_COUNTS } } };
+  return { RetryFailed: { result: { requestId, targetProfile: 'selected-profile', retried: '1', counts: RETRY_COUNTS } } };
+}
+test('job operations use POST /api/jobs/v1 with --auth bearer and stay on the human session under auto', async () => {
+  const routed: string[] = []; let socketOperations = 0;
+  const f = await fixture((q, r, body) => {
+    if (q.url === '/api/versions') { reply(r, 200, VERSION, {}); return; }
+    assert.equal(`${q.method} ${q.url}`, 'POST /api/jobs/v1'); assert.equal(q.headers.authorization, `Bearer ${JOB_TOKEN}`); assert.equal(q.headers.cookie, undefined);
+    const envelope = decodeWire('ClientEnvelope', JSON.parse(body)); const operation = encodeWire('Operation', envelope.operation); assert.ok(isObject(operation)); routed.push(Object.keys(operation)[0]!);
+    reply(r, 200, { requestId: envelope.requestId, result: jobResult(operation, envelope.requestId) }, 'PreviewRetryFailed' in operation ? { 'X-Chronicle-Windows-To-Annotate': 'unknown' } : {});
+  }, ws((socket, id, operation) => { socketOperations++; send(socket, id, jobResult(operation, id)); }));
+  try {
+    state(f);
+    for (const command of JOB_COMMANDS) {
+      const result = await cli([...command, '--auth', 'bearer', '--json'], f, { CHRONICLE_TOKEN: JOB_TOKEN }, null); assert.equal(result.code, 0, result.stderr);
+      if (command[1] === 'preview') assert.deepEqual(JSON.parse(result.stdout).selection, { jobs: '1', windowsToAnnotate: 'unknown' });
+    }
+    assert.deepEqual(routed, ['ActivityJobs', 'RetryJob', 'PreviewRetryFailed', 'ApplyRetryFailed']);
+    for (const command of JOB_COMMANDS) { const result = await cli([...command, '--json'], f, { CHRONICLE_TOKEN: JOB_TOKEN }, null); assert.equal(result.code, 0, result.stderr); }
+    assert.equal(socketOperations, 4); assert.equal(routed.length, 4);
+  } finally { await f.close(); }
+});
+test('a token refused job operations is told it lacks OperateJobs; any other 403 keeps the generic text', async () => {
+  let refusal: unknown = { code: 'forbidden', message: 'browser session required' };
+  const f = await fixture((q, r) => { if (q.url === '/api/versions') reply(r, 200, VERSION, {}); else reply(r, 403, refusal, {}); }, null);
+  try {
+    for (const command of JOB_COMMANDS) {
+      const result = await cli([...command, '--auth', 'bearer'], f, { CHRONICLE_TOKEN: JOB_TOKEN }, null);
+      assert.equal(result.code, 3, result.stderr); assert.match(result.stderr, /The token lacks the OperateJobs scope \(with Read\).*--scopes Read,OperateJobs, or use --auth session\./);
+    }
+    refusal = { code: 'forbidden', message: 'Origin not allowed' };
+    const other = await cli(['jobs', 'retry', ID, '--yes', '--auth', 'bearer'], f, { CHRONICLE_TOKEN: JOB_TOKEN }, null);
+    assert.equal(other.code, 3, other.stderr); assert.ok(!other.stderr.includes('OperateJobs')); assert.match(other.stderr, /not authorized for this operation\. Server forbidden: Origin not allowed/);
+  } finally { await f.close(); }
+});
+type JobReply = (response: ServerResponse, requestId: string) => void;
+const answered = (result: (requestId: string) => unknown, echoed: string | null = null): JobReply => (r, requestId) => reply(r, 200, { requestId: echoed ?? requestId, result: result(requestId) }, {});
+const COMMON_JOB_REPLIES: readonly { name: string; expected: number; stderr: RegExp; answer: JobReply }[] = [
+  { name: 'server without the route', expected: 6, stderr: /This server predates job operations for tokens; use --auth session or upgrade the server\./, answer: r => reply(r, 404, {}, {}) },
+  { name: 'spent budget', expected: 6, stderr: /Job operation limit reached; retry after 600 s\./, answer: r => reply(r, 429, { code: 'rate-limited', message: 'job operation limit reached' }, { 'Retry-After': '600' }) },
+  { name: 'stored conflict', expected: 5, stderr: /Server conflict: retry selection changed; preview again/, answer: answered(() => ({ Error: { failure: { code: 'conflict', message: 'retry selection changed; preview again' } } })) },
+  { name: 'wrong echoed request ID', expected: 7, stderr: /Outcome unknown/, answer: answered(id => jobResult({ RetryJob: {} }, id), ACK_OTHER) },
+  { name: 'correct request ID, wrong branch', expected: 7, stderr: /Outcome unknown/, answer: answered(() => ({ Whoami: { user: { id: 'alice', login: 'alice', scopes: ['Read'] } } })) },
+  { name: 'unknown error code', expected: 7, stderr: /Outcome unknown/, answer: answered(() => ({ Error: { failure: { code: 'surprise', message: 'unrecognized' } } })) },
+  { name: 'busy', expected: 7, stderr: /Outcome unknown/, answer: r => reply(r, 503, { code: 'unavailable', message: 'job operations busy' }, { 'Retry-After': '5' }) },
+  { name: 'reset after send', expected: 7, stderr: /Outcome unknown/, answer: r => { r.socket?.destroy(); } },
+];
+const JOB_MUTATION_REPLIES: readonly { command: readonly string[]; replies: readonly { name: string; expected: number; stderr: RegExp; answer: JobReply }[] }[] = [
+  { command: JOB_COMMANDS[1]!, replies: [
+    { name: 'receipt of another request', expected: 7, stderr: /Outcome unknown/, answer: answered(() => ({ Mutation: { receipt: { requestId: ACK_OTHER, operation: 'RetryJob', entityId: ID } } })) },
+    { name: 'receipt of another job', expected: 7, stderr: /Outcome unknown/, answer: answered(id => ({ Mutation: { receipt: { requestId: id, operation: 'RetryJob', entityId: ACK_OTHER } } })) },
+  ] },
+  { command: JOB_COMMANDS[3]!, replies: [
+    { name: 'retried result of another target profile', expected: 7, stderr: /Outcome unknown/, answer: answered(id => ({ RetryFailed: { result: { requestId: id, targetProfile: 'other-profile', retried: '1', counts: RETRY_COUNTS } } })) },
+  ] },
+];
+test('job mutations: a missing route, a spent budget and a stored conflict are definitive; every other answer is uncertain with the original request ID', async () => {
+  let answer: JobReply = () => {};
+  const f = await fixture((q, r, body) => { if (q.url === '/api/versions') { reply(r, 200, VERSION, {}); return; } const envelope = decodeWire('ClientEnvelope', JSON.parse(body)); assert.equal(envelope.requestId.toLowerCase(), JOB_REQUEST); answer(r, envelope.requestId); }, null);
+  try {
+    for (const { command, replies } of JOB_MUTATION_REPLIES) for (const example of [...COMMON_JOB_REPLIES, ...replies]) {
+      answer = example.answer;
+      const result = await cli([...command, '--auth', 'bearer', '--request-id', JOB_REQUEST], f, { CHRONICLE_TOKEN: JOB_TOKEN }, null);
+      assert.equal(result.code, example.expected, `${command[0]} ${example.name}: ${result.stderr}`); assert.equal(result.stdout, ''); assert.match(result.stderr, example.stderr, example.name);
+      if (example.expected === 7) assert.ok(result.stderr.includes(`run the same command with --request-id ${JOB_REQUEST} to read the stored outcome; it is never applied twice.`), result.stderr);
+    }
+  } finally { await f.close(); }
+});
+test('account calls opt into every account scope, and settings and mint accept OperateJobs with Read', async () => {
+  const token = { id: ID, name: 'operator', source: 'issued', createdAt: '2026-11-23T00:00:00Z', revoked: false, scopes: ['Read', 'OperateJobs'] };
+  const f = await fixture((q, r, body) => {
+    assert.equal(q.headers['x-account-scopes'], 'all');
+    if (q.url === '/api/account/v1/tokens') { assert.deepEqual(JSON.parse(body), { name: 'operator', scopes: ['Read', 'OperateJobs'] }); reply(r, 200, { token, secret: ACK_SECRET }, {}); }
+    else reply(r, 200, { user: USER, tokens: [token], scopes: ['Ingest', 'Read', 'Raw', 'OperateJobs'] }, {});
+  }, null);
+  try {
+    state(f);
+    const settings = await cli(['settings', '--json'], f, {}, null); assert.equal(settings.code, 0, settings.stderr); assert.deepEqual(JSON.parse(settings.stdout).tokens[0].scopes, ['Read', 'OperateJobs']);
+    const minted = await cli(['tokens', 'mint', '--name', 'operator', '--scopes', 'Read,OperateJobs', '--secret-out', join(f.root, 'operator-token'), '--yes', '--json'], f, {}, null);
+    assert.equal(minted.code, 0, minted.stderr); assert.equal(readFileSync(join(f.root, 'operator-token'), 'utf8'), `${ACK_SECRET}\n`);
+    const withoutRead = await cli(['tokens', 'mint', '--name', 'operator', '--scopes', 'OperateJobs', '--secret-out', join(f.root, 'other-token'), '--yes'], f, {}, null);
+    assert.equal(withoutRead.code, 2); assert.match(withoutRead.stderr, /Raw and OperateJobs require Read/);
+    assert.equal(f.requests.length, 3);
+  } finally { await f.close(); }
+});
 });
