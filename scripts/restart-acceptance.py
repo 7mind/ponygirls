@@ -1959,6 +1959,16 @@ SAMPLE_LINES = (  # the formats of spec §1 (R-c), §3 (R-b), §4 (R-a): raw, an
     'MANURE_READY {"apiOrigin":"http://127.0.0.1:1","port":1,"pid":2}',
     '\x1b[32mI 2026-11-23T02:00:00.000 (Main.scala:83)  chronicle.Main$.serve [135:io-compute-26] chronicle listening address=server=/127.0.0.1:1 '
     'workersEnabled=workers_enabled=true\x1b[0m',
+    # Chronicle's logger pads its timestamp column (07:03:47.864 followed by spaces) and other columns by a varying amount
+    # (the supplementary 3b run, 07:03Z): a padded line must be found.
+    'W 2026-11-23T07:03:47.864          (Models.scala:454)  \u2026onicle.Worker.holdTransient [145:io-comput\u2026blocker-36] job held '
+    'jobId=claim=316c672d-85c6-4c33-95b3-d55528d8cbf7 code=code=database-transient sqlState=sql_state=08006 class=error_class=JdbcFailure '
+    'stage=failure_stage=Publication consecutive=k=1 nextAttemptAt=next=2026-11-23T07:04:47.864Z',
+    'W 2026-11-23T07:03:47.86   (Models.scala:416)    chronicle.Worker.process   [1:io-compute-1] job failed jobId=claim=0193e8d5-6f5c-7a1b-8c2d-000000000001 '
+    'code=code=database-transient sqlState=sql_state=none class=error_class=LeaseLost stage=stage=Publication consecutive=k=10 nextAttemptAt=next=none',
+    'I 2026-11-23T07:03:47.8     (Main.scala:83)  chronicle.Main$.serve [135:io-compute-26] chronicle listening address=server=/127.0.0.1:1 '
+    'workersEnabled=workers_enabled=true',
+    'I 2026-11-23T07:03:47.8       (DatabaseWait.scala:1)  ponygirls.runtime.DatabaseWait [1:io-compute-1] chronicle database-wait code=code=jdbc-57P03',
 )
 NEAR_MISSES = (  # lines no pattern may take: today's charged failure (the base's case 3 output), a failure printed as a wait, incomplete events
     'W 2026-11-23T02:54:00.503 (Models.scala:416)  chronicle.Worker.process [112:io-compute-87] job failed jobId=claim=aa295be5-2f17-48bb-b1d3-acf38e77b03f '
@@ -1968,6 +1978,11 @@ NEAR_MISSES = (  # lines no pattern may take: today's charged failure (the base'
     'note: chronicle job held jobId=0193e8d5-6f5c-7a1b-8c2d-000000000001 code=database-transient sqlState=57014 class=JdbcFailure stage=Publication '
     'consecutive=1 nextAttemptAt=2026-11-23T02:01:00Z',
     'job held jobId=not-a-uuid code=database-transient sqlState=57014 class=JdbcFailure stage=Publication consecutive=1 nextAttemptAt=2026-11-23T02:01:00Z',
+    # padded forms of real near misses stay untaken: today's charged worker-fault failure, a hold without nextAttemptAt
+    'W 2026-11-23T07:03:47.864          (Models.scala:416)  chronicle.Worker.process [112:io-compute-87] job failed jobId=claim=aa295be5-2f17-48bb-b1d3-acf38e77b03f '
+    'code=code=worker-fault exceptionClass=exception_class=ponygirls.runtime.JdbcFailure sqlState=sql_state=57014',
+    'W 2026-11-23T07:03:47.864          (Models.scala:454)  chronicle.Worker.holdTransient [1:io-compute-1] job held jobId=claim=316c672d-85c6-4c33-95b3-d55528d8cbf7 '
+    'code=code=database-transient sqlState=sql_state=08006 class=error_class=JdbcFailure stage=failure_stage=Publication consecutive=k=1',
 )
 
 
