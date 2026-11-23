@@ -502,8 +502,9 @@ final class PoolSuite extends FunSuite {
     }
   } }
 
-  test("a fixed pool opens its connections at start, before any transaction; with one login fewer left to its role (another session holds it) it opens the rest, serves, retries the refused login (53300) in the background and is full once that session ends") { configured { config =>
-    val limits = config.limits.copy(maxConnections = 8)
+  test("a fixed pool opens its connections at start, before any transaction; with one login fewer left to its role (another session holds it) it opens the rest, serves, retries the refused login (53300) in the background and is full once that session ends: its six connections hold six callbacks at once, without another login") { configured { config =>
+    // The callbacks hold their transactions open until all have entered.
+    val limits = config.limits.copy(maxConnections = 8, idleTransactionTimeout = 30.seconds)
     val sizing = JdbcPoolSizing.partitioned(limits, None, None, 0).toOption.get
     val password = Files.createTempFile("pool-limit-", ".txt")
     Using.resource(plain(config)) { admin =>
@@ -517,16 +518,27 @@ final class PoolSuite extends FunSuite {
           def open(url: String, properties: Properties): Connection =
             try counting.open(url, properties) catch { case e: java.sql.SQLException => refused.add(e.getSQLState); throw e }
         }
-        def sessions: Int = backends(admin, "usename = 'pool_limited'")
         val held = plain(login)
+        val executor = Executors.newFixedThreadPool(sizing.connections)
+        val release = new CountDownLatch(1)
         try Using.resource(BlockingJdbcDatabase.withConnectionFactory(login, factory, sizing)) { db =>
-          eventually("the logins left are open and the last one was refused twice")(counting.opened.get == sizing.connections - 1 && refused.size >= 2)
-          assertEquals((sizing.fixed, refused.asScala.toSet, sessions), (true, Set("53300"), sizing.connections))
-          assertEquals(db.transaction(c => integer(c, "SELECT 1")), 1)
-          held.close()
-          eventually("the pool is full")(counting.opened.get == sizing.connections)
-          assertEquals(sessions, sizing.connections)
-        } finally held.close()
+          try {
+            eventually("the logins left are open and the last one was refused twice")(counting.opened.get == sizing.connections - 1 && refused.size >= 2)
+            assertEquals((sizing.fixed, refused.asScala.toSet, backends(admin, "usename = 'pool_limited'")), (true, Set("53300"), sizing.connections))
+            assertEquals(db.transaction(c => integer(c, "SELECT 1")), 1)
+            held.close()
+            eventually("the refused login succeeds")(counting.opened.get == sizing.connections)
+            val logins = counting.logins.get
+            val entered = new ConcurrentLinkedQueue[Int]
+            def hold(view: BlockingJdbcTransactions) = executor.submit(new Callable[Int] { def call(): Int = view.transaction { c => entered.add(pid(c)); release.await(); 1 } })
+            val holders = List.fill(sizing.request)(hold(db)) ++ List.fill(sizing.background)(hold(db.background))
+            eventually("every callback holds a connection or one has ended")(entered.size == sizing.connections || holders.exists(_.isDone))
+            assertEquals((entered.asScala.toSet.size, counting.logins.get), (sizing.connections, logins),
+              holders.filter(_.isDone).map(h => scala.util.Try(h.get)).toString)
+            release.countDown()
+            assertEquals(holders.map(_.get(10, TimeUnit.SECONDS)).sum, sizing.connections)
+          } finally release.countDown()
+        } finally { held.close(); executor.shutdownNow() }
       } finally { execute(admin, "DROP ROLE IF EXISTS pool_limited"); Files.deleteIfExists(password) }
     }
   } }
