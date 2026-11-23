@@ -184,9 +184,13 @@ final class TransientPublicationTest extends munit.FunSuite {
           if(range.isEmpty) db.transaction(x => Sql.exec(x,"UPDATE ch_jobs SET transient_range=NULL WHERE id=?",receipt.jobId))
           publisher.claim(publisher.knownProfiles,ClaimScope.Owner("a"),300).get
         }
-        // Range A's statement waits in its first row (before its commit) until `first`, ranges B and C's until `release`.
+        // Range A's statement waits in its first row (before its commit) until `first`. Ranges B and C's first rows check on
+        // entry that A's row is committed (a new snapshot sees no uncommitted row of another transaction; else SQLSTATE
+        // P0042), then wait until `release`.
         withTrigger(db,"ROW",s"IF NEW.ordinal=$a THEN WHILE NOT EXISTS(SELECT 1 FROM ch_test_control WHERE kind='first') LOOP PERFORM pg_sleep(0.01); END LOOP; END IF; "+
-          s"IF NEW.ordinal IN ($b,$c) THEN WHILE NOT EXISTS(SELECT 1 FROM ch_test_control WHERE kind='release') LOOP PERFORM pg_sleep(0.01); END LOOP; END IF; RETURN NEW;") {
+          s"IF NEW.ordinal IN ($b,$c) THEN IF NOT EXISTS(SELECT 1 FROM ch_search_chunks WHERE generation=NEW.generation AND ordinal=$a) THEN "+
+          "RAISE EXCEPTION 'range entered before range A committed' USING ERRCODE='P0042'; END IF; "+
+          "WHILE NOT EXISTS(SELECT 1 FROM ch_test_control WHERE kind='release') LOOP PERFORM pg_sleep(0.01); END LOOP; END IF; RETURN NEW;") {
           // The first attempt stages the generation and stops in its pieces (a sequential phase: no writer outlives it);
           // its record names range A, as a transient hold of a search-row failure does.
           db.transaction { x =>
@@ -197,18 +201,28 @@ final class TransientPublicationTest extends munit.FunSuite {
           finally db.transaction(x => Sql.exec(x,"DROP FUNCTION ch_test_pieces() CASCADE"))
           def writing(condition: String): String = s"(SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND $condition AND query LIKE 'INSERT INTO ch_search_chunks%')"
           def written: Option[Int] = db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_search_chunks WHERE session_id=?",receipt.sessionId)(_.getInt(1)))
-          val publishing=IO.blocking(publisher.publishProblems(again(Some(a)),rows)).start.unsafeRunSync()
+          val outcome=new java.util.concurrent.atomic.AtomicReference[Either[Throwable,Boolean]](null)
+          val publishing=IO.blocking(publisher.publishProblems(again(Some(a)),rows)).attempt.flatTap(value => IO(outcome.set(value))).start.unsafeRunSync()
+          def ended(what: String): Unit = Option(outcome.get).foreach(value => fail(s"the publication ended $what: "+value.left.map {
+            case failure: JdbcFailure => s"${failure.code} SQLSTATE ${failure.sqlState.getOrElse("none")}"
+            case other => other.toString
+          }))
           try {
-            // A holds before its commit: no writer of B or C is at the database, no row is committed.
+            // A holds before its commit, nothing committed; a writer of B or C entering now fails P0042.
             awaitServer(db,writing("wait_event='PgSleep'")+">=1","range A waits before its commit")
-            assertEquals((db.transaction(x => Sql.one(x,"SELECT "+writing("state='active'"))(_.getInt(1))),written),(Some(1),Some(0)))
+            assertEquals(written,Some(0))
             control(db,"first",1)
-            // A committed alone, then two writers wait in ranges B and C at once; the switch waits for both.
-            awaitServer(db,writing("wait_event='PgSleep'")+"=2","two writers wait in ranges B and C at once")
+            // A committed, then two writers wait in ranges B and C at once; the switch waits for both.
+            val deadline=Deadline.now+10.seconds
+            def waiting: Boolean = db.transaction(c => Sql.one(c,"SELECT "+writing("wait_event='PgSleep'")+"=2")(_.getBoolean(1)).get)
+            while(!waiting && outcome.get==null && deadline.hasTimeLeft()) Thread.sleep(10)
+            ended("before two writers waited in ranges B and C")
+            assert(waiting,"two writers wait in ranges B and C at once")
             assertEquals(written,Some(size))
             assertEquals(publisher.session("a",receipt.sessionId).indexedRevision,None)
           } finally { control(db,"first",1); control(db,"release",1) }
-          assert(publishing.joinWithNever.unsafeRunSync())
+          publishing.joinWithNever.unsafeRunSync()
+          assertEquals(outcome.get,Right(true))
         }
         assertEquals((job(db,receipt.jobId).state,db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_search_chunks WHERE session_id=?",receipt.sessionId)(_.getInt(1)))),("Complete",Some(3*size)))
       } finally db.close()
