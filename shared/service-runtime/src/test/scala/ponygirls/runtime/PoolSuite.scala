@@ -100,9 +100,10 @@ final class PoolSuite extends FunSuite {
   private final class Recorded extends JdbcTransactionEngine.Trace {
     val admissions = new ConcurrentLinkedQueue[FiniteDuration]
     val borrows = new ConcurrentLinkedQueue[FiniteDuration]
+    val threads = new ConcurrentLinkedQueue[Thread]
     val admitted = new CountDownLatch(1)
     val borrowed = new CountDownLatch(1)
-    def admission(left: FiniteDuration): Unit = { admissions.add(left); admitted.countDown() }
+    def admission(left: FiniteDuration): Unit = { admissions.add(left); threads.add(Thread.currentThread()); admitted.countDown() }
     def borrow(remaining: FiniteDuration): Unit = { borrows.add(remaining); borrowed.countDown() }
     /** T1i (3): no admission with less than `minimumTry` left to D; no borrow of an expired remainder. */
     def floors(): Unit = assert(admissions.asScala.forall(_ >= BlockingJdbcDatabase.minimumTry) && borrows.asScala.forall(_ > Duration.Zero),
@@ -541,27 +542,36 @@ final class PoolSuite extends FunSuite {
     assertEquals(BlockingJdbcDatabase.minimumTry, 100.millis)
   } }
 
-  test("M1 T1a one D bounds the background admission and the statements after it: a try that waited H for its permit, then for a row lock, ends by D + 0.5 s") { configured { base =>
+  test("M1 T1a one D bounds the background admission and the statements after it: a try that waited H in the permit's queue, then for a row lock, ends by D + 0.5 s") { configured { base =>
     val config = m1(base)
     val limits = config.limits.copy(maxConnections = 4, queueTimeout = 30.seconds)
     val sizing = JdbcPoolSizing.partitioned(limits, Some(1), Some(1), 0).toOption.get
     val trace = new Recorded; val executor = Executors.newCachedThreadPool()
     val permit = new CountDownLatch(1); val release = new CountDownLatch(1)
+    def waiting(n: Int, state: Thread.State): Thread = {
+      eventually(s"try $n enters its admission")(trace.threads.size >= n)
+      val thread = trace.threads.asScala.toList(n - 1)
+      eventually(s"try $n is $state in the admission")(thread.getState == state && thread.getStackTrace.exists(_.getClassName == "ponygirls.runtime.BlockingAdmission"))
+      thread
+    }
     try Using.resources(plain(config), plain(config), BlockingJdbcDatabase.traced(config.copy(limits = limits), new Counting(), sizing, 0, trace)) { (admin, locker, db) =>
-      lockedRow(admin, locker)
-      val holder = executor.submit(new Callable[Int] { def call(): Int = db.background.transaction { _ => permit.countDown(); release.await(); 1 } })
-      assert(permit.await(10, TimeUnit.SECONDS))
-      val deadline = Deadline.now + within
-      val tried = attempt(executor)(db.background.transactionWithin(deadline)(c => execute(c, update)))
-      assert(trace.admitted.await(10, TimeUnit.SECONDS))
-      hold()
-      release.countDown(); assertEquals(holder.get(10, TimeUnit.SECONDS), 1)
-      lockWait(admin, update)
-      val (outcome, ended) = tried.get(30, TimeUnit.SECONDS)
-      assert(ended <= deadline + allowance, s"ended ${ended - deadline} after D")
-      cut(outcome)
-      trace.floors()
-    } finally { release.countDown(); executor.shutdownNow() }
+      try {
+        lockedRow(admin, locker)
+        val holder = executor.submit(new Callable[Int] { def call(): Int = db.background.transaction { _ => permit.countDown(); release.await(); 1 } })
+        assert(permit.await(10, TimeUnit.SECONDS))
+        // The try waits H in the permit's queue (observed), then for the row lock.
+        val deadline = Deadline.now + within
+        val tried = attempt(executor)(db.background.transactionWithin(deadline)(c => execute(c, update)))
+        waiting(1, Thread.State.TIMED_WAITING)
+        hold()
+        release.countDown(); assertEquals(holder.get(10, TimeUnit.SECONDS), 1)
+        lockWait(admin, update)
+        val (outcome, ended) = tried.get(30, TimeUnit.SECONDS)
+        assert(ended <= deadline + allowance, s"ended ${ended - deadline} after D")
+        cut(outcome)
+        trace.floors()
+      } finally release.countDown()
+    } finally executor.shutdownNow()
   } }
 
   test("M1 T1b one D bounds the acquisition and the statements after it: a try whose login took H (on the pool's adder), then waited for a row lock, ends by D + 0.5 s") { configured { base =>
@@ -570,19 +580,21 @@ final class PoolSuite extends FunSuite {
     val factory = new Counting(login = n => if (n == 1) { entered.countDown(); release.await(10, TimeUnit.SECONDS); () })
     val trace = new Recorded; val executor = Executors.newSingleThreadExecutor()
     try Using.resources(plain(config), plain(config), engine(config, 8.seconds, factory, trace = trace)) { (admin, locker, pool) =>
-      lockedRow(admin, locker)
-      val deadline = Deadline.now + within
-      val tried = attempt(executor)(pool.transactionWithin(deadline)(c => execute(c, update)))
-      assert(entered.await(10, TimeUnit.SECONDS) && trace.borrowed.await(10, TimeUnit.SECONDS))
-      assert(factory.threads.asScala.forall(_.endsWith("connection-adder")), factory.threads.toString)
-      hold()
-      release.countDown()
-      lockWait(admin, update)
-      val (outcome, ended) = tried.get(30, TimeUnit.SECONDS)
-      assert(ended <= deadline + allowance, s"ended ${ended - deadline} after D")
-      cut(outcome)
-      trace.floors()
-    } finally { release.countDown(); executor.shutdownNow() }
+      try {
+        lockedRow(admin, locker)
+        val deadline = Deadline.now + within
+        val tried = attempt(executor)(pool.transactionWithin(deadline)(c => execute(c, update)))
+        assert(entered.await(10, TimeUnit.SECONDS) && trace.borrowed.await(10, TimeUnit.SECONDS))
+        assert(factory.threads.asScala.forall(_.endsWith("connection-adder")), factory.threads.toString)
+        hold()
+        release.countDown()
+        lockWait(admin, update)
+        val (outcome, ended) = tried.get(30, TimeUnit.SECONDS)
+        assert(ended <= deadline + allowance, s"ended ${ended - deadline} after D")
+        cut(outcome)
+        trace.floors()
+      } finally release.countDown()
+    } finally executor.shutdownNow()
   } }
 
   test("M1 T1d a reset waiting in the server ends at D before its cap: connection-unavailable by D + 0.5 s") { configured { base =>
@@ -746,22 +758,24 @@ final class PoolSuite extends FunSuite {
     val factory = new Counting(login = n => if (n > sizing.connections) { refill.await(10, TimeUnit.SECONDS); () })
     val trace = new Recorded; val executor = Executors.newSingleThreadExecutor()
     try Using.resources(plain(config), new JdbcTransactionEngine(config.copy(limits = limits), factory, sizing, JdbcTransactionEngine.scheduledWatchdog, () => System.nanoTime(), trace)) { (admin, pool) =>
-      eventually("the fixed pool is open")(factory.opened.get == sizing.connections)
-      val stale = factory.physical.asScala.toList
-      val terminated = stale.map(pid)
-      terminated.foreach(p => assertEquals(scalar(admin, s"SELECT pg_terminate_backend($p, 5000)"), "t"))
-      assertEquals(backends(admin, s"pid IN (${terminated.mkString(",")})"), 0)
-      val start = Deadline.now
-      val tried = attempt(executor)(pool.transactionWithin(start + within)(c => (pid(c), factory.physical.asScala.toList.indexWhere(_ eq c.unwrap(classOf[org.postgresql.PGConnection])) + 1)))
-      eventually("the stale connections are evicted")(stale.forall(_.isClosed))
-      assert(Deadline.now - start < cap, s"evicted ${Deadline.now - start} after the start")
-      assert(!tried.isDone)
-      refill.countDown()
-      val (outcome, _) = tried.get(30, TimeUnit.SECONDS)
-      val (served, index) = outcome.get
-      assert(!terminated.contains(served) && index > sizing.connections, (served, index, terminated).toString)
-      trace.floors()
-    } finally { refill.countDown(); executor.shutdownNow() }
+      try {
+        eventually("the fixed pool is open")(factory.opened.get == sizing.connections)
+        val stale = factory.physical.asScala.toList
+        val terminated = stale.map(pid)
+        terminated.foreach(p => assertEquals(scalar(admin, s"SELECT pg_terminate_backend($p, 5000)"), "t"))
+        assertEquals(backends(admin, s"pid IN (${terminated.mkString(",")})"), 0)
+        val start = Deadline.now
+        val tried = attempt(executor)(pool.transactionWithin(start + within)(c => (pid(c), factory.physical.asScala.toList.indexWhere(_ eq c.unwrap(classOf[org.postgresql.PGConnection])) + 1)))
+        eventually("the stale connections are evicted")(stale.forall(_.isClosed))
+        assert(Deadline.now - start < cap, s"evicted ${Deadline.now - start} after the start")
+        assert(!tried.isDone)
+        refill.countDown()
+        val (outcome, _) = tried.get(30, TimeUnit.SECONDS)
+        val (served, index) = outcome.get
+        assert(!terminated.contains(served) && index > sizing.connections, (served, index, terminated).toString)
+        trace.floors()
+      } finally refill.countDown()
+    } finally executor.shutdownNow()
   } }
 
   test("M1 T4b-ii logins refused at once: one borrow spans the pool's back-off between the adder's failed logins and takes the first that succeeds") { configured { base =>
