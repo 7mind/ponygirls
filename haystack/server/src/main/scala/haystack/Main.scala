@@ -3,7 +3,7 @@ package haystack
 import cats.effect.{IO,IOApp,ExitCode,Resource}
 import cats.syntax.all.*
 import distage.*
-import ponygirls.runtime.{JdbcDatabase,CatsIOInjector,StartFailure}
+import ponygirls.runtime.{DatabaseWait,JdbcDatabase,CatsIOInjector,StartFailure}
 import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry,RetrievalProfile}
 import ponygirls.retrieval.postgres.PostgresRetrieval
 import haystack.auth.{Auth,AccountService,ImperativeRuntime}
@@ -26,7 +26,8 @@ object Main extends IOApp {
     case List(command,path) if Set("serve","migrate","check-config").contains(command)=>
       stage("config",IO.blocking { val file=Path.of(path);val c=Config.load(file);Auth.load(c.auth);(file,c,Option.when(command=="serve")(listener(c))) }).flatMap { (file,config,address)=>
         if(command=="check-config")IO.unit
-        else JdbcDatabase.resource(config.database).adaptError(staged("database")).use { database=>
+        else stage("database-wait",IO.interruptibleMany(DatabaseWait.await(config.database,config.databaseStartWait,line=>System.err.println("haystack "+line)))) *>
+          JdbcDatabase.resource(config.database).adaptError(staged("database")).use { database=>
           stage("migrate",Migrations.initialize(database,config.auth.activityProjectId)) *>
           address.fold(IO.unit)(serve(config,file,database,_))
         }

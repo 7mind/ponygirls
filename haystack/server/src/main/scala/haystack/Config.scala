@@ -3,14 +3,14 @@ package haystack
 import haystack.auth.*
 import haystack.domain.Fault
 import haystack.retrieval.ProjectionPolicy
-import ponygirls.runtime.{JdbcConfig,JdbcLimits}
+import ponygirls.runtime.{DatabaseWait,JdbcConfig,JdbcLimits}
 import ponygirls.retrieval.EmbeddingEndpoint
 import io.circe.{Json,HCursor}
 import java.nio.file.{Files,Path}
 import scala.concurrent.duration.*
 
 final case class RetrievalConfig(policy:ProjectionPolicy,embedding:Option[EmbeddingEndpoint],maxConcurrent:Int,maxQueued:Int,batchSize:Int)
-final case class Config(listenHost:String,listenPort:Int,webRoot:Option[Path],authReloadMs:Int,auth:AuthConfig,database:JdbcConfig,retrieval:RetrievalConfig)
+final case class Config(listenHost:String,listenPort:Int,webRoot:Option[Path],authReloadMs:Int,auth:AuthConfig,database:JdbcConfig,databaseStartWait:FiniteDuration,retrieval:RetrievalConfig)
 object Config {
   /** Design §6.2 defaults of members that `auth.accounts` may omit. */
   private val DefaultRequireApproval=true
@@ -55,6 +55,7 @@ object Config {
     val d=child(c,"database");val l=child(d,"limits")
     val db=JdbcConfig(get[String](d,"jdbcUrl"),get[String](d,"user"),Path.of(expand(get[String](d,"passwordFile"))),JdbcLimits(number[Int](l,"maxConnections"),number[Int](l,"maxQueued"),duration(l,"queueTimeoutMs"),duration(l,"connectTimeoutMs"),duration(l,"statementTimeoutMs"),duration(l,"lockTimeoutMs"),duration(l,"idleTransactionTimeoutMs"),duration(l,"socketTimeoutMs")))
     db.validate()
+    val startWait=numeric[Long](l,"startWaitMs").fold(DatabaseWait.defaultBound)(DatabaseWait.startWait(_).getOrElse(fail()))
     val r=child(c,"retrieval")
     val policy=ProjectionPolicy(get[String](r,"policy"),get[Boolean](r,"includeMetadata"),get[Vector[String]](r,"approvedFieldPrefixes"),number[Int](r,"maxChunkBytes"))
     val embedding=get[Option[Json]](r,"embedding").map {raw=>val e=raw.hcursor
@@ -68,6 +69,6 @@ object Config {
     }
     val host=get[String](c,"listenHost");val port=number[Int](c,"listenPort");val reload=number[Int](c,"authReloadMs")
     if(host.isEmpty||port<1||port>65535||reload<100||reload>60000)fail()
-    Config(host,port,get[Option[String]](c,"webRoot").map(Path.of(_)),reload,auth,db,RetrievalConfig(policy,embedding,concurrent,queued,batch))
+    Config(host,port,get[Option[String]](c,"webRoot").map(Path.of(_)),reload,auth,db,startWait,RetrievalConfig(policy,embedding,concurrent,queued,batch))
   }
 }

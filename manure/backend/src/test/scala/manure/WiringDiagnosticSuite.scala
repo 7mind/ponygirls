@@ -6,6 +6,7 @@ import io.circe.Json
 import java.io.{ByteArrayOutputStream,PrintStream}
 import java.nio.file.{Files,Path}
 import ponygirls.auth.{AccountFailure,Password}
+import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 import scala.util.Using
 
@@ -91,25 +92,44 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
           "connectTimeoutMs" -> Json.fromInt(5000),"statementTimeoutMs" -> Json.fromInt(30000),"lockTimeoutMs" -> Json.fromInt(5000),
           "idleTransactionTimeoutMs" -> Json.fromInt(30000),"socketTimeoutMs" -> Json.fromInt(30000)))).deepMerge(settings).noSpaces)
     config
+  /** The fixture's database and runtime role in place of the unreachable one: the start waits for the database before wiring. */
+  private def reachable(database: ponygirls.runtime.JdbcConfig): Json = Json.obj("database" -> Json.obj("jdbcUrl" -> Json.fromString(database.jdbcUrl),
+    "user" -> Json.fromString(database.user),"passwordFile" -> Json.fromString(database.passwordFile.toString)))
 
   test("sha256-hex password credential fails as config, never as a wiring failure") {
-    val root = Files.createTempDirectory("manure-wiring-diagnostic-")
-    try
-      // The token digest codec (64 hex chars) is NOT the password hash codec.
-      val config = deploymentConfig(root,SecretCodec.sha256("deployment-password")+"\n",Json.obj())
-      assertEquals(runCommand("migrate",config.toString),(1,"manure failure stage=wiring code=config error=AccountFailure message=\"config\"\n"))
-    finally cleanup(root)
+    BackendFixture.configuration.use { (fixture,_,_) => IO.blocking {
+      val root = Files.createTempDirectory("manure-wiring-diagnostic-")
+      try
+        // The token digest codec (64 hex chars) is NOT the password hash codec.
+        val config = deploymentConfig(root,SecretCodec.sha256("deployment-password")+"\n",reachable(fixture.database))
+        assertEquals(runCommand("migrate",config.toString),(1,"manure failure stage=wiring code=config error=AccountFailure message=\"config\"\n"))
+      finally cleanup(root)
+    }}.unsafeRunSync()
   }
 
   test("valid pbkdf2 password credentials acquire the wiring graph") {
+    BackendFixture.configuration.use { (fixture,_,_) => IO.blocking {
+      val root = Files.createTempDirectory("manure-wiring-diagnostic-")
+      try
+        val config = deploymentConfig(root,Password.hash("fixture-password".toCharArray)+"\n",reachable(fixture.database))
+        assertEquals(runCommand("migrate",config.toString),(0,""))
+      finally cleanup(root)
+    }}.unsafeRunSync()
+  }
+
+  test("an unreachable database is waited for until startWaitMs, then fails the database-wait stage; a missing credential fails it at once") {
     val root = Files.createTempDirectory("manure-wiring-diagnostic-")
     try
-      val config = deploymentConfig(root,Password.hash("fixture-password".toCharArray)+"\n",Json.obj())
-      // Wiring succeeds; startup proceeds to the first database use and fails only on
-      // the deliberately unreachable database, or before it on an absent database credential.
-      assertEquals(runCommand("migrate",config.toString),(1,"manure failure stage=database code=jdbc-08001 error=JdbcFailure message=\"database-unavailable\"\n"))
+      val config = deploymentConfig(root,Password.hash("fixture-password".toCharArray)+"\n",
+        Json.obj("database" -> Json.obj("limits" -> Json.obj("startWaitMs" -> Json.fromInt(1000)))))
+      val started = System.nanoTime()
+      assertEquals(runCommand("migrate",config.toString),
+        (1,"manure database-wait code=jdbc-08001\nmanure failure stage=database-wait code=jdbc-08001 error=JdbcFailure message=\"database-wait-timeout\"\n"))
+      assert((System.nanoTime() - started).nanos >= 1.second)
       Files.delete(root.resolve("dbpass"))
-      assertEquals(runCommand("migrate",config.toString),(1,"manure failure stage=database code=credential-file error=RuntimeFailure message=\"credential-file\"\n"))
+      assertEquals(runCommand("migrate",config.toString),(1,"manure failure stage=database-wait code=credential-file error=RuntimeFailure message=\"credential-file\"\n"))
+      Files.writeString(config,Files.readString(config).replace("\"startWaitMs\":1000","\"startWaitMs\":999"))
+      assertEquals(runCommand("check-config",config.toString),(1,"manure failure stage=config code=bad-envelope error=DomainError message=\"bad-envelope\"\n"))
     finally cleanup(root)
   }
 
@@ -137,8 +157,8 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
         val config = deploymentConfig(root,Password.hash("fixture-password".toCharArray)+"\n",Json.obj(
           "port" -> Json.fromInt(port),"api_origin" -> Json.fromString(s"http://127.0.0.1:$port"),
           "dashboard_dir" -> Json.Null,"unlock_shell_dir" -> Json.Null,"viewer_dir" -> Json.Null,
-          "database" -> Json.obj("jdbcUrl" -> Json.fromString(fixture.database.jdbcUrl),"user" -> Json.fromString(fixture.database.user),
-            "passwordFile" -> Json.fromString(fixture.database.passwordFile.toString))))
+          // The smallest start wait passes a healthy database without a wait line.
+          "database" -> Json.obj("limits" -> Json.obj("startWaitMs" -> Json.fromInt(1000)))).deepMerge(reachable(fixture.database)))
         assertEquals(child(root,"serve",config.toString),(1,List(s"manure failure stage=bind code=address-in-use error=BindException message=\"address in use\" port=$port"),""))
       }
       finally cleanup(root)

@@ -26,7 +26,11 @@ New REQUIRED `database` object:
 }
 ```
 
-These are synthetic finite examples, not measured host sizing. Credential values
+These are synthetic finite examples, not measured host sizing. Optional `limits.startWaitMs` (default 120000,
+1000..3600000) bounds how long `serve` and `migrate` wait, after the physical-root claim, for PostgreSQL to accept
+queries: one `manure database-wait code=jdbc-<SQLSTATE>` line when the wait begins, `manure database-wait ready
+seconds=<n>` when it ends, `manure failure stage=database-wait … message="database-wait-timeout"` (exit 1) at the bound;
+a refused login or missing credential fails at once. Credential values
 are NEVER in configuration or Nix store; existing user token `hashFile` paths and
 credential directories are retained. `native_mode` defaults `linked`;
 `posix_library` optional only for `shared` (absolute library path required).

@@ -100,6 +100,7 @@ class StartupConfigTest extends munit.FunSuite {
     val path = file(dir, valid(dir)); val loaded = Config.load(path)
     assertEquals(loaded.listenHost, "127.0.0.1"); assertEquals(loaded.listenPort, 8765)
     assertEquals(loaded.authReloadMs, 1000); assertEquals(loaded.auth.users.map(_.userType), Vector("human", "agent"))
+    assertEquals(loaded.databaseStartWait, 120.seconds)
     assertEquals(loaded.retrieval.embedding, None); assertEquals(loaded.retrieval.policy.approvedFieldPrefixes, Vector("/public"))
     assertEquals(Auth.load(loaded.auth).authenticate(AliceToken).map(_.userId), Some("alice"))
     assertEquals(Main.run(List("check-config", path.toString)).unsafeRunSync(), ExitCode.Success)
@@ -126,6 +127,7 @@ class StartupConfigTest extends munit.FunSuite {
     "database/jdbcUrl" -> Json.fromString("jdbc:postgresql://localhost/test?password=secret"), "database/passwordFile" -> Json.fromString("relative-secret"),
     "database/limits/maxConnections" -> Json.fromInt(0), "database/limits/maxQueued" -> Json.fromInt(-1),
     "database/limits/queueTimeoutMs" -> Json.fromInt(0), "database/limits/socketTimeoutMs" -> Json.fromInt(3600001),
+    "database/limits/startWaitMs" -> Json.fromInt(999), "database/limits/startWaitMs" -> Json.fromInt(3600001),
     "retrieval/approvedFieldPrefixes" -> Json.arr(Json.fromString("not-a-pointer")), "retrieval/approvedFieldPrefixes" -> Json.arr(Json.fromString("/bad~2")),
     "retrieval/approvedFieldPrefixes" -> Json.arr(Json.fromString("/a"), Json.fromString("/a")), "retrieval/maxChunkBytes" -> Json.fromInt(3),
     "retrieval/maxConcurrent" -> Json.fromInt(0), "retrieval/maxConcurrent" -> Json.fromInt(33), "retrieval/maxQueued" -> Json.fromInt(1025),
@@ -158,9 +160,11 @@ class StartupConfigTest extends munit.FunSuite {
       }
     } }
   }
-  test("an unreachable database fails the migrate stage with its SQLSTATE and without the URL") { directory { dir =>
-    assertEquals(captured("migrate", file(dir, valid(dir)).toString),
-      (ExitCode.Error, "haystack failure stage=migrate code=jdbc-08001 error=JdbcFailure message=\"database-unavailable\"\n", ""))
+  test("an unreachable database is waited for until startWaitMs, then fails the database-wait stage with its SQLSTATE and without the URL") { directory { dir =>
+    val started = System.nanoTime()
+    assertEquals(captured("migrate", file(dir, set(valid(dir), "database/limits/startWaitMs", Json.fromInt(1000))).toString),
+      (ExitCode.Error, "haystack database-wait code=jdbc-08001\nhaystack failure stage=database-wait code=jdbc-08001 error=JdbcFailure message=\"database-wait-timeout\"\n", ""))
+    assert((System.nanoTime() - started).nanos >= 1.second)
   } }
   test("an unusable config path or serve's listen host fails the config stage before anything starts") { directory { dir =>
     assertEquals(captured("serve", "config\u0000.json"),
@@ -172,8 +176,9 @@ class StartupConfigTest extends munit.FunSuite {
     Using.resource(new java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))) { occupied =>
       val port = occupied.getLocalPort
       val database = TestSupport.databaseConfig
+      // The smallest start wait passes a healthy database without a wait line.
       val json = Vector("listenPort" -> Json.fromInt(port), "database/jdbcUrl" -> Json.fromString(url), "database/user" -> Json.fromString(database.user),
-        "database/passwordFile" -> Json.fromString(database.passwordFile.toString)).foldLeft(valid(dir)) { case (json, (path, value)) => set(json, path, value) }
+        "database/passwordFile" -> Json.fromString(database.passwordFile.toString), "database/limits/startWaitMs" -> Json.fromInt(1000)).foldLeft(valid(dir)) { case (json, (path, value)) => set(json, path, value) }
       assertEquals(child(dir, Vector.empty, "serve", file(dir, json).toString),
         (1, List(s"haystack failure stage=bind code=address-in-use error=BindException message=\"address in use\" port=$port"), ""))
       // A non-bind failure of the listener's acquisition: the name resolves through an empty hosts file only.

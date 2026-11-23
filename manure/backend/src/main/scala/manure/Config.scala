@@ -3,7 +3,7 @@ package manure
 import io.circe.{Json, HCursor}
 import java.net.{InetAddress, URI}
 import java.nio.file.{Files, Path}
-import ponygirls.runtime.{JdbcConfig, JdbcLimits}
+import ponygirls.runtime.{DatabaseWait, JdbcConfig, JdbcLimits}
 import scala.concurrent.duration.*
 
 final case class ApiOrigin(value: String, scheme: String, host: String, port: Int):
@@ -72,7 +72,7 @@ final case class Config(
   listenAddress: String, port: Int, dataDir: Path, apiOrigin: ApiOrigin, contentMode: String,
   contentSuffix: String, loopbackDev: Boolean, allowInsecureHttp: Boolean,
   allowedApiOrigins: Vector[ApiOrigin], trustedProxies: Vector[Network], users: Vector[UserConfig],
-  limits: Limits, database: JdbcConfig, nativeMode: String, posixLibrary: Option[String],
+  limits: Limits, database: JdbcConfig, databaseStartWait: FiniteDuration, nativeMode: String, posixLibrary: Option[String],
   dashboardDir: Option[Path], unlockShellDir: Option[Path], maxConnections: Int,
   requestTimeout: FiniteDuration, sweepInterval: FiniteDuration, rateMapMaxEntries: Int,
   rateLimitPerMinute: Int, unlockRatePerMinute: Int, loginRatePerMinutePerIp: Int, embedding: Option[EmbeddingSettings], migrationReceiptDir: Option[Path], migrationManifestMaxBytes: Int, migrationManifestMaxEntries: Int, rootAuthority: Option[KubernetesRootConfig], viewerDir: Option[Path], rootBinding: RootBindingMode,
@@ -163,6 +163,7 @@ object Config:
       field(b,"maxConnections"),field(b,"maxQueued"),field[Long](b,"queueTimeoutMs").millis,
       field[Long](b,"connectTimeoutMs").millis,field[Long](b,"statementTimeoutMs").millis,
       field[Long](b,"lockTimeoutMs").millis,field[Long](b,"idleTransactionTimeoutMs").millis,field[Long](b,"socketTimeoutMs").millis))
+    val startWait = DatabaseWait.startWait(default(b,"startWaitMs",DatabaseWait.defaultBound.toMillis)).getOrElse(throw DomainError("bad-envelope"))
     val embedding = c.get[Option[Json]]("embedding").getOrElse(throw DomainError("bad-envelope")).map { value =>
       val e = value.hcursor
       val endpoint = ponygirls.retrieval.EmbeddingEndpoint(field(e,"operationUrl"),field(e,"model"),field(e,"revision"),field(e,"dimensions"),
@@ -174,7 +175,7 @@ object Config:
     val config = Config(default(c,"listen_address","127.0.0.1"),default(c,"port",47329),Path.of(field[String](c,"data_dir")),
       apiOrigin,default(c,"content_mode","subdomain"),default(c,"content_suffix",""),default(c,"loopback_dev",false),
       default(c,"allow_insecure_http",false),default(c,"allowed_api_origins",Vector.empty[String]).map(ApiOrigin.parse),
-      default(c,"trusted_proxies",Vector("127.0.0.1/32","::1/128")).map(Network.apply),users,l,database,
+      default(c,"trusted_proxies",Vector("127.0.0.1/32","::1/128")).map(Network.apply),users,l,database,startWait,
       default(c,"native_mode","linked"),c.get[Option[String]]("posix_library").getOrElse(throw DomainError("bad-envelope")),
       shell(c,"dashboard_dir"),shell(c,"unlock_shell_dir"),default(c,"max_connections",128),default[Long](c,"request_timeout_s",30L).seconds,
       default[Long](c,"sweep_interval_s",300L).seconds,default(c,"rate_map_max_entries",4096),default(c,"rate_limit_per_min",600),
