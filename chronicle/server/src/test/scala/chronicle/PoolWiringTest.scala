@@ -78,12 +78,12 @@ final class PoolWiringTest extends munit.FunSuite {
             override def defer(c: Claim,total: Int): Boolean = observed(super.defer(c,total))
             override def progress(c: Claim,done: Int,total: Int): Boolean = observed(super.progress(c,done,total))
             override def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = observed(super.windowWork(c,key))
-            override def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = observed(super.reserveAnnotation(c,key))
+            override def reserveAnnotation(c: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = observed(super.reserveAnnotation(c,key,prefix))
             override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = observed(super.holdTransient(c,stage,deadline))
           }
           def renewed: Boolean = jobs.forall(id => Option(renewals.get(id)).exists(_.get>=20))
           val annotating=new AtomicInteger(0)
-          val annotator=new ProblemPassageAnnotator {
+          val annotator=new ScriptedAnnotator {
             def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] =
               IO(annotating.incrementAndGet()) *> (IO.blocking(lanes.claim(background.knownProfiles,ClaimScope.Owner("c"),300,LargeJobs.Skipped)) *> IO(renewed)).iterateUntil(identity) *>
                 IO.raiseError(JdbcFailure("database-unavailable",Some("57P01")))
