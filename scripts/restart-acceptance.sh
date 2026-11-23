@@ -64,11 +64,13 @@
 #   5  mechanics: the run's own listener holds each port throughout. Pass: exit 1 ≤ 60 s after spawn; the process's only
 #      failure line is `<svc> failure stage=bind code=address-in-use … port=<its port>`.
 #   6  mechanics: all start; no Chronicle job Queued/Running; every request's decoded success; backends sampled every 1 s
-#      from before the start; a 30 s idle window. Raw pg_stat_database (sessions, xact) and TIME_WAIT snapshots: before
+#      from before the start, each sample's query start and completion recorded, covering the spawn through the end of
+#      the warm run with no span over 2 s from one sample's query start to the next one's completion (r7); a 30 s idle
+#      window. Raw pg_stat_database (sessions, xact) and TIME_WAIT snapshots: before
 #      the start, at ready (+11 s flush), after the idle window, after the cold and the warm run (+11 s each). Background
 #      sessions/s from the idle window; request sessions = delta − background. T = SMALL's request sessions per run kind;
-#      a POOL or FULL run needs RESTART_ACC_CALIBRATION = a SMALL report.json whose case 6 is a BASELINE of the same
-#      workload with positive T (else usage error, before anything starts). POOL/FULL pass: warm sessions delta 0; cold =
+#      a POOL or FULL run needs RESTART_ACC_CALIBRATION = the SMALL report.json rule set r7 registered (resolved path and
+#      SHA-256 checked, reported in the first line and report.json; else usage error, before anything starts). POOL/FULL pass: warm sessions delta 0; cold =
 #      sessions from before the start through the cold run, minus this run's own (r7: the workers-idle query, 1 on
 #      chronicle), ≤ P + 1 (R-b's start probe precedes the pool, spec §3); backends per role ≤ P at every sample; no 53300
 #      (server log, service output).
@@ -80,7 +82,9 @@
 #      new /api/ws socket (Hello, IngestStatus); Haystack item GET = POST /api/v1/get of a seeded item; Manure =
 #      ListArtifacts. Pass (every set): every probe ok ≤ 15 s after the terminations and ≤ 15 s after each LOGIN; the
 #      three processes alive with their PIDs at the end. Pass (POOL and FULL): ≥ 1 fenced answer of every probe type and
-#      every one unavailable within queueTimeout + connectTimeout + 1 s of the process's own configuration (11 s here).
+#      every one unavailable within queueTimeout + connectTimeout + 1 s of the process's own configuration (11 s here),
+#      its elapsed time measured from the request through the decoded outcome and compared unrounded (r7); a reply of
+#      another shape is an `other` outcome.
 #   3a, 3b, 3 share the workload: Chronicle request statement timeout 2 s, publication 10 s; triggers (function-scoped
 #      log level) log each publication statement's start, 57014 cancellation and completion with its sessions, sleep and
 #      statement_timeout on ch_search_chunks (sleep = control table: 3 s, 12 s in case 3's window), and each ingest's
@@ -126,9 +130,10 @@
 #
 # RESTART_ACC_OUT receives report.json (verdicts, checks, measurements), postgres.log, every service process's output
 # (case<id>-<service>.log, seconds since the run's start) and case 3's 1 s timeline. RESTART_ACC_CALIBRATION=<a SMALL
-# run's report.json> gives a POOL or FULL run SMALL's T for case 6 (required there). Exit 0: every case PASS (or BASELINE);
+# run's report.json, the file rule set r7 registered> gives a POOL or FULL run SMALL's T for case 6 (required there). Exit 0: every case PASS (or BASELINE);
 # 1: a case FAILed; 3: a case INVALID and none FAILed; 2: usage. `scripts/restart-acceptance.sh self-check` runs the
-# interlock refusals, the environment sanitizing, the set table and the line patterns against the spec's formats and near misses (no
+# interlock refusals, the environment sanitizing, the set table, r7's enforcement (case 4 timing and reply shapes, case 6
+# sampling coverage, the registered calibration; loopback stubs) and the line patterns against the spec's formats and near misses (no
 # packages, no cluster, seconds). `scripts/restart-acceptance.sh reparse RUN-DIR` re-evaluates a stored run's log-derived
 # checks with e66d4736's patterns and the current ones (offline; database data only as report.json recorded it).
 set -euo pipefail

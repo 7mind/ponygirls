@@ -3,7 +3,7 @@
 by restart-acceptance.sh, whose header has the invocation, the pass rules and the verdict mechanics. Synthetic data only;
 one PostgreSQL cluster this run creates under its own short temporary root; loopback ports it allocated; every process it
 starts is stopped by PID on exit and the root is removed."""
-import ast, base64, datetime, hashlib, http.client, json, os, pwd, random, re, secrets, select, shutil, signal, socket, subprocess, sys
+import ast, base64, datetime, hashlib, http.client, http.server, json, os, pwd, random, re, secrets, select, shutil, signal, socket, subprocess, sys
 import tempfile, threading, time, uuid
 from pathlib import Path
 
@@ -56,6 +56,11 @@ COMPLETE_WITHIN_S = 20 * 60
 FENCE_S, RECOVER_WITHIN_S, ANSWER_MARGIN_S = 30, 15, 1                  # 4: answers within queue + connect + 1 s
 BIND_EXIT_S = 60                                                        # 5
 REQUESTS, PGSTAT_FLUSH_S, IDLE_S, BACKEND_SAMPLE_S = 1000, 11, 30, 1    # 6
+SAMPLE_SPAN_S = 2.0  # 6 (r7): the longest span from one backend sample's query start to the next one's completion
+# The calibration rule set r7 registered for POOL and FULL (FIRST's counted SMALL run, rule set r6): a counted run loads
+# exactly this file, checked by resolved path and SHA-256, and reports both.
+REGISTERED_CALIBRATION = dict(path='/home/pavel/work/flakes/ponygirls/.local/overhaul-20261117/reports/robust/FIRST/acceptance/run-20261123T074816Z/report.json',
+                              sha256='5400b8ccf74d32c5b3a7ee3b4ad4f663c951bcc35aee212ac79e6f6032e84e80')
 # Case 6's workload; a POOL run accepts only a SMALL calibration of the same workload.
 WORKLOAD = dict(version=2, requestsPerService=REQUESTS, chronicle='MCP tools/call ingest_status', haystack='POST /api/v1/get (item GET)',
                 manure='ListArtifacts', concurrency='the three services concurrently, each sequentially, a new connection per request',
@@ -636,6 +641,15 @@ def decoded(body):
         return None
 
 
+def dig(value, *keys):
+    """value[key][key]… through JSON objects only; None when a level has another shape (a malformed reply is an outcome)."""
+    for key in keys:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    return value
+
+
 def failure_code(value):
     """The code of a Chronicle/Haystack `Failure` body ({code, message, …}), else None."""
     return value['code'] if isinstance(value, dict) and isinstance(value.get('code'), str) and isinstance(value.get('message'), str) else None
@@ -719,13 +733,16 @@ class WebSocket:
                 return 'message', json.loads(message)
 
     def call(self, operation):
-        """('result', the result of this request's envelope) or ('close', code); server Pings are answered."""
+        """('result', the result of this request's envelope), ('close', code) or ('malformed', None) for a message that is
+        not an envelope with a result object; server Pings are answered."""
         request = str(uuid.uuid4())
         self.frame(1, json.dumps(dict(requestId=request, operation=operation)).encode())
         while True:
             kind, value = self.receive()
             if kind == 'close':
                 return 'close', value
+            if not (isinstance(value, dict) and isinstance(value.get('result'), dict)):
+                return 'malformed', None
             if 'Ping' in value['result']:
                 self.frame(1, json.dumps(dict(requestId=value['requestId'], operation={'Pong': value['result']['Ping']})).encode())
             elif value['requestId'] == request:
@@ -739,8 +756,9 @@ class Clients:
     """The requests that need the database, per service, against one started trio: Chronicle REST (GET /api/ingest/uploads,
     bearer), MCP (ingest_status), WS (Hello + IngestStatus); Haystack item GET; Manure ListArtifacts. Each answers an
     outcome: 'ok' only for the decoded success branch (correlated request id where the protocol has one), 'unavailable…'
-    only for the decoded structured unavailability, 'other:…' for anything else. Before each request the service's port
-    is checked to be held by the process this run started."""
+    only for the decoded structured unavailability, 'other:…' for anything else (a reply of another shape included). The
+    seconds run from the request (after the port check) through the decoded outcome (r7), unrounded. Before each request
+    the service's port is checked to be held by the process this run started."""
     def __init__(self, run, trio):
         self.run, self.trio = run, trio
         status, body, _ = call(self.port('chronicle'), 'GET', '/api/versions')
@@ -759,31 +777,36 @@ class Clients:
         return service.port
 
     def chronicle_rest(self, timeout=30):
-        status, body, seconds = call(self.port('chronicle'), 'GET', '/api/ingest/uploads', headers={'Authorization': f'Bearer {self.run.chronicle_ingest}'}, timeout=timeout)
+        port = self.port('chronicle')
+        started = now()
+        status, body, _ = call(port, 'GET', '/api/ingest/uploads', headers={'Authorization': f'Bearer {self.run.chronicle_ingest}'}, timeout=timeout)
         value = decoded(body)
         # Baboon encodes i64 as a decimal string, i32 as a number.
         if status == 200 and isinstance(value, dict) and set(value) == UPLOAD_LIMITS and all(re.fullmatch(r'\d+', str(value[k])) for k in UPLOAD_LIMITS):
-            return 'ok', status, seconds
-        return refused_outcome(status, failure_code(value)), status, seconds
+            return 'ok', status, now() - started
+        return refused_outcome(status, failure_code(value)), status, now() - started
 
     def chronicle_mcp(self, timeout=30):
-        rid = random.randrange(1, 2 ** 31)
-        status, body, seconds = call(self.port('chronicle'), 'POST', '/mcp', dict(jsonrpc='2.0', id=rid, method='tools/call',
+        rid, port = random.randrange(1, 2 ** 31), self.port('chronicle')
+        started = now()
+        status, body, _ = call(port, 'POST', '/mcp', dict(jsonrpc='2.0', id=rid, method='tools/call',
                                                                                params=dict(name='ingest_status', arguments=dict(offset=0, limit=5))),
                                      headers={'Authorization': f'Bearer {self.run.chronicle_read}', 'Accept': 'application/json, text/event-stream'}, timeout=timeout)
         value = decoded(body)
         if status != 200:
-            return refused_outcome(status, failure_code(value)), status, seconds
+            return refused_outcome(status, failure_code(value)), status, now() - started
         if not (isinstance(value, dict) and value.get('jsonrpc') == '2.0' and value.get('id') == rid and isinstance(value.get('result'), dict)):
-            return 'other:200:not-a-result-for-this-id', status, seconds
+            return 'other:200:not-a-result-for-this-id', status, now() - started
         result = value['result']
-        texts = [block.get('text') for block in result.get('content', []) if isinstance(block, dict) and block.get('type') == 'text']
-        content = decoded(texts[0]) if len(texts) == 1 else None
+        if not isinstance(result.get('content'), list):
+            return 'other:200:malformed-tool-result', status, now() - started
+        texts = [block.get('text') for block in result['content'] if isinstance(block, dict) and block.get('type') == 'text']
+        content = decoded(texts[0]) if len(texts) == 1 and isinstance(texts[0], str) else None
         if result.get('isError') is not True and status_result(content):
-            return 'ok', status, seconds
+            return 'ok', status, now() - started
         if result.get('isError') is True and failure_code(content) == 'unavailable':
-            return 'unavailable:tool-error', status, seconds
-        return f'other:200:tool-{failure_code(content)}', status, seconds
+            return 'unavailable:tool-error', status, now() - started
+        return f'other:200:tool-{failure_code(content)}', status, now() - started
 
     def chronicle_cookie(self):
         if self.cookie is None:
@@ -803,9 +826,10 @@ class Clients:
         """A new socket: Hello, then IngestStatus. Unavailable: an Error envelope with code unavailable, the retryable close
         1013 (CONTRACT.md: authentication-store failures close retryably with 1013) or HTTP 503 at the upgrade with a
         Failure body coded unavailable."""
-        started, cookie = now(), self.chronicle_cookie()
+        cookie, port = self.chronicle_cookie(), self.port('chronicle')
+        started = now()
         try:
-            ws = WebSocket(self.port('chronicle'), '/api/ws', [('Origin', self.origin), ('Cookie', cookie)], timeout)
+            ws = WebSocket(port, '/api/ws', [('Origin', self.origin), ('Cookie', cookie)], timeout)
         except OSError as error:
             return f'other:{type(error).__name__}', None, now() - started
         try:
@@ -819,7 +843,9 @@ class Clients:
                     return 'ok', 101, now() - started
             if kind == 'close':
                 return ('unavailable:close-1013' if value == 1013 else f'other:close-{value}'), 101, now() - started
-            if failure_code(value.get('Error', {}).get('failure')) == 'unavailable':
+            if kind == 'malformed':
+                return 'other:malformed-envelope', 101, now() - started
+            if failure_code(dig(value, 'Error', 'failure')) == 'unavailable':
                 return 'unavailable:error', 101, now() - started
             return 'other:' + next(iter(value), '?'), 101, now() - started
         except (OSError, ValueError, KeyError) as error:
@@ -831,11 +857,13 @@ class Clients:
         return {'Authorization': f'Bearer {self.run.haystack_token}', 'X-Haystack-Version': '1.0.0'}
 
     def haystack_item(self, timeout=30):
-        status, body, seconds = call(self.port('haystack'), 'POST', '/api/v1/get', dict(key=HAYSTACK_KEY, revision=None), headers=self.haystack_headers(), timeout=timeout)
+        port = self.port('haystack')
+        started = now()
+        status, body, _ = call(port, 'POST', '/api/v1/get', dict(key=HAYSTACK_KEY, revision=None), headers=self.haystack_headers(), timeout=timeout)
         value = decoded(body)
         if status == 200 and isinstance(value, dict) and value.get('key') == HAYSTACK_KEY and isinstance(value.get('revision'), int) and value['revision'] >= 1:
-            return 'ok', status, seconds
-        return refused_outcome(status, failure_code(value)), status, seconds
+            return 'ok', status, now() - started
+        return refused_outcome(status, failure_code(value)), status, now() - started
 
     def ensure_item(self):
         status, _, _ = call(self.port('haystack'), 'POST', '/api/v1/get', dict(key=HAYSTACK_KEY, revision=None), headers=self.haystack_headers())
@@ -850,14 +878,16 @@ class Clients:
         p, rid = self.protocol, uuid.uuid4()
         body = p.dumps(p.ClientEnvelope(rid, p.API_VERSION, p.Command_ListArtifacts(p.CatalogueQuery('', False, None, None, p.CatalogueSort.CreatedAt,
                                                                                                       p.SortDirection.Desc, 10, None, [], None, None))))
-        status, answer, seconds = call(self.port('manure'), 'POST', '/api/current', body, headers={'Authorization': f'Bearer {self.run.manure_token}'}, timeout=timeout)
+        port = self.port('manure')
+        started = now()
+        status, answer, _ = call(port, 'POST', '/api/current', body, headers={'Authorization': f'Bearer {self.run.manure_token}'}, timeout=timeout)
         value = decoded(answer)
         envelope = value if isinstance(value, dict) and isinstance(value.get('result'), dict) else None
         if status == 200 and envelope is not None and envelope.get('requestId') == str(rid) and isinstance(envelope['result'].get('Catalogue'), dict):
-            return 'ok', status, seconds
+            return 'ok', status, now() - started
         # A failure before the envelope is read (authentication, admission) carries the nil request id.
-        code = envelope['result'].get('Error', {}).get('failure', {}).get('code') if envelope is not None and envelope.get('requestId') in (str(rid), NIL) else None
-        return refused_outcome(status, code, 'Unavailable'), status, seconds
+        code = dig(envelope, 'result', 'Error', 'failure', 'code') if envelope is not None and envelope.get('requestId') in (str(rid), NIL) else None
+        return refused_outcome(status, code, 'Unavailable'), status, now() - started
 
     def ingest(self, payload):
         """The receipt of an ingest whose requestId matches, else None."""
@@ -1217,7 +1247,8 @@ def backends(run):
 
 
 class Sampler:
-    """Calls `sample` every `period` seconds on a thread until stopped; a failed sample is recorded as its error."""
+    """Calls `sample` every `period` seconds on a thread until stopped: (query start, completion, value) per sample; a
+    failed sample is recorded as its error."""
     def __init__(self, sample, period):
         self.samples, self.stopping = [], threading.Event()
         self.thread = threading.Thread(target=self.loop, args=(sample, period), daemon=True)
@@ -1230,13 +1261,27 @@ class Sampler:
                 value = sample()
             except Exception as error:
                 value = dict(error=type(error).__name__)
-            self.samples.append((started, value))
+            self.samples.append((started, now(), value))
             self.stopping.wait(max(0.0, period - (now() - started)))
 
     def stop(self):
         self.stopping.set()
         self.thread.join(timeout=SQL_S + 10)
         return self.samples
+
+
+def sampling_gaps(samples, start, end, span=SAMPLE_SPAN_S):
+    """Where successful samples [(query start, completion, value)] fail to cover [start, end] (r7): no sample completed at
+    or before `start`, none started at or after `end`, or between those two a sample's query start and the next one's
+    completion more than `span` apart (each snapshot lies inside its query). Empty = covered."""
+    ordered = sorted((s for s in samples if 'error' not in s[2]), key=lambda s: s[0])
+    first = max((i for i, s in enumerate(ordered) if s[1] <= start), default=None)
+    last = min((i for i, s in enumerate(ordered) if s[0] >= end), default=None)
+    gaps = ([] if first is not None else ['no sample completed before the start']) + ([] if last is not None else ['no sample started after the end'])
+    if gaps:
+        return gaps
+    return [dict(fromSeconds=round(a - start, 3), spanSeconds=round(b - a, 3)) for (a, _, _), (_, b, _) in zip(ordered[first:last], ordered[first + 1:last + 1])
+            if b - a > span]
 
 
 def requests_run(clients):
@@ -1287,6 +1332,16 @@ def load_calibration(path):
     return calibration
 
 
+def registered_calibration(path):
+    """(T, source) of the calibration rule set r7 registered: any other file, or the registered one changed, is refused."""
+    assert path, 'RESTART_ACC_CALIBRATION is not set'
+    given = Path(path).resolve(strict=True)
+    assert given == Path(REGISTERED_CALIBRATION['path']).resolve(), f'{given} is not the calibration of rule set {RULE_SET}: {REGISTERED_CALIBRATION["path"]}'
+    digest = hashlib.sha256(given.read_bytes()).hexdigest()
+    assert digest == REGISTERED_CALIBRATION['sha256'], f'{given} changed since rule set {RULE_SET} registered it: sha256 {digest}'
+    return load_calibration(given), dict(path=str(given), sha256=digest, registered=True)
+
+
 def case_6(run):
     case = Case(run, '6', 'Connections per 1,000 transactions (SMALL baseline, POOL): workers idle; 1,000 requests per service (Chronicle MCP '
                           '`ingest_status`, Haystack item GET, Manure list); cold and warm runs; sessions x 1000 / T and TIME_WAIT to the PostgreSQL '
@@ -1314,6 +1369,7 @@ def case_6(run):
         runs = {}
         for phase in ('cold', 'warm'):
             answered = requests_run(clients)
+            requests_end = now()
             peak = time_wait(run.cluster.port)
             time.sleep(PGSTAT_FLUSH_S)
             snapshots.append(snapshot(run, phase) | dict(timeWaitRightAfterRequests=peak))
@@ -1343,14 +1399,20 @@ def case_6(run):
             derived[phase][name] = row
             case.valid(f'{phase}: {name} answered all {REQUESTS} requests with its decoded success', row['outcomes'] == {'ok': REQUESTS}, row['outcomes'])
     server_log = run.cluster.log_since(offset)
-    peaks = {name: max((value.get(name, 0) for _, value in samples if 'error' not in value), default=None) for name in SERVICES}
+    peaks = {name: max((value.get(name, 0) for _, _, value in samples if 'error' not in value), default=None) for name in SERVICES}
+    gaps = sampling_gaps(samples, trio.started, requests_end)
     rejected = TOO_MANY.findall(server_log) + [text for service in (trio or {}).values() for _, _, _, text, _ in service.find(re.compile('53300'))]
     raw = [dict(label=s['label'], secondsAfterCaseStart=round(s['t'] - start['t'], 1), wall=round(s['wall'], 3), databases=s['databases'], timeWait=s['timeWait'],
                 **({'timeWaitRightAfterRequests': s['timeWaitRightAfterRequests']} if 'timeWaitRightAfterRequests' in s else {})) for s in snapshots]
     case.measurements = dict(workload=WORKLOAD, snapshots=raw, derived=derived, backendsPeak=peaks, backendSamples=len(samples),
-                             sampleErrors=sum(1 for _, v in samples if 'error' in v), rejections53300=rejected[:20],
-                             calibrationSource=os.environ.get('RESTART_ACC_CALIBRATION') if run.set_name in POOL_JUDGED else 'this run (T = its own background-corrected sessions)')
-    case.valid(f'backends sampled every {BACKEND_SAMPLE_S} s from before the start, without error', samples and not any('error' in v for _, v in samples), len(samples))
+                             sampleErrors=sum(1 for _, _, v in samples if 'error' in v), rejections53300=rejected[:20],
+                             sampleCoverage=dict(fromSeconds=round(trio.started - start['t'], 3), toSeconds=round(requests_end - start['t'], 3),
+                                                 spanLimitSeconds=SAMPLE_SPAN_S, gaps=gaps[:20]),
+                             backendSampleSeconds=[[round(a - start['t'], 3), round(b - start['t'], 3)] for a, b, _ in samples],
+                             calibrationSource=run.calibration_source if run.set_name in POOL_JUDGED else 'this run (T = its own background-corrected sessions)')
+    case.valid(f'backends sampled every {BACKEND_SAMPLE_S} s from before the start, without error', samples and not any('error' in v for _, _, v in samples), len(samples))
+    case.valid(f'backend samples cover the start through the end of the warm run: no span over {SAMPLE_SPAN_S} s from a sample\'s query start to '
+               'the next one\'s completion', not gaps, gaps[:5])
     case.valid('background measured over the idle window', idle['t'] - ready['t'] >= IDLE_S, round(idle['t'] - ready['t'], 1))
     note('case 6 measurements: ' + json.dumps(dict(derived=derived, timeWait=[(s['label'], s['timeWait']) for s in raw], backendsPeak=peaks)))
     if run.set_name in POOL_JUDGED:
@@ -1495,6 +1557,16 @@ def terminate_latched(run, case, clients, roles, label, fence=None):
             case.record(f'{label}: answers of the probes that waited on the latch', answers)
 
 
+def fenced_judgment(answers, bound):
+    """(passed, summary) of one probe type's fenced answers (r7): at least one, every one unavailable and its unrounded
+    elapsed time (request through decoded outcome) within the bound; values are rounded only in the summary."""
+    late = [a for a in answers if a['elapsed'] > bound]
+    wrong = [a for a in answers if not a['outcome'].startswith('unavailable') or a['elapsed'] > bound]
+    summary = dict(answers=len(answers), outcomes=sorted({a['outcome'] for a in answers}), slowest=max((round(a['elapsed'], 3) for a in answers), default=None),
+                   late=len(late), boundSeconds=bound, firstOther=[a | dict(elapsed=round(a['elapsed'], 3)) for a in wrong[:3]])
+    return bool(answers) and not wrong, summary
+
+
 def case_4(run):
     pool = run.set_name in POOL_JUDGED
     case = Case(run, '4', 'Terminate, fence, unfence: terminate all three roles\' sessions; then per role the §10 fence procedure for 30 s, then '
@@ -1529,19 +1601,16 @@ def case_4(run):
             while now() < fenced['at'] + FENCE_S:
                 for kind, probe in clients.probes(role).items():
                     outcome, status, seconds = probe(timeout=bound + 30)
-                    answers.append(dict(probe=kind, atSeconds=round(now() - fenced['at'], 2), outcome=outcome, status=status, seconds=round(seconds, 3)))
+                    answers.append(dict(probe=kind, atSeconds=round(now() - fenced['at'], 2), outcome=outcome, status=status, elapsed=seconds))
                 time.sleep(PROBE_PERIOD_S)
             sleep_until(fenced['at'] + FENCE_S)
             unfenced = now()
             run.cluster.sql('postgres', f'ALTER ROLE "{role}" LOGIN')
             case.valid(f'{role}: answers were collected while fenced', len(answers) >= len(clients.probes(role)), len(answers))
             for kind in clients.probes(role):
-                mine = [a for a in answers if a['probe'] == kind]
-                wrong = [a for a in mine if not a['outcome'].startswith('unavailable') or a['seconds'] > bound]
-                summary = dict(answers=len(mine), outcomes=sorted({a['outcome'] for a in mine}), slowest=max((a['seconds'] for a in mine), default=None),
-                               boundSeconds=bound, firstOther=wrong[:3])
+                passed, summary = fenced_judgment([a for a in answers if a['probe'] == kind], bound)
                 if pool:
-                    case.check(f'{role} fenced: every {kind} answer is unavailable within {bound:.0f} s', mine and not wrong, summary)
+                    case.check(f'{role} fenced: every {kind} answer is unavailable within {bound:.0f} s', passed, summary)
                 else:
                     case.record(f'{role} fenced: {kind} answers (SMALL: recorded, the contract is judged on POOL and FULL)', summary)
             recovered, wanted = clients.recovered((role,), unfenced)
@@ -1828,7 +1897,7 @@ class Cohort:
 
     def close(self):
         if self.sampler is not None:
-            for at, value in self.sampler.stop():
+            for at, _, value in self.sampler.stop():
                 self.timeline.write(json.dumps(dict(t=round(at - self.run.t0, 2), **value)) + '\n')
         if self.timeline is not None:
             self.timeline.close()
@@ -2029,9 +2098,166 @@ def parse(line):
     return text, parsed | {f'ready.{name}': True for name, pattern in READY.items() if pattern.search(text)}
 
 
+DECODE_S = 5.0  # self-check: the fake clock's advance per decoded body
+
+
+def answering(reply):
+    """A loopback HTTP server of the self-check: every request gets reply(path, request JSON) = (status, JSON value)."""
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.answer()
+
+        def do_POST(self):
+            self.answer()
+
+        def answer(self):
+            length = int(self.headers.get('Content-Length') or 0)
+            status, value = reply(self.path, json.loads(self.rfile.read(length)) if length else None)
+            body = json.dumps(value).encode()
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def ws_answering(message):
+    """A loopback socket of the self-check that completes one WebSocket upgrade, reads the first frame and answers `message`."""
+    listener = socket.create_server(('127.0.0.1', 0))
+
+    def serve():
+        connection, _ = listener.accept()
+        with connection:
+            head = b''
+            while b'\r\n\r\n' not in head:
+                head += connection.recv(1)
+            connection.sendall(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n')
+            connection.recv(4096)
+            payload = json.dumps(message).encode()
+            connection.sendall(bytes([0x81, len(payload)]) + payload)
+            connection.recv(4096)
+    threading.Thread(target=serve, daemon=True).start()
+    return listener
+
+
+def enforcement_checks(m):
+    """r7's enforcement of the judged rules, exercised without services through module `m`'s own code: [(label, held,
+    detail)]. Case 4: elapsed time through the decoded outcome, compared unrounded; malformed replies are `other`
+    outcomes. Case 6: samples carry their timing, coverage gaps are found. The calibration: only the registered file."""
+    results = []
+
+    def scenario(label, check):
+        try:
+            held, detail = check()
+        except Exception as error:
+            held, detail = False, f'{type(error).__name__}: {error}'
+        results.append((label, bool(held), detail))
+
+    def clients(port):
+        stub = object.__new__(m.Clients)
+        stub.run = type('StubRun', (), dict(chronicle_ingest='self-check', chronicle_read='self-check', haystack_token='self-check', manure_token='self-check'))()
+        stub.port, stub.protocol = (lambda name: port), m.manure_protocol()
+        stub.cookie, stub.origin, stub.versions = 'chronicle_session=self-check', f'http://127.0.0.1:{port}', ['1']
+        return stub
+
+    def unavailable(path, request):
+        if path == '/api/current':
+            return 503, dict(requestId=m.NIL, result=dict(Error=dict(failure=dict(code='Unavailable', message='self-check'))))
+        return 503, dict(code='unavailable', message='self-check')
+
+    server = answering(unavailable)
+    real_now, real_decoded = m.now, m.decoded
+    clock = [1000.0]
+
+    def slow_decoded(body):
+        clock[0] += DECODE_S
+        return real_decoded(body)
+    m.now, m.decoded = (lambda: clock[0]), slow_decoded
+    try:
+        stub = clients(server.server_address[1])
+        for kind in ('chronicle_rest', 'chronicle_mcp', 'haystack_item', 'manure_list'):
+            scenario(f'case 4 timing: {kind} counts its decoding ({DECODE_S} s on a fake clock) in its elapsed time',
+                     lambda kind=kind: (lambda answer: (answer[0].startswith('unavailable') and answer[2] >= DECODE_S, answer))(getattr(stub, kind)(timeout=5)))
+    finally:
+        m.now, m.decoded = real_now, real_decoded
+        server.shutdown()
+        server.server_close()
+    for elapsed, expected in ((11.0004, False), (10.9996, True)):
+        scenario(f'case 4 timing: a fenced unavailable answer after {elapsed} s against the 11 s bound {"passes" if expected else "fails"} (unrounded)',
+                 lambda elapsed=elapsed, expected=expected: (lambda judged: (judged[0] is expected, judged[1]))(
+                     m.fenced_judgment([dict(probe='rest', atSeconds=1.0, outcome='unavailable', status=503, elapsed=elapsed)], 11.0)))
+    malformed = [('chronicle_mcp', 'MCP result with "content": null', lambda request: (200, dict(jsonrpc='2.0', id=request['id'], result=dict(content=None, isError=True)))),
+                 ('chronicle_mcp', 'MCP result with "content": 5', lambda request: (200, dict(jsonrpc='2.0', id=request['id'], result=dict(content=5, isError=True)))),
+                 ('manure_list', 'Manure 503 envelope with "Error": null', lambda request: (503, dict(requestId=m.NIL, result=dict(Error=None))))]
+    for kind, label, answer in malformed:
+        server = answering(lambda path, request, answer=answer: answer(request))
+        try:
+            scenario(f'case 4 malformed reply: {label} is an `other` outcome, not a crash',
+                     lambda kind=kind: (lambda answer: (answer[0].startswith('other'), answer[:2]))(getattr(clients(server.server_address[1]), kind)(timeout=5)))
+        finally:
+            server.shutdown()
+            server.server_close()
+    for label, message in (('a null message', None), ('an envelope whose result is null', dict(requestId='x', result=None))):
+        listener = ws_answering(message)
+        try:
+            scenario(f'case 4 malformed reply: WS {label} is an `other` outcome, not a crash',
+                     lambda: (lambda answer: (answer[0].startswith('other'), answer[:2]))(clients(listener.getsockname()[1]).chronicle_ws(timeout=5)))
+        finally:
+            listener.close()
+    taken, count = threading.Event(), [0]
+
+    def sample():
+        count[0] += 1
+        if count[0] >= 3:
+            taken.set()
+        return {}
+    sampler = m.Sampler(sample, 0.01)
+    taken.wait(10)
+    recorded = sampler.stop()
+    scenario('case 6 sampling: every sample records its query start and its completion',
+             lambda: (len(recorded) >= 3 and all(len(s) == 3 and s[0] <= s[1] for s in recorded), recorded[:3]))
+
+    def series(starts, slow=None):
+        return [(a, a + (3.0 if a == slow else 0.05), {}) for a in starts]
+    steady = [x * 1.0 for x in range(-3, 61)]
+    for label, samples, expected in (('steady 1 s samples', series(steady), True),
+                                     ('a sample whose query took 3 s', series([a for a in steady if a < 21 or a > 23], slow=20.0), False),
+                                     ('sampling stopped before the end', series([a for a in steady if a < 49]), False),
+                                     ('sampling started after the start', series([a for a in steady if a > 0]), False),
+                                     ('a 3 s hole across the start', series([a for a in steady if not -3 < a < 1]), False)):
+        scenario(f'case 6 sampling coverage of [0, 50] s: {label} {"covers" if expected else "is a gap (INVALID)"}',
+                 lambda samples=samples, expected=expected: (lambda gaps: ((not gaps) is expected, gaps[:3]))(m.sampling_gaps(samples, 0.0, 50.0)))
+    scratch = Path(tempfile.mkdtemp(prefix='restart-acc-selfcheck.', dir=SHORT_TMP))
+    try:
+        other = scratch / 'report.json'
+        other.write_text(json.dumps(dict(set='SMALL', cases=[dict(case='6', verdict='BASELINE', measurements=dict(
+            workload=m.WORKLOAD, derived={phase: {name: dict(requestSessions=1000.0) for name in SERVICES} for phase in ('cold', 'warm')}))])))
+
+        def refused_other():
+            try:
+                return False, m.registered_calibration(str(other))
+            except AssertionError as error:
+                return True, str(error)
+        scenario('calibration: a structurally valid SMALL baseline other than the registered file is refused', refused_other)
+    finally:
+        shutil.rmtree(scratch)
+    if Path(REGISTERED_CALIBRATION['path']).exists():
+        scenario('calibration: the registered file is accepted, its path and SHA-256 reported',
+                 lambda: (lambda loaded: (loaded[1] == dict(path=str(Path(REGISTERED_CALIBRATION['path']).resolve()), sha256=REGISTERED_CALIBRATION['sha256'],
+                                                           registered=True), loaded[1]))(m.registered_calibration(REGISTERED_CALIBRATION['path'])))
+    return results
+
+
 def self_check():
     """The interlocks refuse what this run does not own, PostgreSQL tools get no inherited override, the set table is rule
-    set r7's, and the line patterns take the spec's formats and nothing near them. No packages, no cluster; seconds."""
+    set r7's, r7's enforcement holds (enforcement_checks), and the line patterns take the spec's formats and nothing near
+    them. No packages, no cluster, loopback stubs only; seconds."""
     failures = []
 
     def refused(label, action):
@@ -2107,6 +2333,10 @@ def self_check():
         print(f'{"ok" if held else "not ok"} - set table: {label}', flush=True)
         if not held:
             failures.append(f'set table: {label}')
+    for label, held, detail in enforcement_checks(sys.modules[__name__]):
+        print(f'{"ok" if held else "not ok"} - {label}: {detail}', flush=True)
+        if not held:
+            failures.append(label)
     for line in SAMPLE_LINES:
         text, parsed = parse(line)
         if len(parsed) != 1:
@@ -2322,14 +2552,12 @@ def main(argv):
         print(usage, file=sys.stderr)
         return 2
     set_name, selected = argv[0], [case for case in ORDER if case in (argv[1:] or CASES_OF[argv[0]])]
-    calibration = None
+    calibration, calibration_source = None, None
     if set_name in POOL_JUDGED and '6' in selected:
-        path = os.environ.get('RESTART_ACC_CALIBRATION')
         try:
-            assert path, 'RESTART_ACC_CALIBRATION is not set'
-            calibration = load_calibration(path)
+            calibration, calibration_source = registered_calibration(os.environ.get('RESTART_ACC_CALIBRATION'))
         except (OSError, ValueError, KeyError, AssertionError, StopIteration) as error:
-            print(f'{set_name} case 6 needs RESTART_ACC_CALIBRATION=<a SMALL run\'s report.json with a BASELINE case 6 of this workload>: {error}', file=sys.stderr)
+            print(f'{set_name} case 6 needs RESTART_ACC_CALIBRATION={REGISTERED_CALIBRATION["path"]} (rule set {RULE_SET}): {error}', file=sys.stderr)
             return 2
     out = Path(os.environ['RESTART_ACC_OUT'])
     if not out.is_absolute() or (out.exists() and any(out.iterdir())):
@@ -2346,14 +2574,16 @@ def main(argv):
     started_at, results, run = datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'), [], None
     try:
         run = Run(set_name, out, packages, calibration)
-        note(f'restart acceptance, rule set {RULE_SET}, set {set_name}, cases {" ".join(selected)}, packages {json.dumps({k: str(v) for k, v in packages.items()})}, root {run.root.path}')
+        run.calibration_source = calibration_source
+        note(f'restart acceptance, rule set {RULE_SET}, set {set_name}, cases {" ".join(selected)}, packages {json.dumps({k: str(v) for k, v in packages.items()})}, root {run.root.path}'
+             + (f', calibration {json.dumps(calibration_source)}' if calibration_source else ''))
         if SUPPLEMENT_3B_DOWN_S:
             note(f'SUPPLEMENTARY run (not counted): case 3b keeps PostgreSQL down {SUPPLEMENT_3B_DOWN_S} s')
         run.setup()
         for ident in selected:
             try:
                 results.append(CASES[ident](run))
-            except (AssertionError, Refused, OSError, subprocess.SubprocessError, ValueError, KeyError) as error:
+            except (AssertionError, Refused, OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, AttributeError) as error:
                 print(f'case {ident}: INVALID (harness: {type(error).__name__}: {str(error)[:1000]})', flush=True)
                 results.append(dict(case=ident, verdict='INVALID', harnessError=f'{type(error).__name__}: {str(error)[:2000]}'))
     finally:
@@ -2362,7 +2592,7 @@ def main(argv):
         if run is not None:
             run.cleanup()
     verdicts = {r['case']: r['verdict'] for r in results}
-    summary = dict(set=set_name, ruleSet=RULE_SET, startedAt=started_at, wallSeconds=round(now() - run.t0, 1), verdicts=verdicts, cases=results)
+    summary = dict(set=set_name, ruleSet=RULE_SET, calibration=calibration_source, startedAt=started_at, wallSeconds=round(now() - run.t0, 1), verdicts=verdicts, cases=results)
     if SUPPLEMENT_3B_DOWN_S:
         summary['supplementary'] = dict(case3bDownSeconds=SUPPLEMENT_3B_DOWN_S, counted=False)
     (out / 'report.json').write_text(json.dumps(summary, indent=1))
