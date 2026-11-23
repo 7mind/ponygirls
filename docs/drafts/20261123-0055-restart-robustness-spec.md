@@ -165,7 +165,7 @@ retry and cutoff (`transactionWithin`, `loginWithin`, the login-helper bound, th
 `connection-unavailable`, `login-helpers-full` and `LeaseLost`, a failure record after the lease, drain-then-abort of
 the P3 writers, and the `client_connection_check_interval` tightening. The bullets below marked "R-a2" describe them.
 
-**SMALL's guarantee:** a PostgreSQL restart that ends at least 10 s before the in-flight job's lease ends charges no attempt (the hold is then recorded); longer outages charge one attempt through reclaim and can lose one paid model answer; crashed jobs resume as today. Why 10 s: the worker stops trying 5 s (skew margin) before the stored lease end, and
+**SMALL's guarantee:** a PostgreSQL restart that ends at least 10 s before the in-flight job's lease ends charges no attempt, provided the hold's write obtains a connection and the row lock within that margin; longer outages charge one attempt through reclaim and can lose one paid model answer; crashed jobs resume as today. Why 10 s: the worker stops trying 5 s (skew margin) before the stored lease end, and
 a try needs up to 5 s (its bound); a database back ≥ 10 s before the lease end leaves ≥ 5 s of tracked lease, i.e. at
 least one try after it (tries come every 2 s and fail at once while PostgreSQL refuses connections: 08001/57P03). A
 database back inside the last 10 s may still be recorded; inside the last 5 s it is charged as today. Slow statements
@@ -173,6 +173,9 @@ while the database is up (the deploy5/deploy6 cold window: 57014 on P3) are held
 statement fits the 5-min publication timeout. As today, a model answer whose uncommitted checkpoint write the outage
 cuts is lost whatever the outage's length (its window's reservation stays charged, at most one per lane; the next
 attempt calls the model again; a committed but unacknowledged one is reused).
+**SMALL's shutdown bound:** the recorder stops scheduling at once; an in-flight recording try ends within about 10 s
+(each of its waits is bounded separately). One deadline per try (remaining = deadline − now before each step) and a test of
+cancellation across admission then SQL wait are a REQUIRED item of R-a2 (orchestrator decision 2026-11-23 06:11Z).
 
 **Full R-a design** (SMALL above is the part that ships first; the R-a2 parts are marked).
 **Decision (D1 confirmed):** transient database failures are not charged to `attempts`; they hold the job with back-off;

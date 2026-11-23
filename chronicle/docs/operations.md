@@ -227,9 +227,9 @@ rebuild reset it. Every other failure is charged as before.
 - **Restarts.** The hold is written by the job's fenced failure record; while the database refuses it, the worker tries
   again every 2 s until the attempt's lease ends (300 s after its claim or last renewal, less a 5 s margin), each try
   checking that the claim still holds the job and each of its waits (connection, lock, statement, network) bounded by
-  5 s and by the lease left. So a PostgreSQL restart that ends at least 10 s before the in-flight job's lease ends charges no attempt (the hold is then recorded); longer outages charge one attempt through reclaim and can lose one paid model answer; crashed jobs resume as today. As before, a model answer whose uncommitted checkpoint write a restart cuts
-  is lost (its reservation stays charged, at most one per lane). Stopping the server schedules no further try; the one
-  in flight ends within its 5 s bound; the job keeps its lease, as before.
+  5 s and by the lease left. So a PostgreSQL restart that ends at least 10 s before the in-flight job's lease ends charges no attempt, provided the hold's write obtains a connection and the row lock within that margin; longer outages charge one attempt through reclaim and can lose one paid model answer; crashed jobs resume as today. As before, a model answer whose uncommitted checkpoint write a restart cuts
+  is lost (its reservation stays charged, at most one per lane). Stopping the server stops scheduling at once; an in-flight recording try ends within about 10 s (each of
+  its waits is bounded separately; one deadline per try is an R-a2 item); the job keeps its lease, as before.
 - **Logs** (warn, ids and codes only): `job held jobId=… code=database-transient sqlState=<s|none> class=<class>
   stage=<stage|none> consecutive=<k> nextAttemptAt=<ISO>`; at the limit `job failed … consecutive=10 nextAttemptAt=none`.
 - **Visible state.** Activity and the dashboard show a held job as `Queued`, Lease **Waiting** (title "Next attempt
