@@ -169,6 +169,7 @@ buildNpmPackage (finalAttrs: {
       test/model-runtime-*.test.ts \
       test/agent-session-dynamic-provider.test.ts \
       test/sdk-stream-options.test.ts \
+      test/system-prompt.test.ts \
       test/compaction*.test.ts \
       test/agent-session-auto-compaction-queue.test.ts \
       test/branch-summarization.test.ts \

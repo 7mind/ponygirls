@@ -1,6 +1,6 @@
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ADMISSION_CHANNEL, requestInventory, type Admission, type BridgeRequest } from "../context-rules/bridge.ts";
-import { nestedRuleText, type ContextFile } from "../context-rules/rules.ts";
+import { renderProjectContextFile, type ContextFile } from "../context-rules/rules.ts";
 import { MainTurn, nestedFiles, SNAPSHOTS } from "./main.ts";
 import { InstructionPreferences } from "./preferences.ts";
 
@@ -48,7 +48,7 @@ export default function archeologist(pi: ExtensionAPI): void {
   pi.on("context", (event, ctx) => {
     presented = matches(ctx) && prefs.effective(ctx).mainNested ? nestedFiles(ctx, base) : [];
     if (presented.length) return { messages: [...event.messages, {
-      role: "custom", customType: SNAPSHOTS, content: presented.map(nestedRuleText).join("\n"), display: false, timestamp: Date.now(),
+      role: "custom", customType: SNAPSHOTS, content: presented.map(renderProjectContextFile).join("\n\n"), display: false, timestamp: Date.now(),
     }] };
   });
   pi.events.on(ADMISSION_CHANNEL, value => {

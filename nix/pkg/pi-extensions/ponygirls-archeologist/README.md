@@ -8,6 +8,8 @@
 - **Subagents: project AGENTS.md** passes project rules already held by the direct parent.
 - **Subagents: global AGENTS.md** passes the operator's Pi agent-directory rule, or the direct parent's snapshot of it for nested subagents.
 
+Pi and Archeologist use the full path of the selected instruction file. For example, `/repo/api/AGENTS.md` is presented as `<project_instructions path="/repo/api/AGENTS.md">`, followed by the rule text and `</project_instructions>`.
+
 Each visited directory contributes at most one automatic rule, in Pi's own filename order. Explicit subagent skill/context selections remain available with all switches off. Subagents retain admitted snapshots; descendants cannot enlarge automatic grants beyond their direct parent's. Reviewers do not discover rules.
 
 Enter on the subagent files list to inspect the paths per recipient. Shared paths count once in the aggregate. The pane includes closed ordinary subagents in this root session. “History incomplete” means some installation or delivery evidence is unavailable; known files still appear. Neither inventory is a provider audit. `/agents` remains the subagent inspector. Without `ponygirls-subagents`, the main switch works and the other four controls are unavailable.

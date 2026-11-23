@@ -32,7 +32,7 @@ import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { EventBus, Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "@earendil-works/pi-coding-agent";
 import { registerStatsCollector } from "../../ponygirls-model-stats-collector.ts";
 import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, RESULT_TEXT_MAX, childToolGuidelines, childToolSpec, type TypeBuilder } from "./tools.ts";
-import { nestedRuleText } from "../../context-rules/rules.ts";
+import { renderProjectContextFile } from "../../context-rules/rules.ts";
 import { instructionHash, parseInstructionSet } from "./instructions.ts";
 import { MAX_PAYLOAD_BYTES } from "./protocol.ts";
 import { PROTOCOL_VERSION, type ContextFile, type InstructionSet } from "./types.ts";
@@ -1239,10 +1239,10 @@ async function installOriginalFaultWrapper(session: WorkerSession): Promise<void
 function withNestedRules(context: TranscriptContext, files: ContextFile[] | undefined): TranscriptContext {
   if (!files?.length) return context;
   const retained = context.messages.flatMap(message => typeof message.content === "string" ? [message.content] : message.content.flatMap(block => block.type === "text" ? [block.text] : []));
-  const missing = files.map(nestedRuleText).filter(rule => !retained.some(text => text.includes(rule)));
+  const missing = files.map(renderProjectContextFile).filter(rule => !retained.some(text => text.includes(rule)));
   if (!missing.length) return context;
   const [head, ...rest] = context.messages;
-  const rules = missing.join("\n");
+  const rules = missing.join("\n\n");
   return head?.role === "system"
     ? { ...context, messages: [{ ...head, sections: { ...head.sections, subagentNestedRules: rules } }, ...rest] }
     : { ...context, messages: [{ role: "system", content: rules, timestamp: 0 }, ...context.messages] };

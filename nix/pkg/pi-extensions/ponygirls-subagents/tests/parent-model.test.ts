@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import { mkdtempSync, mkdirSync, rmSync, renameSync, linkSync, symlinkSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Supervisor } from "../src/supervisor.ts";
 import { InMemoryRunStore } from "../src/store.ts";
@@ -287,6 +287,11 @@ test("a provider usable in the parent also initializes in a worker and resolves 
 });
 
 
+function assertRule(messages: { role: string; content: unknown }[], role: "system" | "tool", path: string, body: string): void {
+  const expected = `<project_instructions path="${path}">\n${body}\n</project_instructions>`;
+  assert.ok(messages.some(m => m.role === role && typeof m.content === "string" && m.content.includes(expected)), `${role}: ${expected}`);
+}
+
 test("child provider requests contain only admitted AGENTS.md sources and load nested rules on access", async t => {
   if (!process.env["PI_SUBAGENTS_SDK_ROOT"]) { t.skip("needs pinned SDK"); return; }
   const f = await fixture(t, "discovery", "api-key");
@@ -302,8 +307,11 @@ test("child provider requests contain only admitted AGENTS.md sources and load n
   writeFileSync(join(childDir, "AGENTS.md"), "CHECKOUT_LOSER");
   writeFileSync(join(childDir, "AGENTS.override.md"), "\ufeffCHECKOUT_ONLY");
   writeFileSync(join(nested, "CLAUDE.MD"), "NESTED_ONLY");
-  writeFileSync(join(nested, "probe.txt"), "FILE_READ_OK");
+  f.probe.path = "nested/deeper/probe.txt";
+  mkdirSync(join(nested, "deeper"));
+  writeFileSync(join(childDir, f.probe.path), "FILE_READ_OK");
   writeFileSync(join(named, "AGENTS.md"), "EXPLICIT_ONLY");
+  writeFileSync(join(named, "CLAUDE.md"), "EXPLICIT_ONLY");
   writeFileSync(join(f.root, "AGENTS.md"), "POOL_ANCESTOR_ONLY");
   writeFileSync(join(childDir, "SYSTEM.md"), "AMBIENT_SYSTEM_ONLY");
   mkdirSync(join(childDir, ".pi", "extensions"), { recursive: true });
@@ -314,7 +322,7 @@ test("child provider requests contain only admitted AGENTS.md sources and load n
     for (const key of Object.keys(f.discovery) as (keyof Discovery)[]) f.discovery[key] = enabled === key || enabled === "all";
     const start = f.messages.length;
     const child = await f.sup.spawn("governor", { taskName: `source-${enabled}`, message: "Read the probe.", profile: "reader", workspacePath: childDir,
-      ...(enabled === "all" ? { contextFiles: ["elsewhere/AGENTS.md"] } : {}) }, `source-${enabled}`);
+      ...(enabled === "all" ? { contextFiles: ["elsewhere/AGENTS.md", "elsewhere/CLAUDE.md"] } : {}) }, `source-${enabled}`);
     assert.equal((await terminal(f.sup, child.agentId, child.taskRunId, 1)).outcome, "succeeded");
     const requests = f.messages.slice(start);
     assert.equal(requests.length, 2);
@@ -325,6 +333,14 @@ test("child provider requests contain only admitted AGENTS.md sources and load n
       assert.equal(first.includes(marker), enabled === key || enabled === "all", `${enabled}: ${marker}`);
     }
     assert.equal(first.includes("EXPLICIT_ONLY"), enabled === "all");
+    if (enabled === "all") {
+      assertRule(requests[0], "system", join(hostAgentDir, "AGENTS.MD"), "GLOBAL_ONLY");
+      assertRule(requests[0], "system", join(childDir, "AGENTS.override.md"), "CHECKOUT_ONLY");
+      assertRule(requests[0], "system", join(workdir, "AGENTS.md"), "PARENT_SNAPSHOT_ONLY");
+      assertRule(requests[0], "system", join(named, "AGENTS.md"), "EXPLICIT_ONLY");
+      assertRule(requests[0], "system", join(named, "CLAUDE.md"), "EXPLICIT_ONLY");
+      assertRule(requests[1], "tool", join(nested, "CLAUDE.MD"), "NESTED_ONLY");
+    }
     for (const marker of ["OWNER_DISK_ONLY", "OWNER_GLOBAL_ONLY", "GLOBAL_LOSER", "CHECKOUT_LOSER", "POOL_ANCESTOR_ONLY", "AMBIENT_SYSTEM_ONLY", "AMBIENT_EXTENSION_ONLY"]) assert.ok(!second.includes(marker), marker);
     await f.sup.close("governor", child.agentId, `close-${enabled}`);
   }
@@ -396,6 +412,7 @@ test("sandbox worktree discovery stops at the effective cwd's checkout, not the 
       const child = await f.sup.spawn("governor", { taskName: name, profile: "reader", isolation: "sandbox", repoId: name, message: "Read the probe." }, name);
       assert.equal((await terminal(f.sup, child.agentId, child.taskRunId, 1)).outcome, "succeeded");
       const prompt = JSON.stringify(f.messages[start]);
+      assertRule(f.messages[start], "system", join(pkg, "AGENTS.md"), "PACKAGE_RULE");
       assert.match(prompt, /NESTED_CHECKOUT_RULE[\s\S]*PACKAGE_RULE/);
       assert.equal(prompt.split("PACKAGE_RULE").length, 2);
       assert.doesNotMatch(prompt, /PACKAGE_FALLBACK|SUPERPROJECT_RULE/);
@@ -422,6 +439,8 @@ test("allocated worktree uses committed rules from checkout root through effecti
   const child = await f.sup.spawn("governor", args, "allocated");
   assert.equal((await terminal(f.sup, child.agentId, child.taskRunId, 1)).outcome, "succeeded");
   const prompt = JSON.stringify(f.messages[0]);
+  assertRule(f.messages[0], "system", join(dirname(child.workdir), "CLAUDE.md"), "COMMITTED_ROOT");
+  assertRule(f.messages[0], "system", join(child.workdir, "AGENTS.md"), "COMMITTED_SUBDIR");
   assert.ok(prompt.indexOf("COMMITTED_ROOT") !== -1 && prompt.indexOf("COMMITTED_SUBDIR") > prompt.indexOf("COMMITTED_ROOT"));
   assert.ok(!prompt.includes("UNCOMMITTED_OWNER"));
 });
@@ -470,7 +489,7 @@ for (const checkpoint of [true, false]) test(`resumed child keeps one retained c
   assert.equal((await terminal(f.sup, child.agentId, next.taskRunId, 2)).outcome, "succeeded");
   const last = f.messages.at(-1)!;
   if (checkpoint) assert.deepEqual(last.filter(message => ["developer", "system"].includes(message.role)), firstSystem);
-  else assert.ok(last.some(message => message.role === "system" && JSON.stringify(message.content).includes("NESTED_AT_FIRST_READ")));
+  assertRule(last, checkpoint ? "tool" : "system", join(path, "AGENTS.md"), "NESTED_AT_FIRST_READ");
   assert.equal(JSON.stringify(last).split("NESTED_AT_FIRST_READ").length, 2);
   assert.ok(!JSON.stringify(last).includes("ON_DISK"));
 });
@@ -504,6 +523,7 @@ test("a compacted resident child receives the original on-access AGENTS.md rule 
   assert.ok(f.requests.length > 4, "compaction summary reached the provider");
   const last = JSON.stringify(f.messages.at(-1));
   assert.ok(!last.includes("DISCOVERING_TOOL_RESULT") && !last.includes("CHANGED_RESIDENT_RULE"));
+  assertRule(f.messages.at(-1)!, "system", rule, "RESIDENT_RULE_AT_READ");
   assert.equal(last.split("RESIDENT_RULE_AT_READ").length, 2);
 });
 

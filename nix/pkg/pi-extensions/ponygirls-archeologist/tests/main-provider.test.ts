@@ -12,12 +12,14 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 const extension = fileURLToPath(new URL("../index.ts", import.meta.url));
 const cases = ["direct", "codemode", "codemode-replaced", "direct-replaced", "direct-final-error", "codemode-final-error", "codemode-caught-error", "disabled", "blocked", "abort", "override"] as const;
 for (const mode of cases) test(`standalone model requests: ${mode}`, async t => {
-  const root = mkdtempSync(join(tmpdir(), "archeologist-")), cwd = join(root, "project"), agent = join(root, "agent");
+  const root = mkdtempSync(join(tmpdir(), "archeologist-")), cwd = join(root, 'project &<"\t'), agent = join(root, "agent");
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const dir of [agent, join(cwd, "section"), join(cwd, "other"), join(cwd, "unused"), join(root, "outside")]) mkdirSync(dir, { recursive: true });
   const write = (path: string, data: unknown) => writeFileSync(path, JSON.stringify(data));
+  writeFileSync(join(agent, "CLAUDE.md"), "GLOBAL_STARTUP");
   writeFileSync(join(cwd, "AGENTS.md"), "NATIVE_STARTUP");
-  for (const [dir, text] of [["section", "SECTION_RULE"], ["other", "OTHER_RULE"], ["unused", "UNVISITED_RULE"], ["../outside", "OUTSIDE_RULE"]]) {
+  const sectionBody = " SECTION_RULE: <x> & y\n";
+  for (const [dir, text] of [["section", sectionBody], ["other", "OTHER_RULE"], ["unused", "UNVISITED_RULE"], ["../outside", "OUTSIDE_RULE"]]) {
     writeFileSync(join(cwd, dir, "AGENTS.md"), text); write(join(cwd, dir, "probe"), { number: 42 });
   }
   symlinkSync(join(cwd, "section"), join(cwd, "alias"));
@@ -60,17 +62,27 @@ for (const mode of cases) test(`standalone model requests: ${mode}`, async t => 
   write(join(agent, "models.json"), { providers: { fixture: { baseUrl: `http://127.0.0.1:${addr.port}/v1`, apiKey: "fixture", api: "openai-completions", models: [{ id: "model", contextWindow: 16384, maxTokens: 512 }] } } });
   const bin = process.env.PI_BIN; assert.ok(bin);
   const session = join(root, "session.jsonl");
-  async function run(args: string[]) {
-    const cli = promisify(execFile)(bin!, ["--offline", "--model", "fixture/model", "-ne", "-e", extension, "-e", hook, ...(code ? ["-e", "builtin:codemode", "--tools", "+codemode"] : []), ...args, "-p", "Inspect."], { cwd, timeout: 45000, env: { PATH: process.env.PATH, HOME: root, PI_CODING_AGENT_DIR: agent, PI_TELEMETRY: "0" } });
+  async function run(args: string[], workdir = cwd) {
+    const cli = promisify(execFile)(bin!, ["--offline", "--model", "fixture/model", "-ne", "-e", extension, "-e", hook, ...(code ? ["-e", "builtin:codemode", "--tools", "+codemode"] : []), ...args, "-p", "Inspect."], { cwd: workdir, timeout: 45000, env: { PATH: process.env.PATH, HOME: root, PI_CODING_AGENT_DIR: agent, PI_TELEMETRY: "0" } });
     cli.child.stdin!.end();
     const { stderr } = await cli;
     assert.doesNotMatch(stderr, /failed to load|extension.*error/i);
   }
   if (mode === "abort") await assert.rejects(run(["--session", session]), { code: 1, stderr: "This operation was aborted\n" });
   else await run(["--session", session]);
-  assert.match(requests[0], /NATIVE_STARTUP/);
+  const system = JSON.parse(requests[0])[0];
+  assert.equal(system.role, "system");
+  assert.ok(system.content.includes(`<project_instructions path="${agent}/CLAUDE.md">\nGLOBAL_STARTUP\n</project_instructions>`));
+  assert.ok(system.content.includes(`<project_instructions path="${cwd}/AGENTS.md">\nNATIVE_STARTUP\n</project_instructions>`));
   assert.doesNotMatch(requests[0], /SECTION_RULE|OTHER_RULE|UNVISITED_RULE|OUTSIDE_RULE/);
   const accepted = mode === "direct" || mode === "codemode";
+  const section = `<project_instructions path="${cwd}/section/AGENTS.md">\n${sectionBody}\n</project_instructions>`;
+  const other = `<project_instructions path="${cwd}/other/AGENTS.md">\nOTHER_RULE\n</project_instructions>`;
+  if (accepted) {
+    const message = JSON.parse(requests[1]).at(-1);
+    assert.equal(message.role, "user");
+    assert.deepEqual(message.content, [{ type: "text", text: mode === "direct" ? `${section}\n\n${other}` : section }]);
+  }
   if (mode !== "abort") assert.equal(requests.length, 2);
   assert.equal((requests[1]?.match(/SECTION_RULE/g) ?? []).length, Number(accepted), requests[1]);
   assert.equal((requests[1]?.match(/OTHER_RULE/g) ?? []).length, Number(mode === "direct"));
@@ -78,11 +90,18 @@ for (const mode of cases) test(`standalone model requests: ${mode}`, async t => 
   const entries = readFileSync(session, "utf8").trim().split("\n").map(line => JSON.parse(line));
   const deltas = entries.filter(e => e.customType === "archeologist.nested");
   assert.equal(deltas.length, Number(accepted));
-  assert.deepEqual(deltas.flatMap(e => e.data.files.map((f: { content: string }) => f.content)), mode === "direct" ? ["SECTION_RULE", "OTHER_RULE"] : mode === "codemode" ? ["SECTION_RULE"] : []);
+  assert.deepEqual(deltas.flatMap(e => e.data.files.map((f: { content: string }) => f.content)), mode === "direct" ? [sectionBody, "OTHER_RULE"] : mode === "codemode" ? [sectionBody] : []);
   if (code) { assert.match(toolResults.join(""), mode === "codemode-caught-error" ? /Script completed[\s\S]*caught inner error/ : /Script completed[\s\S]*42/); }
   if (mode.endsWith("-replaced")) {
     assert.equal(JSON.parse(readFileSync(join(cwd, "section/probe"), "utf8")).number, 73);
     assert.match(toolResults.join(""), /42/); assert.doesNotMatch(toolResults.join(""), /73/);
+  }
+  if (mode === "codemode") {
+    const dynamic = JSON.parse(requests[1]).at(-1).content[0].text;
+    await run(["--no-session"], join(cwd, "section"));
+    const native = JSON.parse(requests.at(-1)!)[0];
+    assert.equal(native.role, "system");
+    assert.ok(native.content.includes(dynamic), dynamic);
   }
   if (mode === "override") assert.match(toolResults.join(""), /override success/);
   if (mode === "direct") {
@@ -93,7 +112,8 @@ for (const mode of cases) test(`standalone model requests: ${mode}`, async t => 
     await run(["--session", session]);
     assert.match(requests.at(-1)!, /FIXTURE_COMPACTED/);
     assert.doesNotMatch(requests.at(-1)!, /already written/);
-    assert.match(requests.at(-1)!, /SECTION_RULE/); assert.doesNotMatch(requests.at(-1)!, /CHANGED_AFTER_ACCESS/);
+    assert.deepEqual(JSON.parse(requests.at(-1)!).at(-1).content, [{ type: "text", text: `${section}\n\n${other}` }]);
+    assert.doesNotMatch(requests.at(-1)!, /CHANGED_AFTER_ACCESS/);
     await run(["--fork", session]); assert.doesNotMatch(requests.at(-1)!, /SECTION_RULE|OTHER_RULE/);
     write(join(agent, "archeologist.json"), { version: 1, mainNested: false });
     await run(["--session", session]); assert.doesNotMatch(requests.at(-1)!, /SECTION_RULE|OTHER_RULE/);

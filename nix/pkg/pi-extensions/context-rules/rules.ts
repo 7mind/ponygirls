@@ -10,6 +10,6 @@ export interface ContextFile { path: string; content: string }
 export const DISCOVERY_KEYS = ["nested", "worktree", "parent", "global"] as const;
 export type Discovery = Record<typeof DISCOVERY_KEYS[number], boolean>;
 export const DISCOVERY_OFF: Readonly<Discovery> = Object.freeze({ nested: false, worktree: false, parent: false, global: false });
-export function nestedRuleText(file: ContextFile): string {
-  return `Instructions from ${file.path}:\n${file.content}\n`;
+export function renderProjectContextFile({ path, content }: ContextFile): string {
+  return `<project_instructions path="${path}">\n${content}\n</project_instructions>`;
 }

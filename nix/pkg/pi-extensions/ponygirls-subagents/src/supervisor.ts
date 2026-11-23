@@ -27,7 +27,7 @@ import { parseParentModel, parseProviderRequestAuth, type ParentModels } from ".
 import { GateController, fingerprintSummary, restoreGateSpec, type CandidateRecord, type GateDecisionInput, type GateFinding, type GateHost, type GateSpecInput, type GateTerminalOutcome, type NormalizedGateCheck, type NormalizedGateSpec, type NormalizedReviewerSpec, type ReviewFeedback, type ReviewSpecInput, type WorkspaceFingerprint } from "./gate.ts";
 import { PROJECT_CONTEXT_FILE_NAMES } from "@earendil-works/pi-coding-agent";
 import type { Admission, InventoryRow } from "../../context-rules/bridge.ts";
-import { DISCOVERY_OFF, DISCOVERY_KEYS, nestedRuleText } from "../../context-rules/rules.ts";
+import { DISCOVERY_OFF, DISCOVERY_KEYS, renderProjectContextFile } from "../../context-rules/rules.ts";
 import { EMPTY_INSTRUCTIONS, discoveryGrants, instructionHash, mergeInstructions, ownerSource, trustedInstruction, type DiscoveryState, type InstructionSource, parseSelection, selectInstructions } from "./instructions.ts";
 import { ISOLATION_LEVELS } from "./types.ts";
 import { intersectGrants, pathWithin, resolveAllowedConcrete, rootGrants, type RegisteredRepo, type SupervisorPolicy } from "./policy.ts";
@@ -1970,12 +1970,12 @@ export class Supervisor implements GateHost {
       const seen = new Set([...held.contextFiles, ...outstanding].map(f => f.path));
       const files = found.filter(f => !seen.has(f.path));
       if (!current() || files.length === 0) return result;
-      const prefix = files.map(nestedRuleText).join("\n");
+      const prefix = files.map(renderProjectContextFile).join("\n\n");
       if (prefix.length > TOOL_RESULT_MAX / 2) throw err("PAYLOAD_TOO_LARGE", "Nested instruction text exceeds the tool response limit");
       mergeInstructions(held.skills, [...held.contextFiles, ...outstanding, ...files]);
       const revision = this.store.append("agent.instructions_added", { agentId: caller.agentId, taskRunId: caller.taskRunId, files }).seq;
       rt.pendingInstructions.set(revision, { taskRunId: caller.taskRunId, generation: caller.generation, files });
-      return { ...result, instructionRevision: revision, stdout: `${prefix}\n${result.stdout}` };
+      return { ...result, instructionRevision: revision, stdout: `${prefix}\n\n${result.stdout}` };
     } catch {
       return { ...result, stdout: `[Instruction discovery failed after ${request.tool} succeeded]\n${result.stdout}` };
     }
