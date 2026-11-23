@@ -43,11 +43,11 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
   }
   /** The whole transaction by `deadline` D (R-a2 M1), converted once to the engine's clock: the acquisition ends by
     * min(D, its start + the budget), each reset by min(that, its start + the reset cap); from the handoff the transaction
-    * watch aborts the connection at D, D is checked before the setup, the callback and COMMIT (a refusal aborts through the
-    * watch), the setup tightens the statement and lock timeouts to the time left, and after D or the abort nothing more is
-    * sent (no ROLLBACK): the connection is evicted. Fails `deadline-expired` for a refusal at a boundary and for a
-    * connection error caught after the watch aborted (an unknown outcome once COMMIT was sent); every other error keeps
-    * its own SQLSTATE, also when it arrives after D. */
+    * watch aborts the connection at D; D is checked before the setup, the callback, each statement the callback creates or
+    * executes ([[GuardedConnection]]) and COMMIT (a refusal aborts through the watch); the setup tightens the statement
+    * and lock timeouts to the time left; after D or the abort nothing more is sent (no ROLLBACK): the connection is evicted.
+    * Fails `deadline-expired` for a refusal at a boundary and for a connection error caught after the watch aborted (an
+    * unknown outcome once COMMIT was sent); every other error keeps its own SQLSTATE, also when it arrives after D. */
   def transactionWithin[A](deadline: Deadline)(f: Connection => A): A = {
     val end = nanoTime() + deadline.timeLeft.toNanos
     val c = try acquire(Bounds.Within(end)) catch { case e: SQLException => throw sanitize(e) }
@@ -62,7 +62,7 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
         c.setAutoCommit(false)
         limit(c, Bounds.Within(end))
         boundary(watch, end)
-        val result = f(c)
+        val result = f(new GuardedConnection(c, () => boundary(watch, end)))
         boundary(watch, end)
         c.commit()
         settled = nanoTime() - end <= 0

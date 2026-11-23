@@ -657,15 +657,32 @@ final class PoolSuite extends FunSuite {
       assertEquals(failure.getSuppressed.toList.collect { case JdbcFailure(code, _) => code }, List("database-rollback-failed"))
       assertNotEquals(pool.transaction(pid), first.get)
     }
-    // (b) The callback moves the engine's clock past D and fails: its error, no ROLLBACK, evicted.
-    val skew = new java.util.concurrent.atomic.AtomicLong(0); val rolled = new AtomicInteger
-    val counted = new Counting((_, c) => proxy(classOf[Connection], c) { (m, _) => if (m.getName == "rollback") rolled.incrementAndGet(); None })
+    // (b) The callback moves the engine's clock past D, its watch never firing: (1) its own error, thrown then, is kept; (2) a
+    // statement it prepares after D and (3) one it prepared before D never reach the driver (deadline-expired); no
+    // ROLLBACK; each connection evicted.
+    val marker = "m1_after_deadline"
+    val skew = new java.util.concurrent.atomic.AtomicLong(0); val rolled = new AtomicInteger; val executed = new AtomicInteger
+    val counted = new Counting((_, c) => proxy(classOf[Connection], c) { (m, a) => m.getName match {
+      case "rollback" => rolled.incrementAndGet(); None
+      case "prepareStatement" if String.valueOf(a(0)).contains(marker) =>
+        val prepared = m.invoke(c, a*).asInstanceOf[PreparedStatement]
+        Some(proxy(classOf[PreparedStatement], prepared) { (e, _) => if (e.getName.startsWith("execute")) executed.incrementAndGet(); None })
+      case _ => None
+    } })
     Using.resource(engine(config, 8.seconds, counted, never, () => System.nanoTime() + skew.get, trace)) { pool =>
-      val first = new AtomicInteger
-      val failure = intercept[JdbcFailure](pool.transactionWithin(Deadline.now + within) { c => first.set(pid(c)); skew.set((within + 1.second).toNanos); raise(c) })
-      assertEquals((failure.code, failure.sqlState, rolled.get), ("database-unavailable", Some("P0001"), 0))
-      skew.set(0)
-      assertNotEquals(pool.transaction(pid), first.get)
+      def pastDeadline(): Unit = skew.set((within + 1.second).toNanos)
+      def evicting(work: Connection => Unit): JdbcFailure = {
+        val first = new AtomicInteger
+        val failure = intercept[JdbcFailure](pool.transactionWithin(Deadline.now + within) { c => first.set(pid(c)); work(c) })
+        skew.set(0)
+        assertNotEquals(pool.transaction(pid), first.get)
+        failure
+      }
+      val own = evicting { _ => pastDeadline(); throw new java.sql.SQLException("synthetic permanent failure", "P0001") }
+      val prepared = evicting { c => pastDeadline(); Using.resource(c.prepareStatement(s"SELECT '$marker'"))(_.executeQuery()); () }
+      val executedLate = evicting { c => Using.resource(c.prepareStatement(s"SELECT '$marker'")) { p => pastDeadline(); p.executeQuery() }; () }
+      assertEquals((own.code, own.sqlState), ("database-unavailable", Some("P0001")))
+      assertEquals((prepared, executedLate, executed.get, rolled.get), (JdbcFailure("deadline-expired", None), JdbcFailure("deadline-expired", None), 0, 0))
     }
     trace.floors()
   } }
