@@ -131,10 +131,10 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
   }
 
   /** One deadline `now + budget` (a [[transactionWithin]]'s D if earlier) bounds the borrows, the resets and their retries
-    * (at most one more than the pool's connections). The pool does not validate on borrow (see [[newPool]]): a borrow waits at most until the deadline, and a
-    * remainder below the pool's millisecond borrows without waiting (an idle connection or none), so every positive budget
-    * reaches the pool; the reset is the liveness check. A connection whose reset fails, is aborted, throws or outlasts its
-    * cap is evicted, never handed out. */
+    * (at most one more than the pool's connections). The pool does not validate on borrow (see [[newPool]]): a borrow waits
+    * at most until the deadline, and a remainder below the pool's millisecond borrows once without waiting (an idle
+    * connection or none; no borrow follows it), so every positive budget reaches the pool; the reset is the liveness check.
+    * A connection whose reset fails, is aborted, throws or outlasts its cap is evicted, never handed out. */
   private def acquire(bounds: Bounds): Connection = {
     val budgeted = nanoTime() + budget.toNanos
     val deadline = bounds match {
@@ -145,13 +145,17 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
       val remaining = deadline - nanoTime()
       if (tries > sizing.connections || remaining <= 0 || Thread.currentThread().isInterrupted) throw JdbcFailure(UnavailableCode, last)
       trace.borrow(remaining.nanos)
-      val borrowed = try Right(pool.getConnection(TimeUnit.NANOSECONDS.toMillis(remaining)))
+      val wait = TimeUnit.NANOSECONDS.toMillis(remaining)
+      val borrowed = try Right(pool.getConnection(wait))
         catch { case e: SQLException => Left(sqlState(e)) }
+      // A borrow without waiting (a remainder below the pool's millisecond) is the last one.
       borrowed match {
-        case Left(state) => attempt(tries + 1, state.orElse(last))
+        case Left(state) if wait > 0 => attempt(tries + 1, state.orElse(last))
+        case Left(state) => throw JdbcFailure(UnavailableCode, state.orElse(last))
         case Right(c) => handOver(c, deadline, timing, bounds) match {
           case Reset.Ready => c
-          case Reset.Failed(state) => attempt(tries + 1, state.orElse(last))
+          case Reset.Failed(state) if wait > 0 => attempt(tries + 1, state.orElse(last))
+          case Reset.Failed(state) => throw JdbcFailure(UnavailableCode, state.orElse(last))
           case Reset.Late => throw JdbcFailure(UnavailableCode, last)
         }
       }

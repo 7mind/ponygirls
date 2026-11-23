@@ -11,8 +11,9 @@ sealed trait BlockingJdbcTransactions {
     * configured statement timeout and a stricter role setting; lock and idle-in-transaction timeouts stay configured. */
   def extendedTransaction[A](timeout: FiniteDuration)(f: Connection => A): A
   /** One try (R-a2 M1, the transient failure record) by `deadline` D: refused `admission-timeout` with less than
-    * [[BlockingJdbcDatabase.minimumTry]] left; the admission waits at most min(`queueTimeoutMs`, D − now); then
-    * [[JdbcTransactionEngine.transactionWithin]] (acquisition, setup, statements and COMMIT by D; `deadline-expired`). */
+    * [[BlockingJdbcDatabase.minimumTry]] left; the admission waits at most min(`queueTimeoutMs`, D − now), read right
+    * before its semaphore; then [[JdbcTransactionEngine.transactionWithin]] (acquisition, setup, statements and COMMIT by
+    * D; `deadline-expired`). */
   def transactionWithin[A](deadline: Deadline)(f: Connection => A): A
 }
 
@@ -111,7 +112,8 @@ private final class BlockingAdmission(policy: AdmissionConfig, engine: JdbcTrans
     trace.admission(left)
     admitted(policy.queueTimeout.min(deadline.timeLeft))(engine.transactionWithin(deadline)(f))
   }
-  private def admitted[A](wait: FiniteDuration)(work: => A): A = {
+  /** `wait` is read after the reservation, right before the semaphore: a try's is what is left to its deadline then. */
+  private def admitted[A](wait: => FiniteDuration)(work: => A): A = {
     reserve()
     var acquired = false
     try {

@@ -304,6 +304,20 @@ final class PoolSuite extends FunSuite {
       assertEquals((trace.borrows.size, resets.get, idle.opened.get), (0, 1, 1))
       trace.floors()
     }
+    // (2c) The same 0.5 ms remainder with an empty bag (the pool's only login held): exactly one borrow, which finds nothing,
+    // then connection-unavailable.
+    val login = new CountDownLatch(1)
+    val empty = new Counting(login = _ => { login.await(10, TimeUnit.SECONDS); () })
+    val emptyScript = new Scripted; val polls = new Recorded
+    Using.resource(engine(config, 2.seconds, empty, late, emptyScript, polls)) { pool =>
+      try {
+        val now = System.nanoTime()
+        emptyScript.play(now, now, now + budget - 500.micros.toNanos)
+        assertEquals(intercept[JdbcFailure](pool.transactionWithin(Deadline.now + 30.seconds)(_ => fail("the bag is empty"))).code, "connection-unavailable")
+        assertEquals((polls.borrows.size, empty.opened.get), (1, 0))
+        polls.floors()
+      } finally login.countDown()
+    }
     // (c) The deadline passes while the transaction's own network timeout is installed (the first setter after the reset
     // executed, on the engine's clock): the connection goes back to the pool, unused, and the callback never runs.
     val crossing = new java.util.concurrent.atomic.AtomicLong(0); val reset = new java.util.concurrent.atomic.AtomicBoolean(false)
@@ -542,7 +556,7 @@ final class PoolSuite extends FunSuite {
     assertEquals(BlockingJdbcDatabase.minimumTry, 100.millis)
   } }
 
-  test("M1 T1a one D bounds the background admission and the statements after it: a try that waited H in the permit's queue, then for a row lock, ends by D + 0.5 s") { configured { base =>
+  test("M1 T1a one D bounds the background admission and the statements after it: a try that waited H in the permit's queue, then for a row lock, ends by D + 0.5 s; one delayed H at its reservation waits for the permit only until D") { configured { base =>
     val config = m1(base)
     val limits = config.limits.copy(maxConnections = 4, queueTimeout = 30.seconds)
     val sizing = JdbcPoolSizing.partitioned(limits, Some(1), Some(1), 0).toOption.get
@@ -559,10 +573,23 @@ final class PoolSuite extends FunSuite {
         lockedRow(admin, locker)
         val holder = executor.submit(new Callable[Int] { def call(): Int = db.background.transaction { _ => permit.countDown(); release.await(); 1 } })
         assert(permit.await(10, TimeUnit.SECONDS))
-        // The try waits H in the permit's queue (observed), then for the row lock.
+        // (2) The try is delayed H between its check and its reservation (the admission's monitor held by the test), the
+        // permit still held: its wait for the permit is what is left to D then, not the time sampled before.
+        val admission = db.background
+        val delayedDeadline = Deadline.now + within
+        val delayed = admission.synchronized {
+          val tried = attempt(executor)(admission.transactionWithin(delayedDeadline)(_ => fail("the permit is held")))
+          waiting(1, Thread.State.BLOCKED)
+          hold()
+          tried
+        }
+        val (delayedOutcome, delayedEnd) = delayed.get(30, TimeUnit.SECONDS)
+        assert(delayedEnd <= delayedDeadline + allowance, s"ended ${delayedEnd - delayedDeadline} after D")
+        assertEquals(delayedOutcome.failed.toOption, Some(RuntimeFailure("admission-timeout")))
+        // (1) The try waits H in the permit's queue (observed), then for the row lock.
         val deadline = Deadline.now + within
         val tried = attempt(executor)(db.background.transactionWithin(deadline)(c => execute(c, update)))
-        waiting(1, Thread.State.TIMED_WAITING)
+        waiting(2, Thread.State.TIMED_WAITING)
         hold()
         release.countDown(); assertEquals(holder.get(10, TimeUnit.SECONDS), 1)
         lockWait(admin, update)
