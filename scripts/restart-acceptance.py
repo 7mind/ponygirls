@@ -10,9 +10,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 SERVICES = ('chronicle', 'haystack', 'manure')
 SETS = ('SMALL', 'POOL')
-# The pre-registered rule set this script applies (the ACC bundle's PASS-RULES.md) and its revision there; both named in every
-# run's output.
-RULE_SET, RULE_REVISION = 'r7', 5
+# The pre-registered rule set this script applies (the ACC bundle's PASS-RULES.md); named in every run's output.
+RULE_SET = 'r7'
+# Its revision there (r7 rev 5.1), named with it in every run's first line and report.json.
+RULE_REVISION = 5.1
 ORDER = ('1', '2b', '2', '5', '6', '4', '3a', '3b', '3')  # the 3s last: they restart the cluster; 6 before them: its workers idle
 # Rule set r4 (scope change, ORCH-REPLY-0430Z item 3): SMALL ships R-a reduced; its case-3 guarantee is 3a and 3b. Rule set
 # r7 rev 4 (scope change, ORCH-REPLY-1507Z item 3): R-a2 is reduced to M1, so POOL is the final set of this batch; the full
@@ -21,8 +22,9 @@ CASES_OF = dict(SMALL=('1', '2b', '2', '5', '6', '4', '3a', '3b'), POOL=('1', '2
 # The sets whose tree contains POOL: case 4's fenced response contract and case 6's pool rule are judged there.
 POOL_JUDGED = ('POOL',)
 # Supplementary only (orchestrator 06:59Z), never part of a counted run: case 3b keeps PostgreSQL stopped this many seconds
-# between the immediate shutdown and the start. Default 0 = the counted rule set's restart, unchanged.
-SUPPLEMENT_3B_DOWN_S = float(os.environ.get('RESTART_ACC_SUPPLEMENT_3B_DOWN_SECONDS', '0'))
+# between the immediate shutdown and the start. Default 0 = the counted rule set's restart, unchanged. Read by main after the
+# arguments are validated (r7 rev 5.1); a value that is not a number is a usage error.
+SUPPLEMENT_3B_DOWN_VARIABLE = 'RESTART_ACC_SUPPLEMENT_3B_DOWN_SECONDS'
 
 # The cluster: PostgreSQL 18 + pgvector, the spec's connection budget and roles (§5, §9).
 SHORT_TMP, ROOT_PREFIX, MARKER = '/tmp', 'restart-acc.', '.restart-acceptance-owned'
@@ -1759,6 +1761,17 @@ def restart_hold(hold):
                                                or (hold['sqlState'] == 'none' and hold['errorClass'] == UNAVAILABLE_CLASS))
 
 
+def rev4_hold(hold):
+    """Case 3b's hold class up to rule set r7 rev 4 (r5 N6): stage Publication and a RESTART_SQLSTATE."""
+    return hold['stage'] == 'Publication' and bool(RESTART_SQLSTATE.match(hold['sqlState']))
+
+
+def hold_rule(revision):
+    """reparse (r7 rev 5.1): the 3b hold class of a stored report's rule revision (`ruleRevision`, recorded from rev 5 on;
+    absent = rev 4 or earlier)."""
+    return restart_hold if revision is not None and revision >= 5 else rev4_hold
+
+
 def lease_judgment(interrupted, sampled, ready):
     """Case 3b (r7 rev 5): per interrupted cohort job, its last sample before the shutdown request (`lease_until` and
     `attempts` read together; none if it was not Running then), margin = the sampled `lease_until` − the new postmaster's
@@ -1776,12 +1789,14 @@ def lease_judgment(interrupted, sampled, ready):
 
 
 def interrupted_verdicts(jobs, held, completed, attempts):
-    """Case 3b (r7 rev 5): each interrupted job's outcome and verdict — held for its publication (`held`: restart_hold,
-    inside the window), first seen Complete within COMPLETE_WITHIN_S after the restart (`completed`: seconds), its final
-    attempts; an eligible job PASSes with all three (attempts 1), FAILs otherwise; any other job is exempt, with the reason."""
+    """Case 3b (r7 rev 5.1): each interrupted job's outcome and verdict — held for its publication (`held`: restart_hold,
+    inside the window), Complete within COMPLETE_WITHIN_S of the restart's logged readiness (`completed`: the wall time a
+    poll first saw it Complete), its final attempts; an eligible job PASSes with all three (attempts 1), FAILs otherwise;
+    any other job is exempt, with the reason."""
     for job, record in jobs.items():
-        record.update(held=job in held, completeWithin=completed.get(job) is not None and completed[job] <= COMPLETE_WITHIN_S,
-                      completeAfterSeconds=None if completed.get(job) is None else round(completed[job], 1), finalAttempts=attempts.get(job))
+        after = None if completed.get(job) is None or record['readiness'] is None else completed[job] - record['readiness']
+        record.update(held=job in held, completeWithin=after is not None and after <= COMPLETE_WITHIN_S,
+                      completeAfterReadinessSeconds=None if after is None else round(after, 1), finalAttempts=attempts.get(job))
         if record['eligible']:
             record['verdict'] = 'PASS' if record['held'] and record['completeWithin'] and record['finalAttempts'] == 1 else 'FAIL'
         else:
@@ -1867,9 +1882,8 @@ class Cohort:
                 break
             time.sleep(RESTART_POLL_S)
         failed_before = state_count(job_states(run, self.jobs), 'Failed')
-        leases = {job: dict(leaseUntil=float(until), attempts=int(attempts))  # r7 rev 5: attempts sampled together with each lease
-                  for job, until, attempts in run.cluster.sql('chronicle', 'SELECT id, extract(epoch FROM lease_until), attempts FROM ch_jobs WHERE id IN ('
-                                                              + ','.join(f"'{j}'" for j in self.jobs) + ") AND state = 'Running' AND lease_until IS NOT NULL")}
+        leases = {job: float(until) for job, until in run.cluster.sql('chronicle', 'SELECT id, extract(epoch FROM lease_until) FROM ch_jobs WHERE id IN ('
+                                                                     + ','.join(f"'{j}'" for j in self.jobs) + ") AND state = 'Running' AND lease_until IS NOT NULL")}
         postmaster, started, started_wall = run.cluster.postmaster, now(), time.time()
         run.cluster.restart(mode, down)
         marker, interrupted = interrupted_by(run, self.offset, progress, postmaster, mode, started_wall - 1, time.time())
@@ -1904,16 +1918,11 @@ class Cohort:
         every cohort job's attempts = 1 (its one completing claim: nothing charged for the transient class); every cohort
         publication statement ran with the publication timeout; PIDs unchanged; the three answer ok; a new ingest still
         runs with the request timeout. Late mechanics: every Complete job published through the 3 s trigger. Returns
-        (final states, events); keeps each job's final attempts (`attempts`) and when a poll first saw it Complete, in
-        seconds after `since` (`completed`)."""
+        (final states, events)."""
         run, case, clients = self.run, self.case, self.clients
-        final, deadline, self.completed = None, since + COMPLETE_WITHIN_S, {}
+        final, deadline = None, since + COMPLETE_WITHIN_S
         while True:
             final = job_states(run, self.jobs)
-            complete = [job for job, state in run.cluster.sql('chronicle', 'SELECT id, state FROM ch_jobs WHERE id IN (' + ','.join(f"'{j}'" for j in self.jobs) + ')')
-                        if state == 'Complete']
-            for job in complete:
-                self.completed.setdefault(job, now() - since)
             if state_count(final, 'Complete') + state_count(final, 'Failed') == SESSIONS or now() >= deadline or not self.trio['chronicle'].alive():
                 break
             time.sleep(JOB_POLL_S)
@@ -1921,8 +1930,8 @@ class Cohort:
         case.check(f'0 Failed of the {SESSIONS}', state_count(final, 'Failed') == 0, final)
         case.check(f'all {SESSIONS} Complete within {COMPLETE_WITHIN_S // 60} min after the last restart',
                    state_count(final, 'Complete') == SESSIONS and settled <= deadline, dict(states=final, secondsAfterLastRestart=round(settled - since, 1)))
-        attempts = self.attempts = {job: int(count) for job, count in run.cluster.sql('chronicle', 'SELECT id, attempts FROM ch_jobs WHERE id IN ('
-                                                                                      + ','.join(f"'{j}'" for j in self.jobs) + ')')}
+        attempts = {job: int(count) for job, count in run.cluster.sql('chronicle', 'SELECT id, attempts FROM ch_jobs WHERE id IN ('
+                                                                        + ','.join(f"'{j}'" for j in self.jobs) + ')')}
         if charged:
             judged = {job: count for job, count in attempts.items() if job not in exempt}
             case.check('0 attempts charged: every cohort job\'s attempts = 1 (its completing claim)'
@@ -1961,6 +1970,63 @@ class Cohort:
         if self.timeline is not None:
             self.timeline.close()
         self.trio.stop()
+
+
+class M1Cohort(Cohort):
+    """Case 3b's workload (r7 rev 5.1; cases 3a and 3 keep Cohort exactly as in rev 4): Cohort's restart, except that it
+    reads every cohort job's state, `lease_until` and `attempts` in ONE query right before the shutdown request (M1's
+    sample; the jobs already Failed recorded by id), and from the restart's end polls every SAMPLE_S which cohort jobs are
+    Complete (`completion`)."""
+    completions = None
+
+    def ids(self):
+        return ','.join(f"'{j}'" for j in self.jobs)
+
+    def restart(self, mode, earliest, latest, origin, down=0.0):
+        run = self.run
+        sleep_until(origin + earliest)
+        seconds_set = float(run.cluster.sql('chronicle', 'SELECT seconds FROM restart_acc_control')[0][0])
+        while True:
+            progress = cohort_in_progress(run, self.offset, self.cohort, seconds_set)
+            if progress or now() >= origin + latest:
+                break
+            time.sleep(RESTART_POLL_S)
+        sample = {job: (state, until, int(attempts)) for job, state, until, attempts
+                  in run.cluster.sql('chronicle', f'SELECT id, state, extract(epoch FROM lease_until), attempts FROM ch_jobs WHERE id IN ({self.ids()})')}
+        failed_before = sorted(job for job, (state, _, _) in sample.items() if state == 'Failed')
+        leases = {job: dict(leaseUntil=float(until), attempts=attempts) for job, (state, until, attempts) in sample.items() if state == 'Running' and until}
+        postmaster, started, started_wall = run.cluster.postmaster, now(), time.time()
+        run.cluster.restart(mode, down)
+        self.completions = Sampler(self.complete_now, SAMPLE_S)
+        marker, interrupted = interrupted_by(run, self.offset, progress, postmaster, mode, started_wall - 1, time.time())
+        ready = run.cluster.marker(self.offset, run.cluster.postmaster, READY_TO_ACCEPT, started_wall - 1)
+        record = dict(mode=mode, atSeconds=round(started - origin, 1), endSeconds=round(now() - origin, 1), triggerSeconds=seconds_set,
+                      postmasterBefore=postmaster, postmasterAfter=run.cluster.postmaster, shutdownMarker=marker, readyMarker=ready,
+                      outageSeconds=None if marker is None or ready is None else round(ready - marker, 3), cohortInProgress=progress,
+                      interrupted=interrupted, cohortFailedBefore=len(failed_before), failedBeforeJobs=failed_before, leases=leases)
+        self.case.note(f'restart -m {mode}: {json.dumps({k: v for k, v in record.items() if k != "leases"})}')
+        return record
+
+    def complete_now(self):
+        """The cohort jobs Complete now, and the wall time after the query (no earlier than the state it read)."""
+        complete = [row[0] for row in self.run.cluster.sql('chronicle', f"SELECT id FROM ch_jobs WHERE id IN ({self.ids()}) AND state = 'Complete'")]
+        return dict(complete=complete, wall=time.time())
+
+    def completion(self):
+        """Stops the polls: {job: the wall time a poll first saw it Complete}."""
+        first = {}
+        for _, _, value in (self.completions.stop() if self.completions is not None else ()):
+            for job in value.get('complete', ()):
+                first.setdefault(job, value['wall'])
+        return first
+
+    def final_attempts(self):
+        return {job: int(count) for job, count in self.run.cluster.sql('chronicle', f'SELECT id, attempts FROM ch_jobs WHERE id IN ({self.ids()})')}
+
+    def close(self):
+        if self.completions is not None:
+            self.completions.stop()
+        super().close()
 
 
 def collections_count(values):
@@ -2020,11 +2086,11 @@ def case_3b(run):
                            'charge one attempt through reclaim and can lose one paid model answer (out of the case); crashed jobs resume as today. [workload '
                            'of case 3, trigger 3 s; one `restart -m immediate` while cohort publications sleep in the trigger; restart duration and each '
                            'interrupted job\'s lease margin measured]')
-    work = Cohort(run, case, '3b')
+    work = M1Cohort(run, case, '3b')
     try:
         if not work.ready or not work.first_publication():
             return case.result()
-        record = work.restart('immediate', 0, RESTART_SLOT_S, now(), SUPPLEMENT_3B_DOWN_S)
+        record = work.restart('immediate', 0, RESTART_SLOT_S, now(), run.supplement_3b_down)
         work.replaced(record)
         work.interrupted(record)
         session_jobs = {session: job for job, session in work.job_sessions.items()}
@@ -2036,13 +2102,17 @@ def case_3b(run):
         exempt = frozenset(job for job, margin in margins.items() if margin is None or margin < LEASE_MARGIN_S)
         jobs = lease_judgment(interrupted_jobs, record['leases'], ready)
         eligible = sorted(job for job, judged in jobs.items() if judged['eligible'])
+        # Lead decision (r7 rev 5.1): a cohort job already Failed before the restart keeps the case FAIL (an observed failure
+        # is never INVALID, review r2 C2) and is recorded; otherwise no eligible interrupted job makes the case INVALID.
         case.valid(f'an eligible interrupted job: a cohort publication interrupted (D1) and correlated to its Running cohort job, first attempt (sampled '
                    f'attempts 1) with the restart (measured {record["outageSeconds"]} s, shutdown request to readiness) ending at least {LEASE_MARGIN_S} s '
-                   'before its sampled lease end, unrounded (or a cohort job had already Failed)',
-                   bool(eligible) or (not interrupted_jobs and record['cohortFailedBefore'] > 0),
+                   'before its sampled lease end, unrounded (or a cohort job already Failed before the restart: FAIL, never INVALID)',
+                   bool(eligible) or record['cohortFailedBefore'] > 0,
                    dict(restartSeconds=record['outageSeconds'], leaseMarginSeconds={job: judged['marginSeconds'] for job, judged in jobs.items()},
-                        sampledAttempts={job: judged['sampledAttempts'] for job, judged in jobs.items()}, eligible=eligible))
+                        sampledAttempts={job: judged['sampledAttempts'] for job, judged in jobs.items()}, eligible=eligible,
+                        failedBeforeRestart=record['failedBeforeJobs']))
         work.settle(now(), charged=True, exempt=exempt)
+        completed, attempts = work.completion(), work.final_attempts()
         holds = strict_holds(work.trio['chronicle'], work.job_sessions)
         held = {h['jobId'] for h in holds if record['shutdownMarker'] is not None and ready is not None and restart_hold(h)
                 and record['shutdownMarker'] <= h['wall'] <= ready + CORRELATE_S}
@@ -2052,12 +2122,12 @@ def case_3b(run):
                    eligible and set(eligible) <= held,
                    dict(inScope=eligible, held=sorted(held), holdsOfInterruptedJobs=[(h['jobId'], h['stage'], h['sqlState'], h['errorClass'], round(h['wall'], 3))
                                                                              for h in holds if h['jobId'] in interrupted_jobs]))
-        interrupted_verdicts(jobs, held, work.completed, work.attempts)
-        case.check(f'every eligible interrupted job then Complete within {COMPLETE_WITHIN_S // 60} min after the restart with attempts = 1',
+        interrupted_verdicts(jobs, held, completed, attempts)
+        case.check(f'every eligible interrupted job then Complete within {COMPLETE_WITHIN_S // 60} min of the restart\'s logged readiness with attempts = 1',
                    eligible and all(jobs[job]['completeWithin'] and jobs[job]['finalAttempts'] == 1 for job in eligible),
-                   {job: {k: jobs[job][k] for k in ('completeAfterSeconds', 'finalAttempts')} for job in eligible})
+                   {job: {k: jobs[job][k] for k in ('completeAfterReadinessSeconds', 'finalAttempts')} for job in eligible})
         case.measurements.update(restart={k: v for k, v in record.items() if k != 'leases'}, holds=[h['line'] for h in holds[:5]],
-                                 leaseMarginThresholdSeconds=LEASE_MARGIN_S, interruptedJobs=jobs)
+                                 leaseMarginThresholdSeconds=LEASE_MARGIN_S, interruptedJobs=jobs, failedBeforeRestart=record['failedBeforeJobs'])
         return case.result()
     finally:
         work.close()
@@ -2218,8 +2288,9 @@ def ws_answering(message):
 def enforcement_checks(m):
     """r7's enforcement of the judged rules, exercised without services through module `m`'s own code: [(label, held,
     detail)]. Case 4: elapsed time through the decoded outcome, compared unrounded; malformed replies are `other`
-    outcomes. Case 6: samples carry their timing, coverage gaps are found. The calibration: only the registered file. Rev 5:
-    FULL refused by the shell entry point and by reparse; case 3b at 45 s, its eligibility, hold classes and verdicts."""
+    outcomes. Case 6: samples carry their timing, coverage gaps are found. The calibration: only the registered file. Rev 5
+    and 5.1: FULL refused by the shell entry point (whatever the environment) and by reparse; reparse by the stored
+    revision; case 3b at 45 s, its eligibility, hold classes, verdicts, completion from readiness, failed-before rule."""
     results = []
 
     def scenario(label, check):
@@ -2364,6 +2435,33 @@ def enforcement_checks(m):
                 code = m.reparse(str(directory))
             return code == 2 and not printed.getvalue(), dict(exit=code, stdout=printed.getvalue()[:100], stderr=refused.getvalue().strip()[:200])
         scenario('rev 5: reparse refuses a report of the retired set FULL (usage error, exit 2) instead of re-judging its case 6', reparse_full)
+
+        def reparse_by_revision():
+            started, job = '2026-11-23T15:00:00+00:00', '0193e8d5-6f5c-7a1b-8c2d-00000000003b'
+            origin = datetime.datetime.fromisoformat(started).timestamp()
+            heads = {}
+            for label, revision in (('rev 4 or earlier (no ruleRevision)', None), ('rev 5.1', 5.1)):
+                directory = scratch / f'run-3b-{len(heads)}'
+                directory.mkdir()
+                report = dict(set='POOL', ruleSet='r7', startedAt=started, verdicts={'3b': 'FAIL'}, cases=[dict(
+                    case='3b', verdict='FAIL', validity=[dict(label='the restart\'s markers (stored)', ok=True, detail=None)],
+                    checks=[dict(label='every eligible interrupted job held for its interrupted publication (stored)', ok=False, detail=dict(inScope=[job], held=[]))],
+                    measurements=dict(restart=dict(shutdownMarker=origin + 100.0, readyMarker=origin + 103.0)))])
+                if revision is not None:
+                    report['ruleRevision'] = revision
+                (directory / 'report.json').write_text(json.dumps(report))
+                (directory / 'case3b-chronicle.log').write_text(  # padded logger columns: e66d4736's parser skips the line, the fixed one takes it
+                    '  105.000 out W 2026-11-23T15:01:45.000          (Models.scala:454)  chronicle.Worker.holdTransient [1:io-compute-blocker-1] '
+                    f'job held jobId=claim={job} code=code=database-transient sqlState=sql_state=none class=error_class=JdbcFailure '
+                    'stage=failure_stage=Publication consecutive=consecutive=1 nextAttemptAt=next_attempt_at=2026-11-23T15:02:45Z\n')
+                printed = io.StringIO()
+                with contextlib.redirect_stdout(printed):
+                    m.reparse(str(directory))
+                heads[label] = printed.getvalue().splitlines()[0]
+            return heads == {'rev 4 or earlier (no ruleRevision)': 'No verdict changes with the fixed parser.',
+                             'rev 5.1': 'VERDICT CHANGE: case 3b: FAIL -> PASS'}, heads
+        scenario('rev 5.1: reparse judges a stored 3b hold by the report\'s own rule revision: an older report whose only hold is none/JdbcFailure '
+                 'stays FAIL (rev 4 classes); the same report of rev 5.1 is re-judged PASS', reparse_by_revision)
     finally:
         shutil.rmtree(scratch)
 
@@ -2373,8 +2471,16 @@ def enforcement_checks(m):
                                 text=True, timeout=SQL_S)
         return result.returncode == 2, dict(exit=result.returncode, stderr=result.stderr.strip()[-200:])
     scenario('rev 5: the shell entry point refuses the retired set FULL with the usage error (exit 2) while PG_BIN and RESTART_ACC_* are unset', shell_full)
-    scenario('rev 5: case 3b judges M1\'s guarantee: lease margin threshold 45 s, rule set r7 rev 5 named',
-             lambda: (m.LEASE_MARGIN_S == 45 and (m.RULE_SET, m.RULE_REVISION) == ('r7', 5), dict(threshold=m.LEASE_MARGIN_S, revision=getattr(m, 'RULE_REVISION', None))))
+
+    def shell_full_supplement():
+        environment = {k: v for k, v in os.environ.items() if k != 'PG_BIN' and not k.startswith('RESTART_ACC_')} | {SUPPLEMENT_3B_DOWN_VARIABLE: 'not-a-number'}
+        result = subprocess.run([str(Path(m.__file__).resolve().with_name('restart-acceptance.sh')), 'FULL'], env=environment, capture_output=True,
+                                text=True, timeout=SQL_S)
+        return result.returncode == 2, dict(exit=result.returncode, stderr=result.stderr.strip()[-200:])
+    scenario(f'rev 5.1: the shell entry point refuses FULL with the usage error (exit 2) also with {SUPPLEMENT_3B_DOWN_VARIABLE}=not-a-number (no '
+             'environment value is converted before the arguments are validated)', shell_full_supplement)
+    scenario('rev 5.1: case 3b judges M1\'s guarantee: lease margin threshold 45 s, rule set r7 rev 5.1 named',
+             lambda: (m.LEASE_MARGIN_S == 45 and (m.RULE_SET, m.RULE_REVISION) == ('r7', 5.1), dict(threshold=m.LEASE_MARGIN_S, revision=getattr(m, 'RULE_REVISION', None))))
     ready = 1795449000.0
     sampled = dict(a=dict(leaseUntil=ready + 45.0, attempts=1), b=dict(leaseUntil=ready + 44.9996, attempts=1), c=dict(leaseUntil=ready + 280.0, attempts=2),
                    e=dict(leaseUntil=ready + 290.0, attempts=1), f=dict(leaseUntil=ready + 290.0, attempts=1), g=dict(leaseUntil=ready + 290.0, attempts=1))
@@ -2389,12 +2495,83 @@ def enforcement_checks(m):
 
     def verdicts():
         jobs = m.interrupted_verdicts(m.lease_judgment(['a', 'b', 'c', 'd', 'e', 'f', 'g'], sampled, ready), {'a', 'b', 'f', 'g'},
-                                      dict(a=100.0, b=100.0, c=100.0, e=100.0, f=float(COMPLETE_WITHIN_S + 1), g=100.0), dict(a=1, b=1, c=2, e=1, f=1, g=2))
+                                      {job: ready + (COMPLETE_WITHIN_S + 1 if job == 'f' else 100.0) for job in 'abceg' + 'f'}, dict(a=1, b=1, c=2, e=1, f=1, g=2))
         got = {job: judged['verdict'] for job, judged in jobs.items()}
         return got == dict(a='PASS', b='exempt: margin below 45 s', c='exempt: not a first attempt (sampled attempts 2)', d='exempt: not Running at the last sample',
                            e='FAIL', f='FAIL', g='FAIL'), got
     scenario('case 3b verdict per interrupted job (rev 5): eligible -> PASS only when held, Complete within 20 min and attempts 1 (not held, '
              'Complete later, or attempts 2 -> FAIL); others exempt with the reason', verdicts)
+
+    def dry_3b(interrupted, samples, failed_before, holds, completes, final):
+        """`m.case_3b` on a fake workload (no cluster, its output discarded): the restart at `ready` (shutdown 2.5 s before)
+        interrupted the publications of `interrupted` (sessions s<job>), the pre-shutdown `samples` (lease margin, attempts) of
+        Running jobs, the cohort jobs `failed_before` already Failed, `holds` ({job: (sqlState, errorClass)} 3 s after
+        readiness), `completes` ({job: seconds after readiness first seen Complete}; a settle started 60 s after readiness),
+        `final` attempts. (verdict, case 3b's measurements)."""
+        sessions = {job: f's{job}' for job in set(interrupted) | set(samples) | set(failed_before)}
+
+        class Workload:
+            ready, trio = True, dict(chronicle=None)
+
+            def __init__(self, run, case, label):
+                self.case, self.job_sessions = case, sessions
+
+            def first_publication(self):
+                return True
+
+            def restart(self, *args):
+                return dict(mode='immediate', shutdownMarker=ready - 2.5, readyMarker=ready, outageSeconds=2.5, postmasterBefore=1, postmasterAfter=2,
+                            interrupted=[dict(pid=100, sessions=[f's{job}' for job in interrupted])] if interrupted else [],
+                            cohortFailedBefore=len(failed_before), failedBeforeJobs=sorted(failed_before),
+                            leases={job: dict(leaseUntil=ready + margin, attempts=attempts) for job, (margin, attempts) in samples.items()})
+
+            def replaced(self, record):
+                self.case.valid('the restart\'s markers (fake)', True)
+
+            def interrupted(self, record):
+                self.case.valid('a sampled cohort publication interrupted (fake; or a cohort job already Failed)', bool(record['interrupted']) or bool(failed_before))
+
+            def settle(self, since, charged, exempt=frozenset()):
+                self.case.check(f'0 Failed of the {SESSIONS} (fake)', not failed_before)
+                self.completed, self.attempts = {job: seconds - 60.0 for job, seconds in completes.items()}, final  # a6fe1097's interface
+
+            def completion(self):
+                return {job: ready + seconds for job, seconds in completes.items()}
+
+            def final_attempts(self):
+                return final
+
+            def close(self):
+                pass
+        real = m.Cohort, getattr(m, 'M1Cohort', None), m.strict_holds
+        m.Cohort = m.M1Cohort = Workload
+        m.strict_holds = lambda service, job_sessions: [dict(wall=ready + 3.0, jobId=job, session=f's{job}', sqlState=state, errorClass=error_class, stage='Publication',
+                                                             consecutive=1, nextAttemptAt='2026-11-23T16:01:00Z', line='job held (fake)')
+                                                        for job, (state, error_class) in holds.items()]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = m.case_3b(type('FakeRun', (), dict(supplement_3b_down=0.0))())
+        finally:
+            m.Cohort, m.M1Cohort, m.strict_holds = real
+            if real[1] is None:
+                del m.M1Cohort
+        return result['verdict'], result['measurements']
+
+    def completion_from_readiness():
+        verdict, measured = dry_3b(['j0', 'j1'], dict(j0=(280.0, 1), j1=(280.0, 1)), [], dict(j0=('08006', 'JdbcFailure'), j1=('08006', 'JdbcFailure')),
+                                   dict(j0=1190.0, j1=1230.0), dict(j0=1, j1=1))
+        got = {job: judged['verdict'] for job, judged in measured['interruptedJobs'].items()}
+        return verdict == 'FAIL' and got == dict(j0='PASS', j1='FAIL'), dict(verdict=verdict, jobs=got)
+    scenario('rev 5.1: case 3b judges "Complete within 20 min" from the restart\'s logged readiness: an eligible job first seen Complete 1,230 s after '
+             'readiness (1,170 s after a settle that began 60 s after it) FAILs, one at 1,190 s PASSes', completion_from_readiness)
+
+    def failed_before_restart():
+        failing = dry_3b(['j2'], dict(j2=(280.0, 2)), ['j9'], {}, dict(j2=100.0), dict(j2=2))
+        quiet = dry_3b(['j2'], dict(j2=(280.0, 2)), [], {}, dict(j2=100.0), dict(j2=2))
+        return (failing[0] == 'FAIL' and failing[1].get('failedBeforeRestart') == ['j9'] and quiet[0] == 'INVALID',
+                dict(withFailedJob=(failing[0], failing[1].get('failedBeforeRestart')), withoutFailedJob=quiet[0]))
+    scenario('rev 5.1 (lead decision): no eligible interrupted job and a cohort job already Failed before the restart -> 3b FAIL with that job '
+             'recorded; without the failed job -> INVALID', failed_before_restart)
     prefix = 'W 2026-11-23T16:00:00.000 (Models.scala:454)  chronicle.Worker.holdTransient [1:io-compute-blocker-1] '
 
     def held(index, state, error_class, stage):
@@ -2569,6 +2746,7 @@ def reparse(run_dir):
               f'set {RULE_SET} rev 4)', file=sys.stderr)
         return 2
     started = datetime.datetime.fromisoformat(report['startedAt']).timestamp()
+    held_class = hold_rule(report.get('ruleRevision'))
     out = [f'# reparse of {run_dir}', '', f'set {report["set"]}, rule set {report.get("ruleSet", "not recorded (before r6 naming)")}, '
            f'supplementary {report.get("supplementary")}, verdicts in report.json {report["verdicts"]}', '']
     changed = []
@@ -2601,7 +2779,7 @@ def reparse(run_dir):
             elif not any((n, key) in disagree for n in names):
                 evaluated.append((check, check['ok'], f'{key} takes exactly the same lines of {names} under both parsers: the live input, unchanged'))
             else:
-                after, how = reevaluate(rule, check, case, logs, names, key, started)
+                after, how = reevaluate(rule, check, case, logs, names, key, started, held_class)
                 evaluated.append((check, after, how))
         for check, after, how in evaluated:
             if after != check['ok']:
@@ -2621,7 +2799,7 @@ def first_t(lines, pattern):
     return next((t for t, _, text in lines if pattern.search(text)), None)
 
 
-def reevaluate(rule, check, case, logs, names, key, started):
+def reevaluate(rule, check, case, logs, names, key, started, held_class):
     """A check whose input the parsers disagree on, by the live rule from stored data, or UNDETERMINED."""
     detail = check['detail'] if isinstance(check['detail'], dict) else {}
     if rule == 'wait':
@@ -2655,13 +2833,14 @@ def reevaluate(rule, check, case, logs, names, key, started):
             moved[name] = seconds[name] + new - old
         return all(value <= START_READY_S for value in moved.values()), f'start-to-ready seconds with the fixed first lines: {moved}'
     if rule == 'hold':
-        return held_again(check, case, logs['chronicle'], started)
+        return held_again(check, case, logs['chronicle'], started, held_class)
     return UNDETERMINED, f'no offline rule for {rule}'
 
 
-def held_again(check, case, lines, started):
+def held_again(check, case, lines, started, held_class):
     """Case 3b's hold check by the live rule: strict_holds() over the stored Chronicle lines (the same parser, nextAttemptAt
-    validated), the required jobs as report.json recorded them (inScope), stage Publication and a connection class (restart_hold), arrival
+    validated), the required jobs as report.json recorded them (inScope), the hold class of the report's own rule revision
+    (`held_class`: hold_rule), arrival
     inside [shutdown request, readiness + CORRELATE_S]. A line's arrival wall time is known only within [startedAt + t,
     startedAt + 1 + T0_SLACK_S + t] (t0's wall time is not stored): a line straddling a bound is UNDETERMINED. The 3a and
     case-3 holds need the cancellation times per job (sessions to jobs), which were not stored: UNDETERMINED."""
@@ -2676,7 +2855,7 @@ def held_again(check, case, lines, started):
     holds = strict_holds_of([((started + t, started + 1 + T0_SLACK_S + t), text) for t, _, text in lines], {job: None for job in required})
     inside, unsure = set(), []
     for hold in holds:
-        if not restart_hold(hold):
+        if not held_class(hold):
             continue
         low, high = hold['wall']
         if start <= low and high <= ready + CORRELATE_S:
@@ -2684,10 +2863,10 @@ def held_again(check, case, lines, started):
         elif high >= start and low <= ready + CORRELATE_S:
             unsure.append(hold['jobId'])
     if required <= inside:
-        return bool(required), f'strict_holds over the stored lines: in-scope jobs held inside the window {sorted(inside)} of {sorted(required)}'
+        return bool(required), f'strict_holds over the stored lines ({held_class.__name__}): in-scope jobs held inside the window {sorted(inside)} of {sorted(required)}'
     if unsure:
         return UNDETERMINED, f'holds of {sorted(unsure)} straddle a window bound within the stored clock uncertainty'
-    return False, f'in-scope jobs held inside the window: {sorted(inside)} of {sorted(required)}'
+    return False, f'in-scope jobs held inside the window ({held_class.__name__}): {sorted(inside)} of {sorted(required)}'
 
 
 def reverdict(case, evaluated, set_name):
@@ -2728,6 +2907,11 @@ def main(argv):
         return 2 if refused_arguments(argv[1:]) else 0
     if refused_arguments(argv):
         return 2
+    try:
+        supplement_3b_down = float(os.environ.get(SUPPLEMENT_3B_DOWN_VARIABLE, '0'))
+    except ValueError:
+        print(f'{SUPPLEMENT_3B_DOWN_VARIABLE} must be a number of seconds', file=sys.stderr)
+        return 2
     set_name, selected = argv[0], [case for case in ORDER if case in (argv[1:] or CASES_OF[argv[0]])]
     calibration, calibration_source = None, None
     if set_name in POOL_JUDGED and '6' in selected:
@@ -2751,11 +2935,11 @@ def main(argv):
     started_at, results, run = datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'), [], None
     try:
         run = Run(set_name, out, packages, calibration)
-        run.calibration_source = calibration_source
+        run.calibration_source, run.supplement_3b_down = calibration_source, supplement_3b_down
         note(f'restart acceptance, rule set {RULE_SET} rev {RULE_REVISION}, set {set_name}, cases {" ".join(selected)}, packages {json.dumps({k: str(v) for k, v in packages.items()})}, root {run.root.path}'
              + (f', calibration {json.dumps(calibration_source)}' if calibration_source else ''))
-        if SUPPLEMENT_3B_DOWN_S:
-            note(f'SUPPLEMENTARY run (not counted): case 3b keeps PostgreSQL down {SUPPLEMENT_3B_DOWN_S} s')
+        if supplement_3b_down:
+            note(f'SUPPLEMENTARY run (not counted): case 3b keeps PostgreSQL down {supplement_3b_down} s')
         run.setup()
         for ident in selected:
             try:
@@ -2770,8 +2954,8 @@ def main(argv):
             run.cleanup()
     verdicts = {r['case']: r['verdict'] for r in results}
     summary = dict(set=set_name, ruleSet=RULE_SET, ruleRevision=RULE_REVISION, calibration=calibration_source, startedAt=started_at, wallSeconds=round(now() - run.t0, 1), verdicts=verdicts, cases=results)
-    if SUPPLEMENT_3B_DOWN_S:
-        summary['supplementary'] = dict(case3bDownSeconds=SUPPLEMENT_3B_DOWN_S, counted=False)
+    if supplement_3b_down:
+        summary['supplementary'] = dict(case3bDownSeconds=supplement_3b_down, counted=False)
     (out / 'report.json').write_text(json.dumps(summary, indent=1))
     print(json.dumps(dict(set=set_name, wallSeconds=summary['wallSeconds'], verdicts=verdicts)), flush=True)
     values = set(verdicts.values())

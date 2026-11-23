@@ -44,8 +44,8 @@
 # so the case 3 guarantee of SMALL and POOL is 3a and 3b below. SCOPE CHANGE (r7 rev 4, ORCH-REPLY-1507Z item 3): R-a2 is
 # reduced to M1, POOL (+ M1's assertions, under 3b) is the final set of this batch, rule 3 (the full design) is retired:
 # in no set, it runs only when named and never counts. Default cases: SMALL 1 2b 2 5 6 4 3a 3b; POOL 1 2b 2 5 6 4 3a 3b.
-# r7 rev 5 (M1 revision, ORCH-REPLY-1536Z): case 3b judges M1's guarantee (45 s) with M1's assertions; a run names
-# `rule set r7 rev 5` in its first line and report.json (`ruleSet`, `ruleRevision`).
+# r7 rev 5 (M1 revision, ORCH-REPLY-1536Z) and 5.1 (its review round): case 3b judges M1's guarantee (45 s) with M1's
+# assertions; a run names `rule set r7 rev 5.1` in its first line and report.json (`ruleSet`, `ruleRevision`).
 # How the rules are judged (verdict: INVALID if a mechanics condition failed, i.e. the case did not exercise its path;
 # else FAIL if a pass condition failed; else PASS; case 3 is INVALID instead of PASS without its late mechanics; case 6 on
 # SMALL is BASELINE, a measurement that POOL judges). Times are monotonic, from the script's spawn of each process and the
@@ -103,18 +103,20 @@
 #      the first cohort publication after the readiness is cancelled (57014 under 10 s), then 3 s; mechanics: the restart's
 #      markers, that observed cancellation. Pass: common + every cohort job's attempts = 1 (0 charged) + every cancelled
 #      job held for it (`job held`, stage Publication, 57014, ≤ 30 s after) and later published at 3 s under 10 s (r5).
-#   3b (M1 scope, r7 rev 5 wording: a PostgreSQL restart that ends at least 45 s before the in-flight job's lease ends
+#   3b (M1 scope, r7 rev 5.1 wording: a PostgreSQL restart that ends at least 45 s before the in-flight job's lease ends
 #      charges no attempt, provided no other transaction holds that job's rows (the fixture: nothing ingests, retries or
 #      rebuilds a cohort session during the case); longer outages charge one attempt through reclaim and can lose one paid
 #      model answer; crashed jobs resume as today) one `restart -m immediate` within 30 s of the first cohort publication,
 #      when one sleeps in the trigger (3 s); measured: the restart (shutdown request to readiness) and each Running job's
 #      `lease_until` and `attempts`, read together right before the shutdown request; margin = that lease_until − readiness,
 #      unrounded. Mechanics: the markers, a sampled cohort publication interrupted and correlated to its Running cohort job,
-#      ≥ 1 eligible one (first attempt: sampled attempts 1; margin ≥ 45 s) (else INVALID; or a cohort job already Failed).
+#      ≥ 1 eligible one (first attempt: sampled attempts 1; margin ≥ 45 s), else INVALID — unless a cohort job had already
+#      Failed before the restart: then FAIL, the job recorded (lead decision, rev 5.1).
 #      Pass: common + attempts = 1 for every cohort job except Running ones with margin < 45 s (out of scope) + every
 #      eligible job held for its publication (a fully parsed `job held` line of it, stage Publication, sqlState 08xxx or
-#      57P01-57P03, or none with class JdbcFailure = connection-unavailable, between the shutdown request and readiness +
-#      30 s) and then Complete within 20 min with attempts = 1. report.json: every interrupted job's sample, margin
+#      57P01-57P03, or none with class JdbcFailure = connection-unavailable (lead decision, rev 5.1), between the shutdown
+#      request and readiness + 30 s) and then Complete within 20 min of the readiness (a 1 s poll of the cohort's states
+#      from the restart's end, 3b only) with attempts = 1. report.json: every interrupted job's sample, margin
 #      (unrounded; display rounded), eligibility and verdict. Not judged: M1's 5-s shutdown bound (unit tests only).
 #   3  (full design, retired in r7 rev 4: in no set, runs only when named, never counts) the window of 12 s sleeps opens at the first cohort publication; restarts fast in
 #      [20, 45] s, immediate in [50, 80] s, fast in [85, 110] s of the 120 s window, each when a cohort publication sleeps;
@@ -140,11 +142,12 @@
 # run's report.json, the file rule set r7 registered> gives a POOL run SMALL's T for case 6 (required there). Exit 0: every case PASS (or BASELINE);
 # 1: a case FAILed; 3: a case INVALID and none FAILed; 2: usage. `scripts/restart-acceptance.sh self-check` runs the
 # interlock refusals, the environment sanitizing, the set table, r7's enforcement (case 4 timing and reply shapes, case 6
-# sampling coverage, the registered calibration; loopback stubs; rev 5: case 3b's eligibility, hold classes and verdicts, FULL
-# refused by this entry point and by reparse) and the line patterns against the spec's formats and near misses (no
+# sampling coverage, the registered calibration; loopback stubs; rev 5/5.1: case 3b's eligibility, hold classes, verdicts,
+# completion from readiness and failed-before rule on a fake workload, FULL refused by this entry point whatever the
+# environment and by reparse, reparse by the report's revision) and the line patterns against the spec's formats and near misses (no
 # packages, no cluster, seconds). `scripts/restart-acceptance.sh reparse RUN-DIR` re-evaluates a stored run's log-derived
 # checks with e66d4736's patterns and the current ones (offline; database data only as report.json recorded it; a report of
-# a retired set such as FULL is refused: usage error, exit 2).
+# a retired set such as FULL is refused: usage error, exit 2; a 3b hold is judged by the report's own rule revision).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [[ ${1:-} != self-check && ${1:-} != reparse ]]; then
