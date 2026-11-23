@@ -860,4 +860,63 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     assertEquals(counts(config,List(earlier.jobId,later.jobId)),List("jobs|2","windows.one_answer|0","windows.after_continuation|1","windows.accepted_unmarked|0","answers.continued|1","answers.abandoned|0",
       "answers.rejected|0","authorizations.no_outcome|0","chains.open|0","chains.invalid_or_inactive|0","chains.stale|0","windows.reused|1","answers|2","r|0.0000"))
   }}
+
+  /** A failure class of a window's paid-answer write: the throwable injected and what the job meets (held: SMALL's
+    * transient hold; failed: the failure recorded; raised: a fatal fault ends the worker run). */
+  private final case class WriteFailure(name: String,error: () => Throwable,outcome: String)
+  // Every branch of Worker.transient/JdbcTransient.job that these writes can reach (each run in a plain `db.transaction`:
+  // no deadline, so M1's deadline-expired cannot arise here; leftover-staging arises only at a publication's start), a
+  // claim found stale, a non-fatal non-transient error and a fatal fault.
+  private val writeFailures=List(
+    WriteFailure("connection unavailable without SQLSTATE",() => JdbcFailure("connection-unavailable",None),"held"),
+    WriteFailure("statement timeout 57014",() => JdbcFailure("database-unavailable",Some("57014")),"held"),
+    WriteFailure("connection lost 08006",() => JdbcFailure("database-unavailable",Some("08006")),"held"),
+    WriteFailure("admin shutdown 57P01",() => JdbcFailure("database-unavailable",Some("57P01")),"held"),
+    WriteFailure("admission timeout",() => ponygirls.runtime.RuntimeFailure("admission-timeout"),"held"),
+    WriteFailure("stale claim",() => DomainError("stale-claim","indexing claim is no longer current"),"failed"),
+    WriteFailure("non-transient error",() => new IllegalStateException("synthetic write failure"),"failed"),
+    WriteFailure("fatal fault",() => DomainError("internal","synthetic invariant"),"raised"))
+  test("SWITCH S7: a failed continueAnnotation is the failed write of an accepted answer (acceptAnnotation, continuations 0), per failure class: same job row, held/failed/raised, log lines (no window failed line) and next claim, which asks the whole window: the kept answer is lost with its write") { database { (config,db,archive) =>
+    final case class Outcome(outcome: String,row: Option[String],ledger: List[String],partials: Int,lines: List[String],next: List[(Int,Int)])
+    def normalized(line: String): String = line.replaceAll("jobId=\\S+","jobId=J").replaceAll("fence=\\d+","fence=F").replaceAll("nextAttemptAt=\\S+","nextAttemptAt=T")
+    /** One window (64 fragments) whose write fails once with `failure`: kept at (10,0) or answered whole, as `continued`. */
+    def failed(failure: WriteFailure,continued: Boolean): Outcome = {
+      val receipt=archive.ingest("a",source(texts(64))); val id=receipt.jobId
+      val armed=new java.util.concurrent.atomic.AtomicBoolean(true); val log=new WorkerLog
+      val failing=new ForwardingArchive(archive) {
+        override def continueAnnotation(c: Claim,key: CheckpointKey,attempt: Int,partial: AnnotationPartial): Int =
+          if(continued && armed.getAndSet(false)) throw failure.error() else super.continueAnnotation(c,key,attempt,partial)
+        override def acceptAnnotation(c: Claim,key: CheckpointKey,attempt: Int,continuations: Int,value: Json): Unit =
+          if(!continued && continuations==0 && armed.getAndSet(false)) throw failure.error() else super.acceptAnnotation(c,key,attempt,continuations,value)
+      }
+      val answers=new Provider((_,window,previous) => IO.pure(if(continued) upTo(10,false) else whole(window,previous)))
+      val result=worker(failing,config,answers,log).once.attempt.unsafeRunSync()
+      val row=db.transaction(c => Sql.one(c,"""SELECT concat_ws('|',state,attempts,coalesce(error,'-'),coalesce(failure_stage,'-'),transient_failures,
+        coalesce(transient_range::text,'-'),lease_until IS NULL) FROM ch_jobs WHERE id=?""",id)(_.getString(1)))
+      // The job is made claimable again: a held job's next attempt has come, a raised one's lease ended.
+      val outcome=result match {
+        case Left(error: DomainError) if error.code=="internal" => expire(db,id); "raised"
+        case Left(error) => throw error
+        case Right(claimed) =>
+          assert(claimed,"a job was claimed")
+          if(job(db,id).error.contains(Jobs.transientCode)) { due(db,id); "held" } else "failed"
+      }
+      val state=(ledger(db,id),partials(db,id).size,log.lines.map(normalized))
+      val next=new Provider((_,window,previous) => IO.pure(whole(window,previous)))
+      once(archive,config,next)
+      assertEquals((armed.get,job(db,id).state),(false,"Complete"),failure.name)
+      Outcome(outcome,row,state._1,state._2,state._3,next.seen.map(a => (a.position,a.fragments)))
+    }
+    val outcomes=writeFailures.map(failure => (failure,failed(failure,true),failed(failure,false)))
+    assertEquals(outcomes.collect { case (failure,kept,accepted) if kept!=accepted => s"${failure.name}: kept answer's write $kept, accepted answer's write $accepted" },Nil)
+    outcomes.foreach { (failure,kept,_) =>
+      assertEquals((kept.outcome,kept.ledger,kept.partials,kept.next),(failure.outcome,List("none"),0,List((0,64))),failure.name)
+      assertEquals(kept.lines.filter(_.startsWith("window failed")),Nil,failure.name)
+      failure.outcome match {
+        case "held" => assert(kept.lines.exists(_.matches("job held jobId=J code=database-transient .* stage=none consecutive=1 .*")),s"${failure.name}: ${kept.lines}")
+        case "failed" => assert(kept.lines.exists(_.startsWith("job failed jobId=J code=")),s"${failure.name}: ${kept.lines}")
+        case _ => ()
+      }
+    }
+  }}
 }
