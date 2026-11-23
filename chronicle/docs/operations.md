@@ -332,7 +332,7 @@ rebuild, no reuse change).
   `.continued_kept_hash` and `.chain_id`, and the tables `ch_annotation_partials` (the kept parts of unfinished windows: at
   most one row per job, run, retry epoch and window; deleted when the window is accepted, discarded, by RetryJob, when the
   job ends superseded or with the job) and `ch_annotation_active_chains` (DDL only, no rewrite). With the switch off
-  nothing writes them.
+  nothing is added to them or to the three columns; acceptances and supersessions only delete rows a run with it on left.
 - **Logs** (ids and numbers only, switch on): `annotation answer continued jobId=… fence=… windowOrdinal=… totalWindows=…
   attempt=… coveredFragments=… windowFragments=…`; `annotation partial resumed … coveredFragments=… windowFragments=…
   continuations=…`; `annotation partial discarded … reason=<format|profile|content-hash|kept-hash|window-shape|range|
