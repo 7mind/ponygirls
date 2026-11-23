@@ -22,15 +22,16 @@ import ProblemPassages.{Carry,Decision,Part,Point,Window}
   * timeout is held as decision B holds the accepted answer's write (F). */
 final class AnnotationContinuationPoolTest extends munit.FunSuite {
   override val munitTimeout=5.minutes
-  /** The indexing configuration of every case: production's, with the continuations switch on. */
-  private val indexing: IndexingCapacity = IndexingCapacity.defaults.copy(annotationContinuations=true)
+  /** The indexing configuration of every case: production's, with the continuations switch on (off only for the pool
+    * tip's own path, as a control). */
+  private def indexing(continuations: Boolean): IndexingCapacity = IndexingCapacity.defaults.copy(annotationContinuations=continuations)
   /** Production sizing: `maxConnections` 12, the other limits as the example configuration's. */
-  private def production(fixture: Config): Config = fixture.copy(databaseLimits=fixture.databaseLimits.copy(maxConnections=12),indexing=indexing)
+  private def production(fixture: Config,continuations: Boolean): Config = fixture.copy(databaseLimits=fixture.databaseLimits.copy(maxConnections=12),indexing=indexing(continuations))
   /** The service pool of `production(fixture)` (with `queue` as its admission bound) and the Worker's archive over its
     * background view, as the plugin wires it; setup and observation go through the fixture's own pool. */
-  private def pooled(queue: Option[FiniteDuration]=None)(run: (Config,Database,PostgresArchive,Database,PostgresArchive) => Unit): Unit =
+  private def pooled(queue: Option[FiniteDuration]=None,continuations: Boolean=true)(run: (Config,Database,PostgresArchive,Database,PostgresArchive) => Unit): Unit =
     CurrentIndexDatabase.withDatabase { (fixture,fixtureDb,fixtureArchive) =>
-      val shaped=production(fixture)
+      val shaped=production(fixture,continuations)
       val config=queue.fold(shaped)(value => shaped.copy(databaseLimits=shaped.databaseLimits.copy(queueTimeout=value)))
       assertEquals((config.databasePool.request,config.databasePool.background,Database.controlConnections,Database.publicationPermits(config.databasePool)),(5,5,1,3))
       Using.resource(Database.service(config,IndexProfileCatalog.current(config))) { service =>
@@ -244,6 +245,42 @@ final class AnnotationContinuationPoolTest extends munit.FunSuite {
       assertEquals(job(fixtureDb,other.jobId).state,"Running")
     } finally executor.shutdown()
   }}
+
+  /** Known limit (the pool tip's guarantee, kept for this landing set; a later fix unit RENEW-LOCK): renewal ADMISSION is
+    * protected (its own permit), but a renewal can wait on its own job's row locks, and while it does, other jobs' renewals
+    * can miss their admission bound. Job A's write `table` stalls inside its transaction, holding A's source and job rows;
+    * A's periodic renewal takes the renewal permit and waits on A's source row; B's renewal then misses its bound:
+    * B's attempt ends with its model call cancelled (an in-flight paid answer lost) and B is held transient, not charged. */
+  private def renewalWaitsOnItsJob(continuations: Boolean,table: String): Unit = pooled(continuations=continuations) { (config,fixtureDb,fixtureArchive,service,archive) =>
+    val executor=Executors.newCachedThreadPool()
+    try stalling(executor,fixtureDb,table,"INSERT") { lock =>
+      val a=fixtureArchive.ingest("a",source)
+      // On, A's first answer stops at a boundary (its continueAnnotation stalls); off, it is complete (its checkpoint write).
+      val aRun=worker(archive,config,new Provider(if(continuations) keptThenWhole else whole),leases=Worker.Leases.production.copy(renewal=100.millis)).once.unsafeToFuture()
+      eventually("A's write waits inside its transaction")(waiting(fixtureDb,s"INSERT INTO $table")==1)
+      eventually("A's renewal waits on A's source row, holding the renewal permit")(fixtureDb.transaction(c => Sql.one(c,
+        "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND wait_event<>'advisory' AND starts_with(query,'SELECT revision FROM ch_sources')")(_.getInt(1)).get)==1)
+      val b=fixtureArchive.ingest("b",source); val bLog=new WorkerLog
+      val started=new java.util.concurrent.atomic.AtomicLong(0); val cancelled=new AtomicBoolean(false)
+      val inFlight=new ScriptedAnnotator {
+        def annotate(owner: String,window: Window,previous: Option[Carry]): IO[Decision] = IO(started.set(System.nanoTime())) *> IO.never[Decision].onCancel(IO(cancelled.set(true)))
+      }
+      val bRun=worker(archive,config,inFlight,bLog,Worker.Leases.production.copy(renewal=500.millis)).once.unsafeToFuture()
+      finished(bRun)
+      val waited=(System.nanoTime()-started.get).nanos
+      assertEquals((cancelled.get,job(fixtureDb,b.jobId),ledger(fixtureDb,b.jobId)),(true,held(None,1),List("none")))
+      assertEquals(bLog.lines.filter(_.startsWith("job ")).map(_.replaceAll(" nextAttemptAt=.*","")),List(s"job held jobId=${b.jobId} code=database-transient sqlState=none class=RuntimeFailure stage=none consecutive=1"))
+      val bound=config.databaseLimits.queueTimeout
+      assert(waited>=bound,s"B's renewal missed its admission bound ($bound) after $waited")
+      lock.free()
+      finished(aRun)
+      assertEquals(job(fixtureDb,a.jobId).state,"Complete")
+    } finally executor.shutdown()
+  }
+  test("P5 known limit: a stalled continueAnnotation holds its job's rows; that job's renewal waits on them holding the renewal permit, and another job's renewal misses its admission bound: that job's model call is cancelled and it is held transient, not charged")(
+    renewalWaitsOnItsJob(true,"ch_annotation_partials"))
+  test("P5 control, the pool tip's path (switch off): the same with the accepted answer's checkpoint write stalled")(
+    renewalWaitsOnItsJob(false,"ch_index_checkpoints"))
 
   /** Runs `write` (an archive call of the claim's job) where the injected failure meets it. */
   private trait Injection { def apply[A](job: UUID)(write: SessionArchive => A): A }
