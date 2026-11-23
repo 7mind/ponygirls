@@ -30,7 +30,7 @@
 
 1. Inspect `list_agents` and capacity feedback before solo fallback. Its
    `capacity` reports current use against the effective limits
-   (`maxRunnable`, `maxResidentWorkers`, `maxOpenAgents`; defaults 4, 8, 32,
+   (`maxRunnable`, `maxResidentWorkers`, `maxOpenAgents`; defaults 16, 24, 48,
    configurable in `subagents-policy.json`). The open-agent cap counts open
    identities, including idle/nested agents and managed reviewers. Closing a
    subtree reclaims its slots after cleanup and durable closure; closed

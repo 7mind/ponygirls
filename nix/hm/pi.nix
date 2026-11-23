@@ -349,6 +349,9 @@ let
     maxOpenAgents = cfg.pi.subagentsMaxOpenAgents;
   });
 
+  # Must match DEFAULT_LIMITS in ponygirls-subagents/src/scheduler.ts.
+  subagentsLimitDefaults = { maxRunnable = 16; maxResidentWorkers = 24; maxOpenAgents = 48; };
+
   # The managed subagents-policy.json is complete, so emit it as soon as any
   # subagents option diverges from the extension defaults; otherwise leave a
   # hand-maintained file (or none) alone.
@@ -364,9 +367,9 @@ let
     || cfg.pi.subagentsGateBypassAllowed
     || cfg.pi.subagentsGateMaxRoundsCeiling != 3
     || cfg.pi.subagentsWorkspaceOwnerCheckoutAllowed
-    || cfg.pi.subagentsMaxRunnable != 4
-    || cfg.pi.subagentsMaxResidentWorkers != 8
-    || cfg.pi.subagentsMaxOpenAgents != 32;
+    || cfg.pi.subagentsMaxRunnable != subagentsLimitDefaults.maxRunnable
+    || cfg.pi.subagentsMaxResidentWorkers != subagentsLimitDefaults.maxResidentWorkers
+    || cfg.pi.subagentsMaxOpenAgents != subagentsLimitDefaults.maxOpenAgents;
 
   # Repo-agnostic operating manual appended INSIDE Pi's system prompt (via
   # ~/.pi/agent/APPEND_SYSTEM.md, auto-discovered by the resource loader). Pi's
@@ -789,7 +792,7 @@ in
 
     smind.hm.dev.llm.pi.subagentsMaxRunnable = lib.mkOption {
       type = lib.types.ints.between 1 64;
-      default = 4;
+      default = subagentsLimitDefaults.maxRunnable;
       example = 8;
       description = ''
         Runnable slots shared by the whole subagent tree (top-level and
@@ -805,8 +808,8 @@ in
 
     smind.hm.dev.llm.pi.subagentsMaxResidentWorkers = lib.mkOption {
       type = lib.types.ints.between 1 128;
-      default = 8;
-      example = 12;
+      default = subagentsLimitDefaults.maxResidentWorkers;
+      example = 20;
       description = ''
         Loaded worker processes (running or idle) kept at once, written as
         `maxResidentWorkers` into `subagents-policy.json`. Idle workers are
@@ -817,7 +820,7 @@ in
 
     smind.hm.dev.llm.pi.subagentsMaxOpenAgents = lib.mkOption {
       type = lib.types.ints.between 1 1024;
-      default = 32;
+      default = subagentsLimitDefaults.maxOpenAgents;
       description = ''
         Open agent identities (including idle, nested and managed reviewer
         agents), written as `maxOpenAgents` into `subagents-policy.json`.

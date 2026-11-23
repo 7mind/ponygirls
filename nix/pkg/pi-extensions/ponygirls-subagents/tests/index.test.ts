@@ -128,7 +128,7 @@ test("capacity tool descriptions explain descendant authority and reclaimable op
   const agentDir = mkdtempSync(join(tmpdir(), "subagents-capacity-tools-"));
   try {
     const { descriptions } = await loadExtension(agentDir);
-    assert.match(descriptions.get("spawn_agent")!, /32-agent cap counts open identities/);
+    assert.match(descriptions.get("spawn_agent")!, /48-agent cap counts open identities/);
     assert.match(descriptions.get("send_message")!, /any ordinary open descendant, including nested agents/);
     assert.match(descriptions.get("close_agent")!, /governing session may target any descendant/);
     assert.match(descriptions.get("close_agent")!, /releases one open-agent admission slot/);
@@ -233,11 +233,11 @@ test("a policy-changing reload replaces the supervisor and applies new limits", 
   const agentDir = mkdtempSync(join(tmpdir(), "subagents-policy-reload-"));
   let second: Awaited<ReturnType<typeof loadExtension>> | null = null;
   try {
-    writeFileSync(join(agentDir, "subagents-policy.json"), JSON.stringify({ maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 }));
     const first = await loadExtension(agentDir);
     await first.handlers.get("session_start")!({}, first.ctx);
     const before = await first.tools.get("list_agents")!("before-policy-reload", {}, undefined, undefined, first.ctx);
-    assert.equal((JSON.parse(before.content[0]!.text) as { capacity: { limits: { maxRunnable: number } } }).capacity.limits.maxRunnable, 4);
+    assert.deepEqual((JSON.parse(before.content[0]!.text) as { capacity: { limits: Record<string, number> } }).capacity.limits,
+      { maxRunnable: 16, maxResidentWorkers: 24, maxOpenAgents: 48 });
     writeFileSync(join(agentDir, "subagents-policy.json"), JSON.stringify({ maxRunnable: 6, maxResidentWorkers: 12, maxOpenAgents: 40 }));
     await first.handlers.get("session_shutdown")!({ reason: "reload" }, first.ctx);
 

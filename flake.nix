@@ -241,7 +241,7 @@
             observerExtensions = builtins.filter (name: builtins.elem name [ "ponygirls-subagents" "ponygirls-historian" ])
               (map builtins.baseNameOf limitsDefault.programs.pi.settings.extensions);
             limitsCustom = evalWorktree { subagentsMaxRunnable = 8; subagentsMaxResidentWorkers = 12; };
-            limitsMisordered = evalWorktree { subagentsMaxRunnable = 10; };
+            limitsMisordered = evalWorktree { subagentsMaxRunnable = 25; };
             failedLimitAssertion = assertions: builtins.any (a: !a.assertion && builtins.match ".*subagentsMaxRunnable.*" a.message != null) assertions;
             piSharedAssets = ((import ./nix/hm/yolo.nix { inherit inputs; }) {
               inherit pkgs;
@@ -322,7 +322,7 @@
           assert builtins.any (a: !a.assertion && builtins.match ".*subagentsWorktreeRoot.*" a.message != null) worktreeEmptyAssertions;
           assert limitsDefault.programs.pi.settings.httpIdleTimeoutMs == 900000;
           assert !(limitsDefault.programs.pi.settings.retry.provider ? timeoutMs);
-          assert [ limitsDefault.smind.hm.dev.llm.pi.subagentsMaxRunnable limitsDefault.smind.hm.dev.llm.pi.subagentsMaxResidentWorkers limitsDefault.smind.hm.dev.llm.pi.subagentsMaxOpenAgents ] == [ 4 8 32 ];
+          assert [ limitsDefault.smind.hm.dev.llm.pi.subagentsMaxRunnable limitsDefault.smind.hm.dev.llm.pi.subagentsMaxResidentWorkers limitsDefault.smind.hm.dev.llm.pi.subagentsMaxOpenAgents ] == [ 16 24 48 ];
           assert limitsDefault.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
           assert limitsCustom.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
           assert observerExtensions == [ "ponygirls-subagents" "ponygirls-historian" ];
@@ -349,7 +349,7 @@
           assert !(failedLimitAssertion limitsCustom.assertions);
           assert failedLimitAssertion limitsMisordered.assertions;
           pkgs.runCommandLocal "subagents-policy-shape-test" { } ''
-            ${pkgs.jq}/bin/jq -e '.allowedModels == null and .latestModelsOnly == true' ${limitsDefault.home.file."/home/alice/.pi/agent/subagents-policy.json".source}
+            ${pkgs.jq}/bin/jq -e '.allowedModels == null and .latestModelsOnly == true and .maxRunnable == 16 and .maxResidentWorkers == 24 and .maxOpenAgents == 48' ${limitsDefault.home.file."/home/alice/.pi/agent/subagents-policy.json".source}
             ${pkgs.jq}/bin/jq -e '.allowedModels == [] and .latestModelsOnly == false' ${latestModelsOptOut.home.file."/home/alice/.pi/agent/subagents-policy.json".source}
             touch $out
           '';
