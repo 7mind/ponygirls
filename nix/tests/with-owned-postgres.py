@@ -30,6 +30,13 @@ POLL_SECONDS=0.1
 EXIT_TIMEOUT=124
 TERMINATION_SIGNALS=(signal.SIGTERM,signal.SIGINT)
 PR_SET_CHILD_SUBREAPER=36
+# The services' production-shaped maxConnections in the limits handed to the command: a fixed pool of 6, headroom 2.
+SERVER_MAX_CONNECTIONS=8
+# Production runs one process per service role (CONNECTION LIMIT = its maxConnections); fixture runs start up to this many
+# service processes at once under one role (Manure's target suite: 8 shards of up to 2 servers; Haystack's transport
+# suite: 4 files of up to 2). Each role admits SERVER_MAX_CONNECTIONS per server, its headroom covering the test's own
+# probes and provisioning logins.
+FIXTURE_SERVERS=16
 
 
 class Terminated(Exception):
@@ -166,11 +173,13 @@ def main(termination,child_timeout,data_root,command):
             d['passwordFile']=str(root/'secrets'/key)
             # Behavioral native tests have finite <=30s statements. Module policy
             # rehearsal separately executes the short real deadline cases.
-            d.update(createPassword=True,statementTimeoutMs=30000,lockTimeoutMs=35000 if key=="chronicle" else 5000,idleTransactionTimeoutMs=60000 if key=="chronicle" else 30000)
+            d.update(createPassword=True,maxConnections=FIXTURE_SERVERS*SERVER_MAX_CONNECTIONS,statementTimeoutMs=30000,lockTimeoutMs=35000 if key=="chronicle" else 5000,idleTransactionTimeoutMs=60000 if key=="chronicle" else 30000)
         manifest=root/'provider.json';manifest.write_text(json.dumps(template))
         hba=Path(os.environ['PG_HBA']).read_text().replace('local all "nixbld" peer',f'local all "{admin}" peer')
         (root/'hba').write_text(hba)
         settings=Path(os.environ['PG_CONFIGURATION']).read_text().replace('/unused-evaluation-path/socket',str(root/'cluster'/'socket')).replace(os.environ['PG_HBA'],str(root/'hba')).replace('port = 15434',f'port = {port}')
+        # Every role's limit plus the admin reserve (the policy's capacity budget); the last setting in the file wins.
+        settings+=f"max_connections = {sum(d['maxConnections'] for d in template['databases'].values())+template['adminReserve']}\n"
         (root/'postgresql.conf').write_text(settings)
         def run(*args):
             subprocess.run(args,check=True,stdout=subprocess.DEVNULL,timeout=180)
@@ -190,7 +199,7 @@ def main(termination,child_timeout,data_root,command):
                 env['PONYGIRLS_TEST_DATABASE_'+key.upper()]=json.dumps({
                     'jdbcUrl':f'jdbc:postgresql://127.0.0.1:{port}/{d["name"]}',
                     'user':d['user'],'passwordFile':d['passwordFile'],
-                    'limits':{'maxConnections':8,'maxQueued':32,'queueTimeoutMs':5000,'connectTimeoutMs':5000,'statementTimeoutMs':d['statementTimeoutMs'],'lockTimeoutMs':d['lockTimeoutMs'],'idleTransactionTimeoutMs':d['idleTransactionTimeoutMs'],'socketTimeoutMs':35000 if key=='chronicle' else 40000}})
+                    'limits':{'maxConnections':SERVER_MAX_CONNECTIONS,'maxQueued':32,'queueTimeoutMs':5000,'connectTimeoutMs':5000,'statementTimeoutMs':d['statementTimeoutMs'],'lockTimeoutMs':d['lockTimeoutMs'],'idleTransactionTimeoutMs':d['idleTransactionTimeoutMs'],'socketTimeoutMs':35000 if key=='chronicle' else 40000}})
             haystack=json.loads(env['PONYGIRLS_TEST_DATABASE_HAYSTACK'])
             manure=json.loads(env['PONYGIRLS_TEST_DATABASE_MANURE'])
             env.update(HAYSTACK_OWNED_TEST_DB='1',HAYSTACK_TEST_JDBC=haystack['jdbcUrl'],
