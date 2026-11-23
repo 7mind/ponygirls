@@ -270,7 +270,12 @@ rebuild reset it. Every other failure is charged as before.
   admission serves everything with one connection kept for renewals (`maxConnections` − 1 + 1, gate 1, connections
   opened on use); with 1 everything shares that connection, as before (a long publication statement then delays
   renewals: not a production budget). More than 4 annotation sessions need a larger `backgroundConnections`. `migrate`
-  opens connections on use (one), so it fits beside a serving process.
+  opens connections on use (one), so it fits beside a serving process. Annotation continuations (migration 031, with
+  `indexing.annotationContinuations` on) add no lane: a window's part-2 writes — `loadPartial`, the reservation and
+  rejection of a window with kept parts, `continueAnnotation`, `acceptAnnotation` and `discardPartial` — are short work on
+  the shared background permits, as the checkpoint write is. The counts script (`annotation-counts.sql`) runs from an
+  operator's `psql`, not the server: as `chronicle` over TCP it takes 1 of the 2 connections the pool leaves free under the
+  role's limit; as the superuser over the pod's socket it is outside that limit.
 - **Database unavailable.** A request that gets no connection — its admission full or timed out after
   `queueTimeoutMs`, none by the acquisition deadline (`connectTimeoutMs` rounded up to whole seconds; a fenced role's
   28000 included) — or whose connection fails (08xxx, 57P01-03) is answered REST 503 `unavailable` with `Retry-After: 5`
