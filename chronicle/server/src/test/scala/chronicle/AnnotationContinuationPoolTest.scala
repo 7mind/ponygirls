@@ -22,8 +22,8 @@ import ProblemPassages.{Carry,Decision,Part,Point,Window}
   * timeout is held as decision B holds the accepted answer's write (F). */
 final class AnnotationContinuationPoolTest extends munit.FunSuite {
   override val munitTimeout=5.minutes
-  /** The indexing configuration of every case (production's). */
-  private val indexing: IndexingCapacity = IndexingCapacity.defaults
+  /** The indexing configuration of every case: production's, with the continuations switch on. */
+  private val indexing: IndexingCapacity = IndexingCapacity.defaults.copy(annotationContinuations=true)
   /** Production sizing: `maxConnections` 12, the other limits as the example configuration's. */
   private def production(fixture: Config): Config = fixture.copy(databaseLimits=fixture.databaseLimits.copy(maxConnections=12),indexing=indexing)
   /** The service pool of `production(fixture)` (with `queue` as its admission bound) and the Worker's archive over its
@@ -189,8 +189,8 @@ final class AnnotationContinuationPoolTest extends munit.FunSuite {
         (receipt.jobId,log)
       }
       val (continuing,continuingLog)=meets("continueAnnotation",_.fragments.size==fragments)
-      assertEquals((job(fixtureDb,continuing),ledger(fixtureDb,continuing),covered(fixtureDb,continuing)),(held(Some("Annotation"),1),List("none"),Nil))
-      assertEquals(continuingLog.lines.filter(_.startsWith("job ")).map(_.replaceAll(" nextAttemptAt=.*","")),List(s"job held jobId=$continuing code=database-transient sqlState=none class=RuntimeFailure stage=Annotation consecutive=1"))
+      assertEquals((job(fixtureDb,continuing),ledger(fixtureDb,continuing),covered(fixtureDb,continuing)),(held(None,1),List("none"),Nil))
+      assertEquals(continuingLog.lines.filter(_.startsWith("job ")).map(_.replaceAll(" nextAttemptAt=.*","")),List(s"job held jobId=$continuing code=database-transient sqlState=none class=RuntimeFailure stage=none consecutive=1"))
       due(fixtureDb,continuing); val again=new Provider(whole); once(archive,config,again)
       assertEquals((again.seen,ledger(fixtureDb,continuing),job(fixtureDb,continuing).state),(List(full),List("none","accepted(0)"),"Complete"))
       val accepting=meets("acceptAnnotation(1)",_.fragments.size<fragments)._1
