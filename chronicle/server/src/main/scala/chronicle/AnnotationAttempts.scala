@@ -81,18 +81,41 @@ object AnnotationAttempts {
     else if(rows.size>=reservationLimit) Some((callLimitReason,rows.size))
     else None
   }
-  private[chronicle] def reserve(c: Connection,claim: Claim,key: CheckpointKey,continuations: Boolean): AnnotationReservation = {
-    val (currentEpoch,previous)=ledger(c,claim,key,continuations)
-    exhaustion(previous) match {
-      case Some((reason,attempts)) => AnnotationReservation.Exhausted(reason,attempts)
-      case None =>
+  /** With `continuations` (ANNOT2) the window's ledger as `loadPartial` reads it; off, the checks of the release before
+    * ANNOT2 in its place (its faults keep their origin, `reserve`). */
+  private[chronicle] def reserve(c: Connection,claim: Claim,key: CheckpointKey,continuations: Boolean): AnnotationReservation =
+    if(continuations) {
+      val (currentEpoch,previous)=ledger(c,claim,key,continuations)
+      exhaustion(previous) match {
+        case Some((reason,attempts)) => AnnotationReservation.Exhausted(reason,attempts)
+        case None =>
+          val attempt=previous.size+1
+          Sql.exec(c,"""INSERT INTO ch_annotation_attempts(job_id,run_id,retry_epoch,window_ordinal,attempt,input_hash,fence)
+            VALUES(?,?,?,?,?,?,?)""",claim.jobId,claim.runId,currentEpoch,key.window,attempt,key.inputHash,claim.fence)
+          AnnotationReservation.Reserved(attempt)
+      }
+    } else {
+      validate(key)
+      val currentEpoch=epoch(c,claim)
+      val previous=Sql.rows(c,"""SELECT attempt,input_hash,rejection_reason FROM ch_annotation_attempts
+        WHERE job_id=? AND run_id=? AND retry_epoch=? AND window_ordinal=? ORDER BY attempt""",claim.jobId,claim.runId,currentEpoch,key.window) { r =>
+        (r.getInt(1),r.getString(2),Option(r.getString(3)))
+      }
+      Check(previous.size<=reservationLimit && previous.map(_._1)==(1 to previous.size).toList && previous.forall(_._2==key.inputHash),"internal","annotation attempt input identity mismatch")
+      val rejected=previous.flatMap(_._3)
+      rejected.foreach(validateReason)
+      Check(rejected.size<=rejectionLimit,"internal","invalid annotation rejection count")
+      if(rejected.size==rejectionLimit) AnnotationReservation.Exhausted(rejected.last,previous.size)
+      else if(previous.size>=reservationLimit) AnnotationReservation.Exhausted(callLimitReason,previous.size)
+      else {
         val attempt=previous.size+1
         Sql.exec(c,"""INSERT INTO ch_annotation_attempts(job_id,run_id,retry_epoch,window_ordinal,attempt,input_hash,fence)
           VALUES(?,?,?,?,?,?,?)""",claim.jobId,claim.runId,currentEpoch,key.window,attempt,key.inputHash,claim.fence)
         AnnotationReservation.Reserved(attempt)
+      }
     }
-  }
-  private[chronicle] def reject(c: Connection,claim: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = {
+  /** Off, the count is checked here, as before ANNOT2 (its fault keeps its origin, `reject`). */
+  private[chronicle] def reject(c: Connection,claim: Claim,key: CheckpointKey,attempt: Int,reason: String,continuations: Boolean): Int = {
     validate(key); validateReason(reason)
     Check(attempt>=1 && attempt<=reservationLimit,"internal","invalid annotation reservation")
     val currentEpoch=epoch(c,claim)
@@ -100,7 +123,13 @@ object AnnotationAttempts {
       WHERE job_id=? AND run_id=? AND retry_epoch=? AND window_ordinal=? AND attempt=? AND input_hash=? AND fence=?
         AND (rejection_reason IS NULL OR rejection_reason=?)""",reason,claim.jobId,claim.runId,currentEpoch,key.window,attempt,key.inputHash,claim.fence,reason)
     Check(changed==1,"internal","annotation rejection reservation mismatch")
-    rejected(c,claim,currentEpoch,key)
+    if(continuations) rejected(c,claim,currentEpoch,key)
+    else {
+      val rejected=Sql.one(c,"""SELECT count(*) FROM ch_annotation_attempts
+        WHERE job_id=? AND run_id=? AND retry_epoch=? AND window_ordinal=? AND rejection_reason IS NOT NULL""",claim.jobId,claim.runId,currentEpoch,key.window)(_.getInt(1)).get
+      Check(rejected<=rejectionLimit,"internal","invalid annotation rejection count")
+      rejected
+    }
   }
   /** A kept answer's row (ANNOT2): reason continued, the hash of the window's kept parts after it, and its chain. */
   private[chronicle] def continued(c: Connection,claim: Claim,key: CheckpointKey,attempt: Int,keptHash: String,chain: UUID): Int = {
@@ -170,6 +199,15 @@ object AnnotationPartials {
   private[chronicle] def discard(c: Connection,claim: Claim,epoch: Long,ordinal: Int): Unit = {
     Sql.exec(c,s"DELETE FROM ch_annotation_partials WHERE $window",claim.jobId,claim.runId,epoch,ordinal)
     clear(c,claim,epoch,ordinal)
+  }
+  /** At start, after 001.sql ended the previous process's older Queued/Running jobs superseded: the partials and chain
+    * markers of every job Failed `superseded-revision` (one is never claimed again: its revision stays below the head, and
+    * neither retry takes it), the jobs 001.sql just ended among them. */
+  private[chronicle] def supersededAtStart(c: Connection): Unit = {
+    val superseded=s"ch_jobs j WHERE j.state='Failed' AND j.error='${Jobs.supersededRevision}'"
+    Sql.exec(c,s"DELETE FROM ch_annotation_partials p USING $superseded AND p.job_id=j.id")
+    Sql.exec(c,s"DELETE FROM ch_annotation_active_chains m USING $superseded AND m.job_id=j.id")
+    ()
   }
   /** Jobs that ended superseded: their partials and chain markers go (never read again). */
   private[chronicle] def ended(c: Connection,jobs: List[UUID]): Unit = if(jobs.nonEmpty) {

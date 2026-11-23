@@ -89,6 +89,8 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     migrate(c,"029_transient_failures.sql")
     migrate(c,"030_operate_jobs.sql")
     migrate(c,"031_annotation_provenance.sql")
+    // 001.sql (above) ends the previous process's older jobs superseded: their kept parts go with them (ANNOT2).
+    AnnotationPartials.supersededAtStart(c)
     val dimensions=SearchPolicy.dimensions(config)
     Sql.exec(c,s"CREATE INDEX IF NOT EXISTS ch_search_hnsw_d$dimensions ON ch_search_chunks USING hnsw ((l2_normalize(embedding)::halfvec($dimensions)) halfvec_cosine_ops) WHERE vector_dims(embedding)=$dimensions")
     profiles.register(c)
@@ -532,7 +534,12 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     checkpointAuthority(c,claim)
     attempt
   }
-  def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = rejectAnnotation(claim,key,attempt,reason,false)
+  def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = db.transaction { c =>
+    checkpointAuthority(c,claim)
+    val rejected=AnnotationAttempts.reject(c,claim,key,attempt,reason,false)
+    checkpointAuthority(c,claim)
+    rejected
+  }
   def reserveAnnotation(claim: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = db.transaction { c =>
     annotationAuthority(c,claim,prefix)
     val attempt=AnnotationAttempts.reserve(c,claim,key,true)
@@ -545,7 +552,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   }
   def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String,prefix: Boolean): Int = db.transaction { c =>
     annotationAuthority(c,claim,prefix)
-    val rejected=AnnotationAttempts.reject(c,claim,key,attempt,reason)
+    val rejected=AnnotationAttempts.reject(c,claim,key,attempt,reason,true)
     annotationAuthority(c,claim,prefix)
     rejected
   }
