@@ -163,7 +163,7 @@ def main():
                     raise TimeoutError('owned native server readiness')
                 time.sleep(.1)
 
-            def call(label, args, user='alice', expected=0, document=None, token_file=None, diagnostic=None):
+            def call(label, args, user='alice', expected=0, document=None, token_file=None, diagnostic=None, stderr=''):
                 assert process.poll() is None, 'owned native process exited'
                 selected = dict(env, CHRONICLE_STATE_DIR=str(root / (user + '-state')),
                                 CHRONICLE_TOKEN_FILE=str(token_files[user] if token_file is None else token_file))
@@ -175,7 +175,7 @@ def main():
                                   pass_=result.returncode == expected))
                 assert result.returncode == expected, f'{label}: expected exit {expected}, got {result.returncode}; {result.stderr}'
                 if expected == 0:
-                    assert result.stderr == '', f'{label}: success diagnostics'
+                    assert result.stderr == stderr, f'{label}: success diagnostics {result.stderr!r}'
                     return json.loads(result.stdout)
                 assert result.stdout == '', f'{label}: failure polluted stdout'
                 assert diagnostic is None or diagnostic in result.stderr, f'{label}: expected diagnostic missing; {result.stderr}'
@@ -227,7 +227,11 @@ def main():
             assert context['view'] == session['view'] and context['anchor']['messageId'] == 'm2'
             archived = call('raw JSONL fidelity', ['raw', session_id, '--revision', '1'])['Raw']['result']
             assert archived['files'][0]['content'] == raw
-            for label, args in [('lexical search (unindexed fixture)', ['search', 'synthetic']), ('archive', ['archive']), ('related', ['related', session_id]), ('facets', ['facets']), ('activity', ['activity']), ('jobs', ['jobs']), ('model usage/settings', ['usage']), ('collector status', ['collectors']), ('ingest progress', ['progress']), ('bearer facets', ['facets', '--auth', 'bearer']), ('bearer tag catalog', ['tags', '', '--auth', 'bearer'])]:
+            # A defaulted hybrid search whose embedding service is unreachable (the fixture's endpoint) shows lexical results
+            # after exactly this notice (cli/src/main.ts, errors.ts EMBEDDING_FAILURES); an explicit mode never falls back.
+            call('defaulted hybrid search falls back to lexical with its notice', ['search', 'synthetic'],
+                 stderr='chronicle: hybrid search unavailable (embedding service unreachable [model-transport]); showing lexical results\n')
+            for label, args in [('lexical search (unindexed fixture)', ['search', 'synthetic', '--mode', 'lexical']), ('archive', ['archive']), ('related', ['related', session_id]), ('facets', ['facets']), ('activity', ['activity']), ('jobs', ['jobs']), ('model usage/settings', ['usage']), ('collector status', ['collectors']), ('ingest progress', ['progress']), ('bearer facets', ['facets', '--auth', 'bearer']), ('bearer tag catalog', ['tags', '', '--auth', 'bearer'])]:
                 call(label, args)
             rpc('typed archive legacy result', 'Archive', dict(query=dict(expression='', sort='LastTimestamp', direction='Desc', cursor=None, limit=20, preferRelevance=False)))
             rpc('typed expression hints', 'ExpressionHints', dict(query=dict(target=dict(Archive={}), expression='', caretUtf16=0, limit=10)))
@@ -254,6 +258,8 @@ def main():
             token_plan = token_preview['RetryFailedPreview']['result']
             call('token applies retry failed', ['retry-failed', 'apply', '--target-profile', token_plan['targetProfile'], '--selection-hash', token_plan['selectionHash'], '--auth', 'bearer', '--yes'], token_file=operator_file)
             call('token without OperateJobs refused job operations', ['jobs', '--auth', 'bearer'], expected=3,
+                 diagnostic='The token lacks the OperateJobs scope (with Read) needed for jobs, jobs retry and retry-failed')
+            call('token without OperateJobs refused retry failed apply', ['retry-failed', 'apply', '--target-profile', token_plan['targetProfile'], '--selection-hash', token_plan['selectionHash'], '--auth', 'bearer', '--yes'], expected=3,
                  diagnostic='The token lacks the OperateJobs scope (with Read) needed for jobs, jobs retry and retry-failed')
             plan = call('owner reindex preview', ['reindex', 'preview'])['OwnerReindexPreview']['result']
             rebuilt = call('confirmed owner reindex apply', ['reindex', 'apply', '--target-profile', plan['targetProfile'], '--selection-hash', plan['selectionHash'], '--yes'])['OwnerReindexed']['result']
