@@ -197,3 +197,90 @@ test("keyboard actions use the same task operations: signal, mute, terminate, cl
   await press(h, "t");
   assert.equal((await finished(backend, other.id)).reason, "terminated");
 });
+
+const PAGE_DOWN = "\x1b[6~";
+const END = "\x1b[F";
+
+for (const [name, initial, append, expected, caughtUp] of [
+  ["empty", "", "new-tail", "", "new-tail"],
+  ["incomplete UTF-8", "OLD\\360\\237", "\\230\\200", "OLD", "OLD😀"],
+  ["unfinished UTF-8 at final size", "OLD\\360\\237", "", "OLD", "OLD�"],
+  ["unfinished CSI", "OLD\\033[3", "1m\\rNEW", "OLD", "NEW"],
+] as const) {
+  test(`paused ${name} keeps its decoder boundary after append and completion`, async t => {
+    const { backend, sidecar } = await startRealBackend(t, "snapshot-end");
+    const gate = `${sidecar}/release`;
+    const task = await backend.spawn({ label: "writer", command: `printf '${initial}'; while ! test -f '${gate}'; do sleep 0.02; done; printf '${append}'`, cwd: "/", notify: false });
+    if (initial) await eventually(async () => (await backend.get(task.id)).logBytes > 0, "first write");
+    const h = await open(t, backend);
+    await press(h, ENTER, PAGE_UP);
+    const body = (width: number) => h.screen(width).split(`\n${"─".repeat(width)}`)[0]!.split("\n").slice(1).join("\n");
+    const before = body(80);
+    if (expected) assert.equal(before, expected);
+    else assert.match(before, /no output/);
+    const cutoff = (await backend.read(task.id, "tail", 1)).size;
+    const reads: Array<[number | "tail", number]> = [];
+    const read = backend.read.bind(backend);
+    backend.read = async (id, offset, limit) => { reads.push([offset, limit]); return read(id, offset, limit); };
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(gate, "");
+    await finished(backend, task.id);
+    await h.view.refresh();
+    await press(h, PAGE_UP, PAGE_DOWN, PAGE_DOWN);
+    assert.equal(body(100), before);
+    assert.ok(reads.every(([o, n]) => o !== "tail" && o + n <= cutoff), `reads outside [0, ${cutoff}): ${JSON.stringify(reads)}`);
+    await press(h, END);
+    assert.equal(body(100), caughtUp);
+  });
+}
+
+test("pages traverse complete wrapped records across a bounded cache in both directions", async t => {
+  const { backend } = await startRealBackend(t, "snapshot-pages");
+  const row = (i: number) => `${i}`.padStart(5, "0") + "-".repeat(90) + "終";
+  const count = 3907, width = 60;
+  const task = await backend.spawn({ label: "records", command: `for i in $(seq 1 ${count}); do printf '%05d${"-".repeat(90)}終\\n' "$i"; done`, cwd: "/", notify: false });
+  const size = (await finished(backend, task.id)).logBytes;
+  assert.ok(size > 2 * VIEW_WINDOW_BYTES);
+  const all = Array.from({length: count}, (_, i) => [row(i + 1).slice(0, width), row(i + 1).slice(width)]).flat();
+  const h = await open(t, backend);
+  let fetched = 0, total = 0;
+  const read = backend.read.bind(backend);
+  backend.read = async (id, o, n) => { assert.ok(n > 0 && n <= 32768); fetched += n; total += n; return read(id, o, n); };
+  await press(h, ENTER);
+  const body = () => h.screen(width).split("\n").slice(1).filter(s => /^[-\d]/.test(s));
+  const page = body().length;
+  assert.ok(page > 1);
+  let top = all.length - page;
+  for (const dir of [-1, 1]) {
+    for (;;) {
+      assert.deepEqual(body(), all.slice(top, top + page));
+      assert.ok(h.view.loadedBytes <= VIEW_WINDOW_BYTES && fetched <= 2 * VIEW_WINDOW_BYTES);
+      if (top === (dir < 0 ? 0 : all.length - page)) break;
+      top = Math.max(0, Math.min(all.length - page, top + dir * page));
+      fetched = 0;
+      await press(h, dir < 0 ? PAGE_UP : PAGE_DOWN);
+    }
+  }
+  assert.ok(total <= 6 * size, `read ${total} bytes to traverse ${size} bytes twice`);
+});
+
+test("an open detail shows completion and permits clear after its log disappears", async t => {
+  const { backend, sidecar } = await startRealBackend(t, "artifact-metadata");
+  const task = await backend.spawn({ label: "writer", command: `echo ready; while ! test -f '${sidecar}/release'; do sleep 0.02; done`, cwd: "/", notify: false });
+  const h = await open(t, backend);
+  await press(h, ENTER);
+  await eventually(async () => { await h.view.refresh(); return h.screen().includes("ready"); }, "ready output");
+  const { rmSync, writeFileSync } = await import("node:fs");
+  rmSync(backend.logPath(task));
+  await h.view.refresh();
+  assert.match(h.screen(), /terminal log is missing/);
+  writeFileSync(`${sidecar}/release`, "");
+  await finished(backend, task.id);
+  await h.view.refresh();
+  assert.match(h.screen(), /completed/);
+  assert.match(h.screen(), /terminal log is missing/);
+  assert.match(h.screen(), /c clear/);
+  assert.doesNotMatch(h.screen(), /t terminate/);
+  await press(h, "c");
+  assert.equal(h.confirms.length, 1);
+});

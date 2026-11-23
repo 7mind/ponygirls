@@ -66,7 +66,10 @@ reads report fewer consumed bytes instead of truncating silently.
 
 `/bg` (TUI only; RPC gets a plain first page) lists ID, label, state/phase,
 elapsed time, exit evidence, reason, notice state, and log size. Enter opens
-live output (follow mode); ↑/PgUp pauses and scrolls back, `f`/End resumes.
+live output (follow mode). Scrolling pauses at the current log length, even
+if the log is empty. ↑/↓ and PgUp/PgDn move within that snapshot; later
+output stays hidden, including after the task finishes. `f` or End jumps to
+the current tail and resumes following. The next scroll takes a new snapshot.
 `t` terminate, `s` signal (selector), `m` mute/unmute, `c` clear (finished
 tasks only, with a confirmation naming the ID and bytes). The footer shows
 only the keys that apply to the selected task (`t`, `s`, `m` while it runs,
@@ -80,7 +83,10 @@ expanded forms are unchanged. A signal sent with `s` or the tool's
 A list wider than the pane hides whole columns (log, notice, time, exit, in
 that order) and names them; task, label and state stay. The task view's title
 likewise keeps only the facts that fit whole. Closing the viewer never
-affects a task. The detail view holds at most 128 KiB of a log.
+affects a task. The log reader caches at most 128 KiB of source bytes; it
+does not copy the log to pause. Records too long for one window are displayed
+in bounded fragments. Wrapping and carriage-return overwrites on such a
+record need not match rendering the entire record at once.
 
 While any task is unfinished the editor's bottom-left border shows the badge
 `🛠️ N`: the glyph, then the number of running tasks in the running colour.
