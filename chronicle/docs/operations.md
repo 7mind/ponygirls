@@ -323,8 +323,14 @@ under the run) fails the job `annotation-input-changed` (retry starts a new epoc
   is a defect to report); `windows accepted … continuedWindows=… resumedWindows=…`.
 - **Counts** (read-only, per job set, in each job's current run and retry epoch): `psql -X -q -v ON_ERROR_STOP=1 -v
   jobs=<uuid>[,<uuid>...] -f chronicle/scripts/annotation-counts.sql` prints windows accepted in one answer and after kept
-  answers, kept, abandoned and rejected answers (per reason), authorizations without an answer, open and stale partials,
-  reused and legacy windows, and R = rejected / answers.
+  answers, kept, abandoned and rejected answers (per reason), authorizations without an answer, reused and legacy windows,
+  R = rejected / answers, and the partials in three disjoint counts: `stale` (the next claim never reads them), `open`
+  (it would load them and they pass every loader check the database can evaluate: format, profile, ranges, the window's
+  active chain, the chain's kept rows, their count, latest attempt and latest hash, the earlier non-final answers, the
+  stops), `invalid_or_inactive` (it would load and discard them). The script cannot evaluate what needs the window's source,
+  carry or the product's canonical JSON hash (content hash, recomputed kept and prefix hashes before the last stop, fragment
+  count, the kept decision against the window, the rest's request bound, a changed input); product-written rows pass
+  those, so on unaltered data `open` is what the next claims resume. Its header lists every check.
 - **Rollback.** The previous release starts on a database migrated to 031: it neither reads nor writes the new columns
   and tables, annotates an unfinished window in full and counts kept answers among its five non-final answers (a window
   with many of them has fewer re-asks left). To drop them, stop the server and run

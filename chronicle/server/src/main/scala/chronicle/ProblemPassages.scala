@@ -340,39 +340,45 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
     case Carry extends PartialDiscard("carry")
     case Provenance extends PartialDiscard("provenance")
   }
-  /** A stored partial of `window` (before which the passages are `state`) validated for resuming (ANNOT2): total, every
-    * non-fatal throwable of a check is that check's failure. `fits` is the request bound of the rest of the window. */
+  /** A stored partial of `window` (before which the passages are `state`) decoded and validated for resuming (ANNOT2):
+    * total, every non-fatal throwable of a check (decoding a column included) is that check's failure. `fits` is the request
+    * bound of the rest of the window. */
   def resumable(state: State,window: Window,profile: String,key: CheckpointKey,found: PartialLoad.Found,fits: (Window,Int,Option[Carry]) => Boolean): Either[PartialDiscard,AnnotationPartial] = {
     val row=found.partial
-    def check(reason: PartialDiscard)(holds: => Boolean): Either[PartialDiscard,Unit] =
-      Either.cond(try holds catch { case scala.util.control.NonFatal(_) => false },(),reason)
+    def decoded[A](reason: PartialDiscard)(value: => Option[A]): Either[PartialDiscard,A] =
+      (try value catch { case scala.util.control.NonFatal(_) => None }).toRight(reason)
+    def check(reason: PartialDiscard)(holds: => Boolean): Either[PartialDiscard,Unit] = decoded(reason)(Option.when(holds)(()))
+    def number(text: Option[String]): Option[Int] = text.flatMap(_.toIntOption)
     def prefix(kept: Decision,stop: Int): Decision = Decision(kept.parts.takeWhile(part => part.end.fragmentIndex<stop || part.end==Point(stop,0)))
     for {
-      _ <- check(PartialDiscard.Format)(row.format==AnnotationPartials.format)
-      _ <- check(PartialDiscard.Profile)(row.profile==profile)
-      _ <- check(PartialDiscard.ContentHash)(key.contentHash.contains(row.contentHash))
-      _ <- check(PartialDiscard.KeptHash)(row.keptHash==IndexCheckpoints.hash(row.kept))
-      _ <- check(PartialDiscard.WindowShape)(row.windowFragments==window.fragments.size)
-      _ <- check(PartialDiscard.Range)(row.coveredFragments>=1 && row.coveredFragments<row.windowFragments && row.continuations>=1 && row.continuations<=AnnotationAttempts.continuationLimit)
-      kept <- try Right(fields(row.kept)) catch { case scala.util.control.NonFatal(_) => Left(PartialDiscard.KeptDecode) }
-      _ <- check(PartialDiscard.Boundary)(coverage(window,state.carry.nonEmpty,kept)==Point(row.coveredFragments,0))
+      _ <- check(PartialDiscard.Format)(row.format.contains(AnnotationPartials.format))
+      _ <- check(PartialDiscard.Profile)(row.profile.contains(profile))
+      _ <- check(PartialDiscard.ContentHash)(row.contentHash.nonEmpty && key.contentHash==row.contentHash)
+      keptJson <- decoded(PartialDiscard.KeptHash)(row.kept.map(Wire.parse).filter(value => row.keptHash.contains(IndexCheckpoints.hash(value))))
+      fragments <- decoded(PartialDiscard.WindowShape)(number(row.windowFragments).filter(_==window.fragments.size))
+      covered <- decoded(PartialDiscard.Range)(number(row.coveredFragments).filter(value => value>=1 && value<fragments))
+      continuations <- decoded(PartialDiscard.Range)(number(row.continuations).filter(value => value>=1 && value<=AnnotationAttempts.continuationLimit))
+      kept <- decoded(PartialDiscard.KeptDecode)(Some(fields(keptJson)))
+      _ <- check(PartialDiscard.Boundary)(coverage(window,state.carry.nonEmpty,kept)==Point(covered,0))
       _ <- check(PartialDiscard.Carry) {
         val carry=carryAfter(state,window,kept.parts)
         carry.foreach(carryJson)
-        fits(window,row.coveredFragments,carry)
+        fits(window,covered,carry)
       }
+      (attempt,stops,chain) <- decoded(PartialDiscard.Provenance)(for {
+        attempt <- number(row.attempt); stops <- row.stops.flatMap(AnnotationPartials.stops); chain <- row.chain.map(UUID.fromString)
+      } yield (attempt,stops,chain))
       _ <- check(PartialDiscard.Provenance) {
-        val chain=found.ledger.filter(entry => entry.chain.contains(row.chain) && entry.reason.contains(AnnotationAttempts.continuedReason))
-        val earlier=found.ledger.count(entry => entry.reason.nonEmpty && entry.attempt<row.attempt)
-        row.inputHash==key.inputHash && row.attempt<=found.ledger.size && found.activeChain.contains(row.chain) &&
-          chain.size==row.continuations && chain.lastOption.exists(_.attempt==row.attempt) && earlier<AnnotationAttempts.continuationLimit &&
-          row.stops.size==row.continuations && row.stops.headOption.exists(_>=1) && row.stops.zip(row.stops.drop(1)).forall((a,b) => a<b) &&
-          row.stops.lastOption.contains(row.coveredFragments) && row.stops.forall(stop => kept.parts.exists(_.end==Point(stop,0))) &&
-          chain.zip(row.stops).forall((entry,stop) => entry.keptHash.contains(IndexCheckpoints.hash(CheckpointJson.decision(prefix(kept,stop)))))
+        val entries=found.ledger.filter(entry => entry.chain.contains(chain) && entry.reason.contains(AnnotationAttempts.continuedReason))
+        val earlier=found.ledger.count(entry => entry.reason.nonEmpty && entry.attempt<attempt)
+        row.inputHash.contains(key.inputHash) && attempt<=found.ledger.size && found.activeChain.contains(chain) &&
+          entries.size==continuations && entries.lastOption.exists(_.attempt==attempt) && earlier<AnnotationAttempts.continuationLimit &&
+          stops.size==continuations && stops.headOption.exists(_>=1) && stops.zip(stops.drop(1)).forall((a,b) => a<b) &&
+          stops.lastOption.contains(covered) && stops.forall(stop => kept.parts.exists(_.end==Point(stop,0))) &&
+          entries.zip(stops).forall((entry,stop) => entry.keptHash.contains(IndexCheckpoints.hash(CheckpointJson.decision(prefix(kept,stop)))))
       }
-    } yield AnnotationPartial(kept,row.windowFragments,row.coveredFragments,row.continuations,row.stops,row.chain)
+    } yield AnnotationPartial(kept,fragments,covered,continuations,stops,chain)
   }
-
   /** A stored decision (a checkpoint): canonical points only. */
   def decode(window: Window,hasPrevious: Boolean,json: Json): Decision = {
     val decision=fields(json); validate(window,hasPrevious,decision); decision

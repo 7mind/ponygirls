@@ -119,8 +119,9 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
         case None => PartialLoad.Missing(previous.count(_._2.reason.nonEmpty))
         case Some((attempt,partial)) =>
           authorized(claim,true)
-          PartialLoad.Found(StoredPartial(AnnotationPartials.format,claim.profile,key.contentHash.get,key.inputHash,attempt,partial.windowFragments,partial.covered,partial.continuations,
-            partial.stops,partial.chain,partial.keptJson,partial.keptHash),rows(previous),activeChains.get(slot).flatten)
+          PartialLoad.Found(StoredPartial(Some(AnnotationPartials.format),Some(claim.profile),key.contentHash,Some(key.inputHash),Some(attempt.toString),Some(partial.windowFragments.toString),
+            Some(partial.covered.toString),Some(partial.continuations.toString),Some(partial.stops.mkString("{",",","}")),Some(partial.chain.toString),Some(partial.keptJson.noSpaces),
+            Some(partial.keptHash)),rows(previous),activeChains.get(slot).flatten)
       }
     }
   }

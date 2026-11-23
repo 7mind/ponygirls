@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS ch_annotation_partials(
   window_fragments integer NOT NULL CHECK(window_fragments BETWEEN 2 AND 64),
   covered_fragments integer NOT NULL CHECK(covered_fragments>=1 AND covered_fragments<window_fragments),
   continuations integer NOT NULL CHECK(continuations BETWEEN 1 AND 4),
-  stops integer[] NOT NULL CHECK(cardinality(stops)=continuations AND stops[cardinality(stops)]=covered_fragments),
+  -- One-dimensional from index 1, no NULL (CASE: the array functions refuse other shapes rather than answer false).
+  stops integer[] NOT NULL CHECK(CASE WHEN array_ndims(stops)=1 AND array_lower(stops,1)=1 THEN array_position(stops,NULL) IS NULL ELSE false END
+    AND cardinality(stops)=continuations AND stops[cardinality(stops)]=covered_fragments),
   chain_id uuid NOT NULL,
   format text NOT NULL,
   kept jsonb NOT NULL,

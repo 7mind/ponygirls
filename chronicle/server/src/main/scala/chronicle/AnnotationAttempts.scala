@@ -17,9 +17,11 @@ final case class AnnotationPartial(kept: ProblemPassages.Decision,windowFragment
   val keptJson: Json = CheckpointJson.decision(kept)
   val keptHash: String = IndexCheckpoints.hash(keptJson)
 }
-/** A partial row as stored, not yet validated (`ProblemPassages.resumable` does). */
-final case class StoredPartial(format: String,profile: String,contentHash: String,inputHash: String,attempt: Int,windowFragments: Int,coveredFragments: Int,
-  continuations: Int,stops: Vector[Int],chain: UUID,kept: Json,keptHash: String)
+/** A partial row as stored: each column's text (None: NULL), read whatever its shape; `ProblemPassages.resumable` decodes
+  and validates it, so a row the product could not have written is discarded, never a fault. */
+final case class StoredPartial(format: Option[String],profile: Option[String],contentHash: Option[String],inputHash: Option[String],attempt: Option[String],
+  windowFragments: Option[String],coveredFragments: Option[String],continuations: Option[String],stops: Option[String],chain: Option[String],kept: Option[String],
+  keptHash: Option[String])
 /** What `loadPartial` finds for a window before its first authorization (ANNOT2). */
 enum PartialLoad {
   /** The window's ledger is exhausted: nothing is loaded and no model is called. */
@@ -133,12 +135,14 @@ object AnnotationPartials {
   val format="annotation-partial-v1"
   private val window="job_id=? AND run_id=? AND retry_epoch=? AND window_ordinal=?"
   private[chronicle] def read(c: Connection,claim: Claim,epoch: Long,ordinal: Int): Option[StoredPartial] =
-    Sql.one(c,s"""SELECT format,profile,content_hash,input_hash,attempt,window_fragments,covered_fragments,continuations,stops,chain_id,kept::text,kept_hash
-      FROM ch_annotation_partials WHERE $window""",claim.jobId,claim.runId,epoch,ordinal) { r =>
-      val stops=r.getArray("stops").getArray.asInstanceOf[Array[java.lang.Integer]].toVector.map(stop => Option(stop).fold(-1)(_.intValue))
-      StoredPartial(r.getString("format"),r.getString("profile"),r.getString("content_hash"),r.getString("input_hash"),r.getInt("attempt"),r.getInt("window_fragments"),
-        r.getInt("covered_fragments"),r.getInt("continuations"),stops,r.getObject("chain_id",classOf[UUID]),Wire.parse(r.getString("kept")),r.getString("kept_hash"))
+    Sql.one(c,s"""SELECT format,profile,content_hash,input_hash,attempt::text,window_fragments::text,covered_fragments::text,continuations::text,stops::text,
+      chain_id::text,kept::text,kept_hash FROM ch_annotation_partials WHERE $window""",claim.jobId,claim.runId,epoch,ordinal) { r =>
+      def text(column: Int): Option[String] = Option(r.getString(column))
+      StoredPartial(text(1),text(2),text(3),text(4),text(5),text(6),text(7),text(8),text(9),text(10),text(11),text(12))
     }
+  /** `stops` as `continueAnnotation` writes it: a one-dimensional array of integers without NULLs, its first index 1. */
+  private[chronicle] def stops(text: String): Option[Vector[Int]] =
+    Option.when(text.matches("""\{-?[0-9]+(,-?[0-9]+)*\}"""))(text.drop(1).dropRight(1).split(',').toVector.map(_.toIntOption)).filter(_.forall(_.nonEmpty)).map(_.flatten)
   private[chronicle] def activeChain(c: Connection,claim: Claim,epoch: Long,ordinal: Int): Option[UUID] =
     Sql.one(c,s"SELECT active_chain FROM ch_annotation_active_chains WHERE $window",claim.jobId,claim.runId,epoch,ordinal)(r => Option(r.getObject(1,classOf[UUID]))).flatten
   /** The chain's next state: a first row, or the row of its previous kept answer extended. */
