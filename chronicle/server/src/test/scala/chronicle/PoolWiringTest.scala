@@ -43,13 +43,10 @@ final class PoolWiringTest extends munit.FunSuite {
     running
   }
 
-  private val d7="D7 production sizing: the publication gate full and a staging transaction queued outside admission, four lanes' claims, renewals and transient failure records complete; a claim's renewal also with every shared permit held"
-  test(d7)(production(continuations=false))
-  test(s"$d7; with indexing.annotationContinuations on, each lane's loadPartial and three-argument reservation on the shared permits too")(production(continuations=true))
-  private def production(continuations: Boolean): Unit = {
+  test("D7 production sizing: the publication gate full and a staging transaction queued outside admission, four lanes' claims, renewals and transient failure records complete; a claim's renewal also with every shared permit held") {
     CurrentIndexDatabase.withDatabase { (fixture,fixtureDb,archive) =>
       // maxConnections 12, keys omitted: R 5, B 5 = a background admission of 4 + the renewal permit, the gate L 3.
-      val config=ModelFixtures.continuations(fixture.copy(databaseLimits=fixture.databaseLimits.copy(maxConnections=12)),continuations)
+      val config=fixture.copy(databaseLimits=fixture.databaseLimits.copy(maxConnections=12))
       assertEquals((config.databasePool.request,config.databasePool.background,Database.controlConnections,Database.publicationPermits(config.databasePool)),(5,5,1,3))
       val refused=intercept[DomainError](config.copy(databaseRequestConnections=Some(5),databaseBackgroundConnections=Some(2)).databasePool)
       assert(refused.code=="config" && refused.detail.contains("backgroundConnections"),refused.toString)
@@ -67,7 +64,7 @@ final class PoolWiringTest extends munit.FunSuite {
           eventually("the third staging transaction waits at the gate")(queued.getState==Thread.State.TIMED_WAITING)
           // Four lanes on the background view, each renewing every 100 ms; their annotation loops claims (short
           // transactions on the shared permit) until every job was renewed 20 times, then fails transiently: recorded.
-          val renewals=new ConcurrentHashMap[UUID,AtomicInteger]; val failures=new ConcurrentLinkedQueue[Throwable]; val chained=new AtomicInteger(0)
+          val renewals=new ConcurrentHashMap[UUID,AtomicInteger]; val failures=new ConcurrentLinkedQueue[Throwable]
           def observed[A](work: => A): A = try work catch { case error: Throwable => failures.add(error); throw error }
           val background=new PostgresArchive(db.background,config)
           val lanes=new ForwardingArchive(background) {
@@ -82,9 +79,6 @@ final class PoolWiringTest extends munit.FunSuite {
             override def progress(c: Claim,done: Int,total: Int): Boolean = observed(super.progress(c,done,total))
             override def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = observed(super.windowWork(c,key))
             override def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = observed(super.reserveAnnotation(c,key))
-            // The continuation chain's transactions (switch on): its load and its reservation.
-            override def loadPartial(c: Claim,key: CheckpointKey): PartialLoad = { chained.incrementAndGet(); observed(super.loadPartial(c,key)) }
-            override def reserveAnnotation(c: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = { chained.incrementAndGet(); observed(super.reserveAnnotation(c,key,prefix)) }
             override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = observed(super.holdTransient(c,stage,deadline))
           }
           def renewed: Boolean = jobs.forall(id => Option(renewals.get(id)).exists(_.get>=20))
@@ -97,7 +91,7 @@ final class PoolWiringTest extends munit.FunSuite {
           val worker=new Worker(lanes,annotator,embedder,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),
             logstage.IzLogger(),ModelFixtures.failureBackoff,ModelFixtures.snapshots,Worker.Leases(2.seconds,100.millis,Duration.Zero,5.seconds))
           assertEquals(List.fill(4)(worker.once).parSequence.timeout(60.seconds).unsafeRunSync(),List.fill(4)(true))
-          assertEquals((failures.asScala.toList,annotating.get,chained.get),(Nil,4,if(continuations) 8 else 0))
+          assertEquals((failures.asScala.toList,annotating.get),(Nil,4))
           jobs.foreach { id =>
             val row=fixtureDb.transaction(c => Sql.one(c,"SELECT state,attempts,error,failure_stage,transient_failures FROM ch_jobs WHERE id=?",id)(r => (r.getString(1),r.getInt(2),r.getString(3),r.getString(4),r.getInt(5))))
             assertEquals(row,Some(("Queued",0,Jobs.transientCode,"Annotation",1)))
@@ -114,6 +108,63 @@ final class PoolWiringTest extends munit.FunSuite {
             assert(background.renew(claimed,300),"renewed while every shared permit is held")
           } finally slow.countDown()
           claimHolder.foreach(_.get(10,TimeUnit.SECONDS))
+        } finally { release.countDown(); executor.shutdown() }
+        queued.join(10000)
+        assert(entered.get,"the queued staging transaction runs once the gate has a permit")
+      }
+    }
+  }
+
+  test("D7 with indexing.annotationContinuations on: under the same production sizing, full gate and queued staging transaction, the four lanes' claims, continuation-chain transactions (loadPartial and the three-argument reservation on the shared permits), renewals and transient failure records complete") {
+    CurrentIndexDatabase.withDatabase { (fixture,fixtureDb,archive) =>
+      val config=ModelFixtures.continuations(fixture.copy(databaseLimits=fixture.databaseLimits.copy(maxConnections=12)))
+      assertEquals((config.databasePool.request,config.databasePool.background,Database.controlConnections,Database.publicationPermits(config.databasePool)),(5,5,1,3))
+      val jobs=List.fill(4)(archive.ingest("a",Fixtures.snapshot()).jobId)
+      Using.resource(Database.service(config,IndexProfileCatalog.current(config))) { db =>
+        val executor=Executors.newCachedThreadPool(); val release=new CountDownLatch(1)
+        val entered=new AtomicBoolean(false)
+        val queued=new Thread(() => db.publication(_ => entered.set(true)))
+        try {
+          val holders=latched(executor,release,2)(f => db.publication(f))++latched(executor,release,1)(f => db.maintenance.transaction(f))
+          queued.start()
+          eventually("the third staging transaction waits at the gate")(queued.getState==Thread.State.TIMED_WAITING)
+          val renewals=new ConcurrentHashMap[UUID,AtomicInteger]; val failures=new ConcurrentLinkedQueue[Throwable]; val chained=new AtomicInteger(0)
+          def observed[A](work: => A): A = try work catch { case error: Throwable => failures.add(error); throw error }
+          val background=new PostgresArchive(db.background,config)
+          val lanes=new ForwardingArchive(background) {
+            override def renew(c: Claim,lease: Int): Boolean = observed {
+              val renewed=super.renew(c,lease)
+              if(renewed) renewals.computeIfAbsent(c.jobId,_ => new AtomicInteger).incrementAndGet()
+              renewed
+            }
+            override def claim(profiles: Set[String],scope: ClaimScope,lease: Int,large: LargeJobs): Option[Claim] = observed(super.claim(profiles,scope,lease,large))
+            override def publicationParent(c: Claim): Option[PublicationParent] = observed(super.publicationParent(c))
+            override def defer(c: Claim,total: Int): Boolean = observed(super.defer(c,total))
+            override def progress(c: Claim,done: Int,total: Int): Boolean = observed(super.progress(c,done,total))
+            override def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = observed(super.windowWork(c,key))
+            override def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = observed(super.reserveAnnotation(c,key))
+            override def loadPartial(c: Claim,key: CheckpointKey): PartialLoad = { chained.incrementAndGet(); observed(super.loadPartial(c,key)) }
+            override def reserveAnnotation(c: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = { chained.incrementAndGet(); observed(super.reserveAnnotation(c,key,prefix)) }
+            override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = observed(super.holdTransient(c,stage,deadline))
+          }
+          def renewed: Boolean = jobs.forall(id => Option(renewals.get(id)).exists(_.get>=20))
+          val annotating=new AtomicInteger(0)
+          val annotator=new ScriptedAnnotator {
+            def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] =
+              IO(annotating.incrementAndGet()) *> (IO.blocking(lanes.claim(background.knownProfiles,ClaimScope.Owner("c"),300,LargeJobs.Skipped)) *> IO(renewed)).iterateUntil(identity) *>
+                IO.raiseError(JdbcFailure("database-unavailable",Some("57P01")))
+          }
+          val worker=new Worker(lanes,annotator,embedder,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),
+            logstage.IzLogger(),ModelFixtures.failureBackoff,ModelFixtures.snapshots,Worker.Leases(2.seconds,100.millis,Duration.Zero,5.seconds))
+          assertEquals(List.fill(4)(worker.once).parSequence.timeout(60.seconds).unsafeRunSync(),List.fill(4)(true))
+          assertEquals((failures.asScala.toList,annotating.get),(Nil,4))
+          // Each lane's window: one loadPartial and one three-argument reservation (none with the switch off).
+          assertEquals(chained.get,8)
+          jobs.foreach { id =>
+            val row=fixtureDb.transaction(c => Sql.one(c,"SELECT state,attempts,error,failure_stage,transient_failures FROM ch_jobs WHERE id=?",id)(r => (r.getString(1),r.getInt(2),r.getString(3),r.getString(4),r.getInt(5))))
+            assertEquals(row,Some(("Queued",0,Jobs.transientCode,"Annotation",1)))
+          }
+          assert(!entered.get && holders.forall(!_.isDone),"the gate stayed full; the queued staging transaction never ran")
         } finally { release.countDown(); executor.shutdown() }
         queued.join(10000)
         assert(entered.get,"the queued staging transaction runs once the gate has a permit")
