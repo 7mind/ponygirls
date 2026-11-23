@@ -578,6 +578,14 @@
       "sha256": "14js4ayb2k9ll9viim3mbf9g352av81fzy3rda02id9rr9qvn0y3"
     },
     {
+      "url": "https://repo.maven.apache.org/maven2/com/zaxxer/HikariCP/7.1.0/HikariCP-7.1.0.jar",
+      "sha256": "02zl7izkh9sr2dpng8g9y32h0d905hgihbi9hzgq27l43dj5rr1b"
+    },
+    {
+      "url": "https://repo.maven.apache.org/maven2/com/zaxxer/HikariCP/7.1.0/HikariCP-7.1.0.pom",
+      "sha256": "05h293nzfw30l5ry74yrykk1asr2q97yyk8dln58ksikk5lz53av"
+    },
+    {
       "url": "https://repo.maven.apache.org/maven2/commons-codec/commons-codec/1.22.0/commons-codec-1.22.0.jar",
       "sha256": "1r1cqw0zjjy2k2wx53z9sm9pdhni2z9v5dd032djvhv2y9wzwr6i"
     },

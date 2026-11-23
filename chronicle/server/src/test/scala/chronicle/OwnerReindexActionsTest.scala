@@ -19,10 +19,11 @@ final class OwnerReindexActionsTest extends munit.FunSuite {
       Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_sessions,ch_mutations,ch_tokens,ch_collector_progress CASCADE")
       Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile)
     }
+    legacy.close()
     val catalog=IndexProfileCatalog.current(c)
     val db=Fixtures.database(c,catalog); db.initialize()
     val auth=new Auth(db,c); val owner=auth.browser(auth.login(LoginRequest("a","synthetic"))._2)
-    f(Context(c,db,new PostgresArchive(db,c),auth,owner))
+    try f(Context(c,db,new PostgresArchive(db,c),auth,owner)) finally db.close()
   }
   private def plan(c: Context): OwnerReindexPlan = c.auth.previewOwnerReindex(c.owner)
   private def envelope(p: OwnerReindexPlan): ClientEnvelope = ClientEnvelope(UUID.randomUUID(),Operation.ApplyOwnerReindex(p.targetProfile,p.selectionHash,true))
@@ -188,20 +189,16 @@ final class OwnerReindexActionsTest extends munit.FunSuite {
     DriverManager.registerDriver(driver)
     try {
       val config=c.config.copy(jdbcUrl=prefix+c.config.jdbcUrl)
-      f(new Auth(Fixtures.database(config,c.db.profiles),config))
+      scala.util.Using.resource(Fixtures.database(config,c.db.profiles))(db => f(new Auth(db,config)))
     } finally DriverManager.deregisterDriver(driver)
   }
   test("Effectual GoodCommunication: preview authenticates and selects on one repeatable-read connection without mutation") { database { c =>
     c.archive.ingest("a",Fixtures.snapshot()); val before=ownerRows(c,"a"); val receipts=rows(c,"ch_mutations")
     var observedConnection: Option[Connection]=None; val authenticated=new AtomicBoolean(false); var setups=0
-    observed(c,_ => (),(sql,connection) => {
+    // The pool's reset (DISCARD ALL, which no transaction block admits) is prepared before the domain transaction.
+    observed(c,sql => if(sql==Fixtures.runtimeSetupSql) { setups+=1; assert(!authenticated.get()) },(sql,connection) => {
       assert(sql.startsWith("SELECT"))
-      if(sql==Fixtures.runtimeSetupSql) {
-        setups+=1; assert(connection.getAutoCommit,"bounded session setup must precede the domain transaction")
-        assert(!authenticated.get())
-      } else {
-        assertEquals(setups,1); assertEquals(connection.getTransactionIsolation,Connection.TRANSACTION_REPEATABLE_READ)
-      }
+      assertEquals(setups,1); assertEquals(connection.getTransactionIsolation,Connection.TRANSACTION_REPEATABLE_READ)
       observedConnection match { case None => observedConnection=Some(connection); case Some(first) => assert(first eq connection) }
       if(sql.startsWith("SELECT u.id,u.login FROM ch_sessions")) authenticated.set(true)
     },ConnectionFault.None) { auth =>

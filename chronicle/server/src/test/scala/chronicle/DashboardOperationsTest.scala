@@ -28,7 +28,7 @@ final class DashboardOperationsTest extends munit.FunSuite {
     }
     val app=new Application(archive,new PostgresSearch(db,archive,config),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,Clock.systemUTC()),new PostgresExpressionHintIndex(db,archive,Clock.systemUTC()),ModelFixtures.usage(config))
     val owner=auth.browser(auth.login(LoginRequest("a","synthetic"))._2)
-    f(Context(app,auth,archive,db,config,owner,calls))
+    try f(Context(app,auth,archive,db,config,owner,calls)) finally db.close()
   }
   private def run(c: Context,identity: Identity,operation: Operation): Result =
     c.app.operationVersion(identity,ClientEnvelope(UUID.randomUUID(),operation),"1.9.0").unsafeRunSync()

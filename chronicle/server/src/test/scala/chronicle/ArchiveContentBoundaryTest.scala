@@ -15,7 +15,7 @@ class ArchiveContentBoundaryTest extends munit.FunSuite {
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
     val archive=new PostgresArchive(db,config)
-    f(config,db,archive,new PostgresArchiveIndex(db,archive,config))
+    try f(config,db,archive,new PostgresArchiveIndex(db,archive,config)) finally db.close()
   }
   test("BG GoodCommunication regression: whole-field contextual Sigma folding neither loses sigma nor invents final sigma") { database(10000) { (config,db,archive,index) =>
     val original=Fixtures.snapshot(); val text="aΣ"+"\u0301"*5000+"b"

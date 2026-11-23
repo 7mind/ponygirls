@@ -344,8 +344,8 @@ final class ExpressionHintsPostgresTest extends ExpressionHintsContract {
         def report(owner: String,collector: String): Unit = putReport(owner,collector)
         def target(owner: String,profile: String): Unit = db.transaction(c => { Sql.exec(c,"UPDATE ch_owner_targets SET profile=? WHERE owner=?",profile,owner); () })
       }
-      f(provided,db)
-    } finally admin.transaction(c => { Sql.exec(c,s"DROP SCHEMA $schema CASCADE"); () })
+      try f(provided,db) finally db.close()
+    } finally try admin.transaction(c => { Sql.exec(c,s"DROP SCHEMA $schema CASCADE"); () }) finally admin.close()
   }
   test("Blackbox GoodCommunication specified: numeric preflight and bounded fetch share one RR authority/metadata snapshot") {
     val shared=head(1,"b","shared",List("shared-before"),Nil,Nil)

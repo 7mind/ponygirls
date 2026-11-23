@@ -26,7 +26,7 @@ private[chronicle] object ApplicationFixture extends munit.Assertions {
       def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.raiseError(new AssertionError("Activity/actions must not invoke models"))
     }
     val app=new Application(archive,new PostgresSearch(db,archive,config),forbiddenEmbedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,Clock.systemUTC()),new PostgresExpressionHintIndex(db,archive,Clock.systemUTC()),ModelFixtures.usage(config))
-    f(Context(config,db,archive,auth,app,owner))
+    try f(Context(config,db,archive,auth,app,owner)) finally db.close()
   }
   def call(c: Context,i: Identity,operation: Operation): Result = c.app.operation(i,ClientEnvelope(UUID.randomUUID(),operation)).unsafeRunSync()
   def ingest(c: Context,owner: String,name: String): IngestReceipt = {

@@ -14,7 +14,7 @@ class ArchiveIndexTest extends munit.FunSuite {
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
     val archive=new PostgresArchive(db,config)
-    f(config,db,archive,new PostgresArchiveIndex(db,archive,config))
+    try f(config,db,archive,new PostgresArchiveIndex(db,archive,config)) finally db.close()
   }
   private def snapshot(texts: List[String]): IngestRequest = {
     val original=Fixtures.snapshot()

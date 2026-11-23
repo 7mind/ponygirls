@@ -39,7 +39,7 @@ class ArchiveSearchTest extends munit.FunSuite {
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
     val archive=new PostgresArchive(db,config)
-    run(Fixture(config,db,archive,new PostgresArchiveIndex(db,archive,config)))
+    try run(Fixture(config,db,archive,new PostgresArchiveIndex(db,archive,config))) finally db.close()
   }
   private def snapshot(texts: List[String]): IngestRequest = {
     val base=Fixtures.snapshot()

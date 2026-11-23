@@ -12,7 +12,7 @@ object CurrentIndexDatabase extends munit.Assertions {
       Sql.exec(c,"TRUNCATE ch_reindex_members,ch_reindex_requests,ch_sources,ch_mutations,ch_sessions,ch_groups CASCADE")
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
-    run(config,db,new PostgresArchive(db,config))
+    try run(config,db,new PostgresArchive(db,config)) finally db.close()
   }
   def publication(claim: Claim,contextOnly: Boolean): ProblemsPublication = {
     val source=ProblemPassages.Source(claim.messages.decoded); var state=ProblemPassages.State.start(claim.sessionId,claim.runId); var builder=ProblemsPublication.empty

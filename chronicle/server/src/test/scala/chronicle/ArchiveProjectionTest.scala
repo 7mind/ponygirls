@@ -38,7 +38,7 @@ class ArchiveProjectionTest extends munit.FunSuite {
     val config=Fixtures.config(); val db=new Database(config,IndexProfileCatalog.current(config)); db.initialize()
     db.transaction { c => Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_members CASCADE"); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile) }
     // Asserts the legacy tables (ch_messages, per-revision fragments): pinned to the legacy layout.
-    f(config,db,new PostgresArchive(db,config,RevisionLayoutPolicy.Legacy))
+    try f(config,db,new PostgresArchive(db,config,RevisionLayoutPolicy.Legacy)) finally db.close()
   }
   test("BG GoodCommunication specified: metadata/message pages and locator use pinned projection independent of raw files") { database { (config,db,archive) =>
     val original=Fixtures.snapshot(); val out=archive.ingest("a",original)
@@ -87,7 +87,7 @@ class ArchiveProjectionTest extends munit.FunSuite {
     val directory=Files.createTempDirectory("chronicle-index-rollback")
     try {
       val broken=config.copy(users=config.users.map(_.copy(passwordHashFile=directory.resolve("absent").toString)))
-      intercept[ponygirls.runtime.RuntimeFailure](new Database(broken,db.profiles).initialize())
+      intercept[ponygirls.runtime.RuntimeFailure](scala.util.Using.resource(new Database(broken,db.profiles))(_.initialize()))
       assertEquals(indexIdentity,legacy,"credential failure must leave the original index bytes and identity unchanged")
       db.transaction(c => assertEquals(Sql.one(c,"SELECT count(*) FROM ch_schema_migrations WHERE version=17")(_.getInt(1)),Some(0)))
       db.initialize()

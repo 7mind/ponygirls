@@ -17,7 +17,7 @@ class TokenVisibilityTest extends munit.FunSuite {
     val c=Fixtures.config(); val db=new Database(c,IndexProfileCatalog.current(c)); db.initialize()
     db.transaction(x => { Sql.exec(x,"TRUNCATE ch_tokens,ch_mutations,ch_sessions CASCADE"); () })
     val auth=new Auth(db,c); val (_,cookie)=auth.login(LoginRequest("a","synthetic"))
-    f(c,db,auth,auth.browser(cookie))
+    try f(c,db,auth,auth.browser(cookie)) finally db.close()
   }
   def issued(db: Database,n: Int,revoked: Boolean): Unit = db.transaction { c =>
     val info=TokenInfo(new UUID(0,n.toLong),s"issued-$n",List(Scope.Read),Instant.now().toString,revoked)
@@ -27,7 +27,7 @@ class TokenVisibilityTest extends munit.FunSuite {
   test("regression: revoked history must not hide active issued or configured token metadata") { database { (c,db,auth,owner) =>
     (1 to 100).foreach(n => issued(db,n,true))
     val static=configured(UUID.fromString("7fffffff-ffff-4fff-bfff-ffffffffffff"))
-    new Database(c.copy(staticTokens=List(static)),IndexProfileCatalog.current(c.copy(staticTokens=List(static)))).initialize()
+    Fixtures.initialize(c.copy(staticTokens=List(static)))
     val active=TokenInfo(UUID.fromString("7fffffff-ffff-4fff-bfff-fffffffffffe"),"active",List(Scope.Read),Instant.now().toString,false)
     db.transaction(x => Sql.exec(x,"INSERT INTO ch_tokens(id,owner,hash,info) VALUES(?,?,?,?::jsonb)",active.id,"a",Wire.hash("synthetic-active"),Wire.encode(TokenInfo.codecJson,active).noSpaces))
     val listed=auth.tokens(owner).tokens
@@ -45,9 +45,9 @@ class TokenVisibilityTest extends munit.FunSuite {
   test("specified: reconciliation rejects configured plus active issued token overflow transactionally") { database { (c,db,auth,owner) =>
     (1 to 99).foreach(n => issued(db,n,false))
     val first=configured(UUID.randomUUID()); val second=configured(UUID.randomUUID())
-    assertEquals(intercept[DomainError](new Database(c.copy(staticTokens=List(first,second)),IndexProfileCatalog.current(c.copy(staticTokens=List(first,second)))).initialize()).code,"config")
+    assertEquals(intercept[DomainError](Fixtures.initialize(c.copy(staticTokens=List(first,second)))).code,"config")
     assertEquals(auth.tokens(owner).tokens.size,99)
-    new Database(c.copy(staticTokens=List(first)),IndexProfileCatalog.current(c.copy(staticTokens=List(first)))).initialize()
+    Fixtures.initialize(c.copy(staticTokens=List(first)))
     assertEquals(auth.tokens(owner).tokens.count(t => !t.info.revoked),100)
     assertEquals(intercept[DomainError](auth.mutate(owner,ClientEnvelope(UUID.randomUUID(),Operation.MintToken("overflow",List(Scope.Read))))).code,"invalid")
   }}

@@ -21,7 +21,7 @@ class ArchiveApplicationTest extends munit.FunSuite {
     }
     val archive=new PostgresArchive(db,config); val embedder=new FailingEmbedder
     val app=new Application(archive,new PostgresSearch(db,archive,config),embedder,new Auth(db,config),db,new CollectorProgress(new PostgresCollectorProgressStore(db),Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,Clock.systemUTC()),new PostgresExpressionHintIndex(db,archive,Clock.systemUTC()),ModelFixtures.usage(config))
-    f(config,db,archive,app,embedder)
+    try f(config,db,archive,app,embedder) finally db.close()
   }
   private val reader=Identity(UserInfo("a","a",List(Scope.Read)),false,"synthetic")
   private def query(expression: String,cursor: Option[String]): ArchiveQuery = ArchiveQuery(expression,ArchiveSort.LastTimestamp,SortDirection.Desc,cursor,100,false)

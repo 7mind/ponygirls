@@ -30,7 +30,7 @@ class ArchiveRelevanceTest extends munit.FunSuite {
     val archive=new PostgresArchive(db,config); val embedder=new QueryEmbedder
     val index=new PostgresArchiveIndex(db,archive,config)
     val app=new Application(archive,new PostgresSearch(db,archive,config),embedder,new Auth(db,config),db,new CollectorProgress(new PostgresCollectorProgressStore(db),Clock.systemUTC()),index,new PostgresActivity(db,Clock.systemUTC()),new PostgresExpressionHintIndex(db,archive,Clock.systemUTC()),ModelFixtures.usage(config))
-    run(Fixture(config,db,archive,index,app,embedder))
+    try run(Fixture(config,db,archive,index,app,embedder)) finally db.close()
   }
   private def snapshot(texts: List[String],time: Option[String],title: String): IngestRequest = {
     val base=Fixtures.snapshot()

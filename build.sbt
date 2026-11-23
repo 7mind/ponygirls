@@ -91,7 +91,10 @@ lazy val serviceDependencies = Seq(
   "io.circe" %% "circe-core" % "0.14.17" cross CrossVersion.for3Use2_13,
   "io.circe" %% "circe-parser" % "0.14.17" cross CrossVersion.for3Use2_13,
   "io.circe" %% "circe-generic" % "0.14.17" cross CrossVersion.for3Use2_13,
-  "org.postgresql" % "postgresql" % "42.7.14"
+  "org.postgresql" % "postgresql" % "42.7.14",
+  // The pool (restart-robustness spec §5). It logs through the SLF4J API it finds (1.x and 2.x alike, no provider: no
+  // output); excluding its own 2.x API keeps each service's existing SLF4J version and its start notices unchanged.
+  ("com.zaxxer" % "HikariCP" % "7.1.0").exclude("org.slf4j", "slf4j-api")
 )
 lazy val serviceSettings = scala3LibrarySettings ++ Seq(
   scalacOptions += "-Yretain-trees",

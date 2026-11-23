@@ -79,8 +79,8 @@ final class RetryFailedJobsTest extends munit.FunSuite {
         Sql.exec(c,"INSERT INTO ch_ingest_receipts VALUES('a','source-1',?,'digest','{\"retained\":true}')",id(6002))
         Sql.exec(c,"INSERT INTO ch_mutations VALUES('a',?,'digest','{\"retained\":true}')",id(6003))
       }
-      f(db)
-    } finally admin.transaction(c => Sql.exec(c,s"DROP SCHEMA $schema CASCADE"))
+      try f(db) finally db.close()
+    } finally try admin.transaction(c => Sql.exec(c,s"DROP SCHEMA $schema CASCADE")) finally admin.close()
   }
   private def addJob(c: Connection,job: UUID,source: UUID,revision: Int,profile: String,state: String,fence: Long): Unit = {
     Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile,state,attempts,fence,lease_until,error,completed_windows,total_windows) VALUES(?,?,?,?,?,5,?,'2026-10-26T10:00:00Z','actual-error',2,4)",job,source,revision,profile,state,fence)

@@ -67,6 +67,6 @@ final class OwnerDisabledTest extends munit.FunSuite {
       assertEquals(replacement.nonEmpty,plan.replacements==1L); replacement.foreach(claim => assert(ProblemPublicationFixtures.publish(archive,claim,catalog)))
       assert(service.completed(""))
       assertEquals(archive.session("",out.sessionId).ownerId,"")
-    } finally new Database(c,catalog).initialize()
+    } finally { configured.close(); scala.util.Using.resource(new Database(c,catalog))(_.initialize()) }
   }}
 }

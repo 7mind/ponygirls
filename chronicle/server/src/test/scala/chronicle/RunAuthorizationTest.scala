@@ -170,7 +170,7 @@ final class PostgresRunAuthorizationTest extends RunAuthorizationContract {
         archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1,metadata=original.metadata.copy(title="new synthetic head"))); ()
       }
     }
-    f(fixture,db).unsafeRunSync()
+    try f(fixture,db).unsafeRunSync() finally db.close()
   }
 
   test("GoodCommunication: ordinary database startup registers the authorization epoch migration") { withDatabaseFixture { (_,db) =>

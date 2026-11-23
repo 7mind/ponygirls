@@ -69,7 +69,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
   private final case class Fixture(config: Config,db: Database,auth: Auth,app: Application,archive: PostgresArchive,protocol: VersionedWire,wire: McpTestWire,runs: McpTestRuns)
   private def fixture(embedder: Embedder,model: McpTestModel,tools: McpRunTools,wrap: RunAuthorization => RunAuthorization): Resource[IO,Fixture] = for {
     config <- Resource.eval(IO(Fixtures.config()))
-    db <- Resource.eval(IO.blocking {
+    db <- Resource.make(IO.blocking {
       Check(sys.env.contains("CHRONICLE_TEST_JDBC"),"test","PostgreSQL required; use the isolated fixture runner")
       val db=new Database(config,IndexProfileCatalog.current(config))
       db.initialize()
@@ -83,7 +83,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
         Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
       }
       db
-    })
+    })(db => IO.blocking(db.close()))
     auth=new Auth(db,config)
     archive=new PostgresArchive(db,config)
     app=new Application(archive,new PostgresSearch(db,archive,config),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,java.time.Clock.systemUTC()),new PostgresExpressionHintIndex(db,archive,java.time.Clock.systemUTC()),ModelFixtures.usage(config))
@@ -264,8 +264,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
         _ <- Resource.make(IO(java.sql.DriverManager.registerDriver(driver)))(_ => IO(java.sql.DriverManager.deregisterDriver(driver))).use { _ =>
           fixture(immediateEmbedder,model,tools,identity).use { f =>
             val observed=f.config.copy(jdbcUrl=prefix+f.config.jdbcUrl)
-            val auth=new Auth(Fixtures.database(observed,f.db.profiles),observed)
-            for {
+            Resource.make(IO.blocking(Fixtures.database(observed,f.db.profiles)))(db => IO.blocking(db.close())).use { observedDb => val auth=new Auth(observedDb,observed); for {
               secret <- IO.blocking(auth.login(LoginRequest("a","synthetic"))._2)
               _ <- server(f.copy(auth=auth)).use(url => socket(url,f.config,secret).use { client => for {
                 _ <- if(phase=="negotiated heartbeat") client.request(Operation.Hello(List(Wire.versions.current))).flatMap(hello => IO(assert(hello.isInstanceOf[Result.Hello]))) else IO.unit
@@ -277,7 +276,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
               } yield () })
               _ <- IO(failing.set(false))
               _ <- IO.blocking(assertEquals(auth.browser(secret).user.id,"a"))
-            } yield ()
+            } yield () }
           }
         }
       } yield ()).unsafeRunSync()

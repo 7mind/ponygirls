@@ -479,8 +479,8 @@ final class ActivityPostgresTest extends ActivityContract {
         }
         seed.reports.foreach { r => Sql.exec(c,"INSERT INTO ch_collector_progress VALUES(?,?,?,?::jsonb,?::timestamptz)",r.owner,r.value.collectorId,r.value.sequence,Wire.encode(CollectorProgressUpdate.codecJson,r.value).noSpaces,r.received.toString) }
       }
-      f(new PostgresActivity(db,Clock.fixed(seed.observedAt,ZoneOffset.UTC)))
-    } finally admin.transaction(c => Sql.exec(c,s"DROP SCHEMA $schema CASCADE"))
+      try f(new PostgresActivity(db,Clock.fixed(seed.observedAt,ZoneOffset.UTC))) finally db.close()
+    } finally try admin.transaction(c => Sql.exec(c,s"DROP SCHEMA $schema CASCADE")) finally admin.close()
   }
   test("Behavioral-Blackbox GoodCommunication specified: Unicode matching lowercases each entire metadata value before literal LIKE") {
     val marks="\u0345"*3000

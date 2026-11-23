@@ -38,7 +38,7 @@ class McpSourceBoundaryTest extends munit.FunSuite {
     test(s"WG GoodCommunication: huge deployment $field is preflighted before the authoritative guard fetches any text") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
       val selected=if(field=="descriptor") f.config.copy(embedding=f.config.embedding.copy(documentPrefix="\u0080"*50000)) else f.config
       if(field=="descriptor") {
-        val catalog=IndexProfileCatalog.current(selected); Fixtures.database(selected,catalog).initialize()
+        Fixtures.initialize(selected)
         f.db.transaction(c => Sql.exec(c,"UPDATE ch_owner_targets SET profile=? WHERE owner='a'",selected.profile))
       } else f.db.transaction(c => Sql.exec(c,"UPDATE ch_owner_targets SET profile=? WHERE owner='a'","opaque"*20000))
       val tools=new LiveMcpRunTools(new Mcp(f.application(selected)))
@@ -75,7 +75,7 @@ class McpSourceBoundaryTest extends munit.FunSuite {
     test(s"BG GoodCommunication: late $change between preflight and fetch keeps one RR snapshot, then fresh reads observe the change") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
       val original=Fixtures.snapshot(); val receipt=f.archive.ingest("a",original); val group=UUID.randomUUID()
       f.db.transaction { c => Sql.exec(c,"INSERT INTO ch_groups VALUES(?,'a','synthetic')",group); Sql.exec(c,"INSERT INTO ch_members VALUES(?,'a'),(?,'b')",group,group) }
-      val selected=f.config.copy(jdbcUrl=f.probe.url(f.config.jdbcUrl)); val reader=new PostgresArchive(Fixtures.database(selected,f.catalog),selected)
+      val selected=f.config.copy(jdbcUrl=f.probe.url(f.config.jdbcUrl)); val reader=new PostgresArchive(f.database(selected),selected)
       val fired=new AtomicBoolean(); val who=if(change=="sharing") "b" else "a"
       val counted=admission(f,bytes => if(bytes>100 && fired.compareAndSet(false,true)) {
         change match {
@@ -129,7 +129,7 @@ class McpSourceBoundaryTest extends munit.FunSuite {
       Sql.exec(c,s"GRANT SELECT(session_id,revision,epoch,message_count,raw_bytes) ON ch_revisions TO $role")
     }
     try {
-      val denied=Fixtures.database(f.config.copy(databaseUser=role),f.catalog)
+      val denied=f.database(f.config.copy(databaseUser=role))
       assertEquals(intercept[java.sql.SQLException](denied.transaction(c => Sql.exec(c,"CREATE TEMP TABLE forbidden(i integer)"))).getSQLState,"42501")
       val tools=new LiveMcpRunTools(new Mcp(f.application(f.config.copy(databaseUser=role))))
       List("get_session"->args(receipt.sessionId),"get_chunks"->args(receipt.sessionId),"get_messages"->args(receipt.sessionId),"list_facets"->Json.obj(),"search_tags"->Json.obj("query"->string("")),
@@ -165,10 +165,10 @@ class McpSourceBoundaryTest extends munit.FunSuite {
       assertEquals(result.hcursor.downField("result").get[Boolean]("isError").toOption,Some(false))
     }
     val statements=f.probe.observations.collect { case SourceEvent.Statement(_,sql) => sql }
-    // Account every statement, including the one fixed shared-runtime session setup;
+    // Account every statement, including the fixed shared-runtime reset that starts each borrow of a pooled connection;
     // ordinary domain reads still add no source-budget or SET LOCAL deadline work.
     val byConnection=f.probe.observations.collect { case SourceEvent.Statement(id,sql) => (id,sql) }.groupBy(_._1)
-    byConnection.values.foreach(events => assertEquals(events.count(_._2==Fixtures.runtimeSetupSql),1))
+    byConnection.values.foreach(events => assertEquals(events.head._2,Fixtures.runtimeSetupSql))
     statements.foreach { sql =>
       if(sql==Fixtures.runtimeSetupSql) assert(sql.contains("FROM pg_settings"))
       else assert(!sql.contains(" AS source_bytes") && !sql.startsWith("DECLARE") && !sql.startsWith("FETCH") && !sql.contains("statement_timeout"))
@@ -177,7 +177,7 @@ class McpSourceBoundaryTest extends munit.FunSuite {
   }}
   test("BG GoodCommunication: accepted empty owner IDs remain exact in budgeted session and identity source") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
     val config=f.config.copy(users=f.config.users:+f.config.users.head.copy(id="",login="empty-owner"))
-    val db=Fixtures.database(config,f.catalog); db.initialize()
+    val db=f.database(config); db.initialize()
     try {
       val archive=new PostgresArchive(db,config); val receipt=archive.ingest("",Fixtures.snapshot())
       val identity=f.identity.copy(user=f.identity.user.copy(id="",login="empty-owner"))
@@ -186,6 +186,6 @@ class McpSourceBoundaryTest extends munit.FunSuite {
       val content=result.hcursor.downField("content").downN(0).get[String]("text").toOption.get
       val session=Wire.decode(Result.codecJson,Wire.parse(content)).asInstanceOf[Result.Session].result.session
       assertEquals(session.ownerId,"")
-    } finally Fixtures.database(f.config,f.catalog).initialize()
+    } finally Fixtures.initialize(f.config)
   }}
 }

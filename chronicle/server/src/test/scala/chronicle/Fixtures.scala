@@ -52,8 +52,8 @@ object Fixtures {
     label(PassageFormat.LegacyAnnotations)
     try body finally { label(PassageFormat.ContextAwareProblems); db.initialize() }
   }
-  // Exact accounted infrastructure statement, not a wildcard SQL exclusion.
-  val runtimeSetupSql = """SELECT set_config(s.name,least(coalesce(nullif(s.setting::bigint,0),v.bound),v.bound)::text,false)
+  // Exact accounted infrastructure statement (the pool's reset at each borrow), not a wildcard SQL exclusion.
+  val runtimeSetupSql = """DISCARD ALL; SELECT set_config(s.name,least(coalesce(nullif(s.setting::bigint,0),v.bound),v.bound)::text,false)
       FROM pg_settings s JOIN (VALUES ('statement_timeout',?::bigint),('lock_timeout',?::bigint),
       ('idle_in_transaction_session_timeout',?::bigint)) v(name,bound) ON s.name=v.name"""
   val databasePassword = "chronicle-test-password"
@@ -78,6 +78,8 @@ object Fixtures {
       Database.withRuntimes(canonical,profiles,Database.runtimes(canonical,BlockingJdbcDatabase.withConnectionFactory(_,probe)))
     }
   }
+  /** A start's initialize of `config` on a runtime of its own, closed afterwards. */
+  def initialize(config: Config): Unit = scala.util.Using.resource(new Database(config,IndexProfileCatalog.current(config)))(_.initialize())
   // PBKDF2 at the production iteration count costs ~150 ms: once per JVM, not once per config().
   private lazy val syntheticPasswordHash = Password.hash("synthetic".toCharArray)
   def config(): Config = {

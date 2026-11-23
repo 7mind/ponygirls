@@ -35,12 +35,13 @@ final class PostgresSuite extends FunSuite {
   test("required bounds preserve stricter PostgreSQL role timeouts in both facades") {
     run(config.use { cfg => JdbcDatabase.resource(cfg).use { db =>
       val configure = db.transaction(c => execute(c,"ALTER ROLE postgres SET statement_timeout='100ms'; ALTER ROLE postgres SET lock_timeout='75ms'; ALTER ROLE postgres SET idle_in_transaction_session_timeout='150ms'"))
-      val check = for {
-        values <- db.transaction(c => List("statement_timeout","lock_timeout","idle_in_transaction_session_timeout").map(name => scalar(c,s"SHOW $name")))
+      def check(fresh: JdbcDatabase) = for {
+        values <- fresh.transaction(c => List("statement_timeout","lock_timeout","idle_in_transaction_session_timeout").map(name => scalar(c,s"SHOW $name")))
         sync <- IO.blocking(Using.resource(new BlockingJdbcDatabase(cfg))(b => b.transaction(c => List("statement_timeout","lock_timeout","idle_in_transaction_session_timeout").map(name => scalar(c,s"SHOW $name")))))
         _ <- IO { assertEquals(values,List("100ms","75ms","150ms")); assertEquals(sync,values) }
       } yield ()
-      configure *> check.guarantee(db.transaction(c => execute(c,"ALTER ROLE postgres RESET statement_timeout; ALTER ROLE postgres RESET lock_timeout; ALTER ROLE postgres RESET idle_in_transaction_session_timeout")))
+      // Role settings apply at login: a pooled session keeps the ones it logged in with, so a new runtime checks.
+      configure *> JdbcDatabase.resource(cfg).use(fresh => check(fresh)).guarantee(db.transaction(c => execute(c,"ALTER ROLE postgres RESET statement_timeout; ALTER ROLE postgres RESET lock_timeout; ALTER ROLE postgres RESET idle_in_transaction_session_timeout")))
     } })
   }
   test("row lock waits are bounded and a failed transaction releases connection") {

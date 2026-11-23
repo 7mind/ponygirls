@@ -27,7 +27,7 @@ class ArchiveHeadCandidateTest extends munit.FunSuite {
     }
     // Asserts per-revision fragment rows of the legacy layout: pinned to it.
     val archive=new PostgresArchive(db,config,RevisionLayoutPolicy.Legacy)
-    f(config,db,archive,new PostgresArchiveIndex(db,archive,config))
+    try f(config,db,archive,new PostgresArchiveIndex(db,archive,config)) finally db.close()
   }
 
   private def revision(previous: IngestRequest,texts: List[String],expected: Int): IngestRequest = {
@@ -219,7 +219,8 @@ class ArchiveHeadCandidateTest extends munit.FunSuite {
     val function="hc_backfill_gate_"+suffix; val trigger="hc_backfill_pause_"+suffix
     val barrierKey=1729013371L
     val application="head-candidate-backfill-"+suffix
-    val backfillConfig=config.copy(jdbcUrl=config.jdbcUrl+"&ApplicationName="+application)
+    // In the startup packet (assumeMinServerVersion), where the pool's per-borrow reset (DISCARD ALL) keeps it.
+    val backfillConfig=config.copy(jdbcUrl=config.jdbcUrl+"&ApplicationName="+application+"&assumeMinServerVersion=9.0")
     val backfillDb=Fixtures.database(backfillConfig,db.profiles)
     db.transaction { c =>
       Sql.exec(c,"UPDATE ch_revision_info SET lexical_version=0 WHERE session_id=? AND revision=1",out.sessionId)

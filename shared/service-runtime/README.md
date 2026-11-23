@@ -9,9 +9,13 @@ JdbcLimits(maxConnections: Int, maxQueued: Int, queueTimeout: FiniteDuration,
   connectTimeout: FiniteDuration, statementTimeout: FiniteDuration,
   lockTimeout: FiniteDuration, idleTransactionTimeout: FiniteDuration,
   socketTimeout: FiniteDuration)
-JdbcDatabase.resource(config): Resource[IO, JdbcDatabase]
+JdbcDatabase.resource(config): Resource[IO, JdbcDatabase]                       // compatible pool
+JdbcDatabase.resource(config, sizing: JdbcPoolSizing): Resource[IO, JdbcDatabase] // services' pool
 db.transaction[A](f: java.sql.Connection => A): IO[A]
+db.background: JdbcDatabase                                                     // background admission
 db.migrate(namespace: String, migrations: List[Migration]): IO[Unit]
+JdbcPoolSizing.compatible(limits)
+JdbcPoolSizing.partitioned(limits, request: Option[Int], background: Option[Int], minimumBackground: Int): Either[String, JdbcPoolSizing]
 Migration(version: Int, name: String, sql: String)
 Admission.resource(AdmissionConfig(maxActive: Int, maxQueued: Int, queueTimeout: FiniteDuration))
 gate.run[A](work: IO[A]): IO[A]
@@ -28,12 +32,36 @@ operator inputs. Operators must not race a special-file replacement; this bounda
 is not an adversarial payload-path confinement API. Ordinary FIFOs are rejected
 before opening. Systemd LoadCredential copies are also supported.
 
-This is bounded DriverManager-per-transaction, **not** a connection pool. JDBC is
-on `IO.blocking`; connections/statements are not shared between requests. Admission
-bounds active connections plus queued callers, rejects overflow, times out waiting
-and releases reservations on cancellation. Closing rejects new calls and drains
-admitted calls. PostgreSQL receives finite connect/login/socket, statement, lock
-and idle-in-transaction timeouts. Driver second-resolution timeouts round up.
+Each runtime owns one bounded pool (HikariCP, restart-robustness spec §5) of physical connections opened with the
+production login (password file read for each new connection: a rotated file serves the next login, existing
+connections stay authenticated until retired). JDBC is on `IO.blocking`; a connection serves one transaction at a time.
+Admission bounds active transactions plus queued callers, rejects overflow, times out waiting and releases reservations
+on cancellation. Closing rejects new calls, drains admitted calls, then closes the pool. PostgreSQL receives finite
+connect/login/socket, statement, lock and idle-in-transaction timeouts. Driver second-resolution timeouts round up.
+
+**Sizing.** `JdbcPoolSizing` divides one pool into the request admission's and the background admission's connections
+(`request + background`, background 0: `background` is the request admission). `compatible(limits)` (the one-argument
+constructors: rites, ontology, test fixtures) is one admission of `maxConnections` over a pool opened on first use whose
+idle connections close after `idleTimeout` (10 min). `partitioned(limits, request, background, minimumBackground)` is the
+services' sizing from their optional `requestConnections` and `backgroundConnections` keys (set together or omitted):
+omitted, `maxConnections` − `headroom` (2) halved, background the smaller half (12 → 5 + 5, 8 → 3 + 3), below
+`partitionedMinimum` (8) the compatible sizing; set, request ≥ 1, background ≥ `minimumBackground` and together ≤
+`maxConnections` − 2. A partitioned pool opens all its connections at once and keeps them; Left names the invalid key.
+Each admission keeps `maxQueued` and `queueTimeoutMs`.
+
+**Borrow.** After admission one monotonic deadline `now + A`, A = `connectTimeoutMs` in whole seconds rounded up (the
+login bound as before), bounds the acquisition: at most one try more than the pool's connections, each a borrow that
+leaves the pool's validation time V = max(250 ms, min(1 s, A/4)) before the deadline, then the reset `DISCARD ALL;
+<configured bounds>` in one execution under a network timeout and a watchdog that aborts the physical connection at
+min(deadline, now + max(250 ms, A/4)). The watchdog owns the connection until the reset disarms it; exactly one of the two
+happens, and a connection whose reset fails or is aborted is evicted, never handed out. A borrower that finds no
+connection by the deadline fails `JdbcFailure("connection-unavailable", last SQLSTATE)` (e.g. 28000 for a role without
+LOGIN, none when the pool timed out). The reset returns every session state (role, settings including `search_path`,
+temp tables, session advisory locks, LISTEN, cursors, prepared statements) to the login's; the pool resets isolation,
+read-only, auto-commit and network timeout on return. A pooled connection lives 22.5 to 30 min (`maximumLifetime`), an
+idle one is checked every 2 min (`keepaliveTime`; server `idle_session_timeout` must be 0 or at least 3 min); failed
+logins are retried in the background with a back-off up to 5 s. The pool logs through SLF4J without a provider: nothing
+(a provider added later must silence `com.zaxxer.hikari`).
 
 Callbacks are narrow **trusted synchronous JDBC code**. They must terminate, close
 statements/results, not escape a connection, not commit/rollback/close it, and not
@@ -76,7 +104,9 @@ Each service runs it as its `database-wait` stage before it creates its database
 step that uses the database (operator commands such as `check-config` do not wait). Its bound is the optional
 `startWaitMs` beside the required limits (Chronicle `databaseLimits.startWaitMs`, Haystack and Manure
 `database.limits.startWaitMs`): default `DatabaseWait.defaultBound` 120000, accepted 1000..3600000
-(`DatabaseWait.startWait`), anything else is a configuration error.
+(`DatabaseWait.startWait`), anything else is a configuration error. The optional `requestConnections` and
+`backgroundConnections` beside them size the service's pool (`JdbcPoolSizing.partitioned`; Chronicle's background at
+least 3); an invalid pair is a configuration error.
 
 Migrations are append-only, namespace-scoped, ordered positive versions. The
 per-database ledger `ponygirls_runtime_migrations` records name and SHA256 of exact
@@ -97,8 +127,9 @@ here, so apps must not copy their own QuasiIO/QuasiAsync adapter implementation.
 
 ## Synchronous domain adoption
 
-`new BlockingJdbcDatabase(config)` is a bounded, owned `AutoCloseable` synchronous
-facade for existing synchronous JDBC APIs. Call only on blocking threads; close
+`new BlockingJdbcDatabase(config)` (compatible pool) or `new BlockingJdbcDatabase(config, sizing)` is a bounded, owned
+`AutoCloseable` synchronous facade for existing synchronous JDBC APIs; `background` is its background view
+(`BlockingJdbcTransactions`: `transaction`, `extendedTransaction`, `boundedTransaction` through the background admission). Call only on blocking threads; close
 rejects new calls and drains admitted work without any cats runtime or unsafe IO
 bridge. It and async `JdbcDatabase` delegate to the **same** physical transaction
 engine. The blocking gate uses finite fair semaphore admission; queued interruption
@@ -111,9 +142,9 @@ uses DriverManager and the same strict config and connection properties.
 `extendedTransaction(timeout)` (restart-robustness spec §4) is a blocking transaction whose statement timeout is
 raised transaction-locally to `timeout` (also above a stricter role setting; Chronicle's publication batches), with the
 network timeout at `timeout` plus `socketTimeoutMs`; lock and idle-in-transaction timeouts stay configured.
-`boundedTransaction(bound)` ends each of its waits within `bound`: the admission wait, the login (login, connect and
-socket timeouts at most `bound`), each statement's lock wait and execution (transaction-local statement and lock timeouts
-tightened to `bound`) and each network read (Chronicle's transient failure record).
+`boundedTransaction(bound)` ends each of its waits within `bound`: the admission wait, the acquisition (its budget
+min(A, `bound`)), each statement's lock wait and execution (transaction-local statement and lock timeouts tightened to
+`bound`) and each network read (Chronicle's transient failure record).
 `JdbcTransient.job(error)` names a job's failures that a later attempt outlives: the `connection` states above, 57014
 (a statement timeout), `admission-full` and `admission-timeout`.
 
@@ -141,8 +172,8 @@ all eight fields under **`databaseLimits`**: `maxConnections`, `maxQueued`,
 `idleTransactionTimeoutMs`, `socketTimeoutMs`. No omitted-field fallback; the start wait `startWaitMs` beside them is
 optional (see `DatabaseWait` above). Effective
 PostgreSQL statement/lock/idle timeouts are the minimum of required policy and any
-stricter existing role/database setting, applied by one fully consumed bound
-`pg_settings` setup query before the caller transaction. This fixed setup is
+stricter existing role/database setting at login, applied by one fully consumed bound
+`pg_settings` setup query after `DISCARD ALL` (the reset) at each borrow, before the caller transaction. This fixed setup is
 explicitly accounted in SQL-observation tests; domain query work/isolation and
 admission/cursor/deadline contracts are not silently filtered or relaxed.
 

@@ -1,0 +1,7 @@
+{
+  "reflection": [
+    {"type": "com.zaxxer.hikari.util.ConcurrentBag$IConcurrentBagEntry[]"},
+    {"type": "java.sql.Statement[]"},
+    {"type": {"proxy": ["java.sql.Connection"]}}
+  ]
+}

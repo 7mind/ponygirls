@@ -17,6 +17,18 @@ final class ConfigSuite extends FunSuite {
     intercept[IllegalArgumentException](valid.copy(passwordFile = Path.of("relative")).validate())
     intercept[IllegalArgumentException](valid.copy(limits = limits.copy(statementTimeout = Duration.Zero)).validate())
   }
+  test("D10 pool sizing: keys omitted keep two connections of headroom and halve the pool from 8 up; set, they are checked together") {
+    def sized(connections: Int, request: Option[Int] = None, background: Option[Int] = None, minimum: Int = 0) =
+      JdbcPoolSizing.partitioned(limits.copy(maxConnections = connections), request, background, minimum).map(s => (s.connections, s.request, s.background, s.fixed))
+    assertEquals(List(12, 8, 7, 4, 1).map(sized(_)), List(Right((10, 5, 5, true)), Right((6, 3, 3, true)), Right((7, 7, 0, false)), Right((4, 4, 0, false)), Right((1, 1, 0, false))))
+    assertEquals(sized(4, Some(1), Some(1)), Right((2, 1, 1, true)))
+    assertEquals(sized(12, Some(4), Some(6), 3), Right((10, 4, 6, true)))
+    assertEquals(sized(12, Some(5), Some(6)), Left("requestConnections + backgroundConnections must be at most maxConnections - 2"))
+    assertEquals(sized(12, Some(0), Some(5)), Left("requestConnections must be at least 1"))
+    assertEquals(sized(12, Some(5), Some(2), 3), Left("backgroundConnections must be at least 3"))
+    assertEquals(sized(12, Some(5), None), Left("requestConnections and backgroundConnections must be set together"))
+    assertEquals(JdbcPoolSizing.headroom, 2)
+  }
   test("credential file is strict bounded UTF8, strips one newline, resolves trusted operator symlinks") {
     val directory = Files.createTempDirectory("runtime-credential-")
     val file = directory.resolve("password")

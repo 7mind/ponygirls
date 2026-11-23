@@ -100,8 +100,9 @@ private[chronicle] object OwnerProfilePostgres extends munit.Assertions {
       Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile)
     }
     val catalog=IndexProfileCatalog.current(c)
+    legacy.close()
     val db=new Database(c,catalog); db.initialize()
-    f(c,db,new PostgresArchive(db,c),catalog)
+    try f(c,db,new PostgresArchive(db,c),catalog) finally db.close()
   }
 }
 final class OwnerProfilePostgresTest extends munit.FunSuite {
@@ -160,9 +161,9 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
     db.initialize(); assertEquals(fingerprint(db,"a")++fingerprint(db,"b"),before)
     val owner="new-owner-"+UUID.randomUUID().toString
     val next=c.copy(users=c.users:+c.users.head.copy(id=owner,login=owner))
-    new Database(next,catalog).initialize()
+    scala.util.Using.resource(new Database(next,catalog))(_.initialize())
     assertEquals(db.transaction(x => Sql.one(x,"SELECT profile FROM ch_owner_targets WHERE owner=?",owner)(_.getString(1)).get),catalog.preferred.profile)
-    new Database(c,catalog).initialize()
+    scala.util.Using.resource(new Database(c,catalog))(_.initialize())
   }}
   test("Blackbox GoodCommunication: independent current publications remain semantically readable through every retained search wire leg") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
     val first=a.ingest("a",Fixtures.snapshot()); val other=a.ingest("b",Fixtures.snapshot())

@@ -280,7 +280,7 @@ class PostgresPassageWorkerTest extends PassageWorkerContract {
     val base=Fixtures.config(); val config=base.copy(annotation=base.annotation.copy(timeoutSeconds=900,requestPolicy=AnnotationRequestPolicy.GlmMaxReasoning),indexing=IndexingCapacity(2,2,3))
     val catalog=IndexProfileCatalog.current(config); val db=new Database(config,catalog); db.initialize()
     db.transaction(c => { Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",catalog.preferred.profile) })
-    f(config,catalog,db)
+    try f(config,catalog,db) finally db.close()
   }
   protected def withArchive(f: (Config,IndexProfileCatalog,SessionArchive & PassageReader,(String,String) => Unit) => Unit): Unit = withDatabase { (config,catalog,db) =>
     f(config,catalog,new PostgresArchive(db,config),(owner,profile) => { db.transaction(c => Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=epoch+1 WHERE owner=?",profile,owner)); () })

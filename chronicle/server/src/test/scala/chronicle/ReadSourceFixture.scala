@@ -39,7 +39,8 @@ private[chronicle] final class SourceProbe extends Driver {
       Proxy.newProxyInstance(getClass.getClassLoader,Array(classOf[Connection]),new InvocationHandler {
         def invoke(proxy: AnyRef,method: Method,args: Array[AnyRef]): AnyRef = {
           val result=call(connection,method,args)
-          if(method.getName=="setTransactionIsolation") events.add(SourceEvent.Isolation(connectionId,args(0).asInstanceOf[Integer].intValue))
+          // A transaction's isolation, not the pool's reset of a returned connection (after auto-commit is back on).
+          if(method.getName=="setTransactionIsolation" && !connection.getAutoCommit) events.add(SourceEvent.Isolation(connectionId,args(0).asInstanceOf[Integer].intValue))
           if(method.getName!="prepareStatement") result else {
             val sql=args(0).asInstanceOf[String]
             events.add(SourceEvent.Statement(connectionId,sql))
@@ -89,9 +90,12 @@ private[chronicle] final class ReadSourceFixture(val config: Config,val db: Data
     def query(owner: String,text: String): IO[List[Double]]=embedding(text)
     def documents(owner: String,text: List[String]): IO[List[List[Double]]]=IO.raiseError(new AssertionError("source tool embedded documents"))
   }
+  private val readers=new java.util.concurrent.ConcurrentLinkedQueue[Database]
+  /** A runtime over `selected`, closed with this fixture. */
+  def database(selected: Config): Database = { val opened=Fixtures.database(selected,catalog); readers.add(opened); opened }
   def application(selected: Config): Application = {
     val projected=selected.copy(jdbcUrl=probe.url(selected.jdbcUrl))
-    val readerDb=Fixtures.database(projected,catalog); val reader=new PostgresArchive(readerDb,projected)
+    val readerDb=database(projected); val reader=new PostgresArchive(readerDb,projected)
     new Application(reader,new PostgresSearch(readerDb,reader,projected),embedder,new Auth(db,config),readerDb,
       new CollectorProgress(new PostgresCollectorProgressStore(readerDb),Clock.systemUTC()),new PostgresArchiveIndex(readerDb,reader,projected),new PostgresActivity(readerDb,Clock.systemUTC()),new PostgresExpressionHintIndex(readerDb,reader,Clock.systemUTC()),ModelFixtures.usage(projected))
   }
@@ -115,6 +119,9 @@ private[chronicle] object ReadSourceFixture extends munit.Assertions {
     }
     val probe=new SourceProbe
     DriverManager.registerDriver(probe)
-    try test(new ReadSourceFixture(config,db,new PostgresArchive(db,config),catalog,probe,embedding)) finally DriverManager.deregisterDriver(probe)
+    try {
+      val fixture=new ReadSourceFixture(config,db,new PostgresArchive(db,config),catalog,probe,embedding)
+      try test(fixture) finally fixture.readers.forEach(_.close())
+    } finally { DriverManager.deregisterDriver(probe); db.close() }
   }
 }

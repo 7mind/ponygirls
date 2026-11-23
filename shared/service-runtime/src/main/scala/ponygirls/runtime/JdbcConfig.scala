@@ -24,6 +24,37 @@ final case class JdbcLimits(
     }
   }
 }
+/** One process's pool (restart-robustness spec §5): `request + background` connections, the request and the background
+  * admission's (background 0: the background view shares the request admission). A `fixed` pool opens every connection at
+  * once and keeps them; otherwise it opens them on first use and closes them when idle. */
+final case class JdbcPoolSizing private (request: Int, background: Int, fixed: Boolean) {
+  def connections: Int = request + background
+}
+object JdbcPoolSizing {
+  /** Connections of `maxConnections` never pooled: one backend exiting during a replacement, one operator session. */
+  val headroom = 2
+  /** With the keys omitted, a smaller `maxConnections` keeps the compatible sizing (development and test budgets). */
+  val partitionedMinimum = 8
+  /** Default constructors (rites, ontology, fixtures): one admission of `maxConnections`, opened on first use. */
+  def compatible(limits: JdbcLimits): JdbcPoolSizing = JdbcPoolSizing(limits.maxConnections, 0, fixed = false)
+  /** The services' sizing from their optional `requestConnections` and `backgroundConnections` keys, set together or
+    * omitted: omitted, `maxConnections − headroom` halved (background the smaller half), below [[partitionedMinimum]] the
+    * compatible sizing; set, request ≥ 1, background ≥ `minimumBackground` and both together ≤ `maxConnections −
+    * headroom`. Left: what is invalid, by key name. */
+  def partitioned(limits: JdbcLimits, request: Option[Int], background: Option[Int], minimumBackground: Int): Either[String, JdbcPoolSizing] =
+    (request, background) match {
+      case (None, None) if limits.maxConnections < partitionedMinimum => Right(compatible(limits))
+      case (None, None) =>
+        val pooled = limits.maxConnections - headroom
+        Right(JdbcPoolSizing(pooled - pooled / 2, pooled / 2, fixed = true))
+      case (Some(r), Some(b)) =>
+        if (r < 1) Left("requestConnections must be at least 1")
+        else if (b < minimumBackground.max(0)) Left(s"backgroundConnections must be at least ${minimumBackground.max(0)}")
+        else if (r.toLong + b > limits.maxConnections - headroom) Left(s"requestConnections + backgroundConnections must be at most maxConnections - $headroom")
+        else Right(JdbcPoolSizing(r, b, fixed = true))
+      case _ => Left("requestConnections and backgroundConnections must be set together")
+    }
+}
 final case class JdbcConfig(jdbcUrl: String, user: String, passwordFile: Path, limits: JdbcLimits) {
   def validate(): Unit = {
     limits.validate()

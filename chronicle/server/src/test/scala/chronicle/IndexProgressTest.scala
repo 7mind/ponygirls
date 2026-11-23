@@ -9,7 +9,7 @@ class IndexProgressTest extends munit.FunSuite {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val c=Fixtures.config(); val db=new Database(c,IndexProfileCatalog.current(c)); db.initialize()
     db.transaction(x => { Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) })
-    f(c,db,new PostgresArchive(db,c))
+    try f(c,db,new PostgresArchive(db,c)) finally db.close()
   }
   def counters(a: PostgresArchive,id: UUID): (Int,Option[Int]) = {
     val job=a.statuses("a",0,100).jobs.find(_.id==id).get

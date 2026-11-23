@@ -49,7 +49,8 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
     val _ = try
       Using.resource(Files.walk(path))(_.iterator().asScala.toVector.sortBy(_.getNameCount).reverse.foreach(Files.deleteIfExists(_)))
     catch case _: Exception => ()
-  /** Runs one command in process; its exit code and complete stderr, and that it printed nothing on stdout. */
+  /** Runs one command in process; its exit code and its stderr other than knownJvmNotices (the first connection pool of
+    * the test JVM prints SLF4J's no-binding notice), and that it printed nothing on stdout. */
   private def runCommand(command: String,config: String): (Int,String) =
     val captured = new ByteArrayOutputStream(); val output = new ByteArrayOutputStream()
     val (original,originalOut) = (System.err,System.out)
@@ -60,7 +61,7 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
     finally
       System.setErr(original); System.setOut(originalOut)
     assertEquals(output.toString(java.nio.charset.StandardCharsets.UTF_8),"",command)
-    (exit.code,captured.toString(java.nio.charset.StandardCharsets.UTF_8))
+    (exit.code,captured.toString(java.nio.charset.StandardCharsets.UTF_8).linesWithSeparators.filterNot(line => knownJvmNotices.exists(line.stripLineEnd.matches)).mkString)
   /** Runs `manure.Main` as deployed (IOApp's own runtime and failure reporter) in a child JVM: exit code, the stderr
     * lines other than knownJvmNotices, and stdout. */
   private def child(root: Path,arguments: String*): (Int,List[String],String) = signalled(root,_ => (),arguments*)
