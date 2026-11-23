@@ -1,5 +1,6 @@
 package ponygirls.runtime
 
+import cats.effect.{ExitCode, IO}
 import java.util.{ArrayDeque, Collections, IdentityHashMap, Locale}
 
 /** The printable cause of a failed start or run: a code, the simple class name of the chosen cause and a fixed message.
@@ -76,6 +77,10 @@ object StartFailure {
   final class Unobserved(print: Throwable => Unit) {
     private var held: Option[Vector[Throwable]] = Some(Vector.empty)
     private var handled: Option[Throwable] = None
+    /** Runs a command: reports are held from its start and settled on every exit — success, failure (once `failure` has
+      * named the error it reports) and cancellation — so no path leaves a report unprinted. */
+    def around(command: => IO[ExitCode])(failure: Throwable => IO[ExitCode]): IO[ExitCode] =
+      IO.defer { start(); command }.handleErrorWith(failure).guarantee(IO(settle(None)))
     def start(): Unit = synchronized { held = Some(Vector.empty); handled = None }
     def report(error: Throwable): Unit = synchronized {
       held match {
@@ -83,9 +88,10 @@ object StartFailure {
         case _ => if (!handled.exists(_ eq error)) print(error)
       }
     }
+    /** Prints the held reports except the handled failure; a later settle can name the handled failure, never unname it. */
     def settle(failure: Option[Throwable]): Unit = synchronized {
-      handled = failure
-      held.foreach(_.filterNot(error => failure.exists(_ eq error)).foreach(print))
+      failure.foreach(error => handled = Some(error))
+      held.foreach(_.filterNot(error => handled.exists(_ eq error)).foreach(print))
       held = None
     }
   }

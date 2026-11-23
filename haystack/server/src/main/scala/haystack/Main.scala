@@ -22,7 +22,7 @@ import scala.concurrent.duration.*
 
 final class Services(val http:Http,val retrieval:HaystackRetrieval)
 object Main extends IOApp {
-  def run(args:List[String]):IO[ExitCode]=IO.defer { unobserved.start(); args match{
+  def run(args:List[String]):IO[ExitCode]=unobserved.around(args match{
     case List(command,path) if Set("serve","migrate","check-config").contains(command)=>
       stage("config",IO.blocking { val file=Path.of(path);val c=Config.load(file);Auth.load(c.auth);(file,c,Option.when(command=="serve")(listener(c))) }).flatMap { (file,config,address)=>
         if(command=="check-config")IO.unit
@@ -32,7 +32,7 @@ object Main extends IOApp {
         }
       }.as(ExitCode.Success)
     case _=>IO.println("usage: haystack-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json").as(ExitCode.Error)
-  }}.flatTap(_=>IO(unobserved.settle(None))).handleErrorWith(failure)
+  })(failure)
 
   private final case class StageFailure(stage:String,port:Option[Int],error:Throwable) extends RuntimeException(stage,error)
   /** Names the start step that failed; the innermost stage wins, a failure outside every stage is `start`. */

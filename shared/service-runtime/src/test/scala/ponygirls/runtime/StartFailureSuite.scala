@@ -1,5 +1,7 @@
 package ponygirls.runtime
 
+import cats.effect.{Deferred, ExitCode, IO}
+import cats.effect.unsafe.implicits.global
 import java.net.BindException
 import munit.FunSuite
 
@@ -34,5 +36,20 @@ final class StartFailureSuite extends FunSuite {
     (1 to StartFailure.MaxEdges).foreach(_ => repeated.addSuppressed(same))
     repeated.addSuppressed(new BindException("Address already in use"))
     assertEquals(StartFailure.classify(repeated, none), internal)
+  }
+  test("a report held when the command is canceled before it settles is printed once") {
+    val printed = new java.util.concurrent.ConcurrentLinkedQueue[Throwable]()
+    val unobserved = new StartFailure.Unobserved(error => { printed.add(error); () })
+    val cleanup = new java.io.IOException("synthetic cleanup failure")
+    val outcome = (for {
+      started <- Deferred[IO, Unit]
+      // A finalizer failing while the start is canceled reaches the runtime's report, here as `report`.
+      command = (started.complete(()) *> IO.never[ExitCode]).onCancel(IO(unobserved.report(cleanup)))
+      fiber <- unobserved.around(command)(_ => IO.pure(ExitCode.Error)).start
+      _ <- started.get *> fiber.cancel
+      outcome <- fiber.join
+    } yield outcome).unsafeRunSync()
+    assert(outcome.isCanceled)
+    assertEquals(printed.toArray.toList, List(cleanup))
   }
 }

@@ -17,7 +17,7 @@ import scala.util.Using
 import io.circe.Json
 
 object Main extends IOApp:
-  def run(args: List[String]): IO[ExitCode] = IO.defer { unobserved.start(); args match
+  def run(args: List[String]): IO[ExitCode] = unobserved.around { args match
     case List("check-casefold") => IO.blocking(UnicodeCaseFoldProbe.main(Array.empty[String])).as(ExitCode.Success)
     case List("serve",path) => runServer(path).as(ExitCode.Success)
     case List("check-config",path) => stage("config",IO.blocking(Config.load(Path.of(path)))).flatMap(_ => IO.println("MANURE_CONFIG_OK")).as(ExitCode.Success)
@@ -36,7 +36,7 @@ object Main extends IOApp:
     yield ExitCode.Success)
     case List("--config",path) => runServer(path).as(ExitCode.Success)
     case _ => IO.println("usage: manure-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json | --config CONFIG.json | plan-root-identity CONFIG.json PRIVATE_PLAN.json PRIOR_VOLUME_EVIDENCE | migrate-root-identity CONFIG.json PRIVATE_PLAN.json EXPECTED_SHA256").as(ExitCode.Error)
-  }.flatTap(_ => IO(unobserved.settle(None))).handleErrorWith(safeFailure)
+  }(safeFailure)
   private final case class StageFailure(stage: String,port: Option[Int],error: Throwable) extends RuntimeException(stage,error)
   /** Enumerated category by exact failure type only; never message, path or cause detail. StartFailure walks causes and
     * suppressed exceptions: distage wraps any provisioning-step failure into izumi.* (ProvisioningException) with no

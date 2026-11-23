@@ -11,7 +11,7 @@ import scala.concurrent.duration.*
 
 final class RuntimeServices(val database: Database,val http: Http,val worker: Worker,val archive: PostgresArchive,val logger: logstage.IzLogger)
 object Main extends IOApp {
-  def run(args: List[String]): IO[ExitCode] = IO.defer { unobserved.start(); args match {
+  def run(args: List[String]): IO[ExitCode] = unobserved.around(args match {
     case List("password-hash") => stage("password-hash",IO.blocking {
       val console=System.console()
       val chars=if(console!=null) console.readPassword() else { val line=scala.io.StdIn.readLine(); Check(line!=null,"invalid","password required on stdin"); line.toCharArray }
@@ -38,7 +38,7 @@ object Main extends IOApp {
         })
       }.as(ExitCode.Success)
     case _ => IO.println("usage: chronicle-server serve CONFIG.json | serve-standby CONFIG.json (writable API, no background workers) | migrate CONFIG.json | password-hash (stdin)").as(ExitCode.Error)
-  }}.flatTap(_ => IO(unobserved.settle(None))).handleErrorWith(failure)
+  })(failure)
   private final case class StageFailure(stage: String,port: Option[Int],error: Throwable) extends RuntimeException(stage,error)
   /** Names the start step that failed; the innermost stage wins, a failure outside every stage is `start`. */
   private def stage[A](name: String,work: => IO[A],port: Option[Int] = None): IO[A] = IO.defer(work).adaptError {
