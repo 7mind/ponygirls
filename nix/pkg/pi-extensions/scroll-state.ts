@@ -14,6 +14,15 @@ export function clampViewportBudget(budget: number): number {
 	return Math.max(MIN_VIEWPORT_BUDGET, Math.min(MAX_VIEWPORT_BUDGET, Math.floor(budget)));
 }
 
+/** View chrome around the scrollable content: frame title, rule, one key-hint line. */
+export const TABLE_CHROME_LINES = 3;
+
+/** Half the terminal height for content, less the view chrome. Falls back to the default when the size is unknown (a stub TUI, no tty). */
+export function defaultTableBudget(rows: number | undefined): number {
+	if (typeof rows !== "number" || !Number.isFinite(rows)) return DEFAULT_VIEWPORT_BUDGET;
+	return clampViewportBudget(Math.floor(rows / 2) - TABLE_CHROME_LINES);
+}
+
 /** Clamp a scroll offset so the window stays within `lineCount` content lines. */
 export function clampScrollTop(scrollTop: number, lineCount: number, budget: number): number {
 	if (!Number.isFinite(scrollTop)) return 0;

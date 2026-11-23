@@ -38,6 +38,11 @@ implements the pane parts; use it instead of formatting by hand.
   the pane is in.
 - Show only keys that apply to the current selection and state.
 - Aliases (`q`, `j`/`k`, Home/End) may stay bound; they are not advertised.
+- Return an `InlinePane` from an extension-owned inline pane factory. Its
+  `capturesViewportInput` is `true` for local paging, `false` for transcript
+  paging, or a getter when it depends on the current mode. Set it on the
+  component Pi focuses, not on a layout child. Focused overlays already own
+  viewport input.
 
 ## Commands
 

@@ -49,6 +49,8 @@ function countdown(ms: number): string {
 }
 
 export class TokemonView extends PanelLayout {
+  readonly capturesViewportInput = true;
+
   private readonly deps: TokemonViewDeps;
   private report: QuotaReport | null = null;
   private error: string | null = null;

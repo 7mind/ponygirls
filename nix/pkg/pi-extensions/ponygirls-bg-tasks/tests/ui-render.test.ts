@@ -15,6 +15,7 @@ import { MemoryTaskBackend } from "./memory-backend.ts";
 const ENTER = "\r";
 const DOWN = "\x1b[B";
 const PAGE_UP = "\x1b[5~";
+const PAGE_DOWN = "\x1b[6~";
 const END = "\x1b[F";
 const WIDTH = 120;
 /** Widths every pane and transcript line must fit. */
@@ -38,9 +39,9 @@ const PLAIN_TRANSCRIPT: TranscriptTheme = { fg: (_color, s) => s, bold: (s) => s
 /** Styling the kit emits even with an unstyled theme (a reset around its ellipsis). */
 const SGR = /\x1b\[[0-9;]*m/g;
 
-async function inspector(t: TestContext, backend: MemoryTaskBackend, theme: UiTheme, rows = 30): Promise<BgInspector> {
+async function inspector(t: TestContext, backend: MemoryTaskBackend | ViewerDeps["backend"], theme: UiTheme, rows = 30): Promise<BgInspector> {
   const deps: ViewerDeps = {
-    backend: async () => backend,
+    backend: typeof backend === "function" ? backend : async () => backend,
     noticeState: () => null,
     noticeForgotten: () => {},
     confirm: async () => true,
@@ -623,4 +624,175 @@ test("background-task pagination regrows under an auto-basis editor", async (t) 
   const short = pane.bodyScroll.viewportHeight;
   renderLayoutFrame(root, 100, 24, () => {});
   assert.ok(pane.bodyScroll.viewportHeight > short);
+});
+
+test("fullscreen page keys target the wrapped log in detail and return to the transcript on the task list", async (t) => {
+  const { ScrollView, TuiAltScreen, stripTerminalSequences } = await import("@earendil-works/pi-tui");
+  const width = 60, height = 28;
+  let input: (data: string) => void = () => assert.fail("terminal not started");
+  const tui = new TuiAltScreen({
+    columns: width, rows: height, kittyProtocolActive: false, start(onInput) { input = onInput; },
+    stop() {}, async drainInput() {}, write() {}, moveBy() {}, hideCursor() {}, showCursor() {},
+    clearLine() {}, clearFromCursor() {}, clearScreen() {}, setTitle() {}, setProgress() {}, setProgramStatus() {},
+  });
+  const backend = new MemoryTaskBackend("paging" as SessionId);
+  const task = await backend.spawn({ label: "compiler", command: "running", cwd: "/", notify: false });
+  const rows = Array.from({ length: 45 }, (_, i) => `out-${i + 1}:`.padEnd(width, "-"));
+  backend.finish(task.id, 0, rows.join("") + "\n");
+  const view = await inspector(t, backend, PLAIN_THEME, height);
+  const chat = new ScrollView({ render: () => rows.map((_, i) => `Chat row ${i + 1}`), invalidate() {} }, { primary: true, follow: "end" });
+  tui.setLayoutRoot(new VStack([{ component: chat, basis: 4, shrink: 0 }, { component: view, grow: 1, minSize: 0 }]));
+  tui.setFocus(view);
+  const screen = () => { tui.renderNow(); return tui.getScreenLines().map(line => stripTerminalSequences(line).trimEnd()); };
+  const output = (lines: string[]) => lines.filter(line => line.startsWith("out-"));
+  const send = async (key: string) => { input(key); await view.idle(); return screen(); };
+  tui.start();
+  try {
+    assert.ok(screen().includes("Chat row 45"));
+    const tail = output(await send(ENTER));
+    assert.ok(tail.length > 1 && tail.length * 2 <= rows.length, tail.join("\n"));
+    assert.deepEqual(tail, rows.slice(-tail.length));
+    const earlier = await send(PAGE_UP);
+    assert.ok(earlier.includes("Chat row 45"), "PgUp must not move the parent transcript from detail");
+    assert.deepEqual(output(earlier), rows.slice(-2 * tail.length, -tail.length));
+    assert.deepEqual(output(await send("\x1b[6~")), tail);
+    assert.match((await send("\x1b")).join("\n"), /Background tasks/);
+    assert.ok(!(await send(PAGE_UP)).includes("Chat row 45"), "PgUp belongs to the transcript on the task list");
+    assert.ok((await send("\x1b[6~")).includes("Chat row 45"));
+  } finally { tui.stop(); }
+});
+
+test("paging keeps newlines inside control strings out of the displayed records at a read boundary", async t => {
+  const backend = new MemoryTaskBackend("string-edge" as SessionId);
+  const task = await backend.spawn({ label: "string-edge", command: "running", cwd: "/", notify: false });
+  const edge = "A\x1b]title\nHIDDEN\x07B\bC\rZ";
+  const suffix = Array.from({length: 1400}, (_, i) => `${i}:`.padEnd(95, "-") + "\n").join("");
+  const after = suffix.slice(0, 131072 - Buffer.byteLength(edge.slice(4)) - 1);
+  backend.append(task.id, `first\n${edge}\n${after}`);
+  const view = await opened(t, backend, PLAIN_THEME);
+  view.render(110);
+  for (let i = 0; i < 69; i++) await press(view, PAGE_UP);
+  assert.deepEqual(view.render(110).slice(1, 4), ["first", "ZC", "0:".padEnd(95, "-")]);
+});
+
+test("an unfinished control after a newline adds no extra paused display row", async t => {
+  const backend = new MemoryTaskBackend("pending-tail" as SessionId);
+  const task = await backend.spawn({ label: "writer", command: "running", cwd: "/", notify: false });
+  backend.append(task.id, "kept\r\n\x1b[");
+  const view = await opened(t, backend, PLAIN_THEME);
+  const body = () => { const lines = view.render(110); return lines.slice(1, lines.indexOf("─".repeat(110))); };
+  assert.deepEqual(body(), ["kept"]);
+  await press(view, PAGE_UP);
+  assert.deepEqual(body(), ["kept"]);
+});
+
+for (const resume of [END, "f"]) {
+  test(`resume ${JSON.stringify(resume)} publishes the current tail without an intermediate historical frame`, async t => {
+    const backend = new MemoryTaskBackend("resume" as SessionId);
+    const task = await backend.spawn({ label: "writer", command: "running", cwd: "/", notify: false });
+    const rows = Array.from({length: 150}, (_, i) => `record-${i}`);
+    const write = (a: number, b: number) => backend.append(task.id, rows.slice(a, b).join("\r\n") + "\r\n");
+    write(0, 60);
+    const view = await opened(t, backend, PLAIN_THEME);
+    const frame = () => view.render(120);
+    const data = () => frame().filter(s => s.startsWith("record-"));
+    const height = data().length;
+    write(60, 80);
+    await press(view, PAGE_UP);
+    const first = data();
+    assert.deepEqual(first, rows.slice(80 - 2 * height, 80 - height));
+    write(80, 120);
+    await view.refresh();
+    assert.deepEqual(data(), first);
+    await press(view, PAGE_DOWN, PAGE_DOWN, PAGE_UP);
+    assert.deepEqual(data(), first);
+    view.handleInput(resume);
+    assert.deepEqual(data(), first);
+    assert.match(frame()[0]!, /paused/);
+    await view.idle();
+    assert.deepEqual(data(), rows.slice(120 - height, 120));
+    assert.match(frame()[0]!, /following/);
+    await press(view, PAGE_UP);
+    write(120, 150);
+    await press(view, PAGE_DOWN, PAGE_DOWN);
+    assert.deepEqual(data(), rows.slice(120 - height, 120));
+  });
+}
+
+test("a paused detail regrows under an auto-basis editor without reading live output", async t => {
+  const backend = new MemoryTaskBackend("grow-snapshot" as SessionId);
+  const task = await backend.spawn({ label: "writer", command: "running", cwd: "/", notify: false });
+  const lines = Array.from({length: 60}, (_, i) => `line-${i}`);
+  backend.append(task.id, lines.join("\n"));
+  const pane = await opened(t, backend, PLAIN_THEME);
+  const root = new VStack([{ component: { render: () => ["chat"], invalidate() {} }, grow: 1, basis: 0 }, { component: pane, grow: 0 }]);
+  const paint = (rows: number) => renderLayoutFrame(root, 100, rows, () => {}).lines.filter(s => s.startsWith("line-"));
+  paint(12); paint(12);
+  await press(pane, PAGE_UP);
+  const small = paint(12);
+  backend.append(task.id, "\npost-cutoff");
+  paint(24); paint(24); await pane.idle();
+  const large = paint(24);
+  assert.ok(large.length > small.length);
+  const first = Number(large[0]!.slice(5));
+  assert.deepEqual(large.map(s => s.trimEnd()), lines.slice(first, first + large.length));
+});
+
+test("a replacement supervisor serves the same paused range after a cache miss", async t => {
+  const original = new MemoryTaskBackend("replacement" as SessionId);
+  const replacement = new MemoryTaskBackend("replacement" as SessionId);
+  const rows = Array.from({length: 1800}, (_, i) => `record-${i}`.padEnd(90, "."));
+  const log = rows.join("\n") + "\n";
+  for (const b of [original, replacement]) {
+    const task = await b.spawn({ label: "writer", command: "running", cwd: "/", notify: false });
+    b.append(task.id, log);
+    if (b === replacement) b.finish(task.id, 0, "later\n");
+  }
+  let active = original;
+  const view = await inspector(t, async () => active, PLAIN_THEME);
+  await press(view, ENTER);
+  const output = () => view.render(100).filter(s => s.startsWith("record-"));
+  const height = output().length;
+  await press(view, PAGE_UP);
+  active = replacement;
+  original.read = async () => { throw new Error("old connection is gone"); };
+  const read = replacement.read.bind(replacement);
+  const requests: Array<[number | "tail", number]> = [];
+  replacement.read = async (id, offset, limit) => { requests.push([offset, limit]); return read(id, offset, limit); };
+  await view.refresh();
+  assert.match(view.render(100)[0]!, /completed/);
+  for (let top = Math.max(0, rows.length - 2 * height);;) {
+    assert.deepEqual(output(), rows.slice(top, top + height));
+    if (!top) break;
+    top = Math.max(0, top - height);
+    await press(view, PAGE_UP);
+  }
+  assert.ok(requests.length > 0);
+  assert.ok(requests.every(([offset, n]) => offset !== "tail" && offset + n <= log.length));
+});
+
+test("resize during the first pause read reflows the published snapshot without another key", async t => {
+  const b = new MemoryTaskBackend("pause-resize" as SessionId);
+  const task = await b.spawn({ label: "writer", command: "running", cwd: "/", notify: false });
+  const rows = Array.from({length: 40}, (_, i) => `record-${i}:`.padEnd(50, "-") + `end-${i}:`.padEnd(50, "."));
+  b.append(task.id, rows.join("\n"));
+  const view = await opened(t, b, PLAIN_THEME);
+  const height = view.render(100).filter(s => s.startsWith("record-")).length;
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const read = b.read.bind(b);
+  b.read = async (id, offset, n) => {
+    if (typeof offset === "number") { entered.resolve(); await release.promise; }
+    return read(id, offset, n);
+  };
+  view.handleInput(PAGE_UP);
+  await entered.promise;
+  view.render(50);
+  b.append(task.id, "\npost-cutoff");
+  release.resolve();
+  await view.idle();
+  view.render(50);
+  await view.idle();
+  const top = Math.max(0, rows.length - height * 2);
+  const narrower = rows.slice(top).flatMap(s => [s.slice(0, 50), s.slice(50)]);
+  assert.deepEqual(view.render(50).slice(1, 1 + height), narrower.slice(0, height));
 });

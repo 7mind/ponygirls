@@ -9,6 +9,7 @@ const BEL = 0x07;
 const UTF8_MAX_SEQUENCE = 4;
 /** An escape sequence longer than this at a window end is treated as garbage, not split. */
 const MAX_PENDING_ESCAPE_BYTES = 256;
+export const DISPLAY_BOUNDARY_CONTEXT = MAX_PENDING_ESCAPE_BYTES + UTF8_MAX_SEQUENCE;
 
 /** Number of trailing bytes that form an incomplete UTF-8 sequence. */
 function incompleteUtf8Tail(bytes: Uint8Array): number {
@@ -115,4 +116,13 @@ export function displayValue(value: string): string {
 export function shorten(value: string, max: number): string {
   const chars = [...value];
   return chars.length <= max ? value : `${chars.slice(0, max - 1).join("")}…`;
+}
+
+export function recordBreaks(bytes: Uint8Array): { ends: number[]; firstTerminator: number } {
+  const ends: number[] = [];
+  const text = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("latin1");
+  for (const m of text.matchAll(/(?:\x1b[\]PX^_]|\xc2[\x90\x98\x9d-\x9f])[\s\S]*?(?:\x07|\x1b\\|\xc2\x9c|$)|\n/g)) {
+    if (m[0] === "\n") ends.push(m.index + 1);
+  }
+  return { ends, firstTerminator: text.search(/\x07|\x1b\\|\xc2\x9c/) };
 }
