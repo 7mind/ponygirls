@@ -14,6 +14,12 @@ import scala.util.Using
 final class StartFailureLineTest extends munit.FunSuite {
   /** A failed start exits within seconds; the bound only stops a hung child. */
   private val childExitBound = 50.seconds
+  /** The child JVM must not inherit the JVM option variables of the test environment (the Nix check sets JAVA_TOOL_OPTIONS),
+    * whose "Picked up …" notice would be a stderr line that is not the service's; the complete stderr stays asserted. */
+  private def childEnvironment(builder: ProcessBuilder): ProcessBuilder = {
+    Vector("JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS").foreach(builder.environment().remove)
+    builder
+  }
   /** The known notices a fresh JVM prints on stderr that are not the service's, matched exactly: the JDK's warning about
     * Scala's LazyVals, SLF4J's no-binding notices and cats-effect's CPU-starvation warning on a loaded host. */
   private val knownJvmNotices = Vector(
@@ -74,7 +80,7 @@ final class StartFailureLineTest extends munit.FunSuite {
           case loader: java.net.URLClassLoader => loader.getURLs.map(url => Path.of(url.toURI).toString).mkString(java.io.File.pathSeparator)
           case other => fail("the child needs the URL class loader of sbt's forked test JVM, got " + other)
         }
-        val process = new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString,"-cp",classpath,"chronicle.Main","serve",path.toString)
+        val process = childEnvironment(new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString,"-cp",classpath,"chronicle.Main","serve",path.toString))
           .redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null"))).redirectError(err.toFile).redirectOutput(out.toFile).start()
         try assert(process.waitFor(childExitBound.toSeconds,TimeUnit.SECONDS),"the child did not exit")
         finally { process.destroyForcibly(); process.waitFor() }

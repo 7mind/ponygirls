@@ -22,6 +22,12 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
   private val childExitBound = 50L
   /** A cancelled start unwinds within seconds; the bound stays below the suite's 30 s test timeout. */
   private val terminationBound = 20L
+  /** The child JVM must not inherit the JVM option variables of the test environment (the Nix check sets JAVA_TOOL_OPTIONS),
+    * whose "Picked up …" notice would be a stderr line that is not the service's; the complete stderr stays asserted. */
+  private def childEnvironment(builder: ProcessBuilder): ProcessBuilder = {
+    Vector("JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS").foreach(builder.environment().remove)
+    builder
+  }
   /** The known notices a fresh JVM prints on stderr that are not the service's, matched exactly: the JDK's warnings about
     * the native library load (a block ending in an empty line) and Scala's LazyVals, SLF4J's no-binding notice and
     * cats-effect's CPU-starvation warning on a loaded host. */
@@ -62,7 +68,7 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
   private def signalled(root: Path,whileRunning: Process => Unit,arguments: String*): (Int,List[String],String) =
     val (err,out) = (root.resolve("child.err"),root.resolve("child.out"))
     val classpath = sys.props.getOrElse("manure.test.childClasspath",throw new IllegalArgumentException("explicit manure.test.childClasspath required"))
-    val process = new ProcessBuilder((Vector(Path.of(System.getProperty("java.home"),"bin","java").toString,"-cp",classpath,"manure.Main") ++ arguments)*)
+    val process = childEnvironment(new ProcessBuilder((Vector(Path.of(System.getProperty("java.home"),"bin","java").toString,"-cp",classpath,"manure.Main") ++ arguments)*))
       .redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null"))).redirectError(err.toFile).redirectOutput(out.toFile).start()
     try
       whileRunning(process)
