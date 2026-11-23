@@ -68,8 +68,10 @@ final class HaystackRetrieval(val database:JdbcDatabase,val policy:ProjectionPol
     // Fresh delivery-time eligibility/ACL check, preserving immutable hit version.
     visible<-database.transaction(c=>page.hits.filter(hit=>store.visible(c,query,hit.id)))
   }yield page.copy(hits=visible)
+  /** The indexing worker on the background admission (restart-robustness spec §5): requests and the fail-closed auth
+    * reload never wait behind it. */
   def worker(events:IndexingEvent=>IO[Unit]):Option[IndexingWorker]=embedding.map(client=>new IndexingWorker(store,new RetrievalTransactions{
-    def transaction[A](run:Connection=>A):IO[A]=database.transaction(run)
+    def transaction[A](run:Connection=>A):IO[A]=database.background.transaction(run)
   },client,batchSize,120,500.millis,IO.realTimeInstant,events))
   def run(events:IndexingEvent=>IO[Unit]):IO[Nothing]=worker(events).fold(IO.never)(_.run)
 }

@@ -3,7 +3,7 @@ package haystack
 import cats.effect.{IO,IOApp,ExitCode,Resource}
 import cats.syntax.all.*
 import distage.*
-import ponygirls.runtime.{DatabaseWait,JdbcDatabase,CatsIOInjector,StartFailure}
+import ponygirls.runtime.{DatabaseWait,JdbcDatabase,JdbcPoolSizing,CatsIOInjector,StartFailure}
 import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry,RetrievalProfile}
 import ponygirls.retrieval.postgres.PostgresRetrieval
 import haystack.auth.{Auth,AccountService,ImperativeRuntime}
@@ -27,7 +27,7 @@ object Main extends IOApp {
       stage("config",IO.blocking { val file=Path.of(path);val c=Config.load(file);Auth.load(c.auth);(file,c,Option.when(command=="serve")(listener(c))) }).flatMap { (file,config,address)=>
         if(command=="check-config")IO.unit
         else stage("database-wait",IO.interruptibleMany(DatabaseWait.await(config.database,config.databaseStartWait,line=>System.err.println("haystack "+line)))) *>
-          JdbcDatabase.resource(config.database).adaptError(staged("database")).use { database=>
+          JdbcDatabase.service(config.database,poolSizing(config,address.nonEmpty)).adaptError(staged("database")).use { database=>
           stage("migrate",Migrations.initialize(database,config.auth.activityProjectId)) *>
           address.fold(IO.unit)(serve(config,file,database,_))
         }
@@ -57,6 +57,10 @@ object Main extends IOApp {
   private val unobserved=new StartFailure.Unobserved(error=>System.err.println(StartFailure.line("haystack","background",StartFailure.classify(error,known),None)))
   override protected def reportFailure(error:Throwable):IO[Unit]=IO(unobserved.report(error))
 
+  /** The process's one pool (restart-robustness spec §5): serving, the configured sizing; `migrate`, the compatible pool
+    * opened on use (one connection), so a migration beside a serving process stays within the role's headroom. */
+  private def poolSizing(config:Config,serving:Boolean):JdbcPoolSizing=
+    if(serving)config.databasePool else JdbcPoolSizing.compatible(config.database.limits)
   private def listener(config:Config):(Host,Port)=
     (Host.fromString(config.listenHost).getOrElse(throw Fault("config","invalid listen host")),Port.fromInt(config.listenPort).getOrElse(throw Fault("config","invalid port")))
   private def serve(config:Config,file:Path,database:JdbcDatabase,address:(Host,Port)):IO[Unit]=GracefulShutdown.resource.use(stop=>serveOwned(config,file,database,address).race(stop).void)

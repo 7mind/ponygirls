@@ -11,6 +11,7 @@ Authoritative schema: `models/chronicle.baboon` (`chronicle.api`, `1.9.0`), the 
 - `POST /api/ingest`: bearer ONLY, Ingest scope; generated `IngestRequest` -> `IngestReceipt`; errors JSON Failure and non-2xx.
 - `POST /api/jobs/v1`: bearer ONLY, a token with the OperateJobs account scope; the generated envelopes of exactly four operations ("Job operations for tokens" below).
 - `POST /mcp`: bearer ONLY, Read scope (Raw additionally for raw, which is deliberately not an MCP tool). Stateless Streamable HTTP; JSON responses. Supported MCP versions 2025-11-25, 2025-06-18, 2025-03-26. GET returns 405; notifications return 202. Origin if present must match configured origin. No URL credentials anywhere.
+- Database unavailable (restart-robustness spec §5): a REST request, the MCP request's bearer phase included, that gets no database connection (the admission full or timed out, none by the acquisition deadline, a fenced role, the server closing) or whose connection fails (SQLSTATE 08xxx, 57P01-57P03) is answered 503 `unavailable` with `Retry-After: 5` (previously 500); a later request may succeed. An MCP tool call's failure stays a JSON-RPC result with tool error `unavailable` in HTTP 200; WebSocket operations answer `unavailable` as before.
 
 ## Account HTTP v1 (independent of Baboon domain version)
 

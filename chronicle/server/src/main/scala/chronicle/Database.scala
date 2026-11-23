@@ -7,19 +7,39 @@ import chronicle.api.*
 import io.circe.Json
 import ponygirls.auth.{AccountFailure,ImperativeAccountSql}
 
-final class Database private (config: Config,val profiles: IndexProfileCatalog,runtime: ponygirls.runtime.BlockingJdbcDatabase,controlRuntime: ponygirls.runtime.BlockingJdbcDatabase) extends AutoCloseable {
-  private def this(config: Config,profiles: IndexProfileCatalog,runtimes: (ponygirls.runtime.BlockingJdbcDatabase,ponygirls.runtime.BlockingJdbcDatabase)) =
-    this(config,profiles,runtimes._1,runtimes._2)
-  def this(config: Config, profiles: IndexProfileCatalog) = this(config,profiles,Database.runtimes(config,new ponygirls.runtime.BlockingJdbcDatabase(_)))
-  def transaction[A](f: Connection => A): A = runtime.transaction(f)
-  def extendedTransaction[A](timeout: FiniteDuration)(f: Connection => A): A = runtime.extendedTransaction(timeout)(f)
-  def boundedTransaction[A](bound: FiniteDuration)(f: Connection => A): A = runtime.boundedTransaction(bound)(f)
-  /** Lease renewals (restart-robustness spec §4, D3): an admission of their own, so they never wait behind publication
-    * statements, failure records or any other transaction for a connection (one-connection mode: the one admission). */
-  def control[A](f: Connection => A): A = controlRuntime.transaction(f)
-  /** The connections of every other transaction: `databaseLimits.maxConnections` less the control connection. */
-  val ordinaryConnections: Int = Database.split(config).fold(config.databaseLimits.maxConnections)(_._1.limits.maxConnections)
-  def close(): Unit = try runtime.close() finally if(controlRuntime ne runtime) controlRuntime.close()
+/** The process's one pool (restart-robustness spec §5) through one of its admissions: this view the requests',
+  * `background` the background admission's shared permits (the Worker's archive: claims, checkpoints, failure records, P0,
+  * switch), `maintenance` long background work behind the publication gate (as every staging transaction, `publication`),
+  * `control` the renewal permit. Every view closes the one pool. */
+final class Database private (config: Config,val profiles: IndexProfileCatalog,runtime: ponygirls.runtime.BlockingJdbcDatabase,lane: Database.Lane,gate: Database.PublicationGate) extends AutoCloseable {
+  private def this(config: Config,profiles: IndexProfileCatalog,runtime: ponygirls.runtime.BlockingJdbcDatabase,sizing: ponygirls.runtime.JdbcPoolSizing) =
+    this(config,profiles,runtime,Database.Lane.Requests,new Database.PublicationGate(Database.publicationPermits(sizing)))
+  /** The compatible pool (fixtures and tools; spec §5): one admission of `maxConnections` less the renewal permit, opened
+    * on use, no process claim. The server's is [[Database.service]]. */
+  def this(config: Config, profiles: IndexProfileCatalog) = this(config,profiles,
+    new ponygirls.runtime.BlockingJdbcDatabase(config.jdbcConfig,ponygirls.runtime.JdbcPoolSizing.compatible(config.databaseLimits),Database.controlConnections),
+    ponygirls.runtime.JdbcPoolSizing.compatible(config.databaseLimits))
+  private val transactions: ponygirls.runtime.BlockingJdbcTransactions = if(lane==Database.Lane.Requests) runtime else runtime.background
+  private def publicationTimeout: FiniteDuration = config.indexing.publicationTimeout(config.databaseLimits)
+  private def admitted[A](wait: FiniteDuration)(work: => A): A = if(lane==Database.Lane.Gated) gate.run(wait)(work) else work
+  def transaction[A](f: Connection => A): A = admitted(publicationTimeout)(transactions.transaction(f))
+  def extendedTransaction[A](timeout: FiniteDuration)(f: Connection => A): A = admitted(publicationTimeout)(transactions.extendedTransaction(timeout)(f))
+  def boundedTransaction[A](bound: FiniteDuration)(f: Connection => A): A = admitted(bound.min(publicationTimeout))(transactions.boundedTransaction(bound)(f))
+  /** The background admission's shared permits. */
+  lazy val background: Database = new Database(config,profiles,runtime,Database.Lane.Background,gate)
+  /** Long background work (EpochMaintenance, retirements, abandoned generations): each transaction takes a publication gate
+    * permit before the background admission. */
+  lazy val maintenance: Database = new Database(config,profiles,runtime,Database.Lane.Gated,gate)
+  /** A publication's staging transaction: a publication gate permit (waiting at most the publication timeout), then the
+    * background admission, its statements under the publication timeout. */
+  def publication[A](f: Connection => A): A = gate.run(publicationTimeout)(runtime.background.extendedTransaction(publicationTimeout)(f))
+  /** Lease renewals (restart-robustness spec §4, D3; §5 deviation A): the renewal permit, which no other work takes, so
+    * they never wait behind publication statements, failure records or any other transaction for a connection (one
+    * connection: the one admission). */
+  def control[A](f: Connection => A): A = runtime.reserved.transaction(f)
+  /** The publication gate's permits: staging transactions at once, so a publication's search-row writers at most. */
+  def publicationPermits: Int = gate.permits
+  def close(): Unit = runtime.close()
   private def migrate(c: Connection,name: String): Unit = {
     val stream=getClass.getResourceAsStream(s"/$name")
     Check(stream!=null,"config","missing migration resource")
@@ -116,23 +136,47 @@ object Database {
     * is off, and the rows whose TOTP secret was sealed with a key other than `keyId`. */
   def activeImperativeAccounts(c: Connection): Int = Sql.one(c,"SELECT count(*) FROM ponygirls_imperative_users WHERE status='active'")(_.getInt(1)).getOrElse(0)
   def imperativeAccountsSealedByAnotherKey(c: Connection,keyId: String): Int = Sql.one(c,"SELECT count(*) FROM ponygirls_imperative_users WHERE totp_key_id<>?",keyId)(_.getInt(1)).getOrElse(0)
-  /** Explicit runtime injection for trusted JDBC probes; ownership transfers to Database. The given runtime is the only
-    * admission (one-connection mode: renewals share it). */
+  /** Explicit runtime injection for trusted JDBC probes; ownership transfers to Database. Its admissions serve as built
+    * (renewals on its reserved view), behind a publication gate of 1, the compatible sizing's. */
   def withRuntime(config: Config, profiles: IndexProfileCatalog, runtime: ponygirls.runtime.BlockingJdbcDatabase): Database =
-    new Database(config,profiles,runtime,runtime)
-  /** Its runtimes from `open`: with more than one connection the ordinary and the control admission (`split`), else one. */
-  def runtimes(config: Config,open: ponygirls.runtime.JdbcConfig => ponygirls.runtime.BlockingJdbcDatabase): (ponygirls.runtime.BlockingJdbcDatabase,ponygirls.runtime.BlockingJdbcDatabase) =
-    split(config).fold { val one=open(config.jdbcConfig); (one,one) }((ordinary,control) => (open(ordinary),open(control)))
-  def withRuntimes(config: Config, profiles: IndexProfileCatalog, runtimes: (ponygirls.runtime.BlockingJdbcDatabase,ponygirls.runtime.BlockingJdbcDatabase)): Database =
-    new Database(config,profiles,runtimes._1,runtimes._2)
-  /** Connections kept, out of `databaseLimits.maxConnections`, for lease renewals. */
+    new Database(config,profiles,runtime,ponygirls.runtime.JdbcPoolSizing.compatible(config.databaseLimits))
+  /** A fixture's pool over a trusted probe factory: the compatible sizing with the renewal permit, as `new Database`. */
+  def withFactory(config: Config, profiles: IndexProfileCatalog, factory: ponygirls.runtime.JdbcConnectionFactory): Database = {
+    val sizing=ponygirls.runtime.JdbcPoolSizing.compatible(config.databaseLimits)
+    new Database(config,profiles,ponygirls.runtime.BlockingJdbcDatabase.withConnectionFactory(config.jdbcConfig,factory,sizing,controlConnections),sizing)
+  }
+  /** The server's database: the process's one service pool (`pool-already-open` while another is open), of
+    * `databaseLimits`' sizing with the renewal permit. */
+  def service(config: Config, profiles: IndexProfileCatalog): Database =
+    new Database(config,profiles,ponygirls.runtime.BlockingJdbcDatabase.service(config.jdbcConfig,config.databasePool,controlConnections),config.databasePool)
+  /** A one-shot command's database (`migrate`): the process's service pool, compatible sizing opened on use (one
+    * connection), so a migration beside a serving process stays within the role's headroom. */
+  def command(config: Config, profiles: IndexProfileCatalog): Database = {
+    val sizing=ponygirls.runtime.JdbcPoolSizing.compatible(config.databaseLimits)
+    new Database(config,profiles,ponygirls.runtime.BlockingJdbcDatabase.service(config.jdbcConfig,sizing,controlConnections),sizing)
+  }
+  /** The renewal permit (spec §5 deviation A): carved from the background admission, or from the one admission of a budget
+    * below 8; with one connection none (one admission for everything, as before: a long statement then also delays
+    * renewals). */
   val controlConnections = 1
-  /** The ordinary and the control admission's limits; None with one connection (one admission for everything, as before:
-    * a long statement then also delays renewals). */
-  def split(config: Config): Option[(ponygirls.runtime.JdbcConfig,ponygirls.runtime.JdbcConfig)] = {
-    val limits=config.databaseLimits
-    Option.when(limits.maxConnections>controlConnections)((config.jdbcConfig.copy(limits=limits.copy(maxConnections=limits.maxConnections-controlConnections)),
-      config.jdbcConfig.copy(limits=limits.copy(maxConnections=controlConnections))))
+  /** The publication gate's permits L of a pool of `sizing`: its background connections less [[Config.controlReserve]] (the
+    * renewal permit and one for short work: 12 → B 5, L 3); 1 for the compatible sizing (no background admission). */
+  def publicationPermits(sizing: ponygirls.runtime.JdbcPoolSizing): Int = if(sizing.background==0) 1 else sizing.background-Config.controlReserve
+  private[chronicle] enum Lane { case Requests,Background,Gated }
+  /** The publication gate (restart-robustness spec §5): `permits` (L), taken before the background admission by every
+    * staging transaction and every transaction of long background work, so queued long work holds no admission slot and
+    * the background admission keeps a permit for short work; a waiter waits at most its bound (`admission-timeout`, a
+    * transient job failure). A holder never takes a second gate or background permit: its callback uses only its own
+    * connection (`staging`, EpochMaintenance's and PassageStorage's steps). */
+  private[chronicle] final class PublicationGate(val permits: Int) {
+    private val semaphore=new java.util.concurrent.Semaphore(permits,true)
+    def run[A](wait: FiniteDuration)(work: => A): A = {
+      val acquired=try semaphore.tryAcquire(wait.toNanos,java.util.concurrent.TimeUnit.NANOSECONDS) catch {
+        case _: InterruptedException => Thread.currentThread().interrupt(); throw ponygirls.runtime.RuntimeFailure("admission-interrupted")
+      }
+      if(!acquired) throw ponygirls.runtime.RuntimeFailure("admission-timeout")
+      try work finally semaphore.release()
+    }
   }
 }
 object Sql {
@@ -223,6 +267,8 @@ object Jobs {
     job
   }
 }
+/** The Worker's archive (restart-robustness spec §5): over the background view, apart from the requests' archive. */
+final case class WorkerArchive(archive: SessionArchive)
 final class PostgresArchive(private[chronicle] val db: Database, config: Config, layout: RevisionLayoutPolicy) extends SessionArchive with PassageReader with MessageSearchReader with ContextReader {
   def this(db: Database,config: Config) = this(db,config,RevisionLayoutPolicy.production)
   private val contextReader=new PostgresContextReader(db,this)
@@ -518,8 +564,8 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       }
     }
   }
-  /** On the control admission (restart-robustness spec §4). An attempt that committed progress restarts its job's count of
-    * consecutive transient failures. */
+  /** On the renewal permit (restart-robustness spec §4, §5 deviation A). An attempt that committed progress restarts its
+    * job's count of consecutive transient failures. */
   def renew(claim: Claim,leaseSeconds: Int): Boolean = {
     Check(leaseSeconds>0,"invalid","invalid claim lease")
     val progressed=claim.attempt.progressed
@@ -534,8 +580,9 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     * resume step, `Share` for the search-row writers). The job row is not locked: a renewal, which locks it, never waits
     * for the search-row writers, which would hold share locks on it one after another; a reclaim does not wait for a
     * batch either, and a stale worker stops at its next one (the switch checks everything again). Its statements run under
-    * the publication timeout, and it holds its job's staging lock (`PostgresArchive.stagingLock`) shared until its end. */
-  private def staging[A](claim: Claim,generation: UUID,lock: StagedLock)(f: Connection => A): A = db.extendedTransaction(config.indexing.publicationTimeout(config.databaseLimits)) { c =>
+    * the publication timeout, behind the publication gate, and it holds its job's staging lock (`PostgresArchive.stagingLock`)
+    * shared until its end. */
+  private def staging[A](claim: Claim,generation: UUID,lock: StagedLock)(f: Connection => A): A = db.publication { c =>
     Sql.exec(c,"SELECT pg_advisory_xact_lock_shared(hashtextextended(?,0))",PostgresArchive.stagingLock(claim))
     // The claim is checked after the staged row's lock is granted: a batch that waited for it while the job was claimed
     // again (whose phase W may have invalidated the staged chunks) stops there (read committed: the check sees the
@@ -554,7 +601,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     stage(claim,rows.parent) match {
       case None => false
       case Some((staged,abandoned,resumed)) =>
-        abandoned.foreach(PassageStorage.deleteAbandoned(db,_))
+        abandoned.foreach(PassageStorage.deleteAbandoned(db.maintenance,_))
         val written=if(staged.phase==StagedPhase.Passages) writePassages(claim,staged,rows) else staged
         val counts=written.counts.getOrElse(throw DomainError("internal","staged generation without its counts"))
         val pieces=if(written.invalid) rewritePieces(claim,written) else written
@@ -699,8 +746,8 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
         from=next.getAndAdd(size)
       }
     }
-    // At most the connections other transactions may hold: no writer waits for one behind its siblings' statements.
-    val writers=PassageStorage.searchRowWriters.min(db.ordinaryConnections).min((pieces-first+size-1)/size)
+    // At most the publication gate's permits: no writer waits at the gate behind its siblings' statements.
+    val writers=PassageStorage.searchRowWriters.min(db.publicationPermits).min((pieces-first+size-1)/size)
     if(writers<=1) writer() else {
       val pool=java.util.concurrent.Executors.newFixedThreadPool(writers)
       try {
@@ -747,12 +794,12 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   }
   /** Deletes the search rows of the generations a switch of the claim's source replaced (with every generation of a
     * replaced lineage, whose tag rows go too), and the derived rows of those an explicit rebuild retired, and the
-    * superseded ranges of search rows, in bounded statements (spec §5.2.4 retirement, §5.6.2 step 4); the maintenance
-    * pass completes what a crash leaves. */
+    * superseded ranges of search rows, in bounded statements behind the publication gate (spec §5.2.4 retirement, §5.6.2
+    * step 4); the maintenance pass completes what a crash leaves. */
   def retire(claim: Claim): Unit = {
-    db.transaction(c => PassageStorage.retiringLineages(c,Some(claim.sessionId))).foreach(PassageStorage.retireLineage(db,_))
-    db.transaction(c => PassageStorage.retiring(c,Some(claim.sessionId))).foreach(PassageStorage.retire(db,_))
-    db.transaction(c => PassageStorage.retiringRanges(c,Some(claim.sessionId))).foreach(PassageStorage.retireRange(db,_,_))
+    db.transaction(c => PassageStorage.retiringLineages(c,Some(claim.sessionId))).foreach(PassageStorage.retireLineage(db.maintenance,_))
+    db.transaction(c => PassageStorage.retiring(c,Some(claim.sessionId))).foreach(PassageStorage.retire(db.maintenance,_))
+    db.transaction(c => PassageStorage.retiringRanges(c,Some(claim.sessionId))).foreach(PassageStorage.retireRange(db.maintenance,_,_))
   }
   def fail(claim: Claim,code: String): Unit = failAt(claim,code,None)
   def fail(claim: Claim,code: String,stage: IndexingStage): Unit = failAt(claim,code,Some(stage))

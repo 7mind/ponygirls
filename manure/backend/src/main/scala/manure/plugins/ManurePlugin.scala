@@ -13,6 +13,7 @@ import ponygirls.auth.PasswordHasher
 
 final class RuntimeTransactions(database: JdbcDatabase,root: RootLease) extends JdbcTransactions:
   def transaction[A](body: java.sql.Connection => A): IO[A] = database.transaction(c => root.run(body(c)))
+  override lazy val background: JdbcTransactions = new RuntimeTransactions(database.background,root)
 
 final class RuntimeServices(val artifacts: Artifacts,val http: Http,val search: Search,
   val projection: SearchProjection,val worker: SearchWorker,val database: JdbcTransactions,val accounts: Accounts)
@@ -42,6 +43,9 @@ object ManurePlugin extends PluginDef:
   make[AccountPlane]
   make[Catalogue]
   make[Search]
-  make[SearchWorker]
+  // The indexing worker on the background admission (restart-robustness spec §5); requests stay on the request admission.
+  make[SearchWorker].from { (database: JdbcTransactions,root: RootLease,engine: PostgresRetrieval,client: Option[EmbeddingClient],settings: Option[EmbeddingSettings]) =>
+    new SearchWorker(database.background,root,engine,client,settings)
+  }
   make[Http]
   make[RuntimeServices]

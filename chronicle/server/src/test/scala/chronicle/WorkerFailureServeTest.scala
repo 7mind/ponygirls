@@ -37,7 +37,7 @@ final class WorkerFailureServeTest extends munit.FunSuite {
           make[Worker.FailureBackoff].fromValue(ModelFixtures.failureBackoff)
           // A transient failure's record is tried again until the lease ends: a lease of 2 s.
           make[Worker.Leases].fromValue(Worker.Leases.production.copy(lease=2.seconds,skewMargin=Duration.Zero))
-          make[SessionArchive].from { (store: PostgresArchive) => new ForwardingArchive(store) {
+          make[WorkerArchive].from { (db: Database,config: Config) => WorkerArchive(new ForwardingArchive(new PostgresArchive(db.background,config)) {
             override def claim(profiles: Set[String],scope: ClaimScope,lease: Int,large: LargeJobs): Option[Claim] = {
               if(recordFailed.tryGet.unsafeRunSync().nonEmpty) claimedAgain.complete(()).unsafeRunSync()
               super.claim(profiles,scope,lease,large)
@@ -46,7 +46,7 @@ final class WorkerFailureServeTest extends munit.FunSuite {
             override def fail(c: Claim,code: String): Unit = observed(super.fail(c,code))
             override def fail(c: Claim,code: String,stage: IndexingStage): Unit = observed(super.fail(c,code,stage))
             override def holdTransient(c: Claim,stage: Option[IndexingStage],bound: FiniteDuration): TransientOutcome = observed(super.holdTransient(c,stage,bound))
-          }}
+          })}
         })
         _ <- ChronicleInjector().produceGet[RuntimeServices](module).use { services =>
           val versions: IO[List[FiniteDuration]] = EmberClientBuilder.default[IO].build.use { client =>

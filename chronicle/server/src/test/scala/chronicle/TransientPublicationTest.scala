@@ -261,7 +261,7 @@ final class TransientPublicationTest extends munit.FunSuite {
       val factory=new ponygirls.runtime.JdbcConnectionFactory {
         def open(url: String,properties: java.util.Properties): java.sql.Connection = { logins.await(30,java.util.concurrent.TimeUnit.SECONDS); java.sql.DriverManager.getConnection(url,properties) }
       }
-      val stalled=Database.withRuntimes(slow,db.profiles,Database.runtimes(slow,ponygirls.runtime.BlockingJdbcDatabase.withConnectionFactory(_,factory)))
+      val stalled=Database.withFactory(slow,db.profiles,factory)
       try {
         val stalledArchive=new PostgresArchive(stalled,slow)
         val failures=new ConcurrentLinkedQueue[Throwable]; val tries=new AtomicInteger(0); val log=new WorkerLog
@@ -454,7 +454,7 @@ final class TransientPublicationTest extends munit.FunSuite {
       val leases=Worker.Leases(2.seconds,200.millis,Duration.Zero,recordTry)
       val size=PostgresArchive.searchRowsPerStatement
       database(config) { (db,publisher) =>
-        assertEquals(db.ordinaryConnections,1)
+        assertEquals(db.publicationPermits,1)
         val receipt=archive.ingest("a",messages(2*size))
         withTrigger(db,"ROW","IF EXISTS(SELECT 1 FROM ch_test_control WHERE kind='slow' AND value=NEW.ordinal::text) THEN PERFORM pg_sleep(3.5); END IF; RETURN NEW;") {
           control(db,"slow",0,size)
@@ -470,7 +470,7 @@ final class TransientPublicationTest extends munit.FunSuite {
       val one=fixture.copy(databaseLimits=fixture.databaseLimits.copy(maxConnections=1))
       one.validate()
       database(one) { (db,publisher) =>
-        assertEquals(db.ordinaryConnections,1)
+        assertEquals(db.publicationPermits,1)
         archive.ingest("b",Fixtures.snapshot())
         val claim=publisher.claim(publisher.knownProfiles,ClaimScope.Owner("b"),300).get
         assert(publisher.renew(claim,300))

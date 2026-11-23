@@ -8,7 +8,7 @@ import distage.*
 import manure.plugins.{ManurePlugin,RuntimeServices}
 import manure.storage.{ConfinedDirectory,RelativeName,RootLease,RootLocked}
 import ponygirls.auth.CredentialGate
-import ponygirls.runtime.{CatsIOInjector,DatabaseWait,JdbcDatabase,JdbcFailure,Migration,StartFailure}
+import ponygirls.runtime.{CatsIOInjector,DatabaseWait,JdbcDatabase,JdbcFailure,JdbcPoolSizing,Migration,StartFailure}
 import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry}
 import org.http4s.ember.server.EmberServerBuilder
 import scala.concurrent.duration.*
@@ -93,7 +93,8 @@ object Main extends IOApp:
     lease=files.lease
     control=files.control
     _ <- Resource.eval(stage("database-wait",IO.interruptibleMany(DatabaseWait.await(config.database,config.databaseStartWait,line => System.err.println("manure " + line)))))
-    database <- JdbcDatabase.resource(config.database).adaptError(staged("database"))
+    // The process's one pool (restart-robustness spec §5); `migrate` opens the compatible pool on use (one connection).
+    database <- JdbcDatabase.service(config.database,if recover then config.databasePool else JdbcPoolSizing.compatible(config.database.limits)).adaptError(staged("database"))
     models <- if recover then embedding(config) else Resource.pure[IO,Option[EmbeddingClient]](None)
     gate <- Resource.eval(Semaphore[IO](1L))
     credentials <- CredentialGate.resource

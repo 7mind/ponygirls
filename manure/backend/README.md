@@ -33,7 +33,9 @@ seconds=<n>` when it ends, `manure failure stage=database-wait … message="data
 a refused login or missing credential fails at once. Optional `limits.requestConnections` and
 `limits.backgroundConnections` (set together or omitted) size the process's one connection pool
 (`shared/service-runtime/README.md`): omitted, `maxConnections` − 2 halved from 8 connections up (8 → 3 + 3), below 8 one
-shared admission of `maxConnections`; set, request ≥ 1 and both together ≤ `maxConnections` − 2. Credential values
+shared admission of `maxConnections`; set, request ≥ 1 and both together ≤ `maxConnections` − 2. Requests use the request
+connections; the search worker and the sweeper the background ones (8 → a pool of 6 kept open; `migrate` opens one on
+use); a request that gets no connection answers 503 `Unavailable` with `Retry-After: 5`. Credential values
 are NEVER in configuration or Nix store; existing user token `hashFile` paths and
 credential directories are retained. `native_mode` defaults `linked`;
 `posix_library` optional only for `shared` (absolute library path required).

@@ -121,6 +121,8 @@ object EpochMaintenance {
     _ <- Resource.make(supervisor.supervise((sleep(interval) *> maintenance.attempt).foreverM))(_.cancel)
   } yield maintenance
 }
+/** The server's maintenance: long background work, every transaction behind the publication gate (restart-robustness
+  * spec §5). */
 final class EpochMaintenanceResource(db: Database,logger: logstage.IzLogger) extends Lifecycle.FromPair[IO,EpochMaintenance] {
-  def acquire: IO[(EpochMaintenance,IO[Unit])] = EpochMaintenance.resource(db,logger,EpochMaintenance.interval,IO.sleep).allocated
+  def acquire: IO[(EpochMaintenance,IO[Unit])] = EpochMaintenance.resource(db.maintenance,logger,EpochMaintenance.interval,IO.sleep).allocated
 }

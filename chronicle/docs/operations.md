@@ -240,10 +240,32 @@ rebuild reset it. Every other failure is charged as before.
   when that is larger; valid `databaseLimits.statementTimeoutMs`..3600000), set per transaction above the role's
   setting, with the network timeout following it. Every other transaction keeps `databaseLimits`; lock and
   idle-in-transaction timeouts are unchanged.
-- **Connections.** With `databaseLimits.maxConnections` of 2 or more one connection is kept for lease renewals, so they
-  never wait behind publication statements or other transactions; a publication's search-row writers use at most the
-  other connections. With 1 everything shares that connection, as before (a long publication statement then delays
-  renewals: not a production budget).
+- **Connections.** The server holds one connection pool (restart-robustness spec §5). With `databaseLimits.maxConnections`
+  of 8 or more and the optional `requestConnections`/`backgroundConnections` omitted it opens `maxConnections` − 2
+  connections at start and keeps them (12 → 10; two of the role's limit stay free for an exiting backend and an operator
+  session): half for requests — REST, MCP, WebSocket, sign-in (12 → 5) — and half for indexing and maintenance (5). Of
+  the latter one is the renewal permit, which only lease renewals use, so they never wait behind publication statements,
+  failure records or any other transaction; the other 4 serve claims, checkpoints, failure records, a publication's
+  start and switch, and long work: publication batches and search-row statements, epoch maintenance and retirements pass
+  a publication gate first, which admits `backgroundConnections` − 2 at once (3; waiting at most the publication
+  timeout, holding no connection meanwhile), so one connection always stays for short work; a publication's search-row
+  writers are at most the gate's permits. Set, the keys need `requestConnections` ≥ 1, `backgroundConnections` ≥ 3 and
+  both together ≤ `maxConnections` − 2 (else a `config` failure naming the key). Below 8 with the keys omitted one
+  admission serves everything with one connection kept for renewals (`maxConnections` − 1 + 1, gate 1, connections
+  opened on use); with 1 everything shares that connection, as before (a long publication statement then delays
+  renewals: not a production budget). More than 4 annotation sessions need a larger `backgroundConnections`. `migrate`
+  opens connections on use (one), so it fits beside a serving process.
+- **Database unavailable.** A request that gets no connection — its admission full or timed out after
+  `queueTimeoutMs`, none by the acquisition deadline (`connectTimeoutMs` rounded up to whole seconds; a fenced role's
+  28000 included) — or whose connection fails (08xxx, 57P01-03) is answered REST 503 `unavailable` with `Retry-After: 5`
+  (MCP: 503 at bearer authentication, a tool call's failure as tool error `unavailable` in 200; WebSocket operations
+  `unavailable`, as before). Fencing the role (a rollback): 1) `ALTER ROLE chronicle NOLOGIN`; 2) terminate its
+  sessions; 3) check `SELECT count(*) FROM pg_stat_activity WHERE usename='chronicle'` = 0, repeating 2–3 until it is;
+  4) roll back; 5) `ALTER ROLE chronicle LOGIN` only after that check. `NOLOGIN` alone leaves pooled sessions working
+  until they are retired (22.5–30 min); while fenced the pool retries its logins (back-off up to 5 s, one FATAL 28000
+  per try in the server log); after `LOGIN` the next retry succeeds without a restart. After a PostgreSQL restart with
+  connections lost silently (no reset from the network) a borrower can need more than one acquisition budget, each
+  stale connection costing up to a quarter of it; later borrows recover.
 - **Known limit.** A purge of a source whose publication statement is running waits for it and fails `unavailable`
   at its own statement timeout (30 s); it succeeds once that statement ends (at most the publication timeout).
 - **Migration 029** (applied by the start) adds `ch_jobs.transient_failures` and `ch_jobs.transient_range`

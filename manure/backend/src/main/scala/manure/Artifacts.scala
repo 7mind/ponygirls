@@ -229,8 +229,8 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
         }
       }} *> (if rows.size == limits.sweepBatch then batch(Some(rows.last.id)) else IO.unit)
     }
-    batch(None) *> cleanupOrphans()
-  private def cleanupOrphans(): IO[Unit] = serialized(metadata.transaction { tx =>
+    batch(None) *> cleanupOrphans(metadata)
+  private def cleanupOrphans(metadata: Metadata): IO[Unit] = serialized(metadata.transaction { tx =>
     var after: Option[String] = None
     var known = Set.empty[String]
     var more = true
@@ -241,7 +241,10 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
       after = rows.lastOption.map(_.id)
     payloads.cleanupOrphans(known)
   })
+  /** On the background admission (restart-robustness spec §5): requests never wait behind it for a connection. A
+    * deletion still holds the process exclusion while it waits for its transaction (at most the queue timeout). */
   def sweep(): IO[Int] =
+    val metadata = this.metadata.background
     def batch(after: Option[String],removed: Int): IO[Int] = metadata.transaction(_.artifacts(after,limits.sweepBatch)).flatMap { rows =>
       rows.traverse { a => serialized {
         metadata.transaction { tx =>
@@ -257,7 +260,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
         if rows.size == limits.sweepBatch then batch(Some(rows.last.id),total) else IO.pure(total)
       }
     }
-    batch(None,0).flatTap(_ => metadata.transaction(_.sweepGrants(clock.now)) *> cleanupOrphans())
+    batch(None,0).flatTap(_ => metadata.transaction(_.sweepGrants(clock.now)) *> cleanupOrphans(metadata))
   private def issue(tx: MetadataTxn,a: Artifact,identity: Option[Identity],passwordHash: Option[String]): (String,Double) =
     val value = SecretCodec.token()
     val expiry = math.min(clock.now+limits.grantTtl,a.expiresAtSeconds.getOrElse(Double.PositiveInfinity))

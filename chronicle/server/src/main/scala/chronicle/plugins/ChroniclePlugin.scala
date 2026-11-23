@@ -34,7 +34,11 @@ object ChroniclePlugin extends PluginDef {
   make[Embedder].from[OpenAIEmbedder]
   make[Worker.FailureBackoff].fromValue(Worker.FailureBackoff.production)
   make[Worker.Leases].fromValue(Worker.Leases.production)
-  make[Worker]
+  make[WorkerArchive].from { (db: Database,config: Config,layout: RevisionLayoutPolicy) => WorkerArchive(new PostgresArchive(db.background,config,layout)) }
+  make[Worker].from { (archive: WorkerArchive,annotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,
+      admission: ModelAdmission,logger: logstage.IzLogger,backoff: Worker.FailureBackoff,snapshots: SnapshotAdmission,leases: Worker.Leases) =>
+    new Worker(archive.archive,annotator,embedder,config,profiles,admission,logger,backoff,snapshots,leases)
+  }
   make[java.time.Clock].fromValue(java.time.Clock.systemUTC())
   make[CollectorProgressStore].from[PostgresCollectorProgressStore]
   make[CollectorProgress]

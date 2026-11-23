@@ -20,7 +20,7 @@ object Main extends IOApp {
     }).as(ExitCode.Success)
     case List("migrate",path) =>
       stage("config",IO.blocking(Config.load(path))).flatMap { config =>
-        awaitDatabase(config) *> cats.effect.Resource.make(stage("database",IO.blocking(new Database(config,IndexProfileCatalog.current(config)))))(db => IO.blocking(db.close()))
+        awaitDatabase(config) *> cats.effect.Resource.make(stage("database",IO.blocking(Database.command(config,IndexProfileCatalog.current(config)))))(db => IO.blocking(db.close()))
           .use(initialize)
       }.as(ExitCode.Success)
     case List(mode,path) if mode=="serve" || mode=="serve-standby" =>

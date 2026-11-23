@@ -13,6 +13,8 @@ import manure.storage.RootLease
   */
 trait Metadata:
   def transaction[A](body: MetadataTxn => A): IO[A]
+  /** Background work (restart-robustness spec §5: the sweeper) through the background admission; without one, here. */
+  def background: Metadata = this
 trait MetadataTxn:
   def accounts: AuthTxn
   def artifact(id: String): Option[Artifact]
@@ -40,8 +42,11 @@ trait MetadataTxn:
 
 trait JdbcTransactions:
   def transaction[A](body: Connection => A): IO[A]
+  /** The background admission's transactions (restart-robustness spec §5); without one, these. */
+  def background: JdbcTransactions = this
 
 final class PostgresMetadata(database: JdbcTransactions, root: RootLease, projection: SearchProjection) extends Metadata:
+  override lazy val background: Metadata = new PostgresMetadata(database.background,root,projection)
   override def transaction[A](body: MetadataTxn => A): IO[A] = database.transaction { connection =>
     root.run {
       // Fixed namespace, never derived from user data; transaction-scoped lock.

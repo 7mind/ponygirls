@@ -138,7 +138,8 @@ a namespace change needs a reviewed migration, never a fresh database.
 
 Role/database-scoped settings via `tuning` (applied by `haystack-setup`
 as `ALTER ROLE ... IN DATABASE`): SSD/NVMe planner profile, bounded JDBC admission
-(default config example8 active/32 queued; DriverManager-per-transaction, not a pool), per-operation `work_mem`, statement/lock/idle timeouts, JIT
+(default config example 8 connections/32 queued: one pool of 6 kept open, 3 for requests and the auth reload, 3 for the
+indexing worker, `shared/service-runtime/README.md`; a request that gets no connection answers 503 `unavailable`), per-operation `work_mem`, statement/lock/idle timeouts, JIT
 off for short interactive queries. Cluster-wide settings
 (`shared_buffers`, WAL/checkpoint, IO) need an explicit operator-approved
 cluster profile — the module never retunes unrelated databases.

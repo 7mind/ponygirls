@@ -36,7 +36,7 @@ extension (messages: ClaimedMessages) {
 import java.nio.file.{Files,Path}
 import java.util.UUID
 import scala.concurrent.duration.*
-import ponygirls.runtime.{BlockingJdbcDatabase, JdbcConnectionFactory, JdbcLimits}
+import ponygirls.runtime.{JdbcConnectionFactory, JdbcLimits}
 import java.sql.DriverManager
 import java.util.Properties
 object Fixtures {
@@ -75,7 +75,7 @@ object Fixtures {
       val canonical = config.copy(jdbcUrl=canonicalUrl)
       // The decorated URL belongs only to the explicit transport probe. Domain
       // initialization still validates an ordinary production-shaped configuration.
-      Database.withRuntimes(canonical,profiles,Database.runtimes(canonical,BlockingJdbcDatabase.withConnectionFactory(_,probe)))
+      Database.withFactory(canonical,profiles,probe)
     }
   }
   /** A start's initialize of `config` on a runtime of its own, closed afterwards. */

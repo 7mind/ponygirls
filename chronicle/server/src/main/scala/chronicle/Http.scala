@@ -355,6 +355,8 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     response.map(answer => if(answer.status==Status.ServiceUnavailable) retryAfter(answer,RawStream.retryAfterSeconds) else answer)
   private def handle(io: IO[Response[IO]]): IO[Response[IO]] = IO.defer(io).handleErrorWith {
     case d: DomainError => IO.pure(failure(d))
+    case error if Http.databaseUnavailable(error) => IO(logger.warn("request refused: database unavailable")) *>
+      IO.pure(retryAfter(json(Status.ServiceUnavailable,Wire.encode(Failure.codecJson,Failure("unavailable","database unavailable"))),Http.unavailableRetryAfterSeconds))
     case _ => IO(logger.error("request failed")) *> IO.pure(json(Status.InternalServerError,Wire.encode(Failure.codecJson,Failure("unavailable","request failed"))))
   }
   private def static(r: Request[IO]): IO[Response[IO]] = webRoot.path match {
@@ -527,6 +529,16 @@ object Http {
   /** The reverse proxy in front of Chronicle is local: only a loopback peer may name the client address. */
   def loopback(peer: String): Boolean = try java.net.InetAddress.ofLiteral(peer).isLoopbackAddress catch { case _: IllegalArgumentException => false }
   def retryAfterSeconds(wait: java.time.Duration): Long = math.max(1L,wait.getSeconds+(if(wait.getNano>0) 1L else 0L))
+  /** A database the request may find available again (restart-robustness spec §5 B7): a full, timed-out or closed admission,
+    * a connection the pool could not supply by its deadline (a fenced role's 28000 included) or a connection-class
+    * SQLSTATE (08xxx, 57P01-57P03). REST answers 503 `unavailable` with Retry-After [[unavailableRetryAfterSeconds]]. */
+  def databaseUnavailable(error: Throwable): Boolean = error match {
+    case ponygirls.runtime.RuntimeFailure("admission-full" | "admission-timeout" | "runtime-closed") => true
+    case ponygirls.runtime.JdbcFailure("connection-unavailable",_) => true
+    case ponygirls.runtime.JdbcFailure(_,Some(state)) => state.startsWith("08") || Set("57P01","57P02","57P03").contains(state)
+    case _ => false
+  }
+  val unavailableRetryAfterSeconds = 5L
   final case class WebRoot(path: Option[String])
   /** `hello` bounds the wait for Hello, a Ping is due every `pingEvery` and its Pong within `pongWithin`; the session is rechecked every `tick`. */
   final case class SocketLiveness(hello: FiniteDuration,pingEvery: FiniteDuration,pongWithin: FiniteDuration,tick: FiniteDuration) {
