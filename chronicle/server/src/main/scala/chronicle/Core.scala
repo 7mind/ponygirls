@@ -42,7 +42,8 @@ object AccountsConfig {
   val defaultEnrollmentTtlSeconds = 86400
 }
 object TokenPolicy { val maximumPerOwner = 100 }
-final case class StaticTokenConfig(id: UUID, userId: String, name: String, scopes: List[Scope], tokenFile: String)
+/** `operateJobs`: the account-plane scope OperateJobs (JobOperations), given only by naming it in `scopes`. */
+final case class StaticTokenConfig(id: UUID, userId: String, name: String, scopes: List[Scope], tokenFile: String, operateJobs: Boolean = false)
 final case class ModelConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int, requestPolicy: AnnotationRequestPolicy)
 final case class EmbeddingConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int, dimensions: Int, queryPrefix: String, documentPrefix: String, sendDimensions: Boolean)
 /** `incrementalPublication`: an append to an indexed session publishes only its tail as the next version of the published
@@ -98,7 +99,7 @@ final case class Config(listenHost: String, listenPort: Int, allowedOrigin: Stri
     staticTokens.foreach { t =>
       Check(users.exists(_.id==t.userId),"config","static token owner must be configured")
       Check(t.name.nonEmpty && t.name.length<=128,"config","invalid static token name")
-      Check(t.scopes.nonEmpty && t.scopes.distinct.size==t.scopes.size && (!t.scopes.contains(Scope.Raw)||t.scopes.contains(Scope.Read)),"config","invalid static token scopes")
+      Check(t.scopes.nonEmpty && t.scopes.distinct.size==t.scopes.size && (!t.scopes.contains(Scope.Raw)||t.scopes.contains(Scope.Read)) && (!t.operateJobs||t.scopes.contains(Scope.Read)),"config","invalid static token scopes")
       val path=Path.of(t.tokenFile)
       Check(path.isAbsolute && !path.normalize().startsWith(Path.of("/nix/store")),"config","static token requires runtime credential file")
     }
@@ -162,12 +163,9 @@ object Config {
     id <- cursor.get[UUID]("id")
     owner <- cursor.get[String]("userId")
     name <- cursor.get[String]("name")
-    scopes <- cursor.get[List[String]]("scopes").flatMap(xs => xs.foldLeft[Decoder.Result[List[Scope]]](Right(Nil)) { (acc,s) => for {
-      values <- acc
-      scope <- Scope.parse(s).toRight(io.circe.DecodingFailure("invalid scope",cursor.history))
-    } yield values :+ scope })
+    scopes <- cursor.get[List[String]]("scopes").flatMap(xs => JobOperations.scopes(xs).toRight(io.circe.DecodingFailure("invalid static token scopes",cursor.history)))
     file <- cursor.get[String]("tokenFile")
-  } yield StaticTokenConfig(id,owner,name,scopes,file) }
+  } yield StaticTokenConfig(id,owner,name,scopes._1,file,scopes._2) }
   given Decoder[AnnotationRequestPolicy] = Decoder.decodeString.emap {
     case "strict-json-schema" => Right(AnnotationRequestPolicy.StrictJsonSchema)
     case "strict-json-schema-32k" => Right(AnnotationRequestPolicy.StrictJsonSchema32k)

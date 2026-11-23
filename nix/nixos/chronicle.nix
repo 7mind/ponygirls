@@ -86,7 +86,7 @@ in
           id = lib.mkOption { type = lib.types.strMatching "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"; description = "Stable token UUID."; };
           userId = lib.mkOption { type = lib.types.str; description = "Existing configured owner ID."; };
           name = lib.mkOption { type = lib.types.str; };
-          scopes = lib.mkOption { type = lib.types.listOf (lib.types.enum [ "Ingest" "Read" "Raw" ]); };
+          scopes = lib.mkOption { type = lib.types.listOf (lib.types.enum [ "Ingest" "Read" "Raw" "OperateJobs" ]); description = "OperateJobs (requires Read) lets the token list the owner's indexing jobs, retry one and run Retry failed through /api/jobs/v1; nothing else."; };
           tokenFile = lib.mkOption { type = lib.types.str; description = "Private runtime file containing a random strong bearer token, never a Nix store file."; };
         };
       });
@@ -141,7 +141,7 @@ in
         { assertion = !cfg.loopbackDevelopment || (cfg.publicUrl != null && (lib.hasPrefix "http://127.0.0.1:" cfg.publicUrl || lib.hasPrefix "http://localhost:" cfg.publicUrl)); message = "Chronicle: loopbackDevelopment is only valid with a loopback HTTP Origin."; }
         { assertion = lib.any (u: u.enabled) (builtins.attrValues cfg.users); message = "Chronicle: configure at least one enabled static user."; }
         { assertion = builtins.length (map (t: lib.toLower t.id) cfg.staticTokens) == builtins.length (lib.unique (map (t: lib.toLower t.id) cfg.staticTokens)); message = "Chronicle: static token IDs must be distinct."; }
-        { assertion = lib.all (t: builtins.hasAttr t.userId cfg.users && t.name != "" && builtins.stringLength t.name <= 128 && t.scopes != [ ] && builtins.length t.scopes == builtins.length (lib.unique t.scopes) && (!(builtins.elem "Raw" t.scopes) || builtins.elem "Read" t.scopes)) cfg.staticTokens; message = "Chronicle: static tokens require configured owners, bounded names and nonempty distinct valid scopes (Raw requires Read)."; }
+        { assertion = lib.all (t: builtins.hasAttr t.userId cfg.users && t.name != "" && builtins.stringLength t.name <= 128 && t.scopes != [ ] && builtins.length t.scopes == builtins.length (lib.unique t.scopes) && (!(builtins.elem "Raw" t.scopes) || builtins.elem "Read" t.scopes) && (!(builtins.elem "OperateJobs" t.scopes) || builtins.elem "Read" t.scopes)) cfg.staticTokens; message = "Chronicle: static tokens require configured owners, bounded names and nonempty distinct valid scopes (Raw and OperateJobs require Read)."; }
         { assertion = builtins.length loginList == builtins.length (lib.unique loginList); message = "Chronicle: logins must be unique."; }
         { assertion = lib.all (p: lib.hasPrefix "/" p && !(lib.hasPrefix builtins.storeDir p)) runtimeFiles; message = "Chronicle: all credential files must be runtime paths outside the Nix store."; }
         { assertion = !cfg.database.ssdTuning; message = "Chronicle: database.ssdTuning has been retired; configure measured ponygirls.servicePostgres.randomPageCost, effectiveIoConcurrency and maintenanceIoConcurrency explicitly. Chronicle no longer owns cluster tuning."; }

@@ -64,4 +64,24 @@ class StaticTokenTest extends munit.FunSuite {
     assertEquals(intercept[DomainError](new Database(c.copy(staticTokens=List(valueCollision)),IndexProfileCatalog.current(c.copy(staticTokens=List(valueCollision)))).initialize()).code,"config")
     assertEquals(auth.bearer(issued.secret.get).user.id,"a")
   }
+  test("R-f S10: configured OperateJobs passes one scope parser, and configuration alone grants and clears it") {
+    def configured(scopes: String): Option[StaticTokenConfig] =
+      Wire.parse(s"""{"id":"${UUID.randomUUID()}","userId":"a","name":"operator","scopes":$scopes,"tokenFile":"/run/token"}""").as[StaticTokenConfig](using Config.given_Decoder_StaticTokenConfig).toOption
+    List("""["OperateJobs"]""","""["Read","OperateJobs","OperateJobs"]""","""["Read","Read","OperateJobs"]""").foreach(scopes => assertEquals(configured(scopes),None,scopes))
+    val granted=configured("""["OperateJobs","Read"]""").get
+    assertEquals(granted.scopes,List(Scope.Read))
+    if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped") }
+    val c=Fixtures.config(); val db=new Database(c,IndexProfileCatalog.current(c)); db.initialize()
+    db.transaction(x => { Sql.exec(x,"TRUNCATE ch_tokens,ch_mutations,ch_sessions CASCADE"); () })
+    val file=token("a",Wire.secret()).tokenFile
+    def start(t: StaticTokenConfig): (Boolean,String) = {
+      val managed=c.copy(staticTokens=List(t)); val started=new Database(managed,IndexProfileCatalog.current(managed))
+      try started.initialize() finally started.close()
+      db.transaction(x => Sql.one(x,"SELECT operate_jobs,info->>'createdAt' FROM ch_tokens WHERE id=?",t.id)(r => (r.getBoolean(1),r.getString(2))).get)
+    }
+    val (operating,created)=start(granted.copy(tokenFile=file))
+    assert(operating)
+    assertEquals(start(configured("""["Read"]""").get.copy(id=granted.id,tokenFile=file)),(false,created))
+    db.close()
+  }
 }

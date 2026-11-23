@@ -189,21 +189,24 @@ final class Auth(db: Database, config: Config) {
     Sql.exec(c,"DELETE FROM ch_sessions WHERE hash=? AND owner=?",i.credentialHash,i.user.id)
     ()
   }
-  private def listedTokens(c: Connection,owner: String): List[ListedToken] =
-    Sql.rows(c,s"SELECT info,revoked,static_config FROM ch_tokens WHERE owner=? ORDER BY revoked,static_config DESC,id LIMIT ${TokenPolicy.maximumPerOwner}",owner)(r => ListedToken(Wire.decode(TokenInfo.codecJson,Sql.json(r,"info")).copy(revoked=r.getBoolean("revoked")),if(r.getBoolean("static_config")) TokenSource.StaticConfig else TokenSource.Issued))
+  /** Each token with whether it has OperateJobs, which its typed `TokenInfo` never carries. */
+  private def ownedTokens(c: Connection,owner: String): List[(ListedToken,Boolean)] =
+    Sql.rows(c,s"SELECT info,revoked,static_config,operate_jobs FROM ch_tokens WHERE owner=? ORDER BY revoked,static_config DESC,id LIMIT ${TokenPolicy.maximumPerOwner}",owner)(r => (ListedToken(Wire.decode(TokenInfo.codecJson,Sql.json(r,"info")).copy(revoked=r.getBoolean("revoked")),if(r.getBoolean("static_config")) TokenSource.StaticConfig else TokenSource.Issued),r.getBoolean("operate_jobs")))
+  private def listedTokens(c: Connection,owner: String): List[ListedToken] = ownedTokens(c,owner).map(_._1)
   def tokens(i: Identity): TokensResult = { i.requireBrowser(); db.transaction { c => currentBrowser(c,i); TokensResult(listedTokens(c,i.user.id)) } }
   private def accountUser(c: Connection,i: Identity): AccountUser = {
     val hash=Sql.one(c,"SELECT credential FROM ch_users WHERE id=? AND enabled",i.user.id)(_.getString(1)).getOrElse(throw DomainError("unauthorized","session revoked"))
     AccountUser(i.user.id,"human",i.user.login,Some(i.user.login),Some(hash),true,if(config.users.exists(_.id==i.user.id)) AccountOrigin.Declarative else AccountOrigin.Imperative)
   }
-  private def accountToken(token: ListedToken): AccountToken = {
+  /** `all`: the request opted into every account scope (`X-Account-Scopes: all`); otherwise the typed scopes only, as before. */
+  private def accountToken(token: ListedToken,operateJobs: Boolean,all: Boolean): AccountToken = {
     val t=token.info
-    AccountToken(t.id.toString,t.name,if(token.source==TokenSource.StaticConfig) "configured" else "issued",Some(t.createdAt),t.revoked,t.scopes.map(_.toString).toVector)
+    AccountToken(t.id.toString,t.name,if(token.source==TokenSource.StaticConfig) "configured" else "issued",Some(t.createdAt),t.revoked,(t.scopes.map(_.toString)++Option.when(all && operateJobs)(JobOperations.scope)).toVector)
   }
-  def account(i: Identity): (AccountUser,Vector[AccountToken]) = db.transaction { c =>
+  def account(i: Identity,all: Boolean): (AccountUser,Vector[AccountToken]) = db.transaction { c =>
     val current=currentBrowser(c,i)
     val user=accountUser(c,current)
-    val tokens=listedTokens(c,current.user.id).map(accountToken).toVector
+    val tokens=ownedTokens(c,current.user.id).map((token,operateJobs) => accountToken(token,operateJobs,all)).toVector
     currentBrowser(c,i)
     (user,tokens)
   }
@@ -214,13 +217,13 @@ final class Auth(db: Database, config: Config) {
     currentBrowser(c,i)
     ()
   }
-  private def mintToken(c: Connection,i: Identity,name: String,scopes: List[Scope]): TokenResult = {
+  private def mintToken(c: Connection,i: Identity,name: String,scopes: List[Scope],operateJobs: Boolean): TokenResult = {
     lockBrowser(c,i)
-    Check.text(name,128); Check(scopes.nonEmpty && scopes.distinct.size==scopes.size && (!scopes.contains(Scope.Raw)||scopes.contains(Scope.Read)),"invalid","invalid scopes")
+    Check.text(name,128); Check(scopes.nonEmpty && scopes.distinct.size==scopes.size && (!scopes.contains(Scope.Raw)||scopes.contains(Scope.Read)) && (!operateJobs||scopes.contains(Scope.Read)),"invalid","invalid scopes")
     Sql.exec(c,"LOCK TABLE ch_tokens IN ROW EXCLUSIVE MODE")
     Check(Sql.one(c,"SELECT count(*) FROM ch_tokens WHERE owner=? AND NOT revoked",i.user.id)(_.getInt(1)).get < TokenPolicy.maximumPerOwner,"invalid","token limit")
     val secret=Wire.secret(); val token=TokenInfo(UUID.randomUUID(),name,scopes,Instant.now().toString,false)
-    Sql.exec(c,"INSERT INTO ch_tokens(id,owner,hash,info) VALUES(?,?,?,?::jsonb)",token.id,i.user.id,Wire.hash(secret),Wire.encode(TokenInfo.codecJson,token).noSpaces)
+    Sql.exec(c,"INSERT INTO ch_tokens(id,owner,hash,info,operate_jobs) VALUES(?,?,?,?::jsonb,?)",token.id,i.user.id,Wire.hash(secret),Wire.encode(TokenInfo.codecJson,token).noSpaces,operateJobs)
     TokenResult(token,Some(secret))
   }
   private def revokeToken(c: Connection,i: Identity,id: UUID): Unit = {
@@ -229,13 +232,15 @@ final class Auth(db: Database, config: Config) {
     Sql.one(c,"SELECT static_config FROM ch_tokens WHERE id=? AND owner=? FOR UPDATE",id,i.user.id)(_.getBoolean(1)).foreach(managed => Check(!managed,"forbidden","configuration-managed token is immutable"))
     Check(Sql.exec(c,"UPDATE ch_tokens SET revoked=true WHERE id=? AND owner=?",id,i.user.id)==1,"not-found","token not found")
   }
-  def issueAccountToken(i: Identity,name: String,scopes: Vector[String],actors: Vector[String]): AccountIssued = db.transaction { c =>
+  /** OperateJobs can be requested only by a request that opted into every account scope (`all`). */
+  def issueAccountToken(i: Identity,name: String,scopes: Vector[String],actors: Vector[String],all: Boolean): AccountIssued = db.transaction { c =>
     Sql.lock(c,s"mutation:${i.user.id}")
     lockBrowser(c,i)
     AccountJson.requireActor(actors,i.user.id)
-    val parsed=scopes.map(scope => Scope.parse(scope).getOrElse(throw DomainError("invalid","invalid scopes"))).toList
-    val issued=mintToken(c,i,name,parsed)
-    AccountIssued(accountToken(ListedToken(issued.token,TokenSource.Issued)),issued.secret.get)
+    Check(all || !scopes.contains(JobOperations.scope),"invalid","invalid scopes")
+    val (parsed,operateJobs)=JobOperations.scopes(scopes).getOrElse(throw DomainError("invalid","invalid scopes"))
+    val issued=mintToken(c,i,name,parsed,operateJobs)
+    AccountIssued(accountToken(ListedToken(issued.token,TokenSource.Issued),operateJobs,all),issued.secret.get)
   }
   def revokeAccountToken(i: Identity,id: String,actors: Vector[String]): Unit = db.transaction { c =>
     Sql.lock(c,s"mutation:${i.user.id}")
@@ -334,7 +339,7 @@ final class Auth(db: Database, config: Config) {
     def receipt(op: String,id: Option[UUID]): Result = Result.Mutation(MutationReceipt(e.requestId,op,id))
     def groupOwner(id: UUID): Unit = Check(Sql.one(c,"SELECT 1 FROM ch_groups WHERE id=? AND owner=? FOR UPDATE",id,owner)(_ => true).contains(true),"not-found","group not found")
     e.operation match {
-      case Operation.MintToken(name,scopes) => Result.Token(mintToken(c,i,name,scopes))
+      case Operation.MintToken(name,scopes) => Result.Token(mintToken(c,i,name,scopes,false))
       case Operation.RevokeToken(id) => revokeToken(c,i,id); receipt("RevokeToken",Some(id))
       case Operation.CreateGroup(name) =>
         Check.text(name,128)

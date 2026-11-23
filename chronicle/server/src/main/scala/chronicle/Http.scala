@@ -56,6 +56,13 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     Check((sites.isEmpty && header(r,"Origin").nonEmpty) || sites.toList==List("same-origin"),"forbidden","same-origin browser request required")
   }
   private def accountActors(r: Request[IO]): Vector[String] = r.headers.headers.filter(_.name==CIString("X-Account-Actor")).map(_.value).toVector
+  /** The opt-in to every account scope: at most one `X-Account-Scopes`, and only `all`. Without it the account answers
+    * name the typed scopes only. */
+  private def accountScopesAll(r: Request[IO]): Boolean = r.headers.headers.filter(_.name==CIString(Http.accountScopesHeader)).map(_.value) match {
+    case Nil => false
+    case List(Http.allAccountScopes) => true
+    case _ => throw DomainError("invalid","invalid account scopes header")
+  }
   private def accountBody(r: Request[IO]): IO[io.circe.Json] = boundedBytes(r,math.min(config.maxBodyBytes,AccountJson.maxBodyBytes)).map(AccountJson.parseUtf8)
   private def accountEmpty(j: io.circe.Json): Unit = Check(j.asObject.exists(_.isEmpty),"invalid","empty object required")
   private def accountOk: Response[IO] = json(Status.Ok,io.circe.Json.obj("ok"->io.circe.Json.True))
@@ -154,9 +161,10 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     }
     case r @ GET -> Root / "api" / "account" / "v1" => handleAccount { IO.blocking {
       accountBoundary(r,false)
+      val all=accountScopesAll(r)
       val secret=cookie(r)
-      val (user,tokens)=auth.account(auth.browser(secret))
-      json(Status.Ok,AccountJson.account(user,tokens,Vector("Ingest","Read","Raw"))).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds))
+      val (user,tokens)=auth.account(auth.browser(secret),all)
+      json(Status.Ok,AccountJson.account(user,tokens,Vector("Ingest","Read","Raw")++Option.when(all)(JobOperations.scope))).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds))
     } }
     case r @ POST -> Root / "api" / "account" / "v1" / "logout" => handleAccount {
       IO(accountBoundary(r,true)) *> accountBody(r).flatMap { j => IO.blocking {
@@ -166,12 +174,12 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
       }}
     }
     case r @ POST -> Root / "api" / "account" / "v1" / "tokens" => handleAccount {
-      IO(accountBoundary(r,true)) *> accountBody(r).flatMap { j => IO.blocking {
+      IO { accountBoundary(r,true); accountScopesAll(r) }.flatMap(all => accountBody(r).flatMap { j => IO.blocking {
         val (name,scopes)=AccountJson.decodeIssue(j)
         val secret=cookie(r)
-        val issued=auth.issueAccountToken(auth.browser(secret),name,scopes,accountActors(r))
+        val issued=auth.issueAccountToken(auth.browser(secret),name,scopes,accountActors(r),all)
         json(Status.Ok,AccountJson.issued(issued)).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds))
-      }}
+      }})
     }
     case r @ POST -> Root / "api" / "account" / "v1" / "tokens" / id / "revoke" => handleAccount {
       IO(accountBoundary(r,true)) *> accountBody(r).flatMap { j => IO.blocking {
@@ -464,6 +472,8 @@ object Http {
   val mcpBodyBytes = 64*1024
   val socketFrameBytes = 64*1024
   val accountPrefix = "/api/account/v1"
+  val accountScopesHeader = "X-Account-Scopes"
+  val allAccountScopes = "all"
   // Bucket of requests whose socket peer is unknown: they share one address window.
   val unknownPeer = "unknown"
   /** The reverse proxy in front of Chronicle is local: only a loopback peer may name the client address. */

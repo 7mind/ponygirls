@@ -43,7 +43,8 @@ object StaticTokens {
     entries.foreach { case (t,h) =>
       val created=Sql.one(c,"SELECT info FROM ch_tokens WHERE id=?",t.id)(r => Wire.decode(TokenInfo.codecJson,Sql.json(r,"info")).createdAt).getOrElse(Instant.now().toString)
       val info=TokenInfo(t.id,t.name,t.scopes,created,false)
-      Sql.exec(c,"INSERT INTO ch_tokens(id,owner,hash,info,static_config) VALUES(?,?,?,?::jsonb,true) ON CONFLICT(id) DO UPDATE SET hash=excluded.hash,info=excluded.info,revoked=false",t.id,t.userId,h,Wire.encode(TokenInfo.codecJson,info).noSpaces)
+      // Configuration is authoritative for OperateJobs too: a removed grant is cleared on the next start.
+      Sql.exec(c,"INSERT INTO ch_tokens(id,owner,hash,info,static_config,operate_jobs) VALUES(?,?,?,?::jsonb,true,?) ON CONFLICT(id) DO UPDATE SET hash=excluded.hash,info=excluded.info,revoked=false,operate_jobs=excluded.operate_jobs",t.id,t.userId,h,Wire.encode(TokenInfo.codecJson,info).noSpaces,t.operateJobs)
     }
   }
 }
