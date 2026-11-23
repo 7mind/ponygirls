@@ -134,7 +134,8 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
   /** `DISCARD ALL` and the configured bounds in one execution, capped at `until` = min(deadline, now + reset cap): the
     * watchdog, armed for the time left until then, ends it whatever it waits for and owns the connection until the reset
     * disarms it; a reset that ends after `until` (an alarm delivered late, a reply arriving in pieces) is not accepted
-    * either. Then the transaction's own network timeout, before any of its statements. */
+    * either. Then the transaction's own network timeout, before any of its statements, and the acquisition deadline once
+    * more. */
   private def reset(c: Connection, deadline: Long, timing: Acquisition, bounds: Bounds): Reset = {
     val started = nanoTime()
     val until = math.min(deadline, started + timing.resetCap.toNanos)
@@ -152,7 +153,11 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
             val ended = nanoTime()
             if (ended - deadline > 0) Reset.Late
             else if (ended - until > 0) Reset.Failed(None)
-            else { c.setNetworkTimeout(direct, networkTimeout(bounds)); Reset.Ready }
+            else {
+              c.setNetworkTimeout(direct, networkTimeout(bounds))
+              // The deadline is checked last: a setter or a pause crossing it hands nothing over.
+              if (nanoTime() - deadline > 0) Reset.Late else Reset.Ready
+            }
           }
         } finally cancel()
       } catch { case e: SQLException => Reset.Failed(sqlState(e)) }

@@ -231,7 +231,7 @@ final class PoolSuite extends FunSuite {
     }
   } }
 
-  test("D5 a reset that ends after its cap is not handed over although its alarm comes late; a remainder below a millisecond borrows without waiting") { configured { config =>
+  test("D5 a reset that ends after its cap is not handed over although its alarm comes late; a remainder below a millisecond borrows without waiting; the deadline is checked after the network timeout is set") { configured { config =>
     import JdbcTransactionEngine.{Acquisition, Watchdog, acquisitionBudget}
     val arms = new AtomicInteger
     // Every alarm arrives too late to abort anything.
@@ -256,6 +256,19 @@ final class PoolSuite extends FunSuite {
       arms.set(0); start.set(System.nanoTime())
       scala.util.Try(pool.boundedTransaction(1.milli)(_ => 0))
       assertEquals((arms.get, idle.opened.get), (1, 1))
+    }
+    // (c) The deadline passes while the transaction's own network timeout is installed (the first setter after the reset
+    // executed, on the engine's clock): the connection goes back to the pool, unused, and the callback never runs.
+    val crossing = new java.util.concurrent.atomic.AtomicLong(0); val reset = new java.util.concurrent.atomic.AtomicBoolean(false)
+    val once = new java.util.concurrent.atomic.AtomicBoolean(true)
+    val pausing = new Counting((_, c) => proxy(classOf[Connection], afterReset(c, () => reset.set(true))) { (m, _) =>
+      if (m.getName == "setNetworkTimeout" && reset.get && once.compareAndSet(true, false)) crossing.addAndGet(acquisitionBudget(2.seconds).toNanos)
+      None
+    })
+    Using.resource(engine(config, 2.seconds, pausing, late, () => System.nanoTime() + crossing.get)) { pool =>
+      assertEquals(intercept[JdbcFailure](pool.transaction(_ => fail("handed over after the deadline"))).code, "connection-unavailable")
+      assertEquals(pool.transaction(pid) > 0, true)
+      assertEquals(pausing.opened.get, 1)
     }
   } }
 
