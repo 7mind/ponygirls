@@ -13,7 +13,8 @@ sealed trait BlockingJdbcTransactions {
   /** One try (R-a2 M1, the transient failure record) by `deadline` D: refused `admission-timeout` with less than
     * [[BlockingJdbcDatabase.minimumTry]] left; the admission waits at most min(`queueTimeoutMs`, D − now), read right
     * before its semaphore; then [[JdbcTransactionEngine.transactionWithin]] (acquisition, setup, statements and COMMIT by
-    * D; `deadline-expired`). */
+    * D; `deadline-expired`). Callbacks use prepared statements with scalar values only: a refcursor value, or an unsupported
+    * operation attempted after the deadline (reported as `deadline-expired`), is outside this guarantee (M1 gate, stated limits). */
   def transactionWithin[A](deadline: Deadline)(f: Connection => A): A
 }
 
