@@ -49,7 +49,7 @@ class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
   def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int=delegate.discardCheckpoints(c,stage,window)
   def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation=delegate.reserveAnnotation(c,key)
   def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int=delegate.rejectAnnotation(c,key,attempt,reason)
-  def holdTransient(c: Claim,stage: Option[IndexingStage],bound: FiniteDuration): TransientOutcome=delegate.holdTransient(c,stage,bound)
+  def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome=delegate.holdTransient(c,stage,deadline)
 }
 abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   def withFixture(run: ContextWorkerFixture => Unit): Unit

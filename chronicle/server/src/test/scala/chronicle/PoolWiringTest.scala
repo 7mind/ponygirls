@@ -79,7 +79,7 @@ final class PoolWiringTest extends munit.FunSuite {
             override def progress(c: Claim,done: Int,total: Int): Boolean = observed(super.progress(c,done,total))
             override def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = observed(super.windowWork(c,key))
             override def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = observed(super.reserveAnnotation(c,key))
-            override def holdTransient(c: Claim,stage: Option[IndexingStage],bound: FiniteDuration): TransientOutcome = observed(super.holdTransient(c,stage,bound))
+            override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = observed(super.holdTransient(c,stage,deadline))
           }
           def renewed: Boolean = jobs.forall(id => Option(renewals.get(id)).exists(_.get>=20))
           val annotating=new AtomicInteger(0)
@@ -104,7 +104,7 @@ final class PoolWiringTest extends munit.FunSuite {
           val slow=new CountDownLatch(1)
           val claimHolder=latched(executor,slow,1)(f => db.background.transaction(f))
           try {
-            assertEquals(intercept[RuntimeFailure](db.background.boundedTransaction(200.millis)(_ => ())).code,"admission-timeout")
+            assertEquals(intercept[RuntimeFailure](db.background.transactionWithin(Deadline.now+200.millis)(_ => ())).code,"admission-timeout")
             assert(background.renew(claimed,300),"renewed while every shared permit is held")
           } finally slow.countDown()
           claimHolder.foreach(_.get(10,TimeUnit.SECONDS))

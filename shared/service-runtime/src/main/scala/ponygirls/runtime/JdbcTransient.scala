@@ -21,4 +21,11 @@ object JdbcTransient {
     case RuntimeFailure(code) => AdmissionBusy.contains(code)
     case _ => false
   }
+
+  /** The engine's own deadline outcome (R-a2 M1): a try of `transactionWithin` refused at a boundary past its deadline or
+    * cut by its watch, whatever its SQLSTATE; its COMMIT, if sent, has an unknown outcome. */
+  def deadline(error: Throwable): Boolean = error match {
+    case JdbcFailure(JdbcTransactionEngine.DeadlineCode, _) => true
+    case _ => false
+  }
 }

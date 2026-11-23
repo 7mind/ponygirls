@@ -5,7 +5,7 @@ import cats.effect.{Deferred,IO,Outcome}
 import cats.effect.unsafe.implicits.global
 import ponygirls.runtime.JdbcFailure
 import java.util.UUID
-import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.{ConcurrentLinkedQueue,CountDownLatch}
 import java.util.concurrent.atomic.{AtomicBoolean,AtomicInteger}
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
@@ -24,8 +24,8 @@ final class TransientPublicationTest extends munit.FunSuite {
     def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.pure(text.map(_ => List(1.0,0.0,0.0)))
   }
   private val backoff=Worker.FailureBackoff(50.millis)
-  private def lane(archive: SessionArchive,config: Config,logger: logstage.IzLogger,leases: Worker.Leases,annotator: ProblemPassageAnnotator=new Annotator): Worker =
-    new Worker(archive,annotator,embedder,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),logger,backoff,ModelFixtures.snapshots,leases)
+  private def lane(archive: SessionArchive,config: Config,logger: logstage.IzLogger,leases: Worker.Leases,annotator: ProblemPassageAnnotator=new Annotator,pause: Worker.FailureBackoff=backoff): Worker =
+    new Worker(archive,annotator,embedder,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),logger,pause,ModelFixtures.snapshots,leases)
   /** Request statements bounded at one second, publication statements at `publication`. */
   private def bounded(config: Config,publication: FiniteDuration): Config =
     config.copy(databaseLimits=config.databaseLimits.copy(statementTimeout=1.second),indexing=config.indexing.copy(publicationStatementTimeout=Some(publication)))
@@ -129,7 +129,7 @@ final class TransientPublicationTest extends munit.FunSuite {
       def attempt(): (Option[TransientOutcome],JobRow) = {
         val claim=publisher.claim(publisher.knownProfiles,ClaimScope.Owner("a"),300).get
         val outcome=try { assert(publisher.publishProblems(claim,rows)); None } catch {
-          case failure: JdbcFailure => assertEquals(failure.sqlState,Some("57014")); Some(publisher.holdTransient(claim,Some(IndexingStage.Publication),recordTry))
+          case failure: JdbcFailure => assertEquals(failure.sqlState,Some("57014")); Some(publisher.holdTransient(claim,Some(IndexingStage.Publication),Deadline.now+recordTry))
         }
         val row=job(db,receipt.jobId); due(db,receipt.jobId); (outcome,row)
       }
@@ -243,7 +243,7 @@ final class TransientPublicationTest extends munit.FunSuite {
           try {
             awaitServer(db,"EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event='PgSleep' AND query LIKE 'INSERT INTO ch_search_chunks%')","the earlier attempt's statement runs")
             // Its failure was recorded while the statement ran (as the first failing writer's report does).
-            assert(publisher.holdTransient(earlier,Some(IndexingStage.Publication),recordTry).isInstanceOf[TransientOutcome.Held])
+            assert(publisher.holdTransient(earlier,Some(IndexingStage.Publication),Deadline.now+recordTry).isInstanceOf[TransientOutcome.Held])
             due(db,receipt.jobId)
             assert(lane(publisher,config,log.logger,Worker.Leases.production).once.unsafeRunSync())
             // Held, its attempt refunded; the count starts at 1: this attempt committed its model answers' checkpoints.
@@ -299,10 +299,10 @@ final class TransientPublicationTest extends munit.FunSuite {
         override def checkpoint(c: Claim,key: CheckpointKey,value: io.circe.Json): Unit =
           if(key.stage==IndexingStage.Annotation && answerLost.getAndSet(false)) throw JdbcFailure("database-unavailable",Some("08006")) else super.checkpoint(c,key,value)
         // Refused twice; the third try commits but its acknowledgement is lost; the fourth finds it recorded.
-        override def holdTransient(c: Claim,stage: Option[IndexingStage],bound: FiniteDuration): TransientOutcome = tries.incrementAndGet() match {
+        override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = tries.incrementAndGet() match {
           case 1 | 2 => throw unavailable
-          case 3 => super.holdTransient(c,stage,bound); throw JdbcFailure("database-unavailable",Some("08006"))
-          case _ => super.holdTransient(c,stage,bound)
+          case 3 => super.holdTransient(c,stage,deadline); throw JdbcFailure("database-unavailable",Some("08006"))
+          case _ => super.holdTransient(c,stage,deadline)
         }
       }
       val receipt=archive.ingest("a",Fixtures.snapshot())
@@ -329,9 +329,9 @@ final class TransientPublicationTest extends munit.FunSuite {
         val wrapper=new ForwardingArchive(archive) {
           override def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] =
             try stalledArchive.windowWork(c,key) catch { case error: Throwable => failures.add(error); throw error }
-          override def holdTransient(c: Claim,stage: Option[IndexingStage],bound: FiniteDuration): TransientOutcome = {
+          override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = {
             if(tries.incrementAndGet()==2) logins.countDown()
-            try stalledArchive.holdTransient(c,stage,bound) catch { case error: Throwable => failures.add(error); throw error }
+            try stalledArchive.holdTransient(c,stage,deadline) catch { case error: Throwable => failures.add(error); throw error }
           }
         }
         val receipt=archive.ingest("a",Fixtures.snapshot())
@@ -350,7 +350,7 @@ final class TransientPublicationTest extends munit.FunSuite {
       val log=new WorkerLog; val tries=new AtomicInteger(0)
       val wrapper=new ForwardingArchive(archive) {
         override def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = throw unavailable
-        override def holdTransient(c: Claim,stage: Option[IndexingStage],bound: FiniteDuration): TransientOutcome = {
+        override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = {
           if(tries.incrementAndGet()==1) {
             // Meanwhile the lease ended and another lane claimed the job.
             db.transaction(x => Sql.exec(x,"UPDATE ch_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=?",c.jobId))
@@ -358,7 +358,7 @@ final class TransientPublicationTest extends munit.FunSuite {
             require(archive.claim(archive.knownProfiles,ClaimScope.Owner("a"),300).nonEmpty,"the other lane's claim")
             throw unavailable
           }
-          super.holdTransient(c,stage,bound)
+          super.holdTransient(c,stage,deadline)
         }
       }
       val receipt=archive.ingest("a",Fixtures.snapshot())
@@ -381,9 +381,9 @@ final class TransientPublicationTest extends munit.FunSuite {
         val wrapper=new ForwardingArchive(archive) {
           override def claim(profiles: Set[String],scope: ClaimScope,lease: Int,large: LargeJobs): Option[Claim] = { claimed.compareAndSet(null,Deadline.now); super.claim(profiles,scope,lease,large) }
           override def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = throw unavailable
-          override def holdTransient(c: Claim,stage: Option[IndexingStage],bound: FiniteDuration): TransientOutcome = {
+          override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = {
             tries.add(Deadline.now)
-            if(Deadline.now<claimed.get+backAfter) throw unavailable else super.holdTransient(c,stage,bound)
+            if(Deadline.now<claimed.get+backAfter) throw unavailable else super.holdTransient(c,stage,deadline)
           }
         }
         val receipt=archive.ingest(owner,Fixtures.snapshot())
@@ -395,43 +395,235 @@ final class TransientPublicationTest extends munit.FunSuite {
       val (held,_,_,_,heldLog)=attempt("a",700.millis)
       assertEquals(job(db,held).copy(heldSeconds=None),JobRow("Queued",0,Some(Jobs.transientCode),None,1,None,None))
       assert(heldLog.lines.exists(_.startsWith(s"job held jobId=$held ")),heldLog.lines.mkString("\n"))
-      // Back 2.5 s after the claim, inside the last 0.5 s: no try after the tracked end (2 s), the job keeps its lease.
+      // Back 2.5 s after the claim, inside the last 0.5 s: no try after the tracked end (2 s) nor with less than minimumTry left
+      // to it (R-a2 M1), the job keeps its lease.
       val (charged,tries,claimed,started,log)=attempt("b",2500.millis)
       val ended=Deadline.now; val trackedEnd=claimed+leases.lease-leases.skewMargin
       assert(tries.size>=2 && tries.forall(_<trackedEnd),tries.map(trackedEnd-_).toString)
-      assert(ended-started>=leases.lease-leases.skewMargin,s"gave up ${leases.lease-leases.skewMargin-(ended-started)} before the tracked lease end")
+      assert(ended-started>=leases.lease-leases.skewMargin-ponygirls.runtime.BlockingJdbcDatabase.minimumTry,s"gave up ${leases.lease-leases.skewMargin-(ended-started)} before the tracked lease end")
       assert(log.lines.exists(_.startsWith(s"job failure not recorded jobId=$charged failureCode=database-transient")),log.lines.mkString("\n"))
       assertEquals(job(db,charged).copy(heldSeconds=None),JobRow("Running",1,None,None,0,None,None))
       db.transaction(x => Sql.exec(x,"UPDATE ch_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=?",charged))
       assert(archive.claim(archive.knownProfiles,ClaimScope.Owner("b"),300).nonEmpty)
       assertEquals(job(db,charged).attempts,2)
     }
-    assertEquals((Worker.Leases.production,Worker.FailureBackoff.production.delay),(Worker.Leases(300.seconds,30.seconds,5.seconds,5.seconds),2.seconds))
+    assertEquals((Worker.Leases.production,Worker.FailureBackoff.production.delay),(Worker.Leases(300.seconds,30.seconds,5.seconds,4500.millis),2.seconds))
   }
 
-  test("record: cancellation (server stop) during a record blocked in PostgreSQL ends within the try's bound, long before the lease end") {
-    CurrentIndexDatabase.withDatabase { (config,db,archive) =>
-      // Requests keep 30 s statements and 35 s lock waits; a record try waits at most 1 s.
-      val bound=1.second
-      assertEquals(db.boundedTransaction(bound)(c => (c.getNetworkTimeout,Sql.one(c,"SHOW statement_timeout")(_.getString(1)),Sql.one(c,"SHOW lock_timeout")(_.getString(1)))),(1000,Some("1s"),Some("1s")))
-      // After the claim, the source row is held as a long ingest holds it; then the attempt fails and its record waits for it.
-      val claimed=new java.util.concurrent.CountDownLatch(1); val held=new java.util.concurrent.CountDownLatch(1); val release=new java.util.concurrent.CountDownLatch(1)
-      val wrapper=new ForwardingArchive(archive) {
-        override def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = { claimed.countDown(); held.await(); throw unavailable }
+  /** R-a2 M1: a try's end may follow its deadline by the abort of its connection; with `recordTry` a try ends within
+    * `shutdownBound` of its start (spec section-r5 §1, T2). */
+  private val abortAllowance=500.millis
+  private val shutdownBound=5.seconds
+  /** A pool's logins, each connection decorated: `commit` and `rollback` may be intercepted; `aborted` opens once the
+    * connection was aborted (by the try's watch). */
+  private final class Decorated(intercept: (String,java.sql.Connection,CountDownLatch) => Option[AnyRef]) extends ponygirls.runtime.JdbcConnectionFactory {
+    def open(url: String,properties: java.util.Properties): java.sql.Connection = {
+      val c=java.sql.DriverManager.getConnection(url,properties); val aborted=new CountDownLatch(1)
+      java.lang.reflect.Proxy.newProxyInstance(getClass.getClassLoader,Array[Class[?]](classOf[java.sql.Connection]),new java.lang.reflect.InvocationHandler {
+        def invoke(self: AnyRef,method: java.lang.reflect.Method,raw: Array[AnyRef]): AnyRef = {
+          val args=Option(raw).getOrElse(Array.empty[AnyRef])
+          try {
+            if(method.getName=="abort") { method.invoke(c,args*); aborted.countDown(); null }
+            else (if(args.isEmpty) intercept(method.getName,c,aborted) else None).getOrElse(method.invoke(c,args*))
+          } catch { case e: java.lang.reflect.InvocationTargetException => throw e.getCause }
+        }
+      }).asInstanceOf[java.sql.Connection]
+    }
+  }
+  private final case class Fenced(state: String,attempts: Int,transient: Int,lease: Option[String],xmin: String,fence: Long,run: String)
+  private def fenced(db: Database,id: UUID): Fenced = db.transaction(c => Sql.one(c,"SELECT state,attempts,transient_failures,lease_until::text,xmin::text,fence,run_id::text FROM ch_jobs WHERE id=?",id) { r =>
+    Fenced(r.getString(1),r.getInt(2),r.getInt(3),Option(r.getString(4)),r.getString(5),r.getLong(6),r.getString(7))
+  }.get)
+
+  test("T2 shutdown: a record try in flight on the production budget, past a wait for the shared permit and one in SQL, ends by its deadline + 0.5 s, within 5 s of its start; no second try, no refund") {
+    CurrentIndexDatabase.withDatabase { (fixture,db,archive) =>
+      // Two connections: the shared permit (publication gate 1) and the renewal permit. Publication statements end after
+      // 1 s; requests' (and the record's) statement and lock timeouts stay 30 s and 35 s, so only D bounds the record's wait.
+      val config=fixture.copy(databaseLimits=fixture.databaseLimits.copy(maxConnections=Database.controlConnections+1,queueTimeout=10.seconds),
+        indexing=fixture.indexing.copy(publicationStatementTimeout=Some(1.second)))
+      database(config) { (lanes,publisher) =>
+        assertEquals(lanes.publicationPermits,1)
+        val entered=new CountDownLatch(1); val proceed=new CountDownLatch(1); val tries=new AtomicInteger(0)
+        val recorder=new java.util.concurrent.atomic.AtomicReference[(Deadline,Deadline,Thread)]
+        val wrapper=new ForwardingArchive(publisher) {
+          // Blocking here proves the publication failed and released its permit before the record.
+          override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = {
+            tries.incrementAndGet(); recorder.set((Deadline.now,deadline,Thread.currentThread())); entered.countDown(); proceed.await()
+            super.holdTransient(c,stage,deadline)
+          }
+        }
+        val receipt=archive.ingest("a",Fixtures.snapshot())
+        val permit=new CountDownLatch(1); val release=new CountDownLatch(1); val locked=new CountDownLatch(1); val unlock=new CountDownLatch(1)
+        withTrigger(db,"STATEMENT","PERFORM pg_sleep(2); RETURN NULL;") {
+          val running=lane(wrapper,config,logstage.IzLogger(),Worker.Leases.production).once.start.unsafeRunSync()
+          val holder=IO.blocking { entered.await(); lanes.transaction { _ => permit.countDown(); release.await() } }.start.unsafeRunSync()
+          val rowLock=IO.blocking { permit.await(); db.transaction { c => Sql.one(c,"SELECT id FROM ch_sources WHERE id=? FOR UPDATE",receipt.sessionId)(_ => ()); locked.countDown(); unlock.await() } }.start.unsafeRunSync()
+          try {
+            assert(locked.await(30,java.util.concurrent.TimeUnit.SECONDS))
+            proceed.countDown()
+            val (entry,deadline,thread)=recorder.get
+            val parked=Deadline.now+10.seconds
+            def inAdmission: Boolean = thread.getState==Thread.State.TIMED_WAITING && thread.getStackTrace.exists(_.getClassName=="ponygirls.runtime.BlockingAdmission")
+            while(!inAdmission && parked.hasTimeLeft()) Thread.onSpinWait()
+            assert(inAdmission,"the record waits for the shared permit")
+            assertEquals(lanes.control(c => Sql.one(c,"SELECT 1")(_.getInt(1))),Some(1))
+            val cancelled=running.cancel.unsafeToFuture()
+            // The permit is released after H = 1 s (spec section-r5 §3: the admission spends budget; the order is latched).
+            Thread.sleep(1000)
+            release.countDown()
+            awaitServer(db,"EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT revision FROM ch_sources%')","the record waits for the source row")
+            scala.concurrent.Await.result(cancelled,30.seconds)
+            val stopped=Deadline.now
+            assert(stopped>=deadline && stopped<=entry+shutdownBound && stopped<=deadline+abortAllowance,s"stopped ${stopped-entry} after the try's start, ${stopped-deadline} after its deadline")
+            assert(running.join.unsafeRunSync().isCanceled)
+            assertEquals(tries.get,1)
+            assertEquals(job(db,receipt.jobId).copy(heldSeconds=None),JobRow("Running",1,None,None,0,None,None))
+          } finally {
+            proceed.countDown(); release.countDown(); unlock.countDown()
+            running.cancel.unsafeRunSync(); holder.joinWithNever.unsafeRunSync(); rowLock.joinWithNever.unsafeRunSync()
+          }
+        }
       }
-      val receipt=archive.ingest("a",Fixtures.snapshot())
-      val running=lane(wrapper,config,logstage.IzLogger(),Worker.Leases.production.copy(recordTry=bound)).run.start.unsafeRunSync()
-      val holder=IO.blocking { claimed.await(); db.transaction { c => Sql.one(c,"SELECT id FROM ch_sources WHERE id=? FOR UPDATE",receipt.sessionId)(_ => ()); held.countDown(); release.await() } }.start.unsafeRunSync()
+    }
+    assertEquals(Worker.Leases.production.recordTry+abortAllowance,shutdownBound)
+  }
+
+  test("T3 a record whose COMMIT took effect but whose reply was cut by the try's abort (deadline-expired) is read again under the fence: held once, exhausted once, a later claim untouched") {
+    CurrentIndexDatabase.withDatabase { (config,db,archive) =>
+      // Try 1's COMMIT reaches the server; once the test has seen the committed hold, the reply is withheld until the try's
+      // watch aborts the connection, then the driver fails without a SQLSTATE.
+      val cut=new AtomicBoolean(false); val seen=new java.util.concurrent.atomic.AtomicReference[() => Unit](() => ())
+      val proxied=Database.withFactory(config,db.profiles,new Decorated((method,c,aborted) =>
+        if(method=="commit" && cut.getAndSet(false)) {
+          c.commit(); seen.get()(); aborted.await(10,java.util.concurrent.TimeUnit.SECONDS)
+          throw new java.sql.SQLException("the reply was lost")
+        } else None))
       try {
-        awaitServer(db,"EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT revision FROM ch_sources%')","the record waits for the source row")
-        val cancelled=Deadline.now
-        // Bounded only to report a hang: without the bound the record would wait 30 s.
-        running.cancel.timeout(30.seconds).unsafeRunSync()
-        val stopped=Deadline.now-cancelled
-        assert(running.join.unsafeRunSync().isCanceled)
-        assert(stopped<bound+1.second,s"stopped $stopped after the cancellation")
+        val recording=new PostgresArchive(proxied,config)
+        val leases=Worker.Leases.production.copy(recordTry=1.second)
+        /** One attempt failing transiently; its record's try 1 cut after COMMIT; `second` runs before try 2. */
+        def attempt(owner: String,previous: Int,second: Claim => Unit): (UUID,Fenced,(Throwable,Deadline,Deadline),List[String]) = {
+          val log=new WorkerLog; val tries=new AtomicInteger(0)
+          val committed=new java.util.concurrent.atomic.AtomicReference[Fenced]; val failed=new java.util.concurrent.atomic.AtomicReference[(Throwable,Deadline,Deadline)]
+          val receipt=archive.ingest(owner,Fixtures.snapshot())
+          db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET transient_failures=? WHERE id=?",previous,receipt.jobId))
+          val wrapper=new ForwardingArchive(archive) {
+            override def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = throw unavailable
+            override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = tries.incrementAndGet() match {
+              case 1 =>
+                seen.set(() => committed.set(fenced(db,c.jobId))); cut.set(true)
+                try recording.holdTransient(c,stage,deadline) catch { case error: Throwable => failed.set((error,deadline,Deadline.now)); throw error }
+              case _ => second(c); recording.holdTransient(c,stage,deadline)
+            }
+          }
+          assert(lane(wrapper,config,log.logger,leases).once.unsafeRunSync())
+          assertEquals(tries.get,2)
+          (receipt.jobId,committed.get,failed.get,log.lines.filter(_.startsWith("job ")))
+        }
+        def cutAtDeadline(failure: (Throwable,Deadline,Deadline)): Unit = {
+          val (error,deadline,ended)=failure
+          assertEquals(error,JdbcFailure("deadline-expired",None))
+          assert(ended<=deadline+abortAllowance,s"ended ${ended-deadline} after its deadline")
+        }
+        // (a) Held: try 2 reports the committed hold and writes nothing.
+        val (held,heldRow,heldFailure,heldLog)=attempt("a",0,_ => ())
+        cutAtDeadline(heldFailure)
+        assertEquals(heldRow.copy(lease=None,xmin="",fence=0,run=""),Fenced("Queued",0,1,None,"",0,""))
+        assertEquals(fenced(db,held),heldRow)
+        assertEquals(heldLog,List(s"job held jobId=$held code=database-transient sqlState=57P03 class=JdbcFailure stage=none consecutive=1 nextAttemptAt=${nextAttempt(db,held)}"))
+        // (b) Exhausted: try 1 committed the job Failed at the limit; try 2 reports it.
+        val (failed,failedRow,failedFailure,failedLog)=attempt("b",Jobs.transientBackoff.limit-1,_ => ())
+        cutAtDeadline(failedFailure)
+        assertEquals((failedRow.state,failedRow.attempts,failedRow.transient,failedRow.lease),("Failed",0,Jobs.transientBackoff.limit,None))
+        assertEquals(fenced(db,failed),failedRow)
+        assertEquals(failedLog,List(s"job failed jobId=$failed code=database-transient sqlState=57P03 class=JdbcFailure stage=none consecutive=${Jobs.transientBackoff.limit} nextAttemptAt=none"))
+        // (c) Before try 2 the hold becomes claimable and another claim takes the job: try 2 reports the claim ended and
+        // leaves the new claim's row as it is.
+        val taken=new java.util.concurrent.atomic.AtomicReference[Fenced]
+        val (claimed,claimedRow,claimedFailure,claimedLog)=attempt("c",0,c => {
+          db.transaction(x => Sql.exec(x,"UPDATE ch_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=? AND state='Queued'",c.jobId))
+          // Not munit's assert: the lane's thread.
+          require(archive.claim(archive.knownProfiles,ClaimScope.Owner("c"),300).nonEmpty,"the other claim")
+          taken.set(fenced(db,c.jobId))
+        })
+        cutAtDeadline(claimedFailure)
+        // A claim moves the fence (the run changes only with a retry).
+        assertEquals((taken.get.state,taken.get.fence),("Running",claimedRow.fence+1))
+        assertEquals(fenced(db,claimed),taken.get)
+        assertEquals(claimedLog,List(s"job not held jobId=$claimed code=database-transient sqlState=57P03 class=JdbcFailure stage=none: the claim ended"))
+      } finally proxied.close()
+    }
+  }
+
+  test("T4a each record try's deadline is min(its start + recordTry, the tracked lease end), no try starts with less than minimumTry left, then the failure is not recorded") {
+    CurrentIndexDatabase.withDatabase { (config,db,archive) =>
+      val leases=Worker.Leases(2.seconds,30.seconds,Duration.Zero,1.second)
+      // Every login of the record's pool is refused at once.
+      val unreachable=Database.withFactory(config,db.profiles,new ponygirls.runtime.JdbcConnectionFactory {
+        def open(url: String,properties: java.util.Properties): java.sql.Connection = throw new java.sql.SQLException("refused","08001")
+      })
+      try {
+        val recording=new PostgresArchive(unreachable,config)
+        val log=new WorkerLog; val tries=new ConcurrentLinkedQueue[(Deadline,Deadline)]; val claimed=new java.util.concurrent.atomic.AtomicReference[Deadline]
+        val wrapper=new ForwardingArchive(archive) {
+          override def claim(profiles: Set[String],scope: ClaimScope,lease: Int,large: LargeJobs): Option[Claim] = { claimed.compareAndSet(null,Deadline.now); super.claim(profiles,scope,lease,large) }
+          override def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = throw unavailable
+          override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = { tries.add((Deadline.now,deadline)); recording.holdTransient(c,stage,deadline) }
+        }
+        val receipt=archive.ingest("a",Fixtures.snapshot())
+        val started=Deadline.now
+        assert(lane(wrapper,config,log.logger,leases,pause=Worker.FailureBackoff(200.millis)).once.unsafeRunSync())
+        // The tracked end T lies between the lane's start and the claim's call (each + the lease, skew 0).
+        val (lower,upper)=(started+leases.lease,claimed.get+leases.lease)
+        val gaveUp=log.lines.indexWhere(_.startsWith(s"job failure not recorded jobId=${receipt.jobId} failureCode=database-transient code=worker-fault exceptionClass=ponygirls.runtime.JdbcFailure sqlState=08001 "))
+        assert(gaveUp>=0,log.lines.mkString("\n"))
+        val recorded=tries.asScala.toList
+        assert(recorded.size>=2,recorded.toString)
+        recorded.foreach { (entry,deadline) =>
+          assert(deadline<=entry+leases.recordTry && deadline<=upper && deadline-entry>=ponygirls.runtime.BlockingJdbcDatabase.minimumTry && entry<upper,(entry,deadline,upper).toString)
+        }
+        assert(Deadline.now>=lower-ponygirls.runtime.BlockingJdbcDatabase.minimumTry,s"gave up ${lower-Deadline.now} before the tracked end")
         assertEquals(job(db,receipt.jobId).copy(heldSeconds=None),JobRow("Running",1,None,None,0,None,None))
-      } finally { running.cancel.unsafeRunSync(); held.countDown(); release.countDown(); holder.joinWithNever.unsafeRunSync() }
+      } finally unreachable.close()
+    }
+  }
+
+  test("T4c a permanent error raised before the try's deadline but delivered after it (its ROLLBACK cut by the abort) is not retried: one try, reported at once") {
+    CurrentIndexDatabase.withDatabase { (config,db,archive) =>
+      val leases=Worker.Leases(5.seconds,30.seconds,Duration.Zero,1.second)
+      // The record's ROLLBACK reaches the driver only once the try's watch aborted the connection (at most 10 s).
+      val rollbacks=new AtomicInteger(0)
+      val proxied=Database.withFactory(config,db.profiles,new Decorated((method,_,aborted) =>
+        if(method=="rollback") { rollbacks.incrementAndGet(); aborted.await(10,java.util.concurrent.TimeUnit.SECONDS); None } else None))
+      def drop(): Unit = db.transaction { c => Sql.exec(c,"DROP FUNCTION IF EXISTS ch_test_refuse() CASCADE"); () }
+      try {
+        val recording=new PostgresArchive(proxied,config)
+        val log=new WorkerLog; val tries=new ConcurrentLinkedQueue[(Throwable,Deadline,Deadline)]
+        val wrapper=new ForwardingArchive(archive) {
+          // After the claim every UPDATE of the jobs fails P0001: the record's fails before its deadline.
+          override def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = {
+            db.transaction { x =>
+              Sql.exec(x,"CREATE FUNCTION ch_test_refuse() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic permanent failure'; END $$")
+              Sql.exec(x,"CREATE TRIGGER ch_test_refuse BEFORE UPDATE ON ch_jobs FOR EACH STATEMENT EXECUTE FUNCTION ch_test_refuse()")
+            }
+            throw unavailable
+          }
+          override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome =
+            try recording.holdTransient(c,stage,deadline) catch { case error: Throwable => tries.add((error,deadline,Deadline.now)); throw error }
+        }
+        val receipt=archive.ingest("a",Fixtures.snapshot())
+        drop()
+        assert(lane(wrapper,config,log.logger,leases,pause=Worker.FailureBackoff(200.millis)).once.unsafeRunSync())
+        val recorded=tries.asScala.toList
+        assertEquals(recorded.map(_._1),List(JdbcFailure("database-unavailable",Some("P0001"))))
+        val (_,deadline,delivered)=recorded.head
+        assert(delivered>=deadline,s"delivered ${deadline-delivered} before its deadline")
+        assertEquals(rollbacks.get,1)
+        val reported=log.lines.filter(_.startsWith("job "))
+        assert(reported.size==1 && reported.head.startsWith(s"job failure not recorded jobId=${receipt.jobId} failureCode=database-transient ") && reported.head.contains(" sqlState=P0001 "),reported.mkString("\n"))
+        drop()
+        assertEquals(job(db,receipt.jobId).copy(heldSeconds=None),JobRow("Running",1,None,None,0,None,None))
+      } finally { drop(); proxied.close() }
     }
   }
 
@@ -450,7 +642,7 @@ final class TransientPublicationTest extends munit.FunSuite {
           Sql.exec(c,"CREATE TRIGGER ch_test_expiry BEFORE UPDATE ON ch_jobs FOR EACH STATEMENT EXECUTE FUNCTION ch_test_expiry()")
         }
         try {
-          assertEquals(archive.holdTransient(claim,Some(IndexingStage.Publication),recordTry),TransientOutcome.Ended)
+          assertEquals(archive.holdTransient(claim,Some(IndexingStage.Publication),Deadline.now+recordTry),TransientOutcome.Ended)
           assertEquals(db.transaction(c => Sql.one(c,"SELECT count(*)::int FROM ch_test_fired")(_.getInt(1))),Some(1),"the record read a valid lease and then wrote")
         } finally drop()
         assertEquals(job(db,receipt.jobId).copy(heldSeconds=None),JobRow("Running",1,None,None,previous,None,None))
@@ -471,7 +663,7 @@ final class TransientPublicationTest extends munit.FunSuite {
         def attempt(): (Boolean,Int,Option[Int]) = {
           val claim=publisher.claim(publisher.knownProfiles,ClaimScope.Owner("a"),300).get
           val switched=try publisher.publishProblems(claim,rows) catch {
-            case failure: JdbcFailure if failure.sqlState.exists(Set("57014","55P03")) => assert(publisher.holdTransient(claim,Some(IndexingStage.Publication),recordTry).isInstanceOf[TransientOutcome.Held]); false
+            case failure: JdbcFailure if failure.sqlState.exists(Set("57014","55P03")) => assert(publisher.holdTransient(claim,Some(IndexingStage.Publication),Deadline.now+recordTry).isInstanceOf[TransientOutcome.Held]); false
           }
           val row=job(db,receipt.jobId); due(db,receipt.jobId); (switched,row.transient,row.range)
         }

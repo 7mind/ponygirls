@@ -22,11 +22,16 @@ final class PoolSuite extends FunSuite {
   }
   private def pid(c: Connection): Int = integer(c, "SELECT pg_backend_pid()")
 
-  /** Real PostgreSQL connections, counted; `wrap` may decorate the n-th (from 1). */
-  private final class Counting(wrap: (Int, Connection) => Connection = (_, c) => c) extends JdbcConnectionFactory {
+  /** Real PostgreSQL connections, counted; `wrap` may decorate the n-th (from 1); `login` runs before the n-th login
+    * attempt (it may block or refuse it), on the thread that logs in. */
+  private final class Counting(wrap: (Int, Connection) => Connection = (_, c) => c, login: Int => Unit = _ => ()) extends JdbcConnectionFactory {
     val opened = new AtomicInteger
+    val logins = new AtomicInteger
+    val threads = new ConcurrentLinkedQueue[String]
     val physical = new ConcurrentLinkedQueue[Connection]
     def open(url: String, properties: Properties): Connection = {
+      threads.add(Thread.currentThread().getName)
+      login(logins.incrementAndGet())
       val c = DriverManager.getConnection(url, properties)
       physical.add(c)
       wrap(opened.incrementAndGet(), c)
@@ -59,9 +64,10 @@ final class PoolSuite extends FunSuite {
     def close(): Unit = try holder.rollback() finally holder.close()
   }
   private def engine(config: JdbcConfig, connectTimeout: FiniteDuration, factory: JdbcConnectionFactory,
-      watchdog: JdbcTransactionEngine.Watchdog = JdbcTransactionEngine.scheduledWatchdog, nanoTime: () => Long = () => System.nanoTime()): JdbcTransactionEngine = {
+      watchdog: JdbcTransactionEngine.Watchdog = JdbcTransactionEngine.scheduledWatchdog, nanoTime: () => Long = () => System.nanoTime(),
+      trace: JdbcTransactionEngine.Trace = JdbcTransactionEngine.Trace.none): JdbcTransactionEngine = {
     val limits = config.limits.copy(maxConnections = 1, connectTimeout = connectTimeout)
-    new JdbcTransactionEngine(config.copy(limits = limits), factory, JdbcPoolSizing.compatible(limits), watchdog, nanoTime)
+    new JdbcTransactionEngine(config.copy(limits = limits), factory, JdbcPoolSizing.compatible(limits), watchdog, nanoTime, trace)
   }
   /** Waits (no fixed time) until `condition` holds; the bound only keeps a broken run from hanging. */
   private def eventually(what: String)(condition: => Boolean): Unit = {
@@ -75,6 +81,33 @@ final class PoolSuite extends FunSuite {
     try build finally System.clearProperty(key)
   }
   private def elapsed[A](work: => A): (A, FiniteDuration) = { val start = System.nanoTime(); val result = work; (result, (System.nanoTime() - start).nanos) }
+  /** A watchdog whose alarms never come. */
+  private val never = new JdbcTransactionEngine.Watchdog { def arm(delay: FiniteDuration, fire: () => Unit): () => Unit = () => () }
+  /** An engine clock: the real one until [[play]], then the played readings in order, the last one repeated. */
+  private final class Scripted extends (() => Long) {
+    private var readings: Option[List[Long]] = None
+    private var last = 0L
+    def play(values: Long*): Unit = synchronized { readings = Some(values.toList) }
+    def apply(): Long = synchronized {
+      readings match {
+        case None => System.nanoTime()
+        case Some(next :: rest) => readings = Some(rest); last = next; next
+        case Some(Nil) => last
+      }
+    }
+  }
+  /** The `Trace` of R-a2 M1: each try's admission (time left to D) and each borrow (its remainder). */
+  private final class Recorded extends JdbcTransactionEngine.Trace {
+    val admissions = new ConcurrentLinkedQueue[FiniteDuration]
+    val borrows = new ConcurrentLinkedQueue[FiniteDuration]
+    val admitted = new CountDownLatch(1)
+    val borrowed = new CountDownLatch(1)
+    def admission(left: FiniteDuration): Unit = { admissions.add(left); admitted.countDown() }
+    def borrow(remaining: FiniteDuration): Unit = { borrows.add(remaining); borrowed.countDown() }
+    /** T1i (3): no admission with less than `minimumTry` left to D; no borrow of an expired remainder. */
+    def floors(): Unit = assert(admissions.asScala.forall(_ >= BlockingJdbcDatabase.minimumTry) && borrows.asScala.forall(_ > Duration.Zero),
+      (admissions.asScala.toList, borrows.asScala.toList).toString)
+  }
 
   test("D1 a borrower's session state never reaches the next borrower of the same connection") { configured { config =>
     val factory = new Counting()
@@ -185,7 +218,7 @@ final class PoolSuite extends FunSuite {
     try Using.resource(withAliveBypass(-1)(engine(config, 5.seconds, validating))) { pool =>
       pool.transaction(pid)
       stalling.set(true)
-      val (selected, took) = elapsed(pool.boundedTransaction(300.millis)(c => integer(c, "SELECT 1")))
+      val (selected, took) = elapsed(pool.transactionWithin(Deadline.now + 300.millis)(c => integer(c, "SELECT 1")))
       assertEquals((selected, validations.get), (1, 0))
       assert(took < Acquisition(5.seconds).validation, took.toString)
     } finally unstall.countDown()
@@ -231,7 +264,7 @@ final class PoolSuite extends FunSuite {
     }
   } }
 
-  test("D5 a reset that ends after its cap is not handed over although its alarm comes late; a remainder below a millisecond borrows without waiting; the deadline is checked after the network timeout is set") { configured { config =>
+  test("D5 a reset that ends after its cap is not handed over although its alarm comes late; T1i (2a) a remainder below a millisecond borrows once without waiting, (2b) an expired one not at all; the deadline is checked after the network timeout is set") { configured { config =>
     import JdbcTransactionEngine.{Acquisition, Watchdog, acquisitionBudget}
     val arms = new AtomicInteger
     // Every alarm arrives too late to abort anything.
@@ -246,16 +279,29 @@ final class PoolSuite extends FunSuite {
       assertEquals(slow.opened.get, 2)
       eventually("the over-cap connection is closed")(slow.physical.asScala.head.isClosed)
     }
-    // (b) A 1 ms bound whose remainder is 0.5 ms at the borrow (the engine's clock) takes the idle connection without
-    // waiting and resets it (the bound's statements may then time out at 1 ms: not asserted).
-    val idle = new Counting()
-    val start = new java.util.concurrent.atomic.AtomicLong(0); val reads = new AtomicInteger
-    val halfway = () => if (start.get == 0) System.nanoTime() else if (reads.getAndIncrement() == 0) start.get else start.get + 500.micros.toNanos
-    Using.resource(engine(config, 2.seconds, idle, late, halfway)) { pool =>
+    // (b) T1i (2a): a try (D 30 s away) whose acquisition budget leaves 0.5 ms at the borrow (the engine's clock: the
+    // deadline's conversion and the acquisition's start read `now`, the borrow `now + A − 0.5 ms`) takes the idle connection
+    // without waiting and resets it once; (2b) with the remainder expired at the borrow, it borrows nothing and fails
+    // connection-unavailable before its callback.
+    val resets = new AtomicInteger
+    val idle = new Counting((_, c) => afterReset(c, () => { resets.incrementAndGet(); () }))
+    val script = new Scripted; val trace = new Recorded
+    val budget = acquisitionBudget(2.seconds).toNanos
+    Using.resource(engine(config, 2.seconds, idle, late, script, trace)) { pool =>
       pool.transaction(pid)
-      arms.set(0); start.set(System.nanoTime())
-      scala.util.Try(pool.boundedTransaction(1.milli)(_ => 0))
-      assertEquals((arms.get, idle.opened.get), (1, 1))
+      resets.set(0); trace.borrows.clear()
+      val now = System.nanoTime()
+      script.play(now, now, now + budget - 500.micros.toNanos)
+      assertEquals(pool.transactionWithin(Deadline.now + 30.seconds)(c => integer(c, "SELECT 1")), 1)
+      val borrowed = trace.borrows.asScala.toList
+      assert(borrowed.size == 1 && borrowed.forall(r => r > Duration.Zero && r.toMillis == 0), borrowed.toString)
+      assertEquals((resets.get, idle.opened.get), (1, 1))
+      trace.borrows.clear()
+      val later = System.nanoTime()
+      script.play(later, later, later + budget)
+      assertEquals(intercept[JdbcFailure](pool.transactionWithin(Deadline.now + 30.seconds)(_ => fail("an expired remainder borrows nothing"))).code, "connection-unavailable")
+      assertEquals((trace.borrows.size, resets.get, idle.opened.get), (0, 1, 1))
+      trace.floors()
     }
     // (c) The deadline passes while the transaction's own network timeout is installed (the first setter after the reset
     // executed, on the engine's clock): the connection goes back to the pool, unused, and the callback never runs.
@@ -272,9 +318,9 @@ final class PoolSuite extends FunSuite {
     }
   } }
 
-  test("D5 a bounded transaction's network timeout covers its first statement: a stalled setup ends at the bound, not the socket timeout") { configured { config =>
-    // Statement and lock waits long; the socket timeout 5 s; the bound 1 s. The setup statement reads pg_settings, which
-    // another session takes right after the reset.
+  test("D5 a try's network timeout covers its first statement: a stalled setup ends at D, not the socket timeout") { configured { config =>
+    // Statement and lock waits long; the socket timeout 5 s; D 1 s away, its transaction watch never fires. The setup
+    // statement reads pg_settings, which another session takes right after the reset.
     val waits = config.copy(limits = config.limits.copy(statementTimeout = 30.seconds, lockTimeout = 30.seconds))
     val bound = 1.second
     Using.resource(new SettingsLock(config)) { lock =>
@@ -283,8 +329,8 @@ final class PoolSuite extends FunSuite {
         if (m.getName == "setAutoCommit" && a(0) == java.lang.Boolean.FALSE && armed.compareAndSet(true, false)) lock.take()
         None
       })
-      Using.resource(engine(waits, 5.seconds, factory)) { pool =>
-        val (failure, took) = elapsed(intercept[JdbcFailure](pool.boundedTransaction(bound)(_ => fail("the setup must not complete"))))
+      Using.resource(engine(waits, 5.seconds, factory, never)) { pool =>
+        val (failure, took) = elapsed(intercept[JdbcFailure](pool.transactionWithin(Deadline.now + bound)(_ => fail("the setup must not complete"))))
         assertEquals((failure.code, failure.sqlState), ("database-unavailable", Some("08006")))
         assert(took >= bound && took < bound + 700.millis && took < waits.limits.socketTimeout, took.toString)
       }
@@ -438,6 +484,278 @@ final class PoolSuite extends FunSuite {
       assertEquals(factory.opened.get, 0)
       assertEquals(db.background.transaction(c => integer(c, "SELECT 1")), 1)
       assertEquals(factory.opened.get, 1)
+    }
+  } }
+
+  // R-a2 M1 (RA2-SPEC section-r5 §3): one deadline D per try. Budgets: A 8 s (reset cap 2 s); statement, lock, socket and
+  // idle-in-transaction waits 30 s; D = start + 2.5 s unless stated; a phase holds H = 1 s; each case checks its phase's
+  // bound + 0.5 s. The order of events is forced by latches, the `Trace` or the engine's clock; H only spends budget.
+  private val within = 2500.millis
+  private val held = 1.second
+  private val allowance = 500.millis
+  private def m1(config: JdbcConfig): JdbcConfig = config.copy(limits = config.limits.copy(connectTimeout = 8.seconds, statementTimeout = 30.seconds,
+    lockTimeout = 30.seconds, idleTransactionTimeout = 30.seconds, socketTimeout = 30.seconds))
+  private def hold(): Unit = Thread.sleep(held.toMillis)
+  /** A session of the test's own, outside every pool. */
+  private def plain(config: JdbcConfig): Connection = {
+    val p = new Properties; p.setProperty("user", config.user); p.setProperty("password", CredentialFile.read(config.passwordFile))
+    DriverManager.getConnection(config.jdbcUrl, p)
+  }
+  /** `m1_probe` with row 1, its row lock held by `locker` until it rolls back or closes. */
+  private def lockedRow(admin: Connection, locker: Connection): Unit = {
+    execute(admin, "DROP TABLE IF EXISTS m1_probe; CREATE TABLE m1_probe(id int PRIMARY KEY, value int NOT NULL); INSERT INTO m1_probe VALUES (1, 0)")
+    locker.setAutoCommit(false)
+    execute(locker, "SELECT value FROM m1_probe WHERE id = 1 FOR UPDATE")
+  }
+  private val update = "UPDATE m1_probe SET value = value + 1 WHERE id = 1"
+  /** Waits until a backend of this database waits for a lock in a statement starting with `statement`: its pid and the
+    * statement's start (server clock). */
+  private def lockWait(admin: Connection, statement: String): (Int, String) = {
+    var found = Option.empty[(Int, String)]
+    eventually(s"a lock wait in $statement") {
+      found = Using.resource(admin.prepareStatement("SELECT pid, query_start::text FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND ltrim(query) LIKE ?")) { p =>
+        p.setString(1, statement + "%")
+        Using.resource(p.executeQuery())(r => if (r.next()) Some((r.getInt(1), r.getString(2))) else None)
+      }
+      found.nonEmpty
+    }
+    found.get
+  }
+  private def backends(admin: Connection, condition: String): Int = integer(admin, s"SELECT count(*)::int FROM pg_stat_activity WHERE datname = current_database() AND $condition")
+  /** A try on its own thread: its outcome and the instant it ended. */
+  private def attempt[A](executor: java.util.concurrent.ExecutorService)(work: => A): java.util.concurrent.Future[(scala.util.Try[A], Deadline)] =
+    executor.submit(new Callable[(scala.util.Try[A], Deadline)] { def call(): (scala.util.Try[A], Deadline) = { val outcome = scala.util.Try(work); (outcome, Deadline.now) } })
+  /** A try cut at D: by its watch (`deadline-expired`) or, as close to D, by a timeout its setup set (57014, 55P03). */
+  private def cut(outcome: scala.util.Try[?]): Unit = outcome.failed.toOption match {
+    case Some(JdbcFailure("deadline-expired", _)) | Some(JdbcFailure(_, Some("57014" | "55P03"))) => ()
+    case other => fail(s"not cut at D: ${other.collect { case f: JdbcFailure => (f.code, f.sqlState) }.getOrElse(other)}")
+  }
+  private def raise(c: Connection): Unit = execute(c, "DO $$ BEGIN RAISE EXCEPTION 'permanent'; END $$")
+
+  test("M1 T1i (1) a try with less than minimumTry left to D is refused admission-timeout before its admission and any borrow; production floors") { configured { config =>
+    val trace = new Recorded; val factory = new Counting()
+    Using.resource(BlockingJdbcDatabase.traced(config, factory, JdbcPoolSizing.compatible(config.limits), 0, trace)) { db =>
+      assertEquals(intercept[RuntimeFailure](db.background.transactionWithin(Deadline.now + 50.millis)(_ => fail("no try starts"))).code, "admission-timeout")
+      assertEquals((trace.admissions.size, trace.borrows.size, factory.logins.get), (0, 0, 0))
+    }
+    assertEquals(BlockingJdbcDatabase.minimumTry, 100.millis)
+  } }
+
+  test("M1 T1a one D bounds the background admission and the statements after it: a try that waited H for its permit, then for a row lock, ends by D + 0.5 s") { configured { base =>
+    val config = m1(base)
+    val limits = config.limits.copy(maxConnections = 4, queueTimeout = 30.seconds)
+    val sizing = JdbcPoolSizing.partitioned(limits, Some(1), Some(1), 0).toOption.get
+    val trace = new Recorded; val executor = Executors.newCachedThreadPool()
+    val permit = new CountDownLatch(1); val release = new CountDownLatch(1)
+    try Using.resources(plain(config), plain(config), BlockingJdbcDatabase.traced(config.copy(limits = limits), new Counting(), sizing, 0, trace)) { (admin, locker, db) =>
+      lockedRow(admin, locker)
+      val holder = executor.submit(new Callable[Int] { def call(): Int = db.background.transaction { _ => permit.countDown(); release.await(); 1 } })
+      assert(permit.await(10, TimeUnit.SECONDS))
+      val deadline = Deadline.now + within
+      val tried = attempt(executor)(db.background.transactionWithin(deadline)(c => execute(c, update)))
+      assert(trace.admitted.await(10, TimeUnit.SECONDS))
+      hold()
+      release.countDown(); assertEquals(holder.get(10, TimeUnit.SECONDS), 1)
+      lockWait(admin, update)
+      val (outcome, ended) = tried.get(30, TimeUnit.SECONDS)
+      assert(ended <= deadline + allowance, s"ended ${ended - deadline} after D")
+      cut(outcome)
+      trace.floors()
+    } finally { release.countDown(); executor.shutdownNow() }
+  } }
+
+  test("M1 T1b one D bounds the acquisition and the statements after it: a try whose login took H (on the pool's adder), then waited for a row lock, ends by D + 0.5 s") { configured { base =>
+    val config = m1(base)
+    val entered = new CountDownLatch(1); val release = new CountDownLatch(1)
+    val factory = new Counting(login = n => if (n == 1) { entered.countDown(); release.await(10, TimeUnit.SECONDS); () })
+    val trace = new Recorded; val executor = Executors.newSingleThreadExecutor()
+    try Using.resources(plain(config), plain(config), engine(config, 8.seconds, factory, trace = trace)) { (admin, locker, pool) =>
+      lockedRow(admin, locker)
+      val deadline = Deadline.now + within
+      val tried = attempt(executor)(pool.transactionWithin(deadline)(c => execute(c, update)))
+      assert(entered.await(10, TimeUnit.SECONDS) && trace.borrowed.await(10, TimeUnit.SECONDS))
+      assert(factory.threads.asScala.forall(_.endsWith("connection-adder")), factory.threads.toString)
+      hold()
+      release.countDown()
+      lockWait(admin, update)
+      val (outcome, ended) = tried.get(30, TimeUnit.SECONDS)
+      assert(ended <= deadline + allowance, s"ended ${ended - deadline} after D")
+      cut(outcome)
+      trace.floors()
+    } finally { release.countDown(); executor.shutdownNow() }
+  } }
+
+  test("M1 T1d a reset waiting in the server ends at D before its cap: connection-unavailable by D + 0.5 s") { configured { base =>
+    val config = m1(base)
+    import JdbcTransactionEngine.{Acquisition, acquisitionBudget}
+    val cap = Acquisition(acquisitionBudget(8.seconds)).resetCap
+    val trace = new Recorded; val executor = Executors.newSingleThreadExecutor()
+    try Using.resources(plain(config), new SettingsLock(config), engine(config, 8.seconds, new Counting(), trace = trace)) { (admin, lock, pool) =>
+      pool.transaction(pid)
+      lock.take()
+      val start = Deadline.now; val deadline = start + 800.millis
+      val tried = attempt(executor)(pool.transactionWithin(deadline)(_ => fail("a stalled reset must not reach the callback")))
+      lockWait(admin, "SELECT set_config(s.name")
+      val (outcome, ended) = tried.get(30, TimeUnit.SECONDS)
+      assertEquals(outcome.failed.toOption.collect { case JdbcFailure(code, _) => code }, Some("connection-unavailable"))
+      assert(ended <= deadline + allowance && ended < start + cap, s"ended ${ended - start} after the start")
+      trace.floors()
+    } finally executor.shutdownNow()
+    assertEquals(cap, 2.seconds)
+  } }
+
+  test("M1 T1f a COMMIT waiting in the server is cut at D: the caller fails by D + 0.5 s and evicts; the backend waits on (released, it commits; kept, it ends by COMMIT start + (D - setup))") { configured { base =>
+    val config = m1(base)
+    Using.resource(plain(config)) { admin =>
+      execute(admin, "DROP TABLE IF EXISTS m1_commit; CREATE TABLE m1_commit(id int NOT NULL)")
+      execute(admin, "CREATE OR REPLACE FUNCTION m1_commit_wait() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(4711); RETURN NULL; END $$")
+      execute(admin, "CREATE CONSTRAINT TRIGGER m1_commit_wait AFTER INSERT ON m1_commit DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION m1_commit_wait()")
+      try List(1 -> true, 2 -> false).foreach { (row, released) =>
+        val trace = new Recorded; val factory = new Counting(); val executor = Executors.newSingleThreadExecutor()
+        try Using.resources(plain(config), engine(config, 8.seconds, factory, trace = trace)) { (locker, pool) =>
+          execute(locker, "SELECT pg_advisory_lock(4711)")
+          val backend = new AtomicInteger; val setupLockTimeout = new AtomicInteger
+          val deadline = Deadline.now + within
+          val tried = attempt(executor)(pool.transactionWithin(deadline) { c =>
+            backend.set(pid(c)); setupLockTimeout.set(integer(c, "SELECT setting::int FROM pg_settings WHERE name = 'lock_timeout'"))
+            execute(c, s"INSERT INTO m1_commit VALUES ($row)"); hold()
+          })
+          val (waiting, commitStart) = lockWait(admin, "COMMIT")
+          val (outcome, ended) = tried.get(30, TimeUnit.SECONDS)
+          assert(ended <= deadline + allowance, s"ended ${ended - deadline} after D")
+          assertEquals(outcome.failed.toOption.collect { case JdbcFailure(code, _) => code }, Some("deadline-expired"))
+          assertEquals(waiting, backend.get)
+          assertEquals(backends(admin, s"pid = $waiting AND wait_event_type = 'Lock'"), 1, "the backend still waits after the caller failed")
+          eventually("the connection is evicted")(factory.physical.asScala.head.isClosed)
+          if (released) execute(locker, "SELECT pg_advisory_unlock(4711)")
+          eventually("the backend ends")(backends(admin, s"pid = $waiting") == 0)
+          val sinceCommit = scalar(admin, s"SELECT extract(epoch FROM clock_timestamp() - '$commitStart'::timestamptz) * 1000").toDouble
+          if (!released) assert(sinceCommit <= setupLockTimeout.get + allowance.toMillis, s"ended $sinceCommit ms after COMMIT start, lock timeout ${setupLockTimeout.get} ms")
+          assertEquals(integer(admin, s"SELECT count(*)::int FROM m1_commit WHERE id = $row"), if (released) 1 else 0)
+          trace.floors()
+        } finally executor.shutdownNow()
+      } finally execute(admin, "DROP TABLE m1_commit; DROP FUNCTION m1_commit_wait()")
+    }
+  } }
+
+  test("M1 T1h a failure keeps its SQLSTATE: a P0001 whose ROLLBACK hangs is ended by the abort at D (P0001, evicted); one raised after D sends no ROLLBACK") { configured { base =>
+    val config = m1(base)
+    // (a) The first connection's ROLLBACK waits until the connection is aborted (at most 10 s), then reaches the driver.
+    val aborted = new CountDownLatch(1); val rollbacks = new AtomicInteger
+    val frozen = new Counting((n, c) => if (n > 1) c else proxy(classOf[Connection], c) { (m, a) => m.getName match {
+      case "abort" => m.invoke(c, a*); aborted.countDown(); Some(null)
+      case "rollback" if a.isEmpty => rollbacks.incrementAndGet(); aborted.await(10, TimeUnit.SECONDS); None
+      case _ => None
+    } })
+    val trace = new Recorded
+    Using.resource(engine(config, 8.seconds, frozen, trace = trace)) { pool =>
+      val first = new AtomicInteger
+      val deadline = Deadline.now + within
+      val failure = intercept[JdbcFailure](pool.transactionWithin(deadline) { c => first.set(pid(c)); raise(c) })
+      assert(Deadline.now <= deadline + allowance, s"ended ${Deadline.now - deadline} after D")
+      assertEquals((failure.code, failure.sqlState, rollbacks.get), ("database-unavailable", Some("P0001"), 1))
+      assertEquals(failure.getSuppressed.toList.collect { case JdbcFailure(code, _) => code }, List("database-rollback-failed"))
+      assertNotEquals(pool.transaction(pid), first.get)
+    }
+    // (b) The callback moves the engine's clock past D and fails: its error, no ROLLBACK, evicted.
+    val skew = new java.util.concurrent.atomic.AtomicLong(0); val rolled = new AtomicInteger
+    val counted = new Counting((_, c) => proxy(classOf[Connection], c) { (m, _) => if (m.getName == "rollback") rolled.incrementAndGet(); None })
+    Using.resource(engine(config, 8.seconds, counted, never, () => System.nanoTime() + skew.get, trace)) { pool =>
+      val first = new AtomicInteger
+      val failure = intercept[JdbcFailure](pool.transactionWithin(Deadline.now + within) { c => first.set(pid(c)); skew.set((within + 1.second).toNanos); raise(c) })
+      assertEquals((failure.code, failure.sqlState, rolled.get), ("database-unavailable", Some("P0001"), 0))
+      skew.set(0)
+      assertNotEquals(pool.transaction(pid), first.get)
+    }
+    trace.floors()
+  } }
+
+  test("M1 T1j the transaction watch: fired in the callback (deadline-expired, no ROLLBACK, evicted); after the call (nothing aborted); withheld past D (refused before COMMIT); from inside COMMIT (deadline-expired, outcome unknown)") { configured { base =>
+    val config = m1(base)
+    import JdbcTransactionEngine.Watchdog
+    // The latest alarm is the transaction watch's (armed after the reset's).
+    val alarm = new AtomicReference[() => Unit]()
+    val manual = new Watchdog { def arm(delay: FiniteDuration, fire: () => Unit): () => Unit = { alarm.set(fire); () => () } }
+    val skew = new java.util.concurrent.atomic.AtomicLong(0); val rollbacks = new AtomicInteger; val committing = new AtomicInteger(0)
+    val factory = new Counting((_, c) => proxy(classOf[Connection], c) { (m, a) => m.getName match {
+      case "rollback" => rollbacks.incrementAndGet(); None
+      case "commit" => committing.getAndSet(0) match {
+        case 1 => alarm.get()(); None
+        case 2 => m.invoke(c, a*); alarm.get()(); throw new java.sql.SQLException("the reply was lost")
+        case _ => None
+      }
+      case _ => None
+    } })
+    val trace = new Recorded
+    Using.resources(plain(config), engine(config, 8.seconds, factory, manual, () => System.nanoTime() + skew.get, trace)) { (admin, pool) =>
+      execute(admin, "DROP TABLE IF EXISTS m1_rows; CREATE TABLE m1_rows(id int NOT NULL)")
+      def rows(id: Int): Int = integer(admin, s"SELECT count(*)::int FROM m1_rows WHERE id = $id")
+      def insert(c: Connection, id: Int): Int = { execute(c, s"INSERT INTO m1_rows VALUES ($id)"); pid(c) }
+      def expired(id: Int)(work: Connection => Unit): (JdbcFailure, Int) = {
+        val used = new AtomicInteger
+        val failure = intercept[JdbcFailure](pool.transactionWithin(Deadline.now + within) { c => used.set(insert(c, id)); work(c) })
+        assertEquals(failure.code, "deadline-expired")
+        skew.set(0)
+        assertNotEquals(pool.transaction(pid), used.get, "evicted")
+        (failure, used.get)
+      }
+      // (a) Fired in the callback: the next statement meets the aborted connection.
+      val (inCallback, _) = expired(1) { c => alarm.get()(); pid(c) }
+      assert(inCallback.sqlState.forall(_.startsWith("08")), inCallback.toString)
+      assertEquals(rows(1), 0)
+      // (b) Fired after the call returned: nothing is aborted; the same connection serves the next borrow.
+      val kept = pool.transactionWithin(Deadline.now + within)(insert(_, 2))
+      alarm.get()()
+      assertEquals((pool.transaction(pid), rows(2)), (kept, 1))
+      // (c) Withheld while the callback moves the engine's clock past D: refused before COMMIT.
+      assertEquals(expired(3)(_ => skew.set((within + 1.second).toNanos))._1, JdbcFailure("deadline-expired", None))
+      assertEquals(rows(3), 0)
+      // (d) Fired inside COMMIT: (1) before it is sent, (2) after it took effect, its reply lost (no SQLSTATE).
+      committing.set(1); expired(4)(_ => ())
+      committing.set(2); assertEquals(expired(5)(_ => ())._1, JdbcFailure("deadline-expired", None))
+      assertEquals((rows(4), rows(5), rollbacks.get), (0, 1, 0))
+      execute(admin, "DROP TABLE m1_rows")
+    }
+    trace.floors()
+  } }
+
+  test("M1 T4b-i after a restart the stale pooled connections fail their resets at once and are evicted; the try then takes the next new login") { configured { base =>
+    val config = m1(base)
+    val limits = config.limits.copy(maxConnections = 5)
+    val sizing = JdbcPoolSizing.partitioned(limits, Some(1), Some(2), 0).toOption.get
+    import JdbcTransactionEngine.{Acquisition, acquisitionBudget}
+    val cap = Acquisition(acquisitionBudget(8.seconds)).resetCap
+    val refill = new CountDownLatch(1)
+    val factory = new Counting(login = n => if (n > sizing.connections) { refill.await(10, TimeUnit.SECONDS); () })
+    val trace = new Recorded; val executor = Executors.newSingleThreadExecutor()
+    try Using.resources(plain(config), new JdbcTransactionEngine(config.copy(limits = limits), factory, sizing, JdbcTransactionEngine.scheduledWatchdog, () => System.nanoTime(), trace)) { (admin, pool) =>
+      eventually("the fixed pool is open")(factory.opened.get == sizing.connections)
+      val stale = factory.physical.asScala.toList
+      val terminated = stale.map(pid)
+      terminated.foreach(p => assertEquals(scalar(admin, s"SELECT pg_terminate_backend($p, 5000)"), "t"))
+      assertEquals(backends(admin, s"pid IN (${terminated.mkString(",")})"), 0)
+      val start = Deadline.now
+      val tried = attempt(executor)(pool.transactionWithin(start + within)(c => (pid(c), factory.physical.asScala.toList.indexWhere(_ eq c.unwrap(classOf[org.postgresql.PGConnection])) + 1)))
+      eventually("the stale connections are evicted")(stale.forall(_.isClosed))
+      assert(Deadline.now - start < cap, s"evicted ${Deadline.now - start} after the start")
+      assert(!tried.isDone)
+      refill.countDown()
+      val (outcome, _) = tried.get(30, TimeUnit.SECONDS)
+      val (served, index) = outcome.get
+      assert(!terminated.contains(served) && index > sizing.connections, (served, index, terminated).toString)
+      trace.floors()
+    } finally { refill.countDown(); executor.shutdownNow() }
+  } }
+
+  test("M1 T4b-ii logins refused at once: one borrow spans the pool's back-off between the adder's failed logins and takes the first that succeeds") { configured { base =>
+    val config = m1(base)
+    val factory = new Counting(login = n => if (n <= 5) throw new java.sql.SQLException("refused", "08001"))
+    val trace = new Recorded
+    Using.resource(engine(config, 8.seconds, factory, trace = trace)) { pool =>
+      pool.transactionWithin(Deadline.now + within)(pid)
+      assertEquals((factory.logins.get, factory.opened.get, trace.borrows.size), (6, 1, 1))
+      assert(factory.threads.asScala.forall(_.endsWith("connection-adder")), factory.threads.toString)
+      trace.floors()
     }
   } }
 }

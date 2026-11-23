@@ -45,7 +45,7 @@ final class WorkerFailureServeTest extends munit.FunSuite {
             private def observed[A](record: => A): A = try record catch { case error: Exception => recordFailed.complete(()).unsafeRunSync(); throw error }
             override def fail(c: Claim,code: String): Unit = observed(super.fail(c,code))
             override def fail(c: Claim,code: String,stage: IndexingStage): Unit = observed(super.fail(c,code,stage))
-            override def holdTransient(c: Claim,stage: Option[IndexingStage],bound: FiniteDuration): TransientOutcome = observed(super.holdTransient(c,stage,bound))
+            override def holdTransient(c: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = observed(super.holdTransient(c,stage,deadline))
           })}
         })
         _ <- ChronicleInjector().produceGet[RuntimeServices](module).use { services =>

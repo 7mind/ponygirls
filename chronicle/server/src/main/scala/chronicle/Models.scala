@@ -12,7 +12,7 @@ import java.util.UUID
 import java.nio.charset.StandardCharsets.UTF_8
 import scala.concurrent.duration.*
 import ponygirls.retrieval.{JsonHttp,EmbeddingCodec,RetrievalError}
-import ponygirls.runtime.{JdbcFailure,JdbcTransient}
+import ponygirls.runtime.{BlockingJdbcDatabase,JdbcFailure,JdbcTransient}
 
 object Fragments {
   val maxBytes = 2048
@@ -407,9 +407,10 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   /** The end of an attempt's lease as the worker knows it (restart-robustness spec §4): on this process's monotonic clock,
     * from before the claim or the last renewal that set it, less the skew margin; never later than the stored end. */
   private final class AttemptLease(claimed: Deadline) {
-    @volatile private var end=claimed+leases.lease-leases.skewMargin
-    def renewed(at: Deadline): Unit = end=at+leases.lease-leases.skewMargin
-    def timeLeft: FiniteDuration = end.timeLeft
+    @volatile private var tracked=claimed+leases.lease-leases.skewMargin
+    def renewed(at: Deadline): Unit = tracked=at+leases.lease-leases.skewMargin
+    def end: Deadline = tracked
+    def timeLeft: FiniteDuration = tracked.timeLeft
   }
   private def process(claim: Claim,large: LargeJobs,lease: AttemptLease): IO[Unit] = {
     val work=Dispatcher.sequential[IO](await=true).use(dispatcher => passages(claim,large,Worker.messageFetch(config,snapshots,dispatcher)))
@@ -434,18 +435,20 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     }
   }
   /** A transient database failure (restart-robustness spec §4): the job held with back-off, or failed at the consecutive
-    * limit. The record is the fenced transaction of `fail`, tried again every failure back-off while the database cannot
-    * take it (or a try's lock wait ran out of its bound) and the lease has time left, each try's waits within
-    * min(`leases.recordTry`, the lease left); then, as any failure not recorded, the job keeps its lease. A try writes
-    * only while the claim still holds the job; cancellation schedules no further try (the one in flight ends within its
-    * bound); no model is called meanwhile. */
+    * limit. The record is the fenced transaction of `fail`, tried again after a failure back-off (at most the lease left)
+    * while the database cannot take it, a try's lock wait ran out, or a try reached its deadline (R-a2 M1: an unknown
+    * outcome, read again under the fence), as long as the lease has `minimumTry` left; each try by one deadline
+    * min(now + `leases.recordTry`, the tracked lease end); then, as any failure not recorded, the job keeps its lease.
+    * Every other error is reported at once. A try writes only while the claim still holds the job; cancellation schedules
+    * no further try (the one in flight ends by its deadline); no model is called meanwhile. */
   private def holdTransient(claim: Claim,stage: Option[IndexingStage],error: Throwable,lease: AttemptLease): IO[Unit] = {
     val sqlState=error match { case sql: java.sql.SQLException => Option(sql.getSQLState).getOrElse("none"); case _ => "none" }
     val errorClass=error.getClass.getSimpleName; val failureStage=stage.fold("none")(_.toString); val code=Jobs.transientCode
-    def record(last: Throwable): IO[TransientOutcome] = IO(lease.timeLeft).flatMap { left =>
-      if(left.toMillis<1) IO.raiseError(last)
-      else IO.blocking(archive.holdTransient(claim,stage,leases.recordTry.min(left))).handleErrorWith {
-        case refused if JdbcTransient.job(refused) || Worker.lockTimeout(refused) => IO.sleep(failureBackoff.delay.min(lease.timeLeft.max(Duration.Zero))) *> record(refused)
+    def record(last: Throwable): IO[TransientOutcome] = IO(Deadline.now).flatMap { now =>
+      val end=lease.end; val deadline=if(now+leases.recordTry<end) now+leases.recordTry else end
+      if(end-now<BlockingJdbcDatabase.minimumTry) IO.raiseError(last)
+      else IO.blocking(archive.holdTransient(claim,stage,deadline)).handleErrorWith {
+        case refused if JdbcTransient.job(refused) || Worker.lockTimeout(refused) || JdbcTransient.deadline(refused) => IO.sleep(failureBackoff.delay.min(lease.timeLeft.max(Duration.Zero))) *> record(refused)
         case other => IO.raiseError(other)
       }
     }
@@ -512,10 +515,11 @@ object Worker {
     val production: FailureBackoff = FailureBackoff(2.seconds)
   }
   /** An attempt's lease (restart-robustness spec §4): `lease` long, renewed every `renewal`, its end tracked less `skewMargin`;
-    * a try of a transient failure's record waits at most `recordTry` (and never past the tracked end). */
+    * a try of a transient failure's record ends by `recordTry` from its start (and never past the tracked end): with the
+    * abort of its connection at that deadline, within 5 s (R-a2 M1). */
   final case class Leases(lease: FiniteDuration,renewal: FiniteDuration,skewMargin: FiniteDuration,recordTry: FiniteDuration)
   object Leases {
-    val production: Leases = Leases(300.seconds,30.seconds,5.seconds,5.seconds)
+    val production: Leases = Leases(300.seconds,30.seconds,5.seconds,4500.millis)
   }
   /** Not charged to the attempts (restart-robustness spec §4): a transient database failure (JdbcTransient.job), and P0's
     * lock timeout on the staging lock of its job, held by an earlier attempt's staging transaction still in PostgreSQL. */

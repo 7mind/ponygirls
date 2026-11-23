@@ -1,6 +1,6 @@
 package chronicle
 import java.sql.{Connection, PreparedStatement, ResultSet}
-import scala.concurrent.duration.{DurationInt, FiniteDuration}
+import scala.concurrent.duration.{Deadline, DurationInt, FiniteDuration}
 import scala.util.Using
 import java.util.UUID
 import chronicle.api.*
@@ -24,7 +24,7 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
   private def admitted[A](wait: FiniteDuration)(work: => A): A = if(lane==Database.Lane.Gated) gate.run(wait)(work) else work
   def transaction[A](f: Connection => A): A = admitted(publicationTimeout)(transactions.transaction(f))
   def extendedTransaction[A](timeout: FiniteDuration)(f: Connection => A): A = admitted(publicationTimeout)(transactions.extendedTransaction(timeout)(f))
-  def boundedTransaction[A](bound: FiniteDuration)(f: Connection => A): A = admitted(bound.min(publicationTimeout))(transactions.boundedTransaction(bound)(f))
+  def transactionWithin[A](deadline: Deadline)(f: Connection => A): A = admitted(deadline.timeLeft.min(publicationTimeout))(transactions.transactionWithin(deadline)(f))
   /** The background admission's shared permits. */
   lazy val background: Database = new Database(config,profiles,runtime,Database.Lane.Background,gate)
   /** Long background work (EpochMaintenance, retirements, abandoned generations): each transaction takes a publication gate
@@ -813,10 +813,10 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     }
   }
   /** The transient branch of the failure record (restart-robustness spec §4), fenced as `failAt`: the claim's Running job
-    * with a valid lease, each wait of the transaction within `bound`. Held, its claim's attempt refunded, until `delay(k)`
+    * with a valid lease, the whole try by `deadline` (R-a2 M1). Held, its claim's attempt refunded, until `delay(k)`
     * from now, or Failed at the limit; the count restarts at 1 when the attempt committed progress. Only a row the fenced
     * UPDATE returns is reported held or failed: a lease that ended after the read leaves the job as it was (gate r1 F2). */
-  def holdTransient(claim: Claim,stage: Option[IndexingStage],bound: FiniteDuration): TransientOutcome = db.boundedTransaction(bound) { c =>
+  def holdTransient(claim: Claim,stage: Option[IndexingStage],deadline: Deadline): TransientOutcome = db.transactionWithin(deadline) { c =>
     head(c,claim).filter(_ => lockJob(c,claim)).flatMap(head => Sql.one(c,s"SELECT transient_failures FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_.getInt(1)).map(head -> _)) match {
       // A record of this attempt that committed although its acknowledgement was lost: the row still carries the claim's
       // fence and run (any later claim, retry or supersession changes the fence), so it is reported, not written again.
