@@ -42,7 +42,8 @@ final class RetryFailedJobsTest extends munit.FunSuite {
           CREATE TABLE ch_generations(id uuid PRIMARY KEY,session_id uuid REFERENCES ch_sources(id),revision integer NOT NULL,profile text NOT NULL);
           CREATE TABLE ch_chunks(id uuid PRIMARY KEY,generation uuid REFERENCES ch_generations(id),value jsonb NOT NULL);
           CREATE TABLE ch_ingest_receipts(owner text REFERENCES ch_users(id),source_key text,request_id uuid,digest text NOT NULL,result jsonb NOT NULL,PRIMARY KEY(owner,source_key,request_id));
-          CREATE TABLE ch_mutations(owner text REFERENCES ch_users(id),request_id uuid,digest text NOT NULL,result jsonb NOT NULL,PRIMARY KEY(owner,request_id));"""
+          CREATE TABLE ch_mutations(owner text REFERENCES ch_users(id),request_id uuid,digest text NOT NULL,result jsonb NOT NULL,PRIMARY KEY(owner,request_id));
+          CREATE TABLE ch_annotation_partials(job_id uuid REFERENCES ch_jobs(id),window_ordinal integer NOT NULL);"""
         Using.resource(c.createStatement())(_.execute(ddl))
         Using.resource(getClass.getResourceAsStream("/007_owner_profiles.sql")) { stream =>
           val sql=Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)
