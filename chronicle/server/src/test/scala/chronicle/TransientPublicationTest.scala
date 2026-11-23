@@ -168,6 +168,45 @@ final class TransientPublicationTest extends munit.FunSuite {
     }}
   }
 
+  test("A3 parallel: under production's publication gate the recorded range commits alone first, then at least two writers write the other ranges at once; the switch follows every range") {
+    CurrentIndexDatabase.withDatabase { (fixture,_,archive) =>
+      // Production sizing (maxConnections 12): the gate's 3 permits, so 3 writers for the ranges after the recorded one.
+      val config=fixture.copy(databaseLimits=fixture.databaseLimits.copy(maxConnections=12))
+      val db=Database.service(config,IndexProfileCatalog.current(config))
+      try {
+        val publisher=new PostgresArchive(db.background,config)
+        assertEquals(db.publicationPermits,3)
+        val size=PostgresArchive.searchRowsPerStatement; val (a,b,c)=(0,size,2*size)
+        val receipt=archive.ingest("a",messages(3*size))
+        val rows=ProblemsPublication.rows(CurrentIndexDatabase.publication(publisher.claim(publisher.knownProfiles,ClaimScope.Owner("a"),300).get,false))
+        def again(range: Option[Int]): Claim = {
+          db.transaction(x => Sql.exec(x,"UPDATE ch_jobs SET state='Queued',attempts=0,lease_until=NULL,transient_failures=?,transient_range=? WHERE id=?",range.size,range.fold(-1)(identity),receipt.jobId))
+          if(range.isEmpty) db.transaction(x => Sql.exec(x,"UPDATE ch_jobs SET transient_range=NULL WHERE id=?",receipt.jobId))
+          publisher.claim(publisher.knownProfiles,ClaimScope.Owner("a"),300).get
+        }
+        withTrigger(db,"ROW",s"IF NEW.ordinal IN ($b,$c) THEN WHILE NOT EXISTS(SELECT 1 FROM ch_test_control WHERE kind='release') LOOP PERFORM pg_sleep(0.01); END LOOP; END IF; RETURN NEW;") {
+          // The first attempt stages the generation and stops in its pieces (a sequential phase: no writer outlives it);
+          // its record names range A, as a transient hold of a search-row failure does.
+          db.transaction { x =>
+            Sql.exec(x,"CREATE FUNCTION ch_test_pieces() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic step failure'; END $$")
+            Sql.exec(x,"CREATE TRIGGER ch_test_pieces BEFORE INSERT ON ch_chunks FOR EACH STATEMENT EXECUTE FUNCTION ch_test_pieces()")
+          }
+          try intercept[JdbcFailure](publisher.publishProblems(again(None),rows))
+          finally db.transaction(x => Sql.exec(x,"DROP FUNCTION ch_test_pieces() CASCADE"))
+          val publishing=IO.blocking(publisher.publishProblems(again(Some(a)),rows)).start.unsafeRunSync()
+          try {
+            awaitServer(db,"(SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event='PgSleep' AND query LIKE 'INSERT INTO ch_search_chunks%')=2","two writers wait in ranges B and C at once")
+            // A committed alone first; the switch waits for B and C.
+            assertEquals(db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_search_chunks WHERE session_id=?",receipt.sessionId)(_.getInt(1))),Some(size))
+            assertEquals(publisher.session("a",receipt.sessionId).indexedRevision,None)
+          } finally control(db,"release",1)
+          assert(publishing.joinWithNever.unsafeRunSync())
+        }
+        assertEquals((job(db,receipt.jobId).state,db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_search_chunks WHERE session_id=?",receipt.sessionId)(_.getInt(1)))),("Complete",Some(3*size)))
+      } finally db.close()
+    }
+  }
+
   test("55P03: a lock timeout on the job's staging lock while an earlier attempt's staging transaction still runs holds the job, not charged") {
     CurrentIndexDatabase.withDatabase { (fixture,_,archive) =>
       // Publication statements may run a minute; any lock wait ends after 500 ms (requests keep 30 s statements).
