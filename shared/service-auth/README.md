@@ -72,6 +72,11 @@ owner returns HTTP 409 without effects. This closes the cross-tab cookie-switch
 race between preflight and POST. Token metadata:
 `{id,name,source:"configured"|"issued",createdAt:string|null,revoked,scopes}`.
 Failures: `{error:{code,message}}`; no submitted secrets or raw exceptions.
+Clients may send `X-Account-Scopes: all` (the shared browser client always does):
+a service with account scopes that its typed API does not carry names them in the
+offered `scopes` and in token metadata only for such a request (Chronicle:
+`OperateJobs`, see `chronicle/CONTRACT.md`); a service without them ignores the
+header (Haystack and Manure keep offering `["api"]`).
 Configured-token revocation returns forbidden; a different owner's token is not
 found. Account login accepts login/password, not legacy bearer-token exchanges.
 

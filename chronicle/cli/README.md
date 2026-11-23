@@ -62,6 +62,20 @@ wins supported reads even when a different human session exists; use
 `--auth session` to choose that session deliberately. Explicit unsupported
 families and unused `--token-file` fail before credential reads or network I/O.
 
+Job operations — `jobs`, `jobs retry`, `retry-failed preview|apply` and `rpc`/`call`
+with `ActivityJobs`, `RetryJob`, `PreviewRetryFailed`, `ApplyRetryFailed` — use the
+human session under `auto` and `POST /api/jobs/v1` with `--auth bearer`, for a token
+that has the OperateJobs scope with Read (Settings "Indexing operations", or
+`tokens mint --scopes Read,OperateJobs`). `--request-id UUID` names the request.
+A token without the scope exits 3 with a text naming OperateJobs; a server without
+the route exits 6 ("predates job operations for tokens"), as does a spent limit
+(429, with the seconds to wait); a stored conflict exits 5. Any other answer to
+`jobs retry` or `retry-failed apply` after sending (lost connection, 503, an
+answer that does not match the request) exits 7: run the same command with the
+printed `--request-id` to read the stored outcome; it is never applied twice. The
+bearer preview adds `selection: {jobs, windowsToAnnotate}`; the server does not
+count the windows still to annotate, so it is `unknown`.
+
 `CHRONICLE_TOKEN` and `CHRONICLE_TOKEN_FILE` are mutually exclusive when nonempty;
 `--token-file` is an alternative, not an overriding third credential. Tokens use
 Chronicle's43..1024-character `[A-Za-z0-9_+/.=-]` domain (not exact43/base64url);
@@ -111,6 +125,7 @@ revocation and cookie lifetime, not a fabricated local TTL.
 | Public discovery | `versions` requires the sole current1.9.0 API |
 | Bearer Read/MCP | Auto with a configured token, or explicit `--auth bearer`: `whoami`, `search`, `session`, `messages`, `chunks`, `context`, `related`, `facets`, `progress`, `tags` (all ten current tools) |
 | Bearer Ingest | `ingest --file PATH\|- --yes`, `report-progress --file PATH\|- --yes` |
+| Bearer OperateJobs | explicit `--auth bearer`: `jobs`, `jobs retry`, `retry-failed preview/apply` over `/api/jobs/v1` |
 | Human retrieval | `search`, `archive`, `session`, `messages`, `chunks`, `passages`, `passage-spans`, `find`, `locate`, `context`, `raw` (and `raw --output` over `/api/raw`), `related`, `facets` |
 | Activity/settings | `activity`, `jobs`, `usage`, `collectors`, `progress`, `settings`, `session-status`, `tokens list` |
 | Deliberate management | `jobs retry`, `retry-failed preview/apply`, `reindex preview/apply/status`, groups/invitations/membership, token mint/revoke, purge, logout |
