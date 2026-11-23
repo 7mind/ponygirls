@@ -224,15 +224,19 @@ first). An attempt that commits progress — a model answer's checkpoint, a stag
 range the previous attempt stopped in (written alone, first) — starts the count again; any other failure, a retry and a
 rebuild reset it. Every other failure is charged as before.
 
-- **Restarts.** The hold is written by the job's fenced failure record; while the database refuses it, or a try reached
-  its deadline, the worker tries again 2 s after each failed try until the attempt's lease ends (300 s after its claim or
-  last renewal, less a 5 s margin; no try starts with less than 100 ms of it left). Each try checks that the claim still
-  holds the job and ends by one deadline, 4.5 s after its start and never after that tracked end: its wait for a
-  permit, the connection, its locks, statements and COMMIT all spend from it; at the deadline its connection is cut and
-  dropped from the pool, and the try fails `deadline-expired`. A try cut during COMMIT may have committed: the next try
-  reads the job again under the claim's fence and reports that hold without writing it twice. Any other failure of a try
-  (e.g. a permission error) is reported at once (`job failure not recorded`), also when it arrives after the deadline.
-  So a PostgreSQL restart that ends at least 45 s before the in-flight job's lease ends charges no attempt, provided no
+- **Restarts.** The hold is written by the job's fenced failure record. Each try checks that the claim still holds the
+  job and ends by one deadline, 4.5 s after its start and never after the attempt's lease end as the worker tracks it
+  (300 s after its claim or last renewal, less a 5 s margin): its wait for a permit, the connection, its locks,
+  statements and COMMIT all spend from it. How a try ends at its deadline depends on where it is: still waiting for a
+  permit, it fails `admission-timeout`; still waiting for a connection, `connection-unavailable`; once it has its
+  connection, the engine refuses any further statement or COMMIT, cuts the connection and drops it from the pool, and the
+  try fails `deadline-expired` (only for that refusal or cut; a statement timeout the try set itself near the deadline
+  may end it first with 57014). A try cut during COMMIT may have committed: the next try reads the job again under the
+  claim's fence and reports that hold without writing it twice. The worker tries again, 2 s after the failed try, after
+  `deadline-expired`, a lock timeout (55P03) and every transient failure above (incl. `admission-timeout` and
+  `connection-unavailable`), until the tracked lease end (no try starts with less than 100 ms of it left); then `job
+  failure not recorded`. Any other failure of a try (e.g. a permission error or a trigger's exception) is reported at once
+  (`job failure not recorded … sqlState=<s>`), also when it arrives after the deadline. So a PostgreSQL restart that ends at least 45 s before the in-flight job's lease ends charges no attempt, provided no
   other transaction holds that job's rows; longer outages charge one attempt through reclaim and can lose one paid model
   answer; crashed jobs resume as today. Why 45 s: the 5 s margin + at most 5 s of the pool's back-off before its next
   login + the 2 s after a failed try + under 1 s for the login and the record ≈ 13 s, plus up to one 30 s renewal

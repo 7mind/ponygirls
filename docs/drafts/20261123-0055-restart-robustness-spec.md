@@ -183,11 +183,12 @@ supersedes SMALL's guarantee, its shutdown bound and `boundedTransaction` above;
   passes it unchanged: `SessionArchive.holdTransient(claim, stage, D)` → `Database.transactionWithin(D)` → the background
   view's `transactionWithin(D)` (never the renewal permit) → the engine. No try starts with less than
   `BlockingJdbcDatabase.minimumTry` (100 ms) left to T (worker) or to D (`admission-timeout`, before the admission). The
-  admission waits ≤ min(queueTimeout, D − now); the acquisition ends by min(D, its start + A), a reset by min(that, its
-  start + cap); a transaction watch armed at the handoff aborts the connection at D; D is checked before the setup, the
-  callback and COMMIT; the setup tightens statement and lock timeouts to D − now; after D or the abort no ROLLBACK or
-  other I/O, the connection is evicted. The engine raises `JdbcFailure("deadline-expired", sqlState)` exactly for a
-  refusal at a boundary or a connection error (class 08, no SQLSTATE) caught after the watch aborted; the recorder retries
+  admission waits ≤ min(queueTimeout, D − now), read right before its semaphore; the acquisition ends by min(D, its
+  start + A) (a remainder below 1 ms makes one non-waiting borrow, the last), a reset by min(that, its start + cap); a
+  transaction watch armed at the handoff aborts the connection at D; D is checked before the setup, the callback, every
+  statement the callback creates or executes (M1 gate r1) and COMMIT; the setup tightens statement and lock timeouts to
+  D − now; after D or the abort no ROLLBACK or other I/O, the connection is evicted. The engine raises
+  `JdbcFailure("deadline-expired", sqlState)` exactly for a refusal at a boundary or a connection error (class 08, no SQLSTATE) caught after the watch aborted; the recorder retries
   it (`JdbcTransient.deadline`) as it retries `JdbcTransient.job` and 55P03; every other error keeps its classification
   also when delivered after D (a P0001 is reported at once). A COMMIT cut at D has an unknown outcome: the next try reads
   the job under the claim's fence (`recordedTransient`) and reports a committed hold without writing it again, so the

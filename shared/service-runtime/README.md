@@ -166,10 +166,13 @@ raised transaction-locally to `timeout` (also above a stricter role setting; Chr
 network timeout at `timeout` plus `socketTimeoutMs`; lock and idle-in-transaction timeouts stay configured.
 `transactionWithin(deadline)` (R-a2 M1, Chronicle's transient failure record) is one try by one monotonic deadline D,
 converted once to the engine's clock. With less than `BlockingJdbcDatabase.minimumTry` (100 ms) left it is refused
-`admission-timeout` before its admission; the admission waits at most min(`queueTimeoutMs`, D − now); the acquisition
-ends by min(D, its start + A), each reset by min(that, its start + the cap). From the handoff a transaction watch (the
-reset's watchdog, a second one-CAS watch) aborts the physical connection at D; D is checked before the setup, the
-callback and COMMIT (a refusal aborts through the watch); the setup tightens the statement and lock timeouts to the time
+`admission-timeout` before its admission; the admission waits at most min(`queueTimeoutMs`, D − now), read after the
+reservation, right before the semaphore; the acquisition ends by min(D, its start + A) (a remainder below 1 ms makes
+one borrow without waiting and no further borrow), each reset by min(that, its start + the cap). From the handoff a
+transaction watch (the reset's watchdog, a second one-CAS watch) aborts the physical connection at D; D is checked before
+the setup, the callback, every statement the callback creates or executes and every savepoint, commit, rollback or
+autocommit change it makes (the callback's connection is a `GuardedConnection`), and COMMIT: past D, also with a late
+watchdog, nothing more starts (a refusal aborts through the watch); the setup tightens the statement and lock timeouts to the time
 left. After D or the abort nothing more is sent (no ROLLBACK): the connection is evicted; it returns to the pool only
 when the watch was disarmed and the transaction committed or rolled back before D. It fails
 `JdbcFailure("deadline-expired", driver SQLSTATE)` exactly for a refusal at a boundary and for a connection error (class
