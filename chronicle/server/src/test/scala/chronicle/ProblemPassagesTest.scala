@@ -330,7 +330,8 @@ class ProblemPassagesTest extends ProblemPassageContract {
     assertEquals(schema.get[Int]("maxItems").toOption,Some(8))
   }
   test("BA: sole policy identity binds explicit problem/context schema and bounded source/carry/piece policy") {
-    assert(identity.startsWith("problem-context-coverage-v1:")); assertEquals(identity.length,"problem-context-coverage-v1:".length+64)
+    assertEquals(identity,"problem-context-coverage-v1:0a46f04578a75c153f290e56ed4dcec562505299c5eb6d3786299f86ed8d37d3")
     val config=Fixtures.config(); assertEquals(IndexProfileCatalog.current(config).preferred.profile,config.profile)
+    assertEquals(config.profile,"cec7dc2b17082a6d4abe30d6e0dc80144ad5bd6d739089385b5e2c15e252d634")
   }
 }

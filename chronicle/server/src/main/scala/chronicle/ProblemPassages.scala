@@ -294,7 +294,23 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
       Detail.Coordinate(next.fragmentIndex,next.scalarOffset),Detail.ExpectedCoordinate(window.terminal.fragmentIndex,window.terminal.scalarOffset),Detail.Window(window.fragments.size,window.scalarCount))
   }
 
+  /** A stored decision (a checkpoint): canonical points only. */
   def decode(window: Window,hasPrevious: Boolean,json: Json): Decision = {
+    val decision=fields(json); validate(window,hasPrevious,decision); decision
+  }
+  /** A provider's answer: a point written at a fragment's scalar count is read as the next fragment's offset 0 (the
+    * terminal after the last fragment), so the decision it returns is canonical. */
+  def ingress(window: Window,hasPrevious: Boolean,json: Json): Decision = {
+    val decision=canonical(window,fields(json)); validate(window,hasPrevious,decision); decision
+  }
+  private def canonical(window: Window,decision: Decision): Decision = {
+    def point(value: Point): Point =
+      if(value.fragmentIndex>=0 && value.fragmentIndex<window.fragments.size && value.scalarOffset==window.fragments(value.fragmentIndex).scalarCount)
+        Point(value.fragmentIndex+1,0)
+      else value
+    Decision(decision.parts.map(part => part.copy(start=point(part.start),end=point(part.end))))
+  }
+  private def fields(json: Json): Decision = {
     import ModelRejectionReason as Reason
     import ModelRejectionLocation as Location
     import ModelRejectionDetail as Detail
@@ -328,7 +344,7 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
         case _ => invalid(Reason.KindDecode,Location.Kind,"kind")
       }
     }
-    val decision=Decision(parts); validate(window,hasPrevious,decision); decision
+    Decision(parts)
   }
 
   def responseFormat(window: Window): Json = schema(window.fragments.size,window.scalarCount,window.fragments.map(_.scalarCount).max)

@@ -39,12 +39,12 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int = delegate.discardCheckpoints(c,stage,window)
     def holdTransient(c: Claim,stage: Option[IndexingStage],bound: FiniteDuration): TransientOutcome = delegate.holdTransient(c,stage,bound)
   }
-  private def source(texts: List[String]): IngestRequest = {
+  protected def source(texts: List[String]): IngestRequest = {
     val messages=texts.zipWithIndex.map((text,index) => Message(s"m$index",None,"assistant",text,None,index))
     val raw=messages.map(m => Json.obj("id"->Json.fromString(m.id),"text"->Json.fromString(m.text)).noSpaces+"\n").mkString
     Fixtures.snapshot().copy(messages=messages,files=List(RawFile("synthetic.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
   }
-  private final class Embeddings extends Embedder {
+  protected final class Embeddings extends Embedder {
     val batches=ListBuffer.empty[List[String]]
     val vectors=ListBuffer.empty[List[Double]]
     def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("worker queried embedding"))
@@ -53,7 +53,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
       text.map { _ => val vector=List(1.0,vectors.size.toDouble,0.0); vectors+=vector; vector }
     }
   }
-  private def worker(archive: SessionArchive,config: Config,catalog: IndexProfileCatalog,model: ProblemPassageAnnotator,embedder: Embedder): Worker =
+  protected def worker(archive: SessionArchive,config: Config,catalog: IndexProfileCatalog,model: ProblemPassageAnnotator,embedder: Embedder): Worker =
     new Worker(archive,model,embedder,config,catalog,ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger(),ModelFixtures.failureBackoff,ModelFixtures.snapshots)
 
   test("BG/GoodCommunication: actual passage Worker carries one problem, embeds each prefix in batches, coalesces spans and publishes final metadata") { withArchive { (config,catalog,delegate,_) =>
@@ -275,11 +275,46 @@ class DummyPassageWorkerTest extends PassageWorkerContract {
   }
 }
 class PostgresPassageWorkerTest extends PassageWorkerContract {
-  protected def withArchive(f: (Config,IndexProfileCatalog,SessionArchive & PassageReader,(String,String) => Unit) => Unit): Unit = {
+  private def withDatabase(f: (Config,IndexProfileCatalog,Database) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val base=Fixtures.config(); val config=base.copy(annotation=base.annotation.copy(timeoutSeconds=900,requestPolicy=AnnotationRequestPolicy.GlmMaxReasoning),indexing=IndexingCapacity(2,2,3))
     val catalog=IndexProfileCatalog.current(config); val db=new Database(config,catalog); db.initialize()
     db.transaction(c => { Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",catalog.preferred.profile) })
+    f(config,catalog,db)
+  }
+  protected def withArchive(f: (Config,IndexProfileCatalog,SessionArchive & PassageReader,(String,String) => Unit) => Unit): Unit = withDatabase { (config,catalog,db) =>
     f(config,catalog,new PostgresArchive(db,config),(owner,profile) => { db.transaction(c => Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=epoch+1 WHERE owner=?",profile,owner)); () })
   }
+  test("R-g part 1: an HTTP answer with points at fragments' scalar counts completes in one attempt and stores and publishes what a canonical answer does") { withDatabase { (config,catalog,db) =>
+    val archive=new PostgresArchive(db,config)
+    // Problems A, B, A in three one-fragment messages; an alias provider writes each fragment end at its scalar count.
+    def indexed(alias: Boolean): List[String] = {
+      val receipt=archive.ingest("a",source(List("A first","B second","A third")))
+      val app: HttpApp[IO]=cats.data.Kleisli { req => req.as[String].map { body =>
+        val input=Wire.parse(Wire.parse(body).hcursor.downField("messages").downN(1).get[String]("content").toOption.get)
+        val fragments=input.hcursor.get[Vector[Json]]("fragments").toOption.get
+        val counts=fragments.map(_.hcursor.get[Int]("scalarCount").toOption.get)
+        def written(point: ProblemPassages.Point): ProblemPassages.Point =
+          if(alias && point.fragmentIndex>0 && point.scalarOffset==0) ProblemPassages.Point(point.fragmentIndex-1,counts(point.fragmentIndex-1)) else point
+        val plan=ProblemPassageFixtures.plan(fragments.map(_.hcursor.get[String]("text").toOption.get),None)
+        val answer=ProblemPassages.Decision(plan.parts.map(part => part.copy(start=written(part.start),end=written(part.end))))
+        Response[IO](Status.Ok).withEntity(ProblemPassageFixtures.envelope(ProblemPassageFixtures.json(answer).noSpaces,"stop").noSpaces)
+      }}
+      val model=new OpenAIProblemPassageAnnotator(ModelFixtures.http(Client.fromHttpApp(app),config),config)
+      assert(worker(archive,config,catalog,model,new Embeddings).once.unsafeRunSync())
+      db.transaction { c =>
+        val job=Sql.one(c,"SELECT state,error FROM ch_jobs WHERE id=?",receipt.jobId)(r => (r.getString(1),Option(r.getString(2)))).get
+        val attempts=Sql.rows(c,"SELECT rejection_reason FROM ch_annotation_attempts WHERE job_id=? ORDER BY attempt",receipt.jobId)(r => Option(r.getString(1)))
+        assertEquals((job,attempts),(("Complete",None),List(None)))
+        val generation=Sql.one(c,"SELECT published FROM ch_sources WHERE id=?",receipt.sessionId)(_.getObject(1,classOf[UUID])).get
+        Sql.rows(c,"SELECT 'checkpoint|'||value FROM ch_index_checkpoints WHERE job_id=? AND stage='Annotation' ORDER BY window_ordinal",receipt.jobId)(_.getString(1))++
+        Sql.rows(c,"SELECT concat_ws('|','passage',ordinal,initial_summary,(value-'id')::text,span_count) FROM ch_problem_passages WHERE generation=? ORDER BY ordinal",generation)(_.getString(1))++
+        Sql.rows(c,"SELECT concat_ws('|','chunk',ordinal,(value-'id'-'sessionId')::text,document::text,embedding::text) FROM ch_chunks WHERE generation=? ORDER BY ordinal",generation)(_.getString(1))++
+        Sql.rows(c,"SELECT concat_ws('|','search',ordinal,revision,profile,document::text,embedding::text) FROM ch_search_chunks WHERE generation=? ORDER BY ordinal",generation)(_.getString(1))
+      }
+    }
+    val aliased=indexed(true); val canonical=indexed(false)
+    assertEquals(aliased,canonical)
+    assertEquals(canonical.map(_.takeWhile(_!='|')),"checkpoint" :: List("passage","chunk","search").flatMap(List.fill(3)(_)))
+  }}
 }

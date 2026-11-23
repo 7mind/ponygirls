@@ -40,7 +40,7 @@ object ProblemPassageHttp {
       Shape(ModelValueShape.of(message.downField("content").focus))),identity)
     if(content.isEmpty) throw ModelRejection.at(ContentEmpty,Location.Content,TextUnits(0))
     val decoded=io.circe.parser.parse(content).fold(_ => throw ModelRejection.at(ModelJsonInvalid,Location.Content),identity)
-    ProblemPassages.decode(window,hasPrevious,decoded)
+    ProblemPassages.ingress(window,hasPrevious,decoded)
   }
 }
 

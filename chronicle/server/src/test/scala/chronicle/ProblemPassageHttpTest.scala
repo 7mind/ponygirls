@@ -157,7 +157,7 @@ class ProblemPassageHttpTest extends ProblemPassageContract {
   test("BG: adapter rejects invalid partitions rather than returning plausible source rewrites or reopening IDs") {
     val value=window; val part=one(value,false,"summary",Nil).parts.head
     val bad=List(Decision(Vector(part.copy(start=Point(0,1)))),Decision(Vector(part.copy(continuePrevious=true))),
-      Decision(Vector(part.copy(end=Point(0,value.fragments.head.scalarCount)))) ,Decision(Vector(part.copy(summary="\u0000"))))
+      Decision(Vector(part.copy(end=Point(0,value.fragments.head.scalarCount+1)))) ,Decision(Vector(part.copy(summary="\u0000"))))
     bad.foreach { decision =>
       val result=runResponse(envelope(json(decision).noSpaces,"stop").noSpaces,Status.Ok,_ => ())
       assertEquals(result.swap.toOption.map(_.asInstanceOf[DomainError].code),Some("model-output"))

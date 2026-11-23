@@ -178,6 +178,23 @@ final class ModelRejectionTest extends munit.FunSuite {
     assertEquals(response(envelope(validJson.noSpaces,"stop")),valid)
   }
 
+  test("R-g part 1: provider ingress reads a point at a fragment's scalar count as the next fragment's offset 0; stored decisions stay strict") {
+    val three=Source(List(message("m0","ab😀","user",0),message("m1","cd","user",1),message("m2","éfg","user",2))).next(SourceCursor.start).get
+    val counts=three.fragments.map(_.scalarCount)
+    val first=part.copy(end=Point(0,counts(0))); val second=part.copy(start=Point(0,counts(0)),end=Point(2,counts(2)))
+    def outcome(run: => Decision): Either[(Reason,Location,Vector[Detail]),Decision] =
+      try Right(run) catch { case error: ModelRejection => Left((error.reason,error.location,error.structuralDetails)) }
+    def answer(parts: Part*): Either[(Reason,Location,Vector[Detail]),Decision] =
+      outcome(ProblemPassageHttp.response(three,false,envelope(json(Decision(parts.toVector)).noSpaces,"stop")))
+    def noncanonicalEnd(item: Int,point: Point): Either[(Reason,Location,Vector[Detail]),Decision] =
+      Left((Reason.NoncanonicalCoordinate,Location.End,Vector(Detail.Item(item),Detail.Coordinate(point.fragmentIndex,point.scalarOffset),Detail.Window(3,three.scalarCount))))
+    assertEquals(answer(first,second),Right(Decision(Vector(first.copy(end=Point(1,0)),second.copy(start=Point(1,0),end=three.terminal)))))
+    val beyond=Point(0,counts(0)+1)
+    assertEquals(answer(first.copy(end=beyond),second.copy(start=beyond)),noncanonicalEnd(0,beyond))
+    assertEquals(answer(first,second.copy(end=Point(3,1))),noncanonicalEnd(1,Point(3,1)))
+    assertEquals(outcome(ProblemPassages.decode(three,false,json(Decision(Vector(first,second))))),noncanonicalEnd(0,first.end))
+  }
+
   test("BA: integer admission and diagnostic factories preserve broad codes and stable reason identities") {
     assertEquals(checkedUtf8Length(Int.MaxValue.toLong,"model-output"),Int.MaxValue)
     rejection(Reason.Utf8Length)(checkedUtf8Length(Int.MaxValue.toLong+1,"model-output"))
