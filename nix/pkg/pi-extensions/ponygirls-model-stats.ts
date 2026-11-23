@@ -39,6 +39,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { TableViewport } from "./table-viewport.ts";
 import { readStatsRecords, registerStatsCollector } from "./ponygirls-model-stats-collector.ts";
 
 import { getSelectListTheme, type ExtensionAPI, type Theme } from "@earendil-works/pi-coding-agent";
@@ -55,24 +56,18 @@ import {
 	type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 
-import { frameTitle, hintAt, KEY, keyHints, type KeyHint, type Span } from "@ponygirls/pi-ui";
+import { frameTitle, hintAt, KEY, keyHints, type InlinePane, type KeyHint, type Span } from "@ponygirls/pi-ui";
 
 import {
 	type BreakdownSummaries,
-	clampStatsBudget,
-	clampStatsScrollTop,
 	type ColumnSet,
 	DEFAULT_SORT,
-	defaultStatsBudget,
 	renderStatsScreen,
 	shownColumns,
 	shownSort,
 	type SortOrder,
 	sortKeys,
 	type StatsBreakdown,
-	STATS_BUDGET_STEP,
-	STATS_DEFAULT_BUDGET,
-	STATS_WHEEL_STEP,
 	summarize,
 	WINDOWS,
 } from "./ponygirls-model-stats-state.ts";
@@ -119,6 +114,8 @@ class SortPicker implements Component {
 }
 
 class StatsView implements Component {
+	readonly capturesViewportInput = true;
+
 	private readonly theme: Theme;
 	private readonly tui: TUI;
 	/** Fixed for the view lifetime. */
@@ -131,15 +128,12 @@ class StatsView implements Component {
 	private columnChoice: ColumnSet | undefined;
 	private sort: SortOrder = DEFAULT_SORT;
 	private picker: OverlayHandle | undefined;
-	private scrollTop = 0;
-	private budget = STATS_DEFAULT_BUDGET;
-	private budgetTouched = false;
-	/** From the last render: the pane width, the content lines and the title's tab spans. */
+	private readonly viewport: TableViewport;
 	private width = 0;
-	private lineCount = 0;
 	private tabSpans: Span[] = [];
 
 	constructor(theme: Theme, tui: TUI, summaries: BreakdownSummaries, onClose: () => void, requestRender: () => void) {
+		this.viewport = new TableViewport(() => tui.terminal?.rows, requestRender);
 		this.theme = theme;
 		this.tui = tui;
 		this.summaries = summaries;
@@ -155,13 +149,12 @@ class StatsView implements Component {
 			breakdown: this.breakdown,
 			columnChoice: this.columnChoice,
 			sort: this.sort,
-			scrollTop: this.scrollTop,
-			budget: this.effectiveBudget(),
+			scrollTop: this.viewport.scrollTop,
+			budget: this.viewport.budget,
 		});
 		this.width = width;
-		this.lineCount = screen.lineCount;
+		this.viewport.reconcile(screen);
 		this.tabSpans = screen.tabSpans;
-		this.scrollTop = screen.scrollTop;
 		return screen.lines;
 	}
 
@@ -195,7 +188,7 @@ class StatsView implements Component {
 		}
 		if (matchesKey(data, "e")) {
 			this.breakdown = this.breakdown === "model" ? "effort" : "model";
-			this.scrollTop = 0;
+			this.viewport.reset();
 			this.requestRender();
 			return;
 		}
@@ -207,40 +200,15 @@ class StatsView implements Component {
 		if (matchesKey(data, "r")) {
 			const shown = this.shownSort();
 			this.sort = { id: shown.id, descending: !shown.descending };
-			this.scrollTop = 0;
+			this.viewport.reset();
 			this.requestRender();
 			return;
 		}
-		if (matchesKey(data, "up") || matchesKey(data, "down") || parseKey(data) === "k" || parseKey(data) === "j") {
-			const delta = matchesKey(data, "up") || parseKey(data) === "k" ? -1 : 1;
-			this.scrollBy(delta);
-			return;
-		}
-		if (matchesKey(data, "pageUp") || matchesKey(data, "pageDown")) {
-			this.scrollBy(matchesKey(data, "pageUp") ? -this.effectiveBudget() : this.effectiveBudget());
-			return;
-		}
-		if (matchesKey(data, "home") || matchesKey(data, "end")) {
-			this.scrollTo(matchesKey(data, "home") ? 0 : Number.MAX_SAFE_INTEGER);
-			return;
-		}
-		const typed = parseKey(data);
-		if (typed === "+" || typed === "=") {
-			this.growBudget(STATS_BUDGET_STEP);
-			return;
-		}
-		if (typed === "-" || typed === "_") {
-			this.growBudget(-STATS_BUDGET_STEP);
-			return;
-		}
+		this.viewport.handleInput(data);
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (this.picker) return undefined;
-		if (event.type === "wheel" && event.wheelDelta) {
-			this.scrollBy(event.wheelDelta < 0 ? -STATS_WHEEL_STEP : STATS_WHEEL_STEP);
-			return { handled: true };
-		}
 		// The title is the first line. The dispatcher sends the click only to a component that took the press.
 		if (event.y === 0 && event.button === "left" && (event.type === "press" || event.type === "click")) {
 			const tab = hintAt(this.tabSpans, event.x);
@@ -249,39 +217,14 @@ class StatsView implements Component {
 			this.selectPeriod(tab);
 			return { handled: true };
 		}
-		return undefined;
+		return this.viewport.handleMouse(event);
 	}
 
 	private selectPeriod(period: number): void {
 		if (period === this.period) return;
 		this.period = period;
-		this.scrollTop = 0;
+		this.viewport.reset();
 		this.requestRender();
-	}
-
-	private scrollBy(delta: number): void {
-		this.scrollTo(this.scrollTop + delta);
-	}
-
-	private scrollTo(target: number): void {
-		const next = clampStatsScrollTop(target, this.lineCount, this.effectiveBudget());
-		if (next === this.scrollTop) return;
-		this.scrollTop = next;
-		this.requestRender();
-	}
-
-	private growBudget(delta: number): void {
-		const next = clampStatsBudget(this.effectiveBudget() + delta);
-		if (next === this.effectiveBudget()) return;
-		this.budget = next;
-		this.budgetTouched = true;
-		this.scrollTop = clampStatsScrollTop(this.scrollTop, this.lineCount, next);
-		this.requestRender();
-	}
-
-	/** Half the terminal height until the first manual resize, then the sticky budget. */
-	private effectiveBudget(): number {
-		return this.budgetTouched ? this.budget : defaultStatsBudget(this.tui.terminal?.rows);
 	}
 
 	private openSortPicker(): void {
@@ -308,7 +251,7 @@ class StatsView implements Component {
 			const choice = choices[Number(item.value)];
 			if (choice !== undefined) {
 				this.sort = choice.order;
-				this.scrollTop = 0;
+				this.viewport.reset();
 			}
 			close();
 		};
@@ -342,7 +285,7 @@ export default function (pi: ExtensionAPI): void {
 			const now = Date.now();
 			const summaries: BreakdownSummaries = { model: summarize(records, now, "model"), effort: summarize(records, now, "effort") };
 			// In place, replacing the editor, as /usage does. An overlay is a popup.
-			await ctx.ui.custom<void>((tui, theme, _kb, done) => new StatsView(theme, tui, summaries, () => done(), () => tui.requestRender()));
+			await ctx.ui.custom<void>((tui, theme, _kb, done): InlinePane => new StatsView(theme, tui, summaries, () => done(), () => tui.requestRender()));
 		},
 	});
 }

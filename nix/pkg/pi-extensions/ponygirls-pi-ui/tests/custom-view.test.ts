@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { CustomViewToggle, type CustomViewFactory, type CustomViewUI } from "../src/custom-view.ts";
+import { CustomViewToggle, type CustomViewFactory, type CustomViewUI, type InlinePane } from "../src/custom-view.ts";
 
 function fixture(delayed: boolean) {
   let opens = 0;
@@ -26,7 +26,7 @@ function fixture(delayed: boolean) {
   };
   return { ui, opens: () => opens, closes: () => closes, options: () => options, start: () => start!() };
 }
-const component = (): Component => ({ render: () => [], invalidate() {} });
+const component = (): InlinePane => ({ capturesViewportInput: false, render: () => [], invalidate() {} });
 
 test("toggle closes through done, commands do not duplicate, and Esc allows reopening", async () => {
   const h = fixture(false);
@@ -69,7 +69,7 @@ test("a double click before the host calls the factory cancels without construct
 test("closing during asynchronous construction disposes the late component exactly once", async () => {
   const h = fixture(false);
   const view = new CustomViewToggle();
-  let complete!: (value: Component & { dispose(): void }) => void;
+  let complete!: (value: InlinePane & { dispose(): void }) => void;
   let disposed = 0;
   const opened = view.open(h.ui, () => new Promise((resolve) => { complete = resolve; }));
   await view.toggle(h.ui, component);

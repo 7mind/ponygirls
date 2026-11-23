@@ -1,9 +1,12 @@
 import type { Component, TUI } from "@earendil-works/pi-tui";
 
-type CustomComponent = Component & { dispose?(): void };
-export type CustomViewFactory<Theme, Keys> = (tui: TUI, theme: Theme, keys: Keys, done: () => void) => CustomComponent | Promise<CustomComponent>;
+export interface InlinePane extends Component {
+  readonly capturesViewportInput: boolean;
+  dispose?(): void;
+}
+export type CustomViewFactory<Theme, Keys> = (tui: TUI, theme: Theme, keys: Keys, done: () => void) => InlinePane | Promise<InlinePane>;
 export interface CustomViewUI<Theme, Keys> {
-  custom<T>(factory: (tui: TUI, theme: Theme, keys: Keys, done: (value: T) => void) => CustomComponent | Promise<CustomComponent>, options?: { retainEditorBorders?: boolean; overlay?: boolean }): Promise<T>;
+  custom<T>(factory: (tui: TUI, theme: Theme, keys: Keys, done: (value: T) => void) => InlinePane | Promise<InlinePane>, options?: { retainEditorBorders?: boolean; overlay?: boolean }): Promise<T>;
 }
 
 interface Interaction {
@@ -36,11 +39,11 @@ export class CustomViewToggle {
         interaction.done = done;
         if (interaction.closing) {
           done();
-          return { render: () => [], invalidate() {} };
+          return { capturesViewportInput: false, render: () => [], invalidate() {} };
         }
         const finish = () => this.close(interaction);
         const result = factory(tui, theme, keys, finish);
-        const retain = (component: CustomComponent): CustomComponent => {
+        const retain = (component: InlinePane): InlinePane => {
           // Pi can discard a result closed before mounting, without disposing it.
           const originalDispose = component.dispose?.bind(component);
           let disposed = false;

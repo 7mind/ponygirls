@@ -1,0 +1,50 @@
+diff --git a/packages/tui/src/stdin-buffer.ts b/packages/tui/src/stdin-buffer.ts
+--- a/packages/tui/src/stdin-buffer.ts
++++ b/packages/tui/src/stdin-buffer.ts
+@@ -22,6 +22,7 @@
+ const ESC = "\x1b";
+ const DEFAULT_SEQUENCE_TIMEOUT_MS = 50;
+ const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
++const LEGACY_PAGE_KEYS = ["\x1b[[5~", "\x1b[[6~"];
+ const BRACKETED_PASTE_START = "\x1b[200~";
+ const BRACKETED_PASTE_END = "\x1b[201~";
+ // Color and program-status OSC replies, XTVersion, and Kitty graphics replies.
+@@ -207,6 +208,17 @@
+ 
+ 		// Try to extract a sequence starting at this position
+ 		if (remaining.startsWith(ESC)) {
++			if (remaining.startsWith("\x1b[[")) {
++				const page = LEGACY_PAGE_KEYS.find((key) => remaining.startsWith(key));
++				if (page) {
++					sequences.push(page);
++					pos += page.length;
++					continue;
++				}
++				if (LEGACY_PAGE_KEYS.some((key) => key.startsWith(remaining))) {
++					return { sequences, remainder: remaining };
++				}
++			}
+ 			const terminalReply = isControlString(remaining) && TERMINAL_REPLY_HEADER_PATTERN.test(remaining);
+ 			// Find the end of this escape sequence
+ 			let seqEnd = 1;
+diff --git a/packages/tui/test/stdin-buffer.test.ts b/packages/tui/test/stdin-buffer.test.ts
+--- a/packages/tui/test/stdin-buffer.test.ts
++++ b/packages/tui/test/stdin-buffer.test.ts
+@@ -98,6 +98,17 @@
+ 			processInput(";20;5m");
+ 			assert.deepStrictEqual(emittedSequences, ["\x1b[<35;20;5m"]);
+ 			assert.strictEqual(buffer.getBuffer(), "");
++		});
++
++		it("keeps legacy paging keys intact across chunk boundaries", () => {
++			for (const sequence of ["\x1b[[5~", "\x1b[[6~"]) {
++				for (let split = 1; split < sequence.length; split++) {
++					emittedSequences.length = 0;
++					processInput(sequence.slice(0, split));
++					processInput(sequence.slice(split) + "x");
++					assert.deepStrictEqual(emittedSequences, [sequence, "x"]);
++				}
++			}
+ 		});
+ 
+ 		it("should buffer incomplete CSI sequence", () => {

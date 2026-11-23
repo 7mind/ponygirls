@@ -149,6 +149,17 @@ test("d switches between facts and the complete details under the same title", (
   assert.equal(view.render(80).at(-1), "↑↓ scroll  d facts  esc close", "the key is recognised in the kitty keyboard encoding too");
 });
 
+test("a configured cancel on d closes without switching bodies or resetting the page", () => {
+  const { view, closed } = fixture({ keys: { matches: (data, action) => data === "d" && action === "tui.select.cancel" }, rows: () => 5 });
+  const top = view.render(80);
+  view.handleInput(END);
+  const bottom = view.render(80);
+  assert.notDeepEqual(bottom, top);
+  view.handleInput("d");
+  assert.equal(closed(), 1);
+  assert.deepEqual(view.render(80), bottom);
+});
+
 test("without details there is no d hint and the key does nothing", () => {
   const { view, closed } = fixture({ details: null });
   const before = view.render(80);
@@ -244,6 +255,8 @@ test("allocated height keeps the title, rule and hints and scrolls facts and det
   assert.match(frame(48, 18).join("\n"), /detail line 39/);
   view.handleMouse({ type: "wheel", wheelDelta: -400, x: 0, y: 0, screenX: 0, screenY: 0, width: 48, height: 18 } as never);
   assert.match(frame(48, 18).join("\n"), /detail line 0 /);
+  view.handleInput(END);
+  assert.match(frame(48, 18).join("\n"), /detail line 39/);
   view.handleInput("d");
   assert.match(frame(48, 18).join("\n"), /value 0\b/, "facts reopen at their first row");
   view.handleInput(END);

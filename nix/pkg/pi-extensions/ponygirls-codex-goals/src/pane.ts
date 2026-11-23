@@ -94,6 +94,8 @@ export function relativeAge(elapsedMs: number): string {
 
 /** The goal pane shown by `/goal` and by clicking the goal badge. */
 export class GoalPane extends PanelLayout implements Component {
+  readonly capturesViewportInput = true;
+
   private readonly theme: UiTheme;
   private readonly ports: GoalPanePorts;
   private busy = false;

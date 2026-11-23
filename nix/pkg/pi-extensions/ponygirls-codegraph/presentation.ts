@@ -189,6 +189,8 @@ export interface StatusPaneOptions {
  * row's last check under the list, and the complete text report behind `d`.
  */
 export class CodegraphStatusPane extends PanelLayout {
+  readonly capturesViewportInput = true;
+
   private readonly options: StatusPaneOptions;
   private readonly rows: readonly PaneRow[];
   /** The complete text report, wrapped as the read-only status view wraps it. */

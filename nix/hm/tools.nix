@@ -59,7 +59,7 @@ let
       "- Use standard words. Do not make up words."
     ]
     ++ lib.optional simpleLanguage.summaryResponses "- Keep summaries concise."
-    ++ lib.optional simpleLanguage.diffResponses "- When a task is done, briefly explain what you did. For each diff or commit, name the repository and report test and non-test changes separately, with file counts and lines added and removed for each."
+    ++ lib.optional simpleLanguage.diffResponses "- When a task is done, briefly explain what you did. For each diff or commit, name the repository and report file counts and lines added and removed separately for **Test**, **Prod**, and **Docs**. Count test-only files as Test, documentation as Docs, and all other files as Prod."
   );
 
   # Canonical llmAssets bundle from the two in-repo packages: skills from

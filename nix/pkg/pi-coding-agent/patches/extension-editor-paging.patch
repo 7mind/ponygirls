@@ -1,0 +1,52 @@
+diff --git a/packages/coding-agent/src/modes/interactive/components/extension-editor.ts b/packages/coding-agent/src/modes/interactive/components/extension-editor.ts
+--- a/packages/coding-agent/src/modes/interactive/components/extension-editor.ts
++++ b/packages/coding-agent/src/modes/interactive/components/extension-editor.ts
+@@ -24,6 +24,8 @@
+ }
+ 
+ export class ExtensionEditorComponent extends Container implements Focusable {
++	readonly capturesViewportInput = true;
++
+ 	private editor: Editor;
+ 	private onSubmitCallback: (value: string) => void;
+ 	private onCancelCallback: () => void;
+diff --git a/packages/coding-agent/test/extension-editor-paging.test.ts b/packages/coding-agent/test/extension-editor-paging.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/coding-agent/test/extension-editor-paging.test.ts
+@@ -0,0 +1,35 @@
++import { ScrollView, Text, TuiAltScreen, VStack, stripTerminalSequences } from "@earendil-works/pi-tui";
++import { expect, it } from "vitest";
++import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
++import { KeybindingsManager } from "../src/core/keybindings.ts";
++import { ExtensionEditorComponent } from "../src/modes/interactive/components/extension-editor.ts";
++import { initTheme } from "../src/modes/interactive/theme/theme.ts";
++
++it("pages the focused extension editor without moving the transcript", () => {
++	initTheme("dark");
++	const terminal = new VirtualTerminal(90, 30);
++	const tui = new TuiAltScreen(terminal);
++	const document = Array.from({ length: 90 }, (_, i) => `Objective line ${i + 1}`).join("\n");
++	const editor = new ExtensionEditorComponent(tui, new KeybindingsManager(), "Edit objective", document, () => {}, () => {});
++	const chat = new ScrollView(new Text(document.replaceAll("Objective", "Chat"), 0, 0), { primary: true, follow: "end" });
++	tui.setLayoutRoot(new VStack([{ component: chat, basis: 3, shrink: 0 }, { component: editor, grow: 1 }]));
++	tui.setFocus(editor);
++	const screen = () => {
++		tui.renderNow();
++		return tui.getScreenLines().map(stripTerminalSequences).join("\n");
++	};
++	tui.start();
++	try {
++		const last = screen();
++		expect(last).toContain("Objective line 90");
++		terminal.sendInput("\x1b[5~");
++		const earlier = screen();
++		expect(earlier).not.toContain("Objective line 90");
++		expect(earlier).toContain("Objective line ");
++		expect(earlier).toContain("Chat line 90");
++		terminal.sendInput("\x1b[6~");
++		expect(screen()).toBe(last);
++	} finally {
++		tui.stop();
++	}
++});

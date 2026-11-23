@@ -10,16 +10,14 @@ import {
 } from "@ponygirls/pi-ui";
 import type { TaskBackend } from "./backend.ts";
 import {
-  BgTaskError, MAX_LIST_ITEMS, MAX_READ_BYTES, isFinalized, type CompletionDetails, type SignalName, type TaskRecord,
+  BgTaskError, MAX_LIST_ITEMS, MAX_READ_BYTES, isFinalized, type CompletionDetails, type SignalName, type TaskId, type TaskRecord,
 } from "./protocol.ts";
 import { consumableLength, decodeAndSanitize, displayValue, leadingContinuationBytes } from "./terminal-text.ts";
 import { exitCode, exitFailed, formatSize, shortTaskId, shownReason, shownState, stateGlyph, taskStateColor } from "./present.ts";
+import { LogSnapshot, VIEW_WINDOW_BYTES } from "./log-snapshot.ts";
 import { elapsed, formatExit, noticeLabel, noticeStatus, stateLabel } from "./tool.ts";
 
-/** Most log bytes held in memory by the detail view. */
-export const VIEW_WINDOW_BYTES = 131072;
-/** Bytes loaded per step when scrolling back past the window start. */
-export const VIEW_SCROLL_CHUNK_BYTES = MAX_READ_BYTES;
+export { VIEW_WINDOW_BYTES };
 export const VIEW_REFRESH_MS = 500;
 /** Rows not available to list or log lines: the panel frame, hints, message, and pi's footer. */
 const CHROME_ROWS = 9;
@@ -118,14 +116,18 @@ export interface ViewerDeps {
   now(): number;
 }
 
+interface LogViewport {
+  width: number;
+  height: number;
+}
+
 interface DetailState {
   task: TaskRecord;
   start: number;
   bytes: Uint8Array;
   size: number;
-  follow: boolean;
-  /** Lines hidden below the viewport while paused. */
-  scroll: number;
+  snapshot: LogSnapshot | null;
+  reflowTarget: LogViewport | null;
   artifact: string | null;
 }
 
@@ -137,11 +139,14 @@ function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
 }
 
 export class BgInspector extends PanelLayout implements Component {
+  get capturesViewportInput(): boolean { return this.detail !== null; }
+
   private readonly deps: ViewerDeps;
   private items: TaskRecord[] = [];
   private upper: number | null = null;
   private nextAfter: number | null = null;
   private selected = 0;
+  private detailViewport: LogViewport | null = null;
   private detail: DetailState | null = null;
   private message: string | null = null;
   private busy: Promise<void> = Promise.resolve();
@@ -162,7 +167,7 @@ export class BgInspector extends PanelLayout implements Component {
   }
 
   get loadedBytes(): number {
-    return this.detail?.bytes.length ?? 0;
+    return this.detail?.snapshot?.loadedBytes ?? this.detail?.bytes.length ?? 0;
   }
 
   /** Resolves when queued loads and actions have finished. */
@@ -226,84 +231,67 @@ export class BgInspector extends PanelLayout implements Component {
     this.nextAfter = page.next;
   }
 
-  private async readRange(backend: TaskBackend, task: TaskRecord, from: number, to: number): Promise<{ bytes: Uint8Array; size: number; task: TaskRecord }> {
-    let bytes: Uint8Array = new Uint8Array();
-    let size = from;
-    let latest = task;
-    let offset = from;
-    while (offset < to) {
-      const w = await backend.read(task.id, offset, Math.min(MAX_READ_BYTES, to - offset));
-      latest = w.task;
-      size = w.size;
-      if (w.bytes.length === 0) break;
-      bytes = concat(bytes, w.bytes);
+  private async readRange(backend: TaskBackend, id: TaskId, from: number, to: number): Promise<Uint8Array> {
+    const bytes = new Uint8Array(to - from);
+    for (let offset = from; offset < to;) {
+      const w = await backend.read(id, offset, Math.min(MAX_READ_BYTES, to - offset));
+      if (!w.bytes.length) throw new Error("terminal log ended before the requested range");
+      bytes.set(w.bytes, offset - from);
       offset += w.bytes.length;
     }
-    return { bytes, size, task: latest };
+    return bytes;
   }
 
   private async openDetail(task: TaskRecord): Promise<void> {
-    this.detail = { task, start: 0, bytes: new Uint8Array(), size: 0, follow: true, scroll: 0, artifact: null };
+    this.detailViewport = null;
+    this.detail = { task, start: 0, bytes: new Uint8Array(), size: 0, snapshot: null, reflowTarget: null, artifact: null };
     await this.loadDetail();
   }
 
-  private async loadDetail(): Promise<void> {
+  private async loadDetail(resume = false): Promise<void> {
     const d = this.detail;
     if (!d) return;
     const backend = await this.deps.backend();
+    let task = d.task;
     try {
-      // Check current availability: the record may have been cleared.
-      d.task = await backend.get(d.task.id);
-    } catch (error) {
-      if (error instanceof BgTaskError && error.code === "NOT_FOUND") {
-        d.artifact = "this task was cleared; its record and log no longer exist";
+      task = await backend.get(task.id);
+      if (d.snapshot && !resume) {
+        d.task = task;
         return;
       }
-      throw error;
-    }
-    try {
       const probe = await backend.read(d.task.id, "tail", 1);
-      d.size = probe.size;
-      d.task = probe.task;
-      d.artifact = null;
+      const size = probe.size, start = Math.max(0, size - VIEW_WINDOW_BYTES);
+      const end = d.start + d.bytes.length;
+      let bytes = d.bytes;
+      if (!d.snapshot && d.start === start && end <= size) {
+        if (size > end) bytes = concat(bytes, await this.readRange(backend, task.id, end, size));
+      } else bytes = await this.readRange(backend, task.id, start, size);
+      Object.assign(d, { task: probe.task, size, start, bytes, snapshot: null, artifact: null });
     } catch (error) {
-      if (error instanceof BgTaskError && (error.code === "ARTIFACT_MISSING" || error.code === "ARTIFACT_UNREADABLE")) {
-        d.artifact = `terminal log ${error.code === "ARTIFACT_MISSING" ? "is missing" : "cannot be read"}`;
-        d.bytes = new Uint8Array();
-        return;
-      }
-      throw error;
+      if (!(error instanceof BgTaskError)) throw error;
+      d.task = task;
+      if (error.code === "NOT_FOUND") d.artifact = "this task was cleared; its record and log no longer exist";
+      else if (error.code === "ARTIFACT_MISSING" || error.code === "ARTIFACT_UNREADABLE") d.artifact = `terminal log ${error.code === "ARTIFACT_MISSING" ? "is missing" : "cannot be read"}`;
+      else throw error;
     }
-    if (!d.follow) return;
-    const end = d.start + d.bytes.length;
-    if (d.bytes.length > 0 && d.size >= end && d.size - d.start <= VIEW_WINDOW_BYTES) {
-      if (d.size > end) {
-        const more = await this.readRange(backend, d.task, end, d.size);
-        d.bytes = concat(d.bytes, more.bytes);
-      }
-      return;
-    }
-    const start = Math.max(0, d.size - VIEW_WINDOW_BYTES);
-    const all = await this.readRange(backend, d.task, start, d.size);
-    d.start = start;
-    d.bytes = all.bytes;
   }
 
-  private async scrollBack(): Promise<void> {
-    const d = this.detail;
-    if (!d || d.start === 0) return;
-    const backend = await this.deps.backend();
-    const from = Math.max(0, d.start - VIEW_SCROLL_CHUNK_BYTES);
-    const earlier = await this.readRange(backend, d.task, from, d.start);
-    let bytes = concat(earlier.bytes, d.bytes);
-    if (bytes.length > VIEW_WINDOW_BYTES) {
-      bytes = bytes.subarray(0, VIEW_WINDOW_BYTES);
-      // The window no longer reaches the end: the hidden-lines offset restarts from the new end.
-      d.scroll = 0;
+  private async moveLog(d: DetailState, direction: number, page: boolean): Promise<void> {
+    if (d !== this.detail || d.artifact) return;
+    const { width, height } = this.detailViewport ?? { width: 80, height: Math.max(1, this.bodyHeight(this.deps.rows() - CHROME_ROWS)) };
+    let snapshot = d.snapshot;
+    if (!snapshot) {
+      const backend = await this.deps.backend();
+      const id = d.task.id;
+      const probe = await backend.read(id, "tail", 1);
+      snapshot = new LogSnapshot(probe.size, isFinalized(probe.task), async (from, to) => this.readRange(await this.deps.backend(), id, from, to));
+      d.task = probe.task;
     }
-    // Hidden lines are counted from the window end, so prepending keeps the viewport in place.
-    d.start = from;
-    d.bytes = bytes;
+    await snapshot.move(Math.max(10, width), height, direction * (page ? height : 1));
+    d.snapshot = snapshot;
+    d.reflowTarget = null;
+    d.size = snapshot.eof;
+    d.bytes = new Uint8Array();
   }
 
   // ---- rendering --------------------------------------------------------------
@@ -417,8 +405,8 @@ export class BgInspector extends PanelLayout implements Component {
   /** What the log view is doing: only an unfinished task can be followed live (D6). */
   private viewMode(d: DetailState): string {
     const th = this.deps.theme;
-    if (isFinalized(d.task)) return th.fg("muted", d.follow ? "finished" : "scrolled back");
-    return d.follow ? th.fg("accent", "following") : th.fg("warning", "paused");
+    if (isFinalized(d.task)) return th.fg("muted", !d.snapshot ? "finished" : "scrolled back");
+    return !d.snapshot ? th.fg("accent", "following") : th.fg("warning", "paused");
   }
 
   /**
@@ -451,16 +439,26 @@ export class BgInspector extends PanelLayout implements Component {
     const fit = (line: string) => truncateToWidth(line, width);
     if (t.state === "dead") out.push(fit(th.fg("warning", `dead: supervision was interrupted (${t.reason}); the process outcome is unknown${t.exit ? `, root ${formatExit(t.exit)} was observed` : ""}.`)));
     const visible = Math.max(1, this.bodyHeight(this.deps.rows() - CHROME_ROWS) - (out.length - 1));
-    if (d.artifact) out.push(th.fg("error", d.artifact));
-    else {
-      const lines = this.lines(width);
-      if (lines.length === 0 || (lines.length === 1 && lines[0] === "")) out.push(th.fg("dim", isFinalized(t) ? "(no output was produced)" : "(no output yet)"));
-      else {
-        const end = Math.max(0, lines.length - (d.follow ? 0 : d.scroll));
-        out.push(...lines.slice(Math.max(0, end - visible), end).map(fit));
+    if (!this.isMeasuring) {
+      if (this.detailViewport?.width !== width || this.detailViewport.height !== visible) this.detailViewport = { width, height: visible };
+      const viewport = this.detailViewport, snapshot = d.snapshot, wrapWidth = Math.max(10, width);
+      if (snapshot && !d.artifact && !snapshot.fits(wrapWidth, visible) && d.reflowTarget !== viewport) {
+        d.reflowTarget = viewport;
+        this.enqueue(async () => {
+          if (this.detail === d && d.snapshot === snapshot && this.detailViewport === viewport && !snapshot.fits(wrapWidth, visible)) {
+            await snapshot.move(wrapWidth, visible, 0);
+          }
+        });
       }
     }
-    return { header: out.slice(0, 1), body: out.slice(1), footer: [frameRule(th, width), ...keyHints(th, width, detailHints(t, d.follow)).lines] };
+    if (d.artifact) out.push(th.fg("error", d.artifact));
+    else if (d.snapshot && this.isMeasuring) out.push(...Array(Math.max(1, d.snapshot.measure(Math.max(10, width), visible))).fill(""));
+    else {
+      const lines = d.snapshot ? d.snapshot.visible : this.lines(width);
+      if (lines.length === 0 || (lines.length === 1 && lines[0] === "")) out.push(th.fg("dim", (d.snapshot?.final ?? isFinalized(t)) ? "(no output was produced)" : "(no output yet)"));
+      else out.push(...lines.slice(-visible).map(fit));
+    }
+    return { header: out.slice(0, 1), body: out.slice(1), footer: [frameRule(th, width), ...keyHints(th, width, detailHints(t, !d.snapshot)).lines] };
   }
 
   private renderParts(width: number): PanelParts {
@@ -479,25 +477,18 @@ export class BgInspector extends PanelLayout implements Component {
     this.message = null;
     if (this.detail) {
       const d = this.detail;
-      const page = Math.max(1, this.bodyHeight(this.deps.rows() - CHROME_ROWS));
       if (matchesKey(data, Key.escape) || data === "q") {
         this.detail = null;
         void this.refresh();
       } else if (matchesKey(data, Key.up) || matchesKey(data, Key.pageUp) || data === "k") {
-        const step = matchesKey(data, Key.pageUp) ? page : 1;
-        const total = this.lines(80).length;
-        d.follow = false;
-        d.scroll += step;
-        if (d.scroll > Math.max(0, total - page)) {
-          d.scroll = Math.max(0, total - page);
-          this.enqueue(() => this.scrollBack());
-        }
+        this.enqueue(() => this.moveLog(d, -1, matchesKey(data, Key.pageUp)));
+        return;
       } else if (matchesKey(data, Key.down) || matchesKey(data, Key.pageDown) || data === "j") {
-        d.scroll = Math.max(0, d.scroll - (matchesKey(data, Key.pageDown) ? page : 1));
+        this.enqueue(() => this.moveLog(d, 1, matchesKey(data, Key.pageDown)));
+        return;
       } else if (matchesKey(data, Key.end) || data === "f") {
-        d.follow = true;
-        d.scroll = 0;
-        void this.refresh();
+        this.enqueue(async () => { if (this.detail === d) await this.loadDetail(true); });
+        return;
       } else this.action(data);
       this.deps.requestRender();
       return;

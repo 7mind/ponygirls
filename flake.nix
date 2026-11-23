@@ -907,12 +907,15 @@
           '';
           ponygirls-model-stats = pkgs.runCommand "ponygirls-model-stats-test" {
             nativeBuildInputs = [ pkgs.nodejs ];
+            PI_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
           } ''
             cp -r ${./nix/pkg/pi-extensions} pi-extensions
             chmod -R u+w pi-extensions
             cd pi-extensions
-            mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
-            node --test ponygirls-model-stats-state.test.ts ponygirls-model-stats-collector.test.ts
+            mkdir -p node_modules/@ponygirls node_modules/@earendil-works
+            ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
+            ln -s "$PI_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
+            node --test ponygirls-model-stats-state.test.ts ponygirls-model-stats-collector.test.ts table-viewport.test.ts
             touch $out
           '';
           rites-web = self.packages.${system}.rites-web;
