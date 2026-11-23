@@ -94,6 +94,31 @@ try {
     assert.equal(await page.getByLabel('Username', { exact: true }).getAttribute('readonly'), '');
   });
 
+  await run('Chronicle offers OperateJobs as a separate, explained choice tied to Read; Haystack and Manure forms are unchanged', async ({ page, calls, open }) => {
+    for (const app of ['haystack', 'manure']) {
+      await open('settings-tokens', `&app=${app}`);
+      await button(page, 'New token').click();
+      await page.getByText('Full API access').waitFor();
+      assert.equal(await page.getByRole('group', { name: 'Indexing operations', exact: true }).count(), 0, app);
+      await button(page, 'Cancel').click();
+    }
+    await open('settings-tokens');
+    await button(page, 'New token').click();
+    const operations = page.getByRole('group', { name: 'Indexing operations', exact: true });
+    assert.match(await operations.innerText(), /List your indexing jobs, retry one, and run Retry failed, which can start many model calls\. Nothing else \(no purge, sharing or token changes\)\. Needs Read\./);
+    assert.equal(await page.getByRole('group', { name: 'Permissions', exact: true }).getByRole('checkbox', { name: /^OperateJobs/ }).count(), 0);
+    const operate = operations.getByRole('checkbox', { name: /^OperateJobs/ }), read = page.getByRole('checkbox', { name: /^Read —/ });
+    assert.equal(await operate.isChecked(), false, 'unchecked by default');
+    await operate.check(); assert.equal(await read.isChecked(), true, 'checking it checks Read');
+    await read.uncheck(); assert.equal(await operate.isChecked(), false, 'unchecking Read unchecks it');
+    await page.getByRole('checkbox', { name: /^Ingest —/ }).uncheck(); await operate.check();
+    await page.getByLabel('Name', { exact: true }).fill('job-agent');
+    await button(page, 'Create token').click();
+    await page.locator('[data-account-secret]').waitFor();
+    assert.deepEqual(callsTo(calls, '/tokens').map(call => call.body), [{ name: 'job-agent', scopes: ['Read', 'OperateJobs'] }]);
+    assert.ok(calls.length > 0 && calls.every(call => call.scopes === 'all'), 'every account request asks for every scope');
+  });
+
   await run('token secret survives blur/focus, Escape, section change and Back until it is acknowledged', async ({ page, calls }) => {
     await page.goto(`${server.origin}/?scenario=settings-tokens&steps=0#/archive`);
     await page.getByRole('heading', { name: 'Host view' }).waitFor();

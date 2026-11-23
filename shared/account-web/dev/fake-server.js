@@ -121,7 +121,8 @@ export function createFakeAccountServer(fixture, onCall) {
       if (state.account === 'loading') return new Promise(() => {});
       if (state.account === 'down') throw new TypeError('Failed to fetch');
       if (state.account === 'error') return failure(500, 'unavailable', {});
-      return json(200, { user: state.user, tokens: state.tokens, scopes: state.scopes }, {});
+      // Chronicle names its account-plane scope OperateJobs only to a request that asks for every scope.
+      return json(200, { user: state.user, tokens: state.tokens, scopes: state.app === 'chronicle' && call.scopes === 'all' ? [...state.scopes, 'OperateJobs'] : state.scopes }, {});
     }
     if (path === '/profile' && method === 'GET') return state.profile === null ? failure(404, 'not-found', {}) : json(200, state.profile, {});
     if (method === 'GET' && path === '/admin/users') return state.profile === null || !state.profile.admin ? failure(404, 'not-found', {}) : json(200, { users: state.users }, {});
@@ -176,7 +177,7 @@ export function createFakeAccountServer(fixture, onCall) {
   async function fetch(resource, options) {
     const url = new URL(String(resource), 'http://harness');
     if (!url.pathname.startsWith(API)) throw new Error(`The account harness only answers ${API}: ${url.pathname}`);
-    const call = { method: options.method, path: url.pathname.slice(API.length), body: options.body === undefined ? null : JSON.parse(options.body), actor: options.headers['X-Account-Actor'] ?? null };
+    const call = { method: options.method, path: url.pathname.slice(API.length), body: options.body === undefined ? null : JSON.parse(options.body), actor: options.headers['X-Account-Actor'] ?? null, scopes: options.headers['X-Account-Scopes'] ?? null };
     calls.push(call); onCall(call);
     if (state.hold !== null && `${call.method} ${call.path}` === state.hold) {
       const early = state.snapshot ? Promise.resolve().then(() => handle(call)) : null;

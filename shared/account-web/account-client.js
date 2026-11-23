@@ -13,7 +13,9 @@ export const ENROLLMENT_FRAGMENT_PREFIX = '#account-enroll=';
 export const TOTP_PARAMETERS = Object.freeze({ algorithm: 'SHA1', digits: 6, period: 30, secretBytes: 20 });
 // Sent with every account request: a custom header proves same origin where browsers send neither Origin nor
 // Sec-Fetch-Site (plain-HTTP origins), because a cross-origin page cannot add it without a CORS preflight.
-export const ACCOUNT_REQUEST_HEADERS = Object.freeze({ Accept: 'application/json', 'X-Account-Request': '1' });
+// `X-Account-Scopes: all` asks for every account scope by name (Chronicle's OperateJobs); a service without such
+// scopes ignores it.
+export const ACCOUNT_REQUEST_HEADERS = Object.freeze({ Accept: 'application/json', 'X-Account-Request': '1', 'X-Account-Scopes': 'all' });
 
 const ACTOR_HEADER = 'X-Account-Actor';
 const RETRY_AFTER_HEADER = 'Retry-After';

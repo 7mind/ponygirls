@@ -33,8 +33,12 @@ const METER_BARS = 4;
 const METER_STRONG_EXTRA = 4;
 const DEFAULT_USERNAME_PATTERN = '^[a-z][a-z0-9_-]{2,31}$';
 const ACTOR_HEADER = 'X-Account-Actor';
-const KNOWN_SCOPES = ['api', 'Ingest', 'Read', 'Raw'];
-const SCOPE_MEANINGS = { Ingest: 'upload sessions (collectors)', Read: 'search and read indexed sessions', Raw: 'original source records; includes Read' };
+const KNOWN_SCOPES = ['api', 'Ingest', 'Read', 'Raw', 'OperateJobs'];
+// Chronicle's job operations for tokens: an explained choice of its own (it can start many model calls), never a default.
+const OPERATE_JOBS = 'OperateJobs';
+const REQUIRES_READ = ['Raw', OPERATE_JOBS];
+const OPERATE_JOBS_EXPLANATION = 'List your indexing jobs, retry one, and run Retry failed, which can start many model calls. Nothing else (no purge, sharing or token changes). Needs Read.';
+const SCOPE_MEANINGS = { Ingest: 'upload sessions (collectors)', Read: 'search and read indexed sessions', Raw: 'original source records; includes Read', [OPERATE_JOBS]: 'operate your indexing jobs' };
 const APP_NAMES = { chronicle: 'Chronicle', haystack: 'Haystack', manure: 'Manure' };
 // Column headers of the two list tables; a narrow screen repeats them as labels of the stacked cells (data-label).
 const TOKEN_COLUMNS = { name: 'Name', scopes: 'Permissions', source: 'Source', created: 'Created', id: 'Token ID' };
@@ -1309,15 +1313,21 @@ export function installAccountUI(environment) {
         const name = field({ label: 'Name', input: input({ name: 'name', maxlength: TOKEN_NAME_MAX, autocomplete: 'off', spellcheck: false }), hint: 'Shown in this list and in server logs. Pick something that tells you where it is used.', id: nextId('token-name') });
         const submit = entry(h('button', { class: 'btn btn-primary', type: 'submit' }, 'Create token'), false);
         const checks = scopes.includes('api') ? [] : scopes.map(scope => h('input', { type: 'checkbox', value: scope, checked: selected.includes(scope) }));
+        const choice = check => h('label', { class: 'check' }, check, ' ',
+          h('span', {}, h('strong', {}, check.value), SCOPE_MEANINGS[check.value] === undefined ? null : h('span', { class: 'muted' }, ` — ${SCOPE_MEANINGS[check.value]}`)));
         const permissions = scopes.includes('api')
           ? h('p', { class: 'small' }, h('strong', {}, 'Full API access'), h('span', { class: 'muted' }, ' — every operation of this service for your account. Keep access tokens private.'))
-          : h('fieldset', { class: 'field' }, h('legend', { class: 'label' }, 'Permissions'), ...checks.map(check => h('label', { class: 'check' }, check, ' ',
-            h('span', {}, h('strong', {}, check.value), SCOPE_MEANINGS[check.value] === undefined ? null : h('span', { class: 'muted' }, ` — ${SCOPE_MEANINGS[check.value]}`)))));
+          : h('fieldset', { class: 'field' }, h('legend', { class: 'label' }, 'Permissions'), ...checks.filter(check => check.value !== OPERATE_JOBS).map(choice));
+        const operations = checks.filter(check => check.value === OPERATE_JOBS).map(check => {
+          const explanation = h('span', { class: 'hint', id: nextId('operate-jobs') }, OPERATE_JOBS_EXPLANATION);
+          check.setAttribute('aria-describedby', explanation.id);
+          return h('fieldset', { class: 'field' }, h('legend', { class: 'label' }, 'Indexing operations'), choice(check), explanation);
+        });
         for (const check of checks) check.addEventListener('change', () => {
           const chosen = new Set(selected);
           if (check.checked) chosen.add(check.value); else chosen.delete(check.value);
-          if (check.value === 'Raw' && check.checked) chosen.add('Read');
-          if (check.value === 'Read' && !check.checked) chosen.delete('Raw');
+          if (REQUIRES_READ.includes(check.value) && check.checked) chosen.add('Read');
+          if (check.value === 'Read' && !check.checked) for (const scope of REQUIRES_READ) chosen.delete(scope);
           selected = scopes.filter(scope => chosen.has(scope));
           for (const other of checks) other.checked = selected.includes(other.value);
           entry(submit, selected.length === 0);
@@ -1325,7 +1335,7 @@ export function installAccountUI(environment) {
         const error = h('div', { role: 'alert', hidden: true });
         const form = h('form', { class: 'card', novalidate: true, 'aria-labelledby': headId, 'data-account-token-form': true },
           h('div', { class: 'card-head' }, h('h2', { id: headId }, 'New access token')),
-          h('div', { class: 'card-body account-form' }, name.node, permissions, error,
+          h('div', { class: 'card-body account-form' }, name.node, permissions, ...operations, error,
             h('div', { class: 'form-actions' }, submit, h('button', { class: 'btn', type: 'button', onclick: closeForm }, 'Cancel'))));
         form.addEventListener('submit', event => {
           event.preventDefault();
