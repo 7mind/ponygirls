@@ -70,7 +70,7 @@ let
   antiWallsText = "I have ADHD and AI generated walls of text immediately confuse me, make my head physically warm up and cause me to feel distress/despair.\nPlease keep your answers short and the language simple and free of mannered prose.";
   simpleLanguageText = "# Response style\n\n- **IMPORTANT:** Use simple English.\n- Use standard words. Do not make up words.";
   summaryText = "\n- Keep summaries concise.";
-  diffText = "\n- When a task is done, briefly explain what you did. For each diff or commit, name the repository and report test and non-test changes separately, with file counts and lines added and removed for each.";
+  diffText = "\n- When a task is done, briefly explain what you did. For each diff or commit, name the repository and report file counts and lines added and removed separately for **Test**, **Prod**, and **Docs**. Count test-only files as Test, documentation as Docs, and all other files as Prod.";
   disabled = evaluate { enable = false; };
   withoutHammer = evaluate { sections.hammer-mode.enable = false; };
   withoutCodeNavigation = evaluate { sections.code-navigation.enable = false; };
