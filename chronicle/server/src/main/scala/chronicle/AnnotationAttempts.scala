@@ -171,6 +171,13 @@ object AnnotationPartials {
     Sql.exec(c,s"DELETE FROM ch_annotation_partials WHERE $window",claim.jobId,claim.runId,epoch,ordinal)
     clear(c,claim,epoch,ordinal)
   }
+  /** Jobs that ended superseded: their partials and chain markers go (never read again). */
+  private[chronicle] def ended(c: Connection,jobs: List[UUID]): Unit = if(jobs.nonEmpty) {
+    val ids=jobs.mkString("{",",","}")
+    Sql.exec(c,"DELETE FROM ch_annotation_partials WHERE job_id=ANY(?::uuid[])",ids)
+    Sql.exec(c,"DELETE FROM ch_annotation_active_chains WHERE job_id=ANY(?::uuid[])",ids)
+    ()
+  }
   /** The window accepted: its partials and chain markers of every run and epoch of the job go. */
   private[chronicle] def accepted(c: Connection,claim: Claim,ordinal: Int): Unit = {
     Sql.exec(c,"DELETE FROM ch_annotation_partials WHERE job_id=? AND window_ordinal=?",claim.jobId,ordinal)

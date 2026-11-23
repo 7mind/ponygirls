@@ -57,8 +57,8 @@ private[chronicle] object OwnerProfileSwitch {
       "conflict","profile switch selection changed or already current")
     Check(current.epoch<Long.MaxValue,"unavailable","owner target epoch overflow")
     Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=? WHERE owner=?",selected.targetProfile,current.epoch+1,owner)
-    Sql.exec(c,Jobs.superseded("""UPDATE ch_jobs j SET state='Failed',error=?,failure_stage=NULL,fence=j.fence+1,lease_until=NULL
-      FROM ch_sources s WHERE s.id=j.session_id AND s.owner=? AND j.profile<>? AND j.state IN('Queued','Running') RETURNING j.id"""),
+    Jobs.supersede(c,"""UPDATE ch_jobs j SET state='Failed',error=?,failure_stage=NULL,fence=j.fence+1,lease_until=NULL
+      FROM ch_sources s WHERE s.id=j.session_id AND s.owner=? AND j.profile<>? AND j.state IN('Queued','Running') RETURNING j.id""",
       superseded,owner,selected.targetProfile)
     ()
   }
