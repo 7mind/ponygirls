@@ -798,10 +798,12 @@ class Clients:
         if not (isinstance(value, dict) and value.get('jsonrpc') == '2.0' and value.get('id') == rid and isinstance(value.get('result'), dict)):
             return 'other:200:not-a-result-for-this-id', status, now() - started
         result = value['result']
-        if not isinstance(result.get('content'), list):
+        blocks = result.get('content')
+        # Exactly one text block (Chronicle's McpPresentation): any other element or a second block is another shape.
+        if not (isinstance(blocks, list) and len(blocks) == 1 and isinstance(blocks[0], dict) and blocks[0].get('type') == 'text'
+                and isinstance(blocks[0].get('text'), str)):
             return 'other:200:malformed-tool-result', status, now() - started
-        texts = [block.get('text') for block in result['content'] if isinstance(block, dict) and block.get('type') == 'text']
-        content = decoded(texts[0]) if len(texts) == 1 and isinstance(texts[0], str) else None
+        content = decoded(blocks[0]['text'])
         if result.get('isError') is not True and status_result(content):
             return 'ok', status, now() - started
         if result.get('isError') is True and failure_code(content) == 'unavailable':
@@ -1321,7 +1323,11 @@ def delta(later, earlier, name, key='sessions'):
 def load_calibration(path):
     """T of a SMALL run's case 6 (background-corrected request sessions per run kind and service) — only a BASELINE of the
     same WORKLOAD with positive values."""
-    report = json.loads(Path(path).read_text())
+    return calibration_of(json.loads(Path(path).read_bytes()))
+
+
+def calibration_of(report):
+    """load_calibration's T of a parsed SMALL report."""
     assert report.get('set') == 'SMALL', 'not a SMALL run'
     six = next(case for case in report['cases'] if case['case'] == '6')
     assert six['verdict'] == 'BASELINE', f'its case 6 is {six["verdict"]}'
@@ -1333,13 +1339,15 @@ def load_calibration(path):
 
 
 def registered_calibration(path):
-    """(T, source) of the calibration rule set r7 registered: any other file, or the registered one changed, is refused."""
+    """(T, source) of the calibration rule set r7 registered: any other file, or the registered one changed, is refused.
+    One read: the digest is checked on the bytes T is parsed from."""
     assert path, 'RESTART_ACC_CALIBRATION is not set'
     given = Path(path).resolve(strict=True)
     assert given == Path(REGISTERED_CALIBRATION['path']).resolve(), f'{given} is not the calibration of rule set {RULE_SET}: {REGISTERED_CALIBRATION["path"]}'
-    digest = hashlib.sha256(given.read_bytes()).hexdigest()
+    data = given.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
     assert digest == REGISTERED_CALIBRATION['sha256'], f'{given} changed since rule set {RULE_SET} registered it: sha256 {digest}'
-    return load_calibration(given), dict(path=str(given), sha256=digest, registered=True)
+    return calibration_of(json.loads(data)), dict(path=str(given), sha256=digest, registered=True)
 
 
 def case_6(run):
@@ -2099,6 +2107,7 @@ def parse(line):
 
 
 DECODE_S = 5.0  # self-check: the fake clock's advance per decoded body
+UNAVAILABLE_BLOCK = dict(type='text', text=json.dumps(dict(code='unavailable', message='self-check')))  # self-check: a valid tool-error block
 
 
 def answering(reply):
@@ -2194,6 +2203,10 @@ def enforcement_checks(m):
                      m.fenced_judgment([dict(probe='rest', atSeconds=1.0, outcome='unavailable', status=503, elapsed=elapsed)], 11.0)))
     malformed = [('chronicle_mcp', 'MCP result with "content": null', lambda request: (200, dict(jsonrpc='2.0', id=request['id'], result=dict(content=None, isError=True)))),
                  ('chronicle_mcp', 'MCP result with "content": 5', lambda request: (200, dict(jsonrpc='2.0', id=request['id'], result=dict(content=5, isError=True)))),
+                 ('chronicle_mcp', 'MCP tool error whose content is null plus one valid unavailable text block',
+                  lambda request: (200, dict(jsonrpc='2.0', id=request['id'], result=dict(content=[None, UNAVAILABLE_BLOCK], isError=True)))),
+                 ('chronicle_mcp', 'MCP tool error whose content is a non-text block plus one valid unavailable text block',
+                  lambda request: (200, dict(jsonrpc='2.0', id=request['id'], result=dict(content=[dict(type='image'), UNAVAILABLE_BLOCK], isError=True)))),
                  ('manure_list', 'Manure 503 envelope with "Error": null', lambda request: (503, dict(requestId=m.NIL, result=dict(Error=None))))]
     for kind, label, answer in malformed:
         server = answering(lambda path, request, answer=answer: answer(request))
@@ -2203,6 +2216,13 @@ def enforcement_checks(m):
         finally:
             server.shutdown()
             server.server_close()
+    server = answering(lambda path, request: (200, dict(jsonrpc='2.0', id=request['id'], result=dict(content=[UNAVAILABLE_BLOCK], isError=True))))
+    try:
+        scenario('case 4 reply: an MCP tool error of exactly one valid unavailable text block is `unavailable:tool-error`',
+                 lambda: (lambda answer: (answer[0] == 'unavailable:tool-error', answer[:2]))(clients(server.server_address[1]).chronicle_mcp(timeout=5)))
+    finally:
+        server.shutdown()
+        server.server_close()
     for label, message in (('a null message', None), ('an envelope whose result is null', dict(requestId='x', result=None))):
         listener = ws_answering(message)
         try:
@@ -2245,6 +2265,32 @@ def enforcement_checks(m):
             except AssertionError as error:
                 return True, str(error)
         scenario('calibration: a structurally valid SMALL baseline other than the registered file is refused', refused_other)
+
+        def baseline(sessions):
+            return json.dumps(dict(set='SMALL', cases=[dict(case='6', verdict='BASELINE', measurements=dict(
+                workload=m.WORKLOAD, derived={phase: {name: dict(requestSessions=sessions) for name in SERVICES} for phase in ('cold', 'warm')}))]))
+        registered, real_sha256 = scratch / 'registered.json', hashlib.sha256
+        registered.write_text(baseline(1000.0))
+
+        class SwapAfterHash:
+            """hashlib for `m` whose sha256 replaces the registered file with another baseline right after hashing."""
+            @staticmethod
+            def sha256(data):
+                digest = real_sha256(data)
+                registered.write_text(baseline(2000.0))
+                return digest
+
+        def swapped_after_hash():
+            real_hashlib, real_registration = m.hashlib, m.REGISTERED_CALIBRATION
+            registration = dict(path=str(registered), sha256=real_sha256(registered.read_bytes()).hexdigest())
+            try:
+                m.hashlib, m.REGISTERED_CALIBRATION = SwapAfterHash, registration
+                calibration, source = m.registered_calibration(str(registered))
+            finally:
+                m.hashlib, m.REGISTERED_CALIBRATION = real_hashlib, real_registration
+            return all(value == 1000.0 for phases in calibration.values() for value in phases.values()), dict(T=calibration, source=source)
+        scenario('calibration: a file swapped right after its digest was taken cannot change T (one read: digest and T from the same bytes)',
+                 swapped_after_hash)
     finally:
         shutil.rmtree(scratch)
     if Path(REGISTERED_CALIBRATION['path']).exists():
