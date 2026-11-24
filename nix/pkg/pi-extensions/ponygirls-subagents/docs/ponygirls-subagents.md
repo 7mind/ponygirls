@@ -498,16 +498,13 @@ restart, in-process journal reset, or replay of uncertain effects is performed.
   are manual; `docs/progress.md` records which provider/OS combinations
   were exercised.
 - **Children receive their task text plus selected skills and context
-  files; AGENTS.md discovery is opt-in.** `skills` / `context_files` (or `all_skills` /
+  files.** `skills` / `context_files` (or `all_skills` /
   `all_context_files`) select from what the owner holds (the
   governing session: what pi loaded for its current run, observed on
   `before_agent_start`). The selection is snapshotted at spawn (128 KiB
-  ceiling) and survives reloads. With all discovery off, no AGENTS.md is
-  added automatically. `/archeologist` (optional Archeologist extension) can independently enable checkout
-  rules at startup, nested rules on file access, the direct parent’s loaded
-  project rules, and the user’s global rule. Omitting `context_files` does
-  not suppress enabled discovery. See [Skills and context files](../README.md#skills-and-context-files).
-  Children do not discover SYSTEM.md, skills, extensions, or settings packages. The governing session's other prompt
+  ceiling) and survives reloads; children discover nothing from their
+  working directory (no SYSTEM.md, AGENTS.md, skills, or settings
+  packages) and load no extensions. The governing session's other prompt
   additions (appended system prompts, extension prompt sections) are not
   transferred.
 - **No manual approvals.** Every child tool call is decided by grants

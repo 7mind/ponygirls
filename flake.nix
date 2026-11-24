@@ -34,29 +34,6 @@
         skills = pkgs.callPackage ./nix/pkg/llm-skills/default.nix { };
         contexts = pkgs.callPackage ./nix/pkg/llm-contexts/default.nix { };
         chronicleTools = pkgs.callPackage ./nix/pkg/chronicle/toolchain.nix { };
-        checkContextExtension = name: pkgs.runCommand "${name}-test" {
-          nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git pkgs.bubblewrap ];
-          PI_SUBAGENTS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
-          PI_BIN = "${self.packages.${system}.pi-coding-agent}/bin/pi";
-          PI_OFFLINE = "1";
-          PI_TELEMETRY = "0";
-        } ''
-          cp -r ${self.packages.${system}.ponygirls-pi-extensions} pi-extensions
-          chmod -R u+w pi-extensions
-          cd pi-extensions
-          mkdir -p node_modules/@earendil-works
-          ln -s "$PI_SUBAGENTS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
-          for pkg in pi-tui pi-ai pi-agent-core; do
-            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@earendil-works/$pkg" node_modules/@earendil-works/$pkg
-          done
-          for pkg in typebox @types; do
-            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/$pkg" node_modules/$pkg
-          done
-          cd ${name}
-          tsc -p tsconfig.json
-          node --test tests/*.test.ts
-          touch $out
-        '';
         podmanModuleConfig = (nixpkgs.lib.nixosSystem {
           inherit system;
           modules = [
@@ -332,10 +309,7 @@
           assert wildcardOverride == [ "mcp__codegraph__*" ];
           assert builtins.all (asset: builtins.elem asset managedPiAssets) [ "AGENTS.md" "skills" "prompts" "models.json" "keybindings.json" ];
           assert nixpkgs.lib.assertMsg (missingPiAssets == [ ]) "Pi Home Manager files missing from yolo shared assets: ${nixpkgs.lib.concatStringsSep ", " missingPiAssets}";
-          assert builtins.all (asset: !(builtins.elem asset piSharedAssets)) [ "auth.json" "sessions" "archeologist.json" "historian.json" "historian-chronicle.json" ];
-          assert limitsDefault.smind.hm.dev.llm.pi.archeologist == { mainNested = false; nested = false; worktree = false; parent = false; global = false; };
-          assert let cfg = evalWorktree { archeologist.parent = true; }; in
-            builtins.fromJSON cfg.home.file."/home/alice/.pi/agent/archeologist-defaults.json".text == { version = 1; mainNested = false; nested = false; worktree = false; parent = true; global = false; };
+          assert builtins.all (asset: !(builtins.elem asset piSharedAssets)) [ "auth.json" "sessions" "historian.json" "historian-chronicle.json" ];
           assert worktreeDefault == null;
           assert worktreeCustom == "/srv/nvme/subagents-worktrees";
           assert worktreeManagedDefault == true;
@@ -1297,8 +1271,28 @@
             touch "$out"
           '';
           # The full suite requires Linux /proc process identity and bubblewrap.
-          ponygirls-subagents = checkContextExtension "ponygirls-subagents";
-          ponygirls-archeologist = checkContextExtension "ponygirls-archeologist";
+          ponygirls-subagents = pkgs.runCommand "ponygirls-subagents-test" {
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git pkgs.bubblewrap ];
+            PI_SUBAGENTS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
+          } ''
+            cp -r ${./nix/pkg/pi-extensions} pi-extensions
+            chmod -R u+w pi-extensions
+            cd pi-extensions
+            mkdir -p node_modules/@earendil-works
+            mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
+            ln -s "$PI_SUBAGENTS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
+            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
+            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@earendil-works/pi-ai" node_modules/@earendil-works/pi-ai
+            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@earendil-works/pi-agent-core" node_modules/@earendil-works/pi-agent-core
+            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/typebox" node_modules/typebox
+            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@types" node_modules/@types
+            cd ponygirls-subagents
+            tsc -p tsconfig.json
+            PI_SUBAGENTS_SDK_ROOT="$PI_SUBAGENTS_SDK_ROOT" node --test tests/*.test.ts
+            touch $out
+          '';
           podman-module = podmanModuleCheck;
           crawl4ai-startup = import ./nix/tests/crawl4ai-startup.nix { inherit pkgs; package = self.packages.${system}.crawl4ai; };
           oci-images = import ./nix/tests/oci-images.nix { inherit pkgs; oci = self.lib.oci { inherit pkgs; }; };

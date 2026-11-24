@@ -50,12 +50,7 @@ export const STORE_VERSION = 1;
 
 export type JournalKind =
   | "root.init"
-  | "workspace.allocating"
-  | "workspace.staged"
-  | "workspace.released"
   | "agent.spawned"
-  | "agent.instructions_added"
-  | "agent.instructions_accepted"
   | "command.accepted"
   | "mailbox.accepted"
   | "mailbox.receipt"

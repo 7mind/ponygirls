@@ -190,7 +190,7 @@ export function childToolSpec<S>(T: TypeBuilder<S>, name: string): ToolSpec<S> {
       return { description: "Read status, a result, all reviewer feedback (view=reviews after task settlement), or bounded events. Status includes model, requestedThinkingLevel, and effective thinkingLevel (unresolved until confirmed). Result/review text is paged with offset and nextOffset.", parameters: readParameters(T) };
     case "spawn_agent":
       return {
-        description: "Delegate a task to a new child agent in your subtree. Returns immediately with its id, task-run id, model, requestedThinkingLevel, and effective thinkingLevel (unresolved until confirmed); use wait_agent to join it. You must wait for (or close) your children before finishing. The default 48-agent cap counts open identities, including nested agents and reviewers; close_agent releases slots. A child is never less isolated than you; the parent conversation is not passed. Skills and owner context files require explicit selection; enabled AGENTS.md discovery may add rules independently.",
+        description: "Delegate a task to a new child agent in your subtree. Returns immediately with its id, task-run id, model, requestedThinkingLevel, and effective thinkingLevel (unresolved until confirmed); use wait_agent to join it. You must wait for (or close) your children before finishing. The default 48-agent cap counts open identities, including nested agents and reviewers; close_agent releases slots. A child is never less isolated than you; it can receive only skills and context files you have.",
         parameters: spawnParameters(T, {}),
       };
     case "interrupt_agent":
@@ -216,8 +216,8 @@ export function spawnParameters<S>(T: TypeBuilder<S>, extra: Record<string, S>):
     result_limit: T.Optional(T.Integer({ description: `Characters of the child's final text kept as each task run's result (default ${RESULT_TEXT_MAX}, at most ${RESULT_TEXT_HARD_MAX}; outside that range is refused); read a long result page by page with read_agent offset` })),
     skills: T.Optional(T.Array(T.String(), { description: "Names of your skills to pass to the child (omitted: none)" })),
     all_skills: T.Optional(T.Boolean({ description: "Pass every skill you have (instead of listing skills)" })),
-    context_files: T.Optional(T.Array(T.String(), { description: "Owner-held context file paths to pass. With child worktree discovery enabled, you can also name AGENTS.md or CLAUDE.md files inside the child working directory." })),
-    all_context_files: T.Optional(T.Boolean({ description: "Pass every context file you already hold (instead of listing context_files); does not enumerate the child workspace." })),
+    context_files: T.Optional(T.Array(T.String(), { description: "Paths of your context files (AGENTS.md and the like, as shown in your project context) to pass to the child (omitted: none)" })),
+    all_context_files: T.Optional(T.Boolean({ description: "Pass every context file you have (instead of listing context_files)" })),
     ...extra,
   });
 }
@@ -370,13 +370,6 @@ export function bashTimeoutMs(args: Record<string, unknown>): number {
  * arguments arrive as JSON on stdin, never spliced into source.
  */
 const PRELUDE = `const fs=require('fs'),path=require('path');const a=JSON.parse(fs.readFileSync(0,'utf8'));
-const track=process.argv[1]==='track-access';
-const report=(p,st)=>{try{const real=fs.realpathSync.native(p),dir=st.isDirectory()?real:path.dirname(real);
-const parent=fs.statSync(dir,{bigint:true}),current=fs.statSync(real,{bigint:true});
-if(current.ino===st.ino&&current.dev===st.dev)fs.writeSync(3,JSON.stringify({path:dir,dev:String(parent.dev),ino:String(parent.ino),birth:String(parent.birthtimeNs)}))}catch{}};
-const useFile=(p,flag,fn)=>{if(!track)return fn(p);const fd=fs.openSync(p,flag);try{const st=fs.fstatSync(fd,{bigint:true});
-if(process.platform==='linux')report('/proc/self/fd/'+fd,st);else if(st.nlink===1n)report(p,st);return fn(fd)}finally{fs.closeSync(fd)}};
-const useDir=(p)=>{if(!track)return p;try{process.chdir(p)}catch{return p}report('.',fs.statSync('.',{bigint:true}));return '.'};
 const fail=(m)=>{process.stderr.write(m+'\\n');process.exit(1)};
 const globSrc=(g)=>{let r='';for(let i=0;i<g.length;i++){const c=g[i];
 if(c==='*'){if(g[i+1]==='*'){i++;if(g[i+1]==='/'){i++;r+='(?:.*/)?'}else r+='.*'}else r+='[^/]*'}
@@ -391,31 +384,31 @@ const walk=function*(root){const st=[root];while(st.length){const d=st.pop();let
 `;
 
 export const TOOL_SCRIPTS: Record<string, string> = {
-  read: `${PRELUDE}const s=useFile(a.path,'r',f=>fs.readFileSync(f,'utf8'));const L=s.split('\\n');const start=a.offset||1;const limit=a.limit||${READ_DEFAULT_LINES};
+  read: `${PRELUDE}const s=fs.readFileSync(a.path,'utf8');const L=s.split('\\n');const start=a.offset||1;const limit=a.limit||${READ_DEFAULT_LINES};
 if(start>L.length&&L.length>0)fail('offset '+start+' is beyond the end of the file ('+L.length+' lines)');
 const out=[];let bytes=0,i=start-1;for(;i<L.length&&out.length<limit;i++){const b=Buffer.byteLength(L[i])+1;if(bytes+b>${READ_MAX_BYTES}&&out.length>0)break;out.push(L[i]);bytes+=b}
 let text=out.join('\\n');if(i<L.length)text+='\\n\\n[Showing lines '+start+'-'+i+' of '+L.length+(bytes>=${READ_MAX_BYTES}?' (byte limit)':'')+'. Use offset='+(i+1)+' to continue.]';
 process.stdout.write(text);`,
-  ls: `${PRELUDE}const d=useDir(a.path||'.');const lim=a.limit||500;const es=fs.readdirSync(d,{withFileTypes:true}).map(e=>e.isDirectory()?e.name+'/':e.name).sort();
+  ls: `${PRELUDE}const d=a.path||'.';const lim=a.limit||500;const es=fs.readdirSync(d,{withFileTypes:true}).map(e=>e.isDirectory()?e.name+'/':e.name).sort();
 process.stdout.write(es.slice(0,lim).join('\\n')+(es.length>lim?'\\n['+(es.length-lim)+' more entries]':''));`,
-  find: `${PRELUDE}const shown=a.path||'.',root=useDir(shown);const lim=a.limit||1000;const m=matcher(a.pattern);const out=[];
-for(const e of walk(root)){const rel=path.relative(root,e.p);if(m(rel)){out.push(path.join(shown,rel)+(e.dir?'/':''));if(out.length>=lim)break}}
+  find: `${PRELUDE}const root=a.path||'.';const lim=a.limit||1000;const m=matcher(a.pattern);const out=[];
+for(const e of walk(root)){const rel=path.relative(root,e.p);if(m(rel)){out.push(e.dir?e.p+'/':e.p);if(out.length>=lim)break}}
 process.stdout.write(out.length?out.join('\\n'):'No files found matching pattern');`,
   grep: `${PRELUDE}const esc=(t)=>t.replace(/[.*+?^\${}()|[\\]\\\\]/g,'\\\\$&');const re=new RegExp(a.literal?esc(a.pattern):a.pattern,a.ignoreCase?'i':'');
-const lim=a.limit||100;const ctx=a.context||0;const shown=a.path||'.';const single=fs.statSync(shown).isFile(),root=single?shown:useDir(shown);const gm=a.glob&&!single?matcher(a.glob):null;const out=[];let n=0;
+const lim=a.limit||100;const ctx=a.context||0;const root=a.path||'.';const single=fs.statSync(root).isFile();const gm=a.glob&&!single?matcher(a.glob):null;const out=[];let n=0;
 const files=single?[root]:[...walk(root)].filter(e=>!e.dir).map(e=>e.p);
-for(const f of files){if(n>=lim)break;if(gm&&!gm(path.relative(root,f)))continue;const label=single?shown:path.join(shown,path.relative(root,f));let b;try{b=single?useFile(f,'r',v=>fs.readFileSync(v)):fs.readFileSync(f)}catch{continue}if(b.subarray(0,8192).includes(0))continue;
+for(const f of files){if(n>=lim)break;if(gm&&!gm(path.relative(root,f)))continue;let b;try{b=fs.readFileSync(f)}catch{continue}if(b.subarray(0,8192).includes(0))continue;
 const L=b.toString('utf8').split('\\n');for(let i=0;i<L.length&&n<lim;i++){if(!re.test(L[i]))continue;n++;
-for(let j=Math.max(0,i-ctx);j<i;j++)out.push(label+'-'+(j+1)+'-'+L[j].slice(0,500));out.push(label+':'+(i+1)+':'+L[i].slice(0,500));
-for(let j=i+1;j<=Math.min(L.length-1,i+ctx);j++)out.push(label+'-'+(j+1)+'-'+L[j].slice(0,500))}}
+for(let j=Math.max(0,i-ctx);j<i;j++)out.push(f+'-'+(j+1)+'-'+L[j].slice(0,500));out.push(f+':'+(i+1)+':'+L[i].slice(0,500));
+for(let j=i+1;j<=Math.min(L.length-1,i+ctx);j++)out.push(f+'-'+(j+1)+'-'+L[j].slice(0,500))}}
 process.stdout.write(out.length?out.join('\\n')+(n>=lim?'\\n[match limit '+lim+' reached]':''):'No matches found');`,
-  write: `${PRELUDE}fs.mkdirSync(path.dirname(a.path),{recursive:true});useFile(a.path,'w',f=>fs.writeFileSync(f,a.content));
+  write: `${PRELUDE}fs.mkdirSync(path.dirname(a.path),{recursive:true});fs.writeFileSync(a.path,a.content);
 process.stdout.write('Wrote '+Buffer.byteLength(a.content)+' bytes to '+a.path);`,
   edit: `${PRELUDE}const s=fs.readFileSync(a.path,'utf8');const spans=[];
 a.edits.forEach((e,i)=>{const at=s.indexOf(e.oldText);if(at<0)fail('edits['+i+'].oldText not found in '+a.path);
 if(s.indexOf(e.oldText,at+1)>=0)fail('edits['+i+'].oldText occurs more than once in '+a.path+'; add context to make it unique');
 spans.push({start:at,end:at+e.oldText.length,text:e.newText,i})});
 spans.sort((x,y)=>x.start-y.start);for(let k=1;k<spans.length;k++)if(spans[k].start<spans[k-1].end)fail('edits['+spans[k-1].i+'] and edits['+spans[k].i+'] overlap in '+a.path);
-let out='',pos=0;for(const sp of spans){out+=s.slice(pos,sp.start)+sp.text;pos=sp.end}out+=s.slice(pos);useFile(a.path,'w',f=>fs.writeFileSync(f,out));
+let out='',pos=0;for(const sp of spans){out+=s.slice(pos,sp.start)+sp.text;pos=sp.end}out+=s.slice(pos);fs.writeFileSync(a.path,out);
 process.stdout.write('Applied '+spans.length+' edit(s) to '+a.path);`,
 };

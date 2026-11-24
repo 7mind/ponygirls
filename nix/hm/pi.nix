@@ -602,18 +602,6 @@ in
       description = "Load the additive pi-claude-code-subagents backend alongside the managed Claude Code provider and ponygirls-subagents.";
     };
 
-    smind.hm.dev.llm.pi.archeologist = lib.mapAttrs (_: description: lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      inherit description;
-    }) {
-      mainNested = "Discover nested instructions after successful main-session file access.";
-      nested = "Discover nested instructions after successful subagent file access.";
-      worktree = "Load instructions in the subagent checkout and allow named local instruction files.";
-      parent = "Pass the direct parent's loaded project instructions to subagents.";
-      global = "Pass instructions from the Pi agent directory to subagents.";
-    };
-
     smind.hm.dev.llm.pi.subagentsAllowAllModels = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -998,7 +986,6 @@ in
             # file ~/.pi/agent/subagents-policy.json: repos for `sandbox`
             # children, nesting, model, and gate limits).
             "${piExtensions}/ponygirls-subagents"
-            "${piExtensions}/ponygirls-archeologist"
             # Shared project journals outside repositories; explicitly selected model, default off.
             "${piExtensions}/ponygirls-historian"
             # Background shell tasks: the `bg_task` tool, the /bg terminal
@@ -1035,9 +1022,6 @@ in
     (lib.mkIf subagentsPolicyManaged {
       home.file."${piCfg.configDir}/subagents-policy.json".source = piSubagentsPolicyJson;
     })
-    {
-      home.file."${piCfg.configDir}/archeologist-defaults.json".text = builtins.toJSON ({ version = 1; } // cfg.pi.archeologist);
-    }
     (lib.mkIf (piCfg.historian.journalRoot != null || piCfg.historian.model != null) {
       home.file."${piCfg.configDir}/historian-defaults.json".text = builtins.toJSON {
         version = 1;

@@ -491,7 +491,6 @@ in
         "models.json"
         "keybindings.json"
         "subagents-policy.json"
-        "archeologist-defaults.json"
         "historian-defaults.json"
         "historian-chronicle-defaults.json"
         "AGENTS.md"
