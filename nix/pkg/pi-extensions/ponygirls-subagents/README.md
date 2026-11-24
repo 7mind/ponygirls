@@ -128,58 +128,19 @@ directory; if you remove it, the agent's later tasks fail with
 
 ## Skills and context files
 
-By default the child receives only explicitly selected skills and context
-files, snapshotted at spawn and kept across reloads:
+A child's pi session discovers nothing from its working directory. It
+lists exactly the skills and context files (`AGENTS.md` and the like) its
+owner passes, snapshotted at spawn and kept across reloads:
 
 ```text
 spawn_agent(task_name="review", profile="reader", message="...", all_skills=true, context_files=["/home/user/src/myrepo/AGENTS.md"])
 ```
 
-`skills` lists owner-held skill names. `context_files` lists owner-held paths;
-`all_skills` and `all_context_files` pass everything the direct owner holds in
-that category. They never enumerate a child workspace. Explicit selections
-work even when all discovery is off.
-
-With [Archeologist](../ponygirls-archeologist) loaded, `/archeologist` controls four independent AGENTS.md sources for **new**
-ordinary children. All are off by default:
-
-| Setting | What the child receives |
-| --- | --- |
-| Auto-discover nested | On a successful direct model call to `read`, `write`, `edit`, `grep`, `find` or `ls` with a path below its working directory, the child receives newly encountered rules along that path in its tool response. No recursive scan, shell parsing, inspection of an external tool’s internal reads or inference about paths mentioned in tool output. |
-| Child worktree AGENTS.md | Startup rules from the child's allocated checkout root through its working directory, least to most specific. Outside a checkout this uses the working directory only. `context_files` may then also name an existing rule inside that working directory, relative or absolute. No `..` components or links outside that directory. |
-| Parent project AGENTS.md | The direct parent's already-loaded project rules, not the conversation, agent-directory rules or a fresh read of the parent tree. |
-| Global user AGENTS.md | The user rule in Pi's agent directory. A grandchild can receive only the snapshot its direct parent holds. |
-
-Each directory contributes the first readable regular file in Pi's order:
-`AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`.
-An explicit name can select a non-winning file. Project reads use the child's
-actual filesystem view and cannot use links outside the permitted root. No
-additional skills, extensions or other project resources are discovered.
-Before asynchronous startup discovery, the supervisor journals its temporary
-directory and, for an extension-created writer worktree, its Git and directory
-identities. A discovery-staged writer checkout carries a Git worktree lock
-until its spawn is published or rolled back. While that claim is unresolved, another Pi session cannot reuse that checkout
-or its subdirectories as a working directory, prepared workspace, sandbox read root,
-or source for another writer worktree. Reopening the
-session after a crash releases only verified, unpublished allocations. A prepared checkout is never a cleanup target.
-
-Startup ordering is global, inherited project, explicit owner selection, then
-child checkout and named child-local files. At the same path, explicit owner
-text wins over child-local text, and child-local text wins over automatic
-inherited text. The combined skills and rules have a 128 KiB serialized limit;
-an on-access addition must also fit half a 24,000-character tool result. A
-lookup or size failure after a successful tool does not undo the operation;
-the tool response reports the discovery error. Snapshots and discovery grants
-stay with the admitted child across follow-ups and reloads. A descendant's
-automatic discovery cannot exceed either the current settings or its direct
-parent's admitted switches. Gate and one-shot review bundles retain their
-separate, explicit review context and do not run discovery.
-
-The operator pane lists paths confirmed installed by each ordinary worker,
-including explicit selections and closed agents. Missing or legacy delivery
-records leave coverage incomplete. No path inventory is sent to model tools.
-Without Archeologist, new admissions remain explicit-only; switching it off
-does not revoke snapshots already admitted.
+`skills` lists skill names and `context_files` lists paths as shown in the
+owner's project context; `all_skills` / `all_context_files` pass
+everything; omitted passes nothing.
+The governing session offers what pi loaded for its current run; a child
+can pass on only what it holds. Extensions are never loaded in children.
 
 ## Configure
 

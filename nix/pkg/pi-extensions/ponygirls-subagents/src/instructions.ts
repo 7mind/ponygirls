@@ -8,10 +8,7 @@
  * what its children can receive.
  */
 
-import { DISCOVERY_KEYS, type Discovery } from "../../context-rules/rules.ts";
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { err } from "./errors.ts";
 import type { ContextFile, InstructionSet, ResourceSelection, SkillRef } from "./types.ts";
 
@@ -100,52 +97,4 @@ export function parseInstructionSet(raw: unknown): InstructionSet {
       return { name: r["name"], description: r["description"], filePath: r["filePath"], baseDir: r["baseDir"], disableModelInvocation: r["disableModelInvocation"] === true };
     }),
   };
-}
-
-export type InstructionSource = "project" | "global";
-export interface DiscoveryState {
-  grants: Discovery;
-  sources: Record<string, InstructionSource>;
-  nestedFiles: ContextFile[];
-}
-
-export function discoveryGrants(root: Discovery, owner: Discovery | null): Discovery {
-  return Object.fromEntries(DISCOVERY_KEYS.map(key => [key, root[key] && (owner === null || owner[key])])) as Discovery;
-}
-
-export function ownerSource(path: string, cwd: string, agentDir: string | undefined, names: readonly string[]): InstructionSource | undefined {
-  if (!isAbsolute(path) || resolve(path) !== path) return undefined;
-  const name = basename(path);
-  if (agentDir && dirname(path) === resolve(agentDir)) {
-    if (names.includes(name)) return "global";
-    return undefined;
-  }
-  if (!names.includes(name)) return undefined;
-  const rel = relative(dirname(path), cwd);
-  return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) ? "project" : undefined;
-}
-
-export function trustedInstruction(dir: string, names: readonly string[]): ContextFile[] {
-  for (const name of names) {
-    const path = join(dir, name);
-    let fd: number;
-    try { fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK); }
-    catch (error) { if (["ENOENT", "EACCES", "ELOOP", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) continue; throw error; }
-    try {
-      const st = fstatSync(fd);
-      if (!st.isFile()) continue;
-      if (st.size > MAX_INSTRUCTION_BYTES) throw err("INVALID", `Invalid instruction file: ${path}`);
-      const bytes = Buffer.alloc(st.size + 1);
-      const n = readSync(fd, bytes, 0, bytes.length, 0);
-      if (n !== st.size) throw err("INVALID", `Instruction file changed during read: ${path}`);
-      return [{ path, content: bytes.toString("utf8", 0, n).replace(/^\uFEFF/, "") }];
-    } finally { closeSync(fd); }
-  }
-  return [];
-}
-
-export function mergeInstructions(skills: SkillRef[], files: ContextFile[]): InstructionSet {
-  const seen = new Set<string>();
-  const contextFiles = files.filter(f => !seen.has(f.path) && !!seen.add(f.path));
-  return selectInstructions({ contextFiles, skills }, "all", "all");
 }

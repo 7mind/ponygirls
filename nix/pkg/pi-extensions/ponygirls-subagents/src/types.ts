@@ -110,7 +110,6 @@ export interface AgentRecord {
   allocation: WorkspaceAllocation;
   /** Skills and context files snapshotted from the owner at spawn. */
   instructions: InstructionSet;
-  discovery?: import("./instructions.ts").DiscoveryState;
   instructionHash: string;
   policyRevision: number;
   model: ResolvedModel | null;

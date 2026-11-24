@@ -32,10 +32,8 @@ import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { EventBus, Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "@earendil-works/pi-coding-agent";
 import { registerStatsCollector } from "../../ponygirls-model-stats-collector.ts";
 import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, RESULT_TEXT_MAX, childToolGuidelines, childToolSpec, type TypeBuilder } from "./tools.ts";
-import { renderProjectContextFile } from "../../context-rules/rules.ts";
-import { instructionHash, parseInstructionSet } from "./instructions.ts";
 import { MAX_PAYLOAD_BYTES } from "./protocol.ts";
-import { PROTOCOL_VERSION, type ContextFile, type InstructionSet } from "./types.ts";
+import { PROTOCOL_VERSION, type InstructionSet } from "./types.ts";
 import type { ChannelBinding } from "./protocol.ts";
 import type { DeterministicEntryObserver, InvocationScope } from "./deterministic.ts";
 import { adaptStream, isFacadeLocalCompletion } from "./stream-facade.ts";
@@ -123,7 +121,7 @@ interface ResourceLoaderLike {
   getSkills(): unknown;
   getPrompts(): unknown;
   getThemes(): unknown;
-  getAgentsFiles(): { agentsFiles: ContextFile[] };
+  getAgentsFiles(): unknown;
   getSystemPrompt(): unknown;
   getSystemPromptSource(): unknown;
   getAppendSystemPrompt(): unknown;
@@ -1236,18 +1234,6 @@ async function installOriginalFaultWrapper(session: WorkerSession): Promise<void
   };
 }
 
-function withNestedRules(context: TranscriptContext, files: ContextFile[] | undefined): TranscriptContext {
-  if (!files?.length) return context;
-  const retained = context.messages.flatMap(message => typeof message.content === "string" ? [message.content] : message.content.flatMap(block => block.type === "text" ? [block.text] : []));
-  const missing = files.map(renderProjectContextFile).filter(rule => !retained.some(text => text.includes(rule)));
-  if (!missing.length) return context;
-  const [head, ...rest] = context.messages;
-  const rules = missing.join("\n\n");
-  return head?.role === "system"
-    ? { ...context, messages: [{ ...head, sections: { ...head.sections, subagentNestedRules: rules } }, ...rest] }
-    : { ...context, messages: [{ role: "system", content: rules, timestamp: 0 }, ...context.messages] };
-}
-
 async function decorateProviderGuard(
   session: WorkerSession,
   admitted: { provider: string; id: string; thinkingLevel: string },
@@ -1287,7 +1273,7 @@ async function decorateProviderGuard(
       let raw: AssistantMessageEventStream;
       try {
         const request = parentProvider === null ? { model, options } : parentProvider.prepareRequest(model, options);
-        const streamOrPromise: ReturnType<StreamFn> = Reflect.apply(original, this, [request.model, withNestedRules(context, admission.nestedFiles), request.options]) as ReturnType<StreamFn>;
+        const streamOrPromise: ReturnType<StreamFn> = Reflect.apply(original, this, [request.model, context, request.options]) as ReturnType<StreamFn>;
         raw = await streamOrPromise;
       } catch (invokeError: unknown) {
         capturedGen.usage.unknown = true;
@@ -1623,7 +1609,6 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
   setRequestIdentityEnv(init.taskRunId, init.executionGeneration);
 
   let session: WorkerSession;
-  let installedInstructionHash: string;
   let parentProvider: ParentModelProvider | null = null;
   try {
     const sdk = await loadSdk();
@@ -1655,6 +1640,7 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
         (pi) => registerStatsCollector(pi, hostAgentDir), init.workdir, sdk.createEventBus(), extensions.runtime, "ponygirls-worker-perf",
       ));
     }
+    const resourceLoader = snapshotResourceLoader(baseLoader, init.instructions, extensions);
     const Type = await loadTypeBox();
     // Preserved parent schemas/descriptions for external proxies (no generic
     // catchall); native tools keep pi-shaped child specs. Unknown names fail
@@ -1709,7 +1695,6 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
       mkdirSync(state.sessionDir, { recursive: true });
       sessionManager = sdk.SessionManager.create(init.workdir, state.sessionDir);
     }
-    const resourceLoader = snapshotResourceLoader(baseLoader, init.instructions, extensions);
     ({ session } = (await sdk.createAgentSession({
       cwd: init.workdir,
       agentDir,
@@ -1724,7 +1709,6 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
       tools: init.tools,
       customTools,
     })) as { session: WorkerSession });
-    installedInstructionHash = instructionHash({ contextFiles: resourceLoader.getAgentsFiles().agentsFiles, skills: init.instructions.skills });
     if (session.model.provider !== model["provider"] || session.model.id !== model["id"]) {
       throw new Error("MODEL_UNAVAILABLE: restored worker did not select the admitted model");
     }
@@ -1763,7 +1747,6 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
   await decorateProviderGuard(session, { provider: init.model.provider, id: init.model.id, thinkingLevel: init.model.thinkingLevel }, parentProvider);
   ack(env.requestId, {
     sessionId: session.sessionId,
-    installedInstructionHash,
     sessionFile: session.sessionManager.getSessionFile() ?? null,
     thinkingLevel: session.thinkingLevel,
     ...(state.collector !== null ? { collector: { name: state.collector.name, ready: state.collector.ready } } : {}),
@@ -2068,10 +2051,10 @@ function handlePrepareResponse(envelope: IpcEnvelope): void {
 function handleAdmissionResponse(envelope: IpcEnvelope): void {
   const pending = envelope.requestId ? state.pendingAdmission.get(envelope.requestId) : undefined;
   if (!pending) return;
-  const payload = envelope.payload as { ok?: boolean; code?: string; error?: string; auth?: unknown; nestedFiles?: unknown };
+  const payload = envelope.payload as { ok?: boolean; code?: string; error?: string; auth?: unknown };
   if (payload?.ok === true) {
     try {
-      pending.resolve({ ok: true, ...(payload.auth === undefined ? {} : { auth: parseProviderRequestAuth(payload.auth) }), ...(payload.nestedFiles === undefined ? {} : { nestedFiles: parseInstructionSet({ skills: [], contextFiles: payload.nestedFiles }).contextFiles }) });
+      pending.resolve({ ok: true, ...(payload.auth === undefined ? {} : { auth: parseProviderRequestAuth(payload.auth) }) });
     } catch {
       pending.resolve({ ok: false, code: "INVALID", error: "invalid parent provider authentication response" });
     }
@@ -2091,17 +2074,12 @@ function handleToolResponse(envelope: IpcEnvelope): void {
   if (!pending) return;
   const payload = envelope.payload as {
     ok?: boolean;
-    instructionRevision?: number;
     content?: string | Array<Record<string, unknown>>;
     details?: unknown;
     structuredContent?: unknown;
     usage?: unknown;
   };
   const content = Array.isArray(payload?.content) ? payload.content : String(payload?.content ?? "");
-  if (payload?.ok === true && typeof content === "string" && Number.isSafeInteger(payload.instructionRevision) &&
-      envelope.taskRunId === state.gen.taskRunId && envelope.executionGeneration === state.gen.generation) {
-    emitWorkerEvent({ kind: "instructions_accepted", detail: { revision: payload.instructionRevision } });
-  }
   pending.resolve({
     content,
     details: payload?.details,
