@@ -6,17 +6,16 @@ review 1 (reports/claim-order/REVIEW-1.md, -1b.md: F1–F8, D-a…D-j). Code at 
 ## 1. For the owner (read this first)
 - **Today.** A free lane takes the claimable session whose *random* id sorts first, owners strictly in id order. The one
   "large" permit (jobs > 100 windows) goes to whichever lane loops first, and that lane takes the lowest-id job of any size.
-- **24 Nov.** The live session 08ffb631 had six runs end early: 1 pod roll, 2 `model-http`, 3 `stale-claim` whose cause is
-  **not determined**. Its low id won whenever its job was claimable; small jobs also held the permit. 666b5a41 (large, waiting
-  since 16:02Z) had not started by 20:57Z; the permit ran no large job for up to 12–17 min while one was ready.
-- **Proposal.** One ordering key, the time a job started waiting. Lane 0 owns the large permit: it takes the oldest job known
-  to be large, otherwise the oldest job of any kind. Of the other lanes, a fixed number prefer *bulk* work (bulk retry, rebuild),
-  the rest prefer *fresh* work (uploads); each takes the oldest job of its class and borrows from the other class only when its
-  own has nothing claimable. No owner priority. The locking and rechecks of today's claim stay as they are.
+- **24 Nov.** The live session 08ffb631 had six runs end early: 1 pod roll, 2 `model-http`, 3 `stale-claim` — each of those
+  three at its first window with kept parts after a newer revision had arrived (observed, §3). Its low id won whenever its job
+  was claimable; small jobs also held the permit. 666b5a41 (large, since 16:02Z) had not started by 20:57Z.
+- **Proposal.** One key: when a job started waiting. Lane 0 owns the large permit: oldest known-large job, else oldest of any
+  kind. Other lanes: a fixed number prefer *bulk* work (bulk retry, rebuild), the rest *fresh* uploads; each takes its class's
+  oldest and borrows only when its class has nothing claimable. No owner priority; today's locking and rechecks stay.
 - **Does not solve.** Capacity (one large lane; 24 Nov's 46 retried large-by-total jobs ≈ 80–200 h one at a time, conditional
-  estimate RS §7); order of large jobs before a claim has sized them; the cause of the live session's early ends; an hour bound.
-- **Cost.** Two nullable columns (no table rewrite), four partial indexes, a rewrite of candidate selection, a restart to deploy
-  and one per flag change (never free for running work, §6). Risk: a claim bug stops or mis-orders indexing; flag off = today.
+  estimate RS §7); order of large jobs before a claim has sized them; the live session's cuts (below, D3); an hour bound.
+- **Cost.** Two nullable columns, four partial indexes, new candidate selection, a restart per deploy and flag change (never
+  free for running work, §6). Risk: a claim bug stops or mis-orders indexing; flag off = today.
 - **Decisions** (recommendation first; each option: guarantees / costs / does not solve):
   - **D1 Owners.** (a) arrival order: no owner priority; one owner's burst delays only later arrivals of its class; free; gives
     no owner a share [rec for three users]. (b) rotation between owners: each owner with work in turn; needs rotation state
@@ -25,9 +24,10 @@ review 1 (reports/claim-order/REVIEW-1.md, -1b.md: F1–F8, D-a…D-j). Code at 
     lane returns after its current job (≤ 100 windows, ≈ ≤ 2 h at 0.8–2 windows/min — conditional estimate); never idles
     [rec]. (b) hard reservation: exact shares, a lane idles when its class is empty. (c) one oldest-first queue: fresh uploads
     wait behind a bulk apply (24 Nov conditional estimate: 845 small retries on three lanes ≈ 31–46 h).
-  - **D3 Head after a cut run of its session.** (a) new wait from its append [rec]: fair; the session queues behind every older
-    *known-large* job — after a cut in a 24 Nov-like backlog its search can stay stale for days. (b) inherit the cut job's age:
-    the session keeps its place — today's hold on the large lane returns. Quiet period / carry across an append: later units.
+  - **D3 Live session.** The cut is an annotation-continuations rule, not the claim order's; the order only decides where the
+    session's NEXT job waits: (a) new wait from its append [rec]: fair; behind every older *sized* large job, so in a 24 Nov-like
+    backlog its search can stay stale for days; (b) inherit the cut job's age: today's hold on the large lane returns.
+    Avoiding the cut itself is the separate later unit "carry a job across a pure append".
   - **D4 Large lane and rollout.** (a) dedicated permit lane, oldest-first over *sized* large jobs, small work when none waits:
     never idles; a newly sized large job waits for that lane's current job [rec]. (b) next-free-lane dispatch (today's try-permit
     plus early release): no dedicated lane; the permit can sit unused for a lane's job and the releasing lane re-takes it first.
@@ -79,10 +79,15 @@ review 1 (reports/claim-order/REVIEW-1.md, -1b.md: F1–F8, D-a…D-j). Code at 
 - 08ffb631, revisions 43–52 (13:11:03–16:20:52Z): 6 jobs superseded while Queued; runs ended early: c68e6e17 pod roll (+7
   windows), e268e5e5 `model-http` (+15), be06fa02 `model-http` 20:08:15 (+62); 4d178a0b, 7092dfbe, 30c37108 `stale-claim`
   (14:47:42, 17:27:18, 18:25:56). Accepted 272/1010 (13:31) → 406/1013 (17:49) → 507/1013 (20:57, rev 55; rev 56 queued [review]).
-- **Cause of the three stale-claims: not determined.** Neither append timing nor the final `superseded-revision` decides it.
-  Decisive: the `origin` field of their `job failed … code=stale-claim` lines (Models.scala:119, 528) — `…prefixAuthority:528` =
-  head check; `Models.scala:519` or `:290` = renewal refused (job row, lease or target, not necessarily expiry); an expired claim
-  records nothing and is cleaned by `supersedeEndedLeases`. **INCIDENT EVIDENCE: pending.**
+- **Cause of the three stale-claims — observed** (RA table "Early ends of 08ffb631 jobs": Chronicle log of pod 4c806013 + DB,
+  read 21:57Z): 4d178a0b (rev 48, 14:47:42Z), 7092dfbe (51, 17:27:18Z), 30c37108 (52, 18:25:56Z) each logged `job failed` code
+  and reason `stale-claim`, `chronicle.DomainError`, no stage, origin `chronicle.PostgresArchive.prefixAuthority:528`, after a
+  newer head existed (51 at 14:29:44Z, 52 at 16:20:52Z, 54 at 18:20:15Z). [v] `prefixAuthority` (Database.scala:526-529) runs
+  `checkpointAuthority` first (:520-523: current, job locked, `lease_until > now`, binding) — that passed, so the lease was
+  valid — then fails `head = claim revision` (:528), the check on a window with kept parts. e268e5e5 (44, 14:06:20Z) and
+  be06fa02 (54, 20:08:15Z) logged `window failed` at stage annotation, then `job failed` `model-http`. All five: Failed
+  `superseded-revision`, attempts 1 (`failAt` :890). **So with continuations on, a running older-revision job of a session
+  that has a newer head ends at its first continuation window.** Rev 1's "missed lease renewal" reading is withdrawn.
 - Permit: since 16:09Z no job > 100 windows other than 08ffb631's ran; no large job ran 17:27:18 → 17:39–17:44 (12–17 min, the
   permit served small jobs; 30c37108 deferred 17:32:35, then taken), ≤ 3.5 min after 18:25:56, ≤ 2.5 min after 20:08.
 - Waiting at 20:57Z: 666b5a41 (since 16:02:55, deferred 16:09:17) and 46 applied jobs > 100 windows by **pre-retry total**, of
@@ -211,13 +216,12 @@ Ties: `session_id` (today's order). At most one Queued head per source exists, s
 
 ## 9. Out of scope
 Owner weights; size preference; a second large lane (permit rationale: heap per ModelAdmission.scala:8-10, lane time per
-ingest-limits spec §5.2.7 — needs a heap measurement); leases, holds, attempt limits, publication gate; the live session's cut
-cause (incident evidence) and its fixes: carry across a pure append (search stays at the claimed revision, possibly many
+ingest-limits spec §5.2.7 — needs a heap measurement); leases, holds, attempt limits, publication gate; avoiding the live
+session's cut (§3: REL-B r4 head equality, Database.scala:528), i.e. the units carry across a pure append (search stays at the claimed revision, possibly many
 revisions behind; the tail can exceed 100 windows or be a root publication if incremental publication is off or the parent is
 ineligible), quiet period (its maximum can fire during continuous uploads and cut again).
 
 ## 10. Open issues after review
-- F5: cause of the three stale-claims — INCIDENT EVIDENCE pending; T-cases reproduce mechanisms, not the history.
 - D-c: number of returns (holds alternating over two search ranges restart the streak, :221-228, :905-918) is finite, not bounded;
   R1 is conditioned on it rather than fixed.
 - D-d: no order between a sized younger and an unsized older large job; strict FIFO would need sizing at enqueue (a count pass
