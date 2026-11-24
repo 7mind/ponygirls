@@ -13,7 +13,7 @@ import { AdmissionScheduler, type SchedulerLimits } from "../src/scheduler.ts";
 import { SubagentsError } from "../src/errors.ts";
 import { mkSup, tick } from "./ctl-worker.ts";
 
-const DEFAULTS = { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 };
+const DEFAULTS = { maxRunnable: 16, maxResidentWorkers: 24, maxOpenAgents: 48 };
 
 /** Run `body` with PI_CODING_AGENT_DIR pointing at a directory holding `policy` (absent when null). */
 function withPolicyFile<T>(t: TestContext, policy: unknown, body: () => T): T {
@@ -73,15 +73,15 @@ test("invalid limit values fail with a policy error naming the key", (t) => {
 
 test("limits that could never bind are rejected instead of silently ignored", (t) => {
   // A running agent holds a resident worker; each resident worker is an open identity.
-  assert.throws(() => limitsFrom(t, { maxRunnable: 10 }), /INVALID: .*maxRunnable \(10\) must not exceed maxResidentWorkers \(8\)/);
-  assert.throws(() => limitsFrom(t, { maxResidentWorkers: 40 }), /INVALID: .*maxResidentWorkers \(40\) must not exceed maxOpenAgents \(32\)/);
+  assert.throws(() => limitsFrom(t, { maxRunnable: 25 }), /INVALID: .*maxRunnable \(25\) must not exceed maxResidentWorkers \(24\)/);
+  assert.throws(() => limitsFrom(t, { maxResidentWorkers: 49 }), /INVALID: .*maxResidentWorkers \(49\) must not exceed maxOpenAgents \(48\)/);
 });
 
 // -- depth: the policy is the single source of truth ------------------------------
 
 test("scheduler limits carry no depth; policy maxDepth alone bounds nesting", async (t) => {
   assert.deepEqual(new AdmissionScheduler().getLimits(), DEFAULTS);
-  const { sup, byAgent } = mkSup({ policy: (p) => { p.maxDepth = 2; p.nesting = true; } });
+  const { sup, byAgent } = mkSup({ limits: limitsFrom(t, null), policy: (p) => { p.maxDepth = 2; p.nesting = true; } });
   t.after(() => sup.shutdown());
   assert.deepEqual(sup.capacity().limits, DEFAULTS);
   const parent = await sup.spawn("governor", { taskName: "p", message: "m", profile: "reader" }, "rp");
@@ -178,7 +178,7 @@ test("resident CAPACITY_EXCEEDED reports the configured limits", async (t) => {
     const details = e.details as { capacity: string; resident: number; limits: SchedulerLimits };
     assert.equal(details.capacity, "resident_workers");
     assert.equal(details.resident, 1);
-    assert.deepEqual(details.limits, { maxRunnable: 1, maxResidentWorkers: 1, maxOpenAgents: 32 });
+    assert.deepEqual(details.limits, { maxRunnable: 1, maxResidentWorkers: 1, maxOpenAgents: DEFAULTS.maxOpenAgents });
     return true;
   });
 });
