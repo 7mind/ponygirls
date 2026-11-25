@@ -371,6 +371,34 @@ ignores the key but refuses an `indexing` section without the three capacities.
   `mode=apply` with the confirmation it names). Before an older rollback run it first; then 030 needs nothing:
   `down-029`, then `down-028` (the connection pool adds no migration).
 
+## Claim order columns (migration 033)
+
+- **Migration 033** (applied by the start and by `migrate`) adds `ch_jobs.waiting_since` (when a job began waiting) and
+  `ch_jobs.bulk` (bulk work: a retry-failed apply or an owner rebuild), nullable without a default (no rewrite), and four
+  partial indexes (`ch_jobs_class`, `ch_jobs_age`, `ch_jobs_sized`, `ch_jobs_running`). The server writes both on every
+  insert and re-queue that starts a wait, whatever the claim order configured: a revision switch keeps its queued
+  predecessor's, RetryJob starts the job now as fresh work, a retry-failed apply or a rebuild starts all its jobs at one
+  time as bulk work; claims, deferrals, holds, failures and preference changes keep them. No authority check reads them.
+- **An offline step.** Adding the columns takes ACCESS EXCLUSIVE on `ch_jobs` and holds it until the start transaction
+  commits (index builds and the start fill included): every reader and writer of `ch_jobs` waits meanwhile. Stop or replace
+  the serving release before the first start of this release on a database without 033; never run `migrate` beside a
+  serving image for it. Later starts find the columns and indexes and only re-run the fill.
+- **Start fill.** Every start fills the NULLs of unfinished jobs (Queued, Running) in its transaction, all with that
+  transaction's time, and logs `chronicle claim order start fill rows=N`. A job is filed bulk when it is a member of its
+  owner's current rebuild cohort (the member's run and target epoch still the job's) or was ever retried
+  (`annotation_retry_epoch` > 0: single retries before 033 are filed bulk once); every other job fresh.
+- **Reseed.** `chronicle-server reseed-claim-order CONFIG.json`, with the server stopped (it takes the start lock
+  71393721), gives every unfinished job one new time and the class above and prints `claim order reseed rows=N bulk=B
+  fresh=F`. It is MANDATORY after any period in which a release older than 033 served a migrated database and retried or
+  rebuilt jobs (a rollback window), even when the next start fill reports `rows=0`: those releases re-queue jobs without
+  touching the columns, leaving stale non-NULL values the fill cannot see. The ages before the reseed are lost. It
+  refuses (`migration-required`) on a database without 033.
+- **Rollback.** The previous release starts on a database migrated to 033: its inserts name their columns (NULLs, filled
+  by the next start of this release), it never reads them, and claims in its own order. Then reseed as above before serving with this release again. To drop the 033 objects
+  (full revert only), stop the server and run `chronicle/scripts/down-033-claim-order.sql` (read-only preflight, then
+  `mode=apply` with the confirmation it names); a later start migrates again (ages lost). Before an older rollback run it
+  first.
+
 ## Models
 
 An annotation model must honor the structured JSON contract in the server README. Source text is untrusted input, never instructions to execute tools. The model chooses semantic chunk boundaries over bounded, numbered source fragments; the server verifies complete, non-overlapping coverage and constructs the original spans itself.

@@ -80,7 +80,8 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     Check(index!="invalid","migration-required",s"index ${Database.candidateIndex} is invalid (an interrupted concurrent build); before starting this release, $psql DROP INDEX CONCURRENTLY ${Database.candidateIndex}; ${Database.candidateIndexBuild};")
     Check(index=="valid" || bytes<=inlineBytes,"migration-required",s"ch_archive_fragments has $bytes bytes, more than the $inlineBytes a start builds index ${Database.candidateIndex} on; before starting this release, $psql ${Database.candidateIndexBuild};")
   }
-  def initialize(startupCandidateIndexBytes: Long = Database.startupCandidateIndexBytes): Unit = {
+  /** `report` receives the start's progress lines (the claim-order start fill's count). */
+  def initialize(startupCandidateIndexBytes: Long = Database.startupCandidateIndexBytes,report: String => Unit = _ => ()): Unit = {
     transaction { c =>
     Sql.exec(c,"SELECT pg_advisory_xact_lock(71393721)")
     requireCandidateIndex(c,startupCandidateIndexBytes)
@@ -100,6 +101,8 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     IndexingPreferenceSql.initialize(c)
     migrate(c,"032_indexing_eligibility.sql")
     migrate(c,"033_claim_order.sql")
+    // After 001.sql's supersession (above): only the jobs that stay unfinished are filled.
+    report(ClaimOrderSeed.startFillLine(ClaimOrderSeed.startFill(c)))
     // 001.sql (above) ends the previous process's older jobs superseded: their kept parts go with them (ANNOT2).
     AnnotationPartials.supersededAtStart(c)
     val dimensions=SearchPolicy.dimensions(config)

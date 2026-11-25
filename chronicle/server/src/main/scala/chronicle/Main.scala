@@ -23,6 +23,11 @@ object Main extends IOApp {
         awaitDatabase(config) *> cats.effect.Resource.make(stage("database",IO.blocking(Database.command(config,IndexProfileCatalog.current(config)))))(db => IO.blocking(db.close()))
           .use(initialize)
       }.as(ExitCode.Success)
+    case List("reseed-claim-order",path) =>
+      stage("config",IO.blocking(Config.load(path))).flatMap { config =>
+        awaitDatabase(config) *> cats.effect.Resource.make(stage("database",IO.blocking(Database.command(config,IndexProfileCatalog.current(config)))))(db => IO.blocking(db.close()))
+          .use(db => stage("reseed-claim-order",IO.blocking(db.transaction(ClaimOrderSeed.reseed)).flatMap(seeded => IO.println(seeded.line))))
+      }.as(ExitCode.Success)
     case List(mode,path) if mode=="serve" || mode=="serve-standby" =>
       stage("config",IO.blocking { val config=Config.load(path); listener(config); config }).flatMap { config =>
         awaitDatabase(config) *> stage("wiring",ModelHttp.client(config).use { client =>
@@ -37,7 +42,7 @@ object Main extends IOApp {
           }
         })
       }.as(ExitCode.Success)
-    case _ => IO.println("usage: chronicle-server serve CONFIG.json | serve-standby CONFIG.json (writable API, no background workers) | migrate CONFIG.json | password-hash (stdin)").as(ExitCode.Error)
+    case _ => IO.println("usage: chronicle-server serve CONFIG.json | serve-standby CONFIG.json (writable API, no background workers) | migrate CONFIG.json | reseed-claim-order CONFIG.json (server stopped) | password-hash (stdin)").as(ExitCode.Error)
   })(failure)
   private final case class StageFailure(stage: String,port: Option[Int],error: Throwable) extends RuntimeException(stage,error)
   /** Names the start step that failed; the innermost stage wins, a failure outside every stage is `start`. */
@@ -61,7 +66,7 @@ object Main extends IOApp {
   /** IOApp's default prints the stack trace of a failure no fiber observed; one sanitized `background` line instead. */
   private val unobserved = new StartFailure.Unobserved(error => System.err.println(StartFailure.line("chronicle","background",StartFailure.classify(error,known),None)))
   override protected def reportFailure(error: Throwable): IO[Unit] = IO.blocking(unobserved.report(error))
-  private def initialize(database: Database): IO[Unit] = stage("migrate",IO.blocking(database.initialize()))
+  private def initialize(database: Database): IO[Unit] = stage("migrate",IO.blocking(database.initialize(report=line => System.err.println("chronicle " + line))))
   /** Before the database runtime and the graph's background work exist. */
   private def awaitDatabase(config: Config): IO[Unit] =
     stage("database-wait",IO.interruptibleMany(DatabaseWait.await(config.jdbcConfig,config.databaseStartWait,line => System.err.println("chronicle " + line))))
