@@ -3,15 +3,15 @@ import { sameContentView } from './source-view.ts';
 
 /*
  * Source-authority contract between the views that read a pinned source (Search excerpts, the opened session).
- * A view that learns that a pinned source was denied or retired reports it; every other view that retains data of that
- * source decides for itself with `sourceFailureAffectsView`. Document events (like the shell's `account:*` events), so
- * that no view holds a reference to another. Search implements both halves (Search.tsx); the shell's session host (App.tsx)
+ * A view reports a source denial or an unavailable indexed view; other views retaining data of that source decide for
+ * themselves with `sourceFailureAffectsView`. Document events (like the shell's `account:*` events) let the views do this
+ * without holding references to one another. Search implements both halves (Search.tsx); the shell's session host (App.tsx)
  * implements them for the routed session page (Conversation.tsx SessionPage).
  *
  * A SESSION VIEW MUST
- *  1. Publish, whenever a read of its source fails with an authority or retirement failure — get session, locate
+ *  1. Publish, whenever a read of its source fails with an authority or indexed view failure — get session, locate
  *     message, passages, message pages, nested Find (`SearchSessionMessages`); a related session is a session page of its
- *     own (`indexed-view-retired` and every authority code, `isAuthorityDenial`):
+ *     own (`isIndexedViewUnavailable` or `isAuthorityDenial`):
  *       reportSourceUnavailable(document, { origin: 'session', sessionId, view: sourcePin(pinOfTheFailedRead), code: failure.code, message: failure.message })
  *     `view` is the pin the FAILED read used (an archive-only HEAD view has `generationId: null`; null when the read asked
  *     for the session's default view, before any pin was chosen), `sessionId` the session that read addressed, `code` the
@@ -27,6 +27,10 @@ import { sameContentView } from './source-view.ts';
  */
 const AUTHORITY_DENIALS = ['forbidden', 'not-found', 'unauthorized', 'authorization-changed'];
 export function isAuthorityDenial(code: string | null): boolean { return code !== null && AUTHORITY_DENIALS.includes(code); }
+export type IndexedViewUnavailable = 'indexed-view-retired' | 'indexed-view-disabled';
+export function isIndexedViewUnavailable(code: string | null): code is IndexedViewUnavailable {
+  return code === 'indexed-view-retired' || code === 'indexed-view-disabled';
+}
 /**
  * Authority denials concern the whole source of a session; every other failure concerns only the pin that failed (a failure
  * of the default view, `failed` null, then concerns no known pin).

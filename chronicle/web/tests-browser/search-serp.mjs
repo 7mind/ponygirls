@@ -476,12 +476,15 @@ try {
     assert.equal(await page.locator('[data-message-id], [data-passage-id], [data-pane="transcript"]').count(), 0, 'no transcript element stays in the document');
     assert.equal(await session.evaluate(element => element.innerHTML.includes('Literal archived text') || element.innerHTML.includes('continued source')), false, 'no transcript text stays in the document');
     await context.close();
-    // A view-local failure (retirement) of the page's own pin retires the page's view.
-    const own = await opened(f => { f.contextFailure = operation => operation.view.generationId === undefined ? null : 'indexed-view-retired'; });
-    own.held.filter(reply => reply.view.generationId !== undefined).forEach(reply => reply());
-    await sessionMain(own.page).getByRole('region', { name: 'Indexed view unavailable', exact: true }).waitFor();
-    assert.equal(await own.page.locator('[data-message-id], [data-passage-id]').count(), 0, 'the retired view leaves the document');
-    await own.context.close();
+    // View-local indexed failures of the page's own pin use the indexed recovery notice.
+    for (const code of ['indexed-view-retired', 'indexed-view-disabled']) {
+      const own = await opened(f => { f.contextFailure = operation => operation.view.generationId === undefined ? null : code; });
+      own.held.filter(reply => reply.view.generationId !== undefined).forEach(reply => reply());
+      const notice = sessionMain(own.page).getByRole('region', { name: 'Indexed view unavailable', exact: true }); await notice.waitFor();
+      await notice.getByRole('button', { name: `View archived source r${own.fixture.view.revision}`, exact: true }).waitFor();
+      assert.equal(await own.page.locator('[data-message-id], [data-passage-id]').count(), 0, 'the unavailable view leaves the document');
+      await own.context.close();
+    }
   });
   // Every authority code (source-authority.ts isAuthorityDenial), from nested Find, the locator and a message page (readSource).
   for (const [kind, code] of [['find', 'forbidden'], ['locator', 'forbidden'], ['append', 'forbidden'], ['find', 'authorization-changed'], ['append', 'authorization-changed']]) await group(`a ${code} ${kind} read clears the session page's transcript, outline and Find from the document, also against a late reply of an earlier read, and clears Search`, async () => {

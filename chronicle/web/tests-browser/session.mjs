@@ -33,10 +33,10 @@ let cases = 0;
 
 /** Retired annotation generations (the rebuild fixture's subject), zero-problem publications and a plain literal Find. */
 class RetiringFixture extends Goal50Fixture {
-  contextZero = true; retiredType = null; holdRetired = false; retiredReplies = [];
+  contextZero = true; retiredType = null; holdRetired = false; retiredReplies = []; indexedFailure = 'indexed-view-retired';
   get publishedFormat() { return api.PassageFormat.ContextAwareProblems; }
   handle(operation, envelope, send, entry) {
-    if (this.retiredType !== null && operation instanceof this.retiredType && operation.view !== undefined && operation.view.generationId !== undefined) { const reply = () => send(new api.Result_Error(new api.Failure('indexed-view-retired', 'This exact indexed generation has been retired.'))); if (this.holdRetired) this.retiredReplies.push(reply); else reply(); return true; }
+    if (this.retiredType !== null && operation instanceof this.retiredType && operation.view !== undefined && operation.view.generationId !== undefined) { const reply = () => send(new api.Result_Error(new api.Failure(this.indexedFailure, `Indexed request failed: ${this.indexedFailure}`))); if (this.holdRetired) this.retiredReplies.push(reply); else reply(); return true; }
     if (operation instanceof api.Operation_GetPassages && this.contextZero) { send(new api.Result_Passages(new api.PassagesResult(operation.view, operation.view.generationId === undefined ? api.PassageFormat.Unindexed : api.PassageFormat.ContextAwareProblems, [], 0n, operation.offset))); return true; }
     if (operation instanceof api.Operation_SearchSessionMessages) { const hits = this.messagesAt(operation.view.revision).flatMap((message, position) => message.text.toLowerCase().includes(operation.literal.toLowerCase()) ? [new api.MessageSearchHit(message.id, position)] : []); send(new api.Result_SessionMessageSearch(new api.SessionMessageSearchResult(operation.view, hits.slice(0, operation.limit), undefined))); return true; }
     return super.handle(operation, envelope, send, entry);
@@ -636,7 +636,7 @@ try {
     const back = page.getByRole('button', { name: 'Back', exact: true }); await back.focus(); assert.equal(fixture.retiredReplies.length, 1); fixture.retiredReplies.shift()();
     await page.getByRole('region', { name: 'Indexed view unavailable', exact: true }).waitFor(); assert.equal(await back.evaluate(button => button === document.activeElement), true);
   });
-  for (const Type of [api.Operation_GetSession, api.Operation_GetPassages, api.Operation_GetMessages, api.Operation_SearchSessionMessages, api.Operation_LocateMessage, api.Operation_GetPassageSpans]) await run(`a retired indexed pin from ${Type.name} clears the old view and needs an explicit same-revision source action`, retiring({ configure: fixture => { fixture.contextZero = false; fixture.passageMode = 'logical'; if (Type === api.Operation_GetSession || Type === api.Operation_GetPassages || Type === api.Operation_GetMessages) fixture.retiredType = Type; } }), async ({ page, fixture }) => {
+  for (const code of ['indexed-view-retired', 'indexed-view-disabled']) for (const Type of [api.Operation_GetSession, api.Operation_GetPassages, api.Operation_GetMessages, api.Operation_SearchSessionMessages, api.Operation_LocateMessage, api.Operation_GetPassageSpans]) await run(`${code} from ${Type.name} clears the old view and needs an explicit same-revision source action`, retiring({ configure: fixture => { fixture.indexedFailure = code; fixture.contextZero = false; fixture.passageMode = 'logical'; if (Type === api.Operation_GetSession || Type === api.Operation_GetPassages || Type === api.Operation_GetMessages) fixture.retiredType = Type; } }), async ({ page, fixture }) => {
     await main(page).waitFor();
     if (Type === api.Operation_SearchSessionMessages || Type === api.Operation_LocateMessage) {
       await ready(page); await showTab(page, 'Find'); await findInput(page).fill('source');
@@ -644,8 +644,14 @@ try {
       await finder(page).getByRole('button', { name: 'Find messages', exact: true }).click();
       if (Type === api.Operation_LocateMessage) { await hit(page, 1, 'm1').waitFor(); fixture.retiredType = Type; await hit(page, 1, 'm1').click(); }
     } else if (Type === api.Operation_GetPassageSpans) { await ready(page); await outlineRows(page).first().waitFor(); fixture.retiredType = Type; await outlineRows(page).first().click(); }
-    await page.getByText('This indexed view is unavailable because its derived generation was retired.', { exact: true }).waitFor();
-    assert.equal(await hitList(page).count(), 0); assert.equal(await messages(page).count(), 0); assert.equal(calls(fixture, api.Operation_GetRaw).length, 0);
+    const notice = page.getByRole('region', { name: 'Indexed view unavailable', exact: true }); await notice.waitFor({ timeout: 3_000 });
+    await notice.getByText(code === 'indexed-view-retired' ? 'This indexed view is unavailable because its derived generation was retired.' : 'Indexing is off for this session. You can still open the original archived revision.', { exact: true }).waitFor();
+    const pin = new URLSearchParams((await hash(page)).split('?')[1]);
+    assert.deepEqual([pin.get('rev'), pin.get('gen')], ['1', fixture.viewAt(1).generationId], 'failure keeps the exact pin in the link');
+    assert.equal(await finder(page).count(), 0); assert.equal(await hitList(page).count(), 0); assert.equal(await messages(page).count(), 0); assert.equal(calls(fixture, api.Operation_GetRaw).length, 0);
+    for (const Read of [api.Operation_GetSession, api.Operation_GetPassages, api.Operation_GetMessages]) {
+      assert.ok(calls(fixture, Read).every(({ operation }) => operation.view?.revision === 1 && operation.view.generationId === fixture.viewAt(1).generationId), 'no default, HEAD or archive-only read before the explicit action');
+    }
     await page.getByRole('button', { name: 'View archived source r1', exact: true }).click(); await ready(page);
     assert.equal(await infoValue(page, 'Viewing'), 'source r1');
     const last = calls(fixture, api.Operation_GetMessages).at(-1).operation; assert.equal(last.view.revision, 1); assert.equal(last.view.generationId, undefined);

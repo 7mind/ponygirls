@@ -18,10 +18,12 @@ test('BA: a malformed notice is rejected at the listener, not interpreted', () =
 });
 test('BA: authority codes concern every pin of the session, other failures only the pin that failed', () => {
   for (const code of ['forbidden', 'not-found', 'unauthorized', 'authorization-changed']) for (const failed of [new ContentView(9, 'x'), null]) assert.equal(sourceFailureAffectsView(failed, published, code), true);
-  assert.equal(sourceFailureAffectsView(null, published, 'indexed-view-retired'), false, 'a failure of the default view names no pin');
-  for (const code of ['indexed-view-retired', null]) {
+  for (const code of ['indexed-view-retired', 'indexed-view-disabled', null]) {
+    assert.equal(sourceFailureAffectsView(null, published, code), false, 'a failure of the default view names no pin');
     assert.equal(sourceFailureAffectsView(published, new ContentView(2, 'generation-a'), code), true);
+    assert.equal(sourceFailureAffectsView(published, archiveOnly, code), false, 'the same archived revision remains valid');
     assert.equal(sourceFailureAffectsView(archiveOnly, published, code), false, 'same revision, archive-only versus published');
+    assert.equal(sourceFailureAffectsView(new ContentView(2, 'generation-b'), published, code), false, 'same revision, another generation');
     assert.equal(sourceFailureAffectsView(new ContentView(3, 'generation-a'), published, code), false);
   }
 });

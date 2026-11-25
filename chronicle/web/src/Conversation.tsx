@@ -15,7 +15,7 @@ import { Anchored } from './Popover.tsx';
 import { Icon } from './Icon.tsx';
 import { HashRouter, InvalidSessionAddress, formatRoute, parseFragment, routeSlot, sessionIdOf, sessionPlaceOf, sessionPlaceRoute, useRouteState, SESSION_PANES, type Route, type SessionPane, type SessionPlace, type SessionSpan } from './router.ts';
 import { contentViewKey, requireContentView } from './source-view.ts';
-import { isAuthorityDenial, sourceFailureAffectsView } from './source-authority.ts';
+import { isAuthorityDenial, isIndexedViewUnavailable, sourceFailureAffectsView, type IndexedViewUnavailable } from './source-authority.ts';
 import { PASSAGE_PAGE_SIZE, validatePassages, validatePassageSpans } from './passages.ts';
 import { formatBytes, rawFileHref, useRawManifest, type RawManifestState } from './raw-download.ts';
 import './session.css';
@@ -350,7 +350,7 @@ function InfoPane({ session, view, sessionId, headRevision, passages, link }: { 
 
 function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref, view, chooseView, resolveView, retry, initial, settledRevocations, knownHead, rememberHead, findReads, report: reportUnavailable, revocations, pane, setPane, page }: SessionViewProps & { view: ContentView | undefined; chooseView(view: ContentView | undefined): void; resolveView(view: ContentView): void; retry(): void; initial: PageIntegration['initial'] | null; knownHead: KnownHead | null; rememberHead: (ownerId: string, revision: number) => void }) {
   // The message chain starts at the page of the position last navigated to (the first on arrival) and holds that position.
-  const [messageTarget, setMessageTarget] = useState(0), [retired, setRetired] = useState(false), messageStart = Math.floor(messageTarget / MESSAGE_PAGE_SIZE) * MESSAGE_PAGE_SIZE;
+  const [messageTarget, setMessageTarget] = useState(0), [indexedUnavailable, setIndexedUnavailable] = useState<IndexedViewUnavailable | null>(null), messageStart = Math.floor(messageTarget / MESSAGE_PAGE_SIZE) * MESSAGE_PAGE_SIZE;
   const [passage, setPassage] = useState<PassageInfo | null>(null), [spanOffset, setSpanOffset] = useState(0);
   const [seekError, setSeekError] = useState<string | null>(null), [seeking, setSeeking] = useState(false), [revealedMessage, setRevealedMessage] = useState<string | null>(null);
   const [revealEpoch, setRevealEpoch] = useState(0), [findEpoch, setFindEpoch] = useState(0);
@@ -374,12 +374,12 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     const observer = new ResizeObserver(measure); observer.observe(findBar); measure();
     return () => observer.disconnect();
   }, [findBar]);
-  const retiredHeading = useRef<HTMLHeadingElement>(null);
+  const indexedUnavailableHeading = useRef<HTMLHeadingElement>(null);
   useLayoutEffect(() => {
-    if (retired && document.activeElement === document.body && retiredHeading.current !== null) retiredHeading.current.focus({ preventScroll: true });
-  }, [retired]);
+    if (indexedUnavailable !== null && document.activeElement === document.body && indexedUnavailableHeading.current !== null) indexedUnavailableHeading.current.focus({ preventScroll: true });
+  }, [indexedUnavailable]);
   const accessEpoch = useRef(0), accessScope = JSON.stringify([user.id, stats.activeId, stats.generation, contentViewKey(view)]), liveAccessScope = useRef(accessScope); liveAccessScope.current = accessScope;
-  function retireIndexedView() { navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; setLanded(null); setPassage(null); setSpanOffset(0); setSeeking(false); setSeekError(null); setRevealedMessage(null); setFindEpoch(epoch => epoch + 1); setRetired(true); }
+  function markIndexedViewUnavailable(code: IndexedViewUnavailable) { navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; setLanded(null); setPassage(null); setSpanOffset(0); setSeeking(false); setSeekError(null); setRevealedMessage(null); setFindEpoch(epoch => epoch + 1); setIndexedUnavailable(code); }
   // The source-unavailable state: transcript, outline, Find and landing leave the document; replies of reads started before
   // it are fenced (access epoch, navigation, disabled resources). Retry reads again.
   const [revoked, setRevoked] = useState<string | null>(null), cleared = useRef(false);
@@ -387,13 +387,14 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     cleared.current = true; accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null;
     setLanded(null); setPassage(null); setSpanOffset(0); setSeeking(false); setSeekError(null); setRevealedMessage(null); setSearchSpan(null); setFindEpoch(epoch => epoch + 1); setRevoked(message);
   }
-  /** A read of this session failed: an authority or retirement failure is published (`pin` the read's view, null for the default view or an unpinned read) and applied here. */
+  /** A read of this session failed: an authority or indexed view failure is published (`pin` the read's view, null for the default view or an unpinned read) and applied here. */
   function sourceUnavailable(cause: RequestFailure, pin: ContentView | null) {
-    if (cause.code === 'indexed-view-retired' || isAuthorityDenial(cause.code)) reportUnavailable({ sessionId, pin, code: cause.code, message: cause.message });
-    if (cause.code === 'indexed-view-retired') retireIndexedView();
+    const indexedFailure = isIndexedViewUnavailable(cause.code) ? cause.code : null;
+    if (indexedFailure !== null || isAuthorityDenial(cause.code)) reportUnavailable({ sessionId, pin, code: cause.code, message: cause.message });
+    if (indexedFailure !== null) markIndexedViewUnavailable(indexedFailure);
     else if (isAuthorityDenial(cause.code)) clearSource(cause.message);
   }
-  // A failure another view saw that concerns the shown view: a retired generation retires this view; any other failure, and a
+  // A remote indexed view failure for this exact pin gets the indexed notice; any other applicable failure, or a
   // withdrawal, clears the source like a denied read of the page.
   useEffect(() => {
     const settled = settledRevocations;
@@ -407,7 +408,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     }
     if (revocation === null) return;
     for (const item of revocations) settled.add(item);
-    if (revocation.kind === 'source-failure' && revocation.code === 'indexed-view-retired') { retireIndexedView(); return; }
+    if (revocation.kind === 'source-failure' && isIndexedViewUnavailable(revocation.code)) { markIndexedViewUnavailable(revocation.code); return; }
     clearSource(revocation.message);
   }, [revocations, view]);
   /** Every read of this session: a failure of the current access scope is handled by `sourceUnavailable`; replies of abandoned reads are not. */
@@ -420,7 +421,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     }
   }
   function readPinned<T>(operation: Operation, extract: (reply: Result) => T | null): Promise<T> { return readSource(operation, extract, view === undefined ? null : view); }
-  useEffect(() => connection.onInvalidate(() => { accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; setLanded(null); setPassage(null); setSpanOffset(0); setRetired(false); setRevoked(null); cleared.current = false; setSeeking(false); setSeekError(null); setRevealedMessage(null); }), [connection]);
+  useEffect(() => connection.onInvalidate(() => { accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; setLanded(null); setPassage(null); setSpanOffset(0); setIndexedUnavailable(null); setRevoked(null); cleared.current = false; setSeeking(false); setSeekError(null); setRevealedMessage(null); }), [connection]);
   useEffect(() => () => { accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; }, []);
   const session = useResource(connection, stats, `${sessionId}:${contentViewKey(view)}`, '', true, async () => {
     const result = await readPinned(new Operation_GetSession(sessionId, view), value => value instanceof Result_Session ? value.result : null);
@@ -430,7 +431,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
   // A cleared source stays cleared: a late default-view reply does not choose a view (Retry reads again).
   // (A ref: a clear in an effect of the same commit is not yet in `revoked`.)
   useEffect(() => { if (view === undefined && session.data !== null && !cleared.current) resolveView(session.data.session.view); }, [view, session.data, resolveView, revoked]);
-  const snapshot = view === undefined || retired || revoked !== null ? null : session.data;
+  const snapshot = view === undefined || indexedUnavailable !== null || revoked !== null ? null : session.data;
   const passages = useInfiniteResource<PassageInfo, PassagesResult, number>(connection, stats, `${sessionId}:${contentViewKey(view)}`, '', snapshot !== null, undefined, async cursor => {
     const offset = cursor === undefined ? 0 : cursor;
     const result = validatePassages(await readPinned(new Operation_GetPassages(sessionId, view!, offset, PASSAGE_PAGE_SIZE), reply => reply instanceof Result_Passages ? reply.result : null), view!, offset);
@@ -579,7 +580,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
   }, []);
   useEffect(() => { if (snapshot !== null && messages.error === null) arrivalFind.current = null; });
   const title = snapshot === null ? 'Session' : snapshot.session.metadata.title || 'Untitled conversation';
-  const loading = !retired && revoked === null && (session.loading || (snapshot === null && session.error === null));
+  const loading = indexedUnavailable === null && revoked === null && (session.loading || (snapshot === null && session.error === null));
   const rail = pane === 'closed' ? null : pane;
   // The side pane toggle reopens the tab it showed last.
   const lastRail = useRef<Exclude<SessionPane, 'closed'>>(rail ?? 'outline'); if (rail !== null) lastRail.current = rail;
@@ -609,7 +610,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
       </Anchored>
     </>}
   </header>;
-  if (retired) return <>{head}<div className="page session-state"><section className="notice notice-warn" role="region" aria-label="Indexed view unavailable"><div><h3 className="notice-title" ref={retiredHeading} tabIndex={-1}>Indexed view unavailable</h3><p>This indexed view is unavailable because its derived generation was retired.</p>{view !== undefined && <div className="notice-actions"><button type="button" className="btn btn-sm" onClick={() => chooseView(new ContentView(view.revision, undefined))}>View archived source r{view.revision}</button></div>}<p className="xs">This explicitly requests the same source revision without a generation. No HEAD or published view is selected automatically.</p></div></section></div></>;
+  if (indexedUnavailable !== null) return <>{head}<div className="page session-state"><section className="notice notice-warn" role="region" aria-label="Indexed view unavailable"><div><h3 className="notice-title" ref={indexedUnavailableHeading} tabIndex={-1}>Indexed view unavailable</h3><p>{indexedUnavailable === 'indexed-view-retired' ? 'This indexed view is unavailable because its derived generation was retired.' : 'Indexing is off for this session. You can still open the original archived revision.'}</p>{view !== undefined && <div className="notice-actions"><button type="button" className="btn btn-sm" onClick={() => chooseView(new ContentView(view.revision, undefined))}>View archived source r{view.revision}</button></div>}<p className="xs">This explicitly requests the same source revision without a generation. No HEAD or published view is selected automatically.</p></div></section></div></>;
   const unreadable = session.error !== null ? session.error : revoked;
   if (unreadable !== null) return <>{head}<div className="page session-state"><div className="notice notice-danger" role="alert"><Icon name="alert" small={false}/><div><div className="notice-title">This session can no longer be read</div>{unreadable}. Source content has been cleared.<div className="notice-actions"><button type="button" className="btn btn-sm" onClick={page.back}>Back to {page.parent.label}</button><button type="button" className="btn btn-sm btn-ghost" onClick={retry}>Retry</button></div></div></div></div></>;
   const outline = <div className="outline-pane" ref={outlinePane}>
