@@ -3,6 +3,7 @@ package chronicle
 import java.sql.{Connection,ResultSet}
 import java.time.{Instant,OffsetDateTime}
 import java.util.UUID
+import scala.util.Using
 
 /** A worker lane of the waiting claim order (indexing-claim-order spec §5.3, `indexing.claimOrder` "waiting"): lane 0 owns
   * the large-job permit and takes sized jobs first; lanes 1..`bulkLanes` prefer bulk work, the others fresh work. */
@@ -66,16 +67,28 @@ private[chronicle] object ClaimOrder {
   /** No older-revision job of the candidate's source and profile Running. OFFSET 0 keeps it a per-candidate probe of
     * ch_jobs_running: pulled up into an anti-join, the planner may read every Running row instead. */
   private val olderRunning = "NOT EXISTS(SELECT 1 FROM ch_jobs o WHERE o.session_id=j.session_id AND o.profile=j.profile AND o.state='Running' AND o.revision<j.revision OFFSET 0)"
-  /** The candidate statement of `step` over `pairs` (claim-order DESIGN §2), passing the sources in `excluded`. */
-  def candidateSql(step: Step,pairs: Int,excluded: Int): String = {
-    val values=List.fill(pairs)("(?::text,?::text,?::bigint,?::bigint)").mkString(",")
-    val passed=if(excluded==0) "" else s" AND s.id NOT IN(${List.fill(excluded)("?").mkString(",")})"
+  /** The candidate statement of `step` (claim-order DESIGN §2). Five parameters whatever the number of owners: the pairs as
+    * four arrays of one length, aligned by position (multi-argument unnest), and the sources passed so far in this claim. */
+  def candidateSql(step: Step): String =
     s"""SELECT j.id,j.waiting_since,j.bulk,s.id AS source,s.revision,e.owner,e.profile,e.target_epoch,e.indexing_epoch
       FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id AND j.revision=s.revision AND NOT s.tombstone
-      JOIN (VALUES $values) e(owner,profile,target_epoch,indexing_epoch) ON e.owner=s.owner AND e.profile=j.profile
-      WHERE j.state IN('Queued','Running') AND (${step.predicate}) AND ${Jobs.claimable("j","e.indexing_epoch")} AND $olderRunning$passed
+      JOIN unnest(?::text[],?::text[],?::bigint[],?::bigint[]) e(owner,profile,target_epoch,indexing_epoch) ON e.owner=s.owner AND e.profile=j.profile
+      WHERE j.state IN('Queued','Running') AND (${step.predicate}) AND ${Jobs.claimable("j","e.indexing_epoch")} AND $olderRunning AND s.id<>ALL(?::uuid[])
       ORDER BY j.waiting_since,j.session_id FOR UPDATE OF s SKIP LOCKED LIMIT 1"""
-  }
+  /** The candidate of `step`, its source locked. */
+  private def candidate(c: Connection,step: Step,pairs: List[Pair],excluded: Vector[UUID]): Option[Candidate] =
+    Using.resource(c.prepareStatement(candidateSql(step))) { statement =>
+      def array(kind: String,values: Seq[AnyRef]): java.sql.Array = c.createArrayOf(kind,values.toArray)
+      statement.setArray(1,array("text",pairs.map(_.owner)))
+      statement.setArray(2,array("text",pairs.map(_.profile)))
+      statement.setArray(3,array("bigint",pairs.map(pair => java.lang.Long.valueOf(pair.targetEpoch))))
+      statement.setArray(4,array("bigint",pairs.map(pair => java.lang.Long.valueOf(pair.indexingEpoch))))
+      statement.setArray(5,array("uuid",excluded))
+      Using.resource(statement.executeQuery()) { r =>
+        Option.when(r.next())(Candidate(r.getObject("id",classOf[UUID]),instant(r,"waiting_since"),flag(r,"bulk"),r.getObject("source",classOf[UUID]),r.getInt("revision"),
+          Pair(r.getString("owner"),r.getString("profile"),r.getLong("target_epoch"),r.getLong("indexing_epoch"))))
+      }
+    }
   /** The candidate's job locked, with what the claim records of it (ClaimFacts) and whether it still is a candidate of
     * the step: its predicates evaluated on the locked row (the claimability against `?`, the pair's indexing epoch). */
   private def lockedSql(step: Step): String =
@@ -149,16 +162,12 @@ private[chronicle] object ClaimOrder {
   private def probe(archive: PostgresArchive,c: Connection,pairs: List[Pair],step: Step,excluded: Vector[UUID],leaseSeconds: Int,lane: ClaimLane,race: Race): Probe = {
     val savepoint=c.setSavepoint()
     def undo(result: Probe): Probe = { c.rollback(savepoint); c.releaseSavepoint(savepoint); result }
-    val args=pairs.flatMap(pair => List[Sql.Param](pair.owner,pair.profile,pair.targetEpoch,pair.indexingEpoch))++excluded
     // Each step's partial index delivers its order: with few candidates the planner would rather sort a bitmap scan's rows
     // under LockRows, so a sort is ruled out for this statement only.
     Sql.exec(c,"SET LOCAL enable_sort=off")
-    val candidate=Sql.one(c,candidateSql(step,pairs.size,excluded.size),args*) { r =>
-      Candidate(r.getObject("id",classOf[UUID]),instant(r,"waiting_since"),flag(r,"bulk"),r.getObject("source",classOf[UUID]),r.getInt("revision"),
-        Pair(r.getString("owner"),r.getString("profile"),r.getLong("target_epoch"),r.getLong("indexing_epoch")))
-    }
+    val found=candidate(c,step,pairs,excluded)
     Sql.exec(c,"SET LOCAL enable_sort TO DEFAULT")
-    candidate match {
+    found match {
       case None => c.releaseSavepoint(savepoint); Probe.Empty
       case Some(found) =>
         val epoch=found.pair.indexingEpoch

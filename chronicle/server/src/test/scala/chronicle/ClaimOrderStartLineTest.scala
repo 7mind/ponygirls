@@ -9,15 +9,13 @@ import org.http4s.client.Client
 import java.util.concurrent.ConcurrentLinkedQueue
 import scala.jdk.CollectionConverters.*
 import scala.concurrent.duration.*
-import scala.util.Using
 
 /** A serving server logs its effective claim order once, after its listening line: the evidence of the mode a run used. */
 final class ClaimOrderStartLineTest extends munit.FunSuite {
   private def served(indexing: IndexingCapacity): List[String] = {
     var lines=List.empty[String]
-    CurrentIndexDatabase.withDatabase { (fixture,_,_) =>
-      val port=Using.resource(new java.net.ServerSocket(0))(_.getLocalPort)
-      val config=fixture.copy(listenPort=port,allowedOrigin=s"http://127.0.0.1:$port",indexing=indexing)
+    // Port 0: the server binds a free port itself (no port picked and released before the bind).
+    ClaimOrderPostgres.withDatabase(ClaimOrderPostgres.config().copy(listenPort=0,indexing=indexing)) { (config,_,_) =>
       val entries=new ConcurrentLinkedQueue[String]()
       (for {
         logged <- Deferred[IO,Unit]

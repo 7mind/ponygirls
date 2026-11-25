@@ -9,17 +9,8 @@ import java.util.UUID
   * candidate statement and the job lock (B1). Orders come from the stored `waiting_since`/`bulk` the fixture writes. */
 class ClaimOrderLaneTest extends munit.FunSuite {
   private val lane0=ClaimLane.of(0,1); private val bulkLane=ClaimLane.of(1,1); private val freshLane=ClaimLane.of(2,1)
-  private def database(f: (Config,Database,PostgresArchive) => Unit): Unit = database(Fixtures.config())(f)
-  private def database(c: Config)(f: (Config,Database,PostgresArchive) => Unit): Unit = {
-    if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
-    val db=new Database(c,IndexProfileCatalog.current(c)); db.initialize()
-    db.transaction { x =>
-      Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations CASCADE")
-      Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile)
-      Sql.exec(x,"DELETE FROM ponygirls_indexing_preferences WHERE service='chronicle'")
-    }
-    try f(c,db,new PostgresArchive(db,c)) finally db.close()
-  }
+  private def database(f: (Config,Database,PostgresArchive) => Unit): Unit = ClaimOrderPostgres.withDatabase(ClaimOrderPostgres.config())(f)
+  private def database(c: Config)(f: (Config,Database,PostgresArchive) => Unit): Unit = ClaimOrderPostgres.withDatabase(c)(f)
   /** A queued job of a new source of `owner`, waiting since minute `minute` of a fixed hour, of class `bulk`, sized when
     * `total` is given (a deferral's record). */
   private def job(db: Database,a: PostgresArchive,owner: String,minute: Int,bulk: Boolean,total: Option[Int] = None): UUID = {
@@ -50,7 +41,7 @@ class ClaimOrderLaneTest extends munit.FunSuite {
     assertEquals(claim(c,a,lane0),ClaimOutcome.Idle)
   }}
   test("claim order worker: with claimOrder waiting a lane's iteration claims through ClaimOrder, logs `job claimed` with its lane and step and processes the job; lane 0 holds the large-job permit while it runs, a class lane does not take it") {
-    val config=Fixtures.config().copy(indexing=IndexingCapacity.defaults.copy(annotationSessions=3,claimOrder=ClaimOrderSetting.Waiting))
+    val config=ClaimOrderPostgres.config().copy(indexing=IndexingCapacity.defaults.copy(annotationSessions=3,claimOrder=ClaimOrderSetting.Waiting))
     database(config) { (c,db,a) =>
       val bulk=job(db,a,"a",1,true); val fresh=job(db,a,"b",2,false)
       val admission=ModelAdmission.make(config.indexing).unsafeRunSync(); val log=new WorkerLog
@@ -92,6 +83,23 @@ class ClaimOrderLaneTest extends munit.FunSuite {
     } finally holder.close()
     assertEquals(claimed(claim(c,a,bulkLane)).jobId,oldest)
   }}
+  test("claim order (B1): a candidate that passes its locked recheck but whose fenced claim UPDATE changes no row is not claimed: the same step starts again and takes it, not the other class") { database { (c,db,a) =>
+    val wanted=job(db,a,"a",1,false); job(db,a,"b",2,true); job(db,a,"c",3,true)
+    // Fixture-only: the first claim UPDATE of `wanted` is suppressed (a sequence is not rolled back with the probe's savepoint).
+    db.transaction { x =>
+      Sql.exec(x,"CREATE SEQUENCE claim_order_suppressed")
+      Sql.exec(x,s"""CREATE FUNCTION claim_order_suppress() RETURNS trigger LANGUAGE plpgsql AS $$$$
+        BEGIN IF NEW.id='$wanted' AND OLD.state='Queued' AND NEW.state='Running' AND nextval('claim_order_suppressed')=1 THEN RETURN NULL; END IF; RETURN NEW; END $$$$""")
+      Sql.exec(x,"CREATE TRIGGER claim_order_suppress BEFORE UPDATE ON ch_jobs FOR EACH ROW EXECUTE FUNCTION claim_order_suppress()")
+    }
+    try {
+      val taken=claimed(claim(c,a,freshLane))
+      assertEquals((taken.jobId,taken.facts.map(_.step)),(wanted,Some(ClaimStep.Preferred)))
+      assertEquals(db.transaction(x => Sql.one(x,"SELECT last_value FROM claim_order_suppressed")(_.getLong(1)).get),2L,"the first claim UPDATE was suppressed, the second took the job")
+    } finally db.transaction { x =>
+      Sql.exec(x,"DROP TRIGGER claim_order_suppress ON ch_jobs"); Sql.exec(x,"DROP FUNCTION claim_order_suppress()"); Sql.exec(x,"DROP SEQUENCE claim_order_suppressed")
+    }
+  }}
   test("claim order (B1): a candidate claimed and returned to a hold by another lane between the candidate statement and its job lock, its key unchanged, is not claimed: the same step starts again and takes the next candidate") { database { (c,db,a) =>
     val raced=job(db,a,"a",1,false); val next=job(db,a,"b",2,false)
     val other=new Database(c,IndexProfileCatalog.current(c))
@@ -111,4 +119,22 @@ class ClaimOrderLaneTest extends munit.FunSuite {
       assertEquals(db.transaction(x => Sql.one(x,"SELECT state,waiting_since::text FROM ch_jobs WHERE id=?",raced)(r => (r.getString(1),r.getString(2)))).get._1,"Queued")
     } finally other.close()
   }}
+}
+/** The owned PostgreSQL of scripts/test-postgres.sh (CHRONICLE_TEST_JDBC), required: these suites never skip. */
+private[chronicle] object ClaimOrderPostgres extends munit.Assertions {
+  def config(): Config = {
+    assert(sys.env.contains("CHRONICLE_TEST_JDBC"),"PostgreSQL required: run through chronicle/scripts/test-postgres.sh (CHRONICLE_TEST_JDBC)")
+    Fixtures.config()
+  }
+  /** `c` (from `config()`) on an initialized database with no sources, jobs or indexing preferences. */
+  def withDatabase(c: Config)(f: (Config,Database,PostgresArchive) => Unit): Unit = {
+    assert(sys.env.contains("CHRONICLE_TEST_JDBC"),"PostgreSQL required: run through chronicle/scripts/test-postgres.sh (CHRONICLE_TEST_JDBC)")
+    val db=new Database(c,IndexProfileCatalog.current(c)); db.initialize()
+    db.transaction { x =>
+      Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations CASCADE")
+      Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile)
+      Sql.exec(x,"DELETE FROM ponygirls_indexing_preferences WHERE service='chronicle'")
+    }
+    try f(c,db,new PostgresArchive(db,c)) finally db.close()
+  }
 }
