@@ -65,7 +65,7 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
     db.transaction { c =>
       Sql.exec(c,s"CREATE ROLE $role LOGIN PASSWORD '${Fixtures.databasePassword}'")
       Sql.exec(c,s"GRANT USAGE ON SCHEMA public TO $role")
-      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_staged_generations,ch_lineage_segments,ch_problem_passages,ch_problem_spans TO $role")
+      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_staged_generations,ch_lineage_segments,ch_problem_passages,ch_problem_spans,ch_security_epoch,ponygirls_indexing_preferences TO $role")
       Sql.exec(c,s"GRANT SELECT(session_id,revision) ON ch_revisions TO $role")
     }
     try {

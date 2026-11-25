@@ -93,7 +93,7 @@ class MessageContextBoundaryTest extends munit.FunSuite {
     f.db.transaction { c =>
       Sql.exec(c,s"CREATE ROLE $role LOGIN PASSWORD '${Fixtures.databasePassword}'"); Sql.exec(c,s"REVOKE TEMP ON DATABASE $identifier FROM PUBLIC")
       Sql.exec(c,s"GRANT USAGE ON SCHEMA public TO $role")
-      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_revision_info,ch_messages,ch_epoch_messages TO $role")
+      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_revision_info,ch_messages,ch_epoch_messages,ponygirls_indexing_preferences TO $role")
       Sql.exec(c,s"GRANT SELECT(session_id,revision,epoch,message_count,raw_bytes) ON ch_revisions TO $role")
     }
     try {
