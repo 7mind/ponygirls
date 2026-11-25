@@ -73,6 +73,20 @@ class ClaimOrderLaneTest extends munit.FunSuite {
     val any=claimed(claim(c,a,lane0))
     assertEquals((any.jobId,any.facts.map(_.step)),(bulk,Some(ClaimStep.Borrowed)))
   }}
+  test("claim order: each owner's pair keeps its own target epoch and indexing epoch: a Running job leased under its owner's current indexing epoch is not taken, the claim carries the claimed owner's epochs") { database { (c,db,a) =>
+    // Owner b's indexing epoch is 2 (a preference row), owner c's target epoch 5; owner a has 0 and 0.
+    db.transaction { x =>
+      Sql.exec(x,"INSERT INTO ponygirls_indexing_preferences(service,owner_key,user_choice,admin_override,epoch) VALUES('chronicle',?,true,NULL,2)",ponygirls.auth.IndexingPreferenceSql.ownerKey("b"))
+      Sql.exec(x,"UPDATE ch_owner_targets SET epoch=5 WHERE owner='c'")
+    }
+    val leased=job(db,a,"b",1,false); val fresh=job(db,a,"c",2,false); val later=job(db,a,"a",3,false)
+    db.transaction(x => Sql.exec(x,"UPDATE ch_jobs SET state='Running',attempts=1,indexing_epoch=2,lease_until=clock_timestamp()+interval '1 hour' WHERE id=?",leased))
+    val taken=claimed(claim(c,a,freshLane))
+    assertEquals((taken.jobId,taken.owner,taken.targetEpoch,taken.indexingEpoch),(fresh,"c",5L,0L))
+    val next=claimed(claim(c,a,freshLane))
+    assertEquals((next.jobId,next.owner,next.targetEpoch,next.indexingEpoch),(later,"a",0L,0L))
+    assertEquals(claim(c,a,freshLane),ClaimOutcome.Idle,"b's job leased under b's current epoch stays with its claim")
+  }}
   test("claim order: a candidate whose job lock another transaction holds is passed for the next candidate of the same step, not the other class") { database { (c,db,a) =>
     val oldest=job(db,a,"a",1,true); val next=job(db,a,"b",2,true); job(db,a,"c",0,false)
     val holder=new Database(c,IndexProfileCatalog.current(c))
