@@ -305,16 +305,19 @@ final class PostgresActivity(db: Database,clock: Clock,mode: ClaimOrderMode=Clai
   private val claimed=db.profiles.knownProfiles.toList.sorted
   private val queueCte=ActivityQueueSql.cte(mode,claimed.size,ChronicleIndexing.allowsOwnerSql(db.indexingDefaultEnabled,"s.owner"))
   private def queueParameters(owner: String,now: Instant): List[Sql.Param] = parameters(owner,now)++claimed
+  /** One statement: a row per class of the owner's jobs (or one row of NULLs without any), each also carrying the owner's
+    * jobs awaiting the large-job lane and the position of the first. */
   private def queue(c: Connection,owner: String,now: Instant): ActivityQueue = {
     val empty=ActivityClassQueue(0,0,0,0,None)
-    val classes=Sql.rows(c,base+queueCte+" "+ActivityQueueSql.classes,queueParameters(owner,now)*) { r =>
-      r.getString("class") -> ActivityClassQueue(r.getLong("queued"),r.getLong("claimable"),r.getLong("held"),r.getLong("awaiting_reclaim"),Option(r.getTimestamp("oldest")).map(_.toInstant.toString))
-    }.toMap
-    val (awaiting,ahead)=Sql.one(c,base+queueCte+s""" SELECT (SELECT count(*) FROM queue WHERE waiting IN(${ActivityQueueSql.list(ActivityQueueSql.large)})) AS awaiting,
-      (SELECT ${ActivityQueueSql.ahead(mode,"first")} FROM (${ActivityQueueSql.firstLarge(mode)}) first) AS ahead""",queueParameters(owner,now)*) { r =>
-      (r.getLong("awaiting"),Option(r.getObject("ahead",classOf[java.lang.Long])).map(_.longValue))
-    }.get
-    ActivityQueue(ActivityQueueSql.claimOrder(mode),classes.getOrElse("fresh",empty),classes.getOrElse("bulk",empty),classes.getOrElse("unclassified",empty),awaiting,ahead)
+    val rows=Sql.rows(c,base+queueCte+s""", classes AS (${ActivityQueueSql.classes})
+      SELECT classes.*,(SELECT count(*) FROM queue WHERE waiting IN(${ActivityQueueSql.list(ActivityQueueSql.large)})) AS awaiting,
+        (SELECT ${ActivityQueueSql.ahead(mode,"first")} FROM (${ActivityQueueSql.firstLarge(mode)}) first) AS large_ahead
+      FROM (SELECT 1) one LEFT JOIN classes ON true""",queueParameters(owner,now)*) { r =>
+      val counts=Option(r.getString("class")).map(_ -> ActivityClassQueue(r.getLong("queued"),r.getLong("claimable"),r.getLong("held"),r.getLong("awaiting_reclaim"),Option(r.getTimestamp("oldest")).map(_.toInstant.toString)))
+      (counts,r.getLong("awaiting"),Option(r.getObject("large_ahead",classOf[java.lang.Long])).map(_.longValue))
+    }
+    val classes=rows.flatMap(_._1).toMap
+    ActivityQueue(ActivityQueueSql.claimOrder(mode),classes.getOrElse("fresh",empty),classes.getOrElse("bulk",empty),classes.getOrElse("unclassified",empty),rows.head._2,rows.head._3)
   }
   private final case class Totals(archiveHeads: Long,withoutTarget: Long,current: JobCounts,historical: JobCounts,collectors: Long)
   def summary(user: UserInfo,q: ActivityQuery): ActivityResult = {
