@@ -676,7 +676,7 @@ const JOB_TOKEN = 'synthetic-token-0123456789-abcdefghijklmnopqrstuvwxyz-ABCDEF'
 const JOB_REQUEST = '0193e8d5-6f5c-7a1b-8c2d-000000000099';
 const JOB_COMMANDS: readonly (readonly string[])[] = [['jobs'], ['jobs', 'retry', ID, '--yes'], ['retry-failed', 'preview'], ['retry-failed', 'apply', '--target-profile', 'selected-profile', '--selection-hash', 'a'.repeat(64), '--yes']];
 function jobResult(operation: Record<string, unknown>, requestId: string): unknown {
-  if ('ActivityJobs' in operation) return { ActivityJobs: { result: { observedAt: '2026-11-23T00:00:00Z', jobs: [], total: '0', nextCursor: null } } };
+  if ('ActivityJobs' in operation) return { ActivityJobs: { result: { observedAt: '2026-11-23T00:00:00Z', jobs: [], total: '0', nextCursor: null, claimOrder: null } } };
   if ('RetryJob' in operation) return { Mutation: { receipt: { requestId, operation: 'RetryJob', entityId: ID } } };
   if ('PreviewRetryFailed' in operation) return { RetryFailedPreview: { result: { targetProfile: 'selected-profile', selectionHash: 'a'.repeat(64), counts: RETRY_COUNTS } } };
   return { RetryFailed: { result: { requestId, targetProfile: 'selected-profile', retried: '1', counts: RETRY_COUNTS } } };
