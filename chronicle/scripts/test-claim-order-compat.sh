@@ -42,7 +42,7 @@ JDBC = re.fullmatch(r'jdbc:postgresql://(127\.0\.0\.1):(\d+)/([A-Za-z0-9_]+)', D
 assert JDBC is not None, 'an owned loopback database'
 READY_SECONDS = 90
 WINDOWS = 'X-Chronicle-Windows-To-Annotate'
-checks = []
+checks, failures = [], []
 
 
 def check(label, condition, detail=''):
@@ -50,6 +50,16 @@ def check(label, condition, detail=''):
         raise AssertionError(f'{label}: {detail}')
     checks.append(label)
     print('ok -', label, flush=True)
+
+
+def expect(label, condition, detail=''):
+    """A compatibility verdict: reported, and the run goes on to the next one (every break is listed)."""
+    if condition:
+        check(label, True)
+    else:
+        failures.append(label)
+        print('not ok -', label, '--', str(detail)[:2000], flush=True)
+    return condition
 
 
 def sql(statement):
@@ -194,9 +204,9 @@ def main():
         def base_cli_succeeds(label, state, *args, token=None, stdin=None):
             result = cli(state, *args, token=token, stdin=stdin)
             shown = ' '.join(a for a in args if not a.startswith('/')) + ('' if stdin is None else ' ' + next(iter(json.loads(stdin))))
-            check(f'base CLI × tree server ({label}): {shown}', result.returncode == 0 and 'protocol' not in result.stderr.lower(),
-                  f'exit {result.returncode} {result.stderr}')
-            return json.loads(result.stdout)
+            ok = expect(f'base CLI × tree server ({label}): {shown}', result.returncode == 0 and 'protocol' not in result.stderr.lower(),
+                        f'exit {result.returncode} {result.stderr.strip()}')
+            return json.loads(result.stdout) if ok else None
 
         # The recorded requests: fixed request ids, so that a reply's bytes are comparable between servers.
         def envelope(operation):
@@ -243,7 +253,7 @@ def main():
             different = [key for key in base if observed.sub('"observedAt":"…"', base[key]) != observed.sub('"observedAt":"…"', tree[key])]
             for key in different[:3]:
                 print('   base:', base[key][:1500], '\n   tree:', tree[key][:1500], flush=True)
-            check(f'{label}: every reply byte-identical to the base server\'s ({len(base)} replies; observedAt aside)', not different, [k[1][:120] for k in different[:5]])
+            expect(f'{label}: every reply byte-identical to the base server\'s ({len(base)} replies; observedAt aside)', not different, f'{len(different)} differ, e.g. ' + '; '.join(k[1][:100] for k in different[:3]))
 
         servers = []
         try:
@@ -288,18 +298,22 @@ def main():
                 state = f'cli-{order}'
                 login_result = cli(state, 'login', '--login', 'alice', '--password-file', str(root / 'password'))
                 check(f'base CLI × tree server ({order}): login', login_result.returncode == 0, login_result.stderr)
-                listed = base_cli_succeeds(order, state, 'activity')['Activity']['result']
-                check(f'base CLI × tree server ({order}): activity counts the planted jobs', listed['current']['total'] == '9', listed['current'])
-                listed = base_cli_succeeds(order, state, 'jobs', '--scope', 'All')['ActivityJobs']['result']['jobs']
-                check(f'base CLI × tree server ({order}): jobs lists alice\'s ten jobs', len(listed) == 10, len(listed))
+                listed = base_cli_succeeds(order, state, 'activity')
+                if listed is not None:
+                    check(f'base CLI × tree server ({order}): activity counts the planted jobs', listed['Activity']['result']['current']['total'] == '9', listed)
+                listed = base_cli_succeeds(order, state, 'jobs', '--scope', 'All')
+                if listed is not None:
+                    check(f'base CLI × tree server ({order}): jobs lists alice\'s ten jobs', len(listed['ActivityJobs']['result']['jobs']) == 10, listed)
                 base_cli_succeeds(order, state, 'jobs', '--sort', 'LeaseState', '--ascending')
                 base_cli_succeeds(order, state, 'rpc', '--file', '-', stdin=json.dumps(activity('CurrentTotal', 'Desc', limit=1)))
                 base_cli_succeeds(order, state, 'rpc', '--file', '-', stdin=json.dumps(jobs('Historical')))
-                preview = base_cli_succeeds(order, state, 'retry-failed', 'preview')['RetryFailedPreview']['result']
-                check(f'base CLI × tree server ({order}): the preview counts the two current failures', preview['counts']['eligibleCurrentFailed'] == '2', preview['counts'])
+                preview = base_cli_succeeds(order, state, 'retry-failed', 'preview')
+                if preview is not None:
+                    check(f'base CLI × tree server ({order}): the preview counts the two current failures', preview['RetryFailedPreview']['result']['counts']['eligibleCurrentFailed'] == '2', preview)
                 base_cli_succeeds(order, state, 'retry-failed', 'preview', '--auth', 'bearer', token=root / 'operator-token')
-                listed = base_cli_succeeds(order, state, 'jobs', '--auth', 'bearer', token=root / 'operator-token')['ActivityJobs']['result']['jobs']
-                check(f'base CLI × tree server ({order}): jobs --auth bearer lists the current jobs', len(listed) == 9, len(listed))
+                listed = base_cli_succeeds(order, state, 'jobs', '--auth', 'bearer', token=root / 'operator-token')
+                if listed is not None:
+                    check(f'base CLI × tree server ({order}): jobs --auth bearer lists the current jobs', len(listed['ActivityJobs']['result']['jobs']) == 9, listed)
                 if flag == 'ON':
                     base_cli_succeeds(order, state, 'jobs', 'retry', job['a5'], '--yes')
                     base_cli_succeeds(order, state, 'jobs', 'retry', job['a7'], '--auth', 'bearer', '--yes', token=root / 'operator-token')
@@ -313,6 +327,9 @@ def main():
         finally:
             for server in servers:
                 server.stop()
+    if failures:
+        print(json.dumps(dict(status='failed', checks=len(checks), failures=failures)), flush=True)
+        raise SystemExit(1)
     print(json.dumps(dict(status='passed', checks=len(checks), treeServer=str(TREE_SERVER), baseServer=str(BASE_SERVER), baseCli=str(BASE_CLI))), flush=True)
 
 
