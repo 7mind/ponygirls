@@ -32,7 +32,7 @@ object ManurePlugin extends PluginDef:
   make[Option[AccountsConfig]].from((config: Config) => config.accounts)
   make[PasswordHasher].fromValue(PasswordHasher.Pbkdf2)
   make[JdbcTransactions].from[RuntimeTransactions]
-  make[PostgresRetrieval].from(SearchProjection.retrieval _)
+  make[PostgresRetrieval].from(SearchProjection.retrieval)
   make[SearchProjection]
   make[Metadata].from[PostgresMetadata]
   make[Payloads].from[FilesystemPayloads]
