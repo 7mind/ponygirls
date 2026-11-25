@@ -12,8 +12,12 @@ import scala.util.Using
 /** T3 (claim-order design §3): every write path sets or keeps `ch_jobs.waiting_since` and `bulk` as its row of the table
   * says, under the default configuration. A fresh value is the writing transaction's `now()`: read in that transaction where
   * the test runs the production function in its own transaction, otherwise bounded by `now()` of a transaction committed
-  * before and one begun after (no sleeps). Inherited and kept values are compared exactly with planted ones. */
-final class ClaimOrderColumnsTest extends munit.FunSuite {
+  * before and one begun after (no sleeps). Inherited and kept values are compared exactly with planted ones. The claims of
+  * the cases are those of `claimOrder` (ClaimOrderColumnsWaitingTest: the same cases under the waiting order). */
+class ClaimOrderColumnsTest extends munit.FunSuite {
+  protected def claimOrder: ClaimOrderSetting = ClaimOrderSetting.SourceId
+  private def claimOwner(archive: PostgresArchive,catalog: IndexProfileCatalog,owner: String): Option[Claim] =
+    ClaimOrderFixtures.claimIn(claimOrder,archive,catalog.knownProfiles,ClaimScope.Owner(owner),300)
   import UploadFixtures.{Content,declaration,header,part,pi,send}
   private type Order = (Option[Instant],Option[Boolean])
   private def cleanPreferences(db: Database): Unit = db.transaction { c =>
@@ -25,7 +29,7 @@ final class ClaimOrderColumnsTest extends munit.FunSuite {
     OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
       db.transaction(c => Sql.exec(c,"TRUNCATE ch_uploads,ch_epochs,ch_reindex_requests,ch_reindex_members CASCADE"))
       cleanPreferences(db)
-      try f(config,db,archive,catalog) finally cleanPreferences(db)
+      try f(ClaimOrderFixtures.ordered(config,claimOrder),db,archive,catalog) finally cleanPreferences(db)
     }
   private def instant(c: Connection,sql: String,args: Sql.Param*): Instant = Sql.one(c,sql,args*)(_.getObject(1,classOf[OffsetDateTime]).toInstant).get
   private def now(c: Connection): Instant = instant(c,"SELECT now()")
@@ -125,7 +129,7 @@ final class ClaimOrderColumnsTest extends munit.FunSuite {
   test("T3 QA-ii vs D3a: a validly leased predecessor whose indexing epoch moved is inherited; one of the current epoch is not") { fixture { (config,db,archive,catalog) =>
     def leasedSource(owner: String): (Source,UUID,Order) = {
       val source=new Source(archive,owner); val first=source.ingest()
-      val claim=archive.claim(catalog.knownProfiles,ClaimScope.Owner(owner),300).get
+      val claim=claimOwner(archive,catalog,owner).get
       assertEquals(claim.jobId,first.jobId)
       (source,first.jobId,plant(db,first.jobId,bulk=true))
     }
@@ -142,7 +146,7 @@ final class ClaimOrderColumnsTest extends munit.FunSuite {
 
   test("T3 B1: a switch over a validly leased predecessor that another transaction holds FOR SHARE (staging) completes without waiting for it") { fixture { (_,db,archive,catalog) =>
     val source=new Source(archive,"a"); val first=source.ingest()
-    assertEquals(archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).map(_.jobId),Some(first.jobId))
+    assertEquals(claimOwner(archive,catalog,"a").map(_.jobId),Some(first.jobId))
     val pool=Executors.newSingleThreadExecutor()
     try {
       val (blocked,successor)=db.transaction { held =>
@@ -164,7 +168,7 @@ final class ClaimOrderColumnsTest extends munit.FunSuite {
 
   test("T3 QA-iii: with a lease-ended older Running job and a queued head, the switch inherits the queued head's values") { fixture { (_,db,archive,catalog) =>
     val source=new Source(archive,"a"); val first=source.ingest()
-    assertEquals(archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).map(_.jobId),Some(first.jobId))
+    assertEquals(claimOwner(archive,catalog,"a").map(_.jobId),Some(first.jobId))
     val second=source.ingest()
     plant(db,first.jobId,bulk=false)
     val head=plant(db,second.jobId,bulk=true)
@@ -237,7 +241,7 @@ final class ClaimOrderColumnsTest extends munit.FunSuite {
     val receipt=new Source(archive,"a").ingest(); val id=receipt.jobId
     val values=plant(db,id,bulk=true)
     def unchanged(step: String): Unit = assertEquals(order(db,id),values,step)
-    def claim(): Claim = archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).filter(_.jobId==id).getOrElse(fail("job not claimed"))
+    def claim(): Claim = claimOwner(archive,catalog,"a").filter(_.jobId==id).getOrElse(fail("job not claimed"))
     set(db,config,"a",IndexingChoice.Disable); set(db,config,"a",IndexingChoice.Enable); unchanged("preference off/on")
     set(db,config,"a",IndexingChoice.Disable,admin=true); set(db,config,"a",IndexingChoice.Inherit,admin=true); unchanged("admin override")
     val first=claim(); unchanged("claim")
@@ -254,4 +258,9 @@ final class ClaimOrderColumnsTest extends munit.FunSuite {
     claim(); offOn(db,config,"a")
     claim(); unchanged("invalidated reclaim")
   }}
+}
+/** T3 rerun under the waiting order (claim-order DESIGN §12 NEW-4): the same cases with `indexing.claimOrder` "waiting", the
+  * claims of lane 0: identical column values. */
+final class ClaimOrderColumnsWaitingTest extends ClaimOrderColumnsTest {
+  override protected def claimOrder: ClaimOrderSetting = ClaimOrderSetting.Waiting
 }
