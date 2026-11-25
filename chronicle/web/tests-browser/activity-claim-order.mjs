@@ -75,7 +75,8 @@ try {
     assert.equal(await unclipped(table(page, 'jobs').locator('td[data-column-id="CompletedWindows"]')), true, 'no window count is cut');
     assert.equal(await unclipped(table(page, 'jobs').locator('td[data-column-id="LeaseState"] > span')), true, 'no lease state is cut');
     // Waiting since: the time and how long it has waited, both shown whole.
-    assert.match(await text(cell(page, 'jobs', ROWS.running, 'WaitingSince')), /^\S.* waiting 1 h 2 min$/);
+    // A running job joined its order at 16:58; it is not waiting, and its claim time is not recorded: the join time only.
+    assert.match(await text(cell(page, 'jobs', ROWS.running, 'WaitingSince')), /^\d\d:\d\d$/);
     assert.match(await text(cell(page, 'jobs', ROWS.held, 'WaitingSince')), / waiting 3 h 20 min$/);
     assert.equal(await unclipped(table(page, 'jobs').locator('td[data-column-id="WaitingSince"] .waited-for')), true, 'every waiting duration is whole');
     assert.equal(await horizontalOverflow(page), false); assert.deepEqual(await scrollers(page), []);

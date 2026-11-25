@@ -53,10 +53,11 @@ function Progress({ row }: { row: ActivityJob }) {
 }
 const CLASS_TITLES: Readonly<Record<'fresh' | 'bulk' | 'unclassified', string>> = { fresh: 'fresh: uploads and individual retries', bulk: 'bulk: retry-all and rebuild', unclassified: `unclassified: ${UNCLASSIFIED_NOTE}` };
 const CLASS_CHIPS: Readonly<Record<'fresh' | 'bulk' | 'unclassified', string>> = { fresh: 'chip chip-info', bulk: 'chip', unclassified: 'chip chip-outline' };
-/** When a job began waiting and for how long (`16:02 · 2 h 34 min`); the ISO value is the tooltip. */
-function Waited({ value, now, inline }: { value: string | undefined; now: number; inline: boolean }) {
+/** When a job joined its order and, while it still waits (`waiting`: it has a reason), for how long (`16:02 · 2 h 34
+  * min`); a running or finished job shows the join time only (its claim time is not recorded). ISO value as tooltip. */
+function Waited({ value, now, inline, waiting }: { value: string | undefined; now: number; inline: boolean; waiting: boolean }) {
   if (value === undefined) return <span className="muted">—</span>;
-  const duration = waitedFor(value, now);
+  const duration = waiting ? waitedFor(value, now) : null;
   return <span className="waited"><time dateTime={value} title={value}>{waitedSince(value, now)}</time>{duration !== null && (inline ? <span className="muted waited-for"> · {duration}</span> : <span className="when-rel waited-for">waiting {duration}</span>)}</span>;
 }
 function ClassChip({ bulk }: { bulk: boolean | undefined }) {
@@ -91,7 +92,7 @@ function jobColumns(order: ActivityClaimOrder | undefined, sorts: boolean): read
   </> },
   { sort: sorts ? ActivityJobSort.JobClass : null, id: 'Class', label: 'Class', cell: undefined, width: { min: 120, ideal: 120, max: 120 }, compact: true, medium: true, narrow: false, required: false, title: row => CLASS_TITLES[jobClass(row.bulk)], render: row => <ClassChip bulk={row.bulk}/> },
   { sort: ActivityJobSort.State, label: 'State', cell: undefined, width: { min: 100, ideal: 150, max: 160 }, compact: true, medium: true, narrow: true, required: false, title: row => stateLabel(row).title, render: row => { const label = stateLabel(row); return <span className={label.status}>{label.text}</span>; } },
-  { sort: sorts ? ActivityJobSort.WaitingSince : null, id: 'WaitingSince', label: 'Waiting since', cell: undefined, width: { min: 150, ideal: 150, max: 190 }, compact: true, medium: true, narrow: false, required: false, title: row => row.waitingSince, render: (row, now) => <Waited value={row.waitingSince} now={now} inline={false}/> },
+  { sort: sorts ? ActivityJobSort.WaitingSince : null, id: 'WaitingSince', label: 'Waiting since', cell: undefined, width: { min: 150, ideal: 150, max: 190 }, compact: true, medium: true, narrow: false, required: false, title: row => row.waitingSince, render: (row, now) => <Waited value={row.waitingSince} now={now} inline={false} waiting={row.waiting !== undefined}/> },
   { sort: sorts ? ActivityJobSort.WaitingReason : null, id: 'Waiting', label: 'Why not running', cell: undefined, width: { min: 200, ideal: 380, max: 600 }, compact: true, medium: true, narrow: false, required: false, title: row => { const text = why(row, order, clockMinutes); return text.sub === '' ? undefined : text.sub; }, render: row => <Why row={row} order={order}/> },
   { sort: ActivityJobSort.Revision, label: 'Revision', cell: undefined, width: { min: 72, ideal: 88, max: 120 }, compact: false, medium: false, narrow: false, required: false, title: row => `Current HEAD is r${row.session.revision}`, render: row => `r${row.job.revision}` },
   { sort: ActivityJobSort.CompletedWindows, label: 'Windows', cell: undefined, width: { min: 190, ideal: 190, max: 240 }, compact: true, medium: false, narrow: false, required: false, title: row => windowProgress(row.job), render: row => <Progress row={row}/> },
@@ -115,7 +116,7 @@ function ClaimDetail({ row, order }: { row: ActivityJob; order: ActivityClaimOrd
   const position = ahead(row, order), cls = jobClass(row.bulk), now = Date.now();
   return <>
     {position !== null && <><dt>Claim order</dt><dd>{orderDescription(row, order)} · <strong>{position.text}</strong> (all owners; not named)</dd></>}
-    <dt>Waiting since</dt><dd><Waited value={row.waitingSince} now={now} inline={true}/></dd>
+    <dt>Waiting since</dt><dd><Waited value={row.waitingSince} now={now} inline={true} waiting={row.waiting !== undefined}/></dd>
     <dt>Class</dt><dd>{CLASS_TITLES[cls]}</dd>
   </>;
 }
@@ -228,7 +229,7 @@ function ClaimStrip({ summary, user }: { summary: ActivityResult | null; user: U
           <thead><tr><th scope="col">Class</th><th scope="col" className="col-num">Queued</th><th scope="col" className="col-num">Claimable</th><th scope="col" className="col-num">Held</th><th scope="col" className="col-num">Awaiting reclaim</th><th scope="col">Oldest waiting</th></tr></thead>
           <tbody>{rows.map(([name, chip, counts]: readonly [string, string, ActivityClassQueue]) => <tr key={name} data-class={name}>
             <th scope="row"><span className={chip} title={CLASS_TITLES[name as 'fresh' | 'bulk' | 'unclassified']}>{name}</span></th><td className="col-num">{counts.queued.toLocaleString()}</td><td className="col-num">{counts.claimable.toLocaleString()}</td><td className="col-num">{counts.held.toLocaleString()}</td><td className="col-num">{cellCount(counts.awaitingReclaim, true)}</td>
-            <td className="claim-oldest"><Waited value={counts.oldestWaitingSince} now={now} inline={true}/></td></tr>)}</tbody>
+            <td className="claim-oldest"><Waited value={counts.oldestWaitingSince} now={now} inline={true} waiting={true}/></td></tr>)}</tbody>
         </table>
         <dl className="claim-lanes">
           <dt>Order</dt><dd>{waiting ? 'Oldest waiting first within each class' : 'Owner, then source ID (today\'s order)'}</dd>
