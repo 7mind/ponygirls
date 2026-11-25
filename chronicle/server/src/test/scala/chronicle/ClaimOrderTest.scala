@@ -140,9 +140,8 @@ final class ClaimOrderTest extends munit.FunSuite {
           result
         }
       }
-      fiber <- worker(archive,c,admission,log).run.start
-      _ <- done.get.timeout(60.seconds)
-      _ <- fiber.cancel
+      // The worker runs only while the wait does: cancelled when it ends, also by its guard's timeout.
+      _ <- worker(archive,c,admission,log).run.background.use(_ => done.get.timeout(60.seconds))
       order <- published.get
       lanes <- inLane.get
     } yield (order,lanes)).unsafeRunSync() match { case (order,lanes) =>

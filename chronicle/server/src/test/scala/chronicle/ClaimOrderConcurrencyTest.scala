@@ -23,37 +23,42 @@ final class ClaimOrderConcurrencyTest extends munit.FunSuite {
   /** A gate inside the candidate statement, after its snapshot and before any row lock of it: the claims of `archive` run on
     * connections whose search_path puts claim_order_gate before pg_catalog, so the statement's clock_timestamp() (in the
     * claimability of a job with a lease) is the gate's, which waits while the test holds the gate's advisory lock. Test-only
-    * database objects, dropped afterwards; production code and SQL are unchanged. */
-  private final class StatementGate(c: Config,db: Database) {
-    private val key=718293L
-    db.transaction { x =>
-      Sql.exec(x,"CREATE SCHEMA claim_order_gate")
-      Sql.exec(x,s"""CREATE FUNCTION claim_order_gate.clock_timestamp() RETURNS timestamptz LANGUAGE plpgsql VOLATILE AS $$$$
-        BEGIN
-          IF strpos(current_query(),'ORDER BY j.waiting_since,j.session_id FOR UPDATE OF s SKIP LOCKED LIMIT 1')>0 THEN PERFORM pg_advisory_xact_lock_shared($key); END IF;
-          RETURN pg_catalog.clock_timestamp();
-        END $$$$""")
-    }
-    private val gated=Database.withFactory(c,IndexProfileCatalog.current(c),new ponygirls.runtime.JdbcConnectionFactory {
-      def open(url: String,properties: java.util.Properties): java.sql.Connection = {
-        val options=new java.util.Properties(); options.putAll(properties); options.setProperty("options","-c search_path=claim_order_gate,pg_catalog,public")
-        java.sql.DriverManager.getConnection(url,options)
-      }
-    })
+    * database objects; production code and SQL are unchanged. Built and torn down by [[withGate]]. */
+  private final class StatementGate(gated: Database,holder: Database,c: Config) {
     val archive: PostgresArchive = new PostgresArchive(gated,c)
-    private val holder=other(c)
     private val held=new CountDownLatch(1); private val release=new CountDownLatch(1)
     /** Closes the gate, then runs `work` on another thread. */
     def closed[A](pool: java.util.concurrent.ExecutorService)(work: => A): java.util.concurrent.Future[A] = {
-      async(pool)(holder.transaction { h => Sql.exec(h,s"SELECT pg_advisory_xact_lock($key)"); held.countDown(); awaited(release,"gate never opened") })
+      async(pool)(holder.transaction { h => Sql.exec(h,s"SELECT pg_advisory_xact_lock(${StatementGate.key})"); held.countDown(); awaited(release,"gate never opened") })
       awaited(held,"gate never closed")
       async(pool)(work)
     }
     def open(): Unit = release.countDown()
-    def close(): Unit = {
-      release.countDown()
-      try { gated.close(); holder.close() } finally db.transaction(x => Sql.exec(x,"DROP SCHEMA claim_order_gate CASCADE"))
+  }
+  private object StatementGate { val key=718293L }
+  /** Runs `body` with a gate: the schema's drop is registered right after its DDL; the gated pool and the holder's pool are
+    * each closed whatever happens (also if the other's close fails); the gate is opened before they close; the schema is
+    * dropped after both. */
+  private def withGate[A](c: Config,db: Database)(body: StatementGate => A): A = {
+    db.transaction { x =>
+      Sql.exec(x,"CREATE SCHEMA claim_order_gate")
+      Sql.exec(x,s"""CREATE FUNCTION claim_order_gate.clock_timestamp() RETURNS timestamptz LANGUAGE plpgsql VOLATILE AS $$$$
+        BEGIN
+          IF strpos(current_query(),'ORDER BY j.waiting_since,j.session_id FOR UPDATE OF s SKIP LOCKED LIMIT 1')>0 THEN PERFORM pg_advisory_xact_lock_shared(${StatementGate.key}); END IF;
+          RETURN pg_catalog.clock_timestamp();
+        END $$$$""")
     }
+    try scala.util.Using.resource(Database.withFactory(c,IndexProfileCatalog.current(c),new ponygirls.runtime.JdbcConnectionFactory {
+      def open(url: String,properties: java.util.Properties): java.sql.Connection = {
+        val options=new java.util.Properties(); options.putAll(properties); options.setProperty("options","-c search_path=claim_order_gate,pg_catalog,public")
+        java.sql.DriverManager.getConnection(url,options)
+      }
+    })) { gated =>
+      scala.util.Using.resource(other(c)) { holder =>
+        val gate=new StatementGate(gated,holder,c)
+        try body(gate) finally gate.open()
+      }
+    } finally db.transaction(x => Sql.exec(x,"DROP SCHEMA IF EXISTS claim_order_gate CASCADE"))
   }
   /** A claim of `lane` through ClaimOrder with `race` (no first supersession transaction: none of these queues has one). */
   private def paused(a: PostgresArchive,lane: ClaimLane,race: ClaimOrder.Race): ClaimOutcome = ClaimOrder.claim(a,a.knownProfiles,ClaimScope.AllOwners,300,lane,race)
@@ -195,8 +200,7 @@ final class ClaimOrderConcurrencyTest extends munit.FunSuite {
     val request=Fixtures.snapshot(); val first=a.ingest("a",request)
     val obsolete=first.jobId; order(db,obsolete,1,false); set(db,obsolete,"lease_until=clock_timestamp()-interval '1 hour'")
     val next=job(db,a,"b",2,false)
-    val gate=new StatementGate(c,db)
-    try withPool(3) { pool =>
+    withGate(c,db) { gate => withPool(3) { pool =>
       val claiming=gate.closed(pool)(claim(gate.archive,freshLane))
       assert(reachesLockWait(db,claiming),"the candidate statement waits at its gate, after its snapshot")
       val switched=async(pool)(a.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))).get(2,TimeUnit.MINUTES)
@@ -208,7 +212,7 @@ final class ClaimOrderConcurrencyTest extends munit.FunSuite {
       assertEquals((row(db,switched.jobId).state,row(db,switched.jobId).waitingSince,row(db,switched.jobId).bulk),("Queued",Some(base.plusSeconds(1)),Some(false)))
       val head=claimed(claim(a,freshLane))
       assertEquals((head.jobId,head.revision),(switched.jobId,2))
-    } finally gate.close()
+    }}
   }}
 
   test("T4 (B1, CHECK-r3) hold race: the candidate claimed by another lane and returned to a hold between the statement and its job lock, age and class unchanged, is not claimed by any lane kind; each takes the next eligible job") { database { (c,db,a) =>

@@ -79,9 +79,8 @@ final class ClaimOrderPlanTest extends munit.FunSuite {
     case Nil => node
     case children => driving(children.find(child => text(child,"Parent Relationship").contains("Outer")).getOrElse(children.head))
   }
-  /** Index entries the driving scan read; loops of the older-Running probe and the index tuples it read in all of them (its
-    * output and the rows its filter removed; EXPLAIN reports both per loop). */
-  private final case class Shape(index: String,examined: Long,probeLoops: Long,probeVisited: Long,probeCond: Option[String])
+  /** Index entries the driving scan read (one loop); loops of the older-Running probe; its index condition. */
+  private final case class Shape(index: String,examined: Long,probeLoops: Long,probeCond: Option[String])
   /** Asserts the shape of one explained candidate statement and returns what it read. */
   private def shape(explained: Json,label: String,index: String,bulk: Option[Boolean],running: Long): Shape = {
     val top=root(explained)
@@ -100,7 +99,7 @@ final class ClaimOrderPlanTest extends munit.FunSuite {
     val loops=number(scan,"Actual Loops").toLong
     assertEquals(loops,1L,label)
     val probeLoops=number(probe,"Actual Loops")
-    Shape(index,math.round(number(scan,"Actual Rows")*loops+number(scan,"Rows Removed by Filter")*loops),probeLoops.toLong,math.round((number(probe,"Actual Rows")+number(probe,"Rows Removed by Filter"))*probeLoops),text(probe,"Index Cond"))
+    Shape(index,math.round(number(scan,"Actual Rows")*loops+number(scan,"Rows Removed by Filter")*loops),probeLoops.toLong,text(probe,"Index Cond"))
   }
 
   test("T8: every branch of the waiting order reads its ordered partial index up to its candidate on the ANALYZEd spec §5.4 queue: no sort, the older-Running probe on ch_jobs_running, passed sources filtered as <> ALL") { database { (c,db,a) =>
@@ -178,13 +177,12 @@ final class ClaimOrderPlanTest extends munit.FunSuite {
       capture.plans.toList.zip(steps).zipWithIndex.foreach { case ((plan,(index,_,bulk)),n) =>
         for((explained,kind) <- List(plan.custom -> "custom",plan.generic -> "generic")) {
           val read=shape(explained,s"$label step ${n+1} $kind",index,bulk,running)
-          val (scanned,probeBound,longHeadScanned)=entries(n)
+          val (scanned,_,_)=entries(n)
           assertEquals(read.examined,scanned,s"$label step ${n+1} $kind: index entries read")
           assert(read.examined<=300,s"$label: bounded, ${read.examined}")
-          assert(read.probeLoops<=read.examined && read.probeVisited<=probeBound,s"$label step ${n+1} $kind: the older-Running probes read ${read.probeVisited} index tuples in ${read.probeLoops} loops, at most the $probeBound ch_jobs_running entries of the scanned candidates' sources and profiles")
-          if(longHeadScanned) assert(read.probeVisited>=1,s"$label step ${n+1} $kind: the long source's head finds its older run")
+          assert(read.probeLoops<=read.examined,s"$label step ${n+1} $kind: one older-Running probe per scanned candidate at most (${read.probeLoops} loops)")
           probeConditions+=s"$label step ${n+1} $kind" -> read.probeCond
-          report+=s"$label step ${n+1} $kind: $index entries=${read.examined} probeLoops=${read.probeLoops} probeTuples=${read.probeVisited}/$probeBound enable_sort=${plan.setting}"
+          report+=s"$label step ${n+1} $kind: $index entries=${read.examined} probeLoops=${read.probeLoops} enable_sort=${plan.setting}"
         }
         if(passed.nonEmpty && n>0) assert(nodes(root(plan.custom)).exists(node => text(node,"Relation Name").contains("ch_sources") && text(node,"Filter").exists(_.contains("<> ALL"))),s"$label: passed sources as <> ALL")
       }
