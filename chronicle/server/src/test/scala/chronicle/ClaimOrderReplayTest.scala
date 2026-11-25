@@ -90,55 +90,63 @@ final class ClaimOrderReplayTest extends munit.FunSuite {
     assertEquals(largeRuns.map(_._1).distinct,List(0),"only lane 0 runs more than 100 windows")
   }}
 
-  /** 25 Nov STARVATION: four low-id sources appended every tick, twenty high-id bulk jobs of one apply waiting; 30 ticks of
-    * four lanes, each job done within its tick. Returns the bulk jobs claimed, in claim order. */
-  private def starvation(c: Config,db: Database,a: PostgresArchive): (List[UUID],List[UUID]) = {
-    val sources=ingestAll(a,"a",24).sortBy(_.sessionId.toString)
-    val (live,bulk)=(sources.take(4),sources.drop(4).map(_.jobId))
+  /** 25 Nov STARVATION: four low-id sources, each appended (one more message) every tick; twenty high-id bulk jobs of one
+    * apply waiting; 30 ticks; each job claimed in a tick is done within it. Flag on, lane 0 runs a sized job throughout, so only
+    * the bulk lane can serve the bulk jobs; flag off, four lanes of today's claim. Returns the bulk jobs and, per tick, the
+    * bulk lane's claim (flag on) or the bulk jobs claimed (flag off). */
+  private def starvation(c: Config,db: Database,a: PostgresArchive): (List[UUID],List[List[UUID]]) = {
+    val requests=(0 until 24).map(i => (s"starvation $i",messages(1,s"starvation $i"))).toList
+    val sources=withPool(8)(pool => requests.map(request => async(pool)(request -> a.ingest("a",request._2))).map(_.get)).sortBy(_._2.sessionId.toString)
+    val (live,bulk)=(sources.take(4),sources.drop(4).map(_._2.jobId))
     fail(db,bulk); assertEquals(bulkApply(db,"a"),20L)
-    var heads=live.map(r => (r.sessionId,a.headSnapshot("a",r.sessionId),1))
-    val taken=mutable.ListBuffer.empty[UUID]
-    for(tick <- 0 until 30) {
-      heads=heads.map { (id,request,revision) =>
-        val next=request.copy(requestId=UUID.randomUUID(),expectedRevision=revision); a.ingest("a",next); (id,next,revision+1)
+    val waiting=ClaimOrderMode.of(c)!=ClaimOrderMode.SourceId
+    val large=Option.when(waiting)(job(db,a,"b",0,false,Some(400)))
+    large.foreach(id => assertEquals(taken(a,lane0),id))
+    var heads=live.map((request,_) => request)
+    (bulk,(0 until 30).map { tick =>
+      heads=heads.map { (tag,request) =>
+        val next=messages(request.messages.size+1,tag).copy(source=request.source)
+        a.ingest("a",next.copy(requestId=UUID.randomUUID(),expectedRevision=request.messages.size)); (tag,next)
       }
-      val claims=ClaimOrderMode.of(c) match {
-        case ClaimOrderMode.SourceId => (0 until 4).flatMap(lane => a.claim(a.knownProfiles,ClaimScope.AllOwners,300,if(lane==0) LargeJobs.Admitted else LargeJobs.Skipped))
-        case ClaimOrderMode.Waiting(_) => List(lane0,bulkLane,freshLane,freshLane2).flatMap(lane => claim(a,lane) match { case ClaimOutcome.Claimed(value) => Some(value); case _ => None })
-      }
+      val claims=if(!waiting) (0 until 4).flatMap(lane => a.claim(a.knownProfiles,ClaimScope.AllOwners,300,if(lane==0) LargeJobs.Admitted else LargeJobs.Skipped)).toList
+        else List(bulkLane,freshLane,freshLane2).flatMap(lane => claim(a,lane) match { case ClaimOutcome.Claimed(value) => Some(value); case _ => None })
       claims.foreach(value => assert(a.publish(value,Nil)))
-      taken++=claims.map(_.jobId).filter(bulk.contains)
-    }
-    (bulk,taken.toList)
+      if(waiting) claims.filter(_.facts.exists(_.lane==bulkLane.index)).map(_.jobId) else claims.map(_.jobId).filter(bulk.contains)
+    }.toList)
   }
-  test("T10 (25 Nov STARVATION), flag on: steady appends of low-id sources do not hold back older high-id bulk jobs: they are served oldest first (one apply, so by session_id) and all within the run") { database { (c,db,a) =>
-    val (bulk,taken)=starvation(c,db,a)
-    assertEquals(taken,bulk,"every bulk job, in (waiting_since, session_id) order")
+  test("T10 (25 Nov STARVATION), flag on: with lane 0 busy, the bulk lane serves the waiting high-id bulk jobs at its next claims, oldest first (one apply, so by session_id), while low-id sources are appended every tick") { database { (c,db,a) =>
+    val (bulk,perTick)=starvation(c,db,a)
+    assertEquals(perTick.take(20),bulk.map(List(_)),"the bulk lane's claim of each tick: the next bulk job")
+    assert(perTick.drop(20).forall(_.size==1) && perTick.drop(20).flatten.forall(id => !bulk.contains(id)),"then it borrows fresh work")
   }}
   test("T10 (25 Nov STARVATION), flag off: today's order serves the low-id appends at every claim; no bulk job is claimed in the run") { database(ClaimOrderPostgres.config()) { (c,db,a) =>
-    val (bulk,taken)=starvation(c,db,a)
-    assertEquals(taken,Nil)
+    val (bulk,perTick)=starvation(c,db,a)
+    assertEquals(perTick.flatten,Nil)
     assertEquals(bulk.map(row(db,_).state).distinct,List("Queued"))
   }}
 
-  test("T10 (D-c, the documented limit): two older bulk jobs alternate on the sole bulk lane, each attempt held until the other's ended, while lane 0 runs a large job and the fresh lanes take fresh work: a younger bulk job is never claimed") { database { (c,db,a) =>
+  test("T10 (D-c, the documented limit): two older bulk jobs alternate on the sole bulk lane — each attempt commits progress, then fails transiently and is held until the other's attempt ended — past the consecutive-failure limit, while lane 0 runs a large job and the fresh lanes take fresh work: a younger bulk job is never claimed") { database { (c,db,a) =>
     val b1=job(db,a,"a",1,true); val b2=job(db,a,"b",2,true); val b3=job(db,a,"c",3,true)
     val large=job(db,a,"a",0,false,Some(400))
     assertEquals(taken(a,lane0),large)
+    val rounds=2*(Jobs.transientBackoff.limit+2)
     var previous=Option.empty[UUID]
-    val bulkClaims=(1 to 6).map { round =>
+    val bulkClaims=(1 to rounds).map { round =>
       (0 until 2).foreach(_ => a.ingest(if(round%2==0) "b" else "c",Fixtures.snapshot()))
       List(freshLane,freshLane2).foreach { lane =>
         val fresh=claimed(claim(a,lane)); assertEquals(fresh.facts.map(_.step),Some(ClaimStep.Preferred)); assert(a.publish(fresh,Nil))
       }
       val attempt=claimed(claim(a,bulkLane))
-      // The attempt fails transiently after outlasting the other job's hold: it is held, the other one is due again.
-      assert(a.holdTransient(attempt,Some(IndexingStage.Annotation),Deadline.now+30.seconds).isInstanceOf[TransientOutcome.Held])
+      // The attempt succeeds on its previously failed range (a committed checkpoint: progress), then fails on another one
+      // transiently: it is held, its streak restarted; the other job's hold has ended meanwhile.
+      a.checkpoint(attempt,IndexCheckpoints.key(attempt,IndexingStage.Annotation,round,0,ProblemPassages.identity,io.circe.Json.fromString(s"window $round")),io.circe.Json.fromString("accepted"))
+      assertEquals(a.holdTransient(attempt,Some(IndexingStage.Annotation),Deadline.now+30.seconds) match { case TransientOutcome.Held(consecutive,_) => consecutive; case other => fail(s"not held: $other") },1)
       previous.foreach(id => db.transaction(x => Sql.exec(x,"UPDATE ch_jobs SET lease_until=clock_timestamp() WHERE id=? AND state='Queued'",id)))
       previous=Some(attempt.jobId)
       attempt.jobId
     }
-    assertEquals(bulkClaims.toList,List(b1,b2,b1,b2,b1,b2))
+    assertEquals(bulkClaims.toList,List.fill(rounds/2)(List(b1,b2)).flatten)
+    assertEquals(List(b1,b2).map(id => (row(db,id).state,row(db,id).attempts)),List.fill(2)(("Queued",0)),s"each held ${rounds/2} times, more than the limit of ${Jobs.transientBackoff.limit} consecutive failures")
     assertEquals((row(db,b3).state,row(db,b3).attempts,row(db,b3).fence),("Queued",0,0L),"the younger bulk job waits as long as the alternation lasts")
     assertEquals(row(db,large).state,"Running")
   }}

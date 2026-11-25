@@ -298,6 +298,6 @@ class OwnerIndexingJobsTest extends munit.FunSuite {
 }
 /** T7 (claim-order DESIGN §9): OwnerIndexingJobsTest's cases under the waiting order (`indexing.claimOrder` "waiting"): claims
   * of lane 0 and lane 0's worker iterations. */
-final class ClaimOrderOwnerIndexingJobsTest extends OwnerIndexingJobsTest {
+final class ClaimOrderOwnerIndexingJobsTest extends OwnerIndexingJobsTest with ClaimOrderRequiresPostgres {
   override protected def claimOrder: ClaimOrderSetting = ClaimOrderSetting.Waiting
 }

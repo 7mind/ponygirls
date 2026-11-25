@@ -8,44 +8,44 @@ import scala.collection.mutable
   * model of that rule — owners in id order; within an owner the first source by id whose head job is claimable, has no
   * older revision Running and, without the large-job permit, no head job above LargeJobs.windows or sized; a held job lock
   * passes to the next owner; the first transaction's supersession of ended older runs and the lease-exhausted cleanup —
-  * is compared with the production claim over generated queues where each clause decides some claim: identical claim
-  * sequences. */
+  * is compared with the production claim over generated queues: identical claim sequences. Each clause decides some claim:
+  * the model with that clause alone replaced by its counterfactual takes another job there. */
 final class ClaimOrderDifferentialTest extends munit.FunSuite {
   import ClaimOrderFixtures.*
-  /** Why the model's claim went past a candidate: each must decide some claim of the generated queues. */
+  /** The clauses of the rule; a clause decides a claim when the model without it (its counterfactual below) takes another job. */
   private enum Clause { case OwnerOrder,SourceOrder,Permit,OlderRunning,JobLock,NotClaimable }
-  private final case class Decision(job: Option[UUID],clauses: Set[Clause])
-  /** fe4f69f7's claim over the stored rows (`locked`: jobs whose row lock another transaction holds). */
-  private def legacy(s: Snapshot,large: Boolean,locked: Set[UUID]): Decision = {
-    val seen=mutable.Set.empty[Clause]
+  /** fe4f69f7's claim over the stored rows (`locked`: jobs whose row lock another transaction holds), with the clauses
+    * `without` replaced by their counterfactuals: owners and sources in descending id order, the permit always held, older
+    * Running revisions and held job locks ignored, any Queued or Running head taken whether claimable or not. */
+  private def legacy(s: Snapshot,large: Boolean,locked: Set[UUID],without: Set[Clause] = Set.empty): Option[UUID] = {
     def active(o: Owner): Boolean = o.enabled && o.allowed
+    def eligibleHead(r: Row,owner: Owner): Boolean = Set("Queued","Running").contains(r.state) && (without(Clause.NotClaimable) || claimable(r,owner.indexingEpoch))
     // The first transaction ends older-revision Running jobs whose lease ended or whose indexing epoch is behind.
     val ended=s.rows.filter(r => s.owners.get(r.owner).exists(o => active(o) && o.profile==r.profile) && r.revision<r.head && r.state=="Running" &&
       (r.leaseNull || r.leaseAtOrPast || r.indexingEpoch<s.owners(r.owner).indexingEpoch)).map(_.job).toSet
-    val owners=s.owners.values.filter(active).toList.sortBy(_.id)
-    val found=owners.iterator.map { owner =>
+    val ownerOrder=s.owners.values.filter(active).toList.sortBy(_.id)
+    val owners=if(without(Clause.OwnerOrder)) ownerOrder.reverse else ownerOrder
+    owners.iterator.map { owner =>
       val rows=s.rows.filter(r => r.owner==owner.id && !r.tombstone && !ended.contains(r.job))
       // The lease-exhausted cleanup: a head Running on its last attempt, lease ended, of the owner's epoch, ends Failed.
       val exhausted=rows.filter(r => r.revision==r.head && r.profile==owner.profile && r.state=="Running" && r.indexingEpoch==owner.indexingEpoch && r.leasePast && r.attempts>=5).map(_.job).toSet
       val live=rows.filterNot(r => exhausted.contains(r.job))
-      val sources=live.map(_.source).distinct.sortBy(_.toString)
-      val candidates=sources.filter { source =>
+      val sourceOrder=live.map(_.source).distinct.sortBy(_.toString)
+      val sources=if(without(Clause.SourceOrder)) sourceOrder.reverse else sourceOrder
+      sources.find { source =>
         val head=live.filter(r => r.source==source && r.revision==r.head && r.profile==owner.profile)
-        val claimableHead=head.exists(r => Set("Queued","Running").contains(r.state) && claimable(r,owner.indexingEpoch))
         val older=live.exists(r => r.source==source && r.revision<r.head && r.profile==owner.profile && r.state=="Running")
-        val permit=large || !head.exists(r => r.total.exists(_>LargeJobs.windows) || sized(r))
-        if(!claimableHead) seen+=Clause.NotClaimable
-        if(claimableHead && older) seen+=Clause.OlderRunning
-        if(claimableHead && !older && !permit) seen+=Clause.Permit
-        claimableHead && !older && permit
+        val permit=large || without(Clause.Permit) || !head.exists(r => r.total.exists(_>LargeJobs.windows) || sized(r))
+        head.exists(eligibleHead(_,owner)) && (!older || without(Clause.OlderRunning)) && permit
+      }.flatMap { source =>
+        val job=live.find(r => r.source==source && r.revision==r.head && r.profile==owner.profile && eligibleHead(r,owner)).get.job
+        Option.when(!locked.contains(job) || without(Clause.JobLock))(job)
       }
-      candidates.headOption.flatMap { source =>
-        if(candidates.size>1) seen+=Clause.SourceOrder
-        val job=live.find(r => r.source==source && r.revision==r.head && r.profile==owner.profile && Set("Queued","Running").contains(r.state) && claimable(r,owner.indexingEpoch)).get.job
-        if(locked.contains(job)) { seen+=Clause.JobLock; None } else Some(job)
-      }
-    }.zipWithIndex.collectFirst { case (Some(job),index) => if(index>0) seen+=Clause.OwnerOrder; job }
-    Decision(found,seen.toSet)
+    }.collectFirst { case Some(job) => job }
+  }
+  private def decisive(s: Snapshot,large: Boolean,locked: Set[UUID]): Set[Clause] = {
+    val taken=legacy(s,large,locked)
+    Clause.values.filter(clause => legacy(s,large,locked,Set(clause))!=taken).toSet
   }
 
   test("(a) flag off: the production claim equals the independent model of today's rule over generated queues, claim by claim, with and without the permit and with held job locks; owner order, source order, the permit clause, the older-Running wait and the held job lock each decide claims") { database(ClaimOrderPostgres.config()) { (c,db,a) =>
@@ -88,17 +88,17 @@ final class ClaimOrderDifferentialTest extends munit.FunSuite {
         val before=snapshot(db)
         val plain=legacy(before,large,Set.empty)
         // Now and then another transaction holds the job row the claim would take.
-        val locked=if(plain.job.nonEmpty && random.nextInt(4)==0) plain.job.toSet else Set.empty[UUID]
+        val locked=if(plain.nonEmpty && random.nextInt(4)==0) plain.toSet else Set.empty[UUID]
         val model=legacy(before,large,locked)
         val actual=holder.transaction { h =>
           locked.foreach(id => Sql.one(h,"SELECT id FROM ch_jobs WHERE id=? FOR UPDATE",id)(_ => ()).get)
           a.claim(a.knownProfiles,ClaimScope.AllOwners,300,if(large) LargeJobs.Admitted else LargeJobs.Skipped).map(_.jobId)
         }
-        assertEquals(actual,model.job,s"queue $seed claim $step (permit $large, locked $locked)")
-        covered++=model.clauses; compared+=1; step+=1
-        more=legacy(snapshot(db),true,Set.empty).job.nonEmpty && step<200
+        assertEquals(actual,model,s"queue $seed claim $step (permit $large, locked $locked)")
+        covered++=decisive(before,large,locked); compared+=1; step+=1
+        more=legacy(snapshot(db),true,Set.empty).nonEmpty && step<200
       }
     } finally holder.close()
-    assertEquals(covered.toSet,Clause.values.toSet,s"every clause decided a claim ($compared compared)")
+    assertEquals(covered.toSet,Clause.values.toSet,s"every clause decided a claim: without it the model takes another job ($compared compared)")
   }}
 }

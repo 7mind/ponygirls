@@ -79,7 +79,9 @@ final class ClaimOrderPlanTest extends munit.FunSuite {
     case Nil => node
     case children => driving(children.find(child => text(child,"Parent Relationship").contains("Outer")).getOrElse(children.head))
   }
-  private final case class Shape(index: String,examined: Long,probeLoops: Long,probeRows: Double)
+  /** Index entries the driving scan read; loops of the older-Running probe and the index tuples it read in all of them (its
+    * output and the rows its filter removed; EXPLAIN reports both per loop). */
+  private final case class Shape(index: String,examined: Long,probeLoops: Long,probeVisited: Long)
   /** Asserts the shape of one explained candidate statement and returns what it read. */
   private def shape(explained: Json,label: String,index: String,bulk: Option[Boolean],running: Long): Shape = {
     val top=root(explained)
@@ -98,11 +100,14 @@ final class ClaimOrderPlanTest extends munit.FunSuite {
     assert(text(probe,"Index Cond").exists(cond => cond.contains("session_id") && cond.contains("profile")),s"$label: ${text(probe,"Index Cond")}")
     val loops=number(scan,"Actual Loops").toLong
     assertEquals(loops,1L,label)
-    Shape(index,math.round(number(scan,"Actual Rows")*loops+number(scan,"Rows Removed by Filter")),number(probe,"Actual Loops").toLong,number(probe,"Actual Rows"))
+    val probeLoops=number(probe,"Actual Loops")
+    Shape(index,math.round(number(scan,"Actual Rows")*loops+number(scan,"Rows Removed by Filter")*loops),probeLoops.toLong,math.round((number(probe,"Actual Rows")+number(probe,"Rows Removed by Filter"))*probeLoops))
   }
 
   test("T8: every branch of the waiting order reads its ordered partial index up to its candidate on the ANALYZEd spec §5.4 queue: no sort, the older-Running probe on ch_jobs_running, passed sources filtered as <> ALL") { database { (c,db,a) =>
-    val profile=c.profile; val old="claim-order-plan-previous-profile"
+    val profile=c.profile; val old="0-claim-order-plan-previous-profile"
+    // The old profile sorts before the target in ch_jobs_running(session_id,profile): a probe not bounded by the profile reads its rows first.
+    assert(old<profile)
     def ingested(second: Int,bulk: Boolean,total: Option[Int] = None): UUID = job(db,a,owners(second%3),second,bulk,total)
     // The candidates the claims take: real sources (a claim reads its revision), older than the synthetic queue.
     val sizedWinner=ingested(1000,false,Some(150))
@@ -125,26 +130,37 @@ final class ClaimOrderPlanTest extends munit.FunSuite {
         SELECT gen_random_uuid(),s.id,r,?,CASE WHEN r=2000 THEN 'Queued' WHEN r=1999 THEN 'Running' ELSE 'Failed' END,CASE WHEN r=1999 THEN 1 ELSE 0 END,0,
           CASE WHEN r=1999 THEN clock_timestamp()+interval '1 hour' END,CASE WHEN r<1999 THEN 'superseded-revision' END,${age}-1),false
         FROM ch_sources s CROSS JOIN generate_series(1,2000) r WHERE s.source_key='plan-long-0'""",profile)
+      // The old profile's runs of revisions 1,990-1,998 of that source, Running (leases valid), queued after every candidate:
+      // index entries of ch_jobs_running under the same source that the older-Running probe of its head must not read.
+      Sql.exec(x,s"""INSERT INTO ch_jobs(id,session_id,revision,profile,state,attempts,fence,lease_until,waiting_since,bulk)
+        SELECT gen_random_uuid(),s.id,r,?,'Running',1,1,clock_timestamp()+interval '1 hour',${age}100000),false
+        FROM ch_sources s CROSS JOIN generate_series(1990,1998) r WHERE s.source_key='plan-long-0'""",old)
       Sql.exec(x,"ANALYZE ch_jobs"); Sql.exec(x,"ANALYZE ch_sources")
     }
     val shape54=db.transaction(x => Sql.one(x,"""SELECT count(*) FILTER (WHERE state='Queued' AND profile=? AND lease_until>clock_timestamp()),count(*) FILTER (WHERE state='Queued' AND total_windows IS NOT NULL),
       count(*) FILTER (WHERE state='Running'),count(DISTINCT profile),(SELECT count(DISTINCT owner) FROM ch_sources),(SELECT max(revision) FROM ch_sources),count(*) FILTER (WHERE state='Queued') FROM ch_jobs""",profile)(r => (1 to 7).map(r.getLong).toList).get)
-    assertEquals(shape54,List(100L,101L,5L,2L,3L,2000L,10110L),"held, sized, Running, profiles, owners, longest source, queued")
-    val running=5L
+    assertEquals(shape54,List(100L,101L,14L,2L,3L,2000L,10110L),"held, sized, Running (5 of the target profile), profiles, owners, longest source, queued")
+    val running=14L
+    val longHead=db.transaction(x => Sql.one(x,"SELECT j.id FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id AND j.revision=s.revision WHERE s.source_key='plan-long-0' AND j.profile=?",profile)(_.getObject(1,classOf[UUID])).get)
     val capture=new Capture
     val capturing=Database.withFactory(c,IndexProfileCatalog.current(c),capture.factory)
     val archive=new PostgresArchive(capturing,c)
-    /** Index entries in the scanned order up to and including the claimed job's. */
-    def upTo(index: String,bulk: Option[Boolean],claimed: Option[UUID]): Long = db.transaction { x =>
+    /** Index entries in the scanned order up to and including the claimed job's: their count, the ch_jobs_running entries of
+      * their (session_id, profile) — all the older-Running probes of these candidates may read — and whether the long source's
+      * head (whose probe finds its older run) is among them. */
+    def upTo(index: String,bulk: Option[Boolean],claimedJob: Option[UUID]): (Long,Long,Boolean) = db.transaction { x =>
       val partial=index match {
         case "ch_jobs_sized" => "state='Queued' AND total_windows IS NOT NULL"
         case _ => "state IN('Queued','Running')"
       }
       val cls=bulk.fold("")(value => s" AND bulk=$value")
-      claimed match {
-        case Some(id) => Sql.one(x,s"SELECT count(*) FROM ch_jobs j,(SELECT waiting_since,session_id FROM ch_jobs WHERE id=?) k WHERE $partial$cls AND (j.waiting_since,j.session_id)<=(k.waiting_since,k.session_id)",id)(_.getLong(1)).get
-        case None => Sql.one(x,s"SELECT count(*) FROM ch_jobs WHERE $partial$cls")(_.getLong(1)).get
+      val claimed=claimedJob match {
+        case Some(id) => s"(SELECT waiting_since,session_id FROM ch_jobs WHERE id='$id')"
+        case None => "(SELECT 'infinity'::timestamptz AS waiting_since,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid AS session_id)"
       }
+      val selected=s"SELECT j.* FROM ch_jobs j,$claimed k WHERE $partial$cls AND (j.waiting_since,j.session_id)<=(k.waiting_since,k.session_id)"
+      Sql.one(x,s"""SELECT count(*),coalesce(sum((SELECT count(*) FROM ch_jobs o WHERE o.state='Running' AND o.session_id=e.session_id AND o.profile=e.profile)),0),coalesce(bool_or(e.id=?),false)
+        FROM ($selected) e""",longHead)(r => (r.getLong(1),r.getLong(2),r.getBoolean(3))).get
     }
     val report=ListBuffer.empty[String]
     /** One claim of `lane`: its statements' plans in order, checked against `expected` (index, class) per step; the
@@ -161,10 +177,12 @@ final class ClaimOrderPlanTest extends munit.FunSuite {
       capture.plans.toList.zip(steps).zipWithIndex.foreach { case ((plan,(index,_,bulk)),n) =>
         for((explained,kind) <- List(plan.custom -> "custom",plan.generic -> "generic")) {
           val read=shape(explained,s"$label step ${n+1} $kind",index,bulk,running)
-          assertEquals(read.examined,entries(n),s"$label step ${n+1} $kind: index entries read")
+          val (scanned,probeBound,longHeadScanned)=entries(n)
+          assertEquals(read.examined,scanned,s"$label step ${n+1} $kind: index entries read")
           assert(read.examined<=300,s"$label: bounded, ${read.examined}")
-          assert(read.probeRows<=running.toDouble && read.probeLoops<=read.examined,s"$label: anti-check reads ${read.probeRows} rows in ${read.probeLoops} loops")
-          report+=s"$label step ${n+1} $kind: $index entries=${read.examined} probeLoops=${read.probeLoops} enable_sort=${plan.setting}"
+          assert(read.probeLoops<=read.examined && read.probeVisited<=probeBound,s"$label step ${n+1} $kind: the older-Running probes read ${read.probeVisited} index tuples in ${read.probeLoops} loops, at most the $probeBound ch_jobs_running entries of the scanned candidates' sources and profiles")
+          if(longHeadScanned) assert(read.probeVisited>=1,s"$label step ${n+1} $kind: the long source's head finds its older run")
+          report+=s"$label step ${n+1} $kind: $index entries=${read.examined} probeLoops=${read.probeLoops} probeTuples=${read.probeVisited}/$probeBound enable_sort=${plan.setting}"
         }
         if(passed.nonEmpty && n>0) assert(nodes(root(plan.custom)).exists(node => text(node,"Relation Name").contains("ch_sources") && text(node,"Filter").exists(_.contains("<> ALL"))),s"$label: passed sources as <> ALL")
       }

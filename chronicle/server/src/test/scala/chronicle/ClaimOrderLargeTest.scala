@@ -1,6 +1,6 @@
 package chronicle
 
-import cats.effect.{Deferred,IO,Ref}
+import cats.effect.{Deferred,IO,Ref,Resource}
 import cats.effect.unsafe.implicits.global
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -52,7 +52,27 @@ final class ClaimOrderLargeTest extends munit.FunSuite {
     assertEquals(a.session("a",second.sessionId).indexedRevision,Some(2))
   }}
 
-  test("T5 worker run: only lane 0 ever runs a job of more than 100 windows; lane 0 keeps the large-job permit across its iterations; cancelled mid-job the job keeps its lease, is reclaimed after it ends, and lane 0 of the restarted worker runs it to completion with the permit") {
+  /** The admission a worker gets, recording in `events` when the large-job permit of `largeJobOwned` is acquired and released
+    * (by the real semaphore's Resource) and, through the archive, each claim of lane 0. */
+  private final class ObservedAdmission(real: ModelAdmission,events: ConcurrentLinkedQueue[String]) extends ModelAdmission {
+    def annotationSession: Resource[IO,Unit] = real.annotationSession
+    def largeJob: Resource[IO,Boolean] = real.largeJob.evalTap(admitted => IO(events.add(s"try $admitted")).void)
+    def largeJobOwned: Resource[IO,Unit] =
+      Resource.make(IO.unit)(_ => IO(events.add("released")).void).flatMap(_ => real.largeJobOwned).flatMap(_ => Resource.eval(IO(events.add("acquired")).void))
+    def request(purpose: ModelWorkload): Resource[IO,Unit] = real.request(purpose)
+  }
+  /** The permit's history of one run, cancelled at "cancel": one acquisition before lane 0's first claim, held without a release
+    * across at least `claims` claims of lane 0, released once, after the cancellation; no other lane tries it. */
+  private def heldThroughout(events: List[String],claims: Int): Unit = {
+    val permit=events.filter(event => event=="acquired" || event=="released" || event.startsWith("try"))
+    assertEquals(permit,List("acquired","released"),s"one uninterrupted hold of the permit: $events")
+    val (before,after)=events.span(_!="cancel")
+    assert(before.indexOf("acquired")<before.indexOf("claim0") && !before.contains("released"),s"acquired before lane 0's first claim, held until the cancellation: $events")
+    assert(before.count(_=="claim0")>=claims,s"lane 0 claimed at least $claims times under the one hold: $events")
+    assertEquals(after.count(_=="released"),1,s"released by the cancellation: $events")
+  }
+
+  test("T5 worker run: only lane 0 ever runs a job of more than 100 windows; lane 0 acquires the large-job permit once and holds it across its claims until the run is cancelled; cancelled mid-job the job keeps its lease, is reclaimed after it ends, and lane 0 of the restarted worker, again holding the permit throughout, runs it to completion") {
     val config=waiting(ClaimOrderPostgres.config(),lanes=3)
     database(config) { (c,db,a) =>
       val first=job(db,a,"a",0,false,Some(150))
@@ -60,61 +80,47 @@ final class ClaimOrderLargeTest extends munit.FunSuite {
       val small=List(job(db,a,"c",2,false),job(db,a,"a",3,true))
       val windowsRun=new ConcurrentLinkedQueue[(UUID,Int,Int)]() // job, lane, total of every progress report
       val deferred=new ConcurrentLinkedQueue[(UUID,Int)]()
-      final case class Run(log: WorkerLog,admission: ModelAdmission,competitor: Ref[IO,Option[String]],phase: Ref[IO,String],lane0Claims: Ref[IO,Int])
-      def archiveOf(run: Run,published: Ref[IO,Set[UUID]]): SessionArchive = new ForwardingArchive(a) {
+      def archiveOf(events: ConcurrentLinkedQueue[String],published: Ref[IO,Set[UUID]]): SessionArchive = new ForwardingArchive(a) {
         override def claimInLane(profiles: Set[String],scope: ClaimScope,lease: Int,lane: ClaimLane): ClaimOutcome = {
-          if(lane.index==0 && run.lane0Claims.updateAndGet(_+1).unsafeRunSync()==1) {
-            // Lane 0 holds the permit while it claims: from now on another holder gets it only if lane 0 lets it go.
-            run.admission.largeJobOwned.use(_ => run.phase.get.flatMap(at => run.competitor.set(Some(at)))).start.unsafeRunSync(); ()
-          }
+          if(lane.index==0) events.add("claim0")
           super.claimInLane(profiles,scope,lease,lane)
         }
         override def progress(claim: Claim,done: Int,total: Int): Boolean = { windowsRun.add((claim.jobId,claim.facts.fold(-1)(_.lane),total)); super.progress(claim,done,total) }
         override def defer(claim: Claim,total: Int): Boolean = { deferred.add((claim.jobId,claim.facts.fold(-1)(_.lane))); super.defer(claim,total) }
         override def publishProblems(claim: Claim,rows: ProblemRows): Boolean = { val result=super.publishProblems(claim,rows); published.update(_+claim.jobId).unsafeRunSync(); result }
       }
-      def run(): Run = Run(new WorkerLog,admission(c),Ref.unsafe[IO,Option[String]](None),Ref.unsafe[IO,String]("running"),Ref.unsafe[IO,Int](0))
+      /** Runs the worker under `observe` (its fiber cancelled when `observe` ends, also on failure), then marks the cancellation. */
+      var events=new ConcurrentLinkedQueue[String]()
+      def claims(): Int = events.asScala.count(_=="claim0")
+      def run(model: ProblemPassageAnnotator)(observe: Ref[IO,Set[UUID]] => IO[Unit]): List[String] = {
+        events=new ConcurrentLinkedQueue[String]()
+        (for {
+          published <- Ref.of[IO,Set[UUID]](Set.empty)
+          observed=new ObservedAdmission(admission(c),events)
+          _ <- worker(archiveOf(events,published),c,observed,new WorkerLog,model).run.background.use(_ => observe(published) *> IO(events.add("cancel")).void)
+        } yield ()).unsafeRunSync()
+        events.asScala.toList
+      }
       // Run 1: the model provider stops in the big job's window 50; the run is cancelled there.
-      val one=run()
-      val (stalled,claimsBefore)=(for {
-        blocked <- Deferred[IO,Unit]
-        published <- Ref.of[IO,Set[UUID]](Set.empty)
-        model=new ScriptedAnnotator {
-          def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] =
-            if(window.sourceJson.noSpaces.contains(s"big message ${50*ProblemPassages.maximumWindowFragments}\"")) blocked.complete(()) *> IO.never else annotator.annotate(owner,window,previous)
-        }
-        fiber <- worker(archiveOf(one,published),c,one.admission,one.log,model).run.start
-        _ <- blocked.get.timeout(2.minutes)
-        _ <- poll(published.get)(_==(first::small).toSet)
-        claims <- one.lane0Claims.get
-        competitor <- one.competitor.get
-        _ <- one.phase.set("cancelled") *> fiber.cancel
-        _ <- poll(one.competitor.get)(_.nonEmpty)
-      } yield (competitor,claims)).unsafeRunSync()
-      assert(claimsBefore>=2,s"lane 0 claimed $claimsBefore times before the cancellation")
-      assertEquals(stalled,None,"no other holder got the permit while lane 0 ran")
-      assertEquals(one.competitor.get.unsafeRunSync(),Some("cancelled"),"the cancelled lane released the permit")
+      val blocked=Deferred.unsafe[IO,Unit]
+      val one=run(new ScriptedAnnotator {
+        def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] =
+          if(window.sourceJson.noSpaces.contains(s"big message ${50*ProblemPassages.maximumWindowFragments}\"")) blocked.complete(()) *> IO.never else annotator.annotate(owner,window,previous)
+      })(published => blocked.get.timeout(2.minutes) *> poll(published.get)(_==(first::small).toSet).void)
+      heldThroughout(one,2)
       val held=row(db,big)
       assertEquals((held.state,held.total),("Running",Some(large)),"cancelled mid-job, the job keeps its claim and lease")
       assert(db.transaction(x => Sql.one(x,"SELECT lease_until>clock_timestamp() FROM ch_jobs WHERE id=?",big)(_.getBoolean(1)).get))
       // The lease ends (fixture clock); the restarted worker reclaims the job.
       set(db,big,"lease_until=clock_timestamp()-interval '1 second'")
-      val two=run()
       val bigCalls=new java.util.concurrent.atomic.AtomicInteger(0)
       val counting=new ScriptedAnnotator {
         def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] =
           IO(if(window.sourceJson.noSpaces.contains("big message")) bigCalls.incrementAndGet()) *> annotator.annotate(owner,window,previous)
       }
-      (for {
-        published <- Ref.of[IO,Set[UUID]](Set.empty)
-        fiber <- worker(archiveOf(two,published),c,two.admission,two.log,counting).run.start
-        _ <- poll(published.get)(_.contains(big))
-        after <- two.lane0Claims.get
-        _ <- poll(two.lane0Claims.get)(_>after)
-        competitor <- two.competitor.get
-        _ <- IO(assertEquals(competitor,None,"lane 0 of the restarted worker keeps the permit across its iterations"))
-        _ <- two.phase.set("cancelled") *> fiber.cancel
-      } yield ()).unsafeRunSync()
+      // Run 2 is cancelled after lane 0's next claim following the big job's completion.
+      val two=run(counting)(published => poll(published.get)(_.contains(big)) *> IO(claims()).flatMap(done => poll(IO(claims()))(_>done)).void)
+      heldThroughout(two,2)
       assertEquals(row(db,big).state,"Complete")
       val bigRuns=windowsRun.asScala.toList.filter((_,_,total) => total>LargeJobs.windows)
       assert(bigRuns.nonEmpty && bigRuns.forall((job,lane,_) => job==big && lane==0),s"only lane 0 runs more than ${LargeJobs.windows} windows: ${bigRuns.map(_._2).distinct}")

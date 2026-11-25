@@ -198,3 +198,9 @@ private[chronicle] object ClaimOrderFixtures extends munit.Assertions {
     steps.iterator.map(step => rows.filter(step).minOption.map(_.job)).collectFirst { case Some(id) => id }
   }
 }
+/** A suite that requires the owned PostgreSQL of scripts/test-postgres.sh: without it every case fails (never skips), whatever the
+  * fixture of the cases it inherits does. */
+trait ClaimOrderRequiresPostgres extends munit.FunSuite {
+  override def munitTestTransforms: List[TestTransform] = super.munitTestTransforms :+ new TestTransform("requires PostgreSQL",test =>
+    test.withBody(() => { ClaimOrderPostgres.config(); test.body() }))
+}

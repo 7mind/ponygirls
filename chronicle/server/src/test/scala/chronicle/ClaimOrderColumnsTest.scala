@@ -261,6 +261,6 @@ class ClaimOrderColumnsTest extends munit.FunSuite {
 }
 /** T3 rerun under the waiting order (claim-order DESIGN §12 NEW-4): the same cases with `indexing.claimOrder` "waiting", the
   * claims of lane 0: identical column values. */
-final class ClaimOrderColumnsWaitingTest extends ClaimOrderColumnsTest {
+final class ClaimOrderColumnsWaitingTest extends ClaimOrderColumnsTest with ClaimOrderRequiresPostgres {
   override protected def claimOrder: ClaimOrderSetting = ClaimOrderSetting.Waiting
 }
