@@ -42,8 +42,7 @@ private[chronicle] final class PostgresContextReader(db: Database,archive: Postg
         consumed=next
       }
     })
-    try db.transaction { c =>
-      c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+    try IndexedRead.transaction(db,selector.generationId.nonEmpty) { c =>
       Sql.rows(c,"SELECT set_config('statement_timeout',least(coalesce(nullif(setting::bigint,0),?),?)::text,true) FROM pg_settings WHERE name='statement_timeout'",MessageContextPolicy.statementDeadlineMillis,MessageContextPolicy.statementDeadlineMillis)(_ => ())
       val (view,content)=archive.selectContent(c,reader,id,Some(selector),bounded)
       val stored=content.messages

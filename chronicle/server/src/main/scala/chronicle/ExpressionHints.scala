@@ -108,8 +108,11 @@ private[chronicle] final class PostgresExpressionHintStore(db: Database,archive:
   /** Archive hint fields whose values include the generated tags of publications. */
   private val generatedTagFields: Set[HintField]=Set(HintField.Tag,HintField.Tags)
   private def archiveValues(reader: String,field: HintField): ActivitySql = {
-    val heads=s"""WITH hint_heads AS MATERIALIZED(SELECT s.owner,s.published,g.lineage,g.lineage_version,i.metadata,i.source,i.last_timestamp
-      FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision LEFT JOIN ch_generations g ON g.id=s.published WHERE ${archive.visible})"""
+    val withTags=generatedTagFields(field)
+    val publication=if(withTags) "g.id AS published,g.lineage,g.lineage_version," else ""
+    val join=if(withTags) s"LEFT JOIN ch_generations g ON g.id=s.published AND ${archive.indexingAllowed}" else ""
+    val heads=s"""WITH hint_heads AS MATERIALIZED(SELECT s.owner,${publication}i.metadata,i.source,i.last_timestamp
+      FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision $join WHERE ${archive.visible})"""
     val scalar=field match {
       case HintField.User => "owner"
       case HintField.Project => "metadata->>'project'"
@@ -121,7 +124,7 @@ private[chronicle] final class PostgresExpressionHintStore(db: Database,archive:
       case HintField.Tag | HintField.Tags => "jsonb_array_elements_text(metadata->'tags')"
       case _ => throw DomainError("internal","unsupported archive hint field")
     }
-    val tags=if(generatedTagFields(field)) s" UNION ALL SELECT t.tag AS value FROM hint_heads h CROSS JOIN LATERAL ${GenerationRows.tags("h.published","h.lineage","h.lineage_version")} t" else ""
+    val tags=if(withTags) s" UNION ALL SELECT t.tag AS value FROM hint_heads h CROSS JOIN LATERAL ${GenerationRows.tags("h.published","h.lineage","h.lineage_version")} t" else ""
     ActivitySql(heads+s", hint_universe AS (SELECT $scalar AS value FROM hint_heads$tags)",List(reader,reader,reader))
   }
   private def activityValues(reader: String,now: Instant,target: ExpressionHintTarget,field: HintField): ActivitySql = {
@@ -155,10 +158,9 @@ private[chronicle] final class PostgresExpressionHintStore(db: Database,archive:
       case _ => throw DomainError("internal","unsupported activity hint target")
     }
     val extra=target match { case ExpressionHintTarget.ActivityJobs(_,collector) => collector.toList; case _ => Nil }
-    ActivitySql(ActivityMetadataCorpus.base+s", hint_universe AS ($universe)",ActivityMetadataCorpus.parameters(reader,now)++extra)
+    ActivitySql(ActivityMetadataCorpus.base(archive.indexingAllowed)+s", hint_universe AS ($universe)",ActivityMetadataCorpus.parameters(reader,now)++extra)
   }
-  def read(reader: String,target: ExpressionHintTarget,field: Option[HintField],prefix: String,limit: Int): HintValues = db.transaction { c =>
-    c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+  def read(reader: String,target: ExpressionHintTarget,field: Option[HintField],prefix: String,limit: Int): HintValues = IndexedRead.transaction(db,target.isInstanceOf[ExpressionHintTarget.Archive] && field.exists(generatedTagFields)) { c =>
     Sql.exec(c,"SELECT set_config('statement_timeout',?,true)",statementMillis.toString)
     Check(Sql.one(c,"SELECT 1 FROM ch_users WHERE id=? AND enabled",reader)(_ => true).contains(true),"unauthorized","reader disabled")
     val now=clock.instant()
@@ -167,7 +169,7 @@ private[chronicle] final class PostgresExpressionHintStore(db: Database,archive:
       case Some(selected) =>
         val source=target match {
           case _: ExpressionHintTarget.Archive =>
-            if(generatedTagFields(selected)) PassageStorage.requireCurrentPublications(c,archive.visible,reader)
+            if(generatedTagFields(selected)) PassageStorage.requireCurrentPublications(c,archive.indexVisible,reader)
             archiveValues(reader,selected)
           case _ => activityValues(reader,now,target,selected)
         }

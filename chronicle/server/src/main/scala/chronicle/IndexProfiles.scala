@@ -78,13 +78,20 @@ object IndexProfiles {
     }.getOrElse(throw DomainError("unavailable","index profile has no verified descriptor"))
   private def readSpaceSql(profileColumn: String): String =
     s"SELECT compatible.embedding_space FROM ch_index_profiles compatible WHERE compatible.profile=$profileColumn AND compatible.policy IN($executablePolicies)"
-  def semantic(c: Connection,reader: String,visible: String,embedding: EmbeddingSpaceDescriptor): Unit = {
-    OwnerTargets.read(c,reader,false)
+  def semantic(c: Connection,reader: String,archive: PostgresArchive,embedding: EmbeddingSpaceDescriptor,materialization: ReadMaterialization=ReadMaterialization.unrestricted): Unit = {
+    // A reader may search someone else's eligible index without having an eligible indexing target of their own.
+    val ownIndexing=Sql.one(c,s"SELECT ${archive.indexingAllowed} FROM ch_users s WHERE s.id=? AND s.enabled",reader)(_.getBoolean(1))
+      .getOrElse(throw DomainError("unauthorized","owner disabled"))
+    if(ownIndexing) {
+      val guard=ReadSources.Query("SELECT t.profile,t.epoch,p.embedding_space,e.descriptor FROM ch_owner_targets t LEFT JOIN ch_index_profiles p ON p.profile=t.profile LEFT JOIN ch_embedding_spaces e ON e.id=p.embedding_space WHERE t.owner=?",List(reader))
+      materialization.admit(ReadSources.bytes(c,guard))
+      OwnerTargets.read(c,reader,false)
+    }
     verifiedSpace(embedding.id,embedding.json)
     Check(Sql.one(c,"SELECT 1 FROM ch_embedding_spaces WHERE id=? AND descriptor=?::jsonb",embedding.id,embedding.json.noSpaces)(_=>true).contains(true),"unavailable","configured embedding space descriptor is unavailable")
     val incompatible=Sql.one(c,s"""SELECT 1 FROM ch_sources s LEFT JOIN ch_generations g ON g.id=s.published
       LEFT JOIN ch_owner_targets t ON t.owner=s.owner
-      WHERE ($visible) AND (NOT ${compatibleSql("t.profile")} OR (g.id IS NOT NULL AND NOT ${compatibleSql("g.profile")})) LIMIT 1""",reader,reader,reader,embedding.id,embedding.id)(_ => true).contains(true)
+      WHERE ${archive.indexVisible} AND (NOT ${compatibleSql("t.profile")} OR (g.id IS NOT NULL AND NOT ${compatibleSql("g.profile")})) LIMIT 1""",reader,reader,reader,embedding.id,embedding.id)(_ => true).contains(true)
     Check(!incompatible,"unavailable","visible publications or owner targets have an unknown or incompatible embedding profile")
   }
   /** OFFSET 0 keeps this a per-row filter: pulled up into a join, an underestimated number of profiles on the configured

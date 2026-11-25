@@ -47,7 +47,9 @@ private[chronicle] object ArchiveSearchWitnesses {
     values
   }
   /** `literal`: by text operand index, the first matching message positions of the head's epoch (PageRow). */
-  def read(c: Connection,archive: PostgresArchive,reader: String,row: ArchiveRow,parsed: ParsedArchiveExpression,semantic: List[ArchiveSemanticWitness],literal: Map[Int,List[Int]],materialization: ReadMaterialization): List[ArchiveSourceMatch] = {
+  def read(c: Connection,archive: PostgresArchive,reader: String,row: ArchiveRow,parsed: ParsedArchiveExpression,semantic: List[ArchiveSemanticWitness],literal: Map[Int,List[Int]],indexingAllowed: Boolean,materialization: ReadMaterialization): List[ArchiveSourceMatch] = {
+    // A disabled source can still appear via a metadata branch. Do not scan its raw revision for evidence.
+    if(!indexingAllowed) return Nil
     val positives=ArchiveExpression.positiveTextOperands(parsed)
     val lexical=if(parsed.mode==SearchMode.Semantic || positives.isEmpty) Nil else {
       val (view,content)=archive.selectContent(c,reader,row.head.id,Some(row.head.view),materialization)

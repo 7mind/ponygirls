@@ -64,14 +64,14 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
   }
   private def facetCorpus(reader: String,f: SearchFilter): SearchStatement = {
     val (fs,p)=filter(f,Some("g"))
-    SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT s.id,s.published,g.lineage,g.lineage_version,r.metadata FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.visible}$fs)",List(reader,reader,reader)++p)
+    SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT s.id,s.published,g.lineage,g.lineage_version,r.metadata FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.indexVisible}$fs)",List(reader,reader,reader)++p)
   }
   private[chronicle] def statement(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchStatement = statement(reader,q,vector,LegPass.Index)
   private[chronicle] def statement(reader: String,q: SearchQuery,vector: Option[List[Double]],pass: LegPass): SearchStatement = {
     val (fs,fp)=filter(q.filter,None)
     // OFFSET 0 keeps the live authorization check inside the ordered index scan, before its limit: the row is a piece of
     // the published generation, whose revision's metadata the filters read.
-    val authorized=s"(SELECT true FROM ch_sources s CROSS JOIN LATERAL(${GenerationRows.publishedInfo("s.id","s.published","ch")}) r WHERE s.id=ch.session_id AND ${archive.visible}$fs OFFSET 0)"
+    val authorized=s"(SELECT true FROM ch_sources s CROSS JOIN LATERAL(${GenerationRows.publishedInfo("s.id","s.published","ch")}) r WHERE s.id=ch.session_id AND ${archive.indexVisible}$fs OFFSET 0)"
     val acl: List[Sql.Param]=List(reader,reader,reader)++fp
     val lexicalPredicate=if(q.query.nonEmpty) "ch.document @@ websearch_to_tsquery('english',?) AND " else ""
     val lexicalArgs: List[Sql.Param]=(if(q.query.nonEmpty) List(q.query) else Nil)++acl
@@ -101,7 +101,7 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     * generations of visible sessions passing the filters (read as the authorization reads them), of a compatible
     * profile. Arguments: the ACL's and filters', then the space. */
   private def visibleChunks(fs: String): String =
-    s"ch_sources s JOIN ch_search_chunks ch ON ch.session_id=s.id CROSS JOIN LATERAL(${GenerationRows.publishedInfo("s.id","s.published","ch")}) r WHERE ${archive.visible}$fs AND ${IndexProfiles.compatibleSql("ch.profile")}"
+    s"ch_sources s JOIN ch_search_chunks ch ON ch.session_id=s.id CROSS JOIN LATERAL(${GenerationRows.publishedInfo("s.id","s.published","ch")}) r WHERE ${archive.indexVisible}$fs AND ${IndexProfiles.compatibleSql("ch.profile")}"
   private def visibleCount(c: Connection,reader: String,q: SearchQuery): Long = {
     val (fs,fp)=filter(q.filter,None)
     Sql.one(c,s"SELECT count(*) FROM (SELECT 1 FROM ${visibleChunks(fs)} AND vector_dims(ch.embedding)=${SearchPolicy.dimensions(config)} LIMIT ?) visible",
@@ -119,7 +119,7 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     val matches=if(q.mode==SearchMode.Lexical && q.query.nonEmpty) "WHERE lex>0" else ""
     val compatibility=if(semantic) " AND "+IndexProfiles.compatibleSql("g.profile") else ""
     val ties=SearchPolicy.tieBreakSql("")
-    SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT ch.id,ch.ordinal,ch.document,ch.embedding,s.id AS session_id,g.id AS generation,g.revision FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision CROSS JOIN LATERAL(${GenerationRows.members(GenerationRows.Kind.Piece,"g.id")}) m JOIN ch_chunks ch ON ch.generation=m.origin AND ch.ordinal>=m.lo AND ch.ordinal<m.hi WHERE ${archive.visible}$fs$compatibility),ranked AS(SELECT *,ts_rank_cd(document,websearch_to_tsquery('english',?)) AS lex,$distance AS distance FROM corpus),ranked2 AS(SELECT *,row_number() OVER(ORDER BY lex DESC,$ties) AS lr,row_number() OVER(ORDER BY distance,$ties) AS vr FROM ranked),scored AS(SELECT *,$score AS score FROM ranked2 $matches),sessions AS(SELECT DISTINCT ON(session_id) * FROM scored ORDER BY session_id,score DESC,$ties)",List(reader,reader,reader)++fp++(if(semantic) List(EmbeddingSpaceDescriptor.from(config.embedding).id) else Nil)++List(q.query)++(if(semantic) List(SearchPolicy.vector(vector.getOrElse(throw DomainError("unavailable","query embedding unavailable")),config)) else Nil))
+    SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT ch.id,ch.ordinal,ch.document,ch.embedding,s.id AS session_id,g.id AS generation,g.revision FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision CROSS JOIN LATERAL(${GenerationRows.members(GenerationRows.Kind.Piece,"g.id")}) m JOIN ch_chunks ch ON ch.generation=m.origin AND ch.ordinal>=m.lo AND ch.ordinal<m.hi WHERE ${archive.indexVisible}$fs$compatibility),ranked AS(SELECT *,ts_rank_cd(document,websearch_to_tsquery('english',?)) AS lex,$distance AS distance FROM corpus),ranked2 AS(SELECT *,row_number() OVER(ORDER BY lex DESC,$ties) AS lr,row_number() OVER(ORDER BY distance,$ties) AS vr FROM ranked),scored AS(SELECT *,$score AS score FROM ranked2 $matches),sessions AS(SELECT DISTINCT ON(session_id) * FROM scored ORDER BY session_id,score DESC,$ties)",List(reader,reader,reader)++fp++(if(semantic) List(EmbeddingSpaceDescriptor.from(config.embedding).id) else Nil)++List(q.query)++(if(semantic) List(SearchPolicy.vector(vector.getOrElse(throw DomainError("unavailable","query embedding unavailable")),config)) else Nil))
   }
   private[chronicle] def pageStatement(plan: SearchStatement,q: SearchQuery): SearchStatement = {
     val annRows=if(plan.ann) "(SELECT count(*) FROM ann) AS ann_rows," else ""
@@ -138,14 +138,11 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     "session_id"->reference.map(r => io.circe.Json.fromString(r.sessionId.toString)).getOrElse(io.circe.Json.Null),
     "revision"->reference.map(r => io.circe.Json.fromInt(r.view.revision)).getOrElse(io.circe.Json.Null),
     "score"->reference.map(r => io.circe.Json.fromDoubleOrNull(r.score)).getOrElse(io.circe.Json.Null)))
-  private def run(reader: String,q: SearchQuery,vector: Option[List[Double]],legacy: Boolean,materialization: ReadMaterialization): SearchResult = db.transaction { c =>
-    c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+  private def run(reader: String,q: SearchQuery,vector: Option[List[Double]],legacy: Boolean,materialization: ReadMaterialization): SearchResult = IndexedRead.transaction(db) { c =>
     materialization.begin(c)
     SearchPolicy.validateQuery(q,legacy)
     if(q.mode!=SearchMode.Lexical) {
-      val guard=ReadSources.Query("SELECT t.profile,t.epoch,p.embedding_space,e.descriptor FROM ch_users u LEFT JOIN ch_owner_targets t ON t.owner=u.id LEFT JOIN ch_index_profiles p ON p.profile=t.profile LEFT JOIN ch_embedding_spaces e ON e.id=p.embedding_space WHERE u.id=? AND u.enabled",List(reader))
-      materialization.admit(ReadSources.bytes(c,guard))
-      IndexProfiles.semantic(c,reader,archive.visible,EmbeddingSpaceDescriptor.from(config.embedding))
+      IndexProfiles.semantic(c,reader,archive,EmbeddingSpaceDescriptor.from(config.embedding),materialization)
       SemanticLeg.configure(c,budget)
     }
     val semanticLeg= !legacy && q.mode!=SearchMode.Lexical
@@ -177,10 +174,9 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     SearchResult(hits,rows.head._1,if(exact) SearchCountScope.ExactMatches else SearchCountScope.CandidateWindow,if(exact) None else Some(SearchPolicy.rankingLimit(q.mode)))
   }
   def facets(reader: String,f: SearchFilter): FacetsResult = facets(reader,f,ReadMaterialization.unrestricted)
-  def facets(reader: String,f: SearchFilter,materialization: ReadMaterialization): FacetsResult = db.transaction { c =>
-    c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+  def facets(reader: String,f: SearchFilter,materialization: ReadMaterialization): FacetsResult = IndexedRead.transaction(db) { c =>
     materialization.begin(c)
-    PassageStorage.requireCurrentPublications(c,archive.visible,reader)
+    PassageStorage.requireCurrentPublications(c,archive.indexVisible,reader)
     val source=facetCorpus(reader,f)
     val corpus=source.sql
     val args=source.args
@@ -210,10 +206,9 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
       "SELECT tag AS value,count(DISTINCT id) AS n FROM tag_sessions WHERE strpos(lower(tag COLLATE pg_unicode_fast),lower(? COLLATE pg_unicode_fast))>0"+position+
       " GROUP BY tag ORDER BY tag COLLATE \"C\" LIMIT ?"
     val args=corpus.args++List[Sql.Param](q.query)++q.afterTag.toList++List(q.limit)
-    db.transaction { c =>
-      c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+    IndexedRead.transaction(db) { c =>
       materialization.begin(c)
-      PassageStorage.requireCurrentPublications(c,archive.visible,reader)
+      PassageStorage.requireCurrentPublications(c,archive.indexVisible,reader)
       materialization.selected(c,ReadSources.Selection(ReadSources.Query(selection,args),"value COLLATE \"C\"",q.limit)) { value =>
         val cursor=value.hcursor
         val text=cursor.get[String]("value").fold(_ => throw DomainError("projection","invalid tag value"),identity)

@@ -56,11 +56,11 @@ object SearchDiagnostics {
     Check(q.mode == SearchMode.Semantic || q.mode == SearchMode.Hybrid, "diagnostic-input", "semantic or hybrid query required")
     val vector = SearchPolicy.vector(request.vector, config)
     val space = EmbeddingSpaceDescriptor.from(config.embedding)
-    IndexProfiles.semantic(c, request.principal, archive.visible, space)
+    IndexProfiles.semantic(c, request.principal, archive, space)
     val catalog = Sql.rows(c, s"""SELECT s.id,s.published,g.revision,g.profile,s.source_key,r.binding_id
       FROM ch_sources s JOIN ch_generations g ON g.id=s.published
       JOIN ch_revisions r ON r.session_id=s.id AND r.revision=g.revision
-      WHERE ${archive.visible} ORDER BY s.id""", request.principal, request.principal, request.principal) { r =>
+      WHERE ${archive.indexVisible} ORDER BY s.id""", request.principal, request.principal, request.principal) { r =>
       val id = r.getObject("id", classOf[UUID])
       val expected = request.expectedPublications.find(_.sessionId == id)
         .getOrElse(throw DomainError("diagnostic-catalog", "unexpected visible publication"))

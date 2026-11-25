@@ -111,7 +111,7 @@ class ArchiveLiteralWitnessTest extends munit.FunSuite {
     cases.foreach { (parsed,expected) =>
       val result=s.index.sourceSearch("a",query(parsed),parsed,Nil,ReadMaterialization.unrestricted)
       assertEquals(result.evidence.map(evidence => evidence.sessionId -> evidence.matches.map(_.span.messageId)).toMap,expected,parsed.textOperands)
-      val scanned=s.db.transaction(c => result.page.rows.map(row => ArchiveSearchEvidence(row.head.id,ArchiveSearchWitnesses.read(c,s.archive,"a",row,parsed,Nil,Map.empty,ReadMaterialization.unrestricted))))
+      val scanned=s.db.transaction(c => result.page.rows.map(row => ArchiveSearchEvidence(row.head.id,ArchiveSearchWitnesses.read(c,s.archive,"a",row,parsed,Nil,Map.empty,true,ReadMaterialization.unrestricted))))
       assertEquals(result.evidence,scanned,parsed.textOperands)
     }
   }}

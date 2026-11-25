@@ -72,8 +72,7 @@ private[chronicle] final class PostgresMessageSearch(db: Database,archive: Postg
   private val matches="strpos(lower((value->>'text') COLLATE pg_unicode_fast),lower(? COLLATE pg_unicode_fast))>0"
   def searchSessionMessages(reader: String,id: UUID,selector: ContentView,literal: String,cursor: Option[String],limit: Int,materialization: ReadMaterialization): SessionMessageSearchResult = {
     SessionMessageSearchPolicy.validate(literal,cursor,limit)
-    try db.transaction { c =>
-      c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+    try IndexedRead.transaction(db,selector.generationId.nonEmpty) { c =>
       // Apply even to unrestricted browser reads, preserving any stricter configured deadline.
       deadline(c,SessionMessageSearchPolicy.statementDeadlineMillis)
       val (view,content)=archive.selectContent(c,reader,id,Some(selector),materialization)

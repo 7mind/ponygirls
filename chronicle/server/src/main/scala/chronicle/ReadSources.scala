@@ -2,6 +2,26 @@ package chronicle
 
 import java.sql.Connection
 
+/** An indexed result is materialized in one snapshot. Compare its epoch in a fresh transaction, not again in
+  * that same snapshot: an indexing opt-out committed during a read must not leave an already-built page deliverable.
+  * This is a local check before returning the result, not a fence on transport delivery. */
+private[chronicle] object IndexedRead {
+  def epoch(c: Connection): Long =
+    Sql.one(c,"SELECT indexing_revision FROM ch_security_epoch WHERE singleton")(_.getLong(1))
+      .getOrElse(throw DomainError("security-state","indexing epoch is unavailable"))
+  def transaction[A](db: Database,guarded: Boolean=true)(read: Connection => A): A = {
+    val (result,observed)=db.transaction { c =>
+      c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+      val result=read(c)
+      (result,Option.when(guarded)(epoch(c)))
+    }
+    observed.foreach(verify(db,_))
+    result
+  }
+  def verify(db: Database,observed: Long): Unit =
+    Check(db.transaction(epoch)==observed,"authorization-changed","indexing access changed during read")
+}
+
 object ReadSources {
   final case class Query(sql: String,args: List[Sql.Param])
   final case class Selection(query: Query,orderBy: String,maximumRows: Int)

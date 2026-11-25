@@ -19,7 +19,7 @@ private[chronicle] final case class ActivityOrder(column: String,kind: ActivityP
 private[chronicle] final case class ActivityPosition(value: Option[String],id: String)
 
 private[chronicle] object ActivityMetadataCorpus {
-  val base = """WITH observed AS (SELECT ?::timestamptz AS at,?::timestamptz AS stale_at),
+  def base(indexingAllowed: String): String = s"""WITH observed AS (SELECT ?::timestamptz AS at,?::timestamptz AS stale_at),
     reports AS (SELECT collector_id,report,received_at FROM ch_collector_progress WHERE owner=?),
     heads AS (
       SELECT s.id,s.owner,s.revision,g.revision AS indexed_revision,COALESCE((
@@ -29,7 +29,7 @@ private[chronicle] object ActivityMetadataCorpus {
         ORDER BY length(r.collector_id) DESC,r.collector_id COLLATE "C" LIMIT 1
       ),i.source->>'collectorNamespace') AS collector_id
       FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision
-      LEFT JOIN ch_generations g ON g.id=s.published
+      LEFT JOIN ch_generations g ON g.id=s.published AND $indexingAllowed
       WHERE s.owner=? AND NOT s.tombstone
     ),
     jobs AS (
@@ -48,7 +48,8 @@ private[chronicle] object ActivityMetadataCorpus {
 }
 
 final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
-  import ActivityMetadataCorpus.{base,parameters}
+  import ActivityMetadataCorpus.parameters
+  private val base=ActivityMetadataCorpus.base(ChronicleIndexing.allowsOwnerSql(db.indexingDefaultEnabled,"s.owner"))
   private val unicode="COLLATE pg_unicode_fast"
   private val aggregate = """count(*) AS total,
     count(*) FILTER (WHERE state='Queued') AS queued,
@@ -65,8 +66,7 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
     r.getLong(prefix+"total"),r.getLong(prefix+"queued"),r.getLong(prefix+"running"),r.getLong(prefix+"failed"),
     r.getLong(prefix+"complete"),r.getLong(prefix+"active_running"),r.getLong(prefix+"expired_running"),r.getLong(prefix+"unleased_running")
   )
-  private def reading[A](owner: String)(f: (Connection,Instant) => A): A = db.transaction { c =>
-    c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+  private def reading[A](owner: String,indexed: Boolean=false)(f: (Connection,Instant) => A): A = IndexedRead.transaction(db,indexed) { c =>
     Check(Sql.one(c,"SELECT 1 FROM ch_users WHERE id=? AND enabled",owner)(_ => true).contains(true),"unauthorized","owner disabled")
     val target=OwnerTargets.read(c,owner,false)
     db.profiles.resolve(target.profile)
@@ -231,7 +231,7 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
     ActivityCursor.page(q.limit); q.collectorId.foreach(ActivityCursor.collectorId)
     val parsed=ActivityExpression.jobs(q.expression)
     val order=jobOrder(q.sort)
-    reading(owner) { (c,now) =>
+    reading(owner,indexed=true) { (c,now) =>
       val position=ActivityCursor.job(q,owner,order,(id,anchor) =>
         Sql.one(c,s"""SELECT lower((i.metadata->>'title') $unicode) FROM ch_jobs j
           JOIN ch_sources s ON s.id=j.session_id

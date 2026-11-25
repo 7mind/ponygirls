@@ -74,9 +74,12 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.SearchSessionMessages(id,view,literal,cursor,limit) => access.blocking(i => Result.SessionMessageSearch(archive.searchSessionMessages(i.user.id,id,view,literal,cursor,limit,materialization)))
       case Operation.Related(id,limit) =>
         Check.page(0,limit)
-        access.blocking(i => archive.pageChunks(i.user.id,id,0,1,None,materialization).chunks.headOption.map(_.summary).getOrElse("")).flatMap { text =>
-          if(text.isEmpty) IO.pure(Result.Related(RelatedResult(Nil)))
-          else query(access,SearchQuery(text.take(2048),SearchMode.Lexical,emptyFilter,math.min(limit+1,100),0)).map(r => Result.Related(RelatedResult(r.hits.filterNot(_.session.id==id).take(limit))))
+        // The seed and retrieval use separate snapshots. Results still depend on the seed's generation.
+        IO.blocking(db.transaction(IndexedRead.epoch)).flatMap { epoch =>
+          access.blocking(i => archive.pageChunks(i.user.id,id,0,1,None,materialization).chunks.headOption.map(_.summary).getOrElse("")).flatMap { text =>
+            if(text.isEmpty) IO.pure(Result.Related(RelatedResult(Nil)))
+            else query(access,SearchQuery(text.take(2048),SearchMode.Lexical,emptyFilter,math.min(limit+1,100),0)).map(r => Result.Related(RelatedResult(r.hits.filterNot(_.session.id==id).take(limit))))
+          }.flatTap(_ => IO.blocking(IndexedRead.verify(db,epoch)))
         }
       case Operation.Facets(f) => access.blocking(i => Result.Facets(searchIndex.facets(i.user.id,f,materialization)))
       case Operation.IngestStatus(offset,limit) => access.blocking(i => Result.Status(archive.statuses(i.user.id,offset,limit,materialization)))

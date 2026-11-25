@@ -80,7 +80,7 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
   private val columns = "c.*"
   /** `literalPositions`: by text operand index, the first matching message positions of the head's epoch, for the operands
     * whose candidates name every match (none for a legacy head). */
-  private[chronicle] final case class PageRow(value: ArchiveRow,key: Option[String],relevanceScore: Option[String],witnesses: List[ArchiveSemanticWitness],literalPositions: Map[Int,List[Int]])
+  private[chronicle] final case class PageRow(value: ArchiveRow,key: Option[String],relevanceScore: Option[String],witnesses: List[ArchiveSemanticWitness],literalPositions: Map[Int,List[Int]],indexingAllowed: Boolean)
   private def insensitive(column: String,value: String): ArchiveSql = ArchiveSql(s"COALESCE(lower(($column) $unicode)=lower(? $unicode),false)",List(value))
   private def predicate(value: ArchivePredicate): ArchiveSql = value match {
     case ArchivePredicate.User(user) => ArchiveSql("c.owner=?",List(user))
@@ -160,15 +160,17 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     else positive(parsed.expression,false).distinct.map(parsed.textOperands.indexOf).filter(index => LexicalCandidates.trigrams(parsed.textOperands(index)))
   private def literalPositions(index: Int): String = s"literal_positions_$index"
 
-  private def corpus: String = s"""corpus AS MATERIALIZED(SELECT s.id,s.owner,s.revision,s.published,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp,i.last_timestamp_order,i.message_count,g.revision AS indexed_revision,g.id AS generation,g.passage_format AS published_format,g.lineage,g.lineage_version,
+  // Keep source metadata in the ACL-visible corpus. Only the indexed publication and text memberships are gated.
+  private def corpus: String = s"""corpus AS MATERIALIZED(SELECT s.id,s.owner,s.revision,g.id AS published,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp,i.last_timestamp_order,i.message_count,g.revision AS indexed_revision,g.id AS generation,g.passage_format AS published_format,g.lineage,g.lineage_version,policy.indexing_allowed,
       j.id AS job_id,j.state AS job_state,j.attempts AS job_attempts,j.error AS job_error,j.failure_stage,j.completed_windows,j.total_windows,
-      ARRAY(SELECT tag FROM (SELECT jsonb_array_elements_text(i.metadata->'tags') AS tag UNION SELECT generated.tag FROM ${GenerationRows.tags("s.published","g.lineage","g.lineage_version")} generated) tag_values ORDER BY lower(tag $unicode),tag) AS tags
+      ARRAY(SELECT tag FROM (SELECT jsonb_array_elements_text(i.metadata->'tags') AS tag UNION SELECT generated.tag FROM ${GenerationRows.tags("g.id","g.lineage","g.lineage_version")} generated) tag_values ORDER BY lower(tag $unicode),tag) AS tags
       FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision
-      JOIN ch_owner_targets profile ON profile.owner=s.owner LEFT JOIN ch_generations g ON g.id=s.published
+      CROSS JOIN LATERAL (SELECT ${archive.indexingAllowed} AS indexing_allowed OFFSET 0) policy
+      JOIN ch_owner_targets profile ON profile.owner=s.owner LEFT JOIN ch_generations g ON g.id=s.published AND policy.indexing_allowed
       LEFT JOIN ch_jobs j ON j.session_id=s.id AND j.revision=s.revision AND j.profile=profile.profile WHERE ${archive.visible})"""
   private def annRows(index: Int): String = s"ann_rows_$index"
   /** A search row `ch` that is a piece of the published generation of corpus row `c` (which holds its lineage and version). */
-  private val published=GenerationRows.piece("c.published","c.lineage","c.lineage_version","ch")
+  private val published=s"(c.indexing_allowed AND ${GenerationRows.piece("c.published","c.lineage","c.lineage_version","ch")})"
   /** The semantic operands' visible set (it is the same for every operand): pieces of the corpus's published generations
     * passing the metadata restrictions, of a compatible profile, counted up to the second pass's cap. */
   private def visibleCount(c: Connection,reader: String,parsed: ParsedArchiveExpression): Long = {
@@ -193,8 +195,8 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
         if(LexicalCandidates.trigrams(operand)) {
           ctes+=s"g$index AS MATERIALIZED(SELECT fragment.session_id,fragment.revision FROM ch_archive_fragments fragment WHERE fragment.head_candidate AND fragment.value LIKE lower(? $unicode) ESCAPE '\\')"
           ctes+=s"e$index AS MATERIALIZED(SELECT fragment.epoch,fragment.position FROM ch_epoch_fragments fragment WHERE fragment.head_candidate AND fragment.value LIKE lower(? $unicode) ESCAPE '\\')"
-          ctes+=s"l$index AS MATERIALIZED(SELECT c.id FROM corpus c JOIN g$index fragment ON fragment.session_id=c.id AND fragment.revision=c.revision UNION SELECT c.id FROM corpus c JOIN ch_revisions head ON head.session_id=c.id AND head.revision=c.revision JOIN e$index fragment ON fragment.epoch=head.epoch AND fragment.position<head.message_count)"
-        } else ctes+=s"l$index AS MATERIALIZED(SELECT c.id FROM corpus c WHERE EXISTS(SELECT 1 FROM ch_archive_fragments fragment WHERE fragment.head_candidate AND fragment.session_id=c.id AND fragment.revision=c.revision AND fragment.value LIKE lower(? $unicode) ESCAPE '\\') OR EXISTS(SELECT 1 FROM ch_revisions head JOIN ch_epoch_fragments fragment ON fragment.epoch=head.epoch AND fragment.position<head.message_count WHERE head.session_id=c.id AND head.revision=c.revision AND fragment.head_candidate AND fragment.value LIKE lower(? $unicode) ESCAPE '\\'))"
+          ctes+=s"l$index AS MATERIALIZED(SELECT c.id FROM corpus c JOIN g$index fragment ON fragment.session_id=c.id AND fragment.revision=c.revision WHERE c.indexing_allowed UNION SELECT c.id FROM corpus c JOIN ch_revisions head ON head.session_id=c.id AND head.revision=c.revision JOIN e$index fragment ON fragment.epoch=head.epoch AND fragment.position<head.message_count WHERE c.indexing_allowed)"
+        } else ctes+=s"l$index AS MATERIALIZED(SELECT c.id FROM corpus c WHERE c.indexing_allowed AND (EXISTS(SELECT 1 FROM ch_archive_fragments fragment WHERE fragment.head_candidate AND fragment.session_id=c.id AND fragment.revision=c.revision AND fragment.value LIKE lower(? $unicode) ESCAPE '\\') OR EXISTS(SELECT 1 FROM ch_revisions head JOIN ch_epoch_fragments fragment ON fragment.epoch=head.epoch AND fragment.position<head.message_count WHERE head.session_id=c.id AND head.revision=c.revision AND fragment.head_candidate AND fragment.value LIKE lower(? $unicode) ESCAPE '\\')))"
         args+=LexicalCandidates.pattern(operand); args+=LexicalCandidates.pattern(operand)
       }
       if(semantic) {
@@ -246,7 +248,7 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     val positions=literal.map { index =>
       s""",(SELECT CASE WHEN EXISTS(SELECT 1 FROM ch_epochs WHERE id=head.epoch AND candidates='current') AND char_length(lower(? $unicode))<=${ArchiveProjection.overlapScalars}
         THEN (SELECT coalesce(jsonb_agg(x.position ORDER BY x.position),'[]'::jsonb) FROM (SELECT DISTINCT f.position FROM e$index f WHERE f.epoch=head.epoch AND f.position<head.message_count ORDER BY f.position LIMIT ${ArchiveSearchPolicy.maximumMatches}) x) END
-        FROM ch_revisions head WHERE head.session_id=page.id AND head.revision=page.revision) AS ${literalPositions(index)}"""
+        FROM ch_revisions head WHERE page.indexing_allowed AND head.session_id=page.id AND head.revision=page.revision) AS ${literalPositions(index)}"""
     }.mkString
     // A witness is a piece of the page row's published generation: its view is that generation and revision.
     val references=if(witnesses && semantic && positives.nonEmpty) {
@@ -268,19 +270,16 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     val format=published.map(_ => if(stored.exists(GenerationRows.formats.contains)) PassageFormat.ContextAwareProblems else throw DomainError("projection","published generation is not in the current passage format"))
     ArchiveRow(head,published,matched,Option(r.getString("last_timestamp")),r.getInt("message_count"),tags,job,format)
   }
-  def browse(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector]): ArchiveResult = db.transaction { c =>
-    c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
-    execute(c,reader,query,parsed,vectors,None)._1
-  }
+  def browse(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector]): ArchiveResult =
+    IndexedRead.transaction(db)(c => execute(c,reader,query,parsed,vectors,None)._1)
   def sourceSearch(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],materialization: ReadMaterialization): ArchiveSearchResult = {
     ArchiveSearchPolicy.page(query.limit)
     val bounded=ArchiveSearchPolicy.materialization(materialization)
-    try db.transaction { c =>
-      c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+    try IndexedRead.transaction(db) { c =>
       Sql.exec(c,"SELECT set_config('statement_timeout',least(coalesce(nullif(setting::bigint,0),?),?)::text,true) FROM pg_settings WHERE name='statement_timeout'",ArchiveSearchPolicy.statementDeadlineMillis,ArchiveSearchPolicy.statementDeadlineMillis)
       val (page,selected)=execute(c,reader,query,parsed,vectors,Some(bounded))
       val evidence=selected.map { value =>
-        ArchiveSearchEvidence(value.value.head.id,ArchiveSearchWitnesses.read(c,archive,reader,value.value,parsed,value.witnesses,value.literalPositions,bounded))
+        ArchiveSearchEvidence(value.value.head.id,ArchiveSearchWitnesses.read(c,archive,reader,value.value,parsed,value.witnesses,value.literalPositions,value.indexingAllowed,bounded))
       }
       ArchiveSearchPolicy.result(ArchiveSearchResult(page,evidence))
     } catch {
@@ -293,7 +292,7 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     if(parsed.mode!=SearchMode.Semantic && parsed.textOperands.nonEmpty)
       ArchiveSearchPolicy.configureLexical(c)
     if(bounded) {
-      IndexProfiles.semantic(c,reader,archive.visible,EmbeddingSpaceDescriptor.from(config.embedding))
+      IndexProfiles.semantic(c,reader,archive,EmbeddingSpaceDescriptor.from(config.embedding))
       SemanticLeg.configure(c,budget)
     }
     val ranked=relevanceOrdered(query,parsed)
@@ -307,7 +306,7 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
       val result=Option(r.getObject("id",classOf[UUID])).map { _ =>
         val refs=if(materialization.isEmpty) Nil else ArchiveSearchWitnesses.decode(Sql.json(r,"witnesses"))
         val positions=literal.flatMap(index => Option(r.getString(literalPositions(index))).map(value => index -> ArchiveSearchWitnesses.positions(Wire.parse(value)))).toMap
-        PageRow(row(r),Option(r.getString("sort_value")),if(ranked) Some(r.getString("relevance_value")) else None,refs,positions)
+        PageRow(row(r),Option(r.getString("sort_value")),if(ranked) Some(r.getString("relevance_value")) else None,refs,positions,r.getBoolean("indexing_allowed"))
       }
       (r.getLong("total"),result)
     }
@@ -326,8 +325,8 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
         // before any is decoded, and not charged: the page admits the bytes it admitted before they existed (nor are the
         // semantic legs' row counts, which only SemanticLeg reads).
         val positions=literal.map(literalPositions)
-        val uncharged=positions++legs.map(annRows)
-        val charged=if(uncharged.isEmpty) "to_jsonb(p)" else uncharged.map(column => s"'$column'").mkString("(to_jsonb(p)-ARRAY[",",","]::text[])")
+        val uncharged=List("indexing_allowed")++positions++legs.map(annRows)
+        val charged=uncharged.map(column => s"'$column'").mkString("(to_jsonb(p)-ARRAY[",",","]::text[])")
         val longest=if(positions.isEmpty) "0" else positions.map(column => s"coalesce(jsonb_array_length($column),0)").mkString("greatest(",",",")")
         val (bytes,listed)=Sql.one(c,s"SELECT coalesce(sum(octet_length(convert_to($charged::text,'UTF8'))::numeric),0),coalesce(max($longest),0) FROM ch_archive_search_page p")(r => (ReadSources.checked(r.getBigDecimal(1)),r.getInt(2))).get
         Check(listed<=ArchiveSearchPolicy.maximumMatches,"projection","invalid archive literal positions")

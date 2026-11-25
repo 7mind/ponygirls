@@ -298,6 +298,8 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   def searchSessionMessages(reader: String,id: UUID,view: ContentView,literal: String,cursor: Option[String],limit: Int,materialization: ReadMaterialization): SessionMessageSearchResult =
     messageSearch.searchSessionMessages(reader,id,view,literal,cursor,limit,materialization)
   val visible = """EXISTS(SELECT 1 FROM ch_users ou WHERE ou.id=s.owner AND ou.enabled) AND EXISTS(SELECT 1 FROM ch_users ru WHERE ru.id=? AND ru.enabled) AND (s.owner=? OR EXISTS(SELECT 1 FROM ch_members a JOIN ch_members b ON a.group_id=b.group_id WHERE a.user_id=? AND b.user_id=s.owner)) AND NOT s.tombstone"""
+  private[chronicle] val indexingAllowed = ChronicleIndexing.allowsOwnerSql(config.indexingPolicy.defaultEnabled,"s.owner")
+  private[chronicle] val indexVisible = s"($visible) AND $indexingAllowed"
   def sourceKey(r: IngestRequest): String = Wire.hash(Wire.canonical(Wire.encode(SourceIdentity.codecJson,r.source)))
   val knownProfiles: Set[String] = db.profiles.knownProfiles
   def ingest(owner: String, r: IngestRequest): IngestReceipt = {
@@ -339,8 +341,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   }
   def authorized(c: Connection, reader: String, id: UUID): Unit = Check(Sql.one(c,s"SELECT 1 FROM ch_sources s WHERE s.id=? AND $visible",id,reader,reader,reader)(_ => true).contains(true),"not-found","session not found")
   private def reading[A](f: Connection => A): A = reading(ReadMaterialization.unrestricted)(f)
-  private def reading[A](materialization: ReadMaterialization)(f: Connection => A): A = db.transaction { c =>
-    c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+  private def reading[A](materialization: ReadMaterialization,indexed: Boolean=false)(f: Connection => A): A = IndexedRead.transaction(db,indexed) { c =>
     materialization.begin(c)
     f(c)
   }
@@ -353,11 +354,15 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   private[chronicle] def selectContent(c: Connection,reader: String,id: UUID,selector: Option[ContentView],materialization: ReadMaterialization): (ContentView,RevisionContent) =
     select(c,reader,id,selector,materialization)(view => RevisionContent.resolve(c,id,view.revision))
   private def select[A](c: Connection,reader: String,id: UUID,selector: Option[ContentView],materialization: ReadMaterialization)(stored: ContentView => Option[A]): (ContentView,A) = {
-    authorized(c,reader,id)
-    val (head,published,indexed)=Sql.one(c,"SELECT s.revision,s.published,g.revision AS indexed FROM ch_sources s LEFT JOIN ch_generations g ON g.id=s.published WHERE s.id=?",id) { r =>
+    val (head,published,indexed,allowed)=Sql.one(c,s"""SELECT s.revision,g.id AS published,g.revision AS indexed,policy.indexing_allowed
+      FROM ch_sources s CROSS JOIN LATERAL (SELECT $indexingAllowed AS indexing_allowed OFFSET 0) policy
+      LEFT JOIN ch_generations g ON g.id=s.published AND policy.indexing_allowed
+      WHERE s.id=? AND $visible""",id,reader,reader,reader) { r =>
       val revision=r.getInt("indexed"); val index=if(r.wasNull()) None else Some(revision)
-      (r.getInt("revision"),Option(r.getObject("published",classOf[UUID])),index)
-    }.get
+      (r.getInt("revision"),Option(r.getObject("published",classOf[UUID])),index,r.getBoolean("indexing_allowed"))
+    }.getOrElse(throw DomainError("not-found","session not found"))
+    // The policy applies to every generation, not just the current publication. Raw revisions are still ACL-readable.
+    Check(allowed || selector.forall(_.generationId.isEmpty),"not-found","content view not found")
     materialization.admit(JsonUtf8Size(Json.obj("revision"->Json.fromInt(head),"published"->published.map(id => Json.fromString(id.toString)).getOrElse(Json.Null),"indexed"->indexed.map(Json.fromInt).getOrElse(Json.Null))))
     val view=selector.getOrElse(ContentView(indexed.getOrElse(head),published))
     Check(view.revision>0,"invalid","content revision must be positive")
@@ -369,7 +374,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     }
     (view,stored(view).getOrElse(throw DomainError("not-found","content view not found")))
   }
-  private[chronicle] def infoQuery(id: UUID,view: ContentView): ReadSources.Query = ReadSources.Query("SELECT s.owner,s.revision,g.revision AS indexed,i.metadata,i.source,i.completion,i.redacted FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=? LEFT JOIN ch_generations g ON g.id=s.published WHERE s.id=?",List(view.revision,id))
+  private[chronicle] def infoQuery(id: UUID,view: ContentView): ReadSources.Query = ReadSources.Query(s"SELECT s.owner,s.revision,g.revision AS indexed,i.metadata,i.source,i.completion,i.redacted FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=? LEFT JOIN ch_generations g ON g.id=s.published AND $indexingAllowed WHERE s.id=?",List(view.revision,id))
   def info(c: Connection,reader: String,id: UUID,selector: Option[ContentView]): SessionInfo = info(c,reader,id,selector,ReadMaterialization.unrestricted)
   def info(c: Connection,reader: String,id: UUID,selector: Option[ContentView],materialization: ReadMaterialization): SessionInfo = {
     val view=selectView(c,reader,id,selector,materialization)
@@ -383,9 +388,9 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       SessionInfo(view,id,row.getString("owner"),row.getInt("revision"),indexed,Wire.decode(Metadata.codecJson,Sql.json(row,"metadata")),Wire.decode(SourceIdentity.codecJson,Sql.json(row,"source")),Completion.parse(row.getString("completion")).get,row.getBoolean("redacted"))
     }.getOrElse(throw DomainError("projection","content metadata projection missing"))
   }
-  def session(reader: String,id: UUID): SessionInfo = reading(c => info(c,reader,id,None))
+  def session(reader: String,id: UUID): SessionInfo = reading(ReadMaterialization.unrestricted,indexed=true)(c => info(c,reader,id,None))
   def readSession(reader: String,id: UUID,selector: Option[ContentView]): SessionResult = readSession(reader,id,selector,ReadMaterialization.unrestricted)
-  def readSession(reader: String,id: UUID,selector: Option[ContentView],materialization: ReadMaterialization): SessionResult = reading(materialization) { c =>
+  def readSession(reader: String,id: UUID,selector: Option[ContentView],materialization: ReadMaterialization): SessionResult = reading(materialization,indexed=true) { c =>
     val view=selectView(c,reader,id,selector,materialization)
     val total=chunkCount(c,view)
     materialization.admit(ReadSources.sum(List(ReadSources.bytes(c,infoQuery(id,view)),chunkSourceBytes(c,view,0,100),chunkCountBytes(view,total))))
@@ -394,7 +399,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): MessagesResult = messages(reader,id,offset,limit,selector,ReadMaterialization.unrestricted)
   def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView],materialization: ReadMaterialization): MessagesResult =
     messages(reader,id,offset,limit,selector,materialization,PostgresArchive.messagePageBytes)
-  private[chronicle] def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView],materialization: ReadMaterialization,pageBytes: Long): MessagesResult = reading(materialization) { c =>
+  private[chronicle] def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView],materialization: ReadMaterialization,pageBytes: Long): MessagesResult = reading(materialization,selector.forall(_.generationId.nonEmpty)) { c =>
     Check.contentPage(offset,limit)
     val (view,content)=selectContent(c,reader,id,selector,materialization)
     val total=Sql.one(c,"SELECT message_count FROM ch_revision_info WHERE session_id=? AND revision=?",id,view.revision)(_.getInt(1)).getOrElse(throw DomainError("projection","message projection missing"))
@@ -414,7 +419,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     ReadSources.Query(s"SELECT position,value FROM ${stored.sql} m WHERE position>=? ORDER BY position LIMIT ?",stored.args++List(offset,limit))
   }
   private def keyOrdered(c: Connection,content: RevisionContent): Unit = if(content.isInstanceOf[RevisionContent.Epoch]) RevisionContent.keyOrdered(c)
-  def locateMessage(reader: String,id: UUID,selector: ContentView,messageId: String): MessageLocation = reading { c =>
+  def locateMessage(reader: String,id: UUID,selector: ContentView,messageId: String): MessageLocation = reading(ReadMaterialization.unrestricted,selector.generationId.nonEmpty) { c =>
     Check.text(messageId,256)
     val (view,content)=selectContent(c,reader,id,Some(selector),ReadMaterialization.unrestricted)
     val stored=content.messages
@@ -965,18 +970,18 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       ChunksResult(values,total,offset,view)
   }
   def pageChunks(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): ChunksResult = pageChunks(reader,id,offset,limit,selector,ReadMaterialization.unrestricted)
-  def pageChunks(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView],materialization: ReadMaterialization): ChunksResult = reading(materialization) { c =>
+  def pageChunks(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView],materialization: ReadMaterialization): ChunksResult = reading(materialization,selector.forall(_.generationId.nonEmpty)) { c =>
     Check.contentPage(offset,limit)
     val view=selectView(c,reader,id,selector,materialization)
     val total=chunkCount(c,view)
     materialization.admit(ReadSources.sum(List(chunkSourceBytes(c,view,offset,limit),chunkCountBytes(view,total))))
     chunksForView(c,view,offset,limit,total)
   }
-  def passages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): PassagesResult = reading { c =>
+  def passages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): PassagesResult = reading(ReadMaterialization.unrestricted,selector.forall(_.generationId.nonEmpty)) { c =>
     Check.contentPage(offset,limit)
     PassageStorage.passages(c,selectView(c,reader,id,selector),offset,limit)
   }
-  def passageSpans(reader: String,id: UUID,passageId: UUID,offset: Int,limit: Int,selector: Option[ContentView]): PassageSpansResult = reading { c =>
+  def passageSpans(reader: String,id: UUID,passageId: UUID,offset: Int,limit: Int,selector: Option[ContentView]): PassageSpansResult = reading(ReadMaterialization.unrestricted,selector.forall(_.generationId.nonEmpty)) { c =>
     Check.contentPage(offset,limit)
     PassageStorage.spans(c,selectView(c,reader,id,selector),passageId,offset,limit)
   }
