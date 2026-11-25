@@ -25,6 +25,22 @@ POOL_JUDGED = ('POOL',)
 # between the immediate shutdown and the start. Default 0 = the counted rule set's restart, unchanged. Read by main after the
 # arguments are validated (r7 rev 5.1); a value that is not a number is a usage error.
 SUPPLEMENT_3B_DOWN_VARIABLE = 'RESTART_ACC_SUPPLEMENT_3B_DOWN_SECONDS'
+# Test-tooling hook, no rule change: Chronicle's `indexing.claimOrder` in EVERY case's configuration, the replaced `indexing` of
+# the restart cases included. Unset = the configuration as before (the key absent: the server's default). Any value but these
+# is refused at start (usage error); the mode is named in the run's first line, report.json and `reparse`.
+CLAIM_ORDER_VARIABLE = 'RESTART_ACC_CHRONICLE_CLAIM_ORDER'
+CLAIM_ORDERS = ('source-id', 'waiting')
+CLAIM_ORDER_UNSET = 'unset (server default)'  # the recorded marker of a run without the variable (metadata only: the configuration is untouched)
+
+
+def claim_order_of(environment):
+    """(mode or None when unset, error text or None): the value of CLAIM_ORDER_VARIABLE, validated."""
+    if CLAIM_ORDER_VARIABLE not in environment:
+        return None, None
+    value = environment[CLAIM_ORDER_VARIABLE]
+    if value in CLAIM_ORDERS:
+        return value, None
+    return None, f'{CLAIM_ORDER_VARIABLE} must be one of {" | ".join(CLAIM_ORDERS)} (or unset), not {value!r}'
 
 # The cluster: PostgreSQL 18 + pgvector, the spec's connection budget and roles (§5, §9).
 SHORT_TMP, ROOT_PREFIX, MARKER = '/tmp', 'restart-acc.', '.restart-acceptance-owned'
@@ -996,6 +1012,7 @@ class Run:
     def __init__(self, set_name, out, packages, calibration):
         self.set_name, self.out, self.packages, self.calibration = set_name, out, packages, calibration
         self.t0 = now()
+        self.claim_order = None  # CLAIM_ORDER_VARIABLE, set by main
         self.root = Root()
         try:
             self.home = self.root.path / 'home'
@@ -1072,6 +1089,8 @@ class Run:
                       users=[dict(id='alice', login='alice', passwordHashFile=str(self.files['password_hash']), enabled=True)], staticTokens=self.static_tokens)
         if indexing:
             config['indexing'] = dict(annotationSessions=4, embeddingRequests=8, embeddingBatchSize=16, **indexing)  # Core.scala IndexingCapacity.defaults
+        if self.claim_order:
+            config.setdefault('indexing', {})['claimOrder'] = self.claim_order
         stub = f'http://127.0.0.1:{self.stub_port}'
         config['annotation'].update(endpoint=stub + '/v1/chat/completions', credentialFile=str(self.files['empty']), model='stub-annotation', revision='restart-acceptance',
                                     requestPolicy='strict-json-schema', timeoutSeconds=60, maxResponseBytes=1048576)
@@ -2479,6 +2498,134 @@ def enforcement_checks(m):
         return result.returncode == 2, dict(exit=result.returncode, stderr=result.stderr.strip()[-200:])
     scenario(f'rev 5.1: the shell entry point refuses FULL with the usage error (exit 2) also with {SUPPLEMENT_3B_DOWN_VARIABLE}=not-a-number (no '
              'environment value is converted before the arguments are validated)', shell_full_supplement)
+    def claim_order_entry():
+        """main() with the doubles of Run (no cluster, no stub, no password hash), Service (records the serialized configuration it is
+        given instead of starting a process) and started_trio (a Trio only: the real Trio, chronicle_config, Cohort/M1Cohort constructors);
+        cases 1, 2b, 3a, 3b, 3 build their Trios as in the run, case 3's with the replaced `indexing`."""
+        import types
+        example = json.loads((m.REPO / 'chronicle/config.example.json').read_text())
+        base = dict(case1=json.dumps(example['indexing']),  # the base script keeps the example's indexing (key order included)
+                    case2b=json.dumps(example['indexing']),
+                    cohort='{"annotationSessions": 4, "embeddingRequests": 8, "embeddingBatchSize": 16, "publicationStatementTimeoutMs": 10000}')
+        captured = []
+
+        class FakeService:
+            def __init__(self, run, name, label, config, port):
+                self.started = 0.0
+                if name == 'chronicle':
+                    captured.append((label, json.dumps(config)))
+
+        class FakeRun(m.Run):
+            def __init__(self, set_name, out, packages, calibration):
+                self.set_name, self.out, self.packages, self.calibration, self.t0, self.claim_order = set_name, out, packages, calibration, m.now(), None
+                self.root = types.SimpleNamespace(path=out / 'root', remove=lambda: None)
+                self.cluster, self.processes, self.stub = types.SimpleNamespace(secrets=dict(chronicle='s'), port=1, primary=lambda: None), [], None
+                self.files, self.static_tokens, self.stub_port = dict(password_hash='h', empty='e'), [], 1
+
+            def setup(self):
+                pass
+
+            def cleanup(self):
+                pass
+
+            def haystack_config(self, port, limits):
+                return {}
+
+            def manure_config(self, port, limits):
+                return {}
+
+        def cases():
+            def case_1(run):
+                m.Trio(run, '1')
+                return dict(case='1', verdict='PASS')
+
+            def case_2b(run):
+                m.Trio(run, '2b', limits=dict(startWaitMs=m.SHORT_WAIT_MS))
+                return dict(case='2b', verdict='PASS')
+
+            def cohort_case(ident, cohort_class):
+                def run_case(run):
+                    cohort_class(run, None, ident)
+                    return dict(case=ident, verdict='PASS')
+                return run_case
+            return {'1': case_1, '2b': case_2b, '3a': cohort_case('3a', m.M1Cohort), '3b': cohort_case('3b', m.M1Cohort), '3': cohort_case('3', m.Cohort)}
+
+        def drive(mode):
+            """(exit code, first '#' line, report.json, {label: serialized Chronicle configuration}) of main(POOL ...) with the variable `mode` (None = unset)."""
+            captured.clear()
+            scratch = Path(tempfile.mkdtemp(prefix='restart-acc-claim-order.', dir=SHORT_TMP))
+            saved = dict(Run=m.Run, Service=m.Service, started_trio=m.started_trio, CASES=dict(m.CASES), environ=dict(os.environ),
+                         handlers={n: signal.getsignal(n) for n in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)})
+            try:
+                for name in SERVICES:
+                    (scratch / 'pkg' / name / 'bin').mkdir(parents=True)
+                    (scratch / 'pkg' / name / 'bin' / f'{name}-server').write_text('')
+                for key in [k for k in os.environ if k.startswith('RESTART_ACC_')]:
+                    del os.environ[key]
+                os.environ.update({f'RESTART_ACC_{name.upper()}': str(scratch / 'pkg' / name) for name in SERVICES}, RESTART_ACC_OUT=str(scratch / 'out'))
+                if mode is not None:
+                    os.environ[m.CLAIM_ORDER_VARIABLE] = mode
+                m.Run, m.Service, m.started_trio = FakeRun, FakeService, lambda run, case, label, **options: (m.Trio(run, label, **options), None)
+                m.CASES.clear()
+                m.CASES.update(cases())
+                printed = io.StringIO()
+                with contextlib.redirect_stdout(printed):
+                    code = m.main(['POOL', '1', '2b', '3a', '3b', '3'])
+                report = json.loads((scratch / 'out' / 'report.json').read_text()) if (scratch / 'out' / 'report.json').exists() else None
+                header = next((line for line in printed.getvalue().splitlines() if line.startswith('# restart acceptance')), None)
+                return code, header, report, dict(captured)
+            finally:
+                m.Run, m.Service, m.started_trio = saved['Run'], saved['Service'], saved['started_trio']
+                m.CASES.clear()
+                m.CASES.update(saved['CASES'])
+                os.environ.clear()
+                os.environ.update(saved['environ'])
+                for n, handler in saved['handlers'].items():
+                    signal.signal(n, handler)
+                shutil.rmtree(scratch)
+
+        def indexing_of(serialized):
+            return json.dumps(json.loads(serialized)['indexing'])
+
+        varying = ('indexing', 'listenPort', 'allowedOrigin')  # the indexing object is compared above; the ports are drawn per start
+        unset, waiting, explicit = drive(None), drive('waiting'), drive('source-id')
+        expected = {'1': base['case1'], '2b': base['case2b'], '3a': base['cohort'], '3b': base['cohort'], '3': base['cohort']}
+        with_key = lambda text, mode: text[:-1] + f', "claimOrder": "{mode}"' + '}'
+        results_ = dict(
+            unsetIndexingIsBase=all(unset[3][label] and indexing_of(unset[3][label]) == text for label, text in expected.items()) and len(unset[3]) == len(expected),
+            unsetMarker=unset[0] == 0 and unset[1] is not None and unset[1].endswith(f'chronicle indexing.claimOrder {m.CLAIM_ORDER_UNSET}') and
+            unset[2]['chronicleClaimOrder'] == m.CLAIM_ORDER_UNSET,
+            waitingEveryCase=waiting[0] == 0 and len(waiting[3]) == len(expected) and
+            all(indexing_of(waiting[3].get(label, '{"indexing": {}}')) == with_key(text, 'waiting') for label, text in expected.items()),
+            waitingMarker=waiting[1] is not None and waiting[1].endswith('chronicle indexing.claimOrder waiting') and waiting[2]['chronicleClaimOrder'] == 'waiting',
+            sourceIdEveryCase=explicit[0] == 0 and all(indexing_of(explicit[3].get(label, '{"indexing": {}}')) == with_key(text, 'source-id') for label, text in expected.items()) and
+            explicit[2]['chronicleClaimOrder'] == 'source-id',
+            restOfConfigUnchanged=all({k: v for k, v in json.loads(unset[3][label]).items() if k not in varying} ==
+                                      {k: v for k, v in json.loads(waiting[3][label]).items() if k not in varying} for label in expected))
+        return all(results_.values()), results_
+    scenario(f'{m.CLAIM_ORDER_VARIABLE} through main() with test doubles (no services, no PostgreSQL) to the serialized configuration each Chronicle start would receive: '
+             'unset = the base `indexing` (example file; case 3: annotationSessions 4, embeddingRequests 8, embeddingBatchSize 16, publicationStatementTimeoutMs 10000) '
+             'and nothing else; waiting / source-id append claimOrder to every case\'s, case 3\'s replacement included; the mode (or the unset marker) is in the first '
+             'line and report.json', claim_order_entry)
+
+    def claim_order_refused():
+        invalid = {value: m.claim_order_of({m.CLAIM_ORDER_VARIABLE: value})[1] is not None for value in ('Waiting', '', 'source_id', 'fresh')}
+        accepted = [m.claim_order_of({m.CLAIM_ORDER_VARIABLE: value}) for value in m.CLAIM_ORDERS]
+        clean = {k: v for k, v in os.environ.items() if k != 'PG_BIN' and not k.startswith('RESTART_ACC_')}
+        shell = Path(m.__file__).resolve().with_name('restart-acceptance.sh')
+        outcomes = {}
+        for label, command, mode in (('python', [sys.executable, str(Path(m.__file__).resolve()), 'POOL'], 'fresh'), ('shell, prerequisites unset', [str(shell), 'POOL'], 'fresh'),
+                                     ('shell, empty value', [str(shell), 'POOL', '1'], ''), ('shell, retired set first', [str(shell), 'FULL'], 'fresh'),
+                                     ('shell, valid value, prerequisites unset', [str(shell), 'POOL'], 'waiting')):
+            result = subprocess.run(command, env=clean | {m.CLAIM_ORDER_VARIABLE: mode}, capture_output=True, text=True, timeout=SQL_S)
+            outcomes[label] = (result.returncode, m.CLAIM_ORDER_VARIABLE in result.stderr)
+        held = (all(invalid.values()) and accepted == [('source-id', None), ('waiting', None)] and
+                outcomes['python'] == (2, True) and outcomes['shell, prerequisites unset'] == (2, True) and outcomes['shell, empty value'] == (2, True) and
+                outcomes['shell, retired set first'] == (2, False) and outcomes['shell, valid value, prerequisites unset'][1] is False and
+                outcomes['shell, valid value, prerequisites unset'][0] != 2)
+        return held, dict(invalid=invalid, outcomes=outcomes)
+    scenario(f'{m.CLAIM_ORDER_VARIABLE}: an invalid value (including empty) is a usage error (exit 2) naming the variable from main() and from the shell entry point '
+             'even with PG_BIN and the package variables unset; a retired set is still refused first; a valid value is not refused', claim_order_refused)
     scenario('rev 5.1: case 3b judges M1\'s guarantee: lease margin threshold 45 s, rule set r7 rev 5.1 named',
              lambda: (m.LEASE_MARGIN_S == 45 and (m.RULE_SET, m.RULE_REVISION) == ('r7', 5.1), dict(threshold=m.LEASE_MARGIN_S, revision=getattr(m, 'RULE_REVISION', None))))
     ready = 1795449000.0
@@ -2748,7 +2895,7 @@ def reparse(run_dir):
     started = datetime.datetime.fromisoformat(report['startedAt']).timestamp()
     held_class = hold_rule(report.get('ruleRevision'))
     out = [f'# reparse of {run_dir}', '', f'set {report["set"]}, rule set {report.get("ruleSet", "not recorded (before r6 naming)")}, '
-           f'supplementary {report.get("supplementary")}, verdicts in report.json {report["verdicts"]}', '']
+           f'supplementary {report.get("supplementary")}, chronicle claim order {report.get("chronicleClaimOrder", "not recorded (a report of a script before the hook)")}, verdicts in report.json {report["verdicts"]}', '']
     changed = []
     for case in report['cases']:
         ident = case['case']
@@ -2903,14 +3050,24 @@ def main(argv):
         return self_check()
     if len(argv) == 2 and argv[0] == 'reparse':
         return reparse(argv[1])
-    if argv[:1] == ['arguments']:  # restart-acceptance.sh: a run's arguments, checked before its run-only variables
-        return 2 if refused_arguments(argv[1:]) else 0
+    if argv[:1] == ['arguments']:  # restart-acceptance.sh: a run's arguments, then the claim order variable, checked before its other run-only variables
+        if refused_arguments(argv[1:]):
+            return 2
+        claim_order_error = claim_order_of(os.environ)[1]
+        if claim_order_error:
+            print(claim_order_error, file=sys.stderr)
+            return 2
+        return 0
     if refused_arguments(argv):
         return 2
     try:
         supplement_3b_down = float(os.environ.get(SUPPLEMENT_3B_DOWN_VARIABLE, '0'))
     except ValueError:
         print(f'{SUPPLEMENT_3B_DOWN_VARIABLE} must be a number of seconds', file=sys.stderr)
+        return 2
+    claim_order, claim_order_error = claim_order_of(os.environ)
+    if claim_order_error:
+        print(claim_order_error, file=sys.stderr)
         return 2
     set_name, selected = argv[0], [case for case in ORDER if case in (argv[1:] or CASES_OF[argv[0]])]
     calibration, calibration_source = None, None
@@ -2936,8 +3093,10 @@ def main(argv):
     try:
         run = Run(set_name, out, packages, calibration)
         run.calibration_source, run.supplement_3b_down = calibration_source, supplement_3b_down
+        run.claim_order = claim_order
         note(f'restart acceptance, rule set {RULE_SET} rev {RULE_REVISION}, set {set_name}, cases {" ".join(selected)}, packages {json.dumps({k: str(v) for k, v in packages.items()})}, root {run.root.path}'
-             + (f', calibration {json.dumps(calibration_source)}' if calibration_source else ''))
+             + (f', calibration {json.dumps(calibration_source)}' if calibration_source else '')
+             + f', chronicle indexing.claimOrder {claim_order or CLAIM_ORDER_UNSET}')
         if supplement_3b_down:
             note(f'SUPPLEMENTARY run (not counted): case 3b keeps PostgreSQL down {supplement_3b_down} s')
         run.setup()
@@ -2956,6 +3115,7 @@ def main(argv):
     summary = dict(set=set_name, ruleSet=RULE_SET, ruleRevision=RULE_REVISION, calibration=calibration_source, startedAt=started_at, wallSeconds=round(now() - run.t0, 1), verdicts=verdicts, cases=results)
     if supplement_3b_down:
         summary['supplementary'] = dict(case3bDownSeconds=supplement_3b_down, counted=False)
+    summary['chronicleClaimOrder'] = claim_order or CLAIM_ORDER_UNSET
     (out / 'report.json').write_text(json.dumps(summary, indent=1))
     print(json.dumps(dict(set=set_name, wallSeconds=summary['wallSeconds'], verdicts=verdicts)), flush=True)
     values = set(verdicts.values())
