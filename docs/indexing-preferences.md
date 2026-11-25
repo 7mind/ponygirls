@@ -18,8 +18,8 @@ accounts and saved preferences are not synchronized.
   the saved user choice, if any.
 
 Users can see the effective setting in **Account settings → Profile →
-Indexing**. Administrators use **Users → row actions → Indexing…**, then
-confirm with their current password. This does not require enabling self-signup
+Indexing**. Administrators use **Account settings → Users → row actions →
+Indexing…**, then confirm with their current password. This does not require enabling self-signup
 or enrollment. Accounts without a browser login cannot change their own
 setting in the dashboard; an administrator can change it for them.
 
