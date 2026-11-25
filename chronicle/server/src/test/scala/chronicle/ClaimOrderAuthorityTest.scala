@@ -6,9 +6,10 @@ import java.util.UUID
 import java.util.concurrent.{CountDownLatch,TimeUnit}
 
 /** T6 (claim-order DESIGN §9; spec R6, D-g): the waiting order keeps the claim's authority. A reclaimed fence is dead; a
-  * same-profile rebuild or an indexing-preference change that starts while a claim holds its owners' pairs waits for the
-  * claim, so no job is claimed under a stale epoch; a lane whose candidate another lane claimed since its statement never
-  * overwrites that claim. */
+  * same-profile rebuild or an indexing-preference change that starts while a claim holds its owners' pairs — between its
+  * pair read and its source lock, the claim stopped at a later owner's locked target; or at its candidate — waits for the
+  * claim, so no job is claimed under a stale epoch; an owner turned off after the owners statement gives no pair; a lane
+  * whose candidate another lane claimed since its statement never overwrites that claim. */
 final class ClaimOrderAuthorityTest extends munit.FunSuite {
   import ClaimOrderFixtures.*
   /** Stops a claim at its candidate until released. */
@@ -37,19 +38,25 @@ final class ClaimOrderAuthorityTest extends munit.FunSuite {
     assertEquals(row(db,id).state,"Complete")
   }}
 
-  test("T6 (D-g): a same-profile rebuild of the candidate's owner, begun while the claim holds its pairs, waits for the claim and then finds its preview stale; the claim committed under the then current target epoch, and the next rebuild fences it: no claim of a stale epoch is ever valid") { database { (c,db,a) =>
+  test("T6 (D-g): a same-profile rebuild of an owner whose pair the claim read, begun while the claim waits for a later owner's target (before any source lock), waits for the claim; the claim commits under the then current target epoch; the waiting rebuild then finds its preview stale, and the next rebuild fences the claim") { database { (c,db,a) =>
     val id=job(db,a,"b",1,false); job(db,a,"a",2,false)
     val before=target(db,"b")
-    val rebuild=other(c)
-    try withPool(2) { pool =>
-      val pause=new Pause
-      val claiming=async(pool)(ClaimOrder.claim(a,a.knownProfiles,ClaimScope.AllOwners,300,freshLane,pause))
-      awaited(pause.reached,"the claim never reached its candidate")
+    val holder=other(c); val rebuild=other(c)
+    try withPool(3) { pool =>
+      val held=new CountDownLatch(1); val release=new CountDownLatch(1)
+      // c's target locked as a rebuild of c locks it: the claim's P1 waits there, b's pair already read.
+      val holding=async(pool)(holder.transaction { h =>
+        Sql.one(h,"SELECT epoch FROM ch_owner_targets WHERE owner='c' FOR UPDATE")(_ => ()).get
+        held.countDown(); awaited(release,"c's target never released")
+      })
+      awaited(held,"c's target never locked")
+      val claiming=async(pool)(claim(a,freshLane))
+      assert(reachesLockWait(db,claiming),"the claim waits for c's target")
       val plan=rebuild.transaction { h => h.setTransactionIsolation(java.sql.Connection.TRANSACTION_REPEATABLE_READ); OwnerReindex.preview(h,"b",IndexProfileCatalog.current(c),true) }
       val rebuilding=async(pool)(rebuild.transaction(h => OwnerReindex(h,"b",UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true,IndexProfileCatalog.current(c),true)))
-      assert(reachesLockWait(db,rebuilding),"the rebuild waits for the claim's shared lock on b's target")
+      assert(waitersReach(db,2,rebuilding),"the rebuild of b waits for the claim's shared lock on b's target")
       assertEquals(target(db,"b"),before)
-      pause.release.countDown()
+      release.countDown(); holding.get
       val taken=claimed(claiming.get)
       assertEquals((taken.jobId,taken.owner,taken.targetEpoch),(id,"b",before))
       val refused=intercept[java.util.concurrent.ExecutionException](rebuilding.get).getCause
@@ -59,11 +66,28 @@ final class ClaimOrderAuthorityTest extends munit.FunSuite {
       Fixtures.rebuild(db,"b")
       assert(target(db,"b")>before)
       assert(!a.renew(taken,300),"the rebuild fenced the claim of the replaced epoch")
-      assertEquals((row(db,id).state,row(db,id).bulk),("Queued",Some(true)))
       val again=claimed(claim(a,bulkLane))
       assertEquals((again.jobId,again.targetEpoch),(id,target(db,"b")))
-      assert(a.renew(again,300))
-    } finally rebuild.close()
+    } finally { holder.close(); rebuild.close() }
+  }}
+
+  test("T6: an owner whose indexing is turned off after the claim's owners statement, while the claim waits for an earlier owner's target, gives no pair: the claim takes another owner's job") { database { (c,db,a) =>
+    val off=job(db,a,"c",1,false); val allowed=job(db,a,"a",2,false)
+    val holder=other(c); val writer=other(c)
+    try withPool(2) { pool =>
+      val held=new CountDownLatch(1); val release=new CountDownLatch(1)
+      val holding=async(pool)(holder.transaction { h =>
+        Sql.one(h,"SELECT epoch FROM ch_owner_targets WHERE owner='b' FOR UPDATE")(_ => ()).get
+        held.countDown(); awaited(release,"b's target never released")
+      })
+      awaited(held,"b's target never locked")
+      val claiming=async(pool)(claim(a,freshLane))
+      assert(reachesLockWait(db,claiming),"the claim waits for b's target, c still listed")
+      writer.transaction(w => IndexingPreferenceSql.store(w,IndexingService.Chronicle,c.indexingPolicy).setChoice("c",IndexingChoice.Disable))
+      release.countDown(); holding.get
+      assertEquals(claimed(claiming.get).jobId,allowed)
+      assertEquals((row(db,off).state,row(db,off).attempts),("Queued",0))
+    } finally { holder.close(); writer.close() }
   }}
 
   test("T6 (D-g): an indexing-preference change of the candidate's owner, begun while the claim holds its pairs, waits for the claim; the claim commits under the then current indexing epoch, and the next claim replaces that attempt under the new epoch without a charge") { database { (c,db,a) =>

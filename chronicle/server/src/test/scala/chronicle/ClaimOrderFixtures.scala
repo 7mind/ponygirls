@@ -133,6 +133,14 @@ private[chronicle] object ClaimOrderFixtures extends munit.Assertions {
     assert(work.isDone || waited,"the work neither ended nor waited")
     !waited
   }
+  /** Waits until `count` backends of the database wait for a lock at once (`work` among them); false if `work` ended first. */
+  def waitersReach(db: Database,count: Int,work: Future[?]): Boolean = {
+    val guard=Deadline.now+2.minutes
+    var reached=false
+    while(!work.isDone && !reached && guard.hasTimeLeft()) reached=lockWaits(db)>=count
+    assert(work.isDone || reached,"the work neither ended nor waited")
+    reached
+  }
   /** Waits until some backend of the database waits for a lock (the work under test reached its lock); false if `work`
     * ended first. */
   def reachesLockWait(db: Database,work: Future[?]): Boolean = {

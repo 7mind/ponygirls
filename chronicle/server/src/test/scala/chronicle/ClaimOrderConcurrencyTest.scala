@@ -94,7 +94,8 @@ final class ClaimOrderConcurrencyTest extends munit.FunSuite {
       awaited(applied,"the rebuild never applied")
       val claiming=async(pool)(claim(a,freshLane))
       assert(reachesLockWait(db,claiming),"the claim waits for c's target, locked by the rebuild")
-      val sources=prober.transaction(p => Sql.rows(p,"SELECT id FROM ch_sources WHERE owner='a' ORDER BY id FOR UPDATE NOWAIT")(_.getObject(1,classOf[UUID])))
+      val sources=try prober.transaction(p => Sql.rows(p,"SELECT id FROM ch_sources WHERE owner='a' ORDER BY id FOR UPDATE NOWAIT")(_.getObject(1,classOf[UUID])))
+        catch { case refused: Exception => fail(s"a source of owner a is locked while the claim waits for c's target: $refused") }
       assertEquals(sources.toSet,Set(exhausted,queued).map(source(db,_)))
       assert(!claiming.isDone)
       committed.countDown(); rebuilding.get
