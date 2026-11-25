@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState } from 'react';
-import { ActivityCollectorSort, ActivityQuery, Operation_Activity, Result_Activity, Scope, SortDirection, type ActivityCollector, type ActivityResult, type UserInfo } from '../api.ts';
+import { ActivityCollectorSort, ActivityQuery, Operation_Activity, Operation_ActivityClaimOrderSummary, Result_Activity, Result_ActivityClaimOrderSummary, Scope, SortDirection, type ActivityClaimOrderSummaryResult, type ActivityCollector, type ActivityResult, type UserInfo } from '../api.ts';
 import { read, type ChronicleConnection } from '../client.ts';
 import { useInfiniteResource } from '../infinite.ts';
 import { validateMetadataExpression } from '../expression.ts';
@@ -39,6 +39,14 @@ function useCollectorSnapshot(connection: ChronicleConnection, stats: ManagerSta
   return useInfiniteResource<ActivityCollector, ActivityResult, string>(connection, stats, `${name}:${user.id}`, refresh, enabled, undefined, () => readCollectors(connection, user, expression, limit), collector => collector.collectorId);
 }
 
+/** The owner's claim-order counts (`ActivityClaimOrderSummary`, an operation of its own beside `Activity`). */
+function useClaimSummary(connection: ChronicleConnection, stats: ManagerStats, user: UserInfo, refresh: string, enabled: boolean) {
+  return useInfiniteResource<never, ActivityClaimOrderSummaryResult, string>(connection, stats, `activity-claim-order:${user.id}`, refresh, enabled, undefined, async () => {
+    const result = await read(connection, new Operation_ActivityClaimOrderSummary(), reply => reply instanceof Result_ActivityClaimOrderSummary ? reply.result : null);
+    return { items: [], next: undefined, previous: undefined, meta: result };
+  }, () => { throw new Error('the claim-order summary has no rows'); });
+}
+
 export function Activity(props: ActivityProps) { return <OwnerActivity key={props.user.id} {...props}/>; }
 function OwnerActivity({ connection, stats, user, actions, routing }: ActivityProps) {
   const cache = useContext(RouteStateContext);
@@ -67,6 +75,7 @@ function OwnerActivity({ connection, stats, user, actions, routing }: ActivityPr
   const summary = useCollectorSnapshot(connection, stats, user, 'activity-summary', '', SUMMARY_LIMIT, refreshKey, canRead);
   const stale = useCollectorSnapshot(connection, stats, user, 'activity-stale', STALE_EXPRESSION, STALE_NAMES, refreshKey, canRead);
   const unreported = useCollectorSnapshot(connection, stats, user, 'activity-unreported', UNREPORTED_EXPRESSION, COUNT_LIMIT, refreshKey, canRead && section === 'overview');
+  const claimSummary = useClaimSummary(connection, stats, user, refreshKey, canRead && section === 'jobs');
   const usage = useModelUsage(connection, stats, user, routing.active && canRead && (section === 'overview' || section === 'usage'));
   const snapshots: Snapshots = { summary, stale, unreported };
   const refreshNow = () => setRefresh(value => value + 1);
@@ -92,7 +101,7 @@ function OwnerActivity({ connection, stats, user, actions, routing }: ActivityPr
     </div>
     {section === 'overview' && <Overview user={user} snapshots={snapshots} usage={usage}/>}
     {section === 'collectors' && <Collectors connection={connection} stats={stats} user={user} refresh={refreshKey} refreshNow={refreshNow}/>}
-    {section === 'jobs' && <Jobs connection={connection} stats={stats} user={user} actions={actions} refresh={refreshKey} refreshNow={refreshNow} summary={summary.meta} summaryFailed={summary.error !== null}/>}
+    {section === 'jobs' && <Jobs connection={connection} stats={stats} user={user} actions={actions} refresh={refreshKey} refreshNow={refreshNow} summary={summary.meta} claimSummary={claimSummary.meta}/>}
     {section === 'usage' && <section className="page page-narrow" aria-label="Model usage" data-view="activity-usage"><ModelUsageView usage={usage} connected={connected}/></section>}
     {section === 'maintenance' && <Maintenance connection={connection} stats={stats} user={user} actions={actions} summary={summary.meta} switchPending={switchPending} setSwitchPending={setSwitchPending} refresh={refreshNow}/>}
   </main>;

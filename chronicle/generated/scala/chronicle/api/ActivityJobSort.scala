@@ -20,9 +20,6 @@ package chronicle.api {
     case object Classification extends ActivityJobSort
     case object JobId extends ActivityJobSort
     case object SessionId extends ActivityJobSort
-    case object WaitingSince extends ActivityJobSort
-    case object JobClass extends ActivityJobSort
-    case object WaitingReason extends ActivityJobSort
     
     def parse(s: String): Option[ActivityJobSort] = {
       s match {
@@ -41,9 +38,6 @@ package chronicle.api {
         case "Classification" => Some(Classification)
         case "JobId" => Some(JobId)
         case "SessionId" => Some(SessionId)
-        case "WaitingSince" => Some(WaitingSince)
-        case "JobClass" => Some(JobClass)
-        case "WaitingReason" => Some(WaitingReason)
         case _ => None
       }
     }
@@ -63,10 +57,7 @@ package chronicle.api {
       Reason,
       Classification,
       JobId,
-      SessionId,
-      WaitingSince,
-      JobClass,
-      WaitingReason
+      SessionId
     ) 
   }
   

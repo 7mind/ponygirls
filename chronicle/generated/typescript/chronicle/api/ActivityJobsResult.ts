@@ -1,6 +1,5 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
-import {ActivityClaimOrder, ActivityClaimOrder_JsonCodec} from './ActivityClaimOrder.js'
 import {ActivityJob, ActivityJob_JsonCodec} from './ActivityJob.js'
 
 export class ActivityJobsResult implements BaboonGeneratedLatest {
@@ -8,14 +7,12 @@ export class ActivityJobsResult implements BaboonGeneratedLatest {
     private readonly _jobs: Array<ActivityJob>;
     private readonly _total: bigint;
     private readonly _nextCursor: string | undefined;
-    private readonly _claimOrder: ActivityClaimOrder | undefined;
 
-    constructor(observedAt: string, jobs: Array<ActivityJob>, total: bigint, nextCursor: string | undefined, claimOrder: ActivityClaimOrder | undefined) {
+    constructor(observedAt: string, jobs: Array<ActivityJob>, total: bigint, nextCursor: string | undefined) {
         this._observedAt = observedAt
         this._jobs = jobs
         this._total = total
         this._nextCursor = nextCursor
-        this._claimOrder = claimOrder
     }
 
     public get observedAt(): string {
@@ -30,37 +27,31 @@ export class ActivityJobsResult implements BaboonGeneratedLatest {
     public get nextCursor(): string | undefined {
         return this._nextCursor;
     }
-    public get claimOrder(): ActivityClaimOrder | undefined {
-        return this._claimOrder;
-    }
 
     public toJSON(): Record<string, unknown> {
         return {
             observedAt: this._observedAt,
             jobs: this._jobs,
             total: this._total,
-            nextCursor: this._nextCursor !== undefined ? this._nextCursor : undefined,
-            claimOrder: this._claimOrder !== undefined ? this._claimOrder : undefined
+            nextCursor: this._nextCursor !== undefined ? this._nextCursor : undefined
         };
     }
 
-    public with(overrides: {observedAt?: string; jobs?: Array<ActivityJob>; total?: bigint; nextCursor?: string | undefined; claimOrder?: ActivityClaimOrder | undefined}): ActivityJobsResult {
+    public with(overrides: {observedAt?: string; jobs?: Array<ActivityJob>; total?: bigint; nextCursor?: string | undefined}): ActivityJobsResult {
         return new ActivityJobsResult(
             'observedAt' in overrides ? overrides.observedAt! : this._observedAt,
             'jobs' in overrides ? overrides.jobs! : this._jobs,
             'total' in overrides ? overrides.total! : this._total,
-            'nextCursor' in overrides ? overrides.nextCursor! : this._nextCursor,
-            'claimOrder' in overrides ? overrides.claimOrder! : this._claimOrder
+            'nextCursor' in overrides ? overrides.nextCursor! : this._nextCursor
         );
     }
 
-    public static fromPlain(obj: {observedAt: string; jobs: Array<ActivityJob>; total: bigint; nextCursor: string | undefined; claimOrder: ActivityClaimOrder | undefined}): ActivityJobsResult {
+    public static fromPlain(obj: {observedAt: string; jobs: Array<ActivityJob>; total: bigint; nextCursor: string | undefined}): ActivityJobsResult {
         return new ActivityJobsResult(
             obj.observedAt,
             obj.jobs,
             obj.total,
-            obj.nextCursor,
-            obj.claimOrder
+            obj.nextCursor
         );
     }
 
@@ -104,7 +95,6 @@ export class ActivityJobsResult_JsonCodec {
             "jobs": Array.from(value.jobs).map(item => ActivityJob_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "total": value.total.toString(),
             "nextCursor": value.nextCursor === undefined ? null : value.nextCursor,
-            "claimOrder": value.claimOrder === undefined ? null : ActivityClaimOrder_JsonCodec.instance.encode(BaboonCodecContext.Default, value.claimOrder),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): ActivityJobsResult {
@@ -118,7 +108,6 @@ export class ActivityJobsResult_JsonCodec {
             (obj["jobs"] as unknown[]).map(item => ActivityJob_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             BaboonInt64.read(obj["total"], "i64/u64"),
             obj["nextCursor"] === undefined || obj["nextCursor"] === null ? undefined : obj["nextCursor"] === undefined || obj["nextCursor"] === null ? undefined : obj["nextCursor"] as string,
-            obj["claimOrder"] === undefined || obj["claimOrder"] === null ? undefined : obj["claimOrder"] === undefined || obj["claimOrder"] === null ? undefined : ActivityClaimOrder_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["claimOrder"]),
         )
     }
 

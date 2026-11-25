@@ -108,8 +108,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
         assertEquals(setups.get(),setupStatements)
         statements.set(0); setups.set(0)
         assertEquals(activity.summary(c.owner.user,ActivityQuery("",ActivityCollectorSort.CurrentTotal,SortDirection.Desc,None,limit)).collectors.size,math.min(limit,3))
-        val claimOrder=1 // the owner's claim-order counts (ActivityResult.queue), one statement whatever the page size
-        assertEquals(statements.get(),4+claimOrder+epochReads+setupStatements)
+        assertEquals(statements.get(),4+epochReads+setupStatements)
         assertEquals(setups.get(),setupStatements)
       }
     } finally DriverManager.deregisterDriver(driver)

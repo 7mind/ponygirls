@@ -2463,6 +2463,142 @@ package chronicle.api {
       override protected def LazyInstance: Lazy[BaboonJsonCodec[Result.McpTestRun]] = cachedLazyInstance
       override def instance: BaboonJsonCodec[Result.McpTestRun] = LazyInstance.value
     }
+    
+    
+    final case class ActivityClaimOrderSummary(
+      result: ActivityClaimOrderSummaryResult
+    ) extends Result with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = Result.ActivityClaimOrderSummary.baboonDomainVersion
+      override def baboonDomainIdentifier: String = Result.ActivityClaimOrderSummary.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = Result.ActivityClaimOrderSummary.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = Result.ActivityClaimOrderSummary.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = Result.ActivityClaimOrderSummary.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = Result.ActivityClaimOrderSummary.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = Result.ActivityClaimOrderSummary.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = Result.ActivityClaimOrderSummary.baboonAdtType
+    }
+    
+    object ActivityClaimOrderSummary {
+      def baboonDomainVersion: String = "1.9.0"
+      def baboonDomainIdentifier: String = "chronicle.api"
+      def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#ActivityClaimOrderSummary"
+      private lazy val _baboonSameInVersions: List[String] = List("1.9.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.9.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.9.0", "prefix-compact" -> "1.9.0", "prefix-any-mode" -> "1.9.0", "identical" -> "1.9.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "chronicle.api/:#Result"
+      def baboonAdtType: _root_.java.lang.Class[?] = Result.getClass
+      def codecJson: BaboonJsonCodec[Result.ActivityClaimOrderSummary] = Result.ActivityClaimOrderSummary_JsonCodec.instance
+    }
+    
+    object ActivityClaimOrderSummary_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.ActivityClaimOrderSummary, BaboonJsonCodec[Result.ActivityClaimOrderSummary]] {
+      def encode(ctx: BaboonCodecContext, value: Result.ActivityClaimOrderSummary): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          "result" -> ActivityClaimOrderSummaryResult_JsonCodec.instance.encode(ctx, value.result)
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, Result.ActivityClaimOrderSummary] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(jsonObject) => for {
+              result <- getField(jsonObject, "result").flatMap(v => ActivityClaimOrderSummaryResult_JsonCodec.circeDecoder(v.hcursor))
+            } yield Result.ActivityClaimOrderSummary(result)
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to ActivityClaimOrderSummary: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = Result.ActivityClaimOrderSummary.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = Result.ActivityClaimOrderSummary.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = Result.ActivityClaimOrderSummary.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = Result.ActivityClaimOrderSummary.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = Result.ActivityClaimOrderSummary.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[Result.ActivityClaimOrderSummary]] = Lazy(Result.ActivityClaimOrderSummary_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[Result.ActivityClaimOrderSummary]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[Result.ActivityClaimOrderSummary] = LazyInstance.value
+    }
+    
+    
+    final case class ActivityClaimOrderJobs(
+      result: ActivityClaimOrderJobsResult
+    ) extends Result with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = Result.ActivityClaimOrderJobs.baboonDomainVersion
+      override def baboonDomainIdentifier: String = Result.ActivityClaimOrderJobs.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = Result.ActivityClaimOrderJobs.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = Result.ActivityClaimOrderJobs.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = Result.ActivityClaimOrderJobs.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = Result.ActivityClaimOrderJobs.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = Result.ActivityClaimOrderJobs.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = Result.ActivityClaimOrderJobs.baboonAdtType
+    }
+    
+    object ActivityClaimOrderJobs {
+      def baboonDomainVersion: String = "1.9.0"
+      def baboonDomainIdentifier: String = "chronicle.api"
+      def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#ActivityClaimOrderJobs"
+      private lazy val _baboonSameInVersions: List[String] = List("1.9.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.9.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.9.0", "prefix-compact" -> "1.9.0", "prefix-any-mode" -> "1.9.0", "identical" -> "1.9.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "chronicle.api/:#Result"
+      def baboonAdtType: _root_.java.lang.Class[?] = Result.getClass
+      def codecJson: BaboonJsonCodec[Result.ActivityClaimOrderJobs] = Result.ActivityClaimOrderJobs_JsonCodec.instance
+    }
+    
+    object ActivityClaimOrderJobs_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.ActivityClaimOrderJobs, BaboonJsonCodec[Result.ActivityClaimOrderJobs]] {
+      def encode(ctx: BaboonCodecContext, value: Result.ActivityClaimOrderJobs): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          "result" -> ActivityClaimOrderJobsResult_JsonCodec.instance.encode(ctx, value.result)
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, Result.ActivityClaimOrderJobs] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(jsonObject) => for {
+              result <- getField(jsonObject, "result").flatMap(v => ActivityClaimOrderJobsResult_JsonCodec.circeDecoder(v.hcursor))
+            } yield Result.ActivityClaimOrderJobs(result)
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to ActivityClaimOrderJobs: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = Result.ActivityClaimOrderJobs.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = Result.ActivityClaimOrderJobs.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = Result.ActivityClaimOrderJobs.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = Result.ActivityClaimOrderJobs.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = Result.ActivityClaimOrderJobs.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[Result.ActivityClaimOrderJobs]] = Lazy(Result.ActivityClaimOrderJobs_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[Result.ActivityClaimOrderJobs]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[Result.ActivityClaimOrderJobs] = LazyInstance.value
+    }
     def baboonDomainVersion: String = "1.9.0"
     def baboonDomainIdentifier: String = "chronicle.api"
     def baboonTypeIdentifier: String = "chronicle.api/:#Result"
@@ -2553,6 +2689,10 @@ package chronicle.api {
         case mcptesttools: Result.McpTestTools => Json.obj("McpTestTools" -> Result.McpTestTools_JsonCodec.instance.encode(ctx, mcptesttools))
         
         case mcptestrun: Result.McpTestRun => Json.obj("McpTestRun" -> Result.McpTestRun_JsonCodec.instance.encode(ctx, mcptestrun))
+        
+        case activityclaimordersummary: Result.ActivityClaimOrderSummary => Json.obj("ActivityClaimOrderSummary" -> Result.ActivityClaimOrderSummary_JsonCodec.instance.encode(ctx, activityclaimordersummary))
+        
+        case activityclaimorderjobs: Result.ActivityClaimOrderJobs => Json.obj("ActivityClaimOrderJobs" -> Result.ActivityClaimOrderJobs_JsonCodec.instance.encode(ctx, activityclaimorderjobs))
       
         case _ => throw new IllegalArgumentException(s"Cannot encode $value: unexpected subclass")
       }
@@ -2675,6 +2815,12 @@ package chronicle.api {
                 
                 case "McpTestRun" =>
                   Result.McpTestRun_JsonCodec.instance.decode(ctx, json)
+                
+                case "ActivityClaimOrderSummary" =>
+                  Result.ActivityClaimOrderSummary_JsonCodec.instance.decode(ctx, json)
+                
+                case "ActivityClaimOrderJobs" =>
+                  Result.ActivityClaimOrderJobs_JsonCodec.instance.decode(ctx, json)
       
                 case _ => Left(new IllegalArgumentException(s"Cannot decode $wire to Result: no matching value"))
               }

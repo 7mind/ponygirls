@@ -1,10 +1,15 @@
 
 
 export * from './ActivityClaimOrder.js';
+export * from './ActivityClaimOrderJobsQuery.js';
+export * from './ActivityClaimOrderJobsResult.js';
+export * from './ActivityClaimOrderSort.js';
+export * from './ActivityClaimOrderSummaryResult.js';
 export * from './ActivityClassQueue.js';
 export * from './ActivityCollector.js';
 export * from './ActivityCollectorSort.js';
 export * from './ActivityJob.js';
+export * from './ActivityJobClaimOrder.js';
 export * from './ActivityJobClass.js';
 export * from './ActivityJobScope.js';
 export * from './ActivityJobSort.js';

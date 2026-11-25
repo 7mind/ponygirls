@@ -157,6 +157,8 @@ root adt Operation {
   data StartMcpTest { instanceId: uid runId: uid prompt: str }
   data ReadMcpTest { instanceId: uid runId: uid afterSequence: i64 limit: i32 }
   data CancelMcpTest { instanceId: uid runId: uid }
+  data ActivityClaimOrderSummary {}
+  data ActivityClaimOrderJobs { query: ActivityClaimOrderJobsQuery }
 }
 
 root data ClientEnvelope { requestId: uid operation: Operation }
@@ -198,6 +200,8 @@ root adt Result {
   data ReindexStatus { result: ReindexStatusResult }
   data McpTestTools { result: McpTestCatalog }
   data McpTestRun { result: McpTestSnapshot }
+  data ActivityClaimOrderSummary { result: ActivityClaimOrderSummaryResult }
+  data ActivityClaimOrderJobs { result: ActivityClaimOrderJobsResult }
 }
 
 root data ServerEnvelope { requestId: uid result: Result }
@@ -271,7 +275,7 @@ enum ActivityCollectorSort {
 
 enum ActivityJobSort {
   LastTimestamp Title Collector State Revision Profile Attempts CompletedWindows
-  TotalWindows LeaseExpiresAt LeaseState Reason Classification JobId SessionId WaitingSince JobClass WaitingReason
+  TotalWindows LeaseExpiresAt LeaseState Reason Classification JobId SessionId
 }
 
 data JobCounts {
@@ -302,7 +306,6 @@ data ActivityResult {
   observedAt: str user: UserInfo archiveHeads: i64 headsWithoutTargetJob: i64
   current: JobCounts historical: JobCounts
   collectors: lst[ActivityCollector] totalCollectors: i64 allCollectors: i64 nextCursor: opt[str]
-  queue: opt[ActivityQueue]
 }
 
 data ActivityJobsQuery {
@@ -326,12 +329,23 @@ data ActivityJob {
   job: JobInfo profile: str classification: ActivityJobClass
   leaseExpiresAt: opt[str] leaseActive: bit retryable: bit
   collectorId: str session: SessionInfo lastTimestamp: opt[str]
-  waitingSince: opt[str] bulk: opt[bit] waiting: opt[ActivityJobWaiting] ahead: opt[i64]
 }
 
 data ActivityJobsResult {
-  observedAt: str jobs: lst[ActivityJob] total: i64 nextCursor: opt[str] claimOrder: opt[ActivityClaimOrder]
+  observedAt: str jobs: lst[ActivityJob] total: i64 nextCursor: opt[str]
 }
+
+data ActivityClaimOrderSummaryResult { observedAt: str queue: ActivityQueue }
+
+enum ActivityClaimOrderSort { WaitingSince JobClass WaitingReason }
+
+data ActivityClaimOrderJobsQuery { jobs: ActivityJobsQuery order: opt[ActivityClaimOrderSort] }
+
+data ActivityJobClaimOrder {
+  jobId: uid waitingSince: opt[str] bulk: opt[bit] waiting: opt[ActivityJobWaiting] ahead: opt[i64]
+}
+
+data ActivityClaimOrderJobsResult { page: ActivityJobsResult claimOrder: ActivityClaimOrder jobs: lst[ActivityJobClaimOrder] }
 
 data RetryFailedCounts {
   eligibleCurrentFailed: i64 supersededRevisionFailed: i64 obsoleteProfileFailed: i64

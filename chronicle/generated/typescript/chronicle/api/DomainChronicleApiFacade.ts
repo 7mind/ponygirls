@@ -4,10 +4,15 @@ import { AbstractBaboonJsonCodecs, AbstractBaboonUebaCodecs, BaboonBinCodec, Bab
 import type { AbstractBaboonConversions } from '../../BaboonSharedRuntime.js';
 import { BaboonCodecsFacade } from '../../BaboonCodecsFacade.js';
 import { ActivityClaimOrder, ActivityClaimOrder_JsonCodec } from './ActivityClaimOrder.js';
+import { ActivityClaimOrderJobsQuery, ActivityClaimOrderJobsQuery_JsonCodec } from './ActivityClaimOrderJobsQuery.js';
+import { ActivityClaimOrderJobsResult, ActivityClaimOrderJobsResult_JsonCodec } from './ActivityClaimOrderJobsResult.js';
+import { ActivityClaimOrderSort, ActivityClaimOrderSort_JsonCodec } from './ActivityClaimOrderSort.js';
+import { ActivityClaimOrderSummaryResult, ActivityClaimOrderSummaryResult_JsonCodec } from './ActivityClaimOrderSummaryResult.js';
 import { ActivityClassQueue, ActivityClassQueue_JsonCodec } from './ActivityClassQueue.js';
 import { ActivityCollector, ActivityCollector_JsonCodec } from './ActivityCollector.js';
 import { ActivityCollectorSort, ActivityCollectorSort_JsonCodec } from './ActivityCollectorSort.js';
 import { ActivityJob, ActivityJob_JsonCodec } from './ActivityJob.js';
+import { ActivityJobClaimOrder, ActivityJobClaimOrder_JsonCodec } from './ActivityJobClaimOrder.js';
 import { ActivityJobClass, ActivityJobClass_JsonCodec } from './ActivityJobClass.js';
 import { ActivityJobScope, ActivityJobScope_JsonCodec } from './ActivityJobScope.js';
 import { ActivityJobSort, ActivityJobSort_JsonCodec } from './ActivityJobSort.js';
@@ -130,10 +135,15 @@ class DomainChronicleApiV1_9_0JsonCodecs extends AbstractBaboonJsonCodecs {
     constructor() {
         super();
         this.register(ActivityClaimOrder_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityClaimOrder_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ActivityClaimOrderJobsQuery_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityClaimOrderJobsQuery_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ActivityClaimOrderJobsResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityClaimOrderJobsResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ActivityClaimOrderSort_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityClaimOrderSort_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ActivityClaimOrderSummaryResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityClaimOrderSummaryResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityClassQueue_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityClassQueue_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityCollector_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityCollector_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityCollectorSort_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityCollectorSort_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityJob_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityJob_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ActivityJobClaimOrder_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityJobClaimOrder_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityJobClass_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityJobClass_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityJobScope_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityJobScope_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityJobSort_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityJobSort_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -269,10 +279,15 @@ class DomainChronicleApiV1_9_0Conversions implements AbstractBaboonConversions {
 class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
     private static readonly SAME_IN: { readonly [typeId: string]: readonly string[] } = {
         "chronicle.api/:#ActivityClaimOrder": ['1.9.0'],
+        "chronicle.api/:#ActivityClaimOrderJobsQuery": ['1.9.0'],
+        "chronicle.api/:#ActivityClaimOrderJobsResult": ['1.9.0'],
+        "chronicle.api/:#ActivityClaimOrderSort": ['1.9.0'],
+        "chronicle.api/:#ActivityClaimOrderSummaryResult": ['1.9.0'],
         "chronicle.api/:#ActivityClassQueue": ['1.9.0'],
         "chronicle.api/:#ActivityCollector": ['1.9.0'],
         "chronicle.api/:#ActivityCollectorSort": ['1.9.0'],
         "chronicle.api/:#ActivityJob": ['1.9.0'],
+        "chronicle.api/:#ActivityJobClaimOrder": ['1.9.0'],
         "chronicle.api/:#ActivityJobClass": ['1.9.0'],
         "chronicle.api/:#ActivityJobScope": ['1.9.0'],
         "chronicle.api/:#ActivityJobSort": ['1.9.0'],
@@ -408,6 +423,8 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
         "chronicle.api/[chronicle.api/:#McpTestItem]#ToolResult": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Operation]#AcceptInvite": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Operation]#Activity": ['1.9.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#ActivityClaimOrderJobs": ['1.9.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#ActivityClaimOrderSummary": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Operation]#ActivityJobs": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Operation]#ApplyOwnerReindex": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Operation]#ApplyRetryFailed": ['1.9.0'],
@@ -454,6 +471,8 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
         "chronicle.api/[chronicle.api/:#Operation]#StartMcpTest": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Operation]#Whoami": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Result]#Activity": ['1.9.0'],
+        "chronicle.api/[chronicle.api/:#Result]#ActivityClaimOrderJobs": ['1.9.0'],
+        "chronicle.api/[chronicle.api/:#Result]#ActivityClaimOrderSummary": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Result]#ActivityJobs": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Result]#Archive": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Result]#ArchiveSearch": ['1.9.0'],
@@ -492,10 +511,15 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
     };
     private static readonly FORWARD: { readonly [typeId: string]: { readonly [version: string]: string } } = {
         "chronicle.api/:#ActivityClaimOrder": { '1.9.0': 'identical' },
+        "chronicle.api/:#ActivityClaimOrderJobsQuery": { '1.9.0': 'identical' },
+        "chronicle.api/:#ActivityClaimOrderJobsResult": { '1.9.0': 'identical' },
+        "chronicle.api/:#ActivityClaimOrderSort": { '1.9.0': 'identical' },
+        "chronicle.api/:#ActivityClaimOrderSummaryResult": { '1.9.0': 'identical' },
         "chronicle.api/:#ActivityClassQueue": { '1.9.0': 'identical' },
         "chronicle.api/:#ActivityCollector": { '1.9.0': 'identical' },
         "chronicle.api/:#ActivityCollectorSort": { '1.9.0': 'identical' },
         "chronicle.api/:#ActivityJob": { '1.9.0': 'identical' },
+        "chronicle.api/:#ActivityJobClaimOrder": { '1.9.0': 'identical' },
         "chronicle.api/:#ActivityJobClass": { '1.9.0': 'identical' },
         "chronicle.api/:#ActivityJobScope": { '1.9.0': 'identical' },
         "chronicle.api/:#ActivityJobSort": { '1.9.0': 'identical' },
@@ -631,6 +655,8 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
         "chronicle.api/[chronicle.api/:#McpTestItem]#ToolResult": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#AcceptInvite": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#Activity": { '1.9.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#ActivityClaimOrderJobs": { '1.9.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#ActivityClaimOrderSummary": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#ActivityJobs": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#ApplyOwnerReindex": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#ApplyRetryFailed": { '1.9.0': 'identical' },
@@ -677,6 +703,8 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
         "chronicle.api/[chronicle.api/:#Operation]#StartMcpTest": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#Whoami": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Result]#Activity": { '1.9.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#ActivityClaimOrderJobs": { '1.9.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#ActivityClaimOrderSummary": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Result]#ActivityJobs": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Result]#Archive": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Result]#ArchiveSearch": { '1.9.0': 'identical' },

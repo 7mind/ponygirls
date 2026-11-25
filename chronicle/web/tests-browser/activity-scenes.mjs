@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
 import { Goal50Fixture, api } from './goal50-fixture.mjs';
-import { pauseClock } from './fixture.mjs';
+import { jobQuery, pauseClock } from './fixture.mjs';
 
 export const DESKTOP = { width: 1440, height: 900 }, LAPTOP = { width: 1024, height: 700 }, PHONE = { width: 390, height: 844 };
 // Application constants the cases depend on (activity/*.tsx) and the shared token heights (tokens.css).
@@ -66,6 +66,8 @@ export const combobox = (page, kind) => region(page, LISTS[kind].region).getByRo
 export const button = (scope, name) => scope.getByRole('button', { name, exact: true });
 export const hashParam = (page, name) => page.evaluate(key => new URLSearchParams(location.hash.split('?')[1] ?? '').get(key), name);
 export const activityQueries = (fixture, Type) => fixture.calls.filter(call => call.operation instanceof Type).map(call => call.operation.query);
+/** The job list's queries, as the claim-order read sends them (its claim-order sort, if any, in place of the list's). */
+export const jobQueries = fixture => fixture.calls.filter(call => call.operation instanceof api.Operation_ActivityClaimOrderJobs).map(call => jobQuery(call.operation.query));
 /** Lets the page run its queued tasks (renders, effects, socket sends) without advancing the paused clock. */
 export async function quiesce(page) { await page.evaluate(rounds => new Promise(resolve => { const channel = new MessageChannel(); let left = rounds; channel.port1.onmessage = () => { if (--left === 0) resolve(); else channel.port2.postMessage(0); }; channel.port2.postMessage(0); }), QUIESCE_TASKS); }
 /** Opens a section by its sub-navigation tab and waits for its region (and first rows for a list). */

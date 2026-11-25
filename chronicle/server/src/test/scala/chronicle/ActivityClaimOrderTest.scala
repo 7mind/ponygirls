@@ -55,9 +55,26 @@ final class ActivityClaimOrderTest extends munit.FunSuite {
   private def activity(f: Fixture,mode: ClaimOrderMode,lanes: Int=4): PostgresActivity = new PostgresActivity(f.db,Clock.fixed(now,ZoneOffset.UTC),ActivityClaimOrderView(mode,lanes))
   private val waiting=ClaimOrderMode.Waiting(1)
   private def query(scope: ActivityJobScope=ActivityJobScope.All): ActivityJobsQuery = ActivityJobsQuery(None,scope,"",ActivityJobSort.JobId,SortDirection.Asc,None,100)
-  private def jobs(f: Fixture,mode: ClaimOrderMode,owner: String,lanes: Int=4): Map[UUID,ActivityJob] = activity(f,mode,lanes).jobs(owner,query()).jobs.map(j => j.job.id -> j).toMap
-  private def summary(f: Fixture,mode: ClaimOrderMode,owner: String,lanes: Int=4): ActivityResult =
-    activity(f,mode,lanes).summary(UserInfo(owner,owner,List(Scope.Read)),ActivityQuery("",ActivityCollectorSort.CollectorId,SortDirection.Asc,None,100))
+  /** A job of the claim-order read: the job list's row and its claim-order entry (the dashboard merges them by job id). */
+  private final case class Claimed(item: ActivityJob,claim: ActivityJobClaimOrder) {
+    def job: JobInfo = item.job
+    def session: SessionInfo = item.session
+    def leaseActive: Boolean = item.leaseActive
+    def waiting: Option[ActivityJobWaiting] = claim.waiting
+    def ahead: Option[Long] = claim.ahead
+    def waitingSince: Option[String] = claim.waitingSince
+    def bulk: Option[Boolean] = claim.bulk
+  }
+  private def merged(result: ActivityClaimOrderJobsResult): List[Claimed] = {
+    assertEquals(result.jobs.map(_.jobId),result.page.jobs.map(_.job.id),"one claim-order entry per job, in the page's order")
+    result.page.jobs.zip(result.jobs).map(Claimed.apply)
+  }
+  private def claimQuery(q: ActivityJobsQuery=query(),order: Option[ActivityClaimOrderSort]=None): ActivityClaimOrderJobsQuery = ActivityClaimOrderJobsQuery(q,order)
+  private def jobs(f: Fixture,mode: ClaimOrderMode,owner: String,lanes: Int=4): Map[UUID,Claimed] =
+    merged(activity(f,mode,lanes).claimOrderJobs(owner,claimQuery())).map(j => j.job.id -> j).toMap
+  private def user(owner: String): UserInfo = UserInfo(owner,owner,List(Scope.Read))
+  private def summary(f: Fixture,mode: ClaimOrderMode,owner: String,lanes: Int=4): ActivityQueue = activity(f,mode,lanes).claimOrderSummary(user(owner)).queue
+  private val collectors=ActivityQuery("",ActivityCollectorSort.CollectorId,SortDirection.Asc,None,100)
 
   test("defaults: today's claim order unless configured") {
     assertEquals(ClaimOrderMode.of(Fixtures.config()),ClaimOrderMode.SourceId)
@@ -128,7 +145,7 @@ final class ActivityClaimOrderTest extends munit.FunSuite {
         assertEquals(read(row.job).waiting,Some(ActivityJobWaiting.IndexingOff()),row.title)
         assertEquals(read(row.job).ahead,None,row.title)
       }
-      val counts=summary(f,mode,"a").queue.get
+      val counts=summary(f,mode,"a")
       assertEquals(counts.fresh,ActivityClassQueue(5,0,0,0,Some(minutes(-40).toString)))
       assertEquals(counts.awaitingLarge,0L); assertEquals(counts.largeAhead,None)
     }
@@ -147,9 +164,8 @@ final class ActivityClaimOrderTest extends munit.FunSuite {
         assertEquals(job.waiting,Some(ActivityJobWaiting.LeaseExpiredAwaitingReclaim()),row.title)
         assertEquals(job.job.state,JobState.Running); assert(!job.leaseActive)
       }
-      val counts=summary(f,mode,"a")
-      assertEquals(counts.current.activeRunning,0L)
-      assertEquals(counts.queue.get.fresh,ActivityClassQueue(8,8,0,2,Some(minutes(-120).toString)))
+      assertEquals(activity(f,mode).summary(user("a"),collectors).current.activeRunning,0L)
+      assertEquals(summary(f,mode,"a").fresh,ActivityClassQueue(8,8,0,2,Some(minutes(-120).toString)))
     }
     // Waiting: the oldest of their class. Both are fresh: the small one first, the large one behind it.
     val ordered=jobs(f,waiting,"a")
@@ -188,7 +204,7 @@ final class ActivityClaimOrderTest extends munit.FunSuite {
     plantB(f)
     assertEquals(ahead("a"),Map("a-fresh" -> Some(3L),"a-bulk" -> Some(1L),"a-reclaim" -> Some(1L),"a-sized" -> Some(1L),"a-held" -> None,"a-unclassified" -> None))
     assertEquals(ahead("b"),Map("b-fresh-old" -> Some(0L),"b-fresh-mid" -> Some(2L),"b-bulk" -> Some(0L),"b-sized" -> Some(0L),"b-fresh-new" -> Some(4L),"b-held" -> None))
-    val queue=summary(f,waiting,"a").queue.get
+    val queue=summary(f,waiting,"a")
     assertEquals(queue.claimOrder,ActivityClaimOrder.Waiting)
     assertEquals(queue.awaitingLarge,1L); assertEquals(queue.largeAhead,Some(1L))
     // An owner whose indexing is off is not eligible: its jobs are not ahead of anyone's.
@@ -227,7 +243,7 @@ final class ActivityClaimOrderTest extends munit.FunSuite {
   test("the advertised order is the claim's under Waiting: real lane claims (ClaimOrder) take each group in rank order — lane 0 the sized jobs, a bulk lane the bulk class, a fresh lane the fresh class") { withFixture { f =>
     plantA(f); plantB(f)
     val read=List("a","b").flatMap(owner => jobs(f,waiting,owner).values).filter(_.ahead.nonEmpty)
-    def group(j: ActivityJob): String = if(j.job.state==JobState.Queued && j.job.totalWindows.nonEmpty) "sized" else if(j.bulk.contains(true)) "bulk" else "fresh"
+    def group(j: Claimed): String = if(j.job.state==JobState.Queued && j.job.totalWindows.nonEmpty) "sized" else if(j.bulk.contains(true)) "bulk" else "fresh"
     List("sized" -> ClaimLane.of(0,1),"bulk" -> ClaimLane.of(1,1),"fresh" -> ClaimLane.of(2,1)).foreach { (name,lane) =>
       val advertised=read.filter(j => group(j)==name).sortBy(_.ahead.get)
       assert(advertised.size>=2,name)
@@ -252,7 +268,7 @@ final class ActivityClaimOrderTest extends munit.FunSuite {
       assertEquals((read(freedHead.job).waiting,read(freedHead.job).ahead),(Some(ActivityJobWaiting.Queued()),Some(0L)),mode.toString)
       assertEquals((read(heldHead.job).waiting,read(heldHead.job).ahead),(Some(ActivityJobWaiting.BlockedByOlderRevision(1)),None),mode.toString)
       assertEquals((read(unleased.job).waiting,read(unleased.job).ahead,read(unleased.job).leaseActive),(Some(ActivityJobWaiting.RunningWithoutLease()),None,false),mode.toString)
-      val counts=summary(f,mode,"a",lanes).queue.get.fresh
+      val counts=summary(f,mode,"a",lanes).fresh
       assertEquals((counts.queued,counts.claimable,counts.awaitingReclaim),(3L,1L,0L),mode.toString)
     }
     assertEquals(f.archive.claim(f.archive.knownProfiles,ClaimScope.AllOwners,300,LargeJobs.Admitted).map(_.jobId),Some(freedHead.job),"the next real claim takes the advertised candidate")
@@ -261,15 +277,15 @@ final class ActivityClaimOrderTest extends munit.FunSuite {
 
   test("the Class and Why-not-running orders are deterministic and page by cursor: reasons in their precedence, then none; bulk, fresh, then unclassified") { withFixture { f =>
     plantA(f); plantB(f)
-    List(ActivityJobSort.WaitingReason,ActivityJobSort.JobClass).foreach { sort => List(SortDirection.Asc,SortDirection.Desc).foreach { direction =>
-      val q=query().copy(sort=sort,direction=direction)
-      val whole=activity(f,waiting).jobs("a",q).jobs
+    List(ActivityClaimOrderSort.WaitingReason,ActivityClaimOrderSort.JobClass).foreach { sort => List(SortDirection.Asc,SortDirection.Desc).foreach { direction =>
+      val q=query().copy(direction=direction)
+      val whole=merged(activity(f,waiting).claimOrderJobs("a",claimQuery(q,Some(sort))))
       val paged=Iterator.unfold(Option(Option.empty[String])) { cursor => cursor.map { at =>
-        val page=activity(f,waiting).jobs("a",q.copy(cursor=at,limit=1)); (page.jobs,page.nextCursor.map(Some(_)))
+        val page=activity(f,waiting).claimOrderJobs("a",claimQuery(q.copy(cursor=at,limit=1),Some(sort))); (merged(page),page.page.nextCursor.map(Some(_)))
       }}.flatten.toList
       assertEquals(paged.map(_.job.id),whole.map(_.job.id),s"$sort $direction")
-      def key(j: ActivityJob): Option[Int] = sort match {
-        case ActivityJobSort.JobClass => j.bulk.map(b => if(b) 0 else 1)
+      def key(j: Claimed): Option[Int] = sort match {
+        case ActivityClaimOrderSort.JobClass => j.bulk.map(b => if(b) 0 else 1)
         case _ => j.waiting.map(w => ActivityQueueSql.reasonOrder.indexOf(w.getClass.getSimpleName)+1)
       }
       val keyed=whole.map(key)
@@ -280,33 +296,108 @@ final class ActivityClaimOrderTest extends munit.FunSuite {
     }}
   }}
 
-  test("another owner's jobs change only the ahead counts: no other field or byte of any response, and nothing of theirs is named") { withFixture { f =>
+  test("another owner's jobs change only the ahead counts of the claim-order read: no other field or byte of any response, and nothing of theirs is named") { withFixture { f =>
     plantA(f)
-    def responses(mode: ClaimOrderMode): (ActivityJobsResult,ActivityResult) = (activity(f,mode).jobs("a",query()),summary(f,mode,"a"))
-    def counts(result: ActivityJobsResult): List[Option[Long]] = result.jobs.map(_.ahead)
-    def withoutCounts(result: ActivityJobsResult): String = Wire.encode(ActivityJobsResult.codecJson,result.copy(jobs=result.jobs.map(_.copy(ahead=None)))).noSpaces
-    def summaryWithoutCounts(result: ActivityResult): String = Wire.encode(ActivityResult.codecJson,result.copy(queue=result.queue.map(_.copy(largeAhead=None)))).noSpaces
+    val user=this.user("a")
+    def responses(mode: ClaimOrderMode): (ActivityClaimOrderJobsResult,ActivityClaimOrderSummaryResult,ActivityJobsResult,ActivityResult) = {
+      val read=activity(f,mode)
+      (read.claimOrderJobs("a",claimQuery()),read.claimOrderSummary(user),read.jobs("a",query()),read.summary(user,collectors))
+    }
+    def counts(result: ActivityClaimOrderJobsResult): List[Option[Long]] = result.jobs.map(_.ahead)
+    def withoutCounts(result: ActivityClaimOrderJobsResult): String = Wire.encode(ActivityClaimOrderJobsResult.codecJson,result.copy(jobs=result.jobs.map(_.copy(ahead=None)))).noSpaces
+    def summaryWithoutCounts(result: ActivityClaimOrderSummaryResult): String = Wire.encode(ActivityClaimOrderSummaryResult.codecJson,result.copy(queue=result.queue.copy(largeAhead=None))).noSpaces
     val modes=List(ClaimOrderMode.SourceId,waiting)
     val alone=modes.map(responses)
     val b=plantB(f)
     val together=modes.map(responses)
-    alone.zip(together).zip(modes).foreach { case (((jobsAlone,summaryAlone),(jobsTogether,summaryTogether)),mode) =>
+    alone.zip(together).zip(modes).foreach { case (((jobsAlone,summaryAlone,listAlone,activityAlone),(jobsTogether,summaryTogether,listTogether,activityTogether)),mode) =>
       assertEquals(withoutCounts(jobsTogether),withoutCounts(jobsAlone),mode.toString)
       assertEquals(summaryWithoutCounts(summaryTogether),summaryWithoutCounts(summaryAlone),mode.toString)
-      val text=Wire.encode(ActivityJobsResult.codecJson,jobsTogether).noSpaces+Wire.encode(ActivityResult.codecJson,summaryTogether).noSpaces
+      // The replies of the existing operations do not change at all.
+      assertEquals(Wire.encode(ActivityJobsResult.codecJson,listTogether).noSpaces,Wire.encode(ActivityJobsResult.codecJson,listAlone).noSpaces,mode.toString)
+      assertEquals(Wire.encode(ActivityResult.codecJson,activityTogether).noSpaces,Wire.encode(ActivityResult.codecJson,activityAlone).noSpaces,mode.toString)
+      val text=Wire.encode(ActivityClaimOrderJobsResult.codecJson,jobsTogether).noSpaces+Wire.encode(ActivityClaimOrderSummaryResult.codecJson,summaryTogether).noSpaces
       b.values.foreach { row => List(row.job.toString,row.session.toString,row.title).foreach(value => assert(!text.contains(value),s"$mode names $value")) }
     }
     val (waitingAlone,waitingTogether)=(alone(1),together(1))
     assertNotEquals(counts(waitingTogether._1),counts(waitingAlone._1),"the counts include the other owner's older jobs")
-    assertNotEquals(waitingTogether._2.queue.get.largeAhead,waitingAlone._2.queue.get.largeAhead)
+    assertNotEquals(waitingTogether._2.queue.largeAhead,waitingAlone._2.queue.largeAhead)
   }}
 
   test("per-class counts read the owner's own jobs only") { withFixture { f =>
     plantA(f); plantB(f)
-    val queue=summary(f,waiting,"a").queue.get
+    val queue=summary(f,waiting,"a")
     assertEquals(queue.fresh,ActivityClassQueue(3,2,1,1,Some(minutes(-60).toString)))
     assertEquals(queue.bulk,ActivityClassQueue(2,2,0,0,Some(minutes(-20).toString)))
     assertEquals(queue.unclassified,ActivityClassQueue(1,1,0,0,None))
-    assertEquals(summary(f,ClaimOrderMode.SourceId,"a").queue.get.copy(claimOrder=ActivityClaimOrder.Waiting,largeAhead=None),queue.copy(largeAhead=None))
+    assertEquals(summary(f,ClaimOrderMode.SourceId,"a").copy(claimOrder=ActivityClaimOrder.Waiting,largeAhead=None),queue.copy(largeAhead=None))
+  }}
+
+  test("an owner whose retained target this deployment does not execute: both claim-order reads answer, its jobs IndexingOff without a rank (the existing reads keep their answer)") { withFixture { f =>
+    val queued=source(f,"a","queued"); val expired=source(f,"a","expired")
+    set(f,queued,JobState.Queued,waiting=Some(minutes(-10)))
+    set(f,expired,JobState.Running,lease=Some(minutes(-5)),attempts=1,waiting=Some(minutes(-20)))
+    val rotated=f.config.copy(annotation=f.config.annotation.copy(revision="synthetic-rotation"))
+    val catalog=IndexProfileCatalog.current(rotated)
+    assert(!catalog.knownProfiles(f.db.profiles.preferred.profile))
+    scala.util.Using.resource(new Database(rotated,catalog)) { other =>
+      List(ClaimOrderMode.SourceId -> 1,waiting -> 4).foreach { (mode,lanes) =>
+        val read=new PostgresActivity(other,Clock.fixed(now,ZoneOffset.UTC),ActivityClaimOrderView(mode,lanes))
+        val listed=merged(read.claimOrderJobs("a",claimQuery())).map(j => j.job.id -> j).toMap
+        List(queued,expired).foreach { row =>
+          assertEquals((listed(row.job).waiting,listed(row.job).ahead),(Some(ActivityJobWaiting.IndexingOff()),None),s"$mode ${row.title}")
+        }
+        val queue=read.claimOrderSummary(user("a")).queue
+        assertEquals(queue.fresh,ActivityClassQueue(2,0,0,0,Some(minutes(-20).toString)),mode.toString)
+        assertEquals((queue.awaitingLarge,queue.largeAhead),(0L,None),mode.toString)
+        assertEquals(intercept[DomainError](read.jobs("a",query())).code,"unavailable","the existing job list answers as before")
+      }
+    }
+  }}
+
+  test("one observation instant of microseconds: observedAt, the lease flags, reasons, candidates and ranks all at it, also between two microseconds") { withFixture { f =>
+    val row=source(f,"a","ended")
+    val lease=minutes(-1)
+    set(f,row,JobState.Running,lease=Some(lease),attempts=1,waiting=Some(minutes(-20)))
+    def read(at: Instant): (ActivityClaimOrderJobsResult,ActivityClaimOrderSummaryResult) = {
+      val activity=new PostgresActivity(f.db,Clock.fixed(at,ZoneOffset.UTC),ActivityClaimOrderView(ClaimOrderMode.SourceId,1))
+      (activity.claimOrderJobs("a",claimQuery()),activity.claimOrderSummary(user("a")))
+    }
+    // At the lease's own microsecond (and 500 ns into it) the lease is no longer valid and a claim, which needs an earlier
+    // lease, cannot take it yet: awaiting reclaim, not a candidate.
+    List(lease,lease.plusNanos(500)).foreach { at =>
+      val (listed,queue)=read(at)
+      assertEquals(listed.page.observedAt,lease.toString,at.toString); assertEquals(queue.observedAt,lease.toString,at.toString)
+      val job=merged(listed).head
+      assertEquals((job.leaseActive,job.waiting,job.ahead),(false,Some(ActivityJobWaiting.LeaseExpiredAwaitingReclaim()),None),at.toString)
+      assertEquals((queue.queue.fresh.claimable,queue.queue.fresh.awaitingReclaim),(0L,1L),at.toString)
+    }
+    // From the next microsecond (also 500 ns into it) a claim takes it: a candidate with its rank.
+    val next=lease.plus(1,ChronoUnit.MICROS)
+    List(next,next.plusNanos(500)).foreach { at =>
+      val (listed,queue)=read(at)
+      assertEquals(listed.page.observedAt,next.toString,at.toString); assertEquals(queue.observedAt,next.toString,at.toString)
+      val job=merged(listed).head
+      assertEquals((job.leaseActive,job.waiting,job.ahead),(false,Some(ActivityJobWaiting.LeaseExpiredAwaitingReclaim()),Some(0L)),at.toString)
+      assertEquals((queue.queue.fresh.claimable,queue.queue.fresh.awaitingReclaim),(1L,1L),at.toString)
+    }
+  }}
+
+  test("the claim-order read carries the job list unchanged, with cursors of its own: neither list accepts the other's") { withFixture { f =>
+    plantA(f); plantB(f)
+    List(ActivityJobSort.Title,ActivityJobSort.JobId,ActivityJobSort.LastTimestamp).foreach { sort =>
+      val q=query().copy(sort=sort,scope=ActivityJobScope.Current)
+      val read=activity(f,waiting)
+      val claimed=read.claimOrderJobs("a",claimQuery(q))
+      assertEquals(Wire.encode(ActivityJobsResult.codecJson,claimed.page).noSpaces,Wire.encode(ActivityJobsResult.codecJson,read.jobs("a",q)).noSpaces,sort.toString)
+      val first=read.jobs("a",q.copy(limit=2)); val claimFirst=read.claimOrderJobs("a",claimQuery(q.copy(limit=2)))
+      assertEquals(claimFirst.page.jobs,first.jobs,sort.toString)
+      val (listCursor,claimCursor)=(first.nextCursor.get,claimFirst.page.nextCursor.get)
+      assertEquals(read.claimOrderJobs("a",claimQuery(q.copy(limit=2,cursor=Some(claimCursor)))).page.jobs,read.jobs("a",q.copy(limit=2,cursor=Some(listCursor))).jobs,sort.toString)
+      assertEquals(intercept[DomainError](read.jobs("a",q.copy(limit=2,cursor=Some(claimCursor)))).code,"invalid",sort.toString)
+      assertEquals(intercept[DomainError](read.claimOrderJobs("a",claimQuery(q.copy(limit=2,cursor=Some(listCursor))))).code,"invalid",sort.toString)
+      val ordered=read.claimOrderJobs("a",claimQuery(q.copy(limit=2),Some(ActivityClaimOrderSort.WaitingSince))).page.nextCursor.get
+      assertEquals(intercept[DomainError](read.claimOrderJobs("a",claimQuery(q.copy(limit=2,cursor=Some(ordered))))).code,"invalid",sort.toString)
+    }
   }}
 }

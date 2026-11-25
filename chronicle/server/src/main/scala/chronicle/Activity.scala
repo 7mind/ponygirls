@@ -12,6 +12,10 @@ import scala.util.Try
 trait ActivityIndex {
   def summary(user: UserInfo,q: ActivityQuery): ActivityResult
   def jobs(owner: String,q: ActivityJobsQuery): ActivityJobsResult
+  /** The claim-order view (CONTRACT.md "Claim order in Activity"): operations of their own, so that the replies of
+    * `summary` and `jobs` stay exactly those of the release before it. */
+  def claimOrderSummary(user: UserInfo): ActivityClaimOrderSummaryResult
+  def claimOrderJobs(owner: String,q: ActivityClaimOrderJobsQuery): ActivityClaimOrderJobsResult
 }
 private[chronicle] final case class ActivitySql(text: String,args: List[Sql.Param])
 private[chronicle] enum ActivityPositionKind { case Text,RevisionText,Count,Time,Uuid,Phase,Freshness,State,Lease,Classification }
@@ -90,10 +94,12 @@ private[chronicle] object ActivityQueueSql {
   /** The claim's candidate predicate on job `q` of an eligible owner whose indexing epoch is `epoch`: claimable and not
     * held by an older Running revision. */
   private def candidate(q: String,epoch: String): String = s"(${observed(Jobs.claimable(q,epoch))} AND NOT EXISTS${blocker(q,epoch,"1")})"
+  /** Whether this deployment executes the job's profile: the claim takes only jobs of the claimed profiles. */
+  private def executed(q: String): String = s"$q.profile IN(SELECT profile FROM claimed)"
   private def reason(mode: ClaimOrderMode,epoch: String): String = {
     val large=mode match { case ClaimOrderMode.SourceId => "AwaitingLargePermit"; case ClaimOrderMode.Waiting(_) => "AwaitingLargeLane" }
     s"""CASE WHEN NOT j.is_current OR q.state NOT IN('Queued','Running') THEN NULL
-      WHEN NOT h.indexing_allowed THEN 'IndexingOff'
+      WHEN NOT h.indexing_allowed OR NOT ${executed("q")} THEN 'IndexingOff'
       WHEN ${Jobs.invalidated("q",epoch)} THEN 'AwaitingReclaim'
       WHEN ${observed(Jobs.leased("q"))} THEN NULL
       WHEN q.state='Running' AND q.lease_until IS NULL THEN 'RunningWithoutLease'
@@ -120,15 +126,17 @@ private[chronicle] object ActivityQueueSql {
     * statement. Parameters: the claimed profiles, after those of the corpus. */
   def cte(view: ActivityClaimOrderView,profiles: Int,allowedSql: String): String = {
     val epoch="e.epoch"
-    s""", queue AS MATERIALIZED (
+    val claimed=if(profiles==0) "SELECT NULL::text AS profile WHERE false" else List.fill(profiles)("(?)").mkString("VALUES ",",","")
+    s""", claimed(profile) AS ($claimed),
+    queue AS MATERIALIZED (
       SELECT ${order("q")},h.owner,${sizes("q")},CASE WHEN q.state='Queued' THEN q.lease_until END AS held_until,older.revision AS older_revision,
-        ${reason(view.mode,epoch)} AS waiting,COALESCE(j.is_current AND h.indexing_allowed AND ${candidate("q",epoch)},false) AS candidate
+        ${reason(view.mode,epoch)} AS waiting,COALESCE(j.is_current AND h.indexing_allowed AND ${executed("q")} AND ${candidate("q",epoch)},false) AS candidate
       FROM jobs j JOIN heads h ON h.id=j.session_id JOIN ch_jobs q ON q.id=j.id
       CROSS JOIN LATERAL (SELECT ${ChronicleIndexing.epochOwnerSql("h.owner")} AS epoch OFFSET 0) e
       CROSS JOIN LATERAL ${blocker("q",epoch,"max(o.revision) AS revision")} older),
     eligible AS MATERIALIZED (
       SELECT t.owner,t.profile,${ChronicleIndexing.epochOwnerSql("t.owner")} AS epoch FROM ch_owner_targets t JOIN ch_users u ON u.id=t.owner AND u.enabled
-      WHERE t.profile IN(${List.fill(profiles)("?").mkString(",")}) AND $allowedSql),
+      WHERE ${executed("t")} AND $allowedSql),
     claim_queue AS MATERIALIZED (
       SELECT ${order("j")},e.owner,${sizes("j")},$stepGroup AS step_group
       FROM eligible e JOIN ch_sources s ON s.owner=e.owner AND NOT s.tombstone
@@ -213,6 +221,15 @@ final class PostgresActivity(db: Database,clock: Clock,view: ActivityClaimOrderV
     val target=OwnerTargets.read(c,owner,false)
     db.profiles.resolve(target.profile)
     f(c,clock.instant())
+  }
+  /** The claim-order reads: the owner's metadata-read authority only — a retained target this deployment does not execute
+    * makes the owner ineligible for claims (`IndexingOff`, no rank), it is not a failure of the read; and an observation
+    * instant of microseconds, PostgreSQL's precision, so that `observedAt`, the lease flags and the scheduler predicates
+    * are all evaluated at the same instant. */
+  private def claimReading[A](owner: String)(f: (Connection,Instant) => A): A = IndexedRead.transaction(db) { c =>
+    Check(Sql.one(c,"SELECT 1 FROM ch_users WHERE id=? AND enabled",owner)(_ => true).contains(true),"unauthorized","owner disabled")
+    OwnerTargets.read(c,owner,false)
+    f(c,clock.instant().truncatedTo(ChronoUnit.MICROS))
   }
   private def literal(value: String): String = "%"+value.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%"
   private def insensitive(column: String,value: String): ActivitySql = ActivitySql(s"COALESCE(lower(($column) $unicode)=lower(? $unicode),false)",List(value))
@@ -309,9 +326,11 @@ final class PostgresActivity(db: Database,clock: Clock,view: ActivityClaimOrderV
     case ActivityJobSort.Classification => ActivityOrder(s"lower(($classification) $unicode)",ActivityPositionKind.Classification,false)
     case ActivityJobSort.JobId => ActivityOrder("j.id::text COLLATE \"C\"",ActivityPositionKind.Uuid,false)
     case ActivityJobSort.SessionId => ActivityOrder("j.session_id::text COLLATE \"C\"",ActivityPositionKind.Uuid,false)
-    case ActivityJobSort.WaitingSince => ActivityOrder("EXTRACT(epoch FROM j.waiting_since)",ActivityPositionKind.Time,true)
-    case ActivityJobSort.JobClass => ActivityOrder("CASE WHEN j.bulk THEN 'bulk' WHEN NOT j.bulk THEN 'fresh' END",ActivityPositionKind.Text,true)
-    case ActivityJobSort.WaitingReason => ActivityOrder(ActivityQueueSql.reasonOrdinal("j.waiting"),ActivityPositionKind.Count,true)
+  }
+  private def claimOrderColumn(sort: ActivityClaimOrderSort): ActivityOrder = sort match {
+    case ActivityClaimOrderSort.WaitingSince => ActivityOrder("EXTRACT(epoch FROM j.waiting_since)",ActivityPositionKind.Time,true)
+    case ActivityClaimOrderSort.JobClass => ActivityOrder("CASE WHEN j.bulk THEN 'bulk' WHEN NOT j.bulk THEN 'fresh' END",ActivityPositionKind.Text,true)
+    case ActivityClaimOrderSort.WaitingReason => ActivityOrder(ActivityQueueSql.reasonOrdinal("j.waiting"),ActivityPositionKind.Count,true)
   }
   private def seek(position: Option[ActivityPosition],order: ActivityOrder,direction: SortDirection,id: String,uuid: Boolean): ActivitySql = position match {
     case None => ActivitySql("true",Nil)
@@ -386,61 +405,79 @@ final class PostgresActivity(db: Database,clock: Clock,view: ActivityClaimOrderV
       }
       val values=rows.flatMap(_._2); val page=values.take(q.limit)
       val next=if(values.size>q.limit) Some(ActivityCursor.encodeCollector(q,user.id,order,ActivityPosition(page.last._2,page.last._1.collectorId))) else None
-      ActivityResult(now.toString,user,totals.archiveHeads,totals.withoutTarget,totals.current,totals.historical,page.map(_._1),rows.head._1,totals.collectors,next,Some(queue(c,user.id,now)))
+      ActivityResult(now.toString,user,totals.archiveHeads,totals.withoutTarget,totals.current,totals.historical,page.map(_._1),rows.head._1,totals.collectors,next)
     }
   }
+  def claimOrderSummary(user: UserInfo): ActivityClaimOrderSummaryResult =
+    claimReading(user.id) { (c,now) => ActivityClaimOrderSummaryResult(now.toString,queue(c,user.id,now)) }
   def jobs(owner: String,q: ActivityJobsQuery): ActivityJobsResult = {
     ActivityCursor.page(q.limit); q.collectorId.foreach(ActivityCursor.collectorId)
     val parsed=ActivityExpression.jobs(q.expression)
     val order=jobOrder(q.sort)
-    reading(owner) { (c,now) =>
-      val position=ActivityCursor.job(q,owner,order,(id,anchor) =>
-        Sql.one(c,s"""SELECT lower((i.metadata->>'title') $unicode) FROM ch_jobs j
-          JOIN ch_sources s ON s.id=j.session_id
-          JOIN ch_revision_info i ON i.session_id=j.session_id AND i.revision=j.revision
-          WHERE j.id=? AND j.revision=? AND s.owner=? AND NOT s.tombstone""",id,anchor.revision,owner)(r => Option(r.getString(1)))
-          .getOrElse(throw DomainError("conflict","sort cursor anchor unavailable; restart query")))
-      val scope=q.scope match {
-        case ActivityJobScope.Current => ActivitySql("j.is_current",Nil)
-        case ActivityJobScope.Historical => ActivitySql("NOT j.is_current",Nil)
-        case ActivityJobScope.All => ActivitySql("true",Nil)
-      }
-      val predicate=expression(parsed,jobPredicate,value => text(List("j.id::text","j.session_id::text","j.collector_id","j.state","j.revision::text","j.profile","j.attempts::text","j.completed_windows::text","j.total_windows::text","j.error",classification,lease,"j.last_timestamp","j.metadata->>'title'","j.metadata->>'project'","j.metadata->>'gitBranch'","j.metadata->>'producer'","j.metadata->>'model'","j.source->>'format'"),Some("j.metadata->'tags'"),value))
-      val collector=q.collectorId.fold(ActivitySql("true",Nil))(value => ActivitySql("j.collector_id=?",List(value)))
-      val filter=combine(combine(scope,collector,"AND"),predicate,"AND")
-      val cursor=seek(position,order,q.direction,"r.id",true)
-      val directionSql=if(q.direction==SortDirection.Asc) "ASC" else "DESC"
-      val sql=base+queueCte+s""", job_rows AS (SELECT j.*,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp,i.last_timestamp_order,
-          q.waiting_since,q.bulk,q.held_until,q.older_revision,q.waiting,q.candidate
-        FROM jobs j JOIN ch_revision_info i ON i.session_id=j.session_id AND i.revision=j.revision JOIN queue q ON q.id=j.id),
-        filtered AS MATERIALIZED(SELECT j.*,${order.column} AS sort_key FROM job_rows j WHERE (${filter.text}))
-        SELECT counted.total,page.*,page.sort_key::text AS sort_value,CASE WHEN page.candidate THEN ranked.rank END AS ahead FROM (SELECT count(*) AS total FROM filtered) counted
-        LEFT JOIN LATERAL(SELECT r.* FROM filtered r WHERE (${cursor.text}) ORDER BY r.sort_key $directionSql NULLS LAST,r.id LIMIT ?) page ON true
-        LEFT JOIN ranked ON ranked.id=page.id
-        ORDER BY page.sort_key $directionSql NULLS LAST,page.id"""
-      val rows=Sql.rows(c,sql,(queueParameters(owner,now)++filter.args++cursor.args++List(q.limit+1))*) { r =>
-        val row=Option(r.getObject("id",classOf[UUID])).map { id =>
-          val state=JobState.parse(r.getString("state")).get
-          val classification=(r.getBoolean("revision_current"),r.getBoolean("profile_current")) match {
-            case (true,true) => ActivityJobClass.Current
-            case (false,true) => ActivityJobClass.SupersededRevision
-            case (true,false) => ActivityJobClass.ObsoleteProfile
-            case (false,false) => ActivityJobClass.SupersededRevisionAndProfile
-          }
-          val lease=Option(r.getTimestamp("lease_until")).map(_.toInstant)
-          val job=JobInfo(id,r.getObject("session_id",classOf[UUID]),r.getInt("revision"),state,r.getInt("attempts"),Option(r.getString("error")),r.getInt("completed_windows"),Option(r.getObject("total_windows",classOf[java.lang.Integer])).map(_.intValue),Option(r.getString("failure_stage")).map(IndexingFailureStage.parse(_).getOrElse(throw DomainError("internal","invalid persisted failure stage"))))
-          val indexed=Option(r.getObject("indexed_revision",classOf[java.lang.Integer])).map(_.intValue)
-          val session=SessionInfo(ContentView(job.revision,None),job.sessionId,owner,r.getInt("head_revision"),indexed,Wire.decode(Metadata.codecJson,Sql.json(r,"metadata")),Wire.decode(SourceIdentity.codecJson,Sql.json(r,"source")),Completion.parse(r.getString("completion")).get,r.getBoolean("redacted"))
-          (ActivityJob(job,r.getString("profile"),classification,lease.map(_.toString),state==JobState.Running && lease.exists(_.isAfter(now)),classification==ActivityJobClass.Current && state==JobState.Failed,r.getString("collector_id"),session,Option(r.getString("last_timestamp")),
-            Option(r.getTimestamp("waiting_since")).map(_.toInstant.toString),Option(r.getObject("bulk",classOf[java.lang.Boolean])).map(_.booleanValue),
-            ActivityQueueSql.waiting(Option(r.getString("waiting")),Option(r.getTimestamp("held_until")).map(_.toInstant),Option(r.getObject("older_revision",classOf[java.lang.Integer])).map(_.intValue)),Option(r.getObject("ahead",classOf[java.lang.Long])).map(_.longValue)),Option(r.getString("sort_value")))
-        }
-        (r.getLong("total"),row)
-      }
-      val values=rows.flatMap(_._2); val page=values.take(q.limit)
-      val next=if(values.size>q.limit) Some(ActivityCursor.encodeJob(q,owner,order,ActivityPosition(page.last._2,page.last._1.job.id.toString),page.last._1.job.revision)) else None
-      ActivityJobsResult(now.toString,page.map(_._1),rows.head._1,next,Some(ActivityQueueSql.claimOrder(mode)))
+    reading(owner) { (c,now) => jobPage(c,owner,now,q,parsed,order,None)._1 }
+  }
+  def claimOrderJobs(owner: String,query: ActivityClaimOrderJobsQuery): ActivityClaimOrderJobsResult = {
+    val q=query.jobs
+    ActivityCursor.page(q.limit); q.collectorId.foreach(ActivityCursor.collectorId)
+    val parsed=ActivityExpression.jobs(q.expression)
+    val order=query.order.fold(jobOrder(q.sort))(claimOrderColumn)
+    claimReading(owner) { (c,now) =>
+      val (page,claims)=jobPage(c,owner,now,q,parsed,order,Some(query.order))
+      ActivityClaimOrderJobsResult(page,ActivityQueueSql.claimOrder(mode),claims)
     }
+  }
+  /** One page of the owner's jobs. `claim`: the claim-order read (with its order, if any, replacing `q.sort`), which adds
+    * each job's claim-order columns from `queue` and its rank; None: the job list exactly as it was before that view. */
+  private def jobPage(c: Connection,owner: String,now: Instant,q: ActivityJobsQuery,parsed: BooleanExpression[ActivityJobPredicate],order: ActivityOrder,claim: Option[Option[ActivityClaimOrderSort]]): (ActivityJobsResult,List[ActivityJobClaimOrder]) = {
+    val position=ActivityCursor.job(q,owner,order,claim,(id,anchor) =>
+      Sql.one(c,s"""SELECT lower((i.metadata->>'title') $unicode) FROM ch_jobs j
+        JOIN ch_sources s ON s.id=j.session_id
+        JOIN ch_revision_info i ON i.session_id=j.session_id AND i.revision=j.revision
+        WHERE j.id=? AND j.revision=? AND s.owner=? AND NOT s.tombstone""",id,anchor.revision,owner)(r => Option(r.getString(1)))
+        .getOrElse(throw DomainError("conflict","sort cursor anchor unavailable; restart query")))
+    val scope=q.scope match {
+      case ActivityJobScope.Current => ActivitySql("j.is_current",Nil)
+      case ActivityJobScope.Historical => ActivitySql("NOT j.is_current",Nil)
+      case ActivityJobScope.All => ActivitySql("true",Nil)
+    }
+    val predicate=expression(parsed,jobPredicate,value => text(List("j.id::text","j.session_id::text","j.collector_id","j.state","j.revision::text","j.profile","j.attempts::text","j.completed_windows::text","j.total_windows::text","j.error",classification,lease,"j.last_timestamp","j.metadata->>'title'","j.metadata->>'project'","j.metadata->>'gitBranch'","j.metadata->>'producer'","j.metadata->>'model'","j.source->>'format'"),Some("j.metadata->'tags'"),value))
+    val collector=q.collectorId.fold(ActivitySql("true",Nil))(value => ActivitySql("j.collector_id=?",List(value)))
+    val filter=combine(combine(scope,collector,"AND"),predicate,"AND")
+    val cursor=seek(position,order,q.direction,"r.id",true)
+    val directionSql=if(q.direction==SortDirection.Asc) "ASC" else "DESC"
+    val claimed=claim.nonEmpty
+    val (ctes,columns,join,ahead,ranked,params)=
+      if(claimed) (base+queueCte,",q.waiting_since,q.bulk,q.held_until,q.older_revision,q.waiting,q.candidate"," JOIN queue q ON q.id=j.id",
+        ",CASE WHEN page.candidate THEN ranked.rank END AS ahead","\n        LEFT JOIN ranked ON ranked.id=page.id",queueParameters(owner,now))
+      else (base,"","","","",parameters(owner,now))
+    val sql=ctes+s""", job_rows AS (SELECT j.*,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp,i.last_timestamp_order$columns
+        FROM jobs j JOIN ch_revision_info i ON i.session_id=j.session_id AND i.revision=j.revision$join),
+        filtered AS MATERIALIZED(SELECT j.*,${order.column} AS sort_key FROM job_rows j WHERE (${filter.text}))
+        SELECT counted.total,page.*,page.sort_key::text AS sort_value$ahead FROM (SELECT count(*) AS total FROM filtered) counted
+        LEFT JOIN LATERAL(SELECT r.* FROM filtered r WHERE (${cursor.text}) ORDER BY r.sort_key $directionSql NULLS LAST,r.id LIMIT ?) page ON true$ranked
+        ORDER BY page.sort_key $directionSql NULLS LAST,page.id"""
+    val rows=Sql.rows(c,sql,(params++filter.args++cursor.args++List(q.limit+1))*) { r =>
+      val row=Option(r.getObject("id",classOf[UUID])).map { id =>
+        val state=JobState.parse(r.getString("state")).get
+        val classification=(r.getBoolean("revision_current"),r.getBoolean("profile_current")) match {
+          case (true,true) => ActivityJobClass.Current
+          case (false,true) => ActivityJobClass.SupersededRevision
+          case (true,false) => ActivityJobClass.ObsoleteProfile
+          case (false,false) => ActivityJobClass.SupersededRevisionAndProfile
+        }
+        val lease=Option(r.getTimestamp("lease_until")).map(_.toInstant)
+        val job=JobInfo(id,r.getObject("session_id",classOf[UUID]),r.getInt("revision"),state,r.getInt("attempts"),Option(r.getString("error")),r.getInt("completed_windows"),Option(r.getObject("total_windows",classOf[java.lang.Integer])).map(_.intValue),Option(r.getString("failure_stage")).map(IndexingFailureStage.parse(_).getOrElse(throw DomainError("internal","invalid persisted failure stage"))))
+        val indexed=Option(r.getObject("indexed_revision",classOf[java.lang.Integer])).map(_.intValue)
+        val session=SessionInfo(ContentView(job.revision,None),job.sessionId,owner,r.getInt("head_revision"),indexed,Wire.decode(Metadata.codecJson,Sql.json(r,"metadata")),Wire.decode(SourceIdentity.codecJson,Sql.json(r,"source")),Completion.parse(r.getString("completion")).get,r.getBoolean("redacted"))
+        val claimOrder=Option.when(claimed)(ActivityJobClaimOrder(id,Option(r.getTimestamp("waiting_since")).map(_.toInstant.toString),Option(r.getObject("bulk",classOf[java.lang.Boolean])).map(_.booleanValue),
+          ActivityQueueSql.waiting(Option(r.getString("waiting")),Option(r.getTimestamp("held_until")).map(_.toInstant),Option(r.getObject("older_revision",classOf[java.lang.Integer])).map(_.intValue)),Option(r.getObject("ahead",classOf[java.lang.Long])).map(_.longValue)))
+        (ActivityJob(job,r.getString("profile"),classification,lease.map(_.toString),state==JobState.Running && lease.exists(_.isAfter(now)),classification==ActivityJobClass.Current && state==JobState.Failed,r.getString("collector_id"),session,Option(r.getString("last_timestamp"))),claimOrder,Option(r.getString("sort_value")))
+      }
+      (r.getLong("total"),row)
+    }
+    val values=rows.flatMap(_._2); val page=values.take(q.limit)
+    val next=if(values.size>q.limit) Some(ActivityCursor.encodeJob(q,owner,order,claim,ActivityPosition(page.last._3,page.last._1.job.id.toString),page.last._1.job.revision)) else None
+    (ActivityJobsResult(now.toString,page.map(_._1),rows.head._1,next),page.flatMap(_._2))
   }
 }
 
@@ -459,7 +496,16 @@ private[chronicle] object ActivityCursor {
   private def binding(kind: String,owner: String,expression: String,sort: String,direction: SortDirection,order: ActivityOrder,extra: List[Json]): Vector[Json] =
     Vector(kind,Wire.hash(owner),Wire.hash(expression),sort,direction.toString,order.kind.toString).map(Json.fromString)++extra
   private def collectorBinding(q: ActivityQuery,owner: String,order: ActivityOrder): Vector[Json] = binding("activity-collectors-v3",owner,q.expression,q.sort.toString,q.direction,order,Nil)
-  private def jobBinding(q: ActivityJobsQuery,owner: String,order: ActivityOrder): Vector[Json] = binding("activity-jobs-v3",owner,q.expression,q.sort.toString,q.direction,order,List(Json.fromString(q.scope.toString),q.collectorId.fold(Json.Null)(Json.fromString)))
+  /** `claim`: a cursor of the claim-order job list (its own kind, so that the two lists never accept each other's cursors),
+    * bound to its claim-order sort when it has one, else to `q.sort`. */
+  private def jobBinding(q: ActivityJobsQuery,owner: String,order: ActivityOrder,claim: Option[Option[ActivityClaimOrderSort]]): Vector[Json] = {
+    val (kind,sort)=claim match {
+      case None => ("activity-jobs-v3",q.sort.toString)
+      case Some(None) => ("activity-claim-order-jobs-v1",q.sort.toString)
+      case Some(Some(value)) => ("activity-claim-order-jobs-v1","ClaimOrder."+value.toString)
+    }
+    binding(kind,owner,q.expression,sort,q.direction,order,List(Json.fromString(q.scope.toString),q.collectorId.fold(Json.Null)(Json.fromString)))
+  }
   private def key(value: Option[String],order: ActivityOrder): Unit = {
     Check(order.nullable || value.nonEmpty,"invalid","invalid null activity position")
     value.foreach { value =>
@@ -498,11 +544,13 @@ private[chronicle] object ActivityCursor {
     Base64.getUrlEncoder.withoutPadding.encodeToString(json.noSpaces.getBytes(UTF_8))
   }
   def collector(q: ActivityQuery,owner: String,order: ActivityOrder): Option[ActivityPosition] = q.cursor.map(position(_,collectorBinding(q,owner,order),order,false,(_,_) => invalid))
-  def job(q: ActivityJobsQuery,owner: String,order: ActivityOrder,resolve: (UUID,RevisionSortAnchor) => Option[String]): Option[ActivityPosition] =
-    q.cursor.map(position(_,jobBinding(q,owner,order),order,true,(id,anchor) => resolve(UUID.fromString(id),anchor)))
+  def job(q: ActivityJobsQuery,owner: String,order: ActivityOrder,resolve: (UUID,RevisionSortAnchor) => Option[String]): Option[ActivityPosition] = job(q,owner,order,None,resolve)
+  def job(q: ActivityJobsQuery,owner: String,order: ActivityOrder,claim: Option[Option[ActivityClaimOrderSort]],resolve: (UUID,RevisionSortAnchor) => Option[String]): Option[ActivityPosition] =
+    q.cursor.map(position(_,jobBinding(q,owner,order,claim),order,true,(id,anchor) => resolve(UUID.fromString(id),anchor)))
   def encodeCollector(q: ActivityQuery,owner: String,order: ActivityOrder,position: ActivityPosition): String = encode(collectorBinding(q,owner,order),order,position,None)
-  def encodeJob(q: ActivityJobsQuery,owner: String,order: ActivityOrder,position: ActivityPosition,revision: Int): String = {
+  def encodeJob(q: ActivityJobsQuery,owner: String,order: ActivityOrder,position: ActivityPosition,revision: Int): String = encodeJob(q,owner,order,None,position,revision)
+  def encodeJob(q: ActivityJobsQuery,owner: String,order: ActivityOrder,claim: Option[Option[ActivityClaimOrderSort]],position: ActivityPosition,revision: Int): String = {
     val anchor=if(order.kind==ActivityPositionKind.RevisionText) Some(RevisionSortAnchor.capture(revision,position.value)) else None
-    encode(jobBinding(q,owner,order),order,position,anchor)
+    encode(jobBinding(q,owner,order,claim),order,position,anchor)
   }
 }

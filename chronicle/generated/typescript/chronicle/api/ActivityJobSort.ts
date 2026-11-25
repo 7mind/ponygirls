@@ -15,10 +15,7 @@ export enum ActivityJobSort {
     Reason = "Reason",
     Classification = "Classification",
     JobId = "JobId",
-    SessionId = "SessionId",
-    WaitingSince = "WaitingSince",
-    JobClass = "JobClass",
-    WaitingReason = "WaitingReason"
+    SessionId = "SessionId"
 }
 
 export const ActivityJobSort_values: ReadonlyArray<ActivityJobSort> = [
@@ -36,10 +33,7 @@ export const ActivityJobSort_values: ReadonlyArray<ActivityJobSort> = [
     ActivityJobSort.Reason,
     ActivityJobSort.Classification,
     ActivityJobSort.JobId,
-    ActivityJobSort.SessionId,
-    ActivityJobSort.WaitingSince,
-    ActivityJobSort.JobClass,
-    ActivityJobSort.WaitingReason
+    ActivityJobSort.SessionId
 ] as const;
 
 export function ActivityJobSort_parse(s: string): ActivityJobSort {

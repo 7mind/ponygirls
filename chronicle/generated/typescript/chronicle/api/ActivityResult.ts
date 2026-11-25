@@ -1,7 +1,6 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
 import {ActivityCollector, ActivityCollector_JsonCodec} from './ActivityCollector.js'
-import {ActivityQueue, ActivityQueue_JsonCodec} from './ActivityQueue.js'
 import {JobCounts, JobCounts_JsonCodec} from './JobCounts.js'
 import {UserInfo, UserInfo_JsonCodec} from './UserInfo.js'
 
@@ -16,9 +15,8 @@ export class ActivityResult implements BaboonGeneratedLatest {
     private readonly _totalCollectors: bigint;
     private readonly _allCollectors: bigint;
     private readonly _nextCursor: string | undefined;
-    private readonly _queue: ActivityQueue | undefined;
 
-    constructor(observedAt: string, user: UserInfo, archiveHeads: bigint, headsWithoutTargetJob: bigint, current: JobCounts, historical: JobCounts, collectors: Array<ActivityCollector>, totalCollectors: bigint, allCollectors: bigint, nextCursor: string | undefined, queue: ActivityQueue | undefined) {
+    constructor(observedAt: string, user: UserInfo, archiveHeads: bigint, headsWithoutTargetJob: bigint, current: JobCounts, historical: JobCounts, collectors: Array<ActivityCollector>, totalCollectors: bigint, allCollectors: bigint, nextCursor: string | undefined) {
         this._observedAt = observedAt
         this._user = user
         this._archiveHeads = archiveHeads
@@ -29,7 +27,6 @@ export class ActivityResult implements BaboonGeneratedLatest {
         this._totalCollectors = totalCollectors
         this._allCollectors = allCollectors
         this._nextCursor = nextCursor
-        this._queue = queue
     }
 
     public get observedAt(): string {
@@ -62,9 +59,6 @@ export class ActivityResult implements BaboonGeneratedLatest {
     public get nextCursor(): string | undefined {
         return this._nextCursor;
     }
-    public get queue(): ActivityQueue | undefined {
-        return this._queue;
-    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -77,12 +71,11 @@ export class ActivityResult implements BaboonGeneratedLatest {
             collectors: this._collectors,
             totalCollectors: this._totalCollectors,
             allCollectors: this._allCollectors,
-            nextCursor: this._nextCursor !== undefined ? this._nextCursor : undefined,
-            queue: this._queue !== undefined ? this._queue : undefined
+            nextCursor: this._nextCursor !== undefined ? this._nextCursor : undefined
         };
     }
 
-    public with(overrides: {observedAt?: string; user?: UserInfo; archiveHeads?: bigint; headsWithoutTargetJob?: bigint; current?: JobCounts; historical?: JobCounts; collectors?: Array<ActivityCollector>; totalCollectors?: bigint; allCollectors?: bigint; nextCursor?: string | undefined; queue?: ActivityQueue | undefined}): ActivityResult {
+    public with(overrides: {observedAt?: string; user?: UserInfo; archiveHeads?: bigint; headsWithoutTargetJob?: bigint; current?: JobCounts; historical?: JobCounts; collectors?: Array<ActivityCollector>; totalCollectors?: bigint; allCollectors?: bigint; nextCursor?: string | undefined}): ActivityResult {
         return new ActivityResult(
             'observedAt' in overrides ? overrides.observedAt! : this._observedAt,
             'user' in overrides ? overrides.user! : this._user,
@@ -93,12 +86,11 @@ export class ActivityResult implements BaboonGeneratedLatest {
             'collectors' in overrides ? overrides.collectors! : this._collectors,
             'totalCollectors' in overrides ? overrides.totalCollectors! : this._totalCollectors,
             'allCollectors' in overrides ? overrides.allCollectors! : this._allCollectors,
-            'nextCursor' in overrides ? overrides.nextCursor! : this._nextCursor,
-            'queue' in overrides ? overrides.queue! : this._queue
+            'nextCursor' in overrides ? overrides.nextCursor! : this._nextCursor
         );
     }
 
-    public static fromPlain(obj: {observedAt: string; user: UserInfo; archiveHeads: bigint; headsWithoutTargetJob: bigint; current: JobCounts; historical: JobCounts; collectors: Array<ActivityCollector>; totalCollectors: bigint; allCollectors: bigint; nextCursor: string | undefined; queue: ActivityQueue | undefined}): ActivityResult {
+    public static fromPlain(obj: {observedAt: string; user: UserInfo; archiveHeads: bigint; headsWithoutTargetJob: bigint; current: JobCounts; historical: JobCounts; collectors: Array<ActivityCollector>; totalCollectors: bigint; allCollectors: bigint; nextCursor: string | undefined}): ActivityResult {
         return new ActivityResult(
             obj.observedAt,
             obj.user,
@@ -109,8 +101,7 @@ export class ActivityResult implements BaboonGeneratedLatest {
             obj.collectors,
             obj.totalCollectors,
             obj.allCollectors,
-            obj.nextCursor,
-            obj.queue
+            obj.nextCursor
         );
     }
 
@@ -160,7 +151,6 @@ export class ActivityResult_JsonCodec {
             "totalCollectors": value.totalCollectors.toString(),
             "allCollectors": value.allCollectors.toString(),
             "nextCursor": value.nextCursor === undefined ? null : value.nextCursor,
-            "queue": value.queue === undefined ? null : ActivityQueue_JsonCodec.instance.encode(BaboonCodecContext.Default, value.queue),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): ActivityResult {
@@ -180,7 +170,6 @@ export class ActivityResult_JsonCodec {
             BaboonInt64.read(obj["totalCollectors"], "i64/u64"),
             BaboonInt64.read(obj["allCollectors"], "i64/u64"),
             obj["nextCursor"] === undefined || obj["nextCursor"] === null ? undefined : obj["nextCursor"] === undefined || obj["nextCursor"] === null ? undefined : obj["nextCursor"] as string,
-            obj["queue"] === undefined || obj["queue"] === null ? undefined : obj["queue"] === undefined || obj["queue"] === null ? undefined : ActivityQueue_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["queue"]),
         )
     }
 

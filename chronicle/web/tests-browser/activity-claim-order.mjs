@@ -2,7 +2,7 @@
 // Waiting since and Why-not-running columns with every reason, "N ahead" as a count with its footnote, and the legend.
 // Runnable alone; the page clock is paused at 2030-01-01T18:00:00Z (CLAIM_NOW), the fixture's times are the mockup's of that day.
 import assert from 'node:assert/strict';
-import { LAPTOP, api, startRig, scene, main, region, table, rows, row, cell, detail, button, idle, open, activityQueries, horizontalOverflow, scrollers } from './activity-scenes.mjs';
+import { LAPTOP, api, startRig, scene, main, region, table, rows, row, cell, detail, button, idle, open, jobQueries, horizontalOverflow, scrollers } from './activity-scenes.mjs';
 
 const rig = await startRig('Activity claim order');
 const CLAIM_NOW = Date.parse('2030-01-01T18:00:00Z');
@@ -14,15 +14,17 @@ function claimScene(options = {}, viewport = undefined) {
 const unclipped = locator => locator.evaluateAll(items => items.every(item => { const cell = item.closest('td') ?? item, box = item.getBoundingClientRect(), frame = cell.getBoundingClientRect(); return item.scrollWidth <= item.clientWidth + 1 && cell.scrollWidth <= cell.clientWidth + 1 && box.right <= frame.right + 1 && box.width > 0; }));
 const id = n => `00000000-0000-4000-8000-${String(95000 + n).padStart(12, '0')}`;
 const ROWS = {
-  held: id(1), bulk: id(2), large: id(3), expired: id(4), running: id(5), fresh: id(6), blocked: id(7), exhausted: id(8), off: id(9), unclassified: id(10), historical: id(11), unleased: id(12),
+  held: id(1), bulk: id(2), large: id(3), expired: id(4), running: id(5), fresh: id(6), blocked: id(7), exhausted: id(8), off: id(9), unclassified: id(10), historical: id(11), unleased: id(12), finished: id(13),
 };
 /** Jobs of one owner in every state the mockup shows, plus the remaining reasons; the server's summary of them. */
-function claimFixture(fixture, { order = api.ActivityClaimOrder.Waiting, summary = true, jobsOrder = undefined, summaryOrder = order } = {}) {
+function claimFixture(fixture, { order = api.ActivityClaimOrder.Waiting, jobsOrder = undefined, summaryOrder = order } = {}) {
   const large = order === api.ActivityClaimOrder.Waiting ? new api.ActivityJobWaiting_AwaitingLargeLane() : new api.ActivityJobWaiting_AwaitingLargePermit();
   const job = (key, state, attempts, error, done, total) => new api.JobInfo(ROWS[key], fixture.session.id, fixture.headRevision, state, attempts, error, done, total, undefined);
   const make = (key, title, info, options) => {
     const { lease, active = false, since, waiting, ahead, classification = api.ActivityJobClass.Current } = options, bulk = Object.hasOwn(options, 'bulk') ? options.bulk : false, session = fixture.jobSession(info);
-    return new api.ActivityJob(info, fixture.targetProfile, classification, lease, active, false, fixture.source.collectorNamespace, session.with({ metadata: session.metadata.with({ title, project: 'demo-project', gitBranch: 'main' }) }), undefined, since, bulk, waiting, ahead);
+    // The job list's row as every client reads it, and its claim-order entry beside it (ActivityClaimOrderJobs).
+    fixture.claimEntries.set(info.id, new api.ActivityJobClaimOrder(info.id, since, bulk, waiting, ahead));
+    return new api.ActivityJob(info, fixture.targetProfile, classification, lease, active, false, fixture.source.collectorNamespace, session.with({ metadata: session.metadata.with({ title, project: 'demo-project', gitBranch: 'main' }) }), undefined);
   };
   fixture.activityJobs = [
     make('held', 'Session F', job('held', api.JobState.Queued, 3, 'model-http', 40, 160), { lease: '2030-01-01T18:30:00Z', since: '2030-01-01T14:40:00Z', waiting: new api.ActivityJobWaiting_Held('2030-01-01T18:30:00Z') }),
@@ -37,10 +39,12 @@ function claimFixture(fixture, { order = api.ActivityClaimOrder.Waiting, summary
     // A historical (superseded) attempt whose lease ended: no scheduler reason, and not running either.
     make('historical', 'Session K', job('historical', api.JobState.Running, 1, undefined, 2, 9).with({ revision: fixture.headRevision - 1 }), { lease: '2030-01-01T17:00:00Z', since: '2030-01-01T12:00:00Z', classification: api.ActivityJobClass.SupersededRevision }),
     make('unleased', 'Session L', job('unleased', api.JobState.Running, 1, undefined, 0, undefined), { since: '2030-01-01T17:40:00Z', waiting: new api.ActivityJobWaiting_RunningWithoutLease() }),
+    // Finished before the claim order was installed: no class, and no start ever records one.
+    make('finished', 'Session M', job('finished', api.JobState.Complete, 1, undefined, 9, 9), { since: undefined, bulk: undefined }),
     make('unclassified', 'Session J', job('unclassified', api.JobState.Queued, 0, undefined, 0, undefined), { since: undefined, bulk: undefined, waiting: new api.ActivityJobWaiting_Queued(), ahead: order === api.ActivityClaimOrder.Waiting ? undefined : 7n }),
   ];
   fixture.jobs = fixture.activityJobs.map(item => item.job); fixture.jobsClaimOrder = jobsOrder;
-    fixture.claimQueue = summary ? new api.ActivityQueue(summaryOrder, new api.ActivityClassQueue(6n, 2n, 1n, 1n, '2030-01-01T13:00:00Z'), new api.ActivityClassQueue(2n, 2n, 0n, 0n, '2030-01-01T15:20:00Z'), new api.ActivityClassQueue(1n, 1n, 0n, 0n, undefined), 1n, 2n) : undefined;
+  fixture.claimQueue = new api.ActivityQueue(summaryOrder, new api.ActivityClassQueue(6n, 2n, 1n, 1n, '2030-01-01T13:00:00Z'), new api.ActivityClassQueue(2n, 2n, 0n, 0n, '2030-01-01T15:20:00Z'), new api.ActivityClassQueue(1n, 1n, 0n, 0n, undefined), 1n, 2n);
 }
 const why = (page, key) => cell(page, 'jobs', ROWS[key], 'Waiting');
 const text = async locator => (await locator.innerText()).replace(/\s+/g, ' ').trim();
@@ -49,16 +53,20 @@ try {
   await rig.run('the job list opens oldest wait first with the Class, State, Waiting since and Why-not-running columns of the mockup', async () => {
     const { context, page, fixture } = await claimScene();
     await idle(page, 'jobs'); await rows(page, 'jobs').first().waitFor();
-    const query = activityQueries(fixture, api.Operation_ActivityJobs).at(-1);
-    assert.deepEqual([query.sort, query.direction], [api.ActivityJobSort.WaitingSince, api.SortDirection.Asc], 'the default order is the oldest wait first');
+    const query = jobQueries(fixture).at(-1);
+    assert.deepEqual([query.sort, query.direction], [api.ActivityClaimOrderSort.WaitingSince, api.SortDirection.Asc], 'the default order is the oldest wait first');
+    // The list is the claim-order read: never the existing job list, whose replies stay those every older client validates.
+    const sent = fixture.calls.filter(call => call.operation instanceof api.Operation_ActivityClaimOrderJobs).at(-1).operation.query;
+    assert.deepEqual([sent.order, sent.jobs.sort], [api.ActivityClaimOrderSort.WaitingSince, api.ActivityJobSort.LastTimestamp]);
+    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_ActivityJobs).length, 0);
     const shown = await table(page, 'jobs').locator('thead th[data-column-id]').evaluateAll(items => items.map(item => item.dataset.columnId));
     assert.deepEqual(shown, ['Title', 'Class', 'State', 'WaitingSince', 'Waiting', 'CompletedWindows', 'LeaseState', 'Attempts', 'actions']);
     assert.equal(await table(page, 'jobs').locator('thead th[data-column-id="WaitingSince"]').getAttribute('aria-sort'), 'ascending');
     // Class and Why not running order on the server (B6): each header requests its order and the rows follow it.
-    for (const [column, sort] of [['Class', api.ActivityJobSort.JobClass], ['Waiting', api.ActivityJobSort.WaitingReason]]) {
+    for (const [column, sort] of [['Class', api.ActivityClaimOrderSort.JobClass], ['Waiting', api.ActivityClaimOrderSort.WaitingReason]]) {
       const before = fixture.calls.length; await table(page, 'jobs').locator(`thead th[data-column-id="${column}"] button.th-sort`).click();
-      await fixture.waitUntil(() => fixture.calls.slice(before).some(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.sort === sort), `${sort} not requested`);
-      const sent = fixture.calls.slice(before).find(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.sort === sort).operation.query, expected = fixture.activityJobsResult(sent).jobs.map(item => item.job.id);
+      await fixture.waitUntil(() => jobQueries({ calls: fixture.calls.slice(before) }).some(query => query.sort === sort), `${sort} not requested`);
+      const sent = jobQueries({ calls: fixture.calls.slice(before) }).find(query => query.sort === sort), expected = fixture.activityJobsResult(sent).jobs.map(item => item.job.id);
       await row(page, 'jobs', expected[0]).and(rows(page, 'jobs').first()).waitFor(); await idle(page, 'jobs');
       assert.deepEqual(await rows(page, 'jobs').evaluateAll(items => items.map(item => item.dataset.rowId)), expected, `${sort} rows`);
       assert.equal(await table(page, 'jobs').locator(`thead th[data-column-id="${column}"]`).getAttribute('aria-sort'), 'ascending');
@@ -66,9 +74,12 @@ try {
     await table(page, 'jobs').locator('thead th[data-column-id="WaitingSince"] button.th-sort').click(); await idle(page, 'jobs');
     const order = fixture.activityJobsResult(query).jobs.map(item => item.job.id);
     assert.deepEqual(await rows(page, 'jobs').evaluateAll(items => items.map(item => item.dataset.rowId)), order);
-    assert.equal(order.at(-1), ROWS.unclassified, 'a job without a waiting time sorts last');
+    assert.deepEqual(order.slice(-2).sort(), [ROWS.unclassified, ROWS.finished].sort(), 'a job without a waiting time sorts last');
     assert.deepEqual([await text(cell(page, 'jobs', ROWS.fresh, 'Class')), await text(cell(page, 'jobs', ROWS.bulk, 'Class')), await text(cell(page, 'jobs', ROWS.unclassified, 'Class'))], ['fresh', 'bulk', 'unclassified']);
-    assert.match(await cell(page, 'jobs', ROWS.unclassified, 'Class').locator('.chip').getAttribute('title'), /^unclassified: queued before the claim order was installed; the next server start classifies it$/);
+    assert.match(await cell(page, 'jobs', ROWS.unclassified, 'Class').locator('.chip').getAttribute('title'), /^unclassified: queued before the claim order was installed; the next server start classifies it while it is unfinished$/);
+    // A job that finished before the claim order was installed is never classified: its class is "not recorded".
+    assert.equal(await text(cell(page, 'jobs', ROWS.finished, 'Class')), 'not recorded');
+    assert.equal(await cell(page, 'jobs', ROWS.finished, 'Class').locator('span').getAttribute('title'), 'Class not recorded: the job finished before the claim order was installed');
     assert.equal(await unclipped(table(page, 'jobs').locator('td[data-column-id="Class"] .chip')), true, 'every class label is whole');
     // Windows: the whole count and total, also an unknown total (1440 px).
     assert.deepEqual(await Promise.all(['running', 'large', 'fresh'].map(key => text(cell(page, 'jobs', ROWS[key], 'CompletedWindows')))), ['120 / 300', '0 / 1013', '0 / unknown']);
@@ -109,7 +120,7 @@ try {
     assert.equal(await mark.getAttribute('tabindex'), '0', 'the explanation is reachable from the keyboard');
     const notes = region(page, 'Jobs').getByRole('region', { name: 'Claim-order notes', exact: true });
     assert.match(await text(notes), /“N ahead” counts the jobs, of all owners, that will be claimed before this one in its order — an order, not a time estimate; .* Other owners' jobs are counted, never named\./);
-    assert.match(await text(notes), /fresh uploads and individual retries bulk retry-all and rebuild unclassified queued before the claim order was installed; the next server start classifies it Large-job lane the one lane that runs jobs indexing more than 100 windows Waiting since when the job joined its order/);
+    assert.match(await text(notes), /fresh uploads and individual retries bulk retry-all and rebuild unclassified queued before the claim order was installed; the next server start classifies it while it is unfinished Large-job lane the one lane that runs jobs indexing more than 100 windows Waiting since when the job joined its order/);
     // The footnote mark shows the note in place: the route stays the job list (B5), from a row and from the strip.
     for (const mark of [why(page, 'fresh').getByRole('button', { name: 'About ahead counts', exact: true }), main(page).getByRole('region', { name: 'Your jobs in the claim order', exact: true }).getByRole('button', { name: 'About ahead counts', exact: true })]) {
       await page.evaluate(() => { document.activeElement?.blur(); window.scrollTo(0, 0); });
@@ -124,8 +135,8 @@ try {
     await context.close();
   });
 
-  await rig.run('the strip counts the owner’s own jobs per class and the large-job lane, and is absent without a server summary', async () => {
-    const { context, page } = await claimScene();
+  await rig.run('the strip counts the owner’s own jobs per class and the large-job lane from the claim-order summary', async () => {
+    const { context, page, fixture } = await claimScene();
     const strip = main(page).getByRole('region', { name: 'Your jobs in the claim order', exact: true });
     await strip.getByRole('table', { name: 'Claim-order counts per class', exact: true }).waitFor();
     const counts = await strip.locator('tbody tr').evaluateAll(items => items.map(item => [item.dataset.class, ...[...item.querySelectorAll('td.col-num')].map(td => td.textContent)]));
@@ -136,17 +147,9 @@ try {
     assert.equal(await strip.locator('td.claim-oldest .waited-for').first().isVisible(), true);
     assert.equal(await unclipped(strip.locator('td.claim-oldest .waited-for')), true, 'the waiting duration is not cut off');
     assert.match(await text(strip), /Order Oldest waiting first within each class Running 1 of your jobs Large-job lane 1 of your jobs waits for it · 2 large jobs ahead¹ Not counted Running jobs with a valid lease; superseded and obsolete jobs \(History\)/);
+    // The counts are the claim-order summary's (its own operation); the Activity summary keeps its reply.
+    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_ActivityClaimOrderSummary));
     await context.close();
-    // A server without the claim-order summary (an older 1.9.0 after a rollback): no strip, and the list never sends a
-    // claim-order sort it could not decode — it reads the last activity order; Class, Waiting since and Why are labels (A1).
-    const bare = await claimScene({ summary: false });
-    await idle(bare.page, 'jobs'); await rows(bare.page, 'jobs').first().waitFor();
-    assert.equal(await main(bare.page).getByRole('region', { name: 'Your jobs in the claim order', exact: true }).count(), 0, 'no strip without the server summary');
-    const sorts = activityQueries(bare.fixture, api.Operation_ActivityJobs).map(query => [query.sort, query.direction]);
-    assert.ok(sorts.length > 0); assert.deepEqual([...new Set(sorts.map(String))], [[api.ActivityJobSort.LastTimestamp, api.SortDirection.Desc].join()]);
-    assert.equal(await table(bare.page, 'jobs').locator('thead th[data-column-id="Class"] button.th-sort, thead th[data-column-id="Waiting"] button.th-sort, thead th[data-column-id="WaitingSince"] button.th-sort').count(), 0);
-    assert.match(await text(why(bare.page, 'fresh')), /^Queued · 3 ahead¹ in the claim order/, 'a list that reports no claim order names none');
-    await bare.context.close();
   });
 
   await rig.run('under today’s source-id order the permit reason and the claim order are named, never a class queue', async () => {

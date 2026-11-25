@@ -1,17 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ActivityClaimOrder, ActivityJob, ActivityJobClass, ActivityJobWaiting_AwaitingLargeLane, ActivityJobWaiting_AwaitingLargePermit, ActivityJobWaiting_AwaitingReclaim, ActivityJobWaiting_BlockedByOlderRevision, ActivityJobWaiting_Held, ActivityJobWaiting_IndexingOff, ActivityJobWaiting_LeaseExhaustedPending, ActivityJobWaiting_LeaseExpiredAwaitingReclaim, ActivityJobWaiting_Queued, ActivityJobWaiting_RunningWithoutLease, Completion, ContentView, JobInfo, JobState, Metadata, SessionInfo, SourceFormat, SourceIdentity, type ActivityJobWaiting } from '../src/api.ts';
-import { UNCLASSIFIED_NOTE, ahead, jobClass, orderDescription, stateLabel, waitedFor, waitedSince, why } from '../src/activity/claim-order.ts';
+import { ActivityClaimOrder, ActivityClaimOrderJobsResult, ActivityJob, ActivityJobClaimOrder, ActivityJobClass, ActivityJobsResult, ActivityJobWaiting_AwaitingLargeLane, ActivityJobWaiting_AwaitingLargePermit, ActivityJobWaiting_AwaitingReclaim, ActivityJobWaiting_BlockedByOlderRevision, ActivityJobWaiting_Held, ActivityJobWaiting_IndexingOff, ActivityJobWaiting_LeaseExhaustedPending, ActivityJobWaiting_LeaseExpiredAwaitingReclaim, ActivityJobWaiting_Queued, ActivityJobWaiting_RunningWithoutLease, Completion, ContentView, JobInfo, JobState, Metadata, SessionInfo, SourceFormat, SourceIdentity, type ActivityJobWaiting } from '../src/api.ts';
+import { JobRow, NOT_RECORDED_NOTE, UNCLASSIFIED_NOTE, ahead, classLabel, jobClass, mergeClaimOrder, orderDescription, stateLabel, waitedFor, waitedSince, why } from '../src/activity/claim-order.ts';
 
 // Specified: the wording of the claim-order reasons (approved mockup of 25 Nov) from the server's reason, class and count.
 const ID = '00000000-0000-4000-8000-000000000001';
 const time = (iso: string) => `@${iso.slice(11, 16)}`;
-function job(state: JobState, waiting: ActivityJobWaiting | undefined, options: { bulk?: boolean | undefined; ahead?: bigint; lease?: string; active?: boolean; error?: string; total?: number } = {}): ActivityJob {
-  const info = new JobInfo(ID, ID, 2, state, 1, options.error, 120, options.total, undefined);
+function item(state: JobState, options: { lease?: string; active?: boolean; error?: string; total?: number } = {}, id = ID): ActivityJob {
+  const info = new JobInfo(id, ID, 2, state, 1, options.error, 120, options.total, undefined);
   const session = new SessionInfo(new ContentView(2, undefined), ID, 'owner', 2, undefined, new Metadata('Session', undefined, undefined, undefined, undefined, undefined, 'pi', undefined, undefined, undefined, []), new SourceIdentity('c', 'native', SourceFormat.Pi, 's', undefined), Completion.Quiescent, false);
-  return new ActivityJob(info, 'p', ActivityJobClass.Current, options.lease, options.active ?? false, false, 'c', session, undefined, '2026-11-25T16:02:00Z', 'bulk' in options ? options.bulk : false, waiting, options.ahead);
+  return new ActivityJob(info, 'p', ActivityJobClass.Current, options.lease, options.active ?? false, false, 'c', session, undefined);
 }
-const line = (row: ActivityJob, order: ActivityClaimOrder | undefined) => { const text = why(row, order, time); return `${text.main}${text.ahead === null ? '' : text.ahead.text}${text.after} | ${text.sub}`; };
+function job(state: JobState, waiting: ActivityJobWaiting | undefined, options: { bulk?: boolean | undefined; ahead?: bigint; lease?: string; active?: boolean; error?: string; total?: number } = {}): JobRow {
+  return new JobRow(item(state, options), new ActivityJobClaimOrder(ID, '2026-11-25T16:02:00Z', 'bulk' in options ? options.bulk : false, waiting, options.ahead));
+}
+const line = (row: JobRow, order: ActivityClaimOrder | undefined) => { const text = why(row, order, time); return `${text.main}${text.ahead === null ? '' : text.ahead.text}${text.after} | ${text.sub}`; };
 
 test('class: fresh, bulk, or unclassified for a row an older server wrote', () => {
   assert.deepEqual([jobClass(false), jobClass(true), jobClass(undefined)], ['fresh', 'bulk', 'unclassified']);
@@ -23,7 +26,7 @@ test('every reason under the waiting order, with the count in its class queue or
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_AwaitingLargeLane(), { ahead: 1n, bulk: true, total: 1013 }), W), 'Waiting for the large-job lane · 1 large job ahead | Sized 1,013 windows · runs only on the large-job lane');
   assert.equal(line(job(JobState.Running, new ActivityJobWaiting_LeaseExpiredAwaitingReclaim(), { ahead: 0n, lease: '2026-11-25T16:54:00Z' }), W), 'Lease ended @16:54 · 0 ahead in the fresh queue | Worker stopped renewing · any lane may reclaim it');
   assert.equal(line(job(JobState.Running, new ActivityJobWaiting_LeaseExhaustedPending(), { lease: '2026-11-25T16:54:00Z' }), W), 'Lease ended @16:54 · attempt limit reached | The next claim ends it lease-exhausted; retry it then');
-  assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_AwaitingReclaim(), { ahead: 2n }), W), 'Indexing settings changed · 2 ahead in the fresh queue | Its running attempt no longer counts · any lane may reclaim it');
+  assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_AwaitingReclaim(), { ahead: 2n }), W), 'Indexing settings changed · 2 ahead in the fresh queue | Its running attempt no longer counts · an eligible lane may reclaim it');
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_Held('2026-11-25T17:30:00Z'), { error: 'model-http' }), W), 'Retrying after @17:30 (back-off) | Prior: model-http · rejoins the fresh order at @17:30');
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_BlockedByOlderRevision(6)), W), 'Waiting for older revision r6 (still running) | Joins the fresh order when r6 ends');
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_IndexingOff()), W), 'Indexing is turned off for your account | Waits until indexing is turned on again');
@@ -64,8 +67,16 @@ test('the waiting start is a clock time today, a short date this year, a date be
   assert.match(waitedSince(new Date(2026, 10, 24, 9, 5).toISOString(), now), /24.*09:05|09:05.*24/);
   assert.match(waitedSince(new Date(2025, 0, 2, 9, 5).toISOString(), now), /2025/);
 });
-test('an unclassified job explains itself: queued before the claim order was installed', () => {
-  assert.equal(UNCLASSIFIED_NOTE, 'queued before the claim order was installed; the next server start classifies it');
+test('an unclassified job explains itself: an unfinished one until the next start classifies it, a finished one "not recorded"', () => {
+  assert.equal(UNCLASSIFIED_NOTE, 'queued before the claim order was installed; the next server start classifies it while it is unfinished');
+  for (const state of [JobState.Queued, JobState.Running]) assert.deepEqual(classLabel(job(state, new ActivityJobWaiting_Queued(), { bulk: undefined })), { text: 'unclassified', title: `unclassified: ${UNCLASSIFIED_NOTE}`, chip: 'chip chip-outline' }, state);
+  for (const state of [JobState.Complete, JobState.Failed]) {
+    const label = classLabel(job(state, undefined, { bulk: undefined }));
+    assert.deepEqual([label.text, label.title], ['not recorded', 'Class not recorded: the job finished before the claim order was installed'], state);
+    assert.doesNotMatch(label.title, /next server start/);
+  }
+  assert.equal(NOT_RECORDED_NOTE, 'class not recorded: the job finished before the claim order was installed');
+  assert.deepEqual([classLabel(job(JobState.Complete, undefined, { bulk: true })).text, classLabel(job(JobState.Failed, undefined, { bulk: false })).text], ['bulk', 'fresh']);
 });
 test('a Running row without a valid lease is never labelled running, also without a scheduler reason (a historical attempt)', () => {
   const historical = job(JobState.Running, undefined, { lease: '2026-11-25T16:00:00Z', active: false });
@@ -74,6 +85,23 @@ test('a Running row without a valid lease is never labelled running, also withou
   assert.equal(stateLabel(job(JobState.Running, undefined, {})).text, 'Not running · no lease');
   const unleased = job(JobState.Running, new ActivityJobWaiting_RunningWithoutLease());
   assert.deepEqual([stateLabel(unleased).text, line(unleased, ActivityClaimOrder.Waiting)], ['Running without a lease', 'Running without a lease | No claim takes a job without a lease · retry it']);
+});
+test('a policy-invalidated attempt names an eligible lane, never any lane: the permit a large job needs is not in the effective row', () => {
+  for (const order of [ActivityClaimOrder.SourceId, ActivityClaimOrder.Waiting, undefined]) {
+    const text = line(job(JobState.Queued, new ActivityJobWaiting_AwaitingReclaim()), order);
+    assert.match(text, /\| Its running attempt no longer counts · an eligible lane may reclaim it$/, String(order));
+    assert.doesNotMatch(text, /any lane/, String(order));
+  }
+});
+test('the claim-order read merges with the job list by job id, one entry per job in its order, and refuses any other pairing', () => {
+  const first = item(JobState.Queued, {}, '00000000-0000-4000-8000-000000000011'), second = item(JobState.Complete, {}, '00000000-0000-4000-8000-000000000012');
+  const claim = (id: string, ahead: bigint | undefined) => new ActivityJobClaimOrder(id, '2026-11-25T16:02:00Z', true, ahead === undefined ? undefined : new ActivityJobWaiting_Queued(), ahead);
+  const page = new ActivityJobsResult('2026-11-25T17:00:00Z', [first, second], 2n, undefined);
+  const rows = mergeClaimOrder(new ActivityClaimOrderJobsResult(page, ActivityClaimOrder.Waiting, [claim(first.job.id, 4n), claim(second.job.id, undefined)]));
+  assert.deepEqual(rows.map(row => [row.job.id, row.item, row.ahead, row.bulk]), [[first.job.id, first, 4n, true], [second.job.id, second, undefined, true]]);
+  for (const claims of [[claim(second.job.id, 1n), claim(first.job.id, 4n)], [claim(first.job.id, 4n)], [claim(first.job.id, 4n), claim(second.job.id, undefined), claim(ID, 1n)]]) {
+    assert.throws(() => mergeClaimOrder(new ActivityClaimOrderJobsResult(page, ActivityClaimOrder.Waiting, claims)), /Claim-order entries do not match the job list/);
+  }
 });
 test('under today\'s order an ended lease over the large-job size is reclaimed by the permit lane only; under waiting by any lane', () => {
   const large = job(JobState.Running, new ActivityJobWaiting_LeaseExpiredAwaitingReclaim(), { lease: '2026-11-25T16:54:00Z', total: 150, ahead: 2n });

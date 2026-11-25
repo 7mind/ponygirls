@@ -28,6 +28,8 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.GetPassageSpans(id,view,passageId,offset,limit) => i.requireScope(Scope.Read); IO.blocking(Result.PassageSpans(archive.passageSpans(uid,id,passageId,offset,limit,Some(view))))
       case Operation.Activity(q) => i.requireScope(Scope.Read); IO.blocking(Result.Activity(activityIndex.summary(i.user,q)))
       case Operation.ActivityJobs(q) => i.requireScope(Scope.Read); IO.blocking(Result.ActivityJobs(activityIndex.jobs(uid,q)))
+      case Operation.ActivityClaimOrderSummary() => i.requireScope(Scope.Read); IO.blocking(Result.ActivityClaimOrderSummary(activityIndex.claimOrderSummary(i.user)))
+      case Operation.ActivityClaimOrderJobs(q) => i.requireScope(Scope.Read); IO.blocking(Result.ActivityClaimOrderJobs(activityIndex.claimOrderJobs(uid,q)))
       case request: Operation.ReadMessageContext =>
         contextReadAccess(i,IO.blocking(db.transaction(c => auth.currentBrowser(c,i)))).flatMap(access => read(access,request))
       case Operation.LocateMessage(id,view,messageId) => i.requireScope(Scope.Read); IO.blocking(Result.LocatedMessage(archive.locateMessage(uid,id,view,messageId)))

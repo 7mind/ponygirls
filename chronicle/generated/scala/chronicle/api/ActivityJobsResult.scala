@@ -7,8 +7,7 @@ package chronicle.api {
     observedAt: String,
     jobs: List[ActivityJob],
     total: Long,
-    nextCursor: Option[String],
-    claimOrder: Option[ActivityClaimOrder]
+    nextCursor: Option[String]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = ActivityJobsResult.baboonDomainVersion
     override def baboonDomainIdentifier: String = ActivityJobsResult.baboonDomainIdentifier
@@ -41,8 +40,7 @@ package chronicle.api {
         "observedAt" -> Json.fromString(value.observedAt),
         "jobs" -> Json.fromValues(value.jobs.map(e => ActivityJob_JsonCodec.instance.encode(ctx, e))),
         "total" -> Json.fromString(value.total.toString),
-        "nextCursor" -> value.nextCursor.map(v => Json.fromString(v)).getOrElse(Json.Null),
-        "claimOrder" -> value.claimOrder.map(v => ActivityClaimOrder_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null)
+        "nextCursor" -> value.nextCursor.map(v => Json.fromString(v)).getOrElse(Json.Null)
       )
     }
     
@@ -57,8 +55,7 @@ package chronicle.api {
             jobs <- getField(jsonObject, "jobs").flatMap(v => decodeList(ActivityJob_JsonCodec.circeDecoder)(v.hcursor))
             total <- getField(jsonObject, "total").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             nextCursor <- getField(jsonObject, "nextCursor").flatMap(v => decodeOption(decodeString)(v.hcursor))
-            claimOrder <- getField(jsonObject, "claimOrder").flatMap(v => decodeOption(ActivityClaimOrder_JsonCodec.circeDecoder)(v.hcursor))
-          } yield ActivityJobsResult(observedAt,jobs,total,nextCursor,claimOrder)
+          } yield ActivityJobsResult(observedAt,jobs,total,nextCursor)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ActivityJobsResult: object expected"))
       }
     }
