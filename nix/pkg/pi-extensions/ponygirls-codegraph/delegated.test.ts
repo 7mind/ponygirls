@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import type { Extension, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isolateAgentConfig, emptySettingsContext } from "./test-fixtures.ts";
 
 // The ponygirls-subagents delegated-call contract (duplicated there by design).
 const CHANNEL = "ponygirls-subagents:prepare-delegated-call";
@@ -22,6 +23,7 @@ test("subagent calls are prepared like the session's own: index first, then a ve
 }, async (t) => {
   const base = await realpath(await mkdtemp(join(tmpdir(), "pi-codegraph-delegated-")));
   t.after(() => rm(base, { recursive: true, force: true }));
+  isolateAgentConfig(t, base);
   const child = join(base, "child");
   await mkdir(child);
   execFileSync("git", ["init", "--quiet", child]);
@@ -50,7 +52,7 @@ test("subagent calls are prepared like the session's own: index first, then a ve
   const loaded = await loader.loadExtensions([resolve(import.meta.dirname, "index.ts")], base, bus);
   assert.deepEqual(loaded.errors, []);
   const extension = loaded.extensions[0] as Extension;
-  const ctx = { cwd: base, mode: "print", hasUI: false, ui: { notify() {}, setWidget() {} } } as unknown as ExtensionContext;
+  const ctx = { ...emptySettingsContext, cwd: base, mode: "print", hasUI: false, ui: { notify() {}, setWidget() {} } } as unknown as ExtensionContext;
   const emit = (name: string, event: object) => extension.handlers.get(name)![0](event, ctx);
   const prepare = async (toolName: string, input: Record<string, unknown>, cwd: string): Promise<{ claimed: boolean; input: Record<string, unknown> }> => {
     const work: Promise<void>[] = [];
@@ -72,6 +74,13 @@ test("subagent calls are prepared like the session's own: index first, then a ve
   const shared = await prepare("mcp__codegraph__codegraph_explore", { query: "q" }, base);
   assert.equal(shared.input.projectPath, child, "a child in the session's cwd uses the session default");
   assert.equal((await prepare("mcp__other__tool", { query: "q" }, child)).claimed, false);
+
+  const cg = extension.commands.get("cg")!;
+  await cg.handler("global off", ctx as never);
+  const off = { query: "q", projectPath: "child" };
+  assert.deepEqual(await prepare("mcp__codegraph__codegraph_explore", off, base), { claimed: false, input: { query: "q", projectPath: "child" } });
+  await cg.handler("global inherit", ctx as never);
+  assert.equal((await prepare("mcp__codegraph__codegraph_explore", { query: "q", projectPath: "child" }, base)).input.projectPath, child);
 
   await writeFile(join(base, "fail"), "");
   await emit("session_shutdown", { type: "session_shutdown", reason: "reload" });

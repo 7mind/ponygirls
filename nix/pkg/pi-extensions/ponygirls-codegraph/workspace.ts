@@ -114,7 +114,8 @@ export class CodegraphWorkspace {
   private controller = new AbortController();
   private batch: AbortController | null = null;
   private closed = false;
-  private enabled = false;
+  private automatic = false;
+  private activated = false;
   private discoveryError: string | null = null;
   private discovering = false;
   private cancellation = 0;
@@ -133,9 +134,9 @@ export class CodegraphWorkspace {
     this.changed = changed;
     this.now = now;
   }
-  get routingEnabled(): boolean { return this.enabled; }
+  /** Capture at admission so cancellation or an off/on cycle revokes an in-flight route. */
+  get routingSignal(): AbortSignal | null { return this.automatic && !this.closed ? this.controller.signal : null; }
   get state(): State {
-    if (!this.enabled) return { phase: "skipped", detail: "automatic setup disabled" };
     if (this.discovering) return { phase: "working", detail: "checking projects" };
     if (this.discoveryError !== null) return { phase: "error", detail: this.discoveryError };
     const chosen = this.defaultRoot();
@@ -202,80 +203,107 @@ export class CodegraphWorkspace {
     this.assertOpen();
     const token = this.token();
     const projects = await this.catalog.discover(resolve(this.cwd, path), this.controller.signal);
-    this.guard(token, null);
-    const roots = new Set(projects.map((project) => project.root));
-    for (const [root, entry] of this.entries) {
-      const current = projects.find((project) => project.root === root);
-      if (current === undefined || current.kind !== entry.project.kind || current.commonDir !== entry.project.commonDir) {
-        await entry.session.shutdown();
-        if (this.entries.get(root) === entry) {
-          this.entries.delete(root);
-          if (this.selected === root) this.selected = null;
-        }
-        this.guard(token, null);
-      }
-    }
-    if (this.selected !== null && !roots.has(this.selected)) this.selected = null;
-    for (const project of projects) this.add(project);
-    this.discoveryError = null;
-    this.publish();
-  }
-  start(enabled: boolean): Promise<void> {
-    this.enabled = enabled;
-    if (!enabled) { this.publish(); return this.initial; }
-    this.discovering = true;
-    this.publish();
-    const token = this.token();
-    this.initial = (async () => {
-      await this.refresh(this.cwd);
-      const containing = await this.catalog.resolve(this.cwd, this.controller.signal);
+    const found = new Map(projects.map(project => [project.root, project]));
+    for (;;) {
       this.guard(token, null);
-      if (containing !== null) this.selected = this.add(containing).project.root;
+      const removed = [...this.entries].filter(([root, { project }]) => {
+        const current = found.get(root);
+        return current === undefined || current.kind !== project.kind || current.commonDir !== project.commonDir;
+      });
+      const working = removed.filter(([, entry]) => entry.session.state.phase === "working");
+      if (working.length > 0) {
+        // Drain without closing or deleting entries: OFF can revoke this refresh during the wait.
+        await Promise.all(working.map(([, entry]) => entry.session.cancel()));
+        continue;
+      }
+      // No await between the generation check and committing the new inventory.
+      for (const [root, entry] of removed) {
+        void entry.session.shutdown();
+        this.entries.delete(root);
+        if (this.selected === root) this.selected = null;
+      }
+      for (const project of projects) this.add(project);
+      this.discoveryError = null;
+      this.publish();
+      return;
+    }
+  }
+  start(automatic: boolean): Promise<void> {
+    this.assertOpen();
+    if (this.automatic === automatic) { this.publish(); return this.initial; }
+    this.automatic = automatic;
+    if (!automatic) {
+      this.discovering = false;
+      // Drain the old generation before another startup or manual command can start work.
+      this.initial = Promise.all([this.initial, this.cancel(null, true)]).then(() => {});
+      this.publish();
+      return this.initial;
+    }
+    this.discovering = true;
+    const token = this.token();
+    const startup = this.initial.then(async () => {
+      this.guard(token, null);
+      if (!this.activated) await this.discoverCurrent(token);
+      this.guard(token, null);
       const root = this.defaultRoot();
       if (root !== null) {
         this.guard(token, root);
         void this.entries.get(root)!.session.start("sync");
       }
-    })().catch((error: unknown) => {
-      if (!this.closed) this.discoveryError = String(error);
-    }).finally(() => { this.discovering = false; this.publish(); });
-    return this.initial;
+    }).catch((error: unknown) => this.recordDiscoveryError(token, error)).finally(() => {
+      if (this.initial === startup) { this.discovering = false; this.publish(); }
+    });
+    this.initial = startup;
+    this.publish();
+    return startup;
   }
-  private async activate(): Promise<void> {
-    await this.initial;
-    this.assertOpen();
-    if (!this.enabled) {
-      this.enabled = true;
-      const token = this.token();
-      const activation = (async () => {
-        await this.refresh(this.cwd);
-        const containing = await this.catalog.resolve(this.cwd, this.controller.signal);
+  private async discoverCurrent(token: OperationToken): Promise<void> {
+    this.activated = true;
+    try {
+      await this.refresh(this.cwd);
+      this.guard(token, null);
+      const containing = await this.catalog.resolve(this.cwd, this.controller.signal);
+      this.guard(token, null);
+      if (containing !== null) this.selected = this.add(containing).project.root;
+    } finally {
+      if (token.cancellation !== this.cancellation) this.activated = false;
+    }
+  }
+  private recordDiscoveryError(token: OperationToken, error: unknown): void {
+    if (!this.closed && token.cancellation === this.cancellation) { this.discoveryError = String(error); this.publish(); }
+  }
+  private async activate(token: OperationToken): Promise<void> {
+    for (;;) {
+      const pending = this.initial;
+      await pending;
+      this.guard(token, null);
+      // ON may have scheduled discovery while this manual caller was waiting.
+      if (pending !== this.initial) continue;
+      if (this.activated) return;
+      const activation = pending.then(() => {
         this.guard(token, null);
-        if (containing !== null) this.selected = this.add(containing).project.root;
-      })();
-      this.initial = activation.catch((error: unknown) => {
-        if (!this.closed) { this.discoveryError = String(error); this.publish(); }
+        return this.discoverCurrent(token);
       });
+      this.initial = activation.catch((error: unknown) => this.recordDiscoveryError(token, error));
       await activation;
     }
-    await this.initial;
-    this.assertOpen();
   }
-  private async target(path: string | null): Promise<ProjectEntry> {
-    this.assertOpen();
+  private async target(path: string | null, token: OperationToken): Promise<ProjectEntry> {
+    this.guard(token, null);
     const selected = path === null ? this.defaultRoot() : resolve(this.cwd, path);
     if (selected === null) throw new Error(`Ambiguous or missing Codegraph project; pass projectPath or /cg use PATH. Known roots: ${JSON.stringify([...this.entries.keys()])}`);
     const project = await this.catalog.resolve(selected, this.controller.signal);
-    this.assertOpen();
+    this.guard(token, project === null ? null : project.root);
     if (project === null) throw new Error(`No Git checkout or opted-in workspace at ${selected}; use /cg init --workspace PATH for a workspace-wide index`);
     if (this.entries.has(selected) && project.root !== selected) throw new Error(`Project scope changed at ${selected}; rediscover instead of borrowing an ancestor index`);
     return this.add(project);
   }
   async query(path: string | undefined): Promise<string> {
+    this.assertOpen();
+    if (!this.automatic) throw new Error("Codegraph automatic routing is off");
     const token = this.token();
-    await this.activate();
-    this.guard(token, null);
-    const entry = await this.target(path === undefined ? null : path);
+    await this.activate(token);
+    const entry = await this.target(path === undefined ? null : path, token);
     this.guard(token, entry.project.root);
     if (unprepared(entry.session.state.phase)) await entry.session.start("sync");
     else await entry.session.wait();
@@ -290,17 +318,22 @@ export class CodegraphWorkspace {
     return entry.project.root;
   }
   async discover(path: string | null): Promise<void> {
-    await this.activate();
+    const token = this.token();
+    await this.activate(token);
+    this.guard(token, null);
     await this.refresh(path === null ? this.cwd : path);
   }
   async use(path: string): Promise<void> {
-    await this.activate();
-    this.selected = (await this.target(path)).project.root;
+    const token = this.token();
+    await this.activate(token);
+    const entry = await this.target(path, token);
+    this.guard(token, entry.project.root);
+    this.selected = entry.project.root;
     this.publish();
   }
   async initWorkspace(path: string): Promise<void> {
     const token = this.token();
-    await this.activate();
+    await this.activate(token);
     this.guard(token, null);
     const project = await this.catalog.initWorkspace(resolve(this.cwd, path), this.controller.signal);
     this.guard(token, project.root);
@@ -315,11 +348,11 @@ export class CodegraphWorkspace {
   }
   async perform(action: Action, path: string | null, all: boolean): Promise<void> {
     const token = this.token();
-    await this.activate();
+    await this.activate(token);
     this.guard(token, null);
     const useAll = all || (action === "status" && path === null && this.defaultRoot() === null);
     if (!useAll) {
-      const entry = await this.target(path);
+      const entry = await this.target(path, token);
       this.guard(token, entry.project.root);
       await this.run(entry, action);
       return;
@@ -351,7 +384,7 @@ export class CodegraphWorkspace {
       if (this.batch !== null) this.batch.abort();
       await Promise.all([...this.entries.values()].map((entry) => entry.session.cancel()));
     } else {
-      const entry = await this.target(path);
+      const entry = await this.target(path, this.token());
       this.cancelledRoots.set(entry.project.root, (this.cancelledRoots.get(entry.project.root) ?? 0) + 1);
       await entry.session.cancel();
     }
@@ -361,7 +394,7 @@ export class CodegraphWorkspace {
   async snapshot(path: string | null): Promise<StatusSnapshot> {
     await this.initial;
     this.assertOpen();
-    const entries = path === null ? [...this.entries.values()] : [await this.target(path)];
+    const entries = path === null ? [...this.entries.values()] : [await this.target(path, this.token())];
     const scopes: ScopeStatus[] = [];
     for (const entry of entries) {
       const { root, kind, commonDir } = entry.project;
@@ -385,7 +418,6 @@ export class CodegraphWorkspace {
     return this.context();
   }
   context(): string {
-    if (!this.enabled) return "Codegraph automatic preparation/routing is disabled; explicit /cg commands can enable it.";
     const roots = [...this.entries.values()].map(({ project, session }) => ({ ...project, phase: session.state.phase }));
     const visible: typeof roots = [];
     let characters = 0;
@@ -403,8 +435,9 @@ export class CodegraphWorkspace {
     ].join("\n");
   }
   async erase(path: string): Promise<never> {
-    await this.activate();
-    const entry = await this.target(path);
+    const token = this.token();
+    await this.activate(token);
+    const entry = await this.target(path, token);
     const index = resolve(entry.project.root, ".codegraph");
     throw new Error(`Online erasure is unsupported: cannot exclude other MCP readers/writers at ${JSON.stringify(index)}. No files removed. ` +
       `Stop all Pi/Codegraph MCP clients and remaining Codegraph daemons first. Then remove only the exact files ${JSON.stringify(resolve(index, "codegraph.db"))}, ` +

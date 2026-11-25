@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import type { Extension, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isolateAgentConfig, emptySettingsContext } from "./test-fixtures.ts";
 
 // Specified Behavioral-Active / Blackbox-Group: actual Pi loader, public extension hooks.
 test("Pi loader: factory is inert, session startup returns before CLI, commands and shutdown remain live", {
@@ -13,6 +14,7 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), "pi-codegraph-extension-"));
   t.after(() => rm(root, { recursive: true, force: true }));
+  isolateAgentConfig(t, root);
   execFileSync("git", ["init", "--quiet", root]);
   const marker = join(root, "started");
   const binary = join(root, "slow-codegraph");
@@ -49,7 +51,7 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
     fg(color: string, text: string) { badgeColours.push(color); return text; },
     bg(color: string, text: string) { return `[${color}]${text}[/]`; },
   };
-  const ctx = { cwd: root, mode: "tui", hasUI: true, ui: {
+  const ctx = { ...emptySettingsContext, cwd: root, mode: "tui", hasUI: true, ui: {
     theme,
     setWidget(_key: string, widget: string[] | ((...args: unknown[]) => { render(width: number): string[]; invalidate(): void }) | undefined, options: { placement: string } | undefined) {
       let text: string[] | undefined;
@@ -119,6 +121,9 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
     catch { await new Promise((done) => setTimeout(done, 10)); }
   }
   assert.ok(Number(await readFile(marker, "utf8")), "disabled automatic mode must still permit explicit commands");
+  const bypassInput = { projectPath: "./untouched" };
+  assert.equal(await emit("tool_call", { toolName: "mcp__codegraph__codegraph_explore", input: bypassInput }), undefined);
+  assert.deepEqual(bypassInput, { projectPath: "./untouched" }, "explicit sync does not turn the launch override back on");
   await emit("session_shutdown", { type: "session_shutdown", reason: "exit" });
 
   // Regression: an MCP default opened on an ancestor stays there after local init.
@@ -160,6 +165,7 @@ test("Pi loader: empty checkout is an info notice and failures are one-line erro
 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), "pi-codegraph-empty-"));
   t.after(() => rm(root, { recursive: true, force: true }));
+  isolateAgentConfig(t, root);
   execFileSync("git", ["init", "--quiet", root]);
   const binary = join(root, "fake-codegraph");
   const empty = { initialized: true, projectPath: root, indexPath: join(root, ".codegraph"),
@@ -196,7 +202,7 @@ test("Pi loader: empty checkout is an info notice and failures are one-line erro
   const panes: { component: Pane | undefined; closed: boolean }[] = [];
   // Unstyled, so table cells keep their real widths.
   const plain = { fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text, bold: (text: string) => text };
-  const ctx = { cwd: root, mode: "tui", hasUI: true, ui: {
+  const ctx = { ...emptySettingsContext, cwd: root, mode: "tui", hasUI: true, ui: {
     theme,
     setWidget(_key: string, widget: ((...args: unknown[]) => Badge) | undefined) {
       badge = widget === undefined ? undefined : widget({}, theme);

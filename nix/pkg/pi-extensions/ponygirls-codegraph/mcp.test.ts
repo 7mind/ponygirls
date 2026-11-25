@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 import type { Extension, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isolateAgentConfig, emptySettingsContext } from "./test-fixtures.ts";
 
 interface RpcMessage {
   id: number | string;
@@ -74,6 +75,7 @@ test("MCP before init: nested checkout defaults stay local and explicit paths re
 }, async (t) => {
   const binary = process.env.PONYGIRLS_CODEGRAPH_BIN!;
   const base = await mkdtemp(join(tmpdir(), "pi-codegraph-mcp-"));
+  isolateAgentConfig(t, base);
   const cleanup: (() => Promise<unknown>)[] = [() => rm(base, { recursive: true, force: true })];
   t.after(async () => { for (const close of cleanup.reverse()) await close(); });
   const env = { ...process.env, CODEGRAPH_TELEMETRY: "0", CODEGRAPH_DAEMON_IDLE_TIMEOUT_MS: "500" };
@@ -106,7 +108,7 @@ test("MCP before init: nested checkout defaults stay local and explicit paths re
   const loaded = await loader.loadExtensions([resolve(import.meta.dirname, "index.ts")], nested);
   assert.deepEqual(loaded.errors, []);
   const extension = loaded.extensions[0] as Extension;
-  const ctx = { cwd: nested, mode: "json", hasUI: false } as ExtensionContext;
+  const ctx = { ...emptySettingsContext, cwd: nested, mode: "json", hasUI: false } as unknown as ExtensionContext;
   const emit = async (name: string, event: object) => {
     const handlers = extension.handlers.get(name);
     assert.ok(handlers);
@@ -134,6 +136,7 @@ test("MCP from a non-Git parent: lazy repository isolation and ambiguous default
 }, async (t) => {
   const binary = process.env.PONYGIRLS_CODEGRAPH_BIN!;
   const base = await mkdtemp(join(tmpdir(), "pi-codegraph-workspace-mcp-"));
+  isolateAgentConfig(t, base);
   const env = { ...process.env, CODEGRAPH_TELEMETRY: "0", CODEGRAPH_NO_WATCH: "1" };
   t.after(() => rm(base, { recursive: true, force: true }));
   const roots = [join(base, "alpha"), join(base, "beta")];
@@ -151,7 +154,7 @@ test("MCP from a non-Git parent: lazy repository isolation and ambiguous default
   const loaded = await loader.loadExtensions([resolve(import.meta.dirname, "index.ts")], base);
   assert.deepEqual(loaded.errors, []);
   const extension = loaded.extensions[0] as Extension;
-  const ctx = { cwd: base, mode: "json", hasUI: false } as ExtensionContext;
+  const ctx = { ...emptySettingsContext, cwd: base, mode: "json", hasUI: false } as unknown as ExtensionContext;
   const emit = (name: string, event: object) => extension.handlers.get(name)![0](event, ctx);
   t.after(() => emit("session_shutdown", { type: "session_shutdown", reason: "exit" }));
   emit("session_start", { type: "session_start", reason: "startup" });

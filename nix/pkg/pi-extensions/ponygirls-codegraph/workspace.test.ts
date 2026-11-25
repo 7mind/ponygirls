@@ -116,20 +116,84 @@ test("dot and parent-relative targets stay anchored to Pi's cwd after selection"
   t.after(() => workspace.shutdown());
   await workspace.start(false);
   await workspace.use("../b");
+  await workspace.start(true);
   assert.equal(await workspace.query(undefined), "/workspace/b");
   assert.equal(await workspace.query("."), "/workspace/a");
   assert.equal(await workspace.query("../b"), "/workspace/b");
 });
 
-test("disabled startup makes no probes; explicit commands activate discovery", async () => {
+test("disabled startup makes no probes; manual work never enables routing", async (t) => {
   const f = fixture();
+  t.after(() => f.workspace.shutdown());
   await f.workspace.start(false);
   assert.equal(f.probes(), 0);
-  assert.equal(f.workspace.routingEnabled, false);
-  await f.workspace.perform("status", null, true);
-  assert.equal(f.workspace.routingEnabled, true);
-  assert.equal(f.initialized.size, 0);
-  await f.workspace.shutdown();
+  assert.equal(f.workspace.routingSignal, null);
+  await f.workspace.perform("sync", "b", false);
+  assert.equal(f.initialized.has("/workspace/b"), true);
+  assert.equal(f.workspace.routingSignal, null, "a manual sync must not opt the session into routing");
+  await assert.rejects(f.workspace.query("b"), /automatic routing is off/);
+});
+
+test("OFF cancels an admitted query but keeps the selected scope available to manual work", async (t) => {
+  const f = fixture();
+  t.after(() => f.workspace.shutdown());
+  await f.workspace.start(true);
+  await f.workspace.use("b");
+  f.holds.set("/workspace/b", new Promise(() => {}));
+  const routing = f.workspace.routingSignal!;
+  const query = f.workspace.query(undefined);
+  const cancelled = assert.rejects(query, /operation cancelled/);
+  await new Promise(setImmediate);
+  assert.deepEqual(f.calls, ["/workspace/b:init"]);
+  const stopping = f.workspace.start(false);
+  assert.equal(f.workspace.routingSignal, null);
+  assert.equal(routing.aborted, true);
+  await Promise.all([stopping, cancelled]);
+  assert.deepEqual(f.calls, ["/workspace/b:init"], "cancelled preparation must not advance to a health check");
+  f.holds.delete("/workspace/b");
+  await f.workspace.perform("sync", null, false);
+  assert.equal(f.initialized.has("/workspace/b"), true, "manual work uses the prior selection");
+  assert.equal(f.workspace.routingSignal, null);
+  await f.workspace.start(true);
+  assert.equal(await f.workspace.query(undefined), "/workspace/b");
+});
+
+test("ON after OFF during cold discovery starts only the new generation", async (t) => {
+  const f = fixture();
+  const workspace = new CodegraphWorkspace(f.catalog, f.boundary, "/workspace/a", () => {}, () => "checked");
+  t.after(() => workspace.shutdown());
+  const discover = f.catalog.discover;
+  let release!: () => void;
+  let entered!: () => void;
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  const entering = new Promise<void>(resolve => { entered = resolve; });
+  let discoveries = 0;
+  f.catalog.discover = async (path, signal) => {
+    if (++discoveries === 1) { entered(); await hold; }
+    return discover(path, signal);
+  };
+  const first = workspace.start(true);
+  await entering;
+  const off = workspace.start(false);
+  const on = workspace.start(true);
+  release();
+  await Promise.all([first, off, on]);
+  assert.equal(await workspace.query(undefined), "/workspace/a");
+  assert.equal(discoveries, 2);
+  assert.deepEqual(f.calls, ["/workspace/a:init", "/workspace/a:status"]);
+});
+
+// Regression: a queued manual activation must not replace a newer automatic startup's discovery promise.
+test("turning ON while a cold manual command is queued prepares the default and clears discovery", async (t) => {
+  const f = fixture();
+  const workspace = new CodegraphWorkspace(f.catalog, f.boundary, "/workspace/a", () => {}, () => "checked");
+  t.after(() => workspace.shutdown());
+  await workspace.start(false);
+  const manual = workspace.perform("status", "/workspace/b", false);
+  await Promise.all([manual, workspace.start(true)]);
+  await new Promise(setImmediate);
+  assert.deepEqual(f.calls, ["/workspace/a:init", "/workspace/a:status"], "ON must prepare the default without another query");
+  assert.equal(workspace.state.phase, "ready", "the completed startup no longer displays an indexing badge");
 });
 
 test("a failed project does not gate another project's in-flight preparation", async () => {
@@ -211,6 +275,7 @@ test("failed manual activation is recoverable and shutdown does not rethrow it",
   await assert.rejects(f.workspace.perform("status", null, true), /discovery failed once/);
   f.catalog.discover = discover;
   await f.workspace.discover(null);
+  await f.workspace.start(true);
   assert.equal(await f.workspace.query("b"), "/workspace/b");
   await f.workspace.shutdown();
 });
@@ -243,39 +308,40 @@ test("rediscovery removes stale roots and replaces changed project identities", 
   await f.workspace.shutdown();
 });
 
-test("cancelling rediscovery while an old entry drains cannot retain a closed busy session", async () => {
-  const f = fixture();
-  await f.workspace.start(true);
-  const run = f.boundary.run;
-  let release!: () => void;
-  let shutdownBegan!: () => void;
-  const drained = new Promise<void>((resolve) => { release = resolve; });
-  const shuttingDown = new Promise<void>((resolve) => { shutdownBegan = resolve; });
-  f.boundary.run = async (root, args, signal) => {
-    if (root === "/workspace/a") {
-      signal.addEventListener("abort", shutdownBegan, { once: true });
-      await drained;
-      signal.throwIfAborted();
-    }
-    return run(root, args, signal);
-  };
-  const query = f.workspace.query("a");
-  const queryCancelled = assert.rejects(query, /cancelled|changed/i);
-  await new Promise((resolve) => setImmediate(resolve));
-  f.catalog.discover = async () => [];
-  const discovery = f.workspace.discover(null);
-  const discoveryCancelled = assert.rejects(discovery, /cancelled/i);
-  await shuttingDown;
-  const cancel = f.workspace.cancel(null, true);
-  release();
-  await cancel;
-  await discoveryCancelled;
-  await queryCancelled;
-  f.boundary.run = run;
-  await f.workspace.perform("sync", "a", false);
-  assert.equal(await f.workspace.query("a"), "/workspace/a");
-  await f.workspace.shutdown();
-});
+for (const stop of ["cancel --all", "off"]) {
+  test(`${stop} during rediscovery preserves the selection and leaves no closed busy session`, async (t) => {
+    const f = fixture();
+    t.after(() => f.workspace.shutdown());
+    await f.workspace.start(true);
+    await f.workspace.use("a");
+    const run = f.boundary.run;
+    let release!: () => void;
+    let drainBegan!: () => void;
+    const drained = new Promise<void>((resolve) => { release = resolve; });
+    const draining = new Promise<void>((resolve) => { drainBegan = resolve; });
+    f.boundary.run = async (root, args, signal) => {
+      if (root === "/workspace/a") {
+        signal.addEventListener("abort", drainBegan, { once: true });
+        await drained;
+        signal.throwIfAborted();
+      }
+      return run(root, args, signal);
+    };
+    const queryCancelled = assert.rejects(f.workspace.query(undefined), /cancelled|changed/i);
+    await new Promise(setImmediate);
+    f.catalog.discover = async () => [];
+    const discoveryCancelled = assert.rejects(f.workspace.discover(null), /cancelled/i);
+    await draining;
+    const cancel = stop === "off" ? f.workspace.start(false) : f.workspace.cancel(null, true);
+    release();
+    await Promise.all([cancel, discoveryCancelled, queryCancelled]);
+    f.boundary.run = run;
+    const snapshot = await f.workspace.snapshot(null);
+    assert.equal(snapshot.scopes.find(scope => scope.isDefault)?.root, "/workspace/a");
+    await f.workspace.perform("sync", null, false);
+    assert.equal(f.initialized.has("/workspace/a"), true, "manual retry can still use the selected session");
+  });
+}
 
 test("ready project identity is validated again before forwarding a query", async () => {
   const f = fixture();

@@ -7,11 +7,13 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Component, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import extension from "./index.ts";
 import { CG_HELP } from "./commands.ts";
+import { isolateAgentConfig, emptySettingsContext } from "./test-fixtures.ts";
 
 type Badge = Component & { handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined };
 // Specified Behavioral-Active / Blackbox-Group: real extension, scripted UI boundary.
 test("the badge opens the status pane without enabling Codegraph, /cg opens the same pane, and it closes by keyboard or shutdown", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "cg-badge-"));
+  isolateAgentConfig(t, cwd);
   const disabled = process.env.SMIND_CODEGRAPH_DISABLED;
   process.env.SMIND_CODEGRAPH_DISABLED = "1";
   t.after(async () => {
@@ -29,7 +31,7 @@ test("the badge opens the status pane without enabling Codegraph, /cg opens the 
   type PanelFactory = (tui: { terminal: { rows: number }; requestRender(): void }, activeTheme: typeof theme,
     keys: { matches(data: string, action: string): boolean }, done: () => void) => Component | Promise<Component>;
   const notices: string[] = [];
-  const ctx = { cwd, mode: "tui", hasUI: true, ui: {
+  const ctx = { ...emptySettingsContext, cwd, mode: "tui", hasUI: true, ui: {
     notify(text: string) { notices.push(text); },
     setWidget(_key: string, factory: ((tui: object, activeTheme: typeof theme) => Badge) | undefined) { badge = factory === undefined ? undefined : factory({}, theme); },
     custom(factory: PanelFactory, options: { retainEditorBorders: boolean }): Promise<void> {

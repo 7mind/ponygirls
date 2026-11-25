@@ -831,8 +831,9 @@
             cp -r ${./nix/pkg/pi-extensions/ponygirls-codegraph} ponygirls-codegraph
             chmod -R u+w ponygirls-codegraph
             cd ponygirls-codegraph
-            mkdir -p node_modules/@earendil-works
-            mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
+            mkdir -p node_modules/@earendil-works node_modules/@ponygirls
+            ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
+            ln -s ${self.packages.${system}.ponygirls-pi-settings} node_modules/@ponygirls/pi-settings
             ln -s "$PI_CODEGRAPH_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
             ln -s "$PI_CODEGRAPH_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
             ln -s "$PI_CODEGRAPH_SDK_ROOT/node_modules/@types" node_modules/@types

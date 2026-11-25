@@ -9,18 +9,35 @@ const completeCommand = (prefix: string) => completeWith(prefix, noDirectories);
 
 test("subcommand completions show syntax, filter prefixes and insert executable names", () => {
   const items = completeCommand("")!;
-  assert.equal(items.length, 9);
+  assert.equal(items.length, 16);
   for (const item of items) {
     assert.match(CG_HELP, new RegExp(`/cg ${item.value.trim()}(?: | —)`));
     assert.ok(item.description.length > 0);
     assert.doesNotThrow(() => parseCommand(item.value + (item.value === "init " ? "--workspace ./project" :
-      ["use ", "erase "].includes(item.value) ? "./project" : "")));
+      ["use ", "erase "].includes(item.value) ? "./project" :
+      ["session ", "project ", "global "].includes(item.value) ? "off" : "")));
   }
   assert.deepEqual(completeCommand("sy"), [items.find((item) => item.value === "sync ")]);
   assert.deepEqual(completeCommand("  sy"), completeCommand("sy"));
   assert.equal(completeCommand("unknown"), null);
   assert.equal(completeCommand("use ./project"), null);
   assert.equal(completeCommand("help "), null);
+});
+
+test("settings share scoped toggle commands and do not complete them as paths", () => {
+  assert.deepEqual(parseCommand("settings"), { name: "settings" });
+  for (const [verb, enabled] of [["on", true], ["off", false], ["inherit", null]] as const) {
+    assert.deepEqual(parseCommand(verb), { name: "toggle", scope: "session", enabled });
+    for (const scope of ["session", "project", "global"]) {
+      const lister = () => assert.fail("scope commands do not list directories");
+      assert.ok(completeWith(`${scope} ${verb}`, lister)!.some(item => item.value === `${scope} ${verb}`));
+      assert.deepEqual(parseCommand(`${scope} ${verb}`), { name: "toggle", scope, enabled });
+    }
+  }
+  for (const command of ["project", "global yes", "session off /other", "settings extra", "off PATH"]) {
+    assert.throws(() => parseCommand(command), /Usage: \/cg help/);
+  }
+  assert.deepEqual(parseCommand("use global off"), { name: "use", target: "global off" });
 });
 
 test("flag completions preserve the subcommand and never suggest invalid options", () => {

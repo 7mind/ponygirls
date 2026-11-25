@@ -1,8 +1,11 @@
-export type CgCommand =
-  | { name: "help" }
+import { SCOPED_SETTINGS_SCOPES, parseScopedToggleCommand, parseToggleCommand, type ScopedToggleCommand } from "@ponygirls/pi-settings";
+
+export type WorkspaceCommand =
   | { name: "status" | "sync" | "reindex" | "cancel"; target: string | null; all: boolean }
   | { name: "discover"; target: string | null }
   | { name: "use" | "erase" | "init"; target: string };
+
+export type CgCommand = WorkspaceCommand | { name: "help" } | { name: "settings" } | ({ name: "toggle" } & ScopedToggleCommand);
 
 function pathArgument(text: string): string {
   let path = text.trim();
@@ -23,7 +26,11 @@ export function parseCommand(args: string): CgCommand {
   if (match === null) return { name: "status", target: null, all: false };
   const name = match[1]!;
   const rest = match[2] === undefined ? "" : match[2].trim();
-  if (name === "help" && rest === "") return { name: "help" };
+  if ((name === "help" || name === "settings") && rest === "") return { name };
+  const scoped = parseScopedToggleCommand(args);
+  if (scoped !== null) return { name: "toggle", ...scoped };
+  const toggle = parseToggleCommand(args);
+  if (toggle?.kind === "session") return { name: "toggle", scope: "session", enabled: toggle.enabled };
   if (name === "status" || name === "sync" || name === "reindex" || name === "cancel") {
     if (rest === "--all" && name !== "reindex") return { name, target: null, all: true };
     return { name, target: rest === "" ? null : pathArgument(rest), all: false };
@@ -36,6 +43,12 @@ export function parseCommand(args: string): CgCommand {
   throw new Error("Usage: /cg help — workspace creation requires /cg init --workspace PATH");
 }
 
+const TOGGLE_ACTIONS = [
+  { name: "on", syntax: "", description: "enable automatic preparation and routing" },
+  { name: "off", syntax: "", description: "disable automatic preparation and routing" },
+  { name: "inherit", syntax: "", description: "remove the override in this scope" },
+];
+
 const CG_COMMANDS = [
   { name: "status", syntax: "[PATH | --all]", description: "last-checked health and logical index bytes (including WAL/SHM)" },
   { name: "discover", syntax: "[PATH]", description: "list containing checkout or immediate child checkouts; no indexing" },
@@ -45,8 +58,11 @@ const CG_COMMANDS = [
   { name: "cancel", syntax: "[PATH | --all]", description: "stop extension work only; MCP watcher unchanged" },
   { name: "init", syntax: "--workspace PATH", description: "opt in to one non-Git workspace-wide index" },
   { name: "erase", syntax: "PATH", description: "explain safe offline removal; online deletion is refused" },
+  { name: "settings", syntax: "", description: "open scoped settings for automatic preparation and routing" },
+  ...TOGGLE_ACTIONS.map(action => ({ ...action, description: `${action.description} (session)` })),
+  ...SCOPED_SETTINGS_SCOPES.map(name => ({ name, syntax: "on|off|inherit", description: `set or clear the ${name} preference` })),
   { name: "help", syntax: "", description: "show command syntax and path rules" },
-] as const;
+];
 
 interface CommandCompletion {
   value: string;
@@ -115,6 +131,10 @@ export function completeCommand(prefix: string, directories: DirectoryLister): C
     } else if (WORKSPACE_FLAG.startsWith(argument)) {
       items.push({ value: `init ${WORKSPACE_FLAG} `, label: `${WORKSPACE_FLAG} PATH`, description: "explicitly opt in to a non-Git workspace" });
     }
+  } else if (SCOPED_SETTINGS_SCOPES.some(scope => scope === name)) {
+    items.push(...TOGGLE_ACTIONS.filter(action => action.name.startsWith(argument)).map(action => ({
+      value: `${name} ${action.name}`, label: action.name, description: action.description,
+    })));
   } else if (PATH_TAKING.has(name)) {
     if (ALL_FLAG.has(name) && "--all".startsWith(argument)) items.push({ value: `${name} --all`, ...ALL_COMPLETION });
     items.push(...directoryCompletions(`${name} `, argument, directories));

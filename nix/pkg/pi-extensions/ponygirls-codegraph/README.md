@@ -54,6 +54,9 @@ guard, not the MCP server itself.
 /cg cancel [PATH | --all]
 /cg init --workspace PATH
 /cg erase PATH
+/cg settings
+/cg on|off|inherit
+/cg session|project|global on|off|inherit
 ```
 
 Type `/cg ` to see subcommands with argument syntax and descriptions; type a
@@ -131,6 +134,32 @@ of MCP connectivity. Narrow and compact forms have no fill; the compact form
 keeps `●` for working or querying, `!` for cancellation, and `✖` for error.
 There are no animation/polling timers.
 
+## Automatic preparation and routing
+
+`/cg settings` opens the shared settings pane. Use Tab to change scope, Space
+to toggle, `r` to inherit, and Ctrl+S to save the selected scope. Escape
+discards unsaved changes. Outside the TUI, `/cg settings` reports the current
+preference and its source. The on/off/inherit commands write the same setting;
+without a scope they apply to the session.
+
+Codegraph automation is **on** by default. A session override wins over a
+trusted project override, then the global preference. The session setting uses
+Pi's native session records and spans branches within that session. Project
+settings live in `.pi/codegraph.json` in Pi's starting directory (not the
+checkout selected by `/cg use`); global settings live in `codegraph.json` in
+Pi's agent directory. Untrusted project configuration is not read or written.
+An invalid configuration stops automatic work and is reported without rewriting
+it. Saves apply in the current session immediately; changes from another Pi
+are read at the next agent run or reload.
+
+Switching off cancels pending extension-owned work, retains index files and the
+selected checkout, and stops automatic discovery, preparation, and routing. MCP calls
+continue without Pi verifying or filling in `projectPath`; the separate MCP
+server and watcher are unchanged. Manual `/cg` operations still work and do not
+turn automation back on. Turning on schedules the usual preparation of the
+default scope. `SMIND_CODEGRAPH_DISABLED=1` takes precedence over the saved
+preference for the entire launch; the settings pane shows this limitation.
+
 ## Workspace-wide opt-in
 
 `/cg init --workspace /absolute/parent` creates a local
@@ -148,8 +177,8 @@ still select the child's own index. Git scopes take precedence over ancestor
 workspace markers. Without Git, the nearest opted-in workspace marker wins.
 
 Remove the marker while sessions are stopped to revoke persistent workspace
-opt-in; that does not delete index files. `SMIND_CODEGRAPH_DISABLED=1` is the
-separate switch for disabling automatic extension preparation/routing.
+opt-in; that does not delete index files. This marker is independent of the
+setting for automatic extension preparation and routing.
 
 ## Worktrees and writer ownership
 
@@ -221,9 +250,9 @@ refused, never replaced.
 
 - `PONYGIRLS_CODEGRAPH_BIN`: executable path; default `codegraph`.
 - `PONYGIRLS_CODEGRAPH_FLOCK_BIN`: executable path; default `flock`.
-- `SMIND_CODEGRAPH_DISABLED=1`: no automatic Git/CLI probes or query routing.
-  Explicit `/cg` operations can activate discovery/preparation. Help and cancel
-  do not independently bootstrap indexes.
+- `SMIND_CODEGRAPH_DISABLED=1`: force automatic preparation/routing off for this
+  launch. Explicit `/cg` operations remain available (help and cancel never
+  independently bootstrap an index).
 - Custom nonempty `CODEGRAPH_DIR` other than `.codegraph` is refused to prevent
   disagreement with MCP. Symlink index directories/databases are refused.
 - CLI children disable telemetry. Native Windows is unsupported; process groups
