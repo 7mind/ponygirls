@@ -64,9 +64,16 @@ final class ClaimOrderMigrationTest extends munit.FunSuite {
   private val migrated=(List(("bulk","YES",None),("waiting_since","YES",None)),List("ch_jobs_age","ch_jobs_class","ch_jobs_running","ch_jobs_sized"),1)
   private def filenode(db: Database): Long = db.transaction(c => Sql.one(c,"SELECT pg_relation_filenode('ch_jobs')")(_.getLong(1)).get)
 
-  test("T9: 033 adds the columns without rewriting ch_jobs under an ACCESS EXCLUSIVE lock held to commit; a second start changes nothing") { fixture { (config,db,archive,_) =>
+  test("T9: 033 adds the columns without rewriting ch_jobs under an ACCESS EXCLUSIVE lock held to commit; Queued and Running jobs are filled and reseeded, a second start changes nothing") { fixture { (config,db,archive,catalog) =>
     val queued=List.fill(2)(source(archive,"a").jobId); val complete=source(archive,"a").jobId
     setState(db,complete,"state='Complete'")
+    // A head-revision Running job, retried once before (class bulk by D-i).
+    val running=source(archive,"b").jobId
+    setState(db,running,"state='Failed',attempts=5,error='model-http'"); archive.retry("b",running)
+    assertEquals(archive.claim(catalog.knownProfiles,ClaimScope.Owner("b"),300).map(_.jobId),Some(running))
+    def attempt(): (String,Long,Int,Option[Instant],Long) = db.transaction(c => Sql.one(c,"SELECT state,fence,attempts,lease_until,indexing_epoch FROM ch_jobs WHERE id=?",running)(r =>
+      (r.getString(1),r.getLong(2),r.getInt(3),Option(r.getObject(4,classOf[OffsetDateTime])).map(_.toInstant),r.getLong(5))).get)
+    val claimed=attempt(); assertEquals(claimed._1,"Running")
     downApplied(config)
     assertEquals(schema(db),(Nil,Nil,0))
     val node=filenode(db)
@@ -83,20 +90,26 @@ final class ClaimOrderMigrationTest extends munit.FunSuite {
     assertEquals(schema(db),(Nil,Nil,0),"the observing transaction rolled back")
     val before=marker(db); val first=started(db); val after=marker(db)
     assertEquals(filenode(db),node,"033 is a catalog change: ch_jobs keeps its relfilenode")
-    assertEquals(first,List("claim order start fill rows=2"))
+    assertEquals(first,List("claim order start fill rows=3"))
     assertEquals(schema(db),migrated)
-    val filled=queued.map(order(db,_))
+    val filled=(queued:+running).map(order(db,_))
     assertEquals(filled.map(_._1).distinct.size,1,"one start time")
     assert(filled.head._1.exists(t => !t.isBefore(before) && !t.isAfter(after)),filled.toString)
-    assertEquals(filled.map(_._2),List(Some(false),Some(false)))
+    assertEquals(filled.map(_._2),List(Some(false),Some(false),Some(true)))
+    assertEquals(attempt(),claimed,"the fill changes no state, fence, attempt, lease or epoch")
     assertEquals(order(db,complete),(None,None),"a finished job is not filled")
     assertEquals(started(db),List("claim order start fill rows=0"))
-    assertEquals((schema(db),queued.map(order(db,_)),filenode(db)),(migrated,filled,node))
+    assertEquals((schema(db),(queued:+running).map(order(db,_)),filenode(db),attempt()),(migrated,filled,node,claimed))
     // The fill in a transaction of the test: exactly its now(), NULLs only.
     plant(db,queued.head,"2001-01-01T00:00:00Z",true)
     db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET waiting_since=NULL WHERE id=?",queued(1)))
     val (rows,filledAt)=db.transaction(c => (ClaimOrderSeed.startFill(c),now(c)))
     assertEquals((rows,order(db,queued(1)),order(db,queued.head)),(1,(Some(filledAt),Some(false)),(Some(Instant.parse("2001-01-01T00:00:00Z")),Some(true))))
+    // The reseed renews the Running job too, with its class; its attempt stays as it was.
+    val (seeded,seededAt)=db.transaction(c => (ClaimOrderSeed.reseed(c),now(c)))
+    assertEquals(seeded,ClaimOrderSeed.Reseeded(3,1))
+    assertEquals((queued:+running).map(order(db,_)),List(false,false,true).map(bulk => (Some(seededAt),Some(bulk))))
+    assertEquals(attempt(),claimed)
   }}
 
   test("T9 D-i: the fill files a current cohort member and a retried job bulk, a member of a moved target epoch and a plain job fresh") { fixture { (_,db,archive,catalog) =>
@@ -119,7 +132,9 @@ final class ClaimOrderMigrationTest extends munit.FunSuite {
   }}
 
   /** A run of the deployed entry point in process: exit code, stdout. */
-  private def command(config: Config,name: String): (Int,String) = {
+  private def command(config: Config,name: String): (Int,String) = { val (exit,out,_)=captured(config,name); (exit,out) }
+  /** A run of the deployed entry point in process: exit code, stdout, stderr. */
+  private def captured(config: Config,name: String): (Int,String,String) = {
     val sample=Wire.parse(Files.readString(Path.of("config.example.json")))
     def model(key: String,changes: (String,Json)*): Json = sample.hcursor.downField(key).focus.get.mapObject(o => changes.foldLeft(o)((o,change) => o.add(change._1,change._2)))
     val json=sample.mapObject(_.add("jdbcUrl",Json.fromString(config.jdbcUrl)).add("databaseUser",Json.fromString(config.databaseUser)).add("databasePasswordFile",Json.fromString(config.databasePasswordFile))
@@ -128,13 +143,31 @@ final class ClaimOrderMigrationTest extends munit.FunSuite {
       .add("embedding",model("embedding","endpoint"->Json.fromString("http://127.0.0.1:1/forbidden-model"),"credentialFile"->Json.fromString(config.embedding.credentialFile),"dimensions"->Json.fromInt(3))))
     val dir=Files.createTempDirectory("chronicle-reseed-"); val path=dir.resolve("config.json")
     Files.writeString(path,json.noSpaces)
-    val (out,originalOut)=(new ByteArrayOutputStream(),System.out)
+    val (out,err,originalOut,originalErr)=(new ByteArrayOutputStream(),new ByteArrayOutputStream(),System.out,System.err)
     try {
-      System.setOut(new PrintStream(out,true,UTF_8))
+      System.setOut(new PrintStream(out,true,UTF_8)); System.setErr(new PrintStream(err,true,UTF_8))
       val exit=Main.run(List(name,path.toString)).unsafeRunSync()
-      (exit.code,out.toString(UTF_8))
-    } finally { System.setOut(originalOut); List(path,dir).foreach(Files.deleteIfExists) }
+      (exit.code,out.toString(UTF_8),err.toString(UTF_8))
+    } finally { System.setOut(originalOut); System.setErr(originalErr); List(path,dir).foreach(Files.deleteIfExists) }
   }
+
+  test("T9: migrate reports the fill count only after the whole start succeeded; a failure after the fill rolls it back and prints only the failure") { fixture { (config,db,archive,_) =>
+    val job=source(archive,"a").jobId
+    unset(db)
+    db.transaction { c =>
+      Sql.exec(c,"CREATE FUNCTION claim_order_test_fail_after_fill() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'planted failure after the claim-order fill'; END $$")
+      Sql.exec(c,"CREATE TRIGGER fail_after_fill BEFORE UPDATE ON ch_users FOR EACH STATEMENT EXECUTE FUNCTION claim_order_test_fail_after_fill()")
+    }
+    val (failedExit,failedOut,failedErr)=try captured(config,"migrate") finally db.transaction { c =>
+      Sql.exec(c,"DROP TRIGGER fail_after_fill ON ch_users"); Sql.exec(c,"DROP FUNCTION claim_order_test_fail_after_fill()")
+    }
+    assertEquals((failedExit,failedOut),(1,""))
+    val lines=failedErr.linesIterator.toList
+    assert(lines.size==1 && lines.head.startsWith("chronicle failure stage=migrate "),failedErr)
+    assertEquals(order(db,job),(None,None),"the failed start's fill rolled back")
+    assertEquals(captured(config,"migrate"),(0,"","chronicle claim order start fill rows=1\n"))
+    assertEquals(order(db,job)._2,Some(false))
+  }}
 
   test("T9: fe4f69f7's job writes on the new schema leave NULLs (filled at the next start) and stale values (only the reseed renews them)") { fixture { (config,db,archive,catalog) =>
     val switching=source(archive,"a")

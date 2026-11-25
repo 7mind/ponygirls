@@ -80,8 +80,10 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     Check(index!="invalid","migration-required",s"index ${Database.candidateIndex} is invalid (an interrupted concurrent build); before starting this release, $psql DROP INDEX CONCURRENTLY ${Database.candidateIndex}; ${Database.candidateIndexBuild};")
     Check(index=="valid" || bytes<=inlineBytes,"migration-required",s"ch_archive_fragments has $bytes bytes, more than the $inlineBytes a start builds index ${Database.candidateIndex} on; before starting this release, $psql ${Database.candidateIndexBuild};")
   }
-  /** `report` receives the start's progress lines (the claim-order start fill's count). */
+  /** `report` receives the start's progress lines (the claim-order start fill's count) after the whole start succeeded: a
+    * start that fails reports none (its first transaction, the fill's, may have rolled back). */
   def initialize(startupCandidateIndexBytes: Long = Database.startupCandidateIndexBytes,report: String => Unit = _ => ()): Unit = {
+    var filled=Option.empty[String]
     transaction { c =>
     Sql.exec(c,"SELECT pg_advisory_xact_lock(71393721)")
     requireCandidateIndex(c,startupCandidateIndexBytes)
@@ -101,8 +103,8 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     IndexingPreferenceSql.initialize(c)
     migrate(c,"032_indexing_eligibility.sql")
     migrate(c,"033_claim_order.sql")
-    // After 001.sql's supersession (above): only the jobs that stay unfinished are filled.
-    report(ClaimOrderSeed.startFillLine(ClaimOrderSeed.startFill(c)))
+    // After 001.sql's supersession (above): only the jobs that stay unfinished are filled. Reported once the start succeeded.
+    filled=Some(ClaimOrderSeed.startFillLine(ClaimOrderSeed.startFill(c)))
     // 001.sql (above) ends the previous process's older jobs superseded: their kept parts go with them (ANNOT2).
     AnnotationPartials.supersededAtStart(c)
     val dimensions=SearchPolicy.dimensions(config)
@@ -138,6 +140,7 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
       requireCandidateIndex(c,startupCandidateIndexBytes)
       migrate(c,"017_head_literal_candidates.sql")
     }
+    filled.foreach(report)
   }
 }
 object Database {
