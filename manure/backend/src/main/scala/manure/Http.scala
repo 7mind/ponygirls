@@ -172,7 +172,8 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       if bytes.isEmpty then IO.pure(None)
       else IO {
         Require(header(req,"Content-Type").exists(_.split(";",2)(0).trim == "application/json"), "bad-envelope")
-        Some(AccountJson.parseUtf8(bytes))
+        val opaqueTarget = req.method == Method.POST && req.uri.path.renderString == accountPrefix + IndexingAccountEndpoint.SetOverride.path
+        Some(if opaqueTarget then AccountJson.parseOpaqueIndexingTargetUtf8(bytes) else AccountJson.parseUtf8(bytes))
       }
     }
   /** The socket peer, or the right-most `X-Forwarded-For` element when the peer is a trusted proxy. */

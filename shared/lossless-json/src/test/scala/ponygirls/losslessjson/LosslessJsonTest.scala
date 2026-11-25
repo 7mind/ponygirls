@@ -69,6 +69,23 @@ class LosslessJsonTest extends munit.FunSuite {
     List("\"a\n\"", "\"\u0000\"", "\"\u001f\"").foreach(reject(_, "syntax"))
   }
 
+  test("only the named top-level string value can opt in to escaped NUL") {
+    def opaque(raw: String): Either[Error, Value] = parseUtf8WithOpaqueMember(raw.getBytes(UTF_8), StandardLimits, "owner")
+    val raw = """{"owner":"exact\u0000馬"}"""
+    assertEquals(encode(opaque(raw).toOption.get), raw)
+    reject(raw, "unicode")
+    List(
+      """{"password":"secret\u0000"}""" -> "unicode",
+      """{"own\u0000er":"exact"}""" -> "unicode",
+      """{"owner":{"owner":"exact\u0000"}}""" -> "unicode",
+      """{"owner":["exact\u0000"]}""" -> "unicode",
+      """{"owner":"\ud800"}""" -> "unicode",
+      """{"owner":"exact\u0000","\u006fwner":"unexpected"}""" -> "duplicate-key",
+      "{\"owner\":\"exact" + '\u0000' + "\"}" -> "syntax").foreach { (input, code) =>
+      assertEquals(opaque(input).left.toOption.map(_.code), Some(code))
+    }
+  }
+
   test("unpaired surrogates forbidden, paired escaped/raw astral accepted") {
     List("\"\\ud800\"", "\"\\udc00\"", "\"\\ud800a\"", "\"\\ud800\\ud800\"",
       "{\"\\udc00\":1}", "\"" + '\ud800' + "\"", "\"" + '\udc00' + "\"")

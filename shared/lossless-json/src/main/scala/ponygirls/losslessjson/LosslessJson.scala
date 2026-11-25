@@ -78,7 +78,9 @@ object LosslessJson {
   private def fail(code: String, offset: Int, message: String): Nothing =
     throw Rejected(Error(code, offset, message))
 
-  def parse(text: String, limits: Limits): Either[Error, Value] = {
+  def parse(text: String, limits: Limits): Either[Error, Value] = parse(text, limits, None)
+
+  private def parse(text: String, limits: Limits, opaqueMember: Option[String]): Either[Error, Value] = {
     try {
       // Count before allocating UTF-8 bytes and reject malformed Java UTF-16
       // rather than letting getBytes silently substitute replacement chars.
@@ -98,16 +100,23 @@ object LosslessJson {
         }
         if (bytes > limits.maxBytes) fail("byte-limit", 0, "input exceeds byte limit")
       }
-      Right(new Parser(text, limits).parse())
+      Right(new Parser(text, limits, opaqueMember).parse())
     } catch { case Rejected(error) => Left(error) }
   }
 
-  def parseUtf8(bytes: Array[Byte], limits: Limits): Either[Error, Value] = {
+  def parseUtf8(bytes: Array[Byte], limits: Limits): Either[Error, Value] = parseUtf8(bytes, limits, None)
+
+  /** Identical strict validation, except an escaped NUL is allowed in the string value of the named direct
+    * member of the root object. Use only for opaque values that are never sent to a text storage column. */
+  def parseUtf8WithOpaqueMember(bytes: Array[Byte], limits: Limits, member: String): Either[Error, Value] =
+    parseUtf8(bytes, limits, Some(member))
+
+  private def parseUtf8(bytes: Array[Byte], limits: Limits, opaqueMember: Option[String]): Either[Error, Value] = {
     if (bytes.length > limits.maxBytes) Left(Error("byte-limit", 0, "input exceeds byte limit"))
     else {
       val decoder = StandardCharsets.UTF_8.newDecoder()
         .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
-      try parse(decoder.decode(ByteBuffer.wrap(bytes)).toString, limits)
+      try parse(decoder.decode(ByteBuffer.wrap(bytes)).toString, limits, opaqueMember)
       catch { case _: CharacterCodingException => Left(Error("unicode", 0, "invalid UTF-8")) }
     }
   }
@@ -169,7 +178,7 @@ object LosslessJson {
     hash.digest(encodeUtf8(value)).map(b => f"${b & 255}%02x").mkString
   }
 
-  private final class Parser(text: String, limits: Limits) {
+  private final class Parser(text: String, limits: Limits, opaqueMember: Option[String]) {
     private var pos = 0
     private def syntax(): Nothing = fail("syntax", pos, "invalid JSON syntax")
     private def peek: Char = if (pos < text.length) text.charAt(pos) else 0.toChar
@@ -190,13 +199,13 @@ object LosslessJson {
       result
     }
 
-    private def value(depth: Int): Value = {
+    private def value(depth: Int, allowEscapedNul: Boolean = false): Value = {
       whitespace()
       peek match {
         case '[' | '{' if depth >= limits.maxDepth => fail("depth-limit", pos, "container depth exceeds limit")
         case '[' => array(depth + 1)
         case '{' => obj(depth + 1)
-        case '"' => new Str(string())
+        case '"' => new Str(string(allowEscapedNul))
         case 't' => literal("true"); new Bool(true)
         case 'f' => literal("false"); new Bool(false)
         case 'n' => literal("null"); Null
@@ -233,7 +242,7 @@ object LosslessJson {
         val key = string()
         if (!seen.add(key)) fail("duplicate-key", offset, "duplicate object key")
         whitespace(); expect(':')
-        fields += key -> value(depth)
+        fields += key -> value(depth, allowEscapedNul = depth == 1 && opaqueMember.contains(key))
         whitespace()
       }
       if (!eat('}')) {
@@ -244,7 +253,7 @@ object LosslessJson {
       new Obj(fields.result())
     }
 
-    private def string(): String = {
+    private def string(allowEscapedNul: Boolean = false): String = {
       expect('"')
       val out = new java.lang.StringBuilder
       var done = false
@@ -289,7 +298,7 @@ object LosslessJson {
       var i = 0
       while (i < result.length) {
         val c = result.charAt(i)
-        if (c == 0) fail("unicode", pos, "NUL is not supported")
+        if (c == 0 && !allowEscapedNul) fail("unicode", pos, "NUL is not supported")
         if (Character.isHighSurrogate(c)) {
           if (i + 1 >= result.length || !Character.isLowSurrogate(result.charAt(i + 1)))
             fail("unicode", pos, "unpaired surrogate")

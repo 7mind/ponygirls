@@ -10,6 +10,10 @@ object AccountJson {
     io.circe.parser.parse(ponygirls.losslessjson.LosslessJson.encode(value)).fold(_ => throw AccountFailure("invalid"), identity)
   def parse(raw: String): Json = json(ponygirls.losslessjson.LosslessJson.parse(raw, limits).fold(_ => throw AccountFailure("invalid"), identity))
   def parseUtf8(raw: Array[Byte]): Json = json(ponygirls.losslessjson.LosslessJson.parseUtf8(raw, limits).fold(_ => throw AccountFailure("invalid"), identity))
+  /** Manure keeps public owner IDs as arbitrary UTF-8 bytes, not PostgreSQL text. Only this endpoint may
+    * accept a JSON-escaped NUL in `userId`, which is compared exactly and hashed before SQL. */
+  def parseOpaqueIndexingTargetUtf8(raw: Array[Byte]): Json =
+    json(ponygirls.losslessjson.LosslessJson.parseUtf8WithOpaqueMember(raw, limits, "userId").fold(_ => throw AccountFailure("invalid"), identity))
   private def text(value: String): Json = Json.fromString(value)
   private def strings(values: Vector[String]): Json = Json.arr(values.map(text)*)
   def actor(userId: String): String = Secrets.digest("account-actor-v1:" + userId)
