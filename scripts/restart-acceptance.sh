@@ -137,6 +137,10 @@
 #     RESTART_ACC_OUT=/absolute/new/directory \
 #     timeout --signal=TERM --kill-after=300 3600 scripts/restart-acceptance.sh SMALL|POOL [CASE...] 2>&1 | tee "$RESTART_ACC_OUT.log"'
 #
+# RESTART_ACC_CHRONICLE_CLAIM_ORDER=source-id|waiting (optional, test-tooling hook, no rule change) sets Chronicle's
+# indexing.claimOrder in every case's configuration; unset = the configuration as before; any other value: usage error (exit 2).
+# The mode, or `unset (server default)`, is always named in the run's first line, report.json (chronicleClaimOrder) and `reparse`
+# (a report of an older script: "not recorded"). The wrapper validates the variable right after the set and cases.
 # RESTART_ACC_OUT receives report.json (verdicts, checks, measurements), postgres.log, every service process's output
 # (case<id>-<service>.log, seconds since the run's start) and case 3's 1 s timeline. RESTART_ACC_CALIBRATION=<a SMALL
 # run's report.json, the file rule set r7 registered> gives a POOL run SMALL's T for case 6 (required there). Exit 0: every case PASS (or BASELINE);
