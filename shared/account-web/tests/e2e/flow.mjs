@@ -461,7 +461,7 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
       await menu(bobLaptop, BOB, 'Users');
       const configured = userRow(bobLaptop, admin.login);
       await configured.getByText('read-only', { exact: true }).waitFor();
-      assert.equal(await configured.getByText('read-only', { exact: true }).getAttribute('title'), 'Managed in server configuration');
+      assert.equal(await configured.getByText('read-only', { exact: true }).getAttribute('title'), 'Credentials managed in server configuration');
       await button(configured, `Actions for ${admin.login}`).click();
       await configured.getByRole('menuitem', { name: 'Indexing…', exact: true }).waitFor();
       assert.equal(await configured.getByRole('menuitem').count(), 1, 'only indexing, not credentials or permissions, is editable');
