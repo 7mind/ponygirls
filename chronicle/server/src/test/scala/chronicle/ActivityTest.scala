@@ -19,7 +19,7 @@ private object ActivityTestData {
   def session(head: Head,revision: Int): SessionInfo = SessionInfo(ContentView(revision,None),head.id,head.owner,head.revision,None,metadata(head,revision),source(head,revision),Completion.Quiescent,false)
 
   final case class Head(id: UUID,owner: String,revision: Int,namespace: String,tombstone: Boolean,activity: Option[Instant],metadata: Metadata,subagents: Map[Int,Option[String]]=Map.empty,roots: Map[Int,String])
-  final case class Job(info: JobInfo,profile: String,lease: Option[Instant])
+  final case class Job(info: JobInfo,profile: String,lease: Option[Instant],waitingSince: Option[Instant]=None,bulk: Option[Boolean]=None)
   final case class Report(owner: String,value: CollectorProgressUpdate,received: Instant)
   final case class Seed(heads: List[Head],jobs: List[Job],reports: List[Report],disabled: Set[String],observedAt: Instant)
   def id(n: Int): UUID = new UUID(0,n.toLong)
@@ -300,7 +300,8 @@ abstract class ActivityContract extends munit.FunSuite {
   test("Behavioral-Blackbox Atomic/GoodCommunication specified: every job header sorts globally with ascending UUID ties and nulls last in both directions") {
     val varied=timed.copy(jobs=timed.jobs.map { j =>
       val n=j.info.id.getLeastSignificantBits.toInt
-      j.copy(info=j.info.copy(attempts=n%3,completedWindows=n%2,totalWindows=if(n%3==0) None else Some(n%4+2),error=if(n%3==0) None else Some(if(n%2==0) "zETA" else "Alpha")))
+      j.copy(info=j.info.copy(attempts=n%3,completedWindows=n%2,totalWindows=if(n%3==0) None else Some(n%4+2),error=if(n%3==0) None else Some(if(n%2==0) "zETA" else "Alpha")),
+        waitingSince=if(n%4==0) None else Some(now.minusSeconds((n%3).toLong*60)))
     })
     val groups=List(
       ExpectedJobSort(ActivityJobSort.LastTimestamp,List(List(10),List(8),List(7),List(2,4,5),List(1,3)),List(6,9)),
@@ -317,7 +318,8 @@ abstract class ActivityContract extends munit.FunSuite {
       ExpectedJobSort(ActivityJobSort.Reason,List(List(1,5,7),List(2,4,8,10)),List(3,6,9)),
       ExpectedJobSort(ActivityJobSort.Classification,List(List(1,5,6,7,8,9),List(3,10),List(2),List(4)),Nil),
       ExpectedJobSort(ActivityJobSort.JobId,(1 to 10).map(n => List(n)).toList,Nil),
-      ExpectedJobSort(ActivityJobSort.SessionId,List(List(1,2,3,4))++(5 to 10).map(n => List(n)).toList,Nil))
+      ExpectedJobSort(ActivityJobSort.SessionId,List(List(1,2,3,4))++(5 to 10).map(n => List(n)).toList,Nil),
+      ExpectedJobSort(ActivityJobSort.WaitingSince,List(List(2,5),List(1,7,10),List(3,6,9)),List(4,8)))
     assertEquals(groups.map(_.sort).toSet,ActivityJobSort.all.toSet)
     withIndex(varied) { index => groups.foreach { expectation => List(SortDirection.Asc,SortDirection.Desc).foreach { direction =>
       val expected=(if(direction==SortDirection.Asc) expectation.groups else expectation.groups.reverse).flatten++expectation.nulls
@@ -442,7 +444,7 @@ final class ActivityPostgresTest extends ActivityContract {
           CREATE TABLE ch_revisions(session_id uuid REFERENCES ch_sources(id),revision integer,snapshot jsonb NOT NULL,PRIMARY KEY(session_id,revision));
           CREATE TABLE ch_revision_info(session_id uuid,revision integer,metadata jsonb NOT NULL,source jsonb NOT NULL,completion text NOT NULL,redacted boolean NOT NULL,last_timestamp text,last_timestamp_order numeric,message_count integer NOT NULL,PRIMARY KEY(session_id,revision),FOREIGN KEY(session_id,revision) REFERENCES ch_revisions(session_id,revision) ON DELETE CASCADE);
           CREATE TABLE ch_generations(id uuid PRIMARY KEY,session_id uuid,revision integer,profile text);
-          CREATE TABLE ch_jobs(id uuid PRIMARY KEY,session_id uuid REFERENCES ch_sources(id),revision integer NOT NULL,profile text NOT NULL,state text NOT NULL,attempts integer NOT NULL,fence bigint NOT NULL,lease_until timestamptz,error text,completed_windows integer NOT NULL,total_windows integer,failure_stage text,indexing_epoch bigint NOT NULL DEFAULT 0,UNIQUE(session_id,revision,profile));
+          CREATE TABLE ch_jobs(id uuid PRIMARY KEY,session_id uuid REFERENCES ch_sources(id),revision integer NOT NULL,profile text NOT NULL,state text NOT NULL,attempts integer NOT NULL,fence bigint NOT NULL,lease_until timestamptz,error text,completed_windows integer NOT NULL,total_windows integer,failure_stage text,indexing_epoch bigint NOT NULL DEFAULT 0,waiting_since timestamptz,bulk boolean,UNIQUE(session_id,revision,profile));
           CREATE TABLE ch_security_epoch(singleton boolean PRIMARY KEY,indexing_revision bigint NOT NULL);
           INSERT INTO ch_security_epoch VALUES(true,0);
           CREATE TABLE ch_collector_progress(owner text REFERENCES ch_users(id),collector_id text,sequence bigint NOT NULL CHECK(sequence>0),report jsonb NOT NULL,received_at timestamptz NOT NULL,PRIMARY KEY(owner,collector_id));
@@ -477,8 +479,10 @@ final class ActivityPostgresTest extends ActivityContract {
           val lease=j.lease.fold("NULL")(_ => "?::timestamptz")
           val error=i.error.fold("NULL")(_ => "?")
           val windows=i.totalWindows.fold("NULL")(_ => "?")
-          val params=List[Sql.Param](i.id,i.sessionId,i.revision,j.profile,i.state.toString,i.attempts)++j.lease.map(_.toString).toList++i.error.toList++List[Sql.Param](i.completedWindows)++i.totalWindows.toList
-          Sql.exec(c,s"INSERT INTO ch_jobs(id,session_id,revision,profile,state,attempts,fence,lease_until,error,completed_windows,total_windows) VALUES(?,?,?,?,?,?,1,$lease,$error,?,$windows)",params*)
+          val params=List[Sql.Param](i.id,i.sessionId,i.revision,j.profile,i.state.toString,i.attempts)++j.lease.map(_.toString).toList++i.error.toList++List[Sql.Param](i.completedWindows)++i.totalWindows.toList++
+            j.waitingSince.map(_.toString).toList++j.bulk.toList
+          val since=j.waitingSince.fold("NULL")(_ => "?::timestamptz"); val bulk=j.bulk.fold("NULL")(_ => "?")
+          Sql.exec(c,s"INSERT INTO ch_jobs(id,session_id,revision,profile,state,attempts,fence,lease_until,error,completed_windows,total_windows,waiting_since,bulk) VALUES(?,?,?,?,?,?,1,$lease,$error,?,$windows,$since,$bulk)",params*)
         }
         seed.reports.foreach { r => Sql.exec(c,"INSERT INTO ch_collector_progress VALUES(?,?,?,?::jsonb,?::timestamptz)",r.owner,r.value.collectorId,r.value.sequence,Wire.encode(CollectorProgressUpdate.codecJson,r.value).noSpaces,r.received.toString) }
       }
@@ -519,7 +523,7 @@ private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) exte
       case (true,false) => ActivityJobClass.ObsoleteProfile
       case (false,false) => ActivityJobClass.SupersededRevisionAndProfile
     }
-    ActivityJob(j.info,j.profile,classification,j.lease.map(_.toString),j.info.state==JobState.Running && j.lease.exists(_.isAfter(now)),classification==ActivityJobClass.Current && j.info.state==JobState.Failed,collector(h),session(h,j.info.revision),activity(h,j.info.revision).map(_.toString))
+    ActivityJob(j.info,j.profile,classification,j.lease.map(_.toString),j.info.state==JobState.Running && j.lease.exists(_.isAfter(now)),classification==ActivityJobClass.Current && j.info.state==JobState.Failed,collector(h),session(h,j.info.revision),activity(h,j.info.revision).map(_.toString),j.waitingSince.map(_.toString),j.bulk,None,None)
   }}
   private def counts(rows: List[ActivityJob]): JobCounts = {
     def state(s: JobState): Long = rows.count(_.job.state==s).toLong
@@ -581,6 +585,7 @@ private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) exte
     case ActivityJobSort.Classification => text(fold(j.classification.toString))
     case ActivityJobSort.JobId => text(j.job.id.toString)
     case ActivityJobSort.SessionId => text(j.job.sessionId.toString)
+    case ActivityJobSort.WaitingSince => time(j.waitingSince)
   }
   private def collectorKey(c: ActivityCollector,sort: ActivityCollectorSort): Option[Value] = sort match {
     case ActivityCollectorSort.CollectorId => text(c.collectorId)
@@ -622,7 +627,7 @@ private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) exte
   private def wire(value: Option[Value]): Option[String] = value.map { case Value.Text(v) => v; case Value.Number(v) => v.bigDecimal.toPlainString }
   private def position(value: ActivityPosition,kind: ActivityPositionKind): Option[Value] = value.value.map { v => if(kind==ActivityPositionKind.Count || kind==ActivityPositionKind.Time) Value.Number(BigDecimal(v)) else Value.Text(v) }
   private def jobOrder(sort: ActivityJobSort): ActivityOrder = sort match {
-    case ActivityJobSort.LastTimestamp | ActivityJobSort.LeaseExpiresAt => ActivityOrder("",ActivityPositionKind.Time,true)
+    case ActivityJobSort.LastTimestamp | ActivityJobSort.LeaseExpiresAt | ActivityJobSort.WaitingSince => ActivityOrder("",ActivityPositionKind.Time,true)
     case ActivityJobSort.TotalWindows => ActivityOrder("",ActivityPositionKind.Count,true)
     case ActivityJobSort.Revision | ActivityJobSort.Attempts | ActivityJobSort.CompletedWindows => ActivityOrder("",ActivityPositionKind.Count,false)
     case ActivityJobSort.State => ActivityOrder("",ActivityPositionKind.State,false)
@@ -658,7 +663,7 @@ private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) exte
     val remaining=collectors.filter(c => after.forall { p => val compared=compare(collectorKey(c,q.sort),position(p,order.kind),q.direction); compared>0 || (compared==0 && compareText(c.collectorId,p.id)>0) })
     val selected=remaining.take(q.limit)
     val next=if(remaining.size>q.limit) Some(ActivityCursor.encodeCollector(q,user.id,order,ActivityPosition(wire(collectorKey(selected.last,q.sort)),selected.last.collectorId))) else None
-    ActivityResult(now.toString,user,heads.size.toLong,heads.count(h => !current.exists(_.job.sessionId==h.id)).toLong,counts(current),counts(historical),selected,collectors.size.toLong,names.size.toLong,next)
+    ActivityResult(now.toString,user,heads.size.toLong,heads.count(h => !current.exists(_.job.sessionId==h.id)).toLong,counts(current),counts(historical),selected,collectors.size.toLong,names.size.toLong,next,None)
   }
   def jobs(owner: String,q: ActivityJobsQuery): ActivityJobsResult = {
     ActivityCursor.page(q.limit); q.collectorId.foreach(ActivityCursor.collectorId)

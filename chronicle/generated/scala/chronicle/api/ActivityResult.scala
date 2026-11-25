@@ -13,7 +13,8 @@ package chronicle.api {
     collectors: List[ActivityCollector],
     totalCollectors: Long,
     allCollectors: Long,
-    nextCursor: Option[String]
+    nextCursor: Option[String],
+    queue: Option[ActivityQueue]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = ActivityResult.baboonDomainVersion
     override def baboonDomainIdentifier: String = ActivityResult.baboonDomainIdentifier
@@ -52,7 +53,8 @@ package chronicle.api {
         "collectors" -> Json.fromValues(value.collectors.map(e => ActivityCollector_JsonCodec.instance.encode(ctx, e))),
         "totalCollectors" -> Json.fromString(value.totalCollectors.toString),
         "allCollectors" -> Json.fromString(value.allCollectors.toString),
-        "nextCursor" -> value.nextCursor.map(v => Json.fromString(v)).getOrElse(Json.Null)
+        "nextCursor" -> value.nextCursor.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "queue" -> value.queue.map(v => ActivityQueue_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null)
       )
     }
     
@@ -73,7 +75,8 @@ package chronicle.api {
             totalCollectors <- getField(jsonObject, "totalCollectors").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             allCollectors <- getField(jsonObject, "allCollectors").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             nextCursor <- getField(jsonObject, "nextCursor").flatMap(v => decodeOption(decodeString)(v.hcursor))
-          } yield ActivityResult(observedAt,user,archiveHeads,headsWithoutTargetJob,current,historical,collectors,totalCollectors,allCollectors,nextCursor)
+            queue <- getField(jsonObject, "queue").flatMap(v => decodeOption(ActivityQueue_JsonCodec.circeDecoder)(v.hcursor))
+          } yield ActivityResult(observedAt,user,archiveHeads,headsWithoutTargetJob,current,historical,collectors,totalCollectors,allCollectors,nextCursor,queue)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ActivityResult: object expected"))
       }
     }

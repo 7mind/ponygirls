@@ -124,5 +124,14 @@ class CodecFixtureTest extends munit.FunSuite {
     assertEquals(manifests.map(manifest => (manifest.revision,manifest.files.map(file => (file.index,file.bytes)))),
       Vector((7,List((0,9007199254740993L))),(Int.MaxValue,List((0,0L),(1,Long.MaxValue)))))
   }
+  test("BA specified: claim-order Activity goldens keep every waiting reason, nullable age, class and exact i64 counts") {
+    val envelopes=checkList("activity-claim-order",ServerEnvelope.codecJson)
+    val jobs=envelopes.head.result match { case Result.ActivityJobs(result) => result.jobs; case other => fail(s"unexpected $other") }
+    assertEquals(jobs.flatMap(_.waiting).map(_.getClass.getSimpleName).distinct.size,9)
+    assertEquals(jobs.map(_.ahead).head,Some(9007199254740993L))
+    assertEquals(jobs.map(_.bulk).take(3),List(Some(true),Some(false),None))
+    val queues=envelopes.tail.map(_.result match { case Result.Activity(result) => result.queue.get; case other => fail(s"unexpected $other") })
+    assertEquals(queues.map(q => (q.claimOrder,q.bulk.queued,q.largeAhead)),Vector((ActivityClaimOrder.Waiting,9007199254740993L,Some(2L)),(ActivityClaimOrder.SourceId,9007199254740993L,None)))
+  }
 
 }

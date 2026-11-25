@@ -12,7 +12,11 @@ package chronicle.api {
     retryable: Boolean,
     collectorId: String,
     session: SessionInfo,
-    lastTimestamp: Option[String]
+    lastTimestamp: Option[String],
+    waitingSince: Option[String],
+    bulk: Option[Boolean],
+    waiting: Option[ActivityJobWaiting],
+    ahead: Option[Long]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = ActivityJob.baboonDomainVersion
     override def baboonDomainIdentifier: String = ActivityJob.baboonDomainIdentifier
@@ -50,7 +54,11 @@ package chronicle.api {
         "retryable" -> Json.fromBoolean(value.retryable),
         "collectorId" -> Json.fromString(value.collectorId),
         "session" -> SessionInfo_JsonCodec.instance.encode(ctx, value.session),
-        "lastTimestamp" -> value.lastTimestamp.map(v => Json.fromString(v)).getOrElse(Json.Null)
+        "lastTimestamp" -> value.lastTimestamp.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "waitingSince" -> value.waitingSince.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "bulk" -> value.bulk.map(v => Json.fromBoolean(v)).getOrElse(Json.Null),
+        "waiting" -> value.waiting.map(v => ActivityJobWaiting_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null),
+        "ahead" -> value.ahead.map(v => Json.fromString(v.toString)).getOrElse(Json.Null)
       )
     }
     
@@ -70,7 +78,11 @@ package chronicle.api {
             collectorId <- getField(jsonObject, "collectorId").flatMap(v => decodeString(v.hcursor))
             session <- getField(jsonObject, "session").flatMap(v => SessionInfo_JsonCodec.circeDecoder(v.hcursor))
             lastTimestamp <- getField(jsonObject, "lastTimestamp").flatMap(v => decodeOption(decodeString)(v.hcursor))
-          } yield ActivityJob(job,profile,classification,leaseExpiresAt,leaseActive,retryable,collectorId,session,lastTimestamp)
+            waitingSince <- getField(jsonObject, "waitingSince").flatMap(v => decodeOption(decodeString)(v.hcursor))
+            bulk <- getField(jsonObject, "bulk").flatMap(v => decodeOption(decodeBoolean)(v.hcursor))
+            waiting <- getField(jsonObject, "waiting").flatMap(v => decodeOption(ActivityJobWaiting_JsonCodec.circeDecoder)(v.hcursor))
+            ahead <- getField(jsonObject, "ahead").flatMap(v => decodeOption(BaboonJsonCodec.decodeLong)(v.hcursor))
+          } yield ActivityJob(job,profile,classification,leaseExpiresAt,leaseActive,retryable,collectorId,session,lastTimestamp,waitingSince,bulk,waiting,ahead)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ActivityJob: object expected"))
       }
     }

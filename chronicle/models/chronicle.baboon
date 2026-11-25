@@ -271,7 +271,7 @@ enum ActivityCollectorSort {
 
 enum ActivityJobSort {
   LastTimestamp Title Collector State Revision Profile Attempts CompletedWindows
-  TotalWindows LeaseExpiresAt LeaseState Reason Classification JobId SessionId
+  TotalWindows LeaseExpiresAt LeaseState Reason Classification JobId SessionId WaitingSince
 }
 
 data JobCounts {
@@ -287,20 +287,45 @@ data ActivityCollector {
 
 data ActivityQuery { expression: str sort: ActivityCollectorSort direction: SortDirection cursor: opt[str] limit: i32 }
 
+enum ActivityClaimOrder { SourceId Waiting }
+
+data ActivityClassQueue {
+  queued: i64 claimable: i64 held: i64 awaitingReclaim: i64 oldestWaitingSince: opt[str]
+}
+
+data ActivityQueue {
+  claimOrder: ActivityClaimOrder fresh: ActivityClassQueue bulk: ActivityClassQueue unclassified: ActivityClassQueue
+  awaitingLarge: i64 largeAhead: opt[i64]
+}
+
 data ActivityResult {
   observedAt: str user: UserInfo archiveHeads: i64 headsWithoutTargetJob: i64
   current: JobCounts historical: JobCounts
   collectors: lst[ActivityCollector] totalCollectors: i64 allCollectors: i64 nextCursor: opt[str]
+  queue: opt[ActivityQueue]
 }
 
 data ActivityJobsQuery {
   collectorId: opt[str] scope: ActivityJobScope expression: str sort: ActivityJobSort direction: SortDirection cursor: opt[str] limit: i32
 }
 
+adt ActivityJobWaiting {
+  data Queued {}
+  data IndexingOff {}
+  data AwaitingReclaim {}
+  data LeaseExpiredAwaitingReclaim {}
+  data LeaseExhaustedPending {}
+  data Held { nextAttemptAt: str }
+  data BlockedByOlderRevision { revision: i32 }
+  data AwaitingLargeLane {}
+  data AwaitingLargePermit {}
+}
+
 data ActivityJob {
   job: JobInfo profile: str classification: ActivityJobClass
   leaseExpiresAt: opt[str] leaseActive: bit retryable: bit
   collectorId: str session: SessionInfo lastTimestamp: opt[str]
+  waitingSince: opt[str] bulk: opt[bit] waiting: opt[ActivityJobWaiting] ahead: opt[i64]
 }
 
 data ActivityJobsResult {

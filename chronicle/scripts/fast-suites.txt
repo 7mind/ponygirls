@@ -2,6 +2,7 @@ chronicle.ActivityExpressionTest
 chronicle.AgentKindTest
 chronicle.ApiVersionCompatibilityTest
 chronicle.ArchiveExpressionTest
+chronicle.ClaimFactsTest
 chronicle.CodecFixtureTest
 chronicle.CollectorProgressDummyTest
 chronicle.ContextCoverageTest

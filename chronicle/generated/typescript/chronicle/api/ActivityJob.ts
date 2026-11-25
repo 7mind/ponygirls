@@ -1,6 +1,7 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
-import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
 import {ActivityJobClass, ActivityJobClass_JsonCodec} from './ActivityJobClass.js'
+import {ActivityJobWaiting, ActivityJobWaiting_JsonCodec} from './ActivityJobWaiting.js'
 import {JobInfo, JobInfo_JsonCodec} from './JobInfo.js'
 import {SessionInfo, SessionInfo_JsonCodec} from './SessionInfo.js'
 
@@ -14,8 +15,12 @@ export class ActivityJob implements BaboonGeneratedLatest {
     private readonly _collectorId: string;
     private readonly _session: SessionInfo;
     private readonly _lastTimestamp: string | undefined;
+    private readonly _waitingSince: string | undefined;
+    private readonly _bulk: boolean | undefined;
+    private readonly _waiting: ActivityJobWaiting | undefined;
+    private readonly _ahead: bigint | undefined;
 
-    constructor(job: JobInfo, profile: string, classification: ActivityJobClass, leaseExpiresAt: string | undefined, leaseActive: boolean, retryable: boolean, collectorId: string, session: SessionInfo, lastTimestamp: string | undefined) {
+    constructor(job: JobInfo, profile: string, classification: ActivityJobClass, leaseExpiresAt: string | undefined, leaseActive: boolean, retryable: boolean, collectorId: string, session: SessionInfo, lastTimestamp: string | undefined, waitingSince: string | undefined, bulk: boolean | undefined, waiting: ActivityJobWaiting | undefined, ahead: bigint | undefined) {
         this._job = job
         this._profile = profile
         this._classification = classification
@@ -25,6 +30,10 @@ export class ActivityJob implements BaboonGeneratedLatest {
         this._collectorId = collectorId
         this._session = session
         this._lastTimestamp = lastTimestamp
+        this._waitingSince = waitingSince
+        this._bulk = bulk
+        this._waiting = waiting
+        this._ahead = ahead
     }
 
     public get job(): JobInfo {
@@ -54,6 +63,18 @@ export class ActivityJob implements BaboonGeneratedLatest {
     public get lastTimestamp(): string | undefined {
         return this._lastTimestamp;
     }
+    public get waitingSince(): string | undefined {
+        return this._waitingSince;
+    }
+    public get bulk(): boolean | undefined {
+        return this._bulk;
+    }
+    public get waiting(): ActivityJobWaiting | undefined {
+        return this._waiting;
+    }
+    public get ahead(): bigint | undefined {
+        return this._ahead;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -65,11 +86,15 @@ export class ActivityJob implements BaboonGeneratedLatest {
             retryable: this._retryable,
             collectorId: this._collectorId,
             session: this._session,
-            lastTimestamp: this._lastTimestamp !== undefined ? this._lastTimestamp : undefined
+            lastTimestamp: this._lastTimestamp !== undefined ? this._lastTimestamp : undefined,
+            waitingSince: this._waitingSince !== undefined ? this._waitingSince : undefined,
+            bulk: this._bulk !== undefined ? this._bulk : undefined,
+            waiting: this._waiting !== undefined ? this._waiting : undefined,
+            ahead: this._ahead !== undefined ? this._ahead : undefined
         };
     }
 
-    public with(overrides: {job?: JobInfo; profile?: string; classification?: ActivityJobClass; leaseExpiresAt?: string | undefined; leaseActive?: boolean; retryable?: boolean; collectorId?: string; session?: SessionInfo; lastTimestamp?: string | undefined}): ActivityJob {
+    public with(overrides: {job?: JobInfo; profile?: string; classification?: ActivityJobClass; leaseExpiresAt?: string | undefined; leaseActive?: boolean; retryable?: boolean; collectorId?: string; session?: SessionInfo; lastTimestamp?: string | undefined; waitingSince?: string | undefined; bulk?: boolean | undefined; waiting?: ActivityJobWaiting | undefined; ahead?: bigint | undefined}): ActivityJob {
         return new ActivityJob(
             'job' in overrides ? overrides.job! : this._job,
             'profile' in overrides ? overrides.profile! : this._profile,
@@ -79,11 +104,15 @@ export class ActivityJob implements BaboonGeneratedLatest {
             'retryable' in overrides ? overrides.retryable! : this._retryable,
             'collectorId' in overrides ? overrides.collectorId! : this._collectorId,
             'session' in overrides ? overrides.session! : this._session,
-            'lastTimestamp' in overrides ? overrides.lastTimestamp! : this._lastTimestamp
+            'lastTimestamp' in overrides ? overrides.lastTimestamp! : this._lastTimestamp,
+            'waitingSince' in overrides ? overrides.waitingSince! : this._waitingSince,
+            'bulk' in overrides ? overrides.bulk! : this._bulk,
+            'waiting' in overrides ? overrides.waiting! : this._waiting,
+            'ahead' in overrides ? overrides.ahead! : this._ahead
         );
     }
 
-    public static fromPlain(obj: {job: JobInfo; profile: string; classification: ActivityJobClass; leaseExpiresAt: string | undefined; leaseActive: boolean; retryable: boolean; collectorId: string; session: SessionInfo; lastTimestamp: string | undefined}): ActivityJob {
+    public static fromPlain(obj: {job: JobInfo; profile: string; classification: ActivityJobClass; leaseExpiresAt: string | undefined; leaseActive: boolean; retryable: boolean; collectorId: string; session: SessionInfo; lastTimestamp: string | undefined; waitingSince: string | undefined; bulk: boolean | undefined; waiting: ActivityJobWaiting | undefined; ahead: bigint | undefined}): ActivityJob {
         return new ActivityJob(
             obj.job,
             obj.profile,
@@ -93,7 +122,11 @@ export class ActivityJob implements BaboonGeneratedLatest {
             obj.retryable,
             obj.collectorId,
             obj.session,
-            obj.lastTimestamp
+            obj.lastTimestamp,
+            obj.waitingSince,
+            obj.bulk,
+            obj.waiting,
+            obj.ahead
         );
     }
 
@@ -142,6 +175,10 @@ export class ActivityJob_JsonCodec {
             "collectorId": value.collectorId,
             "session": SessionInfo_JsonCodec.instance.encode(BaboonCodecContext.Default, value.session),
             "lastTimestamp": value.lastTimestamp === undefined ? null : value.lastTimestamp,
+            "waitingSince": value.waitingSince === undefined ? null : value.waitingSince,
+            "bulk": value.bulk === undefined ? null : value.bulk,
+            "waiting": value.waiting === undefined ? null : ActivityJobWaiting_JsonCodec.instance.encode(BaboonCodecContext.Default, value.waiting),
+            "ahead": value.ahead === undefined ? null : value.ahead.toString(),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): ActivityJob {
@@ -160,6 +197,10 @@ export class ActivityJob_JsonCodec {
             obj["collectorId"] as string,
             SessionInfo_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["session"]),
             obj["lastTimestamp"] === undefined || obj["lastTimestamp"] === null ? undefined : obj["lastTimestamp"] === undefined || obj["lastTimestamp"] === null ? undefined : obj["lastTimestamp"] as string,
+            obj["waitingSince"] === undefined || obj["waitingSince"] === null ? undefined : obj["waitingSince"] === undefined || obj["waitingSince"] === null ? undefined : obj["waitingSince"] as string,
+            obj["bulk"] === undefined || obj["bulk"] === null ? undefined : obj["bulk"] === undefined || obj["bulk"] === null ? undefined : obj["bulk"] as boolean,
+            obj["waiting"] === undefined || obj["waiting"] === null ? undefined : obj["waiting"] === undefined || obj["waiting"] === null ? undefined : ActivityJobWaiting_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["waiting"]),
+            obj["ahead"] === undefined || obj["ahead"] === null ? undefined : obj["ahead"] === undefined || obj["ahead"] === null ? undefined : BaboonInt64.read(obj["ahead"], "i64/u64"),
         )
     }
 
