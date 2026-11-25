@@ -1,7 +1,11 @@
-# Indexing claim order — specification of a fairer order (draft rev 3, no code)
+# Indexing claim order — specification of a fairer order (agreed specification, not built (rev 3))
 Owner decision Q147 (24 Nov): "Write a specification for a fairer claim order (no code yet) and show it to me". Reviews: §11.
 Code at `main` = d7ae4cc7. **[v]** checked in code here;
 **[r]** from RA = reports/retry-all/REPORT.md, RS = reports/retry-sample/REPORT.md, STATE.md 24 Nov, or the review; **[i]** inference.
+
+**Status.** Owner decision Q148 (25 Nov), verbatim: "Approve the recommended options but do not build yet; keep it as an agreed
+specification;; save the spec in the repo and that's it". Approved: option (a) of each of D1, D2, D3 and D4 as described in §1.
+Nothing is implemented, measured or scheduled; building it needs a new owner decision.
 
 ## 1. For the owner (read this first)
 - **Today.** A free lane takes the claimable session whose *random* id sorts first, owners strictly in id order. The one
@@ -16,20 +20,20 @@ Code at `main` = d7ae4cc7. **[v]** checked in code here;
   sizing, the live session's cuts (D3), any time bound. **Cost:** two nullable columns, four partial indexes, new candidate
   selection, a restart per deploy and flag change (§6). Risk: a claim bug stops or mis-orders indexing; flag off = today.
 - **Decisions** (recommendation first; each option: what it gives / costs / does not solve):
-  - **D1 Owners.** (a) arrival order [rec for three users]: no owner priority, no owner receives a guaranteed share; a burst
+  - **D1 Owners.** (a) arrival order [rec for three users] [approved]: no owner priority, no owner receives a guaranteed share; a burst
     delays later arrivals of its class. (b) rotation: needs state per class; inexact when the next owner's rows are held, locked
     or large. (c) today's id priority: higher ids wait without bound.
-  - **D2 Bulk vs fresh.** (a) static preference with fallback, `bulkLanes = 1` [rec]: each class has a fixed number of preferred
+  - **D2 Bulk vs fresh.** (a) static preference with fallback, `bulkLanes = 1` [rec] [approved]: each class has a fixed number of preferred
     lanes, not a minimum number running its jobs; a borrowed lane returns at its next claim, with no time bound. The fresh class
     includes individual retries; only bulk retry-failed and rebuild are assigned to bulk, and replacing a queued job preserves
     its class (a batch of individual retries can queue ahead of uploads). (b) hard reservation: lanes never borrow and idle when
     their class is empty. (c) one oldest-first queue: uploads wait behind a bulk apply (conditional estimate 24 Nov ≈ 31–46 h).
   - **D3 Live session.** The cut is an annotation-continuations rule; the claim order only decides where the session's NEXT
     job waits. Reset versus inherit applies only when a valid older run has no queued successor; replacing a queued or
-    lease-ended job inherits its age. (a) reset to the append's time [rec]: fair; behind every older sized-large job, so in a
+    lease-ended job inherits its age. (a) reset to the append's time [rec] [approved]: fair; behind every older sized-large job, so in a
     24 Nov-like backlog its search can stay stale for days. (b) inherit the running job's age: inheritance can let repeated
     successors cut ahead. Replacing a deferred job loses its size marker. Avoiding the cut: later unit "carry across a pure append".
-  - **D4 Large lane and rollout.** (a) dedicated with fallback [rec]: takes the next unlocked sized-large job at its next claim,
+  - **D4 Large lane and rollout.** (a) dedicated with fallback [rec] [approved]: takes the next unlocked sized-large job at its next claim,
     otherwise the oldest eligible job of any size. (b) dedicated without fallback: saves the lane for discovered large work but
     can idle. (c) next-free dispatch: can leave the permit unused while all lanes are busy. None guarantees FIFO before sizing.
     Rollout: flag `indexing.claimOrder` off by default, on after verify [rec]; leaving the new image needs a reseed on return (§6).
@@ -247,3 +251,4 @@ publication is off or the parent is ineligible), quiet period (its maximum can f
 - 24 Nov, round 2 (advisory, REVIEW-2.md): NOT READY with exact replacement wording (F4, F6, D-b, D-c, D-d, D-g, D-i, D1–D4,
   restart). Rev 3 applied that wording without a third round.
 - The design has not been implemented or measured.
+- 25 Nov, owner decision Q148: recommended options (a) of D1–D4 approved; agreed specification, not to be built yet.
