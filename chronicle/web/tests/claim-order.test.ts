@@ -32,7 +32,7 @@ test('every reason under the waiting order, with the count in its class queue or
 test('the source-id order names the claim order and the permit, never a class queue; an unknown order names neither', () => {
   const S = ActivityClaimOrder.SourceId;
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_Queued(), { ahead: 5n, bulk: true }), S), 'Queued · 5 ahead in the claim order | Claimable · owner, then source order');
-  assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_AwaitingLargePermit(), { ahead: 9n, total: 150 }), S), 'Waiting for the large-job permit · 9 ahead | Sized 150 windows · only the lane with the permit takes it');
+  assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_AwaitingLargePermit(), { ahead: 9n, total: 150 }), S), 'Waiting for the large-job permit · 9 ahead | Sized 150 windows · only the permit lane takes it');
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_Queued(), { ahead: 5n }), undefined), 'Queued · 5 ahead in the claim order | Claimable');
   assert.equal(orderDescription(job(JobState.Queued, new ActivityJobWaiting_AwaitingLargePermit(), { ahead: 1n }), S), 'The lane holding the large-job permit · owner, then source ID');
   assert.equal(orderDescription(job(JobState.Queued, new ActivityJobWaiting_Queued(), { ahead: 1n, bulk: true }), ActivityClaimOrder.Waiting), 'Bulk lanes · oldest waiting since first, then source ID');

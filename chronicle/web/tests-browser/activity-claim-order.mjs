@@ -73,6 +73,7 @@ try {
     // Windows: the whole count and total, also an unknown total (1440 px).
     assert.deepEqual(await Promise.all(['running', 'large', 'fresh'].map(key => text(cell(page, 'jobs', ROWS[key], 'CompletedWindows')))), ['120 / 300', '0 / 1013', '0 / unknown']);
     assert.equal(await unclipped(table(page, 'jobs').locator('td[data-column-id="CompletedWindows"]')), true, 'no window count is cut');
+    assert.equal(await unclipped(table(page, 'jobs').locator('td[data-column-id="LeaseState"] > span')), true, 'no lease state is cut');
     // Waiting since: the time and how long it has waited, both shown whole.
     assert.match(await text(cell(page, 'jobs', ROWS.running, 'WaitingSince')), /^\S.* waiting 1 h 2 min$/);
     assert.match(await text(cell(page, 'jobs', ROWS.held, 'WaitingSince')), / waiting 3 h 20 min$/);
@@ -152,7 +153,7 @@ try {
     const strip = main(page).getByRole('region', { name: 'Your jobs in the claim order', exact: true });
     await strip.waitFor(); await idle(page, 'jobs'); await rows(page, 'jobs').first().waitFor();
     assert.match(await text(strip), /Order Owner, then source ID \(today's order\)/); assert.match(await text(strip), /1 of your jobs waits for it · 2 ahead¹/);
-    assert.match(await text(why(page, 'large')), /^Waiting for the large-job permit · 2 ahead¹ Sized 1,013 windows · only the lane with the permit takes it$/);
+    assert.match(await text(why(page, 'large')), /^Waiting for the large-job permit · 2 ahead¹ Sized 1,013 windows · only the permit lane takes it$/);
     assert.match(await text(why(page, 'fresh')), /^Queued · 3 ahead¹ in the claim order Claimable · owner, then source order$/);
     assert.match(await text(why(page, 'unclassified')), /^Queued · 7 ahead¹ in the claim order/);
     assert.equal(await unclipped(table(page, 'jobs').locator('td[data-column-id="Waiting"] .why-main, td[data-column-id="Waiting"] .cell-sub > span')), true, 'every reason is shown whole at 1440 px');

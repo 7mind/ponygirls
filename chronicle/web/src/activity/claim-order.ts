@@ -84,7 +84,7 @@ export function why(row: ActivityJob, order: ActivityClaimOrder | undefined, tim
     return { main: at('Queued'), ahead: position, after: position === null ? '' : position.suffix, sub, running: false };
   }
   if (w instanceof ActivityJobWaiting_AwaitingLargeLane) return { main: at('Waiting for the large-job lane'), ahead: position, after: '', sub: `Sized ${PLURAL_WINDOWS(row.job.totalWindows)} · runs only on the large-job lane`, running: false };
-  if (w instanceof ActivityJobWaiting_AwaitingLargePermit) return { main: at('Waiting for the large-job permit'), ahead: position, after: '', sub: `Sized ${PLURAL_WINDOWS(row.job.totalWindows)} · only the lane with the permit takes it`, running: false };
+  if (w instanceof ActivityJobWaiting_AwaitingLargePermit) return { main: at('Waiting for the large-job permit'), ahead: position, after: '', sub: `Sized ${PLURAL_WINDOWS(row.job.totalWindows)} · only the permit lane takes it`, running: false };
   if (w instanceof ActivityJobWaiting_LeaseExpiredAwaitingReclaim) {
     const ended = row.leaseExpiresAt === undefined ? 'Lease ended' : `Lease ended ${time(row.leaseExpiresAt)}`;
     // Today's order with a job over the large-job size: only the lane holding the permit takes it.
