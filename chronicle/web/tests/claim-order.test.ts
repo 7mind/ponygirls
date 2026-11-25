@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ActivityClaimOrder, ActivityClaimOrderJobsResult, ActivityJob, ActivityJobClaimOrder, ActivityJobClass, ActivityJobsResult, ActivityJobWaiting_AwaitingLargeLane, ActivityJobWaiting_AwaitingLargePermit, ActivityJobWaiting_AwaitingReclaim, ActivityJobWaiting_BlockedByOlderRevision, ActivityJobWaiting_Held, ActivityJobWaiting_IndexingOff, ActivityJobWaiting_LeaseExhaustedPending, ActivityJobWaiting_LeaseExpiredAwaitingReclaim, ActivityJobWaiting_Queued, ActivityJobWaiting_RunningWithoutLease, Completion, ContentView, JobInfo, JobState, Metadata, SessionInfo, SourceFormat, SourceIdentity, type ActivityJobWaiting } from '../src/api.ts';
-import { JobRow, NOT_RECORDED_NOTE, UNCLASSIFIED_NOTE, ahead, classLabel, jobClass, mergeClaimOrder, orderDescription, stateLabel, waitedFor, waitedSince, why } from '../src/activity/claim-order.ts';
+import { ActivityClaimOrder, ActivityClaimOrderJobsResult, ActivityJob, ActivityJobClaimOrder, ActivityJobClass, ActivityJobsResult, ActivityJobWaiting_AwaitingLargeLane, ActivityJobWaiting_AwaitingLargePermit, ActivityJobWaiting_AwaitingReclaim, ActivityJobWaiting_BlockedByOlderRevision, ActivityJobWaiting_Held, ActivityJobWaiting_IndexingOff, ActivityJobWaiting_LeaseExhaustedPending, ActivityJobWaiting_LeaseExpiredAwaitingReclaim, ActivityJobWaiting_ProfileNotRun, ActivityJobWaiting_Queued, ActivityJobWaiting_RunningWithoutLease, Completion, ContentView, JobInfo, JobState, Metadata, SessionInfo, SourceFormat, SourceIdentity, type ActivityJobWaiting } from '../src/api.ts';
+import { JobRow, NOT_RECORDED_NOTE, PROFILE_NOT_RUN, UNCLASSIFIED_NOTE, ahead, classLabel, jobClass, mergeClaimOrder, orderDescription, stateLabel, waitedFor, waitedSince, why } from '../src/activity/claim-order.ts';
 
 // Specified: the wording of the claim-order reasons (approved mockup of 25 Nov) from the server's reason, class and count.
 const ID = '00000000-0000-4000-8000-000000000001';
@@ -29,7 +29,7 @@ test('every reason under the waiting order, with the count in its class queue or
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_AwaitingReclaim(), { ahead: 2n }), W), 'Indexing settings changed · 2 ahead in the fresh queue | Its running attempt no longer counts · an eligible lane may reclaim it');
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_Held('2026-11-25T17:30:00Z'), { error: 'model-http' }), W), 'Retrying after @17:30 (back-off) | Prior: model-http · rejoins the fresh order at @17:30');
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_BlockedByOlderRevision(6)), W), 'Waiting for older revision r6 (still running) | Joins the fresh order when r6 ends');
-  assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_IndexingOff()), W), 'Your account is not being indexed | Indexing off, or your index profile is not run here');
+  assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_IndexingOff()), W), 'Indexing is turned off for your account | Waits until indexing is on (Account settings)');
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_Queued(), { bulk: undefined }), W), 'Queued | Claimable · lane 0 takes it', 'no count where the order has none');
 });
 test('the source-id order names the claim order and the permit, never a class queue; an unknown order names neither', () => {
@@ -109,11 +109,14 @@ test('under today\'s order an ended lease over the large-job size is reclaimed b
   assert.match(line(large, ActivityClaimOrder.Waiting), /\| Worker stopped renewing · any lane may reclaim it$/);
   assert.match(line(job(JobState.Running, new ActivityJobWaiting_LeaseExpiredAwaitingReclaim(), { lease: '2026-11-25T16:54:00Z', total: 100 }), ActivityClaimOrder.SourceId), /any lane may reclaim it$/);
 });
-test('not indexing: the explanation holds for both causes (indexing turned off, or a retained index profile this server does not run)', () => {
+test('a retained index profile this server does not run is told apart from indexing turned off, with what the owner can do', () => {
   for (const state of [JobState.Queued, JobState.Running]) {
-    const row = job(state, new ActivityJobWaiting_IndexingOff()), label = stateLabel(row), text = line(row, ActivityClaimOrder.Waiting);
-    assert.deepEqual([label.text, label.title], ['Not indexing', `Stored state: ${state}; your account is not indexed now: its indexing is turned off, or this server does not run its index profile`]);
-    assert.match(text, /your index profile is not run here/);
-    assert.doesNotMatch(`${text} ${label.title}`, /turned on again|until indexing is turned on/, 'turning indexing on alone may not help');
+    const notRun = job(state, new ActivityJobWaiting_ProfileNotRun()), label = stateLabel(notRun);
+    assert.equal(line(notRun, ActivityClaimOrder.Waiting), 'Your index profile is not run by this server | Rebuild archive index (Maintenance) to resume');
+    assert.deepEqual([label.text, label.title], ['Profile not run here', `Stored state: ${state}; ${PROFILE_NOT_RUN}`]);
+    assert.doesNotMatch(`${line(notRun, ActivityClaimOrder.Waiting)} ${label.title}`, /turned (on|off)/, 'the indexing setting is not the cause');
+    const off = job(state, new ActivityJobWaiting_IndexingOff());
+    assert.deepEqual([stateLabel(off).text, line(off, ActivityClaimOrder.Waiting)], ['Indexing off', 'Indexing is turned off for your account | Waits until indexing is on (Account settings)']);
   }
+  assert.equal(PROFILE_NOT_RUN, "this server does not run your account's index profile, so its jobs are not claimed; Rebuild archive index (Maintenance) moves the account to the profile this server runs");
 });

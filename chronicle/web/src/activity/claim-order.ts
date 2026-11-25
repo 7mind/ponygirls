@@ -1,4 +1,4 @@
-import { ActivityClaimOrder, ActivityJobWaiting_AwaitingLargeLane, ActivityJobWaiting_AwaitingLargePermit, ActivityJobWaiting_AwaitingReclaim, ActivityJobWaiting_BlockedByOlderRevision, ActivityJobWaiting_Held, ActivityJobWaiting_IndexingOff, ActivityJobWaiting_LeaseExhaustedPending, ActivityJobWaiting_LeaseExpiredAwaitingReclaim, ActivityJobWaiting_Queued, ActivityJobWaiting_RunningWithoutLease, JobState, type ActivityClaimOrderJobsResult, type ActivityJob, type ActivityJobClaimOrder, type ActivityJobWaiting } from '../api.ts';
+import { ActivityClaimOrder, ActivityJobWaiting_AwaitingLargeLane, ActivityJobWaiting_AwaitingLargePermit, ActivityJobWaiting_AwaitingReclaim, ActivityJobWaiting_BlockedByOlderRevision, ActivityJobWaiting_Held, ActivityJobWaiting_IndexingOff, ActivityJobWaiting_LeaseExhaustedPending, ActivityJobWaiting_LeaseExpiredAwaitingReclaim, ActivityJobWaiting_ProfileNotRun, ActivityJobWaiting_Queued, ActivityJobWaiting_RunningWithoutLease, JobState, type ActivityClaimOrderJobsResult, type ActivityJob, type ActivityJobClaimOrder, type ActivityJobWaiting } from '../api.ts';
 
 // Claim order in Activity (indexing claim-order spec §7; approved mockup of 25 Nov): why a job is not running, its class and
 // its position. The server decides the reason (CONTRACT.md "Claim order in Activity"); this module only words it.
@@ -92,7 +92,9 @@ export function ahead(row: JobRow, order: ActivityClaimOrder | undefined): Ahead
     : `${n.toLocaleString()} ${jobs} (of all owners) will be claimed before this one in the ${name} order. ${ORDER_NOTE}`;
   return { count: n, text, title, suffix: large ? '' : name === 'claim' ? ' in the claim order' : ` in the ${name} queue` };
 }
-const NOT_INDEXING = 'your account is not indexed now: its indexing is turned off, or this server does not run its index profile';
+/** A retained target: the account's index profile is one this server no longer runs, so no claim takes its jobs whatever the
+  * indexing setting; the owner's "Rebuild archive index" (Maintenance) moves the account to the profile the server runs. */
+export const PROFILE_NOT_RUN = 'this server does not run your account\'s index profile, so its jobs are not claimed; Rebuild archive index (Maintenance) moves the account to the profile this server runs';
 /** What the State column shows: the stored state, or what the waiting reason makes of it. */
 export interface StateLabel { readonly text: string; readonly status: string; readonly title: string }
 const STATES: Readonly<Record<JobState, string>> = { [JobState.Complete]: 'status status-ok', [JobState.Queued]: 'status', [JobState.Running]: 'status status-run', [JobState.Failed]: 'status status-danger' };
@@ -103,9 +105,8 @@ export function stateLabel(row: JobRow): StateLabel {
   if (w instanceof ActivityJobWaiting_AwaitingReclaim) return { text: 'Waiting to be reclaimed', status: 'status status-warn state-wrap', title: 'Stored state: Running, invalidated by an indexing settings change — not an active worker' };
   if (w instanceof ActivityJobWaiting_Held) return { text: 'Held', status: 'status status-idle', title: 'Stored state: Queued, with a future attempt time' };
   if (w instanceof ActivityJobWaiting_BlockedByOlderRevision) return { text: 'Blocked', status: 'status status-idle', title: 'Stored state: Queued' };
-  // IndexingOff has two causes the server does not tell apart: the account's indexing is turned off, or this server does not run
-  // the account's index profile (a retained target). The wording holds for both; turning indexing on alone may not help.
-  if (w instanceof ActivityJobWaiting_IndexingOff) return { text: 'Not indexing', status: 'status status-idle', title: `Stored state: ${stored}; ${NOT_INDEXING}` };
+  if (w instanceof ActivityJobWaiting_IndexingOff) return { text: 'Indexing off', status: 'status status-idle', title: `Stored state: ${stored}; indexing is turned off for this account (Account settings → Profile → Indexing)` };
+  if (w instanceof ActivityJobWaiting_ProfileNotRun) return { text: 'Profile not run here', status: 'status status-idle', title: `Stored state: ${stored}; ${PROFILE_NOT_RUN}` };
   if (w instanceof ActivityJobWaiting_RunningWithoutLease) return { text: 'Running without a lease', status: 'status status-warn state-wrap', title: 'Stored state: Running, no lease — not an active worker' };
   // A Running row is shown running only while its lease is valid (also a historical job, whose claim may continue).
   if (stored === JobState.Running && !row.leaseActive) return { text: row.leaseExpiresAt === undefined ? 'Not running · no lease' : 'Not running · lease ended', status: 'status status-warn state-wrap', title: 'Stored state: Running, without a valid lease — not an active worker' };
@@ -141,7 +142,8 @@ export function why(row: JobRow, order: ActivityClaimOrder | undefined, time: (i
   if (w instanceof ActivityJobWaiting_AwaitingReclaim) return { main: at('Indexing settings changed'), ahead: position, after: position === null ? '' : position.suffix, sub: 'Its running attempt no longer counts · an eligible lane may reclaim it', running: false };
   if (w instanceof ActivityJobWaiting_Held) return { main: `Retrying after ${time(w.nextAttemptAt)} (back-off)`, ahead: null, after: '', sub: `${prior}rejoins ${queue} at ${time(w.nextAttemptAt)}`, running: false };
   if (w instanceof ActivityJobWaiting_BlockedByOlderRevision) return { main: `Waiting for older revision r${w.revision} (still running)`, ahead: null, after: '', sub: `Joins ${queue} when r${w.revision} ends`, running: false };
-  if (w instanceof ActivityJobWaiting_IndexingOff) return { main: 'Your account is not being indexed', ahead: null, after: '', sub: 'Indexing off, or your index profile is not run here', running: false };
+  if (w instanceof ActivityJobWaiting_IndexingOff) return { main: 'Indexing is turned off for your account', ahead: null, after: '', sub: 'Waits until indexing is on (Account settings)', running: false };
+  if (w instanceof ActivityJobWaiting_ProfileNotRun) return { main: 'Your index profile is not run by this server', ahead: null, after: '', sub: 'Rebuild archive index (Maintenance) to resume', running: false };
   if (row.job.state === JobState.Running && row.leaseActive) {
     const total = row.job.totalWindows === undefined ? 'unknown' : row.job.totalWindows.toLocaleString();
     return { main: `Running · windows ${row.job.completedWindows.toLocaleString()}/${total}`, ahead: null, after: '', sub: row.leaseExpiresAt === undefined ? 'Not waiting' : `Lease active until ${time(row.leaseExpiresAt)} · not waiting`, running: true };

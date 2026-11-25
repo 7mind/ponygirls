@@ -50,7 +50,7 @@ function fixturePage(rows, cursor, limit, key) {
   return { rows: rows.slice(offset, offset + limit), next: offset + limit < rows.length ? Buffer.from(JSON.stringify([key, offset + limit])).toString('base64url') : undefined };
 }
 // The server order of the waiting reasons (ActivityQueueSql.reasonOrder).
-const WAITING_REASONS = ['IndexingOff', 'AwaitingReclaim', 'RunningWithoutLease', 'LeaseExhaustedPending', 'LeaseExpiredAwaitingReclaim', 'Held', 'BlockedByOlderRevision', 'AwaitingLargeLane', 'AwaitingLargePermit', 'Queued'];
+const WAITING_REASONS = ['IndexingOff', 'ProfileNotRun', 'AwaitingReclaim', 'RunningWithoutLease', 'LeaseExhaustedPending', 'LeaseExpiredAwaitingReclaim', 'Held', 'BlockedByOlderRevision', 'AwaitingLargeLane', 'AwaitingLargePermit', 'Queued'];
 /** The job list's query of a claim-order read, its claim-order sort (if any) in place of the job list's. */
 export function jobQuery(query) { const jobs = query.jobs; return { collectorId: jobs.collectorId, scope: jobs.scope, expression: jobs.expression, sort: query.order ?? jobs.sort, direction: jobs.direction, cursor: jobs.cursor, limit: jobs.limit }; }
 function leaseState(item) { return item.leaseExpiresAt === undefined ? 'unleased' : item.job.state !== api.JobState.Running ? 'inactive' : item.leaseActive ? 'active' : 'expired'; }

@@ -333,7 +333,7 @@ final class ActivityClaimOrderTest extends munit.FunSuite {
     assertEquals(summary(f,ClaimOrderMode.SourceId,"a").copy(claimOrder=ActivityClaimOrder.Waiting,largeAhead=None),queue.copy(largeAhead=None))
   }}
 
-  test("an owner whose retained target this deployment does not execute: both claim-order reads answer, its jobs IndexingOff without a rank (the existing reads keep their answer)") { withFixture { f =>
+  test("an owner whose retained target this deployment does not execute: both claim-order reads answer, its jobs ProfileNotRun (IndexingOff when its indexing is also off) without a rank (the existing reads keep their answer)") { withFixture { f =>
     val queued=source(f,"a","queued"); val expired=source(f,"a","expired")
     set(f,queued,JobState.Queued,waiting=Some(minutes(-10)))
     set(f,expired,JobState.Running,lease=Some(minutes(-5)),attempts=1,waiting=Some(minutes(-20)))
@@ -345,13 +345,16 @@ final class ActivityClaimOrderTest extends munit.FunSuite {
         val read=new PostgresActivity(other,Clock.fixed(now,ZoneOffset.UTC),ActivityClaimOrderView(mode,lanes))
         val listed=merged(read.claimOrderJobs("a",claimQuery())).map(j => j.job.id -> j).toMap
         List(queued,expired).foreach { row =>
-          assertEquals((listed(row.job).waiting,listed(row.job).ahead),(Some(ActivityJobWaiting.IndexingOff()),None),s"$mode ${row.title}")
+          assertEquals((listed(row.job).waiting,listed(row.job).ahead),(Some(ActivityJobWaiting.ProfileNotRun()),None),s"$mode ${row.title}")
         }
         val queue=read.claimOrderSummary(user("a")).queue
         assertEquals(queue.fresh,ActivityClassQueue(2,0,0,0,Some(minutes(-20).toString)),mode.toString)
         assertEquals((queue.awaitingLarge,queue.largeAhead),(0L,None),mode.toString)
         assertEquals(intercept[DomainError](read.jobs("a",query())).code,"unavailable","the existing job list answers as before")
       }
+      preference(f,"a",IndexingChoice.Disable)
+      val off=merged(new PostgresActivity(other,Clock.fixed(now,ZoneOffset.UTC),ActivityClaimOrderView(waiting,4)).claimOrderJobs("a",claimQuery()))
+      assertEquals(off.map(_.waiting).distinct,List(Some(ActivityJobWaiting.IndexingOff())),"indexing off comes first")
     }
   }}
 
@@ -417,5 +420,22 @@ final class ActivityClaimOrderTest extends munit.FunSuite {
     }
     preference(f,"a",IndexingChoice.Disable)
     assertEquals(summary(f,waiting,"a").activeRunning,0L,"a job whose owner's indexing is off is not counted running")
+  }}
+
+  test("a lease that ends between two reads: every claim-order summary counts the job once — running before, awaiting reclaim after — never both") { withFixture { f =>
+    val row=source(f,"a","ending")
+    val lease=minutes(1)
+    set(f,row,JobState.Running,lease=Some(lease),attempts=1,waiting=Some(minutes(-10)))
+    def read(at: Instant): (ActivityQueue,ActivityResult) = {
+      val activity=new PostgresActivity(f.db,Clock.fixed(at,ZoneOffset.UTC),ActivityClaimOrderView(waiting,4))
+      (activity.claimOrderSummary(user("a")).queue,activity.summary(user("a"),collectors))
+    }
+    val (before,activityBefore)=read(lease.minusSeconds(1))
+    val (after,_)=read(lease.plusSeconds(1))
+    assertEquals((before.activeRunning,before.fresh.awaitingReclaim),(1L,0L),"before the lease ends: running")
+    assertEquals((after.activeRunning,after.fresh.awaitingReclaim),(0L,1L),"after: awaiting reclaim, not running")
+    // The two snapshots a dashboard mixing reads would combine: Activity before (one active lease) and the claim order after.
+    assertEquals((activityBefore.current.activeRunning,after.fresh.awaitingReclaim),(1L,1L))
+    List(before,after).foreach(q => assertEquals(q.activeRunning+q.fresh.awaitingReclaim,1L,"one summary counts the job exactly once"))
   }}
 }

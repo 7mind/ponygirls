@@ -69,7 +69,7 @@ object ActivityClaimOrderView {
   * older-Running anti-check after its `supersedeEndedLeases` phase; its `lease-exhausted` cleanup ends only jobs that
   * `Jobs.claimable` already excludes).
   * Reason precedence (first match): not current (older revision, other profile) or finished: none; owner's indexing off:
-  * `IndexingOff`; a policy-invalidated attempt: `AwaitingReclaim`; a valid lease: none (running); Running without a lease:
+  * `IndexingOff`; its target profile not run by this deployment (a retained target): `ProfileNotRun`; a policy-invalidated attempt: `AwaitingReclaim`; a valid lease: none (running); Running without a lease:
   * `RunningWithoutLease` (no claim compares a NULL lease, no cleanup ends it); an ended lease at the attempt limit:
   * `LeaseExhaustedPending`; an ended lease: `LeaseExpiredAwaitingReclaim`; a back-off: `Held`; an older revision Running
   * that the claim's first phase keeps (valid lease, indexing epoch not behind): `BlockedByOlderRevision`; a deferred large
@@ -99,7 +99,8 @@ private[chronicle] object ActivityQueueSql {
   private def reason(mode: ClaimOrderMode,epoch: String): String = {
     val large=mode match { case ClaimOrderMode.SourceId => "AwaitingLargePermit"; case ClaimOrderMode.Waiting(_) => "AwaitingLargeLane" }
     s"""CASE WHEN NOT j.is_current OR q.state NOT IN('Queued','Running') THEN NULL
-      WHEN NOT h.indexing_allowed OR NOT ${executed("q")} THEN 'IndexingOff'
+      WHEN NOT h.indexing_allowed THEN 'IndexingOff'
+      WHEN NOT ${executed("q")} THEN 'ProfileNotRun'
       WHEN ${Jobs.invalidated("q",epoch)} THEN 'AwaitingReclaim'
       WHEN ${observed(Jobs.leased("q"))} THEN NULL
       WHEN q.state='Running' AND q.lease_until IS NULL THEN 'RunningWithoutLease'
@@ -175,11 +176,12 @@ private[chronicle] object ActivityQueueSql {
     count(*) FILTER (WHERE waiting='Held') AS held,count(*) FILTER (WHERE waiting IN('AwaitingReclaim','LeaseExpiredAwaitingReclaim')) AS awaiting_reclaim,
     min(waiting_since) FILTER (WHERE waiting IS NOT NULL) AS oldest FROM queue GROUP BY 1"""
   /** The server order of the "Why not running" column: the reasons in their precedence, then a job without one. */
-  val reasonOrder: List[String] = List("IndexingOff","AwaitingReclaim","RunningWithoutLease","LeaseExhaustedPending","LeaseExpiredAwaitingReclaim","Held","BlockedByOlderRevision","AwaitingLargeLane","AwaitingLargePermit","Queued")
+  val reasonOrder: List[String] = List("IndexingOff","ProfileNotRun","AwaitingReclaim","RunningWithoutLease","LeaseExhaustedPending","LeaseExpiredAwaitingReclaim","Held","BlockedByOlderRevision","AwaitingLargeLane","AwaitingLargePermit","Queued")
   def reasonOrdinal(column: String): String = s"CASE $column ${reasonOrder.zipWithIndex.map((name,i) => s"WHEN '$name' THEN ${i+1}").mkString(" ")} END"
   def waiting(value: Option[String],heldUntil: Option[Instant],older: Option[Int]): Option[ActivityJobWaiting] = value.map {
     case "Queued" => ActivityJobWaiting.Queued()
     case "IndexingOff" => ActivityJobWaiting.IndexingOff()
+    case "ProfileNotRun" => ActivityJobWaiting.ProfileNotRun()
     case "AwaitingReclaim" => ActivityJobWaiting.AwaitingReclaim()
     case "RunningWithoutLease" => ActivityJobWaiting.RunningWithoutLease()
     case "LeaseExpiredAwaitingReclaim" => ActivityJobWaiting.LeaseExpiredAwaitingReclaim()

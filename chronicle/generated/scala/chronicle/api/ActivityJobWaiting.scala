@@ -676,6 +676,72 @@ package chronicle.api {
       override protected def LazyInstance: Lazy[BaboonJsonCodec[ActivityJobWaiting.AwaitingLargePermit]] = cachedLazyInstance
       override def instance: BaboonJsonCodec[ActivityJobWaiting.AwaitingLargePermit] = LazyInstance.value
     }
+    
+    
+    final case class ProfileNotRun(
+      
+    ) extends ActivityJobWaiting with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = ActivityJobWaiting.ProfileNotRun.baboonDomainVersion
+      override def baboonDomainIdentifier: String = ActivityJobWaiting.ProfileNotRun.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = ActivityJobWaiting.ProfileNotRun.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = ActivityJobWaiting.ProfileNotRun.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = ActivityJobWaiting.ProfileNotRun.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = ActivityJobWaiting.ProfileNotRun.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = ActivityJobWaiting.ProfileNotRun.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = ActivityJobWaiting.ProfileNotRun.baboonAdtType
+    }
+    
+    object ProfileNotRun {
+      def baboonDomainVersion: String = "1.9.0"
+      def baboonDomainIdentifier: String = "chronicle.api"
+      def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#ActivityJobWaiting]#ProfileNotRun"
+      private lazy val _baboonSameInVersions: List[String] = List("1.9.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.9.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.9.0", "prefix-compact" -> "1.9.0", "prefix-any-mode" -> "1.9.0", "identical" -> "1.9.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "chronicle.api/:#ActivityJobWaiting"
+      def baboonAdtType: _root_.java.lang.Class[?] = ActivityJobWaiting.getClass
+      def codecJson: BaboonJsonCodec[ActivityJobWaiting.ProfileNotRun] = ActivityJobWaiting.ProfileNotRun_JsonCodec.instance
+    }
+    
+    object ProfileNotRun_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[ActivityJobWaiting.ProfileNotRun, BaboonJsonCodec[ActivityJobWaiting.ProfileNotRun]] {
+      def encode(ctx: BaboonCodecContext, value: ActivityJobWaiting.ProfileNotRun): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, ActivityJobWaiting.ProfileNotRun] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(_) => Right(ActivityJobWaiting.ProfileNotRun())
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to ProfileNotRun: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = ActivityJobWaiting.ProfileNotRun.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = ActivityJobWaiting.ProfileNotRun.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = ActivityJobWaiting.ProfileNotRun.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = ActivityJobWaiting.ProfileNotRun.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = ActivityJobWaiting.ProfileNotRun.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[ActivityJobWaiting.ProfileNotRun]] = Lazy(ActivityJobWaiting.ProfileNotRun_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[ActivityJobWaiting.ProfileNotRun]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[ActivityJobWaiting.ProfileNotRun] = LazyInstance.value
+    }
     def baboonDomainVersion: String = "1.9.0"
     def baboonDomainIdentifier: String = "chronicle.api"
     def baboonTypeIdentifier: String = "chronicle.api/:#ActivityJobWaiting"
@@ -714,6 +780,8 @@ package chronicle.api {
         case awaitinglargelane: ActivityJobWaiting.AwaitingLargeLane => Json.obj("AwaitingLargeLane" -> ActivityJobWaiting.AwaitingLargeLane_JsonCodec.instance.encode(ctx, awaitinglargelane))
         
         case awaitinglargepermit: ActivityJobWaiting.AwaitingLargePermit => Json.obj("AwaitingLargePermit" -> ActivityJobWaiting.AwaitingLargePermit_JsonCodec.instance.encode(ctx, awaitinglargepermit))
+        
+        case profilenotrun: ActivityJobWaiting.ProfileNotRun => Json.obj("ProfileNotRun" -> ActivityJobWaiting.ProfileNotRun_JsonCodec.instance.encode(ctx, profilenotrun))
       
         case _ => throw new IllegalArgumentException(s"Cannot encode $value: unexpected subclass")
       }
@@ -758,6 +826,9 @@ package chronicle.api {
                 
                 case "AwaitingLargePermit" =>
                   ActivityJobWaiting.AwaitingLargePermit_JsonCodec.instance.decode(ctx, json)
+                
+                case "ProfileNotRun" =>
+                  ActivityJobWaiting.ProfileNotRun_JsonCodec.instance.decode(ctx, json)
       
                 case _ => Left(new IllegalArgumentException(s"Cannot decode $wire to ActivityJobWaiting: no matching value"))
               }

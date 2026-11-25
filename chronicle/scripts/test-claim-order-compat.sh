@@ -81,14 +81,19 @@ def ingest_request(name, text, namespace='claim-order-compat'):
                 files=[dict(path=name + '.jsonl', sha256=sha, content=content)])
 
 
+# Every server this run started, registered right after its start: each is stopped on every exit path (main's finally, also
+# after SIGTERM/SIGHUP/SIGINT), by its own process group only (start_new_session: the group id is the server's PID).
+STARTED = []
+
+
 class Server:
     def __init__(self, root, label, binary, config, env):
         self.label = label
         self.log = (root / f'{label}.log').open('x')
         self.process = subprocess.Popen([str(binary), 'serve-standby', str(config)], env=env, stdin=subprocess.DEVNULL, stdout=self.log,
                                         stderr=subprocess.STDOUT, start_new_session=True)
-        # A server that is not ready (or an interrupt during the wait) is stopped here: the caller registers it only once
-        # it is ready, and it runs in its own process group.
+        STARTED.append(self)
+        # A server that does not become ready (or an interrupt during the wait) is stopped here, before the error leaves.
         try:
             self.ready(json.loads(config.read_text())['allowedOrigin'])
         except BaseException:
@@ -109,14 +114,22 @@ class Server:
             time.sleep(0.1)
 
     def stop(self):
-        if self.process.poll() is None:
-            os.killpg(self.process.pid, signal.SIGTERM)
+        """Idempotent: the server's process group gets SIGTERM, then SIGKILL for anything left in it after the server exits."""
+        def group(signal_number):
+            try:
+                os.killpg(self.process.pid, signal_number)
+            except ProcessLookupError:
+                pass
+        if self.process.returncode is None:
+            group(signal.SIGTERM)
             try:
                 self.process.wait(timeout=20)
             except subprocess.TimeoutExpired:
-                os.killpg(self.process.pid, signal.SIGKILL)
-                self.process.wait(timeout=5)
-        self.log.close()
+                pass
+            group(signal.SIGKILL)
+            self.process.wait(timeout=5)
+        if not self.log.closed:
+            self.log.close()
 
 
 def post(origin, path, body, headers):
@@ -153,8 +166,14 @@ socket.onclose = event => { if (next < envelopes.length) { console.error('closed
 '''
 
 
+def interrupted(signal_number, _frame):
+    raise SystemExit(128 + signal_number)
+
+
 def main():
     os.umask(0o077)
+    for signal_number in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(signal_number, interrupted)
     with tempfile.TemporaryDirectory(prefix='chronicle-claim-order-compat-') as temporary:
         root = Path(temporary)
         env = {k: v for k, v in os.environ.items() if not k.startswith('CHRONICLE_') and k not in ('NODE_OPTIONS', 'NODE_PATH')}
@@ -333,7 +352,7 @@ def main():
                 print(f'--- {log.name} (tail)', log.read_text()[-3000:], sep='\n', flush=True)
             raise
         finally:
-            for server in servers:
+            for server in STARTED:
                 server.stop()
     if failures:
         print(json.dumps(dict(status='failed', checks=len(checks), failures=failures)), flush=True)

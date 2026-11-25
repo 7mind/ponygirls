@@ -1,7 +1,7 @@
 import {type BaboonAdtMemberMeta, type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
 
-export type ActivityJobWaiting = ActivityJobWaiting_Queued | ActivityJobWaiting_IndexingOff | ActivityJobWaiting_AwaitingReclaim | ActivityJobWaiting_LeaseExpiredAwaitingReclaim | ActivityJobWaiting_LeaseExhaustedPending | ActivityJobWaiting_RunningWithoutLease | ActivityJobWaiting_Held | ActivityJobWaiting_BlockedByOlderRevision | ActivityJobWaiting_AwaitingLargeLane | ActivityJobWaiting_AwaitingLargePermit
+export type ActivityJobWaiting = ActivityJobWaiting_Queued | ActivityJobWaiting_IndexingOff | ActivityJobWaiting_AwaitingReclaim | ActivityJobWaiting_LeaseExpiredAwaitingReclaim | ActivityJobWaiting_LeaseExhaustedPending | ActivityJobWaiting_RunningWithoutLease | ActivityJobWaiting_Held | ActivityJobWaiting_BlockedByOlderRevision | ActivityJobWaiting_AwaitingLargeLane | ActivityJobWaiting_AwaitingLargePermit | ActivityJobWaiting_ProfileNotRun
 
 export const ActivityJobWaiting = {
     BaboonDomainVersion: '1.9.0',
@@ -1072,6 +1072,111 @@ export class ActivityJobWaiting_AwaitingLargePermit_JsonCodec {
     }
 }
 
+export class ActivityJobWaiting_ProfileNotRun implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#ActivityJobWaiting]#ProfileNotRun' as const;
+
+    constructor() {
+        
+    }
+
+    
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            
+        };
+    }
+
+    public with(overrides: {}): ActivityJobWaiting_ProfileNotRun {
+        return new ActivityJobWaiting_ProfileNotRun(
+            
+        );
+    }
+
+    public static fromPlain(obj: {}): ActivityJobWaiting_ProfileNotRun {
+        return new ActivityJobWaiting_ProfileNotRun(
+            
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.9.0'
+    public baboonDomainVersion() {
+        return ActivityJobWaiting_ProfileNotRun.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return ActivityJobWaiting_ProfileNotRun.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#ActivityJobWaiting]#ProfileNotRun'
+    public baboonTypeIdentifier() {
+        return ActivityJobWaiting_ProfileNotRun.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.9.0"]
+    public baboonSameInVersions() {
+        return ActivityJobWaiting_ProfileNotRun.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.9.0": "identical" }
+    public baboonForwardReadable() {
+        return ActivityJobWaiting_ProfileNotRun.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.9.0", "prefix-compact": "1.9.0", "prefix-any-mode": "1.9.0", "identical": "1.9.0" }
+    public baboonMinReaderVersions() {
+        return ActivityJobWaiting_ProfileNotRun.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#ActivityJobWaiting'
+    public baboonAdtTypeIdentifier() {
+        return ActivityJobWaiting_ProfileNotRun.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): ActivityJobWaiting_ProfileNotRun_JsonCodec {
+        return ActivityJobWaiting_ProfileNotRun_JsonCodec.instance
+    }
+}
+
+export class ActivityJobWaiting_ProfileNotRun_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: ActivityJobWaiting_ProfileNotRun): unknown {
+        if (this !== ActivityJobWaiting_ProfileNotRun_JsonCodec.lazyInstance.value) {
+          return ActivityJobWaiting_ProfileNotRun_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): ActivityJobWaiting_ProfileNotRun {
+        if (this !== ActivityJobWaiting_ProfileNotRun_JsonCodec .lazyInstance.value) {
+            return ActivityJobWaiting_ProfileNotRun_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new ActivityJobWaiting_ProfileNotRun (
+            
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.9.0'
+    public baboonDomainVersion() {
+        return ActivityJobWaiting_ProfileNotRun_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return ActivityJobWaiting_ProfileNotRun_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#ActivityJobWaiting]#ProfileNotRun'
+    public baboonTypeIdentifier() {
+        return ActivityJobWaiting_ProfileNotRun_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#ActivityJobWaiting'
+    public baboonAdtTypeIdentifier() {
+        return ActivityJobWaiting_ProfileNotRun_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new ActivityJobWaiting_ProfileNotRun_JsonCodec())
+    public static get instance(): ActivityJobWaiting_ProfileNotRun_JsonCodec {
+        return ActivityJobWaiting_ProfileNotRun_JsonCodec.lazyInstance.value
+    }
+}
+
 
 export class ActivityJobWaiting_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ActivityJobWaiting): unknown {
@@ -1109,6 +1214,9 @@ export class ActivityJobWaiting_JsonCodec {
             if (value instanceof ActivityJobWaiting_AwaitingLargePermit) {
                 return { "AwaitingLargePermit": ActivityJobWaiting_AwaitingLargePermit_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof ActivityJobWaiting_ProfileNotRun) {
+                return { "ProfileNotRun": ActivityJobWaiting_ProfileNotRun_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
         throw new Error("Unhandled ADT branch: " + (value as {constructor?: {name?: string}}).constructor?.name);
     }
     public decode(ctx: BaboonCodecContext, json: unknown): ActivityJobWaiting {
@@ -1129,6 +1237,7 @@ export class ActivityJobWaiting_JsonCodec {
                 case "BlockedByOlderRevision": return ActivityJobWaiting_BlockedByOlderRevision_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "AwaitingLargeLane": return ActivityJobWaiting_AwaitingLargeLane_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "AwaitingLargePermit": return ActivityJobWaiting_AwaitingLargePermit_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "ProfileNotRun": return ActivityJobWaiting_ProfileNotRun_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
             default: throw new Error("Unknown ADT branch: " + key);
         }
     }
