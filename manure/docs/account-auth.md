@@ -141,6 +141,12 @@ password login without mandatory TOTP keeps working. Key rotation is not provide
 
 **Self-signup and path-mode hosting.** In `path` content mode artifacts are served from the dashboard origin. Script in an uploaded artifact runs with the viewer's browser session and can call the account API as that viewer. For an administrator this includes approving or rejecting applicants, issuing invitations, enabling or disabling users and reading the user list; it does not include changing an admin flag or issuing a credential reset, which require the administrator's current password, nor changing the viewer's own password or TOTP secret. Enabling self-signup in path mode is permitted. Approving an applicant then means trusting every artifact that user uploads. Keep `signup.requireApproval` enabled, approve only trusted people, and prefer `subdomain` content mode whenever uploaders are not fully trusted.
 
+Per-account [indexing preferences](../../docs/indexing-preferences.md) share that
+path-mode boundary. An artifact script can change the viewer’s own indexing
+choice when policy allows it, and can read indexing settings of other accounts
+if the viewer is an administrator. Forcing or clearing an administrator override
+additionally requires the acting administrator’s current password.
+
 ## HTTP boundary
 
 Only the validated management/API context exposes `/api/account/v1`. These routes
