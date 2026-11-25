@@ -267,8 +267,11 @@ object Jobs {
   val superseding = s"state='Failed',error='$supersededRevision',failure_stage=NULL,fence=fence+1,lease_until=NULL"
   /** Runs `update`, an UPDATE of ch_jobs that ends jobs superseded and returns their ids (`RETURNING … id`), and deletes
     * those jobs' annotation partials and chain markers (ANNOT2) in its transaction: no claim reads them again. */
-  def supersede(c: Connection,update: String,args: Sql.Param*): Unit =
-    AnnotationPartials.ended(c,Sql.rows(c,update,args*)(_.getObject(1,classOf[UUID])))
+  def supersede(c: Connection,update: String,args: Sql.Param*): List[UUID] = {
+    val ended=Sql.rows(c,update,args*)(_.getObject(1,classOf[UUID]))
+    AnnotationPartials.ended(c,ended)
+    ended
+  }
   /** A job a claim may take: Queued and not held (no next attempt, or its time has come), or Running with an ended
     * lease. A policy-invalidated Running attempt can be replaced immediately, refunding its charge even if that was
     * the last attempt. This also recovers jobs of a worker that never saw the setting change. */
@@ -286,17 +289,46 @@ object Jobs {
     val (revision,profile)=Sql.one(c,"SELECT revision,profile FROM ch_jobs WHERE id=? FOR UPDATE",id)(r => (r.getInt(1),r.getString(2))).get
     Check(revision==head,"conflict","job superseded by a newer archive revision")
     Check(profile==target,"conflict","job superseded by the target model profile")
-    Sql.exec(c,"UPDATE ch_jobs SET state='Queued',attempts=0,lease_until=NULL,transient_failures=0,transient_range=NULL,fence=fence+1,annotation_retry_epoch=annotation_retry_epoch+1,run_id=CASE WHEN state='Complete' THEN gen_random_uuid() ELSE run_id END,error=CASE WHEN state='Complete' THEN NULL ELSE error END,failure_stage=CASE WHEN state='Complete' THEN NULL ELSE failure_stage END,completed_windows=0,total_windows=NULL WHERE id=?",id)
+    Sql.exec(c,"UPDATE ch_jobs SET state='Queued',attempts=0,lease_until=NULL,transient_failures=0,transient_range=NULL,fence=fence+1,annotation_retry_epoch=annotation_retry_epoch+1,waiting_since=now(),bulk=false,run_id=CASE WHEN state='Complete' THEN gen_random_uuid() ELSE run_id END,error=CASE WHEN state='Complete' THEN NULL ELSE error END,failure_stage=CASE WHEN state='Complete' THEN NULL ELSE failure_stage END,completed_windows=0,total_windows=NULL WHERE id=?",id)
     // The new epoch starts every window afresh (ANNOT2): no partial of an earlier epoch is kept.
     Sql.exec(c,"DELETE FROM ch_annotation_partials WHERE job_id=?",id)
   }
   /** The jobs of a source whose head just switched to revision `next`: older unfinished jobs end superseded (a leased
-    * Running one keeps its claim; Complete and Failed ones are not written) and the new head's job is queued; returns its id. */
+    * Running one keeps its claim; Complete and Failed ones are not written) and the new head's job is queued; returns its id.
+    * The new job's `waiting_since` and `bulk` follow [[successorOrder]] over the unfinished predecessors, which are locked
+    * before the supersession decides which of them keep a valid lease (the caller holds the source row). */
   def switched(c: Connection,id: UUID,next: Int,profile: String): UUID = {
     val job=UUID.randomUUID()
-    Jobs.supersede(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} WHERE j.session_id=? AND j.revision<? AND j.state IN('Queued','Running') AND (${Jobs.leased("j")}) IS NOT TRUE RETURNING j.id",id,next)
-    Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile) VALUES(?,?,?,?)",job,id,next,profile)
+    val unfinished=Sql.rows(c,s"""SELECT j.id,j.revision,j.state='Queued',${invalidated("j",ChronicleIndexing.epochOwnerSql("s.owner"))}
+      FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id WHERE j.session_id=? AND j.revision<? AND j.state IN('Queued','Running') ORDER BY j.id FOR UPDATE OF j""",id,next) { r =>
+      Predecessor(r.getObject(1,classOf[UUID]),r.getInt(2),r.getBoolean(3),r.getBoolean(4))
+    }
+    val ended=Jobs.supersede(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} WHERE j.session_id=? AND j.revision<? AND j.state IN('Queued','Running') AND (${Jobs.leased("j")}) IS NOT TRUE RETURNING j.id",id,next).toSet
+    val (superseded,kept)=unfinished.partition(p => ended(p.id))
+    successorOrder(superseded,kept) match {
+      case None => Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile,waiting_since,bulk) VALUES(?,?,?,?,now(),false)",job,id,next,profile)
+      case Some(predecessor) =>
+        // A predecessor an older release queued after the last start fill has no values (until the reseed): now() and fresh.
+        Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile,waiting_since,bulk) SELECT ?,?,?,?,coalesce(p.waiting_since,now()),coalesce(p.bulk,false) FROM ch_jobs p WHERE p.id=?",job,id,next,profile,predecessor)
+    }
     job
+  }
+  /** An unfinished job of an older revision that a revision switch met: Queued (held and deferred ones included) or Running,
+    * and whether that Running attempt's indexing epoch is no longer the owner's (policy-invalidated: reclaimed, not superseded). */
+  final case class Predecessor(id: UUID,revision: Int,queued: Boolean,invalidated: Boolean)
+  /** The claim-order replacement rules (claim-order spec §5.2; design §3 table): the predecessor whose `waiting_since` and
+    * `bulk` the job queued by a revision switch inherits, or None for `now()` and fresh (bulk=false). Appends and full
+    * replacements alike (QA-i). Rows of the design's §3 table:
+    *  - superseded predecessors (Queued, held, deferred, or Running with an ended lease) → the newest Queued one's, even
+    *    beside a lease-ended older Running one (two predecessors: the queued head's, QA-iii); with none Queued, the newest
+    *    lease-ended Running one's (r2);
+    *  - none superseded, the predecessor kept by its valid lease but policy-invalidated → its values (QA-ii);
+    *  - no unfinished predecessor (the source's first job, an opted-out owner's too), or one kept by a valid lease of the
+    *    current indexing epoch with no queued successor → None: the new job waits from now() as fresh work (r1; r3 D3a).
+    * QA: orchestrator's decision under the agreed specification, owner informed, may be overruled. */
+  def successorOrder(superseded: List[Predecessor],kept: List[Predecessor]): Option[UUID] = {
+    def newest(candidates: List[Predecessor]): Option[UUID] = candidates.maxByOption(_.revision).map(_.id)
+    newest(superseded.filter(_.queued)).orElse(newest(superseded)).orElse(newest(kept.filter(_.invalidated)))
   }
 }
 /** The Worker's archive (restart-robustness spec §5): over the background view, apart from the requests' archive. */
