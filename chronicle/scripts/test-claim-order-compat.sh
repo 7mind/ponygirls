@@ -58,13 +58,13 @@ def sql(statement):
                           env=env, capture_output=True, text=True, check=True, timeout=60).stdout
 
 
-def ingest_request(name, text):
+def ingest_request(name, text, namespace='claim-order-compat'):
     records = [{'type': 'session', 'version': 3, 'id': name, 'timestamp': '2026-11-23T00:00:00.000Z'},
                {'type': 'message', 'id': name + '-1', 'parentId': name, 'timestamp': '2026-11-23T00:00:01.000Z',
                 'message': {'role': 'user', 'content': [{'type': 'text', 'text': text}]}}]
     content = ''.join(json.dumps(r, separators=(',', ':')) + '\n' for r in records)
     sha = hashlib.sha256(content.encode()).hexdigest()
-    return dict(requestId=str(uuid.uuid4()), source=dict(collectorNamespace='claim-order-compat', discoveryRootId='claim-order-compat', format='Pi', producerSessionId=name, subagentId=None),
+    return dict(requestId=str(uuid.uuid4()), source=dict(collectorNamespace=namespace, discoveryRootId='claim-order-compat', format='Pi', producerSessionId=name, subagentId=None),
                 metadata=dict(title=name, project='compat', workdir=None, gitRemote=None, gitBranch='main', gitCommit=None, producer='claim-order-compat', model=None, startedAt=None, endedAt=None, tags=['synthetic']),
                 expectedRevision=0, digest=sha, completion='Quiescent', redacted=False,
                 messages=[dict(id=name + '-1', parentId=None, role='user', text=text, timestamp='2026-11-23T00:00:01.000Z', recordIndex=1)],
@@ -193,7 +193,8 @@ def main():
 
         def base_cli_succeeds(label, state, *args, token=None, stdin=None):
             result = cli(state, *args, token=token, stdin=stdin)
-            check(f'base CLI × tree server ({label}): {" ".join(a for a in args if not a.startswith("/"))}', result.returncode == 0 and 'protocol' not in result.stderr.lower(),
+            shown = ' '.join(a for a in args if not a.startswith('/')) + ('' if stdin is None else ' ' + next(iter(json.loads(stdin))))
+            check(f'base CLI × tree server ({label}): {shown}', result.returncode == 0 and 'protocol' not in result.stderr.lower(),
                   f'exit {result.returncode} {result.stderr}')
             return json.loads(result.stdout)
 
@@ -226,13 +227,13 @@ def main():
                         operation = json.loads(json.dumps(request['operation']))
                         next(iter(operation.values()))['query']['cursor'] = result['nextCursor']
                         follow.append(envelope(operation))
-                check(f'{label}: {user} pages with a continuation', len(follow) >= 3 if user == 'alice' else len(follow) >= 1, len(follow))
+                check(f'{label}: {user} pages with a continuation', len(follow) >= (3 if user == 'alice' else 2), len(follow))
                 answers += ws(user, follow)
                 for request, answer in zip(first + follow, answers):
                     replies[(user, json.dumps(request['operation'], sort_keys=True))] = answer
             for request in bearer:
                 status, headers, body = post(origin, '/api/jobs/v1', request, {'Authorization': f'Bearer {secret["operator"]}'})
-                replies[('bearer', json.dumps(request['operation'], sort_keys=True))] = json.dumps([status, headers.get(WINDOWS), body.decode()])
+                replies[('bearer', json.dumps(request['operation'], sort_keys=True))] = f'{status} {WINDOWS}: {headers.get(WINDOWS)}\n' + body.decode()
             return replies
 
         observed = re.compile(r'"observedAt":"[^"]*"')
@@ -251,11 +252,13 @@ def main():
             sessions = {}
             for owner, names in (('alice', [f'a{n}' for n in range(1, 10)]), ('bob', ['b1', 'b2', 'b3'])):
                 for name in names:
-                    status, _, body = post(origin, '/api/ingest', ingest_request(name, f'synthetic claim-order compatibility {name}'), {'Authorization': f'Bearer {secret["ingest-" + owner]}'})
+                    # Two collectors for alice, so that the collector list has a second page.
+                    namespace = 'claim-order-compat-2' if name in ('a5', 'a6', 'a7', 'a8', 'a9') else 'claim-order-compat'
+                    status, _, body = post(origin, '/api/ingest', ingest_request(name, f'synthetic claim-order compatibility {name}', namespace), {'Authorization': f'Bearer {secret["ingest-" + owner]}'})
                     check(f'base server: {name} is ingested', status == 200, body)
                     sessions[name] = json.loads(body)
             # A second revision of a9: its first job becomes historical.
-            second = ingest_request('a9', 'synthetic claim-order compatibility a9, second revision')
+            second = ingest_request('a9', 'synthetic claim-order compatibility a9, second revision', 'claim-order-compat-2')
             second['expectedRevision'] = 1
             status, _, body = post(origin, '/api/ingest', second, {'Authorization': f'Bearer {secret["ingest-alice"]}'})
             check('base server: a9 revision 2 is ingested', status == 200, body)
