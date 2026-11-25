@@ -835,7 +835,8 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     }
     val five=archive.ingest("a",source(texts(64))); val exhausted=new WorkerLog
     once(archive,off,new Provider((_,_,_) => IO.pure(upTo(10,false))),exhausted)
-    val origin="chronicle.Worker$Windows.annotate$$anonfun$2$$anonfun$2$$anonfun$2:N"
+    // Admission moved out of the whole-window callback; the same rejection branch is one closure shallower.
+    val origin="chronicle.Worker$Windows.annotate$$anonfun$2$$anonfun$2:N"
     assertEquals(warnings(exhausted),List(
       s"window failed jobId=J fence=F windowOrdinal=0 totalWindows=1 stage=annotation annotationAttempt=5 annotationRejectionLimit=5 code=annotation-attempts-exhausted exceptionClass=chronicle.Worker$$AnnotationExhausted origin=$origin reason=annotation-partition-incomplete httpStatus=unavailable structure={}",
       s"job failed jobId=J code=annotation-attempts-exhausted exceptionClass=chronicle.Worker$$AnnotationExhausted sqlState=unavailable origin=$origin reason=annotation-partition-incomplete httpStatus=unavailable"))

@@ -99,15 +99,17 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     try {
       val config=c.config.copy(jdbcUrl=prefix+c.config.jdbcUrl)
       val activity=new PostgresActivity(Fixtures.database(config,IndexProfileCatalog.current(config)),Clock.systemUTC())
+      val epochReads=2 // one in the page snapshot, one on a fresh snapshot to reject a policy race
+      val setupStatements=2
       List(1,100).foreach { limit =>
         statements.set(0); setups.set(0)
         assertEquals(activity.jobs("a",ActivityJobsQuery(None,ActivityJobScope.All,"synthetic",ActivityJobSort.Title,SortDirection.Asc,None,limit)).jobs.size,math.min(limit,3))
-        assertEquals(statements.get(),4,"three unchanged domain statements plus one bounded runtime setup")
-        assertEquals(setups.get(),1)
+        assertEquals(statements.get(),3+epochReads+setupStatements)
+        assertEquals(setups.get(),setupStatements)
         statements.set(0); setups.set(0)
         assertEquals(activity.summary(c.owner.user,ActivityQuery("",ActivityCollectorSort.CurrentTotal,SortDirection.Desc,None,limit)).collectors.size,math.min(limit,3))
-        assertEquals(statements.get(),5,"four unchanged domain statements plus one bounded runtime setup")
-        assertEquals(setups.get(),1)
+        assertEquals(statements.get(),4+epochReads+setupStatements)
+        assertEquals(setups.get(),setupStatements)
       }
     } finally DriverManager.deregisterDriver(driver)
   }}
