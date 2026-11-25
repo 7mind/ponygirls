@@ -43,6 +43,9 @@ Legacy token login is rejected and both logout routes revoke the actual session.
 
 ## Retrieval policy
 
+The optional `indexing` object controls [per-account indexing preferences](../../docs/indexing-preferences.md).
+Both the item creator and the indexed revision's author must allow indexing.
+
 Ordinary Boolean browse/search remains exact and never calls a model. Content
 retrieval is `POST /api/v1/retrieve` using generated `RetrieveRequest`;
 `GET /api/v1/capabilities` lists the servable modes. Unconfigured embedding means

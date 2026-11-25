@@ -145,6 +145,9 @@ happen during builds/tests.
 
 Chronicle, Haystack and Manure are independent Scala/distage/cats-effect/http4s
 applications with separate PostgreSQL databases, credentials and authorization.
+See [indexing preferences](docs/indexing-preferences.md) for server defaults,
+self-service choices, and administrator overrides.
+
 The common sbt build and pinned dependency lock live at repository root:
 
 ```bash

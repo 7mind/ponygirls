@@ -80,6 +80,9 @@ Example minimal synthetic server configuration:
 }
 ```
 
+The optional `indexing` object controls [whose artifacts enter indexed retrieval](../../docs/indexing-preferences.md).
+It does not change catalogue access, downloads or sharing.
+
 ### OCI image configuration and upgrade requirement
 
 The image (`.#oci-manure`, spec in `nix/pkg/oci/default.nix`) runs `/bin/manure-server serve /config/server.json`
