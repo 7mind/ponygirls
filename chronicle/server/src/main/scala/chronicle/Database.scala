@@ -368,8 +368,6 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       val revision=r.getInt("indexed"); val index=if(r.wasNull()) None else Some(revision)
       (r.getInt("revision"),Option(r.getObject("published",classOf[UUID])),index,r.getBoolean("indexing_allowed"))
     }.getOrElse(throw DomainError("not-found","session not found"))
-    // The policy applies to every generation, not just the current publication. Raw revisions are still ACL-readable.
-    Check(allowed || selector.forall(_.generationId.isEmpty),"not-found","content view not found")
     materialization.admit(JsonUtf8Size(Json.obj("revision"->Json.fromInt(head),"published"->published.map(id => Json.fromString(id.toString)).getOrElse(Json.Null),"indexed"->indexed.map(Json.fromInt).getOrElse(Json.Null))))
     val view=selector.getOrElse(ContentView(indexed.getOrElse(head),published))
     Check(view.revision>0,"invalid","content revision must be positive")
@@ -378,6 +376,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       val (retired,current)=Sql.one(c,s"SELECT retired,coalesce(passage_format IN ${GenerationRows.formatsSql},false) FROM ch_generations g WHERE id=? AND session_id=? AND revision=? AND NOT EXISTS(SELECT 1 FROM ch_staged_generations st WHERE st.generation=g.id)",generation,id,view.revision)(r => (r.getBoolean(1),r.getBoolean(2))).getOrElse(throw DomainError("not-found","content view not found"))
       Check(!retired,"indexed-view-retired","indexed content view was retired by an explicit rebuild")
       Check(current,"unavailable","indexed content view is not in the current passage format")
+      Check(allowed,"indexed-view-disabled","indexing is off for this session")
     }
     (view,stored(view).getOrElse(throw DomainError("not-found","content view not found")))
   }

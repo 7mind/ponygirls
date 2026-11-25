@@ -1,10 +1,10 @@
-export type ErrorCode = 'usage' | 'invalid' | 'unauthorized' | 'forbidden' | 'not-found' | 'conflict' | 'gone' | 'indexed-view-retired' | 'version-mismatch' | 'protocol-error' | 'too-large' | 'unavailable' | 'deadline' | 'uncertain' | 'credentials' | 'state';
+export type ErrorCode = 'usage' | 'invalid' | 'unauthorized' | 'forbidden' | 'not-found' | 'conflict' | 'gone' | 'indexed-view-retired' | 'indexed-view-disabled' | 'version-mismatch' | 'protocol-error' | 'too-large' | 'unavailable' | 'deadline' | 'uncertain' | 'credentials' | 'state';
 export class CliError extends Error {
   constructor(readonly code: ErrorCode, message: string) { super(message); }
   get exitCode(): number {
     if (this.code === 'usage' || this.code === 'invalid') return 2;
     if (this.code === 'unauthorized' || this.code === 'forbidden' || this.code === 'credentials') return 3;
-    if (this.code === 'not-found' || this.code === 'gone' || this.code === 'indexed-view-retired') return 4;
+    if (this.code === 'not-found' || this.code === 'gone' || this.code === 'indexed-view-retired' || this.code === 'indexed-view-disabled') return 4;
     if (this.code === 'conflict') return 5;
     if (this.code === 'uncertain') return 7;
     return 6;
@@ -24,6 +24,7 @@ const failures: Record<string, string> = {
   conflict: 'Selection, revision, or receipt conflicts; inspect current state before retrying.',
   gone: 'The source was purged.',
   'indexed-view-retired': 'The exact indexed generation was retired; choose another view explicitly.',
+  'indexed-view-disabled': 'Indexing is off for this session; request the same revision without a generation to read the archived source.',
   'version-mismatch': 'Server does not support the sole current API 1.9.0.',
   'protocol-error': 'Server protocol response was rejected.',
   invalid: 'The server rejected the request parameters.',

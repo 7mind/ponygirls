@@ -85,7 +85,7 @@ class McpSourceBoundaryTest extends munit.FunSuite {
       val chunks=invoke("get_chunks",source).asInstanceOf[Result.Chunks].result
       assertEquals(chunks.total,0); assertEquals(chunks.chunks,Nil)
       assertEquals(invoke("search_sessions",query("semantic")).asInstanceOf[Result.Search].result.total,0)
-      for(name <- List("get_session","get_messages","get_chunks")) assertEquals(intercept[DomainError](invoke(name,pin)).code,"not-found")
+      for(name <- List("get_session","get_messages","get_chunks")) assertEquals(intercept[DomainError](invoke(name,pin)).code,"indexed-view-disabled")
       val hidden=f.probe.observations.drop(before)
       assert(!hidden.exists { case SourceEvent.Statement(_,sql) => sql.contains("JOIN ch_chunks ch") || sql.contains("SELECT count(*) FROM ch_chunks") || sql.contains("SELECT id,value FROM ch_chunks"); case _ => false })
     } finally choose(f,IndexingChoice.Inherit)
