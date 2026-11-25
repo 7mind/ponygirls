@@ -162,12 +162,13 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
 
   // Keep source metadata in the ACL-visible corpus. Only the indexed publication and text memberships are gated.
   private def corpus: String = s"""corpus AS MATERIALIZED(SELECT s.id,s.owner,s.revision,g.id AS published,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp,i.last_timestamp_order,i.message_count,g.revision AS indexed_revision,g.id AS generation,g.passage_format AS published_format,g.lineage,g.lineage_version,policy.indexing_allowed,
-      j.id AS job_id,j.state AS job_state,j.attempts AS job_attempts,j.error AS job_error,j.failure_stage,j.completed_windows,j.total_windows,
+      j.id AS job_id,effective.state AS job_state,effective.attempts AS job_attempts,j.error AS job_error,j.failure_stage,effective.completed_windows,effective.total_windows,
       ARRAY(SELECT tag FROM (SELECT jsonb_array_elements_text(i.metadata->'tags') AS tag UNION SELECT generated.tag FROM ${GenerationRows.tags("g.id","g.lineage","g.lineage_version")} generated) tag_values ORDER BY lower(tag $unicode),tag) AS tags
       FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision
       CROSS JOIN LATERAL (SELECT ${archive.indexingAllowed} AS indexing_allowed OFFSET 0) policy
       JOIN ch_owner_targets profile ON profile.owner=s.owner LEFT JOIN ch_generations g ON g.id=s.published AND policy.indexing_allowed
-      LEFT JOIN ch_jobs j ON j.session_id=s.id AND j.revision=s.revision AND j.profile=profile.profile WHERE ${archive.visible})"""
+      LEFT JOIN ch_jobs j ON j.session_id=s.id AND j.revision=s.revision AND j.profile=profile.profile
+      CROSS JOIN ${IndexedJobRead.effective("j","s.owner","policy.indexing_allowed")} effective WHERE ${archive.visible})"""
   private def annRows(index: Int): String = s"ann_rows_$index"
   /** A search row `ch` that is a piece of the published generation of corpus row `c` (which holds its lineage and version). */
   private val published=s"(c.indexing_allowed AND ${GenerationRows.piece("c.published","c.lineage","c.lineage_version","ch")})"

@@ -22,21 +22,24 @@ private[chronicle] object ActivityMetadataCorpus {
   def base(indexingAllowed: String): String = s"""WITH observed AS (SELECT ?::timestamptz AS at,?::timestamptz AS stale_at),
     reports AS (SELECT collector_id,report,received_at FROM ch_collector_progress WHERE owner=?),
     heads AS (
-      SELECT s.id,s.owner,s.revision,g.revision AS indexed_revision,COALESCE((
+      SELECT s.id,s.owner,s.revision,g.revision AS indexed_revision,policy.indexing_allowed,COALESCE((
         SELECT r.collector_id FROM reports r
         WHERE i.source->>'collectorNamespace'=r.collector_id
           OR starts_with(i.source->>'collectorNamespace',r.collector_id||'/')
         ORDER BY length(r.collector_id) DESC,r.collector_id COLLATE "C" LIMIT 1
       ),i.source->>'collectorNamespace') AS collector_id
       FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision
-      LEFT JOIN ch_generations g ON g.id=s.published AND $indexingAllowed
+      CROSS JOIN LATERAL (SELECT $indexingAllowed AS indexing_allowed OFFSET 0) policy
+      LEFT JOIN ch_generations g ON g.id=s.published AND policy.indexing_allowed
       WHERE s.owner=? AND NOT s.tombstone
     ),
     jobs AS (
-      SELECT j.*,h.collector_id,h.owner,h.revision AS head_revision,h.indexed_revision,
+      SELECT j.id,j.session_id,j.revision,j.profile,j.error,j.failure_stage,effective.*,
+        h.collector_id,h.owner,h.revision AS head_revision,h.indexed_revision,
         j.revision=h.revision AS revision_current,j.profile=p.profile AS profile_current,
         j.revision=h.revision AND j.profile=p.profile AS is_current
       FROM heads h JOIN ch_jobs j ON j.session_id=h.id JOIN ch_owner_targets p ON p.owner=h.owner
+      CROSS JOIN ${IndexedJobRead.effective("j","h.owner","h.indexing_allowed")} effective
     ),
     collectors AS (SELECT collector_id FROM reports UNION SELECT collector_id FROM heads)
     """
@@ -66,7 +69,7 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
     r.getLong(prefix+"total"),r.getLong(prefix+"queued"),r.getLong(prefix+"running"),r.getLong(prefix+"failed"),
     r.getLong(prefix+"complete"),r.getLong(prefix+"active_running"),r.getLong(prefix+"expired_running"),r.getLong(prefix+"unleased_running")
   )
-  private def reading[A](owner: String,indexed: Boolean=false)(f: (Connection,Instant) => A): A = IndexedRead.transaction(db,indexed) { c =>
+  private def reading[A](owner: String)(f: (Connection,Instant) => A): A = IndexedRead.transaction(db) { c =>
     Check(Sql.one(c,"SELECT 1 FROM ch_users WHERE id=? AND enabled",owner)(_ => true).contains(true),"unauthorized","owner disabled")
     val target=OwnerTargets.read(c,owner,false)
     db.profiles.resolve(target.profile)
@@ -231,7 +234,7 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
     ActivityCursor.page(q.limit); q.collectorId.foreach(ActivityCursor.collectorId)
     val parsed=ActivityExpression.jobs(q.expression)
     val order=jobOrder(q.sort)
-    reading(owner,indexed=true) { (c,now) =>
+    reading(owner) { (c,now) =>
       val position=ActivityCursor.job(q,owner,order,(id,anchor) =>
         Sql.one(c,s"""SELECT lower((i.metadata->>'title') $unicode) FROM ch_jobs j
           JOIN ch_sources s ON s.id=j.session_id

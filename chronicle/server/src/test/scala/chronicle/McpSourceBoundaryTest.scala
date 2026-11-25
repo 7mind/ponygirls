@@ -9,6 +9,7 @@ import java.sql.Connection
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.concurrent.duration.*
+import ponygirls.auth.{IndexingChoice,IndexingPreferenceSql,IndexingService}
 
 class McpSourceBoundaryTest extends munit.FunSuite {
   private val maximum=64L*1024
@@ -62,6 +63,59 @@ class McpSourceBoundaryTest extends munit.FunSuite {
       } yield result).unsafeRunSync()
       assertEquals(result.swap.toOption.map(_.asInstanceOf[DomainError].code),Some("authorization-changed"))
       assertEquals(f.probe.observations,Nil)
+    }
+  }
+  private def choose(f: ReadSourceFixture,choice: IndexingChoice): Unit = f.db.transaction { c =>
+    IndexingPreferenceSql.store(c,IndexingService.Chronicle,f.config.indexingPolicy).setChoice("a",choice)
+    ()
+  }
+  private def toolResult(value: Json): Result = Wire.decode(Result.codecJson,Wire.parse(value.hcursor.downField("content").downN(0).get[String]("text").toOption.get))
+  test("Blackbox GoodCommunication: MCP indexing opt-out hides old pins and oversized generated payloads before preflight or count") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
+    val receipt=f.publish(Fixtures.snapshot(),"archive","synthetic"*10000,Nil,Nil)
+    val view=f.archive.session("a",receipt.sessionId).view
+    val source=args(receipt.sessionId)
+    val pin=source.mapObject(_.add("revision",Json.fromInt(view.revision)).add("generationId",string(view.generationId.get.toString)))
+    def invoke(name: String,arguments: Json): Result = toolResult(f.tools.invoke(f.access,name,arguments,admission(f,_ => ())).unsafeRunSync())
+    assertEquals(intercept[DomainError](invoke("get_chunks",source)).code,"read-budget")
+    choose(f,IndexingChoice.Disable)
+    try {
+      val before=f.probe.observations.size
+      val session=invoke("get_session",source).asInstanceOf[Result.Session].result
+      assertEquals(session.session.view,ContentView(1,None)); assertEquals(session.session.indexedRevision,None); assertEquals(session.chunks,Nil)
+      val chunks=invoke("get_chunks",source).asInstanceOf[Result.Chunks].result
+      assertEquals(chunks.total,0); assertEquals(chunks.chunks,Nil)
+      assertEquals(invoke("search_sessions",query("semantic")).asInstanceOf[Result.Search].result.total,0)
+      for(name <- List("get_session","get_messages","get_chunks")) assertEquals(intercept[DomainError](invoke(name,pin)).code,"not-found")
+      val hidden=f.probe.observations.drop(before)
+      assert(!hidden.exists { case SourceEvent.Statement(_,sql) => sql.contains("JOIN ch_chunks ch") || sql.contains("SELECT count(*) FROM ch_chunks") || sql.contains("SELECT id,value FROM ch_chunks"); case _ => false })
+    } finally choose(f,IndexingChoice.Inherit)
+  }}
+  test("Blackbox GoodCommunication: opt-out during a bounded read prevents delivery of materialized search results") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
+    seed(f)
+    val fired=new AtomicBoolean()
+    val counted=admission(f,_ => if(fired.compareAndSet(false,true)) choose(f,IndexingChoice.Disable))
+    try {
+      val error=intercept[DomainError](f.tools.invoke(f.access,"search_sessions",query("lexical"),counted).unsafeRunSync())
+      assert(fired.get()); assertEquals((error.code,error.detail),("unavailable","indexing policy changed during read; retry the request"))
+      assert(payloads(f).exists(_.column=="value"),"the SQL snapshot saw the old hit; expiration is at the result boundary")
+      val fresh=toolResult(f.tools.invoke(f.access,"search_sessions",query("lexical"),admission(f,_ => ())).unsafeRunSync())
+      assertEquals(fresh.asInstanceOf[Result.Search].result.total,0)
+    } finally choose(f,IndexingChoice.Inherit)
+  }}
+  test("Blackbox GoodCommunication: a semantic query already embedding still reads current indexing policy") {
+    val entered=Deferred[IO,Unit].unsafeRunSync(); val release=Deferred[IO,Unit].unsafeRunSync()
+    ReadSourceFixture.withFixture(_ => entered.complete(()).void *> release.get.as(vector)) { f =>
+      seed(f)
+      try {
+        val result=(for {
+          fiber <- f.tools.invoke(f.access,"search_sessions",query("semantic"),admission(f,_ => ())).start
+          _ <- entered.get.timeout(3.seconds)
+          _ <- IO.blocking(choose(f,IndexingChoice.Disable))
+          _ <- release.complete(())
+          result <- fiber.joinWithNever
+        } yield result).unsafeRunSync()
+        assertEquals(toolResult(result).asInstanceOf[Result.Search].result.total,0)
+      } finally choose(f,IndexingChoice.Inherit)
     }
   }
   test("BG GoodCommunication: logout after numeric admission cannot deliver an already-running bounded source read") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>

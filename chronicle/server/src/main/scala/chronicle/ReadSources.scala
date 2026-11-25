@@ -19,7 +19,22 @@ private[chronicle] object IndexedRead {
     result
   }
   def verify(db: Database,observed: Long): Unit =
-    Check(db.transaction(epoch)==observed,"authorization-changed","indexing access changed during read")
+    Check(db.transaction(epoch)==observed,"unavailable","indexing policy changed during read; retry the request")
+}
+
+/** The effective read-side state of a job. A crashed worker need not return its invalidated lease before we show it
+  * as pending. Keep the stored job intact for resume. */
+private[chronicle] object IndexedJobRead {
+  def effective(job: String,owner: String,indexingAllowed: String): String = {
+    val epoch=ChronicleIndexing.epochOwnerSql(owner)
+    val parked=s"CASE WHEN $job.state='Running' THEN NOT ($indexingAllowed) OR $job.indexing_epoch<>($epoch) ELSE false END"
+    s"""LATERAL (SELECT CASE WHEN held.parked THEN 'Queued' ELSE $job.state END AS state,
+      CASE WHEN held.parked THEN greatest($job.attempts-1,0) ELSE $job.attempts END AS attempts,
+      CASE WHEN held.parked THEN NULL ELSE $job.lease_until END AS lease_until,
+      CASE WHEN held.parked THEN 0 ELSE $job.completed_windows END AS completed_windows,
+      CASE WHEN held.parked THEN NULL ELSE $job.total_windows END AS total_windows
+      FROM (SELECT $parked AS parked OFFSET 0) held)"""
+  }
 }
 
 object ReadSources {

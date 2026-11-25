@@ -993,18 +993,12 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     PassageStorage.spans(c,selectView(c,reader,id,selector),passageId,offset,limit)
   }
   def statuses(reader: String,offset: Int,limit: Int): StatusResult = statuses(reader,offset,limit,ReadMaterialization.unrestricted)
-  def statuses(reader: String,offset: Int,limit: Int,materialization: ReadMaterialization): StatusResult = reading(materialization) { c =>
+  def statuses(reader: String,offset: Int,limit: Int,materialization: ReadMaterialization): StatusResult = reading(materialization,indexed=true) { c =>
     Check.page(offset,limit)
-    val from = s"FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id WHERE $visible"
-    val n = Sql.one(c,s"SELECT count(*) $from",reader,reader,reader)(_.getInt(1)).get
-    val allowed=ChronicleIndexing.allowsOwnerSql(db.indexingDefaultEnabled,"s.owner")
-    val epoch=ChronicleIndexing.epochOwnerSql("s.owner")
-    val parked=s"(j.state='Running' AND (NOT $allowed OR j.indexing_epoch<>$epoch))"
-    // A crashed worker may not have physically returned its invalidated lease yet. Show pending, not running.
-    val query=ReadSources.Query(s"""SELECT j.id,j.session_id,j.revision,CASE WHEN $parked THEN 'Queued' ELSE j.state END AS state,
-      CASE WHEN $parked THEN j.attempts-1 ELSE j.attempts END AS attempts,j.error,j.failure_stage,
-      CASE WHEN $parked THEN 0 ELSE j.completed_windows END AS completed_windows,
-      CASE WHEN $parked THEN NULL ELSE j.total_windows END AS total_windows $from ORDER BY j.id LIMIT ? OFFSET ?""",List(reader,reader,reader,limit,offset))
+    val from="FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id"
+    val n = Sql.one(c,s"SELECT count(*) $from WHERE $visible",reader,reader,reader)(_.getInt(1)).get
+    val query=ReadSources.Query(s"""SELECT j.id,j.session_id,j.revision,effective.state,effective.attempts,j.error,j.failure_stage,effective.completed_windows,effective.total_windows
+      $from CROSS JOIN ${IndexedJobRead.effective("j","s.owner",indexingAllowed)} effective WHERE $visible ORDER BY j.id LIMIT ? OFFSET ?""",List(reader,reader,reader,limit,offset))
     materialization.admit(ReadSources.sum(List(JsonUtf8Size(Json.obj("count"->Json.fromInt(n))),ReadSources.bytes(c,query))))
     val jobs = Sql.rows(c,query.sql,query.args*)(r => JobInfo(r.getObject("id",classOf[UUID]),r.getObject("session_id",classOf[UUID]),r.getInt("revision"),JobState.parse(r.getString("state")).get,r.getInt("attempts"),Option(r.getString("error")),r.getInt("completed_windows"),Option(r.getObject("total_windows",classOf[java.lang.Integer])).map(_.intValue),Option(r.getString("failure_stage")).map(IndexingFailureStage.parse(_).getOrElse(throw DomainError("internal","invalid persisted failure stage")))))
     StatusResult(jobs,n)

@@ -2,6 +2,7 @@ package chronicle
 
 import chronicle.api.*
 import java.util.UUID
+import ponygirls.auth.{IndexingChoice,IndexingPreferenceSql,IndexingService}
 import ponygirls.retrieval.CandidatePolicy
 import scala.concurrent.duration.*
 
@@ -91,6 +92,34 @@ class SemanticLegBudgetTest extends munit.FunSuite {
     unavailable(archiveBrowse(s.archiveIndex(exhausted),"needle"))
     // The filtered leg is still exact: within the exact limit no index budget applies.
     assertEquals(s.search(exhausted).search("a",semantic(SearchMode.Semantic,Some("rare")),Some(query)).total,3)
+  }
+
+  test("Blackbox-GoodCommunication: disabled nearest rows do not count toward Search or Archive exact fallback budgets") {
+    val s=shared
+    val group=UUID.randomUUID()
+    def preference(choice: IndexingChoice): Unit = s.db.transaction { c =>
+      IndexingPreferenceSql.store(c,IndexingService.Chronicle,s.config.indexingPolicy).setChoice("c",choice)
+      ()
+    }
+    val exhausted=budget.copy(exactScanChunks=250,secondScanTuples=budget.firstScanTuples)
+    val expected=(s.main++s.rare).toSet
+    s.db.transaction { c =>
+      Sql.exec(c,"INSERT INTO ch_groups VALUES(?,'a','synthetic exact budget')",group)
+      Sql.exec(c,"INSERT INTO ch_members VALUES(?,'a'),(?,'c')",group,group)
+    }
+    try {
+      assertEquals(s.search(SemanticLegBudget.production).search("a",semantic(SearchMode.Semantic,None),Some(query)).total,15)
+      preference(IndexingChoice.Disable)
+      val result=s.search(exhausted).search("a",semantic(SearchMode.Semantic,None),Some(query))
+      assertEquals((result.total,result.hits.map(_.session.id).toSet),(13,expected))
+      assertEquals(archiveBrowse(s.archiveIndex(exhausted),"mode:semantic needle").rows.map(_.head.id).toSet,expected)
+      val evidence=archiveSearch(s.archiveIndex(exhausted),"mode:semantic needle")
+      assertEquals(evidence.page.total,13L)
+      assert(evidence.evidence.forall(e => expected(e.sessionId) && e.matches.exists(_.kind==ArchiveMatchKind.Semantic)))
+    } finally {
+      preference(IndexingChoice.Inherit)
+      s.db.transaction { c => Sql.exec(c,"DELETE FROM ch_members WHERE group_id=?",group); Sql.exec(c,"DELETE FROM ch_groups WHERE id=?",group) }
+    }
   }
 
   test("Effectual-GoodCommunication: the second pass ends at its deadline in a savepoint, leaves the transaction usable and restores the settings") {
