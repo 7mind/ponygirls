@@ -26,6 +26,16 @@ final case class ProjectionPolicy(name:String,includeMetadata:Boolean,approvedFi
   def approved(path:Vector[String]):Boolean=prefixes.exists(prefix=>path.startsWith(prefix))
 }
 
+object HaystackRetrieval {
+  private val Version = "([1-9][0-9]{0,18})/[0-9a-f]{64}".r
+
+  /** A retained generation can use an earlier projection policy. Only the canonical item revision is needed. */
+  private[haystack] def originatingRevision(version: String): Option[Long] = version match {
+    case Version(revision) => revision.toLongOption
+    case _ => None
+  }
+}
+
 final class HaystackRetrieval(val database:JdbcDatabase,val policy:ProjectionPolicy,val store:PostgresRetrieval,val embedding:Option[EmbeddingClient],val batchSize:Int) {
   /** Modes this server can serve: semantic/hybrid need both the query embedding client and the registered profile. */
   val modes:List[RetrievalMode]=
@@ -56,7 +66,8 @@ final class HaystackRetrieval(val database:JdbcDatabase,val policy:ProjectionPol
     }
     leaves(d.fields,Vector.empty)
     val attrs=Vector("project"->item.key.project,"type"->d.docType,"status"->d.status,"importance"->d.importance,"human-attention"->d.humanAttention).map((k,v)=>ProjectionAttribute(AttributeKey.parse(k),AttributeValue(v)))
-    SourceProjection(item.key.qualified,s"${item.revision}/${policy.id}",out.result(),attrs,Set("authenticated"),true,d.status=="archived",None)
+    SourceProjection(item.key.qualified,s"${item.revision}/${policy.id}",out.result(),attrs,Set("authenticated"),true,d.status=="archived",None,
+      owners=Set(item.metadata.createdBy,item.metadata.modifiedBy))
   }
   def put(c:Connection,item:StoredItem):Unit=store.put(c,project(item))
   def initialize(items:Vector[StoredItem]):IO[Unit]=database.transaction{ c=>store.initialize(c);items.foreach(put(c,_)) }
@@ -66,7 +77,7 @@ final class HaystackRetrieval(val database:JdbcDatabase,val policy:ProjectionPol
     vector<-QueryVector(embedding,mode,text)
     page<-database.transaction(c=>store.search(c,query,vector))
     // Fresh delivery-time eligibility/ACL check, preserving immutable hit version.
-    visible<-database.transaction(c=>page.hits.filter(hit=>store.visible(c,query,hit.id)))
+    visible<-database.transaction(c=>page.hits.filter(hit=>store.visible(c,query,hit)))
   }yield page.copy(hits=visible)
   /** The indexing worker on the background admission (restart-robustness spec §5): requests and the fail-closed auth
     * reload never wait behind it. */

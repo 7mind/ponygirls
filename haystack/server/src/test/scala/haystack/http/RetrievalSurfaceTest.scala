@@ -12,6 +12,7 @@ import java.nio.file.{Files,Path}
 import org.http4s.{Header,Method,Request,Status,Uri}
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.typelevel.ci.CIString
+import ponygirls.auth.{IndexingChoice,IndexingPolicy,IndexingPreferenceSql,IndexingService}
 import ponygirls.retrieval.*
 import ponygirls.retrieval.postgres.PostgresRetrieval
 import scala.jdk.CollectionConverters.*
@@ -162,6 +163,67 @@ class RetrievalSurfaceTest extends ContractSuite {
     assert(!page.error && page.text.length>8000,page.text.length)
     assertEquals((page.keys.size,hits.map(_.takeWhile(_!=' ')),page.text.linesIterator.contains(s"ExactMatches: $LongItems; $LongItems shown from offset 0")),(LongItems,page.keys,true))
     assert(hits.forall(line=>line.endsWith(LongTitle.trim.take(200))),hits.head)
+  }
+
+  test("a persisted author's choice hides content matches for another bearer viewer without changing exact access") {
+    val fixture=temporary.flatMap(dir=>TestSupport.emptyDatabase.map(dir->_))
+    run(fixture.use { (dir,db)=>
+      val indexing=IndexingPolicy(defaultEnabled=true,allowOptIn=true,allowOptOut=true)
+      def choose(user:String,choice:IndexingChoice):IO[Unit]=db.transaction { c=>
+        IndexingPreferenceSql.store(c,IndexingService.Haystack,indexing).setChoice(user,choice)
+        ()
+      }
+      def start():IO[(Http,PostgresItemRepository)]=for {
+        auth<-IO.blocking(Auth.load(config(dir)))
+        hub<-LiveHub.create
+        retrieval=new HaystackRetrieval(db,policy,new PostgresRetrieval("haystack",None,IndexingService.Haystack,indexing),None,4)
+        repo=new PostgresItemRepository(db,Some(retrieval),Some(indexing))
+        _<-repo.initializeProjection()
+        accounts=new AccountService(db,()=>auth,imperative)
+      } yield (new Http(()=>auth,new ItemService(repo,(_,_)=>IO.unit),hub,None,retrieval,accounts),repo)
+      def browseKeys(http:Http,query:String):List[String]={
+        val search=api.SearchRequest(query,Some("p"),10,None,api.SearchSort("key","asc"))
+        val (status,browse)=call(http,Method.POST,"/api/v1/search",Some(Wire.encode(api.SearchRequest.codecJson,search)))
+        assertEquals(status,Status.Ok)
+        Wire.decode(api.SearchResult.codecJson,browse).items.map(_.key)
+      }
+      val phrase="\"exact fixture body\""
+      for {
+        _<-Migrations.initialize(db,TestSupport.Activity)
+        initial<-start()
+        operation=TestSupport.op("p:a",document=TestSupport.doc("harbour notes","""{"body":"exact fixture body"}"""))
+        _<-initial._2.commit(operation,TestSupport.Alice,TestSupport.Now)
+        _<-choose(TestSupport.Bot.userId,IndexingChoice.Disable)
+        _<-IO.blocking {
+          val (status,body)=retrieve(initial._1,api.RetrievalMode.Lexical) // Bot is the bearer viewer, not the author.
+          assertEquals(status,Status.Ok)
+          assertEquals(Wire.decode(api.RetrieveResult.codecJson,body).sources.map(_.key),List("p:a"))
+          assertEquals(browseKeys(initial._1,"harbour"),List("p:a"))
+          assertEquals(browseKeys(initial._1,phrase),List("p:a"))
+        }
+        _<-choose(TestSupport.Alice.userId,IndexingChoice.Disable)
+        restarted<-start().map(_._1)
+        _<-IO.blocking {
+          val (status,body)=retrieve(restarted,api.RetrievalMode.Lexical)
+          assertEquals(status,Status.Ok)
+          val hidden=Wire.decode(api.RetrieveResult.codecJson,body)
+          assertEquals((hidden.sources.map(_.key),hidden.total,hidden.pending),(List.empty[String],0L,0L))
+          assertEquals(browseKeys(restarted,"harbour"),Nil)
+          assertEquals(browseKeys(restarted,phrase),Nil)
+          List("", "harbour OR type:fact", "NOT harbour", s"field[\"/body\"] = $phrase").foreach { query=>
+            assertEquals(browseKeys(restarted,query),List("p:a"),query)
+          }
+          val (getStatus,get)=call(restarted,Method.POST,"/api/v1/get",Some(Wire.encode(api.GetRequest.codecJson,api.GetRequest("p:a",Some(1)))))
+          assertEquals(getStatus,Status.Ok)
+          assertEquals(Wire.decode(api.Item.codecJson,get).document.json,operation.documentCanonical)
+        }
+        _<-choose(TestSupport.Alice.userId,IndexingChoice.Inherit)
+        _<-IO.blocking {
+          assertEquals(browseKeys(restarted,"harbour"),List("p:a"))
+          assertEquals(browseKeys(restarted,phrase),List("p:a"))
+        }
+      } yield ()
+    })
   }
 
   test("MCP: retrieve refuses arguments outside its declared schema instead of ignoring them") {

@@ -44,6 +44,7 @@ object Migrations {
     }
     ponygirls.auth.AccountSql.initialize(c)
     ponygirls.auth.ImperativeAccountSql.initialize(c)
+    ponygirls.auth.IndexingPreferenceSql.initialize(c)
     ()
   }
 }

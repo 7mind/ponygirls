@@ -3,6 +3,8 @@ package haystack.storage
 import cats.effect.IO
 import cats.syntax.all.*
 import haystack.domain.*
+import haystack.retrieval.HaystackRetrieval
+import ponygirls.auth.IndexingPolicy
 import ponygirls.runtime.JdbcDatabase
 import java.sql.{Connection, PreparedStatement, ResultSet, Timestamp}
 import java.time.Instant
@@ -36,7 +38,7 @@ private[storage] object Sql {
   }
 }
 
-final class PostgresItemRepository(database: JdbcDatabase, projection: Option[haystack.retrieval.HaystackRetrieval] = None) extends ItemRepository {
+final class PostgresItemRepository(database: JdbcDatabase, projection: Option[HaystackRetrieval] = None, indexingPolicy: Option[IndexingPolicy] = None) extends ItemRepository {
   import Sql.*
   private val columns = "project_id,item_id,revision,document_text,created_at,created_by,modified_at,modified_by"
   private def stored(r: ResultSet): StoredItem = {
@@ -55,7 +57,7 @@ final class PostgresItemRepository(database: JdbcDatabase, projection: Option[ha
       RevisionMeta(r.getLong(1),r.getTimestamp(2).toInstant,r.getString(3),r.getString(4))
     }
   }
-  override def search(input:haystack.query.SearchInput):IO[haystack.query.SearchResult]=database.transaction(c=>PostgresSearch.search(c,input))
+  override def search(input:haystack.query.SearchInput):IO[haystack.query.SearchResult]=database.transaction(c=>PostgresSearch.search(c,input,indexingPolicy))
   private def values(c:Connection,field:String):Vector[String]={
     val sql=field match{
       case "type"|"status"|"importance"=>s"SELECT DISTINCT (document->>'$field') COLLATE \"C\" AS value FROM items ORDER BY value LIMIT 100"
@@ -86,7 +88,18 @@ final class PostgresItemRepository(database: JdbcDatabase, projection: Option[ha
     def loop(after:Option[ItemKey]):IO[Unit]=batch(after).flatMap { keys=>
       keys.toList.traverse_ { key=>database.transaction { c=>
         lock(c,"haystack/item/",Vector(key.project,key.item))
-        readCurrent(c,key).foreach { item=>writeSearchProjection(c,item);shared.put(c,item) }
+        readCurrent(c,key).foreach { item=>
+          writeSearchProjection(c,item)
+          shared.put(c,item)
+          // The publication can lag the head, including across projection policy changes.
+          // Use only its exact revision's author; missing history leaves the publication hidden.
+          shared.store.backfillPublishedOwners(c,key.qualified) { version=>
+            HaystackRetrieval.originatingRevision(version).flatMap { revision=>
+              rows(c,"SELECT modified_by FROM item_revisions WHERE project_id=? AND item_id=? AND revision=?",
+                Seq(key.project,key.item,revision))(_.getString(1)).headOption
+            }.fold(Set.empty[String])(author=>Set(item.metadata.createdBy,author))
+          }
+        }
       }} *> (if(keys.isEmpty)IO.unit else loop(keys.lastOption))
     }
     database.transaction(c=>shared.store.initialize(c)) *> loop(None)

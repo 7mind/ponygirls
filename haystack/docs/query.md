@@ -97,6 +97,11 @@ predicates — every authenticated user reads everything.
 - Corpus: title + description + tags (each tag its own segment) + all string
   leaves of `fields`, with segment boundaries (phrase cannot span
   tags/fields/array elements).
+- Free-text and quoted phrase predicates evaluate to false if indexing is
+  disabled for the record's creator or the author of its current revision.
+  This applies inside Boolean expressions (`NOT` negates that false result).
+  Structured predicates, including metadata and explicit field equality, are
+  unaffected.
 - Index: GIN word array (candidates) + per-segment normalized streams
   (exact phrase check). No stemming/fuzzy/vector (decision: CQ-like).
 - Numbers/booleans are not text-searchable; use JSON predicates.

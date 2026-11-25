@@ -46,6 +46,13 @@ the text uses PostgreSQL web-search syntax (`"exact phrase"`, `-word`, `or`)
 for the lexical leg; semantic and hybrid also rank by meaning through the
 configured embedding. Browse remains the exact listing and filter view.
 
+Ranked Search requires indexing to be enabled for both the record's creator
+and the author of its current revision. An older semantic result also requires
+indexing to be enabled for that revision's author. Disabling indexing hides
+results without deleting the existing index. In Browse, it disables free-text
+and phrase matches for those records; the ordinary listing, structured
+filters, direct record access and revision history stay available.
+
 The route is `#/search?q=&mode=&project=&archived=` (`mode` lexical, semantic or
 hybrid; omitted means the default). Controls:
 

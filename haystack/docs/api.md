@@ -71,6 +71,8 @@ and `LIMIT limit+1` before returning at most101 **summaries**, not full document
 Migration0005 compares query decimal lexemes by signs/magnitudes/digits, including
 `1e±999999`, without numeric-cast overflow or exponent-sized allocation. No
 unsupported-query fallback downloads the corpus into the server/browser.
+Free-text and phrase matches require indexing permission from the creator and
+current revision's author; exact listing and structured predicates do not.
 
 Completion enforces the full4096-UTF16-unit query bound even for a short requested prefix; carets must be in range and cannot split a surrogate pair.
 
@@ -94,13 +96,12 @@ Partial readiness is declared, not refused. Semantic/hybrid rank only
 publications of the active profile; `RetrieveResult.pending` (i64, a JSON decimal
 string like `total`) counts the sources inside the query's
 authorization/project/archived/expiry scope whose current revision has no
-publication under the active profile: never published, published for an older
-revision, or published under another profile/policy/embedding space. A pending
-source with an older revision published under the active profile is still
-ranked through that publication (its hits carry the older revision) until the
-current revision's publication replaces it; a source never published, or
-published only under another profile, is not ranked until the worker publishes
-it. Lexical reads current revisions and always reports `"0"`.
+readable publication under the active profile. Records with indexing disabled
+for either their creator or their current revision's author do not contribute to
+matches or pending. A pending source can still rank through an older revision
+published under the active profile (its hits carry that revision), but only if
+its author is known and allows indexing. Lexical reads current revisions and
+always reports `"0"`.
 
 `GET /api/v1/capabilities` is an authenticated read like `whoami` (401
 `unauthorized` without credentials) returning `RetrievalCapabilities(modes)`:

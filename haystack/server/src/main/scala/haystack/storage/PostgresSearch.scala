@@ -2,6 +2,7 @@ package haystack.storage
 
 import haystack.domain.{Fault,ItemKey,QualifiedId}
 import haystack.query.*
+import ponygirls.auth.{IndexingPolicy,IndexingPreferenceSql,IndexingService}
 import ponygirls.losslessjson.LosslessJson as J
 import java.sql.{Connection,ResultSet}
 
@@ -10,9 +11,13 @@ import java.sql.{Connection,ResultSet}
   * relation before LIMIT and returns summaries, never a corpus of documents.
   */
 private[storage] object PostgresSearch {
-  private final class Context {
+  private val authorKeys=s"ARRAY[${IndexingPreferenceSql.ownerKeySql("i.created_by")},${IndexingPreferenceSql.ownerKeySql("i.modified_by")}]"
+  private final class Context(indexingPolicy:Option[IndexingPolicy]) {
     val values=Vector.newBuilder[Any]
     def bind(value:Any):String={values+=value;"?"}
+    private lazy val contentAllowed=indexingPolicy.map(p=>IndexingPreferenceSql.allowsAllSql(IndexingService.Haystack,p.defaultEnabled,authorKeys))
+    // An ineligible free-text atom is false, not a filter on the whole Browse expression.
+    def content(predicate:String):String=contentAllowed.fold(predicate)(allowed=>s"($predicate AND $allowed)")
   }
   private def comparison(op:String):String=op match{
     case "="|"!="|"<"|"<="|">"|">="=>op
@@ -23,8 +28,8 @@ private[storage] object PostgresSearch {
     case AstNode.And(xs)=>xs.map(node(_,c)).mkString("("," AND ",")")
     case AstNode.Or(xs)=>xs.map(node(_,c)).mkString("("," OR ",")")
     case AstNode.Not(x)=>s"(NOT ${node(x,c)})"
-    case AstNode.Text(words,_)=>s"(COALESCE(s.words,'{}'::text[]) @> ${c.bind(Sql.TextArray(words))}::text[])"
-    case AstNode.Phrase(words,_)=>s"EXISTS(SELECT 1 FROM unnest(s.segments) segment WHERE (' '||segment||' ') LIKE ('% '||${c.bind(words.mkString(" "))}||' %'))"
+    case AstNode.Text(words,_)=>c.content(s"(COALESCE(s.words,'{}'::text[]) @> ${c.bind(Sql.TextArray(words))}::text[])")
+    case AstNode.Phrase(words,_)=>c.content(s"EXISTS(SELECT 1 FROM unnest(s.segments) segment WHERE (' '||segment||' ') LIKE ('% '||${c.bind(words.mkString(" "))}||' %'))")
     case AstNode.Pred(p)=>p match{
       case Predicate.Project(value,_)=>s"i.project_id=${c.bind(value)}"
       case Predicate.Id(value,_)=>val k=QualifiedId.decodeKey(value);s"(i.project_id=${c.bind(k.project)} AND i.item_id=${c.bind(k.item)})"
@@ -71,11 +76,11 @@ private[storage] object PostgresSearch {
     case "revision"=>("i.revision","::bigint")
   }
   final case class Plan(sql:String,params:Vector[Any],fingerprint:String)
-  def compile(input:SearchInput):Plan={
+  def compile(input:SearchInput,indexingPolicy:Option[IndexingPolicy]=None):Plan={
     Search.validateSort(input.sort)
     if(input.limit<1||input.limit>100)throw new InvalidQuery(Vector(QueryDiagnostic("limit must be 1–100",Span(0,0))))
     val ast=Query.applyArchiveDefault(Parser.parseQuery(input.query));val fp=Search.fingerprint(input)
-    val after=input.cursor.map(Search.decodeCursor(_,fp,input.sort));val ctx=new Context
+    val after=input.cursor.map(Search.decodeCursor(_,fp,input.sort));val ctx=new Context(indexingPolicy)
     val filters=Vector.newBuilder[String];filters+=node(ast,ctx)
     input.project.foreach(project=>filters+=s"i.project_id=${ctx.bind(project)}")
     val direction=if(input.sort.direction=="asc")"ASC" else "DESC"
@@ -97,8 +102,8 @@ private[storage] object PostgresSearch {
       FROM items i LEFT JOIN item_search s USING(project_id,item_id) WHERE ${filters.result().map(s=>s"($s)").mkString(" AND ")} ORDER BY $order LIMIT $limit"""
     Plan(sql,ctx.values.result(),fp)
   }
-  def search(connection:Connection,input:SearchInput):SearchResult={
-    val plan=compile(input)
+  def search(connection:Connection,input:SearchInput,indexingPolicy:Option[IndexingPolicy]):SearchResult={
+    val plan=compile(input,indexingPolicy)
     val rows=Sql.rows(connection,plan.sql,plan.params) { r=>
       val tags=io.circe.parser.parse(r.getString("tags")).flatMap(_.as[Vector[String]]).fold(_=>throw Fault("unavailable","invalid stored tags"),identity)
       SearchSummary(r.getString("project_id"),r.getString("item_id"),r.getLong("revision"),r.getString("title"),r.getString("doc_type"),r.getString("status"),r.getString("importance"),r.getString("attention"),tags,r.getTimestamp("modified_at").toInstant,r.getString("modified_by"))

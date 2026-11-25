@@ -7,7 +7,7 @@ import ponygirls.runtime.{DatabaseWait,JdbcDatabase,JdbcPoolSizing,CatsIOInjecto
 import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry,RetrievalProfile}
 import ponygirls.retrieval.postgres.PostgresRetrieval
 import haystack.auth.{Auth,AccountService,ImperativeRuntime}
-import ponygirls.auth.{AccountFailure,PasswordHasher}
+import ponygirls.auth.{AccountFailure,IndexingService,PasswordHasher}
 import haystack.storage.{MigrationRefused,Migrations,PostgresItemRepository,ItemRepository}
 import haystack.application.ItemService
 import haystack.http.{Http,LiveHub}
@@ -77,8 +77,9 @@ object Main extends IOApp {
       suspended<-stage("accounts",accounts.install(initial) *> accounts.suspended(initial))
       _<-IO.whenA(suspended>0)(IO.println(s"haystack: $suspended imperative accounts suspended (auth.accounts.enabled is off)"))
       hub<-LiveHub.create
-      projection=new HaystackRetrieval(database,config.retrieval.policy,new PostgresRetrieval("haystack",config.retrieval.embedding.map(e=>RetrievalProfile(e.space,config.retrieval.policy.id))),embedding,config.retrieval.batchSize)
-      repository=new PostgresItemRepository(database,Some(projection))
+      retrievalStore=new PostgresRetrieval("haystack",config.retrieval.embedding.map(e=>RetrievalProfile(e.space,config.retrieval.policy.id)),IndexingService.Haystack,config.indexingPolicy)
+      projection=new HaystackRetrieval(database,config.retrieval.policy,retrievalStore,embedding,config.retrieval.batchSize)
+      repository=new PostgresItemRepository(database,Some(projection),Some(config.indexingPolicy))
       _<-stage("projection",repository.initializeProjection())
       // Every reload is fail-closed; invalid/unreadable replacement config
       // revokes access until repaired, rather than retaining stale authority.
