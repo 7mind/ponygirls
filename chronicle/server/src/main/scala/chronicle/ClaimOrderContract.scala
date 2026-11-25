@@ -33,15 +33,17 @@ final case class ClaimFacts(lane: Int,step: ClaimStep,preState: String,preLeaseU
 }
 object ClaimFacts {
   /** The claim's log line (U3 owns its text; ids and counts only, never a title or an owner):
-    * `job claimed jobId=… lane=N class=fresh|bulk|unknown step=Preferred|Borrowed|Legacy reclaimed=… invalidated=…
-    * leaseEndedSeconds=… waitingSeconds=…`, the seconds measured at `now` (the claim transaction's time).
+    * `job claimed jobId=… lane=N laneKind=large|bulk|fresh class=fresh|bulk|unknown step=Preferred|Borrowed|Legacy
+    * reclaimed=… invalidated=… leaseEndedSeconds=… waitingSeconds=…` for a claim of `lane` (spec §7: the lane by its kind),
+    * the seconds measured at `now` (the claim transaction's time).
     * `leaseEndedSeconds` is how long ago the reclaimed attempt's lease ended, `-` when the claim is not a reclaim or the
     * lease had not ended (a policy-invalidated attempt reclaimed inside its lease); `waitingSeconds` is the job's age in
     * its order, `-` for a row without `waiting_since`. */
-  def logLine(jobId: UUID,facts: ClaimFacts,now: Instant): String = {
+  def logLine(jobId: UUID,facts: ClaimFacts,lane: ClaimLane,now: Instant): String = {
+    val kind=lane.kind match { case ClaimLane.Kind.Large => "large"; case ClaimLane.Kind.Bulk => "bulk"; case ClaimLane.Kind.Fresh => "fresh" }
     def seconds(from: Instant): Long = Duration.between(from,now).getSeconds
     val leaseEnded=facts.preLeaseUntil.filter(lease => facts.reclaimed && !lease.isAfter(now)).map(lease => seconds(lease).toString).getOrElse("-")
     val waiting=facts.waitingSince.map(since => seconds(since).toString).getOrElse("-")
-    s"job claimed jobId=$jobId lane=${facts.lane} class=${facts.jobClass} step=${facts.step} reclaimed=${facts.reclaimed} invalidated=${facts.invalidated} leaseEndedSeconds=$leaseEnded waitingSeconds=$waiting"
+    s"job claimed jobId=$jobId lane=${facts.lane} laneKind=$kind class=${facts.jobClass} step=${facts.step} reclaimed=${facts.reclaimed} invalidated=${facts.invalidated} leaseEndedSeconds=$leaseEnded waitingSeconds=$waiting"
   }
 }

@@ -224,34 +224,19 @@ final class ActivityClaimOrderTest extends munit.FunSuite {
     assertEquals(f.archive.claim(f.archive.knownProfiles,ClaimScope.AllOwners,300,LargeJobs.Admitted),None,"no candidate was left unranked")
   }}
 
-  /** The candidate statement of a waiting-order step as U2's selection runs it (ClaimOrder.candidateSql at b9c63e0e, which
-    * this branch does not contain), without its locks and limit: eligible pairs with their indexing epochs, the step,
-    * Jobs.claimable and the older-Running anti-check, in (waiting_since, session_id) order. At integration it is replaced
-    * by ClaimOrder.candidateSql itself. */
-  private def stepCandidates(f: Fixture,step: String): List[UUID] = f.db.transaction { c =>
-    val pairs=List("a","b","c").flatMap { owner =>
-      val eligibility=ChronicleIndexing.read(c,f.db.indexingDefaultEnabled,owner)
-      Option.when(eligibility.enabled)((owner,OwnerTargets.read(c,owner,false).profile,eligibility.epoch))
-    }
-    val values=pairs.map(_ => "(?::text,?::text,?::bigint)").mkString(",")
-    Sql.rows(c,s"""SELECT j.id FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id AND j.revision=s.revision AND NOT s.tombstone
-      JOIN (VALUES $values) e(owner,profile,indexing_epoch) ON e.owner=s.owner AND e.profile=j.profile
-      WHERE j.state IN('Queued','Running') AND ($step) AND ${Jobs.claimable("j","e.indexing_epoch")}
-        AND NOT EXISTS(SELECT 1 FROM ch_jobs o WHERE o.session_id=j.session_id AND o.profile=j.profile AND o.state='Running' AND o.revision<j.revision OFFSET 0)
-      ORDER BY j.waiting_since,j.session_id""",pairs.flatMap((o,p,e) => List[Sql.Param](o,p,e))*)(_.getObject(1,classOf[UUID]))
-  }
-
-  test("the advertised order is the claim's under Waiting: each class and the sized jobs in the order of the lane step that takes them") { withFixture { f =>
+  test("the advertised order is the claim's under Waiting: real lane claims (ClaimOrder) take each group in rank order — lane 0 the sized jobs, a bulk lane the bulk class, a fresh lane the fresh class") { withFixture { f =>
     plantA(f); plantB(f)
-    val unsized=s"NOT ${Jobs.sized("j")}"
-    val groups=List("sized" -> Jobs.sized("j"),"bulk" -> s"j.bulk=true AND $unsized","fresh" -> s"j.bulk=false AND $unsized")
     val read=List("a","b").flatMap(owner => jobs(f,waiting,owner).values).filter(_.ahead.nonEmpty)
     def group(j: ActivityJob): String = if(j.job.state==JobState.Queued && j.job.totalWindows.nonEmpty) "sized" else if(j.bulk.contains(true)) "bulk" else "fresh"
-    groups.foreach { (name,step) =>
-      val expected=stepCandidates(f,step)
-      assert(expected.nonEmpty,name)
-      assertEquals(read.filter(j => group(j)==name).sortBy(_.ahead.get).map(_.job.id),expected,name)
-      assertEquals(read.filter(j => group(j)==name).map(_.ahead.get).sorted,expected.indices.map(_.toLong).toList,name)
+    List("sized" -> ClaimLane.of(0,1),"bulk" -> ClaimLane.of(1,1),"fresh" -> ClaimLane.of(2,1)).foreach { (name,lane) =>
+      val advertised=read.filter(j => group(j)==name).sortBy(_.ahead.get)
+      assert(advertised.size>=2,name)
+      assertEquals(advertised.map(_.ahead.get),advertised.indices.map(_.toLong).toList,s"$name ranks are 0..n-1")
+      val claimed=advertised.map(_ => f.archive.claimInLane(f.archive.knownProfiles,ClaimScope.AllOwners,300,lane) match {
+        case ClaimOutcome.Claimed(claim) => Some(claim.jobId)
+        case other => fail(s"$name: $other")
+      })
+      assertEquals(claimed,advertised.map(j => Some(j.job.id)),s"$name: the lane's claims follow the advertised order")
     }
   }}
 

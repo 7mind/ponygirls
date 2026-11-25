@@ -104,7 +104,14 @@ private[chronicle] object ActivityQueueSql {
       WHEN ${Jobs.sized("q")} THEN '$large'
       WHEN ${observed(Jobs.claimable("q",epoch))} THEN 'Queued' END"""
   }
-  private val order="q.id,q.session_id,q.waiting_since,q.bulk"
+  private def order(q: String): String = s"$q.id,$q.session_id,$q.waiting_since,$q.bulk"
+  /** The preferred step of a waiting lane of `kind` that takes the candidate (ClaimOrder.steps, U2's predicates on `j`):
+    * lane 0's sized jobs, the bulk lanes' unsized bulk jobs, the fresh lanes' unsized fresh jobs; NULL for an unclassified
+    * job (only lane 0's second step takes it). */
+  private val stepGroup: String = {
+    def preferred(kind: ClaimLane.Kind): String = ClaimOrder.steps(ClaimLane(0,kind)).head.predicate
+    s"CASE WHEN ${preferred(ClaimLane.Kind.Large)} THEN 'sized' WHEN ${preferred(ClaimLane.Kind.Bulk)} THEN 'bulk' WHEN ${preferred(ClaimLane.Kind.Fresh)} THEN 'fresh' END"
+  }
   private def sizes(q: String): String = s"${Jobs.sized(q)} AS sized,COALESCE($q.total_windows>${LargeJobs.windows},false) OR ${Jobs.sized(q)} AS permit_only"
   /** `queue`: every job of the viewing owner (the `jobs` CTE of [[ActivityMetadataCorpus]]) with its order columns,
     * reason and whether a claim may take it now. `eligible` and `claim_queue`: the owners a claim visits (enabled,
@@ -114,7 +121,7 @@ private[chronicle] object ActivityQueueSql {
   def cte(view: ActivityClaimOrderView,profiles: Int,allowedSql: String): String = {
     val epoch="e.epoch"
     s""", queue AS MATERIALIZED (
-      SELECT $order,h.owner,${sizes("q")},CASE WHEN q.state='Queued' THEN q.lease_until END AS held_until,older.revision AS older_revision,
+      SELECT ${order("q")},h.owner,${sizes("q")},CASE WHEN q.state='Queued' THEN q.lease_until END AS held_until,older.revision AS older_revision,
         ${reason(view.mode,epoch)} AS waiting,COALESCE(j.is_current AND h.indexing_allowed AND ${candidate("q",epoch)},false) AS candidate
       FROM jobs j JOIN heads h ON h.id=j.session_id JOIN ch_jobs q ON q.id=j.id
       CROSS JOIN LATERAL (SELECT ${ChronicleIndexing.epochOwnerSql("h.owner")} AS epoch OFFSET 0) e
@@ -123,10 +130,10 @@ private[chronicle] object ActivityQueueSql {
       SELECT t.owner,t.profile,${ChronicleIndexing.epochOwnerSql("t.owner")} AS epoch FROM ch_owner_targets t JOIN ch_users u ON u.id=t.owner AND u.enabled
       WHERE t.profile IN(${List.fill(profiles)("?").mkString(",")}) AND $allowedSql),
     claim_queue AS MATERIALIZED (
-      SELECT $order,e.owner,${sizes("q")}
+      SELECT ${order("j")},e.owner,${sizes("j")},$stepGroup AS step_group
       FROM eligible e JOIN ch_sources s ON s.owner=e.owner AND NOT s.tombstone
-      JOIN ch_jobs q ON q.session_id=s.id AND q.revision=s.revision AND q.profile=e.profile
-      WHERE q.state IN('Queued','Running') AND ${candidate("q",epoch)}),
+      JOIN ch_jobs j ON j.session_id=s.id AND j.revision=s.revision AND j.profile=e.profile
+      WHERE j.state IN('Queued','Running') AND ${candidate("j",epoch)}),
     ranked AS MATERIALIZED (SELECT id,${rank(view)} AS rank FROM claim_queue)"""
   }
   /** THE place where a job's position is counted (owner decision on the approved mockup, 25 Nov): how many claim
@@ -143,7 +150,7 @@ private[chronicle] object ActivityQueueSql {
     *   permit, whose orders differ: none. */
   def rank(view: ActivityClaimOrderView): String = view.mode match {
     case ClaimOrderMode.Waiting(_) =>
-      "CASE WHEN sized OR bulk IS NOT NULL THEN row_number() OVER (PARTITION BY CASE WHEN sized THEN 'sized' WHEN bulk THEN 'bulk' ELSE 'fresh' END ORDER BY waiting_since,session_id)-1 END"
+      "CASE WHEN step_group IS NOT NULL THEN row_number() OVER (PARTITION BY step_group ORDER BY waiting_since,session_id)-1 END"
     case ClaimOrderMode.SourceId if view.lanes<=1 => "row_number() OVER (ORDER BY owner,session_id)-1"
     case ClaimOrderMode.SourceId => "CASE WHEN permit_only THEN row_number() OVER (ORDER BY owner,session_id)-1 END"
   }
