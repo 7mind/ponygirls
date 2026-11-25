@@ -99,6 +99,7 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     migrate(c,"031_annotation_provenance.sql")
     IndexingPreferenceSql.initialize(c)
     migrate(c,"032_indexing_eligibility.sql")
+    migrate(c,"033_claim_order.sql")
     // 001.sql (above) ends the previous process's older jobs superseded: their kept parts go with them (ANNOT2).
     AnnotationPartials.supersededAtStart(c)
     val dimensions=SearchPolicy.dimensions(config)
@@ -272,8 +273,12 @@ object Jobs {
     * lease. A policy-invalidated Running attempt can be replaced immediately, refunding its charge even if that was
     * the last attempt. This also recovers jobs of a worker that never saw the setting change. */
   def invalidated(job: String,epoch: String): String = s"($job.state='Running' AND $job.indexing_epoch<>($epoch))"
-  def claimable(job: String,epoch: Long): String =
-    s"(${invalidated(job,epoch.toString)} OR ($job.attempts<$attemptLimit AND (($job.state='Queued' AND ($job.lease_until IS NULL OR $job.lease_until<=clock_timestamp())) OR ($job.state='Running' AND $job.lease_until<clock_timestamp()))))"
+  def claimable(job: String,epoch: Long): String = claimable(job,epoch.toString)
+  /** [[claimable]] against an SQL expression of the owner's indexing epoch (a column of a joined pair, a parameter). */
+  def claimable(job: String,epochSql: String): String =
+    s"(${invalidated(job,epochSql)} OR ($job.attempts<$attemptLimit AND (($job.state='Queued' AND ($job.lease_until IS NULL OR $job.lease_until<=clock_timestamp())) OR ($job.state='Running' AND $job.lease_until<clock_timestamp()))))"
+  /** A job deferred to the large-job lane: Queued with its window count (only a deferral records one while it is queued). */
+  def sized(job: String): String = s"($job.state='Queued' AND $job.total_windows IS NOT NULL)"
   def retry(c: Connection,owner: String,id: UUID,defaultEnabled: Boolean = true): Unit = {
     val target=OwnerTargets.read(c,owner,true).profile
     ChronicleIndexing.requireEnabled(ChronicleIndexing.locked(c,defaultEnabled,owner))
@@ -499,7 +504,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
         val source=Sql.one(c,s"""SELECT s.id,s.revision FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
           SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND ${Jobs.claimable("j",epoch)})
           AND NOT EXISTS(SELECT 1 FROM ch_jobs o WHERE o.session_id=s.id AND o.revision<s.revision AND o.profile=? AND o.state='Running')
-          AND (? OR NOT EXISTS(SELECT 1 FROM ch_jobs d WHERE d.session_id=s.id AND d.revision=s.revision AND d.profile=? AND (d.total_windows>? OR (d.state='Queued' AND d.total_windows IS NOT NULL))))
+          AND (? OR NOT EXISTS(SELECT 1 FROM ch_jobs d WHERE d.session_id=s.id AND d.revision=s.revision AND d.profile=? AND (d.total_windows>? OR ${Jobs.sized("d")})))
           ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",owner,target.profile,target.profile,large==LargeJobs.Admitted,target.profile,LargeJobs.windows)(r => (r.getObject(1,classOf[UUID]),r.getInt(2)))
         source.flatMap { (id,revision) =>
           Sql.one(c,s"""UPDATE ch_jobs SET state='Running',attempts=attempts+CASE WHEN ${Jobs.invalidated("ch_jobs",epoch.toString)} THEN 0 ELSE 1 END,
