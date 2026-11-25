@@ -4,6 +4,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import java.nio.file.{Files,Path}
 import java.util.concurrent.TimeUnit
+import ponygirls.auth.IndexingPolicy
 import scala.util.Using
 import munit.FunSuite
 
@@ -87,6 +88,27 @@ final class CheckConfigSuite extends FunSuite:
     finally
       mkfifo.destroyForcibly()
       Files.deleteIfExists(directory.resolve("config.json"));Files.deleteIfExists(fifo);Files.deleteIfExists(directory)
+  }
+
+  test("indexing policy loads from the optional top-level object") {
+    val path=Files.createTempFile("manure-indexing-config-",".json")
+    val base=CurrentWire.parse("""{
+      "data_dir": "/var/lib/manure", "api_origin": "https://artifacts.example.test", "content_mode": "path",
+      "users": [{"id": "operator", "type": "human", "login": "operator", "passwordHashFile": "/run/secrets/operator"}],
+      "database": {"jdbcUrl": "jdbc:postgresql://127.0.0.1:1/x", "user": "manure", "passwordFile": "/run/secrets/db",
+        "limits": {"maxConnections": 1, "maxQueued": 1, "queueTimeoutMs": 5000, "connectTimeoutMs": 5000,
+          "statementTimeoutMs": 5000, "lockTimeoutMs": 5000, "idleTransactionTimeoutMs": 5000, "socketTimeoutMs": 5000}}
+    }""")
+    def load(json: Json): Config =
+      Files.writeString(path,json.noSpaces)
+      Config.load(path)
+    try
+      assertEquals(load(base).indexingPolicy,IndexingPolicy(true,false,false))
+      val flags=Json.obj("defaultEnabled" -> Json.False,"allowOptIn" -> Json.True,"allowOptOut" -> Json.True)
+      assertEquals(load(base.mapObject(_.add("indexing",flags))).indexingPolicy,IndexingPolicy(false,true,true))
+      for invalid <- List(Json.Null,Json.obj("defaultEnabled" -> Json.fromInt(0))) do
+        assertEquals(intercept[DomainError](load(base.mapObject(_.add("indexing",invalid)))).code,"bad-envelope")
+    finally Files.deleteIfExists(path)
   }
 
   test("D10 database.limits pool keys: omitted, one admission below 8 connections and 3 + 3 at 8; set, together within maxConnections - 2") {

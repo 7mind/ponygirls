@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import java.nio.file.{Files,Path}
+import ponygirls.auth.IndexingPolicy
 
 class ModelAdmissionTest extends munit.FunSuite {
   test("BA specified: external old configuration gets explicit capacity defaults; malformed records do not") {
@@ -18,6 +19,18 @@ class ModelAdmissionTest extends munit.FunSuite {
     List(Json.Null,Json.fromString("invalid"),capacity.mapObject(_.add("embeddingRequests",Json.fromString("3")))).foreach { value =>
       assert(json.mapObject(_.add("indexing",value)).as[Config].isLeft,s"malformed capacity accepted: ${value.noSpaces}")
     }
+  }
+  test("indexing policy decodes alongside Chronicle's existing indexing capacity and continuation settings") {
+    import Config.given
+    val example=Wire.parse(Files.readString(Path.of("config.example.json")))
+    def decode(indexing: Json) = example.mapObject(_.add("indexing",indexing)).as[Config]
+    val capacity=Json.obj("annotationSessions"->Json.fromInt(2),"annotationContinuations"->Json.True)
+    assertEquals(example.mapObject(_.remove("indexing")).as[Config].toOption.get.indexingPolicy,IndexingPolicy(true,false,false))
+    assertEquals(decode(capacity).toOption.get.indexingPolicy,IndexingPolicy(true,false,false))
+    val configured=decode(capacity.mapObject(_.add("defaultEnabled",Json.False).add("allowOptIn",Json.True).add("allowOptOut",Json.True))).toOption.get
+    assertEquals(configured.indexingPolicy,IndexingPolicy(false,true,true))
+    assertEquals(configured.indexing,IndexingCapacity.defaults.copy(annotationSessions=2,annotationContinuations=true))
+    assert(decode(capacity.mapObject(_.add("allowOptIn",Json.Null))).isLeft)
   }
   test("BA specified: execution knobs validate independently and never alter either semantic profile") {
     val base=Fixtures.config()

@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files, Path}
 import java.security.{MessageDigest, SecureRandom}
 import java.util.{UUID, Base64}
+import ponygirls.auth.IndexingPolicy
 import ponygirls.runtime.{BoundedSecretFile, DatabaseWait, JdbcConfig, JdbcLimits, JdbcPoolSizing}
 import scala.concurrent.duration.*
 
@@ -81,7 +82,7 @@ object IndexingCapacity {
   /** Large jobs (LargeJobs) running at once; small jobs use every annotation session. */
   val largeJobs: Int = 1
 }
-final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Long, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits,accounts: Option[AccountsConfig],maxRawReadBytes: Long,maxIndexingBudgetBytes: Long,maxSmallJobBudgetBytes: Option[Long],maxRecordBytes: Long=Config.defaultMaxRecordBytes,databaseStartWaitMs: Long=DatabaseWait.defaultBound.toMillis,databaseRequestConnections: Option[Int]=None,databaseBackgroundConnections: Option[Int]=None) {
+final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Long, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits,accounts: Option[AccountsConfig],maxRawReadBytes: Long,maxIndexingBudgetBytes: Long,maxSmallJobBudgetBytes: Option[Long],maxRecordBytes: Long=Config.defaultMaxRecordBytes,databaseStartWaitMs: Long=DatabaseWait.defaultBound.toMillis,databaseRequestConnections: Option[Int]=None,databaseBackgroundConnections: Option[Int]=None,indexingPolicy: IndexingPolicy=IndexingPolicy.defaults) {
   def accountsEnabled: Boolean = accounts.exists(_.enabled)
   def jdbcConfig: JdbcConfig = JdbcConfig(jdbcUrl,databaseUser,Path.of(databasePasswordFile),databaseLimits)
   def databaseStartWait: FiniteDuration = databaseStartWaitMs.millis
@@ -256,6 +257,7 @@ object Config {
     embedding <- cursor.get[EmbeddingConfig]("embedding")
     allowInsecureHttp <- if(cursor.downField("allowInsecureHttp").focus.isEmpty) Right(false) else cursor.get[Boolean]("allowInsecureHttp")
     indexing <- if(cursor.downField("indexing").focus.isEmpty) Right(IndexingCapacity.defaults) else cursor.get[IndexingCapacity]("indexing")
+    indexingPolicy <- IndexingPolicy.decode(cursor)
     accounts <- present[AccountsConfig](cursor,"accounts")
     // Omitted: everything /api/ingest can store stays readable.
     maxRawReadBytes <- optional(cursor,"maxRawReadBytes",maxBodyBytes.toLong)
@@ -263,7 +265,7 @@ object Config {
     // Retired (ingest-limits spec §5.2.7): accepted and validated so existing configurations start, without effect.
     maxSmallJobBudgetBytes <- present[Long](cursor,"maxSmallJobBudgetBytes")
     maxRecordBytes <- optional(cursor,"maxRecordBytes",defaultMaxRecordBytes)
-  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits,accounts,maxRawReadBytes,maxIndexingBudgetBytes,maxSmallJobBudgetBytes,maxRecordBytes,databaseStartWaitMs,pooled._1,pooled._2) }
+  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits,accounts,maxRawReadBytes,maxIndexingBudgetBytes,maxSmallJobBudgetBytes,maxRecordBytes,databaseStartWaitMs,pooled._1,pooled._2,indexingPolicy) }
   /** The server's configuration file. A decoding failure is `invalid configuration`, except a failure that names its key
     * (never a value). */
   def load(path: String): Config = { val c = Wire.parse(Files.readString(Path.of(path))).as[Config].fold(failure => throw DomainError("config", if(failure.message==IndexingCapacity.continuationsInvalid) failure.message else "invalid configuration"), identity); c.validate(); c }

@@ -3,12 +3,14 @@ package haystack.auth
 import cats.effect.ExitCode
 import cats.effect.unsafe.implicits.global
 import haystack.{Config, Main}
+import haystack.domain.Fault
 import haystack.storage.TestSupport
 import io.circe.Json
 import java.io.{ByteArrayOutputStream, PrintStream}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files, Path}
 import java.sql.DriverManager
+import ponygirls.auth.IndexingPolicy
 import ponygirls.runtime.{CredentialFile, JdbcPoolSizing}
 import scala.concurrent.duration.*
 import scala.util.Using
@@ -113,6 +115,15 @@ class StartupConfigTest extends munit.FunSuite {
     assertEquals(loaded.retrieval.embedding, None); assertEquals(loaded.retrieval.policy.approvedFieldPrefixes, Vector("/public"))
     assertEquals(Auth.load(loaded.auth).authenticate(AliceToken).map(_.userId), Some("alice"))
     assertEquals(Main.run(List("check-config", path.toString)).unsafeRunSync(), ExitCode.Success)
+  } }
+  test("indexing policy loads from the optional top-level object") { directory { dir =>
+    val base = valid(dir)
+    def load(json: Json): Config = Config.load(file(dir, json))
+    assertEquals(load(base).indexingPolicy, IndexingPolicy(true, false, false))
+    val flags = Json.obj("defaultEnabled" -> Json.False, "allowOptIn" -> Json.True, "allowOptOut" -> Json.True)
+    assertEquals(load(set(base, "indexing", flags)).indexingPolicy, IndexingPolicy(false, true, true))
+    for (invalid <- List(Json.Null, Json.obj("allowOptOut" -> Json.fromString("true"))))
+      assertEquals(intercept[Fault](load(set(base, "indexing", invalid))).code, "config")
   } }
   test("optional password-only human fields load without changing legacy omitted defaults") { directory { dir=>
     val base=valid(dir)

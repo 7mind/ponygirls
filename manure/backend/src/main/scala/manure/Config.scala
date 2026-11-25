@@ -3,6 +3,7 @@ package manure
 import io.circe.{Json, HCursor}
 import java.net.{InetAddress, URI}
 import java.nio.file.{Files, Path}
+import ponygirls.auth.IndexingPolicy
 import ponygirls.runtime.{DatabaseWait, JdbcConfig, JdbcLimits, JdbcPoolSizing}
 import scala.concurrent.duration.*
 
@@ -76,7 +77,7 @@ final case class Config(
   dashboardDir: Option[Path], unlockShellDir: Option[Path], maxConnections: Int,
   requestTimeout: FiniteDuration, sweepInterval: FiniteDuration, rateMapMaxEntries: Int,
   rateLimitPerMinute: Int, unlockRatePerMinute: Int, loginRatePerMinutePerIp: Int, embedding: Option[EmbeddingSettings], migrationReceiptDir: Option[Path], migrationManifestMaxBytes: Int, migrationManifestMaxEntries: Int, rootAuthority: Option[KubernetesRootConfig], viewerDir: Option[Path], rootBinding: RootBindingMode,
-  accounts: Option[AccountsConfig]
+  accounts: Option[AccountsConfig], indexingPolicy: IndexingPolicy
 ):
   def origins: Vector[ApiOrigin] = apiOrigin +: allowedApiOrigins
   def validate(): Unit =
@@ -140,7 +141,7 @@ object Config:
   def load(path: Path): Config =
     val source = ponygirls.runtime.BoundedSecretFile.read(path.toAbsolutePath,1048576)
     val c = CurrentWire.parse(source).hcursor
-    val known = Set("listen_address","port","data_dir","api_origin","content_mode","content_suffix","loopback_dev","allow_insecure_http","allowed_api_origins","trusted_proxies","users","database","native_mode","posix_library","dashboard_dir","unlock_shell_dir","viewer_dir","storage_quota_bytes","chunk_bytes","max_file_bytes","max_artifact_bytes","max_files_per_artifact","max_request_body_bytes","max_list_limit","max_connections","request_timeout_s","max_sessions_per_user","max_sessions_global","max_grants_per_artifact","rate_map_max_entries","rate_limit_per_min","unlock_rate_per_min","login_rate_per_min_per_ip","sweep_interval_s","incomplete_session_ttl_s","grant_ttl_s","one_time_grant_ttl_s","embedding","migration_receipt_dir","migration_manifest_max_bytes","migration_manifest_max_entries","root_authority","root_binding","accounts")
+    val known = Set("listen_address","port","data_dir","api_origin","content_mode","content_suffix","loopback_dev","allow_insecure_http","allowed_api_origins","trusted_proxies","users","database","native_mode","posix_library","dashboard_dir","unlock_shell_dir","viewer_dir","storage_quota_bytes","chunk_bytes","max_file_bytes","max_artifact_bytes","max_files_per_artifact","max_request_body_bytes","max_list_limit","max_connections","request_timeout_s","max_sessions_per_user","max_sessions_global","max_grants_per_artifact","rate_map_max_entries","rate_limit_per_min","unlock_rate_per_min","login_rate_per_min_per_ip","sweep_interval_s","incomplete_session_ttl_s","grant_ttl_s","one_time_grant_ttl_s","embedding","migration_receipt_dir","migration_manifest_max_bytes","migration_manifest_max_entries","root_authority","root_binding","accounts","indexing")
     Require(c.keys.exists(_.forall(known)), "bad-envelope")
     val users = field[Vector[Json]](c,"users").map { j =>
       val u = j.hcursor
@@ -174,6 +175,7 @@ object Config:
       EmbeddingSettings(endpoint,field(e,"maxConcurrent"),field(e,"maxQueued"),field(e,"batchSize"),field(e,"leaseSeconds"),field[Long](e,"pollIntervalMs").millis)
     }
     val apiOrigin = ApiOrigin.parse(field(c,"api_origin"))
+    val indexingPolicy = IndexingPolicy.decode(c).getOrElse(throw DomainError("bad-envelope"))
     val config = Config(default(c,"listen_address","127.0.0.1"),default(c,"port",47329),Path.of(field[String](c,"data_dir")),
       apiOrigin,default(c,"content_mode","subdomain"),default(c,"content_suffix",""),default(c,"loopback_dev",false),
       default(c,"allow_insecure_http",false),default(c,"allowed_api_origins",Vector.empty[String]).map(ApiOrigin.parse),
@@ -182,5 +184,5 @@ object Config:
       shell(c,"dashboard_dir"),shell(c,"unlock_shell_dir"),default(c,"max_connections",128),default[Long](c,"request_timeout_s",30L).seconds,
       default[Long](c,"sweep_interval_s",300L).seconds,default(c,"rate_map_max_entries",4096),default(c,"rate_limit_per_min",600),
       default(c,"unlock_rate_per_min",10),default(c,"login_rate_per_min_per_ip",10),embedding,c.get[Option[String]]("migration_receipt_dir").getOrElse(throw DomainError("bad-envelope")).map(Path.of(_)),default(c,"migration_manifest_max_bytes",67108864),default(c,"migration_manifest_max_entries",1000000),c.get[Option[Json]]("root_authority").getOrElse(throw DomainError("bad-envelope")).map(KubernetesRootConfig.parse),shell(c,"viewer_dir"),c.downField("root_binding").focus.map(RootBindingMode.parse).getOrElse(RootBindingMode.Strict),
-      accounts(c,apiOrigin))
+      accounts(c,apiOrigin),indexingPolicy)
     config.validate(); config
