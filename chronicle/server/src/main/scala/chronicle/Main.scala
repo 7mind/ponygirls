@@ -83,7 +83,10 @@ object Main extends IOApp {
     gate <- Semaphore[IO](2)
     (host,port) = listener(config)
     _ <- stage("bind",EmberServerBuilder.default[IO].withHost(host).withPort(port).withMaxConnections(128).withMaxHeaderSize(16384).withHttpWebSocketApp(ws => s.http.routes(ws,gate,accounts).orNotFound).build.use { server =>
-      IO(unobserved.settle(None)) *> IO(s.logger.info(s"chronicle listening address=${server.address} workersEnabled=$workersEnabled")) *> stage("serve",background(workersEnabled,s.worker.run))
+      IO(unobserved.settle(None)) *> IO(s.logger.info(s"chronicle listening address=${server.address} workersEnabled=$workersEnabled")) *>
+        // The configured claim order, once serving (a failed start prints only its failure line): the evidence of the mode.
+        IO(s.logger.log(izumi.logstage.api.Log.Level.Info)(izumi.logstage.api.Log.Message.raw(ClaimOrder.startLine(config)))) *>
+        stage("serve",background(workersEnabled,s.worker.run))
     },Some(config.listenPort))
     never <- IO.never[Nothing]
   } yield never })

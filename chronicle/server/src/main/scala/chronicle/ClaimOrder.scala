@@ -38,6 +38,12 @@ object ClaimOutcome {
   *    whose fenced UPDATE (claimHead's text) changes no row, restarts the same step on a fresh statement. A step's next
   *    step runs only when it has no candidate; `maxProbes` probes that did not claim end the claim `Contended`. */
 private[chronicle] object ClaimOrder {
+  /** The server's line of its effective claim order, logged once it serves: `claim order mode=source-id lanes=L` or
+    * `claim order mode=waiting bulkLanes=B lanes=L` (L = indexing.annotationSessions). */
+  def startLine(config: Config): String = ClaimOrderMode.of(config) match {
+    case ClaimOrderMode.SourceId => s"claim order mode=${ClaimOrderSetting.SourceId.key} lanes=${config.indexing.annotationSessions}"
+    case ClaimOrderMode.Waiting(bulkLanes) => s"claim order mode=${ClaimOrderSetting.Waiting.key} bulkLanes=$bulkLanes lanes=${config.indexing.annotationSessions}"
+  }
   /** Probes of one claim that may fail before it gives up (`Contended`). */
   val maxProbes = 8
   final case class Pair(owner: String,profile: String,targetEpoch: Long,indexingEpoch: Long)
