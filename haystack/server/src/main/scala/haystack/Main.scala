@@ -73,7 +73,7 @@ object Main extends IOApp {
       initial<-stage("config",IO.blocking(Auth.load(config.auth)))
       reference=new AtomicReference[Either[Throwable,Auth]](Right(initial))
       getAuth=()=>reference.get().fold(throw _,identity)
-      accounts=new AccountService(database,getAuth,imperative)
+      accounts=new AccountService(database,getAuth,imperative,config.indexingPolicy)
       suspended<-stage("accounts",accounts.install(initial) *> accounts.suspended(initial))
       _<-IO.whenA(suspended>0)(IO.println(s"haystack: $suspended imperative accounts suspended (auth.accounts.enabled is off)"))
       hub<-LiveHub.create

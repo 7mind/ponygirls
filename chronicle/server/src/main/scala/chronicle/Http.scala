@@ -10,7 +10,7 @@ import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci.CIString
 import java.util.UUID
-import ponygirls.auth.{AccountJson,AccountFailure,PersistentCookie,AccountCredential,AccountEvent,AccountEventKind,AccountRejection,AccountReply,AccountRequest,AccountSession,ClientAddress,CookieEffect,CredentialEndpoint,DeclarativeLogin,ImperativeAccountApi,ImperativePolicy,SignedIn}
+import ponygirls.auth.{AccountJson,AccountFailure,PersistentCookie,AccountCredential,AccountEvent,AccountEventKind,AccountRejection,AccountReply,AccountRequest,AccountSession,ClientAddress,CookieEffect,CredentialEndpoint,DeclarativeLogin,IndexingAccountEndpoint,ImperativeAccountApi,ImperativePolicy,SignedIn}
 import java.nio.file.{Files,Path}
 import scala.concurrent.duration.*
 
@@ -98,12 +98,18 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
       SignedIn(user,AccountSession(AccountCredential(user.id,user.userType,hash,hash,true),secret))
     }.adaptError { case d: DomainError => AccountFailure(d.code) }
   }
-  /** A request to the account plane of imperative accounts: the existing account boundary, then the shared
-    * dispatcher; the audit events are logged after its transaction committed. */
-  private def imperativeAccount(r: Request[IO])(dispatch: AccountRequest => IO[AccountReply]): IO[Response[IO]] = {
+  /** The existing account boundary, then a shared dispatcher; logs audit events after its transaction commits. */
+  private def accountOperation(r: Request[IO],strictRead: Boolean = false)(dispatch: AccountRequest => IO[AccountReply]): IO[Response[IO]] = {
     val mutating=r.method!=Method.GET
     val answered=handleAccount {
-      IO(accountBoundary(r,mutating)) *> (if(mutating) accountBody(r).map(Some(_)) else IO.pure(None)).flatMap { body =>
+      IO(accountBoundary(r,mutating)).flatMap { _ =>
+        if(mutating) accountBody(r).map(Some(_))
+        else if(strictRead) r.body.take(1).compile.last.timeout(30.seconds).map { first =>
+          Check(first.isEmpty && !r.contentLength.exists(_>0),"invalid","GET must not have a body")
+          None
+        }
+        else IO.pure(None)
+      }.flatMap { body =>
         IO.blocking(auth.accountSession(cookie(r))).flatMap { session =>
           dispatch(AccountRequest(r.method.name,r.uri.path.renderString.stripPrefix(Http.accountPrefix),body,accountActors(r),session,presentedSession(r),clientAddress(r)))
         }
@@ -134,23 +140,25 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
       }
     }
   }
-  /** Present exactly while the master switch `accounts.enabled` is on. */
-  def accountPlane: Resource[IO,Option[AccountPlane]] = AccountPlane.resource(auth.accounts)
-  /** The service without the account plane: none of the imperative-account endpoints, and no per-address login window. */
-  def routes(ws: WebSocketBuilder2[IO],loginGate: Semaphore[IO]): HttpRoutes[IO] = routes(ws,loginGate,None)
-  /** `accounts` is this service's `accountPlane`. */
-  def routes(ws: WebSocketBuilder2[IO],loginGate: Semaphore[IO],accounts: Option[AccountPlane]): HttpRoutes[IO] = accounts match {
-    case None => declaredRoutes(ws,loginGate,None)
-    case Some(plane) => declaredRoutes(ws,loginGate,accounts) <+> HttpRoutes.of[IO] {
-      // After the routes above: the five existing account endpoints keep their handlers.
-      case r if r.uri.path.renderString.startsWith(Http.accountPrefix+"/") =>
-        imperativeAccount(r)(plane.api.handle(Some(plane.access.settings),plane.access.declared,auth.imperative(plane.access),_))
+  def accountPlane: Resource[IO,AccountPlane] = AccountPlane.resource(config,auth.accounts)
+  /** Routes without the shared account dispatcher, for fixtures that only need the existing endpoints. */
+  def routes(ws: WebSocketBuilder2[IO],loginGate: Semaphore[IO]): HttpRoutes[IO] = declaredRoutes(ws,loginGate,None)
+  private def relativeAccountPath(r: Request[IO]): Option[String] =
+    Some(r.uri.path.renderString).filter(_.startsWith(Http.accountPrefix+"/")).map(_.stripPrefix(Http.accountPrefix))
+  def routes(ws: WebSocketBuilder2[IO],loginGate: Semaphore[IO],plane: AccountPlane): HttpRoutes[IO] = {
+    declaredRoutes(ws,loginGate,plane.access.map(plane -> _)) <+> HttpRoutes.of[IO] {
+      // After the five existing account endpoints, add just the four indexing routes regardless of signup.
+      case r if relativeAccountPath(r).exists(path => IndexingAccountEndpoint.route(r.method.name,path).nonEmpty) =>
+        accountOperation(r,strictRead=true)(plane.api.handleIndexing(config.indexingPolicy,plane.declared,auth.indexing(plane),_))
+      case r if plane.access.nonEmpty && relativeAccountPath(r).nonEmpty =>
+        val access=plane.access.get
+        accountOperation(r)(plane.api.handle(Some(access.settings),access.declared,auth.imperative(access),_))
     }
   }
-  private def declaredRoutes(ws: WebSocketBuilder2[IO],loginGate: Semaphore[IO],accounts: Option[AccountPlane]): HttpRoutes[IO] = HttpRoutes.of[IO] {
+  private def declaredRoutes(ws: WebSocketBuilder2[IO],loginGate: Semaphore[IO],accounts: Option[(AccountPlane,ImperativeAccess)]): HttpRoutes[IO] = HttpRoutes.of[IO] {
     case r @ POST -> Root / "api" / "account" / "v1" / "login" => accounts match {
-      case Some(plane) =>
-        imperativeAccount(r)(plane.api.login(plane.access.settings,plane.access.declared,auth.imperative(plane.access),declarativeLogin,_))
+      case Some((plane,access)) =>
+        accountOperation(r)(plane.api.login(access.settings,access.declared,auth.imperative(access),declarativeLogin,_))
       case None => handleAccount {
         IO(accountBoundary(r,true)) *> loginGate.permit.use { _ =>
           accountBody(r).flatMap { j => IO.blocking {
@@ -205,7 +213,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     case r @ GET -> Root / "api" / "versions" => IO(json(Status.Ok,Wire.encode(VersionInfo.codecJson,Wire.versions)))
     case r @ POST -> Root / "api" / "login" => handle {
       IO { noUrlSecrets(r); origin(r,true); Check(header(r,"Authorization").isEmpty,"forbidden","browser cookie transport only") } *> (accounts match {
-        case Some(plane) => legacyLogin(r,plane)
+        case Some((plane,_)) => legacyLogin(r,plane)
         case None => loginGate.permit.use { _ =>
           boundedBody(r,math.min(config.maxBodyBytes,Http.loginBodyBytes)).flatMap(raw => IO.blocking(auth.login(Wire.decode(LoginRequest.codecJson,Wire.parse(raw))))).map { case (response,secret) => json(Status.Ok,Wire.encode(LoginResponse.codecJson,response)).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds)) }
         }

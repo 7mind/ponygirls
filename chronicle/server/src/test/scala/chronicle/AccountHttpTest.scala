@@ -14,7 +14,7 @@ import org.http4s.ember.client.EmberClientBuilder
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.implicits.*
 import org.typelevel.ci.CIString
-import ponygirls.auth.Totp
+import ponygirls.auth.{IndexingPolicy,Totp}
 import scala.concurrent.duration.*
 
 class AccountHttpTest extends munit.FunSuite {
@@ -56,7 +56,7 @@ class AccountHttpTest extends munit.FunSuite {
     Sql.exec(c,"DELETE FROM ponygirls_imperative_users")
   }
   private def fixture: Resource[IO,Fixture] = fixture(None)
-  private def fixture(accounts: Option[AccountsConfig]): Resource[IO,Fixture] = for {
+  private def fixture(accounts: Option[AccountsConfig],indexingPolicy: Option[IndexingPolicy] = None): Resource[IO,Fixture] = for {
     config <- Resource.eval(IO {
       if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
       Fixtures.config()
@@ -68,7 +68,8 @@ class AccountHttpTest extends munit.FunSuite {
       java.nio.file.Files.writeString(file,secret)
       StaticTokenConfig(java.util.UUID.randomUUID(),"a","configured",List(Scope.Ingest),file.toString)
     })
-    actual=config.copy(staticTokens=List(token),accounts=accounts,users=config.users.map(user => user.copy(admin=accounts.nonEmpty && user.id=="a")))
+    actual=config.copy(staticTokens=List(token),accounts=accounts,indexingPolicy=indexingPolicy.getOrElse(config.indexingPolicy),
+      users=config.users.map(user => user.copy(admin=(accounts.nonEmpty || indexingPolicy.nonEmpty) && user.id=="a")))
     runtimeClient <- EmberClientBuilder.default[IO].build
     services <- {
       val module=new ModuleDef { include(_root_.chronicle.plugins.ChroniclePlugin); make[Config].fromValue(actual); make[Client[IO]].fromValue(runtimeClient) }
@@ -166,6 +167,70 @@ class AccountHttpTest extends munit.FunSuite {
       unregistered <- List(f.request(Method.GET,root+"/policy",None,"",Nil),f.request(Method.POST,root+"/signup",None,"{}",Nil)).sequence
       _ <- IO(unregistered.foreach(reply => assertEquals(reply.status,Status.NotFound)))
     } yield () }.unsafeRunSync()
+  }
+
+  test("indexing works with signup off, and a session revoked under the SQL session lock cannot clear an override") {
+    fixture(None,Some(IndexingPolicy(false,true,false))).use { f =>
+      val self="/indexing"
+      val admin="/admin/indexing"
+      def read(path: String,cookie: String): IO[Reply] = f.request(Method.GET,root+path,Some(cookie),"",Nil)
+      def overrideBody(choice: String,password: String): String = s"""{"userId":"b","override":"$choice","currentPassword":"$password"}"""
+      for {
+        operator <- f.login("a")
+        member <- f.login("b")
+        before <- read(self,member.cookie)
+        _ <- IO {
+          assertEquals(before.status,Status.Ok)
+          assertEquals(before.json.hcursor.get[Boolean]("enabled"),Right(false))
+          assertEquals(before.headers.get(CIString("Cache-Control")).map(_.head.value),Some("no-store"))
+          assertEquals(before.headers.get(CIString("Set-Cookie")),None)
+        }
+        bearer <- f.request(Method.GET,root+self,None,"",List("Authorization" -> s"Bearer ${f.configuredSecret}"))
+        old <- read("/admin/users",operator.cookie)
+        rejected <- read(admin,member.cookie)
+        entity <- f.request(Method.GET,root+self,Some(member.cookie),"{}",Nil)
+        stale <- f.post("a",self,member.cookie,"""{"choice":"enabled"}""")
+        duplicate <- f.post("b",self,member.cookie,"""{"choice":"enabled","choice":"disabled"}""")
+        _ <- IO(assertEquals(Vector(bearer.status,old.status,rejected.status,entity.status,stale.status,duplicate.status),
+          Vector(Status.Forbidden,Status.NotFound,Status.Forbidden,Status.BadRequest,Status.Conflict,Status.BadRequest)))
+        enabled <- f.post("b",self,member.cookie,"""{"choice":"enabled"}""")
+        denied <- f.post("a",admin,operator.cookie,overrideBody("disabled","wrong synthetic password"))
+        forced <- f.post("a",admin,operator.cookie,overrideBody("disabled","synthetic"))
+        _ <- IO {
+          assertEquals((enabled.status,enabled.json.hcursor.get[Boolean]("enabled")),(Status.Ok,Right(true)))
+          assertEquals((denied.status,denied.code),(Status.Forbidden,"proof-rejected"))
+          assert(!denied.body.contains("synthetic password"))
+          assertEquals((forced.status,forced.json),(Status.Ok,Json.obj("ok" -> Json.True)))
+        }
+        sessionHash=Wire.hash(operator.cookie.stripPrefix("chronicle_session="))
+        _ <- Resource.make(IO.blocking {
+          val c=java.sql.DriverManager.getConnection(f.config.jdbcUrl,f.config.databaseUser,Config.credential(f.config.databasePasswordFile))
+          c.setAutoCommit(false)
+          Sql.one(c,"SELECT hash FROM ch_sessions WHERE hash=? FOR UPDATE",sessionHash)(_.getString(1))
+          c
+        })(c => IO.blocking { try c.rollback() finally c.close() }).use { holder =>
+          Resource.make(f.post("a",admin,operator.cookie,overrideBody("inherit","synthetic")).start)(fiber => IO.blocking(holder.rollback()) *> fiber.cancel).use { request => for {
+            pid <- IO.blocking(Sql.one(holder,"SELECT pg_backend_pid()")(_.getInt(1)).get)
+            _ <- McpTestFixtures.await(IO.blocking(f.services.database.transaction(c => Sql.one(c,"SELECT count(*) FROM pg_stat_activity WHERE ?=ANY(pg_blocking_pids(pid))",pid)(_.getInt(1)).get)))(_>=1)
+            _ <- IO.blocking { Sql.exec(holder,"DELETE FROM ch_sessions WHERE hash=?",sessionHash); holder.commit() }
+            reply <- request.joinWithNever
+            _ <- IO(assertEquals((reply.status,reply.code),(Status.Unauthorized,"unauthorized")))
+          } yield () }
+        }
+        stillForced <- read(self,member.cookie)
+        _ <- IO(assertEquals((stillForced.json.hcursor.get[String]("choice"),stillForced.json.hcursor.get[String]("override"),stillForced.json.hcursor.get[Boolean]("enabled")),
+          (Right("enabled"),Right("disabled"),Right(false))))
+        signedIn <- f.login("a")
+        cleared <- f.post("a",admin,signedIn.cookie,overrideBody("inherit","synthetic"))
+        restored <- read(self,member.cookie)
+        reset <- f.post("b",self,member.cookie,"""{"choice":"inherit"}""")
+        _ <- IO {
+          assertEquals(cleared.status,Status.Ok)
+          assertEquals(restored.json.hcursor.get[Boolean]("enabled"),Right(true))
+          assertEquals((reset.status,reset.json.hcursor.get[Boolean]("enabled")),(Status.Ok,Right(false)))
+        }
+      } yield ()
+    }.unsafeRunSync()
   }
 
   private def ownerLock(f: Fixture): Resource[IO,java.sql.Connection] = Resource.make(IO.blocking {

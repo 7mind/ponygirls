@@ -10,7 +10,7 @@ import java.net.{URI, URLDecoder, URLEncoder}
 import java.nio.file.{Files, Path}
 import java.util.UUID
 import scala.concurrent.duration.*
-import ponygirls.auth.{AccountCredential,AccountEvent,AccountFailure,AccountJson,AccountReply,AccountRequest,ClientAddress,CookieEffect,PersistentCookie}
+import ponygirls.auth.{AccountCredential,AccountEvent,AccountFailure,AccountJson,AccountReply,AccountRequest,ClientAddress,CookieEffect,IndexingAccountEndpoint,PersistentCookie}
 
 final class Throttle(capacity: Int, clock: DomainClock):
   private val entries = scala.collection.mutable.Map.empty[String,(Double,Int)]
@@ -196,15 +196,15 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
   private def declarativeAccountPath(method: Method,path: String): Boolean =
     method == Method.GET && path == accountPrefix || method == Method.POST && (path == accountPrefix + "/logout" ||
       path == accountPrefix + "/tokens" || path.startsWith(accountPrefix + "/tokens/") && path.endsWith("/revoke"))
-  /** Every other account path while the master switch is on: cookie-only, never a bearer credential. */
-  private def imperativeAccount(req: Request[IO],ctx: Context): IO[Response[IO]] =
+  /** The independent indexing routes and the imperative routes share the same cookie-only boundary. */
+  private def accountOperation(req: Request[IO],ctx: Context)(dispatch: AccountRequest => IO[AccountReply]): IO[Response[IO]] =
     IO {
       Require(header(req,"Authorization").isEmpty, "ambiguous-credentials")
       Cookies.credential(header(req,"Cookie"),Cookies.sessionName(config.loopbackDev,ctx.insecure))
     }.flatMap { secret => for
       body <- optionalAccountJson(req)
       session <- secret.flatTraverse(accounts.session)
-      reply <- plane.handle(accountRequest(req,body,session,secret))
+      reply <- dispatch(accountRequest(req,body,session,secret))
       response <- accountReply(ctx,reply)
     yield response }
   private def account(req: Request[IO],ctx: Context): IO[Response[IO]] = IO {
@@ -228,7 +228,9 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
           }
         }
       }
-    else if auth.imperative.nonEmpty && !declarativeAccountPath(req.method,path) then imperativeAccount(req,ctx)
+    else if IndexingAccountEndpoint.route(req.method.name,path.stripPrefix(accountPrefix)).nonEmpty then
+      accountOperation(req,ctx)(plane.handleIndexing(config.indexingPolicy,_))
+    else if auth.imperative.nonEmpty && !declarativeAccountPath(req.method,path) then accountOperation(req,ctx)(plane.handle)
     else credentials(req,ctx,false).flatMap { c =>
       IO {
         Require(c.kind == "cookie", "unauthorized")

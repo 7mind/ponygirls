@@ -1,10 +1,11 @@
 package manure
 
-import ponygirls.auth.{AccountCredential,AccountFailure,AccountIssued,AccountLogin,AccountOrigin,AccountSession,AccountSessions,AccountToken,AccountUser,DeclaredDirectory,IdentityHistory,ImperativeAccounts,ImperativeSettings,MemoryImperativeUsers,Password,PasswordHasher}
+import ponygirls.auth.{AccountCredential,AccountFailure,AccountIssued,AccountLogin,AccountOrigin,AccountSession,AccountSessions,AccountToken,AccountUser,DeclaredDirectory,IdentityHistory,IndexingChoice,IndexingPolicy,IndexingPreference,IndexingPreferences,ImperativeAccounts,ImperativeSettings,MemoryImperativeUsers,Password,PasswordHasher}
 
 private[manure] final case class MemoryAccountRow(credential: AccountCredential,metadata: Option[AccountToken])
 /** `fingerprints` are the ids ever reconciled, kept as tombstones after removal: the reconcile scope. */
-private[manure] final case class MemoryAccountState(users: Vector[AccountUser],rows: Vector[MemoryAccountRow],fingerprints: Set[String])
+private[manure] final case class MemoryAccountState(users: Vector[AccountUser],rows: Vector[MemoryAccountRow],fingerprints: Set[String],
+  indexing: Map[String,IndexingPreference] = Map.empty)
 private[manure] object MemoryAccountState:
   val empty = MemoryAccountState(Vector.empty,Vector.empty,Set.empty)
 
@@ -24,7 +25,7 @@ private[manure] final class MemoryAuthTxn(initial: MemoryAccountState,imperative
     require(users.forall(_.origin == AccountOrigin.Declarative),"config")
     val prior = state.users.map(u => u.id -> u).toMap
     val scope = state.fingerprints ++ users.map(_.id)
-    state = MemoryAccountState(users,state.rows.flatMap { row =>
+    state = state.copy(users=users,rows=state.rows.flatMap { row =>
       val current = users.find(_.id == row.credential.userId)
       if !scope(row.credential.userId) then Some(row)
       else if row.credential.browser then
@@ -32,7 +33,7 @@ private[manure] final class MemoryAuthTxn(initial: MemoryAccountState,imperative
           prior.get(u.id).exists(old => old.passwordHash == u.passwordHash)))(row)
       else if current.exists(_.enabled) then Some(row)
       else Some(row.copy(metadata=row.metadata.map(_.copy(revoked=true))))
-    },scope)
+    },fingerprints=scope)
   private def login(users: Vector[AccountUser],login: String,password: String): AccountSession =
     val matches = users.filter(u => u.origin == AccountOrigin.Declarative && u.enabled && u.userType == "human" && u.login.contains(login) &&
       u.passwordHash.exists(Password.verify(password.toCharArray,_)))
@@ -88,6 +89,17 @@ private[manure] final class MemoryAuthTxn(initial: MemoryAccountState,imperative
     val history = new IdentityHistory:
       def retained(username: String): Boolean = state.fingerprints(username) || creators(username)
     imperativeUsers.accounts(settings,declared,new MemorySessions(() => directory(settings,declared)),history,hasher,clock)
+  def indexingPreferences(policy: IndexingPolicy): IndexingPreferences = new IndexingPreferences:
+    def lock(owner: String): Unit = ()
+    def get(owner: String): IndexingPreference = state.indexing.getOrElse(owner,IndexingPreference.inherited)
+    def setChoice(owner: String,choice: IndexingChoice): IndexingPreference = change(owner,_.copy(choice=choice))
+    def setOverride(owner: String,overrideChoice: IndexingChoice): IndexingPreference = change(owner,_.copy(overrideChoice=overrideChoice))
+    private def change(owner: String,update: IndexingPreference => IndexingPreference): IndexingPreference =
+      val previous = get(owner)
+      val requested = update(previous)
+      val next = if previous.enabled(policy) == requested.enabled(policy) then requested else requested.copy(epoch=previous.epoch+1)
+      state = state.copy(indexing=state.indexing.updated(owner,next))
+      next
   /** Sessions and tokens of the imperative core over this snapshot; locks are meaningless here. */
   private final class MemorySessions(directory: () => Vector[AccountUser]) extends AccountSessions:
     def lockOwners(declarative: Vector[String],imperative: Vector[String]): Unit = ()

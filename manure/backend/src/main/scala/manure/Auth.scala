@@ -6,7 +6,7 @@ import java.security.{MessageDigest, SecureRandom}
 import java.util.Base64
 import java.sql.Connection
 import cats.effect.IO
-import ponygirls.auth.{AccountCredential,AccountIssued,AccountJson,AccountLogin,AccountOrigin,AccountReply,AccountRequest,AccountSession,AccountSql,AccountToken,AccountUser,AttemptLimiter,CredentialGate,DeclarativeLogin,DeclaredDirectory,IdentityHistory,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,Password,PasswordHasher,SharedAccountSessions,SignedIn,TotpVault}
+import ponygirls.auth.{AccountCredential,AccountIssued,AccountJson,AccountLogin,AccountOrigin,AccountReply,AccountRequest,AccountSession,AccountSql,AccountToken,AccountUser,AttemptLimiter,CredentialGate,DeclarativeLogin,DeclaredDirectory,IdentityHistory,IndexingAccountTransactions,IndexingPolicy,IndexingPreferenceSql,IndexingPreferences,IndexingService,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,Password,PasswordHasher,SharedAccountSessions,SignedIn,TotpVault}
 
 object SecretCodec:
   private val random = new SecureRandom()
@@ -140,6 +140,7 @@ trait AuthTxn:
     * and every artifact creator: a name that ever owned data here is never registered again.
     */
   def imperative(settings: Option[ImperativeSettings],declared: DeclaredDirectory,hasher: PasswordHasher,clock: java.time.Clock): ImperativeAccounts
+  def indexingPreferences(policy: IndexingPolicy): IndexingPreferences
   def loginReplacing(users: Vector[AccountUser],login: String,password: String,previous: Option[String]): AccountLogin
   def browser(users: Vector[AccountUser],secret: String): Option[AccountCredential]
   def bearer(users: Vector[AccountUser],secret: String): Option[AccountCredential]
@@ -173,6 +174,7 @@ private[manure] final class PostgresAuthTxn(c: Connection) extends AuthTxn:
       def retained(username: String): Boolean = sessions.retained(username) ||
         Jdbc.rows(c,"SELECT EXISTS(SELECT 1 FROM manure.artifacts WHERE created_by_user=?)",Exact.utf8(username))(_.getBoolean(1)).head
     ImperativeAccountSql.accounts(c,settings,declared,sessions,history,hasher,clock)
+  def indexingPreferences(policy: IndexingPolicy): IndexingPreferences = IndexingPreferenceSql.store(c,IndexingService.Manure,policy)
   def loginReplacing(users: Vector[AccountUser],login: String,password: String,previous: Option[String]): AccountLogin =
     val result = AccountSql.loginReplacing(c,directory(users),login,password,previous)
     result.copy(session=result.session.copy(credential=exposed(users,result.session.credential)),
@@ -255,6 +257,13 @@ final class AccountPlane(metadata: Metadata,auth: Auth,accounts: Accounts,gate: 
       metadata.transaction(tx => work(tx.accounts.imperative(auth.imperative,declared,hasher,instants)))
   def handle(request: AccountRequest): IO[AccountReply] =
     IO.blocking(auth.declared).flatMap(declared => api.handle(auth.imperative,declared,transactions(declared),request))
+  def handleIndexing(policy: IndexingPolicy,request: AccountRequest): IO[AccountReply] =
+    val indexing = new IndexingAccountTransactions:
+      def run[A](work: (ImperativeAccounts,IndexingPreferences) => A): IO[A] = metadata.transaction { tx =>
+        val core = tx.accounts.imperative(auth.imperative,auth.declared,hasher,instants)
+        work(core,tx.accounts.indexingPreferences(policy))
+      }
+    IO.blocking(auth.declared).flatMap(declared => api.handleIndexing(policy,declared,indexing,request))
   /** `POST /login` while the master switch is on: declared logins take `Accounts.login`, others the imperative core. */
   def login(settings: ImperativeSettings,request: AccountRequest): IO[AccountReply] =
     IO.blocking(auth.declared).flatMap(declared => api.login(settings,declared,transactions(declared),declarative,request))

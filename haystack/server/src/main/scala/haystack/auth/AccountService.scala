@@ -3,7 +3,7 @@ package haystack.auth
 import cats.effect.{IO,Resource}
 import haystack.domain.{Fault,Principal}
 import io.circe.Json
-import ponygirls.auth.{AccountCredential,AccountIssued,AccountJson,AccountReply,AccountRequest,AccountSql,AccountToken,AccountUser,AttemptLimiter,CredentialGate,DeclarativeLogin,IdentityHistory,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,PasswordHasher,AccountEndpoint,SharedAccountSessions,SignedIn}
+import ponygirls.auth.{AccountCredential,AccountFailure,AccountIssued,AccountJson,AccountReply,AccountRequest,AccountSql,AccountToken,AccountUser,AttemptLimiter,CredentialGate,DeclarativeLogin,IdentityHistory,IndexingAccountTransactions,IndexingPolicy,IndexingPreferenceSql,IndexingPreferences,IndexingService,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,PasswordHasher,AccountEndpoint,SharedAccountSessions,SignedIn}
 import ponygirls.runtime.JdbcDatabase
 import java.sql.Connection
 import java.time.Clock
@@ -35,7 +35,7 @@ private final class HaystackIdentityHistory(c:Connection,fingerprints:IdentityHi
   * callbacks never acquire another connection or run an effect synchronously.
   * Every account decision uses the merged directory: the declared users plus,
   * while `auth.accounts.enabled` is on, the active imperative users. */
-final class AccountService(database:JdbcDatabase,getAuth:()=>Auth,imperative:ImperativeRuntime) {
+final class AccountService(database:JdbcDatabase,getAuth:()=>Auth,imperative:ImperativeRuntime,indexingPolicy:IndexingPolicy=IndexingPolicy.defaults) {
   private def directory(c:Connection,auth:Auth):Vector[AccountUser]=ImperativeAccountSql.directory(c,auth.imperative,auth.declared)
   /** Startup and every reload (design §4.8.5): under the directory lock, a declared id or login equal to an
     * active or disabled imperative account fails closed before the declared directory is reconciled. */
@@ -87,9 +87,12 @@ final class AccountService(database:JdbcDatabase,getAuth:()=>Auth,imperative:Imp
   private val transactions:ImperativeTransactions=new ImperativeTransactions {
     def run[A](work:ImperativeAccounts=>A):IO[A]=database.transaction { c=>
       val auth=getAuth()
-      val sessions=new SharedAccountSessions(c,identity,()=>directory(c,auth))
-      work(ImperativeAccountSql.accounts(c,auth.imperative,auth.declared,sessions,new HaystackIdentityHistory(c,sessions),imperative.hasher,imperative.clock))
+      work(accountCore(c,auth,()=>directory(c,auth)))
     }
+  }
+  private def accountCore(c:Connection,auth:Auth,liveDirectory:()=>Vector[AccountUser]):ImperativeAccounts={
+    val sessions=new SharedAccountSessions(c,identity,liveDirectory)
+    ImperativeAccountSql.accounts(c,auth.imperative,auth.declared,sessions,new HaystackIdentityHistory(c,sessions),imperative.hasher,imperative.clock)
   }
   /** `POST /login` while the master switch is on: declared logins take `declarativeLogin`, every other login
     * the imperative decision; the reply is decided after commit. `auth` is the snapshot taken after the body
@@ -100,11 +103,31 @@ final class AccountService(database:JdbcDatabase,getAuth:()=>Auth,imperative:Imp
   /** Every account path other than the five existing endpoints. The presented cookie is resolved under the
     * merged directory; the dispatcher revalidates it under its owner's lock before any effect. */
   def imperativeRequest(auth:Auth,settings:ImperativeSettings,method:String,path:String,body:Option[Json],actor:Vector[String],presented:Option[String],clientAddress:String):IO[AccountReply]={
+    accountRequest(auth,method,path,body,actor,presented,clientAddress)
+      .flatMap(imperative.api.handle(Some(settings),auth.declared,transactions,_))
+  }
+  def indexingRequest(auth:Auth,method:String,path:String,body:Option[Json],actor:Vector[String],presented:Option[String],clientAddress:String):IO[AccountReply]={
+    val indexing=new IndexingAccountTransactions {
+      def run[A](work:(ImperativeAccounts,IndexingPreferences)=>A):IO[A]=database.transaction { c=>
+        // Called with the account owner locks held, after any wait for a proof slot or those locks. A
+        // role-only reload need not change a session fingerprint, so check the admitted snapshot too.
+        def liveDirectory():Vector[AccountUser]={
+          val current=getAuth()
+          if((current ne auth) && (current.config!=auth.config || current.declared!=auth.declared)) throw AccountFailure("conflict")
+          directory(c,current)
+        }
+        work(accountCore(c,auth,liveDirectory),IndexingPreferenceSql.store(c,IndexingService.Haystack,indexingPolicy))
+      }
+    }
+    accountRequest(auth,method,path,body,actor,presented,clientAddress)
+      .flatMap(imperative.api.handleIndexing(indexingPolicy,auth.declared,indexing,_))
+  }
+  private def accountRequest(auth:Auth,method:String,path:String,body:Option[Json],actor:Vector[String],presented:Option[String],clientAddress:String):IO[AccountRequest]={
     val session=presented.filter(Tokens.canonical) match {
       case None=>IO.pure(None)
       case Some(token)=>database.transaction(c=>AccountSql.browser(c,directory(c,auth),token))
     }
-    session.flatMap(found=>imperative.api.handle(Some(settings),auth.declared,transactions,AccountRequest(method,path,body,actor,found,presented,clientAddress)))
+    session.map(found=>AccountRequest(method,path,body,actor,found,presented,clientAddress))
   }
   def logoutLegacy(captured:Authenticated):IO[Unit]=logoutSession(captured,None)
   def logout(captured:Authenticated,actor:Vector[String]):IO[Unit]=logoutSession(captured,Some(actor))

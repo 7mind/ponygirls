@@ -70,11 +70,11 @@ object Main extends IOApp {
     (Host.fromString(config.listenHost).getOrElse(throw DomainError("config","invalid listenHost")),Port.fromInt(config.listenPort).getOrElse(throw DomainError("config","invalid port")))
   private[chronicle] def background(workersEnabled: Boolean,worker: => IO[Unit]): IO[Unit] =
     if(workersEnabled) worker else IO.never[Unit]
-  private def reportAccounts(s: RuntimeServices,accounts: Option[AccountPlane]): IO[Unit] = accounts match {
+  private def reportAccounts(s: RuntimeServices,accounts: AccountPlane): IO[Unit] = accounts.access match {
     case None => IO.blocking(s.database.transaction(Database.activeImperativeAccounts)).flatMap { suspended =>
       IO(if(suspended>0) s.logger.warn(s"accounts.enabled is off: imperative accounts are suspended, their rows and tokens are kept; $suspended"))
     }
-    case Some(plane) => IO.blocking(s.database.transaction(Database.imperativeAccountsSealedByAnotherKey(_,plane.access.settings.vault.keyId))).flatMap { sealedByAnotherKey =>
+    case Some(access) => IO.blocking(s.database.transaction(Database.imperativeAccountsSealedByAnotherKey(_,access.settings.vault.keyId))).flatMap { sealedByAnotherKey =>
       IO(if(sealedByAnotherKey>0) s.logger.warn(s"imperative accounts whose TOTP secret another key sealed need an administrator reset; $sealedByAnotherKey"))
     }
   }

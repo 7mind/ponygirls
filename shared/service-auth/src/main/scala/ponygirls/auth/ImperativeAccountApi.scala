@@ -49,6 +49,8 @@ enum AccountEventKind(val text: String) {
   case Enabled extends AccountEventKind("account.enabled")
   case Disabled extends AccountEventKind("account.disabled")
   case ProofRejected extends AccountEventKind("account.proof.rejected")
+  case IndexingChoiceChanged extends AccountEventKind("account.indexing.choice-changed")
+  case IndexingOverrideChanged extends AccountEventKind("account.indexing.override-changed")
 }
 /** An audit event; by construction it holds only the allowlisted fields, never a secret, e-mail, code or body.
   * `actor` and `target` are account ids, usernames or enrollment ids; `outcome` is a fixed word.
@@ -146,14 +148,58 @@ final class ImperativeAccountApi(limiter: AttemptLimiter, gate: CredentialGate) 
   import ImperativeAccountJson.{MaximumTextLength, body, credentials, noBody}
   import ImperativePolicy.*
 
-  /** Every path under the prefix other than the five existing endpoints. With the master switch off every
-    * request is `404 not-found` and nothing is read or counted.
+  /** Imperative-account endpoints only. With the master switch off every request here is `404 not-found`
+    * and nothing is read or counted; the independent indexing routes use `handleIndexing`.
     */
   def handle(settings: Option[ImperativeSettings], declared: DeclaredDirectory, transactions: ImperativeTransactions,
     request: AccountRequest): IO[AccountReply] = settings.flatMap(active => route(request.method, request.path).filter(found => available(found.endpoint, active)).map(active -> _)) match {
     case None => IO.pure(failure(NotFoundCode, None, Vector.empty))
     case Some((active, found)) => guarded(dispatch(active, declared, transactions, request, found))
   }
+
+  /** Indexing preference routes are independent of imperative signup and share its session, proof and audit rules. */
+  def handleIndexing(policy: IndexingPolicy, declared: DeclaredDirectory, transactions: IndexingAccountTransactions,
+    request: AccountRequest): IO[AccountReply] = guarded {
+    import IndexingAccountEndpoint.*
+    IndexingAccountEndpoint.route(request.method, request.path) match {
+      case Some(Profile) => authenticated(request, mutation = false) { session =>
+        noBody(request.body)
+        transactions.run((core, preferences) => core.indexingProfile(session, preferences))
+          .map(reply(request, _, None, None, None)(profile => ok(IndexingAccountJson.profile(policy, profile))))
+      }
+      case Some(SetChoice) => authenticated(request, mutation = true) { session =>
+        val choice = IndexingAccountJson.choice(body(request.body, Set("choice"), Set.empty).text("choice", MaximumTextLength))
+        val self = Some(session.userId)
+        transactions.run((core, preferences) => core.setIndexingChoice(session, choice, policy, preferences))
+          .map(reply(request, _, self, self, self) { case (profile, changed) =>
+            ok(IndexingAccountJson.profile(policy, profile)).copy(events = indexingEvent(request, changed, AccountEventKind.IndexingChoiceChanged, session, session.userId, choice))
+          })
+      }
+      case Some(Users) => authenticated(request, mutation = false) { session =>
+        noBody(request.body)
+        transactions.run((core, preferences) => core.indexingUsers(session, preferences))
+          .map(reply(request, _, None, None, None)(users => ok(IndexingAccountJson.users(policy, users))))
+      }
+      case Some(SetOverride) => authenticated(request, mutation = true) { session =>
+        val fields = body(request.body, Set("userId", "override", "currentPassword"), Set.empty)
+        // Public account IDs are not imperative usernames; bound this by the already bounded JSON body.
+        val id = fields.text("userId", AccountJson.maxBodyBytes)
+        val choice = IndexingAccountJson.choice(fields.text("override", MaximumTextLength))
+        val password = fields.text("currentPassword", PasswordMaximumLength)
+        val actor = Some(session.userId)
+        proven(declared, session) { hold =>
+          gated(transactions.run((core, preferences) => hold.keepWhen(core.setIndexingOverride(session, id, choice, password, preferences))(proofFailed))
+            .map(reply(request, _, actor, actor, Some(id)) { changed =>
+              ok(ImperativeAccountJson.ok).copy(events = indexingEvent(request, changed, AccountEventKind.IndexingOverrideChanged, session, id, choice))
+            }))
+        }
+      }
+      case None => IO.pure(failure(NotFoundCode, None, Vector.empty))
+    }
+  }
+  private def indexingEvent(request: AccountRequest, changed: Boolean, kind: AccountEventKind,
+    session: AccountCredential, target: String, choice: IndexingChoice): Vector[AccountEvent] =
+    Option.when(changed)(AccountEvent(kind, Some(session.userId), Some(target), Some(IndexingAccountJson.text(choice)), request.clientAddress)).toVector
 
   /** `POST /login` while the master switch is on; with it off the service keeps its existing login unchanged.
     * `{login,password}` or `{login,password,totp}`. A declared login takes the service's declarative path

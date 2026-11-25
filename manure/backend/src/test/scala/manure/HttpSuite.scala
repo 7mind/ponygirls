@@ -7,7 +7,7 @@ import org.http4s.{Header,Method,Request,Uri}
 import org.typelevel.ci.CIString
 import manure.{api => wire}
 import ponygirls.retrieval.UnavailableReason
-import ponygirls.auth.{AccountJson,CredentialGate,FastPasswordHasher,Secrets,Totp}
+import ponygirls.auth.{AccountJson,CredentialGate,FastPasswordHasher,IndexingPolicy,PasswordHasher,Secrets,Totp}
 import java.nio.file.Files
 import java.util.UUID
 import scala.concurrent.duration.*
@@ -23,7 +23,7 @@ final class HttpSuite extends FunSuite:
     origin.foreach(v => r = r.putHeaders(Header.Raw(CIString("Origin"),v)))
     r
   private val gate = CredentialGate.resource.use(IO.pure).unsafeRunSync()
-  private def app(f: BackendFixture,adjust: Config => Config = c => c): Http =
+  private def app(f: BackendFixture,adjust: Config => Config = c => c,hasher: PasswordHasher = FastPasswordHasher): Http =
     val config = adjust(f.config.copy(apiOrigin=ApiOrigin.parse("http://127.0.0.1:47329"),port=47329))
     val engine = SearchProjection.retrieval(config)
     val projection = new SearchProjection(config,engine)
@@ -31,7 +31,7 @@ final class HttpSuite extends FunSuite:
     val search = new Search(f.database.get,f.lease,config,auth,f.clock,engine,projection,None)
     val accounts = new Accounts(f.metadata,auth)
     new Http(config,f.artifacts,new Catalogue(f.artifacts,config.limits,f.clock),auth,f.clock,search,accounts,
-      new AccountPlane(f.metadata,auth,accounts,gate,FastPasswordHasher,f.clock))
+      new AccountPlane(f.metadata,auth,accounts,gate,hasher,f.clock))
   private def command(c: wire.Command,token: Option[String],origin: Option[String] = None): Request[IO] =
     request(Method.POST,"/api/current",token,origin).withEntity(CurrentWire.encode(wire.ClientEnvelope.codecJson,
       wire.ClientEnvelope(UUID.fromString("01234567-89ab-4def-8123-456789abcdef"),"1.0.0",c)).noSpaces)
@@ -263,6 +263,54 @@ final class HttpSuite extends FunSuite:
       subdomain <- app(f,_.copy(contentMode="subdomain",contentSuffix="localhost")).app.run(
         login("{}").putHeaders(Header.Raw(CIString("Host"),("a"*32)+".localhost:47329")))
       _ <- IO { assertEquals(mounted.status.code,404); assertEquals(subdomain.status.code,404) }
+    yield ()
+  }}
+  test("indexing in path mode uses the exact public owner ID and admin proof even with imperative accounts off") { run { (f,_) =>
+    val origin = "http://127.0.0.1:47329"
+    val root = "/api/account/v1"
+    val owner = f.identity.userId // The public ID contains NUL and a non-ASCII character.
+    val adjust: Config => Config = c => c.copy(users=c.users.map(u => if u.id == "loginonly" then u.copy(admin=true) else u),
+      indexingPolicy=IndexingPolicy(true,false,true))
+    val h = app(f,adjust,PasswordHasher.Pbkdf2)
+    def post(path: String,cookie: String,actor: String,data: String): Request[IO] =
+      request(Method.POST,root+path,None,Some(origin)).withEntity(data).putHeaders(
+        Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cookie"),cookie),Header.Raw(CIString("X-Account-Actor"),AccountJson.actor(actor)))
+    def get(path: String,cookie: String): Request[IO] = request(Method.GET,root+path).putHeaders(Header.Raw(CIString("Cookie"),cookie))
+    def adminBody(target: String,choice: String,password: String): String = io.circe.Json.obj(
+      "userId" -> io.circe.Json.fromString(target),"override" -> io.circe.Json.fromString(choice),"currentPassword" -> io.circe.Json.fromString(password)).noSpaces
+    def send(req: Request[IO],expected: Int): IO[io.circe.Json] = h.app.run(req).flatMap { res => res.as[String].map { text =>
+      assertEquals(res.status.code,expected,clue(text))
+      assertEquals(res.headers.get(CIString("Cache-Control")).map(_.head.value),Some("no-store"))
+      assert(res.headers.get(CIString("Set-Cookie")).isEmpty)
+      CurrentWire.parse(text)
+    }}
+    for
+      cookie <- browserCookie(h)
+      admin <- h.app.run(request(Method.POST,root+"/login",None,Some(origin)).withEntity("""{"login":"loginonly","password":"fixture-password"}""")
+        .putHeaders(Header.Raw(CIString("Content-Type"),"application/json")))
+      adminCookie = admin.headers.get(CIString("Set-Cookie")).get.head.value.takeWhile(_ != ';')
+      _ <- send(get("/admin/indexing",cookie),403)
+      _ <- send(get("/admin/users",adminCookie),404)
+      _ <- send(request(Method.GET,root+"/indexing",Some(f.token)),400)
+      _ <- send(get("/indexing",cookie).withEntity("{}").putHeaders(Header.Raw(CIString("Content-Type"),"application/json")),400)
+      _ <- send(post("/indexing",cookie,"loginonly","""{"choice":"disabled"}"""),409)
+      off <- send(post("/indexing",cookie,owner,"""{"choice":"disabled"}"""),200)
+      _ <- IO(assertEquals((off.hcursor.get[String]("userId"),off.hcursor.get[Boolean]("enabled")),(Right(owner),Right(false))))
+      reset <- send(post("/indexing",cookie,owner,"""{"choice":"inherit"}"""),200)
+      _ <- IO(assertEquals(reset.hcursor.get[Boolean]("enabled"),Right(true)))
+      _ <- send(post("/admin/indexing",adminCookie,"loginonly",adminBody(owner.replace("\u0000",""),"disabled","fixture-password")),404)
+      wrong <- send(post("/admin/indexing",adminCookie,"loginonly",adminBody(owner,"disabled","incorrect password")),403)
+      _ <- IO(assertEquals(wrong.hcursor.downField("error").get[String]("code"),Right("proof-rejected")))
+      done <- send(post("/admin/indexing",adminCookie,"loginonly",adminBody(owner,"disabled","fixture-password")),200)
+      _ <- IO(assertEquals(done,io.circe.Json.obj("ok" -> io.circe.Json.True)))
+      denied <- send(post("/indexing",cookie,owner,"""{"choice":"inherit"}"""),403)
+      _ <- IO(assertEquals(denied.hcursor.downField("error").get[String]("code"),Right("forbidden")))
+      current <- send(get("/indexing",cookie),200)
+      _ <- IO(assertEquals((current.hcursor.get[String]("choice"),current.hcursor.get[String]("override"),current.hcursor.get[Boolean]("enabled")),
+        (Right("inherit"),Right("disabled"),Right(false))))
+      content <- app(f,c => adjust(c).copy(contentMode="subdomain",contentSuffix="localhost")).app.run(
+        get("/indexing",cookie).putHeaders(Header.Raw(CIString("Host"),("a"*32)+".localhost:47329")))
+      _ <- IO(assertEquals(content.status.code,404))
     yield ()
   }}
   test("legacy form logout invalidates the server session as well as credential-bound content grants") { run { (f,h) => for

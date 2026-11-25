@@ -5,7 +5,7 @@ import java.time.Instant
 import java.sql.{Connection,SQLException}
 import java.nio.file.Path
 import cats.effect.{IO,Resource}
-import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,AccountIssued,AccountJson,AccountCredential,AccountSession,AccountSessions,AccountFailure,AccountOutcome,AccountRejection,AttemptLimiter,CredentialGate,DeclaredDirectory,FailurePath,IdentityHistory,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,LoginDecision,PasswordHasher,SignedIn,TotpVault}
+import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,AccountIssued,AccountJson,AccountCredential,AccountSession,AccountSessions,AccountFailure,AccountOutcome,AccountRejection,AttemptLimiter,CredentialGate,DeclaredDirectory,FailurePath,IdentityHistory,IndexingAccountTransactions,IndexingPreferenceSql,IndexingPreferences,IndexingService,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,LoginDecision,PasswordHasher,SignedIn,TotpVault}
 
 /** Outcome of a password login. A rejection of an imperative account is a value: the transaction that counted
   * the failed attempt commits before the caller answers or raises it. */
@@ -28,16 +28,15 @@ object ImperativeAccess {
   def load(config: Config): Option[ImperativeAccess] =
     config.accounts.filter(_.enabled).map(accounts => new ImperativeAccess(settings(config,accounts),DeclaredUsers.directory(DeclaredUsers.load(config))))
 }
-/** The account plane of imperative accounts: their configuration and the in-memory limits of the
-  * unauthenticated account endpoints. */
-final class AccountPlane private (val access: ImperativeAccess,val limiter: AttemptLimiter,val gate: CredentialGate) {
+/** Imperative accounts (when enabled) and indexing administration share the credential admission. */
+final class AccountPlane private (val access: Option[ImperativeAccess],val declared: DeclaredDirectory,val limiter: AttemptLimiter,val gate: CredentialGate) {
   val api = new ImperativeAccountApi(limiter,gate)
 }
 object AccountPlane {
-  def resource(access: Option[ImperativeAccess]): Resource[IO,Option[AccountPlane]] = access match {
-    case None => Resource.pure(None)
-    case Some(configured) => CredentialGate.resource.map(gate => Some(new AccountPlane(configured,new AttemptLimiter(AttemptLimiter.Capacity,java.time.Clock.systemUTC()),gate)))
-  }
+  def resource(config: Config,access: Option[ImperativeAccess]): Resource[IO,AccountPlane] = for {
+    declared <- Resource.eval(IO.blocking(access.fold(DeclaredUsers.directory(DeclaredUsers.load(config)))(_.declared)))
+    gate <- CredentialGate.resource
+  } yield new AccountPlane(access,declared,new AttemptLimiter(AttemptLimiter.Capacity,java.time.Clock.systemUTC()),gate)
 }
 object DeclaredUsers {
   /** The configured users with the password hashes of their hash files. */
@@ -55,13 +54,18 @@ object DeclaredUsers {
   * browser sessions; `ch_users` is the effective directory, so an imperative account that has been active has a
   * projection row there, and every row of it — configured, disabled or removed from configuration — is a
   * retained identity that no new account may take. */
-private final class AccountStore(c: Connection,profile: String) extends AccountSessions with IdentityHistory {
+private final class AccountStore(c: Connection,profile: String,pinBrowserSession: Boolean) extends AccountSessions with IdentityHistory {
   import AccountStore.*
   def lockOwners(declarative: Vector[String],imperative: Vector[String]): Unit =
     (declarative.sorted++imperative.sorted).foreach(owner => Sql.lock(c,s"mutation:$owner"))
   def sessionOwner(secret: String): Option[String] = Sql.one(c,"SELECT owner FROM ch_sessions WHERE hash=?",Wire.hash(secret))(_.getString(1))
-  def live(session: AccountCredential): Boolean =
-    Sql.one(c,s"SELECT 1 FROM ch_sessions s JOIN ch_users u ON u.id=s.owner WHERE s.hash=? AND s.owner=? AND $liveSession",session.digest,session.userId)(_ => true).nonEmpty
+  def live(session: AccountCredential): Boolean = {
+    // Legacy logout takes the user row and then the session row, without the owner advisory lock.
+    val pinned = !pinBrowserSession || (
+      Sql.one(c,"SELECT 1 FROM ch_users WHERE id=? AND enabled FOR SHARE",session.userId)(_ => true).nonEmpty &&
+      Sql.one(c,"SELECT 1 FROM ch_sessions WHERE hash=? AND owner=? FOR UPDATE",session.digest,session.userId)(_ => true).nonEmpty)
+    pinned && Sql.one(c,s"SELECT 1 FROM ch_sessions s JOIN ch_users u ON u.id=s.owner WHERE s.hash=? AND s.owner=? AND $liveSession",session.digest,session.userId)(_ => true).nonEmpty
+  }
   def establish(user: AccountUser,replaced: Option[String]): AccountSession = {
     val secret=Wire.secret(); val hash=Wire.hash(secret)
     exactlyOne(Sql.exec(c,"INSERT INTO ch_sessions(hash,owner) SELECT ?,id FROM ch_users WHERE id=? AND enabled",hash,user.id))
@@ -156,13 +160,21 @@ final class Auth(db: Database, config: Config, val jobs: JobBudget) {
   def accountLogin(loginName: String,password: String): (AccountUser,String) = Auth.established(db.transaction { c =>
     decide(c,loginName,password,None)(configuredAccountLogin(c,loginName,password))(signedIn => (signedIn.user,signedIn.session.secret))
   })
-  private def imperative(c: Connection,access: ImperativeAccess): ImperativeAccounts = {
-    val store=new AccountStore(c,db.profiles.preferred.profile)
-    ImperativeAccountSql.accounts(c,Some(access.settings),access.declared,store,store,PasswordHasher.Pbkdf2,java.time.Clock.systemUTC())
+  private def accountCore(c: Connection,settings: Option[ImperativeSettings],declared: DeclaredDirectory,pinBrowserSession: Boolean): ImperativeAccounts = {
+    val store=new AccountStore(c,db.profiles.preferred.profile,pinBrowserSession)
+    ImperativeAccountSql.accounts(c,settings,declared,store,store,PasswordHasher.Pbkdf2,java.time.Clock.systemUTC())
   }
+  private def imperative(c: Connection,access: ImperativeAccess): ImperativeAccounts =
+    accountCore(c,Some(access.settings),access.declared,pinBrowserSession=false)
   /** One transaction per call, committed whatever `work` returns: a rejection may carry a failure counter. */
   def imperative(access: ImperativeAccess): ImperativeTransactions = new ImperativeTransactions {
     def run[A](work: ImperativeAccounts => A): IO[A] = IO.blocking(db.transaction(c => work(imperative(c,access))))
+  }
+  def indexing(plane: AccountPlane): IndexingAccountTransactions = new IndexingAccountTransactions {
+    def run[A](work: (ImperativeAccounts,IndexingPreferences) => A): IO[A] = IO.blocking(db.transaction { c =>
+      val core=accountCore(c,plane.access.map(_.settings),plane.declared,pinBrowserSession=true)
+      work(core,IndexingPreferenceSql.store(c,IndexingService.Chronicle,config.indexingPolicy))
+    })
   }
   /** The live browser session of the presented cookie, as the account plane names it. */
   def accountSession(secret: String): Option[AccountCredential] =

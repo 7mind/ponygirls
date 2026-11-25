@@ -12,8 +12,9 @@ import java.util.UUID
   * (design D27): a rejection may have counted a failure or consumed a TOTP step. Only faults that leave
   * nothing to persist are thrown (`AccountFailure("config")`, or a port aborting the transaction).
   *
-  * With the master switch off (`settings` empty) the accounts are suspended, never revoked: `directory`
-  * omits them, `login` declines, every other operation is `not-found`, and nothing is written.
+  * With the master switch off (`settings` empty) the imperative accounts are suspended, never revoked:
+  * `directory` omits them, `login` declines, and imperative-account operations answer `not-found`. The
+  * independent indexing endpoints still serve declarative actors and can manage suspended indexing owners.
   */
 final class ImperativeAccounts private[auth] (repository: ImperativeUserRepository, settings: Option[ImperativeSettings],
   declared: DeclaredDirectory, sessions: AccountSessions, history: IdentityHistory, hasher: PasswordHasher, clock: Clock) {
@@ -309,17 +310,22 @@ final class ImperativeAccounts private[auth] (repository: ImperativeUserReposito
 
   // ---- authenticated operations: a live browser session, revalidated under its owner's lock ----
 
-  private def authenticated[A](session: AccountCredential, directory: Boolean, targets: Vector[String])(
-    body: (ImperativeSettings, Actor, Instant) => AccountOutcome[A]): AccountOutcome[A] = whenOn { active =>
+  private def withLiveActor[A](session: AccountCredential, directory: Boolean, targets: Vector[String])(
+    body: (Actor, Instant) => AccountOutcome[A]): AccountOutcome[A] = {
     if (!session.browser) refuse(Forbidden)
     else {
       acquire(directory, Some(session.userId), None, targets)
       val actor = if (!sessions.live(session)) None else declared.user(session.userId) match {
-        case Some(user) => Some(Actor(user, None, user.enabled && declared.admins(user.id)))
-        case None => repository.user(session.userId).filter(_.status == AccountStatus.Active).map(row => Actor(accountUser(row), Some(row), row.admin))
+        case Some(user) => Option.when(user.enabled)(Actor(user, None, declared.admins(user.id)))
+        case None => settings.flatMap(_ => repository.user(session.userId)).filter(_.status == AccountStatus.Active)
+          .map(row => Actor(accountUser(row), Some(row), row.admin))
       }
-      actor.fold[AccountOutcome[A]](refuse(Unauthorized))(found => body(active, found, now))
+      actor.fold[AccountOutcome[A]](refuse(Unauthorized))(found => body(found, now))
     }
+  }
+  private def authenticated[A](session: AccountCredential, directory: Boolean, targets: Vector[String])(
+    body: (ImperativeSettings, Actor, Instant) => AccountOutcome[A]): AccountOutcome[A] = whenOn { active =>
+    withLiveActor(session, directory, targets)((actor, at) => body(active, actor, at))
   }
   /** Self-service applies to active imperative users only; a declarative session is `forbidden`. */
   private def selfService[A](session: AccountCredential)(body: (ImperativeSettings, StoredImperativeUser, Instant) => AccountOutcome[A]): AccountOutcome[A] =
@@ -390,6 +396,60 @@ final class ImperativeAccounts private[auth] (repository: ImperativeUserReposito
         store(row.copy(totpLastStep = step, totpRequired = required), at)
         if (required) sessions.revokeSessions(row.id, Some(session))
         Completed(())
+    }
+  }
+
+  // ---- indexing preferences, independent of the imperative-accounts lifecycle controls ----
+
+  private[auth] def indexingProfile(session: AccountCredential, preferences: IndexingPreferences): AccountOutcome[IndexingAccountProfile] =
+    withLiveActor(session, directory = false, Vector.empty) { (actor, _) =>
+      Completed(IndexingAccountProfile(actor.user.id, actor.admin, preferences.get(actor.user.id)))
+    }
+
+  private[auth] def setIndexingChoice(session: AccountCredential, choice: IndexingChoice, policy: IndexingPolicy,
+    preferences: IndexingPreferences): AccountOutcome[(IndexingAccountProfile, Boolean)] =
+    withLiveActor(session, directory = false, Vector.empty) { (actor, _) =>
+      val owner = actor.user.id
+      preferences.lock(owner)
+      val current = preferences.get(owner)
+      // Inherit clears the user's exception to the operator default, not an explicit opt-in or opt-out.
+      val allowed = choice.setting.fold(current.overrideChoice == IndexingChoice.Inherit)(policy.permitsOpt(_, current.overrideChoice))
+      if (!allowed) refuse(Forbidden)
+      else {
+        val changed = current.choice != choice
+        val saved = if (changed) preferences.setChoice(owner, choice) else current
+        Completed((IndexingAccountProfile(owner, actor.admin, saved), changed))
+      }
+    }
+
+  /** Configured humans and agents and all imperative owners that have ever been active. Neither opting out
+    * nor suspending/disabling an imperative account removes it from indexing administration. */
+  private[auth] def indexingUsers(session: AccountCredential, preferences: IndexingPreferences): AccountOutcome[Vector[IndexingAccountUser]] =
+    withLiveActor(session, directory = true, Vector.empty) { (actor, _) =>
+      if (!actor.admin) refuse(Forbidden)
+      else {
+        val stored = repository.users.filter(_.status != AccountStatus.Pending).sortBy(_.id).map(accountUser)
+        Completed((declared.users ++ stored).map(user => IndexingAccountUser(user.id, user.displayName, preferences.get(user.id))))
+      }
+    }
+
+  private[auth] def setIndexingOverride(session: AccountCredential, id: String, choice: IndexingChoice, currentPassword: String,
+    preferences: IndexingPreferences): AccountOutcome[Boolean] = {
+    // The exact public ID may be wider than a username (or a PostgreSQL text key for Manure). Only a
+    // configured ID or an imperative username may be passed to an account lock or storage lookup.
+    val targets = Vector(id).filter(target => declared.contains(target) || validUsername(target))
+    withLiveActor(session, directory = true, targets) { (actor, at) =>
+      if (!actor.admin) refuse(Forbidden)
+      else {
+        val targetExists = declared.contains(id) || (validUsername(id) && repository.user(id).exists(_.status != AccountStatus.Pending))
+        if (!targetExists) refuse(NotFound)
+        else outcome(freshProof(actor, currentPassword, at).map { _ =>
+          preferences.lock(id)
+          val changed = preferences.get(id).overrideChoice != choice
+          if (changed) preferences.setOverride(id, choice)
+          changed
+        })
+      }
     }
   }
 

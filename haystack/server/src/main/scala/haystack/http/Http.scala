@@ -14,7 +14,7 @@ import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci.CIString
 import io.circe.Json
-import ponygirls.auth.{AccountFailure,AccountJson,AccountReply,ClientAddress,CookieEffect,ImperativeAccountApi,ImperativeSettings}
+import ponygirls.auth.{AccountFailure,AccountJson,AccountReply,ClientAddress,CookieEffect,IndexingAccountEndpoint,ImperativeAccountApi,ImperativeSettings}
 import scala.concurrent.duration.*
 import java.nio.file.{Files,Path}
 
@@ -91,10 +91,11 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     json(status(code),Wire.encode(api.Failure.codecJson,api.Failure(code,message,spans,current)))
   }
   private def handled(operation: =>IO[Response[IO]]):IO[Response[IO]]=IO.defer(operation).handleError(e=>failure(e))
-  private def accountBoundary(r:Request[IO]):Unit={
+  private def accountBoundary(r:Request[IO]):Unit=accountBoundary(r,getAuth())
+  private def accountBoundary(r:Request[IO],auth:Auth):Unit={
     if(all(r,"Host").size!=1 || all(r,"Sec-Fetch-Site").size>1)throw Fault("forbidden","ambiguous host or fetch metadata")
     if(r.uri.query.nonEmpty)throw Fault("bad-envelope","query parameters are not supported")
-    Sessions.accountTransport(getAuth().config,headers(r),safeRead=r.method==Method.GET)
+    Sessions.accountTransport(auth.config,headers(r),safeRead=r.method==Method.GET)
   }
   private def accountHandled(operation: =>IO[Response[IO]]):IO[Response[IO]]=IO.defer(operation).handleError { error=>
     val category=error match {
@@ -158,15 +159,39 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       }
     }
   }
-  /** The imperative-account protocol: a `503` raised outside the dispatcher once a request was routed to it (for
+  private def indexingBoundary(r:Request[IO],auth:Auth):Unit={
+    accountBoundary(r,auth)
+    if(r.method==Method.POST){
+      if(all(r,"Origin").size!=1)throw Fault("forbidden","Origin required")
+      if(all(r,"Content-Type").size!=1)throw Fault("bad-envelope","one Content-Type required")
+    }
+  }
+  private def indexingAccount(r:Request[IO]):IO[Response[IO]]={
+    val body:IO[Option[Json]]=if(r.method==Method.POST)accountBody(r).map(Some(_))
+    else r.body.take(1).compile.last.timeout(30.seconds).map { first=>
+      if(first.nonEmpty || r.contentLength.exists(_>0))throw Fault("bad-envelope","GET must not have a body")
+      None
+    }
+    IO(indexingBoundary(r,getAuth())) *> body.flatMap { value=>
+      val auth=getAuth()
+      indexingBoundary(r,auth)
+      val (secure,previous)=presented(auth,r)
+      accounts.indexingRequest(auth,r.method.name,r.uri.path.renderString.stripPrefix(Http.AccountRoot),value,all(r,"X-Account-Actor"),previous,clientAddress(r))
+        .flatMap(accountReply(_,secure,previous))
+    }
+  }
+  /** The shared account protocol: a `503` raised outside the dispatcher once a request was routed to it (for
     * example an unavailable database or a reload that failed meanwhile) also carries `Retry-After`. */
   private def imperativeHandled(operation: =>IO[Response[IO]]):IO[Response[IO]]=accountHandled(operation).map { response=>
     if(response.status!=Status.ServiceUnavailable || response.headers.get(CIString("Retry-After")).nonEmpty)response
     else response.putHeaders(Header.Raw(CIString("Retry-After"),ImperativeAccountApi.UnavailableRetryAfterSeconds.toString))
   }
-  /** Fixed telemetry labels of the account endpoints added for imperative accounts. */
+  /** Fixed telemetry labels of the shared account endpoints. */
   private def accountLabel(method:Method,path:String):Option[String]=
-    Option.when(path.startsWith(Http.AccountPrefix))(path.stripPrefix(Http.AccountRoot)).flatMap(ImperativeAccountApi.route(method.name,_)).map("account"+_.endpoint.label)
+    Option.when(path.startsWith(Http.AccountPrefix))(path.stripPrefix(Http.AccountRoot)).flatMap { relative=>
+      IndexingAccountEndpoint.route(method.name,relative).map("account"+_.path)
+        .orElse(ImperativeAccountApi.route(method.name,relative).map("account"+_.endpoint.label))
+    }
   def routes(ws:WebSocketBuilder2[IO]):HttpRoutes[IO]={
     val core=HttpRoutes.of[IO] {
     case GET -> Root / "api" / "versions" =>IO.pure(ok(api.VersionInfo.codecJson,Wire.versions))
@@ -205,6 +230,8 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     case r @ POST -> Root / "api" / "account" / "v1" / "logout" =>accountHandled {accountAuthed(r,false) { a=>
       emptyAccountBody(r,a) *> accounts.logout(a,all(r,"X-Account-Actor")) *> hub.endSession(a.token).as(json(Status.Ok,Json.obj("ok"->Json.True)).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(None,a.secureCookie))))
     }}
+    case r if r.uri.path.renderString.startsWith(Http.AccountPrefix) &&
+      IndexingAccountEndpoint.route(r.method.name,r.uri.path.renderString.stripPrefix(Http.AccountRoot)).nonEmpty=>imperativeHandled(indexingAccount(r))
     case r if r.uri.path.renderString.startsWith(Http.AccountPrefix)=>accountHandled {IO(accountBoundary(r)) *> IO.defer {
       if(getAuth().imperative.isEmpty)IO.pure(json(Status.NotFound,AccountJson.failure("not-found"))) else imperativeHandled(imperativeAccount(r))
     }}

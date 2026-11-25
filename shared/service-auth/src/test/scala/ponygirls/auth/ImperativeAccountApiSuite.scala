@@ -57,7 +57,8 @@ final class ImperativeAccountApiSuite extends munit.FunSuite {
     private val declaredHash = FastPasswordHasher.hash(password.toCharArray)
     val declared: DeclaredDirectory = DeclaredDirectory(Vector(
       AccountUser("root", "human", "Root", Some("root"), Some(declaredHash), true, AccountOrigin.Declarative),
-      AccountUser("dora", "human", "Dora", Some("dora"), Some(declaredHash), true, AccountOrigin.Declarative)), Set("root"))
+      AccountUser("dora", "human", "Dora", Some("dora"), Some(declaredHash), true, AccountOrigin.Declarative),
+      AccountUser("Robot/%", "agent", "Robot", None, None, false, AccountOrigin.Declarative)), Set("root"))
     var settings: Option[ImperativeSettings] =
       Some(ImperativeSettings("api", true, false, true, 100, Duration.ofHours(24), "Api test", Set.empty, vault))
     var transactionCount = 0
@@ -90,6 +91,27 @@ final class ImperativeAccountApiSuite extends munit.FunSuite {
         transaction((core, _) => work(core))
       })
     }
+    private var choices = Map.empty[String, IndexingPreference]
+    def indexingTransactions(policy: IndexingPolicy): IndexingAccountTransactions = new IndexingAccountTransactions {
+      def run[A](work: (ImperativeAccounts, IndexingPreferences) => A): IO[A] = transactions.run { core =>
+        val preferences = new IndexingPreferences {
+          def lock(owner: String): Unit = ()
+          def get(owner: String): IndexingPreference = choices.getOrElse(owner, IndexingPreference.inherited)
+          def setChoice(owner: String, choice: IndexingChoice): IndexingPreference = update(owner, _.copy(choice = choice))
+          def setOverride(owner: String, choice: IndexingChoice): IndexingPreference = update(owner, _.copy(overrideChoice = choice))
+          private def update(owner: String, change: IndexingPreference => IndexingPreference): IndexingPreference = {
+            val before = get(owner)
+            val wanted = change(before)
+            val after = if (wanted.enabled(policy) == before.enabled(policy)) wanted else wanted.copy(epoch = before.epoch + 1)
+            choices += owner -> after
+            after
+          }
+        }
+        work(core, preferences)
+      }
+    }
+    def indexing(policy: IndexingPolicy, request: AccountRequest): AccountReply =
+      record(api.handleIndexing(policy, declared, indexingTransactions(policy), request))
     /** The service's declarative path, with the test hasher in place of PBKDF2. */
     val declarative: DeclarativeLogin = (login, secret, previous) => IO(transaction { (core, shared) =>
       val user = declared.users.find(_.login.contains(login)).filter(found => FastPasswordHasher.verify(secret.toCharArray, found.passwordHash.get))
@@ -339,6 +361,93 @@ final class ImperativeAccountApiSuite extends munit.FunSuite {
     }
   }
 
+  test("indexing profile honors the directional flags, allows resetting an exception, and audits only changed choices") {
+    withFixture { f =>
+      f.settings = None
+      val root = f.rootSession
+      val policy = IndexingPolicy(defaultEnabled = true, allowOptIn = false, allowOptOut = true)
+      def index(method: String, input: Option[Json]): AccountReply = f.indexing(policy, f.requestAs(root, method, "/indexing", input))
+      def expected(enabled: Boolean, choice: String): Json = json(s"""{"userId":"root","admin":true,"defaultEnabled":true,"allowOptIn":false,
+        "allowOptOut":true,"enabled":$enabled,"choice":"$choice","override":"inherit"}""").get
+      assertEquals(index(E.Get, None).body, expected(true, "inherit"))
+      assertError(index(E.Post, json("""{"choice":"enabled"}""")), 403, "forbidden")
+      val off = index(E.Post, json("""{"choice":"disabled"}"""))
+      assertEquals((off.status, off.body, off.cookie), (200, expected(false, "disabled"), CookieEffect.Keep))
+      assertEquals(off.events.map(event => (event.kind, event.actor, event.target, event.outcome)),
+        Vector((AccountEventKind.IndexingChoiceChanged, Some("root"), Some("root"), Some("disabled"))))
+      assertEquals(index(E.Post, json("""{"choice":"disabled"}""")).events, Vector.empty)
+      val reset = index(E.Post, json("""{"choice":"inherit"}"""))
+      assertEquals((reset.status, reset.body, reset.events.map(_.outcome)), (200, expected(true, "inherit"), Vector(Some("inherit"))))
+      assertEquals(index(E.Post, json("""{"choice":"inherit"}""")).events, Vector.empty)
+      assertError(index(E.Get, empty), 400, "invalid")
+      assertError(index(E.Post, None), 400, "invalid")
+      Vector("{}", "[]", """{"choice":true}""", """{"choice":" Disable "}""",
+        """{"choice":"disabled","userId":"dora"}""", """{"choice":"disabled","currentPassword":"not requested"}""").foreach { invalid =>
+        assertError(index(E.Post, json(invalid)), 400, "invalid")
+      }
+      val post = f.requestAs(root, E.Post, "/indexing", json("""{"choice":"disabled"}"""))
+      assertError(f.indexing(policy, post.copy(actor = Vector(AccountJson.actor("dora")))), 409, "conflict")
+      assertError(f.indexing(policy, post.copy(actor = post.actor ++ post.actor)), 400, "invalid")
+      assertError(f.indexing(policy, post.copy(session = None)), 401, "unauthorized")
+      assertError(f.indexing(policy, post.copy(session = post.session.map(_.copy(browser = false)))), 403, "forbidden")
+      assertError(f.indexing(policy, post.copy(path = "/indexing/")), 404, "not-found")
+      assertEquals(index(E.Get, None).body, expected(true, "inherit"))
+    }
+  }
+
+  test("indexing administration includes configured agents and inactive owners, but not pending applications or stale administrators") {
+    withFixture { f =>
+      val root = f.rootSession
+      val alice = secret(f.signup("alice", false))
+      f.signup("carol", false)
+      f.settings = f.settings.map(_.copy(requireApproval = true))
+      assertEquals(f.signup("pending", false).status, 202)
+      assertEquals(f.as(root, E.Post, "/admin/users/carol/enabled", json("""{"enabled":false}""")).status, 200)
+      val stale = f.requestAs(alice, E.Get, "/indexing", None)
+      val policy = IndexingPolicy(defaultEnabled = false, allowOptIn = true, allowOptOut = false)
+      val disabledByDefault = policy.copy(allowOptIn = false)
+      def users(owner: String): AccountReply = f.indexing(policy, f.requestAs(owner, E.Get, "/admin/indexing", None))
+      def change(id: String, overrideChoice: String, current: String = password): AccountReply =
+        f.indexing(disabledByDefault, f.requestAs(root, E.Post, "/admin/indexing", Some(Json.obj(
+          "userId" -> Json.fromString(id), "override" -> Json.fromString(overrideChoice), "currentPassword" -> Json.fromString(current)))))
+      assertError(users(alice), 403, "forbidden")
+      assertEquals(f.indexing(policy, f.requestAs(alice, E.Post, "/indexing", json("""{"choice":"enabled"}"""))).status, 200)
+      assertError(f.indexing(policy, f.requestAs(alice, E.Post, "/indexing", json("""{"choice":"disabled"}"""))), 403, "forbidden")
+      f.settings = None
+      assertError(f.indexing(policy, stale), 401, "unauthorized")
+      assertError(f.as(root, E.Get, "/admin/users", None), 404, "not-found")
+      val listed = users(root).body.hcursor.get[Vector[Json]]("users").toOption.get
+      assertEquals(listed.flatMap(_.hcursor.get[String]("userId").toOption), Vector("root", "dora", "Robot/%", "alice", "carol"))
+      val robot = listed.find(_.hcursor.get[String]("userId") == Right("Robot/%")).get
+      assertEquals(robot, json("""{"userId":"Robot/%","displayName":"Robot","defaultEnabled":false,"enabled":false,"choice":"inherit","override":"inherit"}""").get)
+      assertError(change("robot/%", "enabled"), 404, "not-found")
+      assertError(change("pending", "enabled"), 404, "not-found")
+      assertError(change("nobody\u0000", "enabled"), 404, "not-found")
+      val report = change("alice", "disabled")
+      assertEquals((report.status, report.body, report.events.map(event => (event.kind, event.target, event.outcome))),
+        (200, Json.obj("ok" -> Json.True), Vector((AccountEventKind.IndexingOverrideChanged, Some("alice"), Some("disabled")))))
+      assertEquals(change("alice", "disabled").events, Vector.empty)
+      assertEquals(change("carol", "enabled").status, 200)
+      assertEquals(change("Robot/%", "enabled").status, 200)
+      val forced = change("root", "enabled")
+      assertEquals(forced.status, 200, "an admin can manage their own indexing with a current password")
+      assertError(f.indexing(policy, f.requestAs(root, E.Post, "/indexing", json("""{"choice":"inherit"}"""))), 403, "forbidden")
+      val proven = (1 to AttemptLimiter.ProofFailuresPerActor).map(_ => change("alice", "inherit", wrongPassword))
+      proven.foreach { bad =>
+        assertError(bad, 403, "proof-rejected")
+        assertEquals(bad.events.map(_.kind), Vector(AccountEventKind.ProofRejected))
+        assert(!bad.events.flatMap(_.fields.map(_._2)).contains(wrongPassword))
+      }
+      val limited = change("alice", "inherit")
+      assertError(limited, 429, "rate-limited")
+      assertEquals(limited.retryAfterSeconds, Some(AttemptLimiter.ProofWindow.getSeconds))
+      f.clock.advance(AttemptLimiter.ProofWindow)
+      assertEquals(change("alice", "inherit").status, 200)
+      val restored = users(root).body.hcursor.get[Vector[Json]]("users").toOption.get.find(_.hcursor.get[String]("userId") == Right("alice")).get.hcursor
+      assertEquals((restored.get[String]("choice"), restored.get[String]("override"), restored.get[Boolean]("enabled")), (Right("enabled"), Right("inherit"), Right(true)))
+    }
+  }
+
   test("declarative admin proofs: attempts beyond the window are refused before any verification, also concurrently; " +
     "path ids outside the id vocabulary reach neither the core nor an event") {
     withFixture { fixture =>
@@ -395,13 +504,17 @@ final class ImperativeAccountApiSuite extends munit.FunSuite {
       val signup = fixture.api.handle(fixture.settings, fixture.declared, fixture.transactions, AccountRequest(E.Post, "/signup",
         json(s"""{"username":"alice","email":"alice@example.test","password":"$password","totpSecret":"$secretText","totpCode":"${fixture.code}",""" +
           """"requireTotp":false}"""), Vector.empty, None, None, address))
+      val root = fixture.rootSession
+      val policy = IndexingPolicy.defaults
+      val overrideRequest = fixture.requestAs(root, E.Post, "/admin/indexing", json(s"""{"userId":"root","override":"disabled","currentPassword":"$password"}"""))
+      def overrideIndex: IO[AccountReply] = fixture.api.handleIndexing(policy, fixture.declared, fixture.indexingTransactions(policy), overrideRequest)
       def queued: IO[Unit] = gate.occupancy.flatMap(count => if (count == 2) IO.unit else IO.cede *> queued)
       val (admitted, refused) = (for {
         holder <- login(held).start
         _ <- entered.get
         waiting <- signup.start
         _ <- queued
-        refused <- login(fixture.transactions)
+        refused <- overrideIndex
         _ <- waiting.cancel
         _ <- release.complete(())
         admitted <- holder.joinWithNever

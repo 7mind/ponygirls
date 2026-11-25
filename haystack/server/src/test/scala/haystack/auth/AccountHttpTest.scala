@@ -12,7 +12,7 @@ import java.nio.charset.StandardCharsets
 import org.http4s.{Header,Method,Request,Response,Status,Uri}
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.typelevel.ci.CIString
-import ponygirls.auth.{AccountFailure,AccountJson,Password,PasswordHasher,Secrets,Totp}
+import ponygirls.auth.{AccountFailure,AccountJson,IndexingPolicy,Password,PasswordHasher,Secrets,Totp}
 import ponygirls.retrieval.postgres.PostgresRetrieval
 import java.nio.file.Path
 import java.time.{Clock,Instant,ZoneOffset}
@@ -73,7 +73,8 @@ class AccountHttpTest extends ContractSuite {
     private val Salt=java.util.Base64.getEncoder.encodeToString(new Array[Byte](16))
     def hash(chars:Array[Char]):String=
       s"pbkdf2-sha256$$${Password.iterations}$$$Salt$$${java.util.Base64.getEncoder.encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(new String(chars).getBytes("UTF-8")))}"
-    def verify(chars:Array[Char],encoded:String):Boolean=Secrets.equal(encoded,hash(chars))
+    def verify(chars:Array[Char],encoded:String):Boolean=
+      if(encoded==adminHash)Password.verify(chars,encoded) else Secrets.equal(encoded,hash(chars))
   }
   /** Alice is the declared admin with a browser login; `accounts` on with signup. */
   private def accountsConfig(dir:Path,requireApproval:Boolean):AuthConfig={
@@ -84,8 +85,8 @@ class AccountHttpTest extends ContractSuite {
   }
   private final class Seam(val db:ponygirls.runtime.JdbcDatabase,val http:Http,val accounts:AccountService,val auth:AtomicReference[Either[Throwable,Auth]],ws:WebSocketBuilder2[IO]) {
     def send(method:Method,path:String,body:Option[String],cookie:Option[String]=None,actor:Option[String]=None,
-      origin:Boolean=true,bearer:Option[String]=None):IO[(Response[IO],String)]=
-      exchange(method,path,body.map(text=>Stream.emits(text.getBytes(StandardCharsets.UTF_8)).covary[IO]),cookie,actor,origin,bearer)
+      origin:Boolean=true,bearer:Option[String]=None,fetchSite:Option[String]=None):IO[(Response[IO],String)]=
+      exchange(method,path,body.map(text=>Stream.emits(text.getBytes(StandardCharsets.UTF_8)).covary[IO]),cookie,actor,origin,bearer,fetchSite)
     /** From a page on the opted-in plain-HTTP origin: no Origin or Fetch Metadata, only the account module's header. */
     def headerProof(method:Method,path:String,body:Option[String]):IO[(Response[IO],String)]={
       val headers=Vector(Header.Raw(CIString("Host"),"nb.test:8085"),Header.Raw(CIString(Sessions.AccountRequestHeader),Sessions.AccountRequestValue))++
@@ -104,10 +105,11 @@ class AccountHttpTest extends ContractSuite {
       result<-fiber.joinWithNever
     }yield result
     private def exchange(method:Method,path:String,body:Option[Stream[IO,Byte]],cookie:Option[String],actor:Option[String],
-      origin:Boolean,bearer:Option[String]):IO[(Response[IO],String)]={
+      origin:Boolean,bearer:Option[String],fetchSite:Option[String]=None):IO[(Response[IO],String)]={
       val headers=Vector(Header.Raw(CIString("Host"),"ts.test:8445"))++Option.when(origin)(Header.Raw(CIString("Origin"),Secure))++
         cookie.map(secret=>Header.Raw(CIString("Cookie"),"__Host-haystack="+secret))++actor.map(id=>Header.Raw(CIString("X-Account-Actor"),AccountJson.actor(id)))++
-        bearer.map(token=>Header.Raw(CIString("Authorization"),"Bearer "+token))++body.map(_=>Header.Raw(CIString("Content-Type"),"application/json"))
+        bearer.map(token=>Header.Raw(CIString("Authorization"),"Bearer "+token))++body.map(_=>Header.Raw(CIString("Content-Type"),"application/json"))++
+        fetchSite.map(value=>Header.Raw(CIString("Sec-Fetch-Site"),value))
       val request=body.fold(Request[IO](method,Uri.unsafeFromString(path)))(bytes=>Request[IO](method,Uri.unsafeFromString(path)).withBodyStream(bytes))
       http.routes(ws).orNotFound(headers.foldLeft(request)((r,header)=>r.putHeaders(header))).flatMap(response=>response.bodyText.compile.string.map(response->_))
     }
@@ -119,11 +121,11 @@ class AccountHttpTest extends ContractSuite {
   private def cookie(response:Response[IO]):String=
     response.headers.get(CIString("Set-Cookie")).map(_.head.value).getOrElse(fail("session cookie expected")).takeWhile(_!=';').dropWhile(_!='=').drop(1)
   private def code(body:String):String=io.circe.parser.parse(body).toOption.flatMap(_.hcursor.downField("error").get[String]("code").toOption).getOrElse(fail("error body expected"))
-  private def seam(initial:Auth)(body:Seam=>IO[Unit]):Unit=run(TestSupport.emptyDatabase.use { db=>
+  private def seam(initial:Auth,indexingPolicy:IndexingPolicy=IndexingPolicy.defaults)(body:Seam=>IO[Unit]):Unit=run(TestSupport.emptyDatabase.use { db=>
     ImperativeRuntime.resource(Clock.fixed(Now,ZoneOffset.UTC),FastHasher).use { runtime=>for{
       _<-Migrations.initialize(db,TestSupport.Activity)
       reference=new AtomicReference[Either[Throwable,Auth]](Right(initial))
-      accounts=new AccountService(db,()=>reference.get().fold(throw _,identity),runtime)
+      accounts=new AccountService(db,()=>reference.get().fold(throw _,identity),runtime,indexingPolicy)
       _<-accounts.install(initial)
       hub<-LiveHub.create
       retrieval=new HaystackRetrieval(db,ProjectionPolicy("imperative-test",true,Vector.empty,4096),new PostgresRetrieval("imperative-test",None),None,4)
@@ -211,6 +213,42 @@ class AccountHttpTest extends ContractSuite {
       _<-IO(h.auth.set(Right(on)))
       (dora,doraBody)<-h.login("dora",UserPassword)
       _=assertEquals((dora.status,code(doraBody)),(Status.Unauthorized,"unauthorized"),"the suspended signup created no application")
+    }yield()}
+  }}
+
+  test("indexing administration is independent of signup and refuses a demoted admin after a held request body") { directory { dir=>
+    val cfg=accountsConfig(dir,requireApproval=true).copy(accounts=None)
+    val admin=Auth.load(cfg)
+    val demoted=Auth.load(cfg.copy(users=cfg.users.map(_.copy(admin=false))))
+    val self="/api/account/v1/indexing"
+    val indexUsers="/api/account/v1/admin/indexing"
+    def body(overrideChoice:String):String=io.circe.Json.obj("userId"->io.circe.Json.fromString("bot"),
+      "override"->io.circe.Json.fromString(overrideChoice),"currentPassword"->io.circe.Json.fromString(AlicePassword)).noSpaces
+    def bot(raw:String)=io.circe.parser.parse(raw).toOption.get.hcursor.get[Vector[io.circe.Json]]("users").toOption.get
+      .find(_.hcursor.get[String]("userId")==Right("bot")).get.hcursor
+    seam(admin,IndexingPolicy(false,false,false)) { h=>for{
+      (signed,_)<-h.login("alice",AlicePassword)
+      session=Some(cookie(signed)); actor=Some("alice")
+      (fresh,profile)<-h.send(Method.GET,self,None,session)
+      fields=io.circe.parser.parse(profile).toOption.get.hcursor
+      _=assertEquals((fresh.status,fields.get[Boolean]("admin"),fields.get[Boolean]("enabled")),(Status.Ok,Right(true),Right(false)))
+      _=assertEquals(fresh.headers.get(CIString("Cache-Control")).map(_.head.value),Some("no-store"))
+      (missingOrigin,_)<-h.send(Method.POST,indexUsers,Some(body("enabled")),session,actor,origin=false,fetchSite=Some("same-origin"))
+      (bearer,_)<-h.send(Method.GET,indexUsers,None,bearer=Some(AliceToken))
+      (legacy,_)<-h.send(Method.GET,"/api/account/v1/admin/users",None,session)
+      (unexpectedBody,_)<-h.send(Method.GET,self,Some("{}"),session)
+      _=assertEquals(Vector(missingOrigin.status,bearer.status,legacy.status,unexpectedBody.status),
+        Vector(Status.Forbidden,Status.Unauthorized,Status.NotFound,Status.BadRequest))
+      (forced,forcedBody)<-h.send(Method.POST,indexUsers,Some(body("enabled")),session,actor)
+      _=assertEquals((forced.status,forcedBody),(Status.Ok,"""{"ok":true}"""))
+      (listed,listedBody)<-h.send(Method.GET,indexUsers,None,session)
+      _=assertEquals((listed.status,bot(listedBody).get[Boolean]("enabled")),(Status.Ok,Right(true)))
+      _<-h.accounts.install(demoted)
+      (stale,staleBody)<-h.held(indexUsers,body("inherit"),session,actor)(IO(h.auth.set(Right(demoted))))
+      _=assertEquals((stale.status,code(staleBody)),(Status.Forbidden,"forbidden"))
+      _<-IO(h.auth.set(Right(admin)))
+      (_,stillForced)<-h.send(Method.GET,indexUsers,None,session)
+      _=assertEquals(bot(stillForced).get[String]("override"),Right("enabled"))
     }yield()}
   }}
 
