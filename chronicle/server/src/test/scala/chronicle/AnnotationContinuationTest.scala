@@ -17,8 +17,16 @@ import ProblemPassages.{Carry,Decision,Part,Point,Window}
   * (ProblemPassageHttpTest) and T10 (the real previous binary, run outside this suite), with `indexing.annotationContinuations`
   * on; the SWITCH cases run with it off (the default) and across a change of it. A "kill" is a cancelled worker fiber,
   * asserted to leave the database exactly as it was when the call was in flight. */
-final class AnnotationContinuationTest extends munit.FunSuite {
+class AnnotationContinuationTest extends munit.FunSuite {
   override val munitTimeout=5.minutes
+  /** The claim order of the suite's claims and worker iterations, through ClaimOrderFixtures (ClaimOrderAnnotationContinuationTest:
+    * the same cases under the waiting order, every job at most LargeJobs.windows windows: the claims of a fresh lane);
+    * `claimTrace` records the claims of the waiting order. */
+  protected def claimOrder: ClaimOrderSetting = ClaimOrderSetting.SourceId
+  protected final val claimTrace=new ClaimOrderFixtures.ClaimTrace
+  private def claimed(archive: SessionArchive,profiles: Set[String],scope: ClaimScope,lease: Int): Option[Claim] =
+    ClaimOrderFixtures.claimOn(claimOrder,claimTrace,archive,profiles,scope,lease,ClaimOrderFixtures.freshLane)
+  private def iteration(worker: Worker): IO[Boolean] = ClaimOrderFixtures.onceOn(claimOrder,worker,ClaimOrderFixtures.freshLane)
   /** A request as the provider saw it: its first fragment (message position, byte offset), its fragment count, `previous`. */
   private final case class Asked(position: Int,byteStart: Int,fragments: Int,previous: Option[Json])
   /** Answers its n-th request (from 0) with `script`, recording every request. */
@@ -37,9 +45,9 @@ final class AnnotationContinuationTest extends munit.FunSuite {
   }
   private val backoff=Worker.FailureBackoff(50.millis)
   private def worker(archive: SessionArchive,config: Config,annotator: ProblemPassageAnnotator,log: WorkerLog=new WorkerLog,embedding: Embedder=embedder): Worker =
-    new Worker(archive,annotator,embedding,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),log.logger,backoff,ModelFixtures.snapshots)
+    new Worker(ClaimOrderFixtures.traced(claimOrder,claimTrace,archive),annotator,embedding,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),log.logger,backoff,ModelFixtures.snapshots)
   private def once(archive: SessionArchive,config: Config,annotator: ProblemPassageAnnotator,log: WorkerLog=new WorkerLog): Unit =
-    assert(worker(archive,config,annotator,log).once.unsafeRunSync(),"a job was claimed")
+    assert(iteration(worker(archive,config,annotator,log)).unsafeRunSync(),"a job was claimed")
   /** A transient database failure while the call is in flight: SMALL holds the job and refunds the claim. */
   private val interrupted: IO[Decision] = IO.raiseError(JdbcFailure("database-unavailable",Some("08006")))
 
@@ -64,7 +72,7 @@ final class AnnotationContinuationTest extends munit.FunSuite {
 
   /** The fixture database with annotation continuations on. */
   private def database(run: (Config,Database,PostgresArchive) => Unit): Unit =
-    CurrentIndexDatabase.withDatabase((config,db,archive) => run(ModelFixtures.continuations(config),db,archive))
+    CurrentIndexDatabase.withDatabase((config,db,archive) => run(ClaimOrderFixtures.ordered(ModelFixtures.continuations(config),claimOrder),db,archive))
   private def expire(db: Database,job: UUID): Unit = db.transaction { c => Sql.exec(c,"UPDATE ch_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=?",job); () }
   /** A held job's next attempt has come. */
   private def due(db: Database,job: UUID): Unit = db.transaction { c => Sql.exec(c,"UPDATE ch_jobs SET lease_until=clock_timestamp() WHERE id=? AND state='Queued'",job); () }
@@ -130,7 +138,7 @@ final class AnnotationContinuationTest extends munit.FunSuite {
   private def killedIn(db: Database,archive: SessionArchive,config: Config,id: UUID,blocked: Int)(script: (Int,Window,Option[Carry]) => IO[Decision]): Provider = {
     val inFlight=Deferred.unsafe[IO,List[String]]
     val provider=new Provider((n,window,previous) => if(n==blocked) IO.blocking(written(db,id)).flatMap(inFlight.complete) *> IO.never else script(n,window,previous))
-    val fiber=worker(archive,config,provider).once.start.unsafeRunSync()
+    val fiber=iteration(worker(archive,config,provider)).start.unsafeRunSync()
     val before=inFlight.get.timeout(30.seconds).unsafeRunSync()
     fiber.cancel.timeout(30.seconds).unsafeRunSync()
     assertEquals(written(db,id),before,"the cancelled attempt wrote nothing after its call started")
@@ -237,7 +245,7 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     assertEquals(partials(db,id),partial)
     // Nine interrupted reservations, then a boundary stop: the tenth authorization is the last.
     val filled=archive.ingest("a",source(texts(64)))
-    val claim=archive.claim(archive.knownProfiles,ClaimScope.Owner("a"),300).get
+    val claim=claimed(archive,archive.knownProfiles,ClaimScope.Owner("a"),300).get
     val key=IndexCheckpoints.annotation(claim,0,Json.arr(windows(source(texts(64)))(0).sourceJson,Json.Null))
     (1 to 9).foreach(attempt => assertEquals(archive.reserveAnnotation(claim,key),AnnotationReservation.Reserved(attempt)))
     expire(db,filled.jobId)
@@ -271,11 +279,11 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     // A stored decision covering only (0,0)-(10,0): phase W refuses it (internal), so does the publication's replay.
     val short=CheckpointJson.decision(upTo(10,false))
     val stored=archive.ingest("c",source(texts(64)))
-    val claim=archive.claim(archive.knownProfiles,ClaimScope.Owner("c"),300).get
+    val claim=claimed(archive,archive.knownProfiles,ClaimScope.Owner("c"),300).get
     archive.checkpoint(claim,IndexCheckpoints.annotation(claim,0,Json.arr(windows(source(texts(64)))(0).sourceJson,Json.Null)),short)
     expire(db,stored.jobId)
     val none=new Provider((_,_,_) => IO.raiseError(new AssertionError("no call for an accepted window")))
-    assertEquals(intercept[DomainError](worker(archive,config,none).once.unsafeRunSync()).code,"internal")
+    assertEquals(intercept[DomainError](iteration(worker(archive,config,none)).unsafeRunSync()).code,"internal")
     val replayed=archive.ingest("b",source(texts(64)))
     val corrupting=new ForwardingArchive(archive) {
       override def publishProblems(c: Claim,rows: ProblemRows): Boolean = {
@@ -440,7 +448,7 @@ final class AnnotationContinuationTest extends munit.FunSuite {
       override def continueAnnotation(x: Claim,key: CheckpointKey,attempt: Int,partial: AnnotationPartial): Int = {
         if(partial.continuations==2) {
           expire(db,x.jobId)
-          require(archive.claim(archive.knownProfiles,ClaimScope.Owner("a"),300).nonEmpty,"the other claim")
+          require(claimed(archive,archive.knownProfiles,ClaimScope.Owner("a"),300).nonEmpty,"the other claim")
         }
         super.continueAnnotation(x,key,attempt,partial)
       }
@@ -631,7 +639,7 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     // J1: window 1 kept at (10,0); while its rest is asked, an append arrives; the extension is stale and J1 superseded.
     val (j1Request,j1)=ingest("a",128)
     val claims=new ConcurrentLinkedQueue[Claim]()
-    val claiming=new ForwardingArchive(archive) { override def claim(p: Set[String],s: ClaimScope,l: Int,large: LargeJobs): Option[Claim] = { val c=super.claim(p,s,l,large); c.foreach(claims.add); c } }
+    val claiming=ClaimOrderFixtures.recording(archive)(claims.add)
     once(claiming,config,new Provider((n,window,previous) => window.fragments.head.messagePosition match {
       case 0 => IO.pure(whole(window,previous))
       case 64 => IO.pure(upTo(10,true))
@@ -711,7 +719,7 @@ final class AnnotationContinuationTest extends munit.FunSuite {
       def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("no query embedding"))
       def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.raiseError(JdbcFailure("database-unavailable",Some("08006")))
     }
-    assert(worker(archive,config,new Provider((_,window,previous) => IO.pure(whole(window,previous))),embedding=failing).once.unsafeRunSync())
+    assert(iteration(worker(archive,config,new Provider((_,window,previous) => IO.pure(whole(window,previous))),embedding=failing)).unsafeRunSync())
     assertEquals((job(db,receipt.jobId).copy(attempts=0),ledger(db,receipt.jobId)),(Job("Queued",Some(Jobs.transientCode),0,1),List("continued","none","accepted(1)")))
   }}
 
@@ -821,7 +829,7 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     db.transaction(c => Sql.exec(c,"UPDATE ch_index_checkpoints SET value=?,output_hash=? WHERE job_id=? AND stage='Annotation' AND window_ordinal=0",other.noSpaces,IndexCheckpoints.hash(other),receipt.jobId))
     due(db,receipt.jobId)
     val none=new Provider((_,_,_) => IO.raiseError(new AssertionError("no call under a changed input"))); val log=new WorkerLog
-    assertEquals(intercept[DomainError](worker(archive,off,none,log).once.unsafeRunSync()).code,"internal")
+    assertEquals(intercept[DomainError](iteration(worker(archive,off,none,log)).unsafeRunSync()).code,"internal")
     assertEquals((none.seen,(ledger(db,receipt.jobId,0),ledger(db,receipt.jobId,1))),(Nil,rows))
     assertEquals(warnings(log),List(internalAt(1,2,"annotation","chronicle.AnnotationAttempts$.reserve")))
   }}
@@ -829,7 +837,7 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     val off=ModelFixtures.continuations(config,false)
     def raised(annotator: ProblemPassageAnnotator,embedding: Embedder,id: UUID): List[String] = {
       val log=new WorkerLog
-      assertEquals(worker(archive,off,annotator,log,embedding).once.attempt.unsafeRunSync().left.map { case error: DomainError => error.code; case error => error.toString },Left("internal"))
+      assertEquals(iteration(worker(archive,off,annotator,log,embedding)).attempt.unsafeRunSync().left.map { case error: DomainError => error.code; case error => error.toString },Left("internal"))
       expire(db,id); db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET state='Failed' WHERE id=?",id))
       warnings(log)
     }
@@ -852,7 +860,7 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     val wrong=Json.arr(Json.arr(Json.fromDouble(1.0).get,Json.fromDouble(2.0).get,Json.fromDouble(3.0).get))
     List(("chronicle.IndexCheckpoints$.verified",IndexCheckpoints.hash(Json.arr())),("chronicle.Worker.decoded$1$$anonfun$2",IndexCheckpoints.hash(wrong))).foreach { (origin,hash) =>
       val parts=archive.ingest("a",source((0 until 40).map(i => s"source-$i"))); failedOnce=false
-      assert(worker(archive,off,new Provider((_,window,previous) => IO.pure(whole(window,previous))),embedding=failing).once.unsafeRunSync() && failedOnce)
+      assert(iteration(worker(archive,off,new Provider((_,window,previous) => IO.pure(whole(window,previous))),embedding=failing)).unsafeRunSync() && failedOnce)
       db.transaction(c => Sql.exec(c,"UPDATE ch_index_checkpoints SET value=?,output_hash=? WHERE job_id=? AND stage='Embedding' AND part=1",wrong.noSpaces,hash,parts.jobId))
       assertEquals(raised(new Provider((_,window,previous) => IO.pure(whole(window,previous))),failing,parts.jobId),List(internalAt(0,1,"embedding",origin)))
     }
@@ -905,7 +913,7 @@ final class AnnotationContinuationTest extends munit.FunSuite {
     def leftRunning(owner: String): IngestReceipt = {
       val request=source(texts(64)); val receipt=archive.ingest(owner,request); val asked=Deferred.unsafe[IO,Unit]
       val provider=new Provider((n,_,_) => if(n==0) IO.pure(upTo(10,false)) else IO.blocking(archive.ingest(owner,append(request,texts(65),1))) *> asked.complete(()) *> IO.never)
-      val fiber=worker(archive,config,provider).once.start.unsafeRunSync()
+      val fiber=iteration(worker(archive,config,provider)).start.unsafeRunSync()
       asked.get.timeout(30.seconds).unsafeRunSync(); fiber.cancel.timeout(30.seconds).unsafeRunSync()
       assertEquals((job(db,receipt.jobId).state,partials(db,receipt.jobId).size,markers(db,receipt.jobId).flatten.size),("Running",1,1))
       receipt
@@ -965,7 +973,7 @@ final class AnnotationContinuationTest extends munit.FunSuite {
           if(!continued && continuations==0 && armed.getAndSet(false)) throw failure.error() else super.acceptAnnotation(c,key,attempt,continuations,value)
       }
       val answers=new Provider((_,window,previous) => IO.pure(if(continued) upTo(10,false) else whole(window,previous)))
-      val result=worker(failing,config,answers,log).once.attempt.unsafeRunSync()
+      val result=iteration(worker(failing,config,answers,log)).attempt.unsafeRunSync()
       val row=db.transaction(c => Sql.one(c,"""SELECT concat_ws('|',state,attempts,coalesce(error,'-'),coalesce(failure_stage,'-'),transient_failures,
         coalesce(transient_range::text,'-'),lease_until IS NULL) FROM ch_jobs WHERE id=?""",id)(_.getString(1)))
       // The job is made claimable again: a held job's next attempt has come, a raised one's lease ended.
@@ -994,4 +1002,13 @@ final class AnnotationContinuationTest extends munit.FunSuite {
       }
     }
   }}
+}
+/** U4c (claim-order DESIGN §9; spec §5.2/§5.3): AnnotationContinuationTest's cases under the waiting order (`indexing.claimOrder`
+  * "waiting"): its claims and worker iterations those of a fresh lane (every job at most LargeJobs.windows windows). Each case
+  * also asserts that its claims went through the waiting order: at least one, each with ClaimOrder's facts of its lane, none
+  * through today's claim. */
+final class ClaimOrderAnnotationContinuationTest extends AnnotationContinuationTest with ClaimOrderRequiresPostgres {
+  override protected def claimOrder: ClaimOrderSetting = ClaimOrderSetting.Waiting
+  override def munitTestTransforms: List[TestTransform] = super.munitTestTransforms :+ new TestTransform("claims of the waiting order",test =>
+    test.withBody(() => { claimTrace.clear(); val result=test.body(); claimTrace.assertWaiting(test.name); result }))
 }
