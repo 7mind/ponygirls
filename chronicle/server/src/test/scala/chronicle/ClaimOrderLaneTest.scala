@@ -1,5 +1,7 @@
 package chronicle
 
+import cats.effect.IO
+import cats.effect.unsafe.implicits.global
 import java.util.UUID
 
 /** The waiting claim order's lanes on PostgreSQL (claim-order DESIGN §2): one claim of each lane kind, a lane borrowing the
@@ -7,9 +9,10 @@ import java.util.UUID
   * candidate statement and the job lock (B1). Orders come from the stored `waiting_since`/`bulk` the fixture writes. */
 class ClaimOrderLaneTest extends munit.FunSuite {
   private val lane0=ClaimLane.of(0,1); private val bulkLane=ClaimLane.of(1,1); private val freshLane=ClaimLane.of(2,1)
-  private def database(f: (Config,Database,PostgresArchive) => Unit): Unit = {
+  private def database(f: (Config,Database,PostgresArchive) => Unit): Unit = database(Fixtures.config())(f)
+  private def database(c: Config)(f: (Config,Database,PostgresArchive) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
-    val c=Fixtures.config(); val db=new Database(c,IndexProfileCatalog.current(c)); db.initialize()
+    val db=new Database(c,IndexProfileCatalog.current(c)); db.initialize()
     db.transaction { x =>
       Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations CASCADE")
       Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile)
@@ -46,6 +49,32 @@ class ClaimOrderLaneTest extends munit.FunSuite {
     assertEquals(claim(c,a,freshLane),ClaimOutcome.Idle)
     assertEquals(claim(c,a,lane0),ClaimOutcome.Idle)
   }}
+  test("claim order worker: with claimOrder waiting a lane's iteration claims through ClaimOrder, logs `job claimed` with its lane and step and processes the job; lane 0 holds the large-job permit while it runs, a class lane does not take it") {
+    val config=Fixtures.config().copy(indexing=IndexingCapacity.defaults.copy(annotationSessions=3,claimOrder=ClaimOrderSetting.Waiting))
+    database(config) { (c,db,a) =>
+      val bulk=job(db,a,"a",1,true); val fresh=job(db,a,"b",2,false)
+      val admission=ModelAdmission.make(config.indexing).unsafeRunSync(); val log=new WorkerLog
+      val permitFree=scala.collection.mutable.ListBuffer.empty[(UUID,Boolean)]
+      val observed=new ForwardingArchive(a) {
+        override def publishProblems(claim: Claim,rows: ProblemRows): Boolean = {
+          permitFree+=claim.jobId -> admission.largeJob.use(IO.pure).unsafeRunSync()
+          super.publishProblems(claim,rows)
+        }
+      }
+      val embedder=new Embedder {
+        def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.pure(text.map(_ => List(1.0,0.0,0.0)))
+        def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("worker queried embedding"))
+      }
+      val worker=new Worker(observed,new ProblemPassageFixtures.Dummy,embedder,config,IndexProfileCatalog.current(config),admission,log.logger,ModelFixtures.failureBackoff,ModelFixtures.snapshots)
+      assert(worker.onceInLane(lane0).unsafeRunSync())
+      assert(worker.onceInLane(ClaimLane.of(2,1)).unsafeRunSync())
+      assert(!worker.onceInLane(bulkLane).unsafeRunSync())
+      assertEquals(permitFree.toList,List(bulk -> false,fresh -> true))
+      assertEquals(log.lines.filter(_.startsWith("job claimed")).map(_.split(' ').filter(f => f.startsWith("jobId=") || f.startsWith("lane=") || f.startsWith("step=")).mkString(" ")),
+        List(s"jobId=$bulk lane=0 step=Borrowed",s"jobId=$fresh lane=2 step=Preferred"))
+      assertEquals(db.transaction(x => Sql.rows(x,"SELECT state FROM ch_jobs WHERE id IN(?,?)",bulk,fresh)(_.getString(1))),List("Complete","Complete"))
+    }
+  }
   test("claim order: lane 0 without a sized job takes the oldest job of either class; a fresh lane passes a sized job however old") { database { (c,db,a) =>
     val sized=job(db,a,"a",1,false,Some(150)); val bulk=job(db,a,"b",2,true); val fresh=job(db,a,"c",3,false)
     assertEquals(claimed(claim(c,a,freshLane)).jobId,fresh)

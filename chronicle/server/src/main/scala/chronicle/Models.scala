@@ -488,7 +488,10 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     IO.blocking(count(claim,fetch,parent)).flatMap { total =>
       val indexed=total-parent.fold(0)(_.cut.window)
       if(indexed>LargeJobs.windows && large==LargeJobs.Skipped)
-        deferLarge(claim,total) *> IO(logger.info(s"large job deferred jobId=${claim.jobId} totalWindows=$total indexedWindows=$indexed largeJobWindows=${LargeJobs.windows}${Worker.waitingSeconds(claim)}"))
+        deferLarge(claim,total) *> IO(Worker.waitingSeconds(claim) match {
+          case None => logger.info(s"large job deferred jobId=${claim.jobId} totalWindows=$total indexedWindows=$indexed largeJobWindows=${LargeJobs.windows}")
+          case Some(waitingSeconds) => logger.info(s"large job deferred jobId=${claim.jobId} totalWindows=$total indexedWindows=$indexed largeJobWindows=${LargeJobs.windows} waitingSeconds=$waitingSeconds")
+        })
       else indexWindows(claim,ProblemPassages.Source(claim.messages.reader(fetch)),total,parent) *> publish(claim,total,fetch,parent)
     }
   }
@@ -658,9 +661,9 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
 }
 object Worker {
   private enum Iteration { case Processed,Idle,ClaimFailed }
-  /** ` waitingSeconds=…` of a claim of the waiting order (ClaimFacts), empty under today's order. */
-  private def waitingSeconds(claim: Claim): String =
-    claim.facts.flatMap(_.waitingSince).fold("")(since => s" waitingSeconds=${java.time.Duration.between(since,java.time.Instant.now()).getSeconds}")
+  /** How long the job of a claim of the waiting order (ClaimFacts) has waited; None under today's order. */
+  private def waitingSeconds(claim: Claim): Option[Long] =
+    claim.facts.flatMap(_.waitingSince).map(since => java.time.Duration.between(since,java.time.Instant.now()).getSeconds)
   /** A job's message fetching (ingest-limits spec §5.2.2): within `maxIndexingBudgetBytes` per message, and a message above
     * SnapshotAdmission.largeBodyBytes under the snapshot admission's permit, one at a time in the process like large ingests. */
   private[chronicle] def messageFetch(config: Config,snapshots: SnapshotAdmission,dispatcher: Dispatcher[IO]): MessageFetch =
