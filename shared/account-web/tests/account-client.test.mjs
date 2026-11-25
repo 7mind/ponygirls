@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import {
-  actionStart, base32Decode, base32Encode, captureEnrollmentFragment, createAccountClient, enrollmentLink,
-  generateTotpSecret, loadEnrollment, loadSignup, loginInitial, otpauthUri, qrMatrix, recoveryInitial, runAction, submitEnrollment,
+  AccountApiError, AccountOwnerChangedError, AccountResponseError, actionStart, base32Decode, base32Encode,
+  captureEnrollmentFragment, createAccountClient, enrollmentLink, generateTotpSecret, indexingControls, loadEnrollment,
+  loadSignup, loginInitial, otpauthUri, qrMatrix, recoveryInitial, runAction, submitEnrollment,
   submitLogin, submitRecovery, submitSignup
 } from '../account-client.js';
 
@@ -32,6 +33,47 @@ function fakeFetch(...responses) {
 }
 const recorder = () => { const states = []; return { states, emit: state => states.push(state) }; };
 const phases = states => states.map(state => state.phase);
+
+const OWN_INDEXING = { userId: 'alice', admin: false, defaultEnabled: true, allowOptIn: false, allowOptOut: true, enabled: true, choice: 'inherit', override: 'inherit' };
+const MANAGED_INDEXING = { userId: 'collector-bot', displayName: 'Collector', defaultEnabled: true, enabled: true, choice: 'inherit', override: 'inherit' };
+
+test('indexing permits only the available direction, and reset clears a choice even without that direction flag', () => {
+  const disabled = { ...OWN_INDEXING, choice: 'disabled', enabled: false };
+  assert.deepEqual(indexingControls(OWN_INDEXING), { toggle: 'disabled', reset: false });
+  assert.deepEqual(indexingControls(disabled), { toggle: null, reset: true });
+  assert.deepEqual(indexingControls({ ...disabled, allowOptOut: false }), { toggle: null, reset: true });
+  assert.deepEqual(indexingControls({ ...OWN_INDEXING, enabled: false, defaultEnabled: false, allowOptIn: true, allowOptOut: false }), { toggle: 'enabled', reset: false });
+  assert.deepEqual(indexingControls({ ...disabled, allowOptIn: true, override: 'enabled', enabled: true }), { toggle: null, reset: false });
+});
+
+test('indexing reads validate their independent API shapes, check the owner, and keep legacy 404 distinguishable', async () => {
+  const { client, calls } = fakeFetch(reply(200, OWN_INDEXING), reply(200, { users: [MANAGED_INDEXING] }), reply(200, { ...OWN_INDEXING, userId: 'erin' }),
+    reply(200, { ...OWN_INDEXING, allowOptOut: 'true' }), reply(200, { users: [{ ...MANAGED_INDEXING, override: 'force-on' }] }), failure(404, 'not-found'));
+  assert.deepEqual(await client.indexing('alice'), OWN_INDEXING);
+  assert.deepEqual(await client.adminIndexing(), [MANAGED_INDEXING]);
+  await assert.rejects(client.indexing('alice'), AccountOwnerChangedError);
+  await assert.rejects(client.indexing('alice'), AccountResponseError);
+  await assert.rejects(client.adminIndexing(), AccountResponseError);
+  await assert.rejects(client.indexing('alice'), error => error instanceof AccountApiError && error.status === 404);
+  assert.deepEqual(calls.slice(0, 2), ['/indexing', '/admin/indexing'].map(path => ({ url: `/api/account/v1${path}`, method: 'GET', actor: null, body: null })));
+});
+
+test('indexing writes use the supplied fresh actor without /profile, preserve proof failures and reject an owner mismatch', async () => {
+  const { client, calls } = fakeFetch(reply(200, { ...OWN_INDEXING, enabled: false, choice: 'disabled' }),
+    failure(403, 'proof-rejected'), reply(200, { ok: true }), reply(200, { ...OWN_INDEXING, userId: 'erin' }));
+  const run = (name, target, input, actor) => runAction(client, actionStart(name, target), OWNER.id, input, () => {}, actor);
+  await assert.rejects(client.setIndexing(OWNER.id, undefined, { choice: 'disabled' }), AccountResponseError);
+  assert.equal((await run('set-indexing', null, { choice: 'disabled', currentPassword: 'ignored' }, 'fresh-alice')).phase, 'done');
+  const rejected = await run('set-indexing-override', 'collector-bot', { override: 'enabled', currentPassword: 'wrong' }, 'fresh-alice');
+  assert.equal(rejected.phase, 'proof');
+  assert.equal(rejected.error.code, 'proof-rejected');
+  assert.equal((await run('set-indexing-override', 'collector-bot', { override: 'inherit', currentPassword: 'correct' }, 'fresh-alice')).phase, 'done');
+  assert.equal((await run('set-indexing', null, { choice: 'inherit' }, 'fresh-alice')).phase, 'owner-changed');
+  assert.deepEqual(calls.map(({ url, method, actor, body }) => [url, method, actor, body]), [
+    ['/indexing', { choice: 'disabled' }], ['/admin/indexing', { userId: 'collector-bot', override: 'enabled', currentPassword: 'wrong' }],
+    ['/admin/indexing', { userId: 'collector-bot', override: 'inherit', currentPassword: 'correct' }], ['/indexing', { choice: 'inherit' }]
+  ].map(([path, body]) => [`/api/account/v1${path}`, 'POST', 'fresh-alice', body]));
+});
 
 test('base32 matches the RFC 4648 vectors without padding and rejects non-canonical text', () => {
   const vectors = [['', ''], ['f', 'MY'], ['fo', 'MZXQ'], ['foo', 'MZXW6'], ['foob', 'MZXW6YQ'], ['fooba', 'MZXW6YTB'], ['foobar', 'MZXW6YTBOI']];

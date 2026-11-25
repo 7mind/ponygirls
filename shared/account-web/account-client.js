@@ -70,6 +70,10 @@ const validManagedUser = value => hasShape(value, {
   totpRequired: value => value === null || isBoolean(value), totpState: isNonEmptyText, locked: isBoolean,
   pendingEnrollment: value => value === null || ['invite', 'reset'].includes(value)
 });
+const isIndexingChoice = isOneOf('inherit', 'enabled', 'disabled');
+const indexingStateShape = { userId: isNonEmptyText, defaultEnabled: isBoolean, enabled: isBoolean, choice: isIndexingChoice, override: isIndexingChoice };
+const validIndexing = value => hasShape(value, { ...indexingStateShape, admin: isBoolean, allowOptIn: isBoolean, allowOptOut: isBoolean });
+const validManagedIndexing = value => hasShape(value, { ...indexingStateShape, displayName: isText });
 const validOk = value => hasShape(value, { ok: value => value === true });
 const validSignupResult = (value, status) => status === HTTP_ACCEPTED
   ? hasShape(value, { status: isOneOf(STATUS_PENDING) })
@@ -114,6 +118,15 @@ export function createAccountClient({ fetch, requestTimeoutMs, signal }) {
     if (profile.user.id !== owner) throw new AccountOwnerChangedError();
     return request('POST', path, body, profile.user.actor, validate);
   }
+  function ownIndexing(value, owner) {
+    if (value.userId !== owner) throw new AccountOwnerChangedError();
+    return value;
+  }
+  // Indexing is independent of /profile. The sequencer supplies the actor from its owner-checked GET /.
+  async function mutateIndexing(actor, path, body, validate) {
+    if (!isNonEmptyText(actor)) throw new AccountResponseError();
+    return request('POST', path, body, actor, validate);
+  }
   const userPath = (id, action) => `/admin/users/${encodeURIComponent(id)}/${action}`;
   const withOptional = (body, key, value) => (value === null ? body : { ...body, [key]: value });
 
@@ -126,6 +139,10 @@ export function createAccountClient({ fetch, requestTimeoutMs, signal }) {
     redeemEnrollment: ({ code, email, password, totpSecret, totpCode, requireTotp }) => post('/enrollments/redeem', withOptional({ code, password, totpSecret, totpCode, requireTotp }, 'email', email), value => hasShape(value, { user: validUser })),
     recover: ({ username, totp, password }) => post('/recover', { username, totp, password }, value => hasShape(value, { user: validUser })),
     profile: () => get('/profile', validProfile),
+    indexing: owner => get('/indexing', validIndexing).then(value => ownIndexing(value, owner)),
+    setIndexing: (owner, actor, { choice }) => mutateIndexing(actor, '/indexing', { choice }, validIndexing).then(value => ownIndexing(value, owner)),
+    adminIndexing: () => get('/admin/indexing', value => hasShape(value, { users: users => Array.isArray(users) && users.every(validManagedIndexing) })).then(value => value.users),
+    setIndexingOverride: (actor, userId, { override, currentPassword }) => mutateIndexing(actor, '/admin/indexing', { userId, override, currentPassword }, validOk),
     changeEmail: (owner, { email }) => mutate(owner, '/profile/email', { email }, validOk),
     changePassword: (owner, { currentPassword, newPassword }) => mutate(owner, '/profile/password', { currentPassword, newPassword }, validOk),
     // `currentTotp` is null unless mandatory TOTP is on (the member must then be absent).
@@ -403,6 +420,13 @@ export const loadAdminOverview = (client, emit) => loadResource(async () => {
 export const pendingApplicants = users => users.filter(user => user.status === STATUS_PENDING);
 
 // ---------------------------------------------------------------------------------------------
+// What self-service controls can change. Reset removes an explicit choice; only new explicit choices
+// need the corresponding opt-in/out flag. A forced state has no self-service controls.
+export function indexingControls({ enabled, choice, override, allowOptIn, allowOptOut }) {
+  if (override !== 'inherit') return { toggle: null, reset: false };
+  return { toggle: enabled ? (allowOptOut ? 'disabled' : null) : (allowOptIn ? 'enabled' : null), reset: choice !== 'inherit' };
+}
+
 // Confirmed / proof-protected actions (settings sections and admin list actions)
 // phases: <prompt: form | confirm | proof>{action,target,error} → saving → done{result}
 //         | owner-changed | unauthorized | back to the prompt with error
@@ -413,6 +437,8 @@ export const ACCOUNT_ACTIONS = Object.freeze({
   'change-password': { prompt: 'form', run: (client, owner, target, input) => client.changePassword(owner, input) },
   'replace-totp': { prompt: 'form', run: (client, owner, target, input) => client.replaceTotp(owner, input) },
   'set-totp-required': { prompt: 'confirm', run: (client, owner, target, input) => client.setTotpRequired(owner, input) },
+  'set-indexing': { prompt: 'confirm', run: (client, owner, _target, input, actor) => client.setIndexing(owner, actor, input) },
+  'set-indexing-override': { prompt: 'proof', run: (client, _owner, target, input, actor) => client.setIndexingOverride(actor, target, input) },
   'approve-user': { prompt: 'confirm', run: (client, owner, target) => client.approveUser(owner, target) },
   'reject-user': { prompt: 'confirm', run: (client, owner, target) => client.rejectUser(owner, target) },
   'set-user-enabled': { prompt: 'confirm', run: (client, owner, target, input) => client.setUserEnabled(owner, target, input) },
@@ -454,11 +480,12 @@ export function actionReduce(state, event) {
   return unexpected('action', state, event);
 }
 
-// `owner` is the id the dialog was opened for; a mismatch with the fresh profile ends in 'owner-changed'.
-export async function runAction(client, state, owner, input, emit) {
+// `owner` is the id the dialog was opened for; a mismatch ends in 'owner-changed'. Indexing takes
+// the actor from the sequencer's preflight; the existing actions obtain it from the fresh /profile.
+export async function runAction(client, state, owner, input, emit, actor) {
   const saving = actionReduce(state, { type: 'submit' });
   emit(saving);
-  const outcome = await attempt(() => actionDescriptor(saving.action).run(client, owner, saving.target, input));
+  const outcome = await attempt(() => actionDescriptor(saving.action).run(client, owner, saving.target, input, actor));
   const next = actionReduce(saving, outcome.ok ? { type: 'succeeded', result: outcome.value } : { type: 'failed', failure: outcome.failure });
   emit(next);
   return next;

@@ -22,6 +22,12 @@ const recover = (state, spec) => scenario('recover', state, { signedIn: false, h
 const settings = (state, spec) => scenario('settings', state, spec);
 const users = (state, spec) => scenario('users', state, { hash: '#account/users', ready: 'tr[data-row-id="erin"]', ...spec });
 const TOKENS = '#account/tokens', TOKEN_ROWS = 'table[data-list="tokens"] tr[data-row-id]';
+const INDEXING_CARD = '[data-view="profile"] section.card';
+const INDEXING_USERS = 'tr[data-row-id="dmitri"] button[aria-haspopup="menu"]';
+function withIndexing(f, settings = {}) {
+  f.indexing = { defaultEnabled: true, allowOptIn: false, allowOptOut: true, admin: f.profile?.admin === true,
+    choices: new Map(), overrides: new Map(), ...settings };
+}
 // User-supplied strings without a break opportunity: the longest token name the form accepts, logins and e-mails.
 export const LONG_TOKEN_NAME = 'W'.repeat(120);
 export const longLogin = id => `${id}${'w'.repeat(60)}`;
@@ -55,6 +61,11 @@ export const SCENARIOS = new Map([
   recover('weak', { fixture: f => { f.recover = 'weak'; }, steps: async d => { await d.fill('Username', 'alice'); await d.fill('Authenticator code', '204817'); await d.fill('New password', 'short'); await d.click('Set new password and sign in'); }, ready: '[data-view="recover"] [aria-invalid="true"]' }),
   recover('rate-limited', { fixture: f => { f.recover = 'rate-limited'; }, steps: async d => { await d.fill('Username', 'alice'); await d.fill('Authenticator code', '204817'); await d.fill('New password', 'a-new-long-password'); await d.click('Set new password and sign in'); }, ready: '[data-view="recover"] .notice' }),
   settings('profile', { hash: '#account/profile', ready: '[data-view="profile"]' }),
+  settings('indexing', { hash: '#account/profile', fixture: withIndexing, ready: INDEXING_CARD }),
+  settings('indexing-opt-in', { hash: '#account/profile', fixture: f => withIndexing(f, { defaultEnabled: false, allowOptIn: true, allowOptOut: false }), ready: INDEXING_CARD }),
+  settings('indexing-managed', { hash: '#account/profile', fixture: f => {
+    withIndexing(f); f.indexing.choices.set('alice', 'enabled'); f.indexing.overrides.set('alice', 'disabled');
+  }, ready: INDEXING_CARD }),
   settings('declarative', { hash: '#account/profile', fixture: f => { Object.assign(f.profile, { source: 'declarative', email: null, totp: { required: false, state: 'none' }, manage: { email: false, password: false, totp: false, users: true, enrollment: true, reset: true } }); }, ready: '[data-view="profile"]' }),
   settings('password', { hash: '#account/password', ready: '[data-view="password"]' }),
   settings('totp', { hash: '#account/two-factor', ready: '[data-view="two-factor"]' }),
@@ -76,6 +87,11 @@ export const SCENARIOS = new Map([
   settings('legacy', { hash: TOKENS, fixture: f => { f.policy = null; f.profile = null; }, ready: TOKEN_ROWS }),
   settings('tokens-long-strings', { hash: TOKENS, fixture: longStrings, steps: async d => { await d.wait(TOKEN_ROWS); await d.click('Show'); await newToken(d, LONG_TOKEN_NAME); await d.click('Create token'); }, ready: '[data-account-secret]' }),
   users('default', {}),
+  users('indexing', { fixture: f => { withIndexing(f); f.indexing.choices.set('heidi', 'disabled'); }, ready: INDEXING_USERS }),
+  users('indexing-declarative', { fixture: f => {
+    withIndexing(f); f.profile = null; f.policy = null; f.users.find(user => user.id === f.user.id).source = 'declarative';
+  }, ready: INDEXING_USERS }),
+  users('indexing-override', { fixture: withIndexing, steps: async d => { await d.wait(INDEXING_USERS); await userMenu(d, 'Indexing…'); }, ready: 'dialog[open]' }),
   users('pending', { steps: d => d.click('Pending approval'), ready: 'tr[data-row-id="bob"]' }),
   users('menu', { steps: async d => { await d.wait('tr[data-row-id="erin"]'); await d.click('Actions for erin'); }, ready: '[role="menu"]:not([hidden])' }),
   users('approve', { steps: async d => { await d.wait('tr[data-row-id="bob"]'); await d.click('Approve bob…'); }, ready: 'dialog[open]' }),

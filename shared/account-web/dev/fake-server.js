@@ -43,7 +43,7 @@ export function baseFixture(app) {
       managed('heidi', { status: 'disabled', createdAt: iso(-58 * DAY_MS) }),
       managed('ivan', { createdVia: 'enrollment', createdBy: 'alice', pendingEnrollment: 'reset', createdAt: iso(-69 * DAY_MS) }),
       managed('judy', { admin: true, createdAt: iso(-73 * DAY_MS) }),
-      { ...managed('collector-bot', {}), source: 'declarative', displayName: 'service account', email: null, createdAt: null, createdVia: null, approvedBy: null, totpRequired: null, totpState: 'none' },
+      { ...managed('collector-bot', {}), source: 'declarative', type: 'agent', displayName: 'service account', email: null, createdAt: null, createdVia: null, approvedBy: null, totpRequired: null, totpState: 'none' },
       managed('mallory', { totpRequired: false, createdAt: iso(-14 * DAY_MS) }),
       managed('niaj', { createdAt: iso(-9 * DAY_MS) }),
       managed('olivia', { createdVia: 'enrollment', createdBy: 'dmitri', approvedBy: null, createdAt: iso(-6 * DAY_MS) })
@@ -52,6 +52,8 @@ export function baseFixture(app) {
       { id: 'enrollment-0001', username: 'carol', kind: 'invite', createdBy: 'alice', createdAt: iso(-1 * HOUR_MS), expiresAt: iso(23 * HOUR_MS) },
       { id: 'enrollment-0002', username: 'ivan', kind: 'reset', createdBy: 'alice', createdAt: iso(-19 * HOUR_MS), expiresAt: iso(5 * HOUR_MS) }
     ],
+    indexing: null, // null models deployments with no indexing endpoints
+    indexingReadError: false,
     // Behaviour switches used by scenarios: login 'ok' | 'totp' | 'pending' | 'rejected' | 'rate-limited';
     // recover 'ok' | 'rejected' | 'weak' | 'rate-limited'; account 'ok' | 'loading' | 'error' | 'down' (network
     // failure of GET /); mint 'ok' | 'lost'; logout 'ok' | 'fail'.
@@ -80,6 +82,19 @@ export function createFakeAccountServer(fixture, onCall) {
     state.enrollments = state.enrollments.filter(entry => entry.username !== username).concat(enrollment);
     return json(200, { enrollment, code: FAKE_ENROLLMENT_CODE }, {});
   };
+
+  function indexingFor(userId) {
+    const { defaultEnabled, choices, overrides } = state.indexing;
+    const choice = choices.get(userId) ?? 'inherit', override = overrides.get(userId) ?? 'inherit';
+    const selected = override === 'inherit' ? choice : override;
+    return { userId, defaultEnabled, enabled: selected === 'inherit' ? defaultEnabled : selected === 'enabled', choice, override };
+  }
+  function ownIndexing() {
+    const { admin, allowOptIn, allowOptOut } = state.indexing;
+    return { ...indexingFor(state.user.id), admin, allowOptIn, allowOptOut };
+  }
+  const targetable = user => user.status !== 'pending' && (state.profile !== null || user.source === 'declarative');
+  const validChoice = choice => ['inherit', 'enabled', 'disabled'].includes(choice);
 
   function handle(call) {
     const { method, path, body } = call;
@@ -125,11 +140,37 @@ export function createFakeAccountServer(fixture, onCall) {
       return json(200, { user: state.user, tokens: state.tokens, scopes: state.app === 'chronicle' && call.scopes === 'all' ? [...state.scopes, 'OperateJobs'] : state.scopes }, {});
     }
     if (path === '/profile' && method === 'GET') return state.profile === null ? failure(404, 'not-found', {}) : json(200, state.profile, {});
+    if (path === '/indexing' || path === '/admin/indexing') {
+      if (state.indexing === null) return failure(404, 'not-found', {});
+      if (path === '/admin/indexing' && !state.indexing.admin) return failure(403, 'forbidden', {});
+      if (method === 'GET') {
+        if (state.indexingReadError) return failure(500, 'unavailable', {});
+        return json(200, path === '/indexing' ? ownIndexing() : {
+          users: state.users.filter(targetable).map(user => ({ ...indexingFor(user.id), displayName: user.displayName }))
+        }, {});
+      }
+    }
     if (method === 'GET' && path === '/admin/users') return state.profile === null || !state.profile.admin ? failure(404, 'not-found', {}) : json(200, { users: state.users }, {});
     if (method === 'GET' && path === '/admin/enrollments') return state.profile === null ? failure(404, 'not-found', {}) : json(200, { enrollments: state.enrollments }, {});
     if (method !== 'POST') return failure(404, 'not-found', {});
     if (!actorOk(call)) return failure(409, 'conflict', {});
     if (path === '/logout') { if (state.logout === 'fail') return failure(500, 'unavailable', {}); state.signedIn = false; return ok(); }
+    if (path === '/indexing') {
+      const { choice } = body;
+      if (Object.keys(body).length !== 1 || !validChoice(choice)) return failure(400, 'invalid', {});
+      const live = ownIndexing();
+      if (live.override !== 'inherit' || (choice === 'enabled' && !live.allowOptIn) || (choice === 'disabled' && !live.allowOptOut)) return failure(403, 'forbidden', {});
+      state.indexing.choices.set(state.user.id, choice);
+      return json(200, ownIndexing(), {});
+    }
+    if (path === '/admin/indexing') {
+      const { userId, override, currentPassword } = body;
+      if (!validChoice(override) || Object.keys(body).length !== 3) return failure(400, 'invalid', {});
+      if (currentPassword !== FAKE_PASSWORD) return failure(403, 'proof-rejected', {});
+      if (!state.users.some(user => user.id === userId && targetable(user))) return failure(404, 'not-found', {});
+      state.indexing.overrides.set(userId, override);
+      return ok();
+    }
     if (path === '/tokens') {
       if (state.mint === 'lost') { state.tokens.push({ id: tokenId(state.nextToken++), name: body.name, source: 'issued', createdAt: iso(0), revoked: false, scopes: body.scopes }); throw new TypeError('Failed to fetch'); }
       const token = { id: tokenId(state.nextToken++), name: body.name, source: 'issued', createdAt: iso(0), revoked: false, scopes: body.scopes };

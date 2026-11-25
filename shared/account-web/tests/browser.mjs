@@ -634,7 +634,163 @@ try {
     assert.deepEqual(calls.filter(call => call.path.endsWith('/revoke')).map(call => [call.path, call.body, call.actor]), [['/admin/enrollments/enrollment-0002/revoke', {}, 'actor-alice']]);
   });
 
-  await run('without the new endpoints only login and access tokens remain', async ({ page, calls, open }) => {
+  const indexingCard = page => page.getByRole('region', { name: 'Indexing', exact: true });
+  const indexingSwitch = page => indexingCard(page).getByRole('checkbox', { name: 'Index my data', exact: true });
+  const overrideDialog = async (page, user) => {
+    await button(page, `Actions for ${user}`).click();
+    await page.getByRole('menuitem', { name: 'Indexing…', exact: true }).click();
+    return dialog(page, `Indexing for “${user}”`);
+  };
+  const indexingPosts = (calls, path) => callsTo(calls, path).filter(call => call.method === 'POST').map(call => [call.body, call.actor]);
+
+  await run('Profile opt-out and reset hold the write slot through a canonical read, without optimistic state', async ({ page, calls, open }) => {
+    await open('settings-indexing');
+    await indexingSwitch(page).waitFor();
+    assert.equal(await indexingSwitch(page).isChecked(), true);
+    await indexingCard(page).getByText('Server default: on.').waitFor();
+    await indexingCard(page).getByText('Uploads, direct access and sharing don’t change.', { exact: false }).waitFor();
+    assert.equal(await button(page, 'Use server default…').count(), 0);
+    await page.getByLabel('E-mail', { exact: true }).fill('unsaved@example.org');
+    await page.evaluate(() => { window.__accountFake.state.user.actor = 'fresh-alice'; window.__accountFake.state.hold = 'POST /indexing'; });
+    await indexingSwitch(page).click();
+    await dialog(page, 'Turn indexing off?').waitFor();
+    assert.equal(posts(calls, '/indexing'), 0, 'opening the confirmation does not write');
+    await button(page, 'Turn indexing off').click();
+    await page.waitForFunction(() => window.__accountFake.state.pending.length === 1);
+    assert.equal(await button(page, 'Turn indexing off').isDisabled(), true);
+    assert.equal(await button(page, 'Cancel').isDisabled(), true);
+    const heldSwitch = page.locator('[data-view="profile"] label.switch input');
+    assert.equal(await heldSwitch.isChecked(), true, 'the old state is shown while POST is in flight');
+    await page.evaluate(() => { const state = window.__accountFake.state; state.release(); state.hold = 'GET /indexing'; });
+    await page.waitForFunction(() => window.__accountFake.state.pending.some(entry => entry.call.method === 'GET' && entry.call.path === '/indexing'));
+    assert.equal(await heldSwitch.isChecked(), true, 'a POST acknowledgment alone does not change the state');
+    await page.evaluate(() => { location.hash = '#account/tokens'; });
+    await page.getByText(HOLD_PREFIX, { exact: false }).waitFor();
+    assert.equal(await page.evaluate(() => location.hash), '#account/profile');
+    await page.evaluate(() => window.__accountFake.state.release());
+    await indexingCard(page).getByText('Off', { exact: true }).waitFor();
+    assert.equal(await indexingSwitch(page).count(), 0, 'opting back in is disallowed');
+    assert.equal(await page.getByLabel('E-mail', { exact: true }).inputValue(), 'unsaved@example.org', 'the indexing read does not replace the Profile form');
+    await button(page, 'Use server default…').click();
+    await dialog(page, 'Use the server default?').getByRole('button', { name: 'Use server default', exact: true }).click();
+    await indexingCard(page).getByText('On', { exact: true }).waitFor();
+    assert.equal(await indexingSwitch(page).isChecked(), true);
+    assert.equal(await button(page, 'Use server default…').count(), 0);
+    assert.deepEqual(indexingPosts(calls, '/indexing'), [[{ choice: 'disabled' }, 'fresh-alice'], [{ choice: 'inherit' }, 'fresh-alice']]);
+  });
+
+  await run('a late opt-in acknowledgment cannot replace a newer administrator override', async ({ page, calls, open }) => {
+    await open('settings-indexing-opt-in', '&app=haystack&theme=dark');
+    await indexingCard(page).getByText('Off', { exact: true }).waitFor();
+    assert.equal(await indexingSwitch(page).isChecked(), false);
+    await page.evaluate(() => { const state = window.__accountFake.state; state.hold = 'POST /indexing'; state.snapshot = true; });
+    await indexingSwitch(page).click();
+    await dialog(page, 'Turn indexing on?').getByRole('button', { name: 'Turn indexing on', exact: true }).click();
+    await page.waitForFunction(() => window.__accountFake.state.indexing.choices.get('alice') === 'enabled');
+    await page.evaluate(() => {
+      const state = window.__accountFake.state;
+      state.indexing.overrides.set('alice', 'disabled'); state.release();
+    });
+    await indexingCard(page).getByText('An administrator turned indexing off for this account.', { exact: false }).waitFor();
+    assert.equal(await indexingCard(page).getByText('Off', { exact: true }).isVisible(), true);
+    assert.equal(await indexingSwitch(page).count(), 0);
+    assert.equal(await button(page, 'Use server default…').count(), 0, 'a saved opt-in cannot be reset while forced off');
+    assert.deepEqual(indexingPosts(calls, '/indexing'), [[{ choice: 'enabled' }, 'actor-alice']]);
+  });
+
+  await run('a saved change with a failed indexing refresh reports the error and can be checked without another write', async ({ page, calls, open }) => {
+    await open('settings-indexing');
+    await indexingSwitch(page).click();
+    await page.evaluate(() => { window.__accountFake.state.indexingReadError = true; });
+    await button(page, 'Turn indexing off').click();
+    await dialog(page, 'Turn indexing off?').getByRole('alert').getByText('The change was saved, but the current indexing state could not be loaded.', { exact: false }).waitFor();
+    assert.equal(await page.getByText('Indexing preference saved', { exact: true }).count(), 0);
+    await button(page, 'Cancel').click();
+    await indexingCard(page).getByText('Indexing settings could not be loaded', { exact: true }).waitFor();
+    assert.equal(await indexingSwitch(page).count(), 0);
+    await page.evaluate(() => { window.__accountFake.state.indexingReadError = false; });
+    await indexingCard(page).getByRole('button', { name: 'Retry', exact: true }).click();
+    await indexingCard(page).getByText('Off', { exact: true }).waitFor();
+    assert.equal(posts(calls, '/indexing'), 1);
+  });
+
+  await run('Users overrides include own/configured/agent/disabled rows, not pending, and clearing restores the saved choice', async ({ page, calls, open }) => {
+    await open('users-indexing');
+    await button(page, 'Actions for dmitri').waitFor();
+    for (const user of ['alice', 'dmitri', 'collector-bot', 'erin']) {
+      const prompt = await overrideDialog(page, user);
+      await prompt.getByRole('combobox', { name: 'Override' }).waitFor();
+      assert.equal(await prompt.getByRole('combobox', { name: 'Override' }).inputValue(), 'inherit');
+      await prompt.getByRole('button', { name: 'Cancel', exact: true }).click();
+    }
+    assert.equal(await button(page, 'Actions for bob').count(), 0);
+    assert.equal(await button(page, 'Approve bob…').isVisible(), true, 'existing pending approval is unchanged');
+    assert.equal(await button(page, 'Enable heidi').isVisible(), true, 'existing lifecycle action is unchanged');
+    const prompt = await overrideDialog(page, 'heidi');
+    const select = prompt.getByRole('combobox', { name: 'Override' });
+    const password = prompt.getByLabel('Your current password', { exact: true });
+    await prompt.getByText('Currently off. Server default: on.', { exact: true }).waitFor();
+    await select.selectOption({ label: 'Force on' });
+    await password.fill('incorrect password');
+    await button(page, 'Save override').click();
+    await prompt.getByRole('alert').getByText('Your password was not accepted.').waitFor();
+    assert.equal(await select.inputValue(), 'enabled', 'only proof input is cleared');
+    assert.equal(await password.inputValue(), '');
+    assert.equal(await page.evaluate(() => document.activeElement.name), 'currentPassword');
+    await password.fill(FAKE_PASSWORD);
+    await button(page, 'Save override').click();
+    await prompt.waitFor({ state: 'detached' });
+    await overrideDialog(page, 'heidi');
+    assert.equal(await select.inputValue(), 'enabled');
+    await prompt.getByText('Currently on. Server default: on.', { exact: true }).waitFor();
+    await select.selectOption({ label: 'No override' });
+    await password.fill(FAKE_PASSWORD);
+    await button(page, 'Save override').click();
+    await prompt.waitFor({ state: 'detached' });
+    await overrideDialog(page, 'heidi');
+    assert.equal(await select.inputValue(), 'inherit');
+    await prompt.getByText('Currently off. Server default: on.', { exact: true }).waitFor();
+    assert.deepEqual(indexingPosts(calls, '/admin/indexing'), [
+      [{ userId: 'heidi', override: 'enabled', currentPassword: 'incorrect password' }, 'actor-alice'],
+      [{ userId: 'heidi', override: 'enabled', currentPassword: FAKE_PASSWORD }, 'actor-alice'],
+      [{ userId: 'heidi', override: 'inherit', currentPassword: FAKE_PASSWORD }, 'actor-alice']
+    ]);
+    assert.equal((await storageText(page)).includes(FAKE_PASSWORD), false);
+  });
+
+  await run('declarative-only servers expose Profile and just indexing administration, even on a direct Users route', async ({ page, calls, open }) => {
+    await open('users-indexing-declarative', '&app=manure');
+    await button(page, 'Actions for dmitri').waitFor();
+    const sections = page.getByRole('navigation', { name: 'Account sections' }).getByRole('link');
+    assert.deepEqual(await sections.evaluateAll(links => links.map(link => link.dataset.section)), ['profile', 'tokens', 'users']);
+    assert.deepEqual(await page.getByRole('columnheader').allTextContents(), ['User', 'Indexing', 'Actions']);
+    assert.equal(await button(page, 'Enroll user').count(), 0);
+    assert.equal(await button(page, 'Approve bob…').count(), 0);
+    await button(page, 'Actions for collector-bot').click();
+    assert.deepEqual(await page.getByRole('menuitem').allTextContents(), ['Indexing…']);
+    await page.getByRole('menuitem', { name: 'Indexing…' }).click();
+    const prompt = dialog(page, 'Indexing for “collector-bot”');
+    await prompt.getByRole('combobox', { name: 'Override' }).selectOption({ label: 'Force off' });
+    await prompt.getByLabel('Your current password').fill(FAKE_PASSWORD);
+    await button(page, 'Save override').click();
+    await prompt.waitFor({ state: 'detached' });
+    await page.locator('tr[data-row-id="collector-bot"]').getByText('Off', { exact: true }).waitFor();
+    await page.getByRole('link', { name: 'Profile', exact: true }).click();
+    await indexingSwitch(page).waitFor();
+    assert.equal(await page.getByLabel('Username', { exact: true }).inputValue(), 'alice');
+    assert.equal(await page.getByLabel('E-mail', { exact: true }).count(), 0);
+    await page.evaluate(() => { window.__accountFake.state.indexing.admin = false; document.dispatchEvent(new Event('account:invalidate')); });
+    await page.getByRole('link', { name: 'Users', exact: true }).waitFor({ state: 'detached' });
+    assert.equal(await indexingSwitch(page).isVisible(), true, 'ordinary users can still control their own indexing');
+    assert.equal(callsTo(calls, '/admin/users').length + callsTo(calls, '/admin/enrollments').length, 0, 'the old admin plane stays unused');
+    assert.deepEqual(indexingPosts(calls, '/admin/indexing'), [[{ userId: 'collector-bot', override: 'disabled', currentPassword: FAKE_PASSWORD }, 'actor-alice']]);
+  });
+
+  await run('old APIs retain their account surfaces without exposing indexing', async ({ page, calls, open }) => {
+    await open('users-default');
+    await button(page, 'Actions for erin').click();
+    assert.equal(await page.getByRole('menuitem', { name: 'Indexing…', exact: true }).count(), 0, 'the older Users plane remains available without indexing');
+    assert.equal(await page.getByRole('menuitem', { name: 'Reset credentials…', exact: true }).isVisible(), true);
     await open('login-legacy');
     assert.equal(await page.getByRole('link', { name: 'Forgot password?' }).count(), 0);
     assert.equal(await page.getByRole('link', { name: 'Create an account' }).count(), 0);
@@ -649,6 +805,7 @@ try {
     assert.deepEqual(await page.getByRole('navigation', { name: 'Account sections' }).getByRole('link').evaluateAll(links => links.map(link => link.dataset.section)), ['tokens']);
     await mint(page, 'legacy-cli');
     await page.getByLabel('One-time token secret', { exact: true }).waitFor();
+    assert.equal(callsTo(calls, '/admin/indexing').length, 0);
   });
 
   // README "Interleavings", N × P: the fragment is set, the first profile read's answer is applied, and only then is the
@@ -703,7 +860,7 @@ try {
     // Each scenario is driven into its state by the harness (with ?steps), on its own page: the states with a shown-once
     // value hold navigation away (beforeunload). The last one stays open for the 1440 checks.
     const VIEWS = ['login-default', 'login-totp', 'login-pending', 'signup-default', 'signup-pending', 'signup-enroll', 'recover-default',
-      'settings-profile', 'settings-password', 'settings-totp-replace', 'users-menu', 'settings-tokens-long-strings', 'users-long-strings',
+      'settings-profile', 'settings-indexing', 'settings-indexing-managed', 'settings-password', 'settings-totp-replace', 'users-menu', 'users-indexing-override', 'settings-tokens-long-strings', 'users-long-strings',
       'settings-tokens-secret', 'users-enroll-link'];
     const outside = view => view.evaluate(() => {
       const width = document.scrollingElement.clientWidth;

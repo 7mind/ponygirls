@@ -7,7 +7,7 @@
 // Account v1 is deliberately independent of each application's domain protocol.
 import {
   ACCOUNT_API_PATH, ACCOUNT_REQUEST_HEADERS, ACCOUNT_REQUEST_TIMEOUT_MS, AccountApiError, AccountOwnerChangedError, AccountResponseError,
-  actionStart, captureEnrollmentFragment, createAccountClient, enrollmentLink, generateTotpSecret,
+  actionStart, captureEnrollmentFragment, createAccountClient, enrollmentLink, generateTotpSecret, indexingControls,
   loadEnrollment, loadSignup, loginInitial, loginReduce, otpauthUri, qrMatrix, recoveryInitial, runAction,
   submitEnrollment, submitLogin, submitRecovery, submitSignup
 } from './account-client.js';
@@ -46,6 +46,10 @@ const USER_COLUMNS = { user: 'User', status: 'Status', source: 'Source', twoFact
 const USER_FILTERS = [['all', 'All'], ['pending', 'Pending approval'], ['disabled', 'Disabled'], ['admins', 'Admins']];
 const PROOF_FIELD = { name: 'currentPassword', label: 'Your current password', type: 'password', hint: 'Required for this change; used for this request only.' };
 const PROOF_REJECTED_TEXT = 'Your password was not accepted.';
+const INDEXING_OVERRIDES = [['inherit', 'No override'], ['enabled', 'Force on'], ['disabled', 'Force off']];
+const indexingOnOff = enabled => enabled ? 'on' : 'off';
+const INDEXING_IMPACT = 'This controls content search. Uploads, direct access and sharing don’t change.';
+const INDEXING_RETAINED = 'Turning indexing off hides existing content results without deleting the stored index.';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CIRCLE_9 = 'M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0';
 const ICONS = {
@@ -113,8 +117,9 @@ const maskedSecret = secret => MASK_CHAR.repeat(Math.max(0, secret.length - SECR
 //   - per-resource generations: a read's data is applied only if it is newer than the data already applied;
 //   - completions are bound to their area: after dispose a read applies nothing and a write never resumes.
 // Resource modes: 'confirms' = owner-checked (success verifies), 'checks' = not owner-checked (success decides
-// nothing); for both a transport failure unverifies (except an area's very first load) and 401 loses.
-const RESOURCE_MODES = { account: 'confirms', profile: 'confirms', admin: 'checks', policy: 'none' };
+// nothing); for both a transport failure unverifies (except an area's very first load) and 401 loses. Optional
+// indexing reads report loss but neither supersede a core authority read nor unverify a working account API.
+const RESOURCE_MODES = { account: 'confirms', profile: 'confirms', admin: 'checks', policy: 'none', indexing: 'optional', adminIndexing: 'optional' };
 const DATA_LEVEL_STATUSES = [403, 404];
 
 class AccountStop extends Error {
@@ -202,6 +207,8 @@ function createCoordinator({ fetch, window, onSlotChange }) {
         return profile;
       },
       policy: () => client.policy(),
+      indexing: () => client.indexing(owner),
+      adminIndexing: () => client.adminIndexing(),
       admin: async () => {
         const [users, enrollments] = await Promise.all([client.adminUsers(), client.enrollments()]);
         return { users, enrollments };
@@ -220,12 +227,14 @@ function createCoordinator({ fetch, window, onSlotChange }) {
     async function read(resource, apply, first) {
       const generation = ++generations[resource].started;
       const mode = RESOURCE_MODES[resource];
-      const epoch = mode === 'none' ? null : nextEpoch();
+      const epoch = mode === 'none' ? null : mode === 'optional' ? state.epoch : nextEpoch();
       let result;
       try { result = { ok: true, data: await loaders[resource](), cause: null, kind: null }; }
       catch (cause) { result = { ok: false, data: null, cause, kind: classifyFailure(cause) }; }
       if (!hooks.alive()) return never();
-      result.verdict = epoch === null ? 'none' : judge(result.kind, result.ok, epoch, mode, first);
+      const lost = result.kind === 'changed' || result.kind === 'signed-out';
+      const bearsOnAuthority = mode !== 'optional' || (lost && generation === generations[resource].started);
+      result.verdict = epoch === null || !bearsOnAuthority ? 'none' : judge(result.kind, result.ok, epoch, mode, first);
       if (!hooks.alive()) return never();
       if (generation > generations[resource].applied) { generations[resource].applied = generation; apply(result); }
       return result;
@@ -244,10 +253,10 @@ function createCoordinator({ fetch, window, onSlotChange }) {
         const ops = {
           post: (path, body) => endpoint('POST', path, body, actor, signal),
           readAccount: () => read('account', applyAccount, false),
-          // The client re-reads the profile (owner check) before its POST: an authority read with its own epoch.
+          // Legacy actions re-read /profile. Indexing uses the actor from the preflight so /profile is not required.
           action: async (name, target, input) => {
             const epoch = nextEpoch();
-            const final = await runAction(client, actionStart(name, target), owner, input, () => {});
+            const final = await runAction(client, actionStart(name, target), owner, input, () => {}, actor);
             if (!hooks.alive()) return never();
             if (final.phase === 'owner-changed' || final.phase === 'unauthorized') {
               judge(final.phase === 'owner-changed' ? 'changed' : 'signed-out', false, epoch, 'confirms', false);
@@ -410,12 +419,14 @@ export function installAccountUI(environment) {
   }
 
   // In-app confirmation and short forms: native <dialog>, Cancel focused unless the dialog asks for input.
-  // `run(values)` resolves to null (close) or an error text (stay open); `fields` are { name, label, type, hint }.
+  // `run(values)` resolves to null (close) or an error text (stay open). A field can provide select options and an initial value.
   function openDialog({ title, body, fields, confirm, danger, cancel, extra, run }) {
     const titleId = nextId('dialog');
     const error = h('div', { class: 'notice notice-danger', role: 'alert', hidden: true });
     const inputs = fields.map(spec => {
-      const control = spec.type === 'code' ? codeInput({ name: spec.name }) : input({ name: spec.name, type: spec.type, autocomplete: spec.type === 'password' ? 'current-password' : 'off', class: 'input input-lg' });
+      const control = spec.options !== undefined
+        ? h('select', { class: 'select', name: spec.name }, ...spec.options.map(([value, text]) => h('option', { value, selected: spec.value === value }, text)))
+        : spec.type === 'code' ? codeInput({ name: spec.name }) : input({ name: spec.name, type: spec.type, autocomplete: spec.type === 'password' ? 'current-password' : 'off', class: 'input input-lg' });
       return field({ label: spec.label, input: control, hint: spec.hint, id: nextId('dialog-field') });
     });
     const cancelButton = h('button', { class: 'btn', type: 'button' }, cancel);
@@ -432,17 +443,20 @@ export function installAccountUI(environment) {
     cancelButton.addEventListener('click', close);
     form.addEventListener('submit', async event => {
       event.preventDefault();
-      if (busy) return;
+      if (busy || confirmButton.disabled) return;
       busy = true; setBusy(form, true); error.hidden = true;
       const values = Object.fromEntries(inputs.map(item => [item.input.name, item.input.value]));
-      for (const item of inputs) item.input.value = '';
+      for (const item of inputs) if (item.input.tagName === 'INPUT') item.input.value = ''; // never retain a proof on failure
       let failure;
       try { failure = await run(values); } finally {
         busy = false;
         if (dialog.isConnected) { setBusy(form, false); dialog.dispatchEvent(new window.Event('account:settled')); }
       }
       if (failure === null) close();
-      else if (dialog.isConnected) { error.replaceChildren(icon('alert'), h('div', {}, failure)); error.hidden = false; (inputs.length > 0 ? inputs[0].input : cancelButton).focus(); }
+      else if (dialog.isConnected) {
+        error.replaceChildren(icon('alert'), h('div', {}, failure)); error.hidden = false;
+        (inputs.find(item => item.input.type === 'password')?.input ?? inputs[0]?.input ?? cancelButton).focus();
+      }
     });
     document.body.append(dialog); dialog.showModal();
     (inputs.length > 0 ? inputs[0].input : cancelButton).focus();
@@ -832,9 +846,10 @@ export function installAccountUI(environment) {
     const self = {
       alive: true, section: null, hash: null,
       account: { phase: 'loading' }, profile: { phase: 'loading' }, policy: { phase: 'loading' }, admin: { phase: 'idle' },
+      indexing: { phase: 'loading' }, adminIndexing: { phase: 'idle' },
       tokenView: { mode: 'idle', busy: false, formUi: null, secret: null, secretUi: null, highlight: null, showRevoked: false, filter: '', notice: null },
       usersView: { filter: 'all', query: '', mode: 'idle', formUi: null, link: null, linkUi: null, notice: null },
-      tokensUi: null, usersUi: null, pendingLink: null,
+      tokensUi: null, usersUi: null, indexingUi: null, pendingLink: null,
       // Authority: 'verified' | 'verifying' | 'unverified' ('lost' tears the area down). `trusted` changes only on
       // verified/unverified, so 'verifying' keeps the capabilities as they were.
       authority: 'verified', trusted: true,
@@ -867,14 +882,20 @@ export function installAccountUI(environment) {
     const profileData = () => (self.profile.phase === 'ready' ? self.profile.data : null);
     const policyData = () => (self.policy.phase === 'ready' ? self.policy.data : null);
     const accountData = () => (self.account.phase === 'ready' ? self.account.data : null);
+    const indexingData = () => (self.indexing.phase === 'ready' ? self.indexing.data : null);
+    const manageUsers = () => profileData()?.manage.users === true;
+    const manageIndexing = () => indexingData()?.admin === true && self.adminIndexing.phase !== 'absent';
+    const indexedUsers = () => manageIndexing() && self.adminIndexing.phase === 'ready' ? self.adminIndexing.data : [];
+    const indexedUser = id => indexedUsers().find(user => user.userId === id);
     const alive = () => self.alive;
 
     // Account data from any read (load, re-read, write preflight or follow-up): the coordinator calls this only for
     // the newest read; a failure keeps data already shown.
     function applyAccount(result) {
+      const restoresIdentity = result.ok && self.account.phase !== 'ready' && self.profile.phase === 'absent' && self.section === 'profile';
       if (result.ok) self.account = { phase: 'ready', data: result.data };
       else if (self.account.phase !== 'ready') self.account = { phase: 'failed', error: result.cause };
-      renderNav(); requestRender('lists');
+      renderNav(); requestRender(restoresIdentity ? 'section' : 'lists');
     }
     function lose(reason) { forceTeardown(api, reason); }
     function setAuthority(state) {
@@ -898,23 +919,28 @@ export function installAccountUI(environment) {
     async function verify() {
       if (!self.alive) return;
       self.authority = 'verifying'; renderConnection();
-      await io.read('account', applyAccount, false);
+      const result = await io.read('account', applyAccount, false);
       if (self.authority === 'verifying') { self.authority = self.trusted ? 'verified' : 'unverified'; renderConnection(); }
+      if (result.verdict === 'verified') void loadIndexing();
     }
 
     function available(section) {
       const profile = profileData();
       if (section === 'tokens') return true;
-      if (section === 'profile') return self.profile.phase !== 'absent';
+      if (section === 'profile') return self.profile.phase !== 'absent' || self.indexing.phase !== 'absent';
+      if (section === 'users') return manageUsers() || manageIndexing();
       if (profile === null) return false;
-      return { password: profile.manage.password, 'two-factor': profile.manage.totp, users: profile.manage.users }[section];
+      return { password: profile.manage.password, 'two-factor': profile.manage.totp }[section];
     }
-    const pendingProfile = section => self.profile.phase === 'loading' && section !== 'tokens';
+    const pendingCapabilities = section => section !== 'tokens' && (self.profile.phase === 'loading' ||
+      (self.profile.phase === 'absent' && (self.indexing.phase === 'loading' ||
+        (section === 'profile' && available(section) && self.account.phase === 'loading'))));
     const fallbackSection = () => (available(DEFAULT_SECTION) ? DEFAULT_SECTION : FALLBACK_SECTION);
     // Called only from route(), after mayLeave() allowed leaving the current section.
     function open(requested) {
       if (root.parentNode !== outlet) outlet.replaceChildren(root);
-      const section = available(requested) || pendingProfile(requested) ? requested : fallbackSection();
+      if (self.section === requested && (coordinator.slotTaken() || promptOpen())) return;
+      const section = available(requested) || pendingCapabilities(requested) ? requested : fallbackSection();
       if (section !== requested) window.history.replaceState(null, '', ROUTE_PREFIX + section);
       if (self.section === section) return;
       leave();
@@ -932,7 +958,7 @@ export function installAccountUI(environment) {
         if (view.mode === 'form') Object.assign(view, { mode: 'idle', formUi: null });
         view.notice = null;
       }
-      self.section = null; self.hash = null; self.tokensUi = null; self.usersUi = null; self.replaceOpen = false;
+      self.section = null; self.hash = null; self.tokensUi = null; self.usersUi = null; self.indexingUi = null; self.replaceOpen = false;
     }
     // A shown-once value is rendered only into its owning section; arriving for another one is an invariant
     // violation: it is reported and the owning section is shown instead of writing into detached DOM.
@@ -970,10 +996,13 @@ export function installAccountUI(environment) {
       if (!self.alive || self.pendingRender === null || coordinator.slotTaken() || promptOpen()) return;
       const kind = self.pendingRender;
       self.pendingRender = null;
+      if (self.section !== null && !available(self.section) && !pendingCapabilities(self.section)) { replaceRouted(ROUTE_PREFIX + fallbackSection()); return; }
       // The password section is rebuilt only to replace its loading placeholder (it holds typed passwords otherwise).
-      if (kind === 'section' && self.section !== null && self.section !== 'tokens' && (self.section !== 'password' || self.placeholder)) { renderSection(); return; }
+      if (self.section !== null && self.section !== 'tokens' &&
+          ((self.placeholder && !pendingCapabilities(self.section)) || (kind === 'section' && self.section !== 'password'))) { renderSection(); return; }
       if (self.tokensUi !== null) self.tokensUi.renderAll();
       if (self.usersUi !== null) self.usersUi.renderAll();
+      if (self.indexingUi !== null) self.indexingUi();
     }
     // Every section write goes through io.write; a preflight that did not confirm the owner is AccountStop.
     const write = work => io.write(applyAccount, work);
@@ -993,7 +1022,8 @@ export function installAccountUI(environment) {
     }
     function renderSection() {
       const build = { profile: profileSection, password: passwordSection, 'two-factor': twoFactorSection, tokens: tokensSection, users: usersSection }[self.section];
-      self.placeholder = pendingProfile(self.section);
+      self.placeholder = pendingCapabilities(self.section);
+      self.indexingUi = null;
       holder.replaceChildren(self.placeholder ? loadingSection() : build());
     }
     function loadingSection() {
@@ -1006,7 +1036,7 @@ export function installAccountUI(environment) {
     function renderNav() {
       const profile = profileData(), account = accountData();
       const login = profile !== null ? profile.user.login : account !== null ? account.user.login : owner;
-      const role = profile === null ? '' : [profile.admin ? 'Administrator' : null, profile.source === 'declarative' ? 'Server configuration' : null].filter(Boolean).join(' · ');
+      const role = [(profile?.admin ?? indexingData()?.admin) ? 'Administrator' : null, profile?.source === 'declarative' ? 'Server configuration' : null].filter(Boolean).join(' · ');
       const link = (section, iconName, label, count) => (available(section)
         ? h('a', { href: ROUTE_PREFIX + section, 'data-section': section, 'aria-current': self.section === section ? 'page' : null }, icon(iconName), label, count)
         : null);
@@ -1031,10 +1061,7 @@ export function installAccountUI(environment) {
         if (result.ok) self.profile = { phase: 'ready', data: result.data };
         else if (self.profile.phase !== 'ready') self.profile = result.kind === 'refused' && result.cause.status === 404 ? { phase: 'absent' } : { phase: 'failed', error: result.cause };
         renderNav();
-        const profile = profileData();
-        if (profile !== null && profile.manage.users && self.admin.phase === 'idle') loadAdmin();
-        if (self.section === null) return;
-        if (!available(self.section)) { replaceRouted(ROUTE_PREFIX + fallbackSection()); return; }
+        if (manageUsers() && self.admin.phase === 'idle') loadAdmin();
         requestRender('section');
       }, first);
     }
@@ -1058,6 +1085,29 @@ export function installAccountUI(environment) {
       }, false);
     }
 
+    // Separate resources: /profile and its credential/lifecycle capabilities may be off while indexing is on.
+    // Refused optional endpoints are hidden; a failure of the indexing read never pretends to be an off setting.
+    const optionalState = result => result.ok ? { phase: 'ready', data: result.data }
+      : result.kind === 'refused' ? { phase: 'absent' } : { phase: 'failed', error: result.cause };
+    function loadIndexing(refreshUsers = true) {
+      return io.read('indexing', result => {
+        const wasAdmin = indexingData()?.admin;
+        self.indexing = optionalState(result);
+        const admin = indexingData()?.admin;
+        if (admin && refreshUsers) void loadAdminIndexing();
+        renderNav();
+        // In the /profile-off fallback, a changed role also belongs to the identity card.
+        requestRender(self.profile.phase === 'absent' && self.section === 'profile' && wasAdmin !== admin ? 'section' : 'lists');
+      }, false);
+    }
+    function loadAdminIndexing() {
+      if (self.adminIndexing.phase === 'idle') self.adminIndexing = { phase: 'loading' };
+      return io.read('adminIndexing', result => {
+        self.adminIndexing = optionalState(result);
+        renderNav(); requestRender('lists');
+      }, false);
+    }
+
     // Runs one ACCOUNT_ACTIONS entry inside a write: { ok, result } or { ok: false, text, error }.
     function act(action, target, input, proofText) {
       return write(ops => actWith(ops, action, target, input, proofText)).catch(cause => {
@@ -1071,8 +1121,8 @@ export function installAccountUI(environment) {
       if (final.phase === 'owner-changed' || final.phase === 'unauthorized') return { ok: false, text: SESSION_TEXT, error: null };
       const error = final.error;
       const text = error.code === 'proof-rejected' ? proofText
-        : error.code === 'forbidden' ? 'This action is not permitted for the current account.'
-          : error.code === 'not-found' ? 'This user or link no longer exists. Refresh the list.'
+        : error.code === 'forbidden' ? (action === 'set-indexing' ? 'This change is not allowed by the current indexing policy.' : 'This action is not permitted for the current account.')
+          : error.code === 'not-found' ? (action === 'set-indexing' ? 'Indexing settings are no longer available on this server.' : 'This user or link no longer exists. Refresh the list.')
             : error.code === 'username-unavailable' && action === 'approve-user' ? 'The username is now claimed by server configuration or existing data. Reject the application instead.'
               : formErrorText(error, policyData());
       return { ok: false, text, error };
@@ -1080,22 +1130,48 @@ export function installAccountUI(environment) {
     const reloadProfile = () => loadProfile(false);
     const errorCode = outcome => (outcome.error === null ? null : outcome.error.code);
 
+    // An acknowledgement is not a display snapshot. Hold the write slot through the canonical follow-up read;
+    // it goes through resource generations, so a late background or mutation reply cannot roll it back.
+    function saveIndexing(action, target, input, allowed, refresh, savedText) {
+      return write(async ops => {
+        if (!allowed()) return 'Indexing settings changed. Close this dialog and try again.';
+        const outcome = await actWith(ops, action, target, input, PROOF_REJECTED_TEXT);
+        if (!outcome.ok) {
+          if (['forbidden', 'not-found'].includes(errorCode(outcome))) await refresh();
+          return outcome.text;
+        }
+        if (!await refresh()) return 'The change was saved, but the current indexing state could not be loaded. Close this dialog and refresh to check.';
+        toast(savedText);
+        return null;
+      }).catch(cause => {
+        if (cause instanceof AccountStop) return CONNECTION_TEXT;
+        throw cause;
+      });
+    }
+
     // ── Profile ──────────────────────────────────────────────────────────────────────────────
     function profileSection() {
       const profile = profileData();
-      if (profile === null) return failedSection('Profile', self.profile.error);
-      const declarative = profile.source === 'declarative';
-      const email = profile.manage.email
+      const fallback = self.profile.phase === 'absent';
+      const user = profile?.user ?? (fallback ? accountData()?.user ?? null : null);
+      const indexing = indexingCard();
+      if (user === null) {
+        const section = fallback ? failedSection('Profile', self.account.error, verify) : failedSection('Profile', self.profile.error);
+        section.append(indexing); return section;
+      }
+      const declarative = profile?.source === 'declarative';
+      const admin = profile?.admin ?? indexingData()?.admin;
+      const email = profile?.manage.email
         ? field({ label: 'E-mail', input: input({ name: 'email', type: 'email', autocomplete: 'email', value: profile.email ?? '' }), hint: 'For administrators to reach you. Not verified, not used for sign-in or recovery.', id: nextId('email') })
         : null;
       const save = entry(h('button', { class: 'btn btn-primary', type: 'submit' }, 'Save e-mail'), true);
       if (email !== null) email.input.addEventListener('input', () => { entry(save, email.input.value.trim() === (profile.email ?? '')); });
       const form = h('form', { class: 'card-body account-form', novalidate: true },
-        field({ label: 'Username', input: input({ value: profile.user.login, readonly: true }), hint: 'Your sign-in name. It never changes.', id: nextId('username') }).node,
+        field({ label: 'Username', input: input({ value: user.login, readonly: true }), hint: 'Your sign-in name. It never changes.', id: nextId('username') }).node,
         email === null ? null : email.node,
-        h('dl', { class: 'dl dl-fixed' },
-          h('dt', {}, 'Account type'), h('dd', {}, declarative ? 'Declared in server configuration' : 'Created in this service (sign-up or invitation)'),
-          h('dt', {}, 'Role'), h('dd', {}, profile.admin ? h('span', { class: 'chip chip-accent' }, 'Administrator') : 'User')),
+        profile === null && admin === undefined ? null : h('dl', { class: 'dl dl-fixed' },
+          profile === null ? null : [h('dt', {}, 'Account type'), h('dd', {}, declarative ? 'Declared in server configuration' : 'Created in this service (sign-up or invitation)')],
+          admin === undefined ? null : [h('dt', {}, 'Role'), h('dd', {}, admin ? h('span', { class: 'chip chip-accent' }, 'Administrator') : 'User')]),
         email === null ? null : h('div', { class: 'form-actions' }, save));
       form.addEventListener('submit', async event => {
         event.preventDefault();
@@ -1109,12 +1185,61 @@ export function installAccountUI(environment) {
       });
       return h('section', { class: 'account-section', 'data-view': 'profile' }, sectionHeader('Profile', 'How this service identifies you.'),
         declarative ? notice('neutral', 'info', 'This account is managed in server configuration', 'Username, password and two-factor settings are changed by the operator, not here. You can still manage your access tokens.') : null,
-        h('div', { class: 'card' }, form));
+        h('div', { class: 'card' }, form), indexing);
     }
-    function failedSection(title, cause) {
+    function indexingCard() {
+      const slot = h('div', { hidden: true });
+      const titleId = nextId('indexing-title'), hintId = nextId('indexing-detail');
+      let rendered = null;
+      function render() {
+        if (rendered === self.indexing) return;
+        rendered = self.indexing;
+        const current = indexingData();
+        slot.hidden = current === null && self.indexing.phase !== 'failed';
+        if (slot.hidden) { slot.replaceChildren(); return; }
+        const header = h('div', { class: 'card-head' }, h('h2', { id: titleId }, 'Indexing'));
+        let contents;
+        if (current === null) contents = notice('danger', 'alert', 'Indexing settings could not be loaded', UNAVAILABLE_TEXT,
+          h('div', { class: 'notice-actions' }, h('button', { class: 'btn btn-sm', type: 'button', onclick: () => void loadIndexing() }, 'Retry')));
+        else {
+          const { toggle, reset } = indexingControls(current);
+          const serverDefault = `Server default: ${indexingOnOff(current.defaultEnabled)}.`;
+          const detail = current.override !== 'inherit' ? `An administrator turned indexing ${indexingOnOff(current.enabled)} for this account. ${serverDefault}`
+            : `${serverDefault}${current.choice === 'inherit' ? '' : ` Your preference: ${indexingOnOff(current.enabled)}.`}${toggle === null ? ` This server does not allow you to turn indexing ${indexingOnOff(!current.enabled)}.` : ''}`;
+          const caption = h('span', {}, h('strong', {}, 'Index my data'), h('br', {}), h('span', { class: 'hint', id: hintId }, detail));
+          let setting = caption;
+          if (toggle !== null) {
+            const control = entry(h('input', { type: 'checkbox', checked: current.enabled, 'aria-label': 'Index my data', 'aria-describedby': hintId }), false);
+            control.addEventListener('click', event => { event.preventDefault(); confirmChoice(toggle); });
+            setting = h('label', { class: 'switch' }, control, caption);
+          }
+          contents = h('div', { class: 'card-body stack-sm' },
+            h('div', { class: 'row row-between row-top' }, setting, h('span', { class: current.enabled ? 'chip chip-accent' : 'chip' }, current.enabled ? 'On' : 'Off')),
+            h('p', { class: 'small muted' }, INDEXING_IMPACT, ' ', INDEXING_RETAINED),
+            reset ? h('div', {}, entry(h('button', { class: 'btn btn-sm', type: 'button', onclick: () => confirmChoice('inherit') }, 'Use server default…'), false)) : null);
+        }
+        slot.replaceChildren(h('section', { class: 'card', 'aria-labelledby': titleId }, header, contents));
+      }
+      function confirmChoice(choice) {
+        const reset = choice === 'inherit';
+        const toggle = `Turn indexing ${indexingOnOff(choice === 'enabled')}`;
+        dialog({ write: true, title: reset ? 'Use the server default?' : `${toggle}?`, confirm: reset ? 'Use server default' : toggle, danger: false,
+          cancel: 'Cancel', fields: [], extra: [], body: [h('p', {}, reset ? 'Your saved preference will be removed. Indexing will follow the server default.' : INDEXING_IMPACT,
+            choice === 'disabled' ? ` ${INDEXING_RETAINED}` : '')],
+          run: () => saveIndexing('set-indexing', null, { choice }, () => {
+            const updated = indexingData();
+            if (updated === null) return false;
+            const allowed = indexingControls(updated);
+            return reset ? allowed.reset : choice === allowed.toggle;
+          }, async () => (await loadIndexing()).ok, 'Indexing preference saved') });
+      }
+      self.indexingUi = render; render();
+      return slot;
+    }
+    function failedSection(title, cause, retry = reloadProfile) {
       return h('section', { class: 'account-section', 'data-view': 'failed' }, sectionHeader(title, null),
         notice('danger', 'alert', 'Account details could not be loaded', cause instanceof AccountApiError && cause.status === 401 ? SESSION_TEXT : UNAVAILABLE_TEXT,
-          h('div', { class: 'notice-actions' }, h('button', { class: 'btn btn-sm', type: 'button', onclick: reloadProfile }, 'Retry'))));
+          h('div', { class: 'notice-actions' }, h('button', { class: 'btn btn-sm', type: 'button', onclick: retry }, 'Retry'))));
     }
 
     // ── Password ─────────────────────────────────────────────────────────────────────────────
@@ -1454,37 +1579,42 @@ export function installAccountUI(environment) {
 
     // ── Users (admin) ────────────────────────────────────────────────────────────────────────
     function usersSection() {
-      const view = self.usersView, profile = profileData();
+      const view = self.usersView, profile = profileData(), management = manageUsers();
       const titleId = nextId('users-title');
-      const segmented = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Filter users' });
+      const segmented = management ? h('div', { class: 'segmented', role: 'group', 'aria-label': 'Filter users' }) : null;
       const query = h('input', { type: 'text', 'aria-label': 'Filter users by name', placeholder: 'Filter by name', value: view.query, oninput: event => { view.query = event.target.value; renderRows(); } });
-      const enroll = profile.manage.enrollment ? h('button', { class: 'btn btn-primary', type: 'button', onclick: () => openEnroll() }, icon('plus'), 'Enroll user') : null;
+      const enroll = management && profile.manage.enrollment ? h('button', { class: 'btn btn-primary', type: 'button', onclick: () => openEnroll() }, icon('plus'), 'Enroll user') : null;
       const slot = h('div', { class: 'stack', hidden: true });
       const tbody = h('tbody', {});
+      // Without /profile management, the indexing directory has no credential, role, or account status metadata.
+      const columns = management ? [[USER_COLUMNS.status, 'col-u-status'], [USER_COLUMNS.source, 'col-u-src'],
+        [USER_COLUMNS.twoFactor, 'col-u-totp'], [USER_COLUMNS.created, 'col-u-date', true]] : [['Indexing', 'col-u-status']];
       const tableCard = h('div', { class: 'card' }, h('table', { class: 'table table-inset table-2line', 'aria-label': 'Users', 'data-list': 'users' },
-        h('colgroup', {}, h('col', {}), h('col', { class: 'col-u-status' }), h('col', { class: 'col-u-src' }), h('col', { class: 'col-u-totp' }), h('col', { class: 'col-u-date col-optional' }), h('col', { class: 'col-u-act' })),
-        h('thead', {}, h('tr', {}, ...[USER_COLUMNS.user, USER_COLUMNS.status, USER_COLUMNS.source, USER_COLUMNS.twoFactor].map(label => h('th', {}, label)), h('th', { class: 'col-optional' }, USER_COLUMNS.created), h('th', { class: 'col-actions' }, h('span', { class: 'sr-only' }, 'Actions')))),
-        tbody));
+        h('colgroup', {}, h('col', {}), ...columns.map(([, cls, optional]) => h('col', { class: optional ? `${cls} col-optional` : cls })), h('col', { class: 'col-u-act' })),
+        h('thead', {}, h('tr', {}, h('th', {}, USER_COLUMNS.user), ...columns.map(([label, , optional]) => h('th', { class: optional ? 'col-optional' : null }, label)),
+          h('th', { class: 'col-actions' }, h('span', { class: 'sr-only' }, 'Actions')))), tbody));
       const foot = h('p', { class: 'xs muted' });
       const section = h('section', { class: 'account-section', 'data-view': 'users', 'aria-labelledby': titleId },
         h('div', { class: 'account-list-head' }, h('div', { class: 'grow' }, h('h1', { class: 'page-title', id: titleId }, 'Users')), segmented,
           h('div', { class: 'querybar user-filter hide-md' }, icon('search'), query), enroll),
         slot, tableCard, foot);
 
-      const users = () => (self.admin.phase === 'ready' ? self.admin.data.users : []);
-      const enrollments = () => (self.admin.phase === 'ready' ? self.admin.data.enrollments : []);
+      const listPhase = () => management ? self.admin.phase : self.adminIndexing.phase;
+      const users = () => (management && self.admin.phase === 'ready' ? self.admin.data.users : []);
+      const enrollments = () => (management && self.admin.phase === 'ready' ? self.admin.data.enrollments : []);
       const nameOf = user => user.login ?? user.id;
       // A shown-once link must be acknowledged before another one can replace it (in-flight writes: entry()).
       const linkActionsBlocked = () => view.mode !== 'idle';
       const matches = { all: () => true, pending: user => user.status === 'pending', disabled: user => user.status === 'disabled', admins: user => user.admin };
       function renderSegmented() {
+        if (segmented === null) return;
         const count = key => (key === 'all' ? rows().length : users().filter(matches[key]).length);
         segmented.replaceChildren(...USER_FILTERS.map(([key, label]) => h('button', { type: 'button', 'aria-pressed': String(view.filter === key), onclick: () => { view.filter = key; renderAll(); } },
           label, ' ', h('span', { class: key === 'pending' && count(key) > 0 ? 'count count-attn' : 'count' }, String(count(key))))));
       }
       function renderSlot() {
         const nodes = [];
-        if (!profile.manage.enrollment) nodes.push(notice('neutral', 'info', null, `Invitations are turned off on this server, so there is no “Enroll user”. Approving, disabling${profile.manage.reset ? ', roles and credential resets remain' : ' and roles remain'} available.`));
+        if (management && !profile.manage.enrollment) nodes.push(notice('neutral', 'info', null, `Invitations are turned off on this server, so there is no “Enroll user”. Approving, disabling${profile.manage.reset ? ', roles and credential resets remain' : ' and roles remain'} available.`));
         const pending = users().filter(matches.pending).length;
         if (pending > 0 && view.filter === 'all') {
           const policy = policyData();
@@ -1497,12 +1627,15 @@ export function installAccountUI(environment) {
         const lost = lostLinks.get(owner);
         if (lost !== undefined) nodes.push(h('div', { class: 'notice notice-warn', role: 'alert', 'data-account-lost': true }, icon('alert'), h('div', { class: 'grow' }, lostText(lost),
           h('div', { class: 'notice-actions' }, h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { lostLinks.delete(owner); renderSlot(); } }, 'Dismiss')))));
-        if (!['ready', 'loading', 'idle'].includes(self.admin.phase)) nodes.push(notice('danger', 'alert', 'Users could not be loaded', self.admin.phase === 'unauthorized' ? SESSION_TEXT : UNAVAILABLE_TEXT,
+        if (management && !['ready', 'loading', 'idle'].includes(self.admin.phase)) nodes.push(notice('danger', 'alert', 'Users could not be loaded', self.admin.phase === 'unauthorized' ? SESSION_TEXT : UNAVAILABLE_TEXT,
           h('div', { class: 'notice-actions' }, h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { self.admin = { phase: 'idle' }; renderAll(); void loadAdmin(); } }, 'Retry'))));
+        if (manageIndexing() && self.adminIndexing.phase === 'failed') nodes.push(notice('danger', 'alert', 'Indexing settings for users could not be loaded', UNAVAILABLE_TEXT,
+          h('div', { class: 'notice-actions' }, h('button', { class: 'btn btn-sm', type: 'button', onclick: () => void loadAdminIndexing() }, 'Retry'))));
         setChildren(slot, nodes); slot.hidden = nodes.length === 0;
         if (enroll !== null) entry(enroll, linkActionsBlocked());
       }
       function rows() {
+        if (!management) return indexedUsers().map(indexing => ({ kind: 'indexing', name: indexing.userId, indexing })).sort((a, b) => a.name.localeCompare(b.name));
         const list = users().map(user => ({ kind: 'user', id: user.id, name: nameOf(user), user }));
         const known = new Set(list.map(row => row.id));
         for (const enrollment of enrollments()) if (enrollment.kind === 'invite' && !known.has(enrollment.username)) list.push({ kind: 'invite', id: enrollment.username, name: enrollment.username, enrollment });
@@ -1510,27 +1643,36 @@ export function installAccountUI(environment) {
         return list.sort((a, b) => pendingFirst(a) - pendingFirst(b) || a.name.localeCompare(b.name));
       }
       function renderRows() {
-        tableCard.hidden = !['ready', 'loading', 'idle'].includes(self.admin.phase);
-        if (self.admin.phase !== 'ready') {
-          tbody.replaceChildren(...Array.from({ length: 5 }, () => h('tr', {}, ...Array.from({ length: 5 }, () => h('td', {}, h('span', { class: 'skeleton sk-60' }))), h('td', {}))));
+        tableCard.hidden = !['ready', 'loading', 'idle'].includes(listPhase());
+        if (listPhase() !== 'ready') {
+          tbody.replaceChildren(...Array.from({ length: 5 }, () => h('tr', {}, ...Array.from({ length: columns.length + 1 }, () => h('td', {}, h('span', { class: 'skeleton sk-60' }))), h('td', {}))));
           foot.textContent = ''; return;
         }
         const all = rows(), text = view.query.trim().toLowerCase();
-        const searchable = row => (row.kind === 'invite' ? [row.name] : [row.name, row.user.email ?? '', row.user.displayName]);
-        const visible = all.filter(row => (row.kind === 'invite' ? view.filter === 'all' : matches[view.filter](row.user)))
+        const searchable = row => row.kind === 'indexing' ? [row.name, row.indexing.displayName] : row.kind === 'invite' ? [row.name] : [row.name, row.user.email ?? '', row.user.displayName];
+        const visible = all.filter(row => !management || (row.kind === 'invite' ? view.filter === 'all' : matches[view.filter](row.user)))
           .filter(row => text === '' || searchable(row).some(value => value.toLowerCase().includes(text)));
         for (const close of [...menus]) close();
-        tbody.replaceChildren(...visible.map(row => (row.kind === 'invite' ? inviteRow(row.enrollment) : userRow(row.user))));
+        const indexingById = new Map(indexedUsers().map(row => [row.userId, row]));
+        tbody.replaceChildren(...visible.map(row => row.kind === 'indexing' ? indexingRow(row.indexing)
+          : row.kind === 'invite' ? inviteRow(row.enrollment) : userRow(row.user, indexingById.get(row.id))));
         const configured = users().filter(user => user.source === 'declarative').length;
         const label = USER_FILTERS.find(([key]) => key === view.filter)[1].toLowerCase();
         foot.textContent = view.filter === 'all' && text === ''
-          ? `${all.length} users${configured > 0 ? ` · ${configured} from server configuration (read-only)` : ''}`
+          ? `${all.length} users${configured > 0 ? ` · ${configured} from server configuration (${manageIndexing() ? 'credentials read-only' : 'read-only'})` : ''}`
           : `${visible.length} of ${all.length} entries · filtered${view.filter === 'all' ? '' : `: ${label}`}${text === '' ? '' : ` · name contains “${view.query.trim()}”`}`;
       }
       function renderAll() { renderSegmented(); renderSlot(); renderRows(); }
       const chip = (kind, text) => h('span', { class: kind === null ? 'chip' : `chip chip-${kind}` }, text);
       const enrollmentFor = (username, kind) => enrollments().find(enrollment => enrollment.username === username && enrollment.kind === kind) ?? null;
-      function userRow(user) {
+      function indexingRow(indexing) {
+        const { userId, displayName, enabled, override } = indexing;
+        return h('tr', { 'data-row-id': userId },
+          h('td', {}, h('span', { class: 'cell-title' }, userId), displayName === userId ? null : h('span', { class: 'cell-sub' }, displayName)),
+          h('td', { 'data-label': 'Indexing' }, chip(enabled ? 'accent' : null, enabled ? 'On' : 'Off'), override === 'inherit' ? null : h('span', { class: 'xs muted' }, ' · override')),
+          h('td', { class: 'col-actions' }, rowMenu(`Actions for ${userId}`, [indexingAction(userId, indexing)])));
+      }
+      function userRow(user, indexing) {
         const chips = [];
         if (user.status === 'pending') chips.push(chip('warn', 'Pending approval'));
         if (user.status === 'active') chips.push(user.locked ? chip('danger', 'Locked') : chip('ok', 'Active'));
@@ -1547,7 +1689,7 @@ export function installAccountUI(environment) {
           h('td', {}, h('span', { class: 'cell-title' }, nameOf(user)), h('span', { class: 'cell-sub' }, h('span', {}, user.email ?? (user.displayName === nameOf(user) ? '' : user.displayName)))),
           h('td', { 'data-label': USER_COLUMNS.status }, h('div', { class: 'row row-wrap' }, ...chips)), h('td', { 'data-label': USER_COLUMNS.source }, source), h('td', { 'data-label': USER_COLUMNS.twoFactor }, twoFactor),
           h('td', { class: 'col-optional', 'data-label': USER_COLUMNS.created }, recentDate(user.createdAt)),
-          h('td', { class: 'col-actions' }, userActions(user)));
+          h('td', { class: 'col-actions' }, userActions(user, indexing)));
       }
       function inviteRow(enrollment) {
         return h('tr', { 'data-row-id': `invite:${enrollment.username}` },
@@ -1556,19 +1698,22 @@ export function installAccountUI(environment) {
           h('td', { 'data-label': USER_COLUMNS.source }, `Invited by ${enrollment.createdBy}`), h('td', { 'data-label': USER_COLUMNS.twoFactor }, '—'), h('td', { class: 'col-optional', 'data-label': USER_COLUMNS.created }, recentDate(enrollment.createdAt)),
           h('td', { class: 'col-actions' }, entry(h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': `Revoke the invitation for ${enrollment.username}`, onclick: () => confirmRevokeInvite(enrollment) }, 'Revoke link'), false)));
       }
-      function userActions(user) {
-        if (user.status === 'pending') return entry(h('button', { class: 'btn btn-sm btn-primary', type: 'button', 'aria-label': `Approve ${nameOf(user)}…`, onclick: () => openApplication(user) }, 'Approve…'), false);
-        if (user.id === owner) return h('span', { class: 'xs muted' }, 'you');
-        if (user.source === 'declarative') return h('span', { class: 'xs muted', title: 'Managed in server configuration' }, 'read-only');
-        if (user.status === 'disabled') return entry(h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': `Enable ${nameOf(user)}`, onclick: () => confirmEnabled(user, true) }, 'Enable'), false);
-        const items = [];
+      const indexingAction = (name, indexing) => ['search', 'Indexing…', () => confirmIndexing(name, indexing), false, false];
+      function userActions(user, indexing) {
+        const name = nameOf(user);
+        if (user.status === 'pending') return entry(h('button', { class: 'btn btn-sm btn-primary', type: 'button', 'aria-label': `Approve ${name}…`, onclick: () => openApplication(user) }, 'Approve…'), false);
+        const items = indexing === undefined ? [] : [indexingAction(name, indexing)];
+        const onlyIndexing = control => items.length === 0 ? control : h('div', { class: 'row-actions always' }, control, rowMenu(`Actions for ${name}`, items));
+        if (user.id === owner) return onlyIndexing(h('span', { class: 'xs muted' }, 'you'));
+        if (user.source === 'declarative') return onlyIndexing(h('span', { class: 'xs muted', title: 'Credentials managed in server configuration' }, 'read-only'));
+        if (user.status === 'disabled') return onlyIndexing(entry(h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': `Enable ${name}`, onclick: () => confirmEnabled(user, true) }, 'Enable'), false));
         if (profile.manage.reset) items.push(['key', 'Reset credentials…', () => confirmReset(user), false, linkActionsBlocked()]);
         // Pending resets can be revoked whenever the account plane is on (AM1), also without invitations.
         const reset = user.pendingEnrollment === 'reset' ? enrollmentFor(user.id, 'reset') : null;
         if (reset !== null) items.push(['link', 'Revoke reset link…', () => confirmRevokeReset(user, reset), false, false]);
         items.push(['shield', user.admin ? 'Revoke admin…' : 'Grant admin…', () => confirmAdmin(user), false, false]);
         items.push(['x-circle', 'Disable account…', () => confirmEnabled(user, false), true, false]);
-        return rowMenu(`Actions for ${nameOf(user)}`, items);
+        return rowMenu(`Actions for ${name}`, items);
       }
       // An open menu is a section-owned overlay: leave(), dispose() and a row re-render close it (menus set).
       function rowMenu(label, items) {
@@ -1592,7 +1737,22 @@ export function installAccountUI(environment) {
       function afterAction(outcome, message) {
         if (!outcome.ok) return outcome.text;
         toast(message); void loadAdmin();
+        if (manageIndexing()) void loadAdminIndexing();
         return null;
+      }
+      function confirmIndexing(name, indexing) {
+        const { userId, override } = indexing;
+        dialog({ write: true, title: `Indexing for “${name}”`, confirm: 'Save override', danger: false, cancel: 'Cancel',
+          fields: [{ name: 'override', label: 'Override', options: INDEXING_OVERRIDES, value: override,
+            hint: 'No override restores the user’s preference or the server default.' }, PROOF_FIELD], extra: [],
+          body: [h('p', {}, 'An override takes priority over the user’s preference and the server default.'),
+            h('p', { class: 'small muted' }, `Currently ${indexingOnOff(indexing.enabled)}. Server default: ${indexingOnOff(indexing.defaultEnabled)}.`)],
+          run: values => values.currentPassword === '' ? 'Enter your current password.' : saveIndexing('set-indexing-override', userId, values,
+            () => indexedUser(userId)?.override === override,
+            async () => {
+              const results = await Promise.all([loadAdminIndexing(), ...(userId === owner ? [loadIndexing(false)] : [])]);
+              return results.every(result => result.ok);
+            }, 'Indexing override saved') });
       }
       function openApplication(user) {
         const name = nameOf(user);
@@ -1761,7 +1921,7 @@ export function installAccountUI(environment) {
         root.remove();
       }
     };
-    loadAccount(); loadProfile(true); loadPolicy();
+    loadAccount(); loadProfile(true); loadPolicy(); void loadIndexing();
     return api;
   }
 
