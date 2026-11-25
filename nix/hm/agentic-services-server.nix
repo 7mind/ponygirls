@@ -26,6 +26,7 @@ let
   pg = pkgs.postgresql_18;
   json = pkgs.formats.json { };
   accounts = import ../lib/service-account-options.nix { inherit lib; };
+  indexingPolicy = import ../lib/service-indexing-options.nix { inherit lib; };
   # Null keyFile: setup provisions the key once under the credentials directory.
   accountsKeyFile = service: if cfg.${service}.accounts.keyFile == null
     then "${credentials}/${service}-accounts.key"
@@ -83,7 +84,7 @@ let
       max = 600;
     };
   } // accounts.renderAccounts accounts.accountsJsonKeys.camel cfg.haystack.accounts (accountsKeyFile "haystack"));
-  haystackConfig = json.generate "agentic-services-haystack.json" {
+  haystackConfig = json.generate "agentic-services-haystack.json" ({
     listenHost = cfg.haystack.listenAddress;
     listenPort = cfg.haystack.port;
     authReloadMs = 1000;
@@ -91,7 +92,7 @@ let
     auth = haystackAuth.value;
     database = builtins.removeAttrs cfg.haystack.database [ "readinessUnit" ];
     retrieval = cfg.haystack.retrieval;
-  };
+  } // indexingPolicy.render cfg.haystack.indexing);
   manureConfig = json.generate "agentic-services-manure.json" ( {
     database = builtins.removeAttrs cfg.manure.database [ "readinessUnit" ];
     native_mode = "linked";
@@ -115,7 +116,8 @@ let
   # Omit the default for unchanged configs and older package compatibility.
   } // lib.optionalAttrs (cfg.manure.rootBindingMode != "strict") {
     root_binding.mode = cfg.manure.rootBindingMode;
-  } // accounts.renderAccounts accounts.accountsJsonKeys.snake cfg.manure.accounts (accountsKeyFile "manure"));
+  } // indexingPolicy.render cfg.manure.indexing
+    // accounts.renderAccounts accounts.accountsJsonKeys.snake cfg.manure.accounts (accountsKeyFile "manure"));
   setup = pkgs.writeShellScript "agentic-services-setup" ''
     set -euo pipefail
     umask 077

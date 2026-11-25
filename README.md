@@ -619,6 +619,20 @@ those values is a migration, not a harmless module rename. In particular, retain
 all existing credential files; these modules do not migrate databases or rotate
 operator credentials. Backups retain completed dumps for 14 days.
 
+### Indexing policy flags
+
+Chronicle, Haystack and Manure accept three optional booleans in the server
+JSON `indexing` object: `defaultEnabled` (default `true`), `allowOptIn` and
+`allowOptOut` (both default `false`). The two permissions are independent of
+each other and of the default. Chronicle's existing indexing capacity and
+continuation settings stay in the same object.
+
+Set these under `smind.services.<service>.indexing` on NixOS,
+`smind.hm.services.agentic.<service>.indexing` for Haystack or Manure on
+Home Manager, or `smind.hm.services.chronicle.settings.indexing` for Chronicle
+on Home Manager. These flags are parsed configuration only; they do not yet
+change runtime indexing behavior.
+
 ### NixOS modules
 
 - **`nixosModules.service-postgres`** — the same typed provider policy on the

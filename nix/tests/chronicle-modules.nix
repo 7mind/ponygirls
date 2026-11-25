@@ -73,6 +73,7 @@ let
   glmServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.annotation.requestPolicy = "glm-max-reasoning"; });
   strict32kServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.annotation.requestPolicy = "strict-json-schema-32k"; });
   capacityServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing = { annotationSessions = 8; embeddingRequests = 12; embeddingBatchSize = 3; annotationContinuations = true; }; });
+  defaultIndexingPolicy = { defaultEnabled = true; allowOptIn = false; allowOptOut = false; };
   invalidCapacity = field: value: server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing.${field} = value; });
   rejectedCapacity = field: value: !(builtins.tryEval (builtins.getAttr field (invalidCapacity field value).smind.services.chronicle.indexing)).success;
   disabledServer = server { };
@@ -145,8 +146,8 @@ assert enabledServer.systemd.services.chronicle.serviceConfig.User == "chronicle
 assert enabledServer.systemd.services.chronicle.serviceConfig.TimeoutStopSec == 60;
 assert enabledServer.smind.services.chronicle.limits.sessionTtlSeconds == 30 * 24 * 60 * 60;
 assert shortSessionServer.smind.services.chronicle.limits.sessionTtlSeconds == 3600;
-assert enabledServer.smind.services.chronicle.indexing == { annotationSessions = 4; embeddingRequests = 8; embeddingBatchSize = 16; annotationContinuations = false; };
-assert capacityServer.smind.services.chronicle.indexing == { annotationSessions = 8; embeddingRequests = 12; embeddingBatchSize = 3; annotationContinuations = true; };
+assert enabledServer.smind.services.chronicle.indexing == defaultIndexingPolicy // { annotationSessions = 4; embeddingRequests = 8; embeddingBatchSize = 16; annotationContinuations = false; };
+assert capacityServer.smind.services.chronicle.indexing == defaultIndexingPolicy // { annotationSessions = 8; embeddingRequests = 12; embeddingBatchSize = 3; annotationContinuations = true; };
 assert rejectedCapacity "annotationSessions" 0;
 assert rejectedCapacity "annotationSessions" 9;
 assert rejectedCapacity "embeddingRequests" 0;

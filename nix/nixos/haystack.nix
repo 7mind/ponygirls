@@ -7,6 +7,7 @@ let
   proxyFailure = (import ../lib/haystack-proxy.nix { }).unavailableJson;
   cfg = config.smind.services.haystack;
   accounts = import ../lib/service-account-options.nix { inherit lib; };
+  indexingPolicy = import ../lib/service-indexing-options.nix { inherit lib; };
 
   # Credential names are fixed derivations of user/token ids (no secrets in
   # the store; systemd loads the digest files listed here).
@@ -45,7 +46,7 @@ let
     ++ [ "database-password:${cfg.database.passwordFile}" ]
     ++ lib.optional (cfg.retrieval.embedding != null) "embedding-key:${cfg.retrieval.embedding.credentialFile}"
     ++ lib.optional cfg.accounts.enable "${accountsKeyCredName}:${cfg.accounts.keyFile}";
-  serverConfig = pkgs.writeText "haystack-server.json" (builtins.toJSON {
+  serverConfig = pkgs.writeText "haystack-server.json" (builtins.toJSON ({
     listenHost = cfg.listenAddress;
     listenPort = cfg.port;
     webRoot = "${cfg.package}/share/haystack/web";
@@ -56,7 +57,7 @@ let
       passwordFile = "$CREDENTIALS_DIRECTORY/database-password";
     };
     retrieval = cfg.retrieval // { embedding = if cfg.retrieval.embedding == null then null else cfg.retrieval.embedding // { credentialFile = "$CREDENTIALS_DIRECTORY/embedding-key"; }; };
-  });
+  } // indexingPolicy.render cfg.indexing));
   readiness = lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
   backendLocation = {
     proxyPass = "http://${cfg.listenAddress}:${toString cfg.port}";
@@ -147,6 +148,7 @@ in
       description = "Unix-account → agent-credential mapping (not a second user registry).";
     };
     database = import ../lib/service-database-options.nix { inherit lib; name = "haystack"; };
+    indexing = indexingPolicy.options;
     retrieval = {
       policy = lib.mkOption { type = lib.types.str; default = "operator-approved-metadata-v1"; };
       includeMetadata = lib.mkOption { type = lib.types.bool; default = true; };

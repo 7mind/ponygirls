@@ -4,7 +4,8 @@
 let
   lib=pkgs.lib;
   factory = { pkgs }: pkgs.hello;
-  databases = lib.genAttrs [ "haystack" "manure" "chronicle" ] (name: {
+  names = [ "haystack" "manure" "chronicle" ];
+  databases = lib.genAttrs names (name: {
     passwordFile = "/run/secrets/${name}-database";
     schemas = if name=="manure" then [ "public" "manure" ] else [ "public" ];
   });
@@ -31,7 +32,7 @@ let
   changed=hm { smind.hm.services.agentic.haystack.package=lib.mkForce pkgs.coreutils; };
   serviceUnits=base.systemd.user.services;
   sameUnit = unit: serviceUnits.${unit}==changed.systemd.user.services.${unit};
-  system=(nixpkgs.lib.nixosSystem {
+  systemEvaluation=nixpkgs.lib.nixosSystem {
     system=pkgs.stdenv.hostPlatform.system;
     modules=[
       (import ../nixos/haystack.nix { mkHaystackPackage=factory; })
@@ -48,8 +49,36 @@ let
         };
       }
     ];
-  }).config;
+  };
+  system = systemEvaluation.config;
+  # Behavioral-Active Blackbox-Group: check the generated config used by each
+  # real module, including Manure's template that the launcher materializes.
+  systemWith = services: (systemEvaluation.extendModules { modules = [{ smind.services = services; }]; }).config;
+  indexingDefaults = { defaultEnabled = true; allowOptIn = false; allowOptOut = false; };
+  enabledFlags = { defaultEnabled = false; allowOptIn = true; allowOptOut = true; };
+  systemIndexing = systemWith (lib.genAttrs names (name: {
+    indexing = enabledFlags // lib.optionalAttrs (name == "chronicle") {
+      annotationSessions = 2;
+      annotationContinuations = true;
+    };
+  }));
+  systemCommand = c: name: lib.last (lib.splitString " " c.systemd.services.${name}.serviceConfig.ExecStart);
+  hmIndexing = hm {
+    smind.hm.services.agentic.haystack.indexing.allowOptIn = true;
+    smind.hm.services.agentic.manure.indexing.allowOptOut = true;
+    smind.hm.services.chronicle.settings.indexing = enabledFlags // { annotationContinuations = true; };
+  };
+  hmJson = c: name: if name == "chronicle" then c.lib.ponygirls.chronicleServer.serverConfig.value
+    else c.lib.ponygirls.agenticServices."${name}Config".value;
 in
+assert lib.all (name: !(hmJson base name ? indexing)) names;
+assert lib.all (name: base.smind.hm.services.agentic.${name}.indexing == indexingDefaults) [ "haystack" "manure" ];
+assert (hmJson hmIndexing "haystack").indexing == { allowOptIn = true; };
+assert (hmJson hmIndexing "manure").indexing == { allowOptOut = true; };
+assert (hmJson hmIndexing "chronicle").indexing == enabledFlags // { annotationContinuations = true; };
+assert lib.all (name: lib.getAttrs (builtins.attrNames indexingDefaults) system.smind.services.${name}.indexing == indexingDefaults) names;
+assert !(builtins.tryEval (systemWith { haystack.indexing.allowOptIn = "true"; }).smind.services.haystack.indexing.allowOptIn).success;
+assert !(builtins.tryEval (hm { smind.hm.services.agentic.manure.indexing.defaultEnabled = null; }).smind.hm.services.agentic.manure.indexing.defaultEnabled).success;
 assert lib.all (a: a.assertion) base.assertions;
 assert lib.filter (name: lib.hasSuffix "-postgres" name) (builtins.attrNames serviceUnits)==["ponygirls-postgres"];
 assert !(serviceUnits?ivm-postgres) && !(serviceUnits?chronicle-postgres);
@@ -90,7 +119,13 @@ assert !(system.systemd.services.chronicle-migrate.serviceConfig?SuccessExitStat
 assert lib.all (status: !(builtins.elem status system.systemd.services.chronicle.serviceConfig.SuccessExitStatus)) [1 137 "SIGKILL"];
 assert !(serviceUnits.chronicle-migrate.Service?SuccessExitStatus);
 assert serviceUnits.chronicle.Service.SuccessExitStatus==[143]; # Preexisting Chronicle HM policy remains unchanged.
-pkgs.runCommand "shared-three-service-provider-module-composition" {} ''
+pkgs.runCommand "shared-three-service-provider-module-composition" { nativeBuildInputs = [ pkgs.jq ]; } ''
+  manureTemplate() { sed -nE 's/^[[:blank:]]*TEMPLATE=([^ ]+).*$/\1/p' "$1"; }
+  jq -e 'has("indexing") | not' ${systemCommand system "haystack"}
+  jq -e 'has("indexing") | not' "$(manureTemplate ${systemCommand system "manure"})"
+  jq -e '.indexing == {defaultEnabled:false,allowOptIn:true,allowOptOut:true}' ${systemCommand systemIndexing "haystack"}
+  jq -e '.indexing == {defaultEnabled:false,allowOptIn:true,allowOptOut:true}' "$(manureTemplate ${systemCommand systemIndexing "manure"})"
+  jq -e '.indexing == {defaultEnabled:false,allowOptIn:true,allowOptOut:true,annotationSessions:2,embeddingRequests:8,embeddingBatchSize:16,annotationContinuations:true}' ${systemCommand systemIndexing "chronicle"}
   mkdir "$out"
   printf '%s\n' 'Actual HM+NixOS three-service modules: one provider, independent database/migration units, model-independent migrations, app-disable/provider retention and unrelated-package restart identity.' > "$out/scope"
 ''

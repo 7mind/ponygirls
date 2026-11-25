@@ -10,6 +10,7 @@ let
   inherit (lib) mkOption mkEnableOption types;
   cfg = config.smind.hm.services.agentic;
   accounts = import ../lib/service-account-options.nix { inherit lib; };
+  indexingPolicy = import ../lib/service-indexing-options.nix { inherit lib; };
   str =
     default: description:
     mkOption {
@@ -157,6 +158,7 @@ in
       package = package (pkgs.callPackage ../pkg/haystack/package.nix { squishLib = inputs.squish.lib; });
       agentTokenFile = runtimePath "Absolute runtime 43-character agent token file. Existing token mismatches fail closed without rotation.";
       database = import ../lib/service-database-options.nix { inherit lib; name = "haystack"; };
+      indexing = indexingPolicy.options;
       retrieval = {
         policy = str "operator-approved-metadata-v1" "Explicit metadata projection policy identity.";
         includeMetadata = mkOption { type = types.bool; default = true; };
@@ -181,6 +183,7 @@ in
       package = package (pkgs.callPackage ../pkg/manure/package.nix { squishLib = inputs.squish.lib; });
       agentTokenFile = runtimePath "Absolute runtime 43-character agent token file. Existing token mismatches fail closed without rotation.";
       database = import ../lib/service-database-options.nix { inherit lib; name = "manure"; };
+      indexing = indexingPolicy.options;
       legacyOrigins = strings "Additional allowed backend API origins.";
       dataDirectory = str "${cfg.stateDirectory}/manure" "Explicit payload root, independently migratable from the existing credentials/state directory. Offline destination payloads typically live at DEST/data.";
       embedding = import ../lib/embedding-options.nix { inherit lib; extraOptions = {

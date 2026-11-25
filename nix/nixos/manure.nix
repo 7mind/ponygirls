@@ -35,6 +35,7 @@
 let
   cfg = config.smind.services.manure;
   accounts = import ../lib/service-account-options.nix { inherit lib; };
+  indexingPolicy = import ../lib/service-indexing-options.nix { inherit lib; };
 
   # Credential names are sanitized derivations of user/token ids (no
   # secrets in the store; systemd loads the digest files listed here).
@@ -137,6 +138,7 @@ let
   } // lib.optionalAttrs (cfg.rootBindingMode != "strict") {
     root_binding.mode = cfg.rootBindingMode;
   } // lib.optionalAttrs (cfg.contentSuffix != null) { content_suffix = cfg.contentSuffix; }
+    // indexingPolicy.render cfg.indexing
     // accounts.renderAccounts accounts.accountsJsonKeys.snake cfg.accounts "/run/credentials/manure.service/${accountsKeyCredName}";
 
   templateJson = pkgs.writeText "manure-config.template.json" (builtins.toJSON serverTemplate);
@@ -384,6 +386,7 @@ in
       description = "Declarative users, optional human browser credentials and immutable configured API token digests. Password-only humans may have no configured tokens; agent users remain token-only.";
     };
     accounts = accounts.accountsOptions { serviceName = "Manure"; host = if cfg.apiOrigin == null then null else apiHost; };
+    indexing = indexingPolicy.options;
     storageQuotaBytes = lib.mkOption { type = lib.types.ints.positive; default = 21474836480; description = "Atomic reservation cap (20 GiB)."; };
     chunkBytes = lib.mkOption { type = lib.types.ints.positive; default = 1048576; description = "Server-dictated chunk size (256 KiB–4 MiB)."; };
     maxFileBytes = lib.mkOption { type = lib.types.ints.positive; default = 536870912; description = "Per-file cap (512 MiB)."; };
