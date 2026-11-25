@@ -62,7 +62,7 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
             case Some(attempt) if attempt.requestId==open.requestId => state(attempt)
             case Some(_) => throw DomainError("upload-busy","another upload of this source is in progress")
             case None =>
-              db.profiles.resolve(OwnerTargets.read(c,owner,true).profile)
+              db.ingestTarget(c,owner)
               start(c,owner,key,open,digest)
           }
       }
@@ -254,8 +254,7 @@ final class Uploads(db: Database,config: Config,policy: UploadPolicy) {
     // An open refuses a source at the largest revision: only an attempt an earlier server opened can declare it.
     else if(open.expectedRevision>=PostgresArchive.maxRevision) failed("too-large",PostgresArchive.revisionLimit)
     else {
-      val target=OwnerTargets.read(c,owner,true)
-      db.profiles.resolve(target.profile)
+      val target=db.ingestTarget(c,owner)
       Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key) VALUES(?,?,?) ON CONFLICT(owner,source_key) DO NOTHING",a.sessionId,owner,a.key)
       def source(lock: String): Int = Sql.one(c,s"SELECT id,revision,tombstone FROM ch_sources WHERE owner=? AND source_key=?$lock",owner,a.key) { r =>
         Check(!r.getBoolean("tombstone"),"gone",purgedSource)

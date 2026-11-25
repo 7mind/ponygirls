@@ -23,6 +23,13 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
   private def publicationTimeout: FiniteDuration = config.indexing.publicationTimeout(config.databaseLimits)
   private def admitted[A](wait: FiniteDuration)(work: => A): A = if(lane==Database.Lane.Gated) gate.run(wait)(work) else work
   private[chronicle] val indexingDefaultEnabled: Boolean = config.indexingPolicy.defaultEnabled
+  /** Keep the verified target on durable ingest receipts. The raw admission may park an obsolete target, but it
+    * never changes it. Preference is read only for this admission decision; claim will check it independently. */
+  private[chronicle] def ingestTarget(c: Connection,owner: String): OwnerTarget = {
+    val target=OwnerTargets.read(c,owner,true)
+    if(!profiles.knownProfiles(target.profile) && ChronicleIndexing.allows(c,indexingDefaultEnabled,owner)) profiles.resolve(target.profile)
+    target
+  }
   def transaction[A](f: Connection => A): A = admitted(publicationTimeout)(transactions.transaction(f))
   def extendedTransaction[A](timeout: FiniteDuration)(f: Connection => A): A = admitted(publicationTimeout)(transactions.extendedTransaction(timeout)(f))
   def transactionWithin[A](deadline: Deadline)(f: Connection => A): A = admitted(deadline.timeLeft.min(publicationTimeout))(transactions.transactionWithin(deadline)(f))
@@ -315,8 +322,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
         case Some(receipt) => receipt
         case None =>
           Uploads.admitIngest(c,owner,key)
-          val target=OwnerTargets.read(c,owner,true)
-          db.profiles.resolve(target.profile)
+          val target=db.ingestTarget(c,owner)
           Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key) VALUES(?,?,?) ON CONFLICT(owner,source_key) DO NOTHING",UUID.randomUUID(),owner,key)
           def source(lock: String): (UUID,Int) = Sql.one(c,s"SELECT id,revision,tombstone FROM ch_sources WHERE owner=? AND source_key=?$lock",owner,key) { x =>
             Check(!x.getBoolean("tombstone"),"gone","source purged; use a new collector namespace to restore")

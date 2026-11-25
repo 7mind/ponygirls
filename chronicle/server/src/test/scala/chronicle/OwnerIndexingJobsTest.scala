@@ -69,6 +69,48 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
     }
   }}
 
+  test("Effectual GoodCommunication regression: a parked owner archives new snapshots and uploads despite an unexecutable retained target") { fixture { (config,db,_,catalog) =>
+    val request=Fixtures.snapshot()
+    val content=UploadFixtures.header(3)++UploadFixtures.pi("u1","s","user","synthetic upload after rotation",1)
+    def declaration()=UploadFixtures.declaration(UploadFixtures.source(),0,content,None)
+    val legacy=new Uploads(db,config,UploadPolicy.production)
+    val started=legacy.open("a",declaration())
+    UploadFixtures.send(legacy,"a",started.uploadId,UploadFixtures.part(0,content))
+    val rotated=config.copy(annotation=config.annotation.copy(revision="synthetic-rotation"))
+    val newCatalog=IndexProfileCatalog.current(rotated)
+    assert(!newCatalog.knownProfiles(catalog.preferred.profile))
+    Using.resource(new Database(rotated,newCatalog)) { on =>
+      on.initialize()
+      val archive=new PostgresArchive(on,rotated)
+      val uploads=new Uploads(on,rotated,UploadPolicy.production)
+      assertEquals(intercept[DomainError](archive.ingest("a",request)).code,"unavailable")
+      assertEquals(intercept[DomainError](uploads.open("a",declaration())).code,"unavailable")
+      assertEquals(intercept[DomainError](uploads.commit("a",started.uploadId)).code,"unavailable")
+    }
+    val parked=rotated.copy(indexingPolicy=rotated.indexingPolicy.copy(defaultEnabled=false))
+    Using.resource(new Database(parked,newCatalog)) { off =>
+      val archive=new PostgresArchive(off,parked)
+      val uploads=new Uploads(off,parked,UploadPolicy.production)
+      val direct=archive.ingest("a",request)
+      val continued=uploads.commit("a",started.uploadId)
+      val opened=uploads.open("a",declaration())
+      UploadFixtures.send(uploads,"a",opened.uploadId,UploadFixtures.part(0,content))
+      val fresh=uploads.commit("a",opened.uploadId)
+      assertEquals(archive.ingest("a",request),direct)
+      assertEquals(uploads.commit("a",started.uploadId),continued)
+      assertEquals(archive.raw("a",direct.sessionId,None).files,request.files)
+      for(receipt <- List(continued,fresh))
+        assertEquals(archive.raw("a",receipt.sessionId,Some(1)).files.map(_.content).mkString,content.raw)
+      for(receipt <- List(direct,continued,fresh)) {
+        assertEquals(physical(off,receipt.jobId),("Queued",0))
+        assertEquals(off.transaction(c => Sql.one(c,"SELECT profile FROM ch_jobs WHERE id=?",receipt.jobId)(_.getString(1))),Some(catalog.preferred.profile))
+      }
+      assertEquals(archive.claim(newCatalog.knownProfiles,ClaimScope.AllOwners,300),None)
+      enabled(off,parked)
+      assertEquals(archive.claim(newCatalog.knownProfiles,ClaimScope.AllOwners,300),None,"opting in alone does not retarget an obsolete profile")
+    }
+  }}
+
   test("Effectual GoodCommunication: opt-out rejects rerun, bulk retry and rebuild without changing jobs; pre-toggle plans cannot execute after re-enable") { fixture { (config,db,archive,catalog) =>
     val auth=new Auth(db,config)
     val (_,cookie)=auth.login(LoginRequest("a","synthetic"))
