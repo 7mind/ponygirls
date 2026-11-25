@@ -50,6 +50,8 @@ function fixturePage(rows, cursor, limit, key) {
   return { rows: rows.slice(offset, offset + limit), next: offset + limit < rows.length ? Buffer.from(JSON.stringify([key, offset + limit])).toString('base64url') : undefined };
 }
 function leaseState(item) { return item.leaseExpiresAt === undefined ? 'unleased' : item.job.state !== api.JobState.Running ? 'inactive' : item.leaseActive ? 'active' : 'expired'; }
+// The server order of the waiting reasons (ActivityQueueSql.reasonOrder).
+const WAITING_REASONS = ['IndexingOff', 'AwaitingReclaim', 'RunningWithoutLease', 'LeaseExhaustedPending', 'LeaseExpiredAwaitingReclaim', 'Held', 'BlockedByOlderRevision', 'AwaitingLargeLane', 'AwaitingLargePermit', 'Queued'];
 export class ChronicleFixture {
   #observers = new Set();
   #changed() { for (const observer of [...this.#observers]) observer(); }
@@ -70,8 +72,10 @@ export class ChronicleFixture {
   jobs = [new api.JobInfo(ID.job, ID.session, 2, api.JobState.Failed, 3, 'Embedding provider unavailable; archived source is preserved.', 0, undefined, undefined)];
   archiveRowCount = 1; archiveRows = undefined; archiveExcluded = new Set(); archiveFailure = null; holdArchive = false; holdArchiveCursor = false; pendingArchive = []; archiveRelevanceMissing = false;
   activityJobs = undefined; activityCollectors = undefined; collectorExpressions = new Map(); jobExpressions = new Map(); activityFailure = null;
-  // The owner's claim-order summary (ActivityResult.queue); undefined: a server that reports none.
-  claimQueue = undefined;
+  // The owner's claim-order summary (ActivityResult.queue): a server of the claim-order release (undefined: an older one).
+  // The claim order a job list reports (default: the summary's).
+  jobsClaimOrder = undefined;
+  claimQueue = new api.ActivityQueue(api.ActivityClaimOrder.SourceId, ...Array.from({ length: 3 }, () => new api.ActivityClassQueue(0n, 0n, 0n, 0n, undefined)), 0n, undefined);
   holdSessions = false; sessionHeadSnapshot = undefined; pendingSessions = [];
   holdCollectorCursor = false; holdJobCursor = false; pendingCollectors = []; pendingJobs = [];
   targetProfile = 'target-profile'; jobFences = new Map(); bulkPayloads = new Map(); bulkApplyExecutions = 0; bulkDropBeforeCommit = false; bulkDropReply = false; bulkConflictOnce = false; bulkPreviewDenied = false; bulkApplyDenied = false; retryCountsOverride = undefined; messageCount = 87; lateMessageId = 'm65'; holdLocators = false; pendingLocators = [];
@@ -205,6 +209,8 @@ export class ChronicleFixture {
       case api.ActivityJobSort.JobId: return row.job.id;
       case api.ActivityJobSort.SessionId: return row.job.sessionId;
       case api.ActivityJobSort.WaitingSince: return row.waitingSince === undefined ? undefined : Date.parse(row.waitingSince);
+      case api.ActivityJobSort.JobClass: return row.bulk === undefined ? undefined : row.bulk ? 'bulk' : 'fresh';
+      case api.ActivityJobSort.WaitingReason: { const index = WAITING_REASONS.findIndex(name => row.waiting instanceof api[`ActivityJobWaiting_${name}`]); return index < 0 ? undefined : index + 1; }
       default: throw new Error('Unknown fixture job sort');
     }
   }
@@ -229,7 +235,7 @@ export class ChronicleFixture {
     const selected = query.expression === '' ? scoped : scoped.filter(row => this.jobExpressions.get(query.expression).includes(row.job.id));
     const rows = ordered(selected, row => this.jobValue(row, query.sort), row => row.job.id, query.direction);
     const page = fixturePage(rows, query.cursor, query.limit, JSON.stringify(['jobs', this.user.id, query.collectorId, query.scope, query.expression, query.sort, query.direction]));
-    return new api.ActivityJobsResult('2026-10-26T12:00:00Z', page.rows, BigInt(rows.length), page.next);
+    return new api.ActivityJobsResult('2026-10-26T12:00:00Z', page.rows, BigInt(rows.length), page.next, this.jobsClaimOrder ?? (this.claimQueue === undefined ? undefined : this.claimQueue.claimOrder));
   }
   refreshActivityCounts() { if (this.activityCollectors !== undefined) this.activityCollectors = this.activityCollectors.map(collector => { const rows = this.jobRows.filter(row => row.collectorId === collector.collectorId); return collector.with({ current: this.counts(rows.filter(row => row.classification === api.ActivityJobClass.Current)), historical: this.counts(rows.filter(row => row.classification !== api.ActivityJobClass.Current)) }); }); }
   retryPlan() {

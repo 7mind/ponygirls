@@ -301,7 +301,7 @@ abstract class ActivityContract extends munit.FunSuite {
     val varied=timed.copy(jobs=timed.jobs.map { j =>
       val n=j.info.id.getLeastSignificantBits.toInt
       j.copy(info=j.info.copy(attempts=n%3,completedWindows=n%2,totalWindows=if(n%3==0) None else Some(n%4+2),error=if(n%3==0) None else Some(if(n%2==0) "zETA" else "Alpha")),
-        waitingSince=if(n%4==0) None else Some(now.minusSeconds((n%3).toLong*60)))
+        waitingSince=if(n%4==0) None else Some(now.minusSeconds((n%3).toLong*60)),bulk=if(n%3==0) Some(true) else if(n%3==1) Some(false) else None)
     })
     val groups=List(
       ExpectedJobSort(ActivityJobSort.LastTimestamp,List(List(10),List(8),List(7),List(2,4,5),List(1,3)),List(6,9)),
@@ -319,8 +319,10 @@ abstract class ActivityContract extends munit.FunSuite {
       ExpectedJobSort(ActivityJobSort.Classification,List(List(1,5,6,7,8,9),List(3,10),List(2),List(4)),Nil),
       ExpectedJobSort(ActivityJobSort.JobId,(1 to 10).map(n => List(n)).toList,Nil),
       ExpectedJobSort(ActivityJobSort.SessionId,List(List(1,2,3,4))++(5 to 10).map(n => List(n)).toList,Nil),
-      ExpectedJobSort(ActivityJobSort.WaitingSince,List(List(2,5),List(1,7,10),List(3,6,9)),List(4,8)))
-    assertEquals(groups.map(_.sort).toSet,ActivityJobSort.all.toSet)
+      ExpectedJobSort(ActivityJobSort.WaitingSince,List(List(2,5),List(1,7,10),List(3,6,9)),List(4,8)),
+      ExpectedJobSort(ActivityJobSort.JobClass,List(List(3,6,9),List(1,4,7,10)),List(2,5,8)))
+    // The order of the waiting reason is the scheduler's (PostgreSQL): ActivityClaimOrderTest.
+    assertEquals(groups.map(_.sort).toSet,ActivityJobSort.all.toSet-ActivityJobSort.WaitingReason)
     withIndex(varied) { index => groups.foreach { expectation => List(SortDirection.Asc,SortDirection.Desc).foreach { direction =>
       val expected=(if(direction==SortDirection.Asc) expectation.groups else expectation.groups.reverse).flatten++expectation.nulls
       val query=jobsQuery(None,ActivityJobScope.All,None,1).copy(sort=expectation.sort,direction=direction)
@@ -586,6 +588,8 @@ private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) exte
     case ActivityJobSort.JobId => text(j.job.id.toString)
     case ActivityJobSort.SessionId => text(j.job.sessionId.toString)
     case ActivityJobSort.WaitingSince => time(j.waitingSince)
+    case ActivityJobSort.JobClass => j.bulk.flatMap(bulk => text(if(bulk) "bulk" else "fresh"))
+    case ActivityJobSort.WaitingReason => None
   }
   private def collectorKey(c: ActivityCollector,sort: ActivityCollectorSort): Option[Value] = sort match {
     case ActivityCollectorSort.CollectorId => text(c.collectorId)
@@ -628,6 +632,8 @@ private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) exte
   private def position(value: ActivityPosition,kind: ActivityPositionKind): Option[Value] = value.value.map { v => if(kind==ActivityPositionKind.Count || kind==ActivityPositionKind.Time) Value.Number(BigDecimal(v)) else Value.Text(v) }
   private def jobOrder(sort: ActivityJobSort): ActivityOrder = sort match {
     case ActivityJobSort.LastTimestamp | ActivityJobSort.LeaseExpiresAt | ActivityJobSort.WaitingSince => ActivityOrder("",ActivityPositionKind.Time,true)
+    case ActivityJobSort.JobClass => ActivityOrder("",ActivityPositionKind.Text,true)
+    case ActivityJobSort.WaitingReason => ActivityOrder("",ActivityPositionKind.Count,true)
     case ActivityJobSort.TotalWindows => ActivityOrder("",ActivityPositionKind.Count,true)
     case ActivityJobSort.Revision | ActivityJobSort.Attempts | ActivityJobSort.CompletedWindows => ActivityOrder("",ActivityPositionKind.Count,false)
     case ActivityJobSort.State => ActivityOrder("",ActivityPositionKind.State,false)
@@ -683,6 +689,6 @@ private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) exte
     val remaining=filtered.filter(j => after.forall { p => val compared=compare(jobKey(j,q.sort),position(p,order.kind),q.direction); compared>0 || (compared==0 && j.job.id.toString>p.id) })
     val selected=remaining.take(q.limit)
     val next=if(remaining.size>q.limit) Some(ActivityCursor.encodeJob(q,owner,order,ActivityPosition(wire(jobKey(selected.last,q.sort)),selected.last.job.id.toString),selected.last.job.revision)) else None
-    ActivityJobsResult(now.toString,selected,filtered.size.toLong,next)
+    ActivityJobsResult(now.toString,selected,filtered.size.toLong,next,Some(ActivityClaimOrder.SourceId))
   }
 }

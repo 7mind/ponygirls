@@ -344,6 +344,72 @@ package chronicle.api {
     }
     
     
+    final case class RunningWithoutLease(
+      
+    ) extends ActivityJobWaiting with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = ActivityJobWaiting.RunningWithoutLease.baboonDomainVersion
+      override def baboonDomainIdentifier: String = ActivityJobWaiting.RunningWithoutLease.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = ActivityJobWaiting.RunningWithoutLease.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = ActivityJobWaiting.RunningWithoutLease.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = ActivityJobWaiting.RunningWithoutLease.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = ActivityJobWaiting.RunningWithoutLease.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = ActivityJobWaiting.RunningWithoutLease.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = ActivityJobWaiting.RunningWithoutLease.baboonAdtType
+    }
+    
+    object RunningWithoutLease {
+      def baboonDomainVersion: String = "1.9.0"
+      def baboonDomainIdentifier: String = "chronicle.api"
+      def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#ActivityJobWaiting]#RunningWithoutLease"
+      private lazy val _baboonSameInVersions: List[String] = List("1.9.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.9.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.9.0", "prefix-compact" -> "1.9.0", "prefix-any-mode" -> "1.9.0", "identical" -> "1.9.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "chronicle.api/:#ActivityJobWaiting"
+      def baboonAdtType: _root_.java.lang.Class[?] = ActivityJobWaiting.getClass
+      def codecJson: BaboonJsonCodec[ActivityJobWaiting.RunningWithoutLease] = ActivityJobWaiting.RunningWithoutLease_JsonCodec.instance
+    }
+    
+    object RunningWithoutLease_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[ActivityJobWaiting.RunningWithoutLease, BaboonJsonCodec[ActivityJobWaiting.RunningWithoutLease]] {
+      def encode(ctx: BaboonCodecContext, value: ActivityJobWaiting.RunningWithoutLease): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, ActivityJobWaiting.RunningWithoutLease] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(_) => Right(ActivityJobWaiting.RunningWithoutLease())
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to RunningWithoutLease: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = ActivityJobWaiting.RunningWithoutLease.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = ActivityJobWaiting.RunningWithoutLease.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = ActivityJobWaiting.RunningWithoutLease.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = ActivityJobWaiting.RunningWithoutLease.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = ActivityJobWaiting.RunningWithoutLease.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[ActivityJobWaiting.RunningWithoutLease]] = Lazy(ActivityJobWaiting.RunningWithoutLease_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[ActivityJobWaiting.RunningWithoutLease]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[ActivityJobWaiting.RunningWithoutLease] = LazyInstance.value
+    }
+    
+    
     final case class Held(
       nextAttemptAt: String
     ) extends ActivityJobWaiting with BaboonAdtMemberMeta with BaboonGeneratedLatest {
@@ -639,6 +705,8 @@ package chronicle.api {
         
         case leaseexhaustedpending: ActivityJobWaiting.LeaseExhaustedPending => Json.obj("LeaseExhaustedPending" -> ActivityJobWaiting.LeaseExhaustedPending_JsonCodec.instance.encode(ctx, leaseexhaustedpending))
         
+        case runningwithoutlease: ActivityJobWaiting.RunningWithoutLease => Json.obj("RunningWithoutLease" -> ActivityJobWaiting.RunningWithoutLease_JsonCodec.instance.encode(ctx, runningwithoutlease))
+        
         case held: ActivityJobWaiting.Held => Json.obj("Held" -> ActivityJobWaiting.Held_JsonCodec.instance.encode(ctx, held))
         
         case blockedbyolderrevision: ActivityJobWaiting.BlockedByOlderRevision => Json.obj("BlockedByOlderRevision" -> ActivityJobWaiting.BlockedByOlderRevision_JsonCodec.instance.encode(ctx, blockedbyolderrevision))
@@ -675,6 +743,9 @@ package chronicle.api {
                 
                 case "LeaseExhaustedPending" =>
                   ActivityJobWaiting.LeaseExhaustedPending_JsonCodec.instance.decode(ctx, json)
+                
+                case "RunningWithoutLease" =>
+                  ActivityJobWaiting.RunningWithoutLease_JsonCodec.instance.decode(ctx, json)
                 
                 case "Held" =>
                   ActivityJobWaiting.Held_JsonCodec.instance.decode(ctx, json)

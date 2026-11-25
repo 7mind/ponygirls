@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ActivityClaimOrder, ActivityJob, ActivityJobClass, ActivityJobWaiting_AwaitingLargeLane, ActivityJobWaiting_AwaitingLargePermit, ActivityJobWaiting_AwaitingReclaim, ActivityJobWaiting_BlockedByOlderRevision, ActivityJobWaiting_Held, ActivityJobWaiting_IndexingOff, ActivityJobWaiting_LeaseExhaustedPending, ActivityJobWaiting_LeaseExpiredAwaitingReclaim, ActivityJobWaiting_Queued, Completion, ContentView, JobInfo, JobState, Metadata, SessionInfo, SourceFormat, SourceIdentity, type ActivityJobWaiting } from '../src/api.ts';
-import { ahead, jobClass, orderDescription, stateLabel, why } from '../src/activity/claim-order.ts';
+import { ActivityClaimOrder, ActivityJob, ActivityJobClass, ActivityJobWaiting_AwaitingLargeLane, ActivityJobWaiting_AwaitingLargePermit, ActivityJobWaiting_AwaitingReclaim, ActivityJobWaiting_BlockedByOlderRevision, ActivityJobWaiting_Held, ActivityJobWaiting_IndexingOff, ActivityJobWaiting_LeaseExhaustedPending, ActivityJobWaiting_LeaseExpiredAwaitingReclaim, ActivityJobWaiting_Queued, ActivityJobWaiting_RunningWithoutLease, Completion, ContentView, JobInfo, JobState, Metadata, SessionInfo, SourceFormat, SourceIdentity, type ActivityJobWaiting } from '../src/api.ts';
+import { UNCLASSIFIED_NOTE, ahead, jobClass, orderDescription, stateLabel, waitedFor, waitedSince, why } from '../src/activity/claim-order.ts';
 
 // Specified: the wording of the claim-order reasons (approved mockup of 25 Nov) from the server's reason, class and count.
 const ID = '00000000-0000-4000-8000-000000000001';
@@ -27,12 +27,12 @@ test('every reason under the waiting order, with the count in its class queue or
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_Held('2026-11-25T17:30:00Z'), { error: 'model-http' }), W), 'Retrying after @17:30 (back-off) | Prior: model-http · rejoins the fresh order at @17:30');
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_BlockedByOlderRevision(6)), W), 'Waiting for older revision r6 (still running) | Joins the fresh order when r6 ends');
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_IndexingOff()), W), 'Indexing is turned off for your account | Waits until indexing is turned on again');
-  assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_Queued(), { bulk: undefined }), W), 'Queued | Claimable · lane 0 takes it in waiting order', 'no count where the order has none');
+  assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_Queued(), { bulk: undefined }), W), 'Queued | Claimable · lane 0 takes it', 'no count where the order has none');
 });
 test('the source-id order names the claim order and the permit, never a class queue; an unknown order names neither', () => {
   const S = ActivityClaimOrder.SourceId;
-  assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_Queued(), { ahead: 5n, bulk: true }), S), 'Queued · 5 ahead in the claim order | Claimable · claimed in owner, then source order');
-  assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_AwaitingLargePermit(), { ahead: 9n, total: 150 }), S), 'Waiting for the large-job permit · 9 ahead in the claim order | Sized 150 windows · only a lane holding the large-job permit takes it');
+  assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_Queued(), { ahead: 5n, bulk: true }), S), 'Queued · 5 ahead in the claim order | Claimable · owner, then source order');
+  assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_AwaitingLargePermit(), { ahead: 9n, total: 150 }), S), 'Waiting for the large-job permit · 9 ahead | Sized 150 windows · only the lane with the permit takes it');
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_Queued(), { ahead: 5n }), undefined), 'Queued · 5 ahead in the claim order | Claimable');
   assert.equal(orderDescription(job(JobState.Queued, new ActivityJobWaiting_AwaitingLargePermit(), { ahead: 1n }), S), 'The lane holding the large-job permit · owner, then source ID');
   assert.equal(orderDescription(job(JobState.Queued, new ActivityJobWaiting_Queued(), { ahead: 1n, bulk: true }), ActivityClaimOrder.Waiting), 'Bulk lanes · oldest waiting since first, then source ID');
@@ -51,4 +51,33 @@ test('"N ahead" is a count with an explanation that names no one', () => {
   assert.equal(value!.text, `${9007199254740993n.toLocaleString()} ahead`);
   assert.match(value!.title, /jobs \(of all owners\) will be claimed before this one in the fresh order\. An order, not a time estimate/);
   assert.equal(ahead(job(JobState.Queued, new ActivityJobWaiting_Held('2026-11-25T17:30:00Z')), ActivityClaimOrder.Waiting), null);
+});
+test('how long a job has waited: minutes, hours and minutes, days and hours; never negative', () => {
+  const now = Date.parse('2026-11-25T17:14:00Z');
+  assert.deepEqual(['2026-11-25T17:13:30Z', '2026-11-25T17:09:00Z', '2026-11-25T14:40:00Z', '2026-11-25T15:14:00Z', '2026-11-23T13:00:00Z', '2026-11-24T17:14:00Z', '2026-11-25T18:00:00Z'].map(since => waitedFor(since, now)),
+    ['under 1 min', '5 min', '2 h 34 min', '2 h', '2 d 4 h', '1 d', 'under 1 min']);
+  assert.equal(waitedFor('not a time', now), null);
+});
+test('the waiting start is a clock time today, a short date this year, a date before', () => {
+  const now = new Date(2026, 10, 25, 17, 14).getTime();
+  assert.match(waitedSince(new Date(2026, 10, 25, 14, 40).toISOString(), now), /^14:40$/);
+  assert.match(waitedSince(new Date(2026, 10, 24, 9, 5).toISOString(), now), /24.*09:05|09:05.*24/);
+  assert.match(waitedSince(new Date(2025, 0, 2, 9, 5).toISOString(), now), /2025/);
+});
+test('an unclassified job explains itself: queued before the claim order was installed', () => {
+  assert.equal(UNCLASSIFIED_NOTE, 'queued before the claim order was installed; the next server start classifies it');
+});
+test('a Running row without a valid lease is never labelled running, also without a scheduler reason (a historical attempt)', () => {
+  const historical = job(JobState.Running, undefined, { lease: '2026-11-25T16:00:00Z', active: false });
+  assert.deepEqual([stateLabel(historical).text, why(historical, ActivityClaimOrder.Waiting, time).main], ['Not running · lease ended', '—']);
+  assert.doesNotMatch(stateLabel(historical).status, /status-run/);
+  assert.equal(stateLabel(job(JobState.Running, undefined, {})).text, 'Not running · no lease');
+  const unleased = job(JobState.Running, new ActivityJobWaiting_RunningWithoutLease());
+  assert.deepEqual([stateLabel(unleased).text, line(unleased, ActivityClaimOrder.Waiting)], ['Running without a lease', 'Running without a lease | No claim takes a job without a lease · retry it']);
+});
+test('under today\'s order an ended lease over the large-job size is reclaimed by the permit lane only; under waiting by any lane', () => {
+  const large = job(JobState.Running, new ActivityJobWaiting_LeaseExpiredAwaitingReclaim(), { lease: '2026-11-25T16:54:00Z', total: 150, ahead: 2n });
+  assert.match(line(large, ActivityClaimOrder.SourceId), /\| Worker stopped renewing · the permit lane may reclaim it$/);
+  assert.match(line(large, ActivityClaimOrder.Waiting), /\| Worker stopped renewing · any lane may reclaim it$/);
+  assert.match(line(job(JobState.Running, new ActivityJobWaiting_LeaseExpiredAwaitingReclaim(), { lease: '2026-11-25T16:54:00Z', total: 100 }), ActivityClaimOrder.SourceId), /any lane may reclaim it$/);
 });

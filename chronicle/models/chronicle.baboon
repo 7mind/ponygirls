@@ -271,7 +271,7 @@ enum ActivityCollectorSort {
 
 enum ActivityJobSort {
   LastTimestamp Title Collector State Revision Profile Attempts CompletedWindows
-  TotalWindows LeaseExpiresAt LeaseState Reason Classification JobId SessionId WaitingSince
+  TotalWindows LeaseExpiresAt LeaseState Reason Classification JobId SessionId WaitingSince JobClass WaitingReason
 }
 
 data JobCounts {
@@ -315,6 +315,7 @@ adt ActivityJobWaiting {
   data AwaitingReclaim {}
   data LeaseExpiredAwaitingReclaim {}
   data LeaseExhaustedPending {}
+  data RunningWithoutLease {}
   data Held { nextAttemptAt: str }
   data BlockedByOlderRevision { revision: i32 }
   data AwaitingLargeLane {}
@@ -329,7 +330,7 @@ data ActivityJob {
 }
 
 data ActivityJobsResult {
-  observedAt: str jobs: lst[ActivityJob] total: i64 nextCursor: opt[str]
+  observedAt: str jobs: lst[ActivityJob] total: i64 nextCursor: opt[str] claimOrder: opt[ActivityClaimOrder]
 }
 
 data RetryFailedCounts {

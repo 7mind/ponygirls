@@ -50,16 +50,29 @@ private[chronicle] object ActivityMetadataCorpus {
   }
 }
 
+/** The claim order a deployment runs as Activity describes it: the mode and the number of worker lanes
+  * (`indexing.annotationSessions`), which decides whether today's order has a single rank for a job. */
+final case class ActivityClaimOrderView(mode: ClaimOrderMode,lanes: Int)
+object ActivityClaimOrderView {
+  def of(config: Config): ActivityClaimOrderView = ActivityClaimOrderView(ClaimOrderMode.of(config),config.indexing.annotationSessions)
+  /** Today's order with the default lanes (fixtures that do not configure a claim order). */
+  val default: ActivityClaimOrderView = ActivityClaimOrderView(ClaimOrderMode.SourceId,IndexingCapacity.defaults.annotationSessions)
+}
+
 /** Why each of the viewing owner's jobs is not running, and where the claim order in force puts it (claim-order spec §7,
-  * design note §6 and B6). The reason is the scheduler's own predicates (`Jobs.claimable`, `Jobs.sized`,
-  * `Jobs.invalidated`, `Jobs.leased`) on the STORED row, evaluated at the read's observation instant, in this precedence:
-  * a job that is not current (older revision, other profile) or finished has none; an owner whose indexing is off:
-  * `IndexingOff`; then a policy-invalidated attempt (`AwaitingReclaim`), a valid lease (running: none), an ended lease
-  * (`LeaseExhaustedPending` at the attempt limit, else `LeaseExpiredAwaitingReclaim`: never shown as running), a back-off
-  * (`Held`), an older revision still Running (`BlockedByOlderRevision`), a deferred large job (`AwaitingLargeLane` /
-  * `AwaitingLargePermit` by the claim order), claimable (`Queued`). Everything here reads the viewing owner's own jobs
-  * (`queue`) except [[ahead]], which COUNTS the candidates of every eligible owner (`claim_queue`) and returns nothing
-  * else of them. */
+  * design note §6 and B6). Everything is evaluated on the STORED rows at the read's observation instant with the
+  * scheduler's own predicates (`Jobs.claimable`, `Jobs.sized`, `Jobs.invalidated`, `Jobs.leased`, the claim's
+  * older-Running anti-check after its `supersedeEndedLeases` phase; its `lease-exhausted` cleanup ends only jobs that
+  * `Jobs.claimable` already excludes).
+  * Reason precedence (first match): not current (older revision, other profile) or finished: none; owner's indexing off:
+  * `IndexingOff`; a policy-invalidated attempt: `AwaitingReclaim`; a valid lease: none (running); Running without a lease:
+  * `RunningWithoutLease` (no claim compares a NULL lease, no cleanup ends it); an ended lease at the attempt limit:
+  * `LeaseExhaustedPending`; an ended lease: `LeaseExpiredAwaitingReclaim`; a back-off: `Held`; an older revision Running
+  * that the claim's first phase keeps (valid lease, indexing epoch not behind): `BlockedByOlderRevision`; a deferred large
+  * job: `AwaitingLargeLane` / `AwaitingLargePermit` by the claim order; claimable: `Queued`.
+  * Whether a claim may take a job now (`candidate`) is decided independently of the reason, by the claim's own
+  * predicates. Everything reads the viewing owner's own jobs (`queue`) except [[rank]], which ranks the candidates of
+  * every eligible owner (`claim_queue`) and leaves only a number. */
 private[chronicle] object ActivityQueueSql {
   private val at="(SELECT at FROM observed)"
   /** A scheduler predicate of [[Jobs]] at the read's observation instant rather than the statement's clock, so that a
@@ -68,19 +81,22 @@ private[chronicle] object ActivityQueueSql {
     Check(fragment.contains("clock_timestamp()"),"internal","scheduler predicate without its clock")
     fragment.replace("clock_timestamp()",at)
   }
-  /** The reasons under which a claim of the job's order may take it now. */
-  val candidates: List[String] = List("Queued","AwaitingLargeLane","AwaitingLargePermit","LeaseExpiredAwaitingReclaim","AwaitingReclaim")
   val large: List[String] = List("AwaitingLargeLane","AwaitingLargePermit")
   def list(values: List[String]): String = values.map(v => s"'$v'").mkString(",")
-  /** The reason of stored job `q` with `older` (the newest older revision of its source and profile still Running), for a
-    * job whose currency and owner eligibility are the SQL expressions `current` and `allowed`. */
-  private def reason(mode: ClaimOrderMode,current: String,allowed: String,owner: String): String = {
-    val epoch=ChronicleIndexing.epochOwnerSql(owner)
+  /** Older-revision Running jobs of `q`'s source and profile that the claim's first phase (`supersedeEndedLeases`) does not
+    * end: a valid lease and an indexing epoch not behind the owner's. */
+  private def blocker(q: String,epoch: String,select: String): String =
+    s"(SELECT $select FROM ch_jobs o WHERE o.session_id=$q.session_id AND o.profile=$q.profile AND o.state='Running' AND o.revision<$q.revision AND ${observed(Jobs.leased("o"))} AND o.indexing_epoch>=($epoch) OFFSET 0)"
+  /** The claim's candidate predicate on job `q` of an eligible owner whose indexing epoch is `epoch`: claimable and not
+    * held by an older Running revision. */
+  private def candidate(q: String,epoch: String): String = s"(${observed(Jobs.claimable(q,epoch))} AND NOT EXISTS${blocker(q,epoch,"1")})"
+  private def reason(mode: ClaimOrderMode,epoch: String): String = {
     val large=mode match { case ClaimOrderMode.SourceId => "AwaitingLargePermit"; case ClaimOrderMode.Waiting(_) => "AwaitingLargeLane" }
-    s"""CASE WHEN NOT ($current) OR q.state NOT IN('Queued','Running') THEN NULL
-      WHEN NOT ($allowed) THEN 'IndexingOff'
+    s"""CASE WHEN NOT j.is_current OR q.state NOT IN('Queued','Running') THEN NULL
+      WHEN NOT h.indexing_allowed THEN 'IndexingOff'
       WHEN ${Jobs.invalidated("q",epoch)} THEN 'AwaitingReclaim'
       WHEN ${observed(Jobs.leased("q"))} THEN NULL
+      WHEN q.state='Running' AND q.lease_until IS NULL THEN 'RunningWithoutLease'
       WHEN q.state='Running' AND q.attempts>=${Jobs.attemptLimit} THEN 'LeaseExhaustedPending'
       WHEN q.state='Running' THEN 'LeaseExpiredAwaitingReclaim'
       WHEN q.lease_until>$at THEN 'Held'
@@ -88,65 +104,67 @@ private[chronicle] object ActivityQueueSql {
       WHEN ${Jobs.sized("q")} THEN '$large'
       WHEN ${observed(Jobs.claimable("q",epoch))} THEN 'Queued' END"""
   }
-  private def columns(mode: ClaimOrderMode,current: String,allowed: String,owner: String): String =
-    s"""q.id,q.session_id,$owner AS owner,q.waiting_since,q.bulk,${Jobs.sized("q")} AS sized,
-      COALESCE(q.total_windows>${LargeJobs.windows},false) OR ${Jobs.sized("q")} AS permit_only,
-      CASE WHEN q.state='Queued' THEN q.lease_until END AS held_until,older.revision AS older_revision,${reason(mode,current,allowed,owner)} AS waiting"""
-  private val older="CROSS JOIN LATERAL (SELECT max(o.revision) AS revision FROM ch_jobs o WHERE o.session_id=q.session_id AND o.profile=q.profile AND o.state='Running' AND o.revision<q.revision) older"
-  /** `queue`: every job of the viewing owner (the `jobs` CTE of [[ActivityMetadataCorpus]]) with its order columns and
-    * reason. `claim_queue`: the claim candidates of every eligible owner (enabled, indexing allowed, target profile among
-    * the claimed ones, head job of a live source), the set the claim of [[Database]] chooses from; read only by [[ahead]].
-    * Its parameters are the claimed profiles, after those of the corpus. */
-  def cte(mode: ClaimOrderMode,profiles: Int,allowedSql: String): String = s""", queue AS MATERIALIZED (
-      SELECT reasoned.*,reasoned.waiting IN(${list(candidates)}) IS TRUE AS candidate FROM (
-        SELECT ${columns(mode,"j.is_current","h.indexing_allowed","h.owner")}
-        FROM jobs j JOIN heads h ON h.id=j.session_id JOIN ch_jobs q ON q.id=j.id $older) reasoned),
+  private val order="q.id,q.session_id,q.waiting_since,q.bulk"
+  private def sizes(q: String): String = s"${Jobs.sized(q)} AS sized,COALESCE($q.total_windows>${LargeJobs.windows},false) OR ${Jobs.sized(q)} AS permit_only"
+  /** `queue`: every job of the viewing owner (the `jobs` CTE of [[ActivityMetadataCorpus]]) with its order columns,
+    * reason and whether a claim may take it now. `eligible` and `claim_queue`: the owners a claim visits (enabled,
+    * indexing allowed, target profile among the claimed ones) with their indexing epochs, and their candidates (head job
+    * of a live source) — the set the claim chooses from; `ranked`: their positions ([[rank]]), computed once per
+    * statement. Parameters: the claimed profiles, after those of the corpus. */
+  def cte(view: ActivityClaimOrderView,profiles: Int,allowedSql: String): String = {
+    val epoch="e.epoch"
+    s""", queue AS MATERIALIZED (
+      SELECT $order,h.owner,${sizes("q")},CASE WHEN q.state='Queued' THEN q.lease_until END AS held_until,older.revision AS older_revision,
+        ${reason(view.mode,epoch)} AS waiting,COALESCE(j.is_current AND h.indexing_allowed AND ${candidate("q",epoch)},false) AS candidate
+      FROM jobs j JOIN heads h ON h.id=j.session_id JOIN ch_jobs q ON q.id=j.id
+      CROSS JOIN LATERAL (SELECT ${ChronicleIndexing.epochOwnerSql("h.owner")} AS epoch OFFSET 0) e
+      CROSS JOIN LATERAL ${blocker("q",epoch,"max(o.revision) AS revision")} older),
+    eligible AS MATERIALIZED (
+      SELECT t.owner,t.profile,${ChronicleIndexing.epochOwnerSql("t.owner")} AS epoch FROM ch_owner_targets t JOIN ch_users u ON u.id=t.owner AND u.enabled
+      WHERE t.profile IN(${List.fill(profiles)("?").mkString(",")}) AND $allowedSql),
     claim_queue AS MATERIALIZED (
-      SELECT reasoned.* FROM (
-        SELECT ${columns(mode,"true","true","s.owner")}
-        FROM ch_sources s JOIN ch_users u ON u.id=s.owner AND u.enabled JOIN ch_owner_targets t ON t.owner=s.owner
-        JOIN ch_jobs q ON q.session_id=s.id AND q.revision=s.revision AND q.profile=t.profile $older
-        WHERE NOT s.tombstone AND q.state IN('Queued','Running') AND t.profile IN(${List.fill(profiles)("?").mkString(",")}) AND $allowedSql) reasoned
-      WHERE reasoned.waiting IN(${list(candidates)}))"""
-  /** THE place where a job's position is counted (owner decision on the approved mockup, 25 Nov): the number of claim
-    * candidates of ALL eligible owners that the order in force takes before `row` — a count only: no id, title, owner or
-    * other attribute of another owner's job leaves this function. Narrowing it to the owner's own jobs (`queue` instead
-    * of `claim_queue`) or dropping it changes only this function. NULL (not shown) for a job that is not a candidate,
-    * and where the order is not one in use: an unclassified job (NULL `bulk`, an older image's row before the reseed)
-    * under `Waiting`.
-    * - `Waiting`: a sized job — sized candidates before it in lane 0's order; a fresh or bulk job — unsized candidates
-    *   of its class before it in its class lane's order; both by (waiting_since NULLS LAST, session_id).
-    * - `SourceId` (today's order: owner id, then source id): a job only the large-job permit may take (sized, or more
-    *   than LargeJobs.windows) — every candidate before it, the order of the lane holding the permit; any other job —
-    *   the candidates before it that a lane without the permit takes (it passes the permit-only ones). */
-  def ahead(mode: ClaimOrderMode,row: String): String = {
-    val o="ahead_of"
-    val (shown,before)=mode match {
-      case ClaimOrderMode.SourceId =>
-        (s"$row.candidate",s"($row.permit_only OR NOT $o.permit_only) AND ($o.owner<$row.owner OR ($o.owner=$row.owner AND $o.session_id<$row.session_id))")
-      case ClaimOrderMode.Waiting(_) =>
-        val order=s"CASE WHEN $row.sized THEN $o.sized ELSE NOT $o.sized AND $o.bulk=$row.bulk END"
-        val earlier=s"""CASE WHEN $o.waiting_since IS NULL THEN $row.waiting_since IS NULL AND $o.session_id<$row.session_id
-          WHEN $row.waiting_since IS NULL THEN true ELSE ($o.waiting_since,$o.session_id)<($row.waiting_since,$row.session_id) END"""
-        (s"$row.candidate AND ($row.sized OR $row.bulk IS NOT NULL)",s"($order) AND ($earlier)")
-    }
-    s"CASE WHEN $shown THEN (SELECT count(*) FROM claim_queue $o WHERE $before) END"
+      SELECT $order,e.owner,${sizes("q")}
+      FROM eligible e JOIN ch_sources s ON s.owner=e.owner AND NOT s.tombstone
+      JOIN ch_jobs q ON q.session_id=s.id AND q.revision=s.revision AND q.profile=e.profile
+      WHERE q.state IN('Queued','Running') AND ${candidate("q",epoch)}),
+    ranked AS MATERIALIZED (SELECT id,${rank(view)} AS rank FROM claim_queue)"""
   }
-  /** The first of the owner's jobs waiting for the large-job lane, in that lane's order. */
-  def firstLarge(mode: ClaimOrderMode): String = {
-    val order=mode match { case ClaimOrderMode.SourceId => "owner,session_id"; case ClaimOrderMode.Waiting(_) => "waiting_since NULLS LAST,session_id" }
-    s"SELECT * FROM queue WHERE waiting IN(${list(large)}) ORDER BY $order LIMIT 1"
+  /** THE place where a job's position is counted (owner decision on the approved mockup, 25 Nov): how many claim
+    * candidates of ALL eligible owners the order in force takes before the job — a number only: no id, title, owner or
+    * other attribute of another owner's job leaves this expression. Narrowing it to the owner's own jobs (PARTITION BY
+    * owner) or dropping it changes only this function. NULL (not shown) where the order in force gives no single rank:
+    * - `Waiting`: a sized job — its rank among sized candidates, lane 0's preferred order; a fresh or bulk job — among
+    *   the unsized candidates of its class, the order every lane takes that class in; by (waiting_since, session_id) as
+    *   the claim orders them (NULLS LAST). An unclassified job (taken only by lane 0's second step, mixed with every
+    *   class): none.
+    * - `SourceId` (owner, then source id): with one lane (it holds the large-job permit at every claim) every candidate
+    *   ranks over all; with more, only a job the permit is needed for (sized, or more than LargeJobs.windows) has a
+    *   rank — over all, the order of the lane holding the permit. Another job is taken by lanes with and without the
+    *   permit, whose orders differ: none. */
+  def rank(view: ActivityClaimOrderView): String = view.mode match {
+    case ClaimOrderMode.Waiting(_) =>
+      "CASE WHEN sized OR bulk IS NOT NULL THEN row_number() OVER (PARTITION BY CASE WHEN sized THEN 'sized' WHEN bulk THEN 'bulk' ELSE 'fresh' END ORDER BY waiting_since,session_id)-1 END"
+    case ClaimOrderMode.SourceId if view.lanes<=1 => "row_number() OVER (ORDER BY owner,session_id)-1"
+    case ClaimOrderMode.SourceId => "CASE WHEN permit_only THEN row_number() OVER (ORDER BY owner,session_id)-1 END"
   }
+  /** Of the owner's own jobs: those awaiting the large-job lane (permit), and the rank of the first of them. */
+  def largeLane(view: ActivityClaimOrderView): String =
+    s"""SELECT (SELECT count(*) FROM queue WHERE waiting IN(${list(large)})) AS awaiting,
+      (SELECT min(r.rank) FROM queue q JOIN ranked r ON r.id=q.id WHERE q.candidate AND q.waiting IN(${list(large)})) AS large_ahead"""
   /** Per class of the owner's own current unfinished jobs: waiting for any reason, claimable now, held, awaiting reclaim,
     * the oldest wait. */
   val classes: String = s"""SELECT CASE WHEN bulk THEN 'bulk' WHEN NOT bulk THEN 'fresh' ELSE 'unclassified' END AS class,
     count(*) FILTER (WHERE waiting IS NOT NULL) AS queued,count(*) FILTER (WHERE candidate) AS claimable,
     count(*) FILTER (WHERE waiting='Held') AS held,count(*) FILTER (WHERE waiting IN('AwaitingReclaim','LeaseExpiredAwaitingReclaim')) AS awaiting_reclaim,
     min(waiting_since) FILTER (WHERE waiting IS NOT NULL) AS oldest FROM queue GROUP BY 1"""
+  /** The server order of the "Why not running" column: the reasons in their precedence, then a job without one. */
+  val reasonOrder: List[String] = List("IndexingOff","AwaitingReclaim","RunningWithoutLease","LeaseExhaustedPending","LeaseExpiredAwaitingReclaim","Held","BlockedByOlderRevision","AwaitingLargeLane","AwaitingLargePermit","Queued")
+  def reasonOrdinal(column: String): String = s"CASE $column ${reasonOrder.zipWithIndex.map((name,i) => s"WHEN '$name' THEN ${i+1}").mkString(" ")} END"
   def waiting(value: Option[String],heldUntil: Option[Instant],older: Option[Int]): Option[ActivityJobWaiting] = value.map {
     case "Queued" => ActivityJobWaiting.Queued()
     case "IndexingOff" => ActivityJobWaiting.IndexingOff()
     case "AwaitingReclaim" => ActivityJobWaiting.AwaitingReclaim()
+    case "RunningWithoutLease" => ActivityJobWaiting.RunningWithoutLease()
     case "LeaseExpiredAwaitingReclaim" => ActivityJobWaiting.LeaseExpiredAwaitingReclaim()
     case "LeaseExhaustedPending" => ActivityJobWaiting.LeaseExhaustedPending()
     case "Held" => ActivityJobWaiting.Held(heldUntil.getOrElse(throw DomainError("internal","held job without its next attempt")).toString)
@@ -161,9 +179,10 @@ private[chronicle] object ActivityQueueSql {
   }
 }
 
-/** `mode` is the deployment's claim order (`ClaimOrderMode.of(config)`, bound in ChroniclePlugin); it decides the large-job
-  * reason and the order `ahead` counts in, nothing else. */
-final class PostgresActivity(db: Database,clock: Clock,mode: ClaimOrderMode=ClaimOrderMode.SourceId) extends ActivityIndex {
+/** `view` is the deployment's claim order (`ActivityClaimOrderView.of(config)`, bound in ChroniclePlugin); it decides the
+  * large-job reason and the rank `ahead` reports, nothing else. */
+final class PostgresActivity(db: Database,clock: Clock,view: ActivityClaimOrderView=ActivityClaimOrderView.default) extends ActivityIndex {
+  private val mode=view.mode
   import ActivityMetadataCorpus.parameters
   private val base=ActivityMetadataCorpus.base(ChronicleIndexing.allowsOwnerSql(db.indexingDefaultEnabled,"s.owner"))
   private val unicode="COLLATE pg_unicode_fast"
@@ -284,6 +303,8 @@ final class PostgresActivity(db: Database,clock: Clock,mode: ClaimOrderMode=Clai
     case ActivityJobSort.JobId => ActivityOrder("j.id::text COLLATE \"C\"",ActivityPositionKind.Uuid,false)
     case ActivityJobSort.SessionId => ActivityOrder("j.session_id::text COLLATE \"C\"",ActivityPositionKind.Uuid,false)
     case ActivityJobSort.WaitingSince => ActivityOrder("EXTRACT(epoch FROM j.waiting_since)",ActivityPositionKind.Time,true)
+    case ActivityJobSort.JobClass => ActivityOrder("CASE WHEN j.bulk THEN 'bulk' WHEN NOT j.bulk THEN 'fresh' END",ActivityPositionKind.Text,true)
+    case ActivityJobSort.WaitingReason => ActivityOrder(ActivityQueueSql.reasonOrdinal("j.waiting"),ActivityPositionKind.Count,true)
   }
   private def seek(position: Option[ActivityPosition],order: ActivityOrder,direction: SortDirection,id: String,uuid: Boolean): ActivitySql = position match {
     case None => ActivitySql("true",Nil)
@@ -303,16 +324,15 @@ final class PostgresActivity(db: Database,clock: Clock,mode: ClaimOrderMode=Clai
   }
   /** The claimed profiles, as the worker's claim passes them. */
   private val claimed=db.profiles.knownProfiles.toList.sorted
-  private val queueCte=ActivityQueueSql.cte(mode,claimed.size,ChronicleIndexing.allowsOwnerSql(db.indexingDefaultEnabled,"s.owner"))
+  private val queueCte=ActivityQueueSql.cte(view,claimed.size,ChronicleIndexing.allowsOwnerSql(db.indexingDefaultEnabled,"t.owner"))
   private def queueParameters(owner: String,now: Instant): List[Sql.Param] = parameters(owner,now)++claimed
   /** One statement: a row per class of the owner's jobs (or one row of NULLs without any), each also carrying the owner's
     * jobs awaiting the large-job lane and the position of the first. */
   private def queue(c: Connection,owner: String,now: Instant): ActivityQueue = {
     val empty=ActivityClassQueue(0,0,0,0,None)
     val rows=Sql.rows(c,base+queueCte+s""", classes AS (${ActivityQueueSql.classes})
-      SELECT classes.*,(SELECT count(*) FROM queue WHERE waiting IN(${ActivityQueueSql.list(ActivityQueueSql.large)})) AS awaiting,
-        (SELECT ${ActivityQueueSql.ahead(mode,"first")} FROM (${ActivityQueueSql.firstLarge(mode)}) first) AS large_ahead
-      FROM (SELECT 1) one LEFT JOIN classes ON true""",queueParameters(owner,now)*) { r =>
+      , lane AS (${ActivityQueueSql.largeLane(view)})
+      SELECT classes.*,lane.awaiting,lane.large_ahead FROM lane LEFT JOIN classes ON true""",queueParameters(owner,now)*) { r =>
       val counts=Option(r.getString("class")).map(_ -> ActivityClassQueue(r.getLong("queued"),r.getLong("claimable"),r.getLong("held"),r.getLong("awaiting_reclaim"),Option(r.getTimestamp("oldest")).map(_.toInstant.toString)))
       (counts,r.getLong("awaiting"),Option(r.getObject("large_ahead",classOf[java.lang.Long])).map(_.longValue))
     }
@@ -384,11 +404,12 @@ final class PostgresActivity(db: Database,clock: Clock,mode: ClaimOrderMode=Clai
       val cursor=seek(position,order,q.direction,"r.id",true)
       val directionSql=if(q.direction==SortDirection.Asc) "ASC" else "DESC"
       val sql=base+queueCte+s""", job_rows AS (SELECT j.*,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp,i.last_timestamp_order,
-          q.waiting_since,q.bulk,q.sized,q.permit_only,q.held_until,q.older_revision,q.waiting,q.candidate
+          q.waiting_since,q.bulk,q.held_until,q.older_revision,q.waiting,q.candidate
         FROM jobs j JOIN ch_revision_info i ON i.session_id=j.session_id AND i.revision=j.revision JOIN queue q ON q.id=j.id),
         filtered AS MATERIALIZED(SELECT j.*,${order.column} AS sort_key FROM job_rows j WHERE (${filter.text}))
-        SELECT counted.total,page.*,page.sort_key::text AS sort_value,${ActivityQueueSql.ahead(mode,"page")} AS ahead FROM (SELECT count(*) AS total FROM filtered) counted
+        SELECT counted.total,page.*,page.sort_key::text AS sort_value,CASE WHEN page.candidate THEN ranked.rank END AS ahead FROM (SELECT count(*) AS total FROM filtered) counted
         LEFT JOIN LATERAL(SELECT r.* FROM filtered r WHERE (${cursor.text}) ORDER BY r.sort_key $directionSql NULLS LAST,r.id LIMIT ?) page ON true
+        LEFT JOIN ranked ON ranked.id=page.id
         ORDER BY page.sort_key $directionSql NULLS LAST,page.id"""
       val rows=Sql.rows(c,sql,(queueParameters(owner,now)++filter.args++cursor.args++List(q.limit+1))*) { r =>
         val row=Option(r.getObject("id",classOf[UUID])).map { id =>
@@ -411,7 +432,7 @@ final class PostgresActivity(db: Database,clock: Clock,mode: ClaimOrderMode=Clai
       }
       val values=rows.flatMap(_._2); val page=values.take(q.limit)
       val next=if(values.size>q.limit) Some(ActivityCursor.encodeJob(q,owner,order,ActivityPosition(page.last._2,page.last._1.job.id.toString),page.last._1.job.revision)) else None
-      ActivityJobsResult(now.toString,page.map(_._1),rows.head._1,next)
+      ActivityJobsResult(now.toString,page.map(_._1),rows.head._1,next,Some(ActivityQueueSql.claimOrder(mode)))
     }
   }
 }

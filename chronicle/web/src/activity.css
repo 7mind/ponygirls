@@ -104,6 +104,8 @@ a.attention-item:focus-visible{outline:2px solid var(--focus);outline-offset:-2p
 .claim-card-body{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);align-items:start}
 .claim-counts{border-right:1px solid var(--border)}
 .claim-counts td,.activity-view .claim-counts tbody th{height:36px}
+.activity-view .claim-counts td.claim-oldest{white-space:normal;overflow:visible;line-height:var(--leading-tight)}
+.activity-view .waited-for{white-space:nowrap}
 .claim-lanes{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:var(--space-2) var(--space-4);padding:var(--space-3) var(--space-4);font-size:var(--text-sm)}
 .claim-lanes dt{color:var(--text-muted)}
 .activity-table .th-label{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
@@ -112,7 +114,8 @@ a.attention-item:focus-visible{outline:2px solid var(--focus);outline-offset:-2p
 .activity-table .state-wrap{white-space:normal;line-height:var(--leading-tight);align-items:flex-start}
 .activity-view .ahead{border-bottom:1px dotted var(--text-muted);font-weight:var(--weight-semibold);font-variant-numeric:tabular-nums;cursor:help}
 .activity-view .ahead:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:var(--radius-sm)}
-.activity-view .fn-ref{margin-left:1px;font-size:var(--text-xs);vertical-align:super;line-height:0;color:var(--accent)}
+.activity-view .fn-ref{margin-left:1px;padding:0;border:0;background:none;font:inherit;font-size:var(--text-xs);vertical-align:super;line-height:1;color:var(--accent);cursor:pointer}
+.activity-view .fn-ref:focus-visible,.claim-notes p:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:var(--radius-sm)}
 .claim-notes{max-width:1100px;padding:var(--space-2) var(--gutter) 0;font-size:var(--text-xs);color:var(--text-muted)}
 .claim-notes p{margin-bottom:var(--space-3)}
 .claim-notes p strong{color:var(--text)}

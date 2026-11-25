@@ -1,7 +1,7 @@
 import {type BaboonAdtMemberMeta, type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
 
-export type ActivityJobWaiting = ActivityJobWaiting_Queued | ActivityJobWaiting_IndexingOff | ActivityJobWaiting_AwaitingReclaim | ActivityJobWaiting_LeaseExpiredAwaitingReclaim | ActivityJobWaiting_LeaseExhaustedPending | ActivityJobWaiting_Held | ActivityJobWaiting_BlockedByOlderRevision | ActivityJobWaiting_AwaitingLargeLane | ActivityJobWaiting_AwaitingLargePermit
+export type ActivityJobWaiting = ActivityJobWaiting_Queued | ActivityJobWaiting_IndexingOff | ActivityJobWaiting_AwaitingReclaim | ActivityJobWaiting_LeaseExpiredAwaitingReclaim | ActivityJobWaiting_LeaseExhaustedPending | ActivityJobWaiting_RunningWithoutLease | ActivityJobWaiting_Held | ActivityJobWaiting_BlockedByOlderRevision | ActivityJobWaiting_AwaitingLargeLane | ActivityJobWaiting_AwaitingLargePermit
 
 export const ActivityJobWaiting = {
     BaboonDomainVersion: '1.9.0',
@@ -541,6 +541,111 @@ export class ActivityJobWaiting_LeaseExhaustedPending_JsonCodec {
     }
 }
 
+export class ActivityJobWaiting_RunningWithoutLease implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#ActivityJobWaiting]#RunningWithoutLease' as const;
+
+    constructor() {
+        
+    }
+
+    
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            
+        };
+    }
+
+    public with(overrides: {}): ActivityJobWaiting_RunningWithoutLease {
+        return new ActivityJobWaiting_RunningWithoutLease(
+            
+        );
+    }
+
+    public static fromPlain(obj: {}): ActivityJobWaiting_RunningWithoutLease {
+        return new ActivityJobWaiting_RunningWithoutLease(
+            
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.9.0'
+    public baboonDomainVersion() {
+        return ActivityJobWaiting_RunningWithoutLease.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return ActivityJobWaiting_RunningWithoutLease.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#ActivityJobWaiting]#RunningWithoutLease'
+    public baboonTypeIdentifier() {
+        return ActivityJobWaiting_RunningWithoutLease.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.9.0"]
+    public baboonSameInVersions() {
+        return ActivityJobWaiting_RunningWithoutLease.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.9.0": "identical" }
+    public baboonForwardReadable() {
+        return ActivityJobWaiting_RunningWithoutLease.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.9.0", "prefix-compact": "1.9.0", "prefix-any-mode": "1.9.0", "identical": "1.9.0" }
+    public baboonMinReaderVersions() {
+        return ActivityJobWaiting_RunningWithoutLease.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#ActivityJobWaiting'
+    public baboonAdtTypeIdentifier() {
+        return ActivityJobWaiting_RunningWithoutLease.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): ActivityJobWaiting_RunningWithoutLease_JsonCodec {
+        return ActivityJobWaiting_RunningWithoutLease_JsonCodec.instance
+    }
+}
+
+export class ActivityJobWaiting_RunningWithoutLease_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: ActivityJobWaiting_RunningWithoutLease): unknown {
+        if (this !== ActivityJobWaiting_RunningWithoutLease_JsonCodec.lazyInstance.value) {
+          return ActivityJobWaiting_RunningWithoutLease_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): ActivityJobWaiting_RunningWithoutLease {
+        if (this !== ActivityJobWaiting_RunningWithoutLease_JsonCodec .lazyInstance.value) {
+            return ActivityJobWaiting_RunningWithoutLease_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new ActivityJobWaiting_RunningWithoutLease (
+            
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.9.0'
+    public baboonDomainVersion() {
+        return ActivityJobWaiting_RunningWithoutLease_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return ActivityJobWaiting_RunningWithoutLease_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#ActivityJobWaiting]#RunningWithoutLease'
+    public baboonTypeIdentifier() {
+        return ActivityJobWaiting_RunningWithoutLease_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#ActivityJobWaiting'
+    public baboonAdtTypeIdentifier() {
+        return ActivityJobWaiting_RunningWithoutLease_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new ActivityJobWaiting_RunningWithoutLease_JsonCodec())
+    public static get instance(): ActivityJobWaiting_RunningWithoutLease_JsonCodec {
+        return ActivityJobWaiting_RunningWithoutLease_JsonCodec.lazyInstance.value
+    }
+}
+
 export class ActivityJobWaiting_Held implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
     public readonly $type = 'chronicle.api/[chronicle.api/:#ActivityJobWaiting]#Held' as const;
     private readonly _nextAttemptAt: string;
@@ -989,6 +1094,9 @@ export class ActivityJobWaiting_JsonCodec {
             if (value instanceof ActivityJobWaiting_LeaseExhaustedPending) {
                 return { "LeaseExhaustedPending": ActivityJobWaiting_LeaseExhaustedPending_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof ActivityJobWaiting_RunningWithoutLease) {
+                return { "RunningWithoutLease": ActivityJobWaiting_RunningWithoutLease_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
             if (value instanceof ActivityJobWaiting_Held) {
                 return { "Held": ActivityJobWaiting_Held_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
@@ -1016,6 +1124,7 @@ export class ActivityJobWaiting_JsonCodec {
                 case "AwaitingReclaim": return ActivityJobWaiting_AwaitingReclaim_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "LeaseExpiredAwaitingReclaim": return ActivityJobWaiting_LeaseExpiredAwaitingReclaim_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "LeaseExhaustedPending": return ActivityJobWaiting_LeaseExhaustedPending_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "RunningWithoutLease": return ActivityJobWaiting_RunningWithoutLease_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Held": return ActivityJobWaiting_Held_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "BlockedByOlderRevision": return ActivityJobWaiting_BlockedByOlderRevision_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "AwaitingLargeLane": return ActivityJobWaiting_AwaitingLargeLane_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
