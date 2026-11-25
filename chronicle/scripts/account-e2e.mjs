@@ -96,6 +96,7 @@ try {
     listenHost: '127.0.0.1', listenPort: port, allowedOrigin: base, secureCookies: false,
     jdbcUrl: database.jdbcUrl, databaseUser: database.user, databasePasswordFile: database.passwordFile, databaseLimits: database.limits,
     users: [{ id: ADMIN, login: ADMIN, passwordHashFile: path.join(dir, 'admin.password'), enabled: true, admin: true }],
+    indexing: { allowOptOut: true },
     accounts: { enabled: true, keyFile: path.join(dir, 'accounts.key'), signup: { enabled: true }, enrollment: { enabled: true }, issuer: 'Chronicle (127.0.0.1)' },
     maxBodyBytes: 8388608, maxFiles: 16, maxFileBytes: 4194304, maxMessages: 10000, sessionTtlSeconds: 2592000,
     annotation: { requestPolicy: 'strict-json-schema', endpoint: UNUSED_MODEL_ENDPOINT, model: 'unused', revision: 'unused', credentialFile: path.join(dir, 'model-credential'), timeoutSeconds: 60, maxResponseBytes: 65536 },

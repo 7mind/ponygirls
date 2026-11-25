@@ -1,6 +1,6 @@
 // The accounts feature end to end through a service's REAL dashboard and REAL server (accounts design §4, §12;
 // shared/account-web/README.md): self-signup with authenticator set-up → pending → admin approval → sign-in without a
-// code → opt-in TOTP at login → recovery → admin enrollment by one-time link → admin flag rules → credential reset →
+// code → indexing choice/override → opt-in TOTP at login → recovery → admin enrollment by one-time link → admin flag rules → credential reset →
 // disable → no sideways scrolling at a phone width. One browser, one context per person and device. Only the pages are driven; the one direct request checks
 // that an API token survives recovery, which no page shows. Each service has a thin harness that starts its server.
 //
@@ -311,8 +311,40 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
       await signIn(aliceLaptop, ALICE, passwords.alice);
     });
 
-    await step('c. profile e-mail, opt-in code at sign-in, two-step sign-in', async () => {
+    await step('b2. a saved indexing choice survives an administrator override', async () => {
       await menu(aliceLaptop, ALICE, 'Account settings');
+      const card = () => section(aliceLaptop, 'profile').getByRole('region', { name: 'Indexing', exact: true });
+      const toggle = () => card().getByRole('checkbox', { name: 'Index my data', exact: true });
+      await card().getByText('On', { exact: true }).waitFor();
+      assert.equal(await toggle().isChecked(), true);
+      await toggle().click();
+      const optOut = dialog(aliceLaptop, 'Turn indexing off?');
+      await button(optOut, 'Turn indexing off').click();
+      await card().getByText('Off', { exact: true }).waitFor();
+      await aliceLaptop.reload();
+      await card().getByText('Off', { exact: true }).waitFor();
+
+      async function override(value) {
+        await rowAction(adminPage, ALICE, 'Indexing…');
+        const prompt = dialog(adminPage, `Indexing for “${ALICE}”`);
+        await prompt.getByLabel('Override', { exact: true }).selectOption(value);
+        await confirmWithPassword(adminPage, `Indexing for “${ALICE}”`, 'Save override', admin.password);
+      }
+      await override('enabled');
+      await aliceLaptop.reload();
+      await card().getByText('On', { exact: true }).waitFor();
+      assert.equal(await toggle().count(), 0, 'an override is read-only for the account subject');
+      await override('inherit');
+      await aliceLaptop.reload();
+      await card().getByText('Off', { exact: true }).waitFor();
+      await button(card(), 'Use server default…').click();
+      const reset = dialog(aliceLaptop, 'Use the server default?');
+      await button(reset, 'Use server default').click();
+      await card().getByText('On', { exact: true }).waitFor();
+      await shot(aliceLaptop, 'indexing-restored');
+    });
+
+    await step('c. profile e-mail, opt-in code at sign-in, two-step sign-in', async () => {
       const profile = section(aliceLaptop, 'profile');
       await profile.waitFor();
       await profile.getByLabel('E-mail', { exact: true }).fill(changedEmail);

@@ -42,7 +42,8 @@ try {
     cookieSecure: true, allowedHosts: ["127.0.0.1"], allowedOrigins: [base], insecureHttpOrigins: [base], rateLimit: { windowMs: 60000, max: 600 },
   };
   const configFile = path.join(dir, "config.json");
-  await atomicConfig(configFile, await configFor({ database: database.runtime, port, webRoot: path.resolve(here, "../dist"), auth }));
+  const config = await configFor({ database: database.runtime, port, webRoot: path.resolve(here, "../dist"), auth });
+  await atomicConfig(configFile, { ...config, indexing: { allowOptOut: true } });
   backend = await startServer(configFile, port, path.join(dir, "server.log"));
   const evidence = process.env.ACCOUNT_E2E_EVIDENCE_DIR ?? null;
   const result = await runAccountFlow({

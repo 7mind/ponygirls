@@ -31,7 +31,8 @@ class AccountsEndToEndTests(unittest.TestCase):
         accounts = {"enabled": True, "key_file": str(key_file), "signup": {"enabled": True},
                     "enrollment": {"enabled": True}, "issuer": "Manure (127.0.0.1)"}
         fix = bf.start_server(suffix_mode="separate", config_overrides={
-            "users": users, "accounts": accounts, "rate_limit_per_min": 10000, "login_rate_per_min_per_ip": 1000})
+            "users": users, "accounts": accounts, "indexing": {"allowOptOut": True},
+            "rate_limit_per_min": 10000, "login_rate_per_min_per_ip": 1000})
         self.addCleanup(fix.close)
         evidence = os.environ.get("ACCOUNT_E2E_EVIDENCE_DIR")
         payload = {"base": fix.api_base, "login": ADMIN, "password": admin.password,
