@@ -5,6 +5,7 @@ import ponygirls.auth.{IndexingChoice,IndexingPreferenceSql,IndexingService}
 import java.sql.Connection
 import java.time.{Instant,OffsetDateTime}
 import java.util.UUID
+import java.util.concurrent.{Callable,Executors,TimeUnit}
 import scala.concurrent.duration.*
 import scala.util.Using
 
@@ -137,6 +138,28 @@ final class ClaimOrderColumnsTest extends munit.FunSuite {
     val replaced=moved.ingest()
     assertEquals(state(db,movedJob),("Running",None),"a valid lease keeps its claim whatever its epoch")
     assertEquals(order(db,replaced.jobId),inherited)
+  }}
+
+  test("T3 B1: a switch over a validly leased predecessor that another transaction holds FOR SHARE (staging) completes without waiting for it") { fixture { (_,db,archive,catalog) =>
+    val source=new Source(archive,"a"); val first=source.ingest()
+    assertEquals(archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).map(_.jobId),Some(first.jobId))
+    val pool=Executors.newSingleThreadExecutor()
+    try {
+      val (blocked,successor)=db.transaction { held =>
+        Sql.one(held,"SELECT id FROM ch_jobs WHERE id=? FOR SHARE",first.jobId)(_ => ())
+        val switching=pool.submit(new Callable[IngestReceipt] { def call(): IngestReceipt = source.ingest() })
+        // Until the switch ends, any lock wait in this database is the switch's: the share lock is the only one held.
+        def waiting: Boolean = db.transaction(c => Sql.one(c,"SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock')")(_.getBoolean(1)).get)
+        val guard=Deadline.now+2.minutes
+        var blocked=false
+        while(!switching.isDone && !blocked && guard.hasTimeLeft()) blocked=waiting
+        assert(switching.isDone || blocked,"the switch neither ended nor waited")
+        (blocked,Option.when(switching.isDone)(switching.get()))
+      }
+      assert(!blocked,"the switch waited for a lock held by a FOR SHARE reader of its leased predecessor")
+      assertEquals(state(db,first.jobId),("Running",None))
+      assertEquals(successor.map(r => order(db,r.jobId)._2),Some(Some(false)))
+    } finally { pool.shutdownNow(); assert(pool.awaitTermination(30,TimeUnit.SECONDS)) }
   }}
 
   test("T3 QA-iii: with a lease-ended older Running job and a queued head, the switch inherits the queued head's values") { fixture { (_,db,archive,catalog) =>
