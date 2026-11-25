@@ -12,8 +12,12 @@ import java.util.UUID
 import scala.concurrent.duration.*
 import scala.util.Using
 
-/** Chronicle's job and dispatch authority, on the owned suite database and an in-process synthetic model transport. */
-final class OwnerIndexingJobsTest extends munit.FunSuite {
+/** Chronicle's job and dispatch authority, on the owned suite database and an in-process synthetic model transport. Claims
+  * and worker iterations are those of `claimOrder` (ClaimOrderOwnerIndexingJobsTest: the same cases under the waiting order). */
+class OwnerIndexingJobsTest extends munit.FunSuite {
+  protected def claimOrder: ClaimOrderSetting = ClaimOrderSetting.SourceId
+  private def claim(archive: SessionArchive,profiles: Set[String],scope: ClaimScope,lease: Int): Option[Claim] = ClaimOrderFixtures.claimIn(claimOrder,archive,profiles,scope,lease)
+  private def once(worker: Worker): IO[Boolean] = ClaimOrderFixtures.onceIn(claimOrder,worker)
   private def cleanPreferences(db: Database): Unit = db.transaction { c =>
     Sql.exec(c,"DELETE FROM ponygirls_indexing_preferences WHERE service IN('chronicle','haystack') AND owner_key IN(?,?)",
       IndexingPreferenceSql.ownerKey("a"),IndexingPreferenceSql.ownerKey("b"))
@@ -22,7 +26,7 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
   private def fixture(f: (Config,Database,PostgresArchive,IndexProfileCatalog) => Unit): Unit =
     OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
       cleanPreferences(db)
-      try f(config,db,archive,catalog) finally cleanPreferences(db)
+      try f(ClaimOrderFixtures.ordered(config,claimOrder),db,archive,catalog) finally cleanPreferences(db)
     }
   private def set(db: Database,config: Config,choice: IndexingChoice,owner: String="a",service: IndexingService=IndexingService.Chronicle): Unit =
     db.transaction { c => IndexingPreferenceSql.store(c,service,config.indexingPolicy).setOverride(owner,choice); () }
@@ -55,15 +59,15 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
       assertEquals(archive.session("a",ingest.sessionId).view,ContentView(1,None))
       val other=archive.ingest("b",Fixtures.snapshot())
       set(db,config,IndexingChoice.Enable,owner="b")
-      val picked=archive.claim(catalog.knownProfiles,ClaimScope.AllOwners,300).get
+      val picked=claim(archive,catalog.knownProfiles,ClaimScope.AllOwners,300).get
       assertEquals((picked.owner,picked.jobId),("b",other.jobId)); assert(archive.publish(picked,Nil))
-      assertEquals(archive.claim(catalog.knownProfiles,ClaimScope.AllOwners,300),None)
+      assertEquals(claim(archive,catalog.knownProfiles,ClaimScope.AllOwners,300),None)
       for(receipt <- List(ingest,uploaded)) {
         assertEquals(physical(db,receipt.jobId),("Queued",0))
         assertEquals(paid(db,receipt.jobId),(0,0,0))
       }
       enabled(db,config)
-      val resumed=List.fill(2)(archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get)
+      val resumed=List.fill(2)(claim(archive,catalog.knownProfiles,ClaimScope.Owner("a"),300).get)
       assertEquals(resumed.map(_.jobId).toSet,Set(ingest.jobId,uploaded.jobId))
       resumed.foreach(claim => assert(archive.publish(claim,Nil)))
     }
@@ -105,9 +109,9 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
         assertEquals(physical(off,receipt.jobId),("Queued",0))
         assertEquals(off.transaction(c => Sql.one(c,"SELECT profile FROM ch_jobs WHERE id=?",receipt.jobId)(_.getString(1))),Some(catalog.preferred.profile))
       }
-      assertEquals(archive.claim(newCatalog.knownProfiles,ClaimScope.AllOwners,300),None)
+      assertEquals(claim(archive,newCatalog.knownProfiles,ClaimScope.AllOwners,300),None)
       enabled(off,parked)
-      assertEquals(archive.claim(newCatalog.knownProfiles,ClaimScope.AllOwners,300),None,"opting in alone does not retarget an obsolete profile")
+      assertEquals(claim(archive,newCatalog.knownProfiles,ClaimScope.AllOwners,300),None,"opting in alone does not retarget an obsolete profile")
     }
   }}
 
@@ -116,7 +120,7 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
     val (_,cookie)=auth.login(LoginRequest("a","synthetic"))
     val owner=auth.browser(cookie)
     val ingest=archive.ingest("a",Fixtures.snapshot())
-    archive.fail(archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get,IndexingBudget.exceededCode)
+    archive.fail(claim(archive,catalog.knownProfiles,ClaimScope.Owner("a"),300).get,IndexingBudget.exceededCode)
     val original=physical(db,ingest.jobId)
     val retry=auth.previewRetryFailed(owner)
     val rebuild=auth.previewOwnerReindex(owner)
@@ -151,7 +155,7 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
     set(db,config,IndexingChoice.Disable,service=IndexingService.Haystack)
     assertEquals(db.transaction(SecurityEpoch.current),before,"unchanged effective Chronicle choice and other services don't invalidate runs")
     db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET attempts=? WHERE id=?",Jobs.attemptLimit-1,ingest.jobId))
-    val old=archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
+    val old=claim(archive,catalog.knownProfiles,ClaimScope.Owner("a"),300).get
     val accepted=IndexCheckpoints.key(old,IndexingStage.Embedding,0,0,"synthetic",Json.obj())
     val later=accepted.copy(part=1)
     val vector=CheckpointJson.vectors(List(List(1.0,0.0,0.0)))
@@ -159,7 +163,7 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
     val annotation=IndexCheckpoints.annotation(old,0,Json.obj())
     val reservation=archive.reserveAnnotation(old,annotation,false).asInstanceOf[AnnotationReservation.Reserved].attempt
     disabled(db,config)
-    assertEquals(archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300),None)
+    assertEquals(claim(archive,catalog.knownProfiles,ClaimScope.Owner("a"),300),None)
     val parked=status(archive,ingest.jobId)
     assertEquals((parked.state,parked.attempts),(JobState.Queued,Jobs.attemptLimit-1))
     assert(!archive.renew(old,300))
@@ -170,7 +174,7 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
     assertEquals(intercept[DomainError](archive.checkpoint(old,later,vector)).code,"stale-claim")
     assertEquals(intercept[DomainError](archive.acceptAnnotation(old,annotation,reservation,0,Json.obj())).code,"stale-claim")
     assert(!archive.publish(old,Nil)); assertEquals(paid(db,ingest.jobId),(1,0,1))
-    val resumed=archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
+    val resumed=claim(archive,catalog.knownProfiles,ClaimScope.Owner("a"),300).get
     assertEquals((resumed.jobId,resumed.runId),(old.jobId,old.runId)); assert(resumed.fence>old.fence)
     assertEquals(physical(db,ingest.jobId),("Running",Jobs.attemptLimit))
     archive.fail(old,"late-failure")
@@ -182,7 +186,7 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
 
   test("Effectual GoodCommunication: a publication between batches cannot restage or switch after off-on; its current run resumes") { fixture { (config,db,archive,catalog) =>
     val ingest=archive.ingest("a",Fixtures.snapshot())
-    val old=archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
+    val old=claim(archive,catalog.knownProfiles,ClaimScope.Owner("a"),300).get
     val rows=ProblemsPublication.rows(ProblemPublicationFixtures.oneProblem(old))
     def staged(): List[UUID] = db.transaction(c => Sql.rows(c,"SELECT generation FROM ch_staged_generations WHERE job_id=?",old.jobId)(_.getObject(1,classOf[UUID])))
     val paused=new ProblemRows {
@@ -201,7 +205,7 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
     val generation=staged().head
     assertEquals(db.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_problem_passages WHERE generation=?",generation)(_.getInt(1))),Some(0))
     assertEquals(archive.session("a",ingest.sessionId).view,ContentView(1,None))
-    val resumed=archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
+    val resumed=claim(archive,catalog.knownProfiles,ClaimScope.Owner("a"),300).get
     assertEquals(resumed.runId,old.runId)
     assert(archive.publishProblems(resumed,rows))
     assertEquals(archive.session("a",ingest.sessionId).view,ContentView(1,Some(generation)))
@@ -238,7 +242,7 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
         }
         worker <- modelWorker(archive,config,catalog,admission,path => calls.update(_:+path).as(if(path=="/chat") annotationResult else embeddingResult))
         _ <- base.request(workload).use(_ => held.complete(()) *> release.get).background.use { _ =>
-          held.get *> worker.once.background.use { done =>
+          held.get *> once(worker).background.use { done =>
             for {
               _ <- waiting.get.timeout(10.seconds)
               seen <- calls.get
@@ -255,7 +259,7 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
           assertEquals(paid(db,receipt.jobId),if(before.isEmpty) (0,0,0) else (1,1,0))
           assertEquals(physical(db,receipt.jobId),("Queued",0))
         }
-        ran <- worker.once
+        ran <- once(worker)
         seen <- calls.get
         _ <- IO.blocking {
           assert(ran); assertEquals(seen,Vector("/chat","/embedding"))
@@ -275,7 +279,7 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
       worker <- modelWorker(archive,config,catalog,admission,path =>
         if(path=="/chat") sent.complete(()) *> respond.get.as(annotationResult)
         else IO.raiseError(new AssertionError("invalidated annotation sent a document embedding")))
-      _ <- worker.once.background.use { done =>
+      _ <- once(worker).background.use { done =>
         for {
           _ <- sent.get.timeout(10.seconds)
           _ <- IO.blocking { disabled(db,config) }
@@ -284,11 +288,16 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
           _ <- IO.blocking {
             assert(ran); assertEquals(physical(db,receipt.jobId),("Queued",0))
             assertEquals(paid(db,receipt.jobId),(1,0,0),"the admitted reservation is retained but its answer is not accepted")
-            assertEquals(archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300),None)
+            assertEquals(claim(archive,catalog.knownProfiles,ClaimScope.Owner("a"),300),None)
             assertEquals(archive.session("a",receipt.sessionId).view,ContentView(1,None))
           }
         } yield ()
       }
     } yield ()).unsafeRunSync()
   }}
+}
+/** T7 (claim-order DESIGN §9): OwnerIndexingJobsTest's cases under the waiting order (`indexing.claimOrder` "waiting"): claims
+  * of lane 0 and lane 0's worker iterations. */
+final class ClaimOrderOwnerIndexingJobsTest extends OwnerIndexingJobsTest with ClaimOrderRequiresPostgres {
+  override protected def claimOrder: ClaimOrderSetting = ClaimOrderSetting.Waiting
 }
