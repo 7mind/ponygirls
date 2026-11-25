@@ -35,15 +35,18 @@ not whether that account can search other users' indexed data.
   unchanged.
 - **Haystack:** Both the item creator and the author of a revision must allow
   indexing for that revision. A shared or agent credential is an account, not
-  a way to attribute text to the person using it. Ordinary Browse, reads,
-  writes and history are unchanged.
+  a way to attribute text to the person using it. Browse still lists records
+  and supports structured filters, but terms and phrases do not match a
+  revision that is opted out. Direct reads, writes and history are unchanged.
 - **Chronicle:** The archive owner controls indexing, including when sessions
   are shared with a group. Sessions are still listed and readable; they do not
   contribute content matches or generated index data while opted out.
 
 Turning indexing off hides existing content results without deleting the
-stored index. New background model work is paused; locally saved material is
-available to catch up if indexing is turned back on. Requests that had already
+stored index. New background model work is paused. The services can still
+maintain local data for direct reads, within-session find, and catching up if
+indexing is turned back on; excluded content does not match across the corpus.
+Requests that had already
 passed the last provider-admission check can still finish or reach the provider.
 Editing a preference does not ask a provider to erase anything.
 Query embeddings are separate from indexing: when someone chooses a semantic
