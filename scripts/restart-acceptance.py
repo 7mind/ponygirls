@@ -25,6 +25,21 @@ POOL_JUDGED = ('POOL',)
 # between the immediate shutdown and the start. Default 0 = the counted rule set's restart, unchanged. Read by main after the
 # arguments are validated (r7 rev 5.1); a value that is not a number is a usage error.
 SUPPLEMENT_3B_DOWN_VARIABLE = 'RESTART_ACC_SUPPLEMENT_3B_DOWN_SECONDS'
+# Test-tooling hook, no rule change: Chronicle's `indexing.claimOrder` in EVERY case's configuration, the replaced `indexing` of
+# the restart cases included. Unset = the configuration as before (the key absent: the server's default). Any value but these
+# is refused at start (usage error); the mode is named in the run's first line, report.json and `reparse`.
+CLAIM_ORDER_VARIABLE = 'RESTART_ACC_CHRONICLE_CLAIM_ORDER'
+CLAIM_ORDERS = ('source-id', 'waiting')
+
+
+def claim_order_of(environment):
+    """(mode or None when unset, error text or None): the value of CLAIM_ORDER_VARIABLE, validated."""
+    if CLAIM_ORDER_VARIABLE not in environment:
+        return None, None
+    value = environment[CLAIM_ORDER_VARIABLE]
+    if value in CLAIM_ORDERS:
+        return value, None
+    return None, f'{CLAIM_ORDER_VARIABLE} must be one of {" | ".join(CLAIM_ORDERS)} (or unset), not {value!r}'
 
 # The cluster: PostgreSQL 18 + pgvector, the spec's connection budget and roles (§5, §9).
 SHORT_TMP, ROOT_PREFIX, MARKER = '/tmp', 'restart-acc.', '.restart-acceptance-owned'
@@ -996,6 +1011,7 @@ class Run:
     def __init__(self, set_name, out, packages, calibration):
         self.set_name, self.out, self.packages, self.calibration = set_name, out, packages, calibration
         self.t0 = now()
+        self.claim_order = None  # CLAIM_ORDER_VARIABLE, set by main
         self.root = Root()
         try:
             self.home = self.root.path / 'home'
@@ -1072,6 +1088,8 @@ class Run:
                       users=[dict(id='alice', login='alice', passwordHashFile=str(self.files['password_hash']), enabled=True)], staticTokens=self.static_tokens)
         if indexing:
             config['indexing'] = dict(annotationSessions=4, embeddingRequests=8, embeddingBatchSize=16, **indexing)  # Core.scala IndexingCapacity.defaults
+        if self.claim_order:
+            config.setdefault('indexing', {})['claimOrder'] = self.claim_order
         stub = f'http://127.0.0.1:{self.stub_port}'
         config['annotation'].update(endpoint=stub + '/v1/chat/completions', credentialFile=str(self.files['empty']), model='stub-annotation', revision='restart-acceptance',
                                     requestPolicy='strict-json-schema', timeoutSeconds=60, maxResponseBytes=1048576)
@@ -2479,6 +2497,33 @@ def enforcement_checks(m):
         return result.returncode == 2, dict(exit=result.returncode, stderr=result.stderr.strip()[-200:])
     scenario(f'rev 5.1: the shell entry point refuses FULL with the usage error (exit 2) also with {SUPPLEMENT_3B_DOWN_VARIABLE}=not-a-number (no '
              'environment value is converted before the arguments are validated)', shell_full_supplement)
+    def claim_order_hook():
+        import types
+        run = types.SimpleNamespace(jdbc=lambda name: 'jdbc:postgresql://127.0.0.1:1/' + name, stub_port=1, cluster=types.SimpleNamespace(secrets=dict(chronicle='s')),
+                                    files=dict(password_hash='h', empty='e'), static_tokens=[], claim_order=None)
+        variants = dict(default={}, restart=dict(publicationStatementTimeoutMs=m.PUBLICATION_STATEMENT_MS))
+        build = lambda indexing: m.Run.chronicle_config(run, 1, {}, indexing)
+        unset = {name: build(indexing) for name, indexing in variants.items()}
+        example = json.loads((m.REPO / 'chronicle/config.example.json').read_text())
+        unchanged = all('claimOrder' not in config.get('indexing', {}) for config in unset.values()) and \
+            unset['default']['indexing'] == example['indexing'] and m.claim_order_of({}) == (None, None)
+        run.claim_order = 'waiting'
+        waiting = {name: build(indexing) for name, indexing in variants.items()}
+        present = all(config['indexing'].get('claimOrder') == 'waiting' for config in waiting.values())
+        same_otherwise = all({k: v for k, v in waiting[name]['indexing'].items() if k != 'claimOrder'} == unset[name]['indexing'] and
+                             {k: v for k, v in waiting[name].items() if k != 'indexing'} == {k: v for k, v in unset[name].items() if k != 'indexing'} for name in variants)
+        run.claim_order = 'source-id'
+        explicit = all(build(indexing)['indexing'].get('claimOrder') == 'source-id' for indexing in variants.values())
+        invalid = {value: m.claim_order_of({m.CLAIM_ORDER_VARIABLE: value})[1] is not None for value in ('Waiting', '', 'source_id', 'fresh')}
+        accepted = [m.claim_order_of({m.CLAIM_ORDER_VARIABLE: value}) for value in m.CLAIM_ORDERS]
+        environment = {k: v for k, v in os.environ.items() if not k.startswith('RESTART_ACC_')} | {m.CLAIM_ORDER_VARIABLE: 'fresh'}
+        result = subprocess.run([sys.executable, str(Path(m.__file__).resolve()), 'POOL'], env=environment, capture_output=True, text=True, timeout=SQL_S)
+        refused_at_start = result.returncode == 2 and m.CLAIM_ORDER_VARIABLE in result.stderr
+        return (unchanged and present and same_otherwise and explicit and all(invalid.values()) and accepted == [('source-id', None), ('waiting', None)] and refused_at_start,
+                dict(unsetIdentical=unchanged, waitingInEveryConfig=present, nothingElseChanged=same_otherwise, sourceIdExplicit=explicit, invalidRefused=invalid,
+                     refusedAtStart=(result.returncode, result.stderr.strip()[-160:])))
+    scenario(f'{m.CLAIM_ORDER_VARIABLE}: unset leaves every case\'s Chronicle configuration as before; waiting / source-id set indexing.claimOrder in each (the restart '
+             'cases\' replaced indexing included) and nothing else; any other value is refused at start (exit 2)', claim_order_hook)
     scenario('rev 5.1: case 3b judges M1\'s guarantee: lease margin threshold 45 s, rule set r7 rev 5.1 named',
              lambda: (m.LEASE_MARGIN_S == 45 and (m.RULE_SET, m.RULE_REVISION) == ('r7', 5.1), dict(threshold=m.LEASE_MARGIN_S, revision=getattr(m, 'RULE_REVISION', None))))
     ready = 1795449000.0
@@ -2748,7 +2793,7 @@ def reparse(run_dir):
     started = datetime.datetime.fromisoformat(report['startedAt']).timestamp()
     held_class = hold_rule(report.get('ruleRevision'))
     out = [f'# reparse of {run_dir}', '', f'set {report["set"]}, rule set {report.get("ruleSet", "not recorded (before r6 naming)")}, '
-           f'supplementary {report.get("supplementary")}, verdicts in report.json {report["verdicts"]}', '']
+           f'supplementary {report.get("supplementary")}, chronicle claim order {report.get("chronicleClaimOrder", "not set (server default)")}, verdicts in report.json {report["verdicts"]}', '']
     changed = []
     for case in report['cases']:
         ident = case['case']
@@ -2912,6 +2957,10 @@ def main(argv):
     except ValueError:
         print(f'{SUPPLEMENT_3B_DOWN_VARIABLE} must be a number of seconds', file=sys.stderr)
         return 2
+    claim_order, claim_order_error = claim_order_of(os.environ)
+    if claim_order_error:
+        print(claim_order_error, file=sys.stderr)
+        return 2
     set_name, selected = argv[0], [case for case in ORDER if case in (argv[1:] or CASES_OF[argv[0]])]
     calibration, calibration_source = None, None
     if set_name in POOL_JUDGED and '6' in selected:
@@ -2936,8 +2985,10 @@ def main(argv):
     try:
         run = Run(set_name, out, packages, calibration)
         run.calibration_source, run.supplement_3b_down = calibration_source, supplement_3b_down
+        run.claim_order = claim_order
         note(f'restart acceptance, rule set {RULE_SET} rev {RULE_REVISION}, set {set_name}, cases {" ".join(selected)}, packages {json.dumps({k: str(v) for k, v in packages.items()})}, root {run.root.path}'
-             + (f', calibration {json.dumps(calibration_source)}' if calibration_source else ''))
+             + (f', calibration {json.dumps(calibration_source)}' if calibration_source else '')
+             + (f', chronicle indexing.claimOrder {claim_order}' if claim_order else ''))
         if supplement_3b_down:
             note(f'SUPPLEMENTARY run (not counted): case 3b keeps PostgreSQL down {supplement_3b_down} s')
         run.setup()
@@ -2956,6 +3007,8 @@ def main(argv):
     summary = dict(set=set_name, ruleSet=RULE_SET, ruleRevision=RULE_REVISION, calibration=calibration_source, startedAt=started_at, wallSeconds=round(now() - run.t0, 1), verdicts=verdicts, cases=results)
     if supplement_3b_down:
         summary['supplementary'] = dict(case3bDownSeconds=supplement_3b_down, counted=False)
+    if claim_order:
+        summary['chronicleClaimOrder'] = claim_order
     (out / 'report.json').write_text(json.dumps(summary, indent=1))
     print(json.dumps(dict(set=set_name, wallSeconds=summary['wallSeconds'], verdicts=verdicts)), flush=True)
     values = set(verdicts.values())
