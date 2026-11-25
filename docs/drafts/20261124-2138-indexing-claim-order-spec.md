@@ -163,7 +163,7 @@ the new order, not the old owner-first order). Ages are transaction-start times,
   :464-466), selection, job lock, transition — p99 ≤ 50 ms over 1,000 claims at 10,000 queued rows on a production-shaped
   schema (3 owners, 2 profiles, 100 held, 100 sized-large, 4 Running, one source with 2,000 revisions), measured on demand;
   verify checks plan shape (these index scans, no Sort over candidates). If cleanup breaks the bound, it moves onto
-  `ch_jobs_running` (open, §10).
+  `ch_jobs_running` (open, §10). Status (measured 25 Nov): bound not met in either mode because of the existing lease-expiry step; owner decision Q159: accepted, the rewrite onto ch_jobs_running is deferred to its own unit.
 
 ### 5.5 Migration 032, start fill, previous binary
 - `ADD COLUMN IF NOT EXISTS waiting_since timestamptz, ADD COLUMN IF NOT EXISTS bulk boolean`: nullable, no default (no rewrite,
@@ -238,7 +238,7 @@ publication is off or the parent is ineligible), quiet period (its maximum can f
   can be locked, and older work stops returning ahead of them (counter-example §5.3).
 - D-d: no order between a sized younger and an unsized older large job; strict FIFO would need to resolve older candidates' size
   before dispatching a younger large job — not proposed.
-- D-h: the 50 ms bound is an implementation verification gate, not a measured result; today's cleanups may need their own index.
+- D-h: the 50 ms bound is an implementation verification gate, not a measured result; today's cleanups may need their own index. Status (measured 25 Nov): bound not met in either mode because of the existing lease-expiry step; owner decision Q159: accepted, the rewrite onto ch_jobs_running is deferred to its own unit.
 - D-i: retry epoch alone does not tell single from bulk retry, so the start fill files single retries as bulk once; reseed
   after an old-image period loses relative ages (rebuild runs stay identifiable by cohort membership).
 - D1 rotation, D2 hard reservation, D4b/c: offered to the owner, not specified in detail.

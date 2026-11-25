@@ -20,6 +20,8 @@
 #     bash chronicle/scripts/test-claim-order-compat.sh
 #
 # Synthetic home, sessions and credentials in a private temporary directory; each server is stopped on exit.
+# LIMIT: on demand; not signal-safe in two short windows — between starting a server and registering it, and during the
+# final clean-up. If interrupted, check the process group it prints at start and stop only those PIDs.
 set -euo pipefail
 : "${CHRONICLE_SERVER:?set CHRONICLE_SERVER to the server executable built from this tree}"
 : "${BASE_SERVER:?set BASE_SERVER to the server executable built from fe4f69f7}"
