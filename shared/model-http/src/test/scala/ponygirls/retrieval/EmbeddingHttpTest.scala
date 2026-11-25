@@ -90,6 +90,22 @@ class EmbeddingHttpTest extends munit.FunSuite {
       }.unsafeRunSync()
     } finally Files.delete(path)
   }
+  test("Effectual-GoodCommunication: document admission runs after credential resolution and before sending") {
+    val path=Files.createTempFile("controlled-document-credential",".txt")
+    try {
+      Files.writeString(path,"fixture-original\n")
+      val app: HttpApp[IO]=cats.data.Kleisli { request => IO {
+        assertEquals(request.headers.get(org.typelevel.ci.CIString("Authorization")).map(_.head.value),Some("Bearer fixture-original"))
+        assert(!Files.exists(path),"request was sent before the grant")
+        Response[IO](Status.Ok).withEntity(reply)
+      } }
+      server(app).use { (http,url) =>
+        EmbeddingClient.make(http,config(url).copy(credentialFile=path.toString),1,0,EmbeddingTelemetry.noop).flatMap { client =>
+          client.documents(List("fixture"),IO.blocking(Files.delete(path))).map(result => assertEquals(result,List(List(1.0,0.0,0.0))))
+        }
+      }.unsafeRunSync()
+    } finally Files.deleteIfExists(path)
+  }
   test("Blackbox-GoodCommunication: input/body/batch bounds reject before provider call") {
     val calls=new java.util.concurrent.atomic.AtomicInteger()
     val app: HttpApp[IO]=cats.data.Kleisli(_ => IO { calls.incrementAndGet(); Response[IO](Status.Ok).withEntity(reply) })

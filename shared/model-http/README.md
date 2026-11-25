@@ -4,7 +4,7 @@
 
 `EmbeddingClient.resource(config,maxConcurrent,maxQueued,telemetry)` or
 `EmbeddingClient.make(http4sClient,config,maxConcurrent,maxQueued,telemetry)`.
-`documents(List[String]): IO[List[List[Double]]]`, `query(String): IO[List[Double]]`.
+`documents(List[String]): IO[List[List[Double]]]`, `query(String): IO[List[Double]]`. Controlled document work can use `documents(text, admit: IO[Unit])`. The shared client runs `admit` after its running slot and credential read, before transport; an error aborts without sending. A successful grant admits the request and cannot be recalled. Query embeddings do not use this gate.
 
 No endpoint means construct no client and declare lexical-only; no automatic model fallback. Credentials come only from the explicit absolute file, read at call time; no environment lookup. Trusted operator references may be managed symlinks (e.g. agenix): resolve each time, require a regular resolved leaf and open NOFOLLOW. Actual bytes are bounded to 16385 with strict UTF8 decoding, not a metadata-size precheck. Empty regular files deliberately mean no Authorization. Containing/resolved directories and operators must not race replacement with special files; this is not the untrusted payload-path confinement boundary. Queue+running admission, cancellation and whole-call deadlines are bounded. `EmbeddingTelemetry` receives only purpose/outcome, never text/URLs/credentials. Response indexes/cardinality/order/dimensions/finite nonzero float-representability are validated. No model calls in ordinary source writes.
 
