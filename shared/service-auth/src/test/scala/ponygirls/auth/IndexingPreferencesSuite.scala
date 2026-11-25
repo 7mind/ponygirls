@@ -2,6 +2,8 @@ package ponygirls.auth
 
 import java.sql.{Connection, DriverManager}
 import java.util.UUID
+import java.util.concurrent.{Callable, Executors, TimeUnit}
+import scala.concurrent.duration.*
 import scala.util.Using
 
 abstract class IndexingPreferencesContract extends munit.FunSuite {
@@ -59,18 +61,20 @@ final class MemoryIndexingPreferencesSuite extends IndexingPreferencesContract {
 }
 
 final class PostgresIndexingPreferencesSuite extends IndexingPreferencesContract {
-  private def database[A](run: Connection => A): A = {
+  private def connection(): Connection = {
     val jdbc = sys.env.get("ACCOUNT_TEST_JDBC")
     if (jdbc.isEmpty) {
       assert(!sys.env.contains("ACCOUNT_REQUIRE_POSTGRES"), "PostgreSQL required")
       assume(false, "PostgreSQL explicitly skipped: use shared/service-auth/scripts/test-postgres.sh")
     }
-    Using.resource(DriverManager.getConnection(jdbc.get, "account_test", "synthetic-test-password")) { c =>
-      c.setAutoCommit(false)
-      IndexingPreferenceSql.initialize(c)
-      c.commit()
-      try run(c) finally c.rollback()
-    }
+    val c = DriverManager.getConnection(jdbc.get, "account_test", "synthetic-test-password")
+    c.setAutoCommit(false)
+    c
+  }
+  private def database[A](run: Connection => A): A = Using.resource(connection()) { c =>
+    IndexingPreferenceSql.initialize(c)
+    c.commit()
+    try run(c) finally c.rollback()
   }
   protected def withStores(test: (IndexingPreferences, IndexingPreferences) => Unit): Unit = database { c =>
     test(IndexingPreferenceSql.store(c, IndexingService.Manure, IndexingPolicy.defaults),
@@ -114,7 +118,44 @@ final class PostgresIndexingPreferencesSuite extends IndexingPreferencesContract
       settings.setChoice(creator, Inherit)
       settings.setChoice(editor, Inherit)
       assertEquals(state(c, true), (true, 2L))
-      // The random owner records are cleaned up by transaction rollback; the committed decision is isolated by test id.
+      // The committed decision is isolated by test id; the outer runner owns the disposable database.
+    }
+  }
+
+  test("a write waits for admitted work's DB transaction without holding up other owners") {
+    import IndexingChoice.*
+    import IndexingPreferenceSql.*
+    val service = IndexingService.Chronicle
+    val owner = UUID.randomUUID().toString
+    val other = UUID.randomUUID().toString
+    def scalar(c: Connection, sql: String): Int = Using.resource(c.createStatement()) { statement =>
+      Using.resource(statement.executeQuery(sql)) { r => assert(r.next()); r.getInt(1) }
+    }
+    database { worker =>
+      val workerPid = scalar(worker, "SELECT pg_backend_pid()")
+      lockRead(worker, service, List(ownerKey(owner)))
+      val pool = Executors.newFixedThreadPool(2)
+      def disable(id: String) = pool.submit(new Callable[IndexingPreference] {
+        def call(): IndexingPreference = Using.resource(connection()) { writer =>
+          val result = store(writer, service, IndexingPolicy.defaults).setOverride(id, Disable)
+          writer.commit()
+          result
+        }
+      })
+      try {
+        val sameOwner = disable(owner)
+        Using.resource(connection()) { observer =>
+          val blockers = s"SELECT count(*) FROM pg_stat_activity WHERE $workerPid=ANY(pg_blocking_pids(pid))"
+          val deadline = System.nanoTime() + 10.seconds.toNanos
+          while (scalar(observer, blockers) == 0 && System.nanoTime() < deadline) Thread.sleep(10)
+          assertEquals(scalar(observer, blockers), 1)
+          assertEquals(disable(other).get(10, TimeUnit.SECONDS).overrideChoice, Disable)
+          assertEquals(store(observer, service, IndexingPolicy.defaults).get(owner), IndexingPreference.inherited)
+          worker.commit()
+          assertEquals(sameOwner.get(10, TimeUnit.SECONDS), IndexingPreference(Inherit, Disable, 1))
+          assertEquals(store(observer, service, IndexingPolicy.defaults).get(owner).overrideChoice, Disable)
+        }
+      } finally pool.shutdownNow()
     }
   }
 }
