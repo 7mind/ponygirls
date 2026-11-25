@@ -63,7 +63,9 @@ private[chronicle] object ClaimOrder {
       case ClaimLane.Kind.Fresh => List(Step(s"j.bulk=false AND $unsized",ClaimStep.Preferred),Step(s"j.bulk=true AND $unsized",ClaimStep.Borrowed))
     }
   }
-  private val olderRunning = "NOT EXISTS(SELECT 1 FROM ch_jobs o WHERE o.session_id=j.session_id AND o.profile=j.profile AND o.state='Running' AND o.revision<j.revision)"
+  /** No older-revision job of the candidate's source and profile Running. OFFSET 0 keeps it a per-candidate probe of
+    * ch_jobs_running: pulled up into an anti-join, the planner may read every Running row instead. */
+  private val olderRunning = "NOT EXISTS(SELECT 1 FROM ch_jobs o WHERE o.session_id=j.session_id AND o.profile=j.profile AND o.state='Running' AND o.revision<j.revision OFFSET 0)"
   /** The candidate statement of `step` over `pairs` (claim-order DESIGN §2), passing the sources in `excluded`. */
   def candidateSql(step: Step,pairs: Int,excluded: Int): String = {
     val values=List.fill(pairs)("(?::text,?::text,?::bigint,?::bigint)").mkString(",")
