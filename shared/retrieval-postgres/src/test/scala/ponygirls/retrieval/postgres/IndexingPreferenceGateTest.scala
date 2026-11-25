@@ -156,6 +156,27 @@ class IndexingPreferenceGateTest extends munit.FunSuite {
     assertEquals(f.search(RetrievalMode.Semantic).hits.map(_.version),List(edited.version))
   }
 
+  test("a disabled new editor parks the head but does not withdraw an independently eligible older publication") {
+    val f=fixture()
+    val previous=f.projected("shared-item","alpha approved revision")
+    f.put(previous)
+    f.publish(f.claim().get)
+    val pinned=f.search(RetrievalMode.Semantic).hits.head
+    f.choice(f.editor,Disable)
+    val changed=previous.copy(version="version-2",owners=Set(f.owner,f.editor),chunks=List(InputChunk("edit","alpha unapproved edit",provenance)))
+    f.put(changed)
+    assertEquals(f.claim(),None)
+    assertEquals(f.search(RetrievalMode.Lexical).hits,Nil)
+    List(RetrievalMode.Semantic,RetrievalMode.Hybrid).foreach { mode =>
+      val page=f.search(mode)
+      assertEquals(page.hits.map(h => (h.version,h.generation,h.chunk.text)),List((pinned.version,pinned.generation,pinned.chunk.text)))
+      assertEquals((page.total,page.pending),(1L,0L))
+      assert(f.db.tx(c => f.index.visible(c,query(mode),pinned)))
+    }
+    f.choice(f.owner,Disable)
+    assertEquals(f.search(RetrievalMode.Semantic).total,0L)
+  }
+
   test("Blackbox-GoodCommunication: unavailable legacy attribution stays hidden and schedules one head rebuild") {
     val f=fixture(); val s=f.projected("legacy","alpha legacy")
     f.db.store.put(s); f.db.store.publishAll()

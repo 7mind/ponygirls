@@ -281,8 +281,7 @@ final class PostgresRetrieval private[postgres](val namespace: String,val profil
       case AttributeFilter.Equal(_,_) => " AND EXISTS(SELECT 1 FROM pony_retrieval_attributes f WHERE f.namespace=s.namespace AND f.source_id=s.id AND f.key=? AND f.value=?)"
     }.mkString
     val arguments=query.filters.toList.flatMap { case AttributeFilter.Equal(k,v) => List[Value](k.value,bytes(v.value)) }
-    val policy=if(controlsIndexing) s" AND ${allowed("s.owner_keys")}" else ""
-    ("s.namespace=? AND s.eligible AND (? OR NOT s.archived) AND (s.expires_at IS NULL OR s.expires_at>?) AND EXISTS(SELECT 1 FROM pony_retrieval_audience acl WHERE acl.namespace=s.namespace AND acl.source_id=s.id AND acl.principal=?)"+attributes+policy,List[Value](ns,query.includeArchived,query.now.value,key(query.principal))++arguments)
+    ("s.namespace=? AND s.eligible AND (? OR NOT s.archived) AND (s.expires_at IS NULL OR s.expires_at>?) AND EXISTS(SELECT 1 FROM pony_retrieval_audience acl WHERE acl.namespace=s.namespace AND acl.source_id=s.id AND acl.principal=?)"+attributes,List[Value](ns,query.includeArchived,query.now.value,key(query.principal))++arguments)
   }
   /** Decided per query, from a count bounded at threshold + 1. In controlled stores hidden data cannot force ANN. */
   private def exactScan(c: Connection,base: String,baseArgs: List[Value]): Boolean = {
@@ -295,6 +294,7 @@ final class PostgresRetrieval private[postgres](val namespace: String,val profil
     val semantic=query.mode!=RetrievalMode.Lexical
     RetrievalChecks(!semantic || query.offset<rankingLimit(query.mode),"invalid","offset exceeds candidate ranking window")
     val (scope,scopeArgs)=authorization(query)
+    val headScope=if(controlsIndexing) s"$scope AND ${allowed("s.owner_keys")}" else scope
     val (sql,args,pending)=if(!semantic) {
       val matches=if(query.text.nonEmpty) " AND ch.document @@ websearch_to_tsquery('english',?)" else ""
       val matchArgs=if(query.text.nonEmpty) List[Value](query.text) else Nil
@@ -302,12 +302,12 @@ final class PostgresRetrieval private[postgres](val namespace: String,val profil
       val fields="ch.source_id||':'||ch.chunk_id AS id,ch.chunk_id,ch.source_id,s.version,s.head_generation AS generation,NULL::text AS profile,NULL::text AS space,ch.body,ch.provenance"
       val rank="ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) AS score"
       val join="JOIN pony_retrieval_sources s ON s.namespace=ch.namespace AND s.id=ch.source_id"
-      val indexed=s"SELECT $fields,$rank FROM pony_retrieval_head_chunks ch $join WHERE $scope$matches"
+      val indexed=s"SELECT $fields,$rank FROM pony_retrieval_head_chunks ch $join WHERE $headScope$matches"
       val indexedArgs=List[Value](query.text)++scopeArgs++matchArgs
       val (scored,scoredArgs)=if(controlsIndexing) {
         // Lexical-only installations also see their current content after opt-in. Materialize only authorized raw rows
         // before deriving any FTS; never relabel an older head index with the parked head's version.
-        val staging=s"parked AS MATERIALIZED(SELECT $fields,ch.token_text FROM pony_retrieval_parked_chunks ch $join WHERE $scope AND s.head_parked)," +
+        val staging=s"parked AS MATERIALIZED(SELECT $fields,ch.token_text FROM pony_retrieval_parked_chunks ch $join WHERE $headScope AND s.head_parked)," +
           s"parked_documents AS MATERIALIZED(SELECT $hitColumns,to_tsvector('english',token_text) AS document FROM parked),"
         (s"${staging}scored AS($indexed AND NOT s.head_parked UNION ALL SELECT $hitColumns,$rank FROM parked_documents ch WHERE true$matches)",scopeArgs++indexedArgs++List[Value](query.text)++matchArgs)
       } else (s"scored AS($indexed)",indexedArgs)
@@ -316,7 +316,7 @@ final class PostgresRetrieval private[postgres](val namespace: String,val profil
       val p=profile.getOrElse(throw RetrievalError.unavailable(UnavailableReason.NotConfigured))
       val v=Vectors.sql(vector.getOrElse(throw RetrievalError.unavailable(UnavailableReason.EmbeddingFailed)),p.space.dimensions)
       // Declared partial readiness: in-scope sources whose current head has no publication under the active profile.
-      val pending=RetrievalPlan(s"SELECT count(*) AS n FROM pony_retrieval_sources s WHERE $scope AND NOT EXISTS(SELECT 1 FROM pony_retrieval_generations g WHERE g.namespace=s.namespace AND g.id=s.published AND g.version=s.version AND g.profile=? AND ${allowed("g.owner_keys")})",scopeArgs:+p.id)
+      val pending=RetrievalPlan(s"SELECT count(*) AS n FROM pony_retrieval_sources s WHERE $headScope AND NOT EXISTS(SELECT 1 FROM pony_retrieval_generations g WHERE g.namespace=s.namespace AND g.id=s.published AND g.version=s.version AND g.profile=? AND ${allowed("g.owner_keys")})",scopeArgs:+p.id)
       val fields="ch.id,ch.chunk_id,ch.source_id,g.version,ch.generation,ch.profile,g.space,ch.body,ch.provenance,ch.document,ch.embedding"
       // The indexed version's owners may differ from the current head's, even when it still serves pending replacement.
       val publication=if(controlsIndexing) s" AND EXISTS(SELECT 1 FROM pony_retrieval_generations pg WHERE pg.namespace=ch.namespace AND pg.id=ch.generation AND ${allowed("pg.owner_keys")})" else ""
@@ -362,9 +362,12 @@ final class PostgresRetrieval private[postgres](val namespace: String,val profil
     def scoped(extra: String,extraArgs: List[Value]): Boolean =
       one(c,s"SELECT 1 FROM pony_retrieval_sources s WHERE $scope AND s.id=?$extra",(args++List[Value](key(id))++extraArgs)*)(_ => true).contains(true)
     if(!controlsIndexing) scoped("",Nil)
-    else if(query.mode==RetrievalMode.Lexical) hit match {
-      case None => scoped("",Nil)
-      case Some(h) => scoped(" AND s.version=? AND s.head_generation=?",List[Value](key(h.version),h.generation))
+    else if(query.mode==RetrievalMode.Lexical) {
+      val head=s" AND ${allowed("s.owner_keys")}"
+      hit match {
+        case None => scoped(head,Nil)
+        case Some(h) => scoped(head+" AND s.version=? AND s.head_generation=?",List[Value](key(h.version),h.generation))
+      }
     }
     else profile.exists { p =>
       val pin=if(hit.nonEmpty) " AND g.id=? AND g.version=?" else ""
