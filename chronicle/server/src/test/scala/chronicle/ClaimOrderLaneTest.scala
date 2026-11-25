@@ -144,11 +144,13 @@ private[chronicle] object ClaimOrderPostgres extends munit.Assertions {
   def withDatabase(c: Config)(f: (Config,Database,PostgresArchive) => Unit): Unit = {
     assert(sys.env.contains("CHRONICLE_TEST_JDBC"),"PostgreSQL required: run through chronicle/scripts/test-postgres.sh (CHRONICLE_TEST_JDBC)")
     val db=new Database(c,IndexProfileCatalog.current(c)); db.initialize()
-    db.transaction { x =>
+    def reset(): Unit = db.transaction { x =>
       Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations CASCADE")
       Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile)
       Sql.exec(x,"DELETE FROM ponygirls_indexing_preferences WHERE service='chronicle'")
     }
-    try f(c,db,new PostgresArchive(db,c)) finally db.close()
+    reset()
+    // The next suite of the group's database finds no preference or target epoch of these cases.
+    try f(c,db,new PostgresArchive(db,c)) finally try reset() finally db.close()
   }
 }
