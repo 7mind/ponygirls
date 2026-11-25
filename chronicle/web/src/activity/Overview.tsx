@@ -106,7 +106,7 @@ export function Overview({ user, snapshots, usage }: { user: UserInfo; snapshots
       <Tile label="Archive HEADs" value={summary === null ? null : summary.archiveHeads} note="conversations you own" link={archiveWith(user.id, null)} variant=""/>
       <Tile label="Without target job" value={summary === null ? null : summary.headsWithoutTargetJob} note="unscheduled · not Queued" link={archiveWith(user.id, 'unscheduled')} variant={summary !== null && summary.headsWithoutTargetJob > 0n ? 'tile-warn' : ''}/>
       <Tile label="Queued" value={current === null ? null : current.queued} note="current jobs" link={jobsWith('status', 'queued')} variant=""/>
-      <Tile label="Running" value={current === null ? null : current.running} note={current === null ? 'current jobs' : `${current.activeRunning.toLocaleString()} leases active`} link={jobsWith('status', 'running')} variant=""/>
+      <Tile label="Running" value={current === null ? null : current.activeRunning} note={current === null ? 'current jobs · active lease' : `active lease · ${(current.running - current.activeRunning).toLocaleString()} more stored Running without one`} link={jobsWith('lease', 'active')} variant=""/>
       <Tile label="Failed" value={current === null ? null : current.failed} note="current · retry available" link={jobsWith('status', 'failed')} variant={current !== null && current.failed > 0n ? 'tile-danger' : ''}/>
       <Tile label="Complete" value={current === null ? null : current.complete} note={current === null ? 'current jobs' : `of ${current.total.toLocaleString()} current jobs`} link={jobsWith('status', 'complete')} variant=""/>
     </div>
@@ -116,7 +116,7 @@ export function Overview({ user, snapshots, usage }: { user: UserInfo; snapshots
           : !staleKnown ? [...items, unknownStale].map(item => <AttentionItem key={item.key} item={item}/>)
           : items.length === 0 ? <p className="attention-item"><span className="status status-ok">Nothing needs attention</span><span className="grow muted truncate">no failed jobs, expired leases, stale collectors or unscheduled conversations</span></p>
           : items.map(item => <AttentionItem key={item.key} item={item}/>)}</div></section>
-      <section className="card" aria-labelledby="activity-job-totals"><div className="card-head"><h2 id="activity-job-totals">Indexing jobs</h2><span className="xs muted">unfiltered totals</span></div>
+      <section className="card" aria-labelledby="activity-job-totals"><div className="card-head"><h2 id="activity-job-totals">Indexing jobs</h2><span className="xs muted">unfiltered totals of stored states</span></div>
         <div className="card-body stack">{summary === null ? <p className="muted small">Totals unknown.</p> : <>
           <JobBar label="Current" note={completion(summary.current)} counts={summary.current} legend={false}/>
           <JobBar label="Historical" note="superseded revisions and profiles" counts={summary.historical} legend={true}/>

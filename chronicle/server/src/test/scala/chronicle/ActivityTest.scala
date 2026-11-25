@@ -660,6 +660,9 @@ private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) exte
     val next=if(remaining.size>q.limit) Some(ActivityCursor.encodeCollector(q,user.id,order,ActivityPosition(wire(collectorKey(selected.last,q.sort)),selected.last.collectorId))) else None
     ActivityResult(now.toString,user,heads.size.toLong,heads.count(h => !current.exists(_.job.sessionId==h.id)).toLong,counts(current),counts(historical),selected,collectors.size.toLong,names.size.toLong,next)
   }
+  // The claim-order view is evaluated with the scheduler's PostgreSQL predicates only (ActivityClaimOrderTest).
+  def claimOrderSummary(user: UserInfo): ActivityClaimOrderSummaryResult = throw DomainError("unavailable","claim order is read from PostgreSQL")
+  def claimOrderJobs(owner: String,q: ActivityClaimOrderJobsQuery): ActivityClaimOrderJobsResult = throw DomainError("unavailable","claim order is read from PostgreSQL")
   def jobs(owner: String,q: ActivityJobsQuery): ActivityJobsResult = {
     ActivityCursor.page(q.limit); q.collectorId.foreach(ActivityCursor.collectorId)
     val expression=ActivityExpression.jobs(q.expression); val order=jobOrder(q.sort)

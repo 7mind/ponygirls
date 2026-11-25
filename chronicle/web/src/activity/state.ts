@@ -1,4 +1,5 @@
-import { ActivityCollectorSort, ActivityCollectorSort_values, ActivityJobScope, ActivityJobSort, ActivityJobSort_values, SortDirection, type ActivityCollector, type ActivityJob, type ActivityJobsResult, type ActivityResult } from '../api.ts';
+import { ActivityClaimOrderSort, ActivityClaimOrderSort_values, ActivityCollectorSort, ActivityCollectorSort_values, ActivityJobScope, ActivityJobSort_values, SortDirection, type ActivityClaimOrderJobsResult, type ActivityCollector, type ActivityJobSort, type ActivityResult } from '../api.ts';
+import type { JobRow } from './claim-order.ts';
 import { SettledChainCache } from '../infinite.ts';
 import { ACTIVITY_SECTIONS, RouteParams, routeSlot, type Route, type RouteStateCache } from '../router.ts';
 
@@ -16,9 +17,13 @@ export function activityRoute(section: ActivitySection, params: RouteParams): Ro
 export interface ListState<S> { readonly submitted: string; readonly sort: S; readonly direction: SortDirection; readonly expanded: string | null }
 export type CollectorsState = ListState<ActivityCollectorSort>;
 export type JobScope = ActivityJobScope.Current | ActivityJobScope.Historical;
-export interface JobsState extends ListState<ActivityJobSort> { readonly scope: JobScope }
+/** A column order of the job list, or one of the claim-order read's own orders (Class, Waiting since, Why not running). */
+export type JobSort = ActivityJobSort | ActivityClaimOrderSort;
+export function claimOrderSort(sort: JobSort): ActivityClaimOrderSort | undefined { return ActivityClaimOrderSort_values.find(value => value === sort); }
+export interface JobsState extends ListState<JobSort> { readonly scope: JobScope }
 export function emptyCollectors(): CollectorsState { return { submitted: '', sort: ActivityCollectorSort.CollectorId, direction: SortDirection.Asc, expanded: null }; }
-export function emptyJobs(): JobsState { return { submitted: '', scope: ActivityJobScope.Current, sort: ActivityJobSort.LastTimestamp, direction: SortDirection.Desc, expanded: null }; }
+// Oldest wait first (claim-order spec §7, approved mockup): the order the claim order itself follows within a class.
+export function emptyJobs(): JobsState { return { submitted: '', scope: ActivityJobScope.Current, sort: ActivityClaimOrderSort.WaitingSince, direction: SortDirection.Asc, expanded: null }; }
 
 const QUERY_PARAM = 'q', SCOPE_PARAM = 'scope', SORT_PARAM = 'sort', DIRECTION_PARAM = 'dir', HISTORY = 'history';
 function listParams<S>(state: ListState<S>, defaults: ListState<S>, extra: readonly [string, string][]): RouteParams {
@@ -41,7 +46,7 @@ export function collectorsFromParams(params: RouteParams): Omit<CollectorsState,
 }
 export function jobsFromParams(params: RouteParams): Omit<JobsState, 'expanded'> {
   const defaults = emptyJobs(), sort = params.get(SORT_PARAM);
-  return { submitted: params.get(QUERY_PARAM) ?? '', scope: params.get(SCOPE_PARAM) === HISTORY ? ActivityJobScope.Historical : ActivityJobScope.Current, sort: ActivityJobSort_values.find(value => value === sort) ?? defaults.sort, direction: directionOf(params, defaults.direction) };
+  return { submitted: params.get(QUERY_PARAM) ?? '', scope: params.get(SCOPE_PARAM) === HISTORY ? ActivityJobScope.Historical : ActivityJobScope.Current, sort: ActivityJobSort_values.find(value => value === sort) ?? claimOrderSort(sort as JobSort) ?? defaults.sort, direction: directionOf(params, defaults.direction) };
 }
 export function jobsRouteFor(submitted: string, scope: JobScope): Route { return activityRoute('jobs', jobsParams({ ...emptyJobs(), submitted, scope })); }
 export function collectorsRouteFor(submitted: string): Route { return activityRoute('collectors', collectorsParams({ ...emptyCollectors(), submitted })); }
@@ -58,7 +63,7 @@ export const JOBS_DRAFT = routeSlot<string>('activity-jobs-draft', () => '');
 export const JOBS_OPENED = routeSlot<string | null>('activity-jobs-opened', () => null);
 export const SECTION = routeSlot<ActivitySection>('activity-section', () => DEFAULT_SECTION);
 export const COLLECTOR_CHAINS = routeSlot('activity-collector-chains', () => new SettledChainCache<ActivityCollector, ActivityResult, string>(CHAIN_LIMIT));
-export const JOB_CHAINS = routeSlot('activity-job-chains', () => new SettledChainCache<ActivityJob, ActivityJobsResult, string>(CHAIN_LIMIT));
+export const JOB_CHAINS = routeSlot('activity-job-chains', () => new SettledChainCache<JobRow, ActivityClaimOrderJobsResult, string>(CHAIN_LIMIT));
 export const ACTIVITY_INSTANCE = INSTANCE;
 export function sectionParams(section: ActivitySection, cache: RouteStateCache): RouteParams {
   switch (section) {

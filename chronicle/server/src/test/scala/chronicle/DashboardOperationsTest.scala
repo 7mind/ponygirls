@@ -70,4 +70,19 @@ final class DashboardOperationsTest extends munit.FunSuite {
     assertEquals(intercept[DomainError](run(c,c.owner,Operation.PreviewOwnerReindex())).code,"unauthorized")
     assertEquals(c.providerCalls.get(),0)
   }}
+  test("Blackbox-GoodCommunication: the claim-order reads answer a browser session with Read for its own jobs, as the Activity reads do; without Read they are refused") { database { c =>
+    val source=c.archive.ingest("a",Fixtures.snapshot()); c.archive.ingest("b",Fixtures.snapshot())
+    val query=ActivityJobsQuery(None,ActivityJobScope.Current,"",ActivityJobSort.JobId,SortDirection.Asc,None,20)
+    val listed=run(c,c.owner,Operation.ActivityClaimOrderJobs(ActivityClaimOrderJobsQuery(query,None))).asInstanceOf[Result.ActivityClaimOrderJobs].result
+    assertEquals((listed.page.jobs.map(_.job.id),listed.jobs.map(_.jobId)),(List(source.jobId),List(source.jobId)))
+    assertEquals(listed.jobs.map(_.waiting),List(Some(ActivityJobWaiting.Queued())))
+    assertEquals(listed.page.jobs,run(c,c.owner,Operation.ActivityJobs(query)).asInstanceOf[Result.ActivityJobs].result.jobs)
+    val summary=run(c,c.owner,Operation.ActivityClaimOrderSummary()).asInstanceOf[Result.ActivityClaimOrderSummary].result
+    assertEquals((summary.queue.fresh.queued,summary.queue.fresh.claimable),(1L,1L))
+    val unread=c.owner.copy(user=c.owner.user.copy(scopes=c.owner.user.scopes.filterNot(_==Scope.Read)))
+    List(Operation.ActivityClaimOrderSummary(),Operation.ActivityClaimOrderJobs(ActivityClaimOrderJobsQuery(query,None)),Operation.Activity(ActivityQuery("",ActivityCollectorSort.CollectorId,SortDirection.Asc,None,1)),Operation.ActivityJobs(query)).foreach { operation =>
+      assertEquals(intercept[DomainError](run(c,unread,operation)),DomainError("forbidden","scope required"),operation.toString)
+    }
+    assertEquals(c.providerCalls.get(),0)
+  }}
 }

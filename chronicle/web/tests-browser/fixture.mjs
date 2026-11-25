@@ -49,6 +49,10 @@ function fixturePage(rows, cursor, limit, key) {
   if (cursor !== undefined) { const decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString()); if (decoded[0] !== key) throw new Error('Fixture cursor binding mismatch'); offset = decoded[1]; }
   return { rows: rows.slice(offset, offset + limit), next: offset + limit < rows.length ? Buffer.from(JSON.stringify([key, offset + limit])).toString('base64url') : undefined };
 }
+// The server order of the waiting reasons (ActivityQueueSql.reasonOrder).
+const WAITING_REASONS = ['IndexingOff', 'ProfileNotRun', 'AwaitingReclaim', 'RunningWithoutLease', 'LeaseExhaustedPending', 'LeaseExpiredAwaitingReclaim', 'Held', 'BlockedByOlderRevision', 'AwaitingLargeLane', 'AwaitingLargePermit', 'Queued'];
+/** The job list's query of a claim-order read, its claim-order sort (if any) in place of the job list's. */
+export function jobQuery(query) { const jobs = query.jobs; return { collectorId: jobs.collectorId, scope: jobs.scope, expression: jobs.expression, sort: query.order ?? jobs.sort, direction: jobs.direction, cursor: jobs.cursor, limit: jobs.limit }; }
 function leaseState(item) { return item.leaseExpiresAt === undefined ? 'unleased' : item.job.state !== api.JobState.Running ? 'inactive' : item.leaseActive ? 'active' : 'expired'; }
 export class ChronicleFixture {
   #observers = new Set();
@@ -70,6 +74,11 @@ export class ChronicleFixture {
   jobs = [new api.JobInfo(ID.job, ID.session, 2, api.JobState.Failed, 3, 'Embedding provider unavailable; archived source is preserved.', 0, undefined, undefined)];
   archiveRowCount = 1; archiveRows = undefined; archiveExcluded = new Set(); archiveFailure = null; holdArchive = false; holdArchiveCursor = false; pendingArchive = []; archiveRelevanceMissing = false;
   activityJobs = undefined; activityCollectors = undefined; collectorExpressions = new Map(); jobExpressions = new Map(); activityFailure = null;
+  // The claim-order view (ActivityClaimOrderSummary, ActivityClaimOrderJobs): the owner's counts, each job's entry by job id
+  // (default: fresh, no waiting time, reason or rank) and the claim order the job list reports (default: the summary's).
+  claimQueue = new api.ActivityQueue(api.ActivityClaimOrder.SourceId, ...Array.from({ length: 3 }, () => new api.ActivityClassQueue(0n, 0n, 0n, 0n, undefined)), 0n, undefined, 0n);
+  claimEntries = new Map(); jobsClaimOrder = undefined;
+  claimEntry(item) { return this.claimEntries.get(item.job.id) ?? new api.ActivityJobClaimOrder(item.job.id, undefined, false, undefined, undefined); }
   holdSessions = false; sessionHeadSnapshot = undefined; pendingSessions = [];
   holdCollectorCursor = false; holdJobCursor = false; pendingCollectors = []; pendingJobs = [];
   targetProfile = 'target-profile'; jobFences = new Map(); bulkPayloads = new Map(); bulkApplyExecutions = 0; bulkDropBeforeCommit = false; bulkDropReply = false; bulkConflictOnce = false; bulkPreviewDenied = false; bulkApplyDenied = false; retryCountsOverride = undefined; messageCount = 87; lateMessageId = 'm65'; holdLocators = false; pendingLocators = [];
@@ -202,6 +211,9 @@ export class ChronicleFixture {
       case api.ActivityJobSort.Classification: return row.classification;
       case api.ActivityJobSort.JobId: return row.job.id;
       case api.ActivityJobSort.SessionId: return row.job.sessionId;
+      case api.ActivityClaimOrderSort.WaitingSince: { const since = this.claimEntry(row).waitingSince; return since === undefined ? undefined : Date.parse(since); }
+      case api.ActivityClaimOrderSort.JobClass: { const bulk = this.claimEntry(row).bulk; return bulk === undefined ? undefined : bulk ? 'bulk' : 'fresh'; }
+      case api.ActivityClaimOrderSort.WaitingReason: { const waiting = this.claimEntry(row).waiting, index = WAITING_REASONS.findIndex(name => waiting instanceof api[`ActivityJobWaiting_${name}`]); return index < 0 ? undefined : index + 1; }
       default: throw new Error('Unknown fixture job sort');
     }
   }
@@ -320,6 +332,14 @@ export class ChronicleFixture {
           if (this.activityFailure !== null || (operation.query.expression !== '' && this.collectorSelection(operation.query.expression) === undefined)) { send(new api.Result_Error(new api.Failure('invalid', this.activityFailure ?? 'Unsupported synthetic metadata expression'))); return; }
           const result = this.activityResult(operation.query), reply = () => send(new api.Result_Activity(result));
           if (this.holdCollectorCursor && operation.query.cursor !== undefined) this.pendingCollectors.push(reply); else reply(); return;
+        }
+        if (operation instanceof api.Operation_ActivityClaimOrderSummary) { send(new api.Result_ActivityClaimOrderSummary(new api.ActivityClaimOrderSummaryResult('2026-10-26T12:00:00Z', this.claimQueue))); return; }
+        if (operation instanceof api.Operation_ActivityClaimOrderJobs) {
+          const query = jobQuery(operation.query);
+          if (this.activityFailure !== null || (query.expression !== '' && !this.jobExpressions.has(query.expression))) { send(new api.Result_Error(new api.Failure('invalid', this.activityFailure ?? 'Unsupported synthetic metadata expression'))); return; }
+          const page = this.activityJobsResult(query), result = new api.ActivityClaimOrderJobsResult(page, this.jobsClaimOrder ?? this.claimQueue.claimOrder, page.jobs.map(item => this.claimEntry(item)));
+          const reply = () => send(new api.Result_ActivityClaimOrderJobs(result));
+          if (this.holdJobCursor && query.cursor !== undefined) this.pendingJobs.push(reply); else reply(); return;
         }
         if (operation instanceof api.Operation_ActivityJobs) {
           if (this.activityFailure !== null || (operation.query.expression !== '' && !this.jobExpressions.has(operation.query.expression))) { send(new api.Result_Error(new api.Failure('invalid', this.activityFailure ?? 'Unsupported synthetic metadata expression'))); return; }

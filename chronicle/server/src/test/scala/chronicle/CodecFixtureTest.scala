@@ -124,5 +124,15 @@ class CodecFixtureTest extends munit.FunSuite {
     assertEquals(manifests.map(manifest => (manifest.revision,manifest.files.map(file => (file.index,file.bytes)))),
       Vector((7,List((0,9007199254740993L))),(Int.MaxValue,List((0,0L),(1,Long.MaxValue)))))
   }
-
+  test("BA specified: claim-order Activity goldens (their own results) keep the job list unchanged, every waiting reason, nullable age, class and exact i64 counts") {
+    val envelopes=checkList("activity-claim-order",ServerEnvelope.codecJson)
+    val result=envelopes.head.result match { case Result.ActivityClaimOrderJobs(result) => result; case other => fail(s"unexpected $other") }
+    assertEquals(result.claimOrder,ActivityClaimOrder.Waiting)
+    assertEquals(result.jobs.map(_.jobId),result.page.jobs.map(_.job.id))
+    assertEquals(result.jobs.flatMap(_.waiting).map(_.getClass.getSimpleName).distinct.size,10)
+    assertEquals(result.jobs.map(_.ahead).head,Some(9007199254740993L))
+    assertEquals(result.jobs.map(_.bulk).take(3),List(Some(true),Some(false),None))
+    val queues=envelopes.tail.map(_.result match { case Result.ActivityClaimOrderSummary(result) => result.queue; case other => fail(s"unexpected $other") })
+    assertEquals(queues.map(q => (q.claimOrder,q.bulk.queued,q.largeAhead,q.activeRunning)),Vector((ActivityClaimOrder.Waiting,9007199254740993L,Some(2L),9007199254740993L),(ActivityClaimOrder.SourceId,9007199254740993L,None,0L)))
+  }
 }

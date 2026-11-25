@@ -628,7 +628,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     IO(Deadline.now).flatMap(claimed => IO.blocking(archive.claimInLane(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds,lane)).redeemWith(claimFailed,{
       case ClaimOutcome.Idle | ClaimOutcome.Contended => IO.pure(Worker.Iteration.Idle)
       case ClaimOutcome.Claimed(claim) =>
-        IO(claim.facts.foreach(facts => logger.log(izumi.logstage.api.Log.Level.Info)(izumi.logstage.api.Log.Message.raw(ClaimFacts.logLine(claim.jobId,facts,java.time.Instant.now()))))) *>
+        IO(claim.facts.foreach(facts => logger.log(izumi.logstage.api.Log.Level.Info)(izumi.logstage.api.Log.Message.raw(ClaimFacts.logLine(claim.jobId,facts,lane,java.time.Instant.now()))))) *>
           process(claim,lane.large,new AttemptLease(claimed)).as(Worker.Iteration.Processed)
     }))
   }

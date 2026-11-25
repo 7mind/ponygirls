@@ -8,7 +8,7 @@ import { NOW } from './goal50-fixture.mjs';
 import { ACTIVITY_POLL_INTERVAL_MS } from '../src/progress.ts';
 import {
   DESKTOP, LAPTOP, PHONE, PAGE_SIZE, MASTHEAD_H, SUBNAV_H, VIEWBAR_H, SCROLL_TOLERANCE, api, startRig, scene, main, region, sections, tab, navLink, table, rows, row, detail, cell,
-  rowIds, idle, listState, status, combobox, button, hashParam, activityQueries, quiesce, open, filter, appendUntil, scrollers, horizontalOverflow, showAllColumns, largeFixture, scriptJobs,
+  rowIds, idle, listState, status, combobox, button, hashParam, activityQueries, jobQueries, quiesce, open, filter, appendUntil, scrollers, horizontalOverflow, showAllColumns, largeFixture, scriptJobs,
 } from './activity-scenes.mjs';
 
 const rig = await startRig('Activity');
@@ -58,11 +58,11 @@ try {
 
   await rig.run('the laptop and phone widths keep the lists tables without sideways document overflow, light and dark', async () => {
     for (const [viewport, scheme] of [[LAPTOP, 'light'], [PHONE, 'dark']]) {
-      const { context, page } = await scene(rig, { route: '/activity', viewport, scheme, configure: fixture => { largeFixture(fixture); fixture.activityJobs = fixture.activityJobs.map((item, index) => index === 1 ? item.with({ session: item.session.with({ metadata: item.session.metadata.with({ title: 'Literal 猫🦄 <script>not markup</script> '.repeat(40), gitBranch: 'long-value-'.repeat(12) }) }) }) : item); } });
+      const { context, page, fixture: scripted } = await scene(rig, { route: '/activity', viewport, scheme, configure: fixture => { largeFixture(fixture); fixture.activityJobs = fixture.activityJobs.map((item, index) => index === 1 ? item.with({ session: item.session.with({ metadata: item.session.metadata.with({ title: 'Literal 猫🦄 <script>not markup</script> '.repeat(40), gitBranch: 'long-value-'.repeat(12) }) }) }) : item); } });
       await region(page, 'Overview').locator('.tile-value').first().waitFor(); assert.equal(await horizontalOverflow(page), false, `${viewport.width} Overview`);
       for (const name of ['Collectors', 'Jobs', 'Model usage', 'Maintenance']) { await open(page, name); assert.equal(await horizontalOverflow(page), false, `${viewport.width} ${name}`); assert.deepEqual(await scrollers(page), [], `${viewport.width} ${name}`); }
       await open(page, 'Jobs'); assert.equal(await table(page, 'jobs').evaluate(element => getComputedStyle(element).display), 'table');
-      assert.equal(await rows(page, 'jobs').first().locator('a.cell-title').evaluate(element => element.textContent.includes('<script>') && element.children.length === 0), true, 'metadata stays literal text');
+      assert.equal(await row(page, 'jobs', scripted.activityJobs[1].job.id).locator('a.cell-title').evaluate(element => element.textContent.includes('<script>') && element.children.length === 0), true, 'metadata stays literal text');
       await context.close();
     }
   });
@@ -167,16 +167,16 @@ try {
 
   await rig.run('every visible header requests its typed server order in both directions from the first page', async () => {
     const { context, page, fixture } = await scene(rig, { route: '/activity/collectors', configure: largeFixture });
-    async function check(kind, Type, fields, expected) {
+    async function check(kind, queriesOf, fields, expected) {
       await showAllColumns(page, kind); await idle(page, kind);
       const headers = await table(page, kind).locator('thead th[data-sort]').evaluateAll(items => items.map(item => item.dataset.sort));
       assert.deepEqual([...headers].sort(), [...fields].sort(), 'every data header is a typed server sort');
       for (const field of fields) for (let toggle = 0; toggle < 2; toggle++) {
-        const previous = activityQueries(fixture, Type).filter(query => query.limit === PAGE_SIZE).at(-1), direction = previous.sort === field && previous.direction === api.SortDirection.Asc ? api.SortDirection.Desc : api.SortDirection.Asc;
+        const previous = queriesOf(fixture.calls).filter(query => query.limit === PAGE_SIZE).at(-1), direction = previous.sort === field && previous.direction === api.SortDirection.Asc ? api.SortDirection.Desc : api.SortDirection.Asc;
         const before = fixture.calls.length, header = table(page, kind).locator(`thead th[data-sort="${field}"]`), sort = header.locator('button.th-sort');
         await sort.click();
-        await fixture.waitUntil(() => fixture.calls.slice(before).some(call => call.operation instanceof Type && call.operation.query.sort === field && call.operation.query.direction === direction), `${field} ${direction} not requested`);
-        const query = fixture.calls.slice(before).find(call => call.operation instanceof Type && call.operation.query.sort === field).operation.query;
+        await fixture.waitUntil(() => queriesOf(fixture.calls.slice(before)).some(query => query.sort === field && query.direction === direction), `${field} ${direction} not requested`);
+        const query = queriesOf(fixture.calls.slice(before)).find(query => query.sort === field);
         assert.equal(query.cursor, undefined, 'a new order starts at the global beginning, never an old page cursor');
         const ids = expected(query); await row(page, kind, ids[0]).and(rows(page, kind).first()).waitFor(); await idle(page, kind);
         assert.deepEqual(await rowIds(page, kind), ids, `${field} ${direction} rows follow the server order`);
@@ -185,14 +185,15 @@ try {
       }
     }
     await idle(page, 'collectors');
-    await check('collectors', api.Operation_Activity, Object.values(api.ActivityCollectorSort), query => fixture.activityResult(query).collectors.map(item => item.collectorId));
+    await check('collectors', calls => calls.filter(call => call.operation instanceof api.Operation_Activity).map(call => call.operation.query), Object.values(api.ActivityCollectorSort), query => fixture.activityResult(query).collectors.map(item => item.collectorId));
     await open(page, 'Jobs');
-    await check('jobs', api.Operation_ActivityJobs, Object.values(api.ActivityJobSort), query => fixture.activityJobsResult(query).jobs.map(item => item.job.id));
+    // The job list is the claim-order read: its column orders and its own (Class, Waiting since, Why not running).
+    await check('jobs', calls => jobQueries({ calls }), [...Object.values(api.ActivityJobSort), ...Object.values(api.ActivityClaimOrderSort)], query => fixture.activityJobsResult(query).jobs.map(item => item.job.id));
     await button(region(page, 'Jobs'), 'History').click(); await status(page, 'jobs').filter({ hasText: /165 historical jobs/ }).waitFor();
     for (const field of [api.ActivityJobSort.Revision, api.ActivityJobSort.Profile, api.ActivityJobSort.Classification]) {
       const before = fixture.calls.length; await table(page, 'jobs').locator(`thead th[data-sort="${field}"] button.th-sort`).click();
-      await fixture.waitUntil(() => fixture.calls.slice(before).some(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.sort === field), 'historical sort not requested');
-      const query = fixture.calls.slice(before).find(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.sort === field).operation.query, ids = fixture.activityJobsResult(query).jobs.map(item => item.job.id);
+      await fixture.waitUntil(() => jobQueries({ calls: fixture.calls.slice(before) }).some(query => query.sort === field), 'historical sort not requested');
+      const query = jobQueries({ calls: fixture.calls.slice(before) }).find(query => query.sort === field), ids = fixture.activityJobsResult(query).jobs.map(item => item.job.id);
       assert.equal(query.scope, api.ActivityJobScope.Historical); await row(page, 'jobs', ids[0]).and(rows(page, 'jobs').first()).waitFor(); await idle(page, 'jobs'); assert.deepEqual(await rowIds(page, 'jobs'), ids);
     }
     assert.equal(sourceReads(fixture), 0, 'list metadata never reads source, searches transcripts or reads sessions per row');
@@ -201,11 +202,13 @@ try {
 
   await rig.run('jobs append by document scroll, keep Current and History apart, and never offer retry for historical failures', async () => {
     const { context, page, fixture } = await scene(rig, { route: '/activity/jobs', configure: largeFixture });
-    await idle(page, 'jobs'); const identities = fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length; await appendUntil(page, 'jobs', 165);
+    // Revision is not a default column (claim-order mockup): this case reads it.
+    await idle(page, 'jobs'); await showAllColumns(page, 'jobs'); await idle(page, 'jobs');
+    const identities = fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length; await appendUntil(page, 'jobs', 165);
     assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length, identities, 'infinite scrolling never forces a security-epoch reset');
     await listState(page, 'jobs', 'end').waitFor(); assert.equal(await listState(page, 'jobs', 'end').innerText(), 'End of list · 165 current jobs');
     assert.equal(new Set(await rowIds(page, 'jobs')).size, 165);
-    assert.ok(new Set(activityQueries(fixture, api.Operation_ActivityJobs).map(query => query.cursor)).size >= 4);
+    assert.ok(new Set(jobQueries(fixture).map(query => query.cursor)).size >= 4);
     await page.evaluate(() => window.scrollTo(0, 0));
     await button(region(page, 'Jobs'), 'History').click(); await status(page, 'jobs').filter({ hasText: /^165 historical jobs/ }).waitFor(); await idle(page, 'jobs');
     assert.equal(await hashParam(page, 'scope'), 'history');
@@ -237,7 +240,8 @@ try {
         new api.ActivityJob(held, fixture.targetProfile, api.ActivityJobClass.Current, NEXT_ATTEMPT, false, false, fixture.source.collectorNamespace, fixture.jobSession(held), '2026-10-22T09:32:00Z')];
       scriptJobs(fixture, 'lease:"unleased"', item => item.leaseExpiresAt === undefined && item.classification === api.ActivityJobClass.Current);
     } });
-    await idle(page, 'jobs');
+    // Reason is not a default column (claim-order mockup): this case reads it.
+    await idle(page, 'jobs'); await showAllColumns(page, 'jobs'); await idle(page, 'jobs');
     for (const [index, label] of ['Active lease at snapshot', 'Expired lease at snapshot', 'Unleased · no lease expiry'].entries()) {
       const id = runningId(index); assert.equal(await cell(page, 'jobs', id, 'LeaseState').innerText(), ['Active', 'Expired', 'Unleased'][index]);
       assert.match(await (await expand(page, 'jobs', id)).innerText(), new RegExp(label)); await button(row(page, 'jobs', id), 'Details').click();
@@ -269,7 +273,7 @@ try {
     const unleased = fixture.jobRows.filter(item => item.leaseExpiresAt === undefined && item.classification === api.ActivityJobClass.Current).map(item => item.job.id);
     assert.deepEqual([...await rowIds(page, 'jobs')].sort(), [...unleased].sort());
     const before = fixture.calls.length; await table(page, 'jobs').locator('thead th[data-sort="LeaseState"] button.th-sort').click();
-    await fixture.waitUntil(() => fixture.calls.slice(before).some(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.expression === 'lease:"unleased"' && call.operation.query.sort === api.ActivityJobSort.LeaseState), 'the lease order kept the predicate');
+    await fixture.waitUntil(() => jobQueries({ calls: fixture.calls.slice(before) }).some(query => query.expression === 'lease:"unleased"' && query.sort === api.ActivityJobSort.LeaseState), 'the lease order kept the predicate');
     await context.close();
   });
 
@@ -287,15 +291,15 @@ try {
     await combobox(page, 'jobs').fill('producer:"synthetic-harness" OR format:"historian"'); await button(region(page, 'Jobs'), 'Subagents').click();
     assert.equal(await combobox(page, 'jobs').inputValue(), '(producer:"synthetic-harness" OR format:"historian") AND agent:"subagent"', 'a preset conjoins the recorded-agent claim');
     for (const name of ['Add Agent filter', 'Add Recorded yolo profile filter']) assert.equal(await button(region(page, 'Jobs'), name).count(), 1);
-    await filter(page, 'jobs', expression); await fixture.waitUntil(() => activityQueries(fixture, api.Operation_ActivityJobs).some(query => query.expression === expression), 'expression not requested');
+    await filter(page, 'jobs', expression); await fixture.waitUntil(() => jobQueries(fixture).some(query => query.expression === expression), 'expression not requested');
     const expected = fixture.jobRows.filter(item => item.classification === api.ActivityJobClass.Current && fixture.jobExpressions.get(expression).includes(item.job.id));
     await status(page, 'jobs').filter({ hasText: new RegExp(`^${expected.length} current jobs`) }).waitFor(); assert.equal(await rows(page, 'jobs').count(), expected.length);
     const profile = 'yolo-profile:JobRevision'; scriptJobs(fixture, profile, item => item.session.source.discoveryRootId === 'yolo:JobRevision');
     await filter(page, 'jobs', profile); await status(page, 'jobs').filter({ hasText: /^83 current jobs/ }).waitFor(); await idle(page, 'jobs');
     assert.match(await (await expand(page, 'jobs', (await rowIds(page, 'jobs'))[0])).innerText(), /pi \/ Historian · model .*yolo profile JobRevision/s, 'recorded identity claims come from source provenance, never title heuristics');
-    const before = activityQueries(fixture, api.Operation_ActivityJobs).length;
+    const before = jobQueries(fixture).length;
     await filter(page, 'jobs', '(mode:semantic)'); await region(page, 'Jobs').getByRole('alert').filter({ hasText: 'Search mode directives are not supported' }).waitFor();
-    assert.equal(await rows(page, 'jobs').count(), 0); assert.equal(activityQueries(fixture, api.Operation_ActivityJobs).length, before, 'Activity never requests a search mode or silently strips it');
+    assert.equal(await rows(page, 'jobs').count(), 0); assert.equal(jobQueries(fixture).length, before, 'Activity never requests a search mode or silently strips it');
     fixture.activityFailure = 'Unknown Activity metadata field at character 1'; await filter(page, 'jobs', 'unknown:value');
     await region(page, 'Jobs').getByRole('alert').filter({ hasText: 'Unknown Activity metadata field at character 1' }).waitFor(); assert.equal(await rows(page, 'jobs').count(), 0);
     fixture.activityFailure = null; fixture.jobExpressions.set('transcript-only-needle', []); await filter(page, 'jobs', 'transcript-only-needle');
@@ -319,7 +323,7 @@ try {
     assert.ok(hints().at(-1).target instanceof api.ExpressionHintTarget_ActivityJobs); assert.equal(hints().at(-1).target.scope, api.ActivityJobScope.Current);
     await button(region(page, 'Jobs'), 'History').click(); assert.equal(await page.getByRole('listbox').count(), 0, 'a scope change dismisses the old suggestions');
     await combobox(page, 'jobs').focus(); await advanceClock(page, 200); await page.getByRole('listbox').waitFor(); assert.equal(hints().at(-1).target.scope, api.ActivityJobScope.Historical);
-    assert.equal(fixture.calls.some(call => call.operation instanceof api.Operation_Search), false); assert.ok(activityQueries(fixture, api.Operation_ActivityJobs).every(query => query.expression === ''), 'typing never submits');
+    assert.equal(fixture.calls.some(call => call.operation instanceof api.Operation_Search), false); assert.ok(jobQueries(fixture).every(query => query.expression === ''), 'typing never submits');
     await context.close();
   });
 
@@ -331,13 +335,13 @@ try {
     await filter(page, 'collectors', expression); await row(page, 'collectors', 'collector-153').waitFor(); await idle(page, 'collectors');
     fixture.releaseCollectors(); await quiesce(page); assert.deepEqual(await rowIds(page, 'collectors'), ['collector-153', 'collector-154'], 'a late page of the old query is dropped');
     await open(page, 'Jobs'); fixture.holdJobCursor = true;
-    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight)); await fixture.waitUntil(() => activityQueries(fixture, api.Operation_ActivityJobs).some(query => query.cursor !== undefined), 'old job cursor request not sent'); assert.equal(fixture.pendingJobs.length, 1);
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight)); await fixture.waitUntil(() => jobQueries(fixture).some(query => query.cursor !== undefined), 'old job cursor request not sent'); assert.equal(fixture.pendingJobs.length, 1);
     const scoped = 'collector:"collector-154"'; scriptJobs(fixture, scoped, item => item.collectorId === 'collector-154');
     await button(region(page, 'Jobs'), 'History').click(); await filter(page, 'jobs', scoped);
     const expected = fixture.jobRows.filter(item => item.classification !== api.ActivityJobClass.Current && item.collectorId === 'collector-154').map(item => item.job.id);
     await row(page, 'jobs', expected[0]).waitFor(); await idle(page, 'jobs'); fixture.releaseJobs(); await quiesce(page);
     assert.deepEqual(await rowIds(page, 'jobs'), expected, 'a late page of the old scope is dropped');
-    const first = activityQueries(fixture, api.Operation_ActivityJobs).find(query => query.expression === scoped);
+    const first = jobQueries(fixture).find(query => query.expression === scoped);
     assert.equal(first.cursor, undefined); assert.equal(first.scope, api.ActivityJobScope.Historical); assert.equal(first.collectorId, undefined, 'the collector restriction is part of the expression');
     await context.close();
   });
@@ -439,7 +443,8 @@ try {
     await idle(page, 'jobs'); await appendUntil(page, 'jobs', PAGE_SIZE * 2);
     await page.evaluate(() => window.scrollTo(0, 1200)); await page.waitForFunction(() => scrollY === 1200);
     const before = await rowIds(page, 'jobs'), moved = before.at(-1);
-    fixture.activityJobs = fixture.activityJobs.map(item => item.job.id === moved ? item.with({ lastTimestamp: '2029-12-31T00:00:00Z' }) : item); await poll(page);
+    // The default order is the oldest wait first: the moved job starts waiting before every other.
+    fixture.claimEntries.set(moved, fixture.claimEntry(fixture.jobRows.find(item => item.job.id === moved)).with({ waitingSince: '2020-01-01T00:00:00Z' })); await poll(page);
     const pill = button(region(page, 'Jobs'), 'Updated jobs · show latest'); await pill.waitFor();
     assert.deepEqual(await rowIds(page, 'jobs'), before, 'rows stay until the update is applied'); assert.equal(await page.evaluate(() => scrollY), 1200);
     await pill.click(); await rows(page, 'jobs').first().and(row(page, 'jobs', moved)).waitFor(); assert.equal(await pill.count(), 0);
@@ -461,7 +466,7 @@ try {
     const { context, page } = await scene(rig, { route: '/activity/jobs', fixture });
     await main(page).getByRole('alert').filter({ hasText: 'Read scope is required to view your activity' }).waitFor();
     assert.equal(await main(page).getByRole('table').count(), 0); assert.equal(await page.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }).count(), 0);
-    assert.equal(fixture.calls.filter(call => [api.Operation_Activity, api.Operation_ActivityJobs, api.Operation_PreviewRetryFailed, api.Operation_ApplyRetryFailed, api.Operation_ModelUsage].some(Type => call.operation instanceof Type)).length, 0);
+    assert.equal(fixture.calls.filter(call => [api.Operation_Activity, api.Operation_ActivityJobs, api.Operation_ActivityClaimOrderJobs, api.Operation_ActivityClaimOrderSummary, api.Operation_PreviewRetryFailed, api.Operation_ApplyRetryFailed, api.Operation_ModelUsage].some(Type => call.operation instanceof Type)).length, 0);
     await context.close();
   });
 

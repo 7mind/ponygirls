@@ -44,5 +44,6 @@ for (const [name, codec] of [
   ['upload-part', UploadPart_JsonCodec.instance],
   ['upload-state', UploadState_JsonCodec.instance],
   ['raw-manifest', RawManifest_JsonCodec.instance],
+  ['activity-claim-order', ServerEnvelope_JsonCodec.instance],
 ]) checkList(name, codec);
 console.log(`${fixtureGroups} generated TypeScript fixture groups passed; 1 API version (${apiVersion}); no conversion chain`);

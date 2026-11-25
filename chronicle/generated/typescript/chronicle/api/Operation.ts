@@ -1,5 +1,6 @@
 import {type BaboonAdtMemberMeta, type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
+import {ActivityClaimOrderJobsQuery, ActivityClaimOrderJobsQuery_JsonCodec} from './ActivityClaimOrderJobsQuery.js'
 import {ActivityJobsQuery, ActivityJobsQuery_JsonCodec} from './ActivityJobsQuery.js'
 import {ActivityQuery, ActivityQuery_JsonCodec} from './ActivityQuery.js'
 import {ArchiveQuery, ArchiveQuery_JsonCodec} from './ArchiveQuery.js'
@@ -10,7 +11,7 @@ import {SearchFilter, SearchFilter_JsonCodec} from './SearchFilter.js'
 import {SearchQuery, SearchQuery_JsonCodec} from './SearchQuery.js'
 import {Span, Span_JsonCodec} from './Span.js'
 
-export type Operation = Operation_Hello | Operation_Ping | Operation_Pong | Operation_Whoami | Operation_Search | Operation_GetSession | Operation_GetChunks | Operation_GetMessages | Operation_SearchSessionMessages | Operation_ReadMessageContext | Operation_GetRaw | Operation_Related | Operation_Facets | Operation_CollectionStatus | Operation_IngestStatus | Operation_RetryJob | Operation_ListTokens | Operation_MintToken | Operation_RevokeToken | Operation_ListGroups | Operation_CreateGroup | Operation_Invite | Operation_AcceptInvite | Operation_RemoveMember | Operation_LeaveGroup | Operation_DeleteGroup | Operation_Receipt | Operation_Purge | Operation_Logout | Operation_Archive | Operation_ArchiveSearch | Operation_Activity | Operation_ActivityJobs | Operation_LocateMessage | Operation_PreviewRetryFailed | Operation_ApplyRetryFailed | Operation_ExpressionHints | Operation_ModelUsage | Operation_GetPassages | Operation_GetPassageSpans | Operation_PreviewOwnerReindex | Operation_ApplyOwnerReindex | Operation_GetReindexStatus | Operation_McpTestTools | Operation_StartMcpTest | Operation_ReadMcpTest | Operation_CancelMcpTest
+export type Operation = Operation_Hello | Operation_Ping | Operation_Pong | Operation_Whoami | Operation_Search | Operation_GetSession | Operation_GetChunks | Operation_GetMessages | Operation_SearchSessionMessages | Operation_ReadMessageContext | Operation_GetRaw | Operation_Related | Operation_Facets | Operation_CollectionStatus | Operation_IngestStatus | Operation_RetryJob | Operation_ListTokens | Operation_MintToken | Operation_RevokeToken | Operation_ListGroups | Operation_CreateGroup | Operation_Invite | Operation_AcceptInvite | Operation_RemoveMember | Operation_LeaveGroup | Operation_DeleteGroup | Operation_Receipt | Operation_Purge | Operation_Logout | Operation_Archive | Operation_ArchiveSearch | Operation_Activity | Operation_ActivityJobs | Operation_LocateMessage | Operation_PreviewRetryFailed | Operation_ApplyRetryFailed | Operation_ExpressionHints | Operation_ModelUsage | Operation_GetPassages | Operation_GetPassageSpans | Operation_PreviewOwnerReindex | Operation_ApplyOwnerReindex | Operation_GetReindexStatus | Operation_McpTestTools | Operation_StartMcpTest | Operation_ReadMcpTest | Operation_CancelMcpTest | Operation_ActivityClaimOrderSummary | Operation_ActivityClaimOrderJobs
 
 export const Operation = {
     BaboonDomainVersion: '1.9.0',
@@ -5484,6 +5485,219 @@ export class Operation_CancelMcpTest_JsonCodec {
     }
 }
 
+export class Operation_ActivityClaimOrderSummary implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Operation]#ActivityClaimOrderSummary' as const;
+
+    constructor() {
+        
+    }
+
+    
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            
+        };
+    }
+
+    public with(overrides: {}): Operation_ActivityClaimOrderSummary {
+        return new Operation_ActivityClaimOrderSummary(
+            
+        );
+    }
+
+    public static fromPlain(obj: {}): Operation_ActivityClaimOrderSummary {
+        return new Operation_ActivityClaimOrderSummary(
+            
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.9.0'
+    public baboonDomainVersion() {
+        return Operation_ActivityClaimOrderSummary.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Operation_ActivityClaimOrderSummary.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Operation]#ActivityClaimOrderSummary'
+    public baboonTypeIdentifier() {
+        return Operation_ActivityClaimOrderSummary.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.9.0"]
+    public baboonSameInVersions() {
+        return Operation_ActivityClaimOrderSummary.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.9.0": "identical" }
+    public baboonForwardReadable() {
+        return Operation_ActivityClaimOrderSummary.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.9.0", "prefix-compact": "1.9.0", "prefix-any-mode": "1.9.0", "identical": "1.9.0" }
+    public baboonMinReaderVersions() {
+        return Operation_ActivityClaimOrderSummary.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_ActivityClaimOrderSummary.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Operation_ActivityClaimOrderSummary_JsonCodec {
+        return Operation_ActivityClaimOrderSummary_JsonCodec.instance
+    }
+}
+
+export class Operation_ActivityClaimOrderSummary_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Operation_ActivityClaimOrderSummary): unknown {
+        if (this !== Operation_ActivityClaimOrderSummary_JsonCodec.lazyInstance.value) {
+          return Operation_ActivityClaimOrderSummary_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Operation_ActivityClaimOrderSummary {
+        if (this !== Operation_ActivityClaimOrderSummary_JsonCodec .lazyInstance.value) {
+            return Operation_ActivityClaimOrderSummary_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Operation_ActivityClaimOrderSummary (
+            
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.9.0'
+    public baboonDomainVersion() {
+        return Operation_ActivityClaimOrderSummary_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Operation_ActivityClaimOrderSummary_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Operation]#ActivityClaimOrderSummary'
+    public baboonTypeIdentifier() {
+        return Operation_ActivityClaimOrderSummary_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_ActivityClaimOrderSummary_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Operation_ActivityClaimOrderSummary_JsonCodec())
+    public static get instance(): Operation_ActivityClaimOrderSummary_JsonCodec {
+        return Operation_ActivityClaimOrderSummary_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Operation_ActivityClaimOrderJobs implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Operation]#ActivityClaimOrderJobs' as const;
+    private readonly _query: ActivityClaimOrderJobsQuery;
+
+    constructor(query: ActivityClaimOrderJobsQuery) {
+        this._query = query
+    }
+
+    public get query(): ActivityClaimOrderJobsQuery {
+        return this._query;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            query: this._query
+        };
+    }
+
+    public with(overrides: {query?: ActivityClaimOrderJobsQuery}): Operation_ActivityClaimOrderJobs {
+        return new Operation_ActivityClaimOrderJobs(
+            'query' in overrides ? overrides.query! : this._query
+        );
+    }
+
+    public static fromPlain(obj: {query: ActivityClaimOrderJobsQuery}): Operation_ActivityClaimOrderJobs {
+        return new Operation_ActivityClaimOrderJobs(
+            obj.query
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.9.0'
+    public baboonDomainVersion() {
+        return Operation_ActivityClaimOrderJobs.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Operation_ActivityClaimOrderJobs.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Operation]#ActivityClaimOrderJobs'
+    public baboonTypeIdentifier() {
+        return Operation_ActivityClaimOrderJobs.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.9.0"]
+    public baboonSameInVersions() {
+        return Operation_ActivityClaimOrderJobs.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.9.0": "identical" }
+    public baboonForwardReadable() {
+        return Operation_ActivityClaimOrderJobs.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.9.0", "prefix-compact": "1.9.0", "prefix-any-mode": "1.9.0", "identical": "1.9.0" }
+    public baboonMinReaderVersions() {
+        return Operation_ActivityClaimOrderJobs.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_ActivityClaimOrderJobs.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Operation_ActivityClaimOrderJobs_JsonCodec {
+        return Operation_ActivityClaimOrderJobs_JsonCodec.instance
+    }
+}
+
+export class Operation_ActivityClaimOrderJobs_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Operation_ActivityClaimOrderJobs): unknown {
+        if (this !== Operation_ActivityClaimOrderJobs_JsonCodec.lazyInstance.value) {
+          return Operation_ActivityClaimOrderJobs_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "query": ActivityClaimOrderJobsQuery_JsonCodec.instance.encode(BaboonCodecContext.Default, value.query),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Operation_ActivityClaimOrderJobs {
+        if (this !== Operation_ActivityClaimOrderJobs_JsonCodec .lazyInstance.value) {
+            return Operation_ActivityClaimOrderJobs_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Operation_ActivityClaimOrderJobs (
+            ActivityClaimOrderJobsQuery_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["query"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.9.0'
+    public baboonDomainVersion() {
+        return Operation_ActivityClaimOrderJobs_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Operation_ActivityClaimOrderJobs_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Operation]#ActivityClaimOrderJobs'
+    public baboonTypeIdentifier() {
+        return Operation_ActivityClaimOrderJobs_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_ActivityClaimOrderJobs_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Operation_ActivityClaimOrderJobs_JsonCodec())
+    public static get instance(): Operation_ActivityClaimOrderJobs_JsonCodec {
+        return Operation_ActivityClaimOrderJobs_JsonCodec.lazyInstance.value
+    }
+}
+
 
 export class Operation_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation): unknown {
@@ -5632,6 +5846,12 @@ export class Operation_JsonCodec {
             if (value instanceof Operation_CancelMcpTest) {
                 return { "CancelMcpTest": Operation_CancelMcpTest_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof Operation_ActivityClaimOrderSummary) {
+                return { "ActivityClaimOrderSummary": Operation_ActivityClaimOrderSummary_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
+            if (value instanceof Operation_ActivityClaimOrderJobs) {
+                return { "ActivityClaimOrderJobs": Operation_ActivityClaimOrderJobs_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
         throw new Error("Unhandled ADT branch: " + (value as {constructor?: {name?: string}}).constructor?.name);
     }
     public decode(ctx: BaboonCodecContext, json: unknown): Operation {
@@ -5689,6 +5909,8 @@ export class Operation_JsonCodec {
                 case "StartMcpTest": return Operation_StartMcpTest_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "ReadMcpTest": return Operation_ReadMcpTest_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "CancelMcpTest": return Operation_CancelMcpTest_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "ActivityClaimOrderSummary": return Operation_ActivityClaimOrderSummary_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "ActivityClaimOrderJobs": return Operation_ActivityClaimOrderJobs_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
             default: throw new Error("Unknown ADT branch: " + key);
         }
     }
