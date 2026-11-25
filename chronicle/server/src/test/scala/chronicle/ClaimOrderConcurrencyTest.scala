@@ -200,7 +200,7 @@ final class ClaimOrderConcurrencyTest extends munit.FunSuite {
     val request=Fixtures.snapshot(); val first=a.ingest("a",request)
     val obsolete=first.jobId; order(db,obsolete,1,false); set(db,obsolete,"lease_until=clock_timestamp()-interval '1 hour'")
     val next=job(db,a,"b",2,false)
-    withGate(c,db) { gate => withPool(3) { pool =>
+    withGate(c,db) { gate => withPool(3) { pool => try {
       val claiming=gate.closed(pool)(claim(gate.archive,freshLane))
       assert(reachesLockWait(db,claiming),"the candidate statement waits at its gate, after its snapshot")
       val switched=async(pool)(a.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))).get(2,TimeUnit.MINUTES)
@@ -212,7 +212,7 @@ final class ClaimOrderConcurrencyTest extends munit.FunSuite {
       assertEquals((row(db,switched.jobId).state,row(db,switched.jobId).waitingSince,row(db,switched.jobId).bulk),("Queued",Some(base.plusSeconds(1)),Some(false)))
       val head=claimed(claim(a,freshLane))
       assertEquals((head.jobId,head.revision),(switched.jobId,2))
-    }}
+    } finally gate.open() }}
   }}
 
   test("T4 (B1, CHECK-r3) hold race: the candidate claimed by another lane and returned to a hold between the statement and its job lock, age and class unchanged, is not claimed by any lane kind; each takes the next eligible job") { database { (c,db,a) =>
