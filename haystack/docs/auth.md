@@ -176,11 +176,11 @@ Configuration lives inside the hot-reloaded `auth` object; users gain `admin`:
   (300–604800), no reserved names. With the master on, `keyFile` (absolute,
   outside `/nix/store`), `issuer` (1–64 characters, no `:` or control characters)
   and at least one enabled declared `admin` are required.
-- `admin: true` requires a human user with `login` and `passwordHashFile`. It
-  grants account administration only (approve/reject applications, enable/disable
-  imperative users, imperative admin flags, credential resets, invitations while
-  `enrollment.enabled`); item authority is unchanged. Declared users cannot be
-  changed through the API.
+- `admin: true` requires a human user with `login` and `passwordHashFile`; item
+  authority is unchanged. Imperative account administration (approve/reject
+  applications, enable/disable imperative users, imperative admin flags,
+  credential resets, invitations while `enrollment.enabled`) also requires the
+  master switch. Declared users cannot be changed through the imperative accounts API.
 - Imperative users are `human`; their id is the immutable lower-case username,
   which is also their login. They hold the same item authority as every other
   user, issue and revoke their own API tokens through the existing endpoints and

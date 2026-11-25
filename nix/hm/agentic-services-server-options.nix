@@ -50,7 +50,7 @@ let
       login = str "operator" "Browser login for the preserved operator account. Password defaults to this service's existing operator token; no cross-service password unification is implied.";
       enabled = mkOption { type = types.bool; default = true; description = "Whether the preserved operator account may authenticate."; };
       passwordHashFile = runtimePath "Explicit canonical human operator PBKDF2 hash file. Null derives credentials/${service}-operator.pbkdf2 idempotently from the existing ${service}-operator.token without rotating any token. Use the same explicit runtime hash file in each service when intentionally unifying passwords.";
-      admin = mkOption { type = types.bool; default = true; description = "Whether the preserved operator account administers imperative accounts. Inert while accounts.enable is false."; };
+      admin = mkOption { type = types.bool; default = true; description = "Whether the preserved operator account is an indexing administrator. Imperative account administration also requires accounts.enable."; };
     };
     accounts = accounts.accountsOptions { serviceName = serviceNames.${service}; host = cfg.host.hostname; } // {
       keyFile = runtimePath "Absolute runtime accounts key file. Null provisions credentials/${service}-accounts.key once (32 random bytes, base64url, mode 0600) and retains it.";

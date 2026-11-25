@@ -83,7 +83,8 @@ sets at every level; an unknown key is a configuration fault):
   control characters; `reserved_usernames` must satisfy the username policy.
 - `admin: true` requires a human user with `login`/`passwordHashFile` whose id
   contains no NUL character (admin ids are recorded as approver/issuer in text
-  columns). `admin` defaults to false and is inert while the master is off.
+  columns). `admin` defaults to false. Imperative account administration
+  remains unavailable with the master off, even for a declarative admin.
 - `check-config` stays parse-only and does not open `key_file`. Service
   acquisition (`serve`, `migrate`) reads it as the base64url encoding of 32 bytes;
   an unreadable or malformed key fails startup with code `config`.

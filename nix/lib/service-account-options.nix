@@ -29,7 +29,7 @@ in
     admin = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "Account administrator for imperative accounts (approval, enable/disable, admin flags, credential resets). Requires a human account with a browser login. Inert while accounts.enable is false.";
+      description = "Indexing administrator, and administrator for imperative accounts when accounts.enable is true. Requires a human account with a browser login.";
     };
   };
   # Imperative accounts (self-signup, admin enrollment). The master switch is
@@ -90,8 +90,7 @@ in
     camel = { keyFile = "keyFile"; requireApproval = "requireApproval"; maxUsers = "maxUsers"; ttlSeconds = "ttlSeconds"; reservedUsernames = "reservedUsernames"; };
     snake = { keyFile = "key_file"; requireApproval = "require_approval"; maxUsers = "max_users"; ttlSeconds = "ttl_s"; reservedUsernames = "reserved_usernames"; };
   };
-  # Empty while the master switch is off, so the generated configuration
-  # stays identical to the one before imperative accounts existed.
+  # Omit the imperative accounts block while its master switch is off.
   renderAccounts = keys: settings: keyFile: lib.optionalAttrs settings.enable {
     accounts = {
       enabled = true;
@@ -109,7 +108,8 @@ in
       ${keys.reservedUsernames} = settings.reservedUsernames;
     };
   };
-  renderAdmin = settings: user: lib.optionalAttrs settings.enable { inherit (user) admin; };
+  # A configured indexing administrator is independent of the imperative accounts master switch.
+  renderAdmin = settings: user: lib.optionalAttrs (settings.enable || user.admin) { inherit (user) admin; };
   assertions = context: users:
     let
       values = builtins.attrValues users;

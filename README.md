@@ -633,6 +633,12 @@ Home Manager, or `smind.hm.services.chronicle.settings.indexing` for Chronicle
 on Home Manager. These flags are parsed configuration only; they do not yet
 change runtime indexing behavior.
 
+The modules retain `admin: true` for configured browser administrators even
+when `accounts.enable` is off so indexing administration can use the same
+identity. This does not enable imperative account management or provision an
+accounts key. In agentic Home Manager, `operator.admin` defaults to `true` for
+Haystack and Manure.
+
 ### NixOS modules
 
 - **`nixosModules.service-postgres`** — the same typed provider policy on the

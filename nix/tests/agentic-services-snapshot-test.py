@@ -28,7 +28,7 @@ assert current["timers"] == baseline["timers"]
 # network and credential identity binding byte-for-byte.
 for user in current["haystackAuth"]["users"]:
     assert user["displayName"] == user["id"]
-account_fields = ("enabled", "login", "passwordHashFile")
+account_fields = ("enabled", "login", "passwordHashFile", "admin")
 auth_without_accounts = {**current["haystackAuth"], "users": [{k:v for k,v in u.items() if k not in ("displayName", *account_fields)} for u in current["haystackAuth"]["users"]]}
 assert auth_without_accounts == baseline["haystackAuth"]
 assert {k:v for k,v in current["manureConfig"].items() if k not in ("database","migration_receipt_dir","embedding","native_mode","posix_library","dashboard_dir","unlock_shell_dir","viewer_dir","users")} == {k:v for k,v in baseline["manureConfig"].items() if k != "users"}
@@ -37,10 +37,11 @@ for service, values in (("haystack", current["haystackAuth"]["users"]), ("manure
     for user in values:
         assert user["enabled"] is True
         if user["id"] == "operator":
+            assert user["admin"] is True
             assert user["login"] == "operator"
             assert user["passwordHashFile"] == f"/home/alice/.local/state/ivm-services/credentials/{service}-operator.pbkdf2"
         else:
-            assert "login" not in user and "passwordHashFile" not in user
+            assert "login" not in user and "passwordHashFile" not in user and "admin" not in user
 assert current["haystackConfig"]["database"]["jdbcUrl"] == "jdbc:postgresql://127.0.0.1:15434/haystack"
 assert current["manureConfig"]["database"]["jdbcUrl"] == "jdbc:postgresql://127.0.0.1:15434/manure"
 assert current["manureConfig"]["native_mode"] == "linked"

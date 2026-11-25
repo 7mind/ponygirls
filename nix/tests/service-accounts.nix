@@ -105,6 +105,12 @@ let
     });
   };
   legacyHm = hm { };
+  hmIndexingAdmin = hm {
+    smind.hm.services.agentic = lib.genAttrs services (_: {
+      operator.admin = false;
+      users.alice = users.alice // { admin = true; };
+    });
+  };
   user = id: list: lib.findFirst (u: u.id == id) (throw "missing account ${id}") list;
   # Imperative accounts (docs/drafts/20261117-2040-self-signup-admin-enrollment-design.md §6, AM1).
   accountServices = services ++ [ "chronicle" ];
@@ -113,7 +119,8 @@ let
   keyFile = "/run/secrets/accounts-key";
   rejects = needle: config: lib.any (a: !a.assertion && lib.hasInfix needle a.message) config.assertions;
   accountsWith = name: settings: { smind.services.${name} = { accounts = settings; users.alice.admin = true; }; };
-  # Every account setting except the master switch; none may reach the generated configuration.
+  # With the master off, the imperative accounts block stays out of JSON,
+  # but the declarative admin flag is still rendered.
   accountsOff = name: accountsWith name {
     inherit keyFile;
     signup = { requireApproval = false; maxUsers = 7; };
@@ -232,8 +239,13 @@ let
     accounts-admin-human-browser = lib.all (name: lib.all (id:
       rejects "admin = true" (system name { smind.services.${name}.users.${id}.admin = true; })) [ "agent" "retired" ]) services;
     accounts-public-origin-required = rejects "public origin" (onWith "haystack" { smind.services.haystack.publicUrl = null; });
-    hm-accounts-off = lib.all (name: !(hmRendered legacyHm name ? accounts) && lib.all (u: !(u ? admin)) (hmRendered legacyHm name).users
-      && !(lib.hasInfix "accounts-key" (hmSetup legacyHm))) services;
+    hm-accounts-off = lib.all (name:
+      let rendered = hmRendered legacyHm name;
+      in !(rendered ? accounts) && (user "operator" rendered.users).admin && !((user "agent" rendered.users) ? admin)
+        && !(lib.hasInfix "accounts-key" (hmSetup legacyHm))) services;
+    hm-declared-admin-with-accounts-off = valid hmIndexingAdmin && lib.all (name:
+      let rendered = hmRendered hmIndexingAdmin name;
+      in !(rendered ? accounts) && (user "alice" rendered.users).admin && !((user "operator" rendered.users) ? admin)) services;
     hm-accounts-provisioned-key = valid hmOn && lib.all (name:
       (hmRendered hmOn name).accounts.${if name == "haystack" then "keyFile" else "key_file"} == "/home/alice/.local/state/ivm-services/credentials/${name}-accounts.key"
       && lib.hasInfix "--${name}-accounts-key" (hmSetup hmOn)
@@ -314,12 +326,15 @@ pkgs.runCommandLocal "service-accounts-declarations" {
       if service == 'manure':
           path = re.search(r"TEMPLATE=(\S+)", pathlib.Path(path).read_text()).group(1)
       return json.loads(re.sub(r"/nix/store/[a-z0-9]{32}-[^/\"]*", "@STORE@", pathlib.Path(path).read_text()))
-  # Master switch off: equal to the pre-accounts golden (store paths normalized;
-  # the serializers are deterministic, so equal values are equal bytes).
+  # With the master off the sole addition to the legacy JSON is Alice's
+  # declared admin flag, including when other imperative settings are present.
   golden = json.loads(pathlib.Path(os.environ['masterOff']).read_text())
   for service, path in json.loads(os.environ['configsOff']).items():
       actual = generated(service, path)
-      assert actual == golden[service], f"{service}: accounts master off differs from the golden:\n{json.dumps(actual, sort_keys=True)}"
+      expected = golden[service]
+      directory = expected['auth'] if service == 'haystack' else expected
+      next(u for u in directory['users'] if u['id'] == 'alice')['admin'] = True
+      assert actual == expected, f"{service}: accounts master off differs from the golden plus declared admin:\n{json.dumps(actual, sort_keys=True)}"
   on = {service: generated(service, path) for service, path in json.loads(os.environ['configsOn']).items()}
   def camel(key_file, issuer):
       return {'enabled': True, 'keyFile': key_file, 'signup': {'enabled': True, 'requireApproval': True, 'maxUsers': 100},
