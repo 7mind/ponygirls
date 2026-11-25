@@ -162,6 +162,8 @@ final class ClaimOrderPlanTest extends munit.FunSuite {
         FROM ($selected) e""",longHead)(r => (r.getLong(1),r.getLong(2),r.getBoolean(3))).get
     }
     val report=ListBuffer.empty[String]
+    // Asserted after every branch's tuple bound: the probe keyed by both columns of ch_jobs_running.
+    val probeConditions=ListBuffer.empty[(String,Option[String])]
     /** One claim of `lane`: its statements' plans in order, checked against `expected` (index, class) per step; the
       * last statement found the claimed job, the earlier ones none (or a passed one). */
     def claimWith(label: String,lane: ClaimLane,steps: List[(String,String,Option[Boolean])],passed: Option[UUID] = None): UUID = {
@@ -181,7 +183,7 @@ final class ClaimOrderPlanTest extends munit.FunSuite {
           assert(read.examined<=300,s"$label: bounded, ${read.examined}")
           assert(read.probeLoops<=read.examined && read.probeVisited<=probeBound,s"$label step ${n+1} $kind: the older-Running probes read ${read.probeVisited} index tuples in ${read.probeLoops} loops, at most the $probeBound ch_jobs_running entries of the scanned candidates' sources and profiles")
           if(longHeadScanned) assert(read.probeVisited>=1,s"$label step ${n+1} $kind: the long source's head finds its older run")
-          assert(read.probeCond.exists(cond => cond.contains("session_id") && cond.contains("profile")),s"$label step ${n+1} $kind: the probe's index condition ${read.probeCond}")
+          probeConditions+=s"$label step ${n+1} $kind" -> read.probeCond
           report+=s"$label step ${n+1} $kind: $index entries=${read.examined} probeLoops=${read.probeLoops} probeTuples=${read.probeVisited}/$probeBound enable_sort=${plan.setting}"
         }
         if(passed.nonEmpty && n>0) assert(nodes(root(plan.custom)).exists(node => text(node,"Relation Name").contains("ch_sources") && text(node,"Filter").exists(_.contains("<> ALL"))),s"$label: passed sources as <> ALL")
@@ -214,5 +216,6 @@ final class ClaimOrderPlanTest extends munit.FunSuite {
       db.transaction { x => Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs CASCADE"); Sql.exec(x,"ANALYZE ch_jobs"); Sql.exec(x,"ANALYZE ch_sources"); () }
     }
     println(report.mkString("ClaimOrderPlanTest plans:\n  ","\n  ",""))
+    probeConditions.foreach((step,cond) => assert(cond.exists(value => value.contains("session_id") && value.contains("profile")),s"$step: the probe's index condition $cond"))
   }}
 }
