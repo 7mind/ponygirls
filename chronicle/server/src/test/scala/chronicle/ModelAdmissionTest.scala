@@ -65,6 +65,47 @@ class ModelAdmissionTest extends munit.FunSuite {
       assertEquals(intercept[DomainError](load(Some(Json.obj("annotationSessions"->Json.fromString("4"),"annotationContinuations"->Json.True)))).detail,"invalid configuration")
     } finally { Files.deleteIfExists(file); Files.delete(directory) }
   }
+  test("claim order: indexing.claimOrder and indexing.bulkLanes from the server's loader; defaults source-id, one bulk lane, 8 probes; waiting needs at least 3 lanes and 1..lanes-2 bulk lanes; a value of the wrong kind refuses the start naming the key") {
+    val example=Wire.parse(Files.readString(Path.of("config.example.json"))).asObject.get
+    val directory=Files.createTempDirectory("chronicle-config"); val file=directory.resolve("server.json")
+    def load(indexing: Option[Json]): Config = {
+      Files.writeString(file,Json.fromJsonObject(indexing.fold(example.remove("indexing"))(example.add("indexing",_))).noSpaces)
+      Config.load(file.toString)
+    }
+    def refused(indexing: Json): DomainError = intercept[DomainError](load(Some(indexing)))
+    try {
+      val omitted=load(None)
+      assertEquals((omitted.indexing.claimOrder,omitted.indexing.bulkLanes,ClaimOrderMode.of(omitted)),(ClaimOrderSetting.SourceId,1,ClaimOrderMode.SourceId))
+      assertEquals(ClaimOrder.maxProbes,8)
+      assertEquals(ClaimOrderMode.of(load(Some(Json.obj("claimOrder"->Json.fromString("waiting"))))),ClaimOrderMode.Waiting(1))
+      assertEquals(ClaimOrderMode.of(load(Some(Json.obj("claimOrder"->Json.fromString("waiting"),"annotationSessions"->Json.fromInt(5),"bulkLanes"->Json.fromInt(3))))),ClaimOrderMode.Waiting(3))
+      assertEquals(ClaimOrderMode.of(load(Some(Json.obj("claimOrder"->Json.fromString("waiting"),"annotationSessions"->Json.fromInt(3))))),ClaimOrderMode.Waiting(1))
+      // Under today's order the bulk lanes are not used: any positive count starts, also with fewer than 3 lanes.
+      assertEquals(ClaimOrderMode.of(load(Some(Json.obj("claimOrder"->Json.fromString("source-id"),"annotationSessions"->Json.fromInt(2),"bulkLanes"->Json.fromInt(5))))),ClaimOrderMode.SourceId)
+      List(Json.fromString("fifo"),Json.fromString("Waiting"),Json.fromInt(1),Json.Null).foreach { value =>
+        val failure=refused(Json.obj("claimOrder"->value))
+        assertEquals((failure.code,failure.detail),("config",IndexingCapacity.claimOrderInvalid),value.noSpaces)
+      }
+      List(Json.fromString("1"),Json.fromDoubleOrNull(1.5),Json.Null).foreach { value =>
+        val failure=refused(Json.obj("bulkLanes"->value))
+        assertEquals((failure.code,failure.detail),("config",IndexingCapacity.bulkLanesInvalid),value.noSpaces)
+      }
+      def waiting(sessions: Int,bulk: Int) = Json.obj("claimOrder"->Json.fromString("waiting"),"annotationSessions"->Json.fromInt(sessions),"bulkLanes"->Json.fromInt(bulk))
+      List(waiting(2,1),waiting(1,1),waiting(4,3),waiting(8,7),waiting(4,0),Json.obj("bulkLanes"->Json.fromInt(0))).foreach { indexing =>
+        val failure=refused(indexing)
+        assertEquals(failure.code,"config",indexing.noSpaces)
+        assert(failure.detail.startsWith("indexing.claimOrder") || failure.detail.startsWith("indexing.bulkLanes"),failure.detail)
+      }
+      // The worker's admission validates the same capacity.
+      assert(ModelAdmission.make(IndexingCapacity.defaults.copy(annotationSessions=2,claimOrder=ClaimOrderSetting.Waiting)).attempt.unsafeRunSync().isLeft)
+      List(waiting(3,1),waiting(4,2),waiting(8,6)).foreach(indexing => load(Some(indexing)))
+    } finally { Files.deleteIfExists(file); Files.delete(directory) }
+  }
+  test("claim order: lane 0 is the large lane, lanes 1..bulkLanes prefer bulk work, the rest fresh work") {
+    assertEquals(List.tabulate(4)(ClaimLane.of(_,1).kind),List(ClaimLane.Kind.Large,ClaimLane.Kind.Bulk,ClaimLane.Kind.Fresh,ClaimLane.Kind.Fresh))
+    assertEquals(List.tabulate(5)(ClaimLane.of(_,3).kind),List(ClaimLane.Kind.Large,ClaimLane.Kind.Bulk,ClaimLane.Kind.Bulk,ClaimLane.Kind.Bulk,ClaimLane.Kind.Fresh))
+    assertEquals(List.tabulate(3)(ClaimLane.of(_,1).large),List(LargeJobs.Admitted,LargeJobs.Skipped,LargeJobs.Skipped))
+  }
   test("BA specified: session and annotation HTTP permits are distinct, not a recursive gate") {
     (for {
       admission <- ModelAdmission.make(IndexingCapacity(1,1,1))

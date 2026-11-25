@@ -74,6 +74,11 @@ let
   strict32kServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.annotation.requestPolicy = "strict-json-schema-32k"; });
   capacityServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing = { annotationSessions = 8; embeddingRequests = 12; embeddingBatchSize = 3; annotationContinuations = true; }; });
   defaultIndexingPolicy = { defaultEnabled = true; allowOptIn = false; allowOptOut = false; };
+  # The claim order: the default is rendered as before (the explicit default renders the same file), waiting with its lanes.
+  explicitSourceIdServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing = { claimOrder = "source-id"; bulkLanes = 1; }; });
+  waitingServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing = { claimOrder = "waiting"; bulkLanes = 2; }; });
+  waitingWith = indexing: server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing = { claimOrder = "waiting"; } // indexing; });
+  configFile = cfg: lib.last (lib.splitString " " cfg.systemd.services.chronicle.serviceConfig.ExecStart);
   invalidCapacity = field: value: server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing.${field} = value; });
   rejectedCapacity = field: value: !(builtins.tryEval (builtins.getAttr field (invalidCapacity field value).smind.services.chronicle.indexing)).success;
   disabledServer = server { };
@@ -146,8 +151,8 @@ assert enabledServer.systemd.services.chronicle.serviceConfig.User == "chronicle
 assert enabledServer.systemd.services.chronicle.serviceConfig.TimeoutStopSec == 60;
 assert enabledServer.smind.services.chronicle.limits.sessionTtlSeconds == 30 * 24 * 60 * 60;
 assert shortSessionServer.smind.services.chronicle.limits.sessionTtlSeconds == 3600;
-assert enabledServer.smind.services.chronicle.indexing == defaultIndexingPolicy // { annotationSessions = 4; embeddingRequests = 8; embeddingBatchSize = 16; annotationContinuations = false; };
-assert capacityServer.smind.services.chronicle.indexing == defaultIndexingPolicy // { annotationSessions = 8; embeddingRequests = 12; embeddingBatchSize = 3; annotationContinuations = true; };
+assert enabledServer.smind.services.chronicle.indexing == defaultIndexingPolicy // { annotationSessions = 4; embeddingRequests = 8; embeddingBatchSize = 16; annotationContinuations = false; claimOrder = "source-id"; bulkLanes = 1; };
+assert capacityServer.smind.services.chronicle.indexing == defaultIndexingPolicy // { annotationSessions = 8; embeddingRequests = 12; embeddingBatchSize = 3; annotationContinuations = true; claimOrder = "source-id"; bulkLanes = 1; };
 assert rejectedCapacity "annotationSessions" 0;
 assert rejectedCapacity "annotationSessions" 9;
 assert rejectedCapacity "embeddingRequests" 0;
@@ -155,6 +160,15 @@ assert rejectedCapacity "embeddingRequests" 33;
 assert rejectedCapacity "embeddingBatchSize" 0;
 assert rejectedCapacity "embeddingBatchSize" 17;
 assert rejectedCapacity "annotationContinuations" 1;
+assert rejectedCapacity "claimOrder" "fifo";
+assert rejectedCapacity "bulkLanes" 0;
+assert enabledServer.smind.services.chronicle.indexing.claimOrder == "source-id" && enabledServer.smind.services.chronicle.indexing.bulkLanes == 1;
+assert configFile explicitSourceIdServer == configFile enabledServer;
+assert ownAssertions waitingServer == [ ];
+assert ownAssertions (waitingWith { annotationSessions = 3; bulkLanes = 1; }) == [ ];
+assert ownAssertions (waitingWith { annotationSessions = 2; bulkLanes = 1; }) != [ ];
+assert ownAssertions (waitingWith { annotationSessions = 4; bulkLanes = 3; }) != [ ];
+assert ownAssertions (waitingWith { annotationSessions = 2; bulkLanes = 1; claimOrder = "source-id"; }) == [ ];
 assert enabledServer.systemd.services.chronicle.requires == [ "chronicle-migrate.service" ];
 assert enabledServer.systemd.services.chronicle-migrate.requires == [ "ponygirls-database-chronicle.service" ];
 assert !(enabledServer.systemd.services ? chronicle-database);
@@ -177,6 +191,7 @@ pkgs.runCommandLocal "chronicle-modules-test" { nativeBuildInputs = [ pkgs.jq ];
   jq -e '.sessionTtlSeconds == 3600' ${lib.last (lib.splitString " " shortSessionServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.indexing == {annotationSessions:4,embeddingRequests:8,embeddingBatchSize:16}' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.indexing == {annotationSessions:8,embeddingRequests:12,embeddingBatchSize:3,annotationContinuations:true}' ${lib.last (lib.splitString " " capacityServer.systemd.services.chronicle.serviceConfig.ExecStart)}
+  jq -e '.indexing == {annotationSessions:4,embeddingRequests:8,embeddingBatchSize:16,claimOrder:"waiting",bulkLanes:2}' ${configFile waitingServer}
   jq -e '.embedding.sendDimensions == false' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.embedding.sendDimensions == true' ${lib.last (lib.splitString " " sendDimensions.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.allowInsecureHttp == false and .secureCookies == true' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}

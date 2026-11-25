@@ -457,6 +457,14 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     supersedeEndedLeases(profiles,scope)
     claimHead(profiles,scope,leaseSeconds,large)
   }
+  /** The waiting claim order (`indexing.claimOrder` "waiting"; ClaimOrder): the checks and the supersession of today's
+    * claim, then ClaimOrder's selection for `lane`. */
+  override def claimInLane(profiles: Set[String],scope: ClaimScope,leaseSeconds: Int,lane: ClaimLane): ClaimOutcome = {
+    Check(profiles.nonEmpty && leaseSeconds>=0,"invalid","invalid claim profiles or lease")
+    Check(profiles.subsetOf(knownProfiles),"unavailable","index policy is not executable; explicit rebuild required")
+    supersedeEndedLeases(profiles,scope)
+    ClaimOrder.claim(this,profiles,scope,leaseSeconds,lane)
+  }
   /** Running jobs of an older revision whose lease ended cannot renew and are never claimed again: they end superseded and
     * stop blocking their head jobs. A short transaction of its own that locks the sources FOR NO KEY UPDATE, compatible with
     * the key-share locks of an ingest's projection: inside the claim, FOR UPDATE locks on these sources would hold up their

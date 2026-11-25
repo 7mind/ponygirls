@@ -488,7 +488,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     IO.blocking(count(claim,fetch,parent)).flatMap { total =>
       val indexed=total-parent.fold(0)(_.cut.window)
       if(indexed>LargeJobs.windows && large==LargeJobs.Skipped)
-        deferLarge(claim,total) *> IO(logger.info(s"large job deferred jobId=${claim.jobId} totalWindows=$total indexedWindows=$indexed largeJobWindows=${LargeJobs.windows}"))
+        deferLarge(claim,total) *> IO(logger.info(s"large job deferred jobId=${claim.jobId} totalWindows=$total indexedWindows=$indexed largeJobWindows=${LargeJobs.windows}${Worker.waitingSeconds(claim)}"))
       else indexWindows(claim,ProblemPassages.Source(claim.messages.reader(fetch)),total,parent) *> publish(claim,total,fetch,parent)
     }
   }
@@ -617,6 +617,22 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     }
   }
   def once: IO[Boolean] = iteration.map(_==Worker.Iteration.Processed)
+  /** `indexing.claimOrder` (read at start). */
+  private val claimOrder = ClaimOrderMode.of(config)
+  /** One claim of `lane` in the waiting order (ClaimOrder); lane 0 runs it holding the large-job permit (`inLane`). A
+    * contended claim (its probes ran out) waits like an idle one. */
+  private def laneIteration(lane: ClaimLane): IO[Worker.Iteration] = admission.annotationSession.use { _ =>
+    IO(Deadline.now).flatMap(claimed => IO.blocking(archive.claimInLane(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds,lane)).redeemWith(claimFailed,{
+      case ClaimOutcome.Idle | ClaimOutcome.Contended => IO.pure(Worker.Iteration.Idle)
+      case ClaimOutcome.Claimed(claim) =>
+        IO(claim.facts.foreach(facts => logger.log(izumi.logstage.api.Log.Level.Info)(izumi.logstage.api.Log.Message.raw(ClaimFacts.logLine(claim.jobId,facts,java.time.Instant.now()))))) *>
+          process(claim,lane.large,new AttemptLease(claimed)).as(Worker.Iteration.Processed)
+    }))
+  }
+  /** Lane 0 of the waiting order owns the large-job permit while it runs; the other lanes never take it. */
+  private def inLane[A](lane: ClaimLane)(work: IO[A]): IO[A] = (if(lane.kind==ClaimLane.Kind.Large) admission.largeJobOwned else Resource.unit[IO]).use(_ => work)
+  /** One claim of `lane` in the waiting order (tests): true when a job was processed. */
+  def onceInLane(lane: ClaimLane): IO[Boolean] = inLane(lane)(laneIteration(lane)).map(_==Worker.Iteration.Processed)
   def run: IO[Nothing] = {
     val retired=IO(config.maxSmallJobBudgetBytes.foreach(value => logger.warn(s"retired configuration key ignored key=maxSmallJobBudgetBytes value=$value: a job's heap is one window, bounded by maxIndexingBudgetBytes")))
     val lane: IO[Nothing]=iteration.flatMap {
@@ -628,11 +644,23 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       val incremental=config.indexing.incrementalPublication; val horizon=config.indexing.metadataHorizonWindows
       logger.info(s"indexing publication incrementalPublication=$incremental metadataHorizonWindows=$horizon")
     }
-    retired *> publication *> List.fill(config.indexing.annotationSessions)(lane).parSequence.map(_.head)
+    def ordered(value: ClaimLane): IO[Nothing] = inLane(value)(laneIteration(value).flatMap {
+      case Worker.Iteration.Processed => IO.unit
+      case Worker.Iteration.Idle => IO.sleep(idleDelay)
+      case Worker.Iteration.ClaimFailed => IO.sleep(failureBackoff.delay)
+    }.foreverM)
+    val lanes=claimOrder match {
+      case ClaimOrderMode.SourceId => List.fill(config.indexing.annotationSessions)(lane)
+      case ClaimOrderMode.Waiting(bulkLanes) => List.tabulate(config.indexing.annotationSessions)(index => ordered(ClaimLane.of(index,bulkLanes)))
+    }
+    retired *> publication *> lanes.parSequence.map(_.head)
   }
 }
 object Worker {
   private enum Iteration { case Processed,Idle,ClaimFailed }
+  /** ` waitingSeconds=…` of a claim of the waiting order (ClaimFacts), empty under today's order. */
+  private def waitingSeconds(claim: Claim): String =
+    claim.facts.flatMap(_.waitingSince).fold("")(since => s" waitingSeconds=${java.time.Duration.between(since,java.time.Instant.now()).getSeconds}")
   /** A job's message fetching (ingest-limits spec §5.2.2): within `maxIndexingBudgetBytes` per message, and a message above
     * SnapshotAdmission.largeBodyBytes under the snapshot admission's permit, one at a time in the process like large ingests. */
   private[chronicle] def messageFetch(config: Config,snapshots: SnapshotAdmission,dispatcher: Dispatcher[IO]): MessageFetch =
