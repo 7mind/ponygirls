@@ -291,7 +291,7 @@ final case class Identity(user: UserInfo, browser: Boolean, credentialHash: Stri
 }
 /** `snapshot` is the claimed revision's envelope (no messages, no raw files); `messages` reads its messages by position
   * (ingest-limits spec §5.2.1). */
-final case class Claim(jobId: UUID, sessionId: UUID, revision: Int, fence: Long, profile: String, snapshot: IngestRequest, owner: String, targetEpoch: Long, runId: UUID, revisionBinding: RevisionBinding, messages: ClaimedMessages, attempt: ClaimAttempt = ClaimAttempt.unclaimed())
+final case class Claim(jobId: UUID, sessionId: UUID, revision: Int, fence: Long, profile: String, snapshot: IngestRequest, owner: String, targetEpoch: Long, runId: UUID, revisionBinding: RevisionBinding, messages: ClaimedMessages, attempt: ClaimAttempt = ClaimAttempt.unclaimed(), indexingEpoch: Long = 0L)
 final case class IndexedChunk(chunk: Chunk, vector: Seq[Double])
 enum ClaimScope {
   case AllOwners
@@ -317,6 +317,8 @@ trait SessionArchive extends IndexCheckpoints {
     * a newer revision ends superseded instead and false is returned. */
   def defer(claim: Claim, totalWindows: Int): Boolean
   def renew(claim: Claim, leaseSeconds: Int): Boolean
+  /** Final authorization after model request admission. This transaction ends before dispatch. */
+  def authorizeModelDispatch(claim: Claim): Unit
   def progress(claim: Claim, completedWindows: Int, totalWindows: Int): Boolean
   /** Stages the publication's rows and switches the source to it (ingest-limits spec §5.2.4); false when the claim is no
     * longer current. */

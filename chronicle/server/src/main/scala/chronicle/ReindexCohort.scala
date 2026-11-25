@@ -20,28 +20,31 @@ object ReindexCohort {
     Sql.one(c,"SELECT profile,epoch FROM ch_owner_targets WHERE owner=?"+(if(lock) " FOR UPDATE" else ""),owner)(row => OwnerTarget(row.getString(1),row.getLong(2)))
       .getOrElse(throw DomainError("internal","missing owner target"))
   }
-  private def selection(c: Connection,owner: String,current: OwnerTarget,destination: String): String = {
+  private def selection(c: Connection,owner: String,current: OwnerTarget,destination: String,indexingEpoch: Long): String = {
     val digest=MessageDigest.getInstance("SHA-256")
     def append(value: String): Unit = digest.update(value.getBytes(UTF_8))
-    append(Json.arr(Json.fromString("finite-current-rebuild-v1"),Json.fromString(owner),Json.fromString(current.profile),Json.fromLong(current.epoch),Json.fromString(destination)).noSpaces)
+    val version=if(indexingEpoch==0) "finite-current-rebuild-v1" else s"finite-current-rebuild-v1:indexing-epoch:$indexingEpoch"
+    append(Json.arr(Json.fromString(version),Json.fromString(owner),Json.fromString(current.profile),Json.fromLong(current.epoch),Json.fromString(destination)).noSpaces)
     List(
       "SELECT jsonb_build_array(s.id,s.revision,r.binding_id,s.published,g.profile,g.revision,g.retired,g.run_id) AS value FROM ch_sources s LEFT JOIN ch_revisions r ON r.session_id=s.id AND r.revision=s.revision LEFT JOIN ch_generations g ON g.id=s.published WHERE s.owner=? AND NOT s.tombstone ORDER BY s.id",
       "SELECT jsonb_build_array(j.id,j.session_id,j.revision,j.profile,j.state,j.run_id,j.fence,j.attempts,j.lease_until,j.error,j.failure_stage,j.completed_windows,j.total_windows) AS value FROM ch_sources s JOIN ch_jobs j ON j.session_id=s.id WHERE s.owner=? AND NOT s.tombstone ORDER BY j.id"
     ).foreach { sql => append("["); each(c,sql,owner)(row => { append(Sql.json(row,"value").noSpacesSortKeys); append(",") }); append("]") }
     digest.digest().map(value => f"${value & 255}%02x").mkString
   }
-  private def plan(c: Connection,owner: String,current: OwnerTarget,catalog: IndexProfileCatalog): OwnerReindexPreview = {
+  private def plan(c: Connection,owner: String,current: OwnerTarget,catalog: IndexProfileCatalog,indexingEpoch: Long): OwnerReindexPreview = {
     val destination=catalog.preferred.profile
     IndexProfiles.registered(c,destination)
     val heads=Sql.one(c,"SELECT count(*) FROM ch_sources WHERE owner=? AND NOT tombstone",owner)(_.getLong(1)).get
-    OwnerReindexPreview(current.profile,destination,selection(c,owner,current,destination),heads,0L,heads)
+    OwnerReindexPreview(current.profile,destination,selection(c,owner,current,destination,indexingEpoch),heads,0L,heads)
   }
-  def preview(c: Connection,owner: String,catalog: IndexProfileCatalog): OwnerReindexPreview = {
+  def preview(c: Connection,owner: String,catalog: IndexProfileCatalog,defaultEnabled: Boolean): OwnerReindexPreview = {
     Check(!c.getAutoCommit && Set(Connection.TRANSACTION_REPEATABLE_READ,Connection.TRANSACTION_SERIALIZABLE).contains(c.getTransactionIsolation),"internal","rebuild preview requires repeatable read")
-    plan(c,owner,target(c,owner,false),catalog)
+    val current=target(c,owner,false)
+    val epoch=ChronicleIndexing.requireEnabled(ChronicleIndexing.read(c,defaultEnabled,owner))
+    plan(c,owner,current,catalog,epoch)
   }
   private def outcome(value: OwnerReindexResult): OwnerReindexOutcome = OwnerReindexOutcome(value.requestId,value.targetProfile,value.heads,value.queued,value.alreadyCurrent,value.invalidatedClaims)
-  def apply(c: Connection,owner: String,id: UUID,profile: String,hash: String,confirm: Boolean,catalog: IndexProfileCatalog): OwnerReindexOutcome = {
+  def apply(c: Connection,owner: String,id: UUID,profile: String,hash: String,confirm: Boolean,catalog: IndexProfileCatalog,defaultEnabled: Boolean): OwnerReindexOutcome = {
     Check(!c.getAutoCommit && id!=null && confirm && hash!=null && hash.matches("[0-9a-f]{64}"),"invalid","valid rebuild selection and explicit confirmation required")
     val current=target(c,owner,true)
     val replay=Sql.one(c,"SELECT selection_hash,result FROM ch_reindex_requests WHERE owner=? AND request_id=?",owner,id) { row =>
@@ -51,9 +54,10 @@ object ReindexCohort {
       outcome(recorded)
     }
     replay.getOrElse {
+      val indexingEpoch=ChronicleIndexing.requireEnabled(ChronicleIndexing.locked(c,defaultEnabled,owner))
       each(c,"SELECT id FROM ch_sources WHERE owner=? AND NOT tombstone ORDER BY id FOR UPDATE",owner)(_ => ())
       each(c,"SELECT j.id FROM ch_sources s JOIN ch_jobs j ON j.session_id=s.id WHERE s.owner=? AND NOT s.tombstone ORDER BY j.id FOR UPDATE OF j",owner)(_ => ())
-      val selected=plan(c,owner,current,catalog)
+      val selected=plan(c,owner,current,catalog,indexingEpoch)
       Check(profile==selected.targetProfile && hash==selected.selectionHash,"conflict","owner reindex selection changed; preview again")
       val epoch=current.epoch+1
       Check(epoch>current.epoch,"internal","owner target epoch overflow")

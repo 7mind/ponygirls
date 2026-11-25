@@ -5,7 +5,7 @@ import scala.util.Using
 import java.util.UUID
 import chronicle.api.*
 import io.circe.Json
-import ponygirls.auth.{AccountFailure,ImperativeAccountSql}
+import ponygirls.auth.{AccountFailure,ImperativeAccountSql,IndexingPreferenceSql}
 
 /** The process's one pool (restart-robustness spec §5) through one of its admissions: this view the requests',
   * `background` the background admission's shared permits (the Worker's archive: claims, checkpoints, failure records, P0,
@@ -22,6 +22,7 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
   private val transactions: ponygirls.runtime.BlockingJdbcTransactions = if(lane==Database.Lane.Requests) runtime else runtime.background
   private def publicationTimeout: FiniteDuration = config.indexing.publicationTimeout(config.databaseLimits)
   private def admitted[A](wait: FiniteDuration)(work: => A): A = if(lane==Database.Lane.Gated) gate.run(wait)(work) else work
+  private[chronicle] val indexingDefaultEnabled: Boolean = config.indexingPolicy.defaultEnabled
   def transaction[A](f: Connection => A): A = admitted(publicationTimeout)(transactions.transaction(f))
   def extendedTransaction[A](timeout: FiniteDuration)(f: Connection => A): A = admitted(publicationTimeout)(transactions.extendedTransaction(timeout)(f))
   def transactionWithin[A](deadline: Deadline)(f: Connection => A): A = admitted(deadline.timeLeft.min(publicationTimeout))(transactions.transactionWithin(deadline)(f))
@@ -89,6 +90,8 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     migrate(c,"029_transient_failures.sql")
     migrate(c,"030_operate_jobs.sql")
     migrate(c,"031_annotation_provenance.sql")
+    IndexingPreferenceSql.initialize(c)
+    migrate(c,"032_indexing_eligibility.sql")
     // 001.sql (above) ends the previous process's older jobs superseded: their kept parts go with them (ANNOT2).
     AnnotationPartials.supersededAtStart(c)
     val dimensions=SearchPolicy.dimensions(config)
@@ -258,11 +261,15 @@ object Jobs {
     * those jobs' annotation partials and chain markers (ANNOT2) in its transaction: no claim reads them again. */
   def supersede(c: Connection,update: String,args: Sql.Param*): Unit =
     AnnotationPartials.ended(c,Sql.rows(c,update,args*)(_.getObject(1,classOf[UUID])))
-  /** A job a claim may take: Queued and not held (no next attempt, or its time has come), or Running with an ended lease. */
-  def claimable(job: String): String =
-    s"(($job.state='Queued' AND ($job.lease_until IS NULL OR $job.lease_until<=clock_timestamp())) OR ($job.state='Running' AND $job.lease_until<clock_timestamp()))"
-  def retry(c: Connection,owner: String,id: UUID): Unit = {
+  /** A job a claim may take: Queued and not held (no next attempt, or its time has come), or Running with an ended
+    * lease. A policy-invalidated Running attempt can be replaced immediately, refunding its charge even if that was
+    * the last attempt. This also recovers jobs of a worker that never saw the setting change. */
+  def invalidated(job: String,epoch: String): String = s"($job.state='Running' AND $job.indexing_epoch<>($epoch))"
+  def claimable(job: String,epoch: Long): String =
+    s"(${invalidated(job,epoch.toString)} OR ($job.attempts<$attemptLimit AND (($job.state='Queued' AND ($job.lease_until IS NULL OR $job.lease_until<=clock_timestamp())) OR ($job.state='Running' AND $job.lease_until<clock_timestamp()))))"
+  def retry(c: Connection,owner: String,id: UUID,defaultEnabled: Boolean = true): Unit = {
     val target=OwnerTargets.read(c,owner,true).profile
+    ChronicleIndexing.requireEnabled(ChronicleIndexing.locked(c,defaultEnabled,owner))
     val head=Sql.one(c,"SELECT s.revision FROM ch_sources s JOIN ch_jobs j ON j.session_id=s.id WHERE j.id=? AND s.owner=? AND NOT s.tombstone FOR UPDATE OF s",id,owner)(_.getInt(1)).getOrElse(throw DomainError("not-found","job not found"))
     val (revision,profile)=Sql.one(c,"SELECT revision,profile FROM ch_jobs WHERE id=? FOR UPDATE",id)(r => (r.getInt(1),r.getString(2))).get
     Check(revision==head,"conflict","job superseded by a newer archive revision")
@@ -443,12 +450,15 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       case ClaimScope.AllOwners => ("",List.empty[Sql.Param])
       case ClaimScope.Owner(value) => (" AND t.owner=?",List[Sql.Param](value))
     }
-    val ended="j.revision<s.revision AND j.state='Running' AND (j.lease_until>clock_timestamp()) IS NOT TRUE"
-    val sources=Sql.rows(c,s"""SELECT s.id,t.profile FROM ch_sources s JOIN ch_owner_targets t ON t.owner=s.owner JOIN ch_users u ON u.id=s.owner AND u.enabled
-      WHERE t.profile IN(${profiles.toList.map(_ => "?").mkString(",")})$scoped AND NOT s.tombstone AND EXISTS(SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.profile=t.profile AND $ended)
-      ORDER BY s.id FOR NO KEY UPDATE OF s SKIP LOCKED""",(profiles.toList.sorted++owner)*)(r => (r.getObject(1,classOf[UUID]),r.getString(2)))
-    sources.foreach { (id,profile) =>
-      Jobs.supersede(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} FROM ch_sources s WHERE s.id=j.session_id AND j.session_id=? AND j.profile=? AND $ended RETURNING j.id",id,profile)
+    val allowed=ChronicleIndexing.allowsOwnerSql(db.indexingDefaultEnabled,"s.owner")
+    val epoch=ChronicleIndexing.epochOwnerSql("s.owner")
+    // Supersession is permanent for an old revision; a lost epoch, like an elapsed lease, cannot be regained.
+    def ended(epoch: String): String = s"j.revision<s.revision AND j.state='Running' AND ((j.lease_until>clock_timestamp()) IS NOT TRUE OR j.indexing_epoch<($epoch))"
+    val sources=Sql.rows(c,s"""SELECT s.id,t.profile,$epoch FROM ch_sources s JOIN ch_owner_targets t ON t.owner=s.owner JOIN ch_users u ON u.id=s.owner AND u.enabled
+      WHERE t.profile IN(${profiles.toList.map(_ => "?").mkString(",")})$scoped AND NOT s.tombstone AND $allowed AND EXISTS(SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.profile=t.profile AND ${ended(epoch)})
+      ORDER BY s.id FOR NO KEY UPDATE OF s SKIP LOCKED""",(profiles.toList.sorted++owner)*)(r => (r.getObject(1,classOf[UUID]),r.getString(2),r.getLong(3)))
+    sources.foreach { (id,profile,capturedEpoch) =>
+      Jobs.supersede(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} FROM ch_sources s WHERE s.id=j.session_id AND j.session_id=? AND j.profile=? AND ${ended(capturedEpoch.toString)} RETURNING j.id",id,profile)
     }
   }
   private def claimHead(profiles: Set[String],scope: ClaimScope,leaseSeconds: Int,large: LargeJobs): Option[Claim] = db.transaction { c =>
@@ -458,31 +468,36 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       case ClaimScope.Owner(owner) => (" AND t.owner=?",List[Sql.Param](owner))
     }
     val placeholders=profiles.toList.sorted.map(_ => "?").mkString(",")
-    val owners=Sql.rows(c,s"SELECT t.owner FROM ch_owner_targets t JOIN ch_users u ON u.id=t.owner AND u.enabled WHERE t.profile IN($placeholders)${scoped._1} ORDER BY t.owner",(profiles.toList.sorted++scoped._2)*)(_.getString(1))
+    val allowed=ChronicleIndexing.allowsOwnerSql(db.indexingDefaultEnabled,"t.owner")
+    val owners=Sql.rows(c,s"SELECT t.owner FROM ch_owner_targets t JOIN ch_users u ON u.id=t.owner AND u.enabled WHERE t.profile IN($placeholders)${scoped._1} AND $allowed ORDER BY t.owner",(profiles.toList.sorted++scoped._2)*)(_.getString(1))
     owners.iterator.map { owner =>
       OwnerTargets.eligible(c,owner).filter(target => profiles.contains(target.profile)).flatMap { target =>
+        val eligibility=ChronicleIndexing.locked(c,db.indexingDefaultEnabled,owner)
+        Option.when(eligibility.enabled)(target -> eligibility.epoch)
+      }.flatMap { (target,epoch) =>
         val exhausted=Sql.rows(c,s"""SELECT s.id FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
-          SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.state='Running' AND j.lease_until<clock_timestamp() AND j.attempts>=${Jobs.attemptLimit})
-          ORDER BY s.id FOR UPDATE OF s SKIP LOCKED""",owner,target.profile)(_.getObject(1,classOf[UUID]))
+          SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.state='Running' AND j.indexing_epoch=? AND j.lease_until<clock_timestamp() AND j.attempts>=${Jobs.attemptLimit})
+          ORDER BY s.id FOR UPDATE OF s SKIP LOCKED""",owner,target.profile,epoch)(_.getObject(1,classOf[UUID]))
         exhausted.foreach { id =>
-          Sql.exec(c,s"UPDATE ch_jobs SET state='Failed',error='lease-exhausted',failure_stage=NULL,lease_until=NULL,fence=fence+1 WHERE session_id=? AND profile=? AND state='Running' AND lease_until<clock_timestamp() AND attempts>=${Jobs.attemptLimit}",id,target.profile)
+          Sql.exec(c,s"UPDATE ch_jobs SET state='Failed',error='lease-exhausted',failure_stage=NULL,lease_until=NULL,fence=fence+1 WHERE session_id=? AND profile=? AND state='Running' AND indexing_epoch=? AND lease_until<clock_timestamp() AND attempts>=${Jobs.attemptLimit}",id,target.profile,epoch)
         }
         // One job per source and profile at a time: the head job waits while a job of an older revision is Running
         // (supersedeEndedLeases ended those whose lease ended). Without the large-job permit, a claim passes by a job
         // deferred to the lane with it (Queued with its window count: only a deferral records one while it is queued) and
         // a large one whose lease ended. No job is refused for its size (ingest-limits spec §5.2.7).
         val source=Sql.one(c,s"""SELECT s.id,s.revision FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
-          SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.attempts<${Jobs.attemptLimit} AND ${Jobs.claimable("j")})
+          SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND ${Jobs.claimable("j",epoch)})
           AND NOT EXISTS(SELECT 1 FROM ch_jobs o WHERE o.session_id=s.id AND o.revision<s.revision AND o.profile=? AND o.state='Running')
           AND (? OR NOT EXISTS(SELECT 1 FROM ch_jobs d WHERE d.session_id=s.id AND d.revision=s.revision AND d.profile=? AND (d.total_windows>? OR (d.state='Queued' AND d.total_windows IS NOT NULL))))
           ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",owner,target.profile,target.profile,large==LargeJobs.Admitted,target.profile,LargeJobs.windows)(r => (r.getObject(1,classOf[UUID]),r.getInt(2)))
         source.flatMap { (id,revision) =>
-          Sql.one(c,s"""UPDATE ch_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
-            WHERE id=(SELECT id FROM ch_jobs WHERE session_id=? AND revision=? AND profile=? AND attempts<${Jobs.attemptLimit} AND ${Jobs.claimable("ch_jobs")} FOR UPDATE SKIP LOCKED LIMIT 1)
-            RETURNING id,fence,run_id,transient_range""",leaseSeconds,id,revision,target.profile) { row =>
+          Sql.one(c,s"""UPDATE ch_jobs SET state='Running',attempts=attempts+CASE WHEN ${Jobs.invalidated("ch_jobs",epoch.toString)} THEN 0 ELSE 1 END,
+            indexing_epoch=?,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
+            WHERE id=(SELECT id FROM ch_jobs WHERE session_id=? AND revision=? AND profile=? AND ${Jobs.claimable("ch_jobs",epoch)} FOR UPDATE SKIP LOCKED LIMIT 1)
+            RETURNING id,fence,run_id,transient_range""",epoch,leaseSeconds,id,revision,target.profile) { row =>
             val range=Option(row.getObject("transient_range",classOf[java.lang.Integer])).map(_.intValue)
             val (snap,binding,messages)=claimedSnapshot(c,id,revision)
-            Claim(row.getObject("id",classOf[UUID]),id,revision,row.getLong("fence"),target.profile,snap,owner,target.epoch,row.getObject("run_id",classOf[UUID]),binding,messages,new ClaimAttempt(range))
+            Claim(row.getObject("id",classOf[UUID]),id,revision,row.getLong("fence"),target.profile,snap,owner,target.epoch,row.getObject("run_id",classOf[UUID]),binding,messages,new ClaimAttempt(range),epoch)
           }
         }
       }
@@ -500,14 +515,18 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   /** The head revision of the claim's live source while the claim's owner target is current. A claim of an older revision
     * keeps its authority: newer revisions do not end a Running job with a valid lease. */
   private def head(c: Connection,claim: Claim): Option[Int] =
-    OwnerTargets.eligible(c,claim.owner).filter(target => target.profile==claim.profile && target.epoch==claim.targetEpoch && knownProfiles.contains(claim.profile)).flatMap { _ =>
-      // NO KEY UPDATE: serialized with the revision switch and purge, not with the key-share locks an ingest's projection takes.
-      Sql.one(c,"SELECT revision FROM ch_sources WHERE id=? AND owner=? AND revision>=? AND NOT tombstone FOR NO KEY UPDATE",claim.sessionId,claim.owner,claim.revision)(_.getInt(1))
-    }
+    ownerIndexing(c,claim).filter(_.admits(claim)).flatMap(_ => sourceHead(c,claim))
+  private def ownerIndexing(c: Connection,claim: Claim): Option[ChronicleIndexing.Eligibility] =
+    OwnerTargets.eligible(c,claim.owner).filter(target => target.profile==claim.profile && target.epoch==claim.targetEpoch && knownProfiles.contains(claim.profile))
+      .map(_ => ChronicleIndexing.locked(c,db.indexingDefaultEnabled,claim.owner))
+  // NO KEY UPDATE: serialized with the revision switch and purge, not with the key-share locks an ingest's projection takes.
+  private def sourceHead(c: Connection,claim: Claim): Option[Int] =
+    Sql.one(c,"SELECT revision FROM ch_sources WHERE id=? AND owner=? AND revision>=? AND NOT tombstone FOR NO KEY UPDATE",claim.sessionId,claim.owner,claim.revision)(_.getInt(1))
   private def current(c: Connection,claim: Claim): Boolean = head(c,claim).nonEmpty
-  private val claimedJob="id=? AND session_id=? AND revision=? AND profile=? AND fence=? AND run_id=? AND state='Running'"
+  private val jobIdentity="id=? AND session_id=? AND revision=? AND profile=? AND fence=? AND run_id=? AND indexing_epoch=?"
+  private val claimedJob=jobIdentity+" AND state='Running'"
   private val validJob=claimedJob+" AND lease_until>clock_timestamp()"
-  private def jobArgs(claim: Claim): List[Sql.Param] = List(claim.jobId,claim.sessionId,claim.revision,claim.profile,claim.fence,claim.runId)
+  private def jobArgs(claim: Claim): List[Sql.Param] = List(claim.jobId,claim.sessionId,claim.revision,claim.profile,claim.fence,claim.runId,claim.indexingEpoch)
   private def lockJob(c: Connection,claim: Claim): Boolean = Sql.one(c,s"SELECT j.id FROM ch_jobs j WHERE $claimedJob FOR UPDATE",jobArgs(claim)*)(_ => true).contains(true)
   private def revisionMatches(c: Connection,claim: Claim): Boolean = {
     if(!claim.revisionBinding.matches(claim)) false else {
@@ -521,6 +540,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     Check(current(c,claim) && lockJob(c,claim) && Sql.one(c,s"SELECT 1 FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true) &&
       revisionMatches(c,claim),"stale-claim","indexing claim is no longer current")
   }
+  def authorizeModelDispatch(claim: Claim): Unit = db.transaction(c => checkpointAuthority(c,claim))
   /** While a window has committed kept parts (ANNOT2), its writes also need the claim's revision to be the head: a claim of
     * an older revision, which keeps its other writes while leased, never loads, extends or accepts a prefix. */
   private def prefixAuthority(c: Connection,claim: Claim): Unit = {
@@ -667,7 +687,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     // The claim is checked after the staged row's lock is granted: a batch that waited for it while the job was claimed
     // again (whose phase W may have invalidated the staged chunks) stops there (read committed: the check sees the
     // claim's fence and lease as committed by then).
-    if(!(Sql.one(c,s"SELECT 1 FROM ch_staged_generations WHERE generation=? AND job_id=? AND run_id=? FOR ${lock.sql}",generation,claim.jobId,claim.runId)(_ => true).contains(true) &&
+    if(!(ChronicleIndexing.locked(c,db.indexingDefaultEnabled,claim.owner).admits(claim) && Sql.one(c,s"SELECT 1 FROM ch_staged_generations WHERE generation=? AND job_id=? AND run_id=? FOR ${lock.sql}",generation,claim.jobId,claim.runId)(_ => true).contains(true) &&
       Sql.one(c,s"SELECT 1 FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true))) throw new StaleStaging
     f(c)
   }
@@ -885,7 +905,15 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   def fail(claim: Claim,code: String,stage: IndexingStage): Unit = failAt(claim,code,Some(stage))
   private def failAt(claim: Claim,code: String,stage: Option[IndexingStage]): Unit = db.transaction { c =>
     val exhausted=AnnotationAttempts.terminal(code) || code==IndexingBudget.exceededCode
-    head(c,claim).filter(_ => lockJob(c,claim)).foreach { head =>
+    val eligibility=ownerIndexing(c,claim)
+    eligibility.filterNot(_.admits(claim)).foreach { _ =>
+      sourceHead(c,claim).filter(_ => lockJob(c,claim)).foreach { head =>
+        // Parking is bookkeeping only, even after lease expiry. It cannot touch a later attempt (job fence+run+epoch).
+        if(head>claim.revision) Jobs.supersede(c,s"UPDATE ch_jobs SET ${Jobs.superseding},attempts=attempts-1 WHERE $claimedJob RETURNING id",jobArgs(claim)*)
+        else Sql.exec(c,s"UPDATE ch_jobs SET state='Queued',attempts=attempts-1,lease_until=NULL,fence=fence+1,completed_windows=0,total_windows=NULL WHERE $claimedJob",jobArgs(claim)*)
+      }
+    }
+    eligibility.filter(_.admits(claim)).flatMap(_ => sourceHead(c,claim)).filter(_ => lockJob(c,claim)).foreach { head =>
       // A job of an older revision is never queued again: where it would be, it ends superseded.
       val superseded=head>claim.revision && Sql.one(c,s"SELECT attempts<${Jobs.attemptLimit} AND NOT ? FROM ch_jobs WHERE $validJob",(List[Sql.Param](exhausted)++jobArgs(claim))*)(_.getBoolean(1)).contains(true)
       if(superseded) Jobs.supersede(c,s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob RETURNING id",jobArgs(claim)*)
@@ -922,7 +950,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     }
   }
   private def recordedTransient(c: Connection,claim: Claim): Option[TransientOutcome] =
-    Sql.one(c,"SELECT state,transient_failures,lease_until FROM ch_jobs WHERE id=? AND session_id=? AND revision=? AND profile=? AND fence=? AND run_id=? AND state IN('Queued','Failed') AND error=?",(jobArgs(claim):+Jobs.transientCode)*) { r =>
+    Sql.one(c,s"SELECT state,transient_failures,lease_until FROM ch_jobs WHERE $jobIdentity AND state IN('Queued','Failed') AND error=?",(jobArgs(claim):+Jobs.transientCode)*) { r =>
       if(r.getString(1)=="Queued") TransientOutcome.Held(r.getInt(2),r.getTimestamp(3).toInstant) else TransientOutcome.Exhausted(r.getInt(2))
     }
   private def chunkSourceBytes(c: Connection,view: ContentView,offset: Int,limit: Int): Long = view.generationId.map(generation => ReadSources.bytes(c,GenerationRows.chunks(generation,offset,limit))).getOrElse(0L)
@@ -957,13 +985,20 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
     Check.page(offset,limit)
     val from = s"FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id WHERE $visible"
     val n = Sql.one(c,s"SELECT count(*) $from",reader,reader,reader)(_.getInt(1)).get
-    val query=ReadSources.Query(s"SELECT j.id,j.session_id,j.revision,j.state,j.attempts,j.error,j.failure_stage,j.completed_windows,j.total_windows $from ORDER BY j.id LIMIT ? OFFSET ?",List(reader,reader,reader,limit,offset))
+    val allowed=ChronicleIndexing.allowsOwnerSql(db.indexingDefaultEnabled,"s.owner")
+    val epoch=ChronicleIndexing.epochOwnerSql("s.owner")
+    val parked=s"(j.state='Running' AND (NOT $allowed OR j.indexing_epoch<>$epoch))"
+    // A crashed worker may not have physically returned its invalidated lease yet. Show pending, not running.
+    val query=ReadSources.Query(s"""SELECT j.id,j.session_id,j.revision,CASE WHEN $parked THEN 'Queued' ELSE j.state END AS state,
+      CASE WHEN $parked THEN j.attempts-1 ELSE j.attempts END AS attempts,j.error,j.failure_stage,
+      CASE WHEN $parked THEN 0 ELSE j.completed_windows END AS completed_windows,
+      CASE WHEN $parked THEN NULL ELSE j.total_windows END AS total_windows $from ORDER BY j.id LIMIT ? OFFSET ?""",List(reader,reader,reader,limit,offset))
     materialization.admit(ReadSources.sum(List(JsonUtf8Size(Json.obj("count"->Json.fromInt(n))),ReadSources.bytes(c,query))))
     val jobs = Sql.rows(c,query.sql,query.args*)(r => JobInfo(r.getObject("id",classOf[UUID]),r.getObject("session_id",classOf[UUID]),r.getInt("revision"),JobState.parse(r.getString("state")).get,r.getInt("attempts"),Option(r.getString("error")),r.getInt("completed_windows"),Option(r.getObject("total_windows",classOf[java.lang.Integer])).map(_.intValue),Option(r.getString("failure_stage")).map(IndexingFailureStage.parse(_).getOrElse(throw DomainError("internal","invalid persisted failure stage")))))
     StatusResult(jobs,n)
   }
   def retry(owner: String,id: UUID): Unit = db.transaction { c =>
     db.profiles.resolve(OwnerTargets.read(c,owner,true).profile)
-    Jobs.retry(c,owner,id)
+    Jobs.retry(c,owner,id,db.indexingDefaultEnabled)
   }
 }

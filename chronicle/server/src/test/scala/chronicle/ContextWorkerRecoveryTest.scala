@@ -36,6 +36,7 @@ class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
   def headSnapshot(reader: String,id: UUID): IngestRequest=delegate.headSnapshot(reader,id)
   def claim(profiles: Set[String],scope: ClaimScope,lease: Int,large: LargeJobs): Option[Claim]=delegate.claim(profiles,scope,lease,large)
   def renew(c: Claim,lease: Int): Boolean=delegate.renew(c,lease)
+  def authorizeModelDispatch(c: Claim): Unit=delegate.authorizeModelDispatch(c)
   def defer(c: Claim,total: Int): Boolean=delegate.defer(c,total)
   def progress(c: Claim,done: Int,total: Int): Boolean=delegate.progress(c,done,total)
   def publishProblems(c: Claim,p: ProblemRows): Boolean=delegate.publishProblems(c,p)

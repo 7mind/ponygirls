@@ -266,7 +266,7 @@ final class Auth(db: Database, config: Config, val jobs: JobBudget) {
     db.transaction { c =>
       c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
       db.profiles.resolve(OwnerTargets.read(c,i.user.id,false).profile)
-      RetryFailedJobs.preview(c,i.user.id)
+      RetryFailedJobs.preview(c,i.user.id,db.indexingDefaultEnabled)
     }
   }
   def previewOwnerReindex(i: Identity): OwnerReindexPlan = {
@@ -274,7 +274,7 @@ final class Auth(db: Database, config: Config, val jobs: JobBudget) {
     db.transaction { c =>
       c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
       currentBrowser(c,i)
-      val plan=OwnerReindex.preview(c,i.user.id,db.profiles)
+      val plan=OwnerReindex.preview(c,i.user.id,db.profiles,db.indexingDefaultEnabled)
       OwnerReindexPlan(plan.currentTargetProfile,plan.targetProfile,plan.selectionHash,plan.heads,plan.alreadyCurrent,plan.replacements)
     }
   }
@@ -387,13 +387,13 @@ final class Auth(db: Database, config: Config, val jobs: JobBudget) {
       case Operation.DeleteGroup(id) => groupOwner(id); Sql.exec(c,"DELETE FROM ch_groups WHERE id=?",id); receipt("DeleteGroup",Some(id))
       case Operation.ApplyRetryFailed(targetProfile,selectionHash,confirm) =>
         db.profiles.resolve(OwnerTargets.read(c,owner,true).profile)
-        Result.RetryFailed(RetryFailedJobs(c,owner,e.requestId,targetProfile,selectionHash,confirm))
+        Result.RetryFailed(RetryFailedJobs(c,owner,e.requestId,targetProfile,selectionHash,confirm,db.indexingDefaultEnabled))
       case Operation.ApplyOwnerReindex(targetProfile,selectionHash,confirm) =>
-        val result=OwnerReindex(c,owner,e.requestId,targetProfile,selectionHash,confirm,db.profiles)
+        val result=OwnerReindex(c,owner,e.requestId,targetProfile,selectionHash,confirm,db.profiles,db.indexingDefaultEnabled)
         Result.OwnerReindexed(OwnerReindexResult(result.requestId,result.targetProfile,result.heads,result.queued,result.alreadyCurrent,result.invalidatedClaims))
       case Operation.RetryJob(id) =>
         db.profiles.resolve(OwnerTargets.read(c,owner,true).profile)
-        Jobs.retry(c,owner,id); receipt("RetryJob",Some(id))
+        Jobs.retry(c,owner,id,db.indexingDefaultEnabled); receipt("RetryJob",Some(id))
       case Operation.Purge(id) =>
         // First the source's live upload, in the writers' lock order (attempt row, then source row): it waits for a part
         // or commit in flight, which then ends; a later part or commit finds the attempt aborted (gone).

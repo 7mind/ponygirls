@@ -95,6 +95,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
         AnnotationReservation.Reserved(attempt)
     }
   }
+  def authorizeModelDispatch(claim: Claim): Unit = synchronized(authorized(claim,false))
   def reserveAnnotation(claim: Claim,key: CheckpointKey): AnnotationReservation = synchronized(reserve(claim,key,false,false))
   def reserveAnnotation(claim: Claim,key: CheckpointKey,prefix: Boolean): AnnotationReservation = synchronized(reserve(claim,key,true,prefix))
   private def record(claim: Claim,key: CheckpointKey,attempt: Int,update: Attempt => Option[Attempt]): Int = {

@@ -8,6 +8,8 @@ import java.util.UUID
 
 trait ProblemPassageAnnotator {
   def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision]
+  private[chronicle] def annotateGuarded(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry],beforeDispatch: IO[Unit]): IO[ProblemPassages.Decision] =
+    beforeDispatch *> IO.defer(annotate(owner,window,previous))
   /** Whether the request for the window's fragments from `covered` on, with `previous`, is within the request bounds
     * (ANNOT2): an answer stopped at `covered` is kept only then. */
   def tailRequestFits(window: ProblemPassages.Window,covered: Int,previous: Option[ProblemPassages.Carry]): Boolean

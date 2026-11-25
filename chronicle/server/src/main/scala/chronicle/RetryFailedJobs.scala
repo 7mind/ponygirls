@@ -37,11 +37,12 @@ object RetryFailedJobs {
       Sql.bind(p,args)
       Using.resource(p.executeQuery()) { r => while(r.next()) f(r) }
     }
-  private def selectionHash(c: Connection,owner: String,profile: String,sql: String,args: Sql.Param*): String = {
+  private def selectionHash(c: Connection,owner: String,profile: String,indexingEpoch: Long,sql: String,args: Sql.Param*): String = {
     val digest=MessageDigest.getInstance("SHA-256")
     def append(value: String): Unit = digest.update(value.getBytes(UTF_8))
     def string(value: String): String = Wire.canonical(Json.fromString(value))
-    append(s"[${string(hashVersion)},${string(owner)},${string(profile)},[")
+    val version=if(indexingEpoch==0) hashVersion else s"$hashVersion:indexing-epoch:$indexingEpoch"
+    append(s"[${string(version)},${string(owner)},${string(profile)},[")
     var first=true
     each(c,sql,args*) { r =>
       if(!first) append(",")
@@ -51,16 +52,17 @@ object RetryFailedJobs {
     append("]]")
     digest.digest().map(b => f"${b & 255}%02x").mkString
   }
-  def preview(c: Connection,owner: String): RetryFailedPlan = {
+  def preview(c: Connection,owner: String,defaultEnabled: Boolean = true): RetryFailedPlan = {
     text(owner)
     Check(!c.getAutoCommit && Set(Connection.TRANSACTION_REPEATABLE_READ,Connection.TRANSACTION_SERIALIZABLE).contains(c.getTransactionIsolation),"internal","retry preview requires a repeatable-read transaction")
     ownerEnabled(c,owner,false)
     val profile=target(c,owner,false)
+    val epoch=ChronicleIndexing.requireEnabled(ChronicleIndexing.read(c,defaultEnabled,owner))
     val totals=Sql.one(c,s"SELECT $aggregate FROM ($population) jobs",profile,owner)(counts).get
-    val hash=selectionHash(c,owner,profile,s"SELECT j.id,j.fence $eligibleJobs ORDER BY j.id",owner,profile)
+    val hash=selectionHash(c,owner,profile,epoch,s"SELECT j.id,j.fence $eligibleJobs ORDER BY j.id",owner,profile)
     RetryFailedPlan(profile,hash,totals)
   }
-  def apply(c: Connection,owner: String,requestId: UUID,targetProfile: String,selectionHash: String,confirm: Boolean): RetryFailedResult = {
+  def apply(c: Connection,owner: String,requestId: UUID,targetProfile: String,selectionHash: String,confirm: Boolean,defaultEnabled: Boolean = true): RetryFailedResult = {
     text(owner); text(targetProfile)
     Check(requestId!=null && selectionHash!=null && selectionHash.matches("[0-9a-f]{64}") && confirm,"invalid","valid retry hash and explicit confirmation required")
     Check(!c.getAutoCommit,"internal","retry apply requires a transaction")
@@ -68,6 +70,7 @@ object RetryFailedJobs {
     ownerEnabled(c,owner,true)
     Check(Sql.one(c,"SELECT has_database_privilege(current_user,current_database(),'TEMP')")(_.getBoolean(1)).contains(true),"unavailable","bulk retry requires database TEMP privilege")
     val profile=target(c,owner,true)
+    val epoch=ChronicleIndexing.requireEnabled(ChronicleIndexing.locked(c,defaultEnabled,owner))
     each(c,"SELECT id FROM ch_sources WHERE owner=? AND NOT tombstone ORDER BY id FOR UPDATE",owner)(_ => ())
     // The caller must roll back failures; never issue cleanup SQL in a possibly aborted transaction.
     Sql.exec(c,"CREATE TEMP TABLE ch_retry_failed_selection(id uuid PRIMARY KEY,fence bigint NOT NULL) ON COMMIT DROP")
@@ -78,7 +81,7 @@ object RetryFailedJobs {
     ) SELECT $aggregate,(SELECT count(*) FROM captured) AS captured_count FROM ($population) jobs""",owner,profile,profile,owner) { r =>
       (counts(r),r.getLong("captured_count"))
     }.get
-    val hash=RetryFailedJobs.selectionHash(c,owner,profile,"SELECT id,fence FROM pg_temp.ch_retry_failed_selection ORDER BY id")
+    val hash=RetryFailedJobs.selectionHash(c,owner,profile,epoch,"SELECT id,fence FROM pg_temp.ch_retry_failed_selection ORDER BY id")
     Check(profile==targetProfile && hash==selectionHash && selected==totals.eligibleCurrentFailed,"conflict","retry selection changed; preview again")
     // Lease exhaustion can add Failed jobs without source locks: update only this exact captured set.
     val retried=Using.resource(c.prepareStatement("""UPDATE ch_jobs j SET state='Queued',attempts=0,lease_until=NULL,transient_failures=0,transient_range=NULL,

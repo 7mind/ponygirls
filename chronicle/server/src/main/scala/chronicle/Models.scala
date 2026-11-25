@@ -48,7 +48,14 @@ object IndexingBudget {
     * the decoded string (UTF-16), the JSON tree and the decoded Message. */
   val messageDecodeFactor = 7
 }
-trait Embedder { def documents(owner: String,text: List[String]): IO[List[List[Double]]]; def query(owner: String,text: String): IO[List[Double]] }
+trait Embedder {
+  def documents(owner: String,text: List[String]): IO[List[List[Double]]]
+  def query(owner: String,text: String): IO[List[Double]]
+  private[chronicle] def documentsGuarded(owner: String,text: List[String],beforeDispatch: IO[Unit]): IO[List[List[Double]]] =
+    beforeDispatch *> IO.defer(documents(owner,text))
+  private[chronicle] def queryGuarded(owner: String,text: String,beforeDispatch: IO[Unit]): IO[List[Double]] =
+    beforeDispatch *> IO.defer(query(owner,text))
+}
 object ModelHttp {
   def client(config: Config): Resource[IO,Client[IO]] =
     JsonHttp.client(transportTimeout(config))
@@ -57,7 +64,7 @@ object ModelHttp {
 final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: ModelAdmission) {
   def post(context: ModelCallContext,endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json): IO[Json] =
     postDecoded(context,endpoint,credentialFile,timeout,maxBytes,payload)(identity)
-  def postDecoded[A](context: ModelCallContext,endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json)(decode: Json => A): IO[A] = IO.defer {
+  def postDecoded[A](context: ModelCallContext,endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json,beforeDispatch: IO[Unit]=IO.unit)(decode: Json => A): IO[A] = IO.defer {
     admission.request(context.purpose).use { _ => Ref.of[IO,ProviderUsage](ProviderUsage.unknown).flatMap { usage =>
       Resource.makeCase(telemetry.begin(context)) { (ticket,exit) =>
         val outcome=exit match {
@@ -68,7 +75,11 @@ final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: Mo
         usage.get.flatMap(value => telemetry.finish(ticket,outcome,value))
       }.use { _ =>
         JsonHttp.credential(credentialFile).flatMap { credential =>
-          JsonHttp.postF(client,endpoint,credential,timeout.seconds,maxBytes,payload) { json => usage.set(ProviderUsage.parse(json,context.purpose)).as(json).map(decode) }
+          // Admission and credential I/O can wait. Recheck here, without keeping JDBC resources across dispatch.
+          // This is the authorization point, not a guarantee of recall once dispatch is authorized.
+          beforeDispatch *> JsonHttp.postF(client,endpoint,credential,timeout.seconds,maxBytes,payload) { json =>
+            usage.set(ProviderUsage.parse(json,context.purpose)).as(json).map(decode)
+          }
         }
           .handleErrorWith {
             case error: RetrievalError => error.code match {
@@ -91,14 +102,18 @@ enum AnnotationRequestPolicy(val identity: String,val responseTokens: Int) {
   case GlmMaxReasoning extends AnnotationRequestPolicy("glm-max-reasoning:responseTokens65536",65536)
 }
 final class OpenAIEmbedder(http: ModelHttp,config: Config) extends Embedder {
-  def documents(owner: String,text: List[String]): IO[List[List[Double]]] = embed(ModelCallContext(owner,ModelWorkload.IndexEmbedding),text.map(config.embedding.documentPrefix+_))
-  def query(owner: String,text: String): IO[List[Double]] = embed(ModelCallContext(owner,ModelWorkload.QueryEmbedding),List(config.embedding.queryPrefix+text)).map(_.head)
-  private def embed(context: ModelCallContext,text: List[String]): IO[List[List[Double]]] = {
+  def documents(owner: String,text: List[String]): IO[List[List[Double]]] = documentsGuarded(owner,text,IO.unit)
+  override private[chronicle] def documentsGuarded(owner: String,text: List[String],beforeDispatch: IO[Unit]): IO[List[List[Double]]] =
+    embed(ModelCallContext(owner,ModelWorkload.IndexEmbedding),text.map(config.embedding.documentPrefix+_),beforeDispatch)
+  def query(owner: String,text: String): IO[List[Double]] = queryGuarded(owner,text,IO.unit)
+  override private[chronicle] def queryGuarded(owner: String,text: String,beforeDispatch: IO[Unit]): IO[List[Double]] =
+    embed(ModelCallContext(owner,ModelWorkload.QueryEmbedding),List(config.embedding.queryPrefix+text),beforeDispatch).map(_.head)
+  private def embed(context: ModelCallContext,text: List[String],beforeDispatch: IO[Unit]): IO[List[List[Double]]] = {
     val cfg = config.embedding
     Check(text.forall(_.getBytes(UTF_8).length <= 16384),"invalid","embedding input bound including prefix")
     Check(text.nonEmpty && text.size<=16,"invalid","embedding batch bound")
     val payload=EmbeddingCodec.payload(cfg.model,text,cfg.dimensions,cfg.sendDimensions)
-    http.post(context,cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,payload).map { json =>
+    http.postDecoded(context,cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,payload,beforeDispatch)(identity).map { json =>
       try EmbeddingCodec.decode(json,text.size,cfg.dimensions)
       catch { case error: RetrievalError => throw DomainError(error.code,error.detail) }
     }
@@ -178,7 +193,8 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
           IO { if(continuations>0) { continuedWindows.incrementAndGet(); () } }.as((merged,attempt))
       })
       else accepted(key)(json => (ProblemPassages.decode(window,state.carry.nonEmpty,json),0),value => CheckpointJson.decision(value._1))(
-        annotate(key,problemAnnotator.annotate(claim.owner,window,state.carry).flatTap(value => IO(ProblemPassages.validate(window,state.carry.nonEmpty,value))),index))
+        annotate(key,index)(authorize => problemAnnotator.annotateGuarded(claim.owner,window,state.carry,authorize)
+          .flatTap(value => IO(ProblemPassages.validate(window,state.carry.nonEmpty,value)))))
     def report(completed: Int): IO[Unit] = IO.blocking {
       Check(archive.progress(claim,completed,total),"stale-claim","indexing claim is no longer current")
     }
@@ -194,24 +210,39 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       val annotationAttempt=if(attempt==0) "checkpoint" else attempt.toString
       IO(logger.warn(s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total stage=$stage annotationAttempt=$annotationAttempt annotationRejectionLimit=${AnnotationAttempts.rejectionLimit} code=$code exceptionClass=$exceptionClass origin=$origin reason=$reason httpStatus=$httpStatus structure=$structure")) *> IO.raiseError(StagedFailure(failureStage,error))
     }
+    /** Reserve after admission: an answer still needs a fenced acceptance, and a refused waiter spends no reservation. */
+    private def authorizedAnnotation[A](reserve: => AnnotationReservation,index: Int)(send: IO[Unit] => IO[A]): IO[(Int,Either[Throwable,A])] =
+      Ref.of[IO,Int](0).flatMap { reserved =>
+        val authorize=IO.blocking(reserve).flatMap {
+          case AnnotationReservation.Exhausted(reason,attempts) => failed(new AnnotationExhausted(reason),index,"annotation",attempts)
+          case AnnotationReservation.Reserved(attempt) => reserved.set(attempt)
+        }
+        IO.defer(send(authorize)).attempt.flatMap { answer =>
+          reserved.get.flatMap { attempt => answer match {
+            case Left(staged: StagedFailure) => IO.raiseError(staged)
+            case Left(error) if attempt==0 => failed(error,index,"annotation",0)
+            case Right(_) if attempt==0 => failed(DomainError("internal","annotation dispatched without authorization"),index,"annotation",0)
+            case _ => IO.pure((attempt,answer))
+          }}
+        }
+      }
     /** One authorization of the whole window and its answer (continuations off): a `model-output` rejection is recorded
       * and the same request asked again, up to the rejection limit. */
-    def annotate[A](key: CheckpointKey,run: => IO[A],index: Int): IO[(A,Int)] = IO.blocking(archive.reserveAnnotation(claim,key)).flatMap {
-      case AnnotationReservation.Exhausted(reason,attempts) => failed(new AnnotationExhausted(reason),index,"annotation",attempts)
-      case AnnotationReservation.Reserved(attempt) => IO.defer(run).map(value => (value,attempt)).handleErrorWith {
-        case error: DomainError if Set("model-output","model-output/truncated").contains(error.code) =>
+    def annotate[A](key: CheckpointKey,index: Int)(send: IO[Unit] => IO[A]): IO[(A,Int)] =
+      authorizedAnnotation(archive.reserveAnnotation(claim,key),index)(send).flatMap {
+        case (attempt,Right(value)) => IO.pure((value,attempt))
+        case (attempt,Left(error: DomainError)) if Set("model-output","model-output/truncated").contains(error.code) =>
           val details=failureDetails(error); val reason=details.reason; val structure=details.structure.noSpaces; val code=error.code
           IO.blocking(archive.rejectAnnotation(claim,key,attempt,reason)).flatMap { rejected =>
             IO(logger.warn(s"annotation attempt failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total attempt=$attempt rejected=$rejected rejectionLimit=${AnnotationAttempts.rejectionLimit} reservationLimit=${AnnotationAttempts.reservationLimit} code=$code reason=$reason structure=$structure")) *>
               (if(rejected==AnnotationAttempts.rejectionLimit) failed(new AnnotationExhausted(reason),index,"annotation",attempt)
-              else IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current")) *> annotate(key,run,index))
+              else renewed *> annotate(key,index)(send))
           }
-        case error => failed(error,index,"annotation",attempt)
+        case (attempt,Left(error)) => failed(error,index,"annotation",attempt)
+      }.handleErrorWith {
+        case staged: StagedFailure => IO.raiseError(staged)
+        case error => failed(error,index,"annotation",0)
       }
-    }.handleErrorWith {
-      case staged: StagedFailure => IO.raiseError(staged)
-      case error => failed(error,index,"annotation",0)
-    }
     /** The kept parts of the window's chain (ANNOT2; window coordinates, committed as its partial) and the epoch's
       * non-final answers (rows with a reason) so far. */
     private final case class Chain(partial: Option[AnnotationPartial],reasons: Int) {
@@ -251,19 +282,17 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       * boundary, it is kept (committed before the rest is asked); otherwise it is rejected and the same request asked again. */
     private def ask(key: CheckpointKey,window: ProblemPassages.Window,state: ProblemPassages.State,index: Int,chain: Chain): IO[(ProblemPassages.Decision,Int,Int)] =
       IO((chain.partial.fold(window)(value => ProblemPassages.tail(window,value.covered)),chain.partial.fold(state.carry)(value => ProblemPassages.carryAfter(state,window,value.kept.parts)))).flatMap { (request,previous) =>
-        IO.blocking(archive.reserveAnnotation(claim,key,chain.prefix)).flatMap {
-          case AnnotationReservation.Exhausted(reason,attempts) => failed(new AnnotationExhausted(reason),index,"annotation",attempts)
-          case AnnotationReservation.Reserved(attempt) =>
-            IO.defer(problemAnnotator.annotate(claim.owner,request,previous)).flatMap { answer =>
-              IO { val merged=ProblemPassages.merge(chain.covered,chain.kept,answer); (merged,ProblemPassages.coverage(window,state.carry.nonEmpty,merged)) }
-            }.attempt.flatMap {
-              case Right((merged,stop)) if stop==window.terminal => IO.pure((merged,attempt,chain.continuations))
-              case Right((merged,stop)) => keep(key,window,state,index,chain,attempt,merged,stop.fragmentIndex)
-              case Left(error: DomainError) if Set("model-output","model-output/truncated").contains(error.code) =>
-                val details=failureDetails(error)
-                rejected(key,window,state,index,chain,attempt,details.reason,error.code,details.structure.noSpaces)
-              case Left(error) => failed(error,index,"annotation",attempt)
-            }
+        authorizedAnnotation(archive.reserveAnnotation(claim,key,chain.prefix),index) { authorize =>
+          problemAnnotator.annotateGuarded(claim.owner,request,previous,authorize).flatMap { answer =>
+            IO { val merged=ProblemPassages.merge(chain.covered,chain.kept,answer); (merged,ProblemPassages.coverage(window,state.carry.nonEmpty,merged)) }
+          }
+        }.flatMap {
+          case (attempt,Right((merged,stop))) if stop==window.terminal => IO.pure((merged,attempt,chain.continuations))
+          case (attempt,Right((merged,stop))) => keep(key,window,state,index,chain,attempt,merged,stop.fragmentIndex)
+          case (attempt,Left(error: DomainError)) if Set("model-output","model-output/truncated").contains(error.code) =>
+            val details=failureDetails(error)
+            rejected(key,window,state,index,chain,attempt,details.reason,error.code,details.structure.noSpaces)
+          case (attempt,Left(error)) => failed(error,index,"annotation",attempt)
         }
       }
     /** A boundary stop: kept unless it is the epoch's fifth non-final answer (then recorded as such, and the window is
@@ -301,7 +330,9 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       val parts=batches.zipWithIndex.traverse_ { (batch,part) =>
         val key=IndexCheckpoints.embedding(claim,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,batch)
         def validated(vectors: List[List[Double]]): List[List[Double]] = { CheckpointJson.validateVectors(vectors,batch.size,dimensions); vectors }
-        accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(IO.defer(embedder.documents(claim.owner,batch.map(_.text))).map(validated))
+        accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(IO.defer {
+          embedder.documentsGuarded(claim.owner,batch.map(_.text),IO.blocking(archive.authorizeModelDispatch(claim)))
+        }.map(validated))
       }
       // A part accepted under another batch size addresses other pieces: none of the window's parts is reused.
       (admitted *> parts.recoverWith { case _: CheckpointInputMismatch =>

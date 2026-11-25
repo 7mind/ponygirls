@@ -14,10 +14,10 @@ trait OwnerReindex {
 final class PostgresOwnerReindex(db: Database) extends OwnerReindex {
   def preview(owner: String): OwnerReindexPreview = db.transaction { c =>
     c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
-    OwnerReindex.preview(c,owner,db.profiles)
+    OwnerReindex.preview(c,owner,db.profiles,db.indexingDefaultEnabled)
   }
   def apply(owner: String,requestId: UUID,targetProfile: String,selectionHash: String,confirm: Boolean): OwnerReindexOutcome =
-    db.transaction(c => OwnerReindex(c,owner,requestId,targetProfile,selectionHash,confirm,db.profiles))
+    db.transaction(c => OwnerReindex(c,owner,requestId,targetProfile,selectionHash,confirm,db.profiles,db.indexingDefaultEnabled))
   def status(owner: String,requestId: UUID): chronicle.api.ReindexStatusResult = db.transaction { c =>
     c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
     ReindexCohort.status(c,owner,requestId)
@@ -32,7 +32,7 @@ final class PostgresOwnerReindex(db: Database) extends OwnerReindex {
   }
 }
 object OwnerReindex {
-  def preview(c: Connection,owner: String,catalog: IndexProfileCatalog): OwnerReindexPreview = ReindexCohort.preview(c,owner,catalog)
-  def apply(c: Connection,owner: String,requestId: UUID,targetProfile: String,selectionHash: String,confirm: Boolean,catalog: IndexProfileCatalog): OwnerReindexOutcome =
-    ReindexCohort(c,owner,requestId,targetProfile,selectionHash,confirm,catalog)
+  def preview(c: Connection,owner: String,catalog: IndexProfileCatalog,defaultEnabled: Boolean): OwnerReindexPreview = ReindexCohort.preview(c,owner,catalog,defaultEnabled)
+  def apply(c: Connection,owner: String,requestId: UUID,targetProfile: String,selectionHash: String,confirm: Boolean,catalog: IndexProfileCatalog,defaultEnabled: Boolean): OwnerReindexOutcome =
+    ReindexCohort(c,owner,requestId,targetProfile,selectionHash,confirm,catalog,defaultEnabled)
 }

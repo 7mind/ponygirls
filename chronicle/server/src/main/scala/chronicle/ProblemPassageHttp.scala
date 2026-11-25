@@ -49,10 +49,12 @@ object ProblemPassageHttp {
 
 final class OpenAIProblemPassageAnnotator(http: ModelHttp,config: Config) extends ProblemPassageAnnotator {
   private val continuations=config.indexing.annotationContinuations
-  def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.defer {
+  def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] =
+    annotateGuarded(owner,window,previous,IO.unit)
+  override private[chronicle] def annotateGuarded(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry],beforeDispatch: IO[Unit]): IO[ProblemPassages.Decision] = IO.defer {
     val cfg=config.annotation
     val request=ProblemPassageHttp.request(cfg,window,previous)
-    http.postDecoded(ModelCallContext(owner,ModelWorkload.IndexAnnotation),cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,request)(ProblemPassageHttp.response(window,previous.nonEmpty,_,continuations))
+    http.postDecoded(ModelCallContext(owner,ModelWorkload.IndexAnnotation),cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,request,beforeDispatch)(ProblemPassageHttp.response(window,previous.nonEmpty,_,continuations))
   }
   override def tailRequestFits(window: ProblemPassages.Window,covered: Int,previous: Option[ProblemPassages.Carry]): Boolean =
     try { ProblemPassageHttp.request(config.annotation,ProblemPassages.tail(window,covered),previous); true }
