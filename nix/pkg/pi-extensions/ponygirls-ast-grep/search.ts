@@ -16,6 +16,7 @@ const MAX_SNIPPET_CHARS = 160;
 const MAX_DIAGNOSTIC_CHARS = 800;
 const EXCLUDED_DIRS = [".git", ".codegraph", ".worktrees"];
 const FILE_SUMMARY = /^sg: summary\|file: scannedFileCount=(\d+),skippedFileCount=(\d+)\r?$/m;
+const PATTERN_PARSE_WARNING = /^Warning: Pattern contains an ERROR node[^\r\n]*/m;
 
 type Exec = ExtensionAPI["exec"];
 interface Binaries { astGrep: string; git: string }
@@ -73,10 +74,26 @@ async function nestedWorktrees(exec: Exec, git: string, scope: Scope, signal: Ab
   if (result.code !== 0 || result.killed || result.truncated) throw new Error(`Cannot list Git worktrees: ${diagnostic(result.stderr) || "incomplete or failed Git command"}`);
   const worktrees = result.stdout.split("\0\0").filter((record) => record.startsWith("worktree "))
     .map((record) => record.slice("worktree ".length).split("\0", 1)[0]);
-  if (!worktrees.includes(root)) throw new Error("Git worktree list did not identify the caller's checkout.");
-  const nested = worktrees.filter((path) => path !== root && isAbsolute(path) && inside(root, path));
-  if (nested.some((path) => inside(path, scope.target))) throw new Error("Search path is in a separate linked worktree. Start Pi there to search it.");
-  return nested.filter((path) => inside(scope.target, path));
+  // Git may list the main tree by its metadata directory and retain old paths
+  // for linked trees. The list only identifies other trees to exclude.
+  const nested = new Set<string>();
+  for (const path of worktrees) {
+    signal?.throwIfAborted();
+    if (!isAbsolute(path)) continue;
+    let canonical: string;
+    try {
+      canonical = await realpath(path);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") continue;
+      throw error;
+    }
+    if (canonical !== root && inside(root, canonical)) nested.add(canonical);
+  }
+  signal?.throwIfAborted();
+  const excluded = [...nested];
+  if (excluded.some((path) => inside(path, scope.target))) throw new Error("Search path is in a separate linked worktree. Start Pi there to search it.");
+  return excluded.filter((path) => inside(scope.target, path));
 }
 
 function excludeWorktree(root: string, path: string): string {
@@ -159,6 +176,10 @@ export async function search(exec: Exec, binaries: Binaries, caller: string, que
   }
   const { hits, count } = parseMatches(result.stdout, result.truncated, scope, nested);
   if (result.truncated && hits.length === 0) throw new Error("ast-grep reached its output limit before a complete hit; narrow the pattern or path.");
+  if (!result.truncated && count === 0) {
+    const parseWarning = PATTERN_PARSE_WARNING.exec(result.stderr);
+    if (parseWarning !== null) throw new Error(`Cannot parse ast-grep pattern: ${diagnostic(parseWarning[0])}`);
+  }
   if (!result.truncated && (result.code === 0) !== (count > 0)) throw new Error("ast-grep exit status and match records disagree.");
 
   const coverage = summary === null ? "file counts unavailable" : `CLI reports ${summary[1]} file(s) scanned, ${summary[2]} skipped`;

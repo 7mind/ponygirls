@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -46,7 +46,7 @@ async function fixture(t) {
       context: { tools: [tool], messages: [] },
     });
   };
-  return { main, call };
+  return { root, main, call };
 }
 
 const query = { lang: "ts", pattern: "probe($$$ARGS)" };
@@ -107,6 +107,67 @@ test("real loader: an arbitrarily nested linked checkout is excluded from its pa
   assert.equal(delegated.isError, false);
   assert.match(textOf(delegated), /source\.ts:1:1: probe\("other tree"\)/);
 });
+
+test("D1: a malformed Python pattern reports the parser warning, not an inconsistent scan", async (t) => {
+  const { main, call } = await fixture(t);
+  await writeFile(join(main, "source.py"), "foo(1)\n");
+  const result = await call({ lang: "python", pattern: "foo(" });
+  assert.equal(result.isError, true);
+  assert.match(textOf(result), /Cannot parse.*pattern.*Pattern contains an ERROR node/is);
+});
+
+test("D2a: the caller can search a linked worktree whose registered path became a symlink", async (t) => {
+  const { root, main, call } = await fixture(t);
+  const registered = join(root, "registered");
+  const actual = join(root, "actual");
+  await mkdir(registered);
+  const child = join(registered, "child");
+  git(main, "worktree", "add", "--quiet", "--detach", child);
+  await rename(registered, actual);
+  await symlink(actual, registered);
+  await writeFile(join(child, "source.ts"), 'probe("linked");\n');
+  const result = await call(query, child);
+  assert.equal(result.isError, false, textOf(result));
+  assert.match(textOf(result), /^source\.ts:1:1: probe\("linked"\)/m);
+});
+
+for (const explicit of [false, true]) {
+  test(`D2b: a nested linked worktree with a symlinked registration stays out of ${explicit ? "explicit searches" : "recursive scans"}`, async (t) => {
+    const { root, main, call } = await fixture(t);
+    const child = join(main, "nested");
+    git(main, "worktree", "add", "--quiet", "--detach", child);
+    await rename(main, join(root, "moved"));
+    await symlink(join(root, "moved"), main);
+    await writeFile(join(main, "source.ts"), 'probe("parent");\n');
+    await writeFile(join(child, "other.ts"), 'probe("nested");\n');
+    const result = await call(explicit ? { ...query, path: "nested/other.ts" } : query);
+    assert.equal(result.isError, explicit, textOf(result));
+    if (explicit) assert.match(textOf(result), /separate linked worktree/);
+    else {
+      assert.match(textOf(result), /^source\.ts:1:1: probe\("parent"\)/m);
+      assert.doesNotMatch(textOf(result), /other\.ts|probe\("nested"\)/);
+    }
+  });
+}
+
+for (const layout of ["separate Git directory", "submodule with an absorbed Git directory"]) {
+  test(`D3: search works from a checkout with a ${layout}`, async (t) => {
+    const { root, main, call } = await fixture(t);
+    const caller = join(main, "target");
+    if (layout === "separate Git directory") {
+      git(main, "init", "--quiet", "--separate-git-dir", join(root, "metadata.git"), caller);
+    } else {
+      const source = join(root, "source");
+      git(root, "init", "--quiet", source);
+      git(source, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "fixture");
+      git(main, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", source, "target");
+    }
+    await writeFile(join(caller, "source.ts"), 'probe("target");\n');
+    const result = await call(query, caller);
+    assert.equal(result.isError, false, textOf(result));
+    assert.match(textOf(result), /^source\.ts:1:1: probe\("target"\)/m);
+  });
+}
 
 test("real loader: uses bundled config, default ignores and plain read-only path arguments", async (t) => {
   const { main, call } = await fixture(t);
