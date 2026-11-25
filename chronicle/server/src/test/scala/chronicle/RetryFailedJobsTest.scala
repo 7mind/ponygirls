@@ -1,6 +1,7 @@
 package chronicle
 import chronicle.api.*
 import io.circe.Json
+import ponygirls.auth.IndexingPreferenceSql
 import java.sql.Connection
 import java.lang.reflect.{InvocationHandler,InvocationTargetException,Method,Proxy}
 import java.util.UUID
@@ -49,6 +50,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
           val sql=Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)
           Using.resource(c.createStatement())(_.execute(sql))
         }
+        IndexingPreferenceSql.initialize(c)
         db.profiles.register(c); nextCatalog.register(c)
         List("a","b","c").foreach(owner => Sql.exec(c,"INSERT INTO ch_users VALUES(?,?,true,'synthetic')",owner,owner))
         Sql.exec(c,"INSERT INTO ch_users VALUES('disabled','disabled',false,'synthetic')")
@@ -378,7 +380,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
         val schema=Sql.one(c,"SELECT quote_ident(current_schema())")(_.getString(1)).get
         Sql.exec(c,s"GRANT USAGE ON SCHEMA $schema TO pg_read_all_settings")
         Sql.exec(c,"GRANT SELECT,UPDATE ON ch_users,ch_owner_targets,ch_sources,ch_jobs TO pg_read_all_settings")
-        Sql.exec(c,"GRANT SELECT ON ch_index_profiles,ch_embedding_spaces TO pg_read_all_settings")
+        Sql.exec(c,"GRANT SELECT ON ch_index_profiles,ch_embedding_spaces,ponygirls_indexing_preferences TO pg_read_all_settings")
         Sql.exec(c,"SET LOCAL ROLE pg_read_all_settings")
         List("ch_revisions","ch_revision_info","ch_messages","ch_generations","ch_chunks","ch_ingest_receipts","ch_mutations","ch_groups","ch_members").foreach { table =>
           assertEquals(Sql.one(c,"SELECT has_table_privilege(current_user,?,'SELECT')",table)(_.getBoolean(1)),Some(false))
