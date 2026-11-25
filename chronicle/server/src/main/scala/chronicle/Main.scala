@@ -91,7 +91,10 @@ object Main extends IOApp {
     (host,port) = listener(config)
     _ <- stage("bind",EmberServerBuilder.default[IO].withHost(host).withPort(port).withMaxConnections(128).withMaxHeaderSize(16384).withHttpWebSocketApp(ws => s.http.routes(ws,gate,accounts).orNotFound).build.use { server =>
       IO(unobserved.settle(None)) *> IO(s.logger.info(s"chronicle listening address=${server.address} workersEnabled=$workersEnabled")) *>
-        IO(startLines.foreach(line => s.logger.info(s"chronicle start $line"))) *> stage("serve",background(workersEnabled,s.worker.run))
+        IO(startLines.foreach(line => s.logger.info(s"chronicle start $line"))) *>
+        // The configured claim order, once serving (a failed start prints only its failure line): the evidence of the mode.
+        IO(s.logger.log(izumi.logstage.api.Log.Level.Info)(izumi.logstage.api.Log.Message.raw(ClaimOrder.startLine(config)))) *>
+        stage("serve",background(workersEnabled,s.worker.run))
     },Some(config.listenPort))
     never <- IO.never[Nothing]
   } yield never })
