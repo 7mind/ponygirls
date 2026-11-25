@@ -28,20 +28,27 @@ let
       })
     ];
   }).config;
-  hasExtension = config: builtins.any (p: lib.hasSuffix "/ponygirls-codegraph" p) config.programs.pi.settings.extensions;
+  extensions = name: config: builtins.filter (p: lib.hasSuffix "/${name}" p) config.programs.pi.settings.extensions;
+  hasExtension = config: extensions "ponygirls-codegraph" config != [ ];
   local = evaluate { codegraph.command = "/bin/codegraph"; } true;
   absent = evaluate { } true;
   remote = evaluate { codegraph.url = "https://example.invalid/mcp"; } true;
   disabled = evaluate { codegraph = { command = "/bin/codegraph"; enabled = false; }; } true;
   noMcp = evaluate { codegraph.command = "/bin/codegraph"; } false;
+  astGrep = extensions "ponygirls-ast-grep" noMcp;
 in
 assert hasExtension local;
 assert !(hasExtension absent);
 assert !(hasExtension remote);
 assert !(hasExtension disabled);
 assert !(hasExtension noMcp);
+assert builtins.length astGrep == 1;
 pkgs.runCommandLocal "pi-codegraph-wiring-test" { } ''
   grep -F 'PONYGIRLS_CODEGRAPH_BIN' ${local.programs.pi.package}/bin/pi | grep -F '/bin/codegraph'
   grep -F 'PONYGIRLS_CODEGRAPH_FLOCK_BIN' ${local.programs.pi.package}/bin/pi | grep -F '${pkgs.flock}/bin/flock'
+  grep -F 'PONYGIRLS_AST_GREP_BIN' ${noMcp.programs.pi.package}/bin/pi | grep -F '${lib.getExe pkgs.ast-grep}'
+  grep -F 'PONYGIRLS_AST_GREP_GIT_BIN' ${noMcp.programs.pi.package}/bin/pi | grep -F '${lib.getExe pkgs.git}'
+  test -f ${builtins.head astGrep}/index.ts
+  test -f ${builtins.head astGrep}/builtin.yml
   touch $out
 ''

@@ -809,6 +809,29 @@
                 touch $out
               '';
           pi-codegraph-wiring = import ./nix/lib/pi-codegraph-test.nix { inherit pkgs; };
+          ponygirls-ast-grep = pkgs.runCommand "ponygirls-ast-grep-test" {
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git ];
+            PI_AST_GREP_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            PI_AST_GREP_EXTENSION = "${self.packages.${system}.ponygirls-pi-extensions}/ponygirls-ast-grep/index.ts";
+            PONYGIRLS_AST_GREP_BIN = pkgs.lib.getExe pkgs.ast-grep;
+            PONYGIRLS_AST_GREP_GIT_BIN = pkgs.lib.getExe pkgs.git;
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
+          } ''
+            export HOME="$TMPDIR"
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-ast-grep} ponygirls-ast-grep
+            chmod u+w ponygirls-ast-grep
+            mkdir -p ponygirls-subagents/src
+            cp ${./nix/pkg/pi-extensions/ponygirls-subagents/src/delegated-call.ts} ponygirls-subagents/src/delegated-call.ts
+            cd ponygirls-ast-grep
+            mkdir -p node_modules/@earendil-works
+            ln -s "$PI_AST_GREP_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
+            ln -s "$PI_AST_GREP_SDK_ROOT/node_modules/typebox" node_modules/typebox
+            ln -s "$PI_AST_GREP_SDK_ROOT/node_modules/@types" node_modules/@types
+            tsc -p tsconfig.json
+            node --test *.test.ts *.test.mjs
+            touch $out
+          '';
           codegraph-bootstrap = pkgs.runCommand "codegraph-bootstrap-test" {
             nativeBuildInputs = [ pkgs.bash ];
             CODEGRAPH_TELEMETRY = "0";

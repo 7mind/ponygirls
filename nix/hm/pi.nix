@@ -108,6 +108,8 @@ let
       wrapProgram $out/bin/pi \
         --prefix PATH : ${ddgsPython}/bin \
         --set-default PI_SUBAGENTS_SDK_ROOT ${piBase}/lib/node_modules/pi-monorepo \
+        --set PONYGIRLS_AST_GREP_BIN ${lib.getExe pkgs.ast-grep} \
+        --set PONYGIRLS_AST_GREP_GIT_BIN ${lib.getExe pkgs.git} \
         ${lib.optionalString codegraphLocal "--set PONYGIRLS_CODEGRAPH_BIN ${lib.escapeShellArg codegraphServer.command} --set PONYGIRLS_CODEGRAPH_FLOCK_BIN ${pkgs.flock}/bin/flock"} \
         ${(pkgs.callPackage ../pkg/pi-extensions/ponygirls-bg-tasks/wrapper-args.nix { }).args}
     '';
@@ -998,6 +1000,7 @@ in
             # each provider's available models) and a /tokemon table — tokemon
             # without Claude, Codex, or yolo profiles.
             "${piExtensions}/ponygirls-tokemon"
+            "${piExtensions}/ponygirls-ast-grep"
           ] ++ lib.optional codegraphLocal "${piExtensions}/ponygirls-codegraph";
         };
       };
