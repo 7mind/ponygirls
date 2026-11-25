@@ -384,7 +384,8 @@ ignores the key but refuses an `indexing` section without the three capacities.
   the serving release before the first start of this release on a database without 033; never run `migrate` beside a
   serving image for it. Later starts find the columns and indexes and only re-run the fill.
 - **Start fill.** Every start fills the NULLs of unfinished jobs (Queued, Running) in its transaction, all with that
-  transaction's time, and logs `chronicle claim order start fill rows=N`. A job is filed bulk when it is a member of its
+  transaction's time, and reports `claim order start fill rows=N` (`serve`: an info line `chronicle start claim order
+  start fill rows=N` once the server listens; `migrate`: a stderr line `chronicle claim order start fill rows=N`). A job is filed bulk when it is a member of its
   owner's current rebuild cohort (the member's run and target epoch still the job's) or was ever retried
   (`annotation_retry_epoch` > 0: single retries before 033 are filed bulk once); every other job fresh.
 - **Reseed.** `chronicle-server reseed-claim-order CONFIG.json`, with the server stopped (it takes the start lock

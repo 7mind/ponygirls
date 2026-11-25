@@ -21,7 +21,7 @@ object Main extends IOApp {
     case List("migrate",path) =>
       stage("config",IO.blocking(Config.load(path))).flatMap { config =>
         awaitDatabase(config) *> cats.effect.Resource.make(stage("database",IO.blocking(Database.command(config,IndexProfileCatalog.current(config)))))(db => IO.blocking(db.close()))
-          .use(initialize)
+          .use(db => initialize(db,line => System.err.println("chronicle " + line)))
       }.as(ExitCode.Success)
     case List("reseed-claim-order",path) =>
       stage("config",IO.blocking(Config.load(path))).flatMap { config =>
@@ -38,7 +38,9 @@ object Main extends IOApp {
             make[org.http4s.client.Client[IO]].fromValue(client)
           })
           lifecycle.use { services =>
-            initialize(services.database) *> serve(config,services,mode=="serve")
+            // The start's progress lines go to the service log once it listens: a start that fails prints only its failure.
+            val started=new java.util.concurrent.ConcurrentLinkedQueue[String]()
+            initialize(services.database,line => { started.add(line); () }) *> IO.defer(serve(config,services,mode=="serve",started.toArray(Array.empty[String]).toList))
           }
         })
       }.as(ExitCode.Success)
@@ -66,7 +68,7 @@ object Main extends IOApp {
   /** IOApp's default prints the stack trace of a failure no fiber observed; one sanitized `background` line instead. */
   private val unobserved = new StartFailure.Unobserved(error => System.err.println(StartFailure.line("chronicle","background",StartFailure.classify(error,known),None)))
   override protected def reportFailure(error: Throwable): IO[Unit] = IO.blocking(unobserved.report(error))
-  private def initialize(database: Database): IO[Unit] = stage("migrate",IO.blocking(database.initialize(report=line => System.err.println("chronicle " + line))))
+  private def initialize(database: Database,report: String => Unit): IO[Unit] = stage("migrate",IO.blocking(database.initialize(report=report)))
   /** Before the database runtime and the graph's background work exist. */
   private def awaitDatabase(config: Config): IO[Unit] =
     stage("database-wait",IO.interruptibleMany(DatabaseWait.await(config.jdbcConfig,config.databaseStartWait,line => System.err.println("chronicle " + line))))
@@ -83,12 +85,13 @@ object Main extends IOApp {
       IO(if(sealedByAnotherKey>0) s.logger.warn(s"imperative accounts whose TOTP secret another key sealed need an administrator reset; $sealedByAnotherKey"))
     }
   }
-  private[chronicle] def serve(config: Config,s: RuntimeServices,workersEnabled: Boolean): IO[Nothing] = stage("accounts",s.http.accountPlane.use { accounts => for {
+  private[chronicle] def serve(config: Config,s: RuntimeServices,workersEnabled: Boolean,startLines: List[String] = Nil): IO[Nothing] = stage("accounts",s.http.accountPlane.use { accounts => for {
     _ <- reportAccounts(s,accounts)
     gate <- Semaphore[IO](2)
     (host,port) = listener(config)
     _ <- stage("bind",EmberServerBuilder.default[IO].withHost(host).withPort(port).withMaxConnections(128).withMaxHeaderSize(16384).withHttpWebSocketApp(ws => s.http.routes(ws,gate,accounts).orNotFound).build.use { server =>
-      IO(unobserved.settle(None)) *> IO(s.logger.info(s"chronicle listening address=${server.address} workersEnabled=$workersEnabled")) *> stage("serve",background(workersEnabled,s.worker.run))
+      IO(unobserved.settle(None)) *> IO(s.logger.info(s"chronicle listening address=${server.address} workersEnabled=$workersEnabled")) *>
+        IO(startLines.foreach(line => s.logger.info(s"chronicle start $line"))) *> stage("serve",background(workersEnabled,s.worker.run))
     },Some(config.listenPort))
     never <- IO.never[Nothing]
   } yield never })

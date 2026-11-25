@@ -270,11 +270,8 @@ object Jobs {
   val superseding = s"state='Failed',error='$supersededRevision',failure_stage=NULL,fence=fence+1,lease_until=NULL"
   /** Runs `update`, an UPDATE of ch_jobs that ends jobs superseded and returns their ids (`RETURNING … id`), and deletes
     * those jobs' annotation partials and chain markers (ANNOT2) in its transaction: no claim reads them again. */
-  def supersede(c: Connection,update: String,args: Sql.Param*): List[UUID] = {
-    val ended=Sql.rows(c,update,args*)(_.getObject(1,classOf[UUID]))
-    AnnotationPartials.ended(c,ended)
-    ended
-  }
+  def supersede(c: Connection,update: String,args: Sql.Param*): Unit =
+    AnnotationPartials.ended(c,Sql.rows(c,update,args*)(_.getObject(1,classOf[UUID])))
   /** A job a claim may take: Queued and not held (no next attempt, or its time has come), or Running with an ended
     * lease. A policy-invalidated Running attempt can be replaced immediately, refunding its charge even if that was
     * the last attempt. This also recovers jobs of a worker that never saw the setting change. */
@@ -298,16 +295,19 @@ object Jobs {
   }
   /** The jobs of a source whose head just switched to revision `next`: older unfinished jobs end superseded (a leased
     * Running one keeps its claim; Complete and Failed ones are not written) and the new head's job is queued; returns its id.
-    * The new job's `waiting_since` and `bulk` follow [[successorOrder]] over the unfinished predecessors, which are locked
-    * before the supersession decides which of them keep a valid lease (the caller holds the source row). */
+    * The new job's `waiting_since` and `bulk` follow [[successorOrder]] over the predecessors: those the supersession ends,
+    * with their state before it (`old`, PostgreSQL 18), and those it leaves to their valid lease, then locked (the caller
+    * holds the source row, which every other job writer of the source takes first). */
   def switched(c: Connection,id: UUID,next: Int,profile: String): UUID = {
     val job=UUID.randomUUID()
-    val unfinished=Sql.rows(c,s"""SELECT j.id,j.revision,j.state='Queued',${invalidated("j",ChronicleIndexing.epochOwnerSql("s.owner"))}
-      FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id WHERE j.session_id=? AND j.revision<? AND j.state IN('Queued','Running') ORDER BY j.id FOR UPDATE OF j""",id,next) { r =>
-      Predecessor(r.getObject(1,classOf[UUID]),r.getInt(2),r.getBoolean(3),r.getBoolean(4))
+    val superseded=Sql.rows(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} WHERE j.session_id=? AND j.revision<? AND j.state IN('Queued','Running') AND (${Jobs.leased("j")}) IS NOT TRUE RETURNING j.id,j.revision,old.state='Queued'",id,next) { r =>
+      Predecessor(r.getObject(1,classOf[UUID]),r.getInt(2),r.getBoolean(3),false)
     }
-    val ended=Jobs.supersede(c,s"UPDATE ch_jobs j SET ${Jobs.superseding} WHERE j.session_id=? AND j.revision<? AND j.state IN('Queued','Running') AND (${Jobs.leased("j")}) IS NOT TRUE RETURNING j.id",id,next).toSet
-    val (superseded,kept)=unfinished.partition(p => ended(p.id))
+    AnnotationPartials.ended(c,superseded.map(_.id))
+    val kept=Sql.rows(c,s"""SELECT j.id,j.revision,${invalidated("j",ChronicleIndexing.epochOwnerSql("s.owner"))}
+      FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id WHERE j.session_id=? AND j.revision<? AND j.state IN('Queued','Running') ORDER BY j.id FOR UPDATE OF j""",id,next) { r =>
+      Predecessor(r.getObject(1,classOf[UUID]),r.getInt(2),false,r.getBoolean(3))
+    }
     successorOrder(superseded,kept) match {
       case None => Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile,waiting_since,bulk) VALUES(?,?,?,?,now(),false)",job,id,next,profile)
       case Some(predecessor) =>
