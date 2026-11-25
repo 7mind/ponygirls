@@ -432,9 +432,10 @@
       text = ''
         ## Code navigation
 
-        When CodeGraph is available, use `codegraph_explore` with an explicit absolute `projectPath` for every code lookup, not just the first one: finding symbols, reading their source, and finding callers and tests. Select the exact checkout or workspace from the project inventory; never guess or use an ancestor index.
-        Results include verbatim source with line numbers. Do not re-read source already shown. For missing or truncated source, query `codegraph_explore` again by symbol or file and line range.
-        Use grep/read for non-code files or text the index does not cover, such as string literals and comments. If the tool or a suitable index is unavailable, use grep/read for code navigation too.
+        When CodeGraph is available, use `codegraph_explore` with an explicit absolute `projectPath` for symbol navigation: finding definitions, reading their source, and finding callers and tests. Select the exact checkout or workspace from the project inventory; never guess or use an ancestor index.
+        CodeGraph results include verbatim source with line numbers. Do not re-read source already shown. For missing or truncated source, query `codegraph_explore` again by symbol or file and line range.
+        When available, use `ast_grep_search` for syntax shapes such as nested calls or declarations with a particular structure. Its hits are syntactic, not resolved references. Check unexpected misses with grep; zero syntactic matches are not proof of no usages.
+        Use grep/read for text, including string literals, comments and non-code files, and when the appropriate navigation tool or index is unavailable.
       '';
     }
   ];

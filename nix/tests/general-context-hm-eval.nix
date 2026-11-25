@@ -128,9 +128,10 @@ let
   before = first: second: text:
     builtins.match ".*${first}.*${second}.*" text != null;
 in
-assert builtins.hashString "sha256" contexts.general == "bd163fcc06b1be549b41ad050e2b77059599e7b16c921cd22b92e9d768e9603b";
+assert builtins.hashString "sha256" contexts.general == "ad252ea1add912e9e47cd32b78e3907e4b6cc2be46ee9abe6854210189afb707";
 assert general == contexts.general;
 assert lib.hasInfix "## Code navigation\n\nWhen CodeGraph is available, use `codegraph_explore` with an explicit absolute `projectPath`" (memory defaults);
+assert lib.hasInfix "When available, use `ast_grep_search` for syntax shapes" (memory defaults);
 assert !(lib.hasInfix "## Code navigation" (memory withoutCodeNavigation));
 assert lib.hasInfix "## 10. Tools" (memory withoutCodeNavigation);
 assert lib.hasInfix "**Design before editing.** For nontrivial features, fixes, and refactors:" general;
