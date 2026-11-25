@@ -162,8 +162,9 @@ class PublicationFenceTest extends munit.FunSuite {
         Jdbc.exec(c,"CREATE TABLE pony_retrieval_migrations(version integer PRIMARY KEY,digest text NOT NULL)")
         Using.resource(c.createStatement())(_.execute(Schema.v1))
         Jdbc.exec(c,"INSERT INTO pony_retrieval_migrations VALUES(1,?)",RetrievalChecks.hash(Schema.v1))
-        index.put(c,source("one","alpha",Set("reader")))
-        Jdbc.exec(c,"UPDATE pony_retrieval_jobs SET state='Failed',attempts=5")
+        val ns=Jdbc.key(index.namespace); val id=Jdbc.key("one")
+        Jdbc.exec(c,"INSERT INTO pony_retrieval_sources(namespace,id,version,input_digest,target_profile,epoch,head_generation) VALUES(?,?,?,?,?,1,?)",ns,id,Jdbc.key("version-1"),"legacy-digest",profile.id,"legacy-head")
+        Jdbc.exec(c,"INSERT INTO pony_retrieval_jobs(namespace,id,source_id,epoch,profile,run_id,state,attempts) VALUES(?,?,?,1,?,?,'Failed',5)",ns,"legacy-job",id,profile.id,"legacy-run")
       }
       def state: (List[(Int,String)],List[(String,Long)]) = v1 { c =>
         (Jdbc.rows(c,"SELECT version,digest FROM pony_retrieval_migrations ORDER BY version")(r => (r.getInt(1),r.getString(2))),
@@ -171,7 +172,7 @@ class PublicationFenceTest extends munit.FunSuite {
       }
       v1(index.initialize)
       val migrated=state
-      assertEquals(migrated,(List(1 -> RetrievalChecks.hash(Schema.v1),2 -> RetrievalChecks.hash(Schema.v2)),List("Queued" -> 1L)))
+      assertEquals(migrated,(List(1 -> RetrievalChecks.hash(Schema.v1),2 -> RetrievalChecks.hash(Schema.v2),3 -> RetrievalChecks.hash(Schema.v3)),List("Queued" -> 1L)))
       v1(index.initialize)
       assertEquals(state,migrated)
       assertEquals(v1(c => index.claim(c,30,Instant.now())).map(claim => (claim.sourceId,claim.attempt)),Some(("one",6)))

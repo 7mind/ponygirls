@@ -103,7 +103,8 @@ object EpochSeconds {
 }
 final case class ChunkProvenance(field: String,pointer: Option[String],start: Option[Int],end: Option[Int])
 final case class InputChunk(id: String,text: String,provenance: ChunkProvenance)
-final case class SourceProjection(id: String,version: String,chunks: List[InputChunk],attributes: Vector[ProjectionAttribute],audience: Set[String],eligible: Boolean,archived: Boolean,expiresAt: Option[EpochSeconds])
+/** `owners` are the exact account IDs of this version's contributors, for indexing policy only (not audience). */
+final case class SourceProjection(id: String,version: String,chunks: List[InputChunk],attributes: Vector[ProjectionAttribute],audience: Set[String],eligible: Boolean,archived: Boolean,expiresAt: Option[EpochSeconds],owners: Set[String] = Set.empty)
 final case class RetrievalQuery(principal: String,text: String,mode: RetrievalMode,filters: Vector[AttributeFilter],includeArchived: Boolean,offset: Int,limit: Int,now: EpochSeconds)
 final case class RetrievalHit(id: String,version: String,generation: String,profile: Option[String],embeddingSpace: Option[String],chunk: InputChunk,score: Double)
 /** `pending`: sources in the query's scope whose current head has no publication under the active profile; 0 for lexical. */

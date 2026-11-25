@@ -115,6 +115,9 @@ object EmbeddingTelemetry {
 }
 trait EmbeddingClient {
   def documents(text: List[String]): IO[List[List[Double]]]
+  /** A successful grant admits this request. Queuing clients must run the check after acquiring
+    * a running slot and resolving credentials, immediately before handing the request to the transport. */
+  def documents(text: List[String],admit: IO[Unit]): IO[List[List[Double]]] = admit *> IO.defer(documents(text))
   def query(text: String): IO[List[Double]]
 }
 object EmbeddingClient {
@@ -126,7 +129,7 @@ object EmbeddingClient {
     running <- Semaphore[IO](maxConcurrent.toLong)
     admitted <- Semaphore[IO](maxConcurrent.toLong+maxQueued.toLong)
   } yield new EmbeddingClient {
-    private def call(purpose: EmbeddingPurpose,text: List[String]): IO[List[List[Double]]] = IO.defer {
+    private def call(purpose: EmbeddingPurpose,text: List[String],admit: IO[Unit]): IO[List[List[Double]]] = IO.defer {
       val prefix=if(purpose==EmbeddingPurpose.Query) config.queryPrefix else config.documentPrefix
       val inputs=text.map(prefix+_)
       RetrievalChecks(inputs.nonEmpty && inputs.size<=config.maxBatch,"invalid","embedding batch bound")
@@ -139,10 +142,13 @@ object EmbeddingClient {
           case Resource.ExitCase.Succeeded => ModelOutcome.Complete
           case Resource.ExitCase.Errored(_) => ModelOutcome.Failed
           case Resource.ExitCase.Canceled => ModelOutcome.Cancelled
-        }) }.use { _ => JsonHttp.credential(config.credentialFile).flatMap(key => JsonHttp.post(client,config.operationUrl,key,config.deadline,config.maxResponseBytes,payload)(EmbeddingCodec.decode(_,inputs.size,config.dimensions))) }
+        }) }.use { _ => JsonHttp.credential(config.credentialFile).flatMap { key =>
+          admit *> JsonHttp.post(client,config.operationUrl,key,config.deadline,config.maxResponseBytes,payload)(EmbeddingCodec.decode(_,inputs.size,config.dimensions))
+        } }
       } }.timeoutTo(config.deadline,IO.raiseError(RetrievalError("model-timeout","model deadline exceeded")))
     }
-    def documents(text: List[String]): IO[List[List[Double]]] = call(EmbeddingPurpose.Document,text)
-    def query(text: String): IO[List[Double]] = call(EmbeddingPurpose.Query,List(text)).map(_.head)
+    def documents(text: List[String]): IO[List[List[Double]]] = documents(text,IO.unit)
+    override def documents(text: List[String],admit: IO[Unit]): IO[List[List[Double]]] = call(EmbeddingPurpose.Document,text,admit)
+    def query(text: String): IO[List[Double]] = call(EmbeddingPurpose.Query,List(text),IO.unit).map(_.head)
   }
 }

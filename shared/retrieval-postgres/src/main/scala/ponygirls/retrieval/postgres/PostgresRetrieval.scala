@@ -1,5 +1,6 @@
 package ponygirls.retrieval.postgres
 
+import ponygirls.auth.{IndexingPolicy,IndexingPreferenceSql,IndexingService}
 import ponygirls.retrieval.*
 import io.circe.Json
 import java.nio.charset.StandardCharsets.UTF_8
@@ -29,7 +30,7 @@ private[postgres] object Jdbc {
   def bytes(value: String): Array[Byte] = { RetrievalChecks(UTF_8.newEncoder().canEncode(value),"invalid","invalid Unicode retrieval value"); value.getBytes(UTF_8) }
 }
 private[postgres] final case class RetrievalPlan(sql: String,args: List[Jdbc.Value])
-final case class WorkClaim(jobId: String,sourceId: String,version: String,epoch: Long,fence: Long,run: String,profile: String,chunks: List[InputChunk],attempt: Int)
+final case class WorkClaim(jobId: String,sourceId: String,version: String,epoch: Long,fence: Long,run: String,profile: String,chunks: List[InputChunk],attempt: Int,preferenceEpoch: Long = 0L)
 
 object PostgresRetrieval {
   val MaxFilters = 64
@@ -49,9 +50,13 @@ object PostgresRetrieval {
   * in that same transaction. Principal authentication/revocation is app-owned; this
   * is not a cache of a previously computed allowed-ID list.
   */
-final class PostgresRetrieval(val namespace: String,val profile: Option[RetrievalProfile],private[postgres] val candidatesPerLeg: Int,private[postgres] val exactScanChunks: Int) {
+final class PostgresRetrieval private[postgres](val namespace: String,val profile: Option[RetrievalProfile],private[postgres] val candidatesPerLeg: Int,private[postgres] val exactScanChunks: Int,indexing: Option[(IndexingService,IndexingPolicy)]) {
   import Jdbc.*
-  def this(namespace: String,profile: Option[RetrievalProfile]) = this(namespace,profile,CandidatePolicy.candidatesPerLeg,CandidatePolicy.exactScanChunks)
+  def this(namespace: String,profile: Option[RetrievalProfile],candidatesPerLeg: Int,exactScanChunks: Int) = this(namespace,profile,candidatesPerLeg,exactScanChunks,None)
+  def this(namespace: String,profile: Option[RetrievalProfile]) = this(namespace,profile,CandidatePolicy.candidatesPerLeg,CandidatePolicy.exactScanChunks,None)
+  def this(namespace: String,profile: Option[RetrievalProfile],service: IndexingService,policy: IndexingPolicy) =
+    this(namespace,profile,CandidatePolicy.candidatesPerLeg,CandidatePolicy.exactScanChunks,Some(service->policy))
+  private[postgres] val controlsIndexing: Boolean = indexing.nonEmpty
   RetrievalChecks(candidatesPerLeg>0,"config","candidate window must be positive")
   RetrievalChecks(exactScanChunks>=0,"config","exact-scan threshold must not be negative")
   private def rankingLimit(mode: RetrievalMode): Int = if(mode==RetrievalMode.Hybrid) candidatesPerLeg*2 else candidatesPerLeg
@@ -59,8 +64,21 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
   profile.foreach(_.validate())
   private val ns=key(namespace)
   private def transaction(c: Connection): Unit = RetrievalChecks(!c.getAutoCommit,"config","retrieval requires caller transaction")
+  private def allowed(owners: String): String = indexing.fold("true") { (service,policy) => IndexingPreferenceSql.allowsAllSql(service,policy.defaultEnabled,owners) }
+  private def preferenceEpoch(owners: String): String = indexing.fold("0::bigint") { (service,_) => IndexingPreferenceSql.epochSql(service,owners) }
+  private def encodedOwners(owners: Set[String]): String = owners.iterator.map(IndexingPreferenceSql.ownerKey).toSet.toList.sorted.mkString(",")
+  /** Source row is already locked. Read committed gives the policy query a new snapshot AFTER acquiring the preference locks. */
+  private def lockedPreferenceEpoch(c: Connection,id: String,owners: String): Option[Long] = indexing match {
+    case None => Some(0L)
+    case Some(_) if owners.isEmpty => None
+    case Some((service,_)) =>
+      RetrievalChecks(c.getTransactionIsolation==Connection.TRANSACTION_READ_COMMITTED,"config","indexing preferences require read committed")
+      IndexingPreferenceSql.lockRead(c,service,owners.split(',').toList)
+      one(c,s"SELECT ${preferenceEpoch("owner_keys")} FROM pony_retrieval_sources WHERE namespace=? AND id=? AND ${allowed("owner_keys")}",ns,id)(_.getLong(1))
+  }
   def initialize(c: Connection): Unit = {
     transaction(c)
+    if(controlsIndexing) IndexingPreferenceSql.initialize(c)
     exec(c,"SELECT pg_advisory_xact_lock(71393722)")
     exec(c,"CREATE EXTENSION IF NOT EXISTS vector")
     exec(c,"CREATE TABLE IF NOT EXISTS pony_retrieval_migrations(version integer PRIMARY KEY,digest text NOT NULL)")
@@ -84,42 +102,85 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
     InputChunk(unkey(r.getString("chunk_id")),new String(r.getBytes("body"),UTF_8),ChunkProvenance(p(0).asString.get,p(1).asString,p(2).asNumber.flatMap(_.toInt),p(3).asNumber.flatMap(_.toInt)))
   }
   private def inputDigest(chunks: List[InputChunk]): String = RetrievalChecks.hash(Json.arr(chunks.map(ch => Json.arr(Json.fromString(ch.id),Json.fromString(ch.text),Json.fromString(provenance(ch.provenance))))*).noSpaces)
-  private def heads(c: Connection,id: String): List[InputChunk] = rows(c,"SELECT chunk_id,body,provenance FROM pony_retrieval_head_chunks WHERE namespace=? AND source_id=? ORDER BY ordinal",ns,id)(readChunk)
+  private def heads(c: Connection,id: String,parked: Boolean): List[InputChunk] =
+    rows(c,s"SELECT chunk_id,body,provenance FROM ${if(parked) "pony_retrieval_parked_chunks" else "pony_retrieval_head_chunks"} WHERE namespace=? AND source_id=? ORDER BY ordinal",ns,id)(readChunk)
+  private def enqueue(c: Connection,id: String,epoch: Long,target: String): Unit = {
+    exec(c,"INSERT INTO pony_retrieval_jobs(namespace,id,source_id,epoch,profile,run_id) VALUES(?,?,?,?,?,?)",ns,UUID.randomUUID().toString,id,epoch,target,UUID.randomUUID().toString)
+    ()
+  }
+  private def clearParked(c: Connection,id: String): Unit = {
+    exec(c,"DELETE FROM pony_retrieval_parked_chunks WHERE namespace=? AND source_id=?",ns,id)
+    ()
+  }
+  /** Only after allowance is locked; until then keep the earlier lexical index and the raw replacement separate. */
+  private def materializeParked(c: Connection,id: String): Unit = {
+    if(exec(c,"UPDATE pony_retrieval_sources SET head_parked=false WHERE namespace=? AND id=? AND head_parked",ns,id)>0) {
+      exec(c,"DELETE FROM pony_retrieval_head_chunks WHERE namespace=? AND source_id=?",ns,id)
+      exec(c,"""INSERT INTO pony_retrieval_head_chunks(namespace,source_id,ordinal,chunk_id,body,provenance,document)
+        SELECT namespace,source_id,ordinal,chunk_id,body,provenance,to_tsvector('english',token_text) FROM pony_retrieval_parked_chunks WHERE namespace=? AND source_id=?""",ns,id)
+      clearParked(c,id)
+    }
+  }
   def put(c: Connection,source: SourceProjection): Unit = {
     transaction(c)
     RetrievalChecks(source.id.nonEmpty && source.version.nonEmpty && source.chunks.size<=100000 && source.chunks.map(_.id).distinct.size==source.chunks.size,"invalid","invalid source projection")
     RetrievalChecks(source.attributes.map(_.key).distinct.size==source.attributes.size,"invalid","duplicate projection attribute")
     val id=key(source.id); val version=key(source.version); val digest=inputDigest(source.chunks); val target=profile.fold("")(_.id)
     exec(c,"INSERT INTO pony_retrieval_sources(namespace,id,version,input_digest,target_profile,head_generation) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING",ns,id,version,digest,target,UUID.randomUUID().toString)
-    val old=one(c,"SELECT version,input_digest,target_profile,epoch,head_generation FROM pony_retrieval_sources WHERE namespace=? AND id=? FOR UPDATE",ns,id)(r => (r.getString(1),r.getString(2),r.getString(3),r.getLong(4),r.getString(5))).get
+    val old=one(c,"SELECT version,input_digest,target_profile,epoch,head_generation,array_to_string(owner_keys,','),head_parked FROM pony_retrieval_sources WHERE namespace=? AND id=? FOR UPDATE",ns,id)(r => (r.getString(1),r.getString(2),r.getString(3),r.getLong(4),r.getString(5),r.getString(6),r.getBoolean(7))).get
+    val owners=if(controlsIndexing) encodedOwners(source.owners) else ""
     RetrievalChecks(old._1!=version || old._2==digest,"conflict","source version reused with different retrieval content")
-    val changed=old._1!=version || old._2!=digest || old._3!=target || old._4==0L || old._5.isEmpty
-    exec(c,"UPDATE pony_retrieval_sources SET eligible=?,archived=?,expires_at=NULLIF(?,'')::numeric WHERE namespace=? AND id=?",source.eligible,source.archived,source.expiresAt.fold("")(_.value.bigDecimal.toPlainString),ns,id)
+    RetrievalChecks(!controlsIndexing || old._1!=version || old._6.isEmpty || old._6==owners,"conflict","source version reused with different indexing owners")
+    val changed=old._1!=version || old._3!=target || old._4==0L || old._5.isEmpty
+    exec(c,"UPDATE pony_retrieval_sources SET eligible=?,archived=?,expires_at=NULLIF(?,'')::numeric,owner_keys=string_to_array(?,',') WHERE namespace=? AND id=?",source.eligible,source.archived,source.expiresAt.fold("")(_.value.bigDecimal.toPlainString),owners,ns,id)
     exec(c,"DELETE FROM pony_retrieval_attributes WHERE namespace=? AND source_id=?",ns,id)
     source.attributes.foreach(a => exec(c,"INSERT INTO pony_retrieval_attributes VALUES(?,?,?,?)",ns,id,a.key.value,bytes(a.value.value)))
     exec(c,"DELETE FROM pony_retrieval_audience WHERE namespace=? AND source_id=?",ns,id)
     source.audience.foreach(p => exec(c,"INSERT INTO pony_retrieval_audience VALUES(?,?,?)",ns,id,key(p)))
     if(changed) {
       val epoch=old._4+1
-      exec(c,"UPDATE pony_retrieval_sources SET version=?,input_digest=?,target_profile=?,epoch=?,head_generation=? WHERE namespace=? AND id=?",version,digest,target,epoch,UUID.randomUUID().toString,ns,id)
+      val parked=lockedPreferenceEpoch(c,id,owners).isEmpty
+      exec(c,"UPDATE pony_retrieval_sources SET version=?,input_digest=?,target_profile=?,epoch=?,head_generation=?,head_parked=? WHERE namespace=? AND id=?",version,digest,target,epoch,UUID.randomUUID().toString,parked,ns,id)
       exec(c,"UPDATE pony_retrieval_jobs SET state='Superseded',fence=fence+1 WHERE namespace=? AND source_id=? AND state<>'Complete'",ns,id)
-      exec(c,"DELETE FROM pony_retrieval_head_chunks WHERE namespace=? AND source_id=?",ns,id)
+      if(controlsIndexing) clearParked(c,id)
+      if(!parked) exec(c,"DELETE FROM pony_retrieval_head_chunks WHERE namespace=? AND source_id=?",ns,id)
+      val insert=if(parked) "INSERT INTO pony_retrieval_parked_chunks VALUES(?,?,?,?,?,?,?)" else "INSERT INTO pony_retrieval_head_chunks VALUES(?,?,?,?,?,?,to_tsvector('english',?))"
       source.chunks.zipWithIndex.foreach { (ch,i) =>
-        // NUL remains byte-for-byte in body; it is a token separator only in the FTS projection.
-        exec(c,"INSERT INTO pony_retrieval_head_chunks VALUES(?,?,?,?,?,?,to_tsvector('english',?))",ns,id,i,key(ch.id),bytes(ch.text),bytes(provenance(ch.provenance)),ch.text.replace('\u0000',' '))
+        // NUL remains byte-for-byte in body; it is a token separator only in the FTS input.
+        exec(c,insert,ns,id,i,key(ch.id),bytes(ch.text),bytes(provenance(ch.provenance)),ch.text.replace('\u0000',' '))
       }
-      profile.foreach(p => exec(c,"INSERT INTO pony_retrieval_jobs(namespace,id,source_id,epoch,profile,run_id) VALUES(?,?,?,?,?,?)",ns,UUID.randomUUID().toString,id,epoch,p.id,UUID.randomUUID().toString))
+      profile.foreach(p => enqueue(c,id,epoch,p.id))
+    } else if(old._7 && lockedPreferenceEpoch(c,id,owners).isDefined) materializeParked(c,id)
+  }
+  /** One-time reattribution of the current legacy publication from its exact indexed version.
+    * Unknown attribution remains hidden; if there is no outstanding replacement, schedule one for the head. */
+  def backfillPublishedOwners(c: Connection,id: String)(ownersForVersion: String => Set[String]): Unit = {
+    transaction(c)
+    if(controlsIndexing) {
+      val encoded=key(id)
+      val publication=one(c,"""SELECT g.id,g.version FROM pony_retrieval_sources s JOIN pony_retrieval_generations g ON g.namespace=s.namespace AND g.id=s.published
+        WHERE s.namespace=? AND s.id=? AND cardinality(g.owner_keys)=0 FOR UPDATE OF s""",ns,encoded)(r => (r.getString(1),unkey(r.getString(2))))
+      publication.foreach { (generation,version) =>
+        val owners=encodedOwners(ownersForVersion(version))
+        if(owners.nonEmpty) exec(c,"UPDATE pony_retrieval_generations SET owner_keys=string_to_array(?,',') WHERE namespace=? AND id=? AND cardinality(owner_keys)=0",owners,ns,generation)
+        else profile.foreach { p =>
+          val epoch=one(c,"""UPDATE pony_retrieval_sources s SET epoch=s.epoch+1 WHERE s.namespace=? AND s.id=? AND s.target_profile=? AND cardinality(s.owner_keys)>0
+            AND EXISTS(SELECT 1 FROM pony_retrieval_jobs j WHERE j.namespace=s.namespace AND j.source_id=s.id AND j.epoch=s.epoch AND j.state='Complete') RETURNING s.epoch""",ns,encoded,p.id)(_.getLong(1))
+          epoch.foreach(enqueue(c,encoded,_,p.id))
+        }
+      }
     }
   }
   def remove(c: Connection,id: String): Unit = {
     transaction(c)
     one(c,"SELECT id FROM pony_retrieval_sources WHERE namespace=? AND id=? FOR UPDATE",ns,key(id))(_.getString(1)).foreach { encoded =>
       exec(c,"UPDATE pony_retrieval_jobs SET state='Superseded',fence=fence+1 WHERE namespace=? AND source_id=?",ns,encoded)
-      exec(c,"UPDATE pony_retrieval_sources SET eligible=false,epoch=epoch+1,published=NULL,head_generation='' WHERE namespace=? AND id=?",ns,encoded)
+      exec(c,"UPDATE pony_retrieval_sources SET eligible=false,epoch=epoch+1,published=NULL,head_generation='',head_parked=false WHERE namespace=? AND id=?",ns,encoded)
       exec(c,"DELETE FROM pony_retrieval_audience WHERE namespace=? AND source_id=?",ns,encoded)
       exec(c,"DELETE FROM pony_retrieval_chunks WHERE namespace=? AND source_id=?",ns,encoded)
       // A later explicit same-version restore must rebuild, not resurrect a stranded job.
       exec(c,"DELETE FROM pony_retrieval_head_chunks WHERE namespace=? AND source_id=?",ns,encoded)
+      if(controlsIndexing) clearParked(c,encoded)
     }
   }
   /** `now` (caller's retry clock) decides back-off and expiry; leases use the database clock.
@@ -127,23 +188,32 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
   def claim(c: Connection,leaseSeconds: Int,now: Instant): Option[WorkClaim] = {
     transaction(c); RetrievalChecks(leaseSeconds>0 && leaseSeconds<=86400,"invalid","invalid retrieval lease")
     profile.flatMap { p =>
-      val due="((j.state='Queued' AND (j.not_before IS NULL OR j.not_before<=?)) OR (j.state='Running' AND j.lease_until<clock_timestamp()))"
-      // Lock source before jobs, matching put/remove/publication lock order.
-      val source=one(c,s"""SELECT s.id FROM pony_retrieval_sources s WHERE s.namespace=? AND s.target_profile=? AND s.eligible AND (s.expires_at IS NULL OR s.expires_at>?) AND EXISTS(
-        SELECT 1 FROM pony_retrieval_jobs j WHERE j.namespace=s.namespace AND j.source_id=s.id AND j.epoch=s.epoch AND j.profile=s.target_profile AND $due) ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",ns,p.id,EpochSeconds.fromInstant(now).value,now)(_.getString(1))
-      source.flatMap { id => one(c,s"""UPDATE pony_retrieval_jobs SET state='Running',attempts=attempts+1,fence=fence+1,not_before=NULL,lease_until=clock_timestamp()+make_interval(secs=>?) WHERE namespace=? AND id=(
-        SELECT j.id FROM pony_retrieval_jobs j JOIN pony_retrieval_sources s ON s.namespace=j.namespace AND s.id=j.source_id WHERE j.namespace=? AND j.source_id=? AND j.epoch=s.epoch AND j.profile=s.target_profile AND $due FOR UPDATE OF j SKIP LOCKED LIMIT 1) RETURNING id,epoch,fence,run_id,profile,attempts""",leaseSeconds,ns,ns,id,now) { r =>
-          val version=one(c,"SELECT version FROM pony_retrieval_sources WHERE namespace=? AND id=?",ns,id)(_.getString(1)).get
-          WorkClaim(r.getString("id"),unkey(id),unkey(version),r.getLong("epoch"),r.getLong("fence"),r.getString("run_id"),r.getString("profile"),heads(c,id),r.getInt("attempts"))
-        } }
+      val policyExpired=if(controlsIndexing) s" OR j.preference_epoch IS DISTINCT FROM ${preferenceEpoch("s.owner_keys")}" else ""
+      val due=s"((j.state='Queued' AND (j.not_before IS NULL OR j.not_before<=?)) OR (j.state='Running' AND (j.lease_until<clock_timestamp()$policyExpired)))"
+      // Lock source before preference and job rows, matching put/remove/publication lock order.
+      val source=one(c,s"""SELECT s.id,s.version,array_to_string(s.owner_keys,','),s.head_parked FROM pony_retrieval_sources s
+        WHERE s.namespace=? AND s.target_profile=? AND s.eligible AND (s.expires_at IS NULL OR s.expires_at>?) AND ${allowed("s.owner_keys")} AND EXISTS(
+        SELECT 1 FROM pony_retrieval_jobs j WHERE j.namespace=s.namespace AND j.source_id=s.id AND j.epoch=s.epoch AND j.profile=s.target_profile AND $due) ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",ns,p.id,EpochSeconds.fromInstant(now).value,now)(r => (r.getString(1),r.getString(2),r.getString(3),r.getBoolean(4)))
+      source.flatMap { (id,version,owners,parked) => lockedPreferenceEpoch(c,id,owners).flatMap { policy =>
+        one(c,s"""UPDATE pony_retrieval_jobs SET state='Running',attempts=attempts+1,fence=fence+1,preference_epoch=?,not_before=NULL,lease_until=clock_timestamp()+make_interval(secs=>?) WHERE namespace=? AND id=(
+          SELECT j.id FROM pony_retrieval_jobs j JOIN pony_retrieval_sources s ON s.namespace=j.namespace AND s.id=j.source_id WHERE j.namespace=? AND j.source_id=? AND j.epoch=s.epoch AND j.profile=s.target_profile AND $due FOR UPDATE OF j SKIP LOCKED LIMIT 1) RETURNING id,epoch,fence,run_id,profile,attempts""",policy,leaseSeconds,ns,ns,id,now) { r =>
+          (r.getString("id"),r.getLong("epoch"),r.getLong("fence"),r.getString("run_id"),r.getString("profile"),r.getInt("attempts"))
+        }.map { (jobId,epoch,fence,run,profile,attempts) =>
+          WorkClaim(jobId,unkey(id),unkey(version),epoch,fence,run,profile,heads(c,id,parked),attempts,policy)
+        }
+      } }
     }
   }
   private def current(c: Connection,claim: WorkClaim): Boolean = {
     transaction(c)
-    val source=one(c,"SELECT epoch,target_profile,eligible,version,input_digest FROM pony_retrieval_sources WHERE namespace=? AND id=? AND (expires_at IS NULL OR expires_at>?) FOR UPDATE",ns,key(claim.sourceId),EpochSeconds.fromInstant(java.time.Instant.now()).value)(r => r.getLong(1)==claim.epoch && r.getString(2)==claim.profile && r.getBoolean(3) && r.getString(4)==key(claim.version) && r.getString(5)==inputDigest(claim.chunks)).contains(true)
-    source && one(c,"SELECT 1 FROM pony_retrieval_jobs WHERE namespace=? AND id=? AND epoch=? AND profile=? AND fence=? AND run_id=? AND state='Running' AND lease_until>clock_timestamp() FOR UPDATE",ns,claim.jobId,claim.epoch,claim.profile,claim.fence,claim.run)(_ => true).contains(true)
+    val id=key(claim.sourceId)
+    val owners=one(c,"""SELECT array_to_string(owner_keys,',') FROM pony_retrieval_sources WHERE namespace=? AND id=? AND epoch=? AND target_profile=? AND eligible
+      AND version=? AND input_digest=? AND (expires_at IS NULL OR expires_at>?) FOR UPDATE""",ns,id,claim.epoch,claim.profile,key(claim.version),inputDigest(claim.chunks),EpochSeconds.fromInstant(Instant.now()).value)(_.getString(1))
+    owners.exists(keys => lockedPreferenceEpoch(c,id,keys).contains(claim.preferenceEpoch)) &&
+      one(c,"""SELECT 1 FROM pony_retrieval_jobs WHERE namespace=? AND id=? AND source_id=? AND epoch=? AND profile=? AND fence=? AND run_id=?
+        AND (NOT ? OR preference_epoch=?) AND state='Running' AND lease_until>clock_timestamp() FOR UPDATE""",ns,claim.jobId,id,claim.epoch,claim.profile,claim.fence,claim.run,controlsIndexing,claim.preferenceEpoch)(_ => true).contains(true)
   }
-  private def requireCurrent(c: Connection,claim: WorkClaim): Unit = RetrievalChecks(current(c,claim),"stale-claim","retrieval claim no longer current")
+  private[postgres] def requireCurrent(c: Connection,claim: WorkClaim): Unit = RetrievalChecks(current(c,claim),"stale-claim","retrieval claim no longer current")
   def renew(c: Connection,claim: WorkClaim,leaseSeconds: Int): Unit = {
     requireCurrent(c,claim); RetrievalChecks(leaseSeconds>0 && leaseSeconds<=86400,"invalid","invalid retrieval lease")
     exec(c,"UPDATE pony_retrieval_jobs SET lease_until=clock_timestamp()+make_interval(secs=>?) WHERE namespace=? AND id=?",leaseSeconds,ns,claim.jobId)
@@ -168,17 +238,22 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
   }
   def publish(c: Connection,claim: WorkClaim): String = {
     transaction(c)
-    val completed=one(c,"""SELECT s.published FROM pony_retrieval_sources s JOIN pony_retrieval_jobs j ON j.namespace=s.namespace AND j.source_id=s.id
+    val id=key(claim.sourceId)
+    val lock=if(controlsIndexing) " FOR UPDATE OF s" else ""
+    val completed=one(c,s"""SELECT s.published,array_to_string(s.owner_keys,',') FROM pony_retrieval_sources s JOIN pony_retrieval_jobs j ON j.namespace=s.namespace AND j.source_id=s.id
       WHERE s.namespace=? AND s.id=? AND s.epoch=? AND s.version=? AND s.input_digest=? AND s.target_profile=? AND s.eligible
-      AND j.id=? AND j.fence=? AND j.run_id=? AND j.state='Complete'""",ns,key(claim.sourceId),claim.epoch,key(claim.version),inputDigest(claim.chunks),claim.profile,claim.jobId,claim.fence,claim.run)(_.getString(1))
+      AND j.id=? AND j.fence=? AND j.run_id=? AND j.state='Complete' AND (NOT ? OR j.preference_epoch=?)$lock""",ns,id,claim.epoch,key(claim.version),inputDigest(claim.chunks),claim.profile,claim.jobId,claim.fence,claim.run,controlsIndexing,claim.preferenceEpoch)(r => (r.getString(1),r.getString(2)))
+      .collect { case (generation,owners) if lockedPreferenceEpoch(c,id,owners).contains(claim.preferenceEpoch) => generation }
     completed.getOrElse {
       requireCurrent(c,claim)
       val p=profile.filter(_.id==claim.profile).getOrElse(throw RetrievalError("unavailable","retrieval profile not executable"))
       RetrievalChecks(one(c,"SELECT count(*) FROM pony_retrieval_accepted WHERE namespace=? AND job_id=?",ns,claim.jobId)(_.getInt(1)).contains(claim.chunks.size),"incomplete-generation","cannot publish partial retrieval generation")
       val savepoint=c.setSavepoint()
       try {
-        val generation=UUID.randomUUID().toString; val id=key(claim.sourceId)
-        exec(c,"INSERT INTO pony_retrieval_generations VALUES(?,?,?,?,?,?,?)",ns,generation,id,key(claim.version),p.id,p.space.id,bytes(p.policy))
+        val generation=UUID.randomUUID().toString
+        if(controlsIndexing) materializeParked(c,id)
+        exec(c,"""INSERT INTO pony_retrieval_generations(namespace,id,source_id,version,profile,space,policy,owner_keys)
+          SELECT namespace,?,id,version,?,?,?,owner_keys FROM pony_retrieval_sources WHERE namespace=? AND id=?""",generation,p.id,p.space.id,bytes(p.policy),ns,id)
         exec(c,"DELETE FROM pony_retrieval_chunks WHERE namespace=? AND source_id=?",ns,id)
         exec(c,"""INSERT INTO pony_retrieval_chunks(namespace,generation,source_id,id,chunk_id,ordinal,body,provenance,document,embedding,profile)
           SELECT h.namespace,?,h.source_id,h.source_id||':'||h.chunk_id,h.chunk_id,h.ordinal,h.body,h.provenance,h.document,a.embedding,?
@@ -195,7 +270,7 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
     }
   }
   /** Requeues a current claim with back-off from `now` and returns its earliest retry time;
-    * None when the claim is no longer current (superseded, removed or its lease lost). */
+    * None when the claim is no longer current (superseded, removed, opted out or its lease lost). */
   def fail(c: Connection,claim: WorkClaim,now: Instant): Option[Instant] = Option.when(current(c,claim)) {
     val retryAt=now.plusNanos(PostgresRetrieval.retryDelay(claim.attempt).toNanos).truncatedTo(ChronoUnit.MICROS)
     exec(c,"UPDATE pony_retrieval_jobs SET state='Queued',lease_until=NULL,not_before=? WHERE namespace=? AND id=?",retryAt,ns,claim.jobId)
@@ -206,11 +281,14 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
       case AttributeFilter.Equal(_,_) => " AND EXISTS(SELECT 1 FROM pony_retrieval_attributes f WHERE f.namespace=s.namespace AND f.source_id=s.id AND f.key=? AND f.value=?)"
     }.mkString
     val arguments=query.filters.toList.flatMap { case AttributeFilter.Equal(k,v) => List[Value](k.value,bytes(v.value)) }
-    ("s.namespace=? AND s.eligible AND (? OR NOT s.archived) AND (s.expires_at IS NULL OR s.expires_at>?) AND EXISTS(SELECT 1 FROM pony_retrieval_audience acl WHERE acl.namespace=s.namespace AND acl.source_id=s.id AND acl.principal=?)"+attributes,List[Value](ns,query.includeArchived,query.now.value,key(query.principal))++arguments)
+    val policy=if(controlsIndexing) s" AND ${allowed("s.owner_keys")}" else ""
+    ("s.namespace=? AND s.eligible AND (? OR NOT s.archived) AND (s.expires_at IS NULL OR s.expires_at>?) AND EXISTS(SELECT 1 FROM pony_retrieval_audience acl WHERE acl.namespace=s.namespace AND acl.source_id=s.id AND acl.principal=?)"+attributes+policy,List[Value](ns,query.includeArchived,query.now.value,key(query.principal))++arguments)
   }
-  /** Decided per query from the data, not from configuration: a count bounded at the threshold + 1. */
-  private def exactScan(c: Connection): Boolean =
-    one(c,"SELECT count(*) FROM (SELECT 1 FROM pony_retrieval_chunks WHERE namespace=? LIMIT ?) bounded",ns,exactScanChunks.toLong+1)(_.getLong(1)).exists(_<=exactScanChunks)
+  /** Decided per query, from a count bounded at threshold + 1. In controlled stores hidden data cannot force ANN. */
+  private def exactScan(c: Connection,base: String,baseArgs: List[Value]): Boolean = {
+    val (scope,args)=if(controlsIndexing) (base,baseArgs) else ("ch.namespace=?",List[Value](ns))
+    one(c,s"SELECT count(*) FROM (SELECT 1 FROM pony_retrieval_chunks ch WHERE $scope LIMIT ?) bounded",(args:+(exactScanChunks.toLong+1))*)(_.getLong(1)).exists(_<=exactScanChunks)
+  }
   private[postgres] def plan(c: Connection,query: RetrievalQuery,vector: Option[List[Double]]): RetrievalPlan = {
     transaction(c)
     RetrievalChecks(query.principal.nonEmpty && query.text.length<=2048 && query.offset>=0 && query.limit>=1 && query.filters.size<=PostgresRetrieval.MaxFilters,"invalid","invalid retrieval query")
@@ -219,27 +297,41 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
     val (scope,scopeArgs)=authorization(query)
     val (sql,args,pending)=if(!semantic) {
       val matches=if(query.text.nonEmpty) " AND ch.document @@ websearch_to_tsquery('english',?)" else ""
+      val matchArgs=if(query.text.nonEmpty) List[Value](query.text) else Nil
+      val hitColumns="id,chunk_id,source_id,version,generation,profile,space,body,provenance"
       val fields="ch.source_id||':'||ch.chunk_id AS id,ch.chunk_id,ch.source_id,s.version,s.head_generation AS generation,NULL::text AS profile,NULL::text AS space,ch.body,ch.provenance"
-      (s"WITH scored AS(SELECT $fields,ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) AS score FROM pony_retrieval_head_chunks ch JOIN pony_retrieval_sources s ON s.namespace=ch.namespace AND s.id=ch.source_id WHERE $scope$matches),sessions AS(SELECT DISTINCT ON(source_id) * FROM scored ORDER BY source_id,score DESC,id)",List[Value](query.text)++scopeArgs++(if(query.text.nonEmpty) List[Value](query.text) else Nil),
-        RetrievalPlan("SELECT 0::bigint AS n",Nil))
+      val rank="ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) AS score"
+      val join="JOIN pony_retrieval_sources s ON s.namespace=ch.namespace AND s.id=ch.source_id"
+      val indexed=s"SELECT $fields,$rank FROM pony_retrieval_head_chunks ch $join WHERE $scope$matches"
+      val indexedArgs=List[Value](query.text)++scopeArgs++matchArgs
+      val (scored,scoredArgs)=if(controlsIndexing) {
+        // Lexical-only installations also see their current content after opt-in. Materialize only authorized raw rows
+        // before deriving any FTS; never relabel an older head index with the parked head's version.
+        val staging=s"parked AS MATERIALIZED(SELECT $fields,ch.token_text FROM pony_retrieval_parked_chunks ch $join WHERE $scope AND s.head_parked)," +
+          s"parked_documents AS MATERIALIZED(SELECT $hitColumns,to_tsvector('english',token_text) AS document FROM parked),"
+        (s"${staging}scored AS($indexed AND NOT s.head_parked UNION ALL SELECT $hitColumns,$rank FROM parked_documents ch WHERE true$matches)",scopeArgs++indexedArgs++List[Value](query.text)++matchArgs)
+      } else (s"scored AS($indexed)",indexedArgs)
+      (s"WITH $scored,sessions AS(SELECT DISTINCT ON(source_id) * FROM scored ORDER BY source_id,score DESC,id)",scoredArgs,RetrievalPlan("SELECT 0::bigint AS n",Nil))
     } else {
       val p=profile.getOrElse(throw RetrievalError.unavailable(UnavailableReason.NotConfigured))
       val v=Vectors.sql(vector.getOrElse(throw RetrievalError.unavailable(UnavailableReason.EmbeddingFailed)),p.space.dimensions)
       // Declared partial readiness: in-scope sources whose current head has no publication under the active profile.
-      val pending=RetrievalPlan(s"SELECT count(*) AS n FROM pony_retrieval_sources s WHERE $scope AND NOT EXISTS(SELECT 1 FROM pony_retrieval_generations g WHERE g.namespace=s.namespace AND g.id=s.published AND g.version=s.version AND g.profile=?)",scopeArgs:+p.id)
-      val exact=exactScan(c)
-      if(!exact) CandidateSql.configureStatements.foreach(exec(c,_))
+      val pending=RetrievalPlan(s"SELECT count(*) AS n FROM pony_retrieval_sources s WHERE $scope AND NOT EXISTS(SELECT 1 FROM pony_retrieval_generations g WHERE g.namespace=s.namespace AND g.id=s.published AND g.version=s.version AND g.profile=? AND ${allowed("g.owner_keys")})",scopeArgs:+p.id)
       val fields="ch.id,ch.chunk_id,ch.source_id,g.version,ch.generation,ch.profile,g.space,ch.body,ch.provenance,ch.document,ch.embedding"
+      // The indexed version's owners may differ from the current head's, even when it still serves pending replacement.
+      val publication=if(controlsIndexing) s" AND EXISTS(SELECT 1 FROM pony_retrieval_generations pg WHERE pg.namespace=ch.namespace AND pg.id=ch.generation AND ${allowed("pg.owner_keys")})" else ""
       // OFFSET 0 keeps live visibility/filter checks inside the ordered index scan before LIMIT.
-      val authorized=s"(SELECT true FROM pony_retrieval_sources s WHERE s.namespace=ch.namespace AND s.id=ch.source_id AND s.published=ch.generation AND $scope OFFSET 0)"
+      val authorized=s"(SELECT true FROM pony_retrieval_sources s WHERE s.namespace=ch.namespace AND s.id=ch.source_id AND s.published=ch.generation AND $scope$publication OFFSET 0)"
       val base=s"ch.namespace=? AND vector_dims(ch.embedding)=${p.space.dimensions} AND ch.profile=? AND $authorized"
       val baseArgs=List[Value](ns,p.id)++scopeArgs
+      val exact=exactScan(c,base,baseArgs)
+      if(!exact) CandidateSql.configureStatements.foreach(exec(c,_))
       // The window keeps each authorized source's best chunk. The exact scan orders every chunk by the reranking distance,
       // which no index serves, over the authorization join: the window is the nearest sources. The HNSW scan keeps the
       // distinct sources among its first candidatesPerLeg*annChunksPerCandidate chunks; sources with more near chunks than
       // that can still fill the read.
       val (scan,scanArgs)=if(exact)
-        (s"SELECT ch.id,ch.source_id,ch.embedding <=> ?::vector AS distance FROM pony_retrieval_chunks ch JOIN pony_retrieval_sources s ON s.namespace=ch.namespace AND s.id=ch.source_id AND s.published=ch.generation WHERE ch.namespace=? AND ch.profile=? AND $scope",List[Value](v,ns,p.id)++scopeArgs)
+        (s"SELECT ch.id,ch.source_id,ch.embedding <=> ?::vector AS distance FROM pony_retrieval_chunks ch JOIN pony_retrieval_sources s ON s.namespace=ch.namespace AND s.id=ch.source_id AND s.published=ch.generation WHERE ch.namespace=? AND ch.profile=? AND $scope$publication",List[Value](v,ns,p.id)++scopeArgs)
       else
         (s"SELECT ch.id,ch.source_id,${CandidateSql.annDistance(p.space.dimensions,"ch.embedding")} AS distance FROM pony_retrieval_chunks ch WHERE $base ORDER BY distance LIMIT ${candidatesPerLeg.toLong*CandidatePolicy.annChunksPerCandidate}",v::baseArgs)
       val ann=s"ann_scan AS MATERIALIZED($scan),ann_best AS(SELECT DISTINCT ON(source_id) id,source_id,distance FROM ann_scan ORDER BY source_id,distance,id),ann AS MATERIALIZED(SELECT $fields FROM (SELECT id FROM ann_best ORDER BY distance,source_id LIMIT $candidatesPerLeg) w JOIN pony_retrieval_chunks ch ON ch.namespace=? AND ch.id=w.id JOIN pony_retrieval_generations g ON g.namespace=ch.namespace AND g.id=ch.generation)"
@@ -261,10 +353,24 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
     }
     RetrievalPage(result.flatMap(_._3),result.head._1,if(semantic) CountScope.CandidateWindow else CountScope.ExactMatches,if(semantic) Some(rankingLimit(query.mode)) else None,result.head._2)
   }
-  /** Delivery-time reauthorization on a fresh transaction; never relabel a pinned old hit. */
-  def visible(c: Connection,query: RetrievalQuery,id: String): Boolean = {
+  /** Current visibility. Controlled stores should use the hit overload for delivery of pinned content. */
+  def visible(c: Connection,query: RetrievalQuery,id: String): Boolean = visibleSource(c,query,id,None)
+  /** Delivery-time reauthorization on a fresh snapshot, including the pinned indexed version's own policy. */
+  def visible(c: Connection,query: RetrievalQuery,hit: RetrievalHit): Boolean = visibleSource(c,query,hit.id,Some(hit))
+  private def visibleSource(c: Connection,query: RetrievalQuery,id: String,hit: Option[RetrievalHit]): Boolean = {
     transaction(c); val (scope,args)=authorization(query)
-    one(c,s"SELECT 1 FROM pony_retrieval_sources s WHERE $scope AND s.id=?",(args:+key(id))*)(_ => true).contains(true)
+    def scoped(extra: String,extraArgs: List[Value]): Boolean =
+      one(c,s"SELECT 1 FROM pony_retrieval_sources s WHERE $scope AND s.id=?$extra",(args++List[Value](key(id))++extraArgs)*)(_ => true).contains(true)
+    if(!controlsIndexing) scoped("",Nil)
+    else if(query.mode==RetrievalMode.Lexical) hit match {
+      case None => scoped("",Nil)
+      case Some(h) => scoped(" AND s.version=? AND s.head_generation=?",List[Value](key(h.version),h.generation))
+    }
+    else profile.exists { p =>
+      val pin=if(hit.nonEmpty) " AND g.id=? AND g.version=?" else ""
+      val pinArgs=hit.toList.flatMap(h => List[Value](h.generation,key(h.version)))
+      scoped(s" AND EXISTS(SELECT 1 FROM pony_retrieval_generations g WHERE g.namespace=s.namespace AND g.id=s.published AND g.profile=? AND ${allowed("g.owner_keys")}$pin)",List[Value](p.id)++pinArgs)
+    }
   }
 }
 
@@ -288,5 +394,12 @@ CREATE INDEX pony_retrieval_fts ON pony_retrieval_chunks USING gin(document);
 ALTER TABLE pony_retrieval_jobs ADD COLUMN not_before timestamptz;
 UPDATE pony_retrieval_jobs SET state='Queued',fence=fence+1,lease_until=NULL WHERE state='Failed';
 """
-  val migrations: List[(Int,String)] = List(1 -> v1,2 -> v2)
+  /** Leave legacy index rows intact. Unattributed heads and publications fail closed in opted-in stores. */
+  val v3 = """
+ALTER TABLE pony_retrieval_sources ADD COLUMN owner_keys text[] NOT NULL DEFAULT '{}', ADD COLUMN head_parked boolean NOT NULL DEFAULT false;
+ALTER TABLE pony_retrieval_generations ADD COLUMN owner_keys text[] NOT NULL DEFAULT '{}';
+ALTER TABLE pony_retrieval_jobs ADD COLUMN preference_epoch bigint;
+CREATE TABLE pony_retrieval_parked_chunks(namespace text NOT NULL,source_id text NOT NULL,ordinal integer NOT NULL,chunk_id text NOT NULL,body bytea NOT NULL,provenance bytea NOT NULL,token_text text NOT NULL,PRIMARY KEY(namespace,source_id,ordinal),FOREIGN KEY(namespace,source_id) REFERENCES pony_retrieval_sources(namespace,id));
+"""
+  val migrations: List[(Int,String)] = List(1 -> v1,2 -> v2,3 -> v3)
 }

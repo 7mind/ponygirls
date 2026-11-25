@@ -144,7 +144,7 @@ lazy val serviceRuntime = project.in(file("shared/service-runtime")).settings(se
 lazy val serviceAuth = project.in(file("shared/service-auth")).dependsOn(serviceRuntime, losslessJson).settings(serviceSettings).settings(name := "service-auth")
 lazy val modelHttp = project.in(file("shared/model-http")).dependsOn(serviceRuntime, retrievalCore).settings(serviceSettings).settings(name := "model-http")
 lazy val retrievalCore = project.in(file("shared/retrieval-core")).settings(scala3LibrarySettings).settings(name := "retrieval-core", libraryDependencies ++= Seq("io.circe" %% "circe-core" % "0.14.17" cross CrossVersion.for3Use2_13, "io.circe" %% "circe-parser" % "0.14.17" cross CrossVersion.for3Use2_13))
-lazy val retrievalPostgres = project.in(file("shared/retrieval-postgres")).dependsOn(serviceRuntime, retrievalCore, modelHttp).settings(serviceSettings).settings(name := "retrieval-postgres")
+lazy val retrievalPostgres = project.in(file("shared/retrieval-postgres")).dependsOn(serviceRuntime, serviceAuth, retrievalCore, modelHttp).settings(serviceSettings).settings(name := "retrieval-postgres")
 lazy val haystackServer = project.in(file("haystack/server")).dependsOn(haystackContracts, serviceRuntime, serviceAuth, losslessJson, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings).settings(
   name := "haystack-server",
   Compile / unmanagedResourceDirectories += baseDirectory.value.getParentFile / "migrations",

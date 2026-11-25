@@ -41,10 +41,14 @@ final class IndexingWorker(index: PostgresRetrieval,db: RetrievalTransactions,em
       val first=batch.head._2
       db.transaction(c => index.accepted(c,claim,first,batch.size)).flatMap {
         case Some(_) => IO.unit
-        case None => embedder.documents(batch.map(_._1.text)).flatMap { vectors =>
-          IO(RetrievalChecks(vectors.size==batch.size,"model-output","embedding count mismatch")) *>
-            db.transaction(c => index.accept(c,claim,first,vectors))
-        }
+        case None =>
+          val text=batch.map(_._1.text)
+          val response=if(index.controlsIndexing) embedder.documents(text,IO.defer(db.transaction(c => index.requireCurrent(c,claim))))
+            else embedder.documents(text)
+          response.flatMap { vectors =>
+            IO(RetrievalChecks(vectors.size==batch.size,"model-output","embedding count mismatch")) *>
+              db.transaction(c => index.accept(c,claim,first,vectors))
+          }
       }
     } *> db.transaction(c => index.publish(c,claim)).void
     val heartbeat=(IO.sleep((leaseSeconds/3).seconds) *> db.transaction(c => index.renew(c,claim,leaseSeconds))).foreverM
