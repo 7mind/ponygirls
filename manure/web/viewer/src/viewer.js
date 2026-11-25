@@ -8,6 +8,7 @@ import { diffLines } from './diff.js';
 import { formatJson, formatJsonLines, JsonSyntaxError, JsonFormatLimitError } from './json.js';
 import { parseCsv, parseCsvPart, numericColumns, CsvSyntaxError } from './csv.js';
 import { hasAnsi, ansiTokens, escapeTokens } from './ansi.js';
+import { parseAsciicast } from './asciicast.js';
 import { fileSyntax, fenceSyntax, highlightTokens, HIGHLIGHT_LIMIT, FORMAT_DIFF, FORMAT_JSON, FORMAT_JSON_LINES, FORMAT_CSV, FORMAT_TSV } from './syntax.js';
 
 const meta = document.querySelector('#manure-viewer').dataset;
@@ -637,12 +638,59 @@ function media(kind) {
   player.src = raw;
   stage.append(player); content.append(stage);
 }
+function loadCastStyle() {
+  return new Promise((resolve, reject) => {
+    const link = element('link');
+    link.rel = 'stylesheet';
+    link.href = new URL('./asciinema-player.css', import.meta.url).href;
+    link.onload = resolve;
+    link.onerror = () => reject(new Error('Could not load the terminal player styles.'));
+    document.head.append(link);
+  });
+}
+const CAST_START_DEADLINE_MS = 15000;
+async function asciinema() {
+  if (typeof WebAssembly !== 'object') throw new Error('This browser does not support terminal playback.');
+  const data = parseAsciicast(new TextDecoder('utf-8', {fatal:true}).decode(await fetchBytes(TEXT_LIMIT)));
+  const moduleUrl = new URL('./asciinema-player.js', import.meta.url).href;
+  const [{create}] = await Promise.all([import(moduleUrl), loadCastStyle()])
+    .catch(() => { throw new Error('Could not load the terminal player.'); });
+  const stage = element('div', null, 'stage');
+  const host = element('div', null, 'stage-cast');
+  host.setAttribute('role', 'region'); host.setAttribute('aria-label', 'Terminal recording');
+  stage.append(host); content.append(stage);
+  // Only the validated recording data is passed in; the recording never
+  // chooses a URL or the player options (including audio and theme).
+  // A recording-derived NPT poster in 3.19.0 advances the playback cursor
+  // before clearing its drawing, losing initial frames on first play/seek.
+  const player = create({data}, host, {autoplay:false, preload:true, controls:true, fit:'both', theme:'asciinema',
+    poster:'data:text/plain,Press play to watch the terminal recording.'});
+  const onHide = event => {
+    if (event.persisted) void player.pause().catch(() => {});
+    else player.dispose();
+  };
+  addEventListener('pagehide', onHide);
+  await new Promise(resolve => {
+    const finish = () => { clearTimeout(deadline); resolve(); };
+    const unavailable = message => {
+      if (!host.isConnected) return;
+      finish();
+      removeEventListener('pagehide', onHide);
+      player.dispose();
+      fail(new Error(message));
+    };
+    // WASM startup can stall before the player's error handler is active.
+    const deadline = setTimeout(() => unavailable('Terminal player startup timed out.'), CAST_START_DEADLINE_MS);
+    player.addEventListener('ready', finish);
+    player.addEventListener('error', () => unavailable('The browser could not play this terminal recording.'));
+  });
+}
 const FETCH_DEADLINE_MS = 30000;
 async function fetchWithDeadline(read) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_DEADLINE_MS);
   try { return await read(headers => fetch(raw, {headers, credentials:'same-origin', signal:controller.signal, redirect:'error'})); }
-  finally {clearTimeout(timer);}
+  finally { clearTimeout(timer); controller.abort(); }
 }
 function fetchBytes(limit) { return fetchWithDeadline(async request => boundedBytes(await request({}), limit)); }
 /** At most the first TEXT_LIMIT bytes of the file, cut at a line end when the file is larger. */
@@ -740,6 +788,7 @@ async function main() {
   if (meta.kind === 'image') imageView(raw,meta.path);
   else if (meta.kind === 'pdf') await pdf();
   else if (meta.kind === 'archive') archive();
+  else if (meta.kind === 'asciinema') await asciinema();
   else if (meta.kind === 'video' || meta.kind === 'audio') media(meta.kind);
   else if (meta.kind === 'text') {
     const source = await fetchLeadingText();

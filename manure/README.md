@@ -79,18 +79,24 @@ C++, Java, Kotlin, Scala, Go, Rust, shell, YAML, TOML, Nix and others), `.diff` 
 `.patch` are coloured by line, `.json` and `.jsonl` get a Formatted | Raw switch,
 `.csv` and `.tsv` a Table | Raw switch, and a log with ANSI colour codes a Rendered |
 Raw switch. A text file over 2 MiB or 50,000 lines shows its leading part with a note. Audio and
-video files open in the browser's player. Every other file except HTML has a
-viewer page too: a type that is not listed is shown as text when its content is
-UTF-8 text, and otherwise (like archives) as a card that offers the download.
+video files open in the browser's player. Asciinema `.cast` recordings (asciicast
+v2/v3) open paused in the locally bundled terminal player with playback, seek,
+fullscreen and original download. Upload the `.cast` file directly to Manure;
+there is no asciinema.org upload or external rendering service. For recording and
+sharing instructions see `manure/skill/SKILL.md`.
+
+Every other file except HTML has a viewer page too: unlisted types are shown
+as text when the file is UTF-8 text, and otherwise (like archives) as a card
+that offers the download.
 HTML is always served as the page it is. Details and limits:
 `manure/web/viewer/README.md`.
 
 Non-HTML requests, range requests and existing attachment routes still return
 original bytes. On their own and raw URLs, files of text types are
-`text/plain; charset=utf-8` and audio and video files have their media type, so a
-direct link to a file inside a directory artifact opens in the browser; types that
-are not listed stay `application/octet-stream`. Directory paths with an index remain unchanged static sites. Without an index,
-a directory page lists immediate children with parent/nested navigation, viewer
+`text/plain; charset=utf-8`, audio and video files have their media types, and
+`.cast` files use `application/x-asciicast`. Types that are not listed stay
+`application/octet-stream`. Directory paths with an index remain unchanged static
+sites. Without an index, a directory page lists immediate children with parent/nested navigation, viewer
 links for supported files and original-file downloads. An immediate `readme.md` file
 (case-insensitive) renders below the listing through the same local Markdown viewer.
 Preference is `README.md`, then `readme.md`, then lexicographic case-variant order.

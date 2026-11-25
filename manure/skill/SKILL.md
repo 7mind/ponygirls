@@ -1,6 +1,6 @@
 ---
 name: manure
-description: Host files and directories on manure (artifacts.7mind.io) via CLI or MCP stdio. Prefer for human-facing artifacts such as summaries, briefs, reports, slides and diagrams. Use for uploading, fetching, listing, searching, inspecting, deleting artifacts and rotating external passwords.
+description: Host files and directories on Manure via CLI or MCP stdio. Prefer for human-facing artifacts such as reports, slides, diagrams and terminal recordings. Use to record and share CLI/TUI demos with asciinema, or to upload, fetch, list, search, inspect and delete artifacts and rotate external passwords.
 ---
 
 # manure skill
@@ -29,6 +29,7 @@ cannot follow Markdown hyperlinks.
 ## Triggers
 
 - Producing a human-facing artifact, even without an explicit upload request.
+- Demonstrating a CLI command or a terminal UI workflow with a replayable recording.
 - "upload this file/dir", "share a static site", "publish artifacts"
 - "fetch/download artifact <id>", "unlock external link"
 - "list/inspect/delete artifacts", "rotate external password", "whoami"
@@ -97,6 +98,8 @@ content URL in a browser shows:
 - Logs with ANSI colour codes: rendered colours beside the raw text.
 - Audio and video (`.mp3`, `.wav`, `.ogg`, `.m4a`, `.flac`, `.mp4`, `.webm`,
   `.mov`): the browser's player.
+- Asciinema `.cast` (asciicast v2/v3, up to 2 MiB for preview): replay in the
+  built-in terminal player. See [Record and share a terminal demo](#record-and-share-a-terminal-demo).
 - Anything else except `.html`: shown as text when the content is UTF-8 text,
   otherwise a page that offers the download.
 - Text over 2 MiB or 50,000 lines shows only its leading part: CSV/TSV as a
@@ -121,6 +124,55 @@ Markdown resources; automatic external resource loading is blocked. A viewer
 is not an authorization change: internal/external/public and expiry still apply.
 Do not present the existence of these source changes as proof that a particular
 server has been upgraded; verify the deployed instance when that matters.
+
+## Record and share a terminal demo
+
+Use a short asciinema recording when the sequence of terminal output or a TUI
+interaction is the useful part of the demo. Record a dedicated session with
+synthetic or otherwise approved inputs; don't record your live agent session,
+login flow, or shell history. Check that input capture is off in the recorder
+configuration (`session.capture_input` in asciinema 3.x). Check
+`asciinema rec --help` if flags differ on this host. For a scripted demo with
+asciinema 3.x:
+
+```bash
+asciinema rec --headless --return --idle-time-limit 2 --capture-env '' \
+  -c './demo.sh' demo.cast
+```
+
+For an interactive demo, omit `--headless`, set `-c` to the demo program, and
+use the private `tui-tmux` PTY from the `tui-testing` skill when available. A
+regular shell tool call is not an interactive terminal; use a scripted demo
+if you cannot drive a PTY.
+
+Do not put secrets in `-c` (the header can contain the command).
+`--capture-env ''` omits environment metadata; it does not clear the demo's environment.
+Even with input capture off, echoed commands and sensitive terminal output can
+be recorded. Inspect the actual `.cast` header and events before sharing, and
+re-record with sanitized inputs if necessary.
+
+When publication is authorized, upload the reviewed `.cast` directly to Manure,
+not to asciinema.org and not inside an HTML wrapper. Choose access and expiry
+appropriate for the audience; for example:
+
+```bash
+manure upload demo.cast --access internal --expires-in 7d --json
+```
+
+You can also use `upload_artifact` with the same access and expiry. Briefly
+explain what the recording shows and give the user a link as a plain line:
+
+- **Internal:** Use the signed-in dashboard's **Open** link for the returned
+  artifact ID (`/#/artifact/<id>?open` on the dashboard origin). This obtains the
+  browser grant; the raw content URL alone may not open.
+- **Public or external:** Use the returned content URL. For external access,
+  deliver the unlock password separately via an approved channel, not in chat
+  or in the URL.
+
+Verify browser playback on the target Manure instance before promising it.
+If it doesn't offer playback, the user can download the original and run
+`asciinema play demo.cast` locally with a compatible recorder (3.x for the
+example above).
 
 ## Visibility / access
 

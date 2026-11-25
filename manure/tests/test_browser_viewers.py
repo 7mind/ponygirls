@@ -66,6 +66,21 @@ def png_fixture():
             + chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b""))
 
 
+def cast_fixture(version):
+    """The same timeline in v2 (absolute seconds) and v3 (delta seconds)."""
+    if version == 2:
+        header = {"version": 2, "width": 72, "height": 12}
+        times = (0, 1.25, 28, 66)
+    else:
+        header = {"version": 3, "term": {"cols": 48, "rows": 100}}
+        times = (0, 1.25, 26.75, 38)
+    header["audioUrl"] = "https://viewer-attacker.invalid/recording.wav"
+    output = ("\x1b[32mTerminal <b>literal</b>\x1b[0m\r\n", "Playback advanced\r\n",
+              "After seek\r\n", "Recording complete\r\n")
+    events = [[time, "o", text] for time, text in zip(times, output)]
+    return "".join(json.dumps(line) + "\n" for line in [header, *events]).encode()
+
+
 MARKDOWN = b'''# Viewer specification
 
 ## Uploaded at
@@ -171,6 +186,8 @@ class ViewerBrowserTests(unittest.TestCase):
         upload("svg", {"drawing.svg": SVG})
         upload("png", {"picture.png": png_fixture()})
         upload("pdf", {"document.pdf": two_page_pdf()})
+        cast_v2 = cast_fixture(2)
+        upload("cast", {"recording.cast": cast_v2})
         upload("malformed", {"broken.dot": b"digraph { this -> is -> { not valid !!!"})
         upload("graph-limit", {"large-graph.dot": b"digraph G { a -> b; }\n" + b"// padding\n" * 6000})
         upload("oversized", {"large.dot": b"digraph G { a -> b; }\n" + b"// padding\n" * 200000})
@@ -182,7 +199,8 @@ class ViewerBrowserTests(unittest.TestCase):
                           "nested/a & <b> + ü.md": b"# Encoded child preview\n",
                           "original.bin": b"\x00original\xff"}, kind="dir", empty_dirs=["empty"])
         upload("external", {"index.html": b"<h1>Protected directory index</h1>",
-                            "docs/guide ü.md": markdown + b"\n![local asset](../assets/picture.png)\n", "assets/picture.png": png_fixture()},
+                            "docs/guide ü.md": markdown + b"\n![local asset](../assets/picture.png)\n", "assets/picture.png": png_fixture(),
+                            "docs/protected.cast": cast_fixture(3)},
                kind="dir", visibility="external")
         upload("internal", {"private.md": b"# Internal viewer handoff\n"}, visibility="internal")
         upload("code", {"tool.py": b"print('hi')\n# done\n"})
@@ -199,7 +217,10 @@ class ViewerBrowserTests(unittest.TestCase):
             "notes.md": b"# Notes\n\n```python\ndef f():\n    return 1\n```\n",
             "model.bin": b"\x00\x01binary\xff",
             "tone.wav": wav_fixture(),
-            "broken.mp4": b"not a video"}, kind="dir")
+            "broken.mp4": b"not a video",
+            "broken.cast": cast_v2 + b"malformed event\n",
+            # Pad valid JSON whitespace rather than making an enormous output event.
+            "large.cast": cast_v2.replace(b"\n", b" " * (2 * 1024 * 1024) + b"\n", 1)}, kind="dir")
         upload("unknown", {"model.safetensors": b"\x7fELF\x00\x01binary\xff"})
         upload("unlock-states", {"index.html": b"<h1>Unlock states</h1>"}, kind="dir", visibility="external")
         upload("unlock-gone", {"index.html": b"<h1>Deleted while locked</h1>"}, kind="dir", visibility="external")
@@ -213,7 +234,7 @@ class ViewerBrowserTests(unittest.TestCase):
             output = output.replace(secret, "[REDACTED]")
         self.assertEqual(result.returncode, 0, output[-12000:])
         report = json.loads(result.stdout)
-        self.assertEqual(len(report), 17, report)
+        self.assertEqual(len(report), 19, report)
         self.assertTrue(all(item["ok"] for item in report), report)
         for item in report:
             print("ok - " + mode + " viewer: " + item["name"])

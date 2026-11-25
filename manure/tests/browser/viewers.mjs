@@ -1,6 +1,7 @@
 // Specified viewer feature contracts. Real renderers, real HTTP, no CDN access.
 // Credentials are supplied over stdin and redacted from every failure report.
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -28,6 +29,9 @@ const encoded = (name) => name.split("/").map(encodeURIComponent).join("/");
 const viewer = (key, name) => name === undefined ? root(key) + "/" : root(key) + "/__manure/view/" + encoded(name);
 const rawURL = (key, name = filename(key)) => root(key) + "/__manure/raw/" + encoded(name);
 const downloadURL = (key, name = filename(key)) => root(key) + "/__manure/files/" + encoded(name) + "/content";
+const assetURL = (key, name) => root(key) + "/__manure/viewer/" + name;
+const castAssets = ["asciinema-player.js", "asciinema-player.css"];
+const castPoster = "Press play to watch the terminal recording.";
 const expected = (key, name = filename(key)) => Buffer.from(record(key).files[name], "base64");
 const allowedOrigins = new Set([new URL(input.base).origin,
   ...Object.keys(input.records).map((key) => new URL(root(key)).origin)]);
@@ -159,6 +163,7 @@ const open = async (page, key, name) => {
   const response = await page.goto(viewer(key, name), { waitUntil: "domcontentloaded" });
   assert.equal(response.status(), 200);
   await shell(page, key, name);
+  return response;
 };
 const imagesRendered = async (page, minimum = 1, selector = "main img") => {
   await page.waitForFunction(({ minimum, selector }) => [...document.querySelectorAll(selector)]
@@ -195,6 +200,12 @@ const downloadEqual = async (page, key, name = filename(key)) => {
   assert.equal(response.status, 200);
   assert.match(response.disposition || "", /attachment/i);
   assert.deepEqual(Buffer.from(response.bytes), expected(key, name), "download must preserve original bytes");
+};
+const castPlayer = (page) => page.getByRole("region", { name: "Terminal recording", exact: true });
+const castDownloadEqual = async (page, key, name, link) => {
+  const [download] = await Promise.all([page.waitForEvent("download"), link.click()]);
+  assert.equal(download.url(), downloadURL(key, name));
+  assert.ok((await readFile(await download.path())).equals(expected(key, name)), `${name}: download preserves original bytes`);
 };
 const markdownRendered = async (page) => {
   await page.getByRole("heading", { name: "Viewer specification", exact: true }).waitFor();
@@ -384,6 +395,68 @@ await check("two-page PDF paints nonempty distinct canvases, navigates forward a
   await page.evaluate(() => new Promise((resolve) => setTimeout(resolve)));
 }, false);
 
+await check("standalone asciicast v2 starts paused, then plays, pauses, seeks and toggles fullscreen", async (page) => {
+  const key = "cast";
+  const name = filename(key);
+  const responses = await Promise.all([
+    ...castAssets.map((asset) => page.waitForResponse(assetURL(key, asset))),
+    page.goto(viewer(key), { waitUntil: "domcontentloaded" }),
+  ]);
+  for (const response of responses) assert.equal(response.status(), 200, response.url());
+  await shell(page, key);
+  assert.equal(await page.locator("meta#manure-viewer").getAttribute("data-kind"), "asciinema");
+  await page.getByText(/ · Terminal recording\b/).waitFor();
+  await page.getByRole("navigation", { name: "Path", exact: true }).getByText(name, { exact: true }).waitFor();
+  const download = page.getByRole("banner").getByRole("link", { name: "Download original", exact: true });
+  await download.waitFor();
+
+  const player = castPlayer(page);
+  const terminal = player.locator(".ap-term-text");
+  const play = player.getByRole("button", { name: "Play", exact: true });
+  const pause = player.getByRole("button", { name: "Pause", exact: true });
+  await terminal.filter({ hasText: castPoster }).waitFor();
+  await play.waitFor();
+  assert.equal(await pause.isVisible(), false);
+  assert.doesNotMatch(await terminal.textContent(), /literal|Playback advanced/);
+  await play.click();
+  await terminal.filter({ hasText: "Playback advanced" }).waitFor();
+  assert.match(await terminal.textContent(), /<b>literal<\/b>/, "first Play preserves the output at time zero");
+  assert.equal(await terminal.locator("b").count(), 0, "terminal markup stays literal text");
+  await pause.click();
+  await play.waitFor();
+  assert.equal(await terminal.filter({ hasText: "After seek" }).isVisible(), false);
+  await player.locator(".ap-progressbar").click();
+  await terminal.filter({ hasText: "After seek" }).waitFor();
+  await play.waitFor();
+
+  const fullscreen = player.getByRole("button", { name: "Toggle fullscreen mode", exact: true });
+  await fullscreen.click();
+  await page.waitForFunction(() => document.fullscreenElement !== null);
+  await fullscreen.click();
+  await page.waitForFunction(() => document.fullscreenElement === null);
+
+  const raw = await fetchBytes(page, rawURL(key));
+  assert.equal(raw.status, 200);
+  assert.equal(raw.type, "application/x-asciicast");
+  assert.deepEqual(Buffer.from(raw.bytes), expected(key));
+  await castDownloadEqual(page, key, name, download);
+}, false);
+
+await check("failed asciicast previews explain why and keep exact downloads", async (page) => {
+  async function fallback(key, name, reason, nested = true) {
+    await open(page, key, nested ? name : undefined);
+    const notice = page.getByRole("alert").filter({ hasText: "Preview unavailable" });
+    await notice.waitFor();
+    assert.match(await notice.textContent(), reason);
+    assert.equal(await castPlayer(page).count(), 0);
+    await castDownloadEqual(page, key, name, notice.getByRole("link", { name: "Download original", exact: true }));
+  }
+  await fallback("formats", "broken.cast", /invalid|malformed/i);
+  await fallback("formats", "large.cast", /too large/i);
+  await page.addInitScript(() => { globalThis.WebAssembly = undefined; });
+  await fallback("cast", filename("cast"), /does not support terminal playback/i, false);
+}, false);
+
 await check("directory index remains original while explicit nested viewer and raw assets work", async (page) => {
   await page.goto(root("directory") + "/", { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Original directory index", exact: true }).waitFor();
@@ -452,14 +525,18 @@ await check("invalid and oversized Graphviz sources fail visibly; a stalled rend
 await check("external raw and assets deny locked/revoked grants; unlock permits real nested rendering", async (page) => {
   const key = "external";
   const name = "docs/guide ü.md";
-  const lockedView = await page.goto(viewer(key, name), { waitUntil: "domcontentloaded" });
-  assert.ok(lockedView.status() >= 400, 'locked deep links must not become successful HTML shells');
+  const castName = "docs/protected.cast";
+  for (const file of [name, castName]) {
+    const lockedView = await page.goto(viewer(key, file), { waitUntil: "domcontentloaded" });
+    assert.ok(lockedView.status() >= 400, 'locked deep links must not become successful HTML shells');
+  }
   await page.goto(root(key) + '/', { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Protected artifact", exact: true }).waitFor();
   await favicon(page, key);
   const protectedURLs = [rawURL(key, name), rawURL(key, "assets/picture.png"), downloadURL(key, name),
-    ...["viewer.js", "styles.css", "graphviz-worker.js", "pdf.worker.min.mjs", "pdf.renderer.min.mjs"]
-      .map((asset) => root(key) + "/__manure/viewer/" + asset)];
+    rawURL(key, castName), downloadURL(key, castName),
+    ...["viewer.js", "styles.css", "graphviz-worker.js", "pdf.worker.min.mjs", "pdf.renderer.min.mjs", ...castAssets]
+      .map((asset) => assetURL(key, asset))];
   for (const url of protectedURLs) {
     const denied = await fetchBytes(page, url);
     assert.ok(denied.status >= 400, "locked raw/assets/download must not bypass authorization");
@@ -471,21 +548,57 @@ await check("external raw and assets deny locked/revoked grants; unlock permits 
   // Unlock may return the original directory root; navigate explicitly after
   // the form disappears rather than assuming it preserves a deep target.
   await page.waitForFunction(() => document.querySelector("#unlock-form") === null);
-  await open(page, key, name);
+  const markdown = await open(page, key, name);
   await markdownRendered(page);
   await imagesRendered(page, 1, 'img[alt="local asset"]');
   await rawEqual(page, key, name);
   await rawEqual(page, key, "assets/picture.png");
+
+  // The root has an original index, but its docs/ subdirectory is a real listing.
+  await page.getByRole("navigation", { name: "Path", exact: true }).getByRole("link", { name: "docs", exact: true }).click();
+  const listing = page.getByRole("table", { name: "Directory contents", exact: true });
+  const castLink = listing.getByRole("link", { name: "protected.cast", exact: true });
+  await listing.getByRole("row").filter({ hasText: "protected.cast" }).getByRole("cell", { name: "Terminal recording", exact: true }).waitFor();
+  const [cast] = await Promise.all([page.waitForResponse(viewer(key, castName)), castLink.click()]);
+  assert.equal(cast.status(), 200);
+  await shell(page, key, castName);
+  const policy = markdown.headers()["content-security-policy"];
+  assert.ok(policy);
+  assert.equal(cast.headers()["content-security-policy"], policy);
+  const player = castPlayer(page);
+  const terminal = player.locator(".ap-term-text");
+  const play = player.getByRole("button", { name: "Play", exact: true });
+  await terminal.filter({ hasText: castPoster }).waitFor();
+  await play.waitFor();
+  assert.doesNotMatch(await terminal.textContent(), /literal|After seek/);
+  const seek = player.locator(".ap-progressbar");
+  const usable = await seek.evaluate((el) => {
+    const { top, bottom, width } = el.getBoundingClientRect();
+    return top >= 0 && bottom <= innerHeight && width > 24;
+  });
+  assert.ok(usable, "the portrait recording keeps the seek control in the viewport");
+  // Halfway through the v3 recording includes this frame only when times are accumulated.
+  await seek.click();
+  await terminal.filter({ hasText: "After seek" }).waitFor();
+  assert.match(await terminal.textContent(), /<b>literal<\/b>/, "first Seek preserves the output at time zero");
+  await play.waitFor();
+  await rawEqual(page, key, castName);
+
   const rotated = await management(page, { RotateExternalPassword: { artifactId: record(key).artifact_id } });
   const rotatedPassword = rotated.result?.ArtifactPatched?.externalPassword;
   if (rotatedPassword) secrets.add(rotatedPassword);
   const denied = await fetchBytes(page, rawURL(key, name));
   assert.ok(denied.status >= 400, "revoked cookie must deny a new raw request (not cached display)");
-  const deniedAsset = await fetchBytes(page, rawURL(key, "assets/picture.png"));
-  assert.ok(deniedAsset.status >= 400, "revoked cookie must deny fresh assets too");
+  for (const url of [rawURL(key, "assets/picture.png"), rawURL(key, castName), ...castAssets.map((asset) => assetURL(key, asset))]) {
+    assert.ok((await fetchBytes(page, url)).status >= 400, "revoked cookie must deny fresh raw and viewer asset requests");
+  }
 }, true);
 
 await check("source files preview as exact numbered text; archives get a download card instead of a preview", async (page) => {
+  const playerRequests = [];
+  page.on("request", (request) => {
+    if (castAssets.some((asset) => new URL(request.url()).pathname.endsWith("/" + asset))) playerRequests.push(request.url());
+  });
   await page.goto(root("code") + "/", { waitUntil: "domcontentloaded" });
   await shell(page, "code");
   const text = page.getByLabel("File text", { exact: true });
@@ -500,6 +613,7 @@ await check("source files preview as exact numbered text; archives get a downloa
   const download = page.getByRole("main").getByRole("link", { name: "Download original", exact: true });
   assert.equal(new URL(await download.getAttribute("href"), page.url()).href, downloadURL("archive"));
   await downloadEqual(page, "archive");
+  assert.deepEqual(playerRequests, [], "non-terminal previews do not load the player assets");
 }, false);
 
 const scrollers = (page) => page.evaluate(() => [...document.querySelectorAll("body *")].filter((el) => {

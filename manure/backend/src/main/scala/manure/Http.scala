@@ -434,6 +434,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     case "bmp" => "image/bmp"
     case "ico" => "image/x-icon"
     case "pdf" => "application/pdf"
+    case "cast" => "application/x-asciicast"
     case "wasm" => "application/wasm"
     case "mp4" | "m4v" => "video/mp4"
     case "webm" => "video/webm"
@@ -496,6 +497,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       group(Some("image"),"PNG image" -> Seq("png"),"JPEG image" -> Seq("jpg","jpeg"),"GIF image" -> Seq("gif"),"WebP image" -> Seq("webp"),
         "AVIF image" -> Seq("avif"),"BMP image" -> Seq("bmp"),"SVG image" -> Seq("svg"),"Icon" -> Seq("ico")) ++
       group(Some("pdf"),"PDF document" -> Seq("pdf")) ++
+      group(Some("asciinema"),"Terminal recording" -> Seq("cast")) ++
       group(Some("mermaid"),"Mermaid source" -> Seq("mmd","mermaid")) ++
       group(Some("graphviz"),"Graphviz source" -> Seq("dot","gv")) ++
       group(Some("text"),"Text" -> Seq("txt","text"),"Log" -> Seq("log"),"CSV" -> Seq("csv"),"TSV" -> Seq("tsv"),"JSON" -> Seq("json","json5","jsonc"),
@@ -552,9 +554,11 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
 """
   private def faviconLink(ctx: Context): String =
     "<link rel=\"icon\" type=\"image/svg+xml\" href=\"" + ctx.mount + "/__manure/viewer/favicon.svg\">"
+  private val viewerAssets = Set("viewer.js","graphviz-worker.js","pdf.worker.min.mjs","pdf.renderer.min.mjs","styles.css",
+    "asciinema-player.js","asciinema-player.css")
   private def viewerBytes(name: String): IO[Array[Byte]] = IO.blocking {
     val root = config.viewerDir.getOrElse(throw DomainError("not-found"))
-    Require(Set("index.html","viewer.js","graphviz-worker.js","pdf.worker.min.mjs","pdf.renderer.min.mjs","styles.css")(name), "not-found")
+    Require(name == "index.html" || viewerAssets(name), "not-found")
     val file = root.resolve(name)
     Require(Files.isRegularFile(file) && Files.size(file) <= 16777216L, "not-found")
     // Bound the read too: a concurrently replaced asset cannot bypass the cap.
@@ -763,7 +767,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     else if req.method == Method.GET && path.startsWith("/__manure/viewer/") then
       artifacts.contentInfo(id,presented(req,ctx,id),header(req,"X-Manure-Password"),None).flatMap { _ =>
         val name = path.stripPrefix("/__manure/viewer/")
-        Require(Set("viewer.js","graphviz-worker.js","pdf.worker.min.mjs","pdf.renderer.min.mjs","styles.css")(name), "not-found")
+        Require(viewerAssets(name), "not-found")
         viewerBytes(name).map(bytes => Response[IO](Status.Ok).withEntity(bytes).putHeaders(raw("Content-Type",mime(name))))
       }
     else if req.method == Method.GET && path.startsWith("/__manure/raw/") then

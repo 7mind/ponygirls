@@ -324,7 +324,8 @@ let
     artifact = Path(pkg, "bin/manure-server").resolve(strict=True)
     assets = Path(pkg, "share/manure/web")
     viewer = assets / "viewer"
-    expected_viewer = {"index.html", "viewer.js", "graphviz-worker.js", "pdf.worker.min.mjs", "pdf.renderer.min.mjs", "styles.css"}
+    expected_viewer = {"index.html", "viewer.js", "graphviz-worker.js", "pdf.worker.min.mjs", "pdf.renderer.min.mjs", "styles.css",
+                       "asciinema-player.js", "asciinema-player.css"}
     assert {path.name for path in viewer.iterdir() if path.is_file()} == expected_viewer
     assert all((viewer / name).stat().st_size > 0 for name in expected_viewer)
     assert "__MANURE_ASSET_BASE__/viewer.js" in (viewer / "index.html").read_text()

@@ -911,17 +911,19 @@ Baboon API version. With `viewer_dir` enabled, standalone supported file roots
 may return a trusted viewer for HTML navigation (`Accept: text/html`). Non-HTML
 and range requests retain byte-serving behavior; responses vary on Accept.
 Supported formats: Markdown, images including SVG, PDF, Mermaid and Graphviz;
-text (source code, configuration, diffs, JSON, delimited tables, logs), audio
-and video; archives and every other type except HTML get a viewer page that
-offers the download, and a type that is not listed is shown as text when its
-content is UTF-8 text. HTML roots are always served as the stored page.
+text (source code, configuration, diffs, JSON, delimited tables, logs), audio,
+video, and `.cast` terminal recordings (asciicast v2/v3); archives and every other
+type except HTML get a viewer page that offers the download, and unlisted types
+are shown as text when their content is UTF-8. HTML roots are always served as
+the stored page.
 Directory static-site paths are not replaced by viewers.
 
 Inline content types (own URL and `/__manure/raw/<p>`): files of text types are
 `text/plain; charset=utf-8` (script, style, JSON, SVG and HTML keep their own
-types), audio and video files have their media types, and types that are not
-listed are `application/octet-stream`. `X-Content-Type-Options: nosniff` applies
-to all of them. The viewer policy admits same-origin media (`media-src 'self'`).
+types), audio and video files have their media types, `.cast` files use
+`application/x-asciicast`, and unlisted types are `application/octet-stream`.
+`X-Content-Type-Options: nosniff` applies to all of them. The viewer policy
+admits same-origin media (`media-src 'self'`).
 
 `/__manure/view/<p>` explicitly selects a supported manifest file viewer;
 `/__manure/raw/<p>` serves original inline bytes; and

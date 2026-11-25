@@ -162,6 +162,9 @@
 .stage > .notice { max-width: var(--measure); margin: 0 auto; }
 .stage-video { display: block; margin: 0 auto; max-width: 100%; max-height: calc(100dvh - var(--masthead-h) - 41px - 2 * var(--space-5)); background: var(--qr-fg); box-shadow: var(--shadow-1); }
 .stage-audio { display: block; margin: var(--space-7) auto 0; width: min(100%, 560px); }
+.stage-cast { width: min(100%, 960px); height: max(160px, calc(100dvh - var(--masthead-h, 48px) - 41px - 2 * var(--space-5, 24px))); margin-inline: auto; }
+/* A portrait terminal can be narrower than its playback controls. */
+.stage-cast .ap-player { min-width: min(100%, 240px); box-shadow: var(--shadow-1); }
 
 .empty .btn { margin-top: var(--space-3); }
 .readme .viewer-doc { max-width: none; padding: 0; }
