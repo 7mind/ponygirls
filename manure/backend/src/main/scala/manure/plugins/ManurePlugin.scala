@@ -6,7 +6,7 @@ import cats.effect.std.Semaphore
 import distage.*
 import izumi.distage.plugins.PluginDef
 import ponygirls.runtime.JdbcDatabase
-import ponygirls.retrieval.{EmbeddingClient,RetrievalProfile}
+import ponygirls.retrieval.EmbeddingClient
 import ponygirls.retrieval.postgres.PostgresRetrieval
 import manure.storage.{ConfinedDirectory,RootLease}
 import ponygirls.auth.PasswordHasher
@@ -32,9 +32,7 @@ object ManurePlugin extends PluginDef:
   make[Option[AccountsConfig]].from((config: Config) => config.accounts)
   make[PasswordHasher].fromValue(PasswordHasher.Pbkdf2)
   make[JdbcTransactions].from[RuntimeTransactions]
-  make[PostgresRetrieval].from { (config: Config) =>
-    new PostgresRetrieval("manure",config.embedding.map(e => RetrievalProfile(e.endpoint.space,"manure-metadata-paths-v1")))
-  }
+  make[PostgresRetrieval].from(SearchProjection.retrieval _)
   make[SearchProjection]
   make[Metadata].from[PostgresMetadata]
   make[Payloads].from[FilesystemPayloads]

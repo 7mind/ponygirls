@@ -3,21 +3,27 @@ package manure
 import cats.effect.IO
 import cats.syntax.all.*
 import java.sql.Connection
+import ponygirls.auth.IndexingService
 import ponygirls.retrieval.*
 import ponygirls.retrieval.postgres.{PostgresRetrieval,IndexingWorker,QueryVector,RetrievalTransactions}
 import manure.{api => wire}
 import io.circe.Json
 
-/** Private retrieval audience policy. Every authenticated manager may search
-  * every artifact (visibility is a filter attribute, not an ACL), and
-  * authentication is verified live by `Search.query` before any retrieval call.
-  * Publication and delivery queries therefore share one constant, namespaced
-  * audience principal that does not depend on the configured user list.
+/** All live managers share the same search audience. Visibility remains a filter
+  * attribute, not an ACL; producer indexing eligibility is independent of both.
+  * Publication and delivery use one namespaced audience principal rather than
+  * enumerating the configured user list.
   */
 private[manure] final class ManagementSearchPrincipal private (val value: String)
 private[manure] object ManagementSearchPrincipal:
   val all: ManagementSearchPrincipal =
     new ManagementSearchPrincipal(SecretCodec.sha256(Exact.utf8("manure-management-search-principal-v2\u0000all")))
+
+object SearchProjection:
+  // Eligibility does not change the deployed embedding profile or index format.
+  private[manure] def retrieval(config: Config): PostgresRetrieval =
+    new PostgresRetrieval("manure",config.embedding.map(e => RetrievalProfile(e.endpoint.space,"manure-metadata-paths-v1")),
+      IndexingService.Manure,config.indexingPolicy)
 
 /** Management-only, explicitly metadata+manifest paths. No binary extraction,
   * dereferencing, HTML execution, passwords, token/grant/hash or secret fields.
@@ -46,7 +52,7 @@ final class SearchProjection(config: Config, engine: PostgresRetrieval):
       val source = SourceProjection(a.id,revision,chunks,
         Vector(attribute("visibility",a.visibility.wire),attribute("kind",a.kind.wire),attribute("createdByUser",a.createdByUser)) ++
           a.tags.map(tag => attribute(tagKey(tag),tag)) ++ a.hostname.map(attribute("hostname",_)) ++ a.projectPath.map(attribute("projectPath",_)),
-        Set(ManagementSearchPrincipal.all.value),true,false,a.expiresAtSeconds.map(EpochSeconds.fromDouble))
+        Set(ManagementSearchPrincipal.all.value),true,false,a.expiresAtSeconds.map(EpochSeconds.fromDouble),owners=Set(a.createdByUser))
       engine.put(c,source)
       Jdbc.exec(c,"INSERT INTO manure.search_versions(artifact_id,version,metadata) VALUES(?,?,?) ON CONFLICT DO NOTHING",
         Exact.utf8(a.id),Exact.utf8(revision),Exact.utf8(CurrentWire.encode(wire.Artifact.codecJson,snapshot(a)).noSpaces))
@@ -60,7 +66,13 @@ final class SearchProjection(config: Config, engine: PostgresRetrieval):
     val decoded = CurrentWire.decode(wire.Artifact.codecJson,current)
     MetadataRules.validate(decoded.tags,decoded.hostname,decoded.projectPath)
     decoded
-  def backfillSnapshots(c: Connection,id: String): Unit =
+  def backfill(c: Connection,a: Artifact): Unit =
+    backfillSnapshots(c,a.id)
+    put(c,a)
+    // Creator is immutable across metadata revisions. A retained semantic publication can safely use
+    // the authoritative creator even when that publication is older than the current head.
+    if a.state == UploadState.Ready then engine.backfillPublishedOwners(c,a.id)(_ => Set(a.createdByUser))
+  private def backfillSnapshots(c: Connection,id: String): Unit =
     Jdbc.rows(c,"SELECT version,metadata FROM manure.search_versions WHERE artifact_id=?",Exact.utf8(id)) { r =>
       (Exact.string(r.getBytes(1)),CurrentWire.parse(Exact.string(r.getBytes(2))))
     }.foreach { (version,value) =>
@@ -97,8 +109,8 @@ final class Search(database: JdbcTransactions, root: manure.storage.RootLease, c
       val query = RetrievalQuery(ManagementSearchPrincipal.all.value,q.query,mode,filters,false,0,q.limit,EpochSeconds.fromDouble(clock.now))
       val page = engine.search(c,query,values)
       val hits = page.hits.flatMap { hit =>
-        // Fresh source authorization/expiry before returning any pinned metadata.
-        if !auth.live(new PostgresAuthTxn(c),identity) || !engine.visible(c,query.copy(now=EpochSeconds.fromDouble(clock.now)),hit.id) then None
+        // Reauthorize the exact head/publication before returning its pinned metadata.
+        if !auth.live(new PostgresAuthTxn(c),identity) || !engine.visible(c,query.copy(now=EpochSeconds.fromDouble(clock.now)),hit) then None
         else
           val a = projection.pinned(c,hit.id,hit.version).copy(contentUrl=config.contentUrl(hit.id,origin))
           val field = hit.chunk.provenance.field match

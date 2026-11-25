@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import manure.{api => wire}
 import munit.FunSuite
+import ponygirls.auth.IndexingService
 import ponygirls.retrieval.*
 import ponygirls.retrieval.postgres.PostgresRetrieval
 
@@ -15,7 +16,7 @@ final class MetadataSearchSuite extends FunSuite:
   test("lexical/semantic/hybrid apply all exact metadata filters before counts and bounded selection") {
     BackendFixture.resource(true).use { f =>
       val profile=RetrievalProfile(EmbeddingSpace("controlled-metadata","immutable-v1",3,false,"","","cosine"),"manure-metadata-paths-v2")
-      val engine=new PostgresRetrieval("manure",Some(profile))
+      val engine=new PostgresRetrieval("manure",Some(profile),IndexingService.Manure,f.config.indexingPolicy)
       val projection=new SearchProjection(f.config,engine)
       // Published while "other" is not yet configured; it must still find the artifacts after live authentication.
       val publishedBeforeOther=new SearchProjection(f.config.copy(users=f.config.users.filter(_.id==f.identity.userId)),engine)
@@ -87,7 +88,7 @@ final class MetadataSearchSuite extends FunSuite:
   test("semantic declares an in-scope unpublished artifact as pending; unavailability keeps its fixed reason") {
     BackendFixture.resource(true).use { f =>
       val profile=RetrievalProfile(EmbeddingSpace("controlled-metadata","immutable-v1",3,false,"","","cosine"),"manure-metadata-paths-v2")
-      val engine=new PostgresRetrieval("manure",Some(profile))
+      val engine=new PostgresRetrieval("manure",Some(profile),IndexingService.Manure,f.config.indexingPolicy)
       val projection=new SearchProjection(f.config,engine)
       val embedding=new EmbeddingClient:
         def documents(values: List[String]): IO[List[List[Double]]] = IO.pure(values.map(_ => List(1.0,0.0,0.0)))
@@ -135,7 +136,7 @@ final class MetadataSearchSuite extends FunSuite:
     BackendFixture.resource(true).use { f =>
       val tags=Vector.tabulate(MetadataRules.MaxTags)(i => "tag-" + i)
       val input=InitUpload("needle",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None,tags,Some("host"),Some("/project"))
-      val engine=new PostgresRetrieval("manure",None)
+      val engine=SearchProjection.retrieval(f.config)
       val projection=new SearchProjection(f.config,engine)
       val search=new Search(f.database.get,f.lease,f.config,f.auth,f.clock,engine,projection,None)
       for

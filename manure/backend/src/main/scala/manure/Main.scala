@@ -165,8 +165,7 @@ object Main extends IOApp:
       batch.foreach { a =>
         CatalogueProjection.backfill(c,a)
         ArtifactMetadataProjection.backfill(c,a)
-        services.projection.backfillSnapshots(c,a.id)
-        services.projection.put(c,a)
+        services.projection.backfill(c,a)
       }
       batch.lastOption.map(_.id).filter(_ => batch.size == 1000)
     }.flatMap {

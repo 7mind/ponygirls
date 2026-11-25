@@ -1,5 +1,6 @@
 package manure
 
+import ponygirls.auth.{IndexingPolicy,IndexingService}
 import ponygirls.retrieval.{EmbeddingSpace,RetrievalProfile}
 import ponygirls.retrieval.postgres.PostgresRetrieval
 import java.nio.charset.StandardCharsets.UTF_8
@@ -47,7 +48,7 @@ final class LegacyFreeCheckSuite extends munit.FunSuite:
         // shared registry lands there, not in public.
         Using.resource(c.createStatement())(_.execute("SET LOCAL search_path = manure, public"))
         CatalogueProjection.initialize(c)
-        new PostgresRetrieval("manure",Some(profile)).initialize(c)
+        new PostgresRetrieval("manure",Some(profile),IndexingService.Manure,IndexingPolicy.defaults).initialize(c)
         c.commit()
       }
     override def afterAll(): Unit = name.foreach(created => execute(maintenance,List("DROP DATABASE " + created + " WITH (FORCE)")))

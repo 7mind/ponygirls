@@ -7,7 +7,6 @@ import org.http4s.{Header,Method,Request,Uri}
 import org.typelevel.ci.CIString
 import manure.{api => wire}
 import ponygirls.retrieval.UnavailableReason
-import ponygirls.retrieval.postgres.PostgresRetrieval
 import ponygirls.auth.{AccountJson,CredentialGate,FastPasswordHasher,Secrets,Totp}
 import java.nio.file.Files
 import java.util.UUID
@@ -26,7 +25,7 @@ final class HttpSuite extends FunSuite:
   private val gate = CredentialGate.resource.use(IO.pure).unsafeRunSync()
   private def app(f: BackendFixture,adjust: Config => Config = c => c): Http =
     val config = adjust(f.config.copy(apiOrigin=ApiOrigin.parse("http://127.0.0.1:47329"),port=47329))
-    val engine = new PostgresRetrieval("manure",None)
+    val engine = SearchProjection.retrieval(config)
     val projection = new SearchProjection(config,engine)
     val auth = new Auth(config.users,config.accounts)
     val search = new Search(f.database.get,f.lease,config,auth,f.clock,engine,projection,None)

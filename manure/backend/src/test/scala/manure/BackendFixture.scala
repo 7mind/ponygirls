@@ -9,7 +9,6 @@ import scala.util.Using
 import scala.jdk.CollectionConverters.*
 import manure.storage.*
 import ponygirls.runtime.{JdbcDatabase,JdbcConfig}
-import ponygirls.retrieval.postgres.PostgresRetrieval
 import io.circe.Json
 
 final class TestClock(var now: Double) extends DomainClock
@@ -103,7 +102,7 @@ object BackendFixture:
     lease <- Resource.make(IO.blocking(root.lease()))(l => IO.blocking(l.close()))
     db <- if postgres then JdbcDatabase.resource(cfg.database).map(Some(_)) else Resource.pure[IO,Option[JdbcDatabase]](None)
     transactions = db.map { d => new JdbcTransactions { def transaction[A](f: java.sql.Connection => A): IO[A] = d.transaction(c => lease.run(f(c))) } }
-    engine = new PostgresRetrieval("manure",None)
+    engine = SearchProjection.retrieval(cfg)
     projection = new SearchProjection(cfg,engine)
     _ <- Resource.eval(transactions.traverse_(_.transaction { c =>
       val sql = Files.readString(source.resolve("manure/migration/schema.sql"))
