@@ -97,7 +97,32 @@ a.attention-item:focus-visible{outline:2px solid var(--focus);outline-offset:-2p
 .activity-maintenance .card-body{flex:1}
 .activity-maintenance .card-foot{flex-wrap:wrap}
 
+/* Claim order (claim-order spec §7, approved mockup): the owner's per-class strip above the job list, the reason column,
+ * "N ahead" marks and the footnote with the legend below the list. */
+.claim-strip{padding:var(--space-4) var(--gutter) var(--space-2)}
+.claim-card .card-head h2{display:flex;align-items:center}
+.claim-card-body{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);align-items:start}
+.claim-counts{border-right:1px solid var(--border)}
+.claim-counts td,.activity-view .claim-counts tbody th{height:36px}
+.claim-lanes{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:var(--space-2) var(--space-4);padding:var(--space-3) var(--space-4);font-size:var(--text-sm)}
+.claim-lanes dt{color:var(--text-muted)}
+.activity-table .th-label{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+.activity-table .why-main{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.activity-table .why-running{color:var(--info-fg)}
+.activity-table .state-wrap{white-space:normal;line-height:var(--leading-tight);align-items:flex-start}
+.activity-view .ahead{border-bottom:1px dotted var(--text-muted);font-weight:var(--weight-semibold);font-variant-numeric:tabular-nums;cursor:help}
+.activity-view .ahead:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:var(--radius-sm)}
+.activity-view .fn-ref{margin-left:1px;font-size:var(--text-xs);vertical-align:super;line-height:0;color:var(--accent)}
+.claim-notes{max-width:1100px;padding:var(--space-2) var(--gutter) 0;font-size:var(--text-xs);color:var(--text-muted)}
+.claim-notes p{margin-bottom:var(--space-3)}
+.claim-notes p strong{color:var(--text)}
+.claim-notes .fn-mark{margin-right:var(--space-1);color:var(--accent)}
+.claim-legend{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:var(--space-1) var(--space-3);align-items:center}
+.claim-legend dt{color:var(--text);font-weight:var(--weight-medium)}
+
 @media(max-width:1100px){
+  .claim-card-body{grid-template-columns:minmax(0,1fr)}
+  .claim-counts{border-right:0;border-bottom:1px solid var(--border)}
   .activity-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
   .activity-maintenance{grid-template-columns:minmax(0,1fr)}
   .activity-detail-main{grid-template-columns:minmax(0,1fr)}

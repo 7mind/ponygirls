@@ -18,7 +18,8 @@ export type CollectorsState = ListState<ActivityCollectorSort>;
 export type JobScope = ActivityJobScope.Current | ActivityJobScope.Historical;
 export interface JobsState extends ListState<ActivityJobSort> { readonly scope: JobScope }
 export function emptyCollectors(): CollectorsState { return { submitted: '', sort: ActivityCollectorSort.CollectorId, direction: SortDirection.Asc, expanded: null }; }
-export function emptyJobs(): JobsState { return { submitted: '', scope: ActivityJobScope.Current, sort: ActivityJobSort.LastTimestamp, direction: SortDirection.Desc, expanded: null }; }
+// Oldest wait first (claim-order spec §7, approved mockup): the order the claim order itself follows within a class.
+export function emptyJobs(): JobsState { return { submitted: '', scope: ActivityJobScope.Current, sort: ActivityJobSort.WaitingSince, direction: SortDirection.Asc, expanded: null }; }
 
 const QUERY_PARAM = 'q', SCOPE_PARAM = 'scope', SORT_PARAM = 'sort', DIRECTION_PARAM = 'dir', HISTORY = 'history';
 function listParams<S>(state: ListState<S>, defaults: ListState<S>, extra: readonly [string, string][]): RouteParams {

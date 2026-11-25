@@ -70,6 +70,8 @@ export class ChronicleFixture {
   jobs = [new api.JobInfo(ID.job, ID.session, 2, api.JobState.Failed, 3, 'Embedding provider unavailable; archived source is preserved.', 0, undefined, undefined)];
   archiveRowCount = 1; archiveRows = undefined; archiveExcluded = new Set(); archiveFailure = null; holdArchive = false; holdArchiveCursor = false; pendingArchive = []; archiveRelevanceMissing = false;
   activityJobs = undefined; activityCollectors = undefined; collectorExpressions = new Map(); jobExpressions = new Map(); activityFailure = null;
+  // The owner's claim-order summary (ActivityResult.queue); undefined: a server that reports none.
+  claimQueue = undefined;
   holdSessions = false; sessionHeadSnapshot = undefined; pendingSessions = [];
   holdCollectorCursor = false; holdJobCursor = false; pendingCollectors = []; pendingJobs = [];
   targetProfile = 'target-profile'; jobFences = new Map(); bulkPayloads = new Map(); bulkApplyExecutions = 0; bulkDropBeforeCommit = false; bulkDropReply = false; bulkConflictOnce = false; bulkPreviewDenied = false; bulkApplyDenied = false; retryCountsOverride = undefined; messageCount = 87; lateMessageId = 'm65'; holdLocators = false; pendingLocators = [];
@@ -202,6 +204,7 @@ export class ChronicleFixture {
       case api.ActivityJobSort.Classification: return row.classification;
       case api.ActivityJobSort.JobId: return row.job.id;
       case api.ActivityJobSort.SessionId: return row.job.sessionId;
+      case api.ActivityJobSort.WaitingSince: return row.waitingSince === undefined ? undefined : Date.parse(row.waitingSince);
       default: throw new Error('Unknown fixture job sort');
     }
   }
@@ -219,7 +222,7 @@ export class ChronicleFixture {
     const rows = ordered(selected, row => this.collectorValue(row, query.sort), row => row.collectorId, query.direction);
     const page = fixturePage(rows, query.cursor, query.limit, JSON.stringify(['collectors', this.user.id, query.expression, query.sort, query.direction]));
     const current = this.jobRows.filter(item => item.classification === api.ActivityJobClass.Current), historical = this.jobRows.filter(item => item.classification !== api.ActivityJobClass.Current), owned = this.authorizedRows.filter(row => row.head.ownerId === this.user.id);
-    return new api.ActivityResult('2026-10-26T12:00:00Z', this.user, BigInt(owned.length), BigInt(owned.filter(row => row.headJob === undefined).length), this.counts(current), this.counts(historical), page.rows, BigInt(rows.length), BigInt(all.length), page.next);
+    return new api.ActivityResult('2026-10-26T12:00:00Z', this.user, BigInt(owned.length), BigInt(owned.filter(row => row.headJob === undefined).length), this.counts(current), this.counts(historical), page.rows, BigInt(rows.length), BigInt(all.length), page.next, this.claimQueue);
   }
   activityJobsResult(query) {
     const scoped = this.jobRows.filter(item => (query.scope === api.ActivityJobScope.All || (query.scope === api.ActivityJobScope.Current) === (item.classification === api.ActivityJobClass.Current)) && (query.collectorId === undefined || item.collectorId === query.collectorId));

@@ -29,7 +29,7 @@ const SERVE_MODES = ['bundle', 'dev'], FIXTURE_PAGES = 'tests-browser';
 const NETNS_PREFIX = ['unshare', '--user', '--map-root-user', '--net', '--', 'sh', '-c', 'ip link set lo up && exec "$0" "$@"'];
 // Registration: add the entry file name here. Longest scripts first, so the pool's tail is short.
 const SCRIPTS = [
-  'session.mjs', 'activity.mjs', 'run.mjs', 'activity-maintenance.mjs', 'search-serp.mjs', 'archive.mjs', 'access-mcp.mjs',
+  'session.mjs', 'activity.mjs', 'run.mjs', 'activity-maintenance.mjs', 'activity-claim-order.mjs', 'search-serp.mjs', 'archive.mjs', 'access-mcp.mjs',
   'goal50.mjs', 'theme-retry.mjs', 'shell.mjs', 'persistent-login.mjs', 'layout-stability.mjs', 'tool-catalog.mjs', 'refresh-regression.mjs',
 ];
 

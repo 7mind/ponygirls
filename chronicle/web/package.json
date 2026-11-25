@@ -19,7 +19,7 @@
     "test:catalog": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/tool-catalog.mjs",
     "test:archive": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/archive.mjs",
     "test:access-mcp": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/access-mcp.mjs",
-    "test:activity": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/activity.mjs && node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/activity-maintenance.mjs",
+    "test:activity": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/activity.mjs && node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/activity-maintenance.mjs && node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/activity-claim-order.mjs",
     "test:layout-stability": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/layout-stability.mjs"
   },
   "dependencies": {

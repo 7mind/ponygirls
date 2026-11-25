@@ -58,11 +58,11 @@ try {
 
   await rig.run('the laptop and phone widths keep the lists tables without sideways document overflow, light and dark', async () => {
     for (const [viewport, scheme] of [[LAPTOP, 'light'], [PHONE, 'dark']]) {
-      const { context, page } = await scene(rig, { route: '/activity', viewport, scheme, configure: fixture => { largeFixture(fixture); fixture.activityJobs = fixture.activityJobs.map((item, index) => index === 1 ? item.with({ session: item.session.with({ metadata: item.session.metadata.with({ title: 'Literal 猫🦄 <script>not markup</script> '.repeat(40), gitBranch: 'long-value-'.repeat(12) }) }) }) : item); } });
+      const { context, page, fixture: scripted } = await scene(rig, { route: '/activity', viewport, scheme, configure: fixture => { largeFixture(fixture); fixture.activityJobs = fixture.activityJobs.map((item, index) => index === 1 ? item.with({ session: item.session.with({ metadata: item.session.metadata.with({ title: 'Literal 猫🦄 <script>not markup</script> '.repeat(40), gitBranch: 'long-value-'.repeat(12) }) }) }) : item); } });
       await region(page, 'Overview').locator('.tile-value').first().waitFor(); assert.equal(await horizontalOverflow(page), false, `${viewport.width} Overview`);
       for (const name of ['Collectors', 'Jobs', 'Model usage', 'Maintenance']) { await open(page, name); assert.equal(await horizontalOverflow(page), false, `${viewport.width} ${name}`); assert.deepEqual(await scrollers(page), [], `${viewport.width} ${name}`); }
       await open(page, 'Jobs'); assert.equal(await table(page, 'jobs').evaluate(element => getComputedStyle(element).display), 'table');
-      assert.equal(await rows(page, 'jobs').first().locator('a.cell-title').evaluate(element => element.textContent.includes('<script>') && element.children.length === 0), true, 'metadata stays literal text');
+      assert.equal(await row(page, 'jobs', scripted.activityJobs[1].job.id).locator('a.cell-title').evaluate(element => element.textContent.includes('<script>') && element.children.length === 0), true, 'metadata stays literal text');
       await context.close();
     }
   });
@@ -201,7 +201,9 @@ try {
 
   await rig.run('jobs append by document scroll, keep Current and History apart, and never offer retry for historical failures', async () => {
     const { context, page, fixture } = await scene(rig, { route: '/activity/jobs', configure: largeFixture });
-    await idle(page, 'jobs'); const identities = fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length; await appendUntil(page, 'jobs', 165);
+    // Revision is not a default column (claim-order mockup): this case reads it.
+    await idle(page, 'jobs'); await showAllColumns(page, 'jobs'); await idle(page, 'jobs');
+    const identities = fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length; await appendUntil(page, 'jobs', 165);
     assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length, identities, 'infinite scrolling never forces a security-epoch reset');
     await listState(page, 'jobs', 'end').waitFor(); assert.equal(await listState(page, 'jobs', 'end').innerText(), 'End of list · 165 current jobs');
     assert.equal(new Set(await rowIds(page, 'jobs')).size, 165);
@@ -237,7 +239,8 @@ try {
         new api.ActivityJob(held, fixture.targetProfile, api.ActivityJobClass.Current, NEXT_ATTEMPT, false, false, fixture.source.collectorNamespace, fixture.jobSession(held), '2026-10-22T09:32:00Z')];
       scriptJobs(fixture, 'lease:"unleased"', item => item.leaseExpiresAt === undefined && item.classification === api.ActivityJobClass.Current);
     } });
-    await idle(page, 'jobs');
+    // Reason is not a default column (claim-order mockup): this case reads it.
+    await idle(page, 'jobs'); await showAllColumns(page, 'jobs'); await idle(page, 'jobs');
     for (const [index, label] of ['Active lease at snapshot', 'Expired lease at snapshot', 'Unleased · no lease expiry'].entries()) {
       const id = runningId(index); assert.equal(await cell(page, 'jobs', id, 'LeaseState').innerText(), ['Active', 'Expired', 'Unleased'][index]);
       assert.match(await (await expand(page, 'jobs', id)).innerText(), new RegExp(label)); await button(row(page, 'jobs', id), 'Details').click();
@@ -439,7 +442,8 @@ try {
     await idle(page, 'jobs'); await appendUntil(page, 'jobs', PAGE_SIZE * 2);
     await page.evaluate(() => window.scrollTo(0, 1200)); await page.waitForFunction(() => scrollY === 1200);
     const before = await rowIds(page, 'jobs'), moved = before.at(-1);
-    fixture.activityJobs = fixture.activityJobs.map(item => item.job.id === moved ? item.with({ lastTimestamp: '2029-12-31T00:00:00Z' }) : item); await poll(page);
+    // The default order is the oldest wait first: the moved job starts waiting before every other.
+    fixture.activityJobs = fixture.activityJobs.map(item => item.job.id === moved ? item.with({ waitingSince: '2020-01-01T00:00:00Z' }) : item); await poll(page);
     const pill = button(region(page, 'Jobs'), 'Updated jobs · show latest'); await pill.waitFor();
     assert.deepEqual(await rowIds(page, 'jobs'), before, 'rows stay until the update is applied'); assert.equal(await page.evaluate(() => scrollY), 1200);
     await pill.click(); await rows(page, 'jobs').first().and(row(page, 'jobs', moved)).waitFor(); assert.equal(await pill.count(), 0);

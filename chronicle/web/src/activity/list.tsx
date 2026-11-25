@@ -13,12 +13,18 @@ import type { ListState } from './state.ts';
 // place, infinite loading with an explicit end marker. Shared by Collectors and Jobs.
 export interface ColumnWidth { readonly min: number; readonly ideal: number; readonly max: number }
 export interface Column<Row, S extends string> {
-  readonly sort: S; readonly label: string; readonly cell: 'col-num' | 'col-mono' | undefined; readonly width: ColumnWidth;
+  /** The server order of the column, or null for a column the server cannot order (its `id` then names it). */
+  readonly sort: S | null; readonly id?: string; readonly label: string; readonly cell: 'col-num' | 'col-mono' | undefined; readonly width: ColumnWidth;
   /** Shown by default on wide viewports, at the 1100 px breakpoint and on phones; `required` columns cannot be hidden. */
   readonly compact: boolean; readonly medium: boolean; readonly narrow: boolean; readonly required: boolean;
   title(row: Row): string | undefined; render(row: Row, now: number): ReactNode;
 }
 const ACTIONS_COLUMN = 'actions';
+export function columnId<Row, S extends string>(column: Column<Row, S>): string {
+  const id = column.id ?? column.sort;
+  if (id === null) throw new Error(`Column ${column.label} has neither a sort nor an id`);
+  return id;
+}
 // Laptop widths (the shared 1100 px breakpoint) and phone widths (720 px) start with their own shorter column choices, fitted to
 // the viewport (spec §8 item 9; the mockup hides Reason below 1100 px).
 const MEDIUM_QUERY = '(max-width: 1100px)', NARROW_QUERY = '(max-width: 720px)';
@@ -29,7 +35,7 @@ function useMedia(text: string): boolean {
   return useSyncExternalStore(listener => { query.addEventListener('change', listener); return () => query.removeEventListener('change', listener); }, () => query.matches);
 }
 function specs<Row, S extends string>(columns: readonly Column<Row, S>[], actions: ColumnWidth, width: Width): TableColumnSpec[] {
-  return [...columns.map(column => ({ id: column.sort, label: column.label, ...column.width, grow: column.required, required: column.required, compact: width === 'narrow' ? column.narrow : width === 'medium' ? column.medium : column.compact })),
+  return [...columns.map(column => ({ id: columnId(column), label: column.label, ...column.width, grow: column.required, required: column.required, compact: width === 'narrow' ? column.narrow : width === 'medium' ? column.medium : column.compact })),
     { id: ACTIONS_COLUMN, label: 'Actions', ...actions, grow: false, required: true, compact: true }];
 }
 export interface ListTableLayout<Row, S extends string> { readonly layout: TableLayout; readonly shown: readonly Column<Row, S>[] }
@@ -40,7 +46,7 @@ export function useListTable<Row, S extends string>(columns: readonly Column<Row
   const wideSpecs = useMemo(() => specs(columns, actions, 'wide'), [columns, actions]), mediumSpecs = useMemo(() => specs(columns, actions, 'medium'), [columns, actions]), narrowSpecs = useMemo(() => specs(columns, actions, 'narrow'), [columns, actions]);
   const wide = useStoredTableColumns(choices, wideSpecs, rowCount, width === 'wide'), laptop = useStoredTableColumns(mediumChoices, mediumSpecs, rowCount, width === 'medium'), phone = useStoredTableColumns(narrowChoices, narrowSpecs, rowCount, width === 'narrow');
   const layout = width === 'narrow' ? phone : width === 'medium' ? laptop : wide;
-  return { layout, shown: columns.filter(column => layout.columns.some(item => item.spec.id === column.sort)) };
+  return { layout, shown: columns.filter(column => layout.columns.some(item => item.spec.id === columnId(column))) };
 }
 
 export interface ListTableProps<Row, S extends string> {
@@ -57,14 +63,14 @@ export function ListTable<Row, S extends string>({ name, list, twoLine, table, r
   const remaining = total === null ? 0 : Math.min(pageSize, Number(total) - resource.items.length);
   return <ScrollAnchor><div className="activity-table-frame" ref={layout.container} data-scroll-container="">
     <table className={twoLine ? 'table table-2line activity-table' : 'table activity-table'} ref={layout.table} aria-label={name} data-list={list} aria-busy={resource.loading || resource.refreshing || resource.loadingMore} hidden={failed || empty}>{colgroup}
-      <thead><tr>{shown.map(column => { const sorted = state.sort === column.sort; return <th key={column.sort} scope="col" className={column.cell === 'col-num' ? 'col-num' : undefined} data-column-id={column.sort} data-sort={column.sort} aria-sort={sorted ? state.direction === SortDirection.Asc ? 'ascending' : 'descending' : undefined}>
-        <button type="button" className="th-sort" onClick={() => sortBy(column.sort)} aria-label={`Sort by ${column.label}`}>{column.label}</button><ColumnResize column={layout.columns.find(item => item.spec.id === column.sort)!} layout={layout}/>
+      <thead><tr>{shown.map(column => { const id = columnId(column), sort = column.sort, sorted = sort !== null && state.sort === sort; return <th key={id} scope="col" className={column.cell === 'col-num' ? 'col-num' : undefined} data-column-id={id} data-sort={sort ?? undefined} aria-sort={sorted ? state.direction === SortDirection.Asc ? 'ascending' : 'descending' : undefined}>
+        {sort === null ? <span className="th-label" title={column.label}>{column.label}</span> : <button type="button" className="th-sort" onClick={() => sortBy(sort)} aria-label={`Sort by ${column.label}`}>{column.label}</button>}<ColumnResize column={layout.columns.find(item => item.spec.id === id)!} layout={layout}/>
       </th>; })}<th scope="col" className="col-actions" data-column-id={ACTIONS_COLUMN}><span className="sr-only">Actions</span></th></tr></thead>
       <tbody>{resource.items.map(row => {
         const id = rowId(row), open = state.expanded === id, detailId = `${list}-detail-${id}`;
         return <Fragment key={id}>
           <tr className={rowClass} data-row-id={id} data-scroll-anchor={id} data-state={rowState(row)} aria-selected={open ? true : undefined}>
-            {shown.map(column => <td key={column.sort} className={column.cell} data-column-id={column.sort} title={column.title(row)}>{column.render(row, now)}</td>)}
+            {shown.map(column => <td key={columnId(column)} className={column.cell} data-column-id={columnId(column)} title={column.title(row)}>{column.render(row, now)}</td>)}
             <td className="col-actions" data-column-id={ACTIONS_COLUMN}><span className="row-actions always">{actions(row)}
               <button type="button" className="btn btn-ghost btn-icon btn-sm row-toggle" aria-label="Details" aria-expanded={open} aria-controls={open ? detailId : undefined} onClick={() => toggle(id)}><Icon name="chevron-down" small={true}/></button></span></td>
           </tr>
@@ -72,7 +78,7 @@ export function ListTable<Row, S extends string>({ name, list, twoLine, table, r
         </Fragment>;
       })}</tbody>
     </table>
-    {resource.loading && resource.items.length === 0 && <table className={twoLine ? 'table table-2line activity-skeleton' : 'table activity-skeleton'} aria-hidden="true">{colgroup}<tbody>{Array.from({ length: SKELETON_ROWS }, (_, index) => <tr key={index}>{shown.map(column => <td key={column.sort}><span className="skeleton sk-60"/></td>)}<td/></tr>)}</tbody></table>}
+    {resource.loading && resource.items.length === 0 && <table className={twoLine ? 'table table-2line activity-skeleton' : 'table activity-skeleton'} aria-hidden="true">{colgroup}<tbody>{Array.from({ length: SKELETON_ROWS }, (_, index) => <tr key={index}>{shown.map(column => <td key={columnId(column)}><span className="skeleton sk-60"/></td>)}<td/></tr>)}</tbody></table>}
     {empty && !failed && emptyState}
     {resource.meta !== null && resource.items.length > 0 && total !== null && (resource.appendError !== null
       ? <div className="list-foot" data-list-state="append-error"><span role="alert">Could not load more: {resource.appendError}</span><button type="button" className="btn btn-sm" onClick={resource.retryAppend}>Retry</button></div>
