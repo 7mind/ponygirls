@@ -10,14 +10,16 @@ export class ActivityQueue implements BaboonGeneratedLatest {
     private readonly _unclassified: ActivityClassQueue;
     private readonly _awaitingLarge: bigint;
     private readonly _largeAhead: bigint | undefined;
+    private readonly _activeRunning: bigint;
 
-    constructor(claimOrder: ActivityClaimOrder, fresh: ActivityClassQueue, bulk: ActivityClassQueue, unclassified: ActivityClassQueue, awaitingLarge: bigint, largeAhead: bigint | undefined) {
+    constructor(claimOrder: ActivityClaimOrder, fresh: ActivityClassQueue, bulk: ActivityClassQueue, unclassified: ActivityClassQueue, awaitingLarge: bigint, largeAhead: bigint | undefined, activeRunning: bigint) {
         this._claimOrder = claimOrder
         this._fresh = fresh
         this._bulk = bulk
         this._unclassified = unclassified
         this._awaitingLarge = awaitingLarge
         this._largeAhead = largeAhead
+        this._activeRunning = activeRunning
     }
 
     public get claimOrder(): ActivityClaimOrder {
@@ -38,6 +40,9 @@ export class ActivityQueue implements BaboonGeneratedLatest {
     public get largeAhead(): bigint | undefined {
         return this._largeAhead;
     }
+    public get activeRunning(): bigint {
+        return this._activeRunning;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -46,29 +51,32 @@ export class ActivityQueue implements BaboonGeneratedLatest {
             bulk: this._bulk,
             unclassified: this._unclassified,
             awaitingLarge: this._awaitingLarge,
-            largeAhead: this._largeAhead !== undefined ? this._largeAhead : undefined
+            largeAhead: this._largeAhead !== undefined ? this._largeAhead : undefined,
+            activeRunning: this._activeRunning
         };
     }
 
-    public with(overrides: {claimOrder?: ActivityClaimOrder; fresh?: ActivityClassQueue; bulk?: ActivityClassQueue; unclassified?: ActivityClassQueue; awaitingLarge?: bigint; largeAhead?: bigint | undefined}): ActivityQueue {
+    public with(overrides: {claimOrder?: ActivityClaimOrder; fresh?: ActivityClassQueue; bulk?: ActivityClassQueue; unclassified?: ActivityClassQueue; awaitingLarge?: bigint; largeAhead?: bigint | undefined; activeRunning?: bigint}): ActivityQueue {
         return new ActivityQueue(
             'claimOrder' in overrides ? overrides.claimOrder! : this._claimOrder,
             'fresh' in overrides ? overrides.fresh! : this._fresh,
             'bulk' in overrides ? overrides.bulk! : this._bulk,
             'unclassified' in overrides ? overrides.unclassified! : this._unclassified,
             'awaitingLarge' in overrides ? overrides.awaitingLarge! : this._awaitingLarge,
-            'largeAhead' in overrides ? overrides.largeAhead! : this._largeAhead
+            'largeAhead' in overrides ? overrides.largeAhead! : this._largeAhead,
+            'activeRunning' in overrides ? overrides.activeRunning! : this._activeRunning
         );
     }
 
-    public static fromPlain(obj: {claimOrder: ActivityClaimOrder; fresh: ActivityClassQueue; bulk: ActivityClassQueue; unclassified: ActivityClassQueue; awaitingLarge: bigint; largeAhead: bigint | undefined}): ActivityQueue {
+    public static fromPlain(obj: {claimOrder: ActivityClaimOrder; fresh: ActivityClassQueue; bulk: ActivityClassQueue; unclassified: ActivityClassQueue; awaitingLarge: bigint; largeAhead: bigint | undefined; activeRunning: bigint}): ActivityQueue {
         return new ActivityQueue(
             obj.claimOrder,
             obj.fresh,
             obj.bulk,
             obj.unclassified,
             obj.awaitingLarge,
-            obj.largeAhead
+            obj.largeAhead,
+            obj.activeRunning
         );
     }
 
@@ -114,6 +122,7 @@ export class ActivityQueue_JsonCodec {
             "unclassified": ActivityClassQueue_JsonCodec.instance.encode(BaboonCodecContext.Default, value.unclassified),
             "awaitingLarge": value.awaitingLarge.toString(),
             "largeAhead": value.largeAhead === undefined ? null : value.largeAhead.toString(),
+            "activeRunning": value.activeRunning.toString(),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): ActivityQueue {
@@ -129,6 +138,7 @@ export class ActivityQueue_JsonCodec {
             ActivityClassQueue_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["unclassified"]),
             BaboonInt64.read(obj["awaitingLarge"], "i64/u64"),
             obj["largeAhead"] === undefined || obj["largeAhead"] === null ? undefined : obj["largeAhead"] === undefined || obj["largeAhead"] === null ? undefined : BaboonInt64.read(obj["largeAhead"], "i64/u64"),
+            BaboonInt64.read(obj["activeRunning"], "i64/u64"),
         )
     }
 

@@ -1,5 +1,5 @@
 import { useContext, useLayoutEffect, useMemo, useRef } from 'react';
-import { ActivityClaimOrder, ActivityClaimOrderJobsQuery, ActivityClaimOrderSort, ActivityJobClass, ActivityJobScope, ActivityJobSort, ActivityJobsQuery, ExpressionHintTarget_ActivityJobs, JobState, Operation_ActivityClaimOrderJobs, Operation_RetryJob, Result_ActivityClaimOrderJobs, type ActivityClaimOrderJobsResult, type ActivityClaimOrderSummaryResult, type ActivityClassQueue, type ActivityResult, type UserInfo } from '../api.ts';
+import { ActivityClaimOrder, ActivityClaimOrderJobsQuery, ActivityClaimOrderSort, ActivityJobClass, ActivityJobScope, ActivityJobSort, ActivityJobsQuery, ExpressionHintTarget_ActivityJobs, JobState, Operation_ActivityClaimOrderJobs, Operation_RetryJob, Result_ActivityClaimOrderJobs, type ActivityClaimOrderJobsResult, type ActivityClaimOrderSummaryResult, type ActivityClassQueue, type UserInfo } from '../api.ts';
 import { read, type ChronicleConnection } from '../client.ts';
 import { useSettledInfiniteResource } from '../infinite.ts';
 import { validateMetadataExpression } from '../expression.ts';
@@ -152,7 +152,7 @@ function JobDetail({ row, scope, blocked, retry, order }: { row: JobRow; scope: 
 // with each job's claim-order entry beside it, merged by job id. Its own operation keeps the replies of `ActivityJobs`
 // exactly as before for every other client (an older CLI validates their exact fields); the server orders Class, Waiting
 // since and Why not running across pages. `claimSummary`: the owner's claim-order counts (`ActivityClaimOrderSummary`).
-export function Jobs({ connection, stats, user, actions, refresh, refreshNow, summary, claimSummary }: { connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; actions: MutationState; refresh: string; refreshNow: () => void; summary: ActivityResult | null; claimSummary: ActivityClaimOrderSummaryResult | null }) {
+export function Jobs({ connection, stats, user, actions, refresh, refreshNow, claimSummary }: { connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; actions: MutationState; refresh: string; refreshNow: () => void; claimSummary: ActivityClaimOrderSummaryResult | null }) {
   const cache = useContext(RouteStateContext);
   if (cache === null) throw new Error('Jobs requires a RouteStateContext provider');
   const [state, setState] = useRouteState(JOBS_STATE, ACTIVITY_INSTANCE), [draft, setDraft] = useRouteState(JOBS_DRAFT, ACTIVITY_INSTANCE), input = useRef<HTMLInputElement>(null);
@@ -192,7 +192,7 @@ export function Jobs({ connection, stats, user, actions, refresh, refreshNow, su
   // Editing keeps the rows of the submitted expression, dimmed and labelled, until the edit is submitted (spec §1 principle 5).
   const editing = draft !== state.submitted;
   const counter = editing ? <span data-state="pending">Expression edited · Filter to update</span> : resource.loading ? `Loading ${noun} jobs…` : meta === null ? 'Not loaded' : <><strong>{meta.total.toLocaleString()}</strong> {noun} job{meta.total === 1n ? '' : 's'} · {resource.hasMore ? `${resource.items.length.toLocaleString()} loaded` : 'all loaded'}</>;
-  return <><ClaimStrip summary={summary} claimSummary={claimSummary} user={user}/><section className="activity-list" data-editing={editing ? '' : undefined} aria-label="Jobs" data-view="activity-jobs" ref={region} onClickCapture={event => { const row = event.target instanceof Element && event.target.closest('a.cell-title') !== null ? event.target.closest('tr[data-row-id]') : null; if (row instanceof HTMLElement && row.dataset.rowId !== undefined) setOpened(row.dataset.rowId); }}>
+  return <><ClaimStrip claimSummary={claimSummary} user={user}/><section className="activity-list" data-editing={editing ? '' : undefined} aria-label="Jobs" data-view="activity-jobs" ref={region} onClickCapture={event => { const row = event.target instanceof Element && event.target.closest('a.cell-title') !== null ? event.target.closest('tr[data-row-id]') : null; if (row instanceof HTMLElement && row.dataset.rowId !== undefined) setOpened(row.dataset.rowId); }}>
     <div className="viewbar activity-viewbar" data-view-bar="">
       <div className="segmented" role="group" aria-label="Indexing job scope">{([[ActivityJobScope.Current, 'Current'], [ActivityJobScope.Historical, 'History']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={state.scope === value} onClick={() => scope(value)}>{label}</button>)}</div>
       <MetadataQueryBar inputRef={input} name="Indexing job" placeholder={PLACEHOLDER} value={draft} applied={state.submitted} change={setDraft} submit={submit} disabled={stats.activeId === null} completion={{ connection, stats, owner: user.id, target: new ExpressionHintTarget_ActivityJobs(state.scope, undefined) }}/>
@@ -214,8 +214,9 @@ export function Jobs({ connection, stats, user, actions, refresh, refreshNow, su
   </section></>;
 }
 const CLASSES = [['fresh', 'chip chip-info'], ['bulk', 'chip'], ['unclassified', 'chip chip-outline']] as const;
-/** The owner's own current jobs per class in the claim order (owner-scoped: no other owner's job is counted here). */
-function ClaimStrip({ summary, claimSummary, user }: { summary: ActivityResult | null; claimSummary: ActivityClaimOrderSummaryResult | null; user: UserInfo }) {
+/** The owner's own current jobs per class in the claim order (owner-scoped: no other owner's job is counted here). Every number,
+  * the running count too, is the claim-order summary's: one snapshot at its `observedAt`. */
+function ClaimStrip({ claimSummary, user }: { claimSummary: ActivityClaimOrderSummaryResult | null; user: UserInfo }) {
   if (claimSummary === null) return null;
   const queue = claimSummary.queue;
   const now = Date.now(), waiting = queue.claimOrder === ActivityClaimOrder.Waiting;
@@ -234,7 +235,7 @@ function ClaimStrip({ summary, claimSummary, user }: { summary: ActivityResult |
         </table>
         <dl className="claim-lanes">
           <dt>Order</dt><dd>{waiting ? 'Oldest waiting first within each class' : 'Owner, then source ID (today\'s order)'}</dd>
-          <dt>Running</dt><dd>{summary === null ? <span className="muted">Unknown</span> : summary.current.activeRunning > 0n ? <span className="status status-run">{count(summary.current.activeRunning, 'of your jobs', 'of your jobs')}</span> : <span className="muted">None of your jobs</span>}</dd>
+          <dt>Running</dt><dd>{queue.activeRunning > 0n ? <span className="status status-run">{count(queue.activeRunning, 'of your jobs', 'of your jobs')}</span> : <span className="muted">None of your jobs</span>}</dd>
           <dt>Large-job lane</dt><dd>{queue.awaitingLarge === 0n ? <span className="muted">None of your jobs waits for it</span> : <>{queue.awaitingLarge.toLocaleString()} of your jobs {queue.awaitingLarge === 1n ? 'waits' : 'wait'} for it{large !== null && <span className="muted"> · <span className="ahead" tabIndex={0} title={`${large.toLocaleString()} jobs (of all owners) will be claimed before the first of them. An order, not a time estimate.`}>{waiting ? `${count(large, 'large job', 'large jobs')} ahead` : `${large.toLocaleString()} ahead`}</span><NoteMark/></span>}</>}</dd>
           <dt>Not counted</dt><dd className="muted">Running jobs with a valid lease; superseded and obsolete jobs (History)</dd>
         </dl>

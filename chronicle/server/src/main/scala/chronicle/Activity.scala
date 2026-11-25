@@ -129,7 +129,7 @@ private[chronicle] object ActivityQueueSql {
     val claimed=if(profiles==0) "SELECT NULL::text AS profile WHERE false" else List.fill(profiles)("(?)").mkString("VALUES ",",","")
     s""", claimed(profile) AS ($claimed),
     queue AS MATERIALIZED (
-      SELECT ${order("q")},h.owner,${sizes("q")},CASE WHEN q.state='Queued' THEN q.lease_until END AS held_until,older.revision AS older_revision,
+      SELECT ${order("q")},h.owner,${sizes("q")},CASE WHEN q.state='Queued' THEN q.lease_until END AS held_until,older.revision AS older_revision,j.is_current AND q.state='Running' AS current_running,
         ${reason(view.mode,epoch)} AS waiting,COALESCE(j.is_current AND h.indexing_allowed AND ${executed("q")} AND ${candidate("q",epoch)},false) AS candidate
       FROM jobs j JOIN heads h ON h.id=j.session_id JOIN ch_jobs q ON q.id=j.id
       CROSS JOIN LATERAL (SELECT ${ChronicleIndexing.epochOwnerSql("h.owner")} AS epoch OFFSET 0) e
@@ -162,9 +162,11 @@ private[chronicle] object ActivityQueueSql {
     case ClaimOrderMode.SourceId if view.lanes<=1 => "row_number() OVER (ORDER BY owner,session_id)-1"
     case ClaimOrderMode.SourceId => "CASE WHEN permit_only THEN row_number() OVER (ORDER BY owner,session_id)-1 END"
   }
-  /** Of the owner's own jobs: those awaiting the large-job lane (permit), and the rank of the first of them. */
+  /** Of the owner's own jobs: those awaiting the large-job lane (permit), the rank of the first of them, and those running
+    * (current, Running, no waiting reason: a valid lease, its indexing epoch current) in the same snapshot as the reasons. */
   def largeLane(view: ActivityClaimOrderView): String =
     s"""SELECT (SELECT count(*) FROM queue WHERE waiting IN(${list(large)})) AS awaiting,
+      (SELECT count(*) FROM queue WHERE current_running AND waiting IS NULL) AS active_running,
       (SELECT min(r.rank) FROM queue q JOIN ranked r ON r.id=q.id WHERE q.candidate AND q.waiting IN(${list(large)})) AS large_ahead"""
   /** Per class of the owner's own current unfinished jobs: waiting for any reason, claimable now, held, awaiting reclaim,
     * the oldest wait. */
@@ -358,12 +360,12 @@ final class PostgresActivity(db: Database,clock: Clock,view: ActivityClaimOrderV
     val empty=ActivityClassQueue(0,0,0,0,None)
     val rows=Sql.rows(c,base+queueCte+s""", classes AS (${ActivityQueueSql.classes})
       , lane AS (${ActivityQueueSql.largeLane(view)})
-      SELECT classes.*,lane.awaiting,lane.large_ahead FROM lane LEFT JOIN classes ON true""",queueParameters(owner,now)*) { r =>
+      SELECT classes.*,lane.awaiting,lane.large_ahead,lane.active_running FROM lane LEFT JOIN classes ON true""",queueParameters(owner,now)*) { r =>
       val counts=Option(r.getString("class")).map(_ -> ActivityClassQueue(r.getLong("queued"),r.getLong("claimable"),r.getLong("held"),r.getLong("awaiting_reclaim"),Option(r.getTimestamp("oldest")).map(_.toInstant.toString)))
-      (counts,r.getLong("awaiting"),Option(r.getObject("large_ahead",classOf[java.lang.Long])).map(_.longValue))
+      (counts,r.getLong("awaiting"),Option(r.getObject("large_ahead",classOf[java.lang.Long])).map(_.longValue),r.getLong("active_running"))
     }
     val classes=rows.flatMap(_._1).toMap
-    ActivityQueue(ActivityQueueSql.claimOrder(mode),classes.getOrElse("fresh",empty),classes.getOrElse("bulk",empty),classes.getOrElse("unclassified",empty),rows.head._2,rows.head._3)
+    ActivityQueue(ActivityQueueSql.claimOrder(mode),classes.getOrElse("fresh",empty),classes.getOrElse("bulk",empty),classes.getOrElse("unclassified",empty),rows.head._2,rows.head._3,rows.head._4)
   }
   private final case class Totals(archiveHeads: Long,withoutTarget: Long,current: JobCounts,historical: JobCounts,collectors: Long)
   def summary(user: UserInfo,q: ActivityQuery): ActivityResult = {

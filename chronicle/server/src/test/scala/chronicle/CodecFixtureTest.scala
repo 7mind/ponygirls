@@ -133,6 +133,6 @@ class CodecFixtureTest extends munit.FunSuite {
     assertEquals(result.jobs.map(_.ahead).head,Some(9007199254740993L))
     assertEquals(result.jobs.map(_.bulk).take(3),List(Some(true),Some(false),None))
     val queues=envelopes.tail.map(_.result match { case Result.ActivityClaimOrderSummary(result) => result.queue; case other => fail(s"unexpected $other") })
-    assertEquals(queues.map(q => (q.claimOrder,q.bulk.queued,q.largeAhead)),Vector((ActivityClaimOrder.Waiting,9007199254740993L,Some(2L)),(ActivityClaimOrder.SourceId,9007199254740993L,None)))
+    assertEquals(queues.map(q => (q.claimOrder,q.bulk.queued,q.largeAhead,q.activeRunning)),Vector((ActivityClaimOrder.Waiting,9007199254740993L,Some(2L),9007199254740993L),(ActivityClaimOrder.SourceId,9007199254740993L,None,0L)))
   }
 }

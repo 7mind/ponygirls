@@ -299,7 +299,7 @@ data ActivityClassQueue {
 
 data ActivityQueue {
   claimOrder: ActivityClaimOrder fresh: ActivityClassQueue bulk: ActivityClassQueue unclassified: ActivityClassQueue
-  awaitingLarge: i64 largeAhead: opt[i64]
+  awaitingLarge: i64 largeAhead: opt[i64] activeRunning: i64
 }
 
 data ActivityResult {

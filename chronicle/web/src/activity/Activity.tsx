@@ -101,7 +101,7 @@ function OwnerActivity({ connection, stats, user, actions, routing }: ActivityPr
     </div>
     {section === 'overview' && <Overview user={user} snapshots={snapshots} usage={usage}/>}
     {section === 'collectors' && <Collectors connection={connection} stats={stats} user={user} refresh={refreshKey} refreshNow={refreshNow}/>}
-    {section === 'jobs' && <Jobs connection={connection} stats={stats} user={user} actions={actions} refresh={refreshKey} refreshNow={refreshNow} summary={summary.meta} claimSummary={claimSummary.meta}/>}
+    {section === 'jobs' && <Jobs connection={connection} stats={stats} user={user} actions={actions} refresh={refreshKey} refreshNow={refreshNow} claimSummary={claimSummary.meta}/>}
     {section === 'usage' && <section className="page page-narrow" aria-label="Model usage" data-view="activity-usage"><ModelUsageView usage={usage} connected={connected}/></section>}
     {section === 'maintenance' && <Maintenance connection={connection} stats={stats} user={user} actions={actions} summary={summary.meta} switchPending={switchPending} setSwitchPending={setSwitchPending} refresh={refreshNow}/>}
   </main>;

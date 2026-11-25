@@ -17,7 +17,7 @@ const ROWS = {
   held: id(1), bulk: id(2), large: id(3), expired: id(4), running: id(5), fresh: id(6), blocked: id(7), exhausted: id(8), off: id(9), unclassified: id(10), historical: id(11), unleased: id(12), finished: id(13),
 };
 /** Jobs of one owner in every state the mockup shows, plus the remaining reasons; the server's summary of them. */
-function claimFixture(fixture, { order = api.ActivityClaimOrder.Waiting, jobsOrder = undefined, summaryOrder = order } = {}) {
+function claimFixture(fixture, { order = api.ActivityClaimOrder.Waiting, jobsOrder = undefined, summaryOrder = order, running = 1n } = {}) {
   const large = order === api.ActivityClaimOrder.Waiting ? new api.ActivityJobWaiting_AwaitingLargeLane() : new api.ActivityJobWaiting_AwaitingLargePermit();
   const job = (key, state, attempts, error, done, total) => new api.JobInfo(ROWS[key], fixture.session.id, fixture.headRevision, state, attempts, error, done, total, undefined);
   const make = (key, title, info, options) => {
@@ -44,7 +44,7 @@ function claimFixture(fixture, { order = api.ActivityClaimOrder.Waiting, jobsOrd
     make('unclassified', 'Session J', job('unclassified', api.JobState.Queued, 0, undefined, 0, undefined), { since: undefined, bulk: undefined, waiting: new api.ActivityJobWaiting_Queued(), ahead: order === api.ActivityClaimOrder.Waiting ? undefined : 7n }),
   ];
   fixture.jobs = fixture.activityJobs.map(item => item.job); fixture.jobsClaimOrder = jobsOrder;
-  fixture.claimQueue = new api.ActivityQueue(summaryOrder, new api.ActivityClassQueue(6n, 2n, 1n, 1n, '2030-01-01T13:00:00Z'), new api.ActivityClassQueue(2n, 2n, 0n, 0n, '2030-01-01T15:20:00Z'), new api.ActivityClassQueue(1n, 1n, 0n, 0n, undefined), 1n, 2n);
+  fixture.claimQueue = new api.ActivityQueue(summaryOrder, new api.ActivityClassQueue(6n, 2n, 1n, 1n, '2030-01-01T13:00:00Z'), new api.ActivityClassQueue(2n, 2n, 0n, 0n, '2030-01-01T15:20:00Z'), new api.ActivityClassQueue(1n, 1n, 0n, 0n, undefined), 1n, 2n, running);
 }
 const why = (page, key) => cell(page, 'jobs', ROWS[key], 'Waiting');
 const text = async locator => (await locator.innerText()).replace(/\s+/g, ' ').trim();
@@ -110,7 +110,8 @@ try {
     assert.equal(await text(cell(page, 'jobs', ROWS.held, 'State')), 'Held');
     assert.match(await text(why(page, 'blocked')), /^Waiting for older revision r6 \(still running\) Joins the fresh order when r6 ends$/);
     assert.equal(await text(cell(page, 'jobs', ROWS.blocked, 'State')), 'Blocked');
-    assert.match(await text(why(page, 'off')), /^Indexing is turned off for your account/);
+    assert.equal(await text(why(page, 'off')), 'Your account is not being indexed Indexing off, or your index profile is not run here');
+    assert.equal(await text(cell(page, 'jobs', ROWS.off, 'State')), 'Not indexing');
     assert.match(await text(why(page, 'unclassified')), /^Queued Claimable/, 'no position where the order in force has none');
     assert.match(await text(why(page, 'unleased')), /^Running without a lease No claim takes a job without a lease · retry it$/);
     assert.equal(await text(cell(page, 'jobs', ROWS.unleased, 'State')), 'Running without a lease');
@@ -136,9 +137,11 @@ try {
   });
 
   await rig.run('the strip counts the owner’s own jobs per class and the large-job lane from the claim-order summary', async () => {
-    const { context, page, fixture } = await claimScene();
+    // Two snapshots that disagree on purpose: the Activity summary counts one active lease, the claim-order summary three.
+    const { context, page, fixture } = await claimScene({ running: 3n });
     const strip = main(page).getByRole('region', { name: 'Your jobs in the claim order', exact: true });
     await strip.getByRole('table', { name: 'Claim-order counts per class', exact: true }).waitFor();
+    assert.equal(fixture.activityResult(new api.ActivityQuery('', api.ActivityCollectorSort.CollectorId, api.SortDirection.Asc, undefined, 1)).current.activeRunning, 1n);
     const counts = await strip.locator('tbody tr').evaluateAll(items => items.map(item => [item.dataset.class, ...[...item.querySelectorAll('td.col-num')].map(td => td.textContent)]));
     assert.deepEqual(counts, [['fresh', '6', '2', '1', '1'], ['bulk', '2', '2', '0', '0'], ['unclassified', '1', '1', '0', '0']]);
     // Oldest waiting: the time and the duration, both visible at 1440 px.
@@ -146,8 +149,8 @@ try {
     assert.match(oldest[0], /^\S.* · 5 h$/); assert.match(oldest[1], /^\S.* · 2 h 40 min$/); assert.equal(oldest[2], '—');
     assert.equal(await strip.locator('td.claim-oldest .waited-for').first().isVisible(), true);
     assert.equal(await unclipped(strip.locator('td.claim-oldest .waited-for')), true, 'the waiting duration is not cut off');
-    assert.match(await text(strip), /Order Oldest waiting first within each class Running 1 of your jobs Large-job lane 1 of your jobs waits for it · 2 large jobs ahead¹ Not counted Running jobs with a valid lease; superseded and obsolete jobs \(History\)/);
-    // The counts are the claim-order summary's (its own operation); the Activity summary keeps its reply.
+    assert.match(await text(strip), /Order Oldest waiting first within each class Running 3 of your jobs Large-job lane 1 of your jobs waits for it · 2 large jobs ahead¹ Not counted Running jobs with a valid lease; superseded and obsolete jobs \(History\)/);
+    // Every number of the strip, the running count too, is the claim-order summary's (its own operation, one snapshot).
     assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_ActivityClaimOrderSummary));
     await context.close();
   });

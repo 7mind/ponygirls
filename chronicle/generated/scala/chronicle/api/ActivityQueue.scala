@@ -9,7 +9,8 @@ package chronicle.api {
     bulk: ActivityClassQueue,
     unclassified: ActivityClassQueue,
     awaitingLarge: Long,
-    largeAhead: Option[Long]
+    largeAhead: Option[Long],
+    activeRunning: Long
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = ActivityQueue.baboonDomainVersion
     override def baboonDomainIdentifier: String = ActivityQueue.baboonDomainIdentifier
@@ -44,7 +45,8 @@ package chronicle.api {
         "bulk" -> ActivityClassQueue_JsonCodec.instance.encode(ctx, value.bulk),
         "unclassified" -> ActivityClassQueue_JsonCodec.instance.encode(ctx, value.unclassified),
         "awaitingLarge" -> Json.fromString(value.awaitingLarge.toString),
-        "largeAhead" -> value.largeAhead.map(v => Json.fromString(v.toString)).getOrElse(Json.Null)
+        "largeAhead" -> value.largeAhead.map(v => Json.fromString(v.toString)).getOrElse(Json.Null),
+        "activeRunning" -> Json.fromString(value.activeRunning.toString)
       )
     }
     
@@ -61,7 +63,8 @@ package chronicle.api {
             unclassified <- getField(jsonObject, "unclassified").flatMap(v => ActivityClassQueue_JsonCodec.circeDecoder(v.hcursor))
             awaitingLarge <- getField(jsonObject, "awaitingLarge").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             largeAhead <- getField(jsonObject, "largeAhead").flatMap(v => decodeOption(BaboonJsonCodec.decodeLong)(v.hcursor))
-          } yield ActivityQueue(claimOrder,fresh,bulk,unclassified,awaitingLarge,largeAhead)
+            activeRunning <- getField(jsonObject, "activeRunning").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
+          } yield ActivityQueue(claimOrder,fresh,bulk,unclassified,awaitingLarge,largeAhead,activeRunning)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ActivityQueue: object expected"))
       }
     }

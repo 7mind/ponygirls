@@ -87,17 +87,25 @@ class Server:
         self.log = (root / f'{label}.log').open('x')
         self.process = subprocess.Popen([str(binary), 'serve-standby', str(config)], env=env, stdin=subprocess.DEVNULL, stdout=self.log,
                                         stderr=subprocess.STDOUT, start_new_session=True)
-        origin = json.loads(config.read_text())['allowedOrigin']
+        # A server that is not ready (or an interrupt during the wait) is stopped here: the caller registers it only once
+        # it is ready, and it runs in its own process group.
+        try:
+            self.ready(json.loads(config.read_text())['allowedOrigin'])
+        except BaseException:
+            self.stop()
+            raise
+
+    def ready(self, origin):
         deadline = time.monotonic() + READY_SECONDS
         while True:
-            assert self.process.poll() is None, f'the {label} server exited during start'
+            assert self.process.poll() is None, f'the {self.label} server exited during start'
             try:
                 with urllib.request.urlopen(origin + '/api/versions', timeout=1) as response:
                     if response.status == 200:
                         return
             except OSError:
                 pass
-            assert time.monotonic() < deadline, f'{label} server readiness'
+            assert time.monotonic() < deadline, f'{self.label} server readiness'
             time.sleep(0.1)
 
     def stop(self):

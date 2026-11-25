@@ -76,7 +76,7 @@ export class ChronicleFixture {
   activityJobs = undefined; activityCollectors = undefined; collectorExpressions = new Map(); jobExpressions = new Map(); activityFailure = null;
   // The claim-order view (ActivityClaimOrderSummary, ActivityClaimOrderJobs): the owner's counts, each job's entry by job id
   // (default: fresh, no waiting time, reason or rank) and the claim order the job list reports (default: the summary's).
-  claimQueue = new api.ActivityQueue(api.ActivityClaimOrder.SourceId, ...Array.from({ length: 3 }, () => new api.ActivityClassQueue(0n, 0n, 0n, 0n, undefined)), 0n, undefined);
+  claimQueue = new api.ActivityQueue(api.ActivityClaimOrder.SourceId, ...Array.from({ length: 3 }, () => new api.ActivityClassQueue(0n, 0n, 0n, 0n, undefined)), 0n, undefined, 0n);
   claimEntries = new Map(); jobsClaimOrder = undefined;
   claimEntry(item) { return this.claimEntries.get(item.job.id) ?? new api.ActivityJobClaimOrder(item.job.id, undefined, false, undefined, undefined); }
   holdSessions = false; sessionHeadSnapshot = undefined; pendingSessions = [];

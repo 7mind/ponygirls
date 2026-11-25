@@ -400,4 +400,22 @@ final class ActivityClaimOrderTest extends munit.FunSuite {
       assertEquals(intercept[DomainError](read.claimOrderJobs("a",claimQuery(q.copy(limit=2,cursor=Some(ordered))))).code,"invalid",sort.toString)
     }
   }}
+
+  test("the summary's running count is the claim-order read's own: current Running jobs with a valid lease and no waiting reason, in its snapshot") { withFixture { f =>
+    val running=source(f,"a","running"); val expired=source(f,"a","expired"); val invalidated=source(f,"a","invalidated"); val unleased=source(f,"a","unleased")
+    val older=source(f,"a","older")
+    set(f,running,JobState.Running,lease=Some(minutes(10)),attempts=1,waiting=Some(minutes(-5)))
+    set(f,expired,JobState.Running,lease=Some(minutes(-5)),attempts=1,waiting=Some(minutes(-6)))
+    set(f,invalidated,JobState.Running,lease=Some(minutes(10)),attempts=1,waiting=Some(minutes(-7)),invalidated=true)
+    set(f,unleased,JobState.Running,lease=None,attempts=1,waiting=Some(minutes(-8)))
+    set(f,older,JobState.Running,lease=Some(Instant.now().plusSeconds(3600)),attempts=1,waiting=Some(minutes(-9)))
+    set(f,revise(f,older),JobState.Queued,waiting=Some(minutes(-9)))
+    List(ClaimOrderMode.SourceId,waiting).foreach { mode =>
+      val listed=jobs(f,mode,"a").values.toList
+      val shownRunning=listed.count(j => j.item.classification==ActivityJobClass.Current && j.job.state==JobState.Running && j.waiting.isEmpty).toLong
+      assertEquals((summary(f,mode,"a").activeRunning,shownRunning),(1L,1L),mode.toString)
+    }
+    preference(f,"a",IndexingChoice.Disable)
+    assertEquals(summary(f,waiting,"a").activeRunning,0L,"a job whose owner's indexing is off is not counted running")
+  }}
 }
