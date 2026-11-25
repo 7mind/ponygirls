@@ -40,9 +40,11 @@ let
       inherit (token) id userId name scopes;
       tokenFile = "${credentialDir}/${staticTokenName token.id}";
     }) cfg.staticTokens;
-    # Retain the capacity settings and write the switches only when nondefault.
+    # Retain the capacity settings and write the switches only when nondefault (the claim order and its bulk lanes only
+    # with the waiting order), so a default configuration renders as before.
     indexing = builtins.removeAttrs cfg.indexing (builtins.attrNames indexingPolicy.options
-      ++ lib.optional (!cfg.indexing.annotationContinuations) "annotationContinuations")
+      ++ lib.optional (!cfg.indexing.annotationContinuations) "annotationContinuations"
+      ++ lib.optionals (cfg.indexing.claimOrder == "source-id") [ "claimOrder" "bulkLanes" ])
       // indexingPolicy.renderFlags cfg.indexing;
     inherit (cfg.limits) maxBodyBytes maxFiles maxFileBytes maxMessages sessionTtlSeconds;
     annotation = endpointJson "annotation" cfg.annotation // { inherit (cfg.annotation) requestPolicy; };
@@ -100,6 +102,8 @@ in
       embeddingRequests = lib.mkOption { type = lib.types.ints.between 1 32; default = 8; description = "Shared concurrent embedding requests across indexing and search, independent of annotation-session admission."; };
       embeddingBatchSize = lib.mkOption { type = lib.types.ints.between 1 16; default = 16; description = "Maximum source pieces in each indexing embedding request."; };
       annotationContinuations = lib.mkOption { type = lib.types.bool; default = false; description = "Keep an annotation answer that stops at a fragment boundary and ask only the rest of its window (migration 031); off, such an answer is rejected and the whole window asked again. Read at start; not part of the profile identity."; };
+      claimOrder = lib.mkOption { type = lib.types.enum [ "source-id" "waiting" ]; default = "source-id"; description = "Order in which indexing lanes claim jobs (read at start). source-id: owner, then source id, the large-job permit taken by whichever lane loops first. waiting: oldest waiting job first within its class (bulk retry-failed and rebuilds versus everything else); lane 0 owns the large-job permit and takes deferred large jobs first; needs annotationSessions >= 3."; };
+      bulkLanes = lib.mkOption { type = lib.types.ints.positive; default = 1; description = "With claimOrder waiting: lanes that prefer bulk work (1..annotationSessions-2); the others after lane 0 prefer fresh work. A lane takes the other class when its own has no candidate."; };
     } // indexingPolicy.options;
     annotation = lib.mkOption { type = lib.types.submodule { options = endpointOptions // {
       requestPolicy = lib.mkOption { type = lib.types.enum [ "strict-json-schema" "strict-json-schema-32k" "glm-max-reasoning" ]; description = "Strict structured-output policy. strict-json-schema-32k raises the output cap to 32768 without provider-specific overrides. glm-max-reasoning enables the GLM-specific template extension. Changes require an explicit owner rebuild."; };
@@ -143,6 +147,7 @@ in
         { assertion = cfg.listenAddress == "127.0.0.1" || cfg.listenAddress == "::1"; message = "Chronicle: bind the backend to loopback and expose it through a TLS proxy."; }
         { assertion = cfg.publicUrl != null && (lib.hasPrefix "https://" cfg.publicUrl || (cfg.allowInsecureHttp && lib.hasPrefix "http://" cfg.publicUrl) || (cfg.loopbackDevelopment && (lib.hasPrefix "http://127.0.0.1:" cfg.publicUrl || lib.hasPrefix "http://localhost:" cfg.publicUrl))); message = "Chronicle: HTTPS publicUrl is required unless allowInsecureHttp or loopbackDevelopment is explicit."; }
         { assertion = cfg.publicUrl == null || !(lib.hasSuffix "/" cfg.publicUrl); message = "Chronicle: publicUrl must be the exact Origin without trailing slash."; }
+        { assertion = cfg.indexing.claimOrder != "waiting" || (cfg.indexing.annotationSessions >= 3 && cfg.indexing.bulkLanes <= cfg.indexing.annotationSessions - 2); message = "Chronicle: indexing.claimOrder \"waiting\" needs annotationSessions >= 3 and bulkLanes 1..annotationSessions-2."; }
         { assertion = !cfg.loopbackDevelopment || (cfg.publicUrl != null && (lib.hasPrefix "http://127.0.0.1:" cfg.publicUrl || lib.hasPrefix "http://localhost:" cfg.publicUrl)); message = "Chronicle: loopbackDevelopment is only valid with a loopback HTTP Origin."; }
         { assertion = lib.any (u: u.enabled) (builtins.attrValues cfg.users); message = "Chronicle: configure at least one enabled static user."; }
         { assertion = builtins.length (map (t: lib.toLower t.id) cfg.staticTokens) == builtins.length (lib.unique (map (t: lib.toLower t.id) cfg.staticTokens)); message = "Chronicle: static token IDs must be distinct."; }

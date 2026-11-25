@@ -232,6 +232,7 @@ final class OwnerIndexingJobsTest extends munit.FunSuite {
         admission = new ModelAdmission {
           def annotationSession: Resource[IO,Unit] = base.annotationSession
           def largeJob: Resource[IO,Boolean] = base.largeJob
+          def largeJobOwned: Resource[IO,Unit] = base.largeJobOwned
           def request(purpose: ModelWorkload): Resource[IO,Unit] =
             Resource.eval(if(purpose==workload) waiting.complete(()).void else IO.unit) *> base.request(purpose)
         }

@@ -55,12 +55,19 @@ final case class EmbeddingConfig(endpoint: String, model: String, revision: Stri
   * timeout of a publication's staging transactions (restart-robustness spec §4), `publicationTimeout`.
   * `annotationContinuations` (ANNOT2, read at start): an annotation answer that stops at a fragment boundary keeps its parts
   * and the rest of the window is asked; off, it is rejected `annotation-partition-incomplete` and the whole window asked
-  * again. Not part of the index profile. */
-final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int,embeddingBatchSize: Int,incrementalPublication: Boolean=true,metadataHorizonWindows: Int=ProblemRows.metadataHorizonWindows,publicationStatementTimeout: Option[FiniteDuration]=None,annotationContinuations: Boolean=false) {
+  * again. Not part of the index profile. `claimOrder` (read at start; indexing-claim-order spec §6): `SourceId` is today's
+  * order, `Waiting` the waiting order of ClaimOrder with `bulkLanes` bulk-preferring lanes (ignored under `SourceId`). */
+final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int,embeddingBatchSize: Int,incrementalPublication: Boolean=true,metadataHorizonWindows: Int=ProblemRows.metadataHorizonWindows,publicationStatementTimeout: Option[FiniteDuration]=None,annotationContinuations: Boolean=false,claimOrder: ClaimOrderSetting=ClaimOrderSetting.SourceId,bulkLanes: Int=1) {
   def validate(): Unit = {
     Check(annotationSessions>=1 && annotationSessions<=8,"config","annotation session capacity must be 1..8")
     Check(embeddingRequests>=1 && embeddingRequests<=32,"config","embedding request capacity must be 1..32")
     Check(embeddingBatchSize>=1 && embeddingBatchSize<=16,"config","embedding batch size must be 1..16")
+    Check(bulkLanes>=1,"config","indexing.bulkLanes must be at least 1")
+    // Lane 0 runs large jobs, `bulkLanes` lanes prefer bulk work and at least one prefers fresh work (spec R5).
+    if(claimOrder==ClaimOrderSetting.Waiting) {
+      Check(annotationSessions>=3,"config","indexing.claimOrder \"waiting\" needs indexing.annotationSessions of at least 3")
+      Check(bulkLanes<=annotationSessions-2,"config","indexing.bulkLanes must be 1..annotationSessions-2 with indexing.claimOrder \"waiting\"")
+    }
   }
   /** The publication keys, checked at start (Config.validate). */
   def validatePublication(limits: JdbcLimits): Unit = {
@@ -76,6 +83,11 @@ object IndexingCapacity {
   val defaults = IndexingCapacity(4,8,16)
   /** The start failure of a present `indexing.annotationContinuations` that is not a boolean (names the key, not the value). */
   val continuationsInvalid = "indexing.annotationContinuations must be true or false"
+  /** The start failures of a present `indexing.claimOrder` / `indexing.bulkLanes` of the wrong kind (name the key only). */
+  val claimOrderInvalid = "indexing.claimOrder must be \"source-id\" or \"waiting\""
+  val bulkLanesInvalid = "indexing.bulkLanes must be an integer"
+  /** Decoding failures whose message names the key, reported as they are by Config.load. */
+  val namedFailures: Set[String] = Set(continuationsInvalid,claimOrderInvalid,bulkLanesInvalid)
   /** A publication's statements (P1-P3) run up to this long: after a database restart the vector index is read from disk. */
   val publicationStatementTimeout: FiniteDuration = 5.minutes
   val maximumPublicationStatementTimeout: FiniteDuration = 1.hour
@@ -216,7 +228,11 @@ object Config {
       horizon <- if(cursor.downField("metadataHorizonWindows").focus.isEmpty) Right(ProblemRows.metadataHorizonWindows) else integer("metadataHorizonWindows")
       publication <- present[Long](cursor,"publicationStatementTimeoutMs")
       continued <- continuations.focus.fold(Right(IndexingCapacity.defaults.annotationContinuations))(_.asBoolean.toRight(io.circe.DecodingFailure(IndexingCapacity.continuationsInvalid,continuations.history)))
-    } yield IndexingCapacity(annotation,embedding,batch,incremental,horizon,publication.map(_.millis),continued)
+      order <- cursor.downField("claimOrder").focus.fold(Right(IndexingCapacity.defaults.claimOrder))(value => value.asString.flatMap(ClaimOrderSetting.parse)
+        .toRight(io.circe.DecodingFailure(IndexingCapacity.claimOrderInvalid,cursor.downField("claimOrder").history)))
+      bulk <- cursor.downField("bulkLanes").focus.fold(Right(IndexingCapacity.defaults.bulkLanes))(value => value.asNumber.flatMap(_.toInt)
+        .toRight(io.circe.DecodingFailure(IndexingCapacity.bulkLanesInvalid,cursor.downField("bulkLanes").history)))
+    } yield IndexingCapacity(annotation,embedding,batch,incremental,horizon,publication.map(_.millis),continued,order,bulk)
   }
   given Decoder[JdbcLimits] = Decoder.instance { cursor => for {
     connections <- cursor.get[Int]("maxConnections")
@@ -268,7 +284,7 @@ object Config {
   } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits,accounts,maxRawReadBytes,maxIndexingBudgetBytes,maxSmallJobBudgetBytes,maxRecordBytes,databaseStartWaitMs,pooled._1,pooled._2,indexingPolicy) }
   /** The server's configuration file. A decoding failure is `invalid configuration`, except a failure that names its key
     * (never a value). */
-  def load(path: String): Config = { val c = Wire.parse(Files.readString(Path.of(path))).as[Config].fold(failure => throw DomainError("config", if(failure.message==IndexingCapacity.continuationsInvalid) failure.message else "invalid configuration"), identity); c.validate(); c }
+  def load(path: String): Config = { val c = Wire.parse(Files.readString(Path.of(path))).as[Config].fold(failure => throw DomainError("config", if(IndexingCapacity.namedFailures(failure.message)) failure.message else "invalid configuration"), identity); c.validate(); c }
   def credential(path: String): String = BoundedSecretFile.read(Path.of(path),16384).stripTrailing()
 }
 object Password {
@@ -308,12 +324,24 @@ enum LargeJobs {
 object LargeJobs {
   val windows: Int = 100
 }
+/** `indexing.claimOrder`: "source-id" (today's order, the default) or "waiting" (ClaimOrder). */
+enum ClaimOrderSetting(val key: String) {
+  case SourceId extends ClaimOrderSetting("source-id")
+  case Waiting extends ClaimOrderSetting("waiting")
+}
+object ClaimOrderSetting {
+  def parse(value: String): Option[ClaimOrderSetting] = values.find(_.key==value)
+}
 trait SessionArchive extends IndexCheckpoints {
   def knownProfiles: Set[String]
   def ingest(owner: String, request: IngestRequest): IngestReceipt
   def session(reader: String, id: UUID): SessionInfo
   def claim(profiles: Set[String], scope: ClaimScope, leaseSeconds: Int, large: LargeJobs): Option[Claim]
   final def claim(profiles: Set[String], scope: ClaimScope, leaseSeconds: Int): Option[Claim] = claim(profiles,scope,leaseSeconds,LargeJobs.Admitted)
+  /** A claim of the waiting order (ClaimOrder, `indexing.claimOrder` "waiting") for `lane`. An archive without that order
+    * (an in-memory one) claims in its own order, admitting large jobs on lane 0 only. */
+  def claimInLane(profiles: Set[String], scope: ClaimScope, leaseSeconds: Int, lane: ClaimLane): ClaimOutcome =
+    ClaimOutcome.of(claim(profiles,scope,leaseSeconds,lane.large))
   /** Returns a claimed job to the queue without counting the attempt, recording its window count. A job whose source has
     * a newer revision ends superseded instead and false is returned. */
   def defer(claim: Claim, totalWindows: Int): Boolean

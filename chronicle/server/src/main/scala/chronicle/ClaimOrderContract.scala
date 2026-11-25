@@ -13,9 +13,11 @@ enum ClaimOrderMode {
   case Waiting(bulkLanes: Int)
 }
 object ClaimOrderMode {
-  /** The configured mode. U2 reads it from `indexing.claimOrder` / `indexing.bulkLanes`; until then every deployment runs
-    * today's order. */
-  def of(config: Config): ClaimOrderMode = ClaimOrderMode.SourceId
+  /** The configured mode: `indexing.claimOrder` with `indexing.bulkLanes` (validated at start, IndexingCapacity.validate). */
+  def of(config: Config): ClaimOrderMode = config.indexing.claimOrder match {
+    case ClaimOrderSetting.SourceId => ClaimOrderMode.SourceId
+    case ClaimOrderSetting.Waiting => ClaimOrderMode.Waiting(config.indexing.bulkLanes)
+  }
 }
 /** Which selection step of its lane a claim was taken by: the lane's preferred class, the other class (borrowed while the
   * preferred one had no candidate), or today's order (`ClaimOrderMode.SourceId`). */
