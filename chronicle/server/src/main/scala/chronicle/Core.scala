@@ -290,8 +290,9 @@ final case class Identity(user: UserInfo, browser: Boolean, credentialHash: Stri
   }
 }
 /** `snapshot` is the claimed revision's envelope (no messages, no raw files); `messages` reads its messages by position
-  * (ingest-limits spec §5.2.1). */
-final case class Claim(jobId: UUID, sessionId: UUID, revision: Int, fence: Long, profile: String, snapshot: IngestRequest, owner: String, targetEpoch: Long, runId: UUID, revisionBinding: RevisionBinding, messages: ClaimedMessages, attempt: ClaimAttempt = ClaimAttempt.unclaimed(), indexingEpoch: Long = 0L)
+  * (ingest-limits spec §5.2.1). `facts`: what the waiting claim order saw of the job under its lock (ClaimOrderContract);
+  * None under today's order. */
+final case class Claim(jobId: UUID, sessionId: UUID, revision: Int, fence: Long, profile: String, snapshot: IngestRequest, owner: String, targetEpoch: Long, runId: UUID, revisionBinding: RevisionBinding, messages: ClaimedMessages, attempt: ClaimAttempt = ClaimAttempt.unclaimed(), indexingEpoch: Long = 0L, facts: Option[ClaimFacts] = None)
 final case class IndexedChunk(chunk: Chunk, vector: Seq[Double])
 enum ClaimScope {
   case AllOwners
