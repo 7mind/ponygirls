@@ -298,7 +298,8 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   def searchSessionMessages(reader: String,id: UUID,view: ContentView,literal: String,cursor: Option[String],limit: Int,materialization: ReadMaterialization): SessionMessageSearchResult =
     messageSearch.searchSessionMessages(reader,id,view,literal,cursor,limit,materialization)
   val visible = """EXISTS(SELECT 1 FROM ch_users ou WHERE ou.id=s.owner AND ou.enabled) AND EXISTS(SELECT 1 FROM ch_users ru WHERE ru.id=? AND ru.enabled) AND (s.owner=? OR EXISTS(SELECT 1 FROM ch_members a JOIN ch_members b ON a.group_id=b.group_id WHERE a.user_id=? AND b.user_id=s.owner)) AND NOT s.tombstone"""
-  private[chronicle] val indexingAllowed = ChronicleIndexing.allowsOwnerSql(config.indexingPolicy.defaultEnabled,"s.owner")
+  private[chronicle] def ownerIndexingAllowed(ownerSql: String): String = ChronicleIndexing.allowsOwnerSql(config.indexingPolicy.defaultEnabled,ownerSql)
+  private[chronicle] val indexingAllowed = ownerIndexingAllowed("s.owner")
   private[chronicle] val indexVisible = s"($visible) AND $indexingAllowed"
   def sourceKey(r: IngestRequest): String = Wire.hash(Wire.canonical(Wire.encode(SourceIdentity.codecJson,r.source)))
   val knownProfiles: Set[String] = db.profiles.knownProfiles

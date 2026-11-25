@@ -80,7 +80,7 @@ object IndexProfiles {
     s"SELECT compatible.embedding_space FROM ch_index_profiles compatible WHERE compatible.profile=$profileColumn AND compatible.policy IN($executablePolicies)"
   def semantic(c: Connection,reader: String,archive: PostgresArchive,embedding: EmbeddingSpaceDescriptor,materialization: ReadMaterialization=ReadMaterialization.unrestricted): Unit = {
     // A reader may search someone else's eligible index without having an eligible indexing target of their own.
-    val ownIndexing=Sql.one(c,s"SELECT ${archive.indexingAllowed} FROM ch_users s WHERE s.id=? AND s.enabled",reader)(_.getBoolean(1))
+    val ownIndexing=Sql.one(c,s"SELECT ${archive.ownerIndexingAllowed("u.id")} FROM ch_users u WHERE u.id=? AND u.enabled",reader)(_.getBoolean(1))
       .getOrElse(throw DomainError("unauthorized","owner disabled"))
     if(ownIndexing) {
       val guard=ReadSources.Query("SELECT t.profile,t.epoch,p.embedding_space,e.descriptor FROM ch_owner_targets t LEFT JOIN ch_index_profiles p ON p.profile=t.profile LEFT JOIN ch_embedding_spaces e ON e.id=p.embedding_space WHERE t.owner=?",List(reader))
