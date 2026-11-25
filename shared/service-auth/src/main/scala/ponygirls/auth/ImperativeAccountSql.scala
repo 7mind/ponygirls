@@ -81,6 +81,7 @@ private[auth] enum SqlValue {
   case Integer(value: Int)
   case BigInt(value: Long)
   case Flag(value: Boolean)
+  case NullFlag
   case Bytes(value: Array[Byte])
   case Time(value: Option[Instant])
 }
@@ -94,6 +95,7 @@ private[auth] object ImperativeStatements {
       case SqlValue.Integer(number) => statement.setInt(index, number)
       case SqlValue.BigInt(number) => statement.setLong(index, number)
       case SqlValue.Flag(flag) => statement.setBoolean(index, flag)
+      case SqlValue.NullFlag => statement.setNull(index, Types.BOOLEAN)
       case SqlValue.Bytes(bytes) => statement.setBytes(index, bytes)
       case SqlValue.Time(Some(at)) => statement.setObject(index, OffsetDateTime.ofInstant(at, ZoneOffset.UTC))
       case SqlValue.Time(None) => statement.setNull(index, Types.TIMESTAMP_WITH_TIMEZONE)
