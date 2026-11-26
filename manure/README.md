@@ -340,6 +340,77 @@ secrets or passwords). Token-free external fetch needs only the
 content URL + `--password[-file]`; public fetch needs no token. No
 secret ever goes in a URL, log, or error.
 
+### Connections
+
+The Python client (CLI, MCP server, `ManureClient`) speaks HTTP/1.1. A request opens
+a connection and closes it after the response, unless it is sent inside a keep-alive
+scope, `StdlibTransport.keep_alive()`. Inside a scope the client keeps one connection
+per origin (scheme, host, port) and sends the next request to that origin on it.
+Leaving the outermost scope closes every kept connection, also when the code inside
+failed; nested scopes share the connections. These hold a scope:
+
+- The client operations that send several requests: `upload_path` (fresh and
+  resumed), `fetch_to_dest` (by ID and by content URL) and `search_expression`. So
+  `manure upload`, `manure fetch` and `manure search`, and the MCP tools
+  `upload_artifact`, `fetch_artifact` and `search`, use one connection per origin
+  and leave none open when they return. `whoami`, `list`, `info`, `delete` and
+  `rotate-password` (and the matching MCP tools) send one request.
+- A Python caller that wants its own calls to share connections creates the
+  transport and holds the scope itself:
+
+  ```python
+  transport = StdlibTransport()
+  client = ManureClient(url, token_file=path, transport=transport)
+  with transport.keep_alive():
+      client.whoami(); client.list_artifacts()
+  ```
+
+What holds for a kept connection:
+
+- It is kept only after a complete HTTP/1.1 response without `Connection: close`.
+  An error, a timeout, a truncated or an oversized response closes it. At most 4
+  are kept; the least recently used is closed first.
+- It is never used for another origin. Bearer, grant-cookie and redirect rules are
+  applied to every request as before; TLS verification is unchanged.
+- Before reuse it is replaced, without any message, if it was idle for more than
+  15 s or the peer has closed it (or sent anything) in the meantime.
+- If the peer closes it while the request is being sent or before any byte of the
+  response was read, the server may or may not have executed the request. The
+  client then sends it once more on a new connection only where a second copy is
+  harmless: `GET`; the chunk `PUT` (an identical chunk is a no-op, `CONTRACT.md`
+  §8); the commands that only read (`Version`, `GetCapabilities`, `Whoami`,
+  `ListArtifacts`, `GetArtifact`, `GetManifest`, `GetUploadStatus`, `Search`, content
+  `GetManifest`); and `FinishUpload` (idempotent, `CONTRACT.md` §6.3). `InitUpload`,
+  `PatchArtifact`, `DeleteArtifact`, `RotateExternalPassword`, `CreateGrant` and
+  content `Unlock`, `RedeemGrant` and `Logout` are never sent twice: they fail with
+  `unavailable: network error`, and the caller has to look at the server state
+  before trying again. Nothing is sent again after a timeout or once any part of a
+  response was read. The CLI and the MCP server send such a request only as the
+  first one on a connection, so only a Python caller holding its own scope can meet
+  this failure.
+- Over HTTPS the previous rule applies in the same way when the peer ends the TLS
+  connection, with or without its closure alert, or resets it, whether or not it
+  had read the request (tested with TLS 1.2 and 1.3). A TLS failure of another
+  kind on a kept connection, such as a record that does not decrypt, is an ordinary
+  failure: `unavailable: network error`, and nothing is sent again.
+
+Nothing is kept outside a scope, and `manure-mcp` does not keep a connection between
+tool calls (it creates a client per call), because of how the server treats an idle
+keep-alive connection (measured on the native server, 2026-11-26):
+
+- It closes the connection only after `request_timeout_s` (30 s by default: closed
+  after 30.00 s).
+- Its graceful shutdown waits for the connection instead of closing it: the server
+  exited 0.41 s after SIGTERM with no client connection open and 30.14 s after it
+  with one idle keep-alive connection (5.43 s with `request_timeout_s: 5`).
+- The connection occupies one of the `max_connections` + 1 connection slots: with
+  `max_connections: 1` and `request_timeout_s: 5`, two idle keep-alive connections
+  made a third connection wait 5.00 s for its answer.
+
+Keeping a connection between MCP calls would save one connection setup for a call
+that follows another within 15 s, and cost a slot and a delayed shutdown on every
+server that is reached without a proxy in between.
+
 ## Artifact workspace
 
 The dashboard uses the shared design system (`shared/ui-web`): a masthead with
@@ -501,7 +572,9 @@ Real JSON-RPC 2.0 over stdio, one object per line, protocol
 `tools/list` / `tools/call`; same env auth as the CLI. Nine tools:
 `whoami`, `list_artifacts`, `search`, `get_artifact`, `get_manifest`,
 `upload_artifact`, `fetch_artifact`, `delete_artifact`,
-`rotate_external_password` (`tools/list`-verified). Host entries use
+`rotate_external_password` (`tools/list`-verified). A tool call uses one
+connection per origin and none stays open between calls
+([Connections](#connections)). Host entries use
 file-backed credentials only — never `MANURE_TOKEN` beside
 `MANURE_TOKEN_FILE`:
 

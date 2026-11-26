@@ -1113,6 +1113,18 @@ credentials are ALWAYS dropped on cross-origin redirect. `fetch` of
 public artifacts works without any token; other authed commands fail
 `missing-credentials` (exit 2) before network.
 
+Client connection amendment (normative for `ManureClient`/CLI/MCP; no wire
+or server change): a client keeps HTTP/1.1 connections only inside an
+explicit keep-alive scope and only per origin (scheme, host, port); a
+connection never carries a request for another origin, and every rule
+above applies to each request whatever connection it travels on. A
+request whose kept connection ended before any byte of its response was
+read is sent once more, on a new connection, only when a second copy is
+harmless: `GET`, the chunk `PUT` (§8), the commands and the content
+manifest read that have no effect, and publish (§6.3). No other request
+is ever sent twice, and none after a timeout or a partly read response.
+Scopes, limits and the measured server behaviour: README “Connections”.
+
 ## 10. MCP stdio (real JSON-RPC 2.0 + MCP, stdlib-only)
 
 `python -m manure.mcp` speaks MCP over stdio exactly like the official

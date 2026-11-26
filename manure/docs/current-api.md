@@ -26,6 +26,12 @@ revoking bearer tokens or requiring the account actor header.
   Generated `ClientEnvelope {requestId: uid, apiVersion: "1.0.0", command: Command}`
   produces `ServerEnvelope {requestId: uid, result: Result}`. Echo the request ID;
   it is correlation, **not** write deduplication or an exactly-once guarantee.
+  For that reason the owned Python client, which may keep a connection per origin
+  inside an explicit scope (README “Connections”), repeats a request that lost its
+  kept connection before any response byte only when a second copy changes nothing:
+  raw `GET`, chunk `PUT`, Version, GetCapabilities, Whoami, ListArtifacts,
+  GetArtifact, GetManifest (management and content), GetUploadStatus, Search and
+  FinishUpload. Every other command is sent at most once.
 * Content control: `POST /__manure/current`, or
   `POST /view/<artifactId>/__manure/current` in path mode. Generated
   `ContentEnvelope` has the same correlation/version fields and a narrower

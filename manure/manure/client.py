@@ -5,19 +5,23 @@ no module-level mutable state.
 """
 from __future__ import annotations
 
+import contextlib
+import functools
 import hashlib
 import http.client
 import json
 import os
 import posixpath
 import re
+import selectors
+import socket
 import stat
 import time
 import urllib.parse
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Concatenate, Protocol
 from uuid import uuid4
 
 from manure import current_protocol as cp
@@ -39,6 +43,12 @@ MAX_CHUNK_BYTES = 4194304
 # A default-maximum 200-row metadata page needs about 20 MiB when JSON escapes
 # astral scalars. Keep reads bounded, including replies without Content-Length.
 MAX_TRANSPORT_BYTES = 32 * 1024 * 1024
+# Keep-alive (StdlibTransport.keep_alive). A kept connection that was idle for longer is closed instead of
+# reused: the Manure server closes idle connections after its request timeout (30 s by default), and a NAT or
+# firewall may drop an idle flow without a FIN, which the check before reuse cannot see.
+MAX_IDLE_SECONDS = 15.0
+# Kept connections of one transport, one per origin; subdomain mode has a content origin per artifact.
+MAX_KEPT_CONNECTIONS = 4
 # Reference-file representation ceilings, not a new URL grammar/normalization.
 # Token: canonical 43 ASCII bytes and one optional LF. URL: the existing 64 KiB
 # HTTP request-line ceiling (CONTRACT §7.7 / stdlib HTTP server), deliberately
@@ -1144,14 +1154,148 @@ class HttpTransport(Protocol):
         ...
 
 
-class StdlibTransport:
-    """Single-request stdlib transport (no redirect/auth logic; client handles it)."""
+class ReusedConnectionClosed(ManureError):
+    """A kept connection ended before any byte of the response was read.
 
-    def __init__(self, timeout: float = 30.0, allow_insecure_http: bool = False):
+    The peer may have closed it before the request arrived or while handling it,
+    so the request may or may not have taken effect. The transport has closed the
+    connection; only a caller that knows the request is harmless to repeat sends
+    it again.
+
+    Over TLS this is a peer that ends the connection, with or without its closure
+    alert, or resets it. A TLS failure of another kind (a record that does not
+    decrypt, a certificate that does not verify) is an ordinary failure.
+    """
+
+    def __init__(self):
+        super().__init__("unavailable", "network error")
+
+
+class _Response(http.client.HTTPResponse):
+    """Response that records whether any of its bytes arrived, which http.client does not tell."""
+
+    nothing_arrived = False
+
+    def begin(self) -> None:
+        if self.headers is None:
+            self.nothing_arrived = True
+            # peek() reads the socket at most once and consumes nothing; an empty result is the end of the stream.
+            if not self.fp.peek(1):
+                raise http.client.RemoteDisconnected("Remote end closed connection without response")
+            self.nothing_arrived = False
+        super().begin()
+
+
+class _Connection:
+    """One HTTP/1.1 connection of the transport."""
+
+    def __init__(self, connection: http.client.HTTPConnection):
+        self.http = connection
+        self.http.response_class = self._response
+        self.idle_since = 0.0
+        self._sent = False
+        self._answer: _Response | None = None
+
+    def _response(self, *args, **kwargs) -> _Response:
+        self._answer = _Response(*args, **kwargs)
+        return self._answer
+
+    def exchange(self, method: str, path: str, body: bytes | None,
+                 headers: dict[str, str]) -> http.client.HTTPResponse:
+        """Send one request and read the head of its response."""
+        self._sent = False
+        self._answer = None
+        self.http.request(method, path, body=body, headers=headers)
+        self._sent = True
+        return self.http.getresponse()
+
+    @property
+    def unanswered(self) -> bool:
+        """After a ConnectionError from `exchange`: no byte of a response was read."""
+        if not self._sent:
+            return True
+        return self._answer is not None and self._answer.nothing_arrived
+
+    def close(self) -> None:
+        try:
+            self.http.close()
+        except Exception:
+            pass
+
+
+def _has_input(sock: socket.socket) -> bool:
+    """A socket that should be silent is readable: the peer closed it or sent bytes nobody asked for."""
+    with selectors.DefaultSelector() as selector:
+        selector.register(sock, selectors.EVENT_READ)
+        return bool(selector.select(0))
+
+
+def _reusable(response: http.client.HTTPResponse) -> bool:
+    """HTTP/1.1 without `Connection: close`, and the body was read to its end."""
+    return (response.version == 11 and not response.will_close and response.isclosed()
+            and (response.chunked or response.length == 0))
+
+
+class StdlibTransport:
+    """Standard-library HTTP/1.1 transport (no redirect/auth logic; client handles it).
+
+    A request opens a connection and closes it after the response. Inside
+    `keep_alive()` the connection is kept instead, and the next request to the
+    same origin (scheme, host, port) reuses it; a connection never serves
+    another origin. Leaving the outermost `keep_alive()` closes every kept
+    connection.
+
+    Nothing is kept outside `keep_alive()` because of the server: its graceful
+    shutdown waits for idle keep-alive connections instead of closing them, an
+    idle connection occupies one of its connection slots, and it closes an idle
+    connection only after its request timeout (30 s by default).
+
+    One thread at a time: the CLI, the MCP server and the client's operations
+    are sequential, and the kept connections are not locked.
+    """
+
+    def __init__(self, timeout: float = 30.0, allow_insecure_http: bool = False, *,
+                 clock: Callable[[], float] = time.monotonic):
         if type(allow_insecure_http) is not bool:
             raise ManureError("bad-envelope", "allow_insecure_http: boolean required")
         self.allow_insecure_http = allow_insecure_http
         self.timeout = timeout
+        self._clock = clock
+        self._scopes = 0
+        # Least recently used first.
+        self._kept: dict[tuple[str, str, int], _Connection] = {}
+
+    @contextlib.contextmanager
+    def keep_alive(self) -> Iterator[None]:
+        """Keep connections between the requests sent inside; nested uses share them."""
+        self._scopes += 1
+        try:
+            yield
+        finally:
+            self._scopes -= 1
+            if self._scopes == 0:
+                self.close()
+
+    def close(self) -> None:
+        """Close every kept connection."""
+        while self._kept:
+            self._kept.popitem()[1].close()
+
+    def _take(self, origin: tuple[str, str, int]) -> _Connection | None:
+        """The kept connection to this origin if it can carry another request; otherwise it is closed."""
+        conn = self._kept.pop(origin, None)
+        if conn is None:
+            return None
+        if self._clock() - conn.idle_since <= MAX_IDLE_SECONDS and not _has_input(conn.http.sock):
+            return conn
+        conn.close()
+        return None
+
+    def _keep(self, origin: tuple[str, str, int], conn: _Connection) -> None:
+        conn.idle_since = self._clock()
+        self._kept[origin] = conn
+        while len(self._kept) > MAX_KEPT_CONNECTIONS:
+            self._kept.pop(next(iter(self._kept))).close()
 
     def request(self, method: str, url: str, headers: dict[str, str],
                 body: bytes | None) -> tuple[int, dict[str, str], bytes]:
@@ -1166,17 +1310,30 @@ class StdlibTransport:
         path = parsed.path or "/"
         if parsed.query:
             path += "?" + parsed.query
-        conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-        try:
-            conn = conn_cls(host, port, timeout=self.timeout)
-        except Exception:
-            raise ManureError("unavailable", "connection failed")
+        origin = (parsed.scheme, host, port)
+        conn = self._take(origin)
+        reused = conn is not None
+        if conn is None:
+            conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+            try:
+                conn = _Connection(conn_cls(host, port, timeout=self.timeout))
+            except Exception:
+                raise ManureError("unavailable", "connection failed")
+        keep = False
         try:
             send_headers = dict(headers or {})
             data = body if body is not None else None
             try:
-                conn.request(method.upper(), path, body=data, headers=send_headers)
-                resp = conn.getresponse()
+                resp = conn.exchange(method.upper(), path, data, send_headers)
+            except ConnectionError:
+                # Over TLS as well. A peer's closure alert, the end of its TCP stream and a reset arrive here as
+                # end of stream (RemoteDisconnected), ConnectionResetError or BrokenPipeError: observed with
+                # CPython 3.12 to 3.14 on OpenSSL 3.5, TLS 1.2 and 1.3. ssl.SSLEOFError did not occur: it takes a
+                # write after the TLS layer has read the end of the stream, and such a connection is not reused.
+                # Any other ssl.SSLError is a failed session, not a closed connection.
+                if reused and conn.unanswered:
+                    raise ReusedConnectionClosed()
+                raise ManureError("unavailable", "network error")
             except Exception:
                 raise ManureError("unavailable", "network error")
             status = resp.status
@@ -1218,12 +1375,13 @@ class StdlibTransport:
             except Exception:
                 raise ManureError("unavailable", "response read failed")
             payload = b"".join(chunks)
+            keep = self._scopes > 0 and _reusable(resp)
             return (status, hdrs, payload)
         finally:
-            try:
+            if keep:
+                self._keep(origin, conn)
+            else:
                 conn.close()
-            except Exception:
-                pass
 
 
 def _lower_headers(hdrs: dict[str, str]) -> dict[str, str]:
@@ -1276,6 +1434,24 @@ class ExpressionSearch:
 
 # ----------------------------------------------------------------- client
 
+# Management commands that may be sent a second time. All but the last only read (docs/current-api.md
+# "Command/result mapping"; CONTRACT §6.4: reads and status never advance activity); FinishUpload is idempotent
+# by CONTRACT §6.3. The request ID is correlation, not deduplication, so no other command is ever repeated.
+_REPLAYABLE_COMMANDS = (
+    cp.Command_Version, cp.Command_GetCapabilities, cp.Command_Whoami, cp.Command_ListArtifacts,
+    cp.Command_GetArtifact, cp.Command_GetManifest, cp.Command_GetUploadStatus, cp.Command_Search,
+    cp.Command_FinishUpload)
+
+
+def _keeps_connections[**P, T](
+        operation: Callable[Concatenate[ManureClient, P], T]) -> Callable[Concatenate[ManureClient, P], T]:
+    """A client operation that sends several requests: its connections are kept until it returns."""
+    @functools.wraps(operation)
+    def kept(self: ManureClient, *args: P.args, **kwargs: P.kwargs) -> T:
+        with self._keep_alive():
+            return operation(self, *args, **kwargs)
+    return kept
+
 
 class ManureClient:
     def __init__(self, api_base: str, token: str | None = None,
@@ -1325,11 +1501,29 @@ class ManureClient:
         return self._grants.get(host.lower())
 
     # ------------------------------------------------- core request
+    def _keep_alive(self) -> contextlib.AbstractContextManager[None]:
+        """Connection scope of the stdlib transport; a transport of another kind keeps its own counsel."""
+        if isinstance(self._transport, StdlibTransport):
+            return self._transport.keep_alive()
+        return contextlib.nullcontext()
+
+    def _send(self, method: str, url: str, headers: dict[str, str], body: bytes | None,
+              replayable: bool) -> tuple[int, dict[str, str], bytes]:
+        try:
+            return self._transport.request(method, url, headers, body)
+        except ReusedConnectionClosed:
+            # The peer may have handled the request before it closed the connection. GET is safe (RFC 9110
+            # §9.2.1); anything else is repeated only when its caller knows that a second copy is harmless.
+            if method != "GET" and not replayable:
+                raise
+        # The transport closed that connection: this attempt opens a new one and cannot fail the same way.
+        return self._transport.request(method, url, headers, body)
+
     def _request(self, method: str, url: str,
                  headers: dict[str, str] | None = None,
                  body: bytes | None = None,
                  *, send_auth: bool = True, send_grant: bool = True,
-                 origin: str | None = None) -> tuple[int, dict[str, str], bytes]:
+                 origin: str | None = None, replayable: bool = False) -> tuple[int, dict[str, str], bytes]:
         current_url = url
         current_method = method.upper()
         current_body = body
@@ -1373,8 +1567,8 @@ class ManureClient:
                     if k.lower() == "origin":
                         req_headers.pop(k, None)
             try:
-                status, resp_hdrs, resp_body = self._transport.request(
-                    current_method, current_url, req_headers, current_body)
+                status, resp_hdrs, resp_body = self._send(
+                    current_method, current_url, req_headers, current_body, replayable)
             except ManureError:
                 raise
             except Exception:
@@ -1430,7 +1624,7 @@ class ManureClient:
         status, headers, payload = self._request(
             "POST", self.api_base + "/api/current",
             {"Accept": "application/json", "Content-Type": "application/json"},
-            body, send_auth=True, send_grant=False)
+            body, send_auth=True, send_grant=False, replayable=isinstance(command, _REPLAYABLE_COMMANDS))
         if not 200 <= status < 300:
             raise _error_from_body(status, headers, payload)
         try:
@@ -1452,7 +1646,9 @@ class ManureClient:
         status, headers, payload = self._request(
             "POST", content_base + "/__manure/current",
             {"Accept": "application/json", "Content-Type": "application/json"},
-            body, send_auth=False, send_grant=send_grant, origin=origin)
+            body, send_auth=False, send_grant=send_grant, origin=origin,
+            # Reading the manifest changes nothing; Unlock, RedeemGrant and Logout are sent at most once.
+            replayable=isinstance(command, cp.ContentCommand_GetManifest))
         if not 200 <= status < 300:
             raise _error_from_body(status, headers, payload)
         try:
@@ -1505,6 +1701,7 @@ class ManureClient:
             sort, self._enum(cp.SortDirection, direction), 50 if limit is None else limit, cursor or None, tags, hostname, project_path)
         return cp.local(self._current(cp.Command_ListArtifacts(q), cp.Result_Catalogue).page)
 
+    @_keeps_connections
     def search_expression(self, query: str, *, limit: int | None = None,
                           cursor: str | None = None,
                           notify: Callable[[str], None] | None = None) -> ExpressionSearch:
@@ -1585,9 +1782,10 @@ class ManureClient:
         sha = hashlib.sha256(bytes(data)).hexdigest()
         q = {"path": path, "offset": str(offset)}
         url = self.api_base + f"/api/current/artifacts/{artifact_id}/chunks?" + urllib.parse.urlencode(q)
+        # CONTRACT §8: an identical chunk re-PUT is a no-op, and an unacknowledged chunk is always safe to resend.
         status, headers, payload = self._request("PUT", url,
             {"Content-Type": "application/octet-stream", "Accept": "application/json", "X-Chunk-Sha256": sha},
-            data, send_auth=True, send_grant=False)
+            data, send_auth=True, send_grant=False, replayable=True)
         if not 200 <= status < 300: raise _error_from_body(status, headers, payload)
         try:
             receipt = cp.decode(cp.ChunkReceipt, cp.loads(payload))
@@ -1749,6 +1947,7 @@ class ManureClient:
         if server_sha != local_sha:
             raise SourceChanged("server manifest differs from current source")
 
+    @_keeps_connections
     def upload_path(self, local_path: str | os.PathLike, access: str,
                     name: str | None = None, expires_in_s: str | int | None = None,
                     resume_id: str | None = None, fresh: bool = False, *,
@@ -2231,6 +2430,7 @@ class ManureClient:
         return data
 
     # ------------------------------------------------- fetch (high-level)
+    @_keeps_connections
     def fetch_to_dest(self, artifact_id_or_url: str, dest: str | os.PathLike,
                       password: str | None = None) -> dict[str, Any]:
         s = str(artifact_id_or_url)
