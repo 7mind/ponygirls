@@ -67,9 +67,12 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     val labelled=response.withAttribute(authenticatedPrincipal,current.principal)
     if(current.cookie)labelled.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(current.token),current.secureCookie))) else labelled
   }
-  /** A handler that waits (a read, a write): the captured identity is checked once more when its response exists. */
-  private def authed(r:Request[IO],mutate:Boolean=false)(f:Authenticated=>IO[Response[IO]]):IO[Response[IO]]=
-    admitted(r,mutate).flatMap(resolved=>f(resolved).flatMap(response=>revalidate(r,resolved,mutate).map(delivered(response,_))))
+  /** A handler that waits (a read, a write): the captured identity is checked once more when its result exists, and
+    * only then is the result rendered. A caller revoked meanwhile is unauthorized, whatever `render` would answer. */
+  private def authedResult[A](r:Request[IO],mutate:Boolean)(f:Authenticated=>IO[A])(render:A=>Response[IO]):IO[Response[IO]]=
+    admitted(r,mutate).flatMap(resolved=>f(resolved).flatMap(result=>revalidate(r,resolved,mutate).map(current=>delivered(render(result),current))))
+  /** A handler that waits and renders its own response. */
+  private def authed(r:Request[IO],mutate:Boolean=false)(f:Authenticated=>IO[Response[IO]]):IO[Response[IO]]=authedResult(r,mutate)(f)(identity)
   /** A handler that cannot wait: its response follows the check that admitted the request without any wait, so that
     * check is also the one before delivery. */
   private def authedPure(r:Request[IO])(f:Authenticated=>Response[IO]):IO[Response[IO]]=
@@ -135,17 +138,19 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       }
     }
   }
-  /** After the body of an account mutation: the boundary and the transport half of `revalidate`, under one current
-    * configuration. The session is looked up by the mutation itself, in its own transaction before any effect. */
-  private def accountMutationBoundary(r:Request[IO],captured:Authenticated):Unit={
+  /** After the body of an account mutation, under one current configuration: the boundary, and the credential the
+    * request presents. While that is still the captured one, the mutation looks the session up itself, in its own
+    * transaction before any effect, and no lookup is made here. Another credential is refused by the full check, with
+    * its answers. */
+  private def accountMutationBoundary(r:Request[IO],captured:Authenticated):IO[Unit]=IO.defer {
     val auth=getAuth()
     accountBoundary(r,auth)
-    val current=Sessions.resolve(auth.config,headers(r))
-    if(current.token!=captured.token || current.cookie!=captured.cookie)throw Fault("unauthorized","request authority changed")
+    val offered=Sessions.resolve(auth.config,headers(r))
+    if(offered.token==captured.token && offered.cookie==captured.cookie)IO.unit else revalidate(r,captured).void
   }
   private def emptyAccountBody(r:Request[IO],a:Authenticated):IO[Unit]=accountBody(r).flatMap { raw=>
     if(!raw.asObject.exists(_.isEmpty))throw Fault("bad-envelope","empty object required")
-    IO(accountMutationBoundary(r,a))
+    accountMutationBoundary(r,a)
   }
   private def presented(auth:Auth,r:Request[IO]):(Boolean,Option[String])={
     val h=headers(r);val secure=Sessions.secure(auth.config,h)
@@ -243,7 +248,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     case r @ POST -> Root / "api" / "account" / "v1" / "tokens" =>accountHandled {accountAuthed(r,true) { a=>
       accountBody(r).flatMap { raw=>
         val (name,scopes)=AccountJson.decodeIssue(raw)
-        IO(accountMutationBoundary(r,a)) *> accounts.issue(a,name,scopes,all(r,"X-Account-Actor")).map(issued=>json(Status.Ok,AccountJson.issued(issued)))
+        accountMutationBoundary(r,a) *> accounts.issue(a,name,scopes,all(r,"X-Account-Actor")).map(issued=>json(Status.Ok,AccountJson.issued(issued)))
       }
     }}
     case r @ POST -> Root / "api" / "account" / "v1" / "tokens" / id / "revoke" =>accountHandled {accountAuthed(r,true) { a=>
@@ -280,11 +285,12 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       val input=Wire.decode(api.SearchRequest.codecJson,raw)
       service.search(SearchInput(input.query,input.project,input.limit,input.cursor,SearchSort(input.sort.field,input.sort.direction))).map(result=>ok(api.SearchResult.codecJson,api.SearchResult(result.items.map(Wire.summary).toList,result.cursor)))
     }}}
-    case r @ POST -> Root / "api" / "v1" / "retrieve" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
+    // `Wire.retrieved` refuses a page with an invalid or incompatible published identity: it renders after the check.
+    case r @ POST -> Root / "api" / "v1" / "retrieve" =>handled {authedResult(r,mutate=false) { a=>authorizedBody(r,a).flatMap { raw=>
       val input=Wire.decode(api.RetrieveRequest.codecJson,raw)
       val mode=Wire.retrievalMode(input.mode)
-      retrieval.search(input.query,mode,input.project,input.includeArchived,input.offset,input.limit).map(page=>ok(api.RetrieveResult.codecJson,Wire.retrieved(retrieval,mode,page)))
-    }}}
+      retrieval.search(input.query,mode,input.project,input.includeArchived,input.offset,input.limit).map(mode->_)
+    }} { (mode,page)=>ok(api.RetrieveResult.codecJson,Wire.retrieved(retrieval,mode,page)) }}
     case r @ GET -> Root / "api" / "v1" / "capabilities" =>handled {authedPure(r) { _=>ok(api.RetrievalCapabilities.codecJson,Wire.capabilities(retrieval)) }}
     case r @ POST -> Root / "api" / "v1" / "history" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
       val input=Wire.decode(api.HistoryRequest.codecJson,raw)
