@@ -1011,4 +1011,83 @@ final class ClaimOrderAnnotationContinuationTest extends AnnotationContinuationT
   override protected def claimOrder: ClaimOrderSetting = ClaimOrderSetting.Waiting
   override def munitTestTransforms: List[TestTransform] = super.munitTestTransforms :+ new TestTransform("claims of the waiting order",test =>
     test.withBody(() => { claimTrace.clear(); val result=test.body(); claimTrace.assertWaiting(test.name); result }))
+
+  /** The orchestrator's added case (u4c-cont/BRIEF.md, 23:56Z): a job of more than LargeJobs.windows windows with a retained
+    * partial through lane 0, a class lane's deferral and lane 0's sized claim, with annotation continuations on. */
+  test("U4c large: a job of 101 windows whose lane-0 worker is killed after a kept answer is reclaimed by a fresh lane, sized and deferred (attempt refunded), claimed sized by lane 0, which resumes the retained partial and completes it as an uninterrupted run") {
+    CurrentIndexDatabase.withDatabase { (fixture,db,archive) =>
+      import ClaimOrderFixtures.{freshLane,lane0}
+      val config=ClaimOrderFixtures.ordered(ModelFixtures.continuations(fixture),claimOrder)
+      val total=101; val size=ProblemPassages.maximumWindowFragments; val stopWindow=50; val stop=10
+      val request=ClaimOrderFixtures.windows(total,"large")
+      /** The scripted model, by window content: window 50 asked whole is kept at (10,0); every other request is answered whole. */
+      def answer(window: Window,previous: Option[Carry]): Decision = {
+        val continued=previous.nonEmpty
+        if(window.fragments.head.messagePosition==stopWindow*size && window.fragments.size==size) Decision(Vector(Part(Point(0,0),Point(stop,0),continued,"synthetic goal",Nil)))
+        else Decision(Vector(Part(Point(0,0),window.terminal,continued,"synthetic goal",Nil)))
+      }
+      class Model(blockAt: Option[Int],release: Deferred[IO,Unit]) extends ScriptedAnnotator {
+        val asked=new ConcurrentLinkedQueue[(Int,Int)]()
+        def annotate(owner: String,window: Window,previous: Option[Carry]): IO[Decision] = IO.defer {
+          val position=window.fragments.head.messagePosition
+          asked.add((position,window.fragments.size))
+          if(blockAt.contains(position)) release.complete(()) *> IO.never else IO.pure(answer(window,previous))
+        }
+        def seen: List[(Int,Int)] = asked.asScala.toList
+      }
+      val deferrals=new ConcurrentLinkedQueue[(UUID,Option[Int])]()
+      val observed=new ForwardingArchive(archive) {
+        override def defer(c: Claim,totalWindows: Int): Boolean = { deferrals.add((c.jobId,c.facts.map(_.lane))); super.defer(c,totalWindows) }
+      }
+      def worker(model: ScriptedAnnotator,log: WorkerLog): Worker =
+        new Worker(ClaimOrderFixtures.traced(claimOrder,claimTrace,observed),model,ClaimOrderFixtures.embedder,config,IndexProfileCatalog.current(config),
+          ModelAdmission.make(config.indexing).unsafeRunSync(),log.logger,Worker.FailureBackoff(50.millis),ModelFixtures.snapshots)
+      def attempts(id: UUID): (String,Int,Option[Int],Option[java.time.Instant]) = { val r=ClaimOrderFixtures.row(db,id); (r.state,r.attempts,r.total,r.waitingSince) }
+      val logs=List.fill(3)(new WorkerLog)
+      val receipt=archive.ingest("a",request); val id=receipt.jobId
+      val since=attempts(id)._4
+      assertEquals(attempts(id),("Queued",0,None,since))
+      // Lane 0 claims it, accepts windows 0-49, keeps window 50 at (10,0) and is killed while the rest is asked.
+      val blocked=Deferred.unsafe[IO,Unit]; val first=new Model(Some(stopWindow*size+stop),blocked)
+      val fiber=ClaimOrderFixtures.onceOn(claimOrder,worker(first,logs(0)),lane0).start.unsafeRunSync()
+      blocked.get.timeout(2.minutes).unsafeRunSync(); fiber.cancel.timeout(30.seconds).unsafeRunSync()
+      assertEquals(first.seen,(0 to stopWindow).map(w => (w*size,size)).toList:+(stopWindow*size+stop,size-stop))
+      val retained=db.transaction(c => Sql.rows(c,"SELECT window_ordinal,covered_fragments,continuations FROM ch_annotation_partials WHERE job_id=?",id)(r => (r.getInt(1),r.getInt(2),r.getInt(3))))
+      assertEquals(retained,List((stopWindow,stop,1)))
+      assertEquals(attempts(id),("Running",1,Some(total),since))
+      db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=?",id))
+      // A fresh lane reclaims it, sizes it (101 > 100) and defers it: no model call, the attempt refunded.
+      val none=new Model(None,Deferred.unsafe[IO,Unit]) { override def annotate(owner: String,window: Window,previous: Option[Carry]): IO[Decision] = IO.raiseError(new AssertionError("a model call on the class lane")) }
+      assert(ClaimOrderFixtures.onceOn(claimOrder,worker(none,logs(1)),freshLane).unsafeRunSync(),"the fresh lane claimed the job")
+      assertEquals(logs(1).lines.count(_.startsWith(s"large job deferred jobId=$id totalWindows=$total indexedWindows=$total ")),1)
+      assertEquals(attempts(id),("Queued",1,Some(total),since))
+      assertEquals(db.transaction(c => Sql.rows(c,"SELECT window_ordinal,covered_fragments,continuations FROM ch_annotation_partials WHERE job_id=?",id)(r => (r.getInt(1),r.getInt(2),r.getInt(3)))),retained)
+      // Lane 0 claims it as sized, resumes window 50's rest and asks only the windows after it.
+      val last=new Model(None,Deferred.unsafe[IO,Unit])
+      assert(ClaimOrderFixtures.onceOn(claimOrder,worker(last,logs(2)),lane0).unsafeRunSync(),"lane 0 claimed the job")
+      assertEquals(last.seen,(stopWindow*size+stop,size-stop)::(stopWindow+1 until total).map(w => (w*size,size)).toList)
+      assertEquals(attempts(id),("Complete",2,Some(total),since))
+      assertEquals(logs(2).lines.count(_.matches(s"annotation partial resumed jobId=$id fence=\\d+ windowOrdinal=$stopWindow totalWindows=$total coveredFragments=$stop windowFragments=$size continuations=1")),1)
+      assertEquals(logs.flatMap(_.lines.filter(_.startsWith("annotation partial discarded"))),Nil)
+      // The claims: lane 0 (unsized: its second step), the fresh lane's reclaim of the Running job, lane 0's sized step; the
+      // deferral by the fresh lane.
+      assertEquals(claimTrace.waiting.asScala.toList.map((lane,c) => (c.jobId,lane.index,c.facts.map(f => (f.lane,f.step,f.preState)))),List(
+        (id,0,Some((0,ClaimStep.Borrowed,"Queued"))),(id,2,Some((2,ClaimStep.Preferred,"Running"))),(id,0,Some((0,ClaimStep.Preferred,"Queued")))))
+      assertEquals(deferrals.asScala.toList,List((id,Some(2))))
+      // An uninterrupted run of the same source (owner b, lane 0): the same accepted annotations and published rows.
+      val reference=archive.ingest("b",request.copy(requestId=UUID.randomUUID()))
+      assert(ClaimOrderFixtures.onceOn(claimOrder,worker(new Model(None,Deferred.unsafe[IO,Unit]),new WorkerLog),lane0).unsafeRunSync())
+      assertEquals(attempts(reference.jobId)._1,"Complete")
+      def annotations(job: UUID): List[String] =
+        db.transaction(c => Sql.rows(c,"SELECT window_ordinal||'|'||value FROM ch_index_checkpoints WHERE job_id=? AND stage='Annotation' ORDER BY window_ordinal",job)(_.getString(1)))
+      def published(session: UUID): List[String] = db.transaction { c =>
+        val generation=Sql.one(c,"SELECT published FROM ch_sources WHERE id=?",session)(_.getObject(1,classOf[UUID])).get
+        Sql.rows(c,"SELECT concat_ws('|',ordinal,initial_summary,(value-'id')::text,span_count) FROM ch_problem_passages WHERE generation=? ORDER BY ordinal",generation)(_.getString(1))++
+          Sql.rows(c,"SELECT concat_ws('|',ordinal,(value-'id'-'sessionId')::text,document::text) FROM ch_chunks WHERE generation=? ORDER BY ordinal",generation)(_.getString(1))
+      }
+      assertEquals(annotations(id).size,total)
+      assertEquals(annotations(id),annotations(reference.jobId))
+      assertEquals(published(receipt.sessionId),published(reference.sessionId))
+    }
+  }
 }
