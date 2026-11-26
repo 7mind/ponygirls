@@ -673,6 +673,42 @@ final class HttpSuite extends FunSuite:
       _ <- IO(assertEquals(invalid.status.code,400))
     yield ()
   }}
+  test("a content file is authorised once for its response and once more when it is opened") { run { (f,_) =>
+    val text = "internal file bytes"
+    val bytes = Exact.utf8(text)
+    def navigated(r: Request[IO]): Request[IO] = r.putHeaders(Header.Raw(CIString("Sec-Fetch-Mode"),"navigate"),Header.Raw(CIString("Sec-Fetch-Dest"),"document"))
+    for
+      c <- counted(f)
+      a <- f.artifacts.init(f.identity,InitUpload("counted content",ArtifactKind.Directory,Visibility.Internal,
+        Vector(ManifestEntry("nested/notes.md",false,bytes.length,SecretCodec.sha256(bytes))),None,Vector.empty,None,None))
+      id = a.artifact.id
+      _ <- f.artifacts.putChunk(f.identity,id,"nested/notes.md",0,bytes,SecretCodec.sha256(bytes))
+      _ <- f.artifacts.finish(f.identity,id)
+      handoff <- f.artifacts.createGrant(f.identity,id)
+      (grant,_) <- f.artifacts.redeem(id,handoff)
+      cookie = Header.Raw(CIString("Cookie"),s"mgrant-dev-$id=$grant")
+      file = request(Method.GET,s"/view/$id/nested/notes.md").putHeaders(cookie)
+      viewer = request(Method.GET,s"/view/$id/__manure/view/nested/notes.md").putHeaders(cookie,Header.Raw(CIString("Range"),"bytes=0-7"))
+      download = request(Method.GET,s"/view/$id/__manure/files/nested/notes.md/content").putHeaders(cookie)
+      listing = request(Method.GET,s"/view/$id/nested/").putHeaders(cookie)
+      observed <- Vector("file" -> file,"file, document navigation" -> navigated(file),"viewer range" -> viewer,"viewer range, document navigation" -> navigated(viewer),
+        "file with a password header" -> file.putHeaders(Header.Raw(CIString("X-Manure-Password"),"not-a-password")),"download" -> download,
+        "listing" -> listing,"listing, document navigation" -> navigated(listing)).traverse { (label,r) =>
+        c.run(r).map((response,body,transactions) => (label,response.status.code,Exact.string(body),transactions))
+      }
+      _ <- IO {
+        val (files,listings) = observed.splitAt(6)
+        assertEquals(files.map((label,status,body,_) => (label,status,body)),Vector(("file",200,text),("file, document navigation",200,text),
+          ("viewer range",206,text.take(8)),("viewer range, document navigation",206,text.take(8)),("file with a password header",200,text),("download",200,text)))
+        listings.foreach((label,status,body,_) => assert(status == 200 && body.contains("notes.md"),label))
+        // A file: the response's authorisation and the open's. An offered password is not what authorised the page
+        // of a file, so that file is authorised with it as before. A listing opens nothing.
+        assertEquals(observed.map((label,_,_,transactions) => s"$label: $transactions transactions"),Vector("file: 2 transactions","file, document navigation: 2 transactions",
+          "viewer range: 2 transactions","viewer range, document navigation: 2 transactions","file with a password header: 3 transactions","download: 2 transactions",
+          "listing: 1 transactions","listing, document navigation: 1 transactions"))
+      }
+    yield ()
+  }}
   test("content hosting preserves user styles, inline scripts, no API and security headers") { run { (f,h) =>
     val bytes = Exact.utf8("user css")
     for

@@ -460,10 +460,18 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     val base = value.split("/").last
     val fallback = base.map(c => if c >= 32 && c < 127 && c != '"' && c != '\\' then c else '_')
     "attachment; filename=\"" + fallback + "\"; filename*=UTF-8''" + encoded(base)
+  /** The password header a content request presents for a file; a management request has none. */
+  private def filePassword(req: Request[IO],ctx: Context): Option[String] = if ctx.content then header(req,"X-Manure-Password") else None
   private def serveFile(req: Request[IO],ctx: Context,id: String,path: String,attachment: Boolean,identity: Option[Identity]): IO[Response[IO]] =
     val grant = if ctx.content then presented(req,ctx,id) else None
-    val password = if ctx.content then header(req,"X-Manure-Password") else None
-    artifacts.contentInfo(id,grant,password,identity).flatMap { a =>
+    artifacts.contentInfo(id,grant,filePassword(req,ctx),identity).flatMap(serveFile(req,ctx,_,path,attachment,identity))
+  /** Serves a file of an artifact the caller has just authorised with what this request presents for a file: its
+    * grant, its password header and `identity`. Opening the file authorises again. */
+  private def serveFile(req: Request[IO],ctx: Context,a: Artifact,path: String,attachment: Boolean,identity: Option[Identity]): IO[Response[IO]] =
+    IO.defer {
+      val id = a.id
+      val grant = if ctx.content then presented(req,ctx,id) else None
+      val password = filePassword(req,ctx)
       val entry = a.manifest.find(e => !e.directory && e.path == path).getOrElse(throw DomainError("not-found"))
       val range = header(req,"Range")
       val selected = try Right(range.map(UploadRules.range(_,entry.size)).getOrElse((0L,entry.size))) catch case d: DomainError => Left(d)
@@ -740,7 +748,8 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     case _: wire.ContentCommand.GetManifest =>
       artifacts.contentInfo(id,presented(req,ctx,id),header(req,"X-Manure-Password"),None)
         .map(a => envelope(requestId,wire.Result.ArtifactManifest(CurrentWire.manifest(a))))
-  private def content(req: Request[IO],ctx: Context,id: String): IO[Response[IO]] =
+  /** `navigated`: the artifact `contentNavigation` has just authorised with this request's grant alone. */
+  private def content(req: Request[IO],ctx: Context,id: String,navigated: Option[Artifact]): IO[Response[IO]] =
     val path = req.uri.path.renderString.stripPrefix(ctx.mount)
     if req.method == Method.GET && ctx.mount.nonEmpty && path.isEmpty then
       IO.pure(Response[IO](Status.SeeOther).putHeaders(raw("Location",ctx.mount + "/")))
@@ -783,9 +792,11 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       serveFile(req,ctx,id,file,false,None)
     else if req.method == Method.GET && path.startsWith("/__manure/view/") then
       val (file,trailing) = decoded("/" + path.stripPrefix("/__manure/view/"))
-      artifacts.contentInfo(id,presented(req,ctx,id),header(req,"X-Manure-Password"),None).flatMap { a =>
+      val password = filePassword(req,ctx)
+      // The navigation's authorisation is this one unless the request also offers a password.
+      navigated.filter(_ => password.isEmpty).fold(artifacts.contentInfo(id,presented(req,ctx,id),password,None))(IO.pure).flatMap { a =>
         Require(!trailing && a.manifest.exists(e => !e.directory && e.path == file) && viewerKind(file).nonEmpty, "not-found")
-        if header(req,"Range").nonEmpty || config.viewerDir.isEmpty then serveFile(req,ctx,id,file,false,None)
+        if header(req,"Range").nonEmpty || config.viewerDir.isEmpty then serveFile(req,ctx,a,file,false,None)
         else viewerShell(ctx,a,file)
       }
     else if req.method == Method.GET && path.startsWith("/__manure/files/") && path.endsWith("/content") then
@@ -795,7 +806,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       artifacts.externalInfo(id).flatMap(_ => unlockPage(ctx))
     else if req.method == Method.GET && !path.startsWith("/__manure/") then
       val (file,trailing) = decoded(if path.isEmpty then "/" else path)
-      artifacts.contentInfo(id,presented(req,ctx,id),None,None).flatMap { a =>
+      navigated.fold(artifacts.contentInfo(id,presented(req,ctx,id),None,None))(IO.pure).flatMap { a =>
         val isDirectory = a.kind == ArtifactKind.Directory && (file.isEmpty ||
           a.manifest.exists(e => e.path.startsWith(file + "/") || e.directory && e.path == file))
         if isDirectory && file.nonEmpty && !trailing then
@@ -811,6 +822,8 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
             val negotiates = file.isEmpty && a.kind == ArtifactKind.File && viewerKind(target).nonEmpty && config.viewerDir.nonEmpty
             val response = if negotiates && header(req,"Range").isEmpty && acceptsViewer(req) then
               viewerShell(ctx,a,target)
+            // `a` was authorised by the grant alone: a file request that offers a password is authorised with it.
+            else if filePassword(req,ctx).isEmpty then serveFile(req,ctx,a,target,false,None)
             else serveFile(req,ctx,id,target,false,None)
             response.map(r => if negotiates then r.putHeaders(raw("Vary","Accept")) else r)
       }.handleErrorWith {
@@ -835,12 +848,12 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     val document = req.method == Method.GET && header(req,"Sec-Fetch-Mode").contains("navigate") &&
       header(req,"Sec-Fetch-Dest").contains("document")
     val target = !path.startsWith("/api/") && (!path.startsWith("/__manure/") || path.startsWith("/__manure/view/"))
-    if config.contentMode != "path" || !document || !target then content(req,ctx,id)
+    if config.contentMode != "path" || !document || !target then content(req,ctx,id,None)
     else
-      artifacts.contentInfo(id,presented(req,ctx,id),None,None).flatMap(_ => content(req,ctx,id)).handleErrorWith {
+      artifacts.contentInfo(id,presented(req,ctx,id),None,None).flatMap(a => content(req,ctx,id,Some(a))).handleErrorWith {
         // External navigation belongs to the existing unlock-page/path policy,
         // not to the internal management-session exchange.
-        case d: DomainError if d.code == "password-required" => content(req,ctx,id)
+        case d: DomainError if d.code == "password-required" => content(req,ctx,id,None)
         case d: DomainError if d.code == "grant-required" =>
           IO {
             // Validate before either the inert continuation or grant effects.
@@ -866,7 +879,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
                   (if continued then "Sign in on dashboard" else "Continue") + "</a></main></body></html>")
                 .putHeaders(raw("Content-Type","text/html; charset=utf-8"),raw("Referrer-Policy","no-referrer"),
                   raw("Content-Security-Policy","default-src 'none'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")))
-            else if c.kind != "cookie" then content(req,ctx,id)
+            else if c.kind != "cookie" then content(req,ctx,id,None)
             else
               IO {
                 val identity = required(c)
