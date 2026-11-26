@@ -317,6 +317,22 @@ abstract class ArtifactsContract(postgres: Boolean) extends FunSuite:
     still <- f.metadata.transaction(_.artifact(b.artifact.id))
     _ <- IO(assertEquals(still.map(_.state),Some(UploadState.Publishing)))
   yield () }}
+  test("a management download needs a live credential first, then an existing, unexpired, ready artifact") { run { f => for
+    a <- f.artifacts.init(f.identity,request().copy(expiresInSeconds=Some(60)))
+    id = a.artifact.id
+    _ <- fails("not-found",f.artifacts.downloadable(f.identity,id))
+    _ <- fails("not-found",f.artifacts.downloadable(f.identity,"f"*32))
+    _ <- f.artifacts.putChunk(f.identity,id,"資料/file.txt",0,bytes,SecretCodec.sha256(bytes))
+    _ <- f.artifacts.finish(f.identity,id)
+    found <- f.artifacts.downloadable(f.other,id)
+    _ <- IO(assertEquals((found.id,found.state,found.manifest.map(_.path)),(id,UploadState.Ready,Vector("資料/file.txt"))))
+    _ <- IO { f.clock.now = a.artifact.expiresAtSeconds.get }
+    _ <- fails("expired",f.artifacts.downloadable(f.identity,id))
+    // A revoked credential fails before the artifact is looked up, whatever its state.
+    _ <- IO.blocking(Files.writeString(f.config.users.find(_.id == f.other.userId).get.tokens.head.hashFile,SecretCodec.sha256(SecretCodec.token())+"\n"))
+    _ <- fails("unauthorized",f.artifacts.downloadable(f.other,id))
+    _ <- fails("unauthorized",f.artifacts.downloadable(f.other,"f"*32))
+  yield () }}
   test("symlink payload parent/leaf cannot redirect writes, hashes, serving or deletion") { run { f => for
     a <- f.artifacts.init(f.identity,request())
     outside <- IO.blocking(Files.createTempDirectory(f.rootPath.getParent,"outside-"))

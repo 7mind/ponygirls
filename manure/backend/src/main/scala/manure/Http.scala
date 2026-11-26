@@ -394,10 +394,9 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       val id = path.split("/")(4)
       val encoded = path.substring(("/api/current/artifacts/" + id + "/files/").length).stripSuffix("/content")
       val (file,_) = decoded("/" + encoded)
-      val eligibility = c.identity match
-        case Some(identity) => artifacts.info(identity,id).map(_ => ())
-        case None => IO.unit
-      eligibility *> serveFile(req,ctx,id,file,true,c.identity)
+      c.identity match
+        case Some(identity) => artifacts.downloadable(identity,id).flatMap(serveFile(req,ctx,_,file,true,c.identity))
+        case None => serveFile(req,ctx,id,file,true,None)
     else if dashboardAsset(req) then
       c.identity.foreach(auth.human)
       asset(config.dashboardDir,if path == "/" then "index.html" else path.drop(1),ctx,true)

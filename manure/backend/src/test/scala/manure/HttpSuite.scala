@@ -709,6 +709,50 @@ final class HttpSuite extends FunSuite:
       }
     yield ()
   }}
+  test("a management download authorises its bearer and the artifact in one transaction, and once more when it is opened") { run { (f,_) =>
+    val text = "0123456789"
+    val bytes = Exact.utf8(text)
+    val accounts = new Accounts(f.metadata,f.auth)
+    def failure(body: Array[Byte]): wire.ErrorCode =
+      CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(Exact.string(body))).result.asInstanceOf[wire.Result.Error].failure.code
+    for
+      (_,session) <- accounts.login("owner","fixture-password",None)
+      actor = Vector(AccountJson.actor(session.credential.userId))
+      issued <- accounts.issue(session.secret,"download",actor)
+      revoking = new java.util.concurrent.atomic.AtomicBoolean(false)
+      // The bearer is revoked once the request's credential was resolved, before the download's own transaction.
+      c <- counted(f,n => if n == 1 && revoking.compareAndSet(true,false) then accounts.revoke(session.secret,issued.token.id,actor) else IO.unit)
+      a <- f.artifacts.init(f.identity,InitUpload("download",ArtifactKind.File,Visibility.Internal,
+        Vector(ManifestEntry("a.txt",false,bytes.length,SecretCodec.sha256(bytes))),Some(60),Vector.empty,None,None))
+      id = a.artifact.id
+      download = (artifact: String,path: String,token: Option[String]) => request(Method.GET,s"/api/current/artifacts/$artifact/files/$path/content",token)
+      (uploading,uploadingBody,_) <- c.run(download(id,"a.txt",Some(issued.secret)))
+      _ <- f.artifacts.putChunk(f.identity,id,"a.txt",0,bytes,SecretCodec.sha256(bytes))
+      _ <- f.artifacts.finish(f.identity,id)
+      (whole,wholeBody,wholeTransactions) <- c.run(download(id,"a.txt",Some(issued.secret)))
+      (range,rangeBody,rangeTransactions) <- c.run(download(id,"a.txt",Some(issued.secret)).putHeaders(Header.Raw(CIString("Range"),"bytes=2-4")))
+      (anonymous,anonymousBody,anonymousTransactions) <- c.run(download(id,"a.txt",None))
+      (unknown,unknownBody,_) <- c.run(download("0"*32,"a.txt",Some(issued.secret)))
+      (absent,absentBody,_) <- c.run(download(id,"b.txt",Some(issued.secret)))
+      _ <- IO { f.clock.now = a.artifact.expiresAtSeconds.get }
+      (expired,expiredBody,_) <- c.run(download(id,"a.txt",Some(issued.secret)))
+      (expiredAnonymous,expiredAnonymousBody,_) <- c.run(download(id,"a.txt",None))
+      _ <- IO { f.clock.now = a.artifact.createdAtSeconds; revoking.set(true) }
+      (revoked,revokedBody,revokedTransactions) <- c.run(download(id,"a.txt",Some(issued.secret)))
+      _ <- IO {
+        assertEquals((whole.status.code,Exact.string(wholeBody)),(200,text))
+        assertEquals((range.status.code,Exact.string(rangeBody)),(206,"234"))
+        assertEquals(Vector(uploading -> uploadingBody,anonymous -> anonymousBody,unknown -> unknownBody,absent -> absentBody,expired -> expiredBody,
+          expiredAnonymous -> expiredAnonymousBody,revoked -> revokedBody).map((response,body) => response.status.code -> failure(body)),
+          Vector(404 -> wire.ErrorCode.NotFound,401 -> wire.ErrorCode.GrantRequired,404 -> wire.ErrorCode.NotFound,404 -> wire.ErrorCode.NotFound,
+            410 -> wire.ErrorCode.Expired,404 -> wire.ErrorCode.NotFound,401 -> wire.ErrorCode.Unauthorized))
+        // Without a credential the content authorisation and the open; a revoked bearer stops at the download's transaction.
+        assertEquals((anonymousTransactions,revokedTransactions),(1,2))
+        // The credential, the download's own transaction, the open.
+        assertEquals((wholeTransactions,rangeTransactions),(3,3))
+      }
+    yield ()
+  }}
   test("content hosting preserves user styles, inline scripts, no API and security headers") { run { (f,h) =>
     val bytes = Exact.utf8("user css")
     for
