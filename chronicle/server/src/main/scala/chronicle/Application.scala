@@ -46,14 +46,19 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case _ => IO.blocking(auth.mutate(i,e))
     }
   }
-  def contextReadAccess(expected: Identity,fresh: IO[Identity]): IO[ReadAccess] =
-    IO.blocking(db.transaction(SecurityEpoch.current)).map { epoch =>
-      val current=fresh.flatTap { identity => IO.blocking {
-        Check(identity.user.id==expected.user.id && identity.browser==expected.browser && identity.credentialHash==expected.credentialHash,"unauthorized","context credential changed")
-        Check(db.transaction(SecurityEpoch.current)==epoch,"authorization-changed","access changed during context read")
-      }}
-      ReadAccess(current,ReadMaterialization.unrestricted)
+  /** The first fresh check of an access captures the global security epoch and then runs `fresh`; every later check
+    * runs `fresh` and then requires that same epoch. The epoch only grows, so a change after the capture, including one
+    * during the first check, is refused by the next check. */
+  def contextReadAccess(expected: Identity,fresh: IO[Identity]): IO[ReadAccess] = IO {
+    val captured=new java.util.concurrent.atomic.AtomicReference[Option[Long]](None)
+    val epoch=IO.blocking(db.transaction(SecurityEpoch.current))
+    val same=fresh.flatTap(identity => IO(Check(identity.user.id==expected.user.id && identity.browser==expected.browser && identity.credentialHash==expected.credentialHash,"unauthorized","context credential changed")))
+    val current=IO(captured.get()).flatMap {
+      case None => epoch.flatMap(read => IO(captured.compareAndSet(None,Some(read)))) *> same
+      case Some(seen) => same.flatTap(_ => epoch.flatMap(read => IO(Check(read==seen,"authorization-changed","access changed during context read"))))
     }
+    ReadAccess(current,ReadMaterialization.unrestricted)
+  }
   def searchTags(access: ReadAccess,query: TagSearchQuery): IO[Result] =
     access.blocking(i => Result.Facets(FacetsResult(Nil,Nil,searchIndex.tags(i.user.id,query,access.materialization))))
   def read(access: ReadAccess,operation: Operation): IO[Result] = IO.defer {

@@ -110,6 +110,42 @@ class MessageContextHttpTest extends munit.FunSuite {
     assertEquals(intercept[DomainError](f.app.operationVersion(owner,request,"1.9.0").unsafeRunSync()).code,"unauthorized")
     assertEquals(f.probe.observations.collect { case SourceEvent.Query(sql,_) if sql.contains("ch_messages") => sql },before)
   }}
+  test("BG specified: a context read captures the security epoch in its first fresh check and opens no transaction of its own") { ReadSourceFixture.withFixture(_ => IO.pure(ProblemPublicationFixtures.vector)) { f =>
+    val original=Fixtures.snapshot(); val out=f.archive.ingest("a",original); val auth=new Auth(f.db,f.config); val owner=auth.browser(auth.login(LoginRequest("a","synthetic"))._2)
+    /** What the application's runtime ran for `work`: "session lookups, security-epoch reads, transactions". */
+    def observed[A](work: => A): (A,String) = {
+      val before=f.probe.observations.size; val result=work; val events=f.probe.observations.drop(before)
+      val queries=events.collect { case SourceEvent.Query(sql,_) => sql }
+      val transactions=events.count { case SourceEvent.Transaction(_,started) => started; case _ => false }
+      (result,s"${queries.count(_.startsWith("SELECT u.id,u.login FROM ch_sessions"))} session lookups, ${queries.count(_=="SELECT revision FROM ch_security_epoch WHERE singleton")} epoch reads, $transactions transactions")
+    }
+    val context=ClientEnvelope(UUID.randomUUID(),Operation.ReadMessageContext(out.sessionId,ContentView(1,None),Span(original.messages.head.id,0,1),0,4))
+    val (read,browser)=observed(f.app.operationVersion(owner,context,"1.9.0").unsafeRunSync())
+    val search=ClientEnvelope(UUID.randomUUID(),Operation.ArchiveSearch(ArchiveQuery("mode:lexical needle",ArchiveSort.LastTimestamp,SortDirection.Desc,None,10,true)))
+    val (found,archive)=observed(f.app.operationVersion(owner,search,"1.9.0").unsafeRunSync())
+    var fresh=0
+    val access=f.app.contextReadAccess(owner,IO { fresh+=1; owner })
+    def tool(): (Json,String) = observed(f.mcp.handle(owner,rpc(out.sessionId,original.messages.head.id),access).unsafeRunSync().get)
+    val (first,mcp)=tool()
+    // Access changes between two reads through one `contextReadAccess`: each read captures the epoch for itself.
+    val group=UUID.randomUUID()
+    f.db.transaction { c => Sql.exec(c,"INSERT INTO ch_groups VALUES(?,'a','synthetic')",group); Sql.exec(c,"INSERT INTO ch_members VALUES(?,'a'),(?,'b')",group,group) }
+    val (second,_)=tool()
+    // Access changes during the first check of a read, after its capture: the read is refused.
+    var checks=0
+    val changing=f.app.contextReadAccess(owner,IO.blocking { checks+=1; if(checks==1) f.db.transaction(c => Sql.exec(c,"DELETE FROM ch_members WHERE group_id=? AND user_id='b'",group)); owner })
+    val refused=f.mcp.handle(owner,rpc(out.sessionId,original.messages.head.id),changing).unsafeRunSync().get.hcursor.downField("result")
+    assert(read.isInstanceOf[Result.MessageContext]); assert(found.isInstanceOf[Result.ArchiveSearch])
+    List(first,second).foreach(response => assertEquals(response.hcursor.downField("result").get[Boolean]("isError").toOption,Some(false)))
+    assertEquals(fresh,8,"the MCP tool checks around its read, before rendering and before delivery")
+    assertEquals(refused.get[Boolean]("isError").toOption,Some(true))
+    assertEquals(Wire.parse(refused.downField("content").downN(0).get[String]("text").toOption.get).hcursor.get[String]("code").toOption,Some("authorization-changed"))
+    // A fresh check is the session, then the epoch, each in a transaction of its own. The context read: one before
+    // and one after its single source transaction; archive search: one more before planning; the fresh authority of
+    // the MCP calls above is not a session.
+    assertEquals(List("browser context read: "+browser,"browser archive search: "+archive.replaceAll(", [0-9]+ transactions$",""),"MCP context read: "+mcp.replaceAll(", [0-9]+ transactions$","")),
+      List("browser context read: 2 session lookups, 2 epoch reads, 5 transactions","browser archive search: 3 session lookups, 3 epoch reads","MCP context read: 0 session lookups, 4 epoch reads"))
+  }}
 
   test("Blackbox-GoodCommunication specified: opt-in public HTTP text keeps source framing and correlated budget errors") { ReadSourceFixture.withFixture(_ => IO.pure(ProblemPublicationFixtures.vector)) { f =>
     // Corrupts a legacy message row: pinned to the legacy layout.
