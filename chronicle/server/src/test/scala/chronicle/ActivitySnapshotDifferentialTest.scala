@@ -16,11 +16,13 @@ final class ActivitySnapshotDifferentialTest extends munit.FunSuite {
   override val munitTimeout=10.minutes
   private val old="old-profile"; private val other="other-profile"
   private final case class JobRow(revision: Int,profile: String,state: String,attempts: Int,lease: Option[Long],total: Option[Int],completed: Int,epoch: Long,waiting: Option[Long],bulk: Option[Boolean])
-  private final case class Source(owner: String,revision: Int,tombstone: Boolean,namespace: String,jobs: List[JobRow])
+  /** `namespace`: the collector namespace of the head revision's source; None: its source has none. */
+  private final case class Source(owner: String,revision: Int,tombstone: Boolean,namespace: Option[String],jobs: List[JobRow])
   private final case class Report(owner: String,collector: String,age: Long)
   /** `retainedTarget`: owners whose target is a registered profile this deployment does not execute; `indexingOff`:
-    * owners who disabled indexing (which also advances their indexing epoch: their stored jobs' epochs fall behind). */
-  private final case class State(name: String,sources: List[Source],reports: List[Report],disabled: Set[String],indexingOff: Set[String],retainedTarget: Set[String],now: Instant)
+    * owners who disabled indexing (which also advances their indexing epoch: their stored jobs' epochs fall behind);
+    * `sourceless`: stored jobs without a source (NULL `session_id`). */
+  private final case class State(name: String,sources: List[Source],reports: List[Report],disabled: Set[String],indexingOff: Set[String],retainedTarget: Set[String],now: Instant,sourceless: List[JobRow]=Nil)
   private val owners=List("a","b","c")
   private val namespaces=List("base","base/episode","base/episode/child","baseball/child","under_score/child","underXscore/child","percent%/child","percentX/child","orphan/child","host-1/root")
   private val prefixes=List("base","base/episode","baseball","under_score","percent%","host-1","report-only")
@@ -46,7 +48,7 @@ final class ActivitySnapshotDifferentialTest extends munit.FunSuite {
           JobRow(r,p,state,random.nextInt(7),maybe(0.6)(pick(List(-3600L,-1L,0L,1L,3600L))),total,completed,if(random.nextDouble()<0.15) 7L else 0L,
             maybe(0.8)(random.nextInt(7200).toLong),maybe(0.8)(random.nextBoolean()))
         }
-        Source(owner,revision,random.nextDouble()<0.1,pick(namespaces),jobs)
+        Source(owner,revision,random.nextDouble()<0.1,Some(pick(namespaces)),jobs)
       }
     }
     val reports=owners.flatMap(owner => prefixes.filter(_ => random.nextDouble()<0.45).map(id => Report(owner,id,pick(List(0L,30L,CollectorProgress.staleSeconds,CollectorProgress.staleSeconds+1,3600L)))))
@@ -55,18 +57,24 @@ final class ActivitySnapshotDifferentialTest extends munit.FunSuite {
     State(s"generated $seed",sources,reports,some(0.1),some(0.2),some(0.2)-"a",instant.plusNanos(nanos))
   }
   /** Named archives: none; heads without jobs; one current job each; only jobs of other revisions and profiles; every head
-    * sized and queued (the large lane, other owners' candidates ranked ahead); a retained target with indexing off. */
+    * sized and queued (the large lane, other owners' candidates ranked ahead); a retained target with indexing off; live
+    * heads whose source has no collector namespace (with and without a current target job) and stored jobs without a
+    * source (NULL `session_id`). */
   private def named(target: String,retained: String): List[State] = {
     def job(r: Int,p: String,state: String,total: Option[Int]=None,lease: Option[Long]=None,waiting: Option[Long]=Some(60)): JobRow = JobRow(r,p,state,0,lease,total,if(state=="Complete") total.getOrElse(0) else 0,0,waiting,Some(false))
     val empty=State("empty",Nil,Nil,Set.empty,Set.empty,Set.empty,instant)
     List(
       empty,
-      empty.copy(name="heads without jobs",sources=List(Source("a",1,false,"base/episode/child",Nil),Source("a",2,false,"orphan/child",Nil),Source("b",1,false,"base",Nil)),reports=List(Report("a","base",0))),
-      empty.copy(name="one current job per head",sources=namespaces.zipWithIndex.map((ns,i) => Source("a",1+i%3,false,ns,List(job(1+i%3,target,List("Queued","Running","Complete","Failed")(i%4),lease=Some(60))))),reports=prefixes.map(Report("a",_,30))),
-      empty.copy(name="only other revisions and profiles",sources=namespaces.map(ns => Source("a",3,false,ns,List(job(1,target,"Complete",Some(3)),job(2,target,"Failed"),job(3,old,"Complete",Some(3)),job(3,other,"Queued")))),reports=List(Report("a","base",CollectorProgress.staleSeconds+1))),
-      empty.copy(name="large lane",sources=owners.flatMap(o => (0 until 6).map(i => Source(o,1,i==5,namespaces(i),List(job(1,target,"Queued",Some(150),waiting=Some(10L*i+(if(o=="a") 5 else 0)))))))),
-      empty.copy(name="retained target, indexing off",sources=owners.flatMap(o => (0 until 4).map(i => Source(o,2,false,namespaces(i),List(job(2,if(o=="c") retained else target,"Queued",Some(150)),job(2,if(o=="c") target else old,"Running",lease=Some(600)),job(1,target,"Running",lease=Some(600)))))),
-        indexingOff=Set("b"),retainedTarget=Set("c"),reports=List(Report("c","base",0),Report("b","base",5000)))
+      empty.copy(name="heads without jobs",sources=List(Source("a",1,false,Some("base/episode/child"),Nil),Source("a",2,false,Some("orphan/child"),Nil),Source("b",1,false,Some("base"),Nil)),reports=List(Report("a","base",0))),
+      empty.copy(name="one current job per head",sources=namespaces.zipWithIndex.map((ns,i) => Source("a",1+i%3,false,Some(ns),List(job(1+i%3,target,List("Queued","Running","Complete","Failed")(i%4),lease=Some(60))))),reports=prefixes.map(Report("a",_,30))),
+      empty.copy(name="only other revisions and profiles",sources=namespaces.map(ns => Source("a",3,false,Some(ns),List(job(1,target,"Complete",Some(3)),job(2,target,"Failed"),job(3,old,"Complete",Some(3)),job(3,other,"Queued")))),reports=List(Report("a","base",CollectorProgress.staleSeconds+1))),
+      empty.copy(name="large lane",sources=owners.flatMap(o => (0 until 6).map(i => Source(o,1,i==5,Some(namespaces(i)),List(job(1,target,"Queued",Some(150),waiting=Some(10L*i+(if(o=="a") 5 else 0)))))))),
+      empty.copy(name="retained target, indexing off",sources=owners.flatMap(o => (0 until 4).map(i => Source(o,2,false,Some(namespaces(i)),List(job(2,if(o=="c") retained else target,"Queued",Some(150)),job(2,if(o=="c") target else old,"Running",lease=Some(600)),job(1,target,"Running",lease=Some(600)))))),
+        indexingOff=Set("b"),retainedTarget=Set("c"),reports=List(Report("c","base",0),Report("b","base",5000))),
+      empty.copy(name="heads without a namespace, jobs without a source",sources=List(Source("a",1,false,None,List(job(1,target,"Queued",Some(150)))),
+        Source("a",2,false,None,List(job(2,target,"Complete",Some(3)),job(1,target,"Failed"))),Source("a",1,false,None,Nil),
+        Source("a",1,false,Some("base/episode/child"),List(job(1,target,"Running",lease=Some(600)))),Source("b",1,false,None,List(job(1,target,"Queued",Some(150))))),
+        reports=List(Report("a","base",0)),sourceless=List(job(1,target,"Queued",Some(150)),job(1,old,"Running",lease=Some(600)),job(2,target,"Complete",Some(3))))
     )
   }
   private def plant(db: Database,config: Config,retained: String,state: State): Unit = db.transaction { c =>
@@ -80,30 +88,33 @@ final class ActivitySnapshotDifferentialTest extends munit.FunSuite {
     val base=Fixtures.snapshot()
     val metadata=Wire.encode(Metadata.codecJson,base.metadata).noSpaces
     val identity=Wire.encode(SourceIdentity.codecJson,base.source).noSpaces
+    def job(id: UUID,session: Option[UUID],j: JobRow): Unit = {
+      val lease=j.lease.fold("NULL")(_ => "?::timestamptz"); val waiting=j.waiting.fold("NULL")(_ => "?::timestamptz")
+      val total=j.total.fold("NULL")(_ => "?"); val bulk=j.bulk.fold("NULL")(_ => "?"); val error=if(j.state=="Failed") "'model-failed'" else "NULL"
+      val args=List[Sql.Param](id)++session.toList++List[Sql.Param](j.revision,j.profile,j.state,j.attempts)++j.lease.map(s => state.now.plusSeconds(s).toString).toList++
+        List[Sql.Param](j.completed)++j.total.toList++List[Sql.Param](j.epoch)++j.waiting.map(s => state.now.minusSeconds(s).toString).toList++j.bulk.toList
+      Sql.exec(c,s"INSERT INTO ch_jobs(id,session_id,revision,profile,state,attempts,lease_until,error,completed_windows,total_windows,indexing_epoch,waiting_since,bulk) VALUES(?,${session.fold("NULL")(_ => "?")},?,?,?,?,$lease,$error,?,$total,?,$waiting,$bulk)",args*)
+    }
     state.sources.zipWithIndex.foreach { (s,n) =>
       val id=new UUID(1,n.toLong)
       Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key,revision,tombstone) VALUES(?,?,?,?,?)",id,s.owner,s"differential-$n",s.revision,s.tombstone)
       (1 to s.revision).foreach { r =>
         Sql.exec(c,"INSERT INTO ch_revisions(session_id,revision,snapshot) VALUES(?,?,'{}'::jsonb)",id,r)
         // Only the head revision's namespace places a source under a collector.
-        Sql.exec(c,"""INSERT INTO ch_revision_info(session_id,revision,metadata,source,completion,redacted,message_count)
-          VALUES(?,?,?::jsonb,jsonb_set(?::jsonb,'{collectorNamespace}',to_jsonb(?::text)),'Quiescent',false,0)""",id,r,metadata,identity,if(r==s.revision) s.namespace else "wrong-old-namespace")
+        val namespace=if(r==s.revision) s.namespace else Some("wrong-old-namespace")
+        Sql.exec(c,s"""INSERT INTO ch_revision_info(session_id,revision,metadata,source,completion,redacted,message_count)
+          VALUES(?,?,?::jsonb,${namespace.fold("?::jsonb-'collectorNamespace'")(_ => "jsonb_set(?::jsonb,'{collectorNamespace}',to_jsonb(?::text))")},'Quiescent',false,0)""",(List[Sql.Param](id,r,metadata,identity)++namespace.toList)*)
       }
-      s.jobs.zipWithIndex.foreach { (j,k) =>
-        val lease=j.lease.fold("NULL")(_ => "?::timestamptz"); val waiting=j.waiting.fold("NULL")(_ => "?::timestamptz")
-        val total=j.total.fold("NULL")(_ => "?"); val bulk=j.bulk.fold("NULL")(_ => "?"); val error=if(j.state=="Failed") "'model-failed'" else "NULL"
-        val args=List[Sql.Param](new UUID(2,n.toLong*16+k),id,j.revision,j.profile,j.state,j.attempts)++j.lease.map(s => state.now.plusSeconds(s).toString).toList++
-          List[Sql.Param](j.completed)++j.total.toList++List[Sql.Param](j.epoch)++j.waiting.map(s => state.now.minusSeconds(s).toString).toList++j.bulk.toList
-        Sql.exec(c,s"INSERT INTO ch_jobs(id,session_id,revision,profile,state,attempts,lease_until,error,completed_windows,total_windows,indexing_epoch,waiting_since,bulk) VALUES(?,?,?,?,?,?,$lease,$error,?,$total,?,$waiting,$bulk)",args*)
-      }
+      s.jobs.zipWithIndex.foreach((j,k) => job(new UUID(2,n.toLong*16+k),Some(id),j))
     }
+    state.sourceless.zipWithIndex.foreach((j,k) => job(new UUID(3,k.toLong),None,j))
     state.reports.foreach { r =>
       val value=CollectorProgressUpdate(r.collector,1,UUID.randomUUID(),CollectorPhase.Uploading,state.now.minusSeconds(600).toString,CollectorCounters(10,10,0,0,0,0,9,0,0,0,0,0,10),1000,500,Some(500),Some("error of "+r.collector))
       Sql.exec(c,"INSERT INTO ch_collector_progress VALUES(?,?,1,?::jsonb,?::timestamptz)",r.owner,r.collector,Wire.encode(CollectorProgressUpdate.codecJson,value).noSpaces,state.now.minusSeconds(r.age).toString)
     }
   }
 
-  test("the collector snapshot's totals and rows and the claim-order summary answer exactly what 15040203's statements answer, on 6 named and 40 generated archives") { ClaimOrderPostgres.withDatabase(ClaimOrderPostgres.config()) { (c,plain,_) =>
+  test("the collector snapshot's totals and rows and the claim-order summary answer exactly what 15040203's statements answer, on 7 named and 40 generated archives") { ClaimOrderPostgres.withDatabase(ClaimOrderPostgres.config()) { (c,plain,_) =>
     val capture=new Capture
     val capturing=Database.withFactory(c,IndexProfileCatalog.current(c),capture.factory)
     val catalog=IndexProfileCatalog.current(c)
@@ -134,6 +145,7 @@ final class ActivitySnapshotDifferentialTest extends munit.FunSuite {
             count("a collector or owner whose every head lacks a target job",heads.exists(h => h>0 && without.contains(h)))
             count("large-lane rank",value(row,"large_ahead").nonEmpty)
             count("large-lane jobs without a rank",value(row,"awaiting").exists(_!="0") && value(row,"large_ahead").isEmpty)
+            count("a collector row without an id (heads without a namespace)",row.exists((column,text) => column=="collector_id" && text==null))
           }
         }
       }
@@ -177,7 +189,8 @@ final class ActivitySnapshotDifferentialTest extends munit.FunSuite {
         }
       }
       println(s"ActivitySnapshotDifferentialTest: ${states.size} archives, $compared statements compared, non-trivial values: ${nontrivial.toList.sorted.mkString(", ")}")
-      assertEquals(nontrivial.keySet,Set("heads with and without a target job","a collector or owner whose every head lacks a target job","large-lane rank","large-lane jobs without a rank"),"the archives exercise every compared value")
+      assertEquals(nontrivial.keySet,Set("heads with and without a target job","a collector or owner whose every head lacks a target job","large-lane rank","large-lane jobs without a rank",
+        "a collector row without an id (heads without a namespace)"),"the archives exercise every compared value")
     } finally try capturing.transaction { x =>
       Sql.exec(x,"DELETE FROM ch_collector_progress"); owners.foreach(o => Sql.exec(x,"UPDATE ch_users SET enabled=true WHERE id=?",o))
     } finally capturing.close()
