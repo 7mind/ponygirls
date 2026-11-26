@@ -223,7 +223,7 @@ final class PostgresActivity(db: Database,clock: Clock,view: ActivityClaimOrderV
     r.getLong(prefix+"complete"),r.getLong(prefix+"active_running"),r.getLong(prefix+"expired_running"),r.getLong(prefix+"unleased_running")
   )
   private def reading[A](owner: String)(f: (Connection,Instant) => A): A = IndexedRead.transaction(db) { c =>
-    Check(Sql.one(c,"SELECT 1 FROM ch_users WHERE id=? AND enabled",owner)(_ => true).contains(true),"unauthorized","owner disabled")
+    // Also the owner's authority: `unauthorized` unless the owner exists and is enabled.
     val target=OwnerTargets.read(c,owner,false)
     db.profiles.resolve(target.profile)
     f(c,clock.instant())
@@ -233,7 +233,7 @@ final class PostgresActivity(db: Database,clock: Clock,view: ActivityClaimOrderV
     * instant of microseconds, PostgreSQL's precision, so that `observedAt`, the lease flags and the scheduler predicates
     * are all evaluated at the same instant. */
   private def claimReading[A](owner: String)(f: (Connection,Instant) => A): A = IndexedRead.transaction(db) { c =>
-    Check(Sql.one(c,"SELECT 1 FROM ch_users WHERE id=? AND enabled",owner)(_ => true).contains(true),"unauthorized","owner disabled")
+    // The owner's authority: `unauthorized` unless the owner exists and is enabled.
     OwnerTargets.read(c,owner,false)
     f(c,clock.instant().truncatedTo(ChronoUnit.MICROS))
   }

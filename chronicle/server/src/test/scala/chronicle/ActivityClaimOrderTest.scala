@@ -438,4 +438,33 @@ final class ActivityClaimOrderTest extends munit.FunSuite {
     assertEquals((activityBefore.current.activeRunning,after.fresh.awaitingReclaim),(1L,1L))
     List(before,after).foreach(q => assertEquals(q.activeRunning+q.fresh.awaitingReclaim,1L,"one summary counts the job exactly once"))
   }}
+
+  test("every Activity read tests the owner's enabled row in one statement, the one that reads its target; a disabled or unknown owner is unauthorized") { withFixture { f =>
+    source(f,"a","read")
+    val probe=new SourceProbe
+    java.sql.DriverManager.registerDriver(probe)
+    try {
+      val probed=Fixtures.database(f.config.copy(jdbcUrl=probe.url(f.config.jdbcUrl)),f.db.profiles)
+      try {
+        val read=new PostgresActivity(probed,Clock.fixed(now,ZoneOffset.UTC),ActivityClaimOrderView(waiting,4))
+        def reads(owner: String): List[(String,() => Any)] = List(
+          "summary" -> (() => read.summary(user(owner),collectors)),"jobs" -> (() => read.jobs(owner,query())),
+          "claimOrderSummary" -> (() => read.claimOrderSummary(user(owner))),"claimOrderJobs" -> (() => read.claimOrderJobs(owner,claimQuery())))
+        // The statements of one read whose rows come from ch_users, as the read prepared them.
+        def ownerStatements(run: () => Any): List[String] = {
+          val before=probe.observations.size
+          run()
+          probe.observations.drop(before).collect { case SourceEvent.Statement(_,sql) if sql.contains("FROM ch_users") =>
+            if(sql.startsWith("SELECT t.profile,t.epoch,p.embedding_space,e.descriptor FROM ch_users u")) "target of the enabled owner" else sql
+          }
+        }
+        f.db.transaction(c => Sql.exec(c,"UPDATE ch_users SET enabled=false WHERE id='c'"))
+        try List("c","nobody").foreach { owner => reads(owner).foreach { (label,run) =>
+          val refused=intercept[DomainError](run())
+          assertEquals((refused.code,refused.detail),("unauthorized","owner disabled"),s"$label of $owner")
+        }} finally f.db.transaction(c => Sql.exec(c,"UPDATE ch_users SET enabled=true WHERE id='c'"))
+        reads("a").foreach { (label,run) => assertEquals(ownerStatements(run),List("target of the enabled owner"),label) }
+      } finally probed.close()
+    } finally java.sql.DriverManager.deregisterDriver(probe)
+  }}
 }
