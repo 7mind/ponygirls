@@ -2,16 +2,24 @@
 
 Status: draft for review; nothing is implemented. Written 2026-11-26 against commit `a2eae616`. Revision 2 of
 the same day records four decisions of the owner (decision inbox Q173 to Q176; section 13) and orders the work
-accordingly (section 12).
+accordingly (section 12). Revision 3 adds what the Codex source says at the pinned release tag, the identifiers
+behind every `[bin]` tag (appendix A) and corrections from an independent read of revision 2.
 
 Evidence tags used below:
 
 - **[repo]** read in this repository on that commit.
 - **[doc]** stated by vendor documentation fetched on 2026-11-26; not exercised here.
-- **[bin]** the identifier occurs in the pinned binaries (Claude Code 2.1.327, Codex 0.170.0). Presence of a
-  string is not proof of behaviour.
+- **[src]** read in the vendor's public source at the release tag of the pinned version, upstream tests
+  included (Codex `rust-v0.170.0`, commit `29eb79e9`; appendix A); not run here. Claude Code is packaged from
+  a prebuilt binary **[repo]** and has no `[src]` cells.
+- **[bin]** the identifier occurs in the program the pin installs (Claude Code 2.1.327, Codex 0.170.0);
+  appendix A lists identifiers and counts. Presence of a string is not proof of behaviour: `asyncRewake` occurs
+  once in the Codex binary and once in its source tree, where hook configurations of other agents are imported
+  and a hook carrying that field is skipped **[src]**.
 - **[prior]** reported by a third-party project's README or docs; not verified here.
 - Everything untagged is a proposal of this draft.
+
+No hook was installed and no session was started in either harness for this draft.
 
 ## 1. Summary
 
@@ -25,12 +33,12 @@ Evidence tags used below:
 - **Pi is covered** by API the Decisions and subagent extensions already use: `pi.enqueueMessage` with steer
   and wake semantics **[repo]**.
 - **The premise that Claude Code and Codex cannot be extended is outdated.** Both have hooks that add context at
-  prompt submission, after tool calls and at stop, and that rewrite tool arguments **[doc][bin]**. Claude Code
-  also has background monitors **[doc]**, `asyncRewake` hooks and in-process extensions ("mods")
-  **[doc][bin]**. Codex has the app-server protocol with `turn/steer` and `turn/start` **[doc]**. One
-  hook-driven connector (a small CLI plus an MCP endpoint on the server) serves both for delivery between
-  turns. Waking an idle session is harness-specific: a background hook in Claude Code, nothing short of an
-  app-server bridge in Codex.
+  prompt submission and after tool calls, continue a run that is about to stop, and rewrite tool arguments
+  (Claude Code **[doc][bin]**, Codex **[doc][src]**). Claude Code also has background monitors, `asyncRewake`
+  hooks and in-process extensions ("mods") **[doc][bin]**. Codex has the app-server protocol with `turn/steer`
+  and `turn/start` **[doc][bin]**. One hook-driven connector (a small CLI plus an MCP endpoint on the server)
+  serves both for delivery between turns. Waking an idle session is harness-specific: a background hook in
+  Claude Code, nothing short of an app-server bridge in Codex.
 - **Prior art exists** (Concord MCP, agentchattr, MCP Agent Mail, chatroom-mcp; section 11). None supports Pi or
   our accounts and Nix stack, and the two that work across machines need a hosted cloud (Concord) or one token
   per session (chatroom-mcp). Their delivery techniques are worth copying.
@@ -293,16 +301,28 @@ sequenceDiagram
 
 | Capability | Claude Code 2.1.327 | Codex 0.170.0 |
 |---|---|---|
-| Add context when the user submits a prompt | `UserPromptSubmit` → `additionalContext` **[doc][bin]** | same **[doc][bin]** |
-| Add context between tool batches | `PostToolBatch` → `additionalContext` **[doc][bin]** | `PostToolUse` → `additionalContext` (per tool) **[doc][bin]** |
-| Continue a run that is about to stop | `Stop` → `additionalContext`, capped at 8 consecutive continuations **[doc]** | `Stop` → `decision: block`; the reason becomes a new user prompt **[doc]** |
-| Rewrite arguments of an MCP tool call | `PreToolUse` → `updatedInput` **[doc][bin]** | same **[doc][bin]** |
-| Intercept a typed command without a model call | `UserPromptSubmit` → `decision: block`, reason shown to the user; a typed `/command` arrives as typed **[doc]** | `UserPromptSubmit` → `decision: block` **[doc]** |
-| Hook handlers | command, HTTP, MCP tool **[doc]**; `mcp_tool` **[bin]** | command, MCP tool **[doc]**; `mcp_tool` **[bin]** |
-| Wake an idle session | `asyncRewake` hook that exits 2 **[doc][bin]**; plugin monitor whose output lines arrive as notifications **[doc]**, reported to wake an idle session **[prior]** | Hooks cannot: output of a background hook waits for the next user turn **[doc]**. App-server `turn/start` can **[doc]**. |
-| Steer a running session from outside | channel notifications, research preview behind an allowlist or a development flag **[doc][bin]**; per-session inbox socket for own child processes, wire format not documented in the pages read **[doc][bin]** | app-server `turn/steer` with `expectedTurnId`; `thread/inject_items` adds items without starting a turn **[doc]** |
-| In-process extension | "mods": commands, tools, timers, HTTP, `prompt.submit`, panes; from 2.1.287 **[doc][bin]** | none found in the pages read |
-| Preconditions | hooks and mods can be restricted by managed settings **[doc]** | non-managed hooks run only after trust review **[doc]**; `notify.nix` already carries trust-state seeding **[repo]** |
+| Add context when the user submits a prompt | `UserPromptSubmit` → `additionalContext` **[doc][bin]** | same **[doc][src]** |
+| Add context between tool batches | `PostToolBatch` → `additionalContext` **[doc][bin]** | `PostToolUse` → `additionalContext` (per tool) **[doc][src]**; an upstream test covers MCP tools **[src]** |
+| Continue a run that is about to stop | `Stop` → `additionalContext` **[doc][bin]**, capped at 8 consecutive continuations **[doc]** | `Stop` → `decision: block`; the reason becomes a new user prompt **[doc][src]** |
+| Rewrite arguments of an MCP tool call | `PreToolUse` → `updatedInput` **[doc][bin]** | same **[doc][src]**: an upstream integration test rewrites the input of an MCP tool; a rewrite that changes the server is refused **[src]** |
+| Intercept a typed command without a model call | `UserPromptSubmit` → `decision: block`, reason shown to the user; a typed `/command` arrives as typed **[doc]** | `UserPromptSubmit` → `decision: block` **[doc][src]** |
+| Hook handlers | command, HTTP, MCP tool **[doc]**; `mcp_tool` **[bin]** | command, MCP tool **[doc][src]** |
+| Wake an idle session | `asyncRewake` hook that exits 2 **[doc][bin]**, its `timeout` enforced **[doc]**; plugin monitor whose output lines arrive as notifications **[doc][bin]**, reported to wake an idle session **[prior]** | Hooks cannot: output of a background hook is handed over before the next user prompt or inside an active turn **[doc][src]**. App-server `turn/start` can **[doc][bin]**. |
+| Steer a running session from outside | channel notifications, research preview behind an allowlist or a development flag **[doc][bin]**; per-session inbox socket for own child processes, wire format not documented in the pages read **[doc][bin]** | app-server `turn/steer` with `expectedTurnId`; `thread/inject_items` adds items without starting a turn **[doc][bin]** |
+| In-process extension | "mods": commands, tools, timers, HTTP, `prompt.submit`, panes; from 2.1.287 **[doc][bin]** | none found in the pages read **[doc]** |
+| Preconditions | hooks and mods can be restricted by managed settings **[doc]** | non-managed hooks run only after trust review **[doc][bin]**; `notify.nix` already carries trust-state seeding **[repo]** |
+
+Version notes. The pages describe the vendors' current releases, not the pins.
+
+- Claude Code: none of the hook features this design uses carries a "requires" note above 2.1.327. The notes
+  above it concern things not used here (`onFailure` on `mcp_tool` hooks, `PreSkillShellCommand`, several mods
+  methods). One behaviour differs at the pin: before 2.1.328, `UserPromptSubmit` hooks also fire on Code Mode
+  output, so the handler has to recognise real prompts **[doc]**.
+- How far `[bin]` follows those notes was sampled once: two mods names gated above the pin (`tool.offer`,
+  `session.redact`) are absent from the 2.1.327 binary; two gated at 2.1.326 (`tool.judge`,
+  `isTextDisplayOnly`) are present **[bin]**.
+- Codex: the hooks page warns that its linked schemas can be ahead of the release **[doc]**; the `[src]` cells
+  were read at the release tag for that reason.
 
 ### 7.2 Connector for both: hooks, MCP and one CLI
 
@@ -314,8 +334,9 @@ This connector is the whole decided scope for the two harnesses (Q175).
 - **Session identity and the per-session gate.** A `PreToolUse` command hook `blabber hook`, matched on
   `mcp__blabber__.*`, reads the harness session id from the hook input. If the session is not enabled it denies
   the call with an explanation. Otherwise it returns `updatedInput` with `session` set. The identity never
-  passes through the model. agentchattr solves the same problem with a per-instance MCP proxy and chatroom-mcp
-  with one token per session **[prior]**; stamping needs neither.
+  passes through the model. In Codex the rewritten arguments replace the model's for MCP calls **[src]**.
+  agentchattr solves the same problem with a per-instance MCP proxy and chatroom-mcp with one token per
+  session **[prior]**; stamping needs neither.
 - **Enable and disable.** The `UserPromptSubmit` hook recognises `/blabber enable <room>`, `/blabber disable` and
   `/blabber status`, performs the attach or detach itself and blocks the prompt with the result as the reason.
   A prompt command named `blabber` is delivered through the existing asset bundles **[repo]** so the harness
@@ -327,7 +348,7 @@ This connector is the whole decided scope for the two harnesses (Q175).
 | User submits a prompt | pending messages as `additionalContext` | same |
 | Between tool batches | `PostToolBatch` | `PostToolUse`, rate-limited locally |
 | Run about to stop | `Stop` with `additionalContext` | `Stop` with `decision: block` and the batch as reason |
-| Idle | `asyncRewake` hook armed at `Stop` long-polls and exits 2 on a waking message, if spike 1 confirms the behaviour; otherwise as Codex | not delivered until the next prompt; the dashboard and `post` outlook show `idle-nowake` |
+| Idle | `asyncRewake` hook armed at `Stop` long-polls and exits 2 on a waking message, if spike 1 confirms the behaviour; the hook's `timeout` is enforced **[doc]**, so a session can be woken only for that long after its last turn; otherwise as Codex | not delivered until the next prompt; the dashboard and `post` outlook show `idle-nowake` |
 
 - **Visibility.** `additionalContext` does not appear in the Claude Code transcript **[doc]**. Each delivery also
   returns a `systemMessage` naming the room and senders so the user sees that something arrived.
@@ -341,7 +362,8 @@ This connector is the whole decided scope for the two harnesses (Q175).
 
 Caveats: in Codex a `Stop` continuation presents the batch as a user prompt **[doc]**, so the framing must be
 unmistakable. A Claude Code session blocked on a question or permission prompt receives nothing until the user
-answers **[prior]**; the connector reports `blocked-on-user`.
+answers (Concord's table, tested with Claude Code 2.1.308 **[prior]**); the connector reports
+`blocked-on-user`.
 
 ### 7.3 Bridges (not planned)
 
@@ -361,10 +383,13 @@ Codex sessions are an obstacle.
 
 ### 7.4 Spikes before the connector (small experiments in a scratch project)
 
-1. Claude Code: `PostToolBatch` and `Stop` `additionalContext` arrive as described; `asyncRewake` wakes an idle
-   interactive session; `/blabber …` reaches `UserPromptSubmit` and a block shows the reason.
+1. Claude Code 2.1.327: `PostToolBatch` and `Stop` `additionalContext` arrive as described; `asyncRewake` wakes
+   an idle interactive session, and for how long a hook armed at `Stop` may wait before its `timeout` ends it;
+   `/blabber …` reaches `UserPromptSubmit` and a block shows the reason; what the hook receives for Code Mode
+   output at this version.
 2. Codex 0.170.0: `PostToolUse` `additionalContext`, `Stop` continuation and `PreToolUse` `updatedInput` on an
-   MCP tool behave as documented (the docs describe current releases).
+   MCP tool were read in the source at the tag; the spike is to see them work with our hook and our MCP
+   endpoint after the trust review.
 3. Both: `updatedInput` stamping survives parallel tool calls and subagents.
 
 ## 8. Security and safety
@@ -445,7 +470,7 @@ A browsable mockup is published and confirmed before the dashboard is built.
 | Option | Why not the main line |
 |---|---|
 | Concord MCP (MIT, 1.6k stars) **[prior]** | Local-first SQLite per repository; machines are joined through Concord Cloud; no Pi; task and claim model we did not ask for; telemetry on by default. Its Claude Code and Codex adapters are the best reference for section 7. |
-| agentchattr (MIT, 1.6k stars) **[prior]** | Designed for one machine (localhost only); wakes agents by typing a prompt into their tmux panes. |
+| agentchattr (MIT, 1.6k stars) **[prior]** | Designed for one machine: its README says localhost use only, with a LAN mode behind an explicit flag and a warning. Wakes agents by typing a prompt into their tmux panes. |
 | MCP Agent Mail (2.2k stars) **[prior]** | Mail-like inboxes and file leases stored in Git and SQLite; agents fetch their inbox themselves; the Python version is superseded by a Rust rewrite. |
 | chatroom-mcp (Apache-2.0, 1 star) **[prior]** | Closest in shape (remote server, stateless MCP, hook injection, dashboard), but it is described for Claude Code only and wants one token per agent session. |
 | Matrix rooms with bot accounts | The repository already notifies through Matrix **[repo]**, but each agent session would need an account and device, a homeserver has to be run or trusted with the content, and cursors and wake rules would still be ours to build. |
@@ -500,10 +525,64 @@ README), `haystack/docs/api.md`, `haystack/models/current.baboon`, `shared/servi
 `nix/pkg/pi-extensions` (`ponygirls-decisions`, `ponygirls-bg-tasks`, `ponygirls-subagents` notice delivery,
 `ponygirls-pi-ui/CONVENTIONS.md`), `scripts/verify`, `flake.nix` verify aggregates. Pi 1.5.2 `docs/extensions.md`.
 
-Vendor documentation fetched 2026-11-26: Claude Code `hooks`, `channels`, `channels-reference`,
+Vendor documentation fetched 2026-11-26 as Markdown: Claude Code `hooks`, `channels`, `channels-reference`,
 `cross-session-messaging`, `plugins/components`, `plugins/mods/{overview,api,events,reference}` under
-`https://code.claude.com/docs/en/`; Codex `hooks` and `app-server` under `https://learn.chatgpt.com/docs/`.
+`https://code.claude.com/docs/en/`; Codex `hooks` and `app-server` under `https://learn.chatgpt.com/docs/`
+(`hooks` was requested at `https://developers.openai.com/codex/hooks.md`, which redirects there).
+
+Codex source at tag `rust-v0.170.0` (commit `29eb79e9866b3262a777fdf8195c1b9e63684c91`, resolved through the
+GitHub API and read from `raw.githubusercontent.com` on 2026-11-26): the files listed in appendix A.
 
 Third-party projects (README and adapter docs, repository metadata from the GitHub API on 2026-11-26):
 `Get-Concord-AI/concord-mcp`, `bcurts/agentchattr`, `Dicklesworthstone/mcp_agent_mail`,
 `WarrenSchultz/chatroom-mcp`.
+
+The fetched pages, the source files read, the READMEs and the identifier counts are kept, uncommitted, in
+`.local/blabber-research-20261126/` of the main checkout until the spikes of 7.4 are done.
+
+## Appendix A. What `[bin]` and `[src]` rest on
+
+Occurrence counts from `grep -a -o -F -- IDENTIFIER PROGRAM | wc -l` on the programs behind the Nix launchers.
+The first lookups were made on the launchers by mistake and all returned 0.
+
+Claude Code 2.1.327, `libexec/claude-code/claude` (372,908,560 bytes):
+
+| Identifier | Count | Identifier | Count |
+|---|---|---|---|
+| `UserPromptSubmit` | 103 | `claude/channel` | 30 |
+| `additionalContext` | 234 | `dangerously-load-development-channels` | 14 |
+| `PostToolBatch` | 62 | `CLAUDE_CODE_MESSAGING_SOCKET` | 19 |
+| `updatedInput` | 624 | `CLAUDE_CODE_MESSAGING_TOKEN` | 13 |
+| `stop_hook_active` | 10 | `crossSessionInbound` | 56 |
+| `Stop hook feedback` | 7 | `session.receive` | 33 |
+| `asyncRewake` | 32 | `command.register` | 29 |
+| `mcp_tool` | 335 | `prompt.submit` | 113 |
+| `suppressOriginalPrompt` | 36 | `monitors.json` | 7 |
+| `tool.judge` (from 2.1.326) | 30 | `tool.offer` (from 2.1.328) | 0 |
+| `isTextDisplayOnly` (from 2.1.326) | 9 | `session.redact` (from 2.1.331) | 0 |
+
+Codex 0.170.0, `bin/.codex-wrapped` (298,309,560 bytes):
+
+| Identifier | Count | Identifier | Count |
+|---|---|---|---|
+| `UserPromptSubmit` | 10 | `dangerously-bypass-hook-trust` | 3 |
+| `PostToolUse` | 15 | `turn/steer` | 4 |
+| `additionalContext` | 12 | `turn/start` | 15 |
+| `updatedInput` | 6 | `thread/inject_items` | 3 |
+| `stop_hook_active` | 5 | `expectedTurnId` | 3 |
+| `mcp_tool` | 56 | `PostToolBatch` (not a Codex event) | 0 |
+| `additionalContextLimit` | 2 | `asyncRewake` (not a Codex feature) | 1 |
+
+Codex source read at the tag, under `codex-rs/`. The whole tree was searched for `asyncRewake`, `PostToolBatch`
+(no occurrence) and the callers of `drain_async_hook_results`; the other rows are the files read.
+
+| File | What was read there |
+|---|---|
+| `hooks/src/events/pre_tool_use.rs`, `hooks/schema/generated/pre-tool-use.command.output.schema.json` | `updatedInput` and `additionalContext` are parsed; a blocking hook wins over a rewrite |
+| `core/src/tools/registry.rs` (`apply_pre_tool_use`, `with_updated_function_input`) | The rewritten arguments replace the call's arguments; for an MCP call the server selector must stay the same |
+| `core/tests/suite/hooks_mcp.rs` | Tests `pre_tool_use_rewrites_mcp_tool_before_execution` and `post_tool_use_records_mcp_tool_payload_and_context` |
+| `hooks/src/events/post_tool_use.rs`, `hooks/src/events/user_prompt_submit.rs` | Additional context for the model; `UserPromptSubmit` can block |
+| `hooks/src/events/stop.rs` | A blocking `Stop` hook's reason becomes the continuation prompt |
+| `hooks/src/engine/mod.rs` | Handler kinds: command (optionally `async`) and MCP tool |
+| `core/src/hook_runtime.rs` (`drain_async_hook_results`), `core/src/session/turn.rs` | Results of finished background hooks are handed over in two places, both inside `run_turn`: before the turn's user prompt and after sampling. Nothing hands them to an idle session |
+| `external-agent-migration/src/hooks_cla.rs` | The one occurrence of `asyncRewake` in the tree: an imported hook carrying that field is skipped |
