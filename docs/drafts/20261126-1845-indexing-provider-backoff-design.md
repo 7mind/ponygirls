@@ -1,259 +1,320 @@
-# Chronicle indexing: back-off after model-provider failures — design note (DRAFT, nothing built)
+# Chronicle indexing: back-off after model-provider failures — design note, REVISION 2 (DRAFT, nothing built)
 
-Date 2026-11-26 18:45Z, for the owner. Base `main` a2eae616. Design only: no code, no tests, no production access.
-`S/` = `chronicle/server/src/main/scala/chronicle/`; `MH` = `shared/model-http/src/main/scala/ponygirls/retrieval/ModelHttp.scala`;
-`T/` = `chronicle/server/src/test/scala/chronicle/`. Every code reference was read in this tree. Incident facts are cited from
-the overhaul notes (retry-all REPORT.md:30-33, :51-59; retry-followup ALERTS.txt; STATE.md:1133-1135), not re-observed.
+Rev 1 2026-11-26 18:45Z; rev 2 ~19:30Z after review 1 (reports/backoff/REVIEW-1.md) and the 19:00Z production
+measurements quoted there. Base `main` a2eae616; design only (no code, tests or production access). `S/` =
+`chronicle/server/src/main/scala/chronicle/`, `T/` = `chronicle/server/src/test/scala/chronicle/`, `MH` =
+`shared/model-http/src/main/scala/ponygirls/retrieval/ModelHttp.scala`, `AUTH/` =
+`shared/service-auth/src/main/scala/ponygirls/auth/`. Code references read in this tree; incident facts cited from the
+notes (retry-all REPORT.md, retry-followup ALERTS.txt, STATE.md, REVIEW-1.md).
 
-## 0. In short, and two corrections to the brief's mechanism
-- Confirmed: `failAt` (S/Database.scala:968-984) puts a failed job back to Queued with `lease_until=NULL`. The attempt
-  the claim charged stays charged; the job is Failed only at attempts ≥ 5 or on a terminal code. `waiting_since` is
-  untouched, so the waiting order (S/ClaimOrder.scala:77, oldest first) offers the same job again at once. The only pause
-  is 2 s on the lane that failed (S/Models.scala:569; `FailureBackoff.production` = 2 s, :679). Nothing looks at the cause.
-- Correction 1: S/Models.scala:601 sleeps after a *database* hold, :644/:653 after a failed *claim*; only :569 follows a failed job.
-- Correction 2: held jobs exist, but large-job deferral is not one: it records `total_windows` with `lease_until=NULL`
-  (S/Database.scala:719-729). Holds are written only by `holdTransient` (S/Database.scala:989-1012) for `database-transient`
-  (S/Models.scala:558, :690-693): attempt refunded, Queued until `lease_until` = now + 1, 2, 4, 8, then 15 min, Failed at
-  the 10th hold in a row (S/Database.scala:259-269); committed progress restarts the count (:997, :735).
-- Recommendation: send provider-side failures down that same hold path behind one flag (D1 = A + B2, §3): no migration,
-  reply or page change; it would have saved both incidents' jobs. Full refusals over ~1.5 h need the breaker (C) next.
+## 0. In short (what changed in revision 2)
+- **A per-job hold is not a queue bound.** D1 protects each job's attempts, but the claim filters held rows out
+  (S/ClaimOrder.scala:76). The lanes simply go on to new jobs at about today's call rate, and new uploads create
+  successors that are not held (S/Database.scala:311-318). A queue-wide bound needs a gate on new claims.
+- **New recommendation for decision 1:** D1 plus a minimal admission gate per upstream (§3.4). **Also changed:** only
+  explicit refusals are refunded (§2); decisions 3-6 are restated; §6 covers what the owner can do tonight without a
+  code change; §10 gives the disposition of review findings 1-9.
+- **Confirmed:** `failAt` (S/Database.scala:968-984) re-queues a failed job at once, charged, `waiting_since` kept; the
+  lane sleeps 2 s (S/Models.scala:569, :679). Measured: 7fc785e8 spent five attempts in 62 s on one window.
 
-## 1. Current behaviour, traced
-**Per call: no retry.** One POST per call: a non-2xx answer raises `model-http` "model returned HTTP n" (MH:67), the
-deadline `model-timeout` (MH:73), any other transport error `model-transport` (MH:76). Response headers, `Retry-After`
-included, are never read (MH:67). Chronicle re-raises the same code (S/Models.scala:83-88), except `model-response-bound`
-and `model-json`, which become `model-output` rejections (:86-87). Admission is a semaphore that waits and never refuses
-(S/ModelAdmission.scala:28-31). The HTTP status lives only in the error text, parsed for the log (S/Models.scala:137-139);
-the row stores the code alone (`code.take(64)`, S/Database.scala:982).
+## 1. Current behaviour, traced (corrected per review finding 8)
+**Per call: no retry.** A non-2xx answer raises `model-http` "model returned HTTP n" (MH:67). The deadline raises
+`model-timeout` (MH:73); it covers the whole call, including reading and decoding (MH:66-73). Any other error raises
+`model-transport` (MH:76), including read failures after the response has started. `Retry-After` is never read, and
+Chronicle re-raises the code unchanged (S/Models.scala:83-88). The status survives only in the error text, which the log
+parses (S/Models.scala:137-139); the row keeps the code alone (S/Database.scala:982).
 
-**Per attempt, by stage.**
-- Annotation: each call first reserves a row in the window's ledger, just before dispatch (S/Models.scala:80;
-  S/AnnotationAttempts.scala:92-95), so a call answered 429 has used a row. `model-output` and `model-output/truncated`
-  are recorded as rejections and the same window is asked again within the attempt (S/Models.scala:234-240, 292-294,
-  311-317); the 5th rejection ends the job `annotation-attempts-exhausted`. A window has 10 ledger rows per retry epoch
-  (`reservationLimit` = 5 + `attemptLimit`, S/AnnotationAttempts.scala:36-37); once used, the job ends
-  `annotation-reservations-exhausted` (:81, :109; S/Models.scala:131). Any other error ends the attempt (:241, :295).
-- Embedding: each accepted part is checkpointed (S/Models.scala:330-335). No re-ask: any error ends the attempt (:343).
-  The next attempt reuses accepted decisions and parts (:174-181).
-- Publication: no model call; it replays checkpoints (S/Models.scala:346-347). Every claim charges one attempt
-  (S/ClaimOrder.scala:192, S/Database.scala:558); only attempts < 5 are claimable (S/Database.scala:284-285).
+**Per attempt.**
+- **Ledger rows.** Annotation reserves a window-ledger row before each dispatch (S/Models.scala:80;
+  S/AnnotationAttempts.scala:92-95). The row holds job, run, epoch, window, attempt, input hash and fence
+  (chronicle/migrations/015_annotation_attempts.sql:2-11), plus a rejection reason, kept hash or acceptance
+  (S/AnnotationAttempts.scala:118-152). It records no time, no status and no "answered" flag.
+- **Rejections.** A rejection re-asks within the same attempt (S/Models.scala:234-240, 292-294, 311-317); the 5th ends
+  the job `annotation-attempts-exhausted`.
+- **Ledger full.** A window has 10 rows per epoch (S/AnnotationAttempts.scala:36-37). When they are full, the next
+  reservation is refused before dispatch and the job ends `annotation-reservations-exhausted` (:81, :109;
+  S/Models.scala:216-217).
+- **Other errors** end the attempt (S/Models.scala:241, :295, :343).
+- **Reuse.** Accepted work is reused, and reuse records no progress (S/Models.scala:174-181; S/Database.scala:699-704).
+  Publication calls no model (S/Models.scala:346-347).
+- **Charging.** Every claim charges one attempt, except the reclaim of a policy-invalidated claim
+  (S/ClaimOrder.scala:192; S/Database.scala:558). Only jobs with attempts < 5 are claimable (S/Database.scala:284-285).
 
-| code | charged | row afterwards | claimable again |
+| code | charged | row afterwards | next |
 |---|---|---|---|
-| `model-http` (any status), `model-timeout`, `model-transport`, embedding `model-output`, `worker-fault` (S/Models.scala:133), `invalid` (:113-114) | yes | `failAt` (S/Database.scala:982): Queued, `lease_until` NULL, `error`=code, `failure_stage`, `transient_failures`=0, windows reset; fence, `waiting_since`, `bulk` kept; Failed at attempts ≥ 5 | at once, still oldest of its class |
-| `annotation-attempts-exhausted`, `-reservations-exhausted`, `-input-changed` (S/AnnotationAttempts.scala:44), `index-budget-exceeded` (S/Models.scala:39) | — | Failed whatever the attempts (S/Database.scala:969, :982) | only after a retry |
-| `database-transient`, leftover staging | refunded | HELD: Queued, `lease_until`=next attempt, `transient_failures`+1; Failed at the 10th (S/Database.scala:1003-1009) | at `lease_until` |
-| `stale-claim` (claim lost, e.g. S/Models.scala:319) | yes (at claim) | no write: every write needs fence, run, epoch and a live lease (`validJob`, S/Database.scala:588-590); with a live lease and a newer head the job is superseded (:978-980) | per the row |
-| lease end (process died or hung) | yes (at reclaim) | Running with ended lease: any lane reclaims it (S/Database.scala:285); `lease-exhausted` at attempts ≥ 5 (:540-545) | 300 s after the last renewal (S/Models.scala:686) |
-| record failed (DB down) | yes | keeps its lease (S/Models.scala:603-607) | after the lease ends |
-| owner's indexing off or epoch changed | refunded | parked: Queued, fence+1 (S/Database.scala:971-977) | when re-enabled |
-| `internal`, `config`, `model-telemetry-invariant` | — | stops the worker (S/Models.scala:557, :675) | — |
+| `model-http` (any), `model-timeout`, `model-transport`, embedding `model-output`, `worker-fault`, `invalid` | yes | `failAt`: Queued, `lease_until` NULL, `error`=code, `failure_stage`, `transient_failures`=0; fence/`waiting_since`/`bulk` kept; Failed at attempts ≥ 5 (S/Database.scala:982) | eligible at once, still oldest of its class; lane kind, size and locks decide which job a lane takes next |
+| `annotation-*-exhausted`, `-input-changed`, `index-budget-exceeded` | — | Failed whatever the attempts (:969, :982) | retry only |
+| `database-transient`, leftover staging (S/Models.scala:690-693) | refunded | HELD: Queued until `lease_until`, `transient_failures`+1, Failed at the 10th (S/Database.scala:1003-1009); the count restarts when progress is recorded at renewal or at the hold (:735, :997) | at `lease_until` |
+| `stale-claim` | yes | authority lost (lease ended, fence/run changed): no write (`validJob`, :588-590); owner no longer admits the claim: parked, refunded (:971-977); live lease but newer head (prefix check, :608-611): superseded, or at attempts ≥ 5 Failed `stale-claim` (:978-982) | per row |
+| lease end | at reclaim | Running, lease ended; `lease-exhausted` at attempts ≥ 5 (:540-545) | waiting order: any lane; source-id: a recorded large job needs the permit (:546-553) |
+| record failed (DB down) | yes | keeps its lease (S/Models.scala:603-607); `internal`/`config`/`model-telemetry-invariant` instead stop the worker (:557, :675) | after lease |
 
-**Restarts and holds.** A restart leaves head-revision rows alone; at start only older-revision Queued/Running jobs end
-superseded (chronicle/migrations/001.sql:19-21). Running jobs come back after their lease ends, each charged one more
-attempt. A held row stays held: its hold is just `lease_until`. `Jobs.claimable` excludes Queued rows with a future
-`lease_until` (S/Database.scala:284-285). It is a *filter* in the waiting-order candidate statement (S/ClaimOrder.scala:76)
-and in today's order (S/Database.scala:551, :558), so a held head-of-queue job is skipped, not waited for. When its time
-comes it returns at its old place, because holds keep `waiting_since`/`bulk` (claim-order spec
-`docs/drafts/20261124-2138-indexing-claim-order-spec.md:135`). Activity derives `Held` from the same predicate
-(S/Activity.scala:109).
+**Holds today.**
+- Large-job deferral is not a hold: it sets `total_windows` and leaves `lease_until` NULL (S/Database.scala:719-729).
+- `Jobs.claimable` excludes Queued rows with a future `lease_until` (S/Database.scala:284-285). Both claim orders apply
+  it as a filter (S/ClaimOrder.scala:76; S/Database.scala:551), so a held head is skipped, not waited for.
+- A hold keeps `waiting_since`/`bulk` (claim-order spec docs/drafts/20261124-2138-indexing-claim-order-spec.md:135) and
+  survives a restart (chronicle/migrations/001.sql:19-21 touches only older revisions); a restart reclaims Running
+  claims after their lease and charges them once more.
 
-**The two incidents, read through this.** (1) 09:02-09:13Z, embedding pod not Ready: each attempt waited out the embedding
-deadline (`model-timeout`, Embedding); five jobs used 5 attempts each (REPORT.md:30-32, :52-56). (2) From about 17:56Z
-the provider answered 429, partially (other jobs kept running); five jobs Failed `model-http` at Annotation with windows
-28/33, 3/5, 5/7, 6/8, 6/8, 7fc785e8 by 18:00Z (ALERTS.txt; STATE.md:1133-1134). A manual `RetryJob` resets
-`waiting_since` (S/Database.scala:295), so a retried job waits behind 369-377 others (REPORT.md:52-59).
+## 2. Failure classes (proposed default for decision 2; finding 7)
+- **Held and refunded** (an explicit "not now"): `model-http` 429, 503, 529.
+- **Held but charged** (ambiguous): `model-http` 500, 502, 504, 408; `model-timeout`, whose deadline also covers
+  processing the response (MH:66-73); `model-transport`, which also covers read failures (MH:76). Any of these can be
+  the infrastructure. They can also be one request that is slow or breaks the server: a window may ask for up to 65,536
+  response tokens (S/Models.scala:102).
+- **Unchanged** (charged at once): other 4xx, `model-output`, terminal codes. 401/403/404 are configuration errors, not
+  transient refusals. They stay charged and get a distinct "configuration-like status" log line for alerting.
+- **Limits.** Known: status, stage (S/Models.scala:160, :555). Unknown: connect vs slow; our rate vs others'.
 
-## 2. Failure taxonomy (proposed)
-- **Provider or infrastructure** (cannot be the job's fault): `model-http` 429, 502, 503, 504, 529; `model-transport`
-  (the endpoint is not there); `model-timeout` at Embedding. An embedding batch is at most 16 inputs of at most 16 KiB
-  (S/Models.scala:113-114), so a timeout there means the endpoint is not answering.
-- **Configuration** (not the job's fault, but nothing can succeed): `model-http` 401, 403, 404.
-- **Content** (can be the job's fault): `model-http` 400, 413, 422; `model-output/truncated`; the annotation rejections
-  and their terminal codes; `index-budget-exceeded`; `invalid`.
-- **Ambiguous:** `model-timeout` at Annotation (a window can make the model reason up to 65,536 response tokens,
-  S/Models.scala:102); `model-http` 500 and 408; embedding `model-output` (a count or vector mismatch is more likely the
-  server's fault); `worker-fault`, `stale-claim`, `lease-exhausted` (our own side).
-- The code **can** tell apart the status class (error text, S/Models.scala:137-139) and the stage (`StagedFailure`, :160,
-  :555). It **cannot** tell a connect from a read timeout (MH:73), the cause of a transport error (MH:76), `Retry-After`,
-  or whether a 429 is our own rate or another workload on the same account (STATE.md:1134 hypothesis).
+## 3. Options and their exposure
+Rates use the measured attempt: about 14 s to fail plus about 2 s to be re-claimed. With 4 lanes (lane 0 large, 1 bulk,
+2 fresh; REPORT.md:33) that is about 15 attempts/min, so a FULL refusal gives about 900 failed calls/h. **3.1 Today:**
+about 180 jobs lost/h, each within about a minute, the oldest first.
 
-## 3. Design options
-Walkthrough setup: 4 lanes (lane 0 large, 1 bulk, 2 fresh; REPORT.md:33), hundreds of queued jobs. `f` is how long a
-failing attempt takes: one round trip for a 429, the configured deadline for a timeout.
+**3.2 A — hold, still charged.** `failAt` also sets `lease_until` = now + d(attempts), d = 1, 2, 4, 8 min. Changes:
+S/Database.scala:982 and classification at S/Models.scala:556-569; no schema change. Same call rate, because the lanes
+move on. A job's 5 charges spread over ≥ 15 min; after that, losses run at about today's rate.
 
-**Today.** The head job is reclaimed until its 5 attempts are gone, then the next. Under full refusal jobs die at about
-4 ÷ (5·(f + 2 s)) per second, many per minute for fast 429s. Incident 1 (f = the embedding deadline): 25 attempts and 5
-jobs in 11 min; incident 2 (partial refusal): 5 jobs in 35 min.
+**3.3 D1 — hold and refund,** through `holdTransient` (S/Database.scala:989-1017), generalised to a code and a schedule.
+- **Schedule.** Refunded classes are held 1, 2, 4, 8, then 15 min. Held-but-charged classes get the same hold but keep
+  the charge. A job is Failed at the 10th hold in a row, keeping its provider code. A checkpoint, kept answer or
+  acceptance (S/Database.scala:670, :681, :697) restarts the count when recorded at renewal or at the hold (:735, :997).
+  Replay does not.
+- **Fenced semantics (finding 6).** When the owner no longer admits the claim, `holdTransient` returns Ended
+  (S/Database.scala:579-580, :989-993), while `failAt` parks the job refunded (:971-977). D1 must park. Renewal has
+  stopped before the record runs (`IO.race`, S/Models.scala:554). The record is retried only until near the lease end
+  (:583-590). A record that never commits leaves the claim's charge. The job is reclaimed after the lease (one more
+  charge) or ends `lease-exhausted` (S/Database.scala:540-545), as a database hold does today.
+- **Changes.** A classifier next to `Worker.transient` (S/Models.scala:690) and a case before the generic branch (:558);
+  `recordedTransient` matched by code (S/Database.scala:1014-1017); the trait (S/Core.scala:365); the setting (§5). No
+  migration under decision 5(b).
+- **Exposure.** Ten holds in a row take ≥ 90 min (nine waits). That is one job's streak, not an outage threshold. Under
+  a sustained full refusal, losses approach failures ÷ 10, about 90 jobs/h once streaks mature. Windows with a partly
+  full ledger go earlier. The call rate stays near today's: held rows are skipped, and new jobs are claimed, including
+  the unheld successors of superseded ones.
 
-**A. Per-job hold, attempts still charged.** On a provider-side failure, `failAt` also sets `lease_until` = now +
-d(attempts), d = 1, 2, 4, 8 min. Changes: S/Database.scala:982 (one more SET), classification at S/Models.scala:556-569,
-the flag; no schema.
-- Incident 1: a job failing at 09:02 is tried again about 09:03, 09:05 and 09:09 and succeeds about 09:17, having spent
-  4 of its 5 attempts. A job that had already spent 2 still fails, and the lanes spread failures so more jobs lose 1-4.
-- Incident 2: 5 failures need at least 15 min, so the 35-min burst still kills jobs, only more slowly. Not enough alone.
+**3.4 Gate — D1 plus a minimal admission gate per upstream (recommended).**
+- **State.** Memory only, in a small class built with `Worker` (S/Models.scala:122-124). There are two independent
+  gates, annotation and embedding; a failure's stage names its upstream.
+- **Trip.** K = 4 provider-class failures (§2, refunded or charged) from one upstream, with no positive signal from it
+  in between. A positive signal is any 2xx from that upstream to an indexing call. For annotation that is an answer
+  delivered, even one rejected afterwards (S/Models.scala:220-226, :234, :292); for embedding, a returned part
+  (:333-335). The other upstream never counts.
+- **While tripped.** No lane starts a claim except the single probe. The check sits before the claim in
+  `laneIteration`/`iteration` (S/Models.scala:612-634) and before `admission.largeJob` (:613), so a waiting lane holds
+  no permit. Lane 0 of the waiting order keeps its lifetime permit (S/Models.scala:636) and may take the probe token, so
+  a sized large job can be the probe. Claims already in flight run on: their failures are held (D1) and their 2xx
+  answers count. At most L − 1 failures can follow a trip.
+- **Probe.** One token per process. After a pause of 1, 2, 4, 8, then 15 min, the first lane to wake takes it and claims
+  normally. Only a 2xx from the tripped upstream reopens the gate, whether from the probe or from an in-flight claim. A
+  provider-class failure from that upstream returns the token and doubles the pause. A probe that never calls that
+  upstream is neutral: it releases the token and leaves the pause unchanged. Examples: a deferral
+  (S/Models.scala:490-500), a refused reservation (:216-217), a content failure, an attempt that only reuses.
+- **Restart and processes.** A restart opens both gates (at most K + L − 1 failures until they trip again; nothing needs
+  to persist). The gate is per process, so the bound multiplies with the processes; whether two Chronicle processes ever
+  overlap, even in a rollout, is not verified.
+- **Bound under a full refusal.** At most K + (L − 1) failures at the trip, then one per pause: about 14 in the first
+  hour and at most 4/h after that, against about 900/h today. Jobs lost are at most the number of failures, in the worst
+  case where each failure completes a job's ledger or streak; usually far fewer. Probes favour the oldest unheld job.
+- **No page or reply change is needed.** Log lines carry upstream, stage, status and counts: "indexing claims paused
+  upstream=… failures=K pauseSeconds=…", "indexing probe started upstream=… jobId=…", "indexing claims resumed
+  upstream=…". Optional later indicator (labels to confirm): "Indexing paused — the <annotation|embedding> model is
+  refusing requests" · "since HH:MM" · "next probe HH:MM" · "last failure: <code> <status>" · "Indexing resumed HH:MM".
 
-**B. Accounting for provider-side failures.**
-- B1, charge as now: today's behaviour. B2, refund the attempt. Without a hold, the waiting order re-claims the same job within seconds: a hot loop against a
-  refusing provider. Acceptable only with A or C, and it needs a stop rule: a count of consecutive refunds
-  (`transient_failures` exists).
-- B3, charge up to attempt 4, never the 5th: still burns 4 attempts per outage and adds a rule.
-- B4, give up after elapsed time: nothing records when a run of failures began (`waiting_since` is queue age), so it needs
-  a migration. A count on a fixed schedule already implies a minimum time (10 ≥ 90 min, 26 ≥ 5.5 h).
-- Hidden limit for B2/B4: at Annotation each failed call also uses one of the window's 10 ledger rows (§1). Today the 5
-  attempts cap a window's provider rows at 5. Once attempts are refunded, the ledger becomes the limit: after
-  10 − (rejections and kept answers already in the window) provider failures, the job ends
-  `annotation-reservations-exhausted`, a content-looking code for an outage. So any count limit above 10 helps Embedding
-  failures only. Keep the ledger: it is the runaway bound on calls (AGENTS.md keeps runaway safeguards).
+**3.5 Lane cool-down — the smallest variant that still bounds (option c).** After a provider-class failure, the lane
+sleeps 1, 2, 4, 8, then 15 min instead of 2 s (S/Models.scala:569). Its level resets only when one of its later attempts
+gets a 2xx from the upstream that failed. One counter per lane, in memory. Bound: at most L failures per pause, about 32
+in the first hour and at most 16/h after: four times looser than the gate. No single probe, and it needs D1: without it
+the head job's attempts still burn across lanes.
 
-**C. Lane breaker with probe** (Worker memory, no schema).
-- Trip after K provider-side job failures in a row across all lanes, no committed answer between (K = lanes = 4). While
-  open, every lane sleeps instead of claiming, lane 0 too (it keeps its permit, S/Models.scala:636); the pause grows 1, 2,
-  4, 8, 15 min. When it ends, one lane claims normally as the probe: success or a non-provider outcome closes the breaker,
-  a provider-side failure lengthens the pause. Changes: a gate before `laneIteration`/`iteration`
-  (S/Models.scala:641-655), the outcome hook at :556-569, the flag. Search queries do not pass through the worker.
-- C alone (charged): the K failures that trip it are the head job's own re-claims (4 attempts), and the first probe takes
-  its 5th. Incident 1 would lose 1 job instead of 5.
-- C with D1, full refusal: after K failures about one probe per pause. The oldest job takes most probes (its hold,
-  ≤ 15 min, ends before the next pause does) and fails after about 90-135 min; every other job is untouched. A probe
-  outside any job would need an owner-less model call (`ModelCallContext` carries an owner for telemetry,
-  S/ModelTelemetry.scala:16, S/Models.scala:67-69); not now.
+**3.6 Incident 1** (embedding pod not Ready, 09:02-09:13Z; qualified per finding 4).
+- The report establishes the end state, five jobs at five charged `model-timeout` attempts (REPORT.md:30-32, :52-56),
+  not that all 25 failures fell inside those 11 min.
+- Default classes (embedding timeouts held but charged). A or D1: at most 4 failures per touched job by 09:13 (an upper
+  bound, if every record commits); one earlier charge makes the 4th terminal, and the lanes spread charges over more
+  jobs. Gate: it trips after about 4 failures (≤ 3 more in flight), probes at about +1, +2, +4 min, and the first probe
+  after 09:12:42 reopens it: about 10 charged failures over the oldest unheld jobs. With decision 2(b) (embedding
+  timeouts refunded) D1 alone avoids the charges.
 
-**D. Combinations.**
-- **D1 = A + B2.** Provider-side codes go through `holdTransient`, generalised to take the code and the schedule
-  (S/Database.scala:989-1017).
-  - The attempt is refunded and the job held 1, 2, 4, 8, 15 … min; at the 10th hold in a row it is Failed, keeping the
-    provider code. Any committed answer restarts the count through the existing `progressed` flag
-    (S/Database.scala:235-246, :997, :735), which every checkpoint, kept answer and acceptance sets (:670, :681, :697).
-  - Changes: a classifier next to `Worker.transient` (S/Models.scala:690) and one case before the generic branch (:558);
-    `recordedTransient` matching the recorded code (S/Database.scala:1014-1017); the trait (S/Core.scala:365); the flag in
-    `IndexingCapacity` (S/Core.scala:60), read at start like `claimOrder`. No migration: `lease_until`,
-    `transient_failures`, `error`, `failure_stage` and `attempts` carry everything.
-  - Incident 1: nothing charged; a job is held at most 4 times by 09:13, none Failed. Cost: up to 8 min extra delay after
-    recovery, one failed call per job per hold.
-  - Incident 2: a job fails only after 10 holds in a row with no committed answer, at least 90 min. The lost jobs had
-    3-28 windows done; if each attempt committed an answer before its 429, their counts kept restarting and they survive
-    (an assumption: per-attempt progress was not read). Our call rate after a 429 also drops (each job waits ≥ 1 min).
-  - Limit: a full refusal longer than about 1.5 h fails every job the lanes have touched, possibly the whole queue.
-- **D2 = D1 + C:** a multi-hour full refusal costs about 1 job per 1.5-2 h instead of the queue.
-- **Smallest design that would have saved both incidents: D1.** For incident 2 this holds under the assumption above, or
-  if the refusal stayed partial, or if a full refusal lasted under about 90 min.
+**3.7 Incident 2 with the measured numbers** (throttling at about half pace, 17:50-19:00Z).
 
-**Interplay** (A and D1; C as noted).
-- Waiting order and classes: a held row is filtered out (S/ClaimOrder.scala:76), so its lane takes the next job of its
-  class, or borrows, and the row returns to its old place when due (spec :135). Known limit D-c (spec :150-152): a job
-  that progresses, fails and is held can alternate on the single bulk lane; under D1 it keeps progressing, so it does
-  finish. C claims nothing while open.
-- Large lane and permit: a failure or hold clears `total_windows` (S/Database.scala:982, :1008). A small lane sizes the
-  job again and defers it (refunded, no model call; S/Models.scala:490-491, 499-500), then lane 0 takes it, as after
-  `failAt` today. A held large job never blocks lane 0. C pauses lane 0 too.
-- Lease reclaim: unchanged. Holds are written only on a valid lease (`validJob`); a lease that ends before the write
-  leaves the row as it was (tested in T/TransientPublicationTest.scala:634).
-- Restart: a hold survives on the row, and should (a restart does not fix the provider); C's state is lost and re-trips.
-- Supersession: a new upload supersedes a held job (S/Database.scala:311); the new head inherits `waiting_since` and
-  `bulk` (spec :131) and starts unheld. A hold on an older revision supersedes the job instead (S/Database.scala:995).
-- `RetryJob` clears a hold and moves the job to the back of the fresh class (S/Database.scala:295). "Retry failed" takes
-  Failed rows only (S/RetryFailedJobs.scala:88-90), never a held job. The page offers Retry only on Failed jobs
-  (chronicle/web/src/activity/Jobs.tsx:146).
-- Continuations and checkpoints: a hold keeps partials and checkpoints; only supersession and `RetryJob` delete them
-  (S/Database.scala:274-277, :297). The ledger and its epoch are unchanged (bound: see B).
+Measured: 429s per 10 min from 17:50 were 10, 7, 0, 31, 28, 17, 6, plus 529 ×6, 504 ×1 and 502 ×1. Windows were still
+accepted at 2-7 per 10 min. 14 jobs Failed in about an hour (9 fresh, 5 cohort including a 195-window large job), all at
+Annotation. 7fc785e8 failed at 17:57:54, :58:10, :58:24, :58:40 and :58:56; 191d630e failed five times from 18:23:20 to
+18:25:28. Today each lost job burnt its 5 attempts in 1-2 min inside one 429 cluster.
 
-## 4. Interface
-- Today a held job shows: State "Held", tooltip "Stored state: Queued, with a future attempt time"
-  (chronicle/web/src/activity/claim-order.ts:106); Why-not-running "Retrying after HH:MM (back-off)" with sub-line
-  "Prior: <error> · rejoins the fresh order at HH:MM" (:143); a Held count per class (Jobs.tsx:231; S/Activity.scala:178);
-  and in the older `ActivityJobs` reply Queued, `leaseExpiresAt` = next attempt, `leaseActive` false
-  (T/TransientPublicationTest.scala:104-106).
-- D1 changes none of this: a provider hold reads "Held · Retrying after 18:42 (back-off) · Prior: model-http · rejoins the
-  fresh order at 18:42". Existing replies stay byte-identical; no new field, operation or label. A row Failed at the limit
-  keeps the provider code, an existing value.
-- Option (decision 4): show the status ("Prior: model-http/429"). That is a new stored value in an existing field, which
-  older CLIs print verbatim; it needs the claim-order unit's additivity proof (new operations, existing replies
-  byte-identical, old-CLI compat run; claim-order DEPLOYMENT.md:9, :45-46).
-- C only: without an indicator a paused worker looks like "Queued · Claimable" jobs. It needs a new read operation (say
-  `ActivityIndexingPause`) above the job table. Labels to confirm: "Indexing paused — the model provider is refusing
-  requests" · "since HH:MM" · "next probe HH:MM" · "last failure: <code> (<stage>)" · "Indexing resumed HH:MM".
+By option:
+- **A.** 7fc785e8 would retry at about 17:59, 18:01, 18:05 and 18:14. The last is in 18:10-18:20, which had no 429s, so
+  it probably survives on its 5th attempt. 191d630e's retries (about 18:24, 18:26, 18:31, 18:39) all fall in the two
+  densest periods, with 31 and 28 429s, so it is probably lost. Fewer than 14 lost but not zero, at an unchanged call
+  rate.
+- **D1.** No job reaches 10 consecutive 429s in a 63-min burst, because the 10th comes at least 90 min after the first.
+  What is still lost is any job whose failing window already held r rows this epoch (rejections, kept answers,
+  unanswered calls). A job first failing after 18:20 collects up to about 6 provider rows before 19:00 (about :20, :21,
+  :23, :27, :35, :50). With r ≥ 4, its next reservation is refused and it ends `annotation-reservations-exhausted`.
+  Example: 4 kept answers and 1 unanswered call leave 5 rows, which fill after about 30 min of waits. r for the 14
+  windows is unknown: the ledger was not read, and it has no times. The 429 count does not fall, more jobs are touched,
+  and held jobs finish up to 15 min after the burst.
+- **D1 + gate.** In the dense clusters (18:20-18:50), four annotation 429s with no 2xx in between pause new claims until
+  a 2xx arrives. That means fewer of our calls, fewer ledger rows used and fewer ledger-fill losses. Throughput may drop
+  below half pace unless our own rate drives the throttle; the data cannot tell. No option guarantees survival. A
+  partial refusal, or a burst under 90 min, removes only the streak path.
+
+**3.8 Interplay (D1 and the gate).**
+- **Order.** A held row is skipped (S/ClaimOrder.scala:76) and returns to its old place (spec :135); the D-c limit still
+  applies (spec :150-152).
+- **Large jobs.** A hold clears `total_windows` (S/Database.scala:1008), so the job is sized and deferred again
+  (refunded, no call; S/Models.scala:490-500) before lane 0 takes it.
+- **Uploads.** An upload supersedes a held job (S/Database.scala:311). The successor inherits age and class (:318) but
+  not the hold, and starts with a fresh ledger and 0 attempts. The gate covers it; D1 alone does not.
+- **Retries, checkpoints.** `RetryJob` clears the hold, count, epoch and partials (S/Database.scala:295-297).
+  Retry-failed touches only Failed rows (S/RetryFailedJobs.scala:88-90). Checkpoints and partials survive a hold; only
+  supersession and retry delete them (S/Database.scala:274-277, :297).
+
+## 4. Interface (finding 9)
+- **When Held shows.** Only when the job is current, its owner's indexing is on and its profile is run; those other
+  reasons take precedence (S/Activity.scala:99-112).
+- **Text.** Today: "Held" (chronicle/web/src/activity/claim-order.ts:106), "Retrying after HH:MM (back-off)", "Prior:
+  <error> · rejoins <queue> at HH:MM", where `<queue>` follows the class: bulk, fresh or claim order (:121-122, :143).
+  "Retrying after" over-promises: the job only becomes eligible, and a large job must first be sized and deferred again.
+  Proposed (decision 4): "Eligible after HH:MM (back-off)" and "Prior: <error> · then joins <queue>".
+- **Compatibility.** Schemas do not change, but values do: Queued with a future lease, refunded attempts. `error` is
+  optional text (cli/src/schema-data.ts:832-834; S/Activity.scala:478), so the claim is not byte-identity. Acceptance:
+  an older CLI (fe4f69f7) decodes `jobs` replies over real provider-held rows, setting off and on. The gate changes no
+  reply (§3.4).
 
 ## 5. Configuration and rollout
-- **Flag** `indexing.providerBackoff`: boolean, default false, read at start; a wrong type is a named start failure like
-  the other indexing keys (S/Core.scala:84-90). Off means exactly today's behaviour: the new case never matches.
-- **Parameters** (code constants like `transientBackoff`, S/Database.scala:269): 60 s × 2 capped at 15 min, Failed at the
-  10th hold in a row: the existing database hold's values (S/Database.scala:268). 10 holds take ≥ 90 min, covering
-  both incidents, and 10 equals the window ledger, so the hold limit comes first when nothing else used the window.
-  Tests inject a shorter schedule through the Worker constructor, as `FailureBackoff` is
-  (S/plugins/ChroniclePlugin.scala:35-40). C: K = annotationSessions; pauses 1, 2, 4, 8, 15 min. **Migration:** none.
-- **Deploy**, staged like the claim order: stage 0 flag off (one restart, no behaviour change), stage 1 flag on (one
-  restart). Rollback: flag off and a restart; held rows come due within 15 min and refunded attempts stay refunded. Base:
-  main (a2eae616) carries another session's commits beyond production 1878c823 (STATE.md:1135); decide at deployment.
-- **Readable facts:** provider-held rows (Queued, `lease_until` > now(), a provider code) per class; `attempts` flat while
-  `transient_failures` rises during an outage; Failed at the limit = a provider code with `transient_failures` = 10 and
-  attempts < 5; log lines "job held jobId=… code=model-http … consecutive=k nextAttemptAt=…" (format of
-  S/Models.scala:592-597) plus `httpStatus`; the Activity Held counts.
-- **Not observable:** which 429s our own rate caused; whether an annotation timeout was content; the counterfactual; a
-  job's per-attempt progress (no history table).
+- **Setting.** `indexing.providerBackoff` = `off` (default, exactly today) | `hold` (D1) | `gated` (D1 + gate). It is
+  read at start; a wrong value is a named start failure, like the other indexing keys (S/Core.scala:84-90). Constants:
+  the database hold's 60 s doubling, 15-min cap and limit 10 (S/Database.scala:268-269); K = 4. Tests inject short
+  values through the Worker constructor, as `FailureBackoff` is (S/plugins/ChroniclePlugin.scala:35-40).
+- **Switching off while rows are held.** Held rows wait out `lease_until` (≤ 15 min). After that, today's rules apply: a
+  provider failure is charged and `failAt` resets the count (S/Database.scala:982). Refunded attempts and spent ledger
+  rows stay. Under 5(b) a later database hold starts at 1; under 5(a) it would inherit the provider count.
+- **Staging.** Stage 0 `off`, stage 1 `gated`. Each restart interrupts the claims in flight; reclaiming them charges up
+  to L jobs once more (S/ClaimOrder.scala:192). The base is decided at deployment: main carries another session's
+  commits beyond production 1878c823 (STATE.md:1135).
+- **Readable:** held rows per class (Queued, `lease_until` > now(), a provider code); `attempts` flat while
+  `transient_failures` rises; Failed rows with a provider code and attempts < 5; the hold and gate log lines. **Not
+  readable:** whether our own rate caused the 429s, and per-attempt progress: the ledger and the checkpoints carry no
+  times (chronicle/migrations/010_index_checkpoints.sql:6-15).
 
-## 6. Tests the build would need
-PostgreSQL-backed, with a stub HTTP server for transport; time controlled through the `due()` fixture or a short schedule
-passed through the constructor, as T/TransientPublicationTest.scala:93-120 does.
-- **PB-off:** flag off, a 429 at Annotation gives today's row (charged, claimable at once); all existing suites run
-  unchanged at the default, which proves off equals today.
-- **PB-hold:** flag on; a 429 at Annotation (stub server) and a timeout at Embedding each give Queued, attempt refunded,
-  `error`/`failure_stage` set, count 1, `lease_until` within (base − 5 s, base]; refused while held, claimed once due,
-  partials and checkpoints kept, expected log line.
-- **PB-classify:** status × stage (400, 401, 403, 404, 408, 413, 422, 429, 500, 502, 503, 504, 529; timeout; transport;
-  embedding output) gives hold or charge as decided. **PB-limit:** the 10th hold fails the job with the provider code,
-  attempts unchanged; `RetryJob` restarts it. **PB-progress:** accept a window, then a 429: count 1.
-- **PB-ledger:** a window with r rejections, then provider failures, ends with the code of decision 3. **PB-order:** a
-  held oldest job does not block its lane and, once due, is claimed before younger ones; a held large job does not block
-  lane 0.
-- **PB-supersede/retry/restart:** an upload supersedes a held job and the successor is unheld; `RetryJob` clears the hold;
-  retry-failed skips held jobs; a new Worker or archive keeps the hold. **PB-fence:** a lease ending between read and
-  write writes nothing. **PB-default:** production schedule, limit and flag default (false), asserted separately.
-- **Web:** a unit case "Held … Prior: model-http" in the claim-order tests. **C:** trips after K provider failures in a
-  row, not on content failures; a success resets it; no claims while open; one probe per pause; closes on success or a
-  non-provider outcome; restart starts closed; pauses injected.
-- **Existing suites that pin today's behaviour** stay valid with the flag off and gain flag-on variants:
-  T/ContextWorkerRecoveryTest.scala:105, :113, :146, :209 (a model-timeout once, then re-claimed at once);
-  T/PassageWorkerTest.scala:204; T/AnnotationContinuationTest.scala:856; T/ClaimOrderColumnsTest.scala:240-257 (failure to
-  Queued keeps the order values; add "provider hold"); T/TransientPublicationTest.scala (the hold being generalised).
-  No skips. Gate: `scripts/verify chronicle`.
+## 6. What the owner can do tonight without any change (facts; unverified parts marked)
+**Per-owner indexing switch.**
+- **What it is.** Each (service, owner) row holds `user_choice`, `admin_override` and `epoch`
+  (AUTH/IndexingPreferences.scala:40-43). The override wins over the choice, and the choice over the default
+  (AUTH/IndexingPolicy.scala:13-14). Changing whether indexing is enabled increments the epoch
+  (AUTH/IndexingPreferences.scala:104-111).
+- **Who can change it, and where.** The owner: POST `/api/account/v1/indexing {choice}` (AUTH/IndexingAccount.scala:8-9;
+  S/Http.scala:150-152, :534). In the shared account UI this is the `set-indexing` control
+  (shared/account-web/account-client.js:143, :440). It works only if the policy permits opt-out and no admin override is
+  set (AUTH/ImperativeAccounts.scala:410-418; AUTH/IndexingPolicy.scala:17-18). An admin, for any user: POST
+  `/api/account/v1/admin/indexing {userId, override, currentPassword}`, with a fresh password proof
+  (AUTH/ImperativeAccounts.scala:436-447; account-client.js:145, :441). The Chronicle CLI has no command for it
+  (chronicle/cli/src/commands.ts).
+- **The owner's Queued jobs** are not claimed: the claim takes only owners who allow indexing
+  (S/ClaimOrder.scala:122-123; S/Database.scala:533). Activity shows "Indexing off" (S/Activity.scala:102).
+- **The owner's Running jobs** fail their next authority check: renewal (every 30 s), dispatch authorisation or a
+  checkpoint write (S/Database.scala:579-580, :601-605). `failAt` then parks them: Queued, attempt refunded, fence+1,
+  `waiting_since` kept (:971-977). A call in flight is wasted: cancelled when a failed renewal wins the race
+  (S/Models.scala:554), or its answer cannot be checkpointed; at Annotation its ledger row stays unanswered.
+- **Other owners** are unaffected. The freed lanes run their jobs, which then meet the same 429s, so stopping the burn
+  means switching off every owner with queued work.
+- **Switching back.** Clear the choice or the override; the epoch increments again. Parked jobs return with their
+  refunded attempts and their places: T/ClaimOrderColumnsTest.scala:240 asserts that preference and override changes
+  keep the order values. Retries are refused while indexing is off (S/RetryFailedJobs.scala:60, :73;
+  S/Database.scala:290).
+- **Not verified:** the production policy (default, opt-out), which owners have queued jobs, the UI on this host.
 
-## 7. Decisions for the owner
-1. **Build what now?** (a) D1, hold and refund: saves both incidents; a full refusal over about 1.5 h still fails the jobs
-   it touches. (b) D1 + C: also survives multi-hour refusals (about 1 job lost per 1.5-2 h), for about double the work and
-   a new page indicator. (c) A only, hold but charged: jobs still die in a 35-min burst.
-   **Recommended (a) now, C as its own unit if a long full refusal is seen:** the smallest change that saves both
-   incidents, with no schema and no page change.
-2. **Which failures are provider-side (held, refunded)?** (a) Narrow: 429, 502, 503, 504, 529, transport, Embedding
-   timeouts. (b) Broad: (a) plus 500, 408, 401/403/404 and annotation timeouts; a content-caused 500 or timeout is then
-   retried 10 times over at least 90 min instead of 5 at once. (c) (a) plus annotation timeouts held but still charged.
-   **Recommended (a):** it covers both incidents, and the ambiguous codes keep today's behaviour.
-3. **Limit and ledger?** (a) Fail at the 10th hold in a row (≥ 90 min), ledger kept; a window with earlier rejections may
-   end `annotation-reservations-exhausted` first. (b) As (a), but a provider failure that finds the window ledger full
-   records the provider code (a small change). (c) A limit of 26 (≥ 5.5 h), which helps Embedding failures only.
-   **Recommended (b):** the failure is named for its cause, and the bound is unchanged.
-4. **What does a held or Failed row say?** (a) The provider code (`model-http`), existing labels: no page or reply change.
-   (b) The stored status (`model-http/429`): a new value in an existing field, needing an additivity proof. (c) A new code
-   `provider-unavailable` at the limit: a new label. **Recommended (a):** the status is in the log line.
-5. **Count provider holds in `transient_failures` with database holds?** (a) Yes: one "not the job's fault" streak, no
-   migration. (b) No: a separate column (migration 034, down script, column tests).
-   **Recommended (a):** both reset on progress, and neither is the job's fault.
-6. **Manual `RetryJob` of a held job?** (a) Keep today's effect: hold cleared, back of the fresh class. (b) Clear the hold
-   but keep its place: changes S/Database.scala:295 for every retry. (c) Refuse retry while held.
-   **Recommended (a):** nothing existing changes, and D1 makes Q168-style manual retries unnecessary.
-7. **Rollout?** (a) Staged: flag off first, then on with one restart, after `scripts/verify chronicle` and an ON/OFF
-   acceptance run like the claim order's. (b) Flag on at the first deploy. Either way, decide the deployment base
-   (STATE.md:1135). **Recommended (a):** the proven pattern, and OFF can be compared with today.
+**`indexing.annotationSessions`.** Default 4 (S/Core.scala:83), range 1-8 (:62); the waiting order needs L ≥ 3 and
+`bulkLanes` ≤ L − 2 (:67-69). It sets the number of lanes (S/Models.scala:656-657) and the concurrent annotation calls
+(S/ModelAdmission.scala:20-21). It is read at start, so changing it needs a restart, and that restart charges the claims
+in flight once more. Per-job burn does not depend on it: a failed job is eligible at once, and even a single lane
+re-claims it after 2 s. Fewer lanes mean fewer concurrent calls and fewer jobs exposed at a time; whether that lowers
+the 429 rate is unknown.
 
-## 8. Risks, what I did not verify, effort
-- **Not verified:** whether the incident-2 jobs committed answers between their 429s (no per-attempt history); how long
-  the burst ran after 18:30Z; the configured model deadlines; whether 429 calls are billed; whether production runs one
-  Chronicle process (C is per process); the incident numbers (from the notes, not from logs or SQL I read).
-- **Risks of D1:** a misclassified content failure is retried 10 times over ≥ 90 min, so the A5 watch sees fewer, later
-  failures; under full refusal every queued job gets one failed call per hold (a lower steady rate than today's hot loop,
-  but more jobs touched); held rows look idle ("Retrying after" explains them); the ledger edge case (decision 3).
-- **Risks of C:** false trips pause all indexing up to 15 min; the probe always lands on the oldest job; without the
-  indicator the pause is invisible.
-- **Effort** (unit = one focused agent task with its review loop): D1 about 3 units (code 1, tests 1.5, verify and review
-  0.5); C on top about 3-4 (breaker 1, controlled-clock tests 1.5, indicator with labels and additivity proof 1-1.5);
-  rollout 1 per stage.
+## 7. Tests the build would need
+All tests are PostgreSQL-backed with a stub HTTP upstream. Per AGENTS.md: inject short intervals or use a controlled
+clock, assert the production defaults separately, and never lengthen a timeout. `due()` tests filtering, not elapsed
+time.
+- **Off.** A 429 gives today's row; existing suites pass unchanged.
+- **Hold rows.** In both annotation modes and both claim orders, a 429 at Annotation and a 504 or timeout at Embedding
+  each give the right class (refund or charge), with `lease_until` in (interval − 5 s, interval]. The job is refused
+  while held and claimed when due, keeps its partials and checkpoints, and logs status and stage.
+- **Classification.** The §2 status × stage table. 401/403/404 are charged and get the configuration line.
+- **Streak.** The 10th hold in a row fails the job with the provider code. A recorded checkpoint restarts the count;
+  reuse or replay does not. Under 5(b), a database hold after a provider hold starts at 1.
+- **Ledger.** A provider failure on the 10th reservation is handled per decision 3; include r earlier rows; both modes.
+- **Fenced record (finding 6).** A denied write; a lost commit acknowledgement (exactly one refund); a policy change
+  before the record (parked, not Ended); the lease ending before the record, then reclaim and `lease-exhausted` at the
+  limit; an upload over a held job (the successor is unheld).
+- **Gate** (injected pauses). It trips at K failures from one upstream, not on content failures. The other upstream's
+  2xx does not reopen it; the tripped upstream's 2xx does. There is one token at a time, and neutral probes (deferral,
+  refused reservation) release it. Claims in flight continue; lane 0 can probe with a large job; a restart opens it.
+- **Off after on.** Switch off with real held rows and spent reservations, restart, and compare with an all-off
+  baseline.
+- **Retry, web, CLI.** `RetryJob` clears a hold, and retry-failed skips held jobs. The web shows the decision-4 labels.
+  An older CLI decodes provider-held rows.
+- **Existing suites** stay valid with the setting off and gain variants with it on:
+  T/ContextWorkerRecoveryTest.scala:105, :113, :146, :209; T/PassageWorkerTest.scala:204;
+  T/AnnotationContinuationTest.scala:856; T/ClaimOrderColumnsTest.scala:240-257; T/TransientPublicationTest.scala. Gate
+  for the build: `scripts/verify chronicle`.
+
+## 8. Decisions for the owner
+1. **What to build now?** (a) D1 alone. No job dies of a streak, but the queue keeps today's call rate. Under sustained
+   refusal losses approach about 90 jobs/h, and ledger fills still lose jobs. (b) D1 plus the per-upstream gate.
+   Provider failures are bounded to about 14 in the first hour and at most 4/h after that, with no page change, for
+   about 2.5 more units. (c) D1 plus a lane cool-down. A looser bound (about 32, then at most 16/h) for about 1.5 units.
+   **Recommended: (b).** It is the only option that bounds the queue and reopens on evidence from the right upstream. D1
+   alone does not reduce our call rate during the throttling we see.
+2. **Classes.** (a) Refund 429/503/529. Hold but charge 500/502/504/408, timeouts and transport errors. Leave the rest
+   unchanged, plus an alert line for 401/403/404. (b) As (a), but also refund embedding timeouts and transport errors.
+   This saves incident 1 without the gate, but a slow batch gets 10 tries. (c) Refund 429 only. **Recommended: (a).**
+   Ambiguous codes keep their charge, and the gate bounds them.
+3. **Window ledger.** A row names job, run, epoch, window, attempt, fence and rejected/kept/accepted; not when, which
+   status, or why it is unanswered. (a) Keep `annotation-reservations-exhausted` as today. (b) When a classified
+   provider failure used the window's 10th reservation (the worker knows the attempt number at that moment,
+   S/Models.scala:201, :219-226), record Failed with the provider code at once, in the same fenced record. (c) Hold, and
+   let the next claim end the job `reservations-exhausted` without a call. **Recommended: (b).** It names the event that
+   filled the window. Test it in both annotation modes.
+4. **Labels.** (a) Keep today's strings. (b) "Eligible after HH:MM (back-off)" and "Prior: <error> · then joins
+   <queue>", for all holds including database holds. (c) As (b), and also store the HTTP status in `error`, which needs
+   a compatibility proof. **Recommended: (b).** Two strings, and they stop promising a retry.
+5. **Provider streak and database streak.** (a) Share `transient_failures`. Mixed failures share one budget, and after
+   switch-off a database fault inherits the provider count. (b) Same column, counted per kind: a hold of the other kind
+   (read from the row's `error`) restarts the count at 1. This keeps today's database semantics, since any charged
+   failure already resets the count (S/Database.scala:982). No migration. Alternating kinds are then bounded only by the
+   ledger and the gate. (c) A separate `provider_failures` column: migration 034, a down script, column tests. Each
+   streak is bounded independently; both reset on progress, a charge, a retry or a rebuild. **Recommended: (b);** (c) if
+   each streak needs its own bound.
+6. **Manual `RetryJob` on a held job.** It is an explicit override: it clears the hold, count, epoch (a new ledger
+   budget) and partials, and moves the job to the back of the fresh class (S/Database.scala:295-297). (a) Keep it as is.
+   (b) Keep the job's place, for held rows only. (c) Refuse it while the job is held. **Recommended: (a):** a deliberate
+   operator act, needed less under D1 but still needed.
+7. **Rollout.** (a) Staged: `off`, then `gated`, after `scripts/verify chronicle`, older-CLI decoding on held rows and
+   the off-after-on test, counting what each restart charges to claims in flight. (b) `gated` at the first deploy.
+   Either way, decide the base (STATE.md:1135). **Recommended: (a).** It follows the claim-order pattern.
+
+## 9. Risks, not verified, effort
+- **Not verified:** the ledger rows per window and the per-attempt progress for the 14 lost jobs; the deadlines; whether
+  429 responses are billed; the number of Chronicle processes; the production indexing policy; whether our own call rate
+  drives the throttle; the incident numbers, which come from the notes and REVIEW-1, not from logs or SQL I read.
+- **Risks:** the gate pauses new claims during refusal clusters, which costs throughput; gate state is per process and
+  lost at restart; a misclassified content failure gets up to 10 tries over at least 90 min; alternating failure kinds
+  under 5(b).
+- **Effort** (unit = one agent task with review): D1 ~3 (with finding-6 cases); gate ~2.5; cool-down ~1.5; labels 0.5;
+  5(c) +0.5; rollout 1 per stage.
+
+## 10. Review 1 — disposition
+| # | verdict | reason (lines read) | changed in |
+|---|---|---|---|
+| 1 | accepted | holds are filtered (S/ClaimOrder.scala:76); successors start unheld (S/Database.scala:311-318); 90 min is one job's streak | §0, §3.3-3.4, dec. 1 |
+| 2 | accepted | the other upstream's answers, deferrals (S/Models.scala:490-500) and refused reservations (:216-217) could close rev 1's C; C-alone and one-job estimates removed | §3.4 |
+| 3 | accepted | a full ledger refuses the next reservation before dispatch; rows carry no status (015:2-11); 3(b) tied to the reservation that filled the window | dec. 3 |
+| 4 | accepted | the report gives end states; alerts are sampling times; ledger fill can end a job about 30 min in | §3.6, §3.7 |
+| 5 | accepted | a shared count crosses kinds (S/Database.scala:997-1009) and survives switch-off | §5, dec. 5 |
+| 6 | accepted | Ended vs parked (S/Database.scala:971-977 vs :989-993); record loop (S/Models.scala:554, :583-590) | §3.3, §7 |
+| 7 | accepted | transport/timeout also cover reading and processing the response (MH:66-76) | §2, dec. 2 |
+| 8 | accepted | eligible ≠ claimed; invalidated reclaim free (S/ClaimOrder.scala:192); source-id permit (S/Database.scala:546-553); live stale-claim (:978-982) | §1 |
+| 9 | partly | accepted: precedence (S/Activity.scala:99-112), "eligible after", decoding proof, retry as override, off-after-on, `due()`; rejected "wrong for bulk": the page is class-aware (claim-order.ts:121-122); only rev 1's hard-coded "fresh" was wrong | §4, §7, dec. 4/6/7 |
