@@ -147,10 +147,11 @@ final class AccountService(database:JdbcDatabase,getAuth:()=>Auth,imperative:Imp
     }
   }
   def issue(captured:Authenticated,name:String,scopes:Vector[String],actor:Vector[String]):IO[AccountIssued]=IO.defer {
-    if(scopes!=Vector("api"))throw Fault("forbidden","invalid token scopes")
     val auth=getAuth()
     database.transaction { c=>
+      // Before the scopes: after the request body this is the only lookup of the session, and one that ended is refused as such.
       val current=browser(c,auth,captured)
+      if(scopes!=Vector("api"))throw Fault("forbidden","invalid token scopes")
       AccountJson.requireActor(actor,current.userId)
       AccountSql.issue(c,directory(c,auth),current,name)
     }

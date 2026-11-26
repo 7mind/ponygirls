@@ -124,6 +124,43 @@ class HttpAuthorityLifetimeTest extends ContractSuite {
       }yield()})
     }}
   }
+  private val IssueToken="""{"name":"held","scopes":["api"]}"""
+  private val IssueUnknownScope="""{"name":"held","scopes":["admin"]}"""
+  // (what happens while the body is held, body, status, tokens issued)
+  Vector(("nothing",IssueToken,Status.Ok,1L),("logout",IssueToken,Status.Unauthorized,0L),("another cookie name",IssueToken,Status.Unauthorized,0L),
+    ("logout",IssueUnknownScope,Status.Unauthorized,0L),("nothing",IssueUnknownScope,Status.Forbidden,0L)).foreach { (change,input,status,issued)=>
+    test(s"account token issue after body admission: $change while held, ${if(input==IssueToken)"api scope"else"unknown scope"}") { directory { dir=>
+      val configBefore=passwordConfig(dir);val current=new AtomicReference(Auth.load(configBefore))
+      run(TestSupport.emptyDatabase.use { db=>for{
+        _<-Migrations.initialize(db,TestSupport.Activity)
+        accounts=new AccountService(db,()=>current.get(),imperative)
+        _<-accounts.install(current.get())
+        signed<-accounts.login("alice",AlicePassword,None)
+        owner<-accounts.resolve(RequestHeaders("ts.test:8445",cookie=Vector("__Host-haystack="+signed.session.secret)))
+        hub<-LiveHub.create
+        retrieval=new HaystackRetrieval(db,ProjectionPolicy("account-authority-test",true,Vector.empty,4096),new PostgresRetrieval("account-authority-test",None),None,4)
+        http=new Http(()=>current.get(),new ItemService(new PostgresItemRepository(db),(_,_)=>IO.unit),hub,None,retrieval,accounts)
+        ws<-WebSocketBuilder2[IO]
+        entered<-Deferred[IO,Unit];release<-Deferred[IO,Unit]
+        body=Stream.eval(entered.complete(())).drain ++ Stream.eval(release.get).drain ++ Stream.emits(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)).covary[IO]
+        request=Request[IO](Method.POST,Uri.unsafeFromString("/api/account/v1/tokens")).withBodyStream(body).putHeaders(Header.Raw(CIString("Host"),"ts.test:8445"),Header.Raw(CIString("Origin"),Secure),Header.Raw(CIString("Cookie"),"__Host-haystack="+signed.session.secret),Header.Raw(CIString("X-Account-Actor"),ponygirls.auth.AccountJson.actor("alice")),Header.Raw(CIString("Content-Type"),"application/json"))
+        fiber<-http.routes(ws).orNotFound(request).start
+        _<-entered.get.timeout(2.seconds)
+        _<-change match {
+          case "logout"=>accounts.logout(owner,Vector(ponygirls.auth.AccountJson.actor("alice")))
+          // The session cookie of this request is no longer the one the configuration selects for its host.
+          case "another cookie name"=>IO(current.set(Auth.load(configBefore.copy(cookieSecure=false))))
+          case _=>IO.unit
+        }
+        _<-release.complete(())
+        response<-fiber.joinWithNever.timeout(5.seconds)
+        _=assertEquals(response.status,status)
+        _=assertEquals(response.headers.get(CIString("Set-Cookie")).nonEmpty,status==Status.Ok)
+        count<-db.transaction { connection=>val statement=connection.createStatement();try{val rows=statement.executeQuery("SELECT count(*) FROM ponygirls_account_tokens");try{rows.next();rows.getLong(1)}finally rows.close()}finally statement.close() }
+        _=assertEquals(count,issued)
+      }yield()})
+    }}
+  }
   private def waitFor(database:ponygirls.runtime.JdbcDatabase,condition:String):IO[Unit]={
     def poll(remaining:Int):IO[Unit]=database.transaction { c=>
       val s=c.createStatement()

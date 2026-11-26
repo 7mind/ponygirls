@@ -139,10 +139,11 @@ class HttpAuthenticationCountTest extends ContractSuite {
       Observed("live without upgrade, refused before it authenticates",426,"live",session,1),
       // before the read, the read's own transaction, before delivery
       Observed("account",200,"unknown",session,3),
-      Observed("account token issue",200,"unknown",session,4),
-      Observed("account token revoke",200,"unknown",session,4),
-      // the session is gone when the row is written
-      Observed("account logout",200,"logout",None,4),
+      // before the body, the mutation's own transaction, before delivery
+      Observed("account token issue",200,"unknown",session,3),
+      Observed("account token revoke",200,"unknown",session,3),
+      // the session is gone when the row is written: before the body, the logout's transaction, the log's own lookup
+      Observed("account logout",200,"logout",None,3),
       Observed("account login",200,"login",None,2),
       Observed("legacy logout",200,"logout",None,3)).map(_.line))
   }}

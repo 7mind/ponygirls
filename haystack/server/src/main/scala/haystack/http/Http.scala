@@ -135,9 +135,17 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       }
     }
   }
+  /** After the body of an account mutation: the boundary and the transport half of `revalidate`, under one current
+    * configuration. The session is looked up by the mutation itself, in its own transaction before any effect. */
+  private def accountMutationBoundary(r:Request[IO],captured:Authenticated):Unit={
+    val auth=getAuth()
+    accountBoundary(r,auth)
+    val current=Sessions.resolve(auth.config,headers(r))
+    if(current.token!=captured.token || current.cookie!=captured.cookie)throw Fault("unauthorized","request authority changed")
+  }
   private def emptyAccountBody(r:Request[IO],a:Authenticated):IO[Unit]=accountBody(r).flatMap { raw=>
     if(!raw.asObject.exists(_.isEmpty))throw Fault("bad-envelope","empty object required")
-    IO(accountBoundary(r)) *> revalidate(r,a).void
+    IO(accountMutationBoundary(r,a))
   }
   private def presented(auth:Auth,r:Request[IO]):(Boolean,Option[String])={
     val h=headers(r);val secure=Sessions.secure(auth.config,h)
@@ -235,7 +243,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     case r @ POST -> Root / "api" / "account" / "v1" / "tokens" =>accountHandled {accountAuthed(r,true) { a=>
       accountBody(r).flatMap { raw=>
         val (name,scopes)=AccountJson.decodeIssue(raw)
-        IO(accountBoundary(r)) *> revalidate(r,a) *> accounts.issue(a,name,scopes,all(r,"X-Account-Actor")).map(issued=>json(Status.Ok,AccountJson.issued(issued)))
+        IO(accountMutationBoundary(r,a)) *> accounts.issue(a,name,scopes,all(r,"X-Account-Actor")).map(issued=>json(Status.Ok,AccountJson.issued(issued)))
       }
     }}
     case r @ POST -> Root / "api" / "account" / "v1" / "tokens" / id / "revoke" =>accountHandled {accountAuthed(r,true) { a=>
