@@ -340,6 +340,64 @@ secrets or passwords). Token-free external fetch needs only the
 content URL + `--password[-file]`; public fetch needs no token. No
 secret ever goes in a URL, log, or error.
 
+### Connections
+
+The Python client (CLI, MCP server, `ManureClient`) speaks HTTP/1.1. A request opens
+a connection and closes it after the response, unless it is sent inside a keep-alive
+scope, `StdlibTransport.keep_alive()`. Inside a scope the client keeps one connection
+per origin (scheme, host, port) and sends the next request to that origin on it.
+Leaving the outermost scope closes every kept connection, also when the code inside
+failed; nested scopes share the connections. These hold a scope:
+
+- The client operations that send several requests: `upload_path` (fresh and
+  resumed), `fetch_to_dest` (by ID and by content URL) and `search_expression`. So
+  `manure upload`, `manure fetch` and `manure search` use one connection per origin
+  and leave none open when they return. `whoami`, `list`, `info`, `delete` and
+  `rotate-password` send one request.
+- `manure-mcp`, for the life of the process: all tool calls share its connections.
+  It still reads the credentials for every call. The connections end when its input
+  ends or the process is terminated.
+- A Python caller that wants its own calls to share connections creates the
+  transport and holds the scope itself:
+
+  ```python
+  transport = StdlibTransport()
+  client = ManureClient(url, token_file=path, transport=transport)
+  with transport.keep_alive():
+      client.whoami(); client.list_artifacts()
+  ```
+
+What holds for a kept connection:
+
+- It is kept only after a complete HTTP/1.1 response without `Connection: close`.
+  An error, a timeout, a truncated or an oversized response closes it. At most 4
+  are kept; the least recently used is closed first.
+- It is never used for another origin. Bearer, grant-cookie and redirect rules are
+  applied to every request as before; TLS verification is unchanged.
+- Before reuse it is replaced, without any message, if it was idle for more than
+  15 s or the peer has closed it (or sent anything) in the meantime.
+- If the peer closes it after the request was sent and before any byte of the
+  response was read, the server may or may not have executed the request. The
+  client then sends it once more on a new connection only where a second copy is
+  harmless: `GET`; the chunk `PUT` (an identical chunk is a no-op, `CONTRACT.md`
+  §8); the commands that only read (`Version`, `GetCapabilities`, `Whoami`,
+  `ListArtifacts`, `GetArtifact`, `GetManifest`, `GetUploadStatus`, `Search`, content
+  `GetManifest`); and `FinishUpload` (idempotent, `CONTRACT.md` §6.3). `InitUpload`,
+  `PatchArtifact`, `DeleteArtifact`, `RotateExternalPassword`, `CreateGrant` and
+  content `Unlock`, `RedeemGrant` and `Logout` are never sent twice: they fail with
+  `unavailable: network error`, and the caller has to look at the server state
+  before trying again. Nothing is sent again after a timeout or once any part of a
+  response was read.
+
+Two properties of the server shaped this (measured on the native server,
+2026-11-26): it closes an idle connection after `request_timeout_s` (30 s by
+default), and its graceful shutdown does not close idle keep-alive connections but
+waits for them, up to that timeout. Hence the 15 s limit on reuse, and hence nothing
+is kept outside a scope: a client object that merely exists does not delay a server
+shutdown. A running `manure-mcp` that made a call less than `request_timeout_s` ago
+does delay the graceful shutdown of a server it reaches directly, by the rest of
+that time.
+
 ## Artifact workspace
 
 The dashboard uses the shared design system (`shared/ui-web`): a masthead with
@@ -501,7 +559,9 @@ Real JSON-RPC 2.0 over stdio, one object per line, protocol
 `tools/list` / `tools/call`; same env auth as the CLI. Nine tools:
 `whoami`, `list_artifacts`, `search`, `get_artifact`, `get_manifest`,
 `upload_artifact`, `fetch_artifact`, `delete_artifact`,
-`rotate_external_password` (`tools/list`-verified). Host entries use
+`rotate_external_password` (`tools/list`-verified). The process keeps its
+HTTP connections between tool calls and reads the credentials for every call
+([Connections](#connections)). Host entries use
 file-backed credentials only — never `MANURE_TOKEN` beside
 `MANURE_TOKEN_FILE`:
 

@@ -10,7 +10,10 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from manure.client import StdlibTransport
 
 MCP_VERSION = "2025-11-25"
 SUPPORTED_VERSIONS = ("2025-11-25",)
@@ -91,7 +94,8 @@ def _tool_schema(name: str) -> dict[str, Any] | None:
     return None
 
 
-def _client_from_env(client_module: Any | None = None):
+def _client_from_env(client_module: Any | None = None, transport: StdlibTransport | None = None):
+    """A client with the credentials the environment holds now, on `transport` when one is given."""
     from manure.client import (ManureClient, MissingCredentials, _exact_credential,
         check_secret_pair_ambiguity, insecure_http_from_env, resolve_secret_pair,
         strip_secret_value, validate_url_before_network)
@@ -115,7 +119,9 @@ def _client_from_env(client_module: Any | None = None):
     token = resolve_secret_pair(tok_direct, tok_file, kind="token")
     cache = strip_secret_value(os.environ.get("MANURE_CACHE_DIR"))
     cache_dir = Path(cache) if cache is not None else Path.home() / ".cache" / "manure"
-    return MC(api_base, token=token, cache_dir=cache_dir, allow_insecure_http=allow_http)
+    if transport is None:
+        return MC(api_base, token=token, cache_dir=cache_dir, allow_insecure_http=allow_http)
+    return MC(api_base, token=token, cache_dir=cache_dir, allow_insecure_http=allow_http, transport=transport)
 
 
 def _validate_call_args(name: str, args: Any) -> str | None:
@@ -165,11 +171,12 @@ def _validate_call_args(name: str, args: Any) -> str | None:
     return None
 
 
-def handle_tools_call(name: str, arguments: dict[str, Any], client_module: Any | None = None) -> dict[str, Any]:
+def handle_tools_call(name: str, arguments: dict[str, Any], client_module: Any | None = None,
+                      transport: StdlibTransport | None = None) -> dict[str, Any]:
     """Execute one tool call; domain faults -> isError envelope (never raise)."""
     from manure.client import ManureError
     try:
-        client = _client_from_env(client_module)
+        client = _client_from_env(client_module, transport)
     except ManureError as e:
         return {"content": [{"type": "text", "text": json.dumps({"code": e.code, "message": e.message})}],
                 "isError": True}
@@ -302,7 +309,28 @@ def _validate_list_params(params: Any) -> str | None:
     return None
 
 
+def _process_transport() -> StdlibTransport | None:
+    """The transport every tool call of this process uses, or None when the HTTP setting is invalid:
+    each tool call then reports that setting itself and sends nothing."""
+    from manure.client import ManureError, StdlibTransport, insecure_http_from_env
+    try:
+        return StdlibTransport(allow_insecure_http=insecure_http_from_env(os.environ.get("MANURE_ALLOW_INSECURE_HTTP")))
+    except ManureError:
+        return None
+
+
 def main() -> None:
+    transport = _process_transport()
+    if transport is None:
+        _serve(None)
+        return
+    # Tool calls reuse the connections of this one transport. Credentials are still read for every call.
+    # The connections are closed when the server stops reading requests.
+    with transport.keep_alive():
+        _serve(transport)
+
+
+def _serve(transport: StdlibTransport | None) -> None:
     stdin = sys.stdin.buffer
     stdout = sys.stdout
     initialized = False
@@ -434,7 +462,7 @@ def main() -> None:
                     stdout.flush()
                     continue
                 try:
-                    result = handle_tools_call(tname, targs, None)
+                    result = handle_tools_call(tname, targs, None, transport)
                 except Exception:
                     stdout.write(json.dumps(_err(mid, -32603, "Internal error")) + "\n")
                     stdout.flush()

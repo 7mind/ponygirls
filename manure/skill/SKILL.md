@@ -56,6 +56,9 @@ cannot follow Markdown hyperlinks.
   or origin + `/view/<artifact-id>` prefix (path mode). Cross-origin redirects drop credentials, and any
   cross-origin redirect that would replay a request body (unlock password,
   chunk bytes) is refused outright.
+- One `upload`, `fetch` or `search`, and one `manure-mcp` process, reuse a
+  connection per origin; a connection never serves another origin, and the
+  rules above apply to every request on it.
 
 ## Content routing and trust
 
