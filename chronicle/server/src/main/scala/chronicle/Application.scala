@@ -51,10 +51,12 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
     * during the first check, is refused by the next check. */
   def contextReadAccess(expected: Identity,fresh: IO[Identity]): IO[ReadAccess] = IO {
     val captured=new java.util.concurrent.atomic.AtomicReference[Option[Long]](None)
-    // Every read of the epoch either becomes the capture or must equal it, also when two checks read at once.
-    val epoch=IO.blocking(db.transaction(SecurityEpoch.current)).flatMap(read => IO(Check(captured.compareAndSet(None,Some(read)) || captured.get().contains(read),"authorization-changed","access changed during context read")))
+    val epoch=IO.blocking(db.transaction(SecurityEpoch.current))
     val same=fresh.flatTap(identity => IO(Check(identity.user.id==expected.user.id && identity.browser==expected.browser && identity.credentialHash==expected.credentialHash,"unauthorized","context credential changed")))
-    val current=IO(captured.get().isEmpty).ifM(epoch *> same,same.flatTap(_ => epoch))
+    val current=IO(captured.get()).flatMap {
+      case None => epoch.flatMap(read => IO(captured.compareAndSet(None,Some(read)))) *> same
+      case Some(seen) => same.flatTap(_ => epoch.flatMap(read => IO(Check(read==seen,"authorization-changed","access changed during context read"))))
+    }
     ReadAccess(current,ReadMaterialization.unrestricted)
   }
   def searchTags(access: ReadAccess,query: TagSearchQuery): IO[Result] =
