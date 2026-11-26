@@ -137,8 +137,9 @@ final class ActivitySnapshotPlanTest extends munit.FunSuite {
             for(node <- all; name <- text(node,"Subplan Name").map(_.stripPrefix("CTE ")); bound <- bounded.get(name); limit <- bound.rows)
               assert(number(node,"Actual Rows")<=limit,s"$at: CTE $name has ${number(node,"Actual Rows")} rows, beyond $limit (${bound.reason})")
             // A node that replays the rows it stored when rescanned reads a CTE's rows again without scanning it again (an
-            // InitPlan below it is evaluated once and leaves a value, not rows).
-            def unbounded(node: Json): Boolean = cte(node).exists(name => !bounded.contains(name)) ||
+            // InitPlan below it is evaluated once and leaves a value, not rows). `heads` is exempt from the one-scan rule
+            // only: a replay of rows stored from it (a sorted head subquery per head) is not bounded by the owner targets.
+            def unbounded(node: Json): Boolean = cte(node).exists(name => !bounded.contains(name) || name=="heads") ||
               children(node).exists(child => !text(child,"Parent Relationship").contains("InitPlan") && unbounded(child))
             assertEquals(all.filter(node => text(node,"Node Type").exists(replaying) && unbounded(node) && number(node,"Actual Loops")>summary.totalCollectors).map(describe),Nil,s"$at: no stored CTE rows replayed per head or job")
           }
