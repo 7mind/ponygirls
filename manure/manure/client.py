@@ -1242,15 +1242,15 @@ class StdlibTransport:
     connection.
 
     Nothing is kept outside `keep_alive()` because of the server: its graceful
-    shutdown waits for idle keep-alive connections instead of closing them, and
-    it closes an idle connection only after its request timeout (30 s by
-    default).
+    shutdown waits for idle keep-alive connections instead of closing them, an
+    idle connection occupies one of its connection slots, and it closes an idle
+    connection only after its request timeout (30 s by default).
 
     One thread at a time: the CLI, the MCP server and the client's operations
     are sequential, and the kept connections are not locked.
     """
 
-    def __init__(self, timeout: float = 30.0, allow_insecure_http: bool = False,
+    def __init__(self, timeout: float = 30.0, allow_insecure_http: bool = False, *,
                  clock: Callable[[], float] = time.monotonic):
         if type(allow_insecure_http) is not bool:
             raise ManureError("bad-envelope", "allow_insecure_http: boolean required")

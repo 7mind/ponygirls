@@ -351,12 +351,10 @@ failed; nested scopes share the connections. These hold a scope:
 
 - The client operations that send several requests: `upload_path` (fresh and
   resumed), `fetch_to_dest` (by ID and by content URL) and `search_expression`. So
-  `manure upload`, `manure fetch` and `manure search` use one connection per origin
+  `manure upload`, `manure fetch` and `manure search`, and the MCP tools
+  `upload_artifact`, `fetch_artifact` and `search`, use one connection per origin
   and leave none open when they return. `whoami`, `list`, `info`, `delete` and
-  `rotate-password` send one request.
-- `manure-mcp`, for the life of the process: all tool calls share its connections.
-  It still reads the credentials for every call. The connections end when its input
-  ends or the process is terminated.
+  `rotate-password` (and the matching MCP tools) send one request.
 - A Python caller that wants its own calls to share connections creates the
   transport and holds the scope itself:
 
@@ -387,16 +385,26 @@ What holds for a kept connection:
   content `Unlock`, `RedeemGrant` and `Logout` are never sent twice: they fail with
   `unavailable: network error`, and the caller has to look at the server state
   before trying again. Nothing is sent again after a timeout or once any part of a
-  response was read.
+  response was read. The CLI and the MCP server send such a request only as the
+  first one on a connection, so only a Python caller holding its own scope can meet
+  this failure.
 
-Two properties of the server shaped this (measured on the native server,
-2026-11-26): it closes an idle connection after `request_timeout_s` (30 s by
-default), and its graceful shutdown does not close idle keep-alive connections but
-waits for them, up to that timeout. Hence the 15 s limit on reuse, and hence nothing
-is kept outside a scope: a client object that merely exists does not delay a server
-shutdown. A running `manure-mcp` that made a call less than `request_timeout_s` ago
-does delay the graceful shutdown of a server it reaches directly, by the rest of
-that time.
+Nothing is kept outside a scope, and `manure-mcp` does not keep a connection between
+tool calls (it creates a client per call), because of how the server treats an idle
+keep-alive connection (measured on the native server, 2026-11-26):
+
+- It closes the connection only after `request_timeout_s` (30 s by default: closed
+  after 30.00 s).
+- Its graceful shutdown waits for the connection instead of closing it: the server
+  exited 0.41 s after SIGTERM with no client connection open and 30.14 s after it
+  with one idle keep-alive connection (5.43 s with `request_timeout_s: 5`).
+- The connection occupies one of the `max_connections` + 1 connection slots: with
+  `max_connections: 1` and `request_timeout_s: 5`, two idle keep-alive connections
+  made a third connection wait 5.00 s for its answer.
+
+Keeping a connection between MCP calls would save one connection setup for a call
+that follows another within 15 s, and cost a slot and a delayed shutdown on every
+server that is reached without a proxy in between.
 
 ## Artifact workspace
 
@@ -559,8 +567,8 @@ Real JSON-RPC 2.0 over stdio, one object per line, protocol
 `tools/list` / `tools/call`; same env auth as the CLI. Nine tools:
 `whoami`, `list_artifacts`, `search`, `get_artifact`, `get_manifest`,
 `upload_artifact`, `fetch_artifact`, `delete_artifact`,
-`rotate_external_password` (`tools/list`-verified). The process keeps its
-HTTP connections between tool calls and reads the credentials for every call
+`rotate_external_password` (`tools/list`-verified). A tool call uses one
+connection per origin and none stays open between calls
 ([Connections](#connections)). Host entries use
 file-backed credentials only — never `MANURE_TOKEN` beside
 `MANURE_TOKEN_FILE`:

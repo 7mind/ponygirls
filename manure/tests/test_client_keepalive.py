@@ -14,7 +14,6 @@ import json
 import os
 from pathlib import Path
 import queue
-import signal
 import socket
 import ssl
 import subprocess
@@ -22,7 +21,6 @@ import sys
 import tempfile
 import threading
 import time
-import types
 import unittest
 from unittest import mock
 from urllib.parse import urlsplit
@@ -30,7 +28,7 @@ from uuid import UUID
 
 import browser_fixtures
 from keepalive_peer import DEADLINE_SECONDS, Hangup, Partial, Peer, Reply, Request, Silence, interrupt, serve
-from manure import cli, mcp
+from manure import cli
 from manure import current_protocol as cp
 from manure.client import (FETCH_RANGE_BYTES, MAX_IDLE_SECONDS, MAX_KEPT_CONNECTIONS, MAX_TRANSPORT_BYTES,
                            ManureClient, ManureError, ReusedConnectionClosed, StdlibTransport)
@@ -42,7 +40,6 @@ RANGED_FILE_BYTES = 2 * FETCH_RANGE_BYTES + 4096  # three range requests
 # Idle timeout of a peer that closes idle connections, and the socket timeout of a transport under test.
 PEER_IDLE_SECONDS = 0.2
 SHORT_TIMEOUT_SECONDS = 0.3
-OTHER_TOKEN = "C" * 42 + "A"
 TLS_SUFFIX = "manure-keepalive.test"
 TLS_HOST = "peer." + TLS_SUFFIX
 
@@ -670,9 +667,9 @@ class CliTests(unittest.TestCase):
 class McpServer:
     """`python -m manure.mcp` as a child process, driven one JSON-RPC line at a time."""
 
-    def __init__(self, peer: Peer, cache: Path, settings: dict[str, str]):
+    def __init__(self, peer: Peer, cache: Path):
         environment = {name: value for name, value in os.environ.items() if not name.startswith("MANURE_")}
-        environment.update(settings, MANURE_URL=peer.origin, MANURE_CACHE_DIR=str(cache), PYTHONPATH=str(PROJECT))
+        environment.update(MANURE_URL=peer.origin, MANURE_TOKEN=TOKEN, MANURE_CACHE_DIR=str(cache), PYTHONPATH=str(PROJECT))
         self._diagnostics = tempfile.TemporaryFile()
         self.process = subprocess.Popen([sys.executable, "-m", "manure.mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=self._diagnostics, env=environment, text=True, cwd=str(PROJECT))
@@ -724,90 +721,22 @@ class McpServer:
 
 
 class McpTests(unittest.TestCase):
-    """The MCP server keeps one transport for its process: tool calls share its connections until it stops."""
-
-    def test_tool_calls_of_one_server_process_share_one_connection_which_ends_with_its_input(self):
+    def test_each_tool_call_uses_one_connection_and_leaves_none_open_while_the_server_runs(self):
         service = CurrentTransport("http://unused.invalid")
-        with tempfile.TemporaryDirectory() as tmp, Peer(serve(service)) as peer, \
-                McpServer(peer, Path(tmp) / "cache", {"MANURE_TOKEN": TOKEN}) as server:
-            for tool, arguments in (("whoami", {}), ("list_artifacts", {}), ("get_artifact", {"artifact_id": AID}),
-                                    ("delete_artifact", {"artifact_id": AID})):
-                self.assertNotIn("isError", server.call(tool, arguments), tool)
-            self.assertEqual([request.connection for request in peer.requests], [0, 0, 0, 0])
-            self.assertEqual(peer.accepted, 1)
+        with tempfile.TemporaryDirectory() as tmp, Peer(serve(service)) as peer, McpServer(peer, Path(tmp) / "cache") as server:
+            source = source_tree(Path(tmp) / "site", {"index.html": b"<p>hi</p>", "a/one.txt": b"1"})
+            calls = [("whoami", {}, 1),
+                     ("search", {"query": "report"}, 2),
+                     ("upload_artifact", {"local_path": str(source), "access": "internal"}, 5),
+                     ("fetch_artifact", {"artifact_id": AID, "dest_dir": str(Path(tmp) / "out")}, 3),
+                     ("delete_artifact", {"artifact_id": AID}, 1)]
+            for connection, (tool, arguments, requests) in enumerate(calls):
+                with self.subTest(tool=tool):
+                    self.assertNotIn("isError", server.call(tool, arguments))
+                    self.assertEqual([request.connection for request in peer.requests].count(connection), requests)
+                    self.assertEqual(peer.wait_ended(connection), "client")
+            self.assertEqual(peer.accepted, len(calls))
             self.assertEqual(server.end_input(), 0)
-            self.assertEqual(peer.wait_ended(0), "client")
-
-    def test_a_mutating_call_after_the_peer_closed_the_idle_connection_is_sent_once_on_a_new_connection(self):
-        service = CurrentTransport("http://unused.invalid")
-        with tempfile.TemporaryDirectory() as tmp, Peer(serve(service), idle_timeout=PEER_IDLE_SECONDS) as peer, \
-                McpServer(peer, Path(tmp) / "cache", {"MANURE_TOKEN": TOKEN}) as server:
-            self.assertNotIn("isError", server.call("whoami", {}))
-            self.assertEqual(peer.wait_ended(0), "idle")
-            self.assertEqual(json.loads(server.call("delete_artifact", {"artifact_id": AID})["content"][0]["text"]), {"ok": True})
-            self.assertEqual([(request.connection, type(management_command(request))) for request in peer.requests],
-                             [(0, cp.Command_Whoami), (1, cp.Command_DeleteArtifact)])
-            self.assertEqual(peer.accepted, 2)
-
-    def test_credentials_are_read_for_every_call_while_the_connection_is_kept(self):
-        def identity(request: Request) -> Reply:
-            envelope = cp.decode(cp.ClientEnvelope, cp.loads(request.body))
-            result = cp.Result_Identity(cp.Principal("u", "t", cp.PrincipalType.Agent))
-            return Reply(200, {"Content-Type": "application/json"}, cp.dumps(cp.ServerEnvelope(envelope.requestId, result)))
-        with tempfile.TemporaryDirectory() as tmp, Peer(identity) as peer:
-            token_file = Path(tmp) / "token"
-            token_file.write_text(TOKEN + "\n")
-            with McpServer(peer, Path(tmp) / "cache", {"MANURE_TOKEN_FILE": str(token_file)}) as server:
-                self.assertNotIn("isError", server.call("whoami", {}))
-                token_file.write_text(OTHER_TOKEN + "\n")
-                self.assertNotIn("isError", server.call("whoami", {}))
-                self.assertEqual([(request.connection, request.header("Authorization")) for request in peer.requests],
-                                 [(0, "Bearer " + TOKEN), (0, "Bearer " + OTHER_TOKEN)])
-
-    def test_a_terminated_server_leaves_no_connection_open(self):
-        service = CurrentTransport("http://unused.invalid")
-        with tempfile.TemporaryDirectory() as tmp, Peer(serve(service)) as peer, \
-                McpServer(peer, Path(tmp) / "cache", {"MANURE_TOKEN": TOKEN}) as server:
-            self.assertNotIn("isError", server.call("whoami", {}))
-            server.process.send_signal(signal.SIGTERM)
-            server.process.wait(DEADLINE_SECONDS)
-            self.assertEqual(peer.wait_ended(0), "client")
-            self.assertEqual(peer.accepted, 1)
-
-    def test_a_server_interrupted_while_it_waits_for_input_closes_its_connections(self):
-        service = CurrentTransport("http://unused.invalid")
-        messages = [{"jsonrpc": "2.0", "id": 1, "method": "initialize",
-                     "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "keepalive", "version": "0"}}},
-                    {"jsonrpc": "2.0", "method": "notifications/initialized"},
-                    {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "whoami", "arguments": {}}},
-                    {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "whoami", "arguments": {}}}]
-
-        def input_then_interrupt():
-            for message in messages:
-                yield json.dumps(message).encode() + b"\n"
-            raise KeyboardInterrupt
-
-        with tempfile.TemporaryDirectory() as tmp, Peer(serve(service)) as peer:
-            environment = {"MANURE_URL": peer.origin, "MANURE_TOKEN": TOKEN, "MANURE_CACHE_DIR": str(Path(tmp) / "cache")}
-            replies = io.StringIO()
-            with mock.patch.dict(os.environ, environment), mock.patch.object(sys, "stdout", replies), \
-                    mock.patch.object(sys, "stdin", types.SimpleNamespace(buffer=input_then_interrupt())):
-                with self.assertRaises(KeyboardInterrupt):
-                    mcp.main()
-            self.assertEqual([json.loads(line)["id"] for line in replies.getvalue().splitlines()], [1, 2, 3])
-            self.assertEqual([request.connection for request in peer.requests], [0, 0])
-            self.assertEqual(peer.wait_ended(0), "client")
-
-    def test_an_invalid_http_setting_is_reported_by_each_call_and_nothing_is_sent(self):
-        service = CurrentTransport("http://unused.invalid")
-        with tempfile.TemporaryDirectory() as tmp, Peer(serve(service)) as peer, \
-                McpServer(peer, Path(tmp) / "cache", {"MANURE_TOKEN": TOKEN, "MANURE_ALLOW_INSECURE_HTTP": "yes"}) as server:
-            for _ in range(2):
-                result = server.call("whoami", {})
-                self.assertTrue(result["isError"])
-                self.assertEqual(json.loads(result["content"][0]["text"])["code"], "bad-envelope")
-            self.assertEqual(server.end_input(), 0)
-            self.assertEqual(peer.accepted, 0)
 
 
 if __name__ == "__main__":
