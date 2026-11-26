@@ -54,14 +54,28 @@ final class PoolSuite extends FunSuite {
         try intercept(method, args).getOrElse(method.invoke(target, args*)) catch { case e: InvocationTargetException => throw e.getCause }
       }
     }))
-  /** Another session's transaction holding `pg_settings` exclusively while taken: every statement reading it (the reset's
-    * bounds, a bounded transaction's setup) waits server-side, after the reset's `DISCARD ALL`, until `release`. */
+  /** Another session's transaction holding an advisory lock exclusively while taken. A session logged in through
+    * [[SettingsLock.sessions]] resolves the engine's unqualified `set_config` to the fixture's function of that name, which
+    * waits for the lock before it sets: every statement calling it (the reset's bounds, a bounded transaction's setup) waits
+    * server-side, after the reset's `DISCARD ALL`, until `release`. */
   private final class SettingsLock(config: JdbcConfig) extends AutoCloseable {
+    import SettingsLock.*
     private val holder = { val p = new Properties; p.setProperty("user", config.user); p.setProperty("password", CredentialFile.read(config.passwordFile)); DriverManager.getConnection(config.jdbcUrl, p) }
+    execute(holder, s"CREATE SCHEMA IF NOT EXISTS $Schema; CREATE OR REPLACE FUNCTION $Schema.set_config(text, text, boolean) RETURNS text LANGUAGE sql AS " +
+      s"$$$$ SELECT pg_advisory_xact_lock_shared($Key); SELECT pg_catalog.set_config($$1, $$2, $$3) $$$$")
     holder.setAutoCommit(false)
-    def take(): Unit = execute(holder, "LOCK TABLE pg_catalog.pg_settings IN ACCESS EXCLUSIVE MODE")
+    def take(): Unit = execute(holder, s"SELECT pg_advisory_xact_lock($Key)")
     def release(): Unit = holder.rollback()
-    def close(): Unit = try holder.rollback() finally holder.close()
+    def close(): Unit = try { holder.rollback(); holder.setAutoCommit(true); execute(holder, s"DROP SCHEMA $Schema CASCADE") } finally holder.close()
+  }
+  private object SettingsLock {
+    val Schema = "settings_lock"
+    val Key = 7405
+    /** `factory`'s logins with the fixture's schema before `pg_catalog` in their search path: a startup option, which the
+      * reset's `DISCARD ALL` returns the session to. */
+    def sessions(factory: JdbcConnectionFactory): JdbcConnectionFactory = new JdbcConnectionFactory {
+      def open(url: String, properties: Properties): Connection = { properties.setProperty("options", s"-c search_path=$Schema,pg_catalog"); factory.open(url, properties) }
+    }
   }
   private def engine(config: JdbcConfig, connectTimeout: FiniteDuration, factory: JdbcConnectionFactory,
       watchdog: JdbcTransactionEngine.Watchdog = JdbcTransactionEngine.scheduledWatchdog, nanoTime: () => Long = () => System.nanoTime(),
@@ -223,13 +237,13 @@ final class PoolSuite extends FunSuite {
       assertEquals((selected, validations.get), (1, 0))
       assert(took < Acquisition(5.seconds).validation, took.toString)
     } finally unstall.countDown()
-    // (b) every reset execution stalls server-side (its bounds wait for pg_settings after DISCARD ALL): two tries (one
+    // (b) every reset execution stalls server-side (its bounds wait for the settings lock after DISCARD ALL): two tries (one
     // connection), each ended at its cap A/4 by the network timeout and the watchdog, then connection-unavailable within A.
     val budget = acquisitionBudget(2.seconds)
     Using.resource(new SettingsLock(config)) { lock =>
       lock.take()
       val stalled = new Counting()
-      Using.resource(engine(config, 2.seconds, stalled)) { pool =>
+      Using.resource(engine(config, 2.seconds, SettingsLock.sessions(stalled))) { pool =>
         val (failure, took) = elapsed(intercept[JdbcFailure](pool.transaction(_ => fail("a stalled reset must not reach the callback"))))
         assertEquals(failure.code, "connection-unavailable")
         assert(took >= Acquisition(budget).resetCap * 2 && took < budget + 300.millis, took.toString)
@@ -241,7 +255,7 @@ final class PoolSuite extends FunSuite {
     Using.resource(new SettingsLock(config)) { lock =>
       lock.take()
       val first = new Counting((n, c) => { if (n == 2) lock.release(); c })
-      Using.resource(engine(config, 2.seconds, first)) { pool =>
+      Using.resource(engine(config, 2.seconds, SettingsLock.sessions(first))) { pool =>
         val (_, took) = elapsed(pool.transaction(c => integer(c, "SELECT 1")))
         assert(took >= Acquisition(budget).resetCap && took < budget, took.toString)
         assertEquals(first.opened.get, 2)
@@ -335,7 +349,7 @@ final class PoolSuite extends FunSuite {
 
   test("D5 a try's network timeout covers its first statement: a stalled setup ends at D, not the socket timeout") { configured { config =>
     // Statement and lock waits long; the socket timeout 5 s; D 1 s away, its transaction watch never fires. The setup
-    // statement reads pg_settings, which another session takes right after the reset.
+    // statement waits for the settings lock, which another session takes right after the reset.
     val waits = config.copy(limits = config.limits.copy(statementTimeout = 30.seconds, lockTimeout = 30.seconds))
     val bound = 1.second
     Using.resource(new SettingsLock(config)) { lock =>
@@ -344,7 +358,7 @@ final class PoolSuite extends FunSuite {
         if (m.getName == "setAutoCommit" && a(0) == java.lang.Boolean.FALSE && armed.compareAndSet(true, false)) lock.take()
         None
       })
-      Using.resource(engine(waits, 5.seconds, factory, never)) { pool =>
+      Using.resource(engine(waits, 5.seconds, SettingsLock.sessions(factory), never)) { pool =>
         val (failure, took) = elapsed(intercept[JdbcFailure](pool.transactionWithin(Deadline.now + bound)(_ => fail("the setup must not complete"))))
         assertEquals((failure.code, failure.sqlState), ("database-unavailable", Some("08006")))
         assert(took >= bound && took < bound + 700.millis && took < waits.limits.socketTimeout, took.toString)
@@ -670,7 +684,7 @@ final class PoolSuite extends FunSuite {
     import JdbcTransactionEngine.{Acquisition, acquisitionBudget}
     val cap = Acquisition(acquisitionBudget(8.seconds)).resetCap
     val trace = new Recorded; val executor = Executors.newSingleThreadExecutor()
-    try Using.resources(plain(config), new SettingsLock(config), engine(config, 8.seconds, new Counting(), trace = trace)) { (admin, lock, pool) =>
+    try Using.resources(plain(config), new SettingsLock(config), engine(config, 8.seconds, SettingsLock.sessions(new Counting()), trace = trace)) { (admin, lock, pool) =>
       pool.transaction(pid)
       lock.take()
       val start = Deadline.now; val deadline = start + 800.millis
