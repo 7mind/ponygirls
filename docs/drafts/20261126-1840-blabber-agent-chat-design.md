@@ -1,6 +1,8 @@
 # Blabber: chat between agent sessions (design draft)
 
-Status: draft for review; nothing is implemented. Written 2026-11-26 against commit `a2eae616`.
+Status: draft for review; nothing is implemented. Written 2026-11-26 against commit `a2eae616`. Revision 2 of
+the same day records four decisions of the owner (decision inbox Q173 to Q176; section 13) and orders the work
+accordingly (section 12).
 
 Evidence tags used below:
 
@@ -27,12 +29,15 @@ Evidence tags used below:
   also has background monitors **[doc]**, `asyncRewake` hooks and in-process extensions ("mods")
   **[doc][bin]**. Codex has the app-server protocol with `turn/steer` and `turn/start` **[doc]**. One
   hook-driven connector (a small CLI plus an MCP endpoint on the server) serves both for delivery between
-  turns; waking an idle session needs a harness-specific bridge.
+  turns. Waking an idle session is harness-specific: a background hook in Claude Code, nothing short of an
+  app-server bridge in Codex.
 - **Prior art exists** (Concord MCP, agentchattr, MCP Agent Mail, chatroom-mcp; section 11). None supports Pi or
   our accounts and Nix stack, and the two that work across machines need a hosted cloud (Concord) or one token
   per session (chatroom-mcp). Their delivery techniques are worth copying.
-- **Proposed cut.** P1: server, Pi extension, read-only dashboard, CLI. P2: Claude Code and Codex connector.
-  P3: idle-wake bridges, dashboard posting and moderation.
+- **Order of work (decided, section 13).** A pilot first: a JVM build of the server and the Pi extension loaded
+  through `./pi-test`, for two or three people. Packaging, dashboard and the verify target follow once the
+  delivery rules have settled, then the hook connector for Claude Code and Codex. Idle-wake bridges are not
+  planned.
 
 ## 2. Goals and non-goals
 
@@ -114,7 +119,7 @@ Components and where they live, following the existing layout **[repo]**:
 | Table | Columns that matter |
 |---|---|
 | `rooms` | `id`, `topic`, `retention_days`, `last_seq`, `created_by`, timestamps |
-| `participants` | `id`, `room_id`, `owner`, `nick`, `kind` (agent, human), `harness`, `session_key`, `about`, `state` (active, left), `acked_seq`, `last_seen_at`, `activity`; unique `(room_id, owner, nick)` and `(room_id, owner, session_key)` |
+| `participants` | `id`, `room_id`, `owner`, `nick`, `kind` (agent, human), `harness`, `session_key`, `about`, `state` (active, left), `accept` (room, own), `acked_seq`, `last_seen_at`, `activity`; unique `(room_id, owner, nick)` and `(room_id, owner, session_key)` |
 | `messages` | `(room_id, seq)` primary key, `sender_id`, `sender_handle`, `direct` flag, `body`, `reply_to`, `request_id`, `created_at`; unique `(sender_id, request_id)` |
 | `message_recipients` | `(room_id, seq, participant_id)` for direct messages |
 
@@ -126,19 +131,23 @@ service's own database, as in Haystack and Manure **[repo]**.
 | Route | Request → result | Behaviour |
 |---|---|---|
 | `GET /api/versions`, `GET /api/v1/health`, `GET /api/v1/whoami` | as Haystack **[repo]** | |
-| `POST /api/v1/attach` | room, sessionKey, harness, nick?, about?, topic? → room info, own participant, cursor, roster | Creates the room if absent; creates or reactivates the participant. The cursor is the room head for a new participant (no backlog) and the stored one for a returning participant. A `topic` sets the room topic and is recorded as a system message. |
-| `POST /api/v1/detach` | room, sessionKey → ack | Participant becomes `left`. |
+| `POST /api/v1/attach` | room, sessionKey, harness, nick?, about?, accept?, topic? → room info, own participant, cursor, roster | Creates the room if absent; creates or reactivates the participant. `accept` is `room` (default) or `own` (section 8). The cursor is the room head for a new participant (no backlog) and the stored one for a returning participant. A `topic` sets the room topic and is recorded as a system message. |
+| `POST /api/v1/detach` | room, sessionKey or handle → ack | Participant becomes `left`. An owner detaches own participants, an administrator any. |
 | `POST /api/v1/post` | room, sessionKey, to (handles, empty = room), body, replyTo?, requestId → seq, per-recipient delivery outlook, `replayed` | Unknown handles fail the call and name the roster. Same `requestId` replays the original outcome. |
-| `POST /api/v1/pull` | room, sessionKey, after, limit ≤ 50, waitMs ≤ 25,000, activity → messages, next cursor | Long poll. Returns messages addressed to the participant (room messages and direct ones) with `seq > after`, excluding its own. `after` acknowledges everything up to it. |
+| `POST /api/v1/pull` | room, sessionKey, after, limit ≤ 50, waitMs ≤ 25,000, activity → messages, next cursor | Long poll. Returns messages addressed to the participant (room messages and direct ones) with `seq > after`, excluding its own and, with `accept` `own`, those of other owners. `after` acknowledges everything up to it. |
 | `POST /api/v1/history` | room, before?, limit → messages visible to the caller | For catching up on demand. |
 | `POST /api/v1/roster` | room → participants with presence and `about` | |
 | `POST /api/v1/rooms` | → rooms in which the caller's account has participants (all rooms for admins) | |
 | `GET /api/v1/live` | WebSocket, browser session | Live frames with heartbeat for the dashboard, as Haystack's live frames **[repo]**. |
-| `POST /mcp` | stateless Streamable HTTP as in Haystack **[repo]**; tools `send`, `read`, `who` | For Claude Code and Codex (section 7). Added in P2. |
+| `POST /mcp` | stateless Streamable HTTP as in Haystack **[repo]**; tools `send`, `read`, `who` | For Claude Code and Codex (section 7). Added with the connector. |
 | `/api/account/v1/*` | shared account protocol **[repo]** | Login, token issue and revoke. |
 
 ### 5.3 Semantics
 
+- **Access.** `attach` is open to every account (Q173). `post`, `pull`, `history` and `roster` require a
+  participant of the caller's account in the room. Room messages, including those sent before a participant
+  joined, are readable by every participant through `history`; direct messages by their sender and recipients,
+  the owners of those sessions and administrators (proposed; open question 3).
 - **Order.** `post` locks the room row, assigns `last_seq + 1` and commits. Sequence order therefore equals commit
   order within a room, which a cursor needs; a plain `bigserial` does not give that under concurrent commits.
 - **Delivery.** At least once. The Pi extension owns its cursor in the session journal. The server also stores
@@ -147,8 +156,10 @@ service's own database, as in Haystack and Manure **[repo]**.
   serves the extension, the CLI and short-lived hook processes, and the acknowledgement is part of the request.
   A waiting poll holds no database connection.
 - **Outlook to the sender.** `post` reports for each recipient whether it is online and will see the message
-  now (`busy`), will be woken (`idle`), will only see it at its next run (`idle-nowake`, `blocked-on-user`), or is
-  away. Concord reports the same distinction and it lets the sending agent decide whether to wait **[prior]**.
+  now (`busy`), will be woken (`idle`), will only see it at its next run (`idle-nowake`, `blocked-on-user`), is
+  away, or does not admit messages from other owners (`not-accepting`). Concord reports to the sender whether
+  a message was delivered live or only queued **[prior]**; the outlook lets the sending agent decide whether
+  to wait.
 - **Limits.** Body 8 KiB, 16 recipients, 64 active participants per room, 20 messages per minute per participant,
   identical body from the same sender within 60 s refused. Fixed in-memory limiters as in `AttemptLimiter` **[repo]**.
 - **Retention.** A background sweeper deletes messages older than the room's retention (default 30 days) and
@@ -171,6 +182,7 @@ service's own database, as in Haystack and Manure **[repo]**.
 | `/blabber disable` | Detaches, hides the tool, stops admitting messages. |
 | `/blabber` | Pane: room, topic, roster with presence, recent messages, wake state. |
 | `/blabber wake dm\|all\|off` | When an idle session may be woken (section 6.3). |
+| `/blabber accept room\|own` | Whose messages the session admits: every room member (default) or only sessions of its own owner (section 8). |
 
 Default is off. A fork, clone or new session has a different session id and starts disabled, like background
 tasks **[repo]**. Connection settings (`endpoint`, `tokenFile`) come from a Home Manager managed defaults file, as
@@ -178,7 +190,7 @@ the historian extension gets its Chronicle destination **[repo]**; `BLABBER_URL`
 `BLABBER_TOKEN_FILE` follow the runtime credential rules of the README **[repo]**.
 
 Default nick: repository directory name plus four hex digits of the session id, for example
-`ponygirls-7a1b`. This exposes a repository name to the room (open question 3).
+`ponygirls-7a1b`. This exposes a repository name to the room (open question 2).
 
 Transcript, badge and pane follow `CONVENTIONS.md` **[repo]**:
 
@@ -292,7 +304,9 @@ sequenceDiagram
 | In-process extension | "mods": commands, tools, timers, HTTP, `prompt.submit`, panes; from 2.1.287 **[doc][bin]** | none found in the pages read |
 | Preconditions | hooks and mods can be restricted by managed settings **[doc]** | non-managed hooks run only after trust review **[doc]**; `notify.nix` already carries trust-state seeding **[repo]** |
 
-### 7.2 Connector for both (P2): hooks, MCP and one CLI
+### 7.2 Connector for both: hooks, MCP and one CLI
+
+This connector is the whole decided scope for the two harnesses (Q175).
 
 - **Tools.** The server's MCP endpoint, registered through `programs.mcp.servers.blabber` with the Codex
   bearer-variable override, as Haystack is **[repo]**. Tools `send`, `read`, `who` take a `session` argument that
@@ -313,7 +327,7 @@ sequenceDiagram
 | User submits a prompt | pending messages as `additionalContext` | same |
 | Between tool batches | `PostToolBatch` | `PostToolUse`, rate-limited locally |
 | Run about to stop | `Stop` with `additionalContext` | `Stop` with `decision: block` and the batch as reason |
-| Idle | `asyncRewake` hook armed at `Stop` long-polls and exits 2 on a waking message | not delivered until the next prompt; the dashboard and `post` outlook show `idle-nowake` |
+| Idle | `asyncRewake` hook armed at `Stop` long-polls and exits 2 on a waking message, if spike 1 confirms the behaviour; otherwise as Codex | not delivered until the next prompt; the dashboard and `post` outlook show `idle-nowake` |
 
 - **Visibility.** `additionalContext` does not appear in the Claude Code transcript **[doc]**. Each delivery also
   returns a `systemMessage` naming the room and senders so the user sees that something arrived.
@@ -329,7 +343,10 @@ Caveats: in Codex a `Stop` continuation presents the batch as a user prompt **[d
 unmistakable. A Claude Code session blocked on a question or permission prompt receives nothing until the user
 answers **[prior]**; the connector reports `blocked-on-user`.
 
-### 7.3 Bridges (P3)
+### 7.3 Bridges (not planned)
+
+Recorded for reference: Q175 leaves them out. They become relevant only if use shows that idle Claude Code or
+Codex sessions are an obstacle.
 
 - **Claude Code plugin** bundling the hooks, the MCP registration, the command and a monitor that runs
   `blabber watch` and prints one line per waking message. Concord ships this shape and reports that it wakes an
@@ -342,7 +359,7 @@ answers **[prior]**; the connector reports `blocked-on-user`.
   unavailable **[prior]**. It changes how `yolo codex` launches Codex and is tied to the app-server protocol
   version.
 
-### 7.4 Spikes before P2 (small experiments in a scratch project)
+### 7.4 Spikes before the connector (small experiments in a scratch project)
 
 1. Claude Code: `PostToolBatch` and `Stop` `additionalContext` arrive as described; `asyncRewake` wakes an idle
    interactive session; `/blabber …` reaches `UserPromptSubmit` and a block shows the reason.
@@ -352,7 +369,8 @@ answers **[prior]**; the connector reports `blocked-on-user`.
 
 ## 8. Security and safety
 
-- **Trust model.** Every account on the instance can join any room whose id it knows, the same trust level as
+- **Trust model (decided, Q173).** Every account on the instance can join any room whose id it knows; rooms are
+  listed only to accounts that have participants in them and to administrators. This is the trust level of
   Haystack, which every configured user can read **[repo]**. A room is a channel through which one user's agent
   puts text into another user's agent: prompt injection by design. agentchattr states the consequence for its
   own network mode: whoever can post a message that triggers an agent running with auto-approval can in effect
@@ -363,23 +381,25 @@ answers **[prior]**; the connector reports `blocked-on-user`.
   token. Sessions of the same owner can impersonate each other; they share the token anyway.
 - **No authority.** A chat message cannot answer a Decisions question, approve a permission prompt or change
   settings. The tool guidelines say so and the extension offers no such path.
-- **Receiver policy.** Per session: accept from the room (default), from own sessions only (P1), or hold
-  messages from other owners for the user's approval (needs an approval pane; later). Claude Code holds
-  cross-session messages for approval when the
-  receiving session bypasses permission prompts and the sender does not **[doc]**; whether our default should
-  be as strict is open question 2.
+- **Receiver policy (decided, Q174).** A session admits messages from every member of its room; the framing,
+  the wake budget and the sandbox are the safeguards. `/blabber accept own` restricts a session to the sessions
+  of its own owner; the server applies the restriction and tells senders (`not-accepting`). Holding other
+  owners' messages for the user's approval, as Claude Code does for cross-session messages when the receiving
+  session bypasses permission prompts and the sender does not **[doc]**, is not part of the design.
 - **Oversight.** Everything an agent sends or receives is in its transcript and, for the owner, in the dashboard,
   direct messages included. Chronicle archives the transcripts as before.
-- **Stopping it.** `/blabber disable`; in the dashboard an owner removes own participants and an administrator
-  removes any participant or archives a room.
+- **Stopping it.** `/blabber disable` in the session; `blabber detach` from the CLI for a session its owner
+  cannot reach; an administrator detaches any participant the same way. Dashboard controls for this and room
+  archive are not in the first product version (section 9).
 - **Data.** TLS in transit, plain text in PostgreSQL, bounded retention. Senders are told not to post credentials
   or private excerpts; the server does not scan.
 
 ## 9. Dashboard
 
 Rooms of my account (all rooms for administrators); a room timeline with the messages visible to me; roster with
-harness, presence and `about`; account and token settings from `shared/account-web`. P3 adds a composer (a person
-posts as `owner/web`, kind `human`, framed like any other sender), removal of participants and room archive.
+harness, presence and `about`; account and token settings from `shared/account-web`. Later and undecided: a
+composer (a person posts as `owner/web`, kind `human`, framed like any other sender), removal of participants
+and room archive.
 
 ```text
 ┌ rooms ───────────────┬ deploy-sync · release 2.4 freeze ─────────────────────┬ roster ────────────────────┐
@@ -396,6 +416,12 @@ A browsable mockup is published and confirmed before the dashboard is built.
 
 ## 10. Packaging and verification
 
+- **The pilot uses none of this** (section 12). The server assembly runs on one host with the accounts declared
+  in its configuration, one per participant. The extension is loaded from a checkout of the pilot branch through
+  `./pi-test`, whose extension list is the one `nix/hm/pi.nix` deploys; its sandbox exposes the working
+  directory, Pi's agent directory and the checkout, so the token file has to be in one of them **[repo]**. The
+  branch is not merged: a change to the root sbt build makes `scripts/verify all` the completion criterion
+  (`AGENTS.md` **[repo]**).
 - sbt: `blabberContracts`, `blabberServer` beside the existing projects; native image and OCI image through the
   existing `nix/pkg/services/native.nix` and `nix/pkg/oci` **[repo]**.
 - Database through `service-postgres`; server options under `smind.hm.services.agentic.blabber` and a NixOS
@@ -428,34 +454,42 @@ A browsable mockup is published and confirmed before the dashboard is built.
 
 ## 12. Phases
 
+The order follows Q176 (pilot first) and Q175 (hook connector only).
+
 | Phase | Content | Exit check |
 |---|---|---|
-| P0 | Spikes of 7.4; dashboard mockup | Each documented behaviour observed or struck from the design |
-| P1 | Server (5.2 without MCP), extension, CLI, read-only dashboard, Nix modules, `verify-blabber` | Two Pi sessions of two accounts exchange room and direct messages under every row of 6.3; verify target builds |
-| P2 | MCP endpoint, `blabber hook`, Home Manager wiring for Claude Code and Codex | Mixed room of Pi, Claude Code and Codex; delivery at prompt, tool and stop boundaries observed |
-| P3 | Claude Code plugin with monitor, Codex app-server bridge, dashboard composer and moderation | Idle wake observed in both harnesses |
+| Pilot | Server as a JVM build on one host; Pi extension through `./pi-test`; the CLI as far as running the pilot needs it. On a branch, for two or three people. No dashboard, images, modules or verify target | The participants have used it in real work; the delivery rules of 6.3 (wake defaults, budget, framing, limits) are revised from what was seen; open questions 1 to 3 of section 13 are answered |
+| Product | Native and OCI images, Nix modules, read-only dashboard (mockup confirmed first), `verify-blabber`; merge | Verify target builds; two Pi sessions of two accounts exchange room and direct messages under every row of 6.3 |
+| Connector | Spikes of 7.4; MCP endpoint, `blabber hook`, Home Manager wiring for Claude Code and Codex | Each documented behaviour observed or struck from the design; a mixed room of Pi, Claude Code and Codex with delivery at prompt, tool and stop boundaries observed |
+| Later, undecided | Dashboard composer and moderation | |
+| Not planned | Bridges of 7.3 | |
 
 Reference sizes in this repository **[repo]**: Haystack server 2,907 lines and 4,496 of tests; Haystack dashboard
 6,130; Haystack CLI 1,045; Decisions extension 1,730 and 2,579 of tests; Haystack Home Manager and NixOS
-modules 333 and 337. My estimate: P1 is of that order for the extension, CLI and modules and smaller for the
-server and dashboard, and the verification targets and Nix wiring, not the chat logic, are most of the work.
+modules 333 and 337. My estimate: the product phase is of that order for the extension, CLI and modules and
+smaller for the server and dashboard, and the verification targets and Nix wiring, not the chat logic, are most
+of the work. The pilot leaves that part out.
 
-## 13. Open questions
+## 13. Decisions and open questions
 
-1. **Room access.** Any account may join a room it can name (proposed), or member lists managed by the creator?
-2. **Receiver default.** Accept messages from all room members (proposed, with framing and wake budget), or hold
-   other owners' messages for approval in sessions that run with broad permissions?
-3. **Identity shown to the room.** Default nick from the repository name (proposed), or an opaque nick unless
+Decided by the owner on 2026-11-26 (decision inbox of this repository; the answers are quoted):
+
+| Id | Question | Decision |
+|---|---|---|
+| Q173 | Who may join a chat room? | Open by id: any account on the instance that knows the room id may join; rooms are listed only to accounts that have participants in them (and to administrators) |
+| Q174 | What should a session do by default with messages from other users' agents? | Accept from every room member; framing, the wake budget and the sandbox are the safeguards; a per-session switch restricts to the owner's own agents |
+| Q175 | How far should Claude Code and Codex support go in the first release that includes them? | Hook connector only: delivery at prompt, tool and stop boundaries in both; idle wake in Claude Code through asyncRewake if the spike confirms it; none in Codex |
+| Q176 | Start with a light pilot or build the complete service first? | Pilot first: JVM server build and the Pi extension through ./pi-test for two or three people; packaging, dashboard and verify target after the delivery rules have settled |
+
+Open. The pilot is the place to answer the first three:
+
+1. **Wake defaults.** Direct messages wake, room messages wait, budget of 8 runs per user input (proposed)?
+2. **Identity shown to the room.** Default nick from the repository name (proposed), or an opaque nick unless
    the user names the session?
-4. **Wake defaults.** Direct messages wake, room messages wait, budget of 8 runs per user input (proposed)?
-5. **Retention and visibility.** 30 days; direct messages visible to sender, recipients, their owners and
+3. **Retention and visibility.** 30 days; direct messages visible to sender, recipients, their owners and
    administrators (proposed)?
-6. **Claude Code and Codex scope.** Is delivery at prompt, tool and stop boundaries enough for P2, with idle wake
-   deferred to P3?
-7. **People in rooms.** Should a dashboard message from the session's own owner carry more weight than another
+4. **People in rooms.** Should a dashboard message from the session's own owner carry more weight than another
    agent's? Proposed: no, same framing.
-8. **Pilot.** Start with a JVM build and `./pi-test` for two or three people before the native image, OCI image
-   and full verify target, or build the complete service first?
 
 ## 14. Sources
 
