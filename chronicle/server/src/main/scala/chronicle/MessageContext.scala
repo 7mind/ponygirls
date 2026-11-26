@@ -3,6 +3,7 @@ package chronicle
 import chronicle.api.*
 import java.sql.{Connection,SQLException}
 import java.util.UUID
+import ponygirls.runtime.ServerTimeout
 
 trait ContextReader {
   final def readMessageContext(reader: String,id: UUID,view: ContentView,anchor: Span,beforeBytes: Int,afterBytes: Int): MessageContextResult =
@@ -43,7 +44,7 @@ private[chronicle] final class PostgresContextReader(db: Database,archive: Postg
       }
     })
     try IndexedRead.transaction(db,selector.generationId.nonEmpty) { c =>
-      Sql.rows(c,"SELECT set_config('statement_timeout',least(coalesce(nullif(setting::bigint,0),?),?)::text,true) FROM pg_settings WHERE name='statement_timeout'",MessageContextPolicy.statementDeadlineMillis,MessageContextPolicy.statementDeadlineMillis)(_ => ())
+      Sql.rows(c,ServerTimeout.tightenTransaction(ServerTimeout.Statement),MessageContextPolicy.statementDeadlineMillis)(_ => ())
       val (view,content)=archive.selectContent(c,reader,id,Some(selector),bounded)
       val stored=content.messages
       def numeric[A](query: ReadSources.Query)(decode: java.sql.ResultSet => A): List[A] = {

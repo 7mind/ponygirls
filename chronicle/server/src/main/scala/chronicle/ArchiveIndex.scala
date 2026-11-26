@@ -2,6 +2,7 @@ package chronicle
 
 import chronicle.api.*
 import ponygirls.retrieval.CandidateSql
+import ponygirls.runtime.ServerTimeout
 import io.circe.Json
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets.UTF_8
@@ -277,7 +278,7 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     ArchiveSearchPolicy.page(query.limit)
     val bounded=ArchiveSearchPolicy.materialization(materialization)
     try IndexedRead.transaction(db) { c =>
-      Sql.exec(c,"SELECT set_config('statement_timeout',least(coalesce(nullif(setting::bigint,0),?),?)::text,true) FROM pg_settings WHERE name='statement_timeout'",ArchiveSearchPolicy.statementDeadlineMillis,ArchiveSearchPolicy.statementDeadlineMillis)
+      Sql.exec(c,ServerTimeout.tightenTransaction(ServerTimeout.Statement),ArchiveSearchPolicy.statementDeadlineMillis)
       val (page,selected)=execute(c,reader,query,parsed,vectors,Some(bounded))
       val evidence=selected.map { value =>
         ArchiveSearchEvidence(value.value.head.id,ArchiveSearchWitnesses.read(c,archive,reader,value.value,parsed,value.witnesses,value.literalPositions,value.indexingAllowed,bounded))

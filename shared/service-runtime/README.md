@@ -85,6 +85,20 @@ resets isolation, read-only, auto-commit and network timeout on return. A pooled
 least 3 min); failed logins are retried in the background with a back-off up to 5 s. The pool logs through SLF4J without
 a provider: nothing (a provider added later must silence `com.zaxxer.hikari`).
 
+**Tightened timeouts.** `ServerTimeout.tightenSession(timeouts*)` and `ServerTimeout.tightenTransaction(timeouts*)` are
+the one SQL statement that bounds PostgreSQL's `statement_timeout`, `lock_timeout` and
+`idle_in_transaction_session_timeout` (`ServerTimeout.Statement`, `Lock`, `IdleInTransaction`) without loosening them:
+each becomes the smaller of its bound (one `bigint` parameter per timeout, in order, milliseconds) and its current value
+in the session, a disabled one (0) the bound; for the session, or for the current transaction only (as `SET LOCAL`). The
+reset's bounds, the setup of `transactionWithin` and Chronicle's request deadlines (archive search, message search,
+message context, the semantic second pass) are this statement. It reads each current value as `current_setting(name)`,
+whose text (PostgreSQL prints the largest unit that divides the milliseconds exactly: `0`, `1500ms`, `30s`, `1min`, `1h`,
+`2d`) it parses as an interval. It does not read `pg_settings`: that view is the function `pg_show_all_settings()`, which
+materialises every setting for the rows read. pgbench on production PostgreSQL 18.7 (2026-11-26; 1 client, extended
+protocol, local socket, 4 s per script) measured per transaction `SELECT 1` 0.033 ms, `DISCARD ALL` + `SELECT 1`
+0.061 ms, the reset reading `pg_settings` + `SELECT 1` 1.334-1.557 ms, the reset reading `current_setting` + `SELECT 1`
+0.140 ms.
+
 Callbacks are narrow **trusted synchronous JDBC code**. They must terminate, close
 statements/results, not escape a connection, not commit/rollback/close it, and not
 weaken database limits. They can call a retrieval projection on the **same**
@@ -217,13 +231,8 @@ all eight fields under **`databaseLimits`**: `maxConnections`, `maxQueued`,
 optional (see `DatabaseWait` above). Effective
 PostgreSQL statement/lock/idle timeouts are the minimum of required policy and any
 stricter existing role/database setting at login, applied by one fully consumed bound
-setup query after `DISCARD ALL` (the reset) at each borrow, before the caller transaction. The query reads each
-timeout's current value in the session as `current_setting(name)`, whose text (PostgreSQL prints the largest unit that
-divides the milliseconds exactly: `0`, `1500ms`, `30s`, `1min`, `1h`, `2d`) it parses as an interval. It does not read
-`pg_settings`: that view is the function `pg_show_all_settings()`, which materialises every setting for the three rows.
-pgbench on production PostgreSQL 18.7 (2026-11-26; 1 client, extended protocol, local socket, 4 s per script) measured
-per transaction `SELECT 1` 0.033 ms, `DISCARD ALL` + `SELECT 1` 0.061 ms, the reset reading `pg_settings` + `SELECT 1`
-1.334-1.557 ms, the reset reading `current_setting` + `SELECT 1` 0.140 ms. This fixed setup is
+setup query (`ServerTimeout.tightenSession`, above: `current_setting`, not `pg_settings`) after `DISCARD ALL` (the
+reset) at each borrow, before the caller transaction. This fixed setup is
 explicitly accounted in SQL-observation tests; domain query work/isolation and
 admission/cursor/deadline contracts are not silently filtered or relaxed.
 

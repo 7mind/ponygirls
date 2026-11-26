@@ -2,7 +2,6 @@ package ponygirls.runtime
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
-import io.circe.Json
 import java.lang.reflect.{InvocationHandler, InvocationTargetException, Method, Proxy}
 import java.nio.file.Files
 import java.sql.{Connection, DriverManager, PreparedStatement}
@@ -21,11 +20,6 @@ final class ResetSuite extends FunSuite {
   import PostgresFixture.*
   private def configured[A](f: JdbcConfig => A): A = config.use(c => IO.blocking(f(c))).unsafeRunSync()
   private val settings = List("statement_timeout", "lock_timeout", "idle_in_transaction_session_timeout")
-  /** A session of the test's own, outside every pool. */
-  private def plain(config: JdbcConfig): Connection = {
-    val p = new Properties; p.setProperty("user", config.user); p.setProperty("password", CredentialFile.read(config.passwordFile))
-    DriverManager.getConnection(config.jdbcUrl, p)
-  }
   private def row[A](c: Connection, sql: String)(read: java.sql.ResultSet => A): A =
     Using.resource(c.createStatement())(s => Using.resource(s.executeQuery(sql)) { r => r.next(); read(r) })
   /** The session's three timeouts in milliseconds, from `pg_settings` in a statement of its own (a statement that sets them
@@ -84,19 +78,6 @@ final class ResetSuite extends FunSuite {
       }
     }
   }
-  /** The scan nodes of the plan of `select` with `bound` as its parameters: each node's type and what it scans (a
-    * relation, a function, a CTE), if anything. */
-  private def scans(c: Connection, select: String, bound: collection.Map[Int, Long]): List[String] = {
-    def nodes(plan: Json): List[Json] = plan :: plan.hcursor.downField("Plans").focus.flatMap(_.asArray).toList.flatten.flatMap(nodes)
-    def text(node: Json, field: String): Option[String] = node.hcursor.downField(field).focus.flatMap(_.asString)
-    val explained = Using.resource(c.prepareStatement("EXPLAIN (FORMAT JSON) " + select)) { p =>
-      bound.foreach((index, value) => p.setLong(index, value))
-      Using.resource(p.executeQuery()) { r => r.next(); io.circe.parser.parse(r.getString(1)).toTry.get }
-    }
-    nodes(explained.asArray.get.head.hcursor.downField("Plan").focus.get).flatMap { node =>
-      text(node, "Node Type").filter(_.endsWith("Scan")).map(_ + List("Relation Name", "Function Name", "CTE Name").flatMap(text(node, _)).headOption.fold("")(" on " + _))
-    }
-  }
 
   /** A login default in milliseconds and its text in `current_setting`: PostgreSQL prints the largest unit that divides the
     * value exactly. */
@@ -125,6 +106,21 @@ final class ResetSuite extends FunSuite {
       val statements = prepared.flatMap(_.sql.split(';').map(_.trim))
       assertEquals((prepared.map(_.executions.get), statements.size, statements.head, statements.last.takeWhile(_ != ' ')), (List(1), 2, "DISCARD ALL", "SELECT"), statements.toString)
       assertEquals(db.transaction(c => scans(c, statements.last, prepared.head.bound)), List("Values Scan"))
+    }
+  } }
+
+  test("the setups the engine runs in a transaction before its callback scan no more: an extended transaction's nothing, a bounded transaction's its own VALUES list") { configured { config =>
+    val recording = new Recording
+    val limits = config.limits.copy(maxConnections = 1)
+    Using.resource(new JdbcTransactionEngine(config.copy(limits = limits), recording, JdbcPoolSizing.compatible(limits))) { pool =>
+      def setups(transaction: => Unit): List[Prepared] = {
+        recording.prepared.clear(); transaction
+        recording.prepared.asScala.toList.filterNot(_.sql.startsWith("DISCARD ALL"))
+      }
+      val extended = setups(pool.extendedTransaction(2.seconds)(_ => ()))
+      val bounded = setups(pool.transactionWithin(Deadline.now + 10.seconds)(_ => ()))
+      assertEquals((extended.map(_.executions.get), bounded.map(_.executions.get)), (List(1), List(1)), (extended ++ bounded).map(_.sql).toString)
+      assertEquals(pool.transaction(c => (extended ++ bounded).map(setup => scans(c, setup.sql, setup.bound))), List(Nil, List("Values Scan")))
     }
   } }
 

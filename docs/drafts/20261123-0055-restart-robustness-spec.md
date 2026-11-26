@@ -395,7 +395,10 @@ supersedes SMALL's guarantee, its shutdown bound and `boundedTransaction` above;
   same script then takes 0.140 ms. Unchanged: `DISCARD ALL` first, one execution, tighten-only from the session's value
   at that borrow, the reset as the liveness check. `ResetSuite`: the bounds' plan scans only their VALUES list; for login
   defaults in every printed unit they leave what the `pg_settings` statement left; a default reloaded under a pooled
-  session is what its next borrow is tightened from.
+  session is what its next borrow is tightened from. The statement is the shared runtime's `ServerTimeout.tightenSession`;
+  its transaction-local form `tightenTransaction` replaces the same `pg_settings` read in the setup of
+  `transactionWithin` (§4: statement and lock timeouts to D − now) and in Chronicle's request deadlines (archive
+  search, message search, message context, the semantic second pass); `ServerTimeoutSuite`.
 - **Errors and HTTP (B7).** Bounded waits only; named failures: `RuntimeFailure(admission-full|admission-timeout|
   runtime-closed)`, `JdbcFailure("connection-unavailable", _)`. Haystack (haystack http/Http.scala:66-89) and Manure
   (Http.scala:127-133, Retry-After 5) already answer 503 `unavailable` for these. Chronicle REST `handle` (Http.scala:

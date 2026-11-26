@@ -566,11 +566,6 @@ final class PoolSuite extends FunSuite {
   private def m1(config: JdbcConfig): JdbcConfig = config.copy(limits = config.limits.copy(connectTimeout = 8.seconds, statementTimeout = 30.seconds,
     lockTimeout = 30.seconds, idleTransactionTimeout = 30.seconds, socketTimeout = 30.seconds))
   private def hold(): Unit = Thread.sleep(held.toMillis)
-  /** A session of the test's own, outside every pool. */
-  private def plain(config: JdbcConfig): Connection = {
-    val p = new Properties; p.setProperty("user", config.user); p.setProperty("password", CredentialFile.read(config.passwordFile))
-    DriverManager.getConnection(config.jdbcUrl, p)
-  }
   /** `m1_probe` with row 1, its row lock held by `locker` until it rolls back or closes. */
   private def lockedRow(admin: Connection, locker: Connection): Unit = {
     execute(admin, "DROP TABLE IF EXISTS m1_probe; CREATE TABLE m1_probe(id int PRIMARY KEY, value int NOT NULL); INSERT INTO m1_probe VALUES (1, 0)")

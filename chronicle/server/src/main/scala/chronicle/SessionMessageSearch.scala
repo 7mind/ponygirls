@@ -9,6 +9,7 @@ import java.sql.{Connection,SQLException}
 import java.util.{Base64,UUID}
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import ponygirls.runtime.ServerTimeout
 import scala.util.Try
 
 trait MessageSearchReader {
@@ -68,7 +69,7 @@ private[chronicle] final class MessageSearchCursors {
 /** `scanDeadlineMillis`: the limit of the first phase of Find in a current epoch (SessionMessageSearchPolicy). */
 private[chronicle] final class PostgresMessageSearch(db: Database,archive: PostgresArchive,cursors: MessageSearchCursors,val scanDeadlineMillis: Int) extends MessageSearchReader {
   private def deadline(c: Connection,millis: Int): Unit =
-    Sql.exec(c,"SELECT set_config('statement_timeout',least(coalesce(nullif(setting::bigint,0),?),?)::text,true) FROM pg_settings WHERE name='statement_timeout'",millis,millis)
+    Sql.exec(c,ServerTimeout.tightenTransaction(ServerTimeout.Statement),millis)
   private val matches="strpos(lower((value->>'text') COLLATE pg_unicode_fast),lower(? COLLATE pg_unicode_fast))>0"
   def searchSessionMessages(reader: String,id: UUID,selector: ContentView,literal: String,cursor: Option[String],limit: Int,materialization: ReadMaterialization): SessionMessageSearchResult = {
     SessionMessageSearchPolicy.validate(literal,cursor,limit)

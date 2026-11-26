@@ -242,6 +242,7 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
     // Startup `options=-c ...` would override a stricter role/database timeout.
     // Read each timeout's current value in the session and only tighten it. One trusted,
     // bound constant-size setup query, fully exhausted before the caller transaction.
+    // The bounds in the order of ResetSql's timeouts.
     Using.resource(c.prepareStatement(ResetSql)) { p =>
       p.setLong(1,config.limits.statementTimeout.toMillis)
       p.setLong(2,config.limits.lockTimeout.toMillis)
@@ -263,7 +264,7 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
         Using.resource(p.executeQuery()) { r => while (r.next()) () }
       }
     case Bounds.Within(end) =>
-      Using.resource(c.prepareStatement("SELECT set_config(name,least(coalesce(nullif(setting::bigint,0),?),?)::text,true) FROM pg_settings WHERE name IN('statement_timeout','lock_timeout')")) { p =>
+      Using.resource(c.prepareStatement(WithinSql)) { p =>
         val left = millisUntil(end, nanoTime()).toLong
         p.setLong(1, left); p.setLong(2, left)
         Using.resource(p.executeQuery()) { r => while (r.next()) () }
@@ -301,16 +302,11 @@ private[runtime] object JdbcTransactionEngine {
   }
   private val ValidationCeiling = 1.second
   /** The per-borrow reset (restart-robustness spec §5): every session state back to the login's, then the configured
-    * bounds, tighten-only: each timeout becomes the smaller of its bound and its current value in the session (0, disabled,
-    * counts as none). One execution with bound parameters; pgjdbc re-prepares its statements after `DISCARD ALL`.
-    *
-    * The current value is `current_setting`'s text, which PostgreSQL prints with the largest unit that divides the
-    * milliseconds exactly (`0`, `1500ms`, `30s`, `1min`, `1h`, `2d`): each is interval input, whose epoch is the seconds.
-    * Not `pg_settings`: that view is `pg_show_all_settings()`, which materialises every setting for the three rows
-    * (pgbench on production PostgreSQL 18.7, 2026-11-26, per transaction of this reset and `SELECT 1`: 1.334-1.557 ms
-    * read from `pg_settings`, 0.140 ms from `current_setting`). */
-  private val ResetSql = "DISCARD ALL; SELECT set_config(v.name,least(coalesce(nullif((extract(epoch from current_setting(v.name)::interval)*1000)::bigint,0),v.bound),v.bound)::text,false) " +
-    "FROM (VALUES ('statement_timeout',?::bigint),('lock_timeout',?::bigint),('idle_in_transaction_session_timeout',?::bigint)) v(name,bound)"
+    * bounds, tighten-only ([[ServerTimeout.tightenSession]]). One execution with bound parameters; pgjdbc re-prepares its
+    * statements after `DISCARD ALL`. */
+  private val ResetSql = "DISCARD ALL; " + ServerTimeout.tightenSession(ServerTimeout.Statement, ServerTimeout.Lock, ServerTimeout.IdleInTransaction)
+  /** The setup of a transaction within a deadline: its statement and lock timeouts, tightened to the time left. */
+  private val WithinSql = ServerTimeout.tightenTransaction(ServerTimeout.Statement, ServerTimeout.Lock)
   /** Whole seconds rounded up, never below 1: the driver reads 0 as no limit. */
   def wholeSeconds(d: FiniteDuration): Long = math.max(1L, (d.toMillis + 999L) / 1000L)
   def seconds(d: FiniteDuration): String = wholeSeconds(d).toString

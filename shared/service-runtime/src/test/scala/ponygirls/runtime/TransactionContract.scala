@@ -2,9 +2,11 @@ package ponygirls.runtime
 
 import cats.effect.{IO, Ref, Resource}
 import cats.effect.unsafe.implicits.global
+import io.circe.Json
 import munit.FunSuite
 import java.nio.file.Files
-import java.sql.Connection
+import java.sql.{Connection, DriverManager}
+import java.util.Properties
 import scala.concurrent.duration.*
 import scala.util.Using
 
@@ -53,6 +55,24 @@ object PostgresFixture {
   def database: Resource[IO, JdbcDatabase] = config.flatMap(JdbcDatabase.resource)
   def execute(c: Connection, sql: String): Unit = Using.resource(c.createStatement())(_.execute(sql))
   def integer(c: Connection, sql: String): Int = Using.resource(c.createStatement()) { p => Using.resource(p.executeQuery(sql)) { r => r.next(); r.getInt(1) } }
+  /** A session of the test's own, outside every pool. */
+  def plain(config: JdbcConfig): Connection = {
+    val p = new Properties; p.setProperty("user", config.user); p.setProperty("password", CredentialFile.read(config.passwordFile))
+    DriverManager.getConnection(config.jdbcUrl, p)
+  }
+  /** The scan nodes of the plan of `select` with `bound` as its parameters: each node's type and what it scans (a
+    * relation, a function, a CTE), if anything. */
+  def scans(c: Connection, select: String, bound: collection.Map[Int, Long]): List[String] = {
+    def nodes(plan: Json): List[Json] = plan :: plan.hcursor.downField("Plans").focus.flatMap(_.asArray).toList.flatten.flatMap(nodes)
+    def text(node: Json, field: String): Option[String] = node.hcursor.downField(field).focus.flatMap(_.asString)
+    val explained = Using.resource(c.prepareStatement("EXPLAIN (FORMAT JSON) " + select)) { p =>
+      bound.foreach((index, value) => p.setLong(index, value))
+      Using.resource(p.executeQuery()) { r => r.next(); io.circe.parser.parse(r.getString(1)).toTry.get }
+    }
+    nodes(explained.asArray.get.head.hcursor.downField("Plan").focus.get).flatMap { node =>
+      text(node, "Node Type").filter(_.endsWith("Scan")).map(_ + List("Relation Name", "Function Name", "CTE Name").flatMap(text(node, _)).headOption.fold("")(" on " + _))
+    }
+  }
 }
 // Behavioral/Active/Blackbox/Good-Communication: same contract, real transactions.
 final class PostgresTransactionContract extends TransactionContract {

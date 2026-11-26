@@ -2,6 +2,7 @@ package chronicle
 
 import java.sql.{Connection,SQLException}
 import ponygirls.retrieval.CandidatePolicy
+import ponygirls.runtime.ServerTimeout
 
 /** Budgets of a semantic (ANN) leg and of the second pass that completes a short one. The leg's per-tuple filter
   * (authorization, publication, metadata filters) spends the scan budget on every index entry it rejects: rows of other
@@ -59,7 +60,7 @@ private[chronicle] object SemanticLeg {
     val saved=settings.map(name => name -> Sql.one(c,"SELECT current_setting(?)",name)(_.getString(1)).get)
     val savepoint=c.setSavepoint()
     try {
-      Sql.exec(c,"SELECT set_config('statement_timeout',least(coalesce(nullif(setting::bigint,0),?),?)::text,true) FROM pg_settings WHERE name='statement_timeout'",budget.secondPassMillis,budget.secondPassMillis)
+      Sql.exec(c,ServerTimeout.tightenTransaction(ServerTimeout.Statement),budget.secondPassMillis)
       Sql.exec(c,s"SET LOCAL hnsw.max_scan_tuples = ${budget.secondScanTuples}")
       Sql.exec(c,s"SET LOCAL hnsw.scan_mem_multiplier = ${budget.secondScanMemoryMultiplier}")
       val result=run
