@@ -133,6 +133,17 @@ describe('current Scala HTTP/auth/domain',()=>{
    assert.ok(f.logs().some(row=>row.route==='put'&&row.result==='ok'&&row.userId==='alice'));assert.equal(rows.length,5);
   }finally{await new Promise(resolve=>proxy.close(resolve));}
  });
+ it('log rows name the caller of an authenticated cookie get, of a not-found failure and of a route that does not authenticate',async()=>{
+  const cookie=(await login()).split(';')[0];assert.equal((await f.put('http:log-labels')).status,200);
+  const session=decode(api.Identity,await(await f.call('/api/v1/whoami',undefined,{method:'GET',headers:{Cookie:cookie}})).json()).tokenId;
+  const read=key=>f.call('/api/v1/get',encode(api.GetRequest,new api.GetRequest(key,undefined)),{headers:{Cookie:cookie}});
+  assert.equal((await read('http:log-labels')).status,200);await fault(await read('http:log-labels-absent'),404,'not-found');
+  assert.equal((await f.call('/api/v1/health',undefined,{method:'GET',headers:{Cookie:cookie}})).status,200);
+  // Only this session's rows carry its token label; the process output arrives apart from the responses.
+  const rows=()=>f.logs().filter(row=>row.tokenId===session).map(row=>[row.route,row.status,row.userId]);
+  for(const end=Date.now()+1000;rows().length<4&&Date.now()<end;)await sleep(10);
+  assert.deepEqual(rows(),[['whoami',200,'alice'],['get',200,'alice'],['get',404,'alice'],['health',200,'alice']]);
+ });
  it('reload revocation and fail-closed invalid replacement, without session secret logging',async()=>{
   const canary='SECRET-QUERY-CANARY';await f.call('/api/v1/search',encode(api.SearchRequest,new api.SearchRequest(canary,undefined,20,undefined,new api.SearchSort('key','asc'))),{token:f.tokens.bot});
   await f.reload(auth=>{auth.users=auth.users.filter(x=>x.id!=='bot');});await fault(await f.call('/api/v1/whoami',undefined,{method:'GET',token:f.tokens.bot}),401,'unauthorized');
