@@ -86,6 +86,7 @@ try {
     assert.deepEqual(await Promise.all(['running', 'large', 'fresh'].map(key => text(cell(page, 'jobs', ROWS[key], 'CompletedWindows')))), ['120 / 300', '0 / 1013', '0 / unknown']);
     assert.equal(await unclipped(table(page, 'jobs').locator('td[data-column-id="CompletedWindows"]')), true, 'no window count is cut');
     assert.equal(await unclipped(table(page, 'jobs').locator('td[data-column-id="LeaseState"] > span')), true, 'no lease state is cut');
+    assert.equal(await unclipped(table(page, 'jobs').locator('td[data-column-id="State"] > .status')), true, 'no job state is cut (a long one wraps)');
     // Waiting since: the time and how long it has waited, both shown whole.
     // A running job joined its order at 16:58; it is not waiting, and its claim time is not recorded: the join time only.
     assert.match(await text(cell(page, 'jobs', ROWS.running, 'WaitingSince')), /^\d\d:\d\d$/);

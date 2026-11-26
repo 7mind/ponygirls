@@ -106,7 +106,7 @@ export function stateLabel(row: JobRow): StateLabel {
   if (w instanceof ActivityJobWaiting_Held) return { text: 'Held', status: 'status status-idle', title: 'Stored state: Queued, with a future attempt time' };
   if (w instanceof ActivityJobWaiting_BlockedByOlderRevision) return { text: 'Blocked', status: 'status status-idle', title: 'Stored state: Queued' };
   if (w instanceof ActivityJobWaiting_IndexingOff) return { text: 'Indexing off', status: 'status status-idle', title: `Stored state: ${stored}; indexing is turned off for this account (Account settings → Profile → Indexing)` };
-  if (w instanceof ActivityJobWaiting_ProfileNotRun) return { text: 'Profile not run here', status: 'status status-idle', title: `Stored state: ${stored}; ${PROFILE_NOT_RUN}` };
+  if (w instanceof ActivityJobWaiting_ProfileNotRun) return { text: 'Profile not run here', status: 'status status-idle state-wrap', title: `Stored state: ${stored}; ${PROFILE_NOT_RUN}` };
   if (w instanceof ActivityJobWaiting_RunningWithoutLease) return { text: 'Running without a lease', status: 'status status-warn state-wrap', title: 'Stored state: Running, no lease — not an active worker' };
   // A Running row is shown running only while its lease is valid (also a historical job, whose claim may continue).
   if (stored === JobState.Running && !row.leaseActive) return { text: row.leaseExpiresAt === undefined ? 'Not running · no lease' : 'Not running · lease ended', status: 'status status-warn state-wrap', title: 'Stored state: Running, without a valid lease — not an active worker' };
