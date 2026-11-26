@@ -164,11 +164,13 @@ private[chronicle] object ActivityQueueSql {
     case ClaimOrderMode.SourceId => "CASE WHEN permit_only THEN row_number() OVER (ORDER BY owner,session_id)-1 END"
   }
   /** Of the owner's own jobs: those awaiting the large-job lane (permit), the rank of the first of them, and those running
-    * (current, Running, no waiting reason: a valid lease, its indexing epoch current) in the same snapshot as the reasons. */
+    * (current, Running, no waiting reason: a valid lease, its indexing epoch current) in the same snapshot as the reasons.
+    * The ids of the first are read from `queue` once (an array) rather than joined to `ranked`, which the planner may
+    * nest so that it rescans `queue` once per ranked job. */
   def largeLane(view: ActivityClaimOrderView): String =
     s"""SELECT (SELECT count(*) FROM queue WHERE waiting IN(${list(large)})) AS awaiting,
       (SELECT count(*) FROM queue WHERE current_running AND waiting IS NULL) AS active_running,
-      (SELECT min(r.rank) FROM queue q JOIN ranked r ON r.id=q.id WHERE q.candidate AND q.waiting IN(${list(large)})) AS large_ahead"""
+      (SELECT min(r.rank) FROM ranked r WHERE r.id=ANY(ARRAY(SELECT q.id FROM queue q WHERE q.candidate AND q.waiting IN(${list(large)})))) AS large_ahead"""
   /** Per class of the owner's own current unfinished jobs: waiting for any reason, claimable now, held, awaiting reclaim,
     * the oldest wait. */
   val classes: String = s"""SELECT CASE WHEN bulk THEN 'bulk' WHEN NOT bulk THEN 'fresh' ELSE 'unclassified' END AS class,
@@ -377,17 +379,20 @@ final class PostgresActivity(db: Database,clock: Clock,view: ActivityClaimOrderV
     val position=ActivityCursor.collector(q,user.id,order)
     reading(user.id) { (c,now) =>
       val params=parameters(user.id,now)
+      // A head is one source (heads has one row per id) and every job of `jobs` is a job of a head: the heads without a
+      // target job are the heads less the distinct sources of current jobs, counted once rather than probed per head.
       val totals=Sql.one(c,base+s""", head_counts AS (
-        SELECT count(*) AS archive_heads,
-          count(*) FILTER (WHERE NOT EXISTS(SELECT 1 FROM jobs j WHERE j.session_id=heads.id AND j.is_current)) AS without_target FROM heads
+        SELECT a.archive_heads,a.archive_heads-(SELECT count(DISTINCT j.session_id) FROM jobs j WHERE j.is_current) AS without_target
+        FROM (SELECT count(*) AS archive_heads FROM heads) a
       ), job_counts AS (SELECT is_current,$aggregate FROM jobs GROUP BY is_current)
       SELECT a.*,(SELECT count(*) FROM collectors) AS total_collectors,$selected
       FROM head_counts a LEFT JOIN job_counts c ON c.is_current LEFT JOIN job_counts h ON NOT h.is_current""",params*) { r =>
         Totals(r.getLong("archive_heads"),r.getLong("without_target"),counts(r,"current_"),counts(r,"historical_"),r.getLong("total_collectors"))
       }.get
       val rowsBase=base+s""", head_counts AS (
-        SELECT collector_id,count(*) AS archive_heads,
-          count(*) FILTER (WHERE NOT EXISTS(SELECT 1 FROM jobs j WHERE j.session_id=heads.id AND j.is_current)) AS without_target FROM heads GROUP BY collector_id
+        SELECT a.collector_id,a.archive_heads,a.archive_heads-COALESCE(t.targeted,0) AS without_target
+        FROM (SELECT collector_id,count(*) AS archive_heads FROM heads GROUP BY collector_id) a
+        LEFT JOIN (SELECT collector_id,count(DISTINCT session_id) AS targeted FROM jobs WHERE is_current GROUP BY collector_id) t ON t.collector_id IS NOT DISTINCT FROM a.collector_id
       ), job_counts AS (SELECT collector_id,is_current,$aggregate FROM jobs GROUP BY collector_id,is_current),
       collector_rows AS (SELECT p.collector_id,r.report,r.received_at,r.report->>'phase' AS phase,r.report->>'error' AS report_error,
         CASE WHEN r.report IS NULL THEN 'unknown' WHEN r.received_at<(SELECT stale_at FROM observed)-make_interval(secs=>${CollectorProgress.staleSeconds}) THEN 'stale' ELSE 'recent' END AS freshness,
