@@ -101,7 +101,12 @@ class HttpAuthenticationCountTest extends ContractSuite {
       (stranger,_,_)<-s.observe("get with an unknown session",alice,Method.POST,"/api/v1/get",encoded(api.GetRequest.codecJson,api.GetRequest(Key,None)),HostHeader,OriginHeader,JsonBody,"Cookie"->("__Host-haystack="+AliceSession))
       (retrieved,_,retrievedText)<-s.observe("retrieve",alice,Method.POST,"/api/v1/retrieve",retrieve,HostHeader,OriginHeader,JsonBody,alice.cookie)
       _=assertEquals(Wire.decode(api.RetrieveResult.codecJson,parsed(retrievedText)).sources.map(_.key),List(Key))
-      (whoami,_,_)<-s.observe("whoami",alice,Method.GET,"/api/v1/whoami",None,HostHeader,alice.cookie)
+      (whoami,whoamiResponse,_)<-s.observe("whoami",alice,Method.GET,"/api/v1/whoami",None,HostHeader,alice.cookie)
+      (capabilities,capabilitiesResponse,_)<-s.observe("capabilities",alice,Method.GET,"/api/v1/capabilities",None,HostHeader,alice.cookie)
+      (analyze,analyzeResponse,analyzed)<-s.observe("query analysis",alice,Method.POST,"/api/v1/query/analyze",encoded(api.QueryRequest.codecJson,api.QueryRequest("type:fact",9)),HostHeader,OriginHeader,JsonBody,alice.cookie)
+      _=assertEquals(Wire.decode(api.AnalyzeResult.codecJson,parsed(analyzed)).valid,true)
+      // These handlers cannot wait: the session cookie is renewed from the last check, which admitted them.
+      _=List(whoamiResponse,capabilitiesResponse,analyzeResponse).foreach(response=>assertEquals(response.headers.get(CIString("Set-Cookie")).map(_.head.value),Some(Sessions.serialize(Some(alice.secret),true))))
       (health,_,_)<-s.observe("health, which does not authenticate",alice,Method.GET,"/api/v1/health",None,HostHeader,alice.cookie)
       (unknown,_,_)<-s.observe("unknown operation, which does not authenticate",alice,Method.POST,"/api/v1/nope",Some("{}"),HostHeader,OriginHeader,JsonBody,alice.cookie)
       (mcp,_,_)<-s.observe("mcp tools/list",alice,Method.POST,"/mcp",toolsList,HostHeader,JsonBody,"Accept"->"application/json, text/event-stream","Authorization"->("Bearer "+AliceToken))
@@ -116,14 +121,17 @@ class HttpAuthenticationCountTest extends ContractSuite {
       secret=signedIn.headers.get(CIString("Set-Cookie")).map(_.head.value).getOrElse(fail("session cookie expected")).takeWhile(_!=';').dropWhile(_!='=').drop(1)
       second<-s.browser(secret)
       (legacy,_,_)<-s.observe("legacy logout",second,Method.POST,"/api/v1/logout",Some("{}"),HostHeader,OriginHeader,JsonBody,second.cookie)
-    } yield assertEquals(Vector(get,missing,stranger,retrieved,whoami,health,unknown,mcp,live,plain,account,issue,revoke,logout,login,legacy).map(_.line),Vector(
+    } yield assertEquals(Vector(get,missing,stranger,retrieved,whoami,capabilities,analyze,health,unknown,mcp,live,plain,account,issue,revoke,logout,login,legacy).map(_.line),Vector(
       // before the body, after the body, before delivery
       Observed("get",200,"get",session,3),
       // before the body, after the body, then the log's own lookup: no result was delivered
       Observed("get of a missing item",404,"get",session,3),
       Observed("get with an unknown session",401,"get",None,2),
       Observed("retrieve",200,"retrieve",session,3),
-      Observed("whoami",200,"whoami",session,2),
+      // no handler wait: the check that admitted the request, or its body, is the one before delivery
+      Observed("whoami",200,"whoami",session,1),
+      Observed("capabilities",200,"capabilities",session,1),
+      Observed("query analysis",200,"analyze",session,2),
       Observed("health, which does not authenticate",200,"health",session,1),
       Observed("unknown operation, which does not authenticate",404,"unknown",session,1),
       Observed("mcp tools/list",200,"mcp",Some("alice"->"browser"),3),

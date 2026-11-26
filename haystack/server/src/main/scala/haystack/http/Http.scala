@@ -57,17 +57,26 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     if(all(r,"Host").size!=1) throw Fault("forbidden","ambiguous host")
     if(r.uri.query.nonEmpty) throw Fault("bad-envelope","query parameters are not supported")
   }
-  private def authed(r:Request[IO],mutate:Boolean=false)(f:Authenticated=>IO[Response[IO]]):IO[Response[IO]]=IO.defer {
+  /** The identity that admits a request, before its body and handler. */
+  private def admitted(r:Request[IO],mutate:Boolean):IO[Authenticated]=IO.defer {
     version(r)
-    accounts.resolve(headers(r),mutate).flatMap { resolved=>
-      IO(limiter.check(resolved.principal,getAuth().config.rateLimit)) *> f(resolved).flatMap { response=>
-        revalidate(r,resolved,mutate).map { current=>
-          val labelled=response.withAttribute(authenticatedPrincipal,current.principal)
-          if(current.cookie)labelled.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(current.token),current.secureCookie))) else labelled
-        }
-      }
-    }
+    accounts.resolve(headers(r),mutate).flatTap(resolved=>IO(limiter.check(resolved.principal,getAuth().config.rateLimit)))
   }
+  /** `current` is the last check before delivery: its principal labels the log row and its browser session is renewed. */
+  private def delivered(response:Response[IO],current:Authenticated):Response[IO]={
+    val labelled=response.withAttribute(authenticatedPrincipal,current.principal)
+    if(current.cookie)labelled.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(current.token),current.secureCookie))) else labelled
+  }
+  /** A handler that waits (a read, a write): the captured identity is checked once more when its response exists. */
+  private def authed(r:Request[IO],mutate:Boolean=false)(f:Authenticated=>IO[Response[IO]]):IO[Response[IO]]=
+    admitted(r,mutate).flatMap(resolved=>f(resolved).flatMap(response=>revalidate(r,resolved,mutate).map(delivered(response,_))))
+  /** A handler that cannot wait: its response follows the check that admitted the request without any wait, so that
+    * check is also the one before delivery. */
+  private def authedPure(r:Request[IO])(f:Authenticated=>Response[IO]):IO[Response[IO]]=
+    admitted(r,mutate=false).map(resolved=>delivered(f(resolved),resolved))
+  /** A body, then a handler that cannot wait: the check after the body is the one before delivery. */
+  private def authedBodyPure(r:Request[IO])(f:Json=>Response[IO]):IO[Response[IO]]=
+    admitted(r,mutate=false).flatMap(resolved=>body(r).flatMap(raw=>revalidate(r,resolved).map(current=>delivered(f(raw),current))))
   private def status(code:String):Status=code match {
     case "unauthorized"|"ambiguous-credentials"=>Status.Unauthorized
     case "forbidden"=>Status.Forbidden
@@ -250,7 +259,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     case r @ POST -> Root / "api" / "v1" / "logout" =>handled {IO(version(r)) *> accounts.resolve(headers(r),mutate=true).flatMap { a=>
       accounts.logoutLegacy(a) *> hub.endSession(a.token).as(ok(api.Ack.codecJson,api.Ack(true)).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(None,a.secureCookie))))
     }}
-    case r @ GET -> Root / "api" / "v1" / "whoami" =>handled {authed(r) { a=>IO.pure(ok(api.Identity.codecJson,Wire.identity(a.principal,getAuth().config.activityProjectId))) }}
+    case r @ GET -> Root / "api" / "v1" / "whoami" =>handled {authedPure(r) { a=>ok(api.Identity.codecJson,Wire.identity(a.principal,getAuth().config.activityProjectId)) }}
     case r @ POST -> Root / "api" / "v1" / "get" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
       val input=Wire.decode(api.GetRequest.codecJson,raw)
       service.get(input.key,input.revision.map(_.toLong)).map(item=>ok(api.Item.codecJson,Wire.item(item)))
@@ -268,15 +277,15 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       val mode=Wire.retrievalMode(input.mode)
       retrieval.search(input.query,mode,input.project,input.includeArchived,input.offset,input.limit).map(page=>ok(api.RetrieveResult.codecJson,Wire.retrieved(retrieval,mode,page)))
     }}}
-    case r @ GET -> Root / "api" / "v1" / "capabilities" =>handled {authed(r) { _=>IO.pure(ok(api.RetrievalCapabilities.codecJson,Wire.capabilities(retrieval))) }}
+    case r @ GET -> Root / "api" / "v1" / "capabilities" =>handled {authedPure(r) { _=>ok(api.RetrievalCapabilities.codecJson,Wire.capabilities(retrieval)) }}
     case r @ POST -> Root / "api" / "v1" / "history" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
       val input=Wire.decode(api.HistoryRequest.codecJson,raw)
       service.history(input.key).map(revisions=>ok(api.HistoryResult.codecJson,api.HistoryResult(revisions.map(v=>api.RevisionInfo(v.revision.toInt,v.modifiedAt.toString,v.modifiedBy,v.tokenId)).toList)))
     }}}
-    case r @ POST -> Root / "api" / "v1" / "query" / "analyze" =>handled {authed(r) { a=>authorizedBody(r,a).map { raw=>
+    case r @ POST -> Root / "api" / "v1" / "query" / "analyze" =>handled {authedBodyPure(r) { raw=>
       val input=Wire.decode(api.QueryRequest.codecJson,raw); val diagnostics=Search.analyze(input.query)
       ok(api.AnalyzeResult.codecJson,api.AnalyzeResult(diagnostics.isEmpty,diagnostics.map(d=>api.Span(d.message,d.span.start,d.span.end)).toList))
-    }}}
+    }}
     case r @ POST -> Root / "api" / "v1" / "complete" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
       val input=Wire.decode(api.QueryRequest.codecJson,raw)
       if(input.query.length>Query.MaxChars) throw new InvalidQuery(Vector(QueryDiagnostic(s"query exceeds ${Query.MaxChars} characters",Span(0,input.query.length))))

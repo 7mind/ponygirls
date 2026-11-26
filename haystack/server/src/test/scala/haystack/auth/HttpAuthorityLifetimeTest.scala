@@ -32,10 +32,10 @@ class HttpAuthorityLifetimeTest extends ContractSuite {
     case "get"=>Wire.encode(api.GetRequest.codecJson,api.GetRequest(key,None))
     case "history"=>Wire.encode(api.HistoryRequest.codecJson,api.HistoryRequest(key))
     case "search"=>Wire.encode(api.SearchRequest.codecJson,api.SearchRequest("",None,20,None,api.SearchSort("key","asc")))
-    case "complete"=>Wire.encode(api.QueryRequest.codecJson,api.QueryRequest("type:",5))
+    case "complete"|"analyze"=>Wire.encode(api.QueryRequest.codecJson,api.QueryRequest("type:",5))
     case "mcp"=>io.circe.Json.obj("jsonrpc"->io.circe.Json.fromString("2.0"),"id"->io.circe.Json.fromInt(1),"method"->io.circe.Json.fromString("tools/call"),"params"->io.circe.Json.obj("name"->io.circe.Json.fromString("put"),"arguments"->io.circe.Json.obj("key"->io.circe.Json.fromString(key),"document_json"->io.circe.Json.fromString(TestSupport.doc(secret)),"expected_revision"->io.circe.Json.fromInt(0),"request_id"->io.circe.Json.fromString(TestSupport.requestId()))))
   }
-  Vector("put","cookie-put","get","history","search","complete","mcp").foreach { route=>
+  Vector("put","cookie-put","get","history","search","complete","analyze","mcp").foreach { route=>
     test("revocation after body admission denies actual PG route before dispatch: "+route) { directory { dir=>
       val configBefore=passwordConfig(dir);val current=new AtomicReference(Auth.load(configBefore))
       run(TestSupport.emptyDatabase.use { db=>for{
@@ -53,7 +53,7 @@ class HttpAuthorityLifetimeTest extends ContractSuite {
         entered<-Deferred[IO,Unit];release<-Deferred[IO,Unit]
         bytes=payload(route).noSpaces.getBytes(java.nio.charset.StandardCharsets.UTF_8)
         body=Stream.eval(entered.complete(())).drain ++ Stream.eval(release.get).drain ++ Stream.emits(bytes).covary[IO]
-        path=if(route=="mcp")"/mcp"else"/api/v1/"+(if(route=="cookie-put")"put"else route)
+        path=if(route=="mcp")"/mcp"else"/api/v1/"+(if(route=="cookie-put")"put"else if(route=="analyze")"query/analyze"else route)
         credential=if(route=="cookie-put")Header.Raw(CIString("Cookie"),"__Host-haystack="+signed.session.secret)else Header.Raw(CIString("Authorization"),"Bearer "+AliceToken)
         request=Request[IO](Method.POST,Uri.unsafeFromString(path)).withBodyStream(body).putHeaders(Header.Raw(CIString("Host"),"ts.test:8445"),Header.Raw(CIString("Origin"),Secure),credential,Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Accept"),"application/json, text/event-stream"))
         fiber<-http.routes(ws).orNotFound(request).start
