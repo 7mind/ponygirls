@@ -8,6 +8,7 @@ import haystack.application.ItemService
 import haystack.http.{Http,LiveHub,Wire}
 import haystack.retrieval.{HaystackRetrieval,ProjectionPolicy}
 import haystack.storage.{ContractSuite,Migrations,PostgresItemRepository,TestSupport}
+import java.util.concurrent.{CountDownLatch,TimeUnit}
 import java.util.concurrent.atomic.AtomicReference
 import org.http4s.{Header,Method,Request,Status,Uri}
 import org.http4s.ember.client.EmberClientBuilder
@@ -123,5 +124,54 @@ class HttpAuthorityLifetimeTest extends ContractSuite {
       }yield()})
     }}
   }
+  private def waitFor(database:ponygirls.runtime.JdbcDatabase,condition:String):IO[Unit]={
+    def poll(remaining:Int):IO[Unit]=database.transaction { c=>
+      val s=c.createStatement()
+      try {val rows=s.executeQuery(condition);try {rows.next();rows.getBoolean(1)}finally rows.close()}finally s.close()
+    }.flatMap { ready=>
+      if(ready)IO.unit
+      else if(remaining==0)IO.raiseError(new IllegalStateException("expected owned PostgreSQL lock barrier"))
+      else IO.sleep(10.millis) *> poll(remaining-1)
+    }
+    poll(200)
+  }
+  test("issued bearer revoked while retrieval reads cannot deliver private response") { directory { dir=>
+    val auth=Auth.load(passwordConfig(dir))
+    val lockHeld=new CountDownLatch(1);val release=new CountDownLatch(1)
+    run(TestSupport.emptyDatabase.use { db=>for{
+      _<-Migrations.initialize(db,TestSupport.Activity)
+      accounts=new AccountService(db,()=>auth,imperative)
+      _<-accounts.install(auth)
+      signed<-accounts.login("alice",AlicePassword,None)
+      owner<-accounts.resolve(RequestHeaders("ts.test:8445",cookie=Vector("__Host-haystack="+signed.session.secret)))
+      issued<-accounts.issue(owner,"held retrieval",Vector("api"),Vector(ponygirls.auth.AccountJson.actor("alice")))
+      retrieval=new HaystackRetrieval(db,ProjectionPolicy("delivery-test",true,Vector.empty,4096),new PostgresRetrieval("delivery-test",None),None,4)
+      repo=new PostgresItemRepository(db,Some(retrieval))
+      _<-repo.initializeProjection()
+      _<-repo.commit(TestSupport.op(key,document=TestSupport.doc(secret)),TestSupport.Bot,TestSupport.Now)
+      hub<-LiveHub.create
+      http=new Http(()=>auth,new ItemService(repo,(_,_)=>IO.unit),hub,None,retrieval,accounts)
+      ws<-WebSocketBuilder2[IO]
+      // The lexical read waits for this lock, so the request is held inside its handler, after the body was admitted.
+      holder<-db.transaction { c=>
+        val statement=c.createStatement()
+        try statement.execute("LOCK TABLE pony_retrieval_head_chunks IN ACCESS EXCLUSIVE MODE")finally statement.close()
+        lockHeld.countDown()
+        if(!release.await(10,TimeUnit.SECONDS))throw new IllegalStateException("owned test lock release deadline")
+      }.start
+      _<-IO.blocking(assert(lockHeld.await(2,TimeUnit.SECONDS)))
+      input=Wire.encode(api.RetrieveRequest.codecJson,api.RetrieveRequest("canary",api.RetrievalMode.Lexical,None,false,0,10))
+      request=Request[IO](Method.POST,Uri.unsafeFromString("/api/v1/retrieve")).withEntity(input.noSpaces).putHeaders(Header.Raw(CIString("Host"),"ts.test:8445"),Header.Raw(CIString("Authorization"),"Bearer "+issued.secret),Header.Raw(CIString("Content-Type"),"application/json"))
+      fiber<-http.routes(ws).orNotFound(request).start
+      _<-waitFor(db,"SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='pony_retrieval_head_chunks'::regclass AND NOT granted)")
+      _<-accounts.revoke(owner,issued.token.id,Vector(ponygirls.auth.AccountJson.actor("alice")))
+      _<-IO(release.countDown())
+      response<-fiber.joinWithNever.timeout(5.seconds)
+      _<-holder.joinWithNever
+      text<-response.as[String]
+      _=assertEquals(response.status,Status.Unauthorized)
+      _=assert(!text.contains(secret))
+    }yield()}.guarantee(IO(release.countDown())))
+  }}
 
 }

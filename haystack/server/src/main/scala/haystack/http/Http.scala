@@ -261,9 +261,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     case r @ POST -> Root / "api" / "v1" / "retrieve" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
       val input=Wire.decode(api.RetrieveRequest.codecJson,raw)
       val mode=Wire.retrievalMode(input.mode)
-      retrieval.search(input.query,mode,input.project,input.includeArchived,input.offset,input.limit).flatMap { page=>
-        revalidate(r,a).map(_=>ok(api.RetrieveResult.codecJson,Wire.retrieved(retrieval,mode,page)))
-      }
+      retrieval.search(input.query,mode,input.project,input.includeArchived,input.offset,input.limit).map(page=>ok(api.RetrieveResult.codecJson,Wire.retrieved(retrieval,mode,page)))
     }}}
     case r @ GET -> Root / "api" / "v1" / "capabilities" =>handled {authed(r) { _=>IO.pure(ok(api.RetrievalCapabilities.codecJson,Wire.capabilities(retrieval))) }}
     case r @ POST -> Root / "api" / "v1" / "history" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
