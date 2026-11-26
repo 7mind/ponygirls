@@ -43,12 +43,14 @@ assert !(hasExtension remote);
 assert !(hasExtension disabled);
 assert !(hasExtension noMcp);
 assert builtins.length astGrep == 1;
+assert builtins.elem "ast_grep_search" noMcp.smind.hm.dev.llm.pi.subagentsAllowedTools;
 pkgs.runCommandLocal "pi-codegraph-wiring-test" { } ''
   grep -F 'PONYGIRLS_CODEGRAPH_BIN' ${local.programs.pi.package}/bin/pi | grep -F '/bin/codegraph'
   grep -F 'PONYGIRLS_CODEGRAPH_FLOCK_BIN' ${local.programs.pi.package}/bin/pi | grep -F '${pkgs.flock}/bin/flock'
   grep -F 'PONYGIRLS_AST_GREP_BIN' ${noMcp.programs.pi.package}/bin/pi | grep -F '${lib.getExe pkgs.ast-grep}'
   grep -F 'PONYGIRLS_AST_GREP_GIT_BIN' ${noMcp.programs.pi.package}/bin/pi | grep -F '${lib.getExe pkgs.git}'
-  test -f ${builtins.head astGrep}/index.ts
+  # The default subagent grant must name the tool the extension registers.
+  grep -F 'const TOOL_NAME = "ast_grep_search";' ${builtins.head astGrep}/index.ts
   test -f ${builtins.head astGrep}/builtin.yml
   touch $out
 ''

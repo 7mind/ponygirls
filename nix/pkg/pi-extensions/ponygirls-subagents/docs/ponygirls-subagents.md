@@ -520,8 +520,9 @@ restart, in-process journal reset, or replay of uncertain effects is performed.
 - **External delegation is host-only and least-privilege.** Only
   `none`/`worktree` children receive approved concrete external names;
   `sandbox` and gate reviewers never do, and reserved names are never
-  delegable. The default `allowedTools` is empty; Home Manager grants
-  `mcp__codegraph__codegraph_explore` by default only when the `codegraph`
+  delegable. The default `allowedTools` is empty; Home Manager grants the
+  read-only `ast_grep_search` by default, and
+  `mcp__codegraph__codegraph_explore` only when the `codegraph`
   MCP server is configured. Arbitrary whitelisted tools are not magically
   read-only: reader/writer profiles do not bound external effects, only
   naming (the whitelist bounds *which* tools, not JS isolation).

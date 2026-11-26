@@ -617,8 +617,10 @@ in
         Takes precedence over
         {option}`smind.hm.dev.llm.pi.subagentsAllowedModels` when both are set.
         Setting this or a non-empty list manages `subagents-policy.json`
-        declaratively (read-only store symlink); otherwise a hand-maintained
-        file is left alone.
+        declaratively (read-only store symlink). A hand-maintained file is
+        left alone only when this is false,
+        {option}`smind.hm.dev.llm.pi.subagentsAllowedTools` is `[ ]` and
+        every other subagents option keeps its default.
       '';
     };
 
@@ -671,12 +673,16 @@ in
         proxy set, written as `allowedTools` into `subagents-policy.json`.
         Each entry is an exact tool name or full-name pattern with `*`
         wildcard matching (e.g. `mcp__codegraph__*`); the runtime feature
-        implements the glob. Empty (the default) grants no generic tools.
-        When a `codegraph` server exists in
-        {option}`programs.mcp.servers`, the default is
-        `[ "mcp__codegraph__codegraph_explore" ]` (least privilege); set
-        `[ ]` explicitly to disable it, or a wildcard such as
-        `[ "mcp__codegraph__*" ]` to widen it.
+        implements the glob. Empty grants no generic tools.
+        The default (least privilege) grants `ast_grep_search`, the
+        read-only structural search tool this module loads, and, when a
+        `codegraph` server exists in {option}`programs.mcp.servers`,
+        `mcp__codegraph__codegraph_explore`. Set `[ ]` explicitly to grant
+        nothing, or a list of your own, such as `[ "mcp__codegraph__*" ]`,
+        to replace the default. A non-empty list, the default included,
+        manages `subagents-policy.json` declaratively (see
+        {option}`smind.hm.dev.llm.pi.subagentsAllowAllModels` for when a
+        hand-maintained file is left alone).
       '';
     };
 
@@ -855,15 +861,15 @@ in
 
   config = lib.mkMerge [
     # Least-privilege generic-tool default: grant codegraph explore only when
-    # a `codegraph` MCP server is configured. Reads only
-    # `programs.mcp.servers` (never yolo/codegraph-bootstrap state) and sets
-    # only this option via mkDefault, so explicit `[]` disables it, an
-    # explicit wildcard widens it, and no unrelated option is enabled.
+    # a `codegraph` MCP server is configured, and the read-only
+    # ast_grep_search tool of the ponygirls-ast-grep extension loaded below.
+    # Reads only `programs.mcp.servers` (never yolo/codegraph-bootstrap state)
+    # and sets only this option via mkDefault, so explicit `[]` disables it,
+    # an explicit list replaces it, and no unrelated option is enabled.
     {
       smind.hm.dev.llm.pi.subagentsAllowedTools = lib.mkDefault (
-        if config.programs.mcp.servers ? codegraph
-        then [ "mcp__codegraph__codegraph_explore" ]
-        else [ ]
+        lib.optional (config.programs.mcp.servers ? codegraph) "mcp__codegraph__codegraph_explore"
+        ++ [ "ast_grep_search" ]
       );
     }
     (lib.mkIf cfg.enable (lib.mkMerge [
