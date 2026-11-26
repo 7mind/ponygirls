@@ -383,8 +383,8 @@ ignores the key but refuses an `indexing` section without the three capacities.
   commits (index builds and the start fill included): every reader and writer of `ch_jobs` waits meanwhile. Stop or replace
   the serving release before the first start of this release on a database without 033; never run `migrate` beside a
   serving image for it. Later starts skip the physical column and index work but still issue `ADD COLUMN IF NOT EXISTS`,
-  so they still take ACCESS EXCLUSIVE on `ch_jobs` until the start transaction commits (then re-run the fill): an applied 033 does not make
-  an online `migrate` safe.
+  so they still take ACCESS EXCLUSIVE on `ch_jobs` until the start transaction commits, including the start fill, which runs before
+  that commit: an applied 033 does not make an online `migrate` safe.
 - **Start fill.** Every start fills the NULLs of unfinished jobs (Queued, Running) in its transaction, all with that
   transaction's time, and reports `claim order start fill rows=N` (`serve`: an info line `chronicle start claim order
   start fill rows=N` once the server listens; `migrate`: a stderr line `chronicle claim order start fill rows=N`), only
