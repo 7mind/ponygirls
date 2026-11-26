@@ -148,7 +148,7 @@ server's response; upgrade clients with the server.
 
 Generated `LiveFrame.kind` is `ping | pong | changed` with optional fields. Ping
 requires bounded nonce and finite clientTs; pong echoes them with serverTs.
-Changed carries canonical key/revision. Session slots are scoped to the actual upgraded stream; invalid/non-upgrade handshakes never reserve capacity and carry no-store. Initial credential validation admits only bounded body reading: all authenticated body routes revalidate the exact captured identity/transport after the read and before dispatch. A response whose handler waited (a read, a write, a retrieval, an MCP call) is delivered only after one more check of that identity; `whoami`, `capabilities` and `query/analyze` cannot wait, so the check that admitted the request, or its body, is the one before delivery.
+Changed carries canonical key/revision. Session slots are scoped to the actual upgraded stream; invalid/non-upgrade handshakes never reserve capacity and carry no-store. Initial credential validation admits only bounded body reading: all authenticated body routes revalidate the exact captured identity/transport after the read and before dispatch. The result of a handler that waited (`get`, `put`, `search`, `retrieve`, `history`, `complete`, `values`, an MCP call) is delivered only after one more check of that identity; `whoami`, `capabilities` and `query/analyze` cannot wait, so the check that admitted the request, or its body, is the one before delivery.
 
 Only fresh committed writes publish;
 replay/terminal failure does not. Application frame cap1024bytes, transport safety
