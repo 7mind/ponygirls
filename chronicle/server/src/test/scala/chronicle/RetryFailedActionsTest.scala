@@ -104,11 +104,11 @@ final class RetryFailedActionsTest extends munit.FunSuite {
       List(1,100).foreach { limit =>
         statements.set(0); setups.set(0)
         assertEquals(activity.jobs("a",ActivityJobsQuery(None,ActivityJobScope.All,"synthetic",ActivityJobSort.Title,SortDirection.Asc,None,limit)).jobs.size,math.min(limit,3))
-        assertEquals(statements.get(),3+epochReads+setupStatements)
+        assertEquals(statements.get(),2+epochReads+setupStatements) // the owner's target (and enabled row), the page
         assertEquals(setups.get(),setupStatements)
         statements.set(0); setups.set(0)
         assertEquals(activity.summary(c.owner.user,ActivityQuery("",ActivityCollectorSort.CurrentTotal,SortDirection.Desc,None,limit)).collectors.size,math.min(limit,3))
-        assertEquals(statements.get(),4+epochReads+setupStatements)
+        assertEquals(statements.get(),3+epochReads+setupStatements) // the owner's target (and enabled row), the totals, the page
         assertEquals(setups.get(),setupStatements)
       }
     } finally DriverManager.deregisterDriver(driver)

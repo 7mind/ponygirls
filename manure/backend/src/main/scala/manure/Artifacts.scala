@@ -62,6 +62,16 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
       val a = get(tx,id); if !includeExpired then a.requireLive(clock.now); a
     }
   }
+  /** The artifact of a management download: the credential, then an existing, unexpired and ready artifact, in one
+    * transaction. `info` followed by the management leg of `contentInfo` answers the same, each in its own. */
+  def downloadable(identity: Identity,id: String): IO[Artifact] = serialized {
+    metadata.transaction { tx =>
+      Require(auth.live(tx,identity), "unauthorized")
+      val a = live(tx,id)
+      Require(a.state == UploadState.Ready, "not-found")
+      a
+    }
+  }
   def snapshot(identity: Identity, after: Option[String], limit: Int): IO[Vector[Artifact]] = metadata.transaction { tx =>
     Require(auth.live(tx,identity), "unauthorized"); tx.artifacts(after,limit)
   }

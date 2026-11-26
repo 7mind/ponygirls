@@ -8,6 +8,7 @@ import haystack.application.ItemService
 import haystack.http.{Http,LiveHub,Wire}
 import haystack.retrieval.{HaystackRetrieval,ProjectionPolicy}
 import haystack.storage.{ContractSuite,Migrations,PostgresItemRepository,TestSupport}
+import java.util.concurrent.{CountDownLatch,TimeUnit}
 import java.util.concurrent.atomic.AtomicReference
 import org.http4s.{Header,Method,Request,Status,Uri}
 import org.http4s.ember.client.EmberClientBuilder
@@ -31,10 +32,10 @@ class HttpAuthorityLifetimeTest extends ContractSuite {
     case "get"=>Wire.encode(api.GetRequest.codecJson,api.GetRequest(key,None))
     case "history"=>Wire.encode(api.HistoryRequest.codecJson,api.HistoryRequest(key))
     case "search"=>Wire.encode(api.SearchRequest.codecJson,api.SearchRequest("",None,20,None,api.SearchSort("key","asc")))
-    case "complete"=>Wire.encode(api.QueryRequest.codecJson,api.QueryRequest("type:",5))
+    case "complete"|"analyze"=>Wire.encode(api.QueryRequest.codecJson,api.QueryRequest("type:",5))
     case "mcp"=>io.circe.Json.obj("jsonrpc"->io.circe.Json.fromString("2.0"),"id"->io.circe.Json.fromInt(1),"method"->io.circe.Json.fromString("tools/call"),"params"->io.circe.Json.obj("name"->io.circe.Json.fromString("put"),"arguments"->io.circe.Json.obj("key"->io.circe.Json.fromString(key),"document_json"->io.circe.Json.fromString(TestSupport.doc(secret)),"expected_revision"->io.circe.Json.fromInt(0),"request_id"->io.circe.Json.fromString(TestSupport.requestId()))))
   }
-  Vector("put","cookie-put","get","history","search","complete","mcp").foreach { route=>
+  Vector("put","cookie-put","get","history","search","complete","analyze","mcp").foreach { route=>
     test("revocation after body admission denies actual PG route before dispatch: "+route) { directory { dir=>
       val configBefore=passwordConfig(dir);val current=new AtomicReference(Auth.load(configBefore))
       run(TestSupport.emptyDatabase.use { db=>for{
@@ -52,7 +53,7 @@ class HttpAuthorityLifetimeTest extends ContractSuite {
         entered<-Deferred[IO,Unit];release<-Deferred[IO,Unit]
         bytes=payload(route).noSpaces.getBytes(java.nio.charset.StandardCharsets.UTF_8)
         body=Stream.eval(entered.complete(())).drain ++ Stream.eval(release.get).drain ++ Stream.emits(bytes).covary[IO]
-        path=if(route=="mcp")"/mcp"else"/api/v1/"+(if(route=="cookie-put")"put"else route)
+        path=if(route=="mcp")"/mcp"else"/api/v1/"+(if(route=="cookie-put")"put"else if(route=="analyze")"query/analyze"else route)
         credential=if(route=="cookie-put")Header.Raw(CIString("Cookie"),"__Host-haystack="+signed.session.secret)else Header.Raw(CIString("Authorization"),"Bearer "+AliceToken)
         request=Request[IO](Method.POST,Uri.unsafeFromString(path)).withBodyStream(body).putHeaders(Header.Raw(CIString("Host"),"ts.test:8445"),Header.Raw(CIString("Origin"),Secure),credential,Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Accept"),"application/json, text/event-stream"))
         fiber<-http.routes(ws).orNotFound(request).start
@@ -122,6 +123,113 @@ class HttpAuthorityLifetimeTest extends ContractSuite {
         _=assert(!text.contains(secret))
       }yield()})
     }}
+  }
+  private val IssueToken="""{"name":"held","scopes":["api"]}"""
+  private val IssueUnknownScope="""{"name":"held","scopes":["admin"]}"""
+  // (what happens while the body is held, body, status, tokens issued)
+  private val StoreFails="the session store fails"
+  private val OtherCookieAndStoreFails="another session cookie is selected and the session store fails"
+  Vector(("nothing",IssueToken,Status.Ok,1L),("logout",IssueToken,Status.Unauthorized,0L),("another cookie name",IssueToken,Status.Unauthorized,0L),
+    ("logout",IssueUnknownScope,Status.Unauthorized,0L),("nothing",IssueUnknownScope,Status.Forbidden,0L),
+    // An outage of the session store is answered as an outage, also when the request no longer presents the captured cookie.
+    (StoreFails,IssueToken,Status.ServiceUnavailable,0L),(OtherCookieAndStoreFails,IssueToken,Status.ServiceUnavailable,0L)).foreach { (change,input,status,issued)=>
+    test(s"account token issue after body admission: $change while held, ${if(input==IssueToken)"api scope"else"unknown scope"}") { directory { dir=>
+      val configBefore=passwordConfig(dir);val current=new AtomicReference(Auth.load(configBefore))
+      run(TestSupport.emptyDatabase.use { db=>for{
+        _<-Migrations.initialize(db,TestSupport.Activity)
+        accounts=new AccountService(db,()=>current.get(),imperative)
+        _<-accounts.install(current.get())
+        signed<-accounts.login("alice",AlicePassword,None)
+        owner<-accounts.resolve(RequestHeaders("ts.test:8445",cookie=Vector("__Host-haystack="+signed.session.secret)))
+        hub<-LiveHub.create
+        retrieval=new HaystackRetrieval(db,ProjectionPolicy("account-authority-test",true,Vector.empty,4096),new PostgresRetrieval("account-authority-test",None),None,4)
+        http=new Http(()=>current.get(),new ItemService(new PostgresItemRepository(db),(_,_)=>IO.unit),hub,None,retrieval,accounts)
+        ws<-WebSocketBuilder2[IO]
+        entered<-Deferred[IO,Unit];release<-Deferred[IO,Unit]
+        body=Stream.eval(entered.complete(())).drain ++ Stream.eval(release.get).drain ++ Stream.emits(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)).covary[IO]
+        // The second cookie is the one a plain-HTTP authority of the same host would have set; it is no session.
+        cookies="__Host-haystack="+signed.session.secret+(if(change==OtherCookieAndStoreFails)"; haystack-dev="+AliceSession else "")
+        storeFails=db.transaction { connection=>val statement=connection.createStatement();try statement.execute("ALTER TABLE ponygirls_account_sessions RENAME TO ponygirls_account_sessions_unavailable")finally statement.close() }.void
+        request=Request[IO](Method.POST,Uri.unsafeFromString("/api/account/v1/tokens")).withBodyStream(body).putHeaders(Header.Raw(CIString("Host"),"ts.test:8445"),Header.Raw(CIString("Origin"),Secure),Header.Raw(CIString("Cookie"),cookies),Header.Raw(CIString("X-Account-Actor"),ponygirls.auth.AccountJson.actor("alice")),Header.Raw(CIString("Content-Type"),"application/json"))
+        fiber<-http.routes(ws).orNotFound(request).start
+        _<-entered.get.timeout(2.seconds)
+        _<-change match {
+          case "logout"=>accounts.logout(owner,Vector(ponygirls.auth.AccountJson.actor("alice")))
+          // The session cookie of this request is no longer the one the configuration selects for its host.
+          case "another cookie name"=>IO(current.set(Auth.load(configBefore.copy(cookieSecure=false))))
+          case StoreFails=>storeFails
+          case OtherCookieAndStoreFails=>IO(current.set(Auth.load(configBefore.copy(cookieSecure=false)))) *> storeFails
+          case _=>IO.unit
+        }
+        _<-release.complete(())
+        response<-fiber.joinWithNever.timeout(5.seconds)
+        _=assertEquals(response.status,status)
+        _=assertEquals(response.headers.get(CIString("Set-Cookie")).nonEmpty,status==Status.Ok)
+        count<-db.transaction { connection=>val statement=connection.createStatement();try{val rows=statement.executeQuery("SELECT count(*) FROM ponygirls_account_tokens");try{rows.next();rows.getLong(1)}finally rows.close()}finally statement.close() }
+        _=assertEquals(count,issued)
+      }yield()})
+    }}
+  }
+  private def waitFor(database:ponygirls.runtime.JdbcDatabase,condition:String):IO[Unit]={
+    def poll(remaining:Int):IO[Unit]=database.transaction { c=>
+      val s=c.createStatement()
+      try {val rows=s.executeQuery(condition);try {rows.next();rows.getBoolean(1)}finally rows.close()}finally s.close()
+    }.flatMap { ready=>
+      if(ready)IO.unit
+      else if(remaining==0)IO.raiseError(new IllegalStateException("expected owned PostgreSQL lock barrier"))
+      else IO.sleep(10.millis) *> poll(remaining-1)
+    }
+    poll(200)
+  }
+  // (the page the retrieval reads, what a caller who stays authorized is answered)
+  Vector(("a private hit",Status.Ok),("a hit whose published identity is invalid",Status.ServiceUnavailable)).foreach { (page,authorized)=>
+  test("issued bearer revoked while retrieval reads is unauthorized, whatever its page would have answered: "+page) { directory { dir=>
+    val auth=Auth.load(passwordConfig(dir))
+    val lockHeld=new CountDownLatch(1);val release=new CountDownLatch(1)
+    run(TestSupport.emptyDatabase.use { db=>for{
+      _<-Migrations.initialize(db,TestSupport.Activity)
+      accounts=new AccountService(db,()=>auth,imperative)
+      _<-accounts.install(auth)
+      signed<-accounts.login("alice",AlicePassword,None)
+      owner<-accounts.resolve(RequestHeaders("ts.test:8445",cookie=Vector("__Host-haystack="+signed.session.secret)))
+      issued<-accounts.issue(owner,"held retrieval",Vector("api"),Vector(ponygirls.auth.AccountJson.actor("alice")))
+      retrieval=new HaystackRetrieval(db,ProjectionPolicy("delivery-test",true,Vector.empty,4096),new PostgresRetrieval("delivery-test",None),None,4)
+      repo=new PostgresItemRepository(db,Some(retrieval))
+      _<-repo.initializeProjection()
+      _<-repo.commit(TestSupport.op(key,document=TestSupport.doc(secret)),TestSupport.Bot,TestSupport.Now)
+      hub<-LiveHub.create
+      http=new Http(()=>auth,new ItemService(repo,(_,_)=>IO.unit),hub,None,retrieval,accounts)
+      ws<-WebSocketBuilder2[IO]
+      // The stored version of the source (base64url, as the shared store keeps it) no longer names a projection policy.
+      _<-if(authorized==Status.Ok)IO.unit else db.transaction { connection=>
+        val statement=connection.prepareStatement("UPDATE pony_retrieval_sources SET version=?")
+        try {statement.setString(1,java.util.Base64.getUrlEncoder.withoutPadding.encodeToString("1/not-a-projection-policy".getBytes(java.nio.charset.StandardCharsets.UTF_8)));assertEquals(statement.executeUpdate(),1)}finally statement.close()
+      }
+      input=Wire.encode(api.RetrieveRequest.codecJson,api.RetrieveRequest("canary",api.RetrievalMode.Lexical,None,false,0,10))
+      request=Request[IO](Method.POST,Uri.unsafeFromString("/api/v1/retrieve")).withEntity(input.noSpaces).putHeaders(Header.Raw(CIString("Host"),"ts.test:8445"),Header.Raw(CIString("Authorization"),"Bearer "+issued.secret),Header.Raw(CIString("Content-Type"),"application/json"))
+      answered<-http.routes(ws).orNotFound(request)
+      answer<-answered.as[String]
+      _=assertEquals(answered.status,authorized)
+      _=if(authorized==Status.Ok)assert(answer.contains(secret)) else assertEquals(Wire.decode(api.Failure.codecJson,io.circe.parser.parse(answer).fold(throw _,identity)).code,"unavailable")
+      // The lexical read waits for this lock, so the request is held inside its handler, after the body was admitted.
+      holder<-db.transaction { c=>
+        val statement=c.createStatement()
+        try statement.execute("LOCK TABLE pony_retrieval_head_chunks IN ACCESS EXCLUSIVE MODE")finally statement.close()
+        lockHeld.countDown()
+        if(!release.await(10,TimeUnit.SECONDS))throw new IllegalStateException("owned test lock release deadline")
+      }.start
+      _<-IO.blocking(assert(lockHeld.await(2,TimeUnit.SECONDS)))
+      fiber<-http.routes(ws).orNotFound(request).start
+      _<-waitFor(db,"SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='pony_retrieval_head_chunks'::regclass AND NOT granted)")
+      _<-accounts.revoke(owner,issued.token.id,Vector(ponygirls.auth.AccountJson.actor("alice")))
+      _<-IO(release.countDown())
+      response<-fiber.joinWithNever.timeout(5.seconds)
+      _<-holder.joinWithNever
+      text<-response.as[String]
+      _=assertEquals(response.status,Status.Unauthorized)
+      _=assert(!text.contains(secret))
+    }yield()}.guarantee(IO(release.countDown())))
+  }}
   }
 
 }

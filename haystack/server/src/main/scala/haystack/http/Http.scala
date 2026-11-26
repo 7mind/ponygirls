@@ -1,6 +1,6 @@
 package haystack.http
 
-import cats.effect.{IO,Ref,Deferred}
+import cats.effect.{IO,Ref,Deferred,SyncIO}
 import cats.syntax.all.*
 import fs2.Stream
 import haystack.{api,domain}
@@ -13,6 +13,7 @@ import org.http4s.dsl.io.*
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci.CIString
+import org.typelevel.vault.Key
 import io.circe.Json
 import ponygirls.auth.{AccountFailure,AccountJson,AccountReply,ClientAddress,CookieEffect,IndexingAccountEndpoint,ImperativeAccountApi,ImperativeSettings}
 import scala.concurrent.duration.*
@@ -22,6 +23,9 @@ import java.nio.file.{Files,Path}
   * search semantics live in the application/repository shared with MCP. */
 final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option[Path],retrieval:haystack.retrieval.HaystackRetrieval,accounts:AccountService) {
   private val limiter=new RateLimiter
+  /** The principal a route authenticated for the response it returns. The access log labels its row with it and looks
+    * the caller up itself only for a response without one. */
+  private val authenticatedPrincipal:Key[domain.Principal]=Key.newKey[SyncIO,domain.Principal].unsafeRunSync()
   private def all(r:Request[IO],name:String):Vector[String]=r.headers.headers.filter(_.name==CIString(name)).map(_.value).toVector
   private def headers(r:Request[IO]):RequestHeaders=RequestHeaders(all(r,"Host").headOption.getOrElse(""),all(r,"Authorization"),all(r,"Cookie"),all(r,"Origin"),all(r,"Sec-Fetch-Site").headOption,all(r,Sessions.AccountRequestHeader))
   private def json(status:Status,value:Json):Response[IO]=Response[IO](status).withEntity(value.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer"))
@@ -53,16 +57,29 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     if(all(r,"Host").size!=1) throw Fault("forbidden","ambiguous host")
     if(r.uri.query.nonEmpty) throw Fault("bad-envelope","query parameters are not supported")
   }
-  private def authed(r:Request[IO],mutate:Boolean=false)(f:Authenticated=>IO[Response[IO]]):IO[Response[IO]]=IO.defer {
+  /** The identity that admits a request, before its body and handler. */
+  private def admitted(r:Request[IO],mutate:Boolean):IO[Authenticated]=IO.defer {
     version(r)
-    accounts.resolve(headers(r),mutate).flatMap { resolved=>
-      IO(limiter.check(resolved.principal,getAuth().config.rateLimit)) *> f(resolved).flatMap { response=>
-        revalidate(r,resolved,mutate).map { current=>
-          if(current.cookie)response.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(current.token),current.secureCookie))) else response
-        }
-      }
-    }
+    accounts.resolve(headers(r),mutate).flatTap(resolved=>IO(limiter.check(resolved.principal,getAuth().config.rateLimit)))
   }
+  /** `current` is the last check before delivery: its principal labels the log row and its browser session is renewed. */
+  private def delivered(response:Response[IO],current:Authenticated):Response[IO]={
+    val labelled=response.withAttribute(authenticatedPrincipal,current.principal)
+    if(current.cookie)labelled.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(current.token),current.secureCookie))) else labelled
+  }
+  /** A handler that waits (a read, a write): the captured identity is checked once more when its result exists, and
+    * only then is the result rendered. A caller revoked meanwhile is unauthorized, whatever `render` would answer. */
+  private def authedResult[A](r:Request[IO],mutate:Boolean)(f:Authenticated=>IO[A])(render:A=>Response[IO]):IO[Response[IO]]=
+    admitted(r,mutate).flatMap(resolved=>f(resolved).flatMap(result=>revalidate(r,resolved,mutate).map(current=>delivered(render(result),current))))
+  /** A handler that waits and renders its own response. */
+  private def authed(r:Request[IO],mutate:Boolean=false)(f:Authenticated=>IO[Response[IO]]):IO[Response[IO]]=authedResult(r,mutate)(f)(identity)
+  /** A handler that cannot wait: its response follows the check that admitted the request without any wait, so that
+    * check is also the one before delivery. */
+  private def authedPure(r:Request[IO])(f:Authenticated=>Response[IO]):IO[Response[IO]]=
+    admitted(r,mutate=false).map(resolved=>delivered(f(resolved),resolved))
+  /** A body, then a handler that cannot wait: the check after the body is the one before delivery. */
+  private def authedBodyPure(r:Request[IO])(f:Json=>Response[IO]):IO[Response[IO]]=
+    admitted(r,mutate=false).flatMap(resolved=>body(r).flatMap(raw=>revalidate(r,resolved).map(current=>delivered(f(raw),current))))
   private def status(code:String):Status=code match {
     case "unauthorized"|"ambiguous-credentials"=>Status.Unauthorized
     case "forbidden"=>Status.Forbidden
@@ -117,13 +134,23 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       if(!a.cookie)throw Fault("unauthorized","browser session required")
       IO(limiter.check(a.principal,getAuth().config.rateLimit)) *> f(a).flatMap { response=>
         if(!renew)IO.pure(response)
-        else IO(accountBoundary(r)) *> revalidate(r,a).map(current=>response.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(current.token),current.secureCookie))))
+        else IO(accountBoundary(r)) *> revalidate(r,a).map(current=>response.withAttribute(authenticatedPrincipal,current.principal).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(current.token),current.secureCookie))))
       }
     }
   }
+  /** After the body of an account mutation, under one current configuration: the boundary, and the credential the
+    * request presents. While that is still the captured one, the mutation looks the session up itself, in its own
+    * transaction before any effect, and no lookup is made here. Another credential is refused by the full check, with
+    * its answers. */
+  private def accountMutationBoundary(r:Request[IO],captured:Authenticated):IO[Unit]=IO.defer {
+    val auth=getAuth()
+    accountBoundary(r,auth)
+    val offered=Sessions.resolve(auth.config,headers(r))
+    if(offered.token==captured.token && offered.cookie==captured.cookie)IO.unit else revalidate(r,captured).void
+  }
   private def emptyAccountBody(r:Request[IO],a:Authenticated):IO[Unit]=accountBody(r).flatMap { raw=>
     if(!raw.asObject.exists(_.isEmpty))throw Fault("bad-envelope","empty object required")
-    IO(accountBoundary(r)) *> revalidate(r,a).void
+    accountMutationBoundary(r,a)
   }
   private def presented(auth:Auth,r:Request[IO]):(Boolean,Option[String])={
     val h=headers(r);val secure=Sessions.secure(auth.config,h)
@@ -221,7 +248,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     case r @ POST -> Root / "api" / "account" / "v1" / "tokens" =>accountHandled {accountAuthed(r,true) { a=>
       accountBody(r).flatMap { raw=>
         val (name,scopes)=AccountJson.decodeIssue(raw)
-        IO(accountBoundary(r)) *> revalidate(r,a) *> accounts.issue(a,name,scopes,all(r,"X-Account-Actor")).map(issued=>json(Status.Ok,AccountJson.issued(issued)))
+        accountMutationBoundary(r,a) *> accounts.issue(a,name,scopes,all(r,"X-Account-Actor")).map(issued=>json(Status.Ok,AccountJson.issued(issued)))
       }
     }}
     case r @ POST -> Root / "api" / "account" / "v1" / "tokens" / id / "revoke" =>accountHandled {accountAuthed(r,true) { a=>
@@ -245,7 +272,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     case r @ POST -> Root / "api" / "v1" / "logout" =>handled {IO(version(r)) *> accounts.resolve(headers(r),mutate=true).flatMap { a=>
       accounts.logoutLegacy(a) *> hub.endSession(a.token).as(ok(api.Ack.codecJson,api.Ack(true)).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(None,a.secureCookie))))
     }}
-    case r @ GET -> Root / "api" / "v1" / "whoami" =>handled {authed(r) { a=>IO.pure(ok(api.Identity.codecJson,Wire.identity(a.principal,getAuth().config.activityProjectId))) }}
+    case r @ GET -> Root / "api" / "v1" / "whoami" =>handled {authedPure(r) { a=>ok(api.Identity.codecJson,Wire.identity(a.principal,getAuth().config.activityProjectId)) }}
     case r @ POST -> Root / "api" / "v1" / "get" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
       val input=Wire.decode(api.GetRequest.codecJson,raw)
       service.get(input.key,input.revision.map(_.toLong)).map(item=>ok(api.Item.codecJson,Wire.item(item)))
@@ -258,22 +285,21 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       val input=Wire.decode(api.SearchRequest.codecJson,raw)
       service.search(SearchInput(input.query,input.project,input.limit,input.cursor,SearchSort(input.sort.field,input.sort.direction))).map(result=>ok(api.SearchResult.codecJson,api.SearchResult(result.items.map(Wire.summary).toList,result.cursor)))
     }}}
-    case r @ POST -> Root / "api" / "v1" / "retrieve" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
+    // `Wire.retrieved` refuses a page with an invalid or incompatible published identity: it renders after the check.
+    case r @ POST -> Root / "api" / "v1" / "retrieve" =>handled {authedResult(r,mutate=false) { a=>authorizedBody(r,a).flatMap { raw=>
       val input=Wire.decode(api.RetrieveRequest.codecJson,raw)
       val mode=Wire.retrievalMode(input.mode)
-      retrieval.search(input.query,mode,input.project,input.includeArchived,input.offset,input.limit).flatMap { page=>
-        revalidate(r,a).map(_=>ok(api.RetrieveResult.codecJson,Wire.retrieved(retrieval,mode,page)))
-      }
-    }}}
-    case r @ GET -> Root / "api" / "v1" / "capabilities" =>handled {authed(r) { _=>IO.pure(ok(api.RetrievalCapabilities.codecJson,Wire.capabilities(retrieval))) }}
+      retrieval.search(input.query,mode,input.project,input.includeArchived,input.offset,input.limit).map(mode->_)
+    }} { (mode,page)=>ok(api.RetrieveResult.codecJson,Wire.retrieved(retrieval,mode,page)) }}
+    case r @ GET -> Root / "api" / "v1" / "capabilities" =>handled {authedPure(r) { _=>ok(api.RetrievalCapabilities.codecJson,Wire.capabilities(retrieval)) }}
     case r @ POST -> Root / "api" / "v1" / "history" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
       val input=Wire.decode(api.HistoryRequest.codecJson,raw)
       service.history(input.key).map(revisions=>ok(api.HistoryResult.codecJson,api.HistoryResult(revisions.map(v=>api.RevisionInfo(v.revision.toInt,v.modifiedAt.toString,v.modifiedBy,v.tokenId)).toList)))
     }}}
-    case r @ POST -> Root / "api" / "v1" / "query" / "analyze" =>handled {authed(r) { a=>authorizedBody(r,a).map { raw=>
+    case r @ POST -> Root / "api" / "v1" / "query" / "analyze" =>handled {authedBodyPure(r) { raw=>
       val input=Wire.decode(api.QueryRequest.codecJson,raw); val diagnostics=Search.analyze(input.query)
       ok(api.AnalyzeResult.codecJson,api.AnalyzeResult(diagnostics.isEmpty,diagnostics.map(d=>api.Span(d.message,d.span.start,d.span.end)).toList))
-    }}}
+    }}
     case r @ POST -> Root / "api" / "v1" / "complete" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
       val input=Wire.decode(api.QueryRequest.codecJson,raw)
       if(input.query.length>Query.MaxChars) throw new InvalidQuery(Vector(QueryDiagnostic(s"query exceeds ${Query.MaxChars} characters",Span(0,input.query.length))))
@@ -290,7 +316,9 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
         val accept=all(r,"Accept").mkString(",")
         if(!accept.contains("application/json") || !accept.contains("text/event-stream")) throw Fault("bad-envelope","unsupported accept")
         if(all(r,"MCP-Protocol-Version").exists(_!="2025-11-25")) throw Fault("bad-envelope","unsupported MCP version")
-        authorizedBody(r,a,mcp=true).flatMap(raw=>new Mcp(service,retrieval).handle(a.principal,raw)).flatTap(_=>revalidate(r,a,mcp=true)).map(_.fold(json(Status.Accepted,Json.Null))(json(Status.Ok,_)))
+        authorizedBody(r,a,mcp=true).flatMap(raw=>new Mcp(service,retrieval).handle(a.principal,raw)).flatMap { result=>
+          revalidate(r,a,mcp=true).map(current=>result.fold(json(Status.Accepted,Json.Null))(json(Status.Ok,_)).withAttribute(authenticatedPrincipal,current.principal))
+        }
       }
     }.handleError { error=>
       val code=error match{case f:AccountFailure=>f.code;case f:Fault if f.code=="config"=>"unavailable";case f:Fault=>f.code;case _=>"unavailable"}
@@ -305,8 +333,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       core(request).semiflatMap { response=>
         val path=request.uri.path.renderString
         val label=if(path=="/mcp") "mcp" else if(path.startsWith("/api/")) accountLabel(request.method,path).orElse(path.split("/").lastOption.filter(Set("login","logout","whoami","get","put","search","history","analyze","complete","values","live","retrieve","capabilities","health","versions"))).getOrElse("unknown") else "static"
-        accounts.resolve(headers(request),mcp=label=="mcp").attempt.flatMap { resolved=>
-          val principal=resolved.toOption.map(_.principal)
+        response.attributes.lookup(authenticatedPrincipal).fold(accounts.resolve(headers(request),mcp=label=="mcp").attempt.map(_.toOption.map(_.principal)))(principal=>IO.pure(Some(principal))).flatMap { principal=>
           val event=Json.obj("requestId"->Json.fromString(java.util.UUID.randomUUID().toString),"route"->Json.fromString(label),"status"->Json.fromInt(response.status.code),"result"->Json.fromString(if(response.status.isSuccess) "ok" else "fault"),"durationMs"->Json.fromLong((System.nanoTime()-start)/1000000)).deepMerge(principal.fold(Json.obj())(p=>Json.obj("userId"->Json.fromString(p.userId),"tokenId"->Json.fromString(p.tokenId))))
           IO.println(event.noSpaces).as(response)
         }
@@ -362,7 +389,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
         val upgrade=ws.withFilterPingPongs(false).withHeaders(Headers(Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer")))
           .withOnNonWebSocketRequest(IO.pure(failure(Fault("bad-envelope","websocket upgrade required")).withStatus(Status.UpgradeRequired)))
           .withOnHandshakeFailure(IO.pure(failure(Fault("bad-envelope","invalid websocket handshake")).putHeaders(Header.Raw(CIString("Sec-WebSocket-Version"),"13"))))
-        resolved match {
+        (resolved match {
           case None=>upgrade.build(Stream.emit(WebSocketFrame.Close(4401,"Sign in required").fold(throw _,identity)),_.drain).map(_.putHeaders(Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer")))
           case Some(a)=>
             Deferred[IO,Option[WebSocketFrame=>IO[Unit]]].flatMap { receiver=>
@@ -384,7 +411,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
               upgrade.withOnClose(receiver.complete(None).void).build(outgoing,_.evalMap(frame=>receiver.get.flatMap(_.fold(IO.unit)(_(frame)))))
                 .map(_.putHeaders(Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer")))
             }
-        }
+        }).map(response=>resolution.fold(_=>response,value=>response.withAttribute(authenticatedPrincipal,value.principal)))
     }
     }
   }

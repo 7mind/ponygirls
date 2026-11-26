@@ -1,6 +1,7 @@
 package manure
 
 import cats.effect.{Deferred,IO,Resource}
+import cats.effect.std.Semaphore
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import org.http4s.{Header,Method,Request,Uri}
@@ -10,6 +11,7 @@ import ponygirls.retrieval.UnavailableReason
 import ponygirls.auth.{AccountJson,CredentialGate,FastPasswordHasher,IndexingPolicy,PasswordHasher,Secrets,Totp}
 import java.nio.file.Files
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.duration.*
 import munit.FunSuite
 
@@ -24,14 +26,32 @@ final class HttpSuite extends FunSuite:
     r
   private val gate = CredentialGate.resource.use(IO.pure).unsafeRunSync()
   private def app(f: BackendFixture,adjust: Config => Config = c => c,hasher: PasswordHasher = FastPasswordHasher): Http =
+    adapter(f,f.metadata,f.artifacts,adjust,hasher)
+  private def adapter(f: BackendFixture,metadata: Metadata,artifacts: Artifacts,adjust: Config => Config,hasher: PasswordHasher): Http =
     val config = adjust(f.config.copy(apiOrigin=ApiOrigin.parse("http://127.0.0.1:47329"),port=47329))
     val engine = SearchProjection.retrieval(config)
     val projection = new SearchProjection(config,engine)
     val auth = new Auth(config.users,config.accounts)
     val search = new Search(f.database.get,f.lease,config,auth,f.clock,engine,projection,None)
-    val accounts = new Accounts(f.metadata,auth)
-    new Http(config,f.artifacts,new Catalogue(f.artifacts,config.limits,f.clock),auth,f.clock,search,accounts,
-      new AccountPlane(f.metadata,auth,accounts,gate,hasher,f.clock))
+    val accounts = new Accounts(metadata,auth)
+    new Http(config,artifacts,new Catalogue(artifacts,config.limits,f.clock),auth,f.clock,search,accounts,
+      new AccountPlane(metadata,auth,accounts,gate,hasher,f.clock))
+  /** The adapter over accounts and artifacts that count the metadata transactions they start (each one pooled
+    * database transaction); `afterCommit` follows the commit of the n-th of them. */
+  private final class Counted(val http: Http,transactions: AtomicInteger):
+    /** The response of `request`, its body drained, and the transactions it took. */
+    def run(request: Request[IO]): IO[(org.http4s.Response[IO],Array[Byte],Int)] = for
+      _ <- IO(transactions.set(0))
+      response <- http.app.run(request)
+      bytes <- response.body.compile.to(Array)
+    yield (response,bytes,transactions.get())
+  private def counted(f: BackendFixture,afterCommit: Int => IO[Unit] = _ => IO.unit): IO[Counted] = Semaphore[IO](1L).map { exclusion =>
+    val transactions = new AtomicInteger
+    val metadata = new Metadata:
+      def transaction[A](body: MetadataTxn => A): IO[A] =
+        IO(transactions.incrementAndGet()).flatMap(n => f.metadata.transaction(body).flatTap(_ => afterCommit(n)))
+    new Counted(adapter(f,metadata,new Artifacts(metadata,f.payloads,f.config.limits,f.clock,f.auth,f.lease,exclusion,f.faults),c => c,FastPasswordHasher),transactions)
+  }
   private def command(c: wire.Command,token: Option[String],origin: Option[String] = None): Request[IO] =
     request(Method.POST,"/api/current",token,origin).withEntity(CurrentWire.encode(wire.ClientEnvelope.codecJson,
       wire.ClientEnvelope(UUID.fromString("01234567-89ab-4def-8123-456789abcdef"),"1.0.0",c)).noSpaces)
@@ -52,6 +72,29 @@ final class HttpSuite extends FunSuite:
     _ <- IO(assertEquals(cookie.status.code,401))
     legacy <- h.app.run(command(wire.Command.Login(f.token),None,Some("http://127.0.0.1:47329")))
     _ <- IO { assertEquals(legacy.status.code,400); assert(!legacy.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
+  yield () }}
+  test("the account read authenticates its session cookie in its own transaction; any other credential is refused as before") { run { (f,_) => for
+    c <- counted(f)
+    cookie <- browserCookie(c.http)
+    account = request(Method.GET,"/api/account/v1")
+    (read,body,transactions) <- c.run(account.putHeaders(Header.Raw(CIString("Cookie"),cookie)))
+    (bearer,_,bearerTransactions) <- c.run(request(Method.GET,"/api/account/v1",Some(f.token)))
+    (ambiguous,_,ambiguousTransactions) <- c.run(request(Method.GET,"/api/account/v1",Some(f.token)).putHeaders(Header.Raw(CIString("Cookie"),cookie)))
+    (anonymous,_,anonymousTransactions) <- c.run(account)
+    _ <- new Accounts(f.metadata,f.auth).logout(cookie.split("=",2)(1))
+    (stale,_,staleTransactions) <- c.run(account.putHeaders(Header.Raw(CIString("Cookie"),cookie)))
+    _ <- IO {
+      assertEquals(read.status.code,200)
+      assertEquals(CurrentWire.parse(Exact.string(body)).hcursor.downField("user").get[String]("login").toOption,Some("owner"))
+      assertEquals(read.headers.headers.filter(_.name == CIString("Set-Cookie")).map(_.value.takeWhile(_ != ';')),List(cookie))
+      // A bearer is looked up and then refused; nothing is looked up for two credentials or none.
+      assertEquals((bearer.status.code,bearerTransactions),(401,1))
+      assertEquals((ambiguous.status.code,ambiguousTransactions),(400,0))
+      assertEquals((anonymous.status.code,anonymousTransactions),(401,0))
+      assertEquals((stale.status.code,staleTransactions),(401,1))
+      Vector(bearer,ambiguous,anonymous,stale).foreach(response => assert(!response.headers.headers.exists(_.name == CIString("Set-Cookie"))))
+      assertEquals(transactions,1)
+    }
   yield () }}
   test("domain dispatch rejects a session logged out while its Whoami body is held") { run { (f,h) =>
     val deadline = 10.seconds
@@ -628,6 +671,86 @@ final class HttpSuite extends FunSuite:
       _ <- IO(assertEquals(bad.status.code,416))
       invalid <- h.app.run(request(Method.GET,s"/api/current/artifacts/$id/files/%ff/content"))
       _ <- IO(assertEquals(invalid.status.code,400))
+    yield ()
+  }}
+  test("a content file is authorised once for its response and once more when it is opened") { run { (f,_) =>
+    val text = "internal file bytes"
+    val bytes = Exact.utf8(text)
+    def navigated(r: Request[IO]): Request[IO] = r.putHeaders(Header.Raw(CIString("Sec-Fetch-Mode"),"navigate"),Header.Raw(CIString("Sec-Fetch-Dest"),"document"))
+    for
+      c <- counted(f)
+      a <- f.artifacts.init(f.identity,InitUpload("counted content",ArtifactKind.Directory,Visibility.Internal,
+        Vector(ManifestEntry("nested/notes.md",false,bytes.length,SecretCodec.sha256(bytes))),None,Vector.empty,None,None))
+      id = a.artifact.id
+      _ <- f.artifacts.putChunk(f.identity,id,"nested/notes.md",0,bytes,SecretCodec.sha256(bytes))
+      _ <- f.artifacts.finish(f.identity,id)
+      handoff <- f.artifacts.createGrant(f.identity,id)
+      (grant,_) <- f.artifacts.redeem(id,handoff)
+      cookie = Header.Raw(CIString("Cookie"),s"mgrant-dev-$id=$grant")
+      file = request(Method.GET,s"/view/$id/nested/notes.md").putHeaders(cookie)
+      viewer = request(Method.GET,s"/view/$id/__manure/view/nested/notes.md").putHeaders(cookie,Header.Raw(CIString("Range"),"bytes=0-7"))
+      download = request(Method.GET,s"/view/$id/__manure/files/nested/notes.md/content").putHeaders(cookie)
+      listing = request(Method.GET,s"/view/$id/nested/").putHeaders(cookie)
+      observed <- Vector("file" -> file,"file, document navigation" -> navigated(file),"viewer range" -> viewer,"viewer range, document navigation" -> navigated(viewer),
+        "file with a password header" -> file.putHeaders(Header.Raw(CIString("X-Manure-Password"),"not-a-password")),"download" -> download,
+        "listing" -> listing,"listing, document navigation" -> navigated(listing)).traverse { (label,r) =>
+        c.run(r).map((response,body,transactions) => (label,response.status.code,Exact.string(body),transactions))
+      }
+      _ <- IO {
+        val (files,listings) = observed.splitAt(6)
+        assertEquals(files.map((label,status,body,_) => (label,status,body)),Vector(("file",200,text),("file, document navigation",200,text),
+          ("viewer range",206,text.take(8)),("viewer range, document navigation",206,text.take(8)),("file with a password header",200,text),("download",200,text)))
+        listings.foreach((label,status,body,_) => assert(status == 200 && body.contains("notes.md"),label))
+        // A file: the response's authorisation and the open's. An offered password is not what authorised the page
+        // of a file, so that file is authorised with it as before. A listing opens nothing.
+        assertEquals(observed.map((label,_,_,transactions) => s"$label: $transactions transactions"),Vector("file: 2 transactions","file, document navigation: 2 transactions",
+          "viewer range: 2 transactions","viewer range, document navigation: 2 transactions","file with a password header: 3 transactions","download: 2 transactions",
+          "listing: 1 transactions","listing, document navigation: 1 transactions"))
+      }
+    yield ()
+  }}
+  test("a management download authorises its bearer and the artifact in one transaction, and once more when it is opened") { run { (f,_) =>
+    val text = "0123456789"
+    val bytes = Exact.utf8(text)
+    val accounts = new Accounts(f.metadata,f.auth)
+    def failure(body: Array[Byte]): wire.ErrorCode =
+      CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(Exact.string(body))).result.asInstanceOf[wire.Result.Error].failure.code
+    for
+      (_,session) <- accounts.login("owner","fixture-password",None)
+      actor = Vector(AccountJson.actor(session.credential.userId))
+      issued <- accounts.issue(session.secret,"download",actor)
+      revoking = new java.util.concurrent.atomic.AtomicBoolean(false)
+      // The bearer is revoked once the request's credential was resolved, before the download's own transaction.
+      c <- counted(f,n => if n == 1 && revoking.compareAndSet(true,false) then accounts.revoke(session.secret,issued.token.id,actor) else IO.unit)
+      a <- f.artifacts.init(f.identity,InitUpload("download",ArtifactKind.File,Visibility.Internal,
+        Vector(ManifestEntry("a.txt",false,bytes.length,SecretCodec.sha256(bytes))),Some(60),Vector.empty,None,None))
+      id = a.artifact.id
+      download = (artifact: String,path: String,token: Option[String]) => request(Method.GET,s"/api/current/artifacts/$artifact/files/$path/content",token)
+      (uploading,uploadingBody,_) <- c.run(download(id,"a.txt",Some(issued.secret)))
+      _ <- f.artifacts.putChunk(f.identity,id,"a.txt",0,bytes,SecretCodec.sha256(bytes))
+      _ <- f.artifacts.finish(f.identity,id)
+      (whole,wholeBody,wholeTransactions) <- c.run(download(id,"a.txt",Some(issued.secret)))
+      (range,rangeBody,rangeTransactions) <- c.run(download(id,"a.txt",Some(issued.secret)).putHeaders(Header.Raw(CIString("Range"),"bytes=2-4")))
+      (anonymous,anonymousBody,anonymousTransactions) <- c.run(download(id,"a.txt",None))
+      (unknown,unknownBody,_) <- c.run(download("0"*32,"a.txt",Some(issued.secret)))
+      (absent,absentBody,_) <- c.run(download(id,"b.txt",Some(issued.secret)))
+      _ <- IO { f.clock.now = a.artifact.expiresAtSeconds.get }
+      (expired,expiredBody,_) <- c.run(download(id,"a.txt",Some(issued.secret)))
+      (expiredAnonymous,expiredAnonymousBody,_) <- c.run(download(id,"a.txt",None))
+      _ <- IO { f.clock.now = a.artifact.createdAtSeconds; revoking.set(true) }
+      (revoked,revokedBody,revokedTransactions) <- c.run(download(id,"a.txt",Some(issued.secret)))
+      _ <- IO {
+        assertEquals((whole.status.code,Exact.string(wholeBody)),(200,text))
+        assertEquals((range.status.code,Exact.string(rangeBody)),(206,"234"))
+        assertEquals(Vector(uploading -> uploadingBody,anonymous -> anonymousBody,unknown -> unknownBody,absent -> absentBody,expired -> expiredBody,
+          expiredAnonymous -> expiredAnonymousBody,revoked -> revokedBody).map((response,body) => response.status.code -> failure(body)),
+          Vector(404 -> wire.ErrorCode.NotFound,401 -> wire.ErrorCode.GrantRequired,404 -> wire.ErrorCode.NotFound,404 -> wire.ErrorCode.NotFound,
+            410 -> wire.ErrorCode.Expired,404 -> wire.ErrorCode.NotFound,401 -> wire.ErrorCode.Unauthorized))
+        // Without a credential the content authorisation and the open; a revoked bearer stops at the download's transaction.
+        assertEquals((anonymousTransactions,revokedTransactions),(1,2))
+        // The credential, the download's own transaction, the open.
+        assertEquals((wholeTransactions,rangeTransactions),(3,3))
+      }
     yield ()
   }}
   test("content hosting preserves user styles, inline scripts, no API and security headers") { run { (f,h) =>
