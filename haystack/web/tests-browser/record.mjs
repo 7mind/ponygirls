@@ -413,6 +413,7 @@ try {
       // The record left is opened from a list, once the live connection is verified. A record page that is already open
       // at that first verification reads its record again (an announcement after the page opened), and its history and
       // incoming links with it: whether that second pair is issued before the page is left would be a matter of timing.
+      // A reconnection inside the case (a pong overdue by 5 s, or a timer gap that long) would bring that second read back.
       await page.goto(`${base}/#/browse`);
       await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
       // The history and incoming links of the record left answer after the next record is shown.
