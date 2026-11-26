@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 from unittest import mock
 from urllib.parse import urlsplit
@@ -29,7 +30,7 @@ from uuid import UUID
 
 import browser_fixtures
 from keepalive_peer import DEADLINE_SECONDS, Hangup, Partial, Peer, Reply, Request, Silence, interrupt, serve
-from manure import cli
+from manure import cli, mcp
 from manure import current_protocol as cp
 from manure.client import (FETCH_RANGE_BYTES, MAX_IDLE_SECONDS, MAX_KEPT_CONNECTIONS, MAX_TRANSPORT_BYTES,
                            ManureClient, ManureError, ReusedConnectionClosed, StdlibTransport)
@@ -645,6 +646,7 @@ class CliTests(unittest.TestCase):
             code, _, err = run_cli(["upload", str(source), "--access", "internal"], peer, Path(tmp) / "cache")
             self.assertEqual((code, err), (1, "unavailable: unavailable\n"))
             self.assertEqual(service.received, {"a.txt": b"first"})
+            self.assertEqual((peer.accepted, peer.wait_ended(0)), (1, "client"))
             # Upload status, artifact, manifest, the two missing chunks, finish, artifact.
             self.assert_one_connection(peer, ["upload", source, "--access", "internal"], 7, Path(tmp) / "cache")
             self.assertEqual(service.received, files)
@@ -771,6 +773,30 @@ class McpTests(unittest.TestCase):
             server.process.wait(DEADLINE_SECONDS)
             self.assertEqual(peer.wait_ended(0), "client")
             self.assertEqual(peer.accepted, 1)
+
+    def test_a_server_interrupted_while_it_waits_for_input_closes_its_connections(self):
+        service = CurrentTransport("http://unused.invalid")
+        messages = [{"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                     "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "keepalive", "version": "0"}}},
+                    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                    {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "whoami", "arguments": {}}},
+                    {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "whoami", "arguments": {}}}]
+
+        def input_then_interrupt():
+            for message in messages:
+                yield json.dumps(message).encode() + b"\n"
+            raise KeyboardInterrupt
+
+        with tempfile.TemporaryDirectory() as tmp, Peer(serve(service)) as peer:
+            environment = {"MANURE_URL": peer.origin, "MANURE_TOKEN": TOKEN, "MANURE_CACHE_DIR": str(Path(tmp) / "cache")}
+            replies = io.StringIO()
+            with mock.patch.dict(os.environ, environment), mock.patch.object(sys, "stdout", replies), \
+                    mock.patch.object(sys, "stdin", types.SimpleNamespace(buffer=input_then_interrupt())):
+                with self.assertRaises(KeyboardInterrupt):
+                    mcp.main()
+            self.assertEqual([json.loads(line)["id"] for line in replies.getvalue().splitlines()], [1, 2, 3])
+            self.assertEqual([request.connection for request in peer.requests], [0, 0])
+            self.assertEqual(peer.wait_ended(0), "client")
 
     def test_an_invalid_http_setting_is_reported_by_each_call_and_nothing_is_sent(self):
         service = CurrentTransport("http://unused.invalid")

@@ -5,7 +5,8 @@ real TCP server (optionally TLS) with persistent connections. It counts the
 connections it accepted, records every request it read and answers through a
 callback, which may also end the connection or stay silent. `serve` turns the
 typed in-memory current-protocol peer of test_current_client into such a
-callback, so whole client operations run over real sockets.
+callback, so whole client operations run over real sockets. Linux only: the
+idle close waits for the client's TCP acknowledgement through TCP_INFO.
 """
 from __future__ import annotations
 

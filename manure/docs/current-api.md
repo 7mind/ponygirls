@@ -28,7 +28,7 @@ revoking bearer tokens or requiring the account actor header.
   it is correlation, **not** write deduplication or an exactly-once guarantee.
   For that reason the owned Python client, which may keep a connection per origin
   inside an explicit scope (README “Connections”), repeats a request that lost its
-  kept connection before any response byte only when a second copy has no effect:
+  kept connection before any response byte only when a second copy changes nothing:
   raw `GET`, chunk `PUT`, Version, GetCapabilities, Whoami, ListArtifacts,
   GetArtifact, GetManifest (management and content), GetUploadStatus, Search and
   FinishUpload. Every other command is sent at most once.

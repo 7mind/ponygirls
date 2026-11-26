@@ -376,7 +376,7 @@ What holds for a kept connection:
   applied to every request as before; TLS verification is unchanged.
 - Before reuse it is replaced, without any message, if it was idle for more than
   15 s or the peer has closed it (or sent anything) in the meantime.
-- If the peer closes it after the request was sent and before any byte of the
+- If the peer closes it while the request is being sent or before any byte of the
   response was read, the server may or may not have executed the request. The
   client then sends it once more on a new connection only where a second copy is
   harmless: `GET`; the chunk `PUT` (an identical chunk is a no-op, `CONTRACT.md`
