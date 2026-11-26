@@ -6,7 +6,8 @@ import java.sql.Connection
 import munit.FunSuite
 import scala.util.Using
 
-// Behavioral/Active/Good-Communication: the statements that tighten a session's timeouts, against real PostgreSQL.
+// Behavioral/Active/Effectual/Good-Communication: the statements that tighten a session's timeouts, against real
+// PostgreSQL: the session values they leave, and (Whitebox) their plans.
 final class ServerTimeoutSuite extends FunSuite {
   import PostgresFixture.*
   private def configured[A](f: JdbcConfig => A): A = config.use(c => IO.blocking(f(c))).unsafeRunSync()

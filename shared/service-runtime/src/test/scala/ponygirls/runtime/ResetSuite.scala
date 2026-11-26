@@ -14,8 +14,11 @@ import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 import scala.util.Using
 
-// Behavioral/Active/Good-Communication: the bounds of the per-borrow reset against real PostgreSQL (restart-robustness
-// spec §5, per-borrow reset): the statement, lock and idle-in-transaction timeouts a borrowed session is left with.
+// Behavioral/Active/Effectual/Good-Communication: the bounds of the per-borrow reset against real PostgreSQL
+// (restart-robustness spec §5, per-borrow reset): the statement, lock and idle-in-transaction timeouts a borrowed session
+// is left with. The two plan cases are Whitebox: they explain the statements the engine prepares, seen through the
+// connection-factory seam. Regression: the reset's bounds and the bounded transaction's setup read `pg_settings`, whose
+// function materialised every setting (1.3-1.6 ms per transaction on production PostgreSQL 18.7, 2026-11-26).
 final class ResetSuite extends FunSuite {
   import PostgresFixture.*
   private def configured[A](f: JdbcConfig => A): A = config.use(c => IO.blocking(f(c))).unsafeRunSync()
