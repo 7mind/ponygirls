@@ -1035,9 +1035,13 @@ final class ClaimOrderAnnotationContinuationTest extends AnnotationContinuationT
         }
         def seen: List[(Int,Int)] = asked.asScala.toList
       }
-      val deferrals=new ConcurrentLinkedQueue[(UUID,Option[Int])]()
+      // Each deferral: its job, the claim's lane, and the job's persisted state and attempts immediately before it.
+      val deferrals=new ConcurrentLinkedQueue[(UUID,Option[Int],String,Int)]()
       val observed=new ForwardingArchive(archive) {
-        override def defer(c: Claim,totalWindows: Int): Boolean = { deferrals.add((c.jobId,c.facts.map(_.lane))); super.defer(c,totalWindows) }
+        override def defer(c: Claim,totalWindows: Int): Boolean = {
+          val before=ClaimOrderFixtures.row(db,c.jobId)
+          deferrals.add((c.jobId,c.facts.map(_.lane),before.state,before.attempts)); super.defer(c,totalWindows)
+        }
       }
       def worker(model: ScriptedAnnotator,log: WorkerLog): Worker =
         new Worker(ClaimOrderFixtures.traced(claimOrder,claimTrace,observed),model,ClaimOrderFixtures.embedder,config,IndexProfileCatalog.current(config),
@@ -1050,7 +1054,7 @@ final class ClaimOrderAnnotationContinuationTest extends AnnotationContinuationT
       // Lane 0 claims it, accepts windows 0-49, keeps window 50 at (10,0) and is killed while the rest is asked.
       val blocked=Deferred.unsafe[IO,Unit]; val first=new Model(Some(stopWindow*size+stop),blocked)
       val fiber=ClaimOrderFixtures.onceOn(claimOrder,worker(first,logs(0)),lane0).start.unsafeRunSync()
-      blocked.get.timeout(2.minutes).unsafeRunSync(); fiber.cancel.timeout(30.seconds).unsafeRunSync()
+      blocked.get.timeout(2.minutes).guarantee(fiber.cancel.timeout(30.seconds)).unsafeRunSync()
       assertEquals(first.seen,(0 to stopWindow).map(w => (w*size,size)).toList:+(stopWindow*size+stop,size-stop))
       val retained=db.transaction(c => Sql.rows(c,"SELECT window_ordinal,covered_fragments,continuations FROM ch_annotation_partials WHERE job_id=?",id)(r => (r.getInt(1),r.getInt(2),r.getInt(3))))
       assertEquals(retained,List((stopWindow,stop,1)))
@@ -1059,6 +1063,7 @@ final class ClaimOrderAnnotationContinuationTest extends AnnotationContinuationT
       // A fresh lane reclaims it, sizes it (101 > 100) and defers it: no model call, the attempt refunded.
       val none=new Model(None,Deferred.unsafe[IO,Unit]) { override def annotate(owner: String,window: Window,previous: Option[Carry]): IO[Decision] = IO.raiseError(new AssertionError("a model call on the class lane")) }
       assert(ClaimOrderFixtures.onceOn(claimOrder,worker(none,logs(1)),freshLane).unsafeRunSync(),"the fresh lane claimed the job")
+      assertEquals(deferrals.asScala.toList,List((id,Some(2),"Running",2)),"the fresh lane defers the job it reclaimed: Running, the reclaim charged (attempts 2)")
       assertEquals(logs(1).lines.count(_.startsWith(s"large job deferred jobId=$id totalWindows=$total indexedWindows=$total ")),1)
       assertEquals(attempts(id),("Queued",1,Some(total),since))
       assertEquals(db.transaction(c => Sql.rows(c,"SELECT window_ordinal,covered_fragments,continuations FROM ch_annotation_partials WHERE job_id=?",id)(r => (r.getInt(1),r.getInt(2),r.getInt(3)))),retained)
@@ -1073,7 +1078,7 @@ final class ClaimOrderAnnotationContinuationTest extends AnnotationContinuationT
       // deferral by the fresh lane.
       assertEquals(claimTrace.waiting.asScala.toList.map((lane,c) => (c.jobId,lane.index,c.facts.map(f => (f.lane,f.step,f.preState)))),List(
         (id,0,Some((0,ClaimStep.Borrowed,"Queued"))),(id,2,Some((2,ClaimStep.Preferred,"Running"))),(id,0,Some((0,ClaimStep.Preferred,"Queued")))))
-      assertEquals(deferrals.asScala.toList,List((id,Some(2))))
+      assertEquals(deferrals.asScala.toList.map((job,lane,_,_) => (job,lane)),List((id,Some(2))))
       // An uninterrupted run of the same source (owner b, lane 0): the same accepted annotations and published rows.
       val reference=archive.ingest("b",request.copy(requestId=UUID.randomUUID()))
       assert(ClaimOrderFixtures.onceOn(claimOrder,worker(new Model(None,Deferred.unsafe[IO,Unit]),new WorkerLog),lane0).unsafeRunSync())
