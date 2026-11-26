@@ -81,6 +81,60 @@ private[chronicle] object ClaimOrderFixtures extends munit.Assertions {
     case ClaimOrderSetting.SourceId => worker.once
     case ClaimOrderSetting.Waiting => worker.onceInLane(lane0)
   }
+  /** The claim of `order` in `lane` for suites whose jobs are small (at most LargeJobs.windows windows): today's claim exactly
+    * (large jobs admitted, SessionArchive.claim) under `source-id`; under `waiting` the claim of `lane`, recorded in `trace`. */
+  def claimOn(order: ClaimOrderSetting,trace: ClaimTrace,a: SessionArchive,profiles: Set[String],scope: ClaimScope,lease: Int,lane: ClaimLane): Option[Claim] = order match {
+    case ClaimOrderSetting.SourceId => a.claim(profiles,scope,lease)
+    case ClaimOrderSetting.Waiting =>
+      traced(order,trace,a).claimInLane(profiles,scope,lease,lane) match {
+        case ClaimOutcome.Claimed(value) => Some(value)
+        case ClaimOutcome.Idle => None
+        case ClaimOutcome.Contended => fail("a claim without a concurrent claim was contended")
+      }
+  }
+  /** One worker iteration of `order`: today's (`once`), or `lane`'s of the waiting order. */
+  def onceOn(order: ClaimOrderSetting,worker: Worker,lane: ClaimLane): cats.effect.IO[Boolean] = order match {
+    case ClaimOrderSetting.SourceId => worker.once
+    case ClaimOrderSetting.Waiting => worker.onceInLane(lane)
+  }
+  /** The claims an archive of a rerun returned, by path: `waiting` ClaimOrder's (claimInLane, with the lane asked),
+    * `legacy` today's (SessionArchive.claim). The evidence that a rerun's claims went through the waiting order. */
+  final class ClaimTrace {
+    val waiting = new java.util.concurrent.ConcurrentLinkedQueue[(ClaimLane,Claim)]()
+    val legacy = new java.util.concurrent.ConcurrentLinkedQueue[Claim]()
+    def clear(): Unit = { waiting.clear(); legacy.clear() }
+    /** At least one claim, every one of the waiting order: facts of a waiting step (Preferred or Borrowed) of the lane it
+      * was asked in; none of today's claim. */
+    def assertWaiting(what: String): Unit = {
+      import scala.jdk.CollectionConverters.*
+      val claims=waiting.asScala.toList
+      assert(claims.nonEmpty,s"$what: no claim of the waiting order")
+      assertEquals(legacy.asScala.toList.map(_.jobId),Nil,s"$what: claims of today's order")
+      assertEquals(claims.filterNot((lane,c) => c.facts.exists(f => f.step!=ClaimStep.Legacy && f.lane==lane.index)).map((lane,c) => (lane.index,c.facts)),Nil,
+        s"$what: claims without the waiting order's facts of their lane")
+    }
+  }
+  /** `archive` under `order`: itself under `source-id`; under `waiting` an archive recording every claim in `trace`. */
+  def traced(order: ClaimOrderSetting,trace: ClaimTrace,archive: SessionArchive): SessionArchive = order match {
+    case ClaimOrderSetting.SourceId => archive
+    case ClaimOrderSetting.Waiting => new ForwardingArchive(archive) {
+      override def claim(p: Set[String],s: ClaimScope,l: Int,large: LargeJobs): Option[Claim] = { val c=super.claim(p,s,l,large); c.foreach(trace.legacy.add); c }
+      override def claimInLane(p: Set[String],s: ClaimScope,l: Int,lane: ClaimLane): ClaimOutcome = {
+        val outcome=super.claimInLane(p,s,l,lane)
+        outcome match { case ClaimOutcome.Claimed(c) => trace.waiting.add((lane,c)); case _ => () }
+        outcome
+      }
+    }
+  }
+  /** `archive` passing each claim it returns, of either order, to `record`. */
+  def recording(archive: SessionArchive)(record: Claim => Unit): SessionArchive = new ForwardingArchive(archive) {
+    override def claim(p: Set[String],s: ClaimScope,l: Int,large: LargeJobs): Option[Claim] = { val c=super.claim(p,s,l,large); c.foreach(record); c }
+    override def claimInLane(p: Set[String],s: ClaimScope,l: Int,lane: ClaimLane): ClaimOutcome = {
+      val outcome=super.claimInLane(p,s,l,lane)
+      outcome match { case ClaimOutcome.Claimed(c) => record(c); case _ => () }
+      outcome
+    }
+  }
   /** `config` under `order` (the waiting order on four lanes). */
   def ordered(config: Config,order: ClaimOrderSetting): Config = order match {
     case ClaimOrderSetting.SourceId => config
