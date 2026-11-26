@@ -289,8 +289,10 @@ depth 2), `...Repos` (`repoId`, `checkoutPath`, optional `readRoots`,
 `allowWriters`), `...GateBypassAllowed`, `...GateMaxRoundsCeiling`
 (`null` for unlimited), `...AllowedTools` (explicit full-name allowlist for
 governing-session external tools; empty default denies all; Home Manager
-grants `mcp__codegraph__codegraph_explore` by default only when the
-`codegraph` MCP server is configured), `...WorktreeRoot` (null default keeps
+grants the read-only `ast_grep_search` by default, and
+`mcp__codegraph__codegraph_explore` only when the
+`codegraph` MCP server is configured; that default grant alone manages the
+file), `...WorktreeRoot` (null default keeps
 the home layout; an absolute path pools writer worktrees per session as
 above; setting it manages the file),
 `...WorkspaceOwnerCheckoutAllowed`, `...MaxRunnable` (default 16),

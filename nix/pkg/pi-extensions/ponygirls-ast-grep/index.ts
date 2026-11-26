@@ -38,7 +38,7 @@ export default function astGrepExtension(pi: ExtensionAPI): void {
     parameters: Type.Object({
       lang: Type.String({ minLength: 1, maxLength: 40, description: "Built-in ast-grep language alias, e.g. go, python, ts or tsx (separate grammars)." }),
       pattern: Type.String({ minLength: 1, maxLength: 4096, description: "Source pattern with optional metavariables $NAME or $$$ARGS. May include enclosing syntax when selector is set." }),
-      path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096, description: "File or directory, relative to the caller's cwd or absolute inside its checkout. Defaults to the caller's cwd." })),
+      path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096, description: "File or directory, relative to the caller's cwd or absolute inside its checkout. Defaults to the caller's cwd. Recursive scans skip hidden directories and ignored files; name a hidden directory to search it." })),
       selector: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Select a Tree-sitter node kind inside the pattern's enclosing syntax, e.g. call_expression for a call in a Go function body." })),
     }, { additionalProperties: false }),
     async execute(_id, params, signal, _onUpdate, ctx) {

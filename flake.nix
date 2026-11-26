@@ -137,7 +137,8 @@
               maxResidentWorkers = 8;
               maxOpenAgents = 32;
             };
-            # HM-level wiring for subagentsAllowedTools: least-privilege
+            # HM-level wiring for subagentsAllowedTools: the read-only
+            # ast_grep_search tool by default, and the least-privilege
             # codegraph default only when a `codegraph` MCP server is
             # configured (never from yolo/codegraph-bootstrap state). Minimal
             # evalModules with narrow leaf stubs only — never a full machine
@@ -303,8 +304,8 @@
             maxResidentWorkers = 8;
             maxOpenAgents = 32;
           };
-          assert absentDefault == [ ];
-          assert presentDefault == [ "mcp__codegraph__codegraph_explore" ];
+          assert absentDefault == [ "ast_grep_search" ];
+          assert presentDefault == [ "mcp__codegraph__codegraph_explore" "ast_grep_search" ];
           assert disabledOverride == [ ];
           assert wildcardOverride == [ "mcp__codegraph__*" ];
           assert builtins.all (asset: builtins.elem asset managedPiAssets) [ "AGENTS.md" "skills" "prompts" "models.json" "keybindings.json" ];
@@ -316,7 +317,11 @@
           assert limitsDefault.smind.hm.dev.llm.pi.subagentsAllowAllModels;
           assert limitsDefault.smind.hm.dev.llm.pi.subagentsLatestModelsOnly;
           assert latestModelsOptOut.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
-          assert !((evalWorktree { subagentsAllowAllModels = false; }).home.file ? "/home/alice/.pi/agent/subagents-policy.json");
+          # The default tool grant differs from the extension's empty default: with
+          # `subagentsAllowAllModels = false`, a hand-maintained file is left alone
+          # only when the tool list is explicitly empty as well.
+          assert (evalWorktree { subagentsAllowAllModels = false; }).home.file ? "/home/alice/.pi/agent/subagents-policy.json";
+          assert !((evalWorktree { subagentsAllowAllModels = false; subagentsAllowedTools = [ ]; }).home.file ? "/home/alice/.pi/agent/subagents-policy.json");
           assert worktreeManagedCustom == true;
           assert builtins.any (a: !a.assertion && builtins.match ".*subagentsWorktreeRoot.*" a.message != null) worktreeInvalidAssertions;
           assert builtins.any (a: !a.assertion && builtins.match ".*subagentsWorktreeRoot.*" a.message != null) worktreeEmptyAssertions;
@@ -349,7 +354,7 @@
           assert !(failedLimitAssertion limitsCustom.assertions);
           assert failedLimitAssertion limitsMisordered.assertions;
           pkgs.runCommandLocal "subagents-policy-shape-test" { } ''
-            ${pkgs.jq}/bin/jq -e '.allowedModels == null and .latestModelsOnly == true and .maxRunnable == 16 and .maxResidentWorkers == 24 and .maxOpenAgents == 48' ${limitsDefault.home.file."/home/alice/.pi/agent/subagents-policy.json".source}
+            ${pkgs.jq}/bin/jq -e '.allowedModels == null and .latestModelsOnly == true and .allowedTools == ["ast_grep_search"] and .maxRunnable == 16 and .maxResidentWorkers == 24 and .maxOpenAgents == 48' ${limitsDefault.home.file."/home/alice/.pi/agent/subagents-policy.json".source}
             ${pkgs.jq}/bin/jq -e '.allowedModels == [] and .latestModelsOnly == false' ${latestModelsOptOut.home.file."/home/alice/.pi/agent/subagents-policy.json".source}
             touch $out
           '';
@@ -821,13 +826,16 @@
             export HOME="$TMPDIR"
             cp -r ${./nix/pkg/pi-extensions/ponygirls-ast-grep} ponygirls-ast-grep
             chmod u+w ponygirls-ast-grep
-            mkdir -p ponygirls-subagents/src
-            cp ${./nix/pkg/pi-extensions/ponygirls-subagents/src/delegated-call.ts} ponygirls-subagents/src/delegated-call.ts
-            cd ponygirls-ast-grep
+            # The tests send a subagent's calls through the subagents
+            # extension's own dispatcher, so both trees share node_modules.
+            mkdir ponygirls-subagents
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-subagents/src} ponygirls-subagents/src
             mkdir -p node_modules/@earendil-works
             ln -s "$PI_AST_GREP_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
+            ln -s "$PI_AST_GREP_SDK_ROOT/node_modules/@earendil-works/pi-agent-core" node_modules/@earendil-works/pi-agent-core
             ln -s "$PI_AST_GREP_SDK_ROOT/node_modules/typebox" node_modules/typebox
             ln -s "$PI_AST_GREP_SDK_ROOT/node_modules/@types" node_modules/@types
+            cd ponygirls-ast-grep
             tsc -p tsconfig.json
             node --test *.test.ts *.test.mjs
             touch $out
