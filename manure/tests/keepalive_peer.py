@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+import select
 import socket
 import ssl
 import struct
@@ -54,15 +55,25 @@ class Reply:
 
 @dataclass(frozen=True)
 class Hangup:
-    """End the connection instead of answering: with FIN, or with RST when `reset`."""
+    """End the connection instead of answering: with FIN, or with RST when `reset`.
+
+    On a TLS connection `close_notify` sends the TLS closure alert first; without it the TCP
+    connection ends under the TLS session.
+    """
     reset: bool = False
+    close_notify: bool = False
 
 
 @dataclass(frozen=True)
 class Partial:
-    """Send these bytes as they are, then end the connection."""
+    """Send these bytes as they are, then end the connection.
+
+    With `beneath_tls` they go into the TCP stream of a TLS connection as they are, not as a TLS record of
+    the session.
+    """
     data: bytes
     reset: bool = False
+    beneath_tls: bool = False
 
 
 @dataclass(frozen=True)
@@ -73,21 +84,23 @@ class Silence:
 Action = Reply | Hangup | Partial | Silence
 
 
-class _Idle:
-    pass
-
-
-_IDLE = _Idle()
-
-
 class Peer:
+    """The peer: `respond` answers every request it read.
+
+    `refuse(connection, answered)` is asked first, when a request starts to arrive on a connection that has
+    answered that many; a Hangup it returns ends the connection without reading any of the request.
+    """
+
     def __init__(self, respond: Callable[[Request], Action], *, idle_timeout: float | None = None,
-                 tls: ssl.SSLContext | None = None):
+                 tls: ssl.SSLContext | None = None,
+                 refuse: Callable[[int, int], Hangup | None] = lambda connection, answered: None):
         self._respond = respond
         self._idle_timeout = idle_timeout
         self._tls = tls
+        self._refuse = refuse
         self._state = threading.Condition()
         self._requests: list[Request] = []
+        self._protocols: set[str] = set()
         self._ended: dict[int, str] = {}
         self._open: dict[int, socket.socket] = {}
         self._failures: list[Exception] = []
@@ -115,6 +128,12 @@ class Peer:
     def requests(self) -> list[Request]:
         with self._state:
             return list(self._requests)
+
+    @property
+    def tls_protocols(self) -> set[str]:
+        """The TLS versions that its connections negotiated."""
+        with self._state:
+            return set(self._protocols)
 
     def wait_ended(self, connection: int) -> str:
         """Who ended that connection: 'client', 'idle' (this peer's idle timeout) or 'peer' (an action)."""
@@ -164,6 +183,8 @@ class Peer:
                 connection = self._tls.wrap_socket(connection, server_side=True)
             with self._state:
                 self._open[ordinal] = connection
+                if self._tls is not None:
+                    self._protocols.add(connection.version())
             ended_by = self._exchange(ordinal, connection)
         except OSError:
             pass  # the client reset the connection or refused the TLS handshake
@@ -177,14 +198,24 @@ class Peer:
                 self._state.notify_all()
 
     def _exchange(self, ordinal: int, connection: socket.socket) -> str:
+        answered = 0
         while True:
-            request = self._read(ordinal, connection)
-            if request is None:
-                return "client"
-            if request is _IDLE:
+            arrived, _, _ = select.select([connection], [], [], self._idle_timeout)
+            if not arrived:
+                # As servers do: over TLS the closure alert first, then the end of the TCP stream.
+                self._hang_up(connection, Hangup(close_notify=self._tls is not None))
                 connection.shutdown(socket.SHUT_WR)
                 self._await_fin_acknowledged(connection)
                 return "idle"
+            # Looks under TLS at the TCP stream: no byte there means that the client ended the connection.
+            if socket.socket.recv(connection, 1, socket.MSG_PEEK):
+                refusal = self._refuse(ordinal, answered)
+                if refusal is not None:
+                    self._hang_up(connection, refusal)
+                    return "peer"
+            request = self._read(ordinal, connection)
+            if request is None:
+                return "client"
             with self._state:
                 self._requests.append(request)
             action = self._respond(request)
@@ -195,28 +226,40 @@ class Peer:
                 for block in self._wire(action):
                     connection.sendall(block)
                 if not action.close:
+                    answered += 1
                     continue
             elif isinstance(action, Partial):
-                connection.sendall(action.data)
-            if isinstance(action, (Hangup, Partial)) and action.reset:
-                connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                if action.beneath_tls:
+                    socket.socket.sendall(connection, action.data)
+                else:
+                    connection.sendall(action.data)
+                if action.reset:
+                    connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            elif isinstance(action, Hangup):
+                self._hang_up(connection, action)
             return "peer"
 
-    def _read(self, ordinal: int, connection: socket.socket) -> Request | _Idle | None:
-        """The next request, None when the client ended the connection, _IDLE after the idle timeout."""
-        received = b""
-        connection.settimeout(self._idle_timeout)
-        while b"\r\n\r\n" not in received:
+    @staticmethod
+    def _hang_up(connection: socket.socket, hangup: Hangup) -> None:
+        """Prepares the end that `hangup` describes; closing the socket then carries it out."""
+        if hangup.close_notify:
+            connection.settimeout(0)  # send the alert, do not wait for the client's
             try:
-                block = connection.recv(65536)
-            except TimeoutError:
-                if received:
-                    raise AssertionError("request head did not arrive in time")
-                return _IDLE
+                connection.unwrap()
+            except OSError:
+                pass
+        if hangup.reset:
+            connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+
+    def _read(self, ordinal: int, connection: socket.socket) -> Request | None:
+        """The next request, or None when the client ended the connection."""
+        received = b""
+        connection.settimeout(DEADLINE_SECONDS)
+        while b"\r\n\r\n" not in received:
+            block = connection.recv(65536)
             if not block:
                 return None
             received += block
-            connection.settimeout(DEADLINE_SECONDS)
         head, _, body = received.partition(b"\r\n\r\n")
         request_line, *header_lines = head.decode("latin-1").split("\r\n")
         method, target, _protocol = request_line.split(" ", 2)

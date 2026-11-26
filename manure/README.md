@@ -388,6 +388,11 @@ What holds for a kept connection:
   response was read. The CLI and the MCP server send such a request only as the
   first one on a connection, so only a Python caller holding its own scope can meet
   this failure.
+- Over HTTPS the previous rule applies in the same way when the peer ends the TLS
+  connection, with or without its closure alert, or resets it, whether or not it
+  had read the request (tested with TLS 1.2 and 1.3). A TLS failure of another
+  kind on a kept connection, such as a record that does not decrypt, is an ordinary
+  failure: `unavailable: network error`, and nothing is sent again.
 
 Nothing is kept outside a scope, and `manure-mcp` does not keep a connection between
 tool calls (it creates a client per call), because of how the server treats an idle

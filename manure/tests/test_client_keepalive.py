@@ -7,7 +7,9 @@ about what that peer saw and what the caller got back.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import dataclass
 import hashlib
 import io
 import json
@@ -30,7 +32,7 @@ import browser_fixtures
 from keepalive_peer import DEADLINE_SECONDS, Hangup, Partial, Peer, Reply, Request, Silence, interrupt, serve
 from manure import cli
 from manure import current_protocol as cp
-from manure.client import (FETCH_RANGE_BYTES, MAX_IDLE_SECONDS, MAX_KEPT_CONNECTIONS, MAX_TRANSPORT_BYTES,
+from manure.client import (FETCH_RANGE_BYTES, MAX_CHUNK_BYTES, MAX_IDLE_SECONDS, MAX_KEPT_CONNECTIONS, MAX_TRANSPORT_BYTES,
                            ManureClient, ManureError, ReusedConnectionClosed, StdlibTransport)
 from test_client_realserver import _LocalhostResolver, _make_server
 from test_current_client import AID, PASSWORD, TOKEN, CurrentTransport
@@ -42,6 +44,11 @@ PEER_IDLE_SECONDS = 0.2
 SHORT_TIMEOUT_SECONDS = 0.3
 TLS_SUFFIX = "manure-keepalive.test"
 TLS_HOST = "peer." + TLS_SUFFIX
+# How a peer ends a connection instead of answering: the end of the TCP stream or a reset, over TLS each with
+# or without the closure alert before it.
+ENDINGS = {"FIN": Hangup(), "RST": Hangup(reset=True)}
+TLS_ENDINGS = {"closure alert, FIN": Hangup(close_notify=True), "FIN": Hangup(),
+               "closure alert, RST": Hangup(reset=True, close_notify=True), "RST": Hangup(reset=True)}
 
 
 def echo(request: Request) -> Reply:
@@ -225,17 +232,20 @@ class TransportTests(unittest.TestCase):
                 self.assertEqual([(request.connection, request.target) for request in peer.requests], [(0, "/first"), (1, "/second")])
 
     def test_a_kept_connection_closed_before_the_response_is_reported_and_nothing_is_sent_twice(self):
-        for reset in (False, True):
-            with self.subTest(reset=reset), Peer(interrupt(echo, lambda request: request.target == "/second", Hangup(reset))) as peer:
-                transport = StdlibTransport()
-                with transport.keep_alive():
-                    transport.request("POST", peer.origin + "/first", {}, b"1")
-                    with self.assertRaises(ReusedConnectionClosed) as closed:
-                        transport.request("POST", peer.origin + "/second", {}, b"2")
-                    self.assertEqual((closed.exception.code, closed.exception.message), ("unavailable", "network error"))
-                    self.assertEqual(answer_of(transport.request("POST", peer.origin + "/third", {}, b"3")), (200, b"POST /third"))
-                    self.assertEqual([(request.connection, request.target) for request in peer.requests],
-                                     [(0, "/first"), (0, "/second"), (1, "/third")])
+        for ending, hangup in ENDINGS.items():
+            for read in (True, False):  # the peer ends the connection after reading the request, or when it starts to arrive
+                respond = interrupt(echo, lambda request: read and request.target == "/second", hangup)
+                refuse = lambda connection, answered: None if read or (connection, answered) != (0, 1) else hangup
+                with self.subTest(ending=ending, request_read=read), Peer(respond, refuse=refuse) as peer:
+                    transport = StdlibTransport()
+                    with transport.keep_alive():
+                        transport.request("POST", peer.origin + "/first", {}, b"1")
+                        with self.assertRaises(ReusedConnectionClosed) as closed:
+                            transport.request("POST", peer.origin + "/second", {}, b"2")
+                        self.assertEqual((closed.exception.code, closed.exception.message), ("unavailable", "network error"))
+                        self.assertEqual(answer_of(transport.request("POST", peer.origin + "/third", {}, b"3")), (200, b"POST /third"))
+                        self.assertEqual([(request.connection, request.target) for request in peer.requests],
+                                         [(0, "/first")] + [(0, "/second")] * read + [(1, "/third")])
 
     def test_a_new_connection_closed_before_the_response_is_an_ordinary_failure(self):
         for reset in (False, True):
@@ -414,78 +424,111 @@ def carries(kind: type):
     return lambda request: isinstance(management_command(request) or content_command(request), kind)
 
 
+@dataclass(frozen=True)
+class Sent:
+    """A request of the client: the call that sends it, how to recognise it, how many requests the call sends before it."""
+    call: Callable[[ManureClient], object]
+    matches: Callable[[Request], bool]
+    preceding: int = 0
+
+
+def fetch(source: Callable[[ManureClient], str]) -> Callable[[ManureClient], object]:
+    return lambda client: client.fetch_to_dest(source(client), tempfile.mkdtemp(dir=client.cache_dir), PASSWORD)
+
+
 ONE_FILE = {"f.txt": b"file bytes"}
-# What the client may send a second time: the call that sends it and how to recognise its request.
+# What the client may send a second time.
 REPLAYED = {
-    "Version": (lambda client: client.version(), carries(cp.Command_Version)),
-    "GetCapabilities": (lambda client: client.capabilities(), carries(cp.Command_GetCapabilities)),
-    "Whoami": (lambda client: client.whoami(), carries(cp.Command_Whoami)),
-    "ListArtifacts": (lambda client: client.list_artifacts(), carries(cp.Command_ListArtifacts)),
-    "GetArtifact": (lambda client: client.get_artifact(AID), carries(cp.Command_GetArtifact)),
-    "GetManifest": (lambda client: client.get_manifest(AID), carries(cp.Command_GetManifest)),
-    "GetUploadStatus": (lambda client: client.get_upload_status(AID), carries(cp.Command_GetUploadStatus)),
-    "Search": (lambda client: client.search("report"), carries(cp.Command_Search)),
-    "FinishUpload": (lambda client: client.publish(AID), carries(cp.Command_FinishUpload)),
-    "chunk PUT": (lambda client: client.put_chunk(AID, "new.bin", 0, b"chunk"), lambda request: request.method == "PUT"),
-    "GET": (lambda client: client.fetch_to_dest(AID, tempfile.mkdtemp(dir=client.cache_dir)), lambda request: request.method == "GET"),
-    "content GetManifest": (lambda client: client.fetch_to_dest(client.api_base + "/view/" + AID, tempfile.mkdtemp(dir=client.cache_dir), PASSWORD),
-                            carries(cp.ContentCommand_GetManifest)),
+    "Version": Sent(lambda client: client.version(), carries(cp.Command_Version)),
+    "GetCapabilities": Sent(lambda client: client.capabilities(), carries(cp.Command_GetCapabilities)),
+    "Whoami": Sent(lambda client: client.whoami(), carries(cp.Command_Whoami)),
+    "ListArtifacts": Sent(lambda client: client.list_artifacts(), carries(cp.Command_ListArtifacts)),
+    "GetArtifact": Sent(lambda client: client.get_artifact(AID), carries(cp.Command_GetArtifact)),
+    "GetManifest": Sent(lambda client: client.get_manifest(AID), carries(cp.Command_GetManifest)),
+    "GetUploadStatus": Sent(lambda client: client.get_upload_status(AID), carries(cp.Command_GetUploadStatus)),
+    "Search": Sent(lambda client: client.search("report"), carries(cp.Command_Search)),
+    "FinishUpload": Sent(lambda client: client.publish(AID), carries(cp.Command_FinishUpload)),
+    "chunk PUT": Sent(lambda client: client.put_chunk(AID, "new.bin", 0, b"chunk"), lambda request: request.method == "PUT"),
+    "largest chunk PUT": Sent(lambda client: client.put_chunk(AID, "large.bin", 0, b"c" * MAX_CHUNK_BYTES),
+                              lambda request: request.method == "PUT"),
+    "GET": Sent(fetch(lambda client: AID), lambda request: request.method == "GET", preceding=1),
+    "content GetManifest": Sent(fetch(lambda client: client.api_base + "/view/" + AID), carries(cp.ContentCommand_GetManifest),
+                                preceding=1),
 }
 # What is sent at most once.
 NEVER_REPLAYED = {
-    "InitUpload": (lambda client: client.init_upload("n", "dir", "internal", []), carries(cp.Command_InitUpload)),
-    "PatchArtifact": (lambda client: client.patch_artifact(AID, name="renamed"), carries(cp.Command_PatchArtifact)),
-    "DeleteArtifact": (lambda client: client.delete(AID), carries(cp.Command_DeleteArtifact)),
-    "RotateExternalPassword": (lambda client: client.rotate_password(AID), carries(cp.Command_RotateExternalPassword)),
-    "CreateGrant": (lambda client: client.create_grant(AID), carries(cp.Command_CreateGrant)),
-    "content Unlock": (lambda client: client.fetch_to_dest(client.api_base + "/view/" + AID, tempfile.mkdtemp(dir=client.cache_dir), PASSWORD),
-                       carries(cp.ContentCommand_Unlock)),
+    "InitUpload": Sent(lambda client: client.init_upload("n", "dir", "internal", []), carries(cp.Command_InitUpload)),
+    "PatchArtifact": Sent(lambda client: client.patch_artifact(AID, name="renamed"), carries(cp.Command_PatchArtifact)),
+    "DeleteArtifact": Sent(lambda client: client.delete(AID), carries(cp.Command_DeleteArtifact)),
+    "RotateExternalPassword": Sent(lambda client: client.rotate_password(AID), carries(cp.Command_RotateExternalPassword)),
+    "CreateGrant": Sent(lambda client: client.create_grant(AID), carries(cp.Command_CreateGrant)),
+    "content Unlock": Sent(fetch(lambda client: client.api_base + "/view/" + AID), carries(cp.ContentCommand_Unlock)),
 }
 
 
-class ReplayTests(unittest.TestCase):
+def cut_off(sent: Sent, ending: Hangup | Partial, read: bool, cache: str, tls: ssl.SSLContext | None):
+    """Runs the call on a kept connection that has answered one request, and the peer ends that connection at
+    the request under test: after reading it when `read`, otherwise (a Hangup) as soon as it starts to arrive.
+
+    Returns the failure of the call, the connections its request arrived on, and the connections the peer accepted.
+    """
+    service = published(ONE_FILE, cp.Visibility.External, "set below")
+    primed = []
+    respond = interrupt(serve(service), lambda request: read and bool(primed) and sent.matches(request), ending)
+    refuse = lambda connection, answered: None if read or (connection, answered) != (0, 1 + sent.preceding) else ending
+    with Peer(respond, tls=tls, refuse=refuse) as peer:
+        origin = peer.origin if tls is None else f"https://{TLS_HOST}:{peer.port}"
+        service.content_base = origin + "/view/" + AID
+        service.override = unlock_at(origin)
+        transport = StdlibTransport()
+        client = ManureClient(origin, TOKEN, cache_dir=cache, transport=transport)
+        try:
+            with transport.keep_alive():
+                client.whoami()
+                primed.append(True)
+                sent.call(client)
+            failure = None
+        except ManureError as error:
+            failure = error
+        return failure, [request.connection for request in peer.requests[1:] if sent.matches(request)], peer.accepted
+
+
+class CutOffAssertions(unittest.TestCase):
+    """What must hold when the peer ends a kept connection at a request before answering it."""
+
+    def assert_sent_again(self, sent: Sent, ending: Hangup, read: bool, cache: str, tls: ssl.SSLContext | None) -> None:
+        """The call succeeds through one new connection; no connection carried the request twice."""
+        failure, connections, accepted = cut_off(sent, ending, read, cache, tls)
+        self.assertIsNone(failure)
+        self.assertEqual((connections, accepted), ([0, 1] if read else [1], 2))
+
+    def assert_sent_once(self, sent: Sent, ending: Hangup | Partial, read: bool, cache: str,
+                         tls: ssl.SSLContext | None) -> None:
+        """The call fails with the transport's error; the peer received the request at most once and no new connection."""
+        failure, connections, accepted = cut_off(sent, ending, read, cache, tls)
+        self.assertIsNotNone(failure)
+        self.assertEqual((failure.code, failure.message), ("unavailable", "network error"))
+        self.assertEqual((connections, accepted), ([0] if read else [], 1))
+
+
+class ReplayTests(CutOffAssertions):
     """A kept connection that the peer ends before it answers: which requests go out again, and which never do."""
-
-    def interrupted(self, call, matches, reset: bool, tmp: str):
-        """Runs `call` on a connection that has answered one request, cutting off its first matching request.
-
-        Returns the failure of the call, the connections its matching requests arrived on, and the connections accepted.
-        """
-        service = published(ONE_FILE, cp.Visibility.External, "set below")
-        primed = []
-        with Peer(interrupt(serve(service), lambda request: bool(primed) and matches(request), Hangup(reset))) as peer:
-            service.content_base = peer.origin + "/view/" + AID
-            service.override = unlock_at(peer.origin)
-            transport = StdlibTransport()
-            client = ManureClient(peer.origin, TOKEN, cache_dir=tmp, transport=transport)
-            try:
-                with transport.keep_alive():
-                    client.whoami()
-                    primed.append(True)
-                    call(client)
-                failure = None
-            except ManureError as error:
-                failure = error
-            return failure, [request.connection for request in peer.requests[1:] if matches(request)], peer.accepted
 
     def test_requests_that_are_harmless_to_repeat_are_sent_again_on_a_new_connection(self):
         with tempfile.TemporaryDirectory() as tmp:
-            for name, (call, matches) in REPLAYED.items():
-                for reset in (False, True):
-                    with self.subTest(request=name, reset=reset):
-                        failure, connections, accepted = self.interrupted(call, matches, reset, tmp)
-                        self.assertIsNone(failure)
-                        self.assertEqual((connections, accepted), ([0, 1], 2))
+            for name, sent in REPLAYED.items():
+                for ending, hangup in ENDINGS.items():
+                    for read in (True, False):
+                        with self.subTest(request=name, ending=ending, request_read=read):
+                            self.assert_sent_again(sent, hangup, read, tmp, None)
 
     def test_requests_that_change_state_are_sent_once_and_fail(self):
         with tempfile.TemporaryDirectory() as tmp:
-            for name, (call, matches) in NEVER_REPLAYED.items():
-                for reset in (False, True):
-                    with self.subTest(request=name, reset=reset):
-                        failure, connections, accepted = self.interrupted(call, matches, reset, tmp)
-                        self.assertIsNotNone(failure)
-                        self.assertEqual((failure.code, failure.message), ("unavailable", "network error"))
-                        self.assertEqual((connections, accepted), ([0], 1))
+            for name, sent in NEVER_REPLAYED.items():
+                for ending, hangup in ENDINGS.items():
+                    for read in (True, False):
+                        with self.subTest(request=name, ending=ending, request_read=read):
+                            self.assert_sent_once(sent, hangup, read, tmp, None)
 
     def test_a_request_is_not_repeated_after_part_of_its_response_arrived(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -524,18 +567,23 @@ class RedirectTests(unittest.TestCase):
                 self.assertEqual((api.wait_ended(0), elsewhere.wait_ended(0)), ("client", "client"))
 
 
-class TlsTests(unittest.TestCase):
+class TlsTests(CutOffAssertions):
     """HTTPS with the default verification: the peer's certificate is trusted through the platform's CA file setting."""
 
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
-        self.certificate, key = browser_fixtures.make_test_cert(self.directory.name, browser_fixtures.find_openssl(), [TLS_HOST])
-        self.context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        self.context.load_cert_chain(self.certificate, key)
+        self.certificate, self.key = browser_fixtures.make_test_cert(self.directory.name, browser_fixtures.find_openssl(), [TLS_HOST])
+        self.context = self.serving(ssl.TLSVersion.MAXIMUM_SUPPORTED)
         resolver = _LocalhostResolver(TLS_SUFFIX)
         resolver.__enter__()
         self.addCleanup(resolver.__exit__)
+
+    def serving(self, newest: ssl.TLSVersion) -> ssl.SSLContext:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(self.certificate, self.key)
+        context.maximum_version = newest
+        return context
 
     def trusted(self):
         # nixpkgs' OpenSSL reads NIX_SSL_CERT_FILE before SSL_CERT_FILE.
@@ -560,6 +608,58 @@ class TlsTests(unittest.TestCase):
                 self.assertEqual(answer_of(transport.request("POST", f"https://{TLS_HOST}:{peer.port}/second", {}, b"2")),
                                  (200, b"POST /second"))
                 self.assertEqual([(request.connection, request.target) for request in peer.requests], [(0, "/first"), (1, "/second")])
+
+    def test_a_kept_https_connection_the_peer_ends_before_the_response_is_reported_and_nothing_is_sent_twice(self):
+        for newest, protocol in ((ssl.TLSVersion.TLSv1_3, "TLSv1.3"), (ssl.TLSVersion.TLSv1_2, "TLSv1.2")):
+            for ending, hangup in TLS_ENDINGS.items():
+                for read in (True, False):
+                    for method, body in (("GET", None), ("PUT", b"b" * MAX_CHUNK_BYTES)):
+                        respond = interrupt(echo, lambda request: read and request.target == "/second", hangup)
+                        refuse = lambda connection, answered: None if read or (connection, answered) != (0, 1) else hangup
+                        with self.subTest(tls=protocol, ending=ending, request_read=read, method=method), \
+                                Peer(respond, tls=self.serving(newest), refuse=refuse) as peer, self.trusted():
+                            url = f"https://{TLS_HOST}:{peer.port}"
+                            transport = StdlibTransport()
+                            with transport.keep_alive():
+                                transport.request("GET", url + "/first", {}, None)
+                                with self.assertRaises(ReusedConnectionClosed):
+                                    transport.request(method, url + "/second", {}, body)
+                                self.assertEqual(answer_of(transport.request("GET", url + "/third", {}, None)), (200, b"GET /third"))
+                                self.assertEqual([(request.connection, request.target) for request in peer.requests],
+                                                 [(0, "/first")] + [(0, "/second")] * read + [(1, "/third")])
+                                self.assertEqual(peer.tls_protocols, {protocol})
+
+    def test_over_https_requests_that_are_harmless_to_repeat_are_sent_again_on_a_new_connection(self):
+        for name in ("GET", "Whoami", "FinishUpload", "largest chunk PUT"):
+            for ending, hangup in TLS_ENDINGS.items():
+                for read in (True, False):
+                    with self.subTest(request=name, ending=ending, request_read=read), self.trusted():
+                        self.assert_sent_again(REPLAYED[name], hangup, read, self.directory.name, self.context)
+
+    def test_over_https_requests_that_change_state_are_sent_once_and_fail(self):
+        for name in ("InitUpload", "DeleteArtifact"):
+            for ending, hangup in TLS_ENDINGS.items():
+                for read in (True, False):
+                    with self.subTest(request=name, ending=ending, request_read=read), self.trusted():
+                        self.assert_sent_once(NEVER_REPLAYED[name], hangup, read, self.directory.name, self.context)
+
+    def test_a_tls_failure_other_than_the_end_of_the_connection_is_an_ordinary_failure_and_nothing_is_sent_again(self):
+        answers = {"bytes that are no TLS record": b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+                   "a record that does not decrypt": b"\x17\x03\x03\x00\x20" + bytes(32)}
+        for name, data in answers.items():
+            broken = Partial(data, beneath_tls=True)
+            with self.subTest(answer=name, level="transport"), \
+                    Peer(interrupt(echo, lambda request: request.target == "/second", broken), tls=self.context) as peer, self.trusted():
+                transport = StdlibTransport()
+                with transport.keep_alive():
+                    transport.request("GET", f"https://{TLS_HOST}:{peer.port}/first", {}, None)
+                    with self.assertRaises(ManureError) as failed:
+                        transport.request("GET", f"https://{TLS_HOST}:{peer.port}/second", {}, None)
+                    self.assertIs(type(failed.exception), ManureError)
+                    self.assertEqual((failed.exception.code, failed.exception.message), ("unavailable", "network error"))
+                    self.assertEqual([(request.connection, request.target) for request in peer.requests], [(0, "/first"), (0, "/second")])
+            with self.subTest(answer=name, level="client, GET"), self.trusted():
+                self.assert_sent_once(REPLAYED["GET"], broken, True, self.directory.name, self.context)
 
     def test_an_untrusted_certificate_is_refused_before_any_request(self):
         with Peer(echo, tls=self.context) as peer:

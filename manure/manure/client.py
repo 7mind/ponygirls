@@ -1161,6 +1161,10 @@ class ReusedConnectionClosed(ManureError):
     so the request may or may not have taken effect. The transport has closed the
     connection; only a caller that knows the request is harmless to repeat sends
     it again.
+
+    Over TLS this is a peer that ends the connection, with or without its closure
+    alert, or resets it. A TLS failure of another kind (a record that does not
+    decrypt, a certificate that does not verify) is an ordinary failure.
     """
 
     def __init__(self):
@@ -1322,6 +1326,11 @@ class StdlibTransport:
             try:
                 resp = conn.exchange(method.upper(), path, data, send_headers)
             except ConnectionError:
+                # Over TLS as well. A peer's closure alert, the end of its TCP stream and a reset arrive here as
+                # end of stream (RemoteDisconnected), ConnectionResetError or BrokenPipeError: observed with
+                # CPython 3.12 to 3.14 on OpenSSL 3.5, TLS 1.2 and 1.3. ssl.SSLEOFError did not occur: it takes a
+                # write after the TLS layer has read the end of the stream, and such a connection is not reused.
+                # Any other ssl.SSLError is a failed session, not a closed connection.
                 if reused and conn.unanswered:
                     raise ReusedConnectionClosed()
                 raise ManureError("unavailable", "network error")
