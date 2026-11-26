@@ -410,10 +410,16 @@ try {
         assert.equal(await page.getByRole("region", { name: "History", exact: true }).getByText("1 revision", { exact: true }).count(), 1);
         assert.equal(await page.locator('[aria-label="Incoming links"]').getByText("No record links here.", { exact: true }).count(), 1);
       };
+      // The record left is opened from a list, once the live connection is verified. A record page that is already open
+      // at that first verification reads its record again (an announcement after the page opened), and its history and
+      // incoming links with it: whether that second pair is issued before the page is left would be a matter of timing.
+      await page.goto(`${base}/#/browse`);
+      await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
       // The history and incoming links of the record left answer after the next record is shown.
       await page.route("**/api/v1/history", hold(about(left)));
       await page.route("**/api/v1/search", hold(about(left)));
-      await record(page, left);
+      await visit(left);
+      await page.locator('[data-record="ready"]').waitFor();
       await visit(next);
       await page.getByRole("region", { name: "History", exact: true }).getByText("1 revision", { exact: true }).waitFor();
       await page.locator('[aria-label="Incoming links"]').getByText("No record links here.", { exact: true }).waitFor();
