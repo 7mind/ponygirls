@@ -1,6 +1,7 @@
 package manure
 
 import cats.effect.{Deferred,IO,Resource}
+import cats.effect.std.Semaphore
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import org.http4s.{Header,Method,Request,Uri}
@@ -10,6 +11,7 @@ import ponygirls.retrieval.UnavailableReason
 import ponygirls.auth.{AccountJson,CredentialGate,FastPasswordHasher,IndexingPolicy,PasswordHasher,Secrets,Totp}
 import java.nio.file.Files
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.duration.*
 import munit.FunSuite
 
@@ -24,14 +26,32 @@ final class HttpSuite extends FunSuite:
     r
   private val gate = CredentialGate.resource.use(IO.pure).unsafeRunSync()
   private def app(f: BackendFixture,adjust: Config => Config = c => c,hasher: PasswordHasher = FastPasswordHasher): Http =
+    adapter(f,f.metadata,f.artifacts,adjust,hasher)
+  private def adapter(f: BackendFixture,metadata: Metadata,artifacts: Artifacts,adjust: Config => Config,hasher: PasswordHasher): Http =
     val config = adjust(f.config.copy(apiOrigin=ApiOrigin.parse("http://127.0.0.1:47329"),port=47329))
     val engine = SearchProjection.retrieval(config)
     val projection = new SearchProjection(config,engine)
     val auth = new Auth(config.users,config.accounts)
     val search = new Search(f.database.get,f.lease,config,auth,f.clock,engine,projection,None)
-    val accounts = new Accounts(f.metadata,auth)
-    new Http(config,f.artifacts,new Catalogue(f.artifacts,config.limits,f.clock),auth,f.clock,search,accounts,
-      new AccountPlane(f.metadata,auth,accounts,gate,hasher,f.clock))
+    val accounts = new Accounts(metadata,auth)
+    new Http(config,artifacts,new Catalogue(artifacts,config.limits,f.clock),auth,f.clock,search,accounts,
+      new AccountPlane(metadata,auth,accounts,gate,hasher,f.clock))
+  /** The adapter over accounts and artifacts that count the metadata transactions they start (each one pooled
+    * database transaction); `afterCommit` follows the commit of the n-th of them. */
+  private final class Counted(val http: Http,transactions: AtomicInteger):
+    /** The response of `request`, its body drained, and the transactions it took. */
+    def run(request: Request[IO]): IO[(org.http4s.Response[IO],Array[Byte],Int)] = for
+      _ <- IO(transactions.set(0))
+      response <- http.app.run(request)
+      bytes <- response.body.compile.to(Array)
+    yield (response,bytes,transactions.get())
+  private def counted(f: BackendFixture,afterCommit: Int => IO[Unit] = _ => IO.unit): IO[Counted] = Semaphore[IO](1L).map { exclusion =>
+    val transactions = new AtomicInteger
+    val metadata = new Metadata:
+      def transaction[A](body: MetadataTxn => A): IO[A] =
+        IO(transactions.incrementAndGet()).flatMap(n => f.metadata.transaction(body).flatTap(_ => afterCommit(n)))
+    new Counted(adapter(f,metadata,new Artifacts(metadata,f.payloads,f.config.limits,f.clock,f.auth,f.lease,exclusion,f.faults),c => c,FastPasswordHasher),transactions)
+  }
   private def command(c: wire.Command,token: Option[String],origin: Option[String] = None): Request[IO] =
     request(Method.POST,"/api/current",token,origin).withEntity(CurrentWire.encode(wire.ClientEnvelope.codecJson,
       wire.ClientEnvelope(UUID.fromString("01234567-89ab-4def-8123-456789abcdef"),"1.0.0",c)).noSpaces)
@@ -52,6 +72,29 @@ final class HttpSuite extends FunSuite:
     _ <- IO(assertEquals(cookie.status.code,401))
     legacy <- h.app.run(command(wire.Command.Login(f.token),None,Some("http://127.0.0.1:47329")))
     _ <- IO { assertEquals(legacy.status.code,400); assert(!legacy.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
+  yield () }}
+  test("the account read authenticates its session cookie in its own transaction; any other credential is refused as before") { run { (f,_) => for
+    c <- counted(f)
+    cookie <- browserCookie(c.http)
+    account = request(Method.GET,"/api/account/v1")
+    (read,body,transactions) <- c.run(account.putHeaders(Header.Raw(CIString("Cookie"),cookie)))
+    (bearer,_,bearerTransactions) <- c.run(request(Method.GET,"/api/account/v1",Some(f.token)))
+    (ambiguous,_,ambiguousTransactions) <- c.run(request(Method.GET,"/api/account/v1",Some(f.token)).putHeaders(Header.Raw(CIString("Cookie"),cookie)))
+    (anonymous,_,anonymousTransactions) <- c.run(account)
+    _ <- new Accounts(f.metadata,f.auth).logout(cookie.split("=",2)(1))
+    (stale,_,staleTransactions) <- c.run(account.putHeaders(Header.Raw(CIString("Cookie"),cookie)))
+    _ <- IO {
+      assertEquals(read.status.code,200)
+      assertEquals(CurrentWire.parse(Exact.string(body)).hcursor.downField("user").get[String]("login").toOption,Some("owner"))
+      assertEquals(read.headers.headers.filter(_.name == CIString("Set-Cookie")).map(_.value.takeWhile(_ != ';')),List(cookie))
+      // A bearer is looked up and then refused; nothing is looked up for two credentials or none.
+      assertEquals((bearer.status.code,bearerTransactions),(401,1))
+      assertEquals((ambiguous.status.code,ambiguousTransactions),(400,0))
+      assertEquals((anonymous.status.code,anonymousTransactions),(401,0))
+      assertEquals((stale.status.code,staleTransactions),(401,1))
+      Vector(bearer,ambiguous,anonymous,stale).foreach(response => assert(!response.headers.headers.exists(_.name == CIString("Set-Cookie"))))
+      assertEquals(transactions,1)
+    }
   yield () }}
   test("domain dispatch rejects a session logged out while its Whoami body is held") { run { (f,h) =>
     val deadline = 10.seconds

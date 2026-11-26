@@ -77,7 +77,8 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       Require(config.trustedProxies.exists(_.contains(peer(req))) && header(req,"X-Forwarded-Proto").contains("https"), "tls-required")
     ctx
   private case class Credentials(identity: Option[Identity],kind: String,raw: Option[String])
-  private def credentials(req: Request[IO],ctx: Context,publicAssets: Boolean): IO[Credentials] = IO {
+  /** The one secret a request presents, with its kind (`bearer`, `cookie` or none), before any lookup. */
+  private def presentedSecret(req: Request[IO],ctx: Context): (Option[String],String) =
     val authorization = header(req,"Authorization")
     val cookie = Cookies.credential(header(req,"Cookie"),Cookies.sessionName(config.loopbackDev,ctx.insecure))
     Require(!(authorization.nonEmpty && cookie.nonEmpty), "ambiguous-credentials")
@@ -85,7 +86,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       Require(value.startsWith("Bearer "), "unauthorized"); value.substring(7)
     }
     (bearer.orElse(cookie),if bearer.nonEmpty then "bearer" else if cookie.nonEmpty then "cookie" else "")
-  }.flatMap { (secret,kind) =>
+  private def credentials(req: Request[IO],ctx: Context,publicAssets: Boolean): IO[Credentials] = IO(presentedSecret(req,ctx)).flatMap { (secret,kind) =>
     secret match
       case None => IO.pure(Credentials(None,kind,None))
       case Some(_) if kind == "cookie" && publicAssets => IO.pure(Credentials(None,"",None))
@@ -232,15 +233,21 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     else if IndexingAccountEndpoint.route(req.method.name,path.stripPrefix(accountPrefix)).nonEmpty then
       accountOperation(req,ctx)(plane.handleIndexing(config.indexingPolicy,_))
     else if auth.imperative.nonEmpty && !declarativeAccountPath(req.method,path) then accountOperation(req,ctx)(plane.handle)
+    else if req.method == Method.GET && path == accountPrefix then IO(presentedSecret(req,ctx)).flatMap {
+      // The read authenticates the session in its own transaction. The mutations below resolve it first, to key their
+      // throttle before the body.
+      case (Some(secret),"cookie") => accounts.read(secret).map { (user,tokens) =>
+        json(AccountJson.account(user,tokens,Vector("api"))).putHeaders(raw("Set-Cookie",sessionCookie(ctx,secret,false)))
+      }
+      case _ => credentials(req,ctx,false) *> IO.raiseError(DomainError("unauthorized"))
+    }
     else credentials(req,ctx,false).flatMap { c =>
       IO {
         Require(c.kind == "cookie", "unauthorized")
         required(c)
         c.raw.getOrElse(throw DomainError("unauthorized"))
       }.flatMap { secret =>
-        val result = if req.method == Method.GET && path == "/api/account/v1" then
-          accounts.read(secret).map { (user,tokens) => json(AccountJson.account(user,tokens,Vector("api"))) }
-        else if req.method == Method.POST && path == "/api/account/v1/logout" then
+        val result = if req.method == Method.POST && path == "/api/account/v1/logout" then
           IO(mutation(req,ctx,c)) *> emptyAccountBody(req) *> accounts.logoutAccount(secret,accountActors(req)).as(
             json(io.circe.Json.obj("ok" -> io.circe.Json.True)).putHeaders(raw("Set-Cookie",sessionCookie(ctx,"",true))))
         else if req.method == Method.POST && path == "/api/account/v1/tokens" then
