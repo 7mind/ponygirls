@@ -29,11 +29,12 @@ worktree lookup. It does not load a project's `sgconfig.yml` or custom native
 grammars.
 
 ast-grep takes a file's language from its name, also for a file named as
-`path`: `python` covers `.py`, `.pyi`, `.bzl` and `*.bazel` but not a plain
-`BUILD`, and `ts` and `tsx` are separate languages. The result says when
-nothing was searched: no file selected, files that ast-grep skipped unread
-(empty, unreadable, not UTF-8 or too large; a named file gets ast-grep's
-reason), or a named file whose name belongs to another language or to none.
+`path`: `python` covers `.py`, `.py3`, `.pyi`, `.bzl` and `*.bazel` but not a
+plain `BUILD`, and `ts` and `tsx` are separate languages. The result says when
+nothing was searched: no file was selected, ast-grep skipped every selected
+file unread (empty, unreadable, not UTF-8 or too large; a named file gets
+ast-grep's reason), or the name of a named file belongs to another language or
+to none. A scan that skipped only some files says how many.
 Otherwise an empty result shows how the pattern parsed and, for a one-line
 pattern, flags an `ERROR` node inside it; an unclosed bracket is not detected.
 A pattern that parses still says nothing about files with syntax errors: try
