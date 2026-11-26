@@ -13,7 +13,8 @@ R-a) → OPS (R-f) → ANNOT (R-g) → POOL (R-d); R-f and R-g are specified els
 JdbcTransactionEngine.scala:22-51) opens one DriverManager connection per transaction (`connect()` :79-90; password file
 read per open :84; connect/login/socket timeouts in whole seconds rounded up, `tcpKeepAlive` :80-88), runs `configure()`
 (:64-77: one autocommit `set_config(name, least(current,bound), false)` over `pg_settings` for statement/lock/idle
-timeouts, tighten-only), then `setAutoCommit(false)`, callback, commit/rollback; every `SQLException` becomes
+timeouts, tighten-only; since 2026-11-26 the current value is `current_setting(name)`, §5 per-borrow reset), then
+`setAutoCommit(false)`, callback, commit/rollback; every `SQLException` becomes
 `JdbcFailure("database-unavailable", sqlState)` (:49,:58-62; JdbcDatabase.scala:10). Facades: `JdbcDatabase`
 (JdbcDatabase.scala:16-27, async `Admission`, Admission.scala:22-58) and `BlockingJdbcDatabase` (BlockingJdbcDatabase.
 scala:10-53, fair semaphore; `admission-full|admission-timeout|runtime-closed`). `JdbcLimits` (JdbcConfig.scala:9-26: 8
@@ -383,6 +384,18 @@ supersedes SMALL's guarantee, its shutdown bound and `boundedTransaction` above;
   `search_path`, temp tables, session locks, LISTEN, cursors, prepared statements (P6); pgjdbc re-prepares (P5/P16);
   Hikari resets isolation/read-only/auto-commit/network timeout on return. Added cost ≈ +0.1–0.25 ms p50 per transaction
   at JDBC level (P17); the RD unit measures a hot request path before/after (§7 D11).
+  *Amended 2026-11-26: `configure` reads `current_setting`, not `pg_settings`.* P17 lists no pooled configuration
+  without `configure`: its cost was not isolated. It read the three current values from `pg_settings`, which is the
+  set-returning `pg_show_all_settings()`: every setting is materialised for three rows. pgbench on production
+  PostgreSQL 18.7 (2026-11-26; 1 client, extended protocol, local socket, 4 s per script), per transaction: `SELECT 1`
+  0.033 ms; `DISCARD ALL` + `SELECT 1` 0.061 ms; that reset + `SELECT 1` 1.334–1.557 ms, paid by each of a request's 3–12
+  pooled transactions (4–18 ms). `configure` now takes each current value as `(extract(epoch from
+  current_setting(name)::interval)*1000)::bigint` (`current_setting` prints these millisecond settings with the largest
+  unit that divides the value exactly — `0`, `1500ms`, `30s`, `1min`, `1h`, `2d` — and each form is interval input); the
+  same script then takes 0.140 ms. Unchanged: `DISCARD ALL` first, one execution, tighten-only from the session's value
+  at that borrow, the reset as the liveness check. `ResetSuite`: the bounds' plan scans only their VALUES list; for login
+  defaults in every printed unit they leave what the `pg_settings` statement left; a default reloaded under a pooled
+  session is what its next borrow is tightened from.
 - **Errors and HTTP (B7).** Bounded waits only; named failures: `RuntimeFailure(admission-full|admission-timeout|
   runtime-closed)`, `JdbcFailure("connection-unavailable", _)`. Haystack (haystack http/Http.scala:66-89) and Manure
   (Http.scala:127-133, Retry-After 5) already answer 503 `unavailable` for these. Chronicle REST `handle` (Http.scala:

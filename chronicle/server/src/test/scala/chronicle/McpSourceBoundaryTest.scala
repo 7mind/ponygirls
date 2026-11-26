@@ -228,7 +228,7 @@ class McpSourceBoundaryTest extends munit.FunSuite {
     assert(boundaries.nonEmpty)
     boundaries.foreach(events => assert(events.map(_._2).grouped(3).forall(_==List("reset","begin","end")),events.toString))
     statements.foreach { sql =>
-      if(sql==Fixtures.runtimeSetupSql) assert(sql.contains("FROM pg_settings"))
+      if(sql==Fixtures.runtimeSetupSql) assert(sql.contains("current_setting(v.name)"))
       else assert(!sql.contains(" AS source_bytes") && !sql.startsWith("DECLARE") && !sql.startsWith("FETCH") && !sql.contains("statement_timeout"))
     }
     assert(!f.probe.observations.exists { case _: SourceEvent.Consumed => true; case _ => false })

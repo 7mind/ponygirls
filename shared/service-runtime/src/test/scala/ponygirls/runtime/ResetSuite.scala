@@ -2,11 +2,17 @@ package ponygirls.runtime
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import io.circe.Json
+import java.lang.reflect.{InvocationHandler, InvocationTargetException, Method, Proxy}
 import java.nio.file.Files
-import java.sql.{Connection, DriverManager}
+import java.sql.{Connection, DriverManager, PreparedStatement}
 import java.util.Properties
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
 import munit.FunSuite
+import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.*
+import scala.jdk.CollectionConverters.*
 import scala.util.Using
 
 // Behavioral/Active/Good-Communication: the bounds of the per-borrow reset against real PostgreSQL (restart-robustness
@@ -28,8 +34,8 @@ final class ResetSuite extends FunSuite {
     row(c, settings.map(name => s"(SELECT setting::bigint FROM pg_settings WHERE name = '$name')").mkString("SELECT ", ", ", ""))(r => settings.indices.toList.map(i => r.getLong(i + 1)))
   private def printed(c: Connection): List[String] =
     row(c, settings.map(name => s"current_setting('$name')").mkString("SELECT ", ", ", ""))(r => settings.indices.toList.map(i => r.getString(i + 1)))
-  /** Reference for what the reset must leave: the tighten-only bounds computed from `pg_settings.setting` (plain
-    * milliseconds), one `bigint` parameter per timeout. */
+  /** Reference for what the reset must leave: its bounds as it computed them from `pg_settings.setting` (plain
+    * milliseconds) before it read `current_setting`; one `bigint` parameter per timeout. */
   private val reference = """SELECT set_config(s.name,least(coalesce(nullif(s.setting::bigint,0),v.bound),v.bound)::text,false)
       FROM pg_settings s JOIN (VALUES ('statement_timeout',?::bigint),('lock_timeout',?::bigint),
       ('idle_in_transaction_session_timeout',?::bigint)) v(name,bound) ON s.name=v.name"""
@@ -51,6 +57,47 @@ final class ResetSuite extends FunSuite {
     while (!condition) { assert(System.nanoTime() < bound, what); Thread.onSpinWait() }
   }
 
+  private def proxy[T](kind: Class[T], target: T)(intercept: (Method, Array[AnyRef]) => Option[AnyRef]): T =
+    kind.cast(Proxy.newProxyInstance(kind.getClassLoader, Array[Class[?]](kind), new InvocationHandler {
+      def invoke(self: AnyRef, method: Method, raw: Array[AnyRef]): AnyRef = {
+        val args = Option(raw).getOrElse(Array.empty[AnyRef])
+        try intercept(method, args).getOrElse(method.invoke(target, args*)) catch { case e: InvocationTargetException => throw e.getCause }
+      }
+    }))
+  /** A statement prepared on a recorded connection, with the values bound to it by `setLong` and its executions. */
+  private final class Prepared(val sql: String) { val bound = TrieMap.empty[Int, Long]; val executions = new AtomicInteger }
+  /** Real connections that record every statement prepared on them: the engine's own, before a callback prepares any. */
+  private final class Recording extends JdbcConnectionFactory {
+    val prepared = new ConcurrentLinkedQueue[Prepared]
+    def open(url: String, properties: Properties): Connection = {
+      val c = DriverManager.getConnection(url, properties)
+      proxy(classOf[Connection], c) { (method, args) =>
+        if (method.getName != "prepareStatement") None else {
+          val recorded = new Prepared(String.valueOf(args(0)))
+          prepared.add(recorded)
+          Some(proxy(classOf[PreparedStatement], method.invoke(c, args*).asInstanceOf[PreparedStatement]) { (m, a) =>
+            if (m.getName == "setLong") recorded.bound.put(a(0).asInstanceOf[Integer].intValue, a(1).asInstanceOf[java.lang.Long].longValue)
+            if (m.getName.startsWith("execute")) recorded.executions.incrementAndGet()
+            None
+          })
+        }
+      }
+    }
+  }
+  /** The scan nodes of the plan of `select` with `bound` as its parameters: each node's type and what it scans (a
+    * relation, a function, a CTE), if anything. */
+  private def scans(c: Connection, select: String, bound: collection.Map[Int, Long]): List[String] = {
+    def nodes(plan: Json): List[Json] = plan :: plan.hcursor.downField("Plans").focus.flatMap(_.asArray).toList.flatten.flatMap(nodes)
+    def text(node: Json, field: String): Option[String] = node.hcursor.downField(field).focus.flatMap(_.asString)
+    val explained = Using.resource(c.prepareStatement("EXPLAIN (FORMAT JSON) " + select)) { p =>
+      bound.foreach((index, value) => p.setLong(index, value))
+      Using.resource(p.executeQuery()) { r => r.next(); io.circe.parser.parse(r.getString(1)).toTry.get }
+    }
+    nodes(explained.asArray.get.head.hcursor.downField("Plan").focus.get).flatMap { node =>
+      text(node, "Node Type").filter(_.endsWith("Scan")).map(_ + List("Relation Name", "Function Name", "CTE Name").flatMap(text(node, _)).headOption.fold("")(" on " + _))
+    }
+  }
+
   /** A login default in milliseconds and its text in `current_setting`: PostgreSQL prints the largest unit that divides the
     * value exactly. */
   private final case class Default(millis: Long, printed: String)
@@ -69,6 +116,17 @@ final class ResetSuite extends FunSuite {
   private val boundSets = List(List(30.seconds, 35.seconds, 60.seconds), List(1.hour, 1.hour, 1.hour))
   private val role = "reset_probe"
   private val rolePassword = "reset-probe-password"
+
+  test("the reset is one execution of DISCARD ALL and then its bounds, which scan nothing but their own VALUES list: not pg_settings, whose function pg_show_all_settings materialises every setting for the three rows") { configured { config =>
+    val recording = new Recording
+    Using.resource(BlockingJdbcDatabase.withConnectionFactory(config.copy(limits = config.limits.copy(maxConnections = 1)), recording)) { db =>
+      db.transaction(_ => ())
+      val prepared = recording.prepared.asScala.toList
+      val statements = prepared.flatMap(_.sql.split(';').map(_.trim))
+      assertEquals((prepared.map(_.executions.get), statements.size, statements.head, statements.last.takeWhile(_ != ' ')), (List(1), 2, "DISCARD ALL", "SELECT"), statements.toString)
+      assertEquals(db.transaction(c => scans(c, statements.last, prepared.head.bound)), List("Values Scan"))
+    }
+  } }
 
   test("the reset leaves each timeout at the smaller of its bound and the session's login default, a disabled one at the bound: what the pg_settings reference leaves, for defaults in every unit PostgreSQL prints, set for the role and for the role in the database, under every IntervalStyle") { configured { config =>
     val password = Files.createTempFile("reset-probe-", ".txt")
@@ -93,7 +151,7 @@ final class ResetSuite extends FunSuite {
           assertEquals(left, login.zip(bounds).map((default, bound) => if (default.millis == 0) bound.toMillis else default.millis.min(bound.toMillis)), clue)
         }
         for (bounds <- boundSets; source <- sources; login <- logins) check(bounds, source, login, "postgres")
-        // Whatever the session's IntervalStyle.
+        // The reset reads the default's text as an interval: under whatever IntervalStyle of the session.
         for (style <- List("postgres_verbose", "sql_standard", "iso_8601"); source <- sources)
           check(boundSets.last, source, List(Default(120000, "2min"), Default(1500, "1500ms"), Default(172800000, "2d")), style)
       } finally execute(admin, s"DROP ROLE IF EXISTS $role")

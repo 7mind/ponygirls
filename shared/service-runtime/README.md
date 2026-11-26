@@ -217,7 +217,13 @@ all eight fields under **`databaseLimits`**: `maxConnections`, `maxQueued`,
 optional (see `DatabaseWait` above). Effective
 PostgreSQL statement/lock/idle timeouts are the minimum of required policy and any
 stricter existing role/database setting at login, applied by one fully consumed bound
-`pg_settings` setup query after `DISCARD ALL` (the reset) at each borrow, before the caller transaction. This fixed setup is
+setup query after `DISCARD ALL` (the reset) at each borrow, before the caller transaction. The query reads each
+timeout's current value in the session as `current_setting(name)`, whose text (PostgreSQL prints the largest unit that
+divides the milliseconds exactly: `0`, `1500ms`, `30s`, `1min`, `1h`, `2d`) it parses as an interval. It does not read
+`pg_settings`: that view is the function `pg_show_all_settings()`, which materialises every setting for the three rows.
+pgbench on production PostgreSQL 18.7 (2026-11-26; 1 client, extended protocol, local socket, 4 s per script) measured
+per transaction `SELECT 1` 0.033 ms, `DISCARD ALL` + `SELECT 1` 0.061 ms, the reset reading `pg_settings` + `SELECT 1`
+1.334-1.557 ms, the reset reading `current_setting` + `SELECT 1` 0.140 ms. This fixed setup is
 explicitly accounted in SQL-observation tests; domain query work/isolation and
 admission/cursor/deadline contracts are not silently filtered or relaxed.
 

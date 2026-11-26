@@ -53,9 +53,8 @@ object Fixtures {
     try body finally { label(PassageFormat.ContextAwareProblems); db.initialize() }
   }
   // Exact accounted infrastructure statement (the pool's reset at each borrow), not a wildcard SQL exclusion.
-  val runtimeSetupSql = """DISCARD ALL; SELECT set_config(s.name,least(coalesce(nullif(s.setting::bigint,0),v.bound),v.bound)::text,false)
-      FROM pg_settings s JOIN (VALUES ('statement_timeout',?::bigint),('lock_timeout',?::bigint),
-      ('idle_in_transaction_session_timeout',?::bigint)) v(name,bound) ON s.name=v.name"""
+  val runtimeSetupSql = "DISCARD ALL; SELECT set_config(v.name,least(coalesce(nullif((extract(epoch from current_setting(v.name)::interval)*1000)::bigint,0),v.bound),v.bound)::text,false) " +
+    "FROM (VALUES ('statement_timeout',?::bigint),('lock_timeout',?::bigint),('idle_in_transaction_session_timeout',?::bigint)) v(name,bound)"
   val databasePassword = "chronicle-test-password"
   // Preserve the existing 30s public archive statement budget and >5s renewal
   // waits. Infrastructure lock/idle bounds must not silently preempt those APIs.

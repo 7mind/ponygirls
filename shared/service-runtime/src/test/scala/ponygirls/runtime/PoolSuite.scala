@@ -689,7 +689,7 @@ final class PoolSuite extends FunSuite {
       lock.take()
       val start = Deadline.now; val deadline = start + 800.millis
       val tried = attempt(executor)(pool.transactionWithin(deadline)(_ => fail("a stalled reset must not reach the callback")))
-      lockWait(admin, "SELECT set_config(s.name")
+      lockWait(admin, "SELECT set_config(v.name")
       val (outcome, ended) = tried.get(30, TimeUnit.SECONDS)
       assertEquals(outcome.failed.toOption.collect { case JdbcFailure(code, _) => code }, Some("connection-unavailable"))
       assert(ended <= deadline + allowance && ended < start + cap, s"ended ${ended - start} after the start")
