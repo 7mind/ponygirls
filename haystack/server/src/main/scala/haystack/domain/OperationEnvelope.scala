@@ -15,10 +15,6 @@ object OperationDigest {
   val Format = "haystack-op-scala-v1"
   val ApiVersion = "v1"
 
-  def canonicalBytes(key: ItemKey, expectedRevision: Long, documentCanonical: String): Array[Byte] = {
-    if (expectedRevision < 0) throw Fault("bad-envelope", "expected_revision must be nonnegative")
-    canonicalBytes(key, expectedRevision, DocumentCodec.parseRaw(documentCanonical))
-  }
   def canonicalBytes(key: ItemKey, expectedRevision: Long, document: LosslessJson.Value): Array[Byte] = {
     if (expectedRevision < 0) throw Fault("bad-envelope", "expected_revision must be nonnegative")
     val canonical = LosslessJson.encode(document)
@@ -26,9 +22,6 @@ object OperationDigest {
       JsonText.quote(ApiVersion) + "," + JsonText.quote(key.qualified) + "," + expectedRevision + "," + canonical + "]")
       .getBytes(StandardCharsets.UTF_8)
   }
-  def compute(key: ItemKey, expectedRevision: Long, documentCanonical: String): OperationDigest =
-    OperationDigest(Format, sha256(canonicalBytes(key, expectedRevision, documentCanonical)))
-
   def compute(key: ItemKey, expectedRevision: Long, document: LosslessJson.Value): OperationDigest =
     OperationDigest(Format, sha256(canonicalBytes(key, expectedRevision, document)))
 

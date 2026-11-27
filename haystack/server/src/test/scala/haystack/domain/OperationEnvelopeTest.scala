@@ -9,7 +9,7 @@ class OperationEnvelopeTest extends munit.FunSuite {
     OperationEnvelope.accept(key, raw, revision, id)
 
   test("exact independently hashed current-format golden vector") {
-    val raw = "{\"x\":0.10,\"n\":9007199254740993}"
+    val raw = DocumentCodec.parseRaw("{\"x\":0.10,\"n\":9007199254740993}")
     val expected = "[\"haystack-op-scala-v1\",\"lossless-json-v1\",\"v1\",\"p:golden\",0,{\"n\":9007199254740993,\"x\":0.10}]"
     assertEquals(new String(OperationDigest.canonicalBytes(ItemKey("p", "golden"), 0L, raw), StandardCharsets.UTF_8), expected)
     assertEquals(OperationDigest.compute(ItemKey("p", "golden"), 0L, raw),
