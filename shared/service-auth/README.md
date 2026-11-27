@@ -53,19 +53,21 @@ References to password/hash files are runtime secrets, never Nix-store values.
 
 HTTP-neutral transport and configuration rules; nothing in the package imports an
 HTTP library. Request-time rules throw `BoundaryRefused(Refusal)`; configuration
-loaders return `Either[ConfigRefusal, A]`. A service maps each refusal to its own
+loaders return `Either[ConfigRefusal, A]`. An `OriginPolicy` from `deferred` checks a
+configured origin only when a request check first needs it and then throws
+`ConfigRefused`; one from `load` (or `checked`) has validated every origin. A service maps each refusal to its own
 failure with an exhaustive match, so a refusal added here cannot fall through to a
 generic 503. Refusals and failures never carry a presented secret.
 
 | Mechanism | What the service passes |
 |---|---|
 | `CanonicalOrigin`, `RequestAuthority` | — (canonical `scheme://host[:port]` origins; the authority a `Host` names) |
-| `OriginPolicy.load`, `secureCookie`, `validateTransport`, `csrf`, `accountTransport` | allowed host names, allowed origins, opted-in plain-HTTP origins, `cookieSecure` |
+| `OriginPolicy.load` or `deferred`, `secureCookie`, `validateTransport`, `csrf`, `accountTransport` | allowed host names, allowed origins, opted-in plain-HTTP origins, `cookieSecure` (build the policy once per configuration value) |
 | `SessionCookie.serialize`, `select` | cookie name, `SecureAttribute` (`Last` or `BeforeMaxAge`), `CookieValue` (`Trimmed` or `Exact`) |
 | `CredentialSelection.resolve` | `SessionCookies` (secure and plain names, value reading), `CredentialAccept` per route, `mutate` |
 | `DeclaredUsers.load` | parsed users (`DeclaredUserConfig`), `DeclaredIdRules`, `DigestRead` (`Snapshot` or `PerCheck`), `DigestReader` (`Stream` or `Bounded`) |
-| `ConfiguredTokens` | — (lookup by secret or digest; listing with `source: "configured"` and scope `api`) |
-| `ImperativeConfig.settings` | service name, parsed `accounts` settings, the declared directory |
+| `ConfiguredTokens` | — (lookup by secret; liveness of a persisted grant by user id, token id and digest; listing with `source: "configured"` and scope `api`) |
+| `ImperativeConfig.settings` | service name, parsed `accounts` settings, the declared directory, `KeyFilePolicy` (`LiteralStorePrefix` or `NormalizedPath`) |
 
 `OriginPolicy` is the origin model of Haystack: host names admitted on any port,
 an Origin of the request's own security class, a cookie write proven by an allowed
