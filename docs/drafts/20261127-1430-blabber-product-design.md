@@ -34,8 +34,10 @@ Evidence tags:
   `13226cf1`; `product:` on `product/blabber` at `2c444ad4`; `refactor:` on `refactor/account-http` at
   `58c40b55`. Every other path is on `main`; line numbers of such paths are those of `feab9a9b`.
 - **[run]** observed: in the pilot's suites or in its run with real Pi sessions, as recorded in section 14 of the
-  draft; or, for this revision, in a check, suite or run that the orchestrator's log or a README records, with the
-  commit.
+  draft; or, for this revision, in a named run that the orchestrator's log or a README records, with its commit
+  and whose run it was: a unit's **builder** (its own run, often the inner loop) or the **orchestrator** (a check
+  it ran, or a verification of record). A requirement of a unit not yet built is worded as a requirement, never as
+  a result.
 - **[survey]** stated by one of the four surveys or by the survey of the account code
   (`account-glue-dedup.md`, in the orchestrator's working directory) and not checked by me.
 - Untagged text is a proposal of this document.
@@ -87,10 +89,10 @@ account code of the other services; they are listed because they were decided du
 | Q209 | Who moderates Blabber, and may that person read direct messages between other accounts? | The accounts administrators are Blabber's administrators: they see all rooms, remove participants and archive rooms; they can read other accounts' direct messages only after turning on an explicit switch in the dashboard | Sections 4.8, 5.6 and 9.10. |
 | Q210 | How should an agent treat a message that a person writes in the dashboard? | A message from the session's own owner is presented as coming from its user and may change its task | The client frames such a message as its user's; sections 5.2, 10.1 and 12. |
 | Q211 | Land the server in `main` early (switched off by default), or everything in one merge at the end? | One merge at the end; `main` is merged into the product branch regularly meanwhile | No first landing (section 13.5). |
-| Q212 | About 20 "must not" assertions in the Nix checks of Haystack, Manure and Chronicle cannot fail. Fix them now, as a change of its own? | Fix them now on a branch of its own, run `scripts/verify all`, report what turns red, and merge only if everything passes | Done: 22 assertions in 8 files corrected, `scripts/verify all` passed, merged into `main` as `64b64d07` **[run]**. |
+| Q212 | About 20 "must not" assertions in the Nix checks of Haystack, Manure and Chronicle cannot fail. Fix them now, as a change of its own? | Fix them now on a branch of its own, run `scripts/verify all`, report what turns red, and merge only if everything passes | Done: 22 assertions in 8 files corrected, `scripts/verify all` passed, merged into `main` as `64b64d07` **[run]** (the orchestrator's verification of record on `64b64d07`). |
 | Q213 | Does a message you write in the dashboard count as "your next prompt" for a session's safety limits? | For the budget only: it restores the wake budget, but a session you aborted or that restarted uncleanly still waits for a prompt in its terminal, and the dashboard tells you so | Sections 5.2 and 10.1; the contract carries the states (rulings R24, R25). |
 | Q214 | The comparison of Haystack, Manure and Chronicle found behaviour that looks like defects. Which of them should be fixed, after the move to shared code? | Fix the three security-relevant ones (1 to 3), each as its own change with a failing test first; record the minor ones | Three fixes after the refactor's stages (section 4.9); not started. The minor ones are recorded in `refactor:docs/drafts/20261127-1800-account-http-deduplication.md`. |
-| Q215 | Four more assertions cannot fail, for a different reason than the ones just fixed. Fix them the same way? | Fix all four now, as before: a branch of its own, `scripts/verify all` and the on-demand VM check, report what turns red, merge only if everything passes | Built; `scripts/verify all` passed; the on-demand VM check failed to boot once under load, then passed on the rebased tree `4a8485bc` **[run]** (section 14). Not landed: held for Q220. |
+| Q215 | Four more assertions cannot fail, for a different reason than the ones just fixed. Fix them the same way? | Fix all four now, as before: a branch of its own, `scripts/verify all` and the on-demand VM check, report what turns red, merge only if everything passes | Built; `scripts/verify all` passed; the on-demand VM check did not boot in the builder's run on `85a968e1` under load, then passed in the orchestrator's verification of record on the rebased tree `4a8485bc` **[run]** (section 14). Not landed: held for Q220. |
 | Q216 | Account-code deduplication and its three fixes: land each stage on `main` when it is verified, or hold all of it until Blabber's final merge? | Land each stage and each fix on `main` when it is verified and reviewed; I am told at each landing | The refactor reaches the product branch through `main` (section 13.5). Stages 1 and 2 are verified; their landings wait for Q220. |
 | Q217 | Do you confirm the dashboard mockup and the Pi status pane as shown? | Confirmed as shown, with the recommended variant of each choice | The recommended variant of each of the 17 choices is the product; the contract was frozen after it (rulings R24 to R30; sections 6.2, 9). |
 
@@ -103,13 +105,14 @@ How two answers were applied where their wording left room, as stated to the own
   budget; a message to the whole room restores nothing; no chat message lifts a hold. The owner confirmed the
   mockup that draws this (Q217).
 
-Open at the time of this revision:
+Open at the time of this revision (questions and options verbatim from `owner-decisions.md`, "Open questions,
+verbatim"; unanswered at 19:20 UTC):
 
-| Id | Subject (paraphrased) | Bearing on this step |
-|---|---|---|
-| Q219 | Thirteen more check assertions of the kind fixed under Q215 cannot fail; fix them? | None: not about Blabber. |
-| Q220 | May one failed verification on an overloaded machine be repeated once on a quieter machine, as a standing rule? | Until it is answered, nothing lands on `main` from a tree with a failed run, and the orchestrator holds the three landings that queued behind that rule: the refactor's stages 1 and 2 and the Q215 fix. That holds the path to accounts in Blabber (section 13.5). |
-| Q221 | Six weaknesses in how the sandbox launcher passes service tokens. | Not about Blabber's own code; Blabber's client module registers its token file with that launcher (section 11.4). |
+| Id | Question (verbatim) | Options as filed | Bearing on this step |
+|---|---|---|---|
+| Q219 | "Repository checks: thirteen more assertions, outside the four files, can pass when the command they test fails. Fix them too?" | fix the five where a failing command is ignored and leave the eight; fix all thirteen; fix none | None: not about Blabber. |
+| Q220 | "Verification on an overloaded machine: tests that measure real time have failed twice. May I run once more on a quieter machine and land if that passes, as a standing rule?" | yes, as a standing rule (one new run when the machine is quieter, both runs reported, land if it passes; if the same test fails again, stop and investigate); no (a failed verification blocks that landing until the owner has looked at it); yes, and also make those two tests independent of machine load, as work of its own | Until it is answered, nothing lands on `main` from a tree with a failed run, and the orchestrator holds the three landings that queued behind that rule: the refactor's stages 1 and 2 and the Q215 fix. That holds the path to accounts in Blabber (section 13.5). |
+| Q221 | "Sandbox launcher (`yolo`): a review found six weaknesses in how it passes service tokens into the sandbox. They exist today for Haystack's and Manure's tokens. Fix them?" | fix 1 to 5 now on a branch of its own, each reproduced first, and write up 6 for a macOS machine; reproduce all six and report, change nothing yet; record them as a GitHub issue; leave it to the owner | Not about Blabber's own code; Blabber's client module registers its token file with that launcher (section 11.4). |
 
 ## 1. Summary
 
@@ -219,12 +222,12 @@ tests (`wc -l` on `13226cf1`).
 |---|---|---|
 | Contract `blabber/models/current.baboon` (0.1.0) | replace | Became 0.2.0 (appendix A); the 0.1.0 file is removed; the server registers one version (section 6.3). Done in U1, frozen in U1f **[repo]** (`product:blabber/models/current.baboon`). |
 | Generated code `blabber/generated/` | change | Regenerated by `blabber/scripts/generate.sh`; never edited by hand. |
-| Chat semantics: order, idempotent post, visibility, long poll, limits, retention (`application/`, `storage/`, `domain/`) | keep | Extended for people, archive, forward history, read marks (U3). The contract suites on the in-memory store and on PostgreSQL stay the method: `blabber-jvm` passed as a Nix check on `689a6c5c` with 258 cases, 120 of them on PostgreSQL **[run]**. |
+| Chat semantics: order, idempotent post, visibility, long poll, limits, retention (`application/`, `storage/`, `domain/`) | keep | Extended for people, archive, forward history, read marks (U3). The contract suites on the in-memory store and on PostgreSQL stay the method: `blabber-jvm` passed as a Nix check on `689a6c5c` with 258 cases, 120 of them on PostgreSQL **[run]** (the orchestrator's check). |
 | `auth/Auth.scala` (72 lines: declared users, bearer only, read once at start) | replace | The shared account model (section 4), through the shared module (Q204). Until U8 the pilot's configured tokens are the server's only callers **[repo]** (`product:blabber/README.md`, "Configuration"). |
 | `Principal` with `admin` and `displayName` from the configuration **[repo]** (`pilot:blabber/server/src/main/scala/blabber/domain/Model.scala:52`) | replace | Done in U3: a `Caller` per request (account id and type, display name, credential kind, credential id, the account's administrator flag) from the port `http.Callers`; a caller acts as an administrator only on a browser session **[repo]** (`product:blabber/README.md`, "For the accounts unit"). |
 | `Config.scala` (every member required, no unknown member) | change | Gained `administrators.othersDirect` (U3) and the block `live` (U9) **[repo]** (`product:blabber/docs/config.example.json`). Still to come: the `auth` members of Haystack, `authReloadMs` and `webRoot` (U8), `indexing` and `retrieval` (U13). Stays strict about unknown members. |
 | `http/Http.scala` (128 lines, bearer JSON routes) | change | Gained the routes of people and of the archive (U3) and the live socket (U9). Still to come: cookie authentication and the account routes (U8), search (U13), the static web root (U15). |
-| `http/Connections.scala` (notices a closed long poll through a `java.lang.reflect.Proxy` around the listener's sockets) | keep | Works under native image once its two proxies are registered (U4) **[run]**, and a WebSocket upgrade passes through it on the JVM (U9) **[repo]** (`product:blabber/README.md`, "Disconnects"). What is still open is in section 14. |
+| `http/Connections.scala` (notices a closed long poll through a `java.lang.reflect.Proxy` around the listener's sockets) | keep | Works under native image once its two proxies are registered **[run]** (U4's builder: on `71d0d657` with the pilot's server, again on `5c1d497c`), and a WebSocket upgrade passes through it on the JVM (U9) **[repo]** (`product:blabber/README.md`, "Disconnects"). What is still open is in section 14. |
 | `migrations/0001-initial.sql` | replace | Edited in place into the product schema and kept as the only migration: no product database exists that holds the pilot's schema. Installable by a role that owns the database without superuser rights **[repo]** (`product:blabber/README.md`). The product starts on an empty database (Q205). |
 | `scripts/pilot-server.sh` (301 lines) and `scripts/test-pilot-server.sh` (170) | remove | The product is deployed by Home Manager: a provided PostgreSQL, a rendered configuration, setup, migrate and serve units. Still on the branch: the extension's on-demand real-server leg starts its throwaway instance with it **[repo]** (`product:nix/pkg/pi-extensions/ponygirls-blabber/README.md`, "Tests"). Removed in U10. |
 | `scripts/test-postgres.sh` | change | Done in U0: the runner binds itself to the owned PostgreSQL fixture, runs as a role without superuser rights, and refuses any other database **[repo]** (`product:blabber/README.md`, "Tests"; section 11.6). |
@@ -567,12 +570,15 @@ verified and reviewed (Q216); the product branch gets them through `main`.
 
 1. Haystack's transport rules, configured tokens, declared-user validation and imperative settings move into
    `ponygirls.auth.boundary`. Built and reviewed. `scripts/verify all` passed on the landing tree `17988993`
-   (rebased onto `main` at `69c11d37`): 8 members built, 36 reused **[run]**. Its landing waits for Q220, because
-   an earlier run of the same stage failed in a timing-sensitive test of Manure under heavy load (section 14).
+   (rebased onto `main` at `69c11d37`): 8 members built, 36 reused **[run]** (the orchestrator's verification of
+   record). Its landing waits for Q220, because an earlier run of the same stage, the builder's on `f9b001db`
+   (then on `main` at `5de29990`), failed in a timing-sensitive test of Manure under heavy load; the landing tree's
+   run built that same derivation and passed (section 14).
 2. Haystack's account service and the five account routes move into the shared module. Built, reviewed and fixed
-   (`refactor:` `58c40b55`; in the inner loop Haystack's JVM suites 765 cases and `serviceAuth` 205, none skipped
-   **[run]**). `scripts/verify all` passed on the landing tree `40ef1386` (`main` with stages 1 and 2): 14
-   members built, 30 reused **[run]**. Its landing is held with stage 1's for Q220.
+   (`refactor:` `58c40b55`; Haystack's JVM suites 765 cases and `serviceAuth` 205, none skipped **[run]** (the
+   builder's inner loop on `58c40b55`)). `scripts/verify all` passed on the landing tree `40ef1386` (`main` with
+   stages 1 and 2): 14 members built, 30 reused **[run]** (the orchestrator's verification of record). Its
+   landing is held with stage 1's for Q220.
 3. The parameters Blabber needs. Started at 19:02 by the log; nothing of it is on a branch yet. The list it starts
    from: a cookie-only credential kind; an actor helper for domain routes; refusing a token secret as a password;
    an install hook for retained declared ids (section 4.3); Blabber's indexing service key; the read of the
@@ -744,6 +750,10 @@ anybody reads the message. A replay returns the outlooks stored with the message
   `reply-audience`. A reply to a room or System message may have any audience. The rule is checked when the
   message is written; no answer is filtered per reader. Reason: every reader of a reply receives its `replyTo`, and
   a non-party may learn of a direct message only that it exists and when.
+- **No linked reply to what only the administrator's switch shows.** The server looks a reply's target up as the
+  sender's account sees it, without `othersDirect`. A direct message that the person sees only through the
+  administrator's switch (section 5.6; the person's account took no part in it) is therefore not a valid target,
+  and the dashboard offers no "Reply" for it (a design rule of the orchestrator, 19:25).
 - **Default recipients of a reply** in the composer (the confirmed mockup, choice 8):
   - to a room message: the room;
   - to a direct message: everybody who took part in it, that is its sender and its recipients, without the
@@ -854,7 +864,8 @@ non-party's side.
 Appendix A holds the complete model text of `blabber.api` 0.2.0 as it is on `product/blabber` at `2c444ad4`.
 Bodies stay the generated DTOs as JSON; a request must be the exact encoding of its DTO: every member present, no
 other member, no member name twice (ruling R23) **[repo]** (`product:blabber/models/current.baboon`, header
-comment). U1 compiled the first version's appendix unchanged with Baboon 0.0.200 (43 types) **[run]**. The model's
+comment). U1 compiled the first version's appendix unchanged with Baboon 0.0.200 (43 types) **[run]** (U1's builder, on
+`product/blabber-u1`). The model's
 comments now carry the contract rulings and the owner's decisions that bind the wire (Q208 to Q210, Q213); with
 `blabber/README.md` and the tests they are the reference. This document says what a behaviour is in a sentence or
 two and points to the model; it does not restate the contract.
@@ -901,7 +912,9 @@ Every route has a result DTO:
 **The wire freeze.** The confirmed mockup (Q217) kept the items that followed its choices (the read mark and the
 unread counts, explicit joining, the search scope) as the contract had them. Its build brief listed nine things the
 screens need that the contract did not carry (G1 to G9); the rulings R24 to R30 settled them and froze the
-contract, and U1f built them in the model, the server, the client suite and the extension (merged as `cb0743ae`).
+contract. U1f built R24 to R29 in the model, the server, the client suite and the extension (merged as
+`cb0743ae`). R30 left the close codes of the live socket to the live-socket unit; U9 wrote them into the comment
+of `LiveFrame`, which reached `product/blabber` at `2c444ad4`.
 Since then a change of the model, of its members and values or of the rules in its comments needs a ruling of the
 contract's owner **[repo]** (`product:blabber/README.md`, "Contract status").
 
@@ -929,8 +942,12 @@ the clients. Where each now lives:
 ### 6.3 One version: 0.2.0
 
 The product speaks 0.2.0 and nothing else. `GET /api/versions` reports `current` and `minimum` as 0.2.0 and
-lists that one version. A request without `X-Blabber-Version` is served as 0.2.0; a version that is not listed, or
-the header twice, is `version-mismatch` (R10, R16). Built in U3 **[repo]** (`product:blabber/README.md`, "API").
+lists that one version. `GET /api/versions` and `GET /api/v1/health` are served without a version check and
+without a credential; every other route checks the header first, before the credential. There a request without
+`X-Blabber-Version` is served as 0.2.0, and a version that is not listed, or the header twice, is
+`version-mismatch` (400; R10, R16) **[repo]** (`product:blabber/server/src/main/scala/blabber/http/Http.scala`: the
+two discovery routes are answered by `open`, which reads no header; every other route passes `admitted`, which
+checks the version and then the caller).
 
 Why 0.1.0 is not served beside it. Baboon's usual rule is that a server keeps every earlier version
 registered, because clients move separately. Three facts make the pilot's version an exception:
@@ -946,8 +963,11 @@ registered, because clients move separately. Three facts make the pilot's versio
 
 This repository has the precedent of one version changed in place: Haystack's model "stays `1.0.0`, changed in
 place", and clients are upgraded with the server **[repo]** (`haystack/docs/api.md:140-145`). A new number rather
-than 0.1.0 changed in place means that a pilot extension fails at the version check, with `version-mismatch` from
-`GET /api/versions` **[repo]** (`pilot:.../ponygirls-blabber/README.md`, "Commands"), and not at a strict decoder.
+than 0.1.0 changed in place means that an older client finds the mismatch itself, before it sends anything
+else: the pilot's extension reads the supported list from `GET /api/versions` and produces `version-mismatch` on
+its own when its version is missing **[repo]** (`pilot:.../ponygirls-blabber/README.md`, "Assumptions about the
+server"), and the product's extension does the same for 0.2.0 **[repo]** (extension README, same section). It
+does not fail at a strict decoder. The server's own `version-mismatch` is the answer of a version-checked route.
 
 **Until when 0.2.0 may still change.** Since the rulings R24 to R30 a change needs a ruling of the contract's
 owner (section 6.2). With such a ruling 0.2.0 may still be edited in place while only we use the service and
@@ -1003,7 +1023,8 @@ regular file whose real path stays inside the root, `index.html` for `/`, no fal
 **[repo]** (`haystack/server/src/main/scala/haystack/http/Http.scala:343-355`). In the Home Manager deployment
 the proxy serves these files itself and passes only `/api/` to the server **[repo]**
 (`nix/hm/agentic-services-server.nix:245-248`). The security headers of the page (content security policy,
-`nosniff`, no framing, no referrer) are therefore set in both places and tested through the proxy (U15). The
+`nosniff`, no framing, no referrer) are therefore set in both places, and U15's exit check must assert them
+through the proxy. The
 dashboard survey looked only at the server's static route.
 
 ### 7.2 The live protocol
@@ -1068,7 +1089,7 @@ what the socket does; the README has the details.
 - **One replica.** The hub is process-local, like the pilot's room signals. A second replica would need a
   shared signal; that is not in this step.
 - **Tests.** The server's suites on the merged tree: 545 cases, 163 of them on PostgreSQL, run by the merging
-  agent in its inner loop **[run]** (the log, 19:05). As Nix checks on this tree, `blabber-jvm` and
+  agent in its inner loop **[run]** (a builder's run on `2c444ad4`; the log, 19:05). As Nix checks on this tree, `blabber-jvm` and
   `blabber-native` have not run yet; the verification of record is queued (section 13). The upgrade runs on the
   JVM in tests, through a test stand-in for browser sessions; on the native executable only the refusal of a
   bearer caller is shown **[repo]** (`product:blabber/README.md`, "Disconnects").
@@ -1149,9 +1170,11 @@ Changes to Blabber's own tables, as built **[repo]** (`product:blabber/migration
   absence sweep measures (ruling R22); `reported_at`, for people only, is the time of the last presence report of
   a live socket (R31).
 - `rooms`: `archived_at`, `archived_by`.
-- `messages`: `sender_kind`, null for System; `event`, null for Chat. `sender_id` and `sender_handle` may be
-  null, and are null exactly for a System message that no participant of the room caused. `sender_owner` is
-  never null: it is the account that posted or caused the message.
+- `messages`: `event`, null for Chat. `sender_id`, `sender_handle` and `sender_kind` are present or absent
+  together: present for every Chat message and for a `Topic` System message, which keeps the participant that set
+  the topic with its id, handle and kind; absent exactly for `Archived` and `Unarchived`, which no participant of
+  the room causes. `sender_owner` is never null: it is the account that posted or caused the message. The agent
+  columns are present exactly when `sender_kind` is `agent`.
 - `declared_ids` (section 4.3); it exists and nothing uses it yet.
 
 **System messages.** Their invariants, in storage and on the wire:
@@ -1266,16 +1289,21 @@ that sentence.
 configuration.
 
 1. *Blabber's indexing worker.* Only with an embedding endpoint configured for Blabber. It sends the body of
-   each message that is indexed in the embedding index (Q207) and whose sender's preference allows it. Never
-   handles, room ids or identification.
+   each message that Q207's rule indexes, room and direct messages alike, and only when the sender's indexing
+   preference allows it. Never handles, room ids or identification. This is the only path by which Blabber
+   itself sends a message's text anywhere.
 2. *Blabber's search.* Only with the endpoint. A semantic or hybrid query sends the text the searcher typed,
    whatever anybody's preference **[repo]** (`docs/indexing-preferences.md:52-53`). A lexical query sends
    nothing.
-3. *Chronicle, outside Blabber.* A message that was delivered into a Pi session is part of that session's
-   transcript. Where Chronicle archives transcripts and has an embedding service configured, the text leaves
-   through Chronicle, under the preference of the archive's owner (draft section 8). This holds only under
-   those two conditions, and never for a message that reaches no Pi session: a direct message between two
-   people is seen only in browsers.
+3. *An agent's transcript, and whatever archives it.* Text enters a Pi session's transcript in three ways:
+   delivery by `pull` (what is deliverable to the session's participant, section 5.6); the tool's `read`, which
+   returns history, that is everything the account may see; and, by Q208, the tool's `search` (U5b). So a direct
+   message between two people is not pushed into any agent session, but a bearer token of either party's account
+   can read it through `history` and find it through `search`, and when an agent of that account asks, the text
+   enters that agent's transcript. From there it goes wherever the transcript goes: where Chronicle archives
+   transcripts and has an embedding service configured, the text leaves through Chronicle, under Chronicle's
+   configuration and the preference of the archive's owner (draft section 8), whatever the Blabber sender's
+   indexing preference says.
 
 **What a later change does not undo.** Turning an account's indexing off hides its existing results and stops
 new work; it does not erase what is stored, and a request that was already admitted to the endpoint can still
@@ -1301,8 +1329,9 @@ and for the clause, the call sites and `purge` the log, 17:05):
   `pending` and `visible`. Haystack and Manure pass `Principals.one(...)`; two Haystack tests changed only their
   construction of the query. The schema and the ranking are unchanged.
 - `purge(connection, id)` deletes every row of a source in every index table.
-- `scripts/verify all` on `f770b727`: the first run failed in one member of another service (a timeout in
-  Chronicle's suite under heavy load, section 14); the rerun passed, 3 members built and 41 reused **[run]**.
+- `scripts/verify all` on `f770b727`: the builder's run failed in one member of another service (a timeout in
+  Chronicle's suite under heavy load, section 14); the orchestrator's rerun passed, 3 members built and 41 reused
+  **[run]**.
 
 Own SQL over the shared tables, as Chronicle does for its own index, was rejected: it copies the adapter and
 breaks its rule.
@@ -1313,10 +1342,13 @@ breaks its rule.
   `x:R`.
 - The rooms of a query. With `room` in the request: that room, if the caller may read it (a member, or an
   administrator on a browser session); otherwise `not-found`. Without `room`: the rooms of which the caller's
-  account is a member, for a bearer token as for a browser session (Q208). An administrator's reach beyond
-  their own rooms therefore needs `room`.
+  account is a member, that is, has a participant record, active or left, of either kind; for a bearer token
+  exactly as for a browser session (Q208; ruling R32; the model's comment of `SearchRequest`). Whether a session
+  of the account is attached now plays no part. An administrator's reach beyond their own rooms therefore needs
+  `room`.
 - The archive flag. With `includeArchived` false, archived rooms are taken out of that list. With it true,
-  they stay. Nothing in the index changes when a room is archived.
+  they stay. This flag is the only thing that decides about an archived member room: archiving detaches every
+  participant and leaves the account a member (R32). Nothing in the index changes when a room is archived.
 - The set. For each room R of the list: `r:R` and `d:R:<caller>`. With `othersDirect` true, and only where
   section 5.6 allows it: also `x:R`.
 - An empty list is a successful, empty answer: no hits, total 0, pending 0. The index is not asked, and the
@@ -1334,8 +1366,8 @@ that expired meanwhile. So the page is built as follows.
 1. A first read of the scope, before anything is sent anywhere. An empty scope is answered at once.
 2. The query is embedded if the mode needs it. This is the only wait.
 3. After the wait, in one transaction: the credential is checked again; the time `now` is taken; the scope is
-   read (administrator flag, rooms with their archive state, and for a token the rooms with an active
-   session); the index is asked, which gives hits, total and pending from one statement **[repo]**
+   read by the same rule as in step 1, for a token as for a browser session (the administrator flag, and the
+   member rooms with their archive state); the index is asked, which gives hits, total and pending from one statement **[repo]**
    (`PostgresRetrieval.scala:343-355`); the scope is read once more; and the message of every hit is read
    from Blabber's own table under the timeline's rule, with expiry judged at `now`.
 4. If the two scope reads differ, or a hit's message is gone or hidden, the whole page is discarded: hits,
@@ -1352,19 +1384,19 @@ by a non-member; a direct message only by its parties; a total never counts what
 account with no rooms gets the empty answer and the scripted endpoint sees no request; `includeArchived`
 false and true; a membership change, an archive and an expiry placed between the embedding call and the
 transaction change the page, never only its hits; an administrator with a browser session, with `othersDirect`
-off and on, and with a bearer token; a sender who opted out is not found.
+off and on, and with a bearer token; a bearer token whose account has only left participant records finds the
+messages of those rooms, and of an archived one among them only with `includeArchived`; a sender who opted out is
+not found.
 
 ### 8.4 Retention, deletion and rebuilding
 
 - Search stops returning a message at its expiry instant, because the projection carries the expiry.
-- The sweep that deletes messages calls the adapter's `remove` for each, in its transaction.
-- `remove` leaves rows behind: the source row with its id, the attributes, generations, jobs and the accepted
-  embedding vectors **[repo]** (`PostgresRetrieval.scala:174-186` on `feab9a9b`; no statement on `main`
-  deleted those tables, `grep "DELETE FROM pony_retrieval"`). For a service whose promise is "deleted after 30
-  days", vectors derived from the text should go too.
-- So, by Q206, the shared `purge(connection, id)` deletes everything of a removed source (built in U7, section
-  8.3), and Blabber calls it in the sweep (U13). Manure could adopt it for deleted artifacts later; this step does
-  not change Manure's behaviour.
+- **The sweep purges.** For each message it deletes, the sweep calls the shared `purge(connection, id)` in the
+  same transaction (Q206; built in U7, section 8.3). `purge` deletes every row of the source in every index
+  table, the embedding vectors included. The adapter's older `remove` is not used: it kept the source row, the
+  attributes, generations, jobs and vectors **[repo]** (`PostgresRetrieval.scala:174-186` on `feab9a9b`), which is
+  why Q206 asked for `purge`. Manure could adopt `purge` for deleted artifacts later; this step does not change
+  Manure's behaviour.
 - **A changed policy rebuilds the index.** The version of every source is the policy id (section 8.1), and
   the adapter's profile is the embedding space with that id. Changing `maxChunkBytes`, the embedding model, its
   revision or its dimensions therefore changes the target of every source. At the next start the server
@@ -1372,7 +1404,7 @@ off and on, and with a bearer token; a sender who opted out is not found.
   items at start **[repo]** (`haystack/server/src/main/scala/haystack/Main.scala:83`). Word search covers a
   message as soon as it is projected again; semantic search when the worker has embedded it, and the pending
   count shows the difference until then. The same pass applies a change of which messages are eligible (a
-  source that should no longer be indexed is removed).
+  source that should no longer be indexed is taken out of the index).
 - A rebuild sends every retained, eligible message to the endpoint again. It does not recall what an earlier
   profile sent.
 
@@ -1452,7 +1484,8 @@ No claim about the quality of Blabber's search is made by this step.
 ## 9. Dashboard
 
 This section was the brief for the mockup. The owner confirmed the mockup, with the recommended variant of each
-choice (Q217): 111 views in twelve groups, published as the artifact `6f3c4f46995d44b8bd793829d60eeb4d`. The
+choice (Q217): 111 views in thirteen groups, twelve of the dashboard (groups 0 to 11) and one of the pane
+(group 12), published as the artifact `6f3c4f46995d44b8bd793829d60eeb4d`. The
 build brief of the dashboard and the pane is `docs/drafts/20261127-1900-blabber-dashboard-build-brief.md`: it
 names the confirmed behaviour, the decided wording and the view of each state. Where this section and the build
 brief differ, the build brief holds, because it records what the owner confirmed. Nothing of the dashboard is
@@ -1513,6 +1546,12 @@ section 9.12); the shared README's sentence is extended to name the page when th
 
 ### 9.4 Screens and their states
 
+**Thresholds and refusals.** The dashboard takes every threshold it words or checks before sending from
+`Identity.limits` (R26) and classifies every refusal by `Failure.code` and `Failure.reason` (R27), never by a
+message text and never from constants of its own; it ignores a reason it does not know. `Failure.message` is
+what the person is shown. Numbers in the wording of the build brief are the production values of the day, as
+examples. (A design rule of the orchestrator, 19:25.)
+
 "Offline" means that the connection indicator has given up on the socket or that a request failed on the
 network. Content already on screen stays and is marked as possibly stale; nothing is cleared except on
 sign-out, a change of account, or loss of access (section 9.5).
@@ -1521,20 +1560,22 @@ sign-out, a change of account, or loss of access (section 9.5).
 
 - Loading: the button is busy.
 - Error: the module's messages (wrong credentials, too many attempts, pending approval).
-- Offline: "Cannot reach the server", with Retry. It is never shown as a failed sign-in.
+- Offline: the shared module's own wording for a failed request, which says that the credentials were not
+  rejected (view 0f of the build brief). The dashboard adds no wording of its own there.
 
 **Room list.** Per room: id, topic, how many people and how many agent sessions are online, the time of the
 last message the account may see, and marks for "joined" and "archived". For a joined room also the unread
 count and, apart, the count of unread direct messages to the person. Unread means: Chat messages above the
 person's read mark that the account may see and that the person did not write. A message that the account may
-not see is never counted. The counts stop at 1,000 and then read "999+". A field to join or create a room by
-id, with an optional topic.
+not see is never counted. The counts stop at 1,000 (the model's comment of `RoomEntry`) and then read "999+". A
+field to join or create a room by id, with an optional topic and an optional "about".
 
 - Empty: "No rooms yet. Join a room by its id, or enable Blabber in a session.", with the join field and a
   link to Connect an agent.
 - Loading: skeleton rows, with a text for screen readers.
-- Error: a persistent notice with Retry; rows already shown stay. Joining can fail with "invalid room id"
-  (with the rule), "room is archived", or a rate limit.
+- Error: a persistent notice with Retry; rows already shown stay. Joining can fail with `invalid` (the room id
+  rule of R28, which the page also checks before sending), `conflict` with the reason `room-archived` or
+  `room-full`, or `rate-limited` with the wait of `Retry-After`.
 - Offline: rows stay, marked stale; the join field is disabled with the reason.
 
 **Room: timeline.** Messages from oldest to newest. Per message: time, the sender's handle with a chip for
@@ -1558,8 +1599,11 @@ opens at its newest messages.
 counter, Send.
 
 - Sending: the message appears in the timeline as pending.
-- Error, in place: too large; rate-limited, with the wait; identical message within a minute; a recipient has
-  left; the room is archived.
+- Error, in place, told apart by `Failure.code` and `Failure.reason` (R27): `too-large` (beyond
+  `limits.bodyBytes`); `rate-limited`, with the wait of `Retry-After`; `conflict` with `duplicate-body` (the same
+  text within `limits.duplicateWindowMs`); `invalid` with `recipient-not-active`; `invalid` with
+  `reply-audience`; `conflict` with `room-archived`. A reason the page does not know is shown as the generic
+  refusal of its code.
 - Offline: Send is disabled with the reason; the draft is kept.
 - Not joined: the composer is replaced by "Join to post". Archived room: by "This room is archived".
 
@@ -1586,7 +1630,7 @@ update".
 **Signed out by the server.** A socket closed with 4401, or a request answered 401: the workspace is cleared
 and the sign-in page is shown.
 
-**Another account in this browser.** A request answered `409` because the actor does not match: the page
+**Another account in this browser.** A request answered `409` with the reason `actor-mismatch`: the page
 reads its identity again, drops everything it showed for the previous account, and shows the workspace of the
 account that is signed in now, with a notice "You are now signed in as bob".
 
@@ -1608,6 +1652,14 @@ account that is signed in now, with a notice "You are now signed in as bob".
   removed from the page with everything cached for it: timeline, roster, the draft shown for it. An
   administrator who lost the role loses the rooms they are not a member of in the same way. Leaving a room,
   being removed from it and its archiving do not take it out of the list (ruling R32).
+- **The administrator's view can be taken back** (a design rule of the orchestrator, 19:25, inside Q209).
+  Everything fetched with `othersDirect: true` (timeline pages, search results, anything derived from them) is
+  held apart from the rest and is never written to browser storage. It is discarded as a whole when the switch
+  is turned off; when the account is no administrator any more (the live socket's `rooms` frame, a `forbidden`
+  answer, or a `whoami` that says so); when another account signs in; and on sign-out. This holds in every room,
+  also in one of which the account stays a member. The page then reads again without it. No late response of a
+  request made with the switch on may paint after the switch is off: such a request carries the switch's
+  generation, and its answer is dropped when the generation changed.
 - **The read mark.** The page moves it forward to the last message that was displayed at the bottom of a
   visible tab (`read-mark`). Several tabs of one person share the mark through the server; a tab learns of
   another tab's reading when it reads the room list again.
@@ -1615,13 +1667,18 @@ account that is signed in now, with a notice "You are now signed in as bob".
 ### 9.6 The composer and its recipients
 
 - **Recipients.** Default: the room. Picking one or more participants from the roster, or typing a handle,
-  makes the message direct; chips show the recipients; at most 16. A recipient must be active.
+  makes the message direct; chips show the recipients; at most `limits.recipients`. A recipient must be
+  active.
 - **Reply.** To a room message: the room. To a direct message: everybody who took part in it, sender and
   recipients, without the person themselves; a participant that has left is taken out and named in a note.
   The recipients of a reply to a direct message are limited to the accounts that took part (ruling R14): the
   picker shows the others as unavailable with the reason, and "Send without the reply link" drops the
-  reference and lifts the limit (section 5.4; the build brief, section 4).
-- **Text.** A plain text area, Markdown as source. A byte counter appears near the limit of 8,192 bytes.
+  reference and lifts the limit (section 5.4; the build brief, section 4). A direct message that the person
+  sees only through the administrator's switch (the person's account took no part in it) gets no "Reply"
+  action: the server looks a reply's target up as the sender's account sees it, without `othersDirect`, and
+  would refuse it (a design rule of the orchestrator, 19:25).
+- **Text.** A plain text area, Markdown as source. A byte counter appears near `limits.bodyBytes` (from seven
+  eighths of it, note N4 of the build brief).
 - **Sending.** The page creates the `requestId` when the draft is first sent and keeps it with the frozen text
   and recipients, and with the actor it was written under. On an unknown outcome (the network failed after the
   request left) it shows "Not confirmed" with Retry, which sends the same request again; the server then
@@ -1630,7 +1687,8 @@ account that is signed in now, with a notice "You are now signed in as bob".
   message that arrives over the timeline with the same sequence as a confirmed send is shown once.
 - **Bound to the account.** Every request carries the actor (section 4.5). A pending message, a draft and a
   confirmation dialog belong to the account they were made under. When another account signs in in the same
-  browser, a retry or a confirmed dialog of the old account is refused by the server with `409`; the page
+  browser, a retry or a confirmed dialog of the old account is refused by the server with `409` and the reason
+`actor-mismatch`; the page
   then discards the old account's pending messages and drafts and does not offer them to the new account.
 - **After sending.** A line under the message says what the server reported: for a room message the counts per
   outlook, for a direct message one outlook per recipient ("will be woken", "sees it at its next turn", "does
@@ -1690,9 +1748,10 @@ Moderation:
   session and person is detached and nothing is deleted.
 - An administrator outside their own rooms always sees the banner "Reading as administrator".
 - **Direct messages of other accounts** (Q209). A switch "Show direct messages of others" in the banner, off
-  at every page load. Turning it on sends the timeline's and the search's requests again with `othersDirect`;
-  while it is off, the page does not hold such messages at all, because the server did not send them. While it
-  is on, the banner says so, and these messages are marked "not addressed to you".
+  at every page load. Turning it on sends the timeline's and the search's requests again with `othersDirect`.
+  While it is on, the banner says so, and these messages are marked "not addressed to you" and offer no
+  "Reply". What was fetched with it is held apart and taken back as section 9.5 says: turning the switch off,
+  a demotion, another account's sign-in and sign-out discard it, and no late answer paints afterwards.
 
 Keyboard and accessibility:
 
@@ -1776,10 +1835,10 @@ touch the contract; the contract already carried the recommended variants, and t
 
 Built in U5 (merged as `407bc4ef`) and in the extension's part of U1f (merged as `cb0743ae`) **[repo]**
 (`product:nix/pkg/pi-extensions/ponygirls-blabber/README.md`). Recorded counts: `ponygirls-blabber` 392 cases and
-the client suite 494 in the light checks on `4f07a9f0`, the first build against Pi 1.7.0 **[run]**; the on-demand
-real-server leg 42 cases by U1f's agent **[run]**. Real Pi sessions were driven during U5, before `main`'s Pi
-1.7.0 was merged in: a wake by a direct message, a System line and an R14 refusal were captured **[run]** (the
-log, 17:30). The status pane and a run with real Pi 1.7.0 sessions are U5c, running.
+the client suite 494 in the orchestrator's light checks on `4f07a9f0`, the first build against Pi 1.7.0
+**[run]**; the on-demand real-server leg 42 cases **[run]** (U1f's builder, on its branch). Real Pi sessions were
+driven during U5, before `main`'s Pi 1.7.0 was merged in: a wake by a direct message, a System line and an R14
+refusal were captured **[run]** (U5's builder, on `7ce20469`; the log, 17:30). The status pane and a run with real Pi 1.7.0 sessions are U5c, running.
 
 | Area | Change, as built |
 |---|---|
@@ -1877,9 +1936,10 @@ The column "State" says whether the path exists on `product/blabber` at `2c444ad
 
 Already changed on the branch, by `git diff --stat main...product/blabber` at `2c444ad4` **[repo]**: `AGENTS.md`,
 `build.sbt`, `flake.nix`, `lockfile-config.json` (U0; `deps.lock.json` was regenerated and came out
-byte-identical, 640 artifacts **[run]**), `scripts/verify`, the source selections and lock lists under
+byte-identical, 640 artifacts **[run]** (U0's builder)), `scripts/verify`, the source selections and lock lists under
 `nix/pkg/chronicle/` and `nix/tests/` (U0), `nix/tests/jvm-suites.nix`, `shared-postgres.nix` and
-`shared-postgres-test.py` (U0), `nix/pkg/services/native.nix` (U4), `nix/pkg/pi-extensions/blabber-api.nix`,
+`shared-postgres-test.py` and the rewrite of `blabber/scripts/test-postgres.sh` (U0), `nix/pkg/services/native.nix`
+(U4), `nix/pkg/pi-extensions/blabber-api.nix`,
 `package.nix` and `ponygirls-pi-ui/src/border.ts` (the pilot and U1), `nix/hm/dev-llm.nix`, `pi.nix`, `yolo.nix`,
 `nix/lib/runtime-token-test.sh` and the two launchers with their profile tests (the pilot and U11), and
 `shared/retrieval-core`, `shared/retrieval-postgres` with their call sites (U7). Every other row is still to do.
@@ -1908,7 +1968,7 @@ Which parts of a row a unit did is not checked here line by line.
 | `nix/tests/service-accounts.nix` | A Home Manager branch for Blabber, not an entry in the shared list | yes (`:66,87`) |
 | `nix/tests/shared-services-modules.nix` | A Home Manager fixture for Blabber; its list at line 7 also drives the NixOS half and is not extended | yes (`:7,20,44`) |
 | `nix/tests/shared-postgres.nix`, `shared-postgres-test.py`, `shared-postgres-modules.nix` | A fourth database in the fixture's policy, which is also what the owned test fixture provisions (section 11.6); the counts that are written as three | yes for the lists, survey for the counts |
-| `blabber/scripts/test-postgres.sh` | Runs only on the owned fixture's database (section 11.6) | yes (`pilot:blabber/scripts/test-postgres.sh:21-33`) |
+| `blabber/scripts/test-postgres.sh` | Runs only on the owned fixture's database (section 11.6). Done in U0 | yes (`pilot:blabber/scripts/test-postgres.sh:21-33`; `product:blabber/README.md`, "Tests") |
 | `nix/pkg/yolo/profile-test.sh` | The cases for `BLABBER_TOKEN_FILE` (section 11.4) | yes (`:789-809`) |
 | `nix/tests/test_agentic_services_credentials.py` | The cases for Blabber, among them "no agent token file" | yes (`:30,278`) |
 | `nix/tests/agentic-services-hm-eval.nix` | An enabled fixture for Blabber; the baseline with Blabber off stays untouched | survey |
@@ -1989,19 +2049,19 @@ an explicit hash file, are in its test file (U10).
 - No backup unit in this step. Haystack has a daily dump **[repo]** (`:382-401`). For Blabber a full dump would
   keep deleted messages past their retention. A dump of the account tables alone is a small later addition.
 
-The check `blabber-browser` drives Chromium through the proxy configuration that this module renders, not
-through the server's own listener: cookies, the socket upgrade, a long poll held to its limit, the headers of
-the page, and the 421 for a foreign host name are observed there.
+The check `blabber-browser` (U15, not built) must drive Chromium through the proxy configuration that this
+module renders, not through the server's own listener, and must assert there: cookies, the socket upgrade, a long
+poll held to its limit, the headers of the page, and the 421 for a foreign host name.
 
 Plain HTTP on a trusted private network is the stack's explicit opt-in (`host.scheme = "http"`), which renders
 the origin as an insecure one and the cookie as `blabber-dev`, as it does for Haystack **[repo]** (`:69-84`).
-The account flow on such an origin, with the `GET` fallback of section 4.6, is a case of the browser check.
+The account flow on such an origin, with the `GET` fallback of section 4.6, must be a case of the browser check.
 
 ### 11.4 Home Manager: the client
 
 Built in U11 and merged as `886383d3` **[repo]** (`product:nix/hm/blabber.nix`). The checks
-`blabber-hm-eval`, `runtime-token` and `yolo-profile` (592 cases) passed on its branch, and again in the light
-checks on `4f07a9f0` **[run]**. The module admits a subset of the endpoints the extension accepts (it refuses
+`blabber-hm-eval`, `runtime-token` and `yolo-profile` (592 cases) passed in U11's builder's run on its branch,
+and again in the orchestrator's light checks on `4f07a9f0` **[run]**. The module admits a subset of the endpoints the extension accepts (it refuses
 host labels that start with `xn--`), so it cannot render a file that the extension refuses; it requires the token
 path in normal form, outside the store and not under `/nix`.
 
@@ -2103,13 +2163,13 @@ contains them. `blabber-browser` joins with U15.
 
 | Member | What it establishes | From; state |
 |---|---|---|
-| `blabber-jvm` | The complete server suites: the behavioural contract on the in-memory store and on PostgreSQL; the live and archive suites; later the account, authority-lifetime and search suites. No case skips. | U0; grew with U3, U1f and U9; grows with U8, U13. Last passed as a Nix check with 258 cases on `689a6c5c` **[run]**; not yet run as a check on `2c444ad4`. |
-| `ponygirls-blabber` | The extension: type check and its suites on a manual clock, gated through JUnit on skips and empty runs | U0 (the pilot's check); 392 cases on `4f07a9f0` **[run]** |
+| `blabber-jvm` | The complete server suites: the behavioural contract on the in-memory store and on PostgreSQL; the live and archive suites; later the account, authority-lifetime and search suites. No case skips. | U0; grew with U3, U1f and U9; grows with U8, U13. Last passed as a Nix check with 258 cases on `689a6c5c` **[run]** (the orchestrator's check); not yet run as a check on `2c444ad4`. |
+| `ponygirls-blabber` | The extension: type check and its suites on a manual clock, gated through JUnit on skips and empty runs | U0 (the pilot's check); 392 cases on `4f07a9f0` **[run]** (the orchestrator's light checks) |
 | `shared-jvm`, `account-web-browser` | The shared suites, as in the other targets **[repo]** (`flake.nix:1398-1404`) | U0 |
-| `blabber-contract-suite` | The client contract against the in-memory service, directly and behind the HTTP bridge | U2; 494 cases on `4f07a9f0` **[run]** |
+| `blabber-contract-suite` | The client contract against the in-memory service, directly and behind the HTTP bridge | U2; 494 cases on `4f07a9f0` **[run]** (the orchestrator's light checks) |
 | `blabber` | The package. Now: the native executable alone. Final: joined with the web root, whose build includes its type check and Node tests | U4; the web root with U15 |
 | `blabber-hm-eval` | The client module: the exact JSON, the sandbox projection, refusals of bad values; later the server child's rendering | U11; the server child with U10 |
-| `blabber-native` | Now: the executable is static; it migrates and serves on the owned database as a role without superuser rights; a closed long poll is logged as 499; the limits `whoami` reports, an activity and its outlook, a refusal with and without a reason, the refusal of a bearer caller at the live route **[repo]** (`product:blabber/README.md`, "Tests"). Later: the client contract suite against it with tokens and with a browser session obtained through the account routes; the acceptance of section 4.10; a socket upgraded and closed with the right codes; the embedding worker against a scripted provider | U4 (3 cases at `5c1d497c` **[run]**); U12; the worker case with U13 |
+| `blabber-native` | Now: the executable is static; it migrates and serves on the owned database as a role without superuser rights; a closed long poll is logged as 499; the limits `whoami` reports, an activity and its outlook, a refusal with and without a reason, the refusal of a bearer caller at the live route **[repo]** (`product:blabber/README.md`, "Tests"). Later: the client contract suite against it with tokens and with a browser session obtained through the account routes; the acceptance of section 4.10; a socket upgraded and closed with the right codes; the embedding worker against a scripted provider | U4 (3 cases at `5c1d497c` **[run]**, U4's builder); U12; the worker case with U13 |
 | `blabber-browser` | The installed web root and the executable behind the proxy configuration that the Home Manager module renders, driven by Chromium | U15; grows with U16 to U18 |
 
 `scripts/verify all` adds the cross-service checks, which this step edits (section 11.2). It has not run on
@@ -2168,27 +2228,27 @@ landing:
 | Threat | How it is handled |
 |---|---|
 | A token or password is read from the configuration, a log or a URL | Secrets are files named by path; the store and the rendered JSON hold paths only. Tokens and session secrets are stored as SHA-256 digests. The request log holds account and credential ids and never a credential or a message body **[repo]** (`pilot:blabber/README.md`, "Running the pilot"). The proxy listener logs no request lines (section 11.3). The socket's URL carries nothing. The extension's rules stay: it refuses an endpoint that contains the token and discards a response that echoes it **[repo]** (`pilot:.../ponygirls-blabber/README.md`, "Connection settings"). |
-| A bearer secret opens a browser session | No account of Blabber's setup has one secret in both roles: the operator has no token and a password of its own. A login whose password is a live bearer secret is refused for every account. Tested in `blabber-native` (section 4.10). |
-| A revoked credential keeps working | Authority is checked again after every wait and before every delivery (section 4.7). Tests: a token revoked while its pull waits gets 401 and no message; a session ended while its socket is open is closed with 4401 before the next frame. |
+| A bearer secret opens a browser session | No account of Blabber's setup has one secret in both roles: the operator has no token and a password of its own. A login whose password is a live bearer secret is refused for every account. Not built (U8); U12's exit check must assert it in `blabber-native` (section 4.10). |
+| A revoked credential keeps working | Authority is checked again after every wait and before every delivery (section 4.7). Required tests: a token revoked while its pull waits gets 401 and no message (U8); a session ended while its socket is open is closed with 4401 before the next frame. The live socket's re-check of the standing is built and tested with a stand-in for browser sessions **[repo]** (`product:blabber/README.md`, "The live socket"); with real sessions it is a case of U8. |
 | A stolen session cookie | `HttpOnly`, `SameSite=Strict`, and on HTTPS `Secure` with the `__Host-` prefix. Logout, a password change and disabling end it. There is no expiry on the server; that is the shared model **[repo]** (`shared/service-auth/README.md:28-30`) and is not changed here. Because of Q210 the thief can instruct the account's own agents (below). |
 | CSRF | Every cookie-authenticated `POST` needs an allowed Origin or same-origin fetch metadata; every cookie request of the domain API carries the actor header, which a foreign page cannot send; account changes need it too; the server grants no CORS (sections 4.5, 4.6). |
-| A tab acts for an account that another tab replaced | The actor header: the request is refused with `409`, and the page discards the old account's pending messages and dialogs (sections 4.5, 9.6). Tested across two tabs. |
+| A tab acts for an account that another tab replaced | The actor header: the request is refused with `409` and the reason `actor-mismatch`, and the page discards the old account's pending messages and dialogs (sections 4.5, 9.6). Not built (U8, U15); U15's exit check must assert it across two tabs. |
 | A foreign page opens the socket | Exactly one allowed `Origin` is required for the upgrade. |
-| A browser session acts as an agent, or a token as a person | The credential table of section 4.4. Tests for every refused combination. |
+| A browser session acts as an agent, or a token as a person | The credential table of section 4.4. The server's suites test the refused combinations with a stand-in for browser sessions **[repo]** (`product:blabber/README.md`, "Tests"); U8 must test every refused combination with real browser sessions. |
 | An agent session of an administrator reads everything | Administrator authority exists on browser sessions only (section 4.8). |
 | A declared id passes to another person and with it their rooms and direct messages | The binding of section 4.3: the operator's rule, and a refusal to install an id that was removed or that already owns data without an explicit reinstatement. |
 | Reading a room one is not a member of | The matrix of section 5.6, one rule for `history` in both directions, the unread counts, search and the hint check. A caller who is not a member learns nothing about the room's existence, as in the pilot **[repo]** (`pilot:blabber/README.md`, "Access"): a caller without a participant record of its own gets the same answer for an absent, an open and an archived room (rulings R18, R36). The exception is deliberate: rooms are open by id (Q173), so `attach` and `join` tell any caller that a room is archived or full, and nothing else (R36). |
-| A direct message leaks to a member who is not a party | **Property of the design:** such a member can observe that a message was stored and when, because sequence numbers have no gaps and cursors pass invisible messages (section 5.6). Nothing else may leak: no sender, recipient, kind or size through hints, room lists or counts; no hit, excerpt, total or pending count through search. Hints are identical for every kind of message. Counts and totals are computed over visible messages only. A reply to a direct message can only go to the accounts that took part, so its `replyTo` tells no other reader who took part (ruling R14). Tested from the non-party's side in every surface built so far. |
-| An administrator reads others' direct messages without meaning to, or after demotion | Only on an explicit request value, honoured before paging, ranking and counting (section 5.6). The flag is read per request; queued hints are checked when sent (section 7.2). |
+| A direct message leaks to a member who is not a party | **Property of the design:** such a member can observe that a message was stored and when, because sequence numbers have no gaps and cursors pass invisible messages (section 5.6). Nothing else may leak: no sender, recipient, kind or size through hints, room lists or counts; no hit, excerpt, total or pending count through search. Hints are identical for every kind of message. Counts and totals are computed over visible messages only. A reply to a direct message can only go to the accounts that took part, so its `replyTo` tells no other reader who took part (ruling R14). Each unit that builds a surface must test this from the non-party's side. |
+| An administrator reads others' direct messages without meaning to, or after demotion | Only on an explicit request value, honoured before paging, ranking and counting (section 5.6). The flag is read per request; queued hints are checked when sent (section 7.2). In the browser, what was fetched with the switch on is held apart, never stored, and discarded as a whole when the switch goes off, on demotion, on another account's sign-in and on sign-out, also in rooms that stay readable; no late answer paints after the switch is off (section 9.5). U15, U17 and U18 must assert this. |
 | An archived or expired message is found | The scope leaves out archived rooms unless asked; expiry is part of the projection and is judged again at delivery time; a page whose scope changed is discarded whole (sections 8.3, 8.4). |
 | Moderation by the wrong account | `archive` and `detach` of another account's handle require an administrator's browser session, checked in the transaction that makes the change. Every moderation call is logged. |
 | Prompt injection through another agent | Unchanged from the pilot: the framing with a random marker per batch, the wake budget, the abort hold, `accept own`, and the sandbox as the containment (draft section 8). |
 | Prompt injection through a person's account | By Q210 a message of the session's own account's person is treated as the user's. For the owner's own sessions the browser session is then as powerful as the terminal, within each session's own permissions: whoever controls the owner's dashboard session (script injection into the page, a stolen cookie, the account itself) **instructs the owner's agents**, and "a chat message has no authority" is not true for that sender. What bounds it: the cookie, origin and actor rules of section 4.5; the page's content security policy; the user's block is given only to a Chat message that the server vouches for as the person (kind `Human`) of the session's own account, never to a sibling agent session or to a text that imitates the block (section 10.1); no chat message lifts a hold (Q213); the budget is restored only by a direct message to the session, once per message. `accept own` does not shield a session from its own account's person (section 5.2). A person of another account has no such authority: its messages are weighed like any participant's. |
 | Prompt injection through search results (Q208) | A hit is framed like history that the agent asked for. An agent reaches the messages of every room its account may read, also of rooms where it has no session now. |
 | Self-reported identification is believed | It is marked as self-reported wherever it is shown, to people and to models. It is never an attribute of the index and never decides anything. The kind of a participant is assigned by the server. |
-| Text leaves the machine | The three ways of section 8.2, each on its own configuration. Through Blabber: only with an embedding endpoint; then the bodies of the messages that Q207 puts into the embedding index, under the sender's preference, which by default is on and cannot be changed by the person; and the text of semantic and hybrid queries. A recipient has no say. Changing a preference or removing the endpoint recalls nothing. Through Chronicle: only where it archives transcripts with an embedding service, and only for messages that reached a Pi session. |
+| Text leaves the machine | The three ways of section 8.2, each on its own configuration. Through Blabber itself: only with an embedding endpoint; then the bodies of the messages that Q207's rule indexes, room and direct, under the sender's preference, which by default is on and cannot be changed by the person; and the text of semantic and hybrid queries. A recipient has no say. Changing a preference or removing the endpoint recalls nothing. Through an agent's transcript: whatever an agent receives by `pull`, `read` or `search` is in its transcript; a direct message between two people is never pushed to an agent, but an agent of either party's account can read or find it when it asks. Where Chronicle archives that transcript with an embedding service, the text leaves through Chronicle under Chronicle's configuration and the archive owner's preference, not the Blabber sender's. |
 | Flooding | The post limits per participant; the shared attempt limits on login and signup; the socket limits; `maxConnections`. |
-| Message text attacks the page | Bodies are rendered through a safe subset of Markdown without HTML. The page's content security policy allows scripts and styles from itself only and is tested through the proxy. |
+| Message text attacks the page | Bodies are rendered through a safe subset of Markdown without HTML. The page's content security policy allows scripts and styles from itself only; U15's exit check must assert it through the proxy. |
 | A test or a tool destroys real data | The server suites accept only the owned fixture's database (section 11.6). No test or tool touches the running pilot instance or its state directory. |
 
 A finding about credential handling that a unit's review raises is fixed in that unit. It is not recorded as a
@@ -2227,30 +2287,45 @@ reported from its inner loop and that no Nix check of record has repeated yet.
 
 | Unit | State | Record |
 |---|---|---|
-| U0 Bring the pilot forward | done | `product/blabber` up to `8e9c8c25`: the pilot merged, the two sbt projects in every list, `blabber-jvm` on the owned fixture as a role without superuser rights, `verify-blabber`. The lock regenerated byte-identical (640 artifacts); `scripts/verify all` exit 0 (46 reused) **[run]**. |
-| U1 Contract 0.2.0 | done | Appendix A of the first version compiled unchanged with Baboon 0.0.200: 43 types **[run]**. |
-| U2 Client contract suite | done | Merged as `0d93a802`: 426 cases (206 in memory, 220 behind the HTTP bridge), 71 injected defects each caught **[run]**. 494 cases in the light checks on `4f07a9f0` **[run]**; 240 and 254 by the merging agent on `2c444ad4`. |
-| U3 Server core | done | Merged as `689a6c5c`: `blabber-jvm` 258 cases, 120 on PostgreSQL, as a Nix check inside the owned fixture **[run]**. Rulings R18 to R23 in server, suite and model comments: `eacf9836`, 269 cases (125 on PostgreSQL) by its agent. |
+| U0 Bring the pilot forward | done | `product/blabber` up to `8e9c8c25`: the pilot merged, the two sbt projects in every list, `blabber-jvm` on the owned fixture as a role without superuser rights, `verify-blabber`. The lock regenerated byte-identical (640 artifacts); `scripts/verify all` exit 0 (46 reused) **[run]** (U0's builder, on `8e9c8c25`). |
+| U1 Contract 0.2.0 | done | Appendix A of the first version compiled unchanged with Baboon 0.0.200: 43 types **[run]** (U1's builder). |
+| U2 Client contract suite | done | Merged as `0d93a802`: 426 cases (206 in memory, 220 behind the HTTP bridge), 71 injected defects each caught **[run]** (U2's builder, on `7075bc9d`). 494 cases in the orchestrator's light checks on `4f07a9f0` **[run]**; 240 and 254 by the merging agent on `2c444ad4`. |
+| U3 Server core | done | Merged as `689a6c5c`: `blabber-jvm` 258 cases, 120 on PostgreSQL, as a Nix check inside the owned fixture **[run]** (the orchestrator's check). Rulings R18 to R23 in server, suite and model comments: `eacf9836`, 269 cases (125 on PostgreSQL) by its agent. |
 | U3i Import of the pilot's data | dropped | Q205. |
-| U4 Native package | done | Fast-forwarded into `product/blabber` at `5c1d497c`: static executable; `blabber-native` 3 cases; a closed long poll logged as 499 after 5 ms; `scripts/verify all` exit 0 on its branch (48 reused) **[run]**. |
-| U5 Extension on 0.2.0 | done | Merged as `407bc4ef`: `ponygirls-blabber` 378 cases, client suite 450, real-server leg 39 of 39; `scripts/verify blabber` exit 0 on its branch **[run]**. |
-| U6 Shared account adapter | replaced | By the account refactor's stages 1 to 3 (section 4.9). Stage 1: verified on the landing tree `17988993`, landing held for Q220. Stage 2: built, reviewed and fixed (`refactor:` `58c40b55`); verified on the landing tree `40ef1386`, landing held for Q220 **[run]**. Stage 3: started 19:02. |
-| U7 Shared retrieval changes | done | Merged as `8fadee59`. `scripts/verify all` on `f770b727`: first run exit 1 (a Chronicle test timed out under heavy load), rerun exit 0, 3 built and 41 reused **[run]**. |
+| U4 Native package | done | U4's builder: the first green `scripts/verify all` (48 reused) was on `71d0d657`, a tree with the pilot's server, not the product's **[run]** (the log, 16:15). After its follow-up moved the native driver to 0.2.0, it was fast-forwarded into `product/blabber` at `5c1d497c`: static executable, `blabber-native` 3 cases, a closed long poll logged as 499 after 5 ms **[run]** (U4's builder). That tree was red for `verify-blabber` until U5, because the extension still spoke 0.1.0 (the log, 16:40). |
+| U5 Extension on 0.2.0 | done | Merged as `407bc4ef`: `ponygirls-blabber` 378 cases, client suite 450, real-server leg 39 of 39; `scripts/verify blabber` exit 0 **[run]** (U5's builder, on its branch; the log does not name the commit). |
+| U6 Shared account adapter | replaced | By the account refactor's stages 1 to 3 (section 4.9). Stage 1: verified on the landing tree `17988993` (the orchestrator's verification of record), landing held for Q220. Stage 2: built, reviewed and fixed (`refactor:` `58c40b55`); verified on the landing tree `40ef1386`, landing held for Q220 **[run]** (the orchestrator's verification of record). Stage 3: started 19:02. |
+| U7 Shared retrieval changes | done | Merged as `8fadee59`. `scripts/verify all` on `f770b727`: the builder's run exit 1 (a Chronicle test timed out under heavy load); the orchestrator's rerun exit 0, 3 built and 41 reused **[run]**. |
 | U1f Wire freeze | done | Rulings R24 to R30, then R34 to R36, in model, server, suite and extension; merged as `cb0743ae`. By its agent: server 468 cases (133 on PostgreSQL), suite 494, `ponygirls-blabber` 392, real-server leg 42. |
 | U9 Live socket | done | Built on its own branch before accounts, with a seam for them (section 7.2); merged as `2c444ad4`, which also brought `4f07a9f0` into it. By the merging agent: server 545 cases (163 on PostgreSQL), client suite 240 and 254. The merge found and fixed a defect of the combination: a person was judged by the last sight instead of the live report (R31). |
-| U11 Home Manager client module | done | Merged as `886383d3`; `blabber-contract-suite` added to `verify-blabber` in `99b14cb2`. `blabber-hm-eval`, `runtime-token`, `yolo-profile` (592) passed **[run]**. |
-| `main` merged into the product branch | done | `4f07a9f0` (Pi 1.7.0, tool updates, the Q212 fix), no conflicts. Light checks on it green: the extensions' build, the client suite 494, `ponygirls-blabber` 392, `blabber-hm-eval`, `runtime-token`, `yolo-profile` **[run]**. |
+| U11 Home Manager client module | done | Merged as `886383d3`; `blabber-contract-suite` added to `verify-blabber` in `99b14cb2`. `blabber-hm-eval`, `runtime-token`, `yolo-profile` (592) passed **[run]** (U11's builder, on its branch). |
+| `main` merged into the product branch | done | `4f07a9f0` (Pi 1.7.0, tool updates, the Q212 fix), no conflicts. Light checks on it green: the extensions' build, the client suite 494, `ponygirls-blabber` 392, `blabber-hm-eval`, `runtime-token`, `yolo-profile` **[run]** (the orchestrator's light checks on `4f07a9f0`). |
 | Verification of record of `product/blabber` | running | `scripts/verify all` on `2c444ad4`, behind the load gate (section 13.6); it had the lock or was taking it at 19:18. `blabber-jvm` and `blabber-native` have not run as Nix checks on a tree with U1f and U9. |
-| U5c Status pane | running | Branch `product/blabber-u5c` from `4f07a9f0`, started 18:58; includes the first run of the extension in real Pi 1.7.0 sessions. |
+| U5c Status pane | running | Branch `product/blabber-u5c` from `4f07a9f0`, started 18:58; includes the first run of the extension in real Pi 1.7.0 sessions. It may be built now; it is merged into `product/blabber` only after the verification of record of `2c444ad4` has finished (section 13.6). |
 | U13 Search in the server | started | Branch `product/blabber-u13` from `2c444ad4`, at 19:18, before accounts: the per-account indexing preference is behind a port, and the Blabber service key in `shared/service-auth` is stage 3's. |
-| U8, U10, U12, U12a, U14, U5b, U15 to U20 | not started | Below. |
+| U8, U9b, U10, U12, U12a, U14, U5b, U15 to U20 | not started | Below. |
 
 ### 13.3 The units that remain
 
 **U5c. The status pane.** Section 10.2, as group 12 of the confirmed mockup and section 7 of the build brief
 show it. Owns the pane's module in the extension. Exit check: `nix build .#checks.x86_64-linux.ponygirls-blabber`,
 with cases for every state of section 10.2 on a manual clock. Size: the transcript module, which renders lines
-under the same conventions, is 625 lines. Risk: low.
+under the same conventions, is 625 lines. Risk: low. Merged only after the verification of record of
+`2c444ad4` has finished (section 13.6).
+
+**U9b. The live socket in the client suite's in-memory service** (a design rule of the orchestrator, 19:25).
+
+- Goal: the in-memory service of the client contract suite gets the live socket and a person's presence as ruling
+  R31 defines it: the capability `liveSocket`, frames as hints, a person `Online` only while a reporting socket
+  names the room and `Away` at once when the last report ends. The cases are shared with the real server where it
+  can run them. The dashboard's tests must not skip live cases or assert the older presence rule, under which a
+  person is present while seen within the presence window (the in-memory service's rule today, the log, 19:05).
+- Owns: `blabber/contract-suite/`, for that purpose.
+- Depends on: U9 (built); U13 having finished its own changes of the suite.
+- Exit check: `nix build .#checks.x86_64-linux.blabber-contract-suite`, with the live cases registered for the
+  in-memory world, and, where it can run them, for the real server: in `blabber-native` once browser sessions
+  exist (U8, U12).
+- Prerequisite of: U15.
 
 **U8. Accounts in the server.**
 
@@ -2328,10 +2403,9 @@ under the same conventions, is 625 lines. Risk: low.
   in every room of its account and nothing of other accounts' direct messages; after the sweep no row of the
   message is in any index table; no index write on a membership change or an archive.
 - Owns: `blabber/server/src/main/scala/blabber/retrieval/`, the search routes, their tests.
-- Depends on: U7 (done). Started before U8 (section 13.2): the indexing preference lives in the account tables
-  and is behind a port in U13; Blabber's indexing service key comes with the refactor's stage 3. Open: whether U13
-  is completed before U8, with the preference behind its port, or waits for U8; the log records only how it
-  started.
+- Depends on: U7 (done). Built before U8 behind a seam (section 13.4): the per-account indexing preference is
+  behind a port. U13 is completed, for its account-controlled preference, by U8, which implements the port over
+  the shared account tables; Blabber's indexing service key comes with the refactor's stage 3.
 - Exit check: `nix build .#checks.x86_64-linux.blabber-jvm .#checks.x86_64-linux.blabber-native`, then
   `scripts/verify all`
 - Size: Haystack's projection is 88 lines and its retrieval tests 514.
@@ -2356,19 +2430,21 @@ model (part of `tool.ts`, 242 lines on `product/blabber`).
   the live timeline and the roster, resynchronisation, loss of access, the change of account; the web package
   and the browser check. The package becomes the executable joined with the web root. The build brief is
   `docs/drafts/20261127-1900-blabber-dashboard-build-brief.md`.
-- Also needed: the in-memory service of the client suite has no live socket yet (its capability `liveSocket`
-  registers nothing), and a person there is still `Present` while seen within the presence window rather than by
-  the live report of R31. The dashboard's tests against it need live-socket modelling; no unit owns that work
-  yet (the log, 18:35 and 19:05).
+- Its tests against the in-memory service use the live socket of U9b; none skips a live case or asserts the
+  older presence rule.
 - Owns: `blabber/web/` (shell, API client, connection, rooms, timeline, roster), `nix/pkg/blabber/web.nix`,
   `test-dependencies.nix`, `nix/tests/blabber-browser.nix`, the entries in the shared theme and account-web
   lists.
-- Depends on: U1f and U9 (done), U8, U10 (the proxy configuration under test).
+- Depends on: U1f and U9 (done), U9b, U8, U10 (the proxy configuration under test).
 - Exit check: `nix build .#blabber .#checks.x86_64-linux.blabber-browser .#checks.x86_64-linux.account-web-browser`,
   then `scripts/verify all`. Browser cases among others: sign-in; the shared account flow, also on an opted-in
   plain-HTTP origin; a room that updates when an agent posts; a dropped socket followed by catching up without
   a gap or a duplicate; a second account signing in in another tab; the page's security headers and the 421
-  through the proxy.
+  through the proxy; and, for the timeline, the taking back of the administrator's view (section 9.5): in a room
+  of which the administrator stays a member, others' direct messages are gone from the timeline and from browser
+  storage after the switch goes off, after a demotion announced by a `rooms` frame, by a `forbidden` answer and by
+  `whoami`, after another account signs in and after sign-out; a timeline page requested with the switch on and
+  answered after it went off is not painted.
 - Size: Haystack's web source is 6,130 lines, its Node tests 1,145, its browser tests 4,931. The whole
   dashboard is of that order; this unit is its largest part.
 - Risk: high. The largest unit; live behaviour in a real browser.
@@ -2381,11 +2457,15 @@ held response followed by Retry that yields one message also after an archive, a
 
 **U17. Moderation and the administrator's views.** Depends on U15. Exit check: the same command, with cases
 for removing a participant, archive and unarchive, the administrator's list and banner, the switch for others'
-direct messages off and on, and the refusal of each for an ordinary account.
+direct messages off and on, no "Reply" on a message seen only through the switch, the taking back of the view
+(section 9.5) when the switch goes off and on demotion in a room that stays readable, and the refusal of each for
+an ordinary account.
 
 **U18. Search view.** Depends on U15 and U13. Exit check: the same command, with cases for a search with
-results, the kind filter, the fallback notice against a server without an embedding endpoint, and a jump to a
-message.
+results, the kind filter, the fallback notice against a server without an embedding endpoint, a jump to a
+message, and the taking back of the administrator's view: hits and excerpts found with the switch on are gone
+after the switch goes off, after a demotion and after sign-out, and a search answered after the switch went off
+is not painted.
 
 **U19. One run with real browsers and real Pi sessions.**
 
@@ -2422,10 +2502,23 @@ that the service is ready for others ends editing 0.2.0 in place (section 6.3).
 
 ### 13.4 Order
 
+An arrow means: the unit at its head needs the result of the unit at its tail before it can be integrated and
+declared done. A unit may start earlier behind a seam, and three did:
+
+- the live socket (U9) before accounts (U8), with the port `http.LiveSessions` that U8 implements (section 7.2);
+- search in the server (U13) before accounts, with the per-account indexing preference behind a port that U8
+  implements (section 13.3);
+- stage 3 of the account refactor on top of stage 2, before stage 2 has landed; it lands after stage 2 (Q216).
+
+A merge into `product/blabber` also waits for the verification of record of the branch that is queued or running
+when the merge would happen (section 13.6); the diagram shows that for U5c, whose merge waits for the run on
+`2c444ad4`.
+
 ```mermaid
 flowchart TD
-  DONE[Done: U0 U1 U2 U3 U4 U5 U7 U9 U11 U1f] --> V[Verification of record of product/blabber, queued]
+  DONE[Done: U0 U1 U2 U3 U4 U5 U7 U9 U11 U1f] --> V[Verification of record of 2c444ad4, running]
   DONE --> U5c[U5c status pane, running]
+  V --> U5c
   S1[Refactor stage 1, verified; landing held for Q220] --> S2[Refactor stage 2, verified; landing held]
   S2 --> S3[Refactor stage 3, running]
   S3 --> M[main merged into product/blabber]
@@ -2438,7 +2531,10 @@ flowchart TD
   U8 --> U13[U13 search, started]
   U13 --> U14[U14 evaluation baseline]
   U13 --> U5b[U5b search action]
-  U8 --> U15[U15 dashboard: reading]
+  DONE --> U9b[U9b live socket in the suite's in-memory service]
+  U13 -->|its suite changes| U9b
+  U9b --> U15[U15 dashboard: reading]
+  U8 --> U15
   U10 --> U15
   U15 --> U16[U16 participation]
   U15 --> U17[U17 moderation]
@@ -2455,8 +2551,10 @@ flowchart TD
   U20 --> L([one merge into main, Q211])
 ```
 
-Every arrow points from what must be done to what needs it; no unit is reachable from itself. Each refactor
-stage lands on `main` before the next one lands (Q216).
+Every arrow points from what must be done to what needs it; no unit is reachable from itself. `U8 --> U13`
+says that U13 is completed by U8, not that it starts after it. `S2 --> S3` says that stage 3 lands after stage 2;
+it was built on top of stage 2 before that landed. Each refactor stage lands on `main` before the next one lands
+(Q216).
 
 ### 13.5 Landing (Q211, Q216) and what blocks what
 
@@ -2470,10 +2568,14 @@ same way, after the stages.
 
 **What blocks what now.** All decisions of the first version are answered, and the mockup is confirmed. The
 critical path is the accounts: stage 1 lands, stage 2 lands, stage 3 is built, reviewed, verified and lands,
-`main` is merged into the product branch, then U8. Stage 1's landing waits for Q220: until it is answered,
-nothing lands on `main` from a tree that has had a failed run, and stage 1 had one (section 13.6). Everything
-after U8 in section 13.4 waits with it. Not blocked: U5c, the verification of record of `product/blabber`, the
-building of stage 3, and the start of U13.
+`main` is merged into the product branch, then U8. Stage 1's landing waits for Q220. Its landing tree
+`17988993` passed its verification of record; an earlier run of the same stage, the builder's on `f9b001db`, had
+failed in a timing-sensitive test of Manure that the landing tree's run built again and passed (section 14). The
+orchestrator holds every landing behind that earlier failure until Q220 is answered, stage 2 and the Q215 fix
+with it (section 13.6). Everything
+after U8 in section 13.4 waits with it. Not blocked: the building of U5c (its merge waits for the verification of
+record of `2c444ad4`), that verification itself, the building of stage 3, and U13 up to its port for the
+indexing preference.
 
 **The contract under the landing.** 0.2.0 may be edited in place, by a ruling of the contract's owner, while
 only we use the service and server and extension are deployed from one revision (section 6.3). The landing and
@@ -2496,6 +2598,9 @@ under that load (section 14). The procedure since then, by the log (18:20 to 18:
 - **Open question Q220**: whether one failed verification on an overloaded machine may be repeated once on a
   quieter machine, and the tree land if that run passes, as a standing rule. Until it is answered, a tree with a
   failed run does not land.
+- **No merge into the integration branch while its verification of record is queued or running** (a design
+  rule of the orchestrator, 19:25). A unit that is ready waits; U5c waits for the run on `2c444ad4` (the log,
+  19:05).
 - **What counts as evidence** stays as `AGENTS.md` says: a member reused from the cache was verified on exactly
   these inputs before. Inner-loop counts of a builder are recorded as such and are not checks of record.
 
@@ -2506,7 +2611,7 @@ The first version's risks, with what happened to them:
 1. **The socket wrapper.** The pilot notices a closed long poll through a reflective proxy around the
    listener's sockets. *Answered in part.* Under native image the wrapper works once its two proxies are
    registered; without them `serve` fails at bind; `blabber-native` shows a closed poll logged as 499 after
-   5 ms (U4) **[run]**. A WebSocket upgrade passes through the wrapper on the JVM, where a pull on another
+   5 ms **[run]** (U4's builder, on `5c1d497c`). A WebSocket upgrade passes through the wrapper on the JVM, where a pull on another
    connection still notices that its client went away (`LiveSuite`), and the JVM's tracing agent found one more
    type to register for native image **[repo]** (`product:blabber/README.md`, "Disconnects"). *Still open:* an
    upgrade on the native executable. It needs a browser session (U8) and is a case of U12.
@@ -2514,12 +2619,13 @@ The first version's risks, with what happened to them:
    **[run]** (draft section 14.1). The plan answers with reuse (Q204: the shared module of section 4.9), closed
    fix lists, and tests taken from Haystack. The risk remains highest in U8.
 3. **A regression in Haystack, Manure or Chronicle** from the account refactor or U7. Guard: `scripts/verify all`
-   on each tree that lands, and the refactor's stop rule. U7 passed on its rerun; stage 1 passed on its landing
-   tree; no stop rule was triggered **[run]**.
+   on each tree that lands, and the refactor's stop rule. U7 passed on the orchestrator's rerun on `f770b727`;
+   stages 1 and 2 passed the orchestrator's verifications of record on `17988993` and `40ef1386` **[run]**; the
+   builders report that no stop rule was triggered.
 4. **Visibility in search.** The one place where a new mechanism decides who sees a direct message, and by
    Q207 direct messages are indexed. Guard: the cases of U13 and the discard of a page whose scope changed.
 5. **The suites under a role without superuser rights.** *Answered:* `blabber-jvm` passed inside the owned
-   fixture as such a role on `689a6c5c`, 258 cases **[run]**.
+   fixture as such a role on `689a6c5c`, 258 cases **[run]** (the orchestrator's check).
 6. **The size of the dashboard.** It is of the order of Haystack's, and it has a kind of page that no
    dashboard here has: a live transcript with a composer. Guard: the confirmed mockup and its build brief; U15
    as a reading-only cut that is useful by itself.
@@ -2538,14 +2644,16 @@ Observed during the build:
 
 13. **Tests that measure real time fail when this machine is overloaded.** Two cases, both in other services'
     suites. Chronicle's `ProviderCoolDownTest` (an oversized streaming case) took 31.21 s against munit's limit
-    of 30 s at a load of about 157 on 128 cores; the same derivation passed at a load of 51 to 67, the suite in
-    10.9 s. Manure's `CheckConfigSuite` waited 2 s for a fresh child JVM and failed at a load of 128 to 155; the
-    same derivation passed at a load of 71 to 77 **[run]** (the log, 17:25 to 18:40). The cause is not proven;
+    of 30 s at a load of about 157 on 128 cores, in U7's builder's run on `f770b727`; the same derivation passed in
+    the orchestrator's rerun at a load of 51 to 67, the suite in 10.9 s. Manure's `CheckConfigSuite` waited 2 s for
+    a fresh child JVM and failed at a load of 128 to 155, in the refactor builder's run on `f9b001db`; the same
+    derivation passed in the orchestrator's verification of record of `17988993` at a load of 71 to 77 **[run]**
+    (the log, 17:25 to 18:40). The cause is not proven;
     the failures go with the load. The answer so far is one full verification at a time behind a load gate
     (section 13.6); whether a failed run may be repeated once is Q220.
 14. **The extension has not run in a real Pi 1.7.0 session yet.** `main`'s Pi 1.7.0, with the rebased patch
     that provides `enqueueMessage`, was merged into the product branch at `4f07a9f0`; the extension's type check
-    and suites pass against it **[run]**. Real Pi sessions were driven only on the earlier Pi, during U5. U5c
+    and suites pass against it **[run]** (the orchestrator's light checks on `4f07a9f0`). Real Pi sessions were driven only on the earlier Pi, during U5. U5c
     makes the first real run.
 15. **A Pi session never reports "waiting for its user".** Pi gives an extension no signal for a run that waits
     for its user, so the extension never reports `BlockedOnUser` **[repo]** (extension README, "When a message
@@ -2553,13 +2661,16 @@ Observed during the build:
     they never show it. By the extension's order of reports such a session shows as busy (inferred, not
     observed).
 16. **The emulated VM check does not boot here under load.** This machine has no `/dev/kvm`, so VM checks run
-    emulated. `onDemand.manure-vm` (for Q215) did not reach its shell within 326 s at a load of about 122, and no
-    test command ran. On the rebased tree it booted and passed: exit 0 at 19:04, the test script in 858.70 s, at
-    a load of 42 to 60 when it started **[run]** (the log, 18:08 and 19:05). U10's exit includes the VM check `hm-service-unit-graph-vm`.
+    emulated. `onDemand.manure-vm` (for Q215) did not reach its shell within 326 s at a load of about 122 in the
+    builder's run on `85a968e1`, and no test command ran. In the orchestrator's verification of record on the
+    rebased tree `4a8485bc` it booted and passed: exit 0 at 19:04, the test script in 858.70 s, at a load of 42 to
+    60 when it started **[run]** (the log, 18:08 and 19:05). U10's exit includes the VM check
+    `hm-service-unit-graph-vm`.
 17. **The dashboard needs live-socket modelling in the contract suite's in-memory service.** Its capability
     `liveSocket` registers nothing yet **[repo]** (`product:blabber/contract-suite/README.md`), and the in-memory
     service still treats a person as present while seen within the presence window, not by the live report of
-    R31 (the log, 19:05). The dashboard's tests against it need both (section 13.3, U15).
+    R31 (the log, 19:05). The dashboard's tests against it need both. Unit U9b provides them and is a
+    prerequisite of U15 (section 13.3).
 
 Not determined:
 
@@ -2903,7 +3014,7 @@ root data LiveFrame { kind: str nonce: opt[str] clientTs: opt[f64] serverTs: opt
 ```
 
 This is the text of `blabber/models/current.baboon` on `product/blabber` at `2c444ad4`, byte for byte. Its first
-form, the appendix of the first version, was compiled unchanged with Baboon 0.0.200 in U1 **[run]**; the rulings
+form, the appendix of the first version, was compiled unchanged with Baboon 0.0.200 in U1 **[run]** (U1's builder); the rulings
 since then changed comments, members and enum values.
 
 ## Appendix B. The open questions of the four surveys
