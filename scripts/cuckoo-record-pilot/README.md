@@ -346,6 +346,7 @@ SCENARIO_SET=record ./run.sh sonnet-B-tools-builtins <frozen copy, arm B> <out> 
 node record-summary.mjs "sonnet A=<out>/sonnet-A-tools-builtins" "sonnet B=<out>/sonnet-B-tools-builtins"   # tables
 node record-summary.mjs --sessions "sonnet B=results/batch2/sonnet-B-tools-builtins.jsonl.gz"               # per session
 node adoption.mjs results/batch2                                                                              # the rule
+node first-deliverable.mjs "sonnet B=results/batch2/sonnet-B-tools-builtins.jsonl.gz"                           # see results
 node export-results.mjs --gz results/batch2 <out>/<label> ...
 ```
 
@@ -373,8 +374,9 @@ In short: batch 1 showed that sonnet/medium keeps one entry for a whole request,
 developed in three rounds, frozen, and compared with the shipped one on 576 sessions with held-out scenarios by a
 blind author. The registered rule for adopting it holds, by one session on its main point; the wording is adopted.
 With it sonnet records objectives as separate entries and retires cancelled ones, records every rule, and makes
-about twice as many extra provider requests. It still misses a deliverable whose first message asks only for a
-sketch (0 of 12 in both held-out cases), so "keeps the record as specified" is not claimed. Details below.
+about twice as many extra provider requests. A deliverable that the first message asks only to sketch or to start
+still gets its entry in that turn unevenly (10, 0 and 0 of 12 in the three held-out scenarios that have one), so
+"keeps the record as specified" is not claimed. Details below.
 
 ### Protocol (registered 2026-11-27, before any run of this batch)
 
@@ -586,8 +588,8 @@ with the built-in tools declared (hashes `07499ee7b2c1` and `354f2ce07dbd`), 551
 
 **Held-out scenarios.** Written by a subagent of another model family (gpt-6.2-sol) from the seven points of the
 desired behaviour, the format and the list of subjects to avoid; it was told to read no file and its reply named
-only the file and its hash. The file was written at 13:33 UTC, ten minutes before the freeze commit, and read after
-it. It is `heldout.mjs`, unchanged (SHA-256 `2959702f…`). The scripted check of its keys against the author's example
+only the file and its hash. The protocol was committed at 13:30 UTC, the file was written at 13:33, the wording was
+frozen at 13:43, and the file was read after that. It is `heldout.mjs`, unchanged (SHA-256 `2959702f…`). The scripted check of its keys against the author's example
 titles and the user's own words passed; no fixture was corrected. `h1`: three deliverables stated in running prose,
 one cancelled, one accepted, one still open, one rule, one plain question. `h2`: two deliverables, a third added in
 the second message, one cancelled, two accepted, one rule. `h3`: one label built in parts. `h4`: questions and small
@@ -843,15 +845,29 @@ of 24 held-out work sessions in arm A and in 9 of 24 in arm B (20 were required)
   12 sessions, `h1` 11 of 12) or no objective at all (`report` 9, `h2` 12, `h3` 12 of 12). Under arm B there is no
   merged entry in any of the 96 sessions and an objective entry in every work and single-deliverable session but one;
   the cancelled objective is retired, in an entry of its own, in 48 of 48 work sessions (1 of 48 in arm A).
-- **What it does not change: a deliverable whose first message asks only for a sketch or a first part.** In `h2` the
-  first message asks to "just sketch the speech here for now". In 11 of 12 arm-B sessions the speech never gets an
-  entry, also not when the next message asks to finish it; in 1 it gets one a turn late. The other two deliverables
-  of `h2` get their entries in their turn in 12 of 12, the cancelled one is retired, the invitation completed. In
-  `h3` ("start with just the opening phrase here") the label gets its entry one turn late in 11 of 12 and never in 1.
-  The wording has a clause for exactly this ("even when the message asks only for a first step of it"). It was
-  written against the development scenario `single`, where it gives 9 of 12 in this batch (6 of 6 in the last
-  development round), and it carries to neither held-out case. With only Cuckoo's tools declared the same subject
-  records the label of `h3` in its turn in 6 of 6 and the three deliverables of `h2` in 2 of 6.
+- **Uneven: the deliverable that the first message asks only to sketch or to start.** Four scenarios have one. The
+  table says in how many sessions it has an entry of its own after the first message ("at once": already complete
+  then), gets one later, or never does (`node first-deliverable.mjs NAME=PATH ...` on the stored runs; built-in tools
+  declared unless said otherwise):
+
+  | | `h1` welcome | `h2` speech | `h3` label | `single` plan |
+  |---|---|---|---|---|
+  | sonnet A | 2 of 12 (1 at once); later 0, never 10 | 0 of 12; later 0, never 12 | 0 of 12; later 0, never 12 | 0 of 12; later 10, never 2 |
+  | sonnet B | 10 of 12 (4 at once); later 1, never 1 | 0 of 12; later 1, never 11 | 0 of 12; later 11, never 1 | 9 of 12; later 3, never 0 |
+  | haiku A | 0 of 6; later 0, never 6 | 0 of 6; later 0, never 6 | 0 of 6; later 0, never 6 | 0 of 6; later 0, never 6 |
+  | haiku B | 5 of 6; later 0, never 1 | 2 of 6 (2 at once); later 0, never 4 | 6 of 6; later 0, never 0 | 0 of 6; later 5, never 1 |
+  | fable A | 6 of 6; later 0, never 0 | 6 of 6 (6 at once); later 0, never 0 | 6 of 6; later 0, never 0 | 6 of 6; later 0, never 0 |
+  | fable B | 6 of 6; later 0, never 0 | 6 of 6; later 0, never 0 | 6 of 6; later 0, never 0 | 6 of 6; later 0, never 0 |
+  | sonnet A, only Cuckoo's tools | 4 of 6 (4 at once); later 0, never 2 | 0 of 6; later 1, never 5 | 0 of 6; later 2, never 4 | 0 of 6; later 6, never 0 |
+  | sonnet B, only Cuckoo's tools | 6 of 6 (3 at once); later 0, never 0 | 2 of 6 (1 at once); later 1, never 3 | 6 of 6; later 0, never 0 | 6 of 6; later 0, never 0 |
+
+  For sonnet B the speech of `h2` has no entry even after the message that asks to finish it, while the two other
+  deliverables of `h2` get theirs in their turn in 12 of 12, the cancelled one is retired and the invitation
+  completed. The first messages of `h1` and `h2` are built alike ("just sketch the welcome here for now and leave
+  the other two for later"; "just sketch the speech here for now and leave the blurb for later"), and the results
+  are 10 of 12 and 0 of 12: the batch does not show what makes the difference. The wording has a clause for the case
+  ("even when the message asks only for a first step of it"), written against `single`; it is not reliable beyond
+  it.
 - **Closing before the delivery.** After the first message of `h1` or `h2`, which ask for a sketch, an objective was
   already complete in: sonnet A 1 of 24 sessions, sonnet B 4 of 24 (reopened when the user asked to finish it in 2;
   a second completion refused in 1), fable A 6 of 12 (all in `h2`; reopened in 5, two with a refused call, which is
@@ -905,10 +921,12 @@ of 24 held-out work sessions in arm A and in 9 of 24 in arm B (20 were required)
   96 sessions against 96 of 96), which the batch was not designed to show.
 - What may be said: with the new wording sonnet/medium records objectives as separate entries and retires cancelled
   ones; it does not yet "keep the record as specified" (9 of 24 held-out work sessions right). The open defects are
-  the deliverable that starts with a sketch or a first part, and completion before delivery.
+  the entry for a deliverable that starts with a sketch or a first part (19 of 48 sonnet sessions and 13 of 24 haiku
+  sessions have it in the first turn, very unevenly by scenario), and completion before delivery.
 - Not tested: sessions with real work and working tools, long sessions, other provider families, a tool set between
-  the two tried here. The held-out scenarios are four, by one author; `h2` and `h3` share the feature that defeats the
-  wording, so "0 of 12" twice is one finding, not two.
+  the two tried here. The held-out scenarios are four, by one author, and three of them open with the same
+  construction (a request to sketch or to start one deliverable); they are less independent than four scenarios by
+  four authors would be, and the two "0 of 12" are not two findings.
 
-A second candidate was not frozen. If one is written, `h2` and `h3` become development scenarios for it and it needs
-held-out scenarios its author has not seen.
+A second candidate was not frozen. If one is written, the four held-out scenarios become development scenarios for
+it and it needs new ones that its author has not seen, preferably by more than one author.

@@ -249,11 +249,13 @@ but blocked; three models of one provider family; 144 and 576 sessions):
   one (10 of 36 in the scenarios the wording was not developed on, against 1
   of 36 before). The small model went from 4 to 35 of 36 sessions with an
   objective entry and missed a rule in 6 of 48.
-- Still unreliable for the middle and the small model: a deliverable whose
-  first message asks only for a sketch or a first part often gets its entry a
-  turn late or not at all (0 of 12 in each of the two unseen scenarios), and an
-  objective is sometimes completed when only the sketch was delivered. In 6 of
-  104 sessions with a completion the next checkpoint repeated it.
+- Still unreliable for the middle and the small model: a deliverable that the
+  first message asks only to sketch or to start gets its entry in that turn in
+  19 of 48 sessions of the middle model and 13 of 24 of the small one, very
+  unevenly by scenario (from 10 of 12 to 0 of 12 for the middle model), and
+  otherwise a turn late or not at all; an objective is sometimes completed
+  when only the sketch was delivered. In 6 of 104 sessions with a completion
+  the next checkpoint repeated it.
 - Each turn that edits the record costs one more provider request: for the
   middle model 2.8 instead of 1.4 per session of four turns.
 

@@ -379,9 +379,11 @@ entry of its own for every stated objective, in its turn, in 10 of 24 held-out w
 No guard of the rule shows harm: no entry made of a question in 384 sessions, no more surplus entries or rules than
 before, checkpoint replies valid and ID-correct in 192 of 192.
 
-**What it does not fix.** A deliverable whose first message asks only for a sketch or a first part gets its entry a
-turn late or not at all: 0 of 12 in each of the two held-out scenarios that have this feature, although the wording
-has a clause for it that works on the development scenario it was written against (9 of 12). An objective is
+**What it does not fix.** A deliverable that the first message asks only to sketch or to start gets its entry in
+that turn unevenly: for sonnet in 10, 0 and 0 of 12 sessions of the three held-out scenarios that have one and in 9
+of 12 of the development scenario its clause was written against; for haiku in 5, 2 and 6 of 6 and in 0 of 6.
+Otherwise the entry comes a turn late or not at all. Two scenarios with nearly the same first message give 10 of 12
+and 0 of 12, so the cause is not known. An objective is
 sometimes completed when only the sketch was delivered (sonnet 4 of 24 sessions, haiku 2 of 12; fable did this with
 the shipped wording in 6 of 12 and not with the new one). A completion made with the tool is repeated at the next
 checkpoint about as often as before (sonnet 5 of 70 sessions that had one, against 2 of 31). By the registered
@@ -394,11 +396,11 @@ scenarios of batch 1 only; with the shipped wording sonnet missed a rule in 39 o
 objective as recorded when one entry named it among others; under the stricter reading it is 0 of 24.
 
 **Limits.** As for the first pilot: synthetic chat sessions of four turns, built-in tools declared but blocked, one
-provider family. Four held-out scenarios by one author, two of which share the feature that defeats the wording.
+provider family. Four held-out scenarios by one author, three of which open with the same construction.
 The form that was frozen differs from the last development round by the tool's name written into three guidelines.
 The effect on sessions with real work is not measured.
 
 **Shipped.** `src/update.ts` (guidelines and description), a test that pins their length and SHA-256, the user
-documentation in the extension's README. A second candidate was not attempted; if one is, `h2` and `h3` become its
-development scenarios and it needs new held-out ones.
+documentation in the extension's README. A second candidate was not attempted; if one is, the four held-out
+scenarios become development scenarios for it and it needs new ones, preferably by more than one author.
 
