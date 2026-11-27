@@ -76,9 +76,18 @@ final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: Mo
   def post(context: ModelCallContext,endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json): IO[Json] =
     postDecoded(context,endpoint,credentialFile,timeout,maxBytes,payload)(identity)
   def postDecoded[A](context: ModelCallContext,endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json,beforeDispatch: IO[Unit]=IO.unit)(decode: Json => A): IO[A] = IO.defer {
-    admission.request(context.purpose).use { _ => (Ref.of[IO,ProviderUsage](ProviderUsage.unknown),Ref.of[IO,Option[Int]](None)).flatMapN { (usage,status) =>
-      // Typed statuses: the response's status, recorded as the exchange starts; otherwise the client as before.
-      val exchange=if(statuses.typed) Client[IO](request => client.run(request).evalTap(response => status.set(Some(response.status.code)))) else client
+    admission.request(context.purpose).use { _ =>
+      // Typed statuses only (`indexing.providerBackoff` on): a Ref for the response's status, set as the exchange starts.
+      // Untyped, the exchange is the one before: the client itself, and no Ref.
+      if(statuses.typed) Ref.of[IO,Option[Int]](None).flatMap { status =>
+        postDecoded(Client[IO](request => client.run(request).evalTap(response => status.set(Some(response.status.code)))),Some(status),context,endpoint,credentialFile,timeout,maxBytes,payload,beforeDispatch)(decode)
+      }
+      else postDecoded(client,None,context,endpoint,credentialFile,timeout,maxBytes,payload,beforeDispatch)(decode)
+    }
+  }
+  /** The exchange of `postDecoded` over `via`; `status`: the typed mode's response status. */
+  private def postDecoded[A](via: Client[IO],status: Option[Ref[IO,Option[Int]]],context: ModelCallContext,endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json,beforeDispatch: IO[Unit])(decode: Json => A): IO[A] =
+    Ref.of[IO,ProviderUsage](ProviderUsage.unknown).flatMap { usage =>
       Resource.makeCase(telemetry.begin(context)) { (ticket,exit) =>
         val outcome=exit match {
           case Resource.ExitCase.Succeeded => ModelCallOutcome.Complete
@@ -90,22 +99,21 @@ final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: Mo
         JsonHttp.credential(credentialFile).flatMap { credential =>
           // Admission and credential I/O can wait. Recheck here, without keeping JDBC resources across dispatch.
           // This is the authorization point, not a guarantee of recall once dispatch is authorized.
-          beforeDispatch *> JsonHttp.postF(exchange,endpoint,credential,timeout.seconds,maxBytes,payload) { json =>
+          beforeDispatch *> JsonHttp.postF(via,endpoint,credential,timeout.seconds,maxBytes,payload) { json =>
             usage.set(ProviderUsage.parse(json,context.purpose)).as(json).map(decode)
           }
         }
           .handleErrorWith {
-            case error: RetrievalError => error.code match {
-              case "model-response-bound" => IO.raiseError(ModelRejection.from(ModelRejectionReason.ResponseByteBound))
-              case "model-json" => IO.raiseError(ModelRejection.from(ModelRejectionReason.ModelJsonInvalid))
-              case "model-http" if statuses.typed => status.get.flatMap(observed => IO.raiseError(observed.fold(DomainError(error.code,error.detail))(new ModelHttpStatus(_,error.detail))))
+            case error: RetrievalError => (error.code,status) match {
+              case ("model-response-bound",_) => IO.raiseError(ModelRejection.from(ModelRejectionReason.ResponseByteBound))
+              case ("model-json",_) => IO.raiseError(ModelRejection.from(ModelRejectionReason.ModelJsonInvalid))
+              case ("model-http",Some(response)) => response.get.flatMap(observed => IO.raiseError(observed.fold(DomainError(error.code,error.detail))(new ModelHttpStatus(_,error.detail))))
               case _ => IO.raiseError(DomainError(error.code,error.detail))
             }
             case error => IO.raiseError(error)
           }
       }
-    }}
-  }
+    }
 }
 object ModelOutput {
   def parse(text: String): Json = io.circe.parser.parse(text).fold(_ => throw ModelRejection.from(ModelRejectionReason.ModelJsonInvalid),identity)
@@ -570,10 +578,13 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   }
   /** One attempt of `claim`; what its lane learns of it (Worker.Attempt): the stage of a classified provider failure that
     * ended it (only with `indexing.providerBackoff`), and the upstreams that answered one of its calls with a completed 2xx. */
-  private def process(claim: Claim,large: LargeJobs,lease: AttemptLease): IO[Worker.Attempt] = {
-    val answers=new Worker.Answers
-    attempt(claim,large,lease,answers).map(failed => Worker.Attempt(failed,answers.upstreams))
-  }
+  private def process(claim: Claim,large: LargeJobs,lease: AttemptLease): IO[Worker.Attempt] =
+    if(providerBackoff) {
+      val answers=new Worker.Answers.Recorded
+      attempt(claim,large,lease,answers).map(failed => Worker.Attempt(failed,answers.upstreams))
+    }
+    // Off: the calls as they are (Answers.Off) and the one constant attempt, nothing observed.
+    else attempt(claim,large,lease,Worker.Answers.Off).as(Worker.Attempt.unobserved)
   private def attempt(claim: Claim,large: LargeJobs,lease: AttemptLease,answers: Worker.Answers): IO[Option[IndexingStage]] = {
     val work=Dispatcher.sequential[IO](await=true).use(dispatcher => passages(claim,large,Worker.messageFetch(config,snapshots,dispatcher),answers))
     val renew=(IO.sleep(leases.renewal) *> IO(Deadline.now).flatMap(at => IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current")) *> IO(lease.renewed(at)))).foreverM
@@ -679,6 +690,11 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     }
   }
   def once: IO[Boolean] = iteration.map(_.processed)
+  /** One claim of today's order (tests): what its lane learns of the attempt (None: nothing was claimed). */
+  private[chronicle] def onceObserved: IO[Option[Worker.Attempt]] = iteration.map {
+    case Worker.Iteration.Processed(attempt) => Some(attempt)
+    case _ => None
+  }
   /** `indexing.claimOrder` (read at start). */
   private val claimOrder = ClaimOrderMode.of(config)
   /** One claim of `lane` in the waiting order (ClaimOrder); lane 0 runs it holding the large-job permit (`inLane`). A
@@ -748,17 +764,30 @@ object Worker {
     * failure that ended it (None: none, or `indexing.providerBackoff` off), and the upstreams (stages) that answered a call
     * of the attempt with a completed 2xx exchange. */
   private[chronicle] final case class Attempt(providerFailure: Option[IndexingStage],answered: Set[IndexingStage])
-  /** The upstreams that answered an attempt's calls with a completed 2xx: the call returned, or its answer was rejected
-    * for its content (a ModelRejection or a `model-output` code, which only an answer read in full can give); a non-2xx
-    * status, a deadline or a transport failure (also after 2xx headers) is no answer. */
-  private[chronicle] final class Answers {
-    private val seen=new java.util.concurrent.atomic.AtomicReference[Set[IndexingStage]](Set.empty)
-    def upstreams: Set[IndexingStage] = seen.get
-    def observed[A](stage: IndexingStage)(call: IO[A]): IO[A] = call.attempt.flatMap { result =>
-      IO(if(Answers.answered(result)) { seen.updateAndGet(_+stage); () }) *> IO.fromEither(result)
-    }
+  private[chronicle] object Attempt {
+    /** Every attempt of a worker with `indexing.providerBackoff` off: nothing observed. */
+    val unobserved: Attempt = Attempt(None,Set.empty)
+  }
+  /** How an attempt observes its model calls (provider back-off, lane cool-down): with the flag off `Off`, the call itself. */
+  private[chronicle] sealed trait Answers {
+    def observed[A](stage: IndexingStage)(call: IO[A]): IO[A]
   }
   private[chronicle] object Answers {
+    /** `indexing.providerBackoff` off: the call as it is, without attempting or classifying its result or any state. */
+    object Off extends Answers {
+      def observed[A](stage: IndexingStage)(call: IO[A]): IO[A] = call
+    }
+    /** The upstreams that answered an attempt's calls with a completed 2xx (`answered`). */
+    final class Recorded extends Answers {
+      private val seen=new java.util.concurrent.atomic.AtomicReference[Set[IndexingStage]](Set.empty)
+      def upstreams: Set[IndexingStage] = seen.get
+      def observed[A](stage: IndexingStage)(call: IO[A]): IO[A] = call.attempt.flatMap { result =>
+        IO(if(answered(result)) { seen.updateAndGet(_+stage); () }) *> IO.fromEither(result)
+      }
+    }
+    /** A completed 2xx exchange: the call returned, or its answer was rejected for its content (a ModelRejection or a
+      * `model-output` code, which only an answer read in full can give); a non-2xx status, a deadline or a transport
+      * failure (also after 2xx headers) is no answer. */
     def answered(result: Either[Throwable,?]): Boolean = result match {
       case Right(_) => true
       case Left(error) => ModelRejection.classify(error).nonEmpty || (error match {

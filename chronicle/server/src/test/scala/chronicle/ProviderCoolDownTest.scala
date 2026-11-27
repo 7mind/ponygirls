@@ -44,6 +44,11 @@ class ProviderCoolDownTest extends munit.FunSuite {
       DomainError("model-transport","model transport failed"),DomainError("stale-claim","x"),new RuntimeException("x")).foreach(error => assert(!Worker.Answers.answered(Left(error)),error.toString))
   }
 
+  test("Off: with the flag off an attempt's answer observer is the call itself: no attempt, classification or state") {
+    val call=IO.pure(List(1.0))
+    assert(Worker.Answers.Off.observed(annotation)(call) eq call)
+    assert(Worker.Answers.Off.observed(embedding)(call) eq call)
+  }
   private final case class Lanes(config: Config,db: Database,archive: PostgresArchive,stub: ProviderStub,client: org.http4s.client.Client[IO],log: WorkerLog) {
     def row(id: UUID): JobRow = ProviderBackoffFixtures.row(db,id)
     def rewind(id: UUID): Unit = db.transaction { c => Sql.exec(c,"UPDATE ch_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=?",id); () }
@@ -86,6 +91,18 @@ class ProviderCoolDownTest extends munit.FunSuite {
         l.rewind(again)
         val restarted=workerWith(l.archive,l.config,l.client,l.log.logger,ModelAdmission.make(l.config.indexing).unsafeRunSync(),coolDown)
         assertEquals(restarted.step(new restarted.Lane(index)).unsafeRunSync(),1.second,"a restart clears the cool-down")
+      }
+    }
+  }
+  for(backoff <- List(false,true)) {
+    test(s"Off: an attempt of a worker with the flag ${if(backoff) "on records the upstreams that answered it" else "off observes nothing: its lane gets the one constant attempt"}") {
+      lanes(ClaimOrderSetting.SourceId,backoff=backoff) { l =>
+        val id=l.archive.ingest("a",Fixtures.snapshot()).jobId
+        val w=workerWith(l.archive,l.config,l.client,l.log.logger,ModelAdmission.make(l.config.indexing).unsafeRunSync(),coolDown)
+        val observed=w.onceObserved.unsafeRunSync().getOrElse(fail("a job was claimed"))
+        assertEquals((l.row(id).state,l.stub.chatCalls.get,l.stub.embeddingCalls.get),("Complete",1,1),"both upstreams answered 2xx")
+        if(backoff) assertEquals(observed,Worker.Attempt(None,Set(annotation,embedding)))
+        else assert(observed eq Worker.Attempt.unobserved,s"no answer state with the flag off: $observed")
       }
     }
   }
