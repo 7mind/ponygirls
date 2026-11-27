@@ -162,7 +162,8 @@ abstract class AccountPlaneContract extends munit.FunSuite {
     val events = new ConcurrentLinkedQueue[AccountEvent]
     val ended = new ConcurrentLinkedQueue[String]
     val admitted = new AtomicInteger
-    val service = new DeclarativeAccountService[PlaneSnapshot](store, () => snapshot.get, runtime, IndexingService.Haystack, Indexing)
+    val service = new DeclarativeAccountService[PlaneSnapshot](store, () => snapshot.get, runtime, IndexingService.Haystack, Indexing,
+      BearerSecretPasswords.Accepted, DeclaredInstallation.Reconciled, AccountLifecycle.Unobserved)
     val plane = new AccountPlane[PlaneSnapshot](service, AccountPlaneSettings[PlaneSnapshot](
       current = () => snapshot.get, origins = _ => Policy, cookies = Cookies, cookieOrder = choices.order, respond = choices.respond,
       failureCode = choices.codes, status = status, audit = event => IO(events.add(event)).void, endSession = secret => IO(ended.add(secret)).void,

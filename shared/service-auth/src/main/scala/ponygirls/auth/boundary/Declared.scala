@@ -66,6 +66,9 @@ trait ConfiguredTokens {
   def live(userId: String, tokenId: String, digest: String): Boolean
   /** The configured tokens of `owner` as account-protocol metadata (`source: "configured"`, scope `api`). */
   def listed(owner: String): Vector[AccountToken]
+  /** Whether `secret` is the secret of any configured token: of any declared user, enabled or not, whether or not
+    * another token shares its digest. Membership, never a credential decision (`authenticate` decides those). */
+  def configures(secret: String): Boolean
 }
 object ConfiguredTokens {
   val Source = "configured"
@@ -75,6 +78,12 @@ object ConfiguredTokens {
 /** Lookup by digest over the enabled users' configured tokens; listing over every declared user. */
 private abstract class DigestTokens(users: Vector[DeclaredUserConfig]) extends ConfiguredTokens {
   protected def byDigest(digest: String): Option[ConfiguredToken]
+  /** Every configured digest, of every declared user. */
+  protected def everyDigest: Vector[Array[Byte]]
+  def configures(secret: String): Boolean = Secrets.canonical(secret) && {
+    val presented = Secrets.digest(secret).getBytes(StandardCharsets.US_ASCII)
+    everyDigest.map(MessageDigest.isEqual(presented, _)).foldLeft(false)(_ | _)
+  }
   def authenticate(secret: String): Option[ConfiguredToken] = if (Secrets.canonical(secret)) byDigest(Secrets.digest(secret)) else None
   def live(userId: String, tokenId: String, digest: String): Boolean = byDigest(digest).exists(token => token.userId == userId && token.tokenId == tokenId)
   def listed(owner: String): Vector[AccountToken] =
@@ -86,7 +95,9 @@ private abstract class DigestTokens(users: Vector[DeclaredUserConfig]) extends C
 }
 
 /** Digests read once per configuration load; the load refused a digest that two tokens share. */
-private final class SnapshotTokens(users: Vector[DeclaredUserConfig], digests: Vector[(Array[Byte], ConfiguredToken)]) extends DigestTokens(users) {
+private final class SnapshotTokens(users: Vector[DeclaredUserConfig], digests: Vector[(Array[Byte], ConfiguredToken)], every: Vector[Array[Byte]])
+    extends DigestTokens(users) {
+  protected def everyDigest: Vector[Array[Byte]] = every
   protected def byDigest(digest: String): Option[ConfiguredToken] = matching(digest, digests).lastOption
 }
 
@@ -94,6 +105,8 @@ private final class SnapshotTokens(users: Vector[DeclaredUserConfig], digests: V
   * a digest that several tokens share after the load matches none of them. */
 private final class PerCheckTokens(users: Vector[DeclaredUserConfig], enabled: Vector[(DeclaredTokenConfig, ConfiguredToken)], reader: DigestReader)
     extends DigestTokens(users) {
+  protected def everyDigest: Vector[Array[Byte]] =
+    users.flatMap(_.tokens).flatMap(token => reader.read(token.hashFile).toOption).map(_.getBytes(StandardCharsets.US_ASCII))
   protected def byDigest(digest: String): Option[ConfiguredToken] = {
     val current = enabled.flatMap((config, token) => reader.read(config.hashFile).toOption.map(_.getBytes(StandardCharsets.US_ASCII) -> token))
     matching(digest, current) match {
@@ -197,7 +210,8 @@ object DeclaredUsers {
     val directory = DeclaredDirectory(accountUsers, users.filter(_.admin).map(_.id).toSet)
     val enabled = entries.filter { (_, _, token) => accountUsers.exists(u => u.id == token.userId && u.enabled) }
     val tokens = read match {
-      case DigestRead.Snapshot => new SnapshotTokens(users, enabled.map((digest, _, token) => digest.getBytes(StandardCharsets.US_ASCII) -> token))
+      case DigestRead.Snapshot => new SnapshotTokens(users, enabled.map((digest, _, token) => digest.getBytes(StandardCharsets.US_ASCII) -> token),
+        entries.map((digest, _, _) => digest.getBytes(StandardCharsets.US_ASCII)))
       case DigestRead.PerCheck => new PerCheckTokens(users, enabled.map((_, config, token) => config -> token), reader)
     }
     Declared(accountUsers, directory, tokens)

@@ -15,9 +15,9 @@ import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci.CIString
 import org.typelevel.vault.Key
 import io.circe.Json
-import ponygirls.auth.{AccountFailure,ClientAddress}
+import ponygirls.auth.{AccountFailure,CallerReads,Captured,ClientAddress}
 import ponygirls.auth.boundary.{CredentialAccept,SecureAttribute}
-import ponygirls.auth.http4s.{AccountPlane,AccountPlaneSettings,ActorRule,CallerRoute,LoginAdmission,RouteCredential,ServiceCallerSettings,ServiceCallers}
+import ponygirls.auth.http4s.{AccountPlane,AccountPlaneSettings,ActorRule,CallerRoute,LoginAdmission,RequestAmbiguity,RouteCredential,ServiceCallerSettings,ServiceCallers}
 import scala.concurrent.duration.*
 import java.nio.file.{Files,Path}
 
@@ -42,8 +42,10 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     parse(bytes)
   }
   /** The callers of Haystack's own routes: either credential, no actor header; `/mcp` takes a bearer token only and
-    * refuses a session cookie before any lookup. */
-  private val callers=new ServiceCallers[Auth](accounts.shared,ServiceCallerSettings[Auth](_.config.originPolicy,Sessions.Cookies,SecureAttribute.Last))
+    * refuses a session cookie before any lookup. Haystack's ambiguity rule (its `version` counts `Host` headers) and the
+    * credential alone, with exactly the reads of `AccountService.resolve`. */
+  private val callers=new ServiceCallers[Auth,Captured](accounts.shared,ServiceCallerSettings[Auth,Captured](_.config.originPolicy,Sessions.Cookies,
+    SecureAttribute.Last,RequestAmbiguity.FirstHostClassCookie,CallerReads.CredentialOnly))
   private def route(mutate:Boolean,mcp:Boolean):CallerRoute=
     CallerRoute(if(mcp)CredentialAccept.BearerOnly else CredentialAccept.BearerOrCookie,RouteCredential.Either,mutate,ActorRule.NotRequired)
   /** Initial auth admits bounded body work only. Dispatch must use the same

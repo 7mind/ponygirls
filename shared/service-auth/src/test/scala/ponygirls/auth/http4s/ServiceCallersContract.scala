@@ -6,7 +6,8 @@ import io.circe.Json
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 import java.time.Duration
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 import org.http4s.{Header, Headers, Method, Request, Response, Status, Uri}
 import org.http4s.dsl.io.*
 import org.typelevel.ci.CIString
@@ -80,6 +81,13 @@ abstract class ServiceCallersContract extends munit.FunSuite {
   private lazy val ci = DeclaredUserConfig("ci", "agent", "CI", Vector(DeclaredTokenConfig("default", file("ci.sha", Secrets.digest(CiToken)))), None, None, true, false)
   private lazy val dora = DeclaredUserConfig("dora", "human", "Dora", Vector.empty, Some("dora"), Some(passwordFile("dora", AliceToken)), true, false)
   private lazy val everyone = Vector(alice, bob, ci, dora)
+  private val EveToken = Secrets.generate()
+  /** A canonical secret Erin chooses as her password before a configuration declares it as a token's. */
+  private val ErinSecret = Secrets.generate()
+  /** Eve: disabled, with a configured token whose digest stays configured; Fay: a person whose password is Eve's token. */
+  private lazy val eve = DeclaredUserConfig("eve", "human", "Eve", Vector(DeclaredTokenConfig("old", file("eve.sha", Secrets.digest(EveToken)))), None, None, false, false)
+  private lazy val fay = DeclaredUserConfig("fay", "human", "Fay", Vector.empty, Some("fay"), Some(passwordFile("fay", EveToken)), true, false)
+  private lazy val erinToken = DeclaredTokenConfig("rotation", file("erin.sha", Secrets.digest(ErinSecret)))
   private def configuration(users: Vector[DeclaredUserConfig], reinstated: Set[String] = Set.empty): ChatSnapshot = {
     val declared = DeclaredUsers.load(users, DeclaredIdRules.Blabber, DigestRead.Snapshot, DigestReader.Stream).fold(r => fail(s"refused: $r"), identity)
     ChatSnapshot(declared.users, declared.directory, None, declared.tokens, reinstated)
@@ -94,7 +102,7 @@ abstract class ServiceCallersContract extends munit.FunSuite {
     case CallerRefused(CallerRefusal.ActorRequired) => "invalid"
     case CallerRefused(CallerRefusal.ActorMismatch) => "conflict"
     case NotAdministrator => "forbidden"
-    case AccountFailure(code) => code
+    case AccountFailure(code) => AccountJson.code(code)
     case BoundaryRefused(refusal) => refusal match {
       case Refusal.DisallowedHost | Refusal.AmbiguousOrigin | Refusal.DisallowedOrigin | Refusal.OriginHostMismatch | Refusal.SameOriginProofMissing |
            Refusal.AmbiguousHost | Refusal.OriginRequired => "forbidden"
@@ -123,7 +131,7 @@ abstract class ServiceCallersContract extends munit.FunSuite {
 
   /** The consumer's own routes. Each admits its caller before the body, reads the body, checks the caller again and
     * renews a browser session's cookie on the answer, which names the caller. */
-  private final class Chat(callers: ServiceCallers[ChatSnapshot], pause: AtomicReference[IO[Unit]]) {
+  private final class Chat(callers: ServiceCallers[ChatSnapshot, Identified], pause: AtomicReference[IO[Unit]]) {
     private val Whoami = CallerRoute(CredentialAccept.BearerOrCookie, RouteCredential.Either, mutate = false, ActorRule.NotRequired)
     private val AgentWrite = CallerRoute(CredentialAccept.BearerOrCookie, RouteCredential.Bearer, mutate = true, ActorRule.Required)
     private val PersonWrite = CallerRoute(CredentialAccept.BearerOrCookie, RouteCredential.BrowserSession, mutate = true, ActorRule.Required)
@@ -157,15 +165,61 @@ abstract class ServiceCallersContract extends munit.FunSuite {
     }
   }
 
+  /** What the account service told the consumer. */
+  private enum Told {
+    case Ended(credentialId: String)
+    case Changed(accountId: String)
+  }
+  /** The store the service uses, with two probes: an effect run once before the next transaction starts (`gate`), and a
+    * failure before the commit of the next transaction that changes sessions or tokens (`failMutation`). */
+  private final class Probe(underlying: AccountStorage) extends AccountStorage {
+    val gate = new AtomicReference[Option[IO[Unit]]](None)
+    val failMutation = new AtomicBoolean(false)
+    def transaction[A](work: AccountStore => A): IO[A] = IO.defer(gate.getAndSet(None).getOrElse(IO.unit)) *> underlying.transaction { store =>
+      val recording = new Recording(store)
+      val result = work(recording)
+      if (recording.mutated && failMutation.getAndSet(false)) throw new IllegalStateException("synthetic failure before commit")
+      result
+    }
+    private final class Recording(store: AccountStore) extends AccountStore {
+      var mutated = false
+      def directory(settings: Option[ImperativeSettings], declared: DeclaredDirectory): Vector[AccountUser] = store.directory(settings, declared)
+      def installDeclared(declared: DeclaredDirectory, users: Vector[AccountUser]): Unit = store.installDeclared(declared, users)
+      def activeImperativeUsers(): Int = store.activeImperativeUsers()
+      def browser(users: Vector[AccountUser], secret: String): Option[AccountCredential] = store.browser(users, secret)
+      def bearer(users: Vector[AccountUser], secret: String): Option[AccountCredential] = store.bearer(users, secret)
+      def loginReplacing(users: Vector[AccountUser], login: String, password: String, previous: Option[String]): AccountLogin =
+        store.loginReplacing(users, login, password, previous)
+      def logout(users: Vector[AccountUser], secret: String): Unit = { mutated = true; store.logout(users, secret) }
+      def tokens(owner: String): Vector[AccountToken] = store.tokens(owner)
+      def issue(users: Vector[AccountUser], session: AccountCredential, name: String): AccountIssued = store.issue(users, session, name)
+      def revoke(users: Vector[AccountUser], session: AccountCredential, id: String): Unit = { mutated = true; store.revoke(users, session, id) }
+      def imperative(settings: Option[ImperativeSettings], declared: DeclaredDirectory, directory: () => Vector[AccountUser],
+          hasher: PasswordHasher, clock: java.time.Clock): ImperativeAccounts = store.imperative(settings, declared, directory, hasher, clock)
+      def indexing(service: IndexingService, policy: IndexingPolicy): IndexingPreferences = store.indexing(service, policy)
+    }
+  }
+  /** The consumer's published configuration: a reload publishes its result, a failure included, and every decision
+    * taken under a published failure fails with it (Haystack's reload pattern). */
+  private final class Published(initial: ChatSnapshot) {
+    val value = new AtomicReference[Either[Throwable, ChatSnapshot]](Right(initial))
+    def get: ChatSnapshot = value.get.fold(throw _, identity)
+    def set(next: ChatSnapshot): Unit = value.set(Right(next))
+  }
+
   /** One consumer over a backend: its account service, account plane and routes, with a fresh credential runtime. */
-  private final class World(val backend: Backend, runtime: ImperativeRuntime, passwords: BearerSecretPasswords) {
-    val snapshot = new AtomicReference[ChatSnapshot](configuration(everyone))
+  private final class World(val backend: Backend, runtime: ImperativeRuntime, passwords: BearerSecretPasswords, ambiguity: RequestAmbiguity) {
+    val snapshot = new Published(configuration(everyone))
     val pause = new AtomicReference[IO[Unit]](IO.unit)
-    val ended = new java.util.concurrent.ConcurrentLinkedQueue[String]
+    val ended = new ConcurrentLinkedQueue[String]
+    val probe = new Probe(backend.storage)
+    private val telling = new ConcurrentLinkedQueue[Told]
+    /** What was told since the last call. */
+    def told(): Vector[Told] = Iterator.continually(telling.poll()).takeWhile(_ != null).toVector
     private val limiter = new AttemptLimiter(AttemptLimiter.Capacity, FrozenTime.clock)
     private def client(r: Request[IO]): String = r.headers.get(CIString("X-Test-Client")).fold("client-a")(_.head.value)
-    val service = new DeclarativeAccountService[ChatSnapshot](backend.storage, () => snapshot.get, runtime, IndexingService.Blabber, Indexing,
-      passwords, backend.installation)
+    val service = new DeclarativeAccountService[ChatSnapshot](probe, () => snapshot.get, runtime, IndexingService.Blabber, Indexing,
+      passwords, backend.installation, AccountLifecycle.Observed(id => IO(telling.add(Told.Ended(id))).void, id => IO(telling.add(Told.Changed(id))).void))
     private val plane = new AccountPlane[ChatSnapshot](service, AccountPlaneSettings[ChatSnapshot](
       current = () => snapshot.get, origins = _ => Policy, cookies = Cookies, cookieOrder = SecureAttribute.Last, respond = json, failureCode = code,
       status = status, audit = _ => IO.unit, endSession = secret => IO(ended.add(secret)).void, clientAddress = client, admitted = _ => (),
@@ -174,7 +228,8 @@ abstract class ServiceCallersContract extends munit.FunSuite {
         case None => IO.unit
         case Some(_) => IO.raiseError(AccountFailure("rate-limited"))
       })))
-    private val chat = new Chat(new ServiceCallers[ChatSnapshot](service, ServiceCallerSettings(_ => Policy, Cookies, SecureAttribute.Last)), pause)
+    private val chat = new Chat(new ServiceCallers[ChatSnapshot, Identified](service,
+      ServiceCallerSettings(_ => Policy, Cookies, SecureAttribute.Last, ambiguity, CallerReads.WithAdministrator)), pause)
     private val routes = plane.routes.orElse(chat.routes)
     def run(method: Method, path: String, body: Option[String], headers: (String, String)*): (Response[IO], Json) = {
       val plain = Request[IO](method, Uri.unsafeFromString(path))
@@ -183,12 +238,14 @@ abstract class ServiceCallersContract extends munit.FunSuite {
       val text = response.as[String].unsafeRunSync()
       (response, if (text.isEmpty) Json.Null else io.circe.parser.parse(text).fold(throw _, identity))
     }
-    /** One reload: the next configuration is published once installed. */
+    /** One reload: its result is published, the configuration once installed or the failure. */
     def reloading(next: ChatSnapshot): IO[Either[Throwable, ChatSnapshot]] =
-      service.reloaded(IO.pure(next)).flatTap(result => IO(result.foreach(snapshot.set)))
+      service.reloaded(IO.pure(next)).flatTap(result => IO(snapshot.value.set(result)))
     def reload(next: ChatSnapshot): Either[Throwable, ChatSnapshot] = reloading(next).unsafeRunSync()
-    def signIn(login: String, password: String): Response[IO] =
-      run(Method.POST, "/api/account/v1/login", Some(Json.obj("login" -> Json.fromString(login), "password" -> Json.fromString(password)).noSpaces), write*)._1
+    def signIn(login: String, password: String): Response[IO] = signingIn(login, password, None)._1
+    def signingIn(login: String, password: String, previous: Option[String]): (Response[IO], Json) =
+      run(Method.POST, "/api/account/v1/login", Some(Json.obj("login" -> Json.fromString(login), "password" -> Json.fromString(password)).noSpaces),
+        (write ++ previous.map(cookie))*)
     def login(user: String): String = {
       val response = signIn(user, Password)
       assertEquals(response.status, Status.Ok)
@@ -196,13 +253,20 @@ abstract class ServiceCallersContract extends munit.FunSuite {
     }
     /** A self-signup with imperative accounts on: the new account's session. */
     def signup(user: String, password: String): String = {
-      val code = Totp.code(Totp.decodeSecret(TotpSecret).getOrElse(fail("secret")), Totp.stepAt(FrozenTime.Now))
-      val body = Json.obj("username" -> Json.fromString(user), "email" -> Json.fromString(s"$user@example.test"), "password" -> Json.fromString(password),
-        "totpSecret" -> Json.fromString(TotpSecret), "totpCode" -> Json.fromString(code), "requireTotp" -> Json.False)
-      val (response, _) = run(Method.POST, "/api/account/v1/signup", Some(body.noSpaces), write*)
+      val response = signingUp(user, password)._1
       assertEquals(response.status, Status.Ok)
       cookieOf(response).getOrElse(fail("session cookie expected"))
     }
+    def signingUp(user: String, password: String): (Response[IO], Json) = {
+      val code = Totp.code(Totp.decodeSecret(TotpSecret).getOrElse(fail("secret")), Totp.stepAt(FrozenTime.Now))
+      val body = Json.obj("username" -> Json.fromString(user), "email" -> Json.fromString(s"$user@example.test"), "password" -> Json.fromString(password),
+        "totpSecret" -> Json.fromString(TotpSecret), "totpCode" -> Json.fromString(code), "requireTotp" -> Json.False)
+      run(Method.POST, "/api/account/v1/signup", Some(body.noSpaces), write*)
+    }
+    /** A password change of the session's owner. */
+    def changingPassword(session: String, user: String, current: String, next: String): (Response[IO], Json) =
+      run(Method.POST, "/api/account/v1/profile/password", Some(Json.obj("currentPassword" -> Json.fromString(current), "newPassword" -> Json.fromString(next)).noSpaces),
+        (write :+ cookie(session) :+ actor(user))*)
     /** An issued token of the session's owner: its id and secret. */
     def issue(session: String, user: String): (String, String) = {
       val (response, body) = run(Method.POST, "/api/account/v1/tokens", Some("""{"name":"client","scopes":["api"]}"""), (write :+ cookie(session) :+ actor(user))*)
@@ -211,10 +275,11 @@ abstract class ServiceCallersContract extends munit.FunSuite {
     }
     def captured(secret: String, browser: Boolean): Captured = service.resolve(_ => Presented(secret, browser, true)).unsafeRunSync()
   }
-  private def world(passwords: BearerSecretPasswords = BearerSecretPasswords.Refused)(body: World => Unit): Unit = withBackend { backend =>
+  private def world(passwords: BearerSecretPasswords = BearerSecretPasswords.Refused, ambiguity: RequestAmbiguity = RequestAmbiguity.OneHostAnyCookie)(
+      body: World => Unit): Unit = withBackend { backend =>
     val (runtime, release) = ImperativeRuntime.resource(FrozenTime.clock, PasswordHasher.Pbkdf2).allocated.unsafeRunSync()
     try {
-      val w = new World(backend, runtime, passwords)
+      val w = new World(backend, runtime, passwords, ambiguity)
       w.service.install(w.snapshot.get).unsafeRunSync()
       body(w)
     } finally release.unsafeRunSync()
@@ -262,7 +327,7 @@ abstract class ServiceCallersContract extends munit.FunSuite {
     val caller = answered((said, body))
     assertEquals(caller.copy(tokenId = ""), Answer("alice", "human", "Alice", "", true, true))
     assert(caller.tokenId.startsWith("session-"), caller.tokenId)
-    assertEquals(setCookie(said), Some(SessionCookie.serialize("__Host-chat", Some(session), true, SecureAttribute.Last)))
+    assert(setCookie(said) == Some(SessionCookie.serialize("__Host-chat", Some(session), true, SecureAttribute.Last)), "the renewed session cookie differs")
     assertEquals(refused(w.run(Method.POST, "/api/v1/say", Some("{}"), (write :+ bearer(AliceToken))*)), Forbidden)
     assertEquals(refused(w.run(Method.POST, "/api/v1/say", Some("{}"), (write :+ cookie(session))*)), Invalid)
     assertEquals(refused(w.run(Method.POST, "/api/v1/say", Some("{}"), (write :+ cookie(session) :+ actor("alice") :+ actor("alice"))*)), Invalid)
@@ -280,8 +345,8 @@ abstract class ServiceCallersContract extends munit.FunSuite {
     assertEquals(answered(w.run(Method.POST, "/api/v1/rooms", Some("{}"), (write :+ cookie(alice) :+ actor("alice"))*)).administrator, true)
     val (whoami, whoamiBody) = w.run(Method.GET, "/api/v1/whoami", None, (read :+ cookie(bob))*)
     assertEquals(answered((whoami, whoamiBody)).copy(tokenId = ""), Answer("bob", "human", "Bob", "", true, false))
-    assertEquals(setCookie(whoami), Some(SessionCookie.serialize("__Host-chat", Some(bob), true, SecureAttribute.Last)))
-    assertEquals(setCookie(w.run(Method.GET, "/api/v1/whoami", None, (read :+ bearer(AliceToken))*)._1), None)
+    assert(setCookie(whoami) == Some(SessionCookie.serialize("__Host-chat", Some(bob), true, SecureAttribute.Last)), "the renewed session cookie differs")
+    assert(setCookie(w.run(Method.GET, "/api/v1/whoami", None, (read :+ bearer(AliceToken))*)._1).isEmpty, "a bearer request got a session cookie")
     assertEquals(refused(w.run(Method.GET, "/api/v1/whoami", None, (read :+ cookie(alice) :+ bearer(AliceToken))*)), Unauthorized)
   }}
   test("an administrator-only route is served to an administrator's browser session alone") { world() { w =>
@@ -342,14 +407,58 @@ abstract class ServiceCallersContract extends munit.FunSuite {
       val rotated = configuration(Vector(alice, bob.copy(passwordHashFile = Some(passwordFile("bob-issued", issued))), ci, dora))
       assert(w.reload(rotated).isRight)
       assertEquals(outcome(w.signIn("bob", issued)), expected)
-      assert(w.reload(switchedOn(rotated)).isRight)
+      // A configured digest whose owner is disabled is still a configured secret.
+      val retained = configuration(Vector(alice, bob.copy(passwordHashFile = Some(passwordFile("bob-issued", issued))), ci, dora, eve, fay))
+      assert(w.reload(retained).isRight)
+      assertEquals(outcome(w.signIn("fay", EveToken)), expected)
+      assert(w.reload(switchedOn(retained)).isRight)
       assertEquals(outcome(w.signIn("dora", AliceToken)), expected)
-      w.signup("erin", CiToken)
-      assertEquals(outcome(w.signIn("erin", CiToken)), expected)
+      // An imperative password that a later configuration declares as a token's secret.
+      w.signup("erin", ErinSecret)
+      assert(w.reload(switchedOn(configuration(Vector(alice, bob, ci.copy(tokens = ci.tokens :+ erinToken), dora, eve, fay)))).isRight)
+      assertEquals(outcome(w.signIn("erin", ErinSecret)), expected)
       assertEquals(outcome(w.signIn("alice", Password)), (Status.Ok, true))
     }}
   }
-  test("the consumer's installation runs in the installing transaction: a refused one publishes its failure and writes nothing") { world() { w =>
+  test("a refused bearer secret and a wrong password get the same answer, declared and imperative") { world() { w =>
+    def answer(login: String, password: String): (Int, Json, Option[String]) = {
+      val (response, body) = w.signingIn(login, password, None)
+      (response.status.code, body, setCookie(response))
+    }
+    assertEquals(answer("dora", AliceToken), answer("dora", "synthetic-wrong-password"))
+    assert(w.reload(switchedOn(w.snapshot.get)).isRight)
+    assertEquals(answer("dora", AliceToken), answer("dora", "synthetic-wrong-password"))
+    w.signup("erin", ErinSecret)
+    assert(w.reload(switchedOn(configuration(Vector(alice, bob, ci.copy(tokens = ci.tokens :+ erinToken), dora)))).isRight)
+    assertEquals(answer("erin", ErinSecret), answer("erin", "synthetic-wrong-password"))
+  }}
+  Vector(BearerSecretPasswords.Refused, BearerSecretPasswords.Accepted).foreach { choice =>
+    test(s"a bearer secret offered as a new password, at sign-up and at a password change ($choice)") { world(choice) { w =>
+      val refuses = choice == BearerSecretPasswords.Refused
+      assert(w.reload(switchedOn(w.snapshot.get)).isRight)
+      val (signup, signupBody) = w.signingUp("erin", CiToken)
+      if (refuses) {
+        assertEquals(refused((signup, signupBody)), (400, Some("weak-password"), None))
+        assert(setCookie(signup).isEmpty, "a refused sign-up set a cookie")
+        assertEquals(w.signIn("erin", CiToken).status, Status.Unauthorized)
+      } else assertEquals((signup.status, cookieOf(signup).isDefined), (Status.Ok, true))
+      val carol = w.signup("carol", "synthetic-carol-password")
+      val other = cookieOf(w.signingIn("carol", "synthetic-carol-password", None)._1).getOrElse(fail("session cookie expected"))
+      w.told()
+      val (change, changeBody) = w.changingPassword(carol, "carol", "synthetic-carol-password", CiToken)
+      if (refuses) {
+        assertEquals(refused((change, changeBody)), (400, Some("weak-password"), None))
+        assert(setCookie(change).isEmpty, "a refused change set a cookie")
+        assertEquals(w.told(), Vector.empty)
+        Vector(carol, other).foreach(session => assertEquals(answered(w.run(Method.GET, "/api/v1/whoami", None, (read :+ cookie(session))*)).userId, "carol"))
+        assertEquals(w.signIn("carol", "synthetic-carol-password").status, Status.Ok)
+      } else {
+        assertEquals((change.status, cookieOf(change).isDefined), (Status.Ok, true))
+        assertEquals(w.signIn("carol", CiToken).status, Status.Ok)
+      }
+    }}
+  }
+  test("the consumer's installation runs in the installing transaction: a refused one is published, and every request is refused") { world() { w =>
     assertEquals(w.backend.recorded(), Map("alice" -> false, "bob" -> false, "ci" -> false, "dora" -> false))
     val session = w.login("alice")
     val (_, issued) = w.issue(session, "alice")
@@ -357,11 +466,24 @@ abstract class ServiceCallersContract extends munit.FunSuite {
     assert(w.reload(withoutBob).isRight)
     assertEquals(w.backend.recorded()("bob"), true)
     assertEquals(w.signIn("bob", Password).status, Status.Unauthorized)
-    // Bob returns in the same configuration that disables Alice: refused, so neither her session nor her token ends.
     val returning = configuration(Vector(alice.copy(enabled = false, admin = false), bob, ci, dora))
     assertEquals(w.reload(returning).left.toOption, Some(DeclaredIdBinding.Refused(Vector("bob"))))
-    assertEquals(w.snapshot.get, withoutBob)
+    assertEquals(w.snapshot.value.get.left.toOption, Some(DeclaredIdBinding.Refused(Vector("bob"))))
     assertEquals(w.backend.recorded()("bob"), true)
+    val Unavailable = (503, Some("unavailable"), None)
+    assertEquals(refused(w.run(Method.GET, "/api/v1/whoami", None, (read :+ cookie(session))*)), Unavailable)
+    assertEquals(refused(w.run(Method.POST, "/api/v1/rooms", Some("{}"), (write :+ bearer(issued))*)), Unavailable)
+    assertEquals(refused(w.run(Method.GET, "/api/account/v1", None, (write :+ cookie(session))*)), Unavailable)
+    assertEquals(w.signIn("alice", Password).status, Status.ServiceUnavailable)
+  }}
+  test("a valid configuration published after a refused one serves again; the refused installation wrote nothing") { world() { w =>
+    val session = w.login("alice")
+    val (_, issued) = w.issue(session, "alice")
+    val withoutBob = configuration(Vector(alice, ci, dora))
+    assert(w.reload(withoutBob).isRight)
+    // Bob returns in the configuration that would disable Alice: refused, so neither her session nor her token ended.
+    assert(w.reload(configuration(Vector(alice.copy(enabled = false, admin = false), bob, ci, dora))).isLeft)
+    assert(w.reload(withoutBob).isRight)
     assertEquals(answered(w.run(Method.GET, "/api/v1/whoami", None, (read :+ cookie(session))*)).userId, "alice")
     assertEquals(answered(w.run(Method.POST, "/api/v1/rooms", Some("{}"), (write :+ bearer(issued))*)).userId, "alice")
     // A shared refusal after the consumer's rule would pass: a declared id of an imperative account. Its records stay.
@@ -387,6 +509,82 @@ abstract class ServiceCallersContract extends munit.FunSuite {
     assertEquals(w.signIn("bob", Password).status, Status.TooManyRequests)
     assertEquals(w.run(Method.POST, "/api/account/v1/login", Some(s"""{"login":"bob","password":"$Password"}"""), (write :+ ("X-Test-Client" -> "client-b"))*)._1.status, Status.Ok)
   }}
+  Vector(RequestAmbiguity.FirstHostClassCookie, RequestAmbiguity.OneHostAnyCookie).foreach { ambiguity =>
+    test(s"a bearer beside the other class's session cookie and a second Host on the consumer's routes ($ambiguity)") { world(ambiguity = ambiguity) { w =>
+      val strict = ambiguity == RequestAmbiguity.OneHostAnyCookie
+      val session = w.login("alice")
+      val beside = w.run(Method.GET, "/api/v1/whoami", None, (read :+ bearer(AliceToken) :+ ("Cookie" -> ("chat-dev=" + session)))*)
+      if (strict) assertEquals(refused(beside), Unauthorized) else assertEquals(answered(beside).tokenId, "laptop")
+      val hosts = w.run(Method.GET, "/api/v1/whoami", None, "Host" -> Host, "Host" -> "other.test", bearer(AliceToken))
+      if (strict) assertEquals(refused(hosts), Forbidden) else assertEquals(answered(hosts).tokenId, "laptop")
+      assertEquals(refused(w.run(Method.GET, "/api/v1/whoami", None, (read :+ bearer(AliceToken) :+ cookie(session))*)), Unauthorized)
+    }}
+  }
+  test("a caller is judged against the configuration current when its lookup runs: a demotion published while it waited decides") { world() { w =>
+    val session = w.login("alice")
+    val captured = w.captured(session, browser = true)
+    val demoted = configuration(Vector(alice.copy(admin = false), bob, ci, dora))
+    w.probe.gate.set(Some(w.reloading(demoted).map(result => assert(result.isRight))))
+    assertEquals(w.service.identify(_ => captured.presented).unsafeRunSync().administrator, false)
+    w.probe.gate.set(Some(w.reloading(configuration(everyone)).map(result => assert(result.isRight))))
+    assertEquals(w.service.standing(captured).unsafeRunSync().map(_.administrator), Some(true))
+    w.probe.gate.set(Some(w.reloading(demoted).map(result => assert(result.isRight))))
+    assertEquals(w.service.standing(captured).unsafeRunSync().map(_.administrator), Some(false))
+  }}
+  test("a sign-out, a replacing sign-in and a token revocation tell the credential's id after their commit") { world() { w =>
+    val first = w.login("alice")
+    val firstId = w.captured(first, browser = true).authority.tokenId
+    val second = cookieOf(w.signingIn("alice", Password, Some(first))._1).getOrElse(fail("session cookie expected"))
+    assertEquals(w.told(), Vector(Told.Ended(firstId)))
+    val secondId = w.captured(second, browser = true).authority.tokenId
+    val (tokenId, _) = w.issue(second, "alice")
+    assertEquals(w.run(Method.POST, s"/api/account/v1/tokens/$tokenId/revoke", Some("{}"), (write :+ cookie(second) :+ actor("alice"))*)._1.status, Status.Ok)
+    assertEquals(w.run(Method.POST, "/api/account/v1/logout", Some("{}"), (write :+ cookie(second) :+ actor("alice"))*)._1.status, Status.Ok)
+    assertEquals(w.told(), Vector(Told.Ended(tokenId), Told.Ended(secondId)))
+    assert(!firstId.contains(first) && !secondId.contains(second), "a credential id carries its secret")
+  }}
+  test("nothing is told for a sign-out or a revocation that rolled back") { world() { w =>
+    val session = w.login("alice")
+    val (tokenId, token) = w.issue(session, "alice")
+    w.told()
+    val Unavailable = (503, Some("unavailable"), None)
+    w.probe.failMutation.set(true)
+    assertEquals(refused(w.run(Method.POST, "/api/account/v1/logout", Some("{}"), (write :+ cookie(session) :+ actor("alice"))*)), Unavailable)
+    w.probe.failMutation.set(true)
+    assertEquals(refused(w.run(Method.POST, s"/api/account/v1/tokens/$tokenId/revoke", Some("{}"), (write :+ cookie(session) :+ actor("alice"))*)), Unavailable)
+    assertEquals(w.told(), Vector.empty)
+    assertEquals(answered(w.run(Method.GET, "/api/v1/whoami", None, (read :+ cookie(session))*)).userId, "alice")
+    assertEquals(answered(w.run(Method.POST, "/api/v1/rooms", Some("{}"), (write :+ bearer(token))*)).tokenId, tokenId)
+  }}
+  test("dispatcher changes tell the account, a replaced session its id, and the master switch going off every active imperative account") { world() { w =>
+    assert(w.reload(switchedOn(w.snapshot.get)).isRight)
+    val carol = w.signup("carol", "synthetic-carol-password")
+    val alice = w.login("alice")
+    assertEquals(w.told(), Vector.empty)
+    val promote = Json.obj("admin" -> Json.True, "currentPassword" -> Json.fromString(Password)).noSpaces
+    assertEquals(w.run(Method.POST, "/api/account/v1/admin/users/carol/admin", Some(promote), (write :+ cookie(alice) :+ actor("alice"))*)._1.status, Status.Ok)
+    assertEquals(w.told(), Vector(Told.Changed("carol")))
+    val carolId = w.captured(carol, browser = true).authority.tokenId
+    val again = cookieOf(w.signingIn("carol", "synthetic-carol-password", Some(carol))._1).getOrElse(fail("session cookie expected"))
+    assertEquals(w.told(), Vector(Told.Ended(carolId)))
+    val againId = w.captured(again, browser = true).authority.tokenId
+    assertEquals(w.changingPassword(again, "carol", "synthetic-carol-password", "synthetic-carol-password-2")._1.status, Status.Ok)
+    assertEquals(w.told(), Vector(Told.Ended(againId), Told.Changed("carol")))
+    assertEquals(w.run(Method.POST, "/api/account/v1/admin/users/carol/enabled", Some("""{"enabled":false}"""), (write :+ cookie(alice) :+ actor("alice"))*)._1.status,
+      Status.Ok)
+    assertEquals(w.told(), Vector(Told.Changed("carol")))
+    w.signup("erin", "synthetic-erin-password")
+    assert(w.reload(w.snapshot.get.copy(imperative = None)).isRight)
+    assertEquals(w.told(), Vector(Told.Changed("erin")))
+  }}
+  test("a reload tells the declared accounts it changed or removed; a refused one tells nothing") { world() { w =>
+    assert(w.reload(configuration(Vector(alice.copy(admin = false), ci, dora))).isRight)
+    assertEquals(w.told(), Vector(Told.Changed("alice"), Told.Changed("bob")))
+    assert(w.reload(configuration(everyone)).isLeft)
+    assertEquals(w.told(), Vector.empty)
+    assert(w.reload(configuration(Vector(alice.copy(admin = false), bob, ci, dora), Set("bob"))).isRight)
+    assertEquals(w.told(), Vector(Told.Changed("bob")))
+  }}
 }
 
 /** BA: the types stage 3 added print no credential. */
@@ -394,7 +592,8 @@ final class ServiceCallersTypesSuite extends munit.FunSuite {
   test("an identified caller and the callers' refusals never print a secret or its digest") {
     val secret = Secrets.generate()
     val identified = Identified(Captured(Authority("alice", "human", "session-1"), Presented(secret, true, true)), "Alice", true)
-    val texts = identified.toString +: CallerRefusal.values.toVector.map(refusal => CallerRefused(refusal).getMessage)
-    texts.foreach(text => Vector(secret, Secrets.digest(secret)).foreach(value => assert(!text.contains(value), text)))
+    Vector("Identified" -> identified.toString).++(CallerRefusal.values.toVector.map(refusal => refusal.toString -> CallerRefused(refusal).getMessage)).foreach {
+      (label, text) => Vector("secret" -> secret, "digest" -> Secrets.digest(secret)).foreach((kind, value) => assert(!text.contains(value), s"$label prints the $kind"))
+    }
   }
 }

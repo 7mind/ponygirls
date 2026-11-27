@@ -3,9 +3,10 @@ package ponygirls.auth.http4s
 import cats.effect.IO
 import org.http4s.{Header, Request, Response}
 import org.typelevel.ci.CIString
-import ponygirls.auth.{AccountJson, AccountRefusal, AccountRefused, AccountSnapshot, CallerRefusal, CallerRefused, Captured, DeclarativeAccountService,
-  Identified, Secrets}
-import ponygirls.auth.boundary.{CredentialAccept, CredentialSelection, OriginPolicy, SecureAttribute, SessionCookie, SessionCookies}
+import ponygirls.auth.{AccountJson, AccountRefusal, AccountRefused, AccountSnapshot, CallerReads, CallerRefusal, CallerRefused, Captured,
+  DeclarativeAccountService, Secrets}
+import ponygirls.auth.boundary.{BoundaryRefused, CredentialAccept, CredentialSelection, OriginPolicy, Presented, Refusal, SecureAttribute, SessionCookie,
+  SessionCookies}
 
 /** Which kind of authenticated credential a service route serves. The other kind is refused after authentication
   * (`CallerRefusal.CredentialKindNotServed`), unlike `CredentialAccept.BearerOnly`, which refuses a session cookie before
@@ -19,24 +20,46 @@ enum ActorRule { case Required, NotRequired }
   * serves, whether a session cookie needs the same-origin proof of a write (`mutate`), and the actor rule. */
 final case class CallerRoute(accept: CredentialAccept, serves: RouteCredential, mutate: Boolean, actor: ActorRule)
 
-/** A service's transport choices for its own routes; the same values as its account plane's. */
-final case class ServiceCallerSettings[S](origins: S => OriginPolicy, cookies: SessionCookies, cookieOrder: SecureAttribute)
+/** How strictly a service's own routes treat an ambiguous request, before the credential is selected. No default. */
+enum RequestAmbiguity {
+  /** The first `Host` decides (a service that counts `Host` headers does so itself); a bearer token beside the session
+    * cookie of the request's security class is ambiguous, beside the other class's cookie it is not looked at. */
+  case FirstHostClassCookie
+  /** Exactly one `Host` (`AmbiguousHost`), and a bearer token beside a session cookie of either name is ambiguous
+    * (`AmbiguousCredentials`). */
+  case OneHostAnyCookie
+}
+
+/** A service's choices for its own routes: its transport values (the same as its account plane's), how strictly it treats
+  * ambiguity, and what it learns of a caller (`C`: `Captured` or `Identified`). */
+final case class ServiceCallerSettings[S, C](origins: S => OriginPolicy, cookies: SessionCookies, cookieOrder: SecureAttribute,
+  ambiguity: RequestAmbiguity, reads: CallerReads[C])
 
 /** The callers of a service's own routes over the shared account service. `admit` before the body, `recheck` after the
   * body and after every wait, `renewed` on the response. Refusals: `BoundaryRefused` (transport, credential selection),
   * `AccountRefused` (no such credential, the authority changed), `CallerRefused` (the route's kind and actor rules); the
   * service maps each to its own failure. */
-final class ServiceCallers[S <: AccountSnapshot[S]](service: DeclarativeAccountService[S], settings: ServiceCallerSettings[S]) {
+final class ServiceCallers[S <: AccountSnapshot[S], C](service: DeclarativeAccountService[S], settings: ServiceCallerSettings[S, C]) {
   import ServiceCallers.*
-  private def identify(r: Request[IO], route: CallerRoute): IO[Identified] = {
+  /** The ambiguity rule, then the credential selection, under the configuration the decision reads. */
+  private def selected(r: Request[IO], route: CallerRoute)(s: S): Presented = {
     val headers = AccountPlane.headers(r)
-    service.identify(s => CredentialSelection.resolve(settings.origins(s), settings.cookies, headers, route.accept, route.mutate))
+    settings.ambiguity match {
+      case RequestAmbiguity.FirstHostClassCookie => ()
+      case RequestAmbiguity.OneHostAnyCookie =>
+        if (r.headers.headers.count(_.name == HostName) != 1) throw BoundaryRefused(Refusal.AmbiguousHost)
+        val cookie = Vector(settings.cookies.secure, settings.cookies.plain).exists(name => SessionCookie.select(headers.cookie, name, settings.cookies.value).isDefined)
+        if (headers.authorization.nonEmpty && cookie) throw BoundaryRefused(Refusal.AmbiguousCredentials)
+    }
+    CredentialSelection.resolve(settings.origins(s), settings.cookies, headers, route.accept, route.mutate)
   }
+  private def identify(r: Request[IO], route: CallerRoute): IO[C] = settings.reads.read(service, selected(r, route))
   private def actors(r: Request[IO]): Vector[String] = r.headers.headers.filter(_.name == ActorName).map(_.value).toVector
-  /** Before the body, in this order: the transport and the one credential, the authority it resolves to (with its
-    * display name and administrator flag), the kind the route serves, the actor of a browser session. */
-  def admit(r: Request[IO], route: CallerRoute): IO[Identified] = identify(r, route).map { identified =>
-    val browser = identified.captured.presented.cookie
+  /** Before the body, in this order: the ambiguity rule, the transport and the one credential, the authority it resolves
+    * to (with what `reads` names), the kind the route serves, the actor of a browser session. */
+  def admit(r: Request[IO], route: CallerRoute): IO[C] = identify(r, route).map { caller =>
+    val identified = settings.reads.captured(caller)
+    val browser = identified.presented.cookie
     val served = route.serves match {
       case RouteCredential.Bearer => !browser
       case RouteCredential.BrowserSession => browser
@@ -46,14 +69,14 @@ final class ServiceCallers[S <: AccountSnapshot[S]](service: DeclarativeAccountS
     if (browser && route.actor == ActorRule.Required) {
       val offered = actors(r)
       if (offered.size != 1 || !offered.head.matches(ActorPattern)) throw CallerRefused(CallerRefusal.ActorRequired)
-      if (!Secrets.equal(offered.head, AccountJson.actor(identified.captured.authority.userId))) throw CallerRefused(CallerRefusal.ActorMismatch)
+      if (!Secrets.equal(offered.head, AccountJson.actor(identified.authority.userId))) throw CallerRefused(CallerRefusal.ActorMismatch)
     }
-    identified
+    caller
   }
   /** After the body or a wait, under the current configuration: the request still presents the admitted credential and
-    * it still authenticates the same authority; the administrator flag is read again. */
-  def recheck(r: Request[IO], route: CallerRoute, admitted: Captured): IO[Identified] = identify(r, route).map { current =>
-    val now = current.captured
+    * it still authenticates the same authority; what `reads` names is read again. */
+  def recheck(r: Request[IO], route: CallerRoute, admitted: Captured): IO[C] = identify(r, route).map { current =>
+    val now = settings.reads.captured(current)
     if (now.authority != admitted.authority || now.presented.secret != admitted.presented.secret || now.presented.cookie != admitted.presented.cookie)
       throw AccountRefused(AccountRefusal.AuthorityChanged)
     current
@@ -66,6 +89,7 @@ final class ServiceCallers[S <: AccountSnapshot[S]](service: DeclarativeAccountS
 }
 object ServiceCallers {
   private val ActorName = CIString(AccountPlane.ActorHeader)
+  private val HostName = CIString("Host")
   private val ActorPattern = "[0-9a-f]{64}"
   private val SetCookie = CIString("Set-Cookie")
 }
