@@ -931,5 +931,10 @@ of 24 held-out work sessions in arm A and in 9 of 24 in arm B (20 were required)
   construction (a request to sketch or to start one deliverable); they are less independent than four scenarios by
   four authors would be, and the two "0 of 12" are not two findings.
 
+A limit that the protocol did not name: the largest tool menu of this pilot has six tools (Pi's four built-in ones
+and Cuckoo's two). The Pi session in which the pilot was written and run declares 35, from the other extensions and
+MCP servers of its configuration. Batch 1 showed that going from two declared tools to six changed what sonnet
+recorded, so these counts are not a forecast for a menu of that size; no cell measures it.
+
 A second candidate was not frozen. If one is written, the four held-out scenarios become development scenarios for
 it and it needs new ones that its author has not seen, preferably by more than one author.

@@ -398,7 +398,8 @@ objective as recorded when one entry named it among others; under the stricter r
 **Limits.** As for the first pilot: synthetic chat sessions of four turns, built-in tools declared but blocked, one
 provider family. Four held-out scenarios by one author, three of which open with the same construction.
 The form that was frozen differs from the last development round by the tool's name written into three guidelines.
-The effect on sessions with real work is not measured.
+The effect on sessions with real work is not measured, and neither is a tool menu of the size a configured Pi has:
+the pilot's largest menu has six tools, the session that ran it declares 35.
 
 **Shipped.** `src/update.ts` (guidelines and description), a test that pins their length and SHA-256, the user
 documentation in the extension's README. A second candidate was not attempted; if one is, the four held-out
