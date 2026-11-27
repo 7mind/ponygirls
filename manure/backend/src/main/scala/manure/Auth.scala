@@ -3,27 +3,19 @@ package manure
 import java.nio.file.Path
 import ponygirls.runtime.BoundedSecretFile
 import java.security.{MessageDigest, SecureRandom}
-import java.util.Base64
 import java.sql.Connection
 import cats.effect.IO
-import ponygirls.auth.{AccountCredential,AccountIssued,AccountJson,AccountLogin,AccountOrigin,AccountReply,AccountRequest,AccountSession,AccountSql,AccountToken,AccountUser,AttemptLimiter,CredentialGate,DeclarativeLogin,DeclaredDirectory,IdentityHistory,IndexingAccountTransactions,IndexingPolicy,IndexingPreferenceSql,IndexingPreferences,IndexingService,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,Password,PasswordHasher,SharedAccountSessions,SignedIn,TotpVault}
+import ponygirls.auth.{AccountCredential,AccountIssued,AccountJson,AccountLogin,AccountOrigin,AccountReply,AccountRequest,AccountSession,AccountSql,AccountToken,AccountUser,AttemptLimiter,CredentialGate,DeclarativeLogin,DeclaredDirectory,IdentityHistory,IndexingAccountTransactions,IndexingPolicy,IndexingPreferenceSql,IndexingPreferences,IndexingService,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,Password,PasswordHasher,Secrets,SharedAccountSessions,SignedIn,TotpVault}
 
 object SecretCodec:
   private val random = new SecureRandom()
-  private val encoder = Base64.getUrlEncoder.withoutPadding()
-  def token(): String =
-    val bytes = new Array[Byte](32); random.nextBytes(bytes); encoder.encodeToString(bytes)
+  def token(): String = Secrets.generate()
   def artifactId(): String =
     val bytes = new Array[Byte](16); random.nextBytes(bytes); hex(bytes)
   def hex(bytes: Array[Byte]): String = bytes.map(b => f"${b & 0xff}%02x").mkString
   def sha256(bytes: Array[Byte]): String = hex(MessageDigest.getInstance("SHA-256").digest(bytes))
   def sha256(value: String): String = sha256(Exact.utf8(value))
-  def canonical(value: String): Boolean =
-    if !value.matches("[A-Za-z0-9_-]{43}") then false
-    else try
-      val bytes = Base64.getUrlDecoder.decode(value)
-      bytes.length == 32 && encoder.encodeToString(bytes) == value
-    catch case _: IllegalArgumentException => false
+  def canonical(value: String): Boolean = Secrets.canonical(value)
   def equal(a: String, b: String): Boolean = MessageDigest.isEqual(Exact.utf8(a), Exact.utf8(b))
   def verify(candidate: String, digest: String): Boolean = equal(sha256(candidate), digest)
   def readHash(path: Path): String =
