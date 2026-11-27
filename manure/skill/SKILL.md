@@ -326,3 +326,9 @@ See `docs/query.md` for all sort values and pagination semantics.
 - Do not overwrite or follow symlinks in fetch destinations.
 - Public links are world-readable; external links need the password;
   internal links need the API token or a grant handoff.
+- An artifact cannot be replaced in place (the CLI has no such command); a
+  correction is a new artifact with a new URL. Upload it, re-point the links
+  you know of, read each back, and only then delete the superseded artifact:
+  deleting first left a tracker link dead for a few minutes, at most seven.
+  If links may exist that you cannot list or edit, do not delete; let the
+  old one expire (hypothesis).
