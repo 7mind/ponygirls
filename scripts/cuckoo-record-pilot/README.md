@@ -861,9 +861,9 @@ of 24 held-out work sessions in arm A and in 9 of 24 in arm B (20 were required)
   | sonnet A, only Cuckoo's tools | 4 of 6 (4 at once); later 0, never 2 | 0 of 6; later 1, never 5 | 0 of 6; later 2, never 4 | 0 of 6; later 6, never 0 |
   | sonnet B, only Cuckoo's tools | 6 of 6 (3 at once); later 0, never 0 | 2 of 6 (1 at once); later 1, never 3 | 6 of 6; later 0, never 0 | 6 of 6; later 0, never 0 |
 
-  For sonnet B the speech of `h2` has no entry even after the message that asks to finish it, while the two other
-  deliverables of `h2` get theirs in their turn in 12 of 12, the cancelled one is retired and the invitation
-  completed. The first messages of `h1` and `h2` are built alike ("just sketch the welcome here for now and leave
+  For sonnet B the speech of `h2` never gets an entry in 11 of 12 sessions, not even after the message that asks to
+  finish it, while the two other deliverables of `h2` get theirs in their turn in 12 of 12 and end as they should
+  (the cancelled one retired, the invitation completed). The first messages of `h1` and `h2` are built alike ("just sketch the welcome here for now and leave
   the other two for later"; "just sketch the speech here for now and leave the blurb for later"), and the results
   are 10 of 12 and 0 of 12: the batch does not show what makes the difference. The wording has a clause for the case
   ("even when the message asks only for a first step of it"), written against `single`. The batch compared whole
