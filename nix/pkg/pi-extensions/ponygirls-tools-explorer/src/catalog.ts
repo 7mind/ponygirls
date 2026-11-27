@@ -1,0 +1,131 @@
+/**
+ * The explorer's view of a registry snapshot: one entry per registered tool
+ * with its state, source, definition and estimated cost.
+ */
+import { originOf, type ToolOrigin } from "./origin.ts";
+import type { PromptLines, RegisteredTool, RegistrySnapshot, ToolDeclaration, ToolExposure, ToolHints, ToolNamespace, ToolProvenance } from "./registry.ts";
+import { declarationTokens, promptLineTokens } from "./tokens.ts";
+
+/**
+ * Whether the model has the tool.
+ * - `active`: in pi's active set, so declared to the model.
+ * - `indirect`: active, but an orchestrating tool keeps its declaration out of requests.
+ * - `deferred`, `codemode`: registered and reachable through tool search or scripts, not declared.
+ * - `off`: a directly exposed tool that is not active.
+ * - `hidden`: registered but unreachable.
+ */
+export type ToolState = "active" | "indirect" | "deferred" | "codemode" | "off" | "hidden";
+
+/** How the active set relates to what the transcript has declared so far. */
+export type Delivery = "declared" | "next-request" | "withheld" | "removal-pending" | "none";
+
+export interface ToolCost {
+  declaration: number;
+  promptLines: number;
+}
+
+export interface ToolEntry {
+  name: string;
+  state: ToolState;
+  delivery: Delivery;
+  exposure: ToolExposure;
+  origin: ToolOrigin;
+  /** The declaration the model has, or the registered one when it has none. */
+  definition: ToolDeclaration;
+  /** The model's declaration is not the registered definition (a loadout hook rewrote it, or it is stale). */
+  differsFromRegistered: boolean;
+  cost: ToolCost;
+  promptLines: PromptLines;
+  namespace: ToolNamespace | null;
+  hints: ToolHints | null;
+  reachesOtherTools: boolean;
+  provenance: ToolProvenance;
+}
+
+export interface ToolCatalog {
+  entries: readonly ToolEntry[];
+  contextWindow: number | null;
+}
+
+const NO_PROMPT_LINES: PromptLines = { snippet: null, guidelines: [] };
+/** Exposures tool search loads from; the pane loads the same ones. */
+const LOADABLE_EXPOSURES: ReadonlySet<ToolExposure> = new Set<ToolExposure>(["deferred", "codemode"]);
+const INACTIVE_STATE: Readonly<Record<ToolExposure, ToolState>> = {
+  direct: "off",
+  "model-only": "off",
+  codemode: "codemode",
+  deferred: "deferred",
+  hidden: "hidden",
+};
+
+export function totalTokens(cost: ToolCost): number {
+  return cost.declaration + cost.promptLines;
+}
+
+/** In pi's active set. */
+export function isActive(entry: ToolEntry): boolean {
+  return entry.state === "active" || entry.state === "indirect";
+}
+
+/** Its declaration and prompt lines are part of every request. */
+export function isCharged(entry: ToolEntry): boolean {
+  return entry.state === "active";
+}
+
+export function canLoad(entry: ToolEntry): boolean {
+  return !isActive(entry) && LOADABLE_EXPOSURES.has(entry.exposure);
+}
+
+export function canUnload(entry: ToolEntry): boolean {
+  return isActive(entry) && LOADABLE_EXPOSURES.has(entry.exposure);
+}
+
+function sameDeclaration(a: ToolDeclaration, b: ToolDeclaration): boolean {
+  return a.description === b.description && JSON.stringify(a.parameters) === JSON.stringify(b.parameters);
+}
+
+function stateOf(tool: RegisteredTool, active: boolean, withheld: boolean): ToolState {
+  if (!active) return INACTIVE_STATE[tool.exposure];
+  return withheld ? "indirect" : "active";
+}
+
+function deliveryOf(state: ToolState, declared: boolean): Delivery {
+  if (state === "indirect") return "withheld";
+  if (state === "active") return declared ? "declared" : "next-request";
+  return declared ? "removal-pending" : "none";
+}
+
+export function buildCatalog(snapshot: RegistrySnapshot): ToolCatalog {
+  const active = new Set(snapshot.active);
+  const withheld = new Set(snapshot.withheld);
+  const entries = snapshot.tools.map((tool): ToolEntry => {
+    const state = stateOf(tool, active.has(tool.name), withheld.has(tool.name));
+    const declared = snapshot.declared.get(tool.name);
+    const registered: ToolDeclaration = { name: tool.name, description: tool.description, parameters: tool.parameters };
+    const definition = declared !== undefined && state === "active" ? declared : registered;
+    const promptLines = snapshot.promptLines.get(tool.name) ?? NO_PROMPT_LINES;
+    return {
+      name: tool.name,
+      state,
+      delivery: deliveryOf(state, declared !== undefined),
+      exposure: tool.exposure,
+      origin: originOf(tool),
+      definition,
+      differsFromRegistered: definition !== registered && !sameDeclaration(definition, registered),
+      cost: {
+        declaration: declarationTokens(definition),
+        promptLines: snapshot.promptLinesSent ? promptLineTokens(tool.name, promptLines) : 0,
+      },
+      promptLines,
+      namespace: tool.namespace,
+      hints: tool.hints,
+      reachesOtherTools: tool.reachesOtherTools,
+      provenance: tool.provenance,
+    };
+  });
+  return { entries, contextWindow: snapshot.contextWindow };
+}
+
+export function findEntry(catalog: ToolCatalog, name: string): ToolEntry | null {
+  return catalog.entries.find((entry) => entry.name === name) ?? null;
+}
