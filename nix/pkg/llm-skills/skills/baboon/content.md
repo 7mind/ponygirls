@@ -11,7 +11,7 @@ Baboon is an **opt-in** toolchain, not a default way to model data. Apply this s
 
 Do **not** introduce baboon into a project that has no baboon models just because a task touches an external API, adds a field, changes a type, or needs a database migration — use the project's existing modelling approach. Migrating an existing project onto baboon is a decision for the user: you may **propose** it, but do not start a migration on your own — act only on the user's explicit go-ahead.
 
-Once baboon is confirmed to be in use (or chosen): when you need to update a data model, create a new version of the baboon domain according to these guidelines and rely on its conversion facilities rather than implementing things manually.
+Once baboon is confirmed to be in use (or chosen), establish the compatibility contract before choosing an evolution strategy: identify independently deployed consumers, rolling-upgrade/coexistence requirements, persisted wire payloads and retention promises. When multiple wire versions are required, create a new version of the baboon domain according to these guidelines and rely on its conversion facilities rather than implementing things manually. Do not infer a multi-version promise merely from use of Baboon.
 
 ## Model structure
 
@@ -88,12 +88,12 @@ When adding new required fields to stored types:
 
 ## Backward compatibility
 
-The server **must** keep all previous Baboon API versions active so that older clients continue to work. Never remove or disable support for an older version when introducing a new one — Baboon's multi-version codecs and auto-derived conversions make this straightforward. The cost of maintaining old versions is low; the cost of breaking deployed clients is high.
+Retention follows the verified compatibility and rollout contract, not compiler capability alone.
 
-When adding a new model version:
-- The old version's codecs and service handlers must remain registered and functional.
-- Conversions between old and new versions must be implemented (auto-derived or manual stubs).
-- Test that a client speaking the old version can still complete its full workflow against the updated server.
+- Preserve old codecs/handlers when external or independently deployed consumers, rolling upgrades, or a promised support window require them. Use generated conversions and test each supported workflow and rejection boundary.
+- A single deployment with all consumers owned and co-deployed may use one self-contained current schema when the user explicitly chooses that policy. Do not create additional API versions automatically. Keep explicit unsupported-version rejection where a wire version is negotiated; never silently reinterpret old payloads as current.
+- Wire retention, database migration and persisted data are separate boundaries. Removing old API codecs does not authorize deleting historical data or changing persisted shapes.
+- Do not collapse an already-promised public API merely because only one consumer is currently observed. If ownership, rollout or persistence constraints are unknown, ask before choosing retention or removal.
 
 ## Version negotiation
 
@@ -104,6 +104,8 @@ Every Baboon-based service should expose a **version check API** (e.g. a `getVer
 Clients use this to detect when their version is outdated and prompt the user to update. When designing a new service or adding a version bump, always verify that such a version check endpoint exists and is kept up to date.
 
 ## Checklist for model changes
+
+First establish the compatibility/rollout/persistence policy above. The version-copying steps below apply only when retained wire versions are required; for an explicitly chosen single-current deployment, edit the sole schema in place and still complete regeneration, domain mapping and behavioral validation.
 
 1. Copy the current model file as `<name>-<old-version>.baboon` — preserves the old version for evolution.
 2. Update the main model file — bump version, add `import "<old>" { * } without { ... }`, redefine changed types/services.
