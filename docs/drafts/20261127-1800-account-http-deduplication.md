@@ -1,6 +1,6 @@
 # Account HTTP code: one shared implementation for Haystack, Manure and Chronicle
 
-Status: stage 1 done and reviewed; stages 2 to 5 and three fixes follow. This file records the work for a reader
+Status: stage 1 done and reviewed; stage 2 done, under review; stages 3 to 5 and three fixes follow. This file records the work for a reader
 who has not seen the plan it condenses (`account-glue-dedup.md`, a survey kept outside the repository).
 
 ## What the work is and why
@@ -114,6 +114,51 @@ Shared JVM: 44 suites, 359 cases on the first round. Manure backend 303 cases, M
 backend 1464, all unchanged by the stage. The counts of the verification of the landed tree are in its landing
 report. No existing test file of Haystack changed; Manure and Chronicle are untouched.
 
+## What stage 2 did
+
+**Moved** from `haystack/server/src/main/scala/haystack/auth/AccountService.scala` (172 lines before, 73 after) and
+`haystack/server/src/main/scala/haystack/http/Http.scala` (469 lines before, 343 after) into `shared/service-auth`:
+
+- `ImperativeRuntime` and the account service itself (`DeclarativeAccountService`, package `ponygirls.auth`):
+  credential resolution with configured tokens first, liveness, password login, the imperative and indexing
+  dispatch, logout, the account read, token issue and revoke. It reads the service's configuration exactly where
+  Haystack read it, so the number of reads per route (pinned by `HttpAuthenticationCountTest`) is unchanged.
+- The storage it needs as a port, `AccountStore` / `AccountStorage`, with `SharedAccountStorage` making exactly the
+  calls on the shared tables that Haystack made.
+- The account routes (`AccountPlane`, package `ponygirls.auth.http4s`): the five endpoints, the imperative and
+  indexing pipelines, the account boundary and body envelope, the reply writer, `Retry-After` on a 503 outside the
+  dispatcher, and the telemetry labels.
+
+**Shared interface, in brief.** `DeclarativeAccountService[S <: AccountSnapshot[S]](storage, current, runtime,
+indexingService, indexingPolicy, scopes)` with `install`, `reloaded`, `suspended`, `resolve(select: S => Presented)`,
+`live`, `login`, `imperativeLogin`, `imperativeRequest`, `indexingRequest`, `logout`, `account`, `issue`, `revoke`.
+Refusals are `AccountRefused(AccountRefusal)`. `AccountPlane[S](service, AccountPlaneSettings[S])` with `routes`, plus
+`AccountPlane.label` and `AccountPlane.headers`. The settings carry the service's transport supplier and origin
+policy, cookie names and attribute order, JSON responses, failure codes and statuses, the audit sink, what ends with a
+session, the client address, admission and labelling of authenticated requests, the body timeout, the `Retry-After`
+choice and the offered scopes.
+
+**Stayed in Haystack**: `AccountService` with its constructor and methods as a façade that maps the shared refusals
+to its `Fault`s; `HaystackIdentityHistory`; `Http` with its constructor, the domain routes, the access log, the
+per-principal rate limiter, the live sockets and the legacy `/api/v1/login` and `/api/v1/logout`. Haystack passes
+`SecureAttribute.Last`, its `json` response, its failure-code mapping, its status map, one JSON log line per security
+event, `LiveHub.endSession`, a loopback-trusting client address, its rate limiter, the access-log attribute, a 30 s
+body timeout, `Retry-After` on 503, and the scope `api`.
+
+**Tests.** New shared suites state the service's and the plane's rules over the shared types and run on a hand-written
+in-memory store and on the shared PostgreSQL tables (dual tests); the value Manure will use for `Retry-After` was tested
+first. No existing test file changed. Inner loop: Haystack JVM 41 suites, 764 cases; `serviceAuth` 21 suites, 193 cases,
+PostgreSQL cases executed.
+
+**What stages 3 to 5 still need** (not provided yet): for Blabber, a cookie-only credential kind, an actor helper for
+domain routes, refusing a token secret as a password, an install hook for retained declared ids, its indexing service
+key, and a shared version of Haystack's domain-route credential pipeline if Blabber wants it; for Manure, an owner-key
+mapping in the shared store, a store over its own transactions and memory dummy, a hook for grant revocation inside the
+transaction, the "configured and issued at once is ambiguous" precedence, a boundary parameter in place of the fixed
+origin-policy boundary (its Host and TLS context, three cookie names), its body handling of indexing requests, its
+login throttle, and statuses that depend on the route; for Chronicle, the reply writer and pipeline as separately
+usable functions.
+
 ## Recorded, not fixed
 
 Each item was noticed and deliberately left. "Read" means read from the code; "reproduced" means a test or run
@@ -149,3 +194,10 @@ showed it.
   Each needs a decision or a parameter in stage 4. Read.
 - The plan's statement that the imperative-settings requirements of Haystack and Manure are the same is wrong on
   the key-file check (above). Read.
+- Haystack decides transport (Host, Origin, cookie selection) with the configuration its HTTP layer reads and account
+  questions with the configuration its account service reads; in production both read the same reference, so a reload
+  between two reads of one request can split them. Stage 2 keeps both reads where they were. Read.
+- The account plane's body timeout (30 s) and the probe for a body on an indexing GET are real-time limits; unchanged.
+  Read.
+- The shared test sources keep their in-memory account rows private to one file, so the new in-memory store has its
+  own copy of those rows (test code only). Read.
