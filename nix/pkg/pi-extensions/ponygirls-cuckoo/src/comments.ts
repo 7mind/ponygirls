@@ -43,8 +43,8 @@ export function commentNodes(value: Checkpoint): CommentNode[] {
   const rules = value.report.rules === null ? [] : value.report.rules;
   const answers = value.report.answers === null ? [] : value.report.answers;
   return [
-    ...rules.map((item, index): CommentNode => ({ ref: { kind: 'rule', index }, subject: `Rule (${item.source}): ${quote(item.rule)} (scope: ${quote(item.scope)})` })),
-    ...value.report.objectives.map((item, index): CommentNode => ({ ref: { kind: 'objective', index }, subject: `Objective ${index + 1}: ${quote(item.objective)}` })),
+    ...rules.map((item, index): CommentNode => ({ ref: { kind: 'rule', index }, subject: `Rule ${item.id === null ? '' : `${item.id} `}(${item.source}): ${quote(item.rule)} (scope: ${quote(item.scope)})` })),
+    ...value.report.objectives.map((item, index): CommentNode => ({ ref: { kind: 'objective', index }, subject: `Objective ${item.id === null ? index + 1 : item.id}: ${quote(item.objective)}` })),
     ...answers.map((item, index): CommentNode => ({ ref: { kind: 'answer', index }, subject: `Standing question ${item.id}: ${quote(item.question)} Answer: ${quote(item.answer)}` })),
   ];
 }

@@ -14,10 +14,11 @@ const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2
 const assistant = (text, stopReason = 'stop') => ({ role: 'assistant', content: [{ type: 'text', text }], stopReason, usage, api: 'openai-completions', provider: 'fixture', model: 'fixture', timestamp: 1 });
 const theme = { fg: (_token, text) => text, bg: (_token, text) => text, bold: text => text };
 const tick = () => new Promise(setImmediate);
-const objective = { objective: 'Ship Cuckoo', progress: 'Testing', issues: ['Serial validation'], eta: 'Unknown: tests pending' };
-const rules = [{ rule: 'Show mockups first', source: 'user', scope: 'This UI change' }];
+// Replies name new entries with a null id; the first checkpoint of a session numbers them AO1 and AR1.
+const objective = { id: null, objective: 'Ship Cuckoo', progress: 'Testing', issues: ['Serial validation'], eta: 'Unknown: tests pending' };
+const rules = [{ id: null, rule: 'Show mockups first', source: 'user', scope: 'This UI change' }];
 const plainReport = JSON.stringify({ objectives: [objective], rules });
-const TAB = '\t', ENTER = '\r', ESCAPE = '\x1b';
+const TAB = '\t', ENTER = '\r', ESCAPE = '\x1b', DOWN = '\x1b[B';
 
 function fixture(t) {
   const cwd = mkdtempSync(join(tmpdir(), 'cuckoo-feedback-'));
@@ -66,11 +67,13 @@ function fixture(t) {
     }
     return result;
   }
-  /** Open the report panel, comment on the nodes reached by the given tab counts, and close it with `closeKey`. */
+  /** Open the report panel, comment on the nodes of the newest checkpoint reached by the given tab counts, and close it with `closeKey`. */
   async function comment(items, closeKey) {
     const showing = command(''); await tick();
     const panel = views.at(-1).component;
     panel.render(100);
+    // The pane opens on the current set, which takes no comments; the newest checkpoint is the row below it.
+    panel.handleInput(DOWN);
     for (const item of items) {
       for (let i = 0; i < item.tabs; i++) panel.handleInput(TAB);
       panel.handleInput('c'); for (const character of item.text) panel.handleInput(character); panel.handleInput(ENTER);
@@ -184,14 +187,15 @@ test('an automatic inquiry asks the standing questions, and the reply is validat
   const raw = JSON.stringify({ objectives: [objective], rules, answers: [{ id: question.id, answer: 'The decoder tests passed.' }] });
   f.boundary(assistant(raw));
   const saved = checkpoints(f.manager.getBranch())[0];
-  assert.equal(saved.version, 5); assert.equal(saved.error, null);
+  assert.equal(saved.version, 6); assert.equal(saved.error, null);
   assert.deepEqual(saved.report.answers, [{ id: question.id, question: 'What did you verify?', scope: 'global', answer: 'The decoder tests passed.' }]);
   assert.match(historyText(f.manager.getEntries(), f.manager.getBranch()), /Q1\. What did you verify\? \(global, .*\)\n   Answer: The decoder tests passed\./);
-  // With no questions left, the next inquiry is the unchanged base inquiry and saves a version-4 report.
+  // With no questions left, the next inquiry is the base inquiry again, now stating what the first reply recorded.
   f.tokens(30000); const next = f.boundary(assistant('more work'));
-  assert.equal(next.entries.at(-1).content, INQUIRY);
+  const recorded = '{"objectives":[{"id":"AO1","objective":"Ship Cuckoo"}],"completed":[],"rules":[{"id":"AR1","rule":"Show mockups first","source":"user","scope":"This UI change"}]}';
+  assert.equal(next.entries.at(-1).content, INQUIRY.replace('{"objectives":[],"completed":[],"rules":[]}', recorded));
   f.boundary(assistant(plainReport));
-  assert.equal(checkpoints(f.manager.getBranch())[1].version, 4); assert.equal(checkpoints(f.manager.getBranch())[1].report.answers, null);
+  assert.equal(checkpoints(f.manager.getBranch())[1].version, 6); assert.equal(checkpoints(f.manager.getBranch())[1].report.answers, null);
 });
 
 test('a reply that ignores the standing questions is kept as invalid, and a superseded inquiry records what it asked', async t => {
@@ -203,12 +207,12 @@ test('a reply that ignores the standing questions is kept as invalid, and a supe
   assert.deepEqual(f.sent.at(-1).options, { triggerTurn: true });
   f.boundary(assistant(plainReport));
   const ignored = checkpoints(f.manager.getBranch())[0];
-  assert.equal(ignored.report, null); assert.equal(ignored.raw, plainReport); assert.equal(ignored.version, 5); assert.match(ignored.error, /answers/);
+  assert.equal(ignored.report, null); assert.equal(ignored.raw, plainReport); assert.equal(ignored.version, 6); assert.match(ignored.error, /answers/);
   assert.ok(f.notifications.some(args => args[1] === 'warning' && /raw response preserved/.test(args[0])));
   await f.command('inquire now');
   f.handlers.get('before_agent_start')({ messageType: 'user', systemPromptOptions: { sections: {} } }, f.ctx);
   const superseded = checkpoints(f.manager.getBranch())[1];
-  assert.equal(superseded.version, 5); assert.match(superseded.error, /superseded/); assert.equal(superseded.questions[0].question, 'What did you verify?');
+  assert.equal(superseded.version, 6); assert.match(superseded.error, /superseded/); assert.equal(superseded.questions[0].question, 'What did you verify?');
 });
 
 test('an unreadable question store is a visible configuration fault and no inquiry is issued from it', async t => {
@@ -230,15 +234,15 @@ test('comments made while idle are saved as history entries and appended for the
   await f.comment([{ tabs: 1, text: 'I never asked for mockups.' }, { tabs: 1, text: 'Run the full suite.' }], ESCAPE);
   const saved = savedComments(f.manager.getBranch());
   assert.deepEqual(saved.map(item => [item.requestId, item.target.kind, item.subject, item.text]), [
-    [requestId, 'rule', 'Rule (user): Show mockups first (scope: This UI change)', 'I never asked for mockups.'],
-    [requestId, 'objective', 'Objective 1: Ship Cuckoo', 'Run the full suite.']]);
+    [requestId, 'rule', 'Rule AR1 (user): Show mockups first (scope: This UI change)', 'I never asked for mockups.'],
+    [requestId, 'objective', 'Objective AO1: Ship Cuckoo', 'Run the full suite.']]);
   for (const item of saved) { assert.match(item.createdAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/); assert.ok(item.commentId.length > 0); }
   assert.equal(new Set(saved.map(item => item.commentId)).size, 2);
   assert.equal(f.manager.getBranch().filter(entry => entry.type === 'custom' && entry.customType === COMMENT_TYPE).length, 2);
   const [delivery] = f.deliveries();
   assert.equal(f.deliveries().length, 1);
-  assert.match(delivery.content, /On Rule \(user\): Show mockups first.*\n   User comment: I never asked for mockups\./);
-  assert.match(delivery.content, /On Objective 1: Ship Cuckoo\n   User comment: Run the full suite\./);
+  assert.match(delivery.content, /On Rule AR1 \(user\): Show mockups first.*\n   User comment: I never asked for mockups\./);
+  assert.match(delivery.content, /On Objective AO1: Ship Cuckoo\n   User comment: Run the full suite\./);
   assert.ok(delivery.content.includes(`Checkpoint ${requestId}`));
   assert.deepEqual(delivery.details.commentIds, saved.map(item => item.commentId));
   assert.equal(delivery.display, true);
@@ -255,6 +259,9 @@ test('comments made while idle are saved as history entries and appended for the
   f.handlers.get('agent_settled')({ aborted: false }, f.ctx);
   assert.equal(f.deliveries().length, 1);
   const reports = f.command('reports'); await tick();
+  // The comment is shown with the checkpoint it was made on: the row below the current set.
+  assert.doesNotMatch(f.views.at(-1).component.render(120).join('\n'), /Run the full suite\./);
+  f.views.at(-1).component.handleInput(DOWN);
   assert.match(f.views.at(-1).component.render(120).join('\n'), /Comment:\s+\[.*Z\] Run the full suite\./);
   f.views.at(-1).component.handleInput(ESCAPE); await reports;
   assert.match(historyText(f.manager.getEntries(), f.manager.getBranch()), /ETA: Unknown: tests pending\n   Comment \(.*Z\): Run the full suite\./);
@@ -412,7 +419,7 @@ test('session shutdown saves comments still open in the panel', async t => {
   f.boundary(assistant('baseline')); await f.checkpointed(plainReport);
   const shown = f.command(''); await tick();
   const panel = f.views.at(-1).component; panel.render(100);
-  panel.handleInput(TAB); panel.handleInput('c'); for (const character of 'Typed before quitting') panel.handleInput(character);
+  panel.handleInput(DOWN); panel.handleInput(TAB); panel.handleInput('c'); for (const character of 'Typed before quitting') panel.handleInput(character);
   f.handlers.get('session_shutdown')({}, f.ctx); await shown;
   assert.deepEqual(savedComments(f.manager.getBranch()).map(item => item.text), ['Typed before quitting']);
   assert.equal(f.deliveries().length, 1, 'an idle session records the delivery before it closes');

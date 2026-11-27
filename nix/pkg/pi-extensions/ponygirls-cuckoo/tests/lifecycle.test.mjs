@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { registerCuckoo } from '../index.ts';
 import { inertNetworkServices } from './fixtures/task-network.mjs';
-import { checkpoints } from '../src/report.ts';
+import { REPORT_TYPE, checkpoint, checkpoints } from '../src/report.ts';
+import { currentSet } from '../src/current.ts';
 import { STATE_TYPE, INQUIRY_TYPE, RESUME_TYPE, stateOnBranch } from '../src/state.ts';
 
 const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
@@ -37,23 +38,60 @@ test('default-off is inert; 20k to exactly 23k triggers JSON checkpoint at 15% a
   f.tokens(23000); const issue = f.boundary();
   assert.equal(issue.continue, true); assert.equal(issue.entries.at(-1).customType, INQUIRY_TYPE);
   assert.equal(stateOnBranch(f.manager.getBranch()).baseline, 23000);
-  const reply = f.boundary(assistant('{"objectives":[{"objective":"Ship Cuckoo","progress":"Testing","issues":["Serial validation"],"eta":"Unknown: tests pending"}],"rules":[]}'));
+  const reply = f.boundary(assistant('{"objectives":[{"id":null,"objective":"Ship Cuckoo","progress":"Testing","issues":["Serial validation"],"eta":"Unknown: tests pending"}],"rules":[]}'));
   assert.equal(reply.continue, undefined); assert.equal(checkpoints(f.manager.getBranch())[0].report.objectives.length, 1);
+  assert.equal(checkpoints(f.manager.getBranch())[0].version, 6); assert.equal(checkpoints(f.manager.getBranch())[0].report.objectives[0].id, 'AO1');
   assert.equal(stateOnBranch(f.manager.getBranch()).pending, null);
   assert.ok(!reply.entries.some(entry => entry.customType === INQUIRY_TYPE));
 });
 
-test('an objective reported as complete is named in later inquiries until it is reopened', async () => {
+/** The record an inquiry closes with. */
+const recordOf = content => JSON.parse(content.slice(content.indexOf(' The record now, as JSON: ', content.indexOf(' This request grants no new authority.')) + ' The record now, as JSON: '.length));
+
+test('an inquiry states the record: what a reply numbered, completed and reopened is what the next one is asked to restate', async () => {
   const f = fixture(); await f.command('on'); f.boundary();
-  const report = (objective, eta) => assistant(JSON.stringify({ objectives: [{ objective, progress: 'Stated', issues: ['One caveat'], eta }], rules: [] }));
-  const listed = 'already reported these objectives as complete, so do not report their completion again: ["Ship the parser"].';
-  f.tokens(23000); assert.ok(!f.boundary().entries.at(-1).content.includes('already reported these objectives'), 'nothing was reported yet');
-  f.boundary(report('Ship the parser', 'Complete'));
+  const report = (id, objective, eta, rules = []) => assistant(JSON.stringify({ objectives: [{ id, objective, progress: 'Stated', issues: ['One caveat'], eta }], rules }));
+  f.tokens(23000); const first = f.boundary();
+  assert.deepEqual(recordOf(first.entries.at(-1).content), { objectives: [], completed: [], rules: [] }, 'nothing was recorded yet');
+  f.boundary(report(null, 'Ship the parser', 'Complete', [{ id: null, rule: 'Ask before pushing', source: 'user', scope: 'This repository' }]));
   f.tokens(26450); const second = f.boundary();
-  assert.equal(second.entries.at(-1).customType, INQUIRY_TYPE); assert.ok(second.entries.at(-1).content.includes(listed));
-  f.boundary(report('Ship the parser', 'About an hour: the user asked for a change'));
+  assert.equal(second.entries.at(-1).customType, INQUIRY_TYPE);
+  assert.deepEqual(recordOf(second.entries.at(-1).content), { objectives: [], completed: [{ id: 'AO1', objective: 'Ship the parser' }], rules: [{ id: 'AR1', rule: 'Ask before pushing', source: 'user', scope: 'This repository' }] });
+  assert.doesNotMatch(second.entries.at(-1).content, /already reported these objectives/, 'titles are named separately only for reports saved before numbering');
+  // The reply reopens the completed objective by its id and leaves the rule out.
+  f.boundary(report('AO1', 'Ship the parser', 'About an hour: the user asked for a change'));
   await f.command('inquire now');
-  assert.equal(f.sent.at(-1)[0].customType, INQUIRY_TYPE); assert.ok(!f.sent.at(-1)[0].content.includes('already reported these objectives'), 'a reopened objective is not named');
+  assert.equal(f.sent.at(-1)[0].customType, INQUIRY_TYPE);
+  assert.deepEqual(recordOf(f.sent.at(-1)[0].content), { objectives: [{ id: 'AO1', objective: 'Ship the parser' }], completed: [], rules: [] }, 'a reopened objective is active again; a rule the reply left out is closed');
+  assert.deepEqual(currentSet(f.manager.getBranch()).rules.map(item => [item.id, item.status]), [['AR1', 'retired']]);
+});
+
+test('a reply that names an entry the record never held is invalid, and the record keeps its state', async () => {
+  const f = fixture(); await f.command('on'); f.boundary();
+  const reply = objectives => assistant(JSON.stringify({ objectives, rules: [] }));
+  const item = (id, objective) => ({ id, objective, progress: 'Stated', issues: [], eta: 'Unknown' });
+  f.tokens(23000); f.boundary(); f.boundary(reply([item(null, 'Ship the parser')]));
+  f.tokens(26450); f.boundary(); f.boundary(reply([item('AO1', 'Ship the parser'), item('AO2', 'Invented id')]));
+  const [, invalid] = checkpoints(f.manager.getBranch());
+  assert.equal(invalid.report, null); assert.match(invalid.error, /Unknown objective id AO2/); assert.equal(invalid.assigned, null);
+  assert.deepEqual(currentSet(f.manager.getBranch()).objectives.map(entry => [entry.id, entry.status]), [['AO1', 'active']]);
+  assert.ok(f.notifications.some(args => /Unknown objective id AO2/.test(String(args[0]))), 'the fault is shown');
+  await f.command('inquire now');
+  assert.deepEqual(recordOf(f.sent.at(-1)[0].content).objectives, [{ id: 'AO1', objective: 'Ship the parser' }], 'the next inquiry still states the record as it was');
+});
+
+test('titles completed in reports saved before numbering are named until an entry of the record carries them', async () => {
+  const f = fixture(); await f.command('on');
+  f.manager.appendCustomEntry(REPORT_TYPE, checkpoint('legacy', JSON.stringify({ objectives: [{ objective: 'Ship the parser', progress: 'Shipped', issues: [], eta: 'Complete' }, { objective: 'Write the docs', progress: 'Written', issues: [], eta: 'Complete' }], rules: [] })));
+  f.boundary(); f.tokens(23000); const first = f.boundary();
+  assert.ok(first.entries.at(-1).content.includes('already reported these objectives as complete, so do not report their completion again: ["Ship the parser","Write the docs"].'));
+  assert.deepEqual(recordOf(first.entries.at(-1).content), { objectives: [], completed: [], rules: [] }, 'reports without ids do not enter the record');
+  // The docs are taken up again under an id: from then on the record says whether they are complete.
+  f.boundary(assistant(JSON.stringify({ objectives: [{ id: null, objective: 'Write the docs', progress: 'Reopened', issues: [], eta: 'Unknown' }], rules: [] })));
+  await f.command('inquire now');
+  const content = f.sent.at(-1)[0].content;
+  assert.ok(content.includes('do not report their completion again: ["Ship the parser"].'), 'only the title without an entry is still named');
+  assert.deepEqual(recordOf(content).objectives, [{ id: 'AO1', objective: 'Write the docs' }]);
 });
 
 test('unfinished tool turn resumes once; checkpoint tools blocked and malformed response preserved without retries', async () => {

@@ -80,7 +80,8 @@ test('list defaults to current branch and session scope explicitly labels other 
   assert.equal(all.rounds[1].requestId, 'other-round'); assert.equal(all.rounds[1].objectiveCount, 1); assert.equal(all.rounds[1].ruleCount, 1);
   assert.equal(all.rounds[1].timestamp, f.manager.getEntry(other).timestamp);
   await assert.rejects(f.call({ action: 'read', entryId: other }), /not found.*scope/i);
-  assert.deepEqual((await readAll(f, other, 'session')).report, { ...JSON.parse(raw), answers: null });
+  const unnumbered = { objectives: JSON.parse(raw).objectives.map(item => ({ id: null, ...item })), rules: JSON.parse(raw).rules.map(item => ({ id: null, ...item })), answers: null };
+  assert.deepEqual((await readAll(f, other, 'session')).report, unnumbered, 'a round saved before numbering has null ids');
   assert.deepEqual(f.manager.getEntries(), before); assert.equal(f.manager.getLeafId(), leaf);
 });
 

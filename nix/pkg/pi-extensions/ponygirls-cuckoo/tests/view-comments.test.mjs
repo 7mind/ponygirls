@@ -4,6 +4,10 @@ import { visibleWidth } from '@earendil-works/pi-tui';
 import { renderLayoutFrame } from '@earendil-works/pi-tui/dist/layout.js';
 import { CuckooView } from '../src/view.ts';
 import { answeredCheckpoint, checkpoint, REPORT_TYPE } from '../src/report.ts';
+import { EMPTY_SET } from '../src/current.ts';
+
+/** A fixed clock: these panes show no current set, so no age is drawn from it. */
+const clock = () => Date.parse('2026-11-27T12:00:00Z');
 
 const theme = { fg: (_token, text) => text, bg: (_token, text) => text, bold: text => text };
 const TAB = '\t', BACKTAB = '\x1b[Z', ENTER = '\r', SHIFT_ENTER = '\x1b[13;2u', ESCAPE = '\x1b', CTRL_D = '\x04', END = '\x1b[F';
@@ -33,8 +37,8 @@ function fixture(saved, uiTheme = theme) {
   return { ctx, host, views, widgets, notifications, savedCalls, reasons, scopes, resize: value => { rows = value; }, badge: () => widgets.at(-1)[1](null, theme) };
 }
 async function open(f, reports, inquire) {
-  const view = new CuckooView(inquire, f.host);
-  const showing = view.showReports(f.ctx, reports, 'Cuckoo: ON (session)');
+  const view = new CuckooView(inquire, f.host, clock);
+  const showing = view.showReports(f.ctx, reports, 'Cuckoo: ON (session)', EMPTY_SET);
   await tick();
   return { view, showing, panel: f.views.at(-1).component };
 }
@@ -146,8 +150,8 @@ test('every close path saves: inquiry key, badge toggle and disposal, including 
   assert.deepEqual(order, ['save:before inquiry', 'inquire'], 'comments are saved before the inquiry is requested');
   opened.view.dispose(f.ctx);
 
-  f = fixture([]); let view = new CuckooView(never, f.host);
-  view.publish(f.ctx, [report], true, null);
+  f = fixture([]); let view = new CuckooView(never, f.host, clock);
+  view.publish(f.ctx, [report], EMPTY_SET, true, null);
   f.badge().handleMouse({ type: 'click', button: 'left' }); await tick();
   let panel = f.views[0].component;
   panel.handleInput(TAB); panel.handleInput('c'); type(panel, 'closed by badge'); panel.handleInput(ENTER);
@@ -261,7 +265,7 @@ test('invalid and empty reports have nothing to comment on; unreadable saved com
 test('history reads session-wide comments, plain output includes saved comments, and no frame exceeds the panel width', async () => {
   const saved = [{ commentId: 'c-0', requestId: 'req-1', target: { kind: 'objective', index: 1 }, subject: 'Objective 2: Write docs', text: 'Start with the README\x1b[31m', createdAt: '2026-11-17T20:00:00.000Z' }];
   const entry = { type: 'custom', id: 'entry-1', parentId: null, timestamp: '2026-11-17T19:00:00Z', customType: REPORT_TYPE, data: structuredClone(report) };
-  const f = fixture(saved); const view = new CuckooView(never, f.host);
+  const f = fixture(saved); const view = new CuckooView(never, f.host, clock);
   const showing = view.showHistory(f.ctx, [entry], []); await tick();
   const panel = f.views[0].component;
   assert.deepEqual(f.scopes, ['session']);
@@ -277,8 +281,8 @@ test('history reads session-wide comments, plain output includes saved comments,
   panel.handleInput(ESCAPE); await showing; view.dispose(f.ctx);
   assert.equal(f.savedCalls[0][0].requestId, 'req-1');
 
-  const rpc = fixture(saved); rpc.ctx.mode = 'rpc'; const plain = new CuckooView(never, rpc.host);
-  await plain.showReports(rpc.ctx, [report], 'Cuckoo: ON');
+  const rpc = fixture(saved); rpc.ctx.mode = 'rpc'; const plain = new CuckooView(never, rpc.host, clock);
+  await plain.showReports(rpc.ctx, [report], 'Cuckoo: ON', EMPTY_SET);
   assert.match(rpc.notifications[0][0], /ETA: Unknown\n   Comment \(2026-11-17T20:00:00.000Z\): Start with the README/);
   assert.deepEqual(rpc.scopes, ['branch']); assert.equal(rpc.views.length, 0);
 });
@@ -362,9 +366,9 @@ test('a fault while handling a key is reported and leaves the panel usable, so c
 // The host decides what follows a save from why the panel closed: only a plain user close asks the model to respond.
 test('the host is told why the panel closed: by the user, for an inquiry, or with the session', async () => {
   const one = async (close, inquire) => {
-    const f = fixture([]); const view = new CuckooView(inquire, f.host);
-    view.publish(f.ctx, [report], true, null);
-    const showing = view.showReports(f.ctx, [report], 'Cuckoo: ON'); await tick();
+    const f = fixture([]); const view = new CuckooView(inquire, f.host, clock);
+    view.publish(f.ctx, [report], EMPTY_SET, true, null);
+    const showing = view.showReports(f.ctx, [report], 'Cuckoo: ON', EMPTY_SET); await tick();
     const panel = f.views[0].component; panel.render(100);
     panel.handleInput(TAB); panel.handleInput('c'); type(panel, 'a comment'); panel.handleInput(ENTER);
     await close({ f, view, panel }); await showing; view.dispose(f.ctx);
