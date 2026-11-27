@@ -7,7 +7,7 @@ with R24 to R30. Units U0, U1, U2, U3, U4, U5, U7, U9, U11 and U1f are built and
 `product/blabber`. The owner confirmed the dashboard's mockup and the Pi status pane
 (Q217); its build brief is committed beside this file as
 `docs/drafts/20261127-1900-blabber-dashboard-build-brief.md`. This revision describes `product/blabber` at commit
-`2c444ad4` and the orchestrator's log up to its entry of 19:05 UTC. Text about work that is not built is the
+`2c444ad4` and the orchestrator's log up to its entry of 19:18 UTC. Text about work that is not built is the
 specification of that work and carries no tag. Nothing of the product is on `main`: by Q211 it lands in one merge
 at the end.
 
@@ -90,8 +90,8 @@ account code of the other services; they are listed because they were decided du
 | Q212 | About 20 "must not" assertions in the Nix checks of Haystack, Manure and Chronicle cannot fail. Fix them now, as a change of its own? | Fix them now on a branch of its own, run `scripts/verify all`, report what turns red, and merge only if everything passes | Done: 22 assertions in 8 files corrected, `scripts/verify all` passed, merged into `main` as `64b64d07` **[run]**. |
 | Q213 | Does a message you write in the dashboard count as "your next prompt" for a session's safety limits? | For the budget only: it restores the wake budget, but a session you aborted or that restarted uncleanly still waits for a prompt in its terminal, and the dashboard tells you so | Sections 5.2 and 10.1; the contract carries the states (rulings R24, R25). |
 | Q214 | The comparison of Haystack, Manure and Chronicle found behaviour that looks like defects. Which of them should be fixed, after the move to shared code? | Fix the three security-relevant ones (1 to 3), each as its own change with a failing test first; record the minor ones | Three fixes after the refactor's stages (section 4.9); not started. The minor ones are recorded in `refactor:docs/drafts/20261127-1800-account-http-deduplication.md`. |
-| Q215 | Four more assertions cannot fail, for a different reason than the ones just fixed. Fix them the same way? | Fix all four now, as before: a branch of its own, `scripts/verify all` and the on-demand VM check, report what turns red, merge only if everything passes | Built; `scripts/verify all` passed; the on-demand VM check failed to boot once under load and was running again at 19:05 (section 14); not landed. |
-| Q216 | Account-code deduplication and its three fixes: land each stage on `main` when it is verified, or hold all of it until Blabber's final merge? | Land each stage and each fix on `main` when it is verified and reviewed; I am told at each landing | The refactor reaches the product branch through `main` (section 13.5). |
+| Q215 | Four more assertions cannot fail, for a different reason than the ones just fixed. Fix them the same way? | Fix all four now, as before: a branch of its own, `scripts/verify all` and the on-demand VM check, report what turns red, merge only if everything passes | Built; `scripts/verify all` passed; the on-demand VM check failed to boot once under load, then passed on the rebased tree `4a8485bc` **[run]** (section 14). Not landed: held for Q220. |
+| Q216 | Account-code deduplication and its three fixes: land each stage on `main` when it is verified, or hold all of it until Blabber's final merge? | Land each stage and each fix on `main` when it is verified and reviewed; I am told at each landing | The refactor reaches the product branch through `main` (section 13.5). Stages 1 and 2 are verified; their landings wait for Q220. |
 | Q217 | Do you confirm the dashboard mockup and the Pi status pane as shown? | Confirmed as shown, with the recommended variant of each choice | The recommended variant of each of the 17 choices is the product; the contract was frozen after it (rulings R24 to R30; sections 6.2, 9). |
 
 How two answers were applied where their wording left room, as stated to the owner at the time:
@@ -108,7 +108,7 @@ Open at the time of this revision:
 | Id | Subject (paraphrased) | Bearing on this step |
 |---|---|---|
 | Q219 | Thirteen more check assertions of the kind fixed under Q215 cannot fail; fix them? | None: not about Blabber. |
-| Q220 | May one failed verification on an overloaded machine be repeated once on a quieter machine, as a standing rule? | Until it is answered, nothing lands on `main` from a tree with a failed run. That holds the landing of the refactor's stage 1 and so the path to accounts in Blabber (section 13.5). |
+| Q220 | May one failed verification on an overloaded machine be repeated once on a quieter machine, as a standing rule? | Until it is answered, nothing lands on `main` from a tree with a failed run, and the orchestrator holds the three landings that queued behind that rule: the refactor's stages 1 and 2 and the Q215 fix. That holds the path to accounts in Blabber (section 13.5). |
 | Q221 | Six weaknesses in how the sandbox launcher passes service tokens. | Not about Blabber's own code; Blabber's client module registers its token file with that launcher (section 11.4). |
 
 ## 1. Summary
@@ -146,8 +146,8 @@ Q220 holds a landing on the path to accounts (section 13.5). The product speaks 
 
 **State and order of work.** Built and merged on `product/blabber`: the bootstrap, the contract and its client
 suite, the server core, the native package, the extension on the new contract, the shared retrieval changes, the
-live socket, the Home Manager client module and the contract freeze. Running: the status pane, and stage 3 of the
-account refactor. Next on the critical path: the refactor's stages land on `main`, `main` is merged into the
+live socket, the Home Manager client module and the contract freeze. Running: the status pane, search in the
+server, and stage 3 of the account refactor. Next on the critical path: the refactor's stages land on `main`, `main` is merged into the
 product branch, then accounts in Blabber's server. After them: the server module, the native acceptance, search
 and the dashboard, then one integration run with real browsers and real Pi sessions, the final verification and
 the one merge. Section 13 has the details.
@@ -571,7 +571,8 @@ verified and reviewed (Q216); the product branch gets them through `main`.
    an earlier run of the same stage failed in a timing-sensitive test of Manure under heavy load (section 14).
 2. Haystack's account service and the five account routes move into the shared module. Built, reviewed and fixed
    (`refactor:` `58c40b55`; in the inner loop Haystack's JVM suites 765 cases and `serviceAuth` 205, none skipped
-   **[run]**). Its verification of record is queued on the landing tree `40ef1386`.
+   **[run]**). `scripts/verify all` passed on the landing tree `40ef1386` (`main` with stages 1 and 2): 14
+   members built, 30 reused **[run]**. Its landing is held with stage 1's for Q220.
 3. The parameters Blabber needs. Started at 19:02 by the log; nothing of it is on a branch yet. The list it starts
    from: a cookie-only credential kind; an actor helper for domain routes; refusing a token secret as a password;
    an install hook for retained declared ids (section 4.3); Blabber's indexing service key; the read of the
@@ -2195,7 +2196,7 @@ limit. A fix that adds states and draws new findings is replaced by one that rem
 
 ## 13. Staged plan
 
-This section says where the plan stands at `product/blabber` `2c444ad4` and the orchestrator's log up to 19:05
+This section says where the plan stands at `product/blabber` `2c444ad4` and the orchestrator's log up to 19:18
 UTC on 2026-11-27. Counts are those the log records, with the commit; "by its agent" marks a count that a builder
 reported from its inner loop and that no Nix check of record has repeated yet.
 
@@ -2233,15 +2234,16 @@ reported from its inner loop and that no Nix check of record has repeated yet.
 | U3i Import of the pilot's data | dropped | Q205. |
 | U4 Native package | done | Fast-forwarded into `product/blabber` at `5c1d497c`: static executable; `blabber-native` 3 cases; a closed long poll logged as 499 after 5 ms; `scripts/verify all` exit 0 on its branch (48 reused) **[run]**. |
 | U5 Extension on 0.2.0 | done | Merged as `407bc4ef`: `ponygirls-blabber` 378 cases, client suite 450, real-server leg 39 of 39; `scripts/verify blabber` exit 0 on its branch **[run]**. |
-| U6 Shared account adapter | replaced | By the account refactor's stages 1 to 3 (section 4.9). Stage 1: verified on the landing tree `17988993`, landing held for Q220. Stage 2: built, reviewed and fixed (`refactor:` `58c40b55`); verification queued on `40ef1386`. Stage 3: started 19:02. |
+| U6 Shared account adapter | replaced | By the account refactor's stages 1 to 3 (section 4.9). Stage 1: verified on the landing tree `17988993`, landing held for Q220. Stage 2: built, reviewed and fixed (`refactor:` `58c40b55`); verified on the landing tree `40ef1386`, landing held for Q220 **[run]**. Stage 3: started 19:02. |
 | U7 Shared retrieval changes | done | Merged as `8fadee59`. `scripts/verify all` on `f770b727`: first run exit 1 (a Chronicle test timed out under heavy load), rerun exit 0, 3 built and 41 reused **[run]**. |
 | U1f Wire freeze | done | Rulings R24 to R30, then R34 to R36, in model, server, suite and extension; merged as `cb0743ae`. By its agent: server 468 cases (133 on PostgreSQL), suite 494, `ponygirls-blabber` 392, real-server leg 42. |
 | U9 Live socket | done | Built on its own branch before accounts, with a seam for them (section 7.2); merged as `2c444ad4`, which also brought `4f07a9f0` into it. By the merging agent: server 545 cases (163 on PostgreSQL), client suite 240 and 254. The merge found and fixed a defect of the combination: a person was judged by the last sight instead of the live report (R31). |
 | U11 Home Manager client module | done | Merged as `886383d3`; `blabber-contract-suite` added to `verify-blabber` in `99b14cb2`. `blabber-hm-eval`, `runtime-token`, `yolo-profile` (592) passed **[run]**. |
 | `main` merged into the product branch | done | `4f07a9f0` (Pi 1.7.0, tool updates, the Q212 fix), no conflicts. Light checks on it green: the extensions' build, the client suite 494, `ponygirls-blabber` 392, `blabber-hm-eval`, `runtime-token`, `yolo-profile` **[run]**. |
-| Verification of record of `product/blabber` | queued | `scripts/verify all` on `2c444ad4`, behind the load gate (section 13.6). `blabber-jvm` and `blabber-native` have not run as Nix checks on a tree with U1f and U9. |
+| Verification of record of `product/blabber` | running | `scripts/verify all` on `2c444ad4`, behind the load gate (section 13.6); it had the lock or was taking it at 19:18. `blabber-jvm` and `blabber-native` have not run as Nix checks on a tree with U1f and U9. |
 | U5c Status pane | running | Branch `product/blabber-u5c` from `4f07a9f0`, started 18:58; includes the first run of the extension in real Pi 1.7.0 sessions. |
-| U8, U10, U12, U12a, U13, U14, U5b, U15 to U20 | not started | Below. |
+| U13 Search in the server | started | Branch `product/blabber-u13` from `2c444ad4`, at 19:18, before accounts: the per-account indexing preference is behind a port, and the Blabber service key in `shared/service-auth` is stage 3's. |
+| U8, U10, U12, U12a, U14, U5b, U15 to U20 | not started | Below. |
 
 ### 13.3 The units that remain
 
@@ -2326,8 +2328,10 @@ under the same conventions, is 625 lines. Risk: low.
   in every room of its account and nothing of other accounts' direct messages; after the sweep no row of the
   message is in any index table; no index write on a membership change or an archive.
 - Owns: `blabber/server/src/main/scala/blabber/retrieval/`, the search routes, their tests.
-- Depends on: U7 (done); U8, because the indexing preference lives in the account tables and Blabber's indexing
-  service key comes with the refactor's stage 3.
+- Depends on: U7 (done). Started before U8 (section 13.2): the indexing preference lives in the account tables
+  and is behind a port in U13; Blabber's indexing service key comes with the refactor's stage 3. Open: whether U13
+  is completed before U8, with the preference behind its port, or waits for U8; the log records only how it
+  started.
 - Exit check: `nix build .#checks.x86_64-linux.blabber-jvm .#checks.x86_64-linux.blabber-native`, then
   `scripts/verify all`
 - Size: Haystack's projection is 88 lines and its retrieval tests 514.
@@ -2422,7 +2426,7 @@ that the service is ready for others ends editing 0.2.0 in place (section 6.3).
 flowchart TD
   DONE[Done: U0 U1 U2 U3 U4 U5 U7 U9 U11 U1f] --> V[Verification of record of product/blabber, queued]
   DONE --> U5c[U5c status pane, running]
-  S1[Refactor stage 1, verified; landing held for Q220] --> S2[Refactor stage 2, verification queued]
+  S1[Refactor stage 1, verified; landing held for Q220] --> S2[Refactor stage 2, verified; landing held]
   S2 --> S3[Refactor stage 3, running]
   S3 --> M[main merged into product/blabber]
   M --> U8[U8 accounts in the server]
@@ -2431,7 +2435,7 @@ flowchart TD
   U8 --> U12[U12 native acceptance]
   U10 --> U12
   U12 --> U12a[U12a run with real Pi sessions]
-  U8 --> U13[U13 search]
+  U8 --> U13[U13 search, started]
   U13 --> U14[U14 evaluation baseline]
   U13 --> U5b[U5b search action]
   U8 --> U15[U15 dashboard: reading]
@@ -2469,7 +2473,7 @@ critical path is the accounts: stage 1 lands, stage 2 lands, stage 3 is built, r
 `main` is merged into the product branch, then U8. Stage 1's landing waits for Q220: until it is answered,
 nothing lands on `main` from a tree that has had a failed run, and stage 1 had one (section 13.6). Everything
 after U8 in section 13.4 waits with it. Not blocked: U5c, the verification of record of `product/blabber`, the
-building of stage 3.
+building of stage 3, and the start of U13.
 
 **The contract under the landing.** 0.2.0 may be edited in place, by a ruling of the contract's owner, while
 only we use the service and server and extension are deployed from one revision (section 6.3). The landing and
@@ -2550,8 +2554,8 @@ Observed during the build:
     observed).
 16. **The emulated VM check does not boot here under load.** This machine has no `/dev/kvm`, so VM checks run
     emulated. `onDemand.manure-vm` (for Q215) did not reach its shell within 326 s at a load of about 122, and no
-    test command ran; at its second attempt it booted and was running its script at 19:03 **[run]** (the log,
-    18:08 and 19:05). U10's exit includes the VM check `hm-service-unit-graph-vm`.
+    test command ran. On the rebased tree it booted and passed: exit 0 at 19:04, the test script in 858.70 s, at
+    a load of 42 to 60 when it started **[run]** (the log, 18:08 and 19:05). U10's exit includes the VM check `hm-service-unit-graph-vm`.
 17. **The dashboard needs live-socket modelling in the contract suite's in-memory service.** Its capability
     `liveSocket` registers nothing yet **[repo]** (`product:blabber/contract-suite/README.md`), and the in-memory
     service still treats a person as present while seen within the presence window, not by the live report of
@@ -2580,7 +2584,7 @@ head and options), `blabber/docs/config.example.json`, the table definitions of
 main...product/blabber`; the model's and `blabber/README.md`'s difference between `4f07a9f0` and `2c444ad4`. On
 `refactor/account-http` at `58c40b55`: `docs/drafts/20261127-1800-account-http-deduplication.md`. In the
 orchestrator's working directory (not tracked): `owner-decisions.md`, `contract-rulings-1.md` to `-5.md`,
-`STATE.md` from its entry of 15:10 to that of 19:05, `RESUME.md`, `design-update-notes.md`, `mockup/CONFIRMED.md`,
+`STATE.md` from its entry of 15:10 to that of 19:18, `RESUME.md`, `design-update-notes.md`, `mockup/CONFIRMED.md`,
 and parts of `survey/account-glue-dedup.md`. On `product/blabber`, in `shared/retrieval-core` and
 `shared/retrieval-postgres`: the lines that define `Principals` and `purge`, found with `git grep`. Not read for
 this revision: the server's and the extension's sources beyond what is named, the reviews of the units, the code of the account refactor.
