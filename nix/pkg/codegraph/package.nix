@@ -34,7 +34,7 @@ buildNpmPackage {
   npmDeps = fetchNpmDeps {
     inherit src;
     # Hash of the pinned main rev's package-lock.json closure. Refresh on bumps.
-    hash = "sha256-iewSnvtUR7jWTF7dVsb2qOA7q3pzk+bwMaCJOZ8pMSM=";
+    hash = "sha256-8Jj2u885Qsv/FOwxJbIovFWcMVkOQl2ata+CN1qs/m4=";
   };
 
   nodejs = nodejs_24;
@@ -56,6 +56,7 @@ buildNpmPackage {
     CODEGRAPH_FLOCK=${util-linux}/bin/flock node ${./tests/flock-proof.cjs}
     node ${./tests/ownership.cjs} "$PWD/dist"
     node ${./tests/daemon-namespace.cjs} "$PWD/dist"
+    node ${./tests/daemon-proof.cjs} "$PWD/dist"
     node ${./tests/socket-paths.cjs} "$PWD/dist"
     runHook postCheck
   '';

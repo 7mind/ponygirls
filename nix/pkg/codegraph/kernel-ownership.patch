@@ -299,7 +299,7 @@
 
 --- a/src/bin/codegraph.ts
 +++ b/src/bin/codegraph.ts
-@@ -2479,8 +2479,21 @@
+@@ -2558,8 +2558,21 @@
        const lockPath = path.join(getCodeGraphDir(projectPath), 'codegraph.lock');
        let removed = false;
        if (fs.existsSync(lockPath)) {

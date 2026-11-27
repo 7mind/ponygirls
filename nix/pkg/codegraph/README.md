@@ -52,10 +52,20 @@ The Linux CLI wrapper defaults `CODEGRAPH_SOCKET_DIR` to
 host Unix sockets use a per-user/canonical-project hashed socket there, instead
 of namespace-private `/tmp`. Explicit overrides must be absolute and produce a
 socket path of at most 100 UTF-8 bytes; invalid paths fail actionably rather than
-silently falling back to private `/tmp`. Bind creates the directory with mode
-0700 and refuses a public, foreign-owned, or symlink directory. Pure path
-lookup/probing has no mkdir side effect. Direct module users without this env
-retain upstream `/tmp` defaults.
+silently falling back to private `/tmp`. Bind or proof-key creation creates the
+configured directory with mode 0700; both refuse a public, foreign-owned, or
+symlink directory. Pure path and key lookup have no mkdir side effect.
+
+Since 1.6.4 the proxy and prompt hook also require the daemon to prove it
+holds the user's key before sending session or prompt data. On Linux with
+`CODEGRAPH_SOCKET_DIR` set, the key (`daemon.key`, mode 0600) is kept in that
+private directory, even when the daemon uses the in-project socket. A
+configured daemon checks that the key is usable before binding or registering. This
+lets host and yolo authenticate using their already shared cache without
+sharing `~/.codegraph`. The proof does not qualify any PID as local and does
+not authorize in-process fallback against a foreign/unknown daemon owner.
+Direct module users without this env retain upstream `/tmp` socket fallback
+and `~/.codegraph/daemon.key` defaults.
 
 The cache **must actually be shared**. Current yolo binds an existing
 `$HOME/.cache`; create it on the host before launching yolo on a fresh machine.
@@ -73,6 +83,7 @@ Run against a built package's `lib/codegraph/dist`:
 CODEGRAPH_FLOCK=/absolute/path/to/flock node tests/flock-proof.cjs
 node tests/ownership.cjs /absolute/path/to/dist
 node tests/daemon-namespace.cjs /absolute/path/to/dist
+node tests/daemon-proof.cjs /absolute/path/to/dist
 node tests/socket-paths.cjs /absolute/path/to/dist
 ```
 
@@ -82,7 +93,10 @@ asserting metadata. It includes retained-inode release, crash recovery,
 record-deletion resistance, rebuild exclusion, and online removal refusal.
 Daemon tests exercise the compiled modules: peer qualification, no PID probes/
 signals/deletion for foreign/legacy records, current-protocol foreign recovery,
-and a separate live contender.
+and a separate live contender. The 1.6.4 proof suite exercises a real daemon
+and proxy with different home directories, rejects unsafe key directories and
+unproven peers, and checks that an unproven response does not permit a fallback
+against a foreign ownership record.
 
 Fail-first evidence against the installed unpatched 1.6.2 package: the initial
 four ownership regressions all failed as expected: a live writer and FileLock
