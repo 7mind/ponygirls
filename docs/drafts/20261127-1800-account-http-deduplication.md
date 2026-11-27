@@ -1,6 +1,6 @@
 # Account HTTP code: one shared implementation for Haystack, Manure and Chronicle
 
-Status: stage 1 done and reviewed; stage 2 done, under review; stages 3 to 5 and three fixes follow. This file records the work for a reader
+Status: stages 1 and 2 done and reviewed; stage 3 done, under review; stages 4 and 5 and three fixes follow. This file records the work for a reader
 who has not seen the plan it condenses (`account-glue-dedup.md`, a survey kept outside the repository).
 
 ## What the work is and why
@@ -218,6 +218,69 @@ live sockets keep the session secret that the standing re-read needs, since `Liv
 `Caller` without it (9); its token-id and login rules (13: Haystack's, unless it states others); the content of its
 installation check (14).
 
+## What stage 3 did
+
+**Added to the shared module** (each test first; signatures in brief):
+
+- `DeclarativeAccountService` takes two more choices, without defaults: `BearerSecretPasswords` (`Accepted` |
+  `Refused`) and `DeclaredInstallation[S]` (`Reconciled` | `Own(install: S => IO[Unit])`). With `Refused`, a password
+  that is the secret of a configured token or of a live issued token is refused as a wrong password is: after the
+  declared user's verification (the throw rolls the new session back) and inside the imperative core's verifications
+  (a wrapped `PasswordHasher`, so failure counting is a wrong password's). `install` runs the chosen installation;
+  `SharedAccountStorage.checked(check: (Connection, S) => Unit)` runs the service's rule under the directory lock, after
+  the shared collision check and before the reconciliation, in one transaction.
+- `identify(select: S => Presented): IO[Identified]` and `standing(captured): IO[Option[Identified]]`, with
+  `Identified(captured, displayName, administrator)`; `administrator` is read in the same transaction for a browser
+  session and is false for every bearer token. `ImperativeAccounts.administrator(userId)` (the rule of the
+  authenticated operations, now one private function both use) and `ImperativeAccountSql.administrator(c, settings,
+  declared, userId)`.
+- `ServiceCallers[S](service, ServiceCallerSettings(origins, cookies, cookieOrder))` with `admit(r, route)`,
+  `recheck(r, route, admitted: Captured)`, `renewed(response, current: Captured)`; `CallerRoute(accept:
+  CredentialAccept, serves: RouteCredential, mutate, actor: ActorRule)`; refusals `CallerRefused(CallerRefusal)`
+  (`CredentialKindNotServed`, `ActorRequired`, `ActorMismatch`). Admission order: transport and the one credential, its
+  authority, the kind the route serves, the actor.
+- `DeclaredIdRules.Blabber` (`[a-z0-9][a-z0-9._-]{0,31}`; token ids and logins as Haystack's) and
+  `IndexingService.Blabber` (key `blabber`).
+
+Corrections to the plan (7.6, 8): the bearer-secret rule is the service's choice, not an `AccountPlane.routes`
+parameter, because the imperative core verifies passwords too; the per-route kind is checked after authentication
+(Blabber's contract answers `forbidden` to an authenticated caller), not as a `CredentialAccept.CookieOnly`; the
+design's `ImperativeAccountSql.admin` is `administrator`. The stage-2 constructor signature of
+`DeclarativeAccountService` stays as a package-private secondary constructor with Haystack's choices, because the
+stage-2 suites construct the service with it and their files may not change.
+
+**Haystack** moved its own routes' `admitted`, `revalidate` and the cookie renewal of `delivered` onto
+`ServiceCallers` (`RouteCredential.Either`, `ActorRule.NotRequired`; `/mcp` with `CredentialAccept.BearerOnly`);
+`AccountService.caller` maps the shared refusals to the same `Fault`s. Its legacy logout, live upgrade and the access
+log's own lookup keep `AccountService.resolve`. The stop rule did not trigger: no existing test file changed, and
+`HttpAuthenticationCountTest`'s counts are as before. It passes `BearerSecretPasswords.Accepted` (its Home Manager
+stack derives the operator's browser password from the operator's token when no hash is supplied,
+`nix/hm/agentic-services-credentials.py`) and `DeclaredInstallation.Reconciled`. Manure and Chronicle untouched.
+
+**Tests.** `ServiceCallersContract` runs a test-only consumer, wired as Blabber's unit will be (its own routes for
+bearer only, browser session only, either, `whoami`, an administrator-only route and a waiting `pull`; the account
+plane with `Refused` and a `Guarded` login admission; its own declared-id rule and indexing key), on the in-memory
+store and on the shared PostgreSQL tables (`MemoryServiceCallersSuite`, `PostgresServiceCallersSuite`, 12 cases each);
+`ServiceCallersTypesSuite` and `BlabberIdRulesSuite` beside them. Failing first: with each new rule disabled in one
+run (no password rule, no kind or actor check, no administrator read, the own installation ignored, Haystack's id rule
+for Blabber's), 8 of 12 cases failed on each backend and the id-rule case failed, each at the assertion of the
+disabled rule; the four that passed exercise what was not disabled (the re-check, `Accepted`, the indexing key, the
+login guard).
+
+**Verification (inner loop only).** `nix develop .#backend --command bash shared/service-auth/scripts/test-postgres.sh`:
+25 suites, 232 cases, PostgreSQL cases executed, no skip (before: 21 suites, 205 cases). `nix develop .#chronicle
+--command bash haystack/scripts/test-postgres-scala.sh`: 42 suites, 765 cases (before: the same). `manureServer` and
+`chronicleServer` `Test/compile` pass against the changed module. `scripts/verify`, the native, browser and VM checks
+were not run (the owner runs them behind a load gate). The Haystack suites ran on the final tree; the first code commit
+alone (Haystack's construction choices without the pipeline move) was compiled, not tested.
+
+**Found, not built.** Blabber's live hub ends sockets by credential id (`LiveHub.endSession(credentialId)`), the
+plane's `endSession` passes the session secret (logout, replacing login); the unit keeps the secret with its sockets
+anyway (the standing re-read needs it, need 9). Session revocations inside the dispatcher (password change, TOTP
+requirement, disable, reset) and role, enabled or display-name changes reach the service only as `audit` events with
+their target, and declared changes through its own reload; a dedicated hook would need a new `AccountPlaneSettings`
+field, which the stage-2 suite constructs. The per-client login limit is fix 1.
+
 ## Recorded, not fixed
 
 Each item was noticed and deliberately left. "Read" means read from the code; "reproduced" means a test or run
@@ -263,3 +326,20 @@ showed it.
 - The module's older PostgreSQL suites skip their cases when the owned database is not configured and
   `ACCOUNT_REQUIRE_POSTGRES` is unset; both runners set it, so no case is skipped there. The suites added in stage 2 fail
   instead. Read.
+- The shared type `AccountCredential` is a plain case class whose generated `toString` prints the stored digest of its
+  session or token secret. It exists on `main` in that form and is not known to be logged anywhere. Read from the code,
+  not reproduced.
+- A `429` that a `LoginAdmission.Guarded` guard raises carries no `Retry-After` (the plane's login path is not a
+  dispatched route); Blabber's contract requires it on every `429`. For fix 1. Read.
+- `BearerSecretPasswords.Refused` covers verification, not setting: signup, redemption and a password change accept a
+  bearer secret as the new password, which then never verifies. A disabled user's configured token is not looked at
+  (`ConfiguredTokens.authenticate` covers enabled users' tokens only). Read.
+- Haystack's identification now also reads the effective administrator flag it does not use: for an imperative user
+  with the master switch on, one primary-key read of the imperative row per identification. Read.
+- `ServiceCallers` repeats the actor pattern of `AccountJson.requireActor` (with typed refusals instead of its
+  `AccountFailure` codes); the service's `authenticate` and `identified` repeat the configured, issued and browser
+  branching, kept apart so that the account plane's resolution does exactly what it did. Read.
+- The stage-2 constructor of `DeclarativeAccountService` remains as a package-private secondary constructor only for the
+  stage-2 suites. Read.
+- `PostgresServiceCallersSuite` creates the test table `consumer_declared_ids` in the owned database and empties it; it
+  does not drop it. Read.
