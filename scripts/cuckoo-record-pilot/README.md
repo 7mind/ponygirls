@@ -65,6 +65,18 @@ and a session another model answered is reported apart from its cell.
   a request-shape check) is reported as failed; a cell may be topped up, and the top-up is labelled.
 - Stored runs are rescored, never rerun, when the grader changes; both codings are then reported.
 
+## Amendment 1 (2026-11-27, after reading the registered batch; before the top-up runs)
+
+Observation. All 96 registered sessions completed. Two sonnet cells show outcomes that four sessions cannot size: in
+`checkpoint-compacted` two of four sessions listed the cancelled objective once more, with "Cancelled by the user" as
+its progress, before leaving it out at the second inquiry; in `tools-builtins` no session recorded an objective in the
+scenario `report` (0 of 4) while all did in `tools-only` (4 of 4).
+
+Change. The four sonnet cells are enlarged by eight sessions per cell and scenario, with the same runner, extension
+and settings, under labels `sonnet-topup-<cell>`. Nothing registered is rerun or replaced. The registered four and the
+eight added are reported separately and together; the added ones are labelled as run after outcomes were seen. No
+wording of the extension changes in response to this batch.
+
 ## Exploratory batch (before registration; kept, labelled)
 
 Run first, with an earlier runner (`.local/cuckoo-ledger/pilot/` in the main checkout, not tracked): fable/high and
