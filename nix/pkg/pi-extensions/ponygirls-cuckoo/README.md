@@ -263,7 +263,7 @@ So between checkpoints the record is current for the strongest model, usable
 with the gaps above for the other two, and as of the last checkpoint for a
 model you have not seen keep it; the interval is yours to set per model.
 These counts are from sessions that declare six tools. A configured Pi
-declares many more (35 in the session that ran the pilots), and the first
+declares many more (36 at the start of the session that ran the pilots), and the first
 pilot showed that the tool menu changes what a model records, so watch the
 panel in your own sessions before relying on the record.
 
