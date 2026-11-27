@@ -135,20 +135,40 @@ indexingService, indexingPolicy, scopes)` with `install`, `reloaded`, `suspended
 Refusals are `AccountRefused(AccountRefusal)`. `AccountPlane[S](service, AccountPlaneSettings[S])` with `routes`, plus
 `AccountPlane.label` and `AccountPlane.headers`. The settings carry the service's transport supplier and origin
 policy, cookie names and attribute order, JSON responses, failure codes and statuses, the audit sink, what ends with a
-session, the client address, admission and labelling of authenticated requests, the body timeout, the `Retry-After`
-choice and the offered scopes.
+session, the client address, admission and labelling of authenticated requests, the body timeout and the `Retry-After`
+choice.
 
 **Stayed in Haystack**: `AccountService` with its constructor and methods as a façade that maps the shared refusals
 to its `Fault`s; `HaystackIdentityHistory`; `Http` with its constructor, the domain routes, the access log, the
 per-principal rate limiter, the live sockets and the legacy `/api/v1/login` and `/api/v1/logout`. Haystack passes
 `SecureAttribute.Last`, its `json` response, its failure-code mapping, its status map, one JSON log line per security
 event, `LiveHub.endSession`, a loopback-trusting client address, its rate limiter, the access-log attribute, a 30 s
-body timeout, `Retry-After` on 503, and the scope `api`.
+body timeout and `Retry-After` on 503.
 
 **Tests.** New shared suites state the service's and the plane's rules over the shared types and run on a hand-written
 in-memory store and on the shared PostgreSQL tables (dual tests); the value Manure will use for `Retry-After` was tested
 first. No existing test file changed. Inner loop: Haystack JVM 41 suites, 764 cases; `serviceAuth` 21 suites, 193 cases,
 PostgreSQL cases executed.
+
+**Review round of stage 2.** Three changes to the shared interface, each tested first:
+
+- *Login admission.* `AccountPlaneSettings.loginAdmission: LoginAdmission` is required, with no default: `Unguarded` or
+  `Guarded(admit: Request => IO[Unit])`. A guard runs before a declared user's password is verified (imperative
+  accounts off); an error it raises refuses the attempt with that error's failure. Haystack states `Unguarded`, which is
+  what it did before; its imperative dispatcher, with its own limits, is unchanged. The owner's later fix (a per-client
+  limit on password-login attempts in all three services) plugs in here.
+- *One scope.* The scope parameters of the service and the plane are gone. `AccountScopes.Api` (`["api"]`) is the one
+  scope the account read advertises, `POST /tokens` accepts, and issued and configured tokens carry: the shared tables and
+  the services' authorisation represent nothing narrower. Haystack's answers are unchanged.
+- *No-store.* Every final response of the account plane carries exactly one `Cache-Control: no-store`, whatever the
+  service's responder writes; a responder that already writes exactly that keeps its headers as they are (Haystack).
+
+Also in that round: a failure code the protocol does not know is normalised to `unavailable` once, before body and
+status are derived; Haystack's translation of a shared refusal into its `Fault` keeps the cleanup failures (a failed
+rollback or close) that the transaction engine attached; the new suites run on a fixed clock with timers that never
+fire and a fresh credential runtime per case, and the new PostgreSQL suite fails with setup instructions where the
+module's older suites skip. A browser session's id (`session-<uuid>`) is a row id, not a secret: Haystack logs it as
+`tokenId`; the session's cookie secret and its stored digest are what the string forms never print.
 
 **What stages 3 to 5 still need** (not provided yet): for Blabber, a cookie-only credential kind, an actor helper for
 domain routes, refusing a token secret as a password, an install hook for retained declared ids, its indexing service
@@ -157,7 +177,7 @@ mapping in the shared store, a store over its own transactions and memory dummy,
 transaction, the "configured and issued at once is ambiguous" precedence, a boundary parameter in place of the fixed
 origin-policy boundary (its Host and TLS context, three cookie names), its body handling of indexing requests, its
 login throttle, and statuses that depend on the route; for Chronicle, the reply writer and pipeline as separately
-usable functions.
+usable functions. Narrower token scopes need a store and an authorisation model that represent them first.
 
 ## Recorded, not fixed
 
@@ -201,3 +221,6 @@ showed it.
   Read.
 - The shared test sources keep their in-memory account rows private to one file, so the new in-memory store has its
   own copy of those rows (test code only). Read.
+- The module's older PostgreSQL suites skip their cases when the owned database is not configured and
+  `ACCOUNT_REQUIRE_POSTGRES` is unset; both runners set it, so no case is skipped there. The suites added in stage 2 fail
+  instead. Read.
