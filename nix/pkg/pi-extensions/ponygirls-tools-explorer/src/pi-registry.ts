@@ -12,12 +12,33 @@ interface Transcript {
   declared: ReadonlyMap<string, ToolDeclaration>;
 }
 
+/**
+ * pi checks that a tool's parameters are an object, but not that its description is text: an MCP tool
+ * without a description gets its `title`, whatever JSON the server sent, and session files are not checked
+ * at all. Neither may reach code that draws text.
+ */
+function isText(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+/** Text as it is; nothing as no text; anything else as its JSON. */
+function descriptionOf(value: unknown): string {
+  if (isText(value)) return value;
+  return value === undefined || value === null ? "" : JSON.stringify(value) ?? String(value);
+}
+
+function schemaOf(value: unknown): JsonSchema {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as JsonSchema : {};
+}
+
 function registeredTool(tool: ToolInfo): RegisteredTool {
   const { namespace, annotations, sourceInfo } = tool;
+  const description: unknown = tool.description;
   return {
     name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters as JsonSchema,
+    description: descriptionOf(description),
+    nonTextDescription: description !== undefined && description !== null && !isText(description),
+    parameters: schemaOf(tool.parameters),
     exposure: tool.exposure,
     namespace: namespace === undefined ? null : { name: namespace.name, description: namespace.description ?? null },
     hints: annotations === undefined ? null : {
@@ -26,6 +47,7 @@ function registeredTool(tool: ToolInfo): RegisteredTool {
       idempotent: annotations.idempotentHint ?? null,
       openWorld: annotations.openWorldHint ?? null,
     },
+    reachesOtherTools: tool.reachesTools !== undefined,
     provenance: { path: sourceInfo.path, source: sourceInfo.source, scope: sourceInfo.scope, origin: sourceInfo.origin, baseDir: sourceInfo.baseDir ?? null },
   };
 }
@@ -47,7 +69,7 @@ export class PiToolRegistry implements ToolRegistry {
       const tools = getCurrentTools(this.session.sessionManager.buildSessionProjection().messages);
       this.transcript = {
         leafId,
-        declared: new Map(tools.map((tool) => [tool.name, { name: tool.name, description: tool.description, parameters: tool.parameters as JsonSchema }])),
+        declared: new Map(tools.map((tool) => [tool.name, { name: tool.name, description: descriptionOf(tool.description), parameters: schemaOf(tool.parameters) }])),
       };
     }
     return this.transcript.declared;

@@ -27,15 +27,21 @@ gets it on stderr, because pi keeps stdout for the model's answer there.
 | State | Meaning |
 |---|---|
 | `● active` | In pi's active tool set: declared to the model, from the next request on if it was just loaded. |
-| `◐ indirect` | Active, but another tool keeps its declaration out of requests (pi's `hiddenDeclarations`). Not counted in the totals. |
+| `◐ indirect` | Active, but another tool keeps its declaration out of requests (pi's `hiddenDeclarations`). It counts as active; its tokens are not in the active totals. |
 | `○ deferred` | Registered, not declared; the model can load it with `tool_search`. |
 | `○ codemode` | Registered, not declared; callable from codemode scripts. |
 | `○ off` | A directly exposed tool that is not active, such as `grep` by default. |
-| `– hidden` | Registered with exposure `hidden`: pi never activates it. |
+| `– hidden` | Registered with exposure `hidden`: pi never activates it. Its tokens are in no total. |
+
+`tool_search` finds deferred and codemode tools alike, and codemode scripts can
+call both. The detail view names the way that is open, or says that the tool
+is out of the model's reach when neither `tool_search` nor `codemode` is
+active.
 
 A source is pi itself (`built-in`), an extension (its file or directory name),
-a package, or an MCP server (`mcp · <server>`). The title counts the active
-tools and gives their share of the current model's context window.
+a package, or an MCP server (`mcp · <server>`). The title gives the estimated
+tokens of the active tools and their share of the current model's context
+window.
 
 - `↑↓`, `PgUp/PgDn`, Home/End and the wheel move the selection; `⏎` opens the tool.
 - `tab` cycles all, active and inactive tools.
@@ -55,13 +61,19 @@ The detail view states whether the model has the tool, where it comes from
 author declared (read-only, destructive, idempotent, open world; unverified).
 Below that are the description, the lines the tool adds to the system prompt,
 and its parameters with type, description and a `*` for required ones.
-Parameters that are a union of object shapes are listed shape by shape.
 `v` switches to the declaration as JSON, the text the estimate measures. `←→`
 step to the previous or next tool of the list.
 
+The parameter list is an outline of the schema's top level. Parameters that
+are a union of object shapes are listed shape by shape. It shows at most 120
+parameters and 24 shapes and counts the rest. A schema it cannot show
+truthfully (`allOf`, parameters of its own beside a union, parameters by
+pattern or of any name) is not outlined; the JSON view has it.
+
 A tool that is declared is shown as the model has it. When that differs from
 the registered definition (a tool's `prepareLoadout` can rewrite
-descriptions), the view says so.
+descriptions), the view says so. pi does not check that a description is
+text; one that is not is shown as its JSON, with a note.
 
 ## Loading and unloading
 
@@ -75,6 +87,11 @@ pi ignores an activation it does not allow, for example an MCP tool that the
 session's `--tools` list does not match. The pane reads the result back and
 says when nothing changed. Tools that `--tools` or `--exclude-tools` keep out
 of the session are not registered and therefore not listed.
+
+In a session started with `--tools`, an unload of a tool that the list names
+does not last: pi activates every such tool again whenever a tool is
+registered, for example when an MCP server connects (observed). The pane shows
+the tool as active again at its next refresh.
 
 Measured with pi 1.5.2 and claude-haiku-5-5: loading or unloading a tool
 between two requests left the 22k-token prefix in the provider's prompt cache;
@@ -128,8 +145,10 @@ The script runs `pi` four times with the same one-word request: without the
 sample in `calibration/corpus.json`, with its 55 tools declared, with its
 prompt lines appended to the system prompt, and without it again. The
 differences in the prompt tokens the provider reports are the sample's cost.
-It refuses to report when the runs were answered by different models or when
-the request without the sample did not cost the same before and after. The
+It refuses to report when the runs were answered by different models, or when
+the request without the sample cost a different amount after the measurement
+than before it, by more than 1% of the smaller sample; a smaller move is
+reported with the result. The
 runs use your pi configuration without its MCP servers and send the sample
 (tool definitions of pi and of this repository) to the model's provider, up to
 about 30,000 tokens in total. `--json` prints the result for programs;
@@ -139,6 +158,10 @@ about 30,000 tokens in total. `--json` prints the result for programs;
 
 - The estimates are sizes to compare and to plan with, not what a provider
   bills. One tool can be further off than the sample average.
+- pi keeps a sampling directive with the declarations of `read`, `bash`,
+  `edit`, `write` and `powershell`. It is a request setting, not text of the
+  declaration, and is not counted here, so pi's own estimate for each of
+  these five is about 16 tokens higher.
 - The estimate is what a tool adds to every request while it is declared.
   Switching a tool that has prompt lines also makes pi send the changed
   `tools` and `rules` sections of the system prompt once more, which the
@@ -150,8 +173,11 @@ about 30,000 tokens in total. `--json` prints the result for programs;
   connecting, also drops the tools pi had yet to restore: pi treats a set that
   deactivates a tool as replacing the restored one (read in pi 1.5.2's
   `setActiveToolsByName`, not tested).
-- Tool names, descriptions and schemas are untrusted text. Control and
-  bidirectional characters in them are shown as `\uXXXX` escapes.
+- Tool names, descriptions and schemas are untrusted text that the model
+  reads in full. Characters in them that would act on the terminal, reorder
+  the line or be drawn as nothing (controls, bidirectional controls, zero-width
+  characters, Unicode tags, selectors outside an emoji) are shown as `\uXXXX`
+  escapes.
 
 ## Layout and checks
 
@@ -161,8 +187,9 @@ in-memory registry, and one contract (`tests/registry-contract.ts`) runs
 against both, the pi side in a real session of the pinned SDK with a scripted
 model. That is where the assumptions about pi are checked: a tool activated
 between two requests is declared by the next one and a deactivated one is
-dropped, pi's own estimate equals the explorer's under pi's rule, and the
-prompt lines are the lines pi renders.
+dropped; under pi's rule the explorer's estimate of a declaration equals pi's
+own for the declaration pi sent, apart from the sampling directive; and a
+tool's prompt lines are exactly what the system prompt loses without the tool.
 
 ```sh
 nix build .#checks.x86_64-linux.ponygirls-tools-explorer -L

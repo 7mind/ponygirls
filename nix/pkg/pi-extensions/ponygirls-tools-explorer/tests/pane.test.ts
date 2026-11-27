@@ -696,6 +696,29 @@ test("with a height from pi's layout the list fills it and regrows after a resiz
   assert.equal(large[large.length - 1], "status");
 });
 
+// regression: found in review. The pane lets tool_search be unloaded and went on saying it could load tools.
+test("a deferred tool is said to be within reach only while the model has a tool that reaches it", (t) => {
+  const search = tool("tool_search", { exposure: "model-only", description: "Searches deferred tools", reachesOtherTools: true });
+  const { pane } = open(t, { tools: [...TOOLS, search], active: [...ACTIVE, "tool_search"], filter: "tool_search" });
+  /** Back to an unfiltered list, then the one tool the words select. */
+  const find = (words: string): void => press(pane, KEY.esc, KEY.esc, KEY.esc, "/", ...words, KEY.enter);
+  const stateOfDeferred = (): string => {
+    find("linear__get_issue");
+    press(pane, KEY.enter);
+    const lines = screen(pane, WIDTH);
+    assert.match(lines[0]!, /^── mcp__linear__get_issue /);
+    return lines[1]!;
+  };
+  assert.equal(stateOfDeferred(), "  State   deferred · not declared to the model · tool_search can load it");
+  find("tool_search");
+  press(pane, "u");
+  assert.match(listRows(pane, WIDTH).find((row) => row.startsWith("▌"))!, /^▌ tool_search +○ off /);
+  assert.equal(stateOfDeferred(), "  State   deferred · not declared to the model · out of the model's reach: neither tool_search nor codemode is active");
+  find("tool_search");
+  press(pane, "l");
+  assert.equal(stateOfDeferred(), "  State   deferred · not declared to the model · tool_search can load it");
+});
+
 // regression: found in a real pi terminal, where a ten-line detail kept a nine-line body and a position line.
 test("a detail that fits the height pi gives the pane is shown whole, without a position line", (t) => {
   const { pane } = open(t, { filter: "bash", rows: 40 });

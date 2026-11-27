@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCatalog, findEntry, type ToolEntry } from "../src/catalog.ts";
+import { buildCatalog, findEntry, type Reach, type ToolEntry } from "../src/catalog.ts";
 import {
   activationNotice, basisLine, basisText, budgetText, costFacts, hintFacts, shareText, sourceFacts, sourceFactsOf, stateFacts, stateLabel, stateTone,
   tabCount, tabLabel, tokenText,
@@ -22,6 +22,9 @@ function entryOf(registered: RegisteredTool, overrides: Partial<Omit<RegistrySna
 function source(tools: number, active: number, chargedTokens: number, allTokens: number): SourceSummary {
   return { origin: { kind: "extension", name: "x" }, tools, active, chargedTokens, allTokens };
 }
+
+const BOTH: Reach = { toolSearch: true, codemode: true };
+const NEITHER: Reach = { toolSearch: false, codemode: false };
 
 test("a state reads as a glyph and its name; only active states are on", () => {
   assert.deepEqual(["active", "indirect", "deferred", "codemode", "off", "hidden"].map((state) => stateLabel(state as ToolEntry["state"])),
@@ -60,24 +63,36 @@ test("a source line says how many tools are active and what they cost", () => {
   assert.equal(sourceFacts(source(84, 0, 0, 29_373)), "84 tools · none active · ~29.4k tok if loaded");
   assert.equal(sourceFacts(source(1, 0, 0, 500)), "1 tool · none active · ~500 tok if loaded");
   assert.equal(sourceFacts(source(2, 2, 100, 300)), "2 tools · all active · ~100 of ~300 tok", "active but partly withheld");
+  assert.equal(sourceFacts(source(2, 0, 0, 0)), "2 tools · none active", "nothing that could be loaded: no figure");
 });
 
 test("the state fact says whether the model has the tool and what would change that", () => {
   const read = tool("read", {});
-  assert.deepEqual(stateFacts(entryOf(read, { active: ["read"], declared: declared([read]) })), ["active", "declared to the model"]);
-  assert.deepEqual(stateFacts(entryOf(read, { active: ["read"] })), ["active", "declared to the model with the next request"]);
-  assert.deepEqual(stateFacts(entryOf(read, { active: ["read"], withheld: ["read"] })), ["indirect", "active, but another tool keeps its declaration out of requests"]);
-  assert.deepEqual(stateFacts(entryOf(read, {})), ["off", "not declared to the model"]);
-  assert.deepEqual(stateFacts(entryOf(mcpTool("s", "t", {}), {})), ["deferred", "not declared to the model", "tool_search can load it"]);
-  assert.deepEqual(stateFacts(entryOf(mcpTool("s", "t", { exposure: "codemode" }), {})), ["codemode", "not declared to the model", "callable from codemode scripts"]);
-  assert.deepEqual(stateFacts(entryOf(tool("x", { exposure: "hidden" }), {})), ["hidden", "never declared: pi does not activate hidden tools"]);
+  assert.deepEqual(stateFacts(entryOf(read, { active: ["read"], declared: declared([read]) }), BOTH), ["active", "declared to the model"]);
+  assert.deepEqual(stateFacts(entryOf(read, { active: ["read"] }), BOTH), ["active", "declared to the model with the next request"]);
+  assert.deepEqual(stateFacts(entryOf(read, { active: ["read"], withheld: ["read"] }), BOTH), ["indirect", "active, but another tool keeps its declaration out of requests"]);
+  assert.deepEqual(stateFacts(entryOf(read, {}), BOTH), ["off", "not declared to the model"]);
+  assert.deepEqual(stateFacts(entryOf(mcpTool("s", "t", {}), {}), BOTH), ["deferred", "not declared to the model", "tool_search can load it"]);
+  assert.deepEqual(stateFacts(entryOf(mcpTool("s", "t", { exposure: "codemode" }), {}), BOTH), ["codemode", "not declared to the model", "callable from codemode scripts"]);
+  assert.deepEqual(stateFacts(entryOf(tool("x", { exposure: "hidden" }), {}), BOTH), ["hidden", "never declared: pi does not activate hidden tools"]);
+});
+
+test("an undeclared tool is within the model's reach only through a tool the model has", () => {
+  const deferred = entryOf(mcpTool("s", "t", {}), {});
+  const scripted = entryOf(mcpTool("s", "t", { exposure: "codemode" }), {});
+  const unreachable = "out of the model's reach: neither tool_search nor codemode is active";
+  // Tool search finds both exposures and scripts can call both; each is named by the way meant for it first.
+  assert.deepEqual([stateFacts(deferred, { toolSearch: true, codemode: false })[2], stateFacts(scripted, { toolSearch: true, codemode: false })[2]], ["tool_search can load it", "tool_search can load it"]);
+  assert.deepEqual([stateFacts(deferred, { toolSearch: false, codemode: true })[2], stateFacts(scripted, { toolSearch: false, codemode: true })[2]], ["callable from codemode scripts", "callable from codemode scripts"]);
+  assert.deepEqual([stateFacts(deferred, NEITHER)[2], stateFacts(scripted, NEITHER)[2]], [unreachable, unreachable]);
+  assert.deepEqual(stateFacts(entryOf(tool("grep", {}), {}), NEITHER), ["off", "not declared to the model"], "a direct tool was never within such reach");
 });
 
 test("an unloaded tool the transcript still declares says so", () => {
   const issue = mcpTool("linear", "save_issue", {});
-  assert.deepEqual(stateFacts(entryOf(issue, { declared: declared([issue]) })), ["deferred", "still declared to the model", "dropped with the next request"]);
+  assert.deepEqual(stateFacts(entryOf(issue, { declared: declared([issue]) }), NEITHER), ["deferred", "still declared to the model", "dropped with the next request"]);
   const read = tool("read", {});
-  assert.deepEqual(stateFacts(entryOf(read, { declared: declared([read]) })), ["off", "still declared to the model", "dropped with the next request"]);
+  assert.deepEqual(stateFacts(entryOf(read, { declared: declared([read]) }), BOTH), ["off", "still declared to the model", "dropped with the next request"]);
 });
 
 test("the source fact names the kind of source first and the recorded path last", () => {

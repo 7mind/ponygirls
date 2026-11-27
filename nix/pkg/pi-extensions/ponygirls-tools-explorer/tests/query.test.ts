@@ -117,6 +117,19 @@ test("a withheld tool is active but its tokens are not charged", () => {
   assert.equal(summary.inactiveTokens, ["grep", "mcp__linear__save_issue", "mcp__linear__get_issue"].reduce((sum, name) => sum + tokensOf(catalog, name), 0));
 });
 
+test("a hidden tool can never be loaded: its tokens are in no total", () => {
+  const withdrawn = mcpTool("linear", "withdrawn", { exposure: "hidden", description: "x".repeat(4000) });
+  const catalog = buildCatalog(snapshot([...TOOLS, withdrawn], { active: ACTIVE }));
+  const before = summarize(catalogOf({}));
+  const summary = summarize(catalog);
+  assert.deepEqual([summary.all, summary.inactive], [8, 4], "it is registered and not active");
+  assert.equal(summary.inactiveTokens, before.inactiveTokens, "what loading everything loadable would add");
+  const linear = summary.sources.find((source) => originLabel(source.origin) === "mcp · linear")!;
+  assert.deepEqual([linear.tools, linear.allTokens], [3, before.sources[3]!.allTokens]);
+  const alone = summarize(buildCatalog(snapshot([withdrawn], {})));
+  assert.deepEqual([alone.inactiveTokens, alone.sources[0]!.allTokens, alone.sources[0]!.tools], [0, 0, 1]);
+});
+
 test("without a model there is no share of a context window", () => {
   assert.equal(summarize(catalogOf({ model: null })).windowShare, null);
   assert.equal(summarize(catalogOf({ model: { id: "scripted", contextWindow: 0 } })).windowShare, null);

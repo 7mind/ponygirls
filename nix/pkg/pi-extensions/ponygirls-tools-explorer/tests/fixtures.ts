@@ -16,10 +16,12 @@ export function tool(name: string, overrides: Partial<Omit<RegisteredTool, "name
   return {
     name,
     description: `${name} description`,
+    nonTextDescription: false,
     parameters: EMPTY_OBJECT,
     exposure: "direct",
     namespace: null,
     hints: null,
+    reachesOtherTools: false,
     provenance: BUILTIN,
     ...overrides,
   };
@@ -75,17 +77,20 @@ export function plain(lines: readonly string[]): string[] {
   return lines.map((line) => stripTerminalSequences(line).trimEnd());
 }
 
-/** Anything that could act on the terminal once the pane's own styling is taken away. */
-export const TERMINAL_ACTIVE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069\ufeff]/;
+/**
+ * Anything that would act on the terminal or be drawn as nothing: controls other than the line feed, format
+ * characters (bidi controls, Unicode tags, zero-width characters), separators, selectors, lone surrogates.
+ */
+export const HIDDEN = /(?!\n)[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\p{Default_Ignorable_Code_Point}]/u;
 
-/** Text that tries to clear the screen, set the title, reorder the line and hide in a tab. */
-export const HOSTILE = "evil\u001b[2J\u001b]0;owned\u0007\u009b31m\u202egnp\ttab\u2028end";
+/** Text that tries to clear the screen, set the title, reorder the line, hide in a tab and smuggle invisible words. */
+export const HOSTILE = "evil\u001b[2J\u001b]0;owned\u0007\u009b31m\u202egnp\ttab\u2028end\u200b\u{e0068}\u{e0069}";
 
 export function assertFits(lines: readonly string[], width: number, what: string): void {
   for (const line of lines) assert.ok(visibleWidth(line) <= width, `${what} at ${width}: ${visibleWidth(line)} columns: ${JSON.stringify(stripTerminalSequences(line))}`);
 }
 
-/** No tool-supplied control character reaches the terminal: only the pane's own SGR styling is left. */
+/** Nothing tool-supplied acts on the terminal or stays unseen: only the pane's own SGR styling is left. */
 export function assertInert(lines: readonly string[], what: string): void {
-  for (const line of lines) assert.doesNotMatch(line.replace(/\x1b\[[0-9;]*m/g, ""), TERMINAL_ACTIVE, `${what}: ${JSON.stringify(line)}`);
+  for (const line of lines) assert.doesNotMatch(line.replace(/\x1b\[[0-9;]*m/g, ""), HIDDEN, `${what}: ${JSON.stringify(line)}`);
 }

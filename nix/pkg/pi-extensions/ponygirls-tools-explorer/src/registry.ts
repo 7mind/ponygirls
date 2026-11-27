@@ -43,9 +43,13 @@ export interface ToolHints {
 }
 
 export interface RegisteredTool extends ToolDeclaration {
+  /** The session holds something other than text as the description; `description` is that value as JSON. */
+  nonTextDescription: boolean;
   exposure: ToolExposure;
   namespace: ToolNamespace | null;
   hints: ToolHints | null;
+  /** The tool declares that it reaches other tools (pi's `reachesTools`), as `codemode` and `tool_search` do. */
+  reachesOtherTools: boolean;
   provenance: ToolProvenance;
 }
 

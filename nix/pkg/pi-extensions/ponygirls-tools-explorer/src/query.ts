@@ -2,7 +2,7 @@
  * What the list shows: a tab, a text filter and a sort key applied to the
  * catalog, plus the per-source and overall totals.
  */
-import { isActive, isCharged, totalTokens, type ToolCatalog, type ToolEntry } from "./catalog.ts";
+import { canLoad, isActive, isCharged, totalTokens, type ToolCatalog, type ToolEntry } from "./catalog.ts";
 import { compareOrigins, compareText, originLabel, sameOrigin, type ToolOrigin } from "./origin.ts";
 
 export type Tab = "all" | "active" | "inactive";
@@ -25,7 +25,7 @@ export interface SourceSummary {
   active: number;
   /** Estimated tokens its declared tools cost now. */
   chargedTokens: number;
-  /** Estimated tokens of all its tools, as if every one were declared. */
+  /** Estimated tokens of its tools as if every one that can be declared were. */
   allTokens: number;
 }
 
@@ -34,7 +34,7 @@ export interface CatalogSummary {
   active: number;
   inactive: number;
   chargedTokens: number;
-  /** What the tools outside the active set would add. */
+  /** What loading every tool outside the active set that can be loaded would add. */
   inactiveTokens: number;
   /** Share of the model's context window the charged tokens take, `null` without a model. */
   windowShare: number | null;
@@ -64,11 +64,14 @@ export function summarize(catalog: ToolCatalog): CatalogSummary {
     }
     const tokens = totalTokens(entry.cost);
     source.tools += 1;
-    source.allTokens += tokens;
     if (isActive(entry)) {
       active += 1;
       source.active += 1;
-    } else inactiveTokens += tokens;
+      source.allTokens += tokens;
+    } else if (canLoad(entry)) {
+      inactiveTokens += tokens;
+      source.allTokens += tokens;
+    }
     if (isCharged(entry)) {
       chargedTokens += tokens;
       source.chargedTokens += tokens;

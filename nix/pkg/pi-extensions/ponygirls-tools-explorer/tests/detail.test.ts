@@ -58,7 +58,10 @@ test("the facts come first, state before source, then description and parameters
   const starts = ["State", "Source", "Tokens", "Hints", "Description", "Parameters"].map((label) => lines.findIndex((line) => line.startsWith(`  ${label}`)));
   assert.ok(starts.every((index) => index !== -1), lines.join("\n"));
   assert.deepEqual(starts, [...starts].sort((a, b) => a - b));
-  assert.equal(lines[0], "  State   deferred · not declared to the model · tool_search can load it");
+  // Nothing but the tool itself is registered here, so nothing reaches it.
+  assert.equal(lines[0], "  State   deferred · not declared to the model · out of the model's reach: neither tool_search nor");
+  assert.equal(lines[1], "          codemode is active");
+  lines.splice(1, 1);
   assert.equal(lines[1], "  Source  MCP server linear · registered by builtin:mcp");
   assert.match(lines[2]!, /^  Tokens  ~\d+ if loaded · declaration ~\d+ at 4 characters per token · no prompt lines · pi's rule:$/);
   assert.equal(lines[3], "          no model is selected", "a long value continues under the value column");
@@ -167,7 +170,41 @@ test("parameters that are a union are shown shape by shape", () => {
 test("no parameters and an unreadable schema each get a sentence", () => {
   assert.deepEqual(section(render(tool("t", {}), {}, WIDTH).lines, "Parameters"), ["  Parameters", "    The tool takes no parameters."]);
   assert.deepEqual(section(render(tool("t", { parameters: { type: "string" } }), {}, WIDTH).lines, "Parameters"),
-    ["  Parameters", "    The schema is not a plain object; v shows it as JSON."]);
+    ["  Parameters", "    The outline cannot show this schema; v shows it as JSON."]);
+});
+
+test("a very large object shows its first parameters, its real totals and how many more there are", () => {
+  const names = Array.from({ length: 500 }, (_unused, index) => `p${index}`);
+  const large = tool("large", { parameters: { type: "object", required: names.slice(0, 2), properties: Object.fromEntries(names.map((name) => [name, { type: "string" }])) } });
+  const rows = section(render(large, {}, WIDTH).lines, "Parameters");
+  assert.equal(rows[0], "  Parameters  500 · 2 required (*)");
+  assert.deepEqual(rows.slice(1, 4), ["    p0 *  string", "    p1 *  string", "    p2    string"]);
+  assert.equal(rows[120], "    p119  string", "the last row shown");
+  assert.equal(rows.length, 1 + 120 + 1);
+  assert.equal(rows[121], "    … 380 more; v shows the JSON");
+});
+
+test("a union with more shapes than the outline shows says how many there are", () => {
+  const shape = { type: "object", required: ["a"], properties: { a: { type: "string" }, b: { type: "number" } } };
+  const wide = tool("wide", { parameters: { anyOf: Array.from({ length: 40 }, () => ({ $ref: "#/$defs/S" })), $defs: { S: shape } } });
+  const rows = section(render(wide, {}, WIDTH).lines, "Parameters");
+  assert.equal(rows[0], "  Parameters  one of 40 shapes · 24 shown");
+  assert.deepEqual(rows.slice(1, 4), ["    shape 1  1 required (*)", "      a *  string", "      b    number"]);
+  assert.equal(rows.length, 1 + 24 * 3 + 1);
+  assert.equal(rows[rows.length - 1], "    … 16 more shapes; v shows the JSON");
+});
+
+test("a schema built to expand draws a bounded number of lines", () => {
+  const properties = Object.fromEntries(Array.from({ length: 3000 }, (_unused, index) => [`p${index}`, { type: "string" }]));
+  const hostile = tool("hostile", { parameters: { anyOf: Array.from({ length: 3000 }, () => ({ $ref: "#/$defs/A" })), $defs: { A: { type: "object", properties } } } });
+  const { lines } = render(hostile, {}, WIDTH);
+  assert.deepEqual(section(lines, "Parameters").filter((line) => !/^ {6}p\d+ +string$/.test(line)), [
+    "  Parameters  one of 3,000 shapes · 1 shown",
+    "    shape 1  none required",
+    "      … 2,880 more; v shows the JSON",
+    "    … 2,999 more shapes; v shows the JSON",
+  ]);
+  assert.equal(section(lines, "Parameters").length, 4 + 120);
 });
 
 test("a pane too narrow for labels beside values stacks them", () => {
@@ -221,6 +258,14 @@ test("the JSON view is the declaration the estimate measures, pretty-printed", (
   assert.deepEqual(JSON.parse(json), { name: SAVE_ISSUE.name, description: SAVE_ISSUE.description, parameters: SAVE_ISSUE.parameters });
   assert.equal(json.split("\n")[1], '  "name": "mcp__linear__save_issue",');
   assert.deepEqual(Object.keys(JSON.parse(json)), ["name", "description", "parameters"]);
+});
+
+test("the JSON view stays JSON for the same declaration when it holds hidden characters", () => {
+  const smuggling = tool("smuggling", { description: "Lists files.\u{e0069}\u{e0067} \u202e \u200b", parameters: { type: "object", properties: { "p\u200b": { type: "string", description: "tab\there" } } } });
+  const json = declarationJson(render(smuggling, {}, WIDTH).entry);
+  assertInert(json.split("\n"), "the JSON text");
+  assert.deepEqual(JSON.parse(json), { name: "smuggling", description: smuggling.description, parameters: smuggling.parameters });
+  assert.ok(json.includes('"description": "Lists files.\\udb40\\udc69\\udb40\\udc67 \\u202e \\u200b"'), json);
 });
 
 test("the JSON view shows the model's declaration, not the registered one, when they differ", () => {

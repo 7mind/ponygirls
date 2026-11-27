@@ -33,7 +33,8 @@ export function toolsExplorer(write: ProcessOutput): (pi: ExtensionAPI) => void 
       description: "Explore tools: state, source, token cost, schema",
       handler: async (args, ctx) => {
         const registry = new PiToolRegistry(pi, ctx);
-        const filter = args.trim();
+        // The words, one blank apart: the pane's filter editor holds one line.
+        const filter = args.trim().split(/\s+/).join(" ");
         if (ctx.mode !== "tui" || !ctx.hasUI) {
           const catalog = buildCatalog(registry.snapshot());
           const text = filter === "" ? summaryReport(catalog) : toolsReport(catalog, filter);

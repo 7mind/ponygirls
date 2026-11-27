@@ -10,10 +10,12 @@ function contractRegistry(): InMemoryToolRegistry {
   const tools: RegisteredTool[] = CONTRACT_TOOLS.map((tool) => ({
     name: tool.name,
     description: tool.description,
+    nonTextDescription: false,
     parameters: tool.parameters,
     exposure: tool.exposure,
     namespace: null,
     hints: null,
+    reachesOtherTools: false,
     provenance: extensionFile("/fixtures/probes.ts"),
   }));
   const promptLines = new Map<string, PromptLines>(CONTRACT_TOOLS

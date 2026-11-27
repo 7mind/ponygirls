@@ -5,7 +5,7 @@ import { shareText, tokenText } from "../src/present.ts";
 import { summarize } from "../src/query.ts";
 import type { RegistrySnapshot } from "../src/registry.ts";
 import { summaryReport, toolsReport } from "../src/report.ts";
-import { HOSTILE, TERMINAL_ACTIVE, extensionFile, mcpTool, snapshot, tool } from "./fixtures.ts";
+import { HIDDEN, HOSTILE, extensionFile, mcpTool, snapshot, tool } from "./fixtures.ts";
 
 const TOOLS = [
   tool("read", { description: "Read the contents of a file" }),
@@ -87,7 +87,7 @@ test("hostile names and filters are escaped in the text", () => {
   const hostile = tool(HOSTILE, { provenance: extensionFile(`/x/${HOSTILE}.ts`) });
   const catalog = buildCatalog(snapshot([hostile], {}));
   for (const text of [summaryReport(catalog), toolsReport(catalog, "evil"), toolsReport(catalog, HOSTILE)]) {
-    assert.doesNotMatch(text, TERMINAL_ACTIVE);
+    assert.doesNotMatch(text.replaceAll("\n", ""), HIDDEN);
     assert.ok(text.includes("\\u001b"), "the escape character is shown as text");
   }
 });

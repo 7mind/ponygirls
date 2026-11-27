@@ -113,6 +113,20 @@ test("an entry keeps its source, namespace, hints and provenance", () => {
   assert.deepEqual(catalog.model, { id: "scripted", contextWindow: 200_000 });
 });
 
+test("the catalog knows which of pi's two reaching tools the model has", () => {
+  const search = tool("tool_search", { exposure: "model-only", reachesOtherTools: true });
+  const scripts = tool("codemode", { exposure: "model-only", reachesOtherTools: true });
+  const reach = (active: readonly string[], withheld: readonly string[]) => buildCatalog(snapshot([search, scripts, READ], { active, withheld })).reach;
+  assert.deepEqual(reach(["tool_search", "codemode"], []), { toolSearch: true, codemode: true });
+  assert.deepEqual(reach(["tool_search"], []), { toolSearch: true, codemode: false });
+  assert.deepEqual(reach(["read"], []), { toolSearch: false, codemode: false }, "registered is not enough: the model has to have it");
+  assert.deepEqual(reach(["tool_search", "codemode"], ["tool_search"]), { toolSearch: false, codemode: true }, "nor is active with its declaration withheld");
+  assert.deepEqual(buildCatalog(snapshot([READ], { active: ["read"] })).reach, { toolSearch: false, codemode: false });
+  // pi's own rule: a tool of that name reaches other tools only if it declares that it does.
+  const namesake = tool("tool_search", { description: "Searches the web for tools to buy" });
+  assert.deepEqual(buildCatalog(snapshot([namesake, scripts], { active: ["tool_search", "codemode"] })).reach, { toolSearch: false, codemode: true });
+});
+
 test("costs use the token ratios measured for the model's family, and pi's rule otherwise", () => {
   const lines: PromptLines = { snippet: "Read file contents", guidelines: ["Use read instead of cat."] };
   const promptLines = new Map([["read", lines]]);

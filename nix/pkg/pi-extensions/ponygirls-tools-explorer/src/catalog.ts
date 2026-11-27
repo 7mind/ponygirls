@@ -34,6 +34,8 @@ export interface ToolEntry {
   definition: ToolDeclaration;
   /** The model's declaration is not the registered definition (a loadout hook rewrote it, or it is stale). */
   differsFromRegistered: boolean;
+  /** The registered description is not text; what is shown is its JSON. */
+  nonTextDescription: boolean;
   cost: ToolCost;
   promptLines: PromptLines;
   namespace: ToolNamespace | null;
@@ -41,8 +43,18 @@ export interface ToolEntry {
   provenance: ToolProvenance;
 }
 
+/**
+ * Whether the model has pi's two tools that reach tools it has no declaration of: tool search loads
+ * them into the active set, codemode scripts call them. Either reaches `deferred` and `codemode` tools alike.
+ */
+export interface Reach {
+  toolSearch: boolean;
+  codemode: boolean;
+}
+
 export interface ToolCatalog {
   entries: readonly ToolEntry[];
+  reach: Reach;
   /** What the costs were estimated with: the ratios of the model's family, or pi's rule. */
   basis: TokenBasis;
   /** `null` while no model is selected. */
@@ -50,6 +62,12 @@ export interface ToolCatalog {
 }
 
 const NO_PROMPT_LINES: PromptLines = { snippet: null, guidelines: [] };
+/**
+ * pi's own rule for which tools reach undeclared ones: a tool of one of these names that declares that it
+ * reaches other tools. A tool that merely has the name does not.
+ */
+const TOOL_SEARCH_TOOL = "tool_search";
+const CODEMODE_TOOL = "codemode";
 const INACTIVE_STATE: Readonly<Record<ToolExposure, ToolState>> = {
   direct: "off",
   "model-only": "off",
@@ -114,6 +132,7 @@ export function buildCatalog(snapshot: RegistrySnapshot): ToolCatalog {
       origin: originOf(tool),
       definition,
       differsFromRegistered: definition !== registered && !sameDeclaration(definition, registered),
+      nonTextDescription: tool.nonTextDescription,
       cost: {
         declaration: declarationTokens(definition, basis),
         promptLines: snapshot.promptLinesSent ? promptLineTokens(tool.name, promptLines, basis) : 0,
@@ -124,7 +143,10 @@ export function buildCatalog(snapshot: RegistrySnapshot): ToolCatalog {
       provenance: tool.provenance,
     };
   });
-  return { entries, basis, model: snapshot.model };
+  // The model has a tool only while its declaration is sent.
+  const reaching = new Set(snapshot.tools.filter((tool) => tool.reachesOtherTools).map((tool) => tool.name));
+  const has = (name: string): boolean => reaching.has(name) && entries.some((entry) => entry.name === name && isCharged(entry));
+  return { entries, reach: { toolSearch: has(TOOL_SEARCH_TOOL), codemode: has(CODEMODE_TOOL) }, basis, model: snapshot.model };
 }
 
 export function findEntry(catalog: ToolCatalog, name: string): ToolEntry | null {

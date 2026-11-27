@@ -5,7 +5,7 @@
  */
 import { formatCompact, formatCount, homeRelative, type UiState } from "@ponygirls/pi-ui";
 import type { ActivationResult, Refusal } from "./activation.ts";
-import { isActive, isCharged, totalTokens, type ToolEntry, type ToolState } from "./catalog.ts";
+import { isActive, isCharged, totalTokens, type Reach, type ToolEntry, type ToolState } from "./catalog.ts";
 import { displayLine } from "./display.ts";
 import type { CatalogSummary, SourceSummary, Tab } from "./query.ts";
 import type { SessionModel } from "./registry.ts";
@@ -52,14 +52,25 @@ export function tabLabel(summary: CatalogSummary, tab: Tab): string {
 /** `7 tools · 4 active · ~836 of ~1.4k tok`: one source in one line. */
 export function sourceFacts(source: SourceSummary): string {
   const active = source.active === 0 ? "none active" : source.active < source.tools ? `${formatCount(source.active)} active` : source.tools === 1 ? "active" : "all active";
-  const tokens = source.chargedTokens === source.allTokens ? `${tokenText(source.allTokens)} tok`
-    : source.chargedTokens === 0 ? `${tokenText(source.allTokens)} tok if loaded`
-    : `${tokenText(source.chargedTokens)} of ${tokenText(source.allTokens)} tok`;
-  return [plural(source.tools, "tool"), active, tokens].join(" · ");
+  // A source of hidden tools only has nothing that could be declared, so no figure.
+  const tokens = source.allTokens === 0 ? []
+    : source.chargedTokens === source.allTokens ? [`${tokenText(source.allTokens)} tok`]
+    : source.chargedTokens === 0 ? [`${tokenText(source.allTokens)} tok if loaded`]
+    : [`${tokenText(source.chargedTokens)} of ${tokenText(source.allTokens)} tok`];
+  return [plural(source.tools, "tool"), active, ...tokens].join(" · ");
+}
+
+const REACH_FACT: Readonly<Record<keyof Reach, string>> = { toolSearch: "tool_search can load it", codemode: "callable from codemode scripts" };
+
+/** How the model can get a tool it has no declaration of: by the way meant for the tool's exposure, else by the other. */
+function reachFact(reach: Reach, meant: keyof Reach): string {
+  const other: keyof Reach = meant === "toolSearch" ? "codemode" : "toolSearch";
+  if (reach[meant]) return REACH_FACT[meant];
+  return reach[other] ? REACH_FACT[other] : "out of the model's reach: neither tool_search nor codemode is active";
 }
 
 /** Whether the model has the tool, then why not or since when. */
-export function stateFacts(entry: ToolEntry): string[] {
+export function stateFacts(entry: ToolEntry, reach: Reach): string[] {
   if (entry.delivery === "removal-pending") return [entry.state, "still declared to the model", "dropped with the next request"];
   switch (entry.state) {
     case "active":
@@ -67,9 +78,9 @@ export function stateFacts(entry: ToolEntry): string[] {
     case "indirect":
       return ["indirect", "active, but another tool keeps its declaration out of requests"];
     case "deferred":
-      return ["deferred", "not declared to the model", "tool_search can load it"];
+      return ["deferred", "not declared to the model", reachFact(reach, "toolSearch")];
     case "codemode":
-      return ["codemode", "not declared to the model", "callable from codemode scripts"];
+      return ["codemode", "not declared to the model", reachFact(reach, "codemode")];
     case "off":
       return ["off", "not declared to the model"];
     case "hidden":

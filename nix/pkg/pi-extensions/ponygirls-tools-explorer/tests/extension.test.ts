@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { initTheme, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import type { TSchema } from "typebox";
 import { PLAIN_THEME } from "@ponygirls/pi-ui";
 import { toolsExplorer } from "../index.ts";
 import { assertInert, plain } from "./fixtures.ts";
@@ -144,13 +145,15 @@ test("a tool loaded in the pane is declared by the next request; unloaded, it is
   const { session, request, requests } = await start(t, screen);
   await request();
   assert.equal(requestedTools(requests[0]!).includes("probe_deferred"), false);
-  const running = session.prompt("/tools   probe_deferred");
+  // The words of the filter, however they were separated: a line break here would not survive the filter's editor.
+  const running = session.prompt("/tools   probe_deferred \n A  ");
   const pane = await screen.next();
   const selected = (): string => plain(pane.render(WIDTH)).find((line) => line.startsWith("▌"))!;
-  assert.equal(plain(pane.render(WIDTH))[1], `  / probe_deferred  1 of ${session.getAllTools().length}`);
+  assert.equal(plain(pane.render(WIDTH))[1], `  / probe_deferred A  1 of ${session.getAllTools().length}`);
   pane.handleInput("/");
-  assert.equal(plain(pane.render(WIDTH))[1], `  / probe_deferred   1 of ${session.getAllTools().length}`, "the filter is the words, without the blanks around them");
+  assert.equal(plain(pane.render(WIDTH))[1], `  / probe_deferred A   1 of ${session.getAllTools().length}`, "the editor holds the same words, one blank apart");
   pane.handleInput(ENTER);
+  assert.equal(plain(pane.render(WIDTH))[1], `  / probe_deferred A  1 of ${session.getAllTools().length}`, "and editing nothing changes nothing");
   assert.match(selected(), /^▌ probe_deferred +○ deferred /);
   pane.handleInput("l");
   assert.match(selected(), /^▌ probe_deferred +● active /);
@@ -176,6 +179,39 @@ test("a tool loaded in the pane is declared by the next request; unloaded, it is
   await reopened;
   await request();
   assert.equal(requestedTools(requests[2]!).includes("probe_deferred"), false);
+});
+
+// regression: found in review. Drawing such a row threw inside pi's render loop, which ends the pi process.
+test("a tool whose description is not text is listed and opened like any other", { timeout: 15_000 }, async (t) => {
+  initTheme("dark");
+  const screen = terminal(t);
+  const notified: [string, NotifyLevel][] = [];
+  const session = await startPiSession(t, {
+    extension: (pi) => {
+      pi.registerTool({
+        name: "untitled", label: "untitled", description: 42 as unknown as string,
+        parameters: { type: "object", properties: {} } as TSchema, execute: async () => ({ content: [{ type: "text", text: "ok" }], details: undefined }),
+      });
+      toolsExplorer(() => {})(pi);
+    },
+    extensionPaths: [], systemPrompt: null, toolAllowlist: null,
+    ui: { mode: "tui", notify: (message, level) => { notified.push([message, level]); }, custom: screen.custom },
+  });
+  const running = session.session.prompt("/tools untitled");
+  const pane = await screen.next();
+  const list = plain(pane.render(WIDTH));
+  assert.match(list.find((line) => line.startsWith("▌"))!, /^▌ untitled +● active +~\d+ +42$/);
+  pane.handleInput(ENTER);
+  const detail = plain(pane.render(WIDTH));
+  assert.ok(detail.includes("  Note    the registered description is not text · shown as JSON"), detail.join("\n"));
+  assert.deepEqual(detail.slice(detail.indexOf("  Description"), detail.indexOf("  Description") + 2), ["  Description", "    42"]);
+  pane.handleInput("v");
+  assert.ok(plain(pane.render(WIDTH)).includes('    "description": "42",'));
+  pane.handleInput(ESC);
+  pane.handleInput(ESC);
+  pane.handleInput(ESC);
+  await running;
+  assert.deepEqual([session.errors, notified], [[], []]);
 });
 
 test("the JSON view is coloured by pi's highlighter and stays inert", { timeout: 15_000 }, async (t) => {

@@ -5,11 +5,11 @@
  * `displayLine` before it is styled.
  */
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { MARKER_WIDTH, stateColor, type UiFg, type UiTheme } from "@ponygirls/pi-ui";
+import { MARKER_WIDTH, formatCount, stateColor, type UiFg, type UiTheme } from "@ponygirls/pi-ui";
 import type { ToolCatalog, ToolEntry } from "./catalog.ts";
-import { displayLine, displayText } from "./display.ts";
+import { displayJson, displayLine, displayText } from "./display.ts";
 import { costFacts, hintFacts, sourceFactsOf, stateFacts, stateTone } from "./present.ts";
-import { outlineParameters, parameterCount, type ParameterRow } from "./schema.ts";
+import { outlineParameters, type ParameterList, type ParameterRow } from "./schema.ts";
 
 export interface DetailView {
   theme: UiTheme;
@@ -75,17 +75,24 @@ function factLines(view: DetailView, facts: readonly Fact[]): string[] {
 function facts(entry: ToolEntry, catalog: ToolCatalog, home: string): Fact[] {
   const hints = hintFacts(entry);
   return [
-    { label: "State", parts: stateFacts(entry), lead: stateColor(stateTone(entry)) },
+    { label: "State", parts: stateFacts(entry, catalog.reach), lead: stateColor(stateTone(entry)) },
     { label: "Source", parts: sourceFactsOf(entry, home), lead: "text" },
     { label: "Tokens", parts: costFacts(entry, catalog.basis, catalog.model), lead: "text" },
     ...(hints === null ? [] : [{ label: "Hints", parts: hints, lead: "text" as const }]),
     ...(entry.differsFromRegistered ? [{ label: "Note", parts: ["shown as declared to the model", "the registered definition differs"], lead: "text" as const }] : []),
+    ...(entry.nonTextDescription ? [{ label: "Note", parts: ["the registered description is not text", "shown as JSON"], lead: "text" as const }] : []),
   ];
 }
 
-function requiredSummary(rows: readonly ParameterRow[]): string {
-  const required = rows.filter((row) => row.required).length;
-  return required === 0 ? "none required" : required === rows.length ? "all required" : `${required} required (*)`;
+function requiredSummary(list: ParameterList): string {
+  return list.required === 0 ? "none required" : list.required === list.total ? "all required" : `${formatCount(list.required)} required (*)`;
+}
+
+/** The rows the outline shows, and a line for those it left to the JSON view. */
+function listRows(view: DetailView, list: ParameterList, indent: string): string[] {
+  const rest = list.total - list.rows.length;
+  const more = rest === 0 ? [] : [`${indent}${view.theme.fg("dim", `… ${formatCount(rest)} more; ${JSON_VIEW_KEY} shows the JSON`)}`];
+  return [...parameterRows(view, list.rows, indent), ...more];
 }
 
 /** A table of name, type and description; a row that does not fit its columns puts the description below. */
@@ -124,17 +131,23 @@ function parameterLines(view: DetailView, entry: ToolEntry): string[] {
     case "none":
       return [heading(theme, "Parameters", null), ...bodyText(view, "The tool takes no parameters.", "muted")];
     case "opaque":
-      return [heading(theme, "Parameters", null), ...bodyText(view, `The schema is not a plain object; ${JSON_VIEW_KEY} shows it as JSON.`, "muted")];
+      return [heading(theme, "Parameters", null), ...bodyText(view, `The outline cannot show this schema; ${JSON_VIEW_KEY} shows it as JSON.`, "muted")];
     case "object":
-      return [heading(theme, "Parameters", `${outline.rows.length} · ${requiredSummary(outline.rows)}`), ...parameterRows(view, outline.rows, BODY_INDENT)];
-    case "union":
+      return [heading(theme, "Parameters", `${formatCount(outline.total)} · ${requiredSummary(outline)}`), ...listRows(view, outline, BODY_INDENT)];
+    case "union": {
+      const rest = outline.total - outline.shapes.length;
+      // The count of distinct parameters is over the shapes shown, so a cut union does not state one.
+      const meta = rest === 0 ? `${formatCount(outline.parameters)} · one of ${formatCount(outline.total)} shapes`
+        : `one of ${formatCount(outline.total)} shapes · ${formatCount(outline.shapes.length)} shown`;
       return [
-        heading(theme, "Parameters", `${parameterCount(outline)} · one of ${outline.shapes.length} shapes`),
+        heading(theme, "Parameters", meta),
         ...outline.shapes.flatMap((shape) => [
-          `${BODY_INDENT}${theme.bold(theme.fg("text", displayLine(shape.label)))}${PARAMETER_GAP}${theme.fg("dim", requiredSummary(shape.rows))}`,
-          ...parameterRows(view, shape.rows, SHAPE_INDENT),
+          `${BODY_INDENT}${theme.bold(theme.fg("text", displayLine(shape.label)))}${PARAMETER_GAP}${theme.fg("dim", requiredSummary(shape))}`,
+          ...listRows(view, shape, SHAPE_INDENT),
         ]),
+        ...(rest === 0 ? [] : [`${BODY_INDENT}${theme.fg("dim", `… ${formatCount(rest)} more shapes; ${JSON_VIEW_KEY} shows the JSON`)}`]),
       ];
+    }
   }
 }
 
@@ -163,7 +176,7 @@ export function outlineLines(entry: ToolEntry, catalog: ToolCatalog, view: Detai
 /** The declaration the token estimate measures, pretty-printed and safe to draw. */
 export function declarationJson(entry: ToolEntry): string {
   const { name, description, parameters } = entry.definition;
-  return displayText(JSON.stringify({ name, description, parameters }, null, JSON_INDENT));
+  return displayJson(JSON.stringify({ name, description, parameters }, null, JSON_INDENT));
 }
 
 /** Highlighted JSON lines wrapped to the pane. */
