@@ -96,3 +96,46 @@ export const TOOL_SCENARIOS = [
     ],
     expect: { added: ['a', 'b'], addedBy: 0, rules: ['spelling'], rulesBy: 1, complete: [['a', 2]], retired: [['b', 3]] } },
 ];
+
+/**
+ * Batch 2 (guidance wording): tool sessions graded by `gradeRecord`. Each stated objective names the turn that states
+ * it (`at`, 0-based) and what becomes of it: `['complete', turn]`, `['retired', turn]` or `['open']`. `questions`
+ * recognises an entry made out of a plain question, `oneTurn` one made out of a small request that its own reply
+ * answers completely; both are entries the record should not hold. `role` is `development` for scenarios the wording
+ * was written against and `held-out` for those written by someone who had not seen the wording.
+ * `build` and `report` have the turns of batch 1.
+ */
+export const RECORD_SCENARIOS = [
+  { id: 'build', role: 'development', kind: 'work',
+    objectives: { a: { key: /bazel|migrat/i, at: 0, fate: ['complete', 2] }, b: { key: /onboarding/i, at: 0, fate: ['complete', 3] }, c: { key: /checklist/i, at: 0, fate: ['retired', 3] } },
+    rules: { length: { key: /120 words|word/i, at: 1 }, tables: { key: /table/i, at: 1 } },
+    questions: /\b17\b|times|multipl|arithmetic|\b391\b/i, oneTurn: null,
+    turns: TOOL_SCENARIOS[0].turns },
+  { id: 'report', role: 'development', kind: 'work',
+    objectives: { a: { key: /summary/i, at: 0, fate: ['complete', 2] }, b: { key: /fact-?check|risk/i, at: 0, fate: ['retired', 3] } },
+    rules: { spelling: { key: /british/i, at: 1 } },
+    questions: null, oneTurn: /title/i,
+    turns: TOOL_SCENARIOS[1].turns },
+  // Opposite error, nothing to record but one rule: questions and a small request, each answered by its own reply.
+  { id: 'chat', role: 'development', kind: 'control',
+    objectives: {},
+    rules: { prose: { key: /prose|bullet|list/i, at: 2 } },
+    questions: /mutex|semaphore|ipv6|bits/i, oneTurn: /name|photo|renam/i,
+    turns: [
+      'Quick one: what is the difference between a mutex and a semaphore? Two sentences.',
+      'And how many bits are there in an IPv6 address?',
+      'Please answer in plain prose from now on, no bullet lists.',
+      'Thanks. Can you suggest a name for a small internal tool that renames photos by date?',
+    ] },
+  // Opposite error, one deliverable built over several turns: the parts are steps, not objectives.
+  { id: 'single', role: 'development', kind: 'single',
+    objectives: { plan: { key: /plan|postgres|migrat|upgrad/i, at: 0, fate: ['complete', 3] } },
+    rules: { versions: { key: /version/i, at: 1 } },
+    questions: null, oneTurn: null,
+    turns: [
+      'I need a plan for moving our Postgres 13 cluster to version 16; we will build it up over the next few messages. First: which three risks would you look at before anything else?',
+      'One rule while we do this: give version numbers exactly, never "the latest".',
+      'Fine. Next part of the plan: the cutover sequence, at most six steps.',
+      'Good. Now put the whole plan together in one message, risks first; with that the plan is finished.',
+    ] },
+];

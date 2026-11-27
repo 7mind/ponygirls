@@ -359,3 +359,165 @@ Bounds are execution controls: 6 concurrent sessions; per session 3 (checkpoint)
   and the built-in tools were blocked, which a subject that calls one learns in its first turn.
 - Key patterns recognise the scripted subjects; a reply that rewords beyond them is listed as unclear and read.
 - One coder, the grader's author, read the flagged replies.
+
+## Batch 2: the wording of the guidance for `cuckoo_update`
+
+### Protocol (registered 2026-11-27, before any run of this batch)
+
+**Question.** In batch 1 sonnet/medium kept one entry for a whole request, never retired a cancelled part and, with
+Pi's built-in tools declared, recorded no objective in 10 of 12 sessions of one scenario. Does a rewording of the
+tool's guidance make that subject keep the record as specified below, without making the other subjects worse and
+without filling the record with entries that do not belong there? Only the model-facing text of `cuckoo_update`
+changes (`promptGuidelines`, and `description` if needed); the checkpoint request and the decoder do not.
+
+**Desired behaviour.** The wording and the scenarios are both written against this.
+
+1. An objective is a deliverable the user asked for, or the model committed to, whose work continues after the reply
+   to the message that states it. Each gets an entry of its own, in the turn that states it; a message that asks for
+   several deliverables gives several entries, the one started first included.
+2. A question, or a request that its own reply answers completely, is not an objective.
+3. The steps toward one deliverable are not objectives.
+4. A deliverable that is delivered and accepted is completed in that turn, with what was delivered and the caveats.
+5. A deliverable the user cancels or replaces is retired in that turn with the reason, not completed.
+6. An instruction the user gives for the session is recorded as a rule in the turn that gives it.
+7. A checkpoint after such edits repeats no completion and revives no retirement.
+
+**Arms.** A: the extension as merged on main. B: the same with the candidate wording. Both run in the same batch at
+the same time. Every run records the hashes of the system text and the tool definitions it sent: equal within an arm
+and cell, different between the arms of a cell; the difference is read once per cell on stopped requests (`DRY=1`)
+and must be the guidance text only.
+
+**Subjects.** As in batch 1: fable-5-2/high, sonnet-5-5/medium (the subject the wording is for), haiku-5-5/low.
+
+**Cells.** `tools-builtins` (the ordinary tool menu; the cell the rule below reads), `tools-only` (sonnet),
+`checkpoint-visible` and `checkpoint-compacted` (non-regression: their system prompt carries the guidance too).
+
+**Scenarios** (`RECORD_SCENARIOS`). Development: `build` and `report` of batch 1 (`report` was held out there and is
+not here), `chat` (control: questions, one rule, one small request; nothing to record but the rule) and `single` (one
+deliverable built over four turns). Held-out: two work scenarios, one single-deliverable scenario and one control,
+written by an author who has seen neither the candidate wording nor any result: a subagent given the seven points
+above, the scenario format and the subjects of the development scenarios to avoid. They are requested once this
+protocol is committed. The experimenter reads them only after the wording is frozen, checks each key against the
+scenario's own text and may correct a defect of a fixture, which is recorded; the wording is not touched after that.
+Before the batch each held-out fixture is run twice with fable/high in arm A, the subject and arm that kept the
+record as specified in batch 1, and the runs are read: a fixture whose expected outcome that subject cannot reach
+for a reason in the fixture is corrected or dropped, with the reason.
+
+**Development.** At most three rounds, sonnet/medium, `tools-builtins`, development scenarios, arm B, at most six
+sessions per scenario and round. Arm A's rates under this batch's coding are known from the stored runs of batch 1
+(table below). Every development run is kept and reported as development.
+
+**Freeze.** The candidate is committed and copied; the system text and the tool definitions it sends are recorded
+by length and SHA-256 from a stopped request. After the freeze the wording is not edited. One second candidate is
+allowed, only with a new held-out set made the same way; otherwise the result stands as it falls.
+
+**n.** `tools-builtins`: 12 sessions per arm and scenario for sonnet, 6 for fable and haiku. `tools-only`: 6 per arm
+and scenario, sonnet. Checkpoint cells: 12 per arm and variant for sonnet, 6 for fable and haiku. Every run is
+reported; no rerun replaces a failed run.
+
+**Outcomes** (`gradeRecord`; scripted cases in `grade.test.mjs`). A stated objective counts as recorded only by an
+entry of its own: one whose text matches its key and the key of no other stated objective.
+
+- *Record right*: every stated objective has an entry of its own by its turn; every objective is closed the way it
+  ended, in its turn (complete, retired, or still active); every rule is recorded by its turn; no call was refused;
+  the final checkpoint is valid, repeats no completion and revives no retirement.
+- *No surplus entries*: no objective entry made out of a question, out of a request its own reply answers, or out of
+  anything else that is not a stated objective, and no second entry for one objective or rule.
+- Beside these: the reading of batch 1 (named in some entry), sessions with an entry that holds several objectives,
+  sessions without any objective entry, the cancelled objective retired at the end, calls and provider requests.
+
+**Adoption rule.** The wording is merged only if all of this holds. It is read on sonnet/medium in `tools-builtins`
+unless said otherwise; the two held-out work scenarios together are 24 sessions per arm.
+
+1. *Effect.* Over the held-out work scenarios together, arm B has *an entry of its own for every stated objective, by
+   its turn* in at least 8 sessions more than arm A, and in neither scenario in fewer sessions than arm A by more
+   than 2. This is the defect batch 1 showed (one entry for a whole request, or none). A scenario supports the change
+   only where the baseline fails: where arm A already does it the scenario shows no harm, not an effect.
+2. *No surplus.* In every control and single-deliverable scenario, development or held-out, arm B has *no surplus
+   entries* in at most 2 sessions fewer than arm A. In every work scenario arm B has an entry made out of a question
+   in at most 1 session more than arm A.
+3. *Rules.* In every scenario arm B has *every rule recorded by its turn* in at most 2 sessions fewer than arm A.
+4. *Other subjects.* For fable/high and haiku/low in `tools-builtins`, in every scenario, *record right* and *no
+   surplus entries* are each at most 1 session lower in arm B than in arm A.
+5. *Checkpoints.* For every subject, the checkpoint replies that are invalid or have a wrong ID, an entry restated
+   as new or a dropped entry are at most 1 more in arm B than in arm A.
+
+The number of calls and of provider requests is reported and not judged. If the rule fails, the wording is not
+merged and the runs are.
+
+**What may be said afterwards.** "Keeps the record as specified" is said of a subject with a wording only where
+*record right* holds in at least 20 of its 24 held-out work sessions and its control and single-deliverable sessions
+pass point 2. Otherwise the documentation gives the counts. *Record right* is stricter than point 1 on purpose: a
+wording can be worth merging because entries appear, while closing them in their turn is still unreliable.
+
+**Limits known beforehand.** Those of batch 1 ("Limits"): no work in the sessions, built-in tools declared and
+blocked, one provider family, short sessions. One reader who knows the arm reads the flagged sessions. What counts
+as one deliverable is the experimenter's reading in the development scenarios and the author's in the held-out ones.
+
+### Arm A before the batch: the stored runs of batch 1 under this batch's coding
+
+`node record-summary.mjs` over `results/*tools*.jsonl` (sonnet: the registered sessions and the top-up together).
+
+#### tools-builtins, scenario build (development, work)
+
+| | fable/high | sonnet/medium | haiku/low |
+|---|---|---|---|
+| Sessions graded (failed runs apart) | 6 | 12 | 6 |
+| **Record right** (registered rule) | 6 of 6 | 0 of 12 | 0 of 6 |
+| An entry of its own for every stated objective, by its turn | 6 of 6 | 0 of 12 | 0 of 6 |
+| Every stated objective named in some entry by its turn (reading of batch 1) | 6 of 6 | 10 of 12 | 2 of 6 |
+| Sessions with an entry that holds several objectives | 0 of 6 | 12 of 12 | 2 of 6 |
+| No objective entry at all | 0 of 6 | 0 of 12 | 4 of 6 |
+| Cancelled objective retired at the end | 6 of 6 | 0 of 12 | 0 of 6 |
+| Every rule recorded by its turn | 6 of 6 | 12 of 12 | 6 of 6 |
+| Final checkpoint sound | 6 of 6 | 9 of 12 | 6 of 6 |
+| **No surplus entries** (registered rule) | 6 of 6 | 12 of 12 | 6 of 6 |
+| of a request its own reply answers | 0 of 6 | 0 of 12 | 0 of 6 |
+
+#### tools-builtins, scenario report (development, work)
+
+| | fable/high | sonnet/medium | haiku/low |
+|---|---|---|---|
+| Sessions graded (failed runs apart) | 6 | 12 | 6 |
+| **Record right** (registered rule) | 6 of 6 | 0 of 12 | 0 of 6 |
+| An entry of its own for every stated objective, by its turn | 6 of 6 | 0 of 12 | 0 of 6 |
+| Every stated objective named in some entry by its turn (reading of batch 1) | 6 of 6 | 0 of 12 | 0 of 6 |
+| Sessions with an entry that holds several objectives | 0 of 6 | 2 of 12 | 0 of 6 |
+| No objective entry at all | 0 of 6 | 10 of 12 | 6 of 6 |
+| Cancelled objective retired at the end | 6 of 6 | 0 of 12 | 0 of 6 |
+| Every rule recorded by its turn | 6 of 6 | 12 of 12 | 6 of 6 |
+| Final checkpoint sound | 6 of 6 | 12 of 12 | 6 of 6 |
+| **No surplus entries** (registered rule) | 0 of 6 | 12 of 12 | 6 of 6 |
+| of a request its own reply answers | 6 of 6 | 0 of 12 | 0 of 6 |
+
+#### tools-only, scenario build (development, work)
+
+| | fable/high | sonnet/medium | haiku/low |
+|---|---|---|---|
+| Sessions graded (failed runs apart) | 6 | 12 | 6 |
+| **Record right** (registered rule) | 6 of 6 | 0 of 12 | 0 of 6 |
+| An entry of its own for every stated objective, by its turn | 6 of 6 | 0 of 12 | 0 of 6 |
+| Every stated objective named in some entry by its turn (reading of batch 1) | 6 of 6 | 12 of 12 | 1 of 6 |
+| Sessions with an entry that holds several objectives | 0 of 6 | 12 of 12 | 1 of 6 |
+| No objective entry at all | 0 of 6 | 0 of 12 | 4 of 6 |
+| Cancelled objective retired at the end | 6 of 6 | 0 of 12 | 0 of 6 |
+| Every rule recorded by its turn | 6 of 6 | 12 of 12 | 6 of 6 |
+| Final checkpoint sound | 6 of 6 | 12 of 12 | 6 of 6 |
+| **No surplus entries** (registered rule) | 6 of 6 | 12 of 12 | 6 of 6 |
+| of a request its own reply answers | 0 of 6 | 0 of 12 | 0 of 6 |
+
+#### tools-only, scenario report (development, work)
+
+| | fable/high | sonnet/medium | haiku/low |
+|---|---|---|---|
+| Sessions graded (failed runs apart) | 6 | 12 | 6 |
+| **Record right** (registered rule) | 6 of 6 | 0 of 12 | 0 of 6 |
+| An entry of its own for every stated objective, by its turn | 6 of 6 | 0 of 12 | 0 of 6 |
+| Every stated objective named in some entry by its turn (reading of batch 1) | 6 of 6 | 12 of 12 | 1 of 6 |
+| Sessions with an entry that holds several objectives | 0 of 6 | 12 of 12 | 1 of 6 |
+| No objective entry at all | 0 of 6 | 0 of 12 | 4 of 6 |
+| Cancelled objective retired at the end | 6 of 6 | 0 of 12 | 0 of 6 |
+| Every rule recorded by its turn | 6 of 6 | 12 of 12 | 6 of 6 |
+| Final checkpoint sound | 6 of 6 | 12 of 12 | 6 of 6 |
+| **No surplus entries** (registered rule) | 0 of 6 | 8 of 12 | 6 of 6 |
+| of a request its own reply answers | 6 of 6 | 4 of 12 | 0 of 6 |

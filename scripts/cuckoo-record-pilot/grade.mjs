@@ -142,3 +142,75 @@ export function gradeTools(result, scenario) {
   }
   return out;
 }
+
+/**
+ * Batch 2: one tool session against a scenario of `RECORD_SCENARIOS`. Unlike `gradeTools`, a stated objective counts
+ * as recorded only by an entry of its own: one whose text matches its key and the key of no other stated objective.
+ * Turn indexes are 0-based; every reading is taken from the record as it stood after a turn.
+ */
+export function gradeRecord(result, scenario) {
+  const stated = Object.entries(scenario.objectives);
+  const keysOf = item => stated.filter(([, objective]) => objective.key.test(item.objective)).map(([name]) => name);
+  const ownOf = (snapshot, name) => snapshot.objectives.filter(item => { const keys = keysOf(item); return keys.length === 1 && keys[0] === name; });
+  const rulesOf = (snapshot, key) => snapshot.rules.filter(item => key.test(`${item.rule} ${item.scope}`));
+  const after = index => result.turns[index] === undefined ? null : result.turns[index].after;
+  const end = after(result.turns.length - 1);
+  const firstTurn = present => { const index = result.turns.findIndex(turn => present(turn.after)); return index === -1 ? null : index; };
+  const when = (turn, at) => turn === null ? 'never' : turn <= at ? 'by its turn' : `late (turn ${turn + 1})`;
+  const updates = result.turns.map(turn => turn.calls.filter(call => call.name === 'cuckoo_update'));
+  const title = item => `${item.id} ${item.status}: ${item.objective.slice(0, 70)}`;
+  const out = {
+    kind: scenario.kind,
+    callsPerTurn: updates.map(list => list.map(call => `${call.arguments.action}${call.arguments.id === undefined ? '' : ` ${call.arguments.id}`}${call.result !== null && call.result.isError ? ' (REFUSED)' : ''}`)),
+    updateCalls: updates.flat().length, refused: updates.flat().filter(call => call.result !== null && call.result.isError).map(call => call.result.text.slice(0, 120)),
+    recallCalls: result.turns.flatMap(turn => turn.calls).filter(call => call.name === 'cuckoo_recall').length,
+    blockedCalls: (result.blockedCalls ?? []).map(call => call.name), extraRequests: result.requests - (result.turns.length + 1),
+    own: {}, any: {}, fates: {}, rules: {}, merged: [], duplicates: [], extras: { questions: [], oneTurn: [], other: [] }, entries: end === null ? 0 : end.objectives.length, final: null,
+  };
+  for (const [name, objective] of stated) {
+    out.own[name] = when(firstTurn(snapshot => ownOf(snapshot, name).length > 0), objective.at);
+    out.any[name] = when(firstTurn(snapshot => snapshot.objectives.some(item => objective.key.test(item.objective))), objective.at);
+    // What became of it, read from its own entry: after the turn that settles it, and at the end.
+    const [fate, turn] = objective.fate; const wanted = fate === 'open' ? 'active' : fate;
+    const statusAt = snapshot => { const found = snapshot === null ? [] : ownOf(snapshot, name); return found.length === 0 ? 'no own entry' : found.map(item => item.status).join('/'); };
+    const atEnd = statusAt(end), inTurn = fate === 'open' ? atEnd : statusAt(after(turn));
+    out.fates[name] = atEnd === wanted && inTurn === wanted ? 'right' : atEnd === wanted ? `${wanted} at the end, ${inTurn} in its turn` : `${atEnd} at the end, wanted ${wanted}`;
+  }
+  for (const [name, rule] of Object.entries(scenario.rules)) {
+    const turn = firstTurn(snapshot => rulesOf(snapshot, rule.key).length > 0);
+    out.rules[name] = `${when(turn, rule.at)}${turn === null ? '' : `, source ${rulesOf(after(turn), rule.key)[0].source}`}`;
+  }
+  if (end !== null) {
+    for (const item of end.objectives) {
+      const keys = keysOf(item);
+      if (keys.length > 1) out.merged.push(`${title(item)} [${keys.join('+')}]`);
+      else if (keys.length === 0) out.extras[scenario.questions !== null && scenario.questions.test(item.objective) ? 'questions' : scenario.oneTurn !== null && scenario.oneTurn.test(item.objective) ? 'oneTurn' : 'other'].push(title(item));
+    }
+    for (const [name] of stated) { const found = ownOf(end, name); if (found.length > 1) out.duplicates.push(`${name}: ${found.map(title).join(' | ')}`); }
+    for (const [name, rule] of Object.entries(scenario.rules)) { const found = rulesOf(end, rule.key); if (found.length > 1) out.duplicates.push(`rule ${name}: ${found.map(item => item.id).join(',')}`); }
+  }
+  const round = result.rounds[0];
+  if (round !== undefined && end !== null) {
+    if (round.error !== null) out.final = { invalid: round.error.slice(0, 200) };
+    else {
+      const reply = JSON.parse(round.raw);
+      const before = new Map([...end.objectives, ...end.rules].map(item => [item.id, item]));
+      const listed = new Set([...reply.objectives, ...reply.rules].flatMap(item => item.id === null ? [] : [item.id]));
+      out.final = {
+        completedRepeated: reply.objectives.filter(item => item.id !== null && before.get(item.id)?.status === 'complete').map(item => item.id),
+        retiredRevived: [...reply.objectives, ...reply.rules].filter(item => item.id !== null && before.get(item.id)?.status === 'retired').map(item => item.id),
+        activeDropped: [...before.values()].filter(item => item.status === 'active' && !listed.has(item.id)).map(item => item.id),
+        newAtCheckpoint: [...reply.objectives.filter(item => item.id === null).map(item => `objective: ${item.objective.slice(0, 50)}`), ...reply.rules.filter(item => item.id === null).map(item => `rule: ${item.rule.slice(0, 50)}`)],
+      };
+    }
+  }
+  out.allOwnByTurn = Object.values(out.own).every(value => value === 'by its turn');
+  out.allAnyByTurn = Object.values(out.any).every(value => value === 'by its turn');
+  out.allFatesRight = Object.values(out.fates).every(value => value === 'right');
+  out.allRulesByTurn = Object.values(out.rules).every(value => value.startsWith('by its turn'));
+  out.finalSound = out.final !== null && out.final.invalid === undefined && out.final.completedRepeated.length === 0 && out.final.retiredRevived.length === 0;
+  // Entries the record should not hold: made out of a question, a one-turn request or a step, or a second entry for one objective.
+  out.noExtras = out.extras.questions.length + out.extras.oneTurn.length + out.extras.other.length + out.duplicates.length === 0;
+  out.recordRight = out.allOwnByTurn && out.allFatesRight && out.allRulesByTurn && out.refused.length === 0 && out.finalSound;
+  return out;
+}

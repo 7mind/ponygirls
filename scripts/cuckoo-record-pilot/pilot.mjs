@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { CHECKPOINT_SCENARIO, RECORD, TOOL_SCENARIOS } from './scenarios.mjs';
+import { CHECKPOINT_SCENARIO, RECORD, RECORD_SCENARIOS, TOOL_SCENARIOS } from './scenarios.mjs';
 
 const [label, extensionArgument, outputArgument, repsArgument, modelArgument, thinkingArgument, cell] = process.argv.slice(2);
 if ([label, extensionArgument, outputArgument, repsArgument, modelArgument, thinkingArgument, cell].includes(undefined) || process.env.PI_SDK_ROOT === undefined || process.env.GATEWAY_EXTENSION === undefined) {
@@ -166,7 +166,7 @@ async function leadingSystemMessage(work) {
 async function run(scenario, rep) {
   const id = `${cell}-${scenario.id}-${rep}`; const directory = join(output, id); mkdirSync(directory, { recursive: true });
   const work = join(mkdtempSync(join(workRoot, 's-')), 'project'); mkdirSync(work);
-  const result = { id, label, cell, kind, scenario: scenario.id, rep, model: MODEL, thinking, variant, toolset, status: 'running', requests: 0, errors: [], notifications: [], rounds: [], turns: [], blockedCalls: [] };
+  const result = { id, label, cell, kind, scenario: scenario.id, scenarioSet: kind === 'tools' && process.env.SCENARIO_SET === 'record' ? 'record' : 'batch1', rep, model: MODEL, thinking, variant, toolset, status: 'running', requests: 0, errors: [], notifications: [], rounds: [], turns: [], blockedCalls: [] };
   let session; const payloads = [];
   const guard = pi => {
     pi.on('before_provider_request', (event, ctx) => {
@@ -228,7 +228,9 @@ async function run(scenario, rep) {
 }
 
 const only = process.env.ONLY === undefined ? null : process.env.ONLY.split(',');
-const plan = (kind === 'checkpoint' ? [CHECKPOINT_SCENARIO] : TOOL_SCENARIOS).filter(scenario => only === null || only.includes(scenario.id))
+// SCENARIO_SET=record: the tool scenarios of batch 2 (`RECORD_SCENARIOS`) instead of those of batch 1.
+const toolScenarios = process.env.SCENARIO_SET === 'record' ? RECORD_SCENARIOS : TOOL_SCENARIOS;
+const plan = (kind === 'checkpoint' ? [CHECKPOINT_SCENARIO] : toolScenarios).filter(scenario => only === null || only.includes(scenario.id))
   .flatMap(scenario => Array.from({ length: reps }, (_, rep) => ({ scenario, rep })));
 if (plan.length === 0) throw new Error('Nothing selected');
 const results = []; let next = 0;
