@@ -25,11 +25,15 @@ for meta_file in "$@"; do
   if [ -z "$description" ]; then
     echo "  ERROR: missing required 'description' field" >&2
     errors=$((errors + 1))
-  elif [ "$(yq -r '.description | split("") | length' "$meta_file")" -gt "$max_description_chars" ]; then
+  else
     # yq's string length counts bytes; splitting first counts Unicode characters,
     # including trailing newlines command substitution strips from $description.
-    echo "  ERROR: description must not exceed $max_description_chars characters" >&2
-    errors=$((errors + 1))
+    description_chars=$(yq -r '.description | split("") | length' "$meta_file")
+    test -n "$description_chars"
+    if [ "$description_chars" -gt "$max_description_chars" ]; then
+      echo "  ERROR: description must not exceed $max_description_chars characters" >&2
+      errors=$((errors + 1))
+    fi
   fi
 
   content_file="$skill_dir/content.md"

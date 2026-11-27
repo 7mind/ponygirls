@@ -10,7 +10,10 @@ artifact=${1:?actual native ELF}; report=${2:?fresh absolute report}; proxy=${3:
 : "${PONYGIRLS_OWNED_FIXTURE_ROOT:?use the owned fixture wrapper}"
 : "${HAYSTACK_TEST_PROVISION_COMMAND:?strict paired helper required}"
 [[ -x $HAYSTACK_TEST_PROVISION_COMMAND && $(<"$PONYGIRLS_OWNED_FIXTURE_ROOT/.owned-test-only") == ponygirls-owned-test-v1 ]]
-if [[ -e $report && -n $(ls -A "$report") ]]; then echo 'refusing nonempty report' >&2; exit 2; fi
+if [[ -e $report ]]; then
+  report_entries=$(ls -A "$report")
+  if [[ -n $report_entries ]]; then echo 'refusing nonempty report' >&2; exit 2; fi
+fi
 umask 077
 mkdir -p "$report/artifacts"
 export HAYSTACK_SERVER_COMMAND="$artifact" HAYSTACK_UI_ARTIFACTS="$report/artifacts" HAYSTACK_PROXY_CONFIG_FILE="$proxy"

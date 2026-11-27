@@ -56,6 +56,22 @@ assert_fail() {
   fi
 }
 
+# assert_diagnostic_bound DESC TEXT: TEXT is at most DIAGNOSTIC_MAX_BYTES bytes.
+# The byte count runs on its own, so a failed count fails the case.
+assert_diagnostic_bound() {
+  local desc="$1" text="$2" bytes status
+  TESTS_RUN=$((TESTS_RUN + 1))
+  bytes="$(set -o pipefail; printf '%s' "$text" | wc -c)"
+  status=$?
+  if [[ $status -ne 0 || -z "$bytes" ]]; then
+    echo "FAIL: $desc -- byte count failed (exit $status)"
+    FAILURES=$((FAILURES + 1))
+  elif [[ $bytes -gt $DIAGNOSTIC_MAX_BYTES ]]; then
+    echo "FAIL: $desc exceeds its bound (> $DIAGNOSTIC_MAX_BYTES bytes)"
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+
 # Strict recorder: every adapter invocation appends ONE line to argv.log with
 # the complete argv joined by U+001F (never present in these arguments), so the
 # suite compares whole argv vectors and counts invocations — no substrings.
@@ -395,12 +411,7 @@ ERR="$("$PROXY" client get 2>&1)"
 ST=$?
 assert_fail "limit-plus-one adapter stdout rejected" "$ST"
 assert_contains "stdout overflow is attributed by the broker" "$ERR" "stdout exceeds the"
-TESTS_RUN=$((TESTS_RUN + 1))
-diag="${ERR#yolo-clipboard-proxy client: }"
-if [[ $(printf '%s' "$diag" | wc -c) -gt $DIAGNOSTIC_MAX_BYTES ]]; then
-  echo "FAIL: stdout-overflow diagnostic exceeds its bound (> $DIAGNOSTIC_MAX_BYTES bytes)"
-  FAILURES=$((FAILURES + 1))
-fi
+assert_diagnostic_bound "stdout-overflow diagnostic" "${ERR#yolo-clipboard-proxy client: }"
 
 # Oversized adapter stderr on failure: the diagnostic stays within its bound.
 printf 'big-stderr-fail\n' > "$FAKE_STATE/mode"
@@ -409,12 +420,7 @@ ERR="$(printf 'x' | "$PROXY" client set 2>&1)"
 ST=$?
 assert_fail "adapter failure surfaces" "$ST"
 assert_contains "adapter failure keeps the broker diagnostic form" "$ERR" "failed (status"
-TESTS_RUN=$((TESTS_RUN + 1))
-diag="${ERR#yolo-clipboard-proxy client: }"
-if [[ $(printf '%s' "$diag" | wc -c) -gt $DIAGNOSTIC_MAX_BYTES ]]; then
-  echo "FAIL: adapter-failure diagnostic exceeds its bound (> $DIAGNOSTIC_MAX_BYTES bytes)"
-  FAILURES=$((FAILURES + 1))
-fi
+assert_diagnostic_bound "adapter-failure diagnostic" "${ERR#yolo-clipboard-proxy client: }"
 
 # stderr filled beyond pipe capacity before the child consumes stdin:
 # concurrent pumping must avoid the pipe deadlock.
@@ -443,12 +449,7 @@ if [[ $elapsed -gt $((ADAPTER_DEADLINE_SECONDS + SCHEDULING_TOLERANCE_SECONDS)) 
   echo "FAIL: hanging adapter was not killed within deadline+tolerance (${elapsed}s > $((ADAPTER_DEADLINE_SECONDS + SCHEDULING_TOLERANCE_SECONDS))s)"
   FAILURES=$((FAILURES + 1))
 fi
-TESTS_RUN=$((TESTS_RUN + 1))
-diag="${ERR#yolo-clipboard-proxy client: }"
-if [[ $(printf '%s' "$diag" | wc -c) -gt $DIAGNOSTIC_MAX_BYTES ]]; then
-  echo "FAIL: hang diagnostic exceeds its bound (> $DIAGNOSTIC_MAX_BYTES bytes)"
-  FAILURES=$((FAILURES + 1))
-fi
+assert_diagnostic_bound "hang diagnostic" "${ERR#yolo-clipboard-proxy client: }"
 
 # The broker stays available: the next valid request succeeds.
 printf 'normal\n' > "$FAKE_STATE/mode"

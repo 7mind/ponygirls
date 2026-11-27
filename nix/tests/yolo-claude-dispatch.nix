@@ -52,8 +52,11 @@ assert evaluate true true base == managed;
 assert evaluate true false null == managed;
 assert evaluate false false base == managed;
 pkgs.runCommand "yolo-claude-dispatch-test" { } ''
-  test "$(env -u YOLO_NAMED_PROFILE ${isolated}/bin/claude 'a b' '--flag')" = 'native <a b> <--flag>'
-  test "$(YOLO_NAMED_PROFILE=0 ${isolated}/bin/claude 'a b')" = 'native <a b>'
-  test "$(YOLO_NAMED_PROFILE=1 ${isolated}/bin/claude 'a b')" = 'managed-mcp-plugins <a b>'
+  dispatched=$(env -u YOLO_NAMED_PROFILE ${isolated}/bin/claude 'a b' '--flag')
+  test "$dispatched" = 'native <a b> <--flag>'
+  dispatched=$(YOLO_NAMED_PROFILE=0 ${isolated}/bin/claude 'a b')
+  test "$dispatched" = 'native <a b>'
+  dispatched=$(YOLO_NAMED_PROFILE=1 ${isolated}/bin/claude 'a b')
+  test "$dispatched" = 'managed-mcp-plugins <a b>'
   touch $out
 ''

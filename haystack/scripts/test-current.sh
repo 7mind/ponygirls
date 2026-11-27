@@ -8,7 +8,10 @@ cd "$(dirname "$0")/../.."
 root=$PWD
 : "${HAYSTACK_SERVER_COMMAND:?explicit JVM/native executable command required}"
 report="${HAYSTACK_REPORT_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/haystack-current-report.XXXXXX")}"
-if [[ -e "$report" && -n "$(ls -A "$report")" ]]; then echo "refusing to overwrite an existing report: $report" >&2; exit 2; fi
+if [[ -e "$report" ]]; then
+  report_entries="$(ls -A "$report")"
+  if [[ -n "$report_entries" ]]; then echo "refusing to overwrite an existing report: $report" >&2; exit 2; fi
+fi
 mkdir -p "$report"
 if [[ -z "${HAYSTACK_TEST_JDBC:-}" ]]; then
   work="$(mktemp -d "${TMPDIR:-/tmp}/haystack-current-pg.XXXXXX")"

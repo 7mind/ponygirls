@@ -20,7 +20,10 @@ for command in node npm initdb pg_ctl psql python3 timeout bash curl openssl; do
 if [[ "${HAYSTACK_PROXY_CONFIG_FILE+x}" != x ]]; then command -v nix >/dev/null; fi
 report="${HAYSTACK_REPORT_DIR:-$root/haystack/web/target/browser-report-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 [[ "$report" == /* ]] || { echo 'HAYSTACK_REPORT_DIR must be absolute' >&2; exit 2; }
-if [[ -e "$report" && -n "$(ls -A "$report")" ]]; then echo "refusing to overwrite an existing report: $report" >&2; exit 2; fi
+if [[ -e "$report" ]]; then
+  report_entries="$(ls -A "$report")"
+  if [[ -n "$report_entries" ]]; then echo "refusing to overwrite an existing report: $report" >&2; exit 2; fi
+fi
 mkdir -p "$report/artifacts"
 export HAYSTACK_UI_ARTIFACTS="$report/artifacts"
 work="$(mktemp -d "${TMPDIR:-/tmp}/haystack-browser-pg.XXXXXX")"

@@ -254,7 +254,8 @@ buildNpmPackage (finalAttrs: {
   ];
   installCheckPhase = ''
     runHook preInstallCheck
-    test "$("$out/bin/pi" --version)" = "${finalAttrs.version}"
+    reported_version=$("$out/bin/pi" --version)
+    test "$reported_version" = "${finalAttrs.version}"
     PI_OFFLINE=1 node ${./tests/compaction-transport-runtime.mjs} "$out/lib/node_modules/pi-monorepo"
     runHook postInstallCheck
   '';
