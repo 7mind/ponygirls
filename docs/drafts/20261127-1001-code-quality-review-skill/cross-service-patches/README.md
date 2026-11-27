@@ -16,5 +16,6 @@ work tree. They were tested on the JVM suites only, on a heavily loaded host.
 
 Decision Q223: apply 1 to 4, one commit each, with `scripts/verify all`. The
 haystack and manure parts of patch 1 were already on main when it was
-decided (Q203), so only its chronicle part remained. Patches 5 and 6 are
-kept as evidence and are not applied.
+decided (Q203), so only its chronicle part remained. Patch 4 was dropped
+afterwards (Q225): another session's account refactor reached main first and
+owns that code. Patches 4, 5 and 6 are kept as a record and are not applied.
