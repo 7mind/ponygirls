@@ -1010,7 +1010,9 @@ here.
 - Haystack: `corporate-activity:skill-draft-code-quality-review`, revision 2
   (v0.5 complete, evidence of three runs, known defects), attention required.
 - Decision inbox: Q183 to Q186, Q193, Q194, Q202 and Q203 answered (section
-  6). Open in chat only: the lens set, the name and the home of the skill.
+  6). Open: Q222 (how to conclude), Q223 (whether to apply the six
+  cross-service changes, and with which checks). Open in chat only: the lens
+  set, the name and the home of the skill.
 - Left in place after the wave: five spike work trees with staged patches
   (listed in the run directory's `spike-worktrees.tsv`), the planted branch
   and its work tree. All subagents are closed.
