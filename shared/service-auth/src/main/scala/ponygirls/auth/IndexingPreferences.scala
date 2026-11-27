@@ -8,6 +8,7 @@ enum IndexingService(private[auth] val key: String) {
   case Manure extends IndexingService("manure")
   case Haystack extends IndexingService("haystack")
   case Chronicle extends IndexingService("chronicle")
+  case Blabber extends IndexingService("blabber")
 }
 
 final case class IndexingPreference(choice: IndexingChoice, overrideChoice: IndexingChoice, epoch: Long) {

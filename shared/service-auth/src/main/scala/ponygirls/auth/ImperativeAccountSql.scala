@@ -49,6 +49,11 @@ object ImperativeAccountSql {
   def directory(c: Connection, settings: Option[ImperativeSettings], declared: DeclaredDirectory): Vector[AccountUser] =
     accounts(c, settings, declared, DirectoryRead, DirectoryRead, DirectoryRead, Clock.systemUTC()).directory
 
+  /** `ImperativeAccounts.administrator` on this connection: the account's effective admin flag, read in the caller's
+    * transaction without locks. */
+  def administrator(c: Connection, settings: Option[ImperativeSettings], declared: DeclaredDirectory, userId: String): Boolean =
+    accounts(c, settings, declared, DirectoryRead, DirectoryRead, DirectoryRead, Clock.systemUTC()).administrator(userId)
+
   /** Startup and reload (design §4.8.5): under the directory lock, the imperative ids read after acquiring it are
     * checked against the declared ids and logins, then `reconcile` installs the declarative directory. A collision
     * is `AccountFailure("config")` before anything is written.

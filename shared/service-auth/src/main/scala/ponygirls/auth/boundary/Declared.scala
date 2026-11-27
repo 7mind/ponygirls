@@ -139,6 +139,13 @@ object DeclaredIdRules {
     def tokenId(id: String): Boolean = attributionId(id, MaximumTokenId)
     def login(login: String): Boolean = login.nonEmpty && login.length <= MaximumLogin && login == login.trim && !login.exists(_.isControl)
   }
+  /** Blabber: an id is the owner part of every chat handle, `[a-z0-9][a-z0-9._-]{0,31}` (Blabber's design §4.2); token
+    * ids and logins follow Haystack's rules, whose configuration shape Blabber shares. */
+  val Blabber: DeclaredIdRules = new DeclaredIdRules {
+    def userId(id: String, admin: Boolean): Boolean = id.matches("[a-z0-9][a-z0-9._-]{0,31}")
+    def tokenId(id: String): Boolean = Haystack.tokenId(id)
+    def login(login: String): Boolean = Haystack.login(login)
+  }
   /** Manure: ids are arbitrary UTF-8 (`manure/docs/account-auth.md`), except that an administrator's id is
     * recorded in the text provenance columns of imperative accounts, which cannot hold NUL. */
   val Manure: DeclaredIdRules = new DeclaredIdRules {

@@ -3,7 +3,7 @@ package haystack.auth
 import cats.effect.IO
 import haystack.domain.{Fault,Principal}
 import io.circe.Json
-import ponygirls.auth.{AccountIssued,AccountRefusal,AccountRefused,AccountReply,Authority,Captured,ConnectionTransactions,DeclarativeAccountService,IdentityHistory,IndexingPolicy,IndexingService,ImperativeSettings,SharedAccountStorage,SignedIn}
+import ponygirls.auth.{AccountIssued,AccountRefusal,AccountRefused,AccountReply,Authority,BearerSecretPasswords,Captured,ConnectionTransactions,DeclarativeAccountService,DeclaredInstallation,IdentityHistory,IndexingPolicy,IndexingService,ImperativeSettings,SharedAccountStorage,SignedIn}
 import ponygirls.auth.boundary
 import ponygirls.runtime.JdbcDatabase
 import java.sql.Connection
@@ -33,7 +33,9 @@ private final class HaystackIdentityHistory(c:Connection,fingerprints:IdentityHi
 final class AccountService(database:JdbcDatabase,getAuth:()=>Auth,imperative:ImperativeRuntime,indexingPolicy:IndexingPolicy=IndexingPolicy.defaults) {
   private val transactions=new ConnectionTransactions { def transaction[A](work:Connection=>A):IO[A]=database.transaction(work) }
   private[haystack] val shared=new DeclarativeAccountService[Auth](new SharedAccountStorage(transactions,(c,sessions)=>new HaystackIdentityHistory(c,sessions)),
-    getAuth,imperative,IndexingService.Haystack,indexingPolicy)
+    getAuth,imperative,IndexingService.Haystack,indexingPolicy,
+    // Without a supplied hash the Home Manager stack derives the operator's browser password from its token: it signs in.
+    BearerSecretPasswords.Accepted,DeclaredInstallation.Reconciled)
   private def faults[A](operation:IO[A]):IO[A]=operation.adaptError { case refused:AccountRefused=>AccountService.translated(refused) }
   def install(auth:Auth):IO[Unit]=faults(shared.install(auth))
   def reloaded(next:IO[Auth]):IO[Either[Throwable,Auth]]=shared.reloaded(next)

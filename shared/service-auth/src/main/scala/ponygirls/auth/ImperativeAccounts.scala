@@ -315,14 +315,20 @@ final class ImperativeAccounts private[auth] (repository: ImperativeUserReposito
     if (!session.browser) refuse(Forbidden)
     else {
       acquire(directory, Some(session.userId), None, targets)
-      val actor = if (!sessions.live(session)) None else declared.user(session.userId) match {
-        case Some(user) => Option.when(user.enabled)(Actor(user, None, declared.admins(user.id)))
-        case None => settings.flatMap(_ => repository.user(session.userId)).filter(_.status == AccountStatus.Active)
-          .map(row => Actor(accountUser(row), Some(row), row.admin))
-      }
+      val actor = if (!sessions.live(session)) None else enabledActor(session.userId)
       actor.fold[AccountOutcome[A]](refuse(Unauthorized))(found => body(found, now))
     }
   }
+  /** An enabled declared user, or an active imperative user while the master switch is on, with its effective admin flag. */
+  private def enabledActor(userId: String): Option[Actor] = declared.user(userId) match {
+    case Some(user) => Option.when(user.enabled)(Actor(user, None, declared.admins(user.id)))
+    case None => settings.flatMap(_ => repository.user(userId)).filter(_.status == AccountStatus.Active)
+      .map(row => Actor(accountUser(row), Some(row), row.admin))
+  }
+  /** The effective admin flag of an account, by the rule of the authenticated operations: the declared flag of an
+    * enabled declared user, or the flag of an active imperative user while the master switch is on; false for anyone
+    * else. A read in the caller's transaction, without locks; whether a session of the account is live is the caller's. */
+  def administrator(userId: String): Boolean = enabledActor(userId).exists(_.admin)
   private def authenticated[A](session: AccountCredential, directory: Boolean, targets: Vector[String])(
     body: (ImperativeSettings, Actor, Instant) => AccountOutcome[A]): AccountOutcome[A] = whenOn { active =>
     withLiveActor(session, directory, targets)((actor, at) => body(active, actor, at))
