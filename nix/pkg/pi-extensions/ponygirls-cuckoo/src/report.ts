@@ -154,9 +154,13 @@ export function capturedCheckpoint(requestId: string, raw: string, questions: re
     return { version: NUMBERED_VERSION, requestId, raw, report: numbered(parsed, assigned), error: null, questions, assigned };
   } catch (error) { return { version: NUMBERED_VERSION, requestId, raw, report: null, error: String(error), questions, assigned: null }; }
 }
+/** A reply kept without a report: `reason` says why it was not validated. Its raw text stays readable. */
+export function rejectedCheckpoint(requestId: string, raw: string, questions: readonly AskedQuestion[], reason: string): Checkpoint {
+  return { version: NUMBERED_VERSION, requestId, raw, report: null, error: reason, questions, assigned: null };
+}
 /** A checkpoint that ended without a reply to capture. */
 export function cancelledCheckpoint(requestId: string, questions: readonly AskedQuestion[], reason: string): Checkpoint {
-  return { version: NUMBERED_VERSION, requestId, raw: '', report: null, error: reason, questions, assigned: null };
+  return rejectedCheckpoint(requestId, '', questions, reason);
 }
 function savedAssigned(value: unknown): Assigned {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Invalid saved Cuckoo checkpoint numbering');
@@ -185,6 +189,22 @@ export function checkpoints(entries: readonly SessionEntry[]): Checkpoint[] {
     return [{ ...parsed, report: numbered(parsed.report, assigned), assigned }];
   });
 }
+/**
+ * The checkpoints these entries closed, by request ID. null stands for a saved report that cannot be decoded: its
+ * inquiry is closed all the same, and the fault itself is reported where reports are read for the user.
+ */
+export function closedCheckpoints(entries: readonly SessionEntry[]): Map<string, Checkpoint | null> {
+  const closed = new Map<string, Checkpoint | null>();
+  for (const entry of entries) {
+    if (entry.type !== 'custom' || entry.customType !== REPORT_TYPE) continue;
+    const data: unknown = entry.data;
+    if (typeof data !== 'object' || data === null || !('requestId' in data) || typeof data.requestId !== 'string') continue;
+    let value: Checkpoint | null;
+    try { [value] = checkpoints([entry]); } catch { value = null; }
+    closed.set(data.requestId, value);
+  }
+  return closed;
+}
 /** Request IDs of the checkpoints saved in these entries, without decoding the reports. */
 export function checkpointRequestIds(entries: readonly SessionEntry[]): Set<string> {
   const ids = new Set<string>();
@@ -202,8 +222,11 @@ export function savedNumbering(entry: SessionEntry): Assigned | null {
   const value = object(entry.data);
   return value.version === NUMBERED_VERSION && value.error === null ? savedAssigned(value.assigned) : null;
 }
-/** The eta the inquiry prescribes for an objective reported as completed; older reports wrote longer variants. */
-export const COMPLETE_ETA = /^\s*complete\b/i;
+/**
+ * The eta the inquiry prescribes for an objective reported as completed; older reports wrote longer variants
+ * (`Complete; nothing remains`). Only punctuation may follow the word: `Complete by Friday` is an estimate.
+ */
+export const COMPLETE_ETA = /^\s*complete\s*(?:$|[.;:,!(\u2013\u2014-])/i;
 export const MAX_COMPLETED_TITLES = 50;
 export const MAX_COMPLETED_TITLE_CHARS = 300;
 /**

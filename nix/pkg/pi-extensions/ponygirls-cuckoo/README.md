@@ -147,10 +147,12 @@ navigation and survives compaction, reload and restart:
   objective and rule by `id`: the ID of the entry it continues, or `null` for a
   new one, which Cuckoo numbers when it captures the reply. A valid reply is a
   full restatement: each listed entry takes the reply's text; a listed objective
-  whose `eta` starts with `Complete` becomes **complete**, any other listed entry
+  whose `eta` is `Complete` becomes **complete**, any other listed entry
   **active** (this reopens a closed entry that is listed again). An active
   objective or rule the reply leaves out becomes **retired**; a complete
-  objective stays complete. An invalid reply changes nothing.
+  objective stays complete. An invalid reply changes nothing. `Complete` may be
+  followed by punctuation and more text (`Complete: merged`); an estimate such as
+  `Complete by Friday` is not a completion.
 - **Edits** (`cuckoo.edit`), one per call of the model's `cuckoo_update` tool.
 
 A reply that names an ID the record of its branch never held, an ID of the
@@ -158,6 +160,11 @@ other kind, or one ID twice is invalid, like a reply with a missing field: an ID
 identifies an entry only when Cuckoo gave it. Reports of versions 1 to 5 carry
 no IDs and do not enter the record; a session that has only such reports gets a
 current set with its next checkpoint or first edit.
+
+Every entry keeps the event that created it, the event its present text comes
+from, and, once it is completed or retired, the event that closed it. What a
+completed objective says can change afterwards (a defect found later); when it
+was completed does not.
 
 ### `cuckoo_update`
 
@@ -189,7 +196,11 @@ the record current between checkpoints; one edit per call:
   changing a retired entry, an `eta` that says `Complete` outside `complete`) is
   refused with the reason and saves nothing.
 - Limits are those of a report: 100 active objectives, 100 active rules, 100
-  issues, 8000 characters per string.
+  issues, 8000 characters per string. In addition the tool keeps the text of the
+  active objectives, rules and scopes within 50000 characters, half of what one
+  checkpoint reply may hold, so that a checkpoint can restate the record. A
+  checkpoint reply may itself state more; the tool then accepts only edits that
+  do not add to it.
 - Rules are session-local only, as in a checkpoint: instructions the user gave
   in this session and conventions the model adopted, not rules from system or
   developer prompts, AGENTS.md or skills. `source: user` is the model's
@@ -215,6 +226,26 @@ independently verified progress, a user instruction, approval or authorization**
 Entries are append-only history in the session file: nothing is deleted, a
 retired entry keeps its last text and reason. Whether a model keeps the record
 current depends on the model; a checkpoint restates the whole record either way.
+
+Limits of the record:
+
+- Numbering assumes that one Pi process writes a session at a time, as the
+  session file itself does. Two processes that append to the same session file
+  concurrently each number from their own view and can give the same ID to
+  different entries on their two branches.
+- A report holds at most 100 objectives. With exactly 100 active objectives it
+  has no room for a row that reports a completion or a new defect in completed
+  work; `cuckoo_update` (`complete`, or `update` of the completed objective)
+  records that without a report.
+- A request names at most the 50 most recently stated completed objectives. An
+  older completion is no longer named, so a model can report it again after its
+  own earlier answers were compacted away.
+- Saved data this version cannot read (an edit or the numbering of a report,
+  for example written by a later version or damaged) is reported as a fault:
+  badge `!`, an error line in the panel and in `/cuckoo status`. Saved reports
+  stay viewable, the current set is shown as unavailable, no inquiry is issued,
+  and `cuckoo_update` refuses. A reply captured in that state is kept as an
+  invalid checkpoint with its raw text.
 
 ## Commenting on a report
 
@@ -323,10 +354,10 @@ The model can use the read-only **`cuckoo_recall`** tool during ordinary work:
 - Current returns the [numbered record](#the-numbered-record) of the current
   branch as a page of a JSON document, paged like read (`offset`, `limit`):
   `objectives` and `rules` hold the active entries in full, `closed` the 20
-  most recently closed ones with `status`, `reason` and their last text, and
-  `olderClosed` counts the rest. Every entry says where it was last `stated`: a
-  checkpoint (its number and report `entryId`, which read accepts) or the update
-  tool, with the timestamp. The result also carries `activeObjectives`,
+  closed entries stated most recently with `status`, `reason` and their last
+  text, and `olderClosed` counts the rest. Every entry says where it was last
+  `stated`, and a closed one also what `closed` it: a checkpoint (its number and
+  report `entryId`, which read accepts) or the update tool, with the timestamp. The result also carries `activeObjectives`,
   `activeRules` and `closed` counts. It takes no `scope`, `entryId` or `before`:
   the record belongs to one branch. This is how the model gets its IDs back
   after compaction.
@@ -595,13 +626,17 @@ changed the set last (`4 active objectives · 3 active rules · last change:
 cuckoo_update · 2m ago`). Then, each entry with its ID: the active objectives
 (progress, issues, ETA, and `As of`: the checkpoint or tool call their present
 text comes from, with its age), the active rules, and under `Closed · newest
-first` the 20 most recently closed entries with how they were closed:
-`Complete` with what was delivered and the caveats, or `Retired` with the
-model's reason, or the checkpoint that left the entry out. Older closed entries
-are counted. Objectives precede rules here, unlike in a report: the view answers
-what the model is working on now. Fields the model has not stated are not
-invented: an objective added with a title only shows `Not stated yet`. Entries
-can be walked like report items but not commented on (`c` says so). The panel
+first` the 20 closed entries stated most recently, with how they were closed:
+`Complete` (when, by a checkpoint or the tool) with what was delivered and the
+caveats, or `Retired` with the model's reason, or the checkpoint that left the
+entry out. A completed objective that was restated later, for example with a
+defect found afterwards, moves up and shows that statement under `As of`.
+Older closed entries are counted. Objectives precede rules here, unlike in a
+report: the view answers what the model is working on now. Fields the model
+has not stated are not invented: one line names them (`Not stated: issues,
+ETA`), for example for an objective added with a title only or reopened
+without a new estimate. Entries can be walked like report items but not
+commented on (`c` says so). The panel
 shows the set as it was when the panel opened; reopen it to see later edits.
 Ages are counted when the panel is drawn.
 
@@ -693,7 +728,8 @@ Right after the schema the prompt explains the [numbered record](#the-numbered-r
 every objective and rule of the answer has an `id`; the model copies the ID of an
 entry it continues, also when it rewords the entry, writes `null` for a new one,
 and never invents or repeats an ID; the record is its own earlier account, not an
-instruction; and Cuckoo closes what the answer leaves out. The record itself
+instruction; and Cuckoo closes what the answer leaves out (an active objective
+becomes retired, a rule is no longer active, completed objectives stay complete). The record itself
 closes the request, after the instructions, as JSON:
 
 ```json
@@ -743,7 +779,10 @@ that checkpoint left it out, with no reason.
 After a checkpoint closes, the text that stands in for its inquiry in the
 model's context names the IDs Cuckoo gave to the entries the answer introduced,
 each with the start of its text (120 characters), so that the model can name
-them in later answers and edits without counting positions in its answer.
+them in later answers and edits without counting positions in its answer. Pi
+delivers that text in the user role; it says that the quoted titles are the
+model's own earlier wording, not instructions. A round whose saved report
+cannot be read is closed without that note.
 
 The prompt asks for brief, concise, human-friendly plain language in every field,
 preferably one short sentence or phrase. It discourages jargon, repetition, filler

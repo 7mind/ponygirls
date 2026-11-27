@@ -1,6 +1,6 @@
 import type { SessionEntry } from '@earendil-works/pi-coding-agent';
 import { ID_PREFIX, parseEntryId, type EntryKind, type NextNumbers } from './ids.ts';
-import { COMPLETE_ETA, MAX_COMPLETED_TITLES, MAX_COMPLETED_TITLE_CHARS, MAX_FIELD_CHARS, MAX_ISSUES, MAX_OBJECTIVES, MAX_RULES, REPORT_TYPE, checkpoints, completedObjectives, savedNumbering,
+import { COMPLETE_ETA, MAX_COMPLETED_TITLES, MAX_COMPLETED_TITLE_CHARS, MAX_FIELD_CHARS, MAX_ISSUES, MAX_OBJECTIVES, MAX_REPORT_CHARS, MAX_RULES, REPORT_TYPE, checkpoints, completedObjectives, savedNumbering,
   type Assigned, type Checkpoint, type KnownIds, type Report } from './report.ts';
 
 /** One edit of the current set made with the model's tool; never part of model context by itself. */
@@ -8,6 +8,11 @@ export const EDIT_TYPE = 'cuckoo.edit';
 /** The model's tool that writes edits; reading stays with cuckoo_recall. */
 export const UPDATE_TOOL = 'cuckoo_update';
 export const MAX_REASON_CHARS = MAX_FIELD_CHARS;
+/**
+ * How much text of active objectives, rules and scopes the tool may build up. A checkpoint request quotes that text
+ * and its reply restates it within the reply limit, so half of that limit is left for progress, issues and estimates.
+ */
+export const MAX_ACTIVE_RECORD_CHARS = MAX_REPORT_CHARS / 2;
 /** What the tool writes as the estimate of an objective it completes: the form a checkpoint reply uses. */
 const COMPLETE = 'Complete';
 
@@ -21,14 +26,18 @@ interface SavedEvent { readonly entryId: string; readonly timestamp: string; rea
  * report list counts them.
  */
 export type Change = (SavedEvent & { readonly via: 'checkpoint'; readonly checkpoint: number }) | (SavedEvent & { readonly via: 'tool' });
-/** `reason` is what the model gave when it retired the entry with the tool; null otherwise, also for an entry a checkpoint left out. */
+/**
+ * `reason` is what the model gave when it retired the entry with the tool; null otherwise, also for an entry a
+ * checkpoint left out. `stated` is the event its present text comes from; `closed` the event that completed or
+ * retired it, null while it is active. What a completed objective says can change after it was closed.
+ */
 export interface CurrentObjective {
   readonly id: string; readonly objective: string; readonly progress: string | null; readonly issues: readonly string[] | null; readonly eta: string | null;
-  readonly status: ObjectiveStatus; readonly reason: string | null; readonly created: Change; readonly stated: Change;
+  readonly status: ObjectiveStatus; readonly reason: string | null; readonly created: Change; readonly stated: Change; readonly closed: Change | null;
 }
 export interface CurrentRule {
   readonly id: string; readonly rule: string; readonly source: RuleSource; readonly scope: string;
-  readonly status: RuleStatus; readonly reason: string | null; readonly created: Change; readonly stated: Change;
+  readonly status: RuleStatus; readonly reason: string | null; readonly created: Change; readonly stated: Change; readonly closed: Change | null;
 }
 /** The numbered objectives and rules of one branch, in ID order. `events` counts the numbered reports and edits behind it; none means no set yet. */
 export interface CurrentSet { readonly objectives: readonly CurrentObjective[]; readonly rules: readonly CurrentRule[]; readonly events: number; readonly last: Change | null }
@@ -173,6 +182,13 @@ class Builder {
     return item;
   }
   private done(change: Change): void { this.events++; this.last = change; }
+  /** The text of the active entries that a checkpoint request quotes and its reply restates. */
+  private activeChars(): number {
+    let total = 0;
+    for (const item of this.objectives.values()) if (item.status === 'active') total += item.objective.length;
+    for (const item of this.rules.values()) if (item.status === 'active') total += item.rule.length + item.scope.length;
+    return total;
+  }
 
   /**
    * A full restatement: what it lists is as it says, and what it leaves out is closed, except objectives already
@@ -182,39 +198,50 @@ class Builder {
     for (const id of [...assigned.objectives, ...assigned.rules]) {
       if (this.objectives.has(id) || this.rules.has(id)) throw new Error(`Invalid saved Cuckoo checkpoint numbering at entry ${change.entryId}: ${id} is already in the record`);
     }
+    const numbered = new Set([...assigned.objectives, ...assigned.rules]);
+    // An entry exists because this report numbered it or because the record already holds it; a reply cannot name one into being.
+    const known = (id: string, held: boolean): void => {
+      if (!held && !numbered.has(id)) throw new Error(`Invalid saved Cuckoo checkpoint numbering at entry ${change.entryId}: ${id} is not in the record and this checkpoint did not number it`);
+    };
     const listed = new Set<string>();
     for (const item of report.objectives) {
       if (item.id === null) throw new Error('A numbered report holds an objective without an id');
       const previous = this.objectives.get(item.id);
+      known(item.id, previous !== undefined);
       listed.add(item.id);
+      const complete = item.eta !== null && COMPLETE_ETA.test(item.eta);
       this.objectives.set(item.id, { id: item.id, objective: item.objective, progress: item.progress, issues: item.issues, eta: item.eta,
-        status: item.eta !== null && COMPLETE_ETA.test(item.eta) ? 'complete' : 'active', reason: null, created: previous === undefined ? change : previous.created, stated: change });
+        status: complete ? 'complete' : 'active', reason: null, created: previous === undefined ? change : previous.created, stated: change,
+        // An objective listed again as complete, to report a new defect, was completed when it first became so.
+        closed: !complete ? null : previous !== undefined && previous.status === 'complete' && previous.closed !== null ? previous.closed : change });
     }
-    for (const item of this.objectives.values()) if (item.status === 'active' && !listed.has(item.id)) this.objectives.set(item.id, { ...item, status: 'retired', reason: null, stated: change });
+    for (const item of this.objectives.values()) if (item.status === 'active' && !listed.has(item.id)) this.objectives.set(item.id, { ...item, status: 'retired', reason: null, stated: change, closed: change });
     for (const item of report.rules === null ? [] : report.rules) {
       if (item.id === null) throw new Error('A numbered report holds a rule without an id');
       const previous = this.rules.get(item.id);
+      known(item.id, previous !== undefined);
       listed.add(item.id);
-      this.rules.set(item.id, { id: item.id, rule: item.rule, source: item.source, scope: item.scope, status: 'active', reason: null, created: previous === undefined ? change : previous.created, stated: change });
+      this.rules.set(item.id, { id: item.id, rule: item.rule, source: item.source, scope: item.scope, status: 'active', reason: null, created: previous === undefined ? change : previous.created, stated: change, closed: null });
     }
-    for (const item of this.rules.values()) if (item.status === 'active' && !listed.has(item.id)) this.rules.set(item.id, { ...item, status: 'retired', reason: null, stated: change });
+    for (const item of this.rules.values()) if (item.status === 'active' && !listed.has(item.id)) this.rules.set(item.id, { ...item, status: 'retired', reason: null, stated: change, closed: change });
     this.done(change);
   }
 
   /** Apply one edit, or throw the reason it does not fit the record. */
   edit(edit: Edit, change: Change): EditOutcome {
     const kind = idOf(edit.id, null).kind;
+    const before = this.activeChars();
     let status: ObjectiveStatus;
     switch (edit.action) {
       case 'add_objective':
         if (this.objectives.has(edit.id)) throw new Error(`${edit.id} is already in the record`);
         this.room('objective');
-        this.objectives.set(edit.id, { id: edit.id, objective: edit.objective, progress: edit.progress, issues: edit.issues, eta: edit.eta, status: 'active', reason: null, created: change, stated: change });
+        this.objectives.set(edit.id, { id: edit.id, objective: edit.objective, progress: edit.progress, issues: edit.issues, eta: edit.eta, status: 'active', reason: null, created: change, stated: change, closed: null });
         status = 'active'; break;
       case 'add_rule':
         if (this.rules.has(edit.id)) throw new Error(`${edit.id} is already in the record`);
         this.room('rule');
-        this.rules.set(edit.id, { id: edit.id, rule: edit.rule, source: edit.source, scope: edit.scope, status: 'active', reason: null, created: change, stated: change });
+        this.rules.set(edit.id, { id: edit.id, rule: edit.rule, source: edit.source, scope: edit.scope, status: 'active', reason: null, created: change, stated: change, closed: null });
         status = 'active'; break;
       case 'update': {
         // A retired entry changes only by being reopened, so what it says is what it said when it was retired.
@@ -235,15 +262,15 @@ class Builder {
         const item = this.objective(edit.id);
         if (item.status === 'complete') throw new Error(`${edit.id} is already complete; use update to correct what it says`);
         if (item.status === 'retired') throw new Error(`${edit.id} is retired, not active; reopen it first`);
-        this.objectives.set(edit.id, { ...item, progress: edit.progress, issues: edit.issues, eta: COMPLETE, status: 'complete', reason: null, stated: change });
+        this.objectives.set(edit.id, { ...item, progress: edit.progress, issues: edit.issues, eta: COMPLETE, status: 'complete', reason: null, stated: change, closed: change });
         status = 'complete'; break;
       }
       case 'retire': {
         const item = kind === 'objective' ? this.objective(edit.id) : this.rule(edit.id);
         if (item.status === 'retired') throw new Error(`${edit.id} is already retired`);
         if (item.status === 'complete') throw new Error(`${edit.id} is complete, not active; a completed objective is not retired`);
-        if (kind === 'objective') this.objectives.set(edit.id, { ...this.objective(edit.id), status: 'retired', reason: edit.reason, stated: change });
-        else this.rules.set(edit.id, { ...this.rule(edit.id), status: 'retired', reason: edit.reason, stated: change });
+        if (kind === 'objective') this.objectives.set(edit.id, { ...this.objective(edit.id), status: 'retired', reason: edit.reason, stated: change, closed: change });
+        else this.rules.set(edit.id, { ...this.rule(edit.id), status: 'retired', reason: edit.reason, stated: change, closed: change });
         status = 'retired'; break;
       }
       case 'reopen': {
@@ -251,11 +278,14 @@ class Builder {
         if (item.status === 'active') throw new Error(`${edit.id} is active; only a completed or retired entry can be reopened`);
         this.room(kind);
         // A completed objective loses the estimate that said so; nothing else about it is known to have changed.
-        if (kind === 'objective') { const objective = this.objective(edit.id); this.objectives.set(edit.id, { ...objective, eta: objective.status === 'complete' ? null : objective.eta, status: 'active', reason: null, stated: change }); }
-        else this.rules.set(edit.id, { ...this.rule(edit.id), status: 'active', reason: null, stated: change });
+        if (kind === 'objective') { const objective = this.objective(edit.id); this.objectives.set(edit.id, { ...objective, eta: objective.status === 'complete' ? null : objective.eta, status: 'active', reason: null, stated: change, closed: null }); }
+        else this.rules.set(edit.id, { ...this.rule(edit.id), status: 'active', reason: null, stated: change, closed: null });
         status = 'active'; break;
       }
     }
+    // A checkpoint may state more than this; the tool then only accepts what does not add to it.
+    const after = this.activeChars();
+    if (after > MAX_ACTIVE_RECORD_CHARS && after > before) throw new Error(`The record's active entries would hold ${after} characters of objectives, rules and scopes; at most ${MAX_ACTIVE_RECORD_CHARS} can be restated at a checkpoint: shorten, complete or retire entries first`);
     this.done(change);
     return { id: edit.id, kind, status, activeObjectives: this.active('objective'), activeRules: this.active('rule') };
   }
@@ -300,10 +330,17 @@ export function previewEdit(set: CurrentSet, edit: unknown): EditOutcome {
 
 /** Closed entries shown with the current set, newest first; older ones are counted. */
 export const MAX_CLOSED_SHOWN = 20;
-/** The completed and retired entries, most recently closed first: the ones to show, and how many older ones there are. */
-export function closedEntries(set: CurrentSet): { readonly shown: readonly (CurrentObjective | CurrentRule)[]; readonly older: number } {
-  const closed = [...set.objectives.filter(item => item.status !== 'active'), ...set.rules.filter(item => item.status !== 'active')]
-    .sort((left, right) => right.stated.position - left.stated.position);
+/** A completed or retired entry: it carries the event that closed it. */
+export type ClosedEntry = (CurrentObjective | CurrentRule) & { readonly closed: Change };
+/** The completed and retired entries, most recently stated first, so that one whose caveats changed is seen: the ones to show, and how many older ones there are. */
+export function closedEntries(set: CurrentSet): { readonly shown: readonly ClosedEntry[]; readonly older: number } {
+  const closed: ClosedEntry[] = [];
+  for (const item of [...set.objectives, ...set.rules]) {
+    if (item.status === 'active') continue;
+    if (item.closed === null) throw new Error(`Invalid Cuckoo record: ${item.id} is closed without the event that closed it`);
+    closed.push({ ...item, closed: item.closed });
+  }
+  closed.sort((left, right) => right.stated.position - left.stated.position);
   return { shown: closed.slice(0, MAX_CLOSED_SHOWN), older: Math.max(0, closed.length - MAX_CLOSED_SHOWN) };
 }
 

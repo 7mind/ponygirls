@@ -50,8 +50,8 @@ test('current returns the record of this branch: active entries in full, closed 
   assert.deepEqual([empty.summary.activeObjectives, empty.summary.activeRules, empty.summary.closed], [0, 0, 0]);
   assert.match(empty.summary.notice, /own account/); assert.match(empty.summary.notice, /authorization/);
 
-  const report = f.checkpoint('r1', { objectives: [objective(null, 'Parser'), objective(null, 'Docs'), objective(null, 'Cache')], rules: [{ id: null, rule: 'Mockups first', source: 'user', scope: 'This UI change' }, { id: null, rule: 'British spelling', source: 'assistant', scope: 'Notes' }] });
-  const added = f.edit({ action: 'add_objective', id: 'AO4', objective: 'Release', progress: null, issues: null, eta: null });
+  f.checkpoint('r1', { objectives: [objective(null, 'Parser'), objective(null, 'Docs'), objective(null, 'Cache')], rules: [{ id: null, rule: 'Mockups first', source: 'user', scope: 'This UI change' }, { id: null, rule: 'British spelling', source: 'assistant', scope: 'Notes' }] });
+  f.edit({ action: 'add_objective', id: 'AO4', objective: 'Release', progress: null, issues: null, eta: null });
   f.edit({ action: 'complete', id: 'AO2', progress: 'Docs published', issues: ['No index yet'] });
   f.edit({ action: 'retire', id: 'AO3', reason: 'Cancelled by the user' });
   const second = f.checkpoint('r2', { objectives: [objective('AO1', 'Parser'), objective('AO4', 'Release')], rules: [{ id: 'AR1', rule: 'Mockups first', source: 'user', scope: 'This UI change' }] });
@@ -70,7 +70,9 @@ test('current returns the record of this branch: active entries in full, closed 
   assert.deepEqual([document.closed[0].rule, document.closed[0].source, document.closed[0].scope], ['British spelling', 'assistant', 'Notes']);
   assert.equal(document.closed[0].stated.entryId, second, 'the checkpoint that left the rule out');
   assert.equal(document.olderClosed, 0);
-  assert.equal(typeof added, 'string'); assert.equal(typeof report, 'string');
+  // The docs were completed by the tool and nothing was said about them since; the cache was retired by the tool before the checkpoint.
+  assert.deepEqual(document.closed.map(item => [item.id, item.closed.via, item.closed.timestamp === item.stated.timestamp]), [['AR2', 'checkpoint', true], ['AO3', 'tool', true], ['AO2', 'tool', true]]);
+  assert.equal(document.closed[0].closed.checkpoint, 2); assert.equal(document.closed[0].closed.entryId, second);
   // The round that stated an entry is readable by the entry ID the record names.
   const round = await f.call({ action: 'read', entryId: second });
   assert.equal(round.round.entryId, second);

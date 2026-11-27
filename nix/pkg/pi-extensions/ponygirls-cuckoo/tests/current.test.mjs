@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { REPORT_TYPE, MAX_OBJECTIVES, MAX_RULES, MAX_ISSUES, MAX_FIELD_CHARS, MAX_COMPLETED_TITLES, MAX_COMPLETED_TITLE_CHARS, capturedCheckpoint, checkpoint } from '../src/report.ts';
-import { EDIT_TYPE, MAX_REASON_CHARS, currentSet, editRecord, inquiryRecord, knownIds, nextNumbers, previewEdit } from '../src/current.ts';
+import { EDIT_TYPE, MAX_REASON_CHARS, closedEntries, currentSet, editRecord, inquiryRecord, knownIds, nextNumbers, previewEdit } from '../src/current.ts';
 
 const objective = (id, title, eta = 'Unknown: not measured') => ({ id, objective: title, progress: `${title}: stated`, issues: [`${title}: a risk`], eta });
 const rule = (id, text, source = 'user') => ({ id, rule: text, source, scope: 'This session' });
@@ -15,11 +15,9 @@ function checkpointNow(manager, requestId, reply) {
 const edit = (manager, value) => manager.appendCustomEntry(EDIT_TYPE, editRecord(value));
 const byId = (items, id) => items.find(item => item.id === id);
 /** Where a saved event stands on the branch, as an entry's `created` and `stated` name it. */
-const change = (manager, entryId, via) => {
-  const branch = manager.getBranch(); const position = branch.findIndex(entry => entry.id === entryId);
-  const base = { entryId, timestamp: manager.getEntry(entryId).timestamp, via, position };
-  // A checkpoint is numbered among the saved checkpoints of its branch, valid or not.
-  return via === 'tool' ? base : { ...base, checkpoint: branch.slice(0, position + 1).filter(entry => entry.type === 'custom' && entry.customType === REPORT_TYPE).length };
+const change = (manager, entryId, checkpoint) => {
+  const base = { entryId, timestamp: manager.getEntry(entryId).timestamp, position: manager.getBranch().findIndex(entry => entry.id === entryId) };
+  return checkpoint === null ? { ...base, via: 'tool' } : { ...base, via: 'checkpoint', checkpoint };
 };
 const brief = set => ({ objectives: set.objectives.map(item => [item.id, item.status]), rules: set.rules.map(item => [item.id, item.status]) });
 
@@ -39,10 +37,10 @@ test('a numbered report creates entries, restates them and closes what it leaves
   let set = currentSet(manager.getBranch());
   assert.deepEqual(brief(set), { objectives: [['AO1', 'active'], ['AO2', 'active'], ['AO3', 'active']], rules: [['AR1', 'active'], ['AR2', 'active']] });
   assert.deepEqual(byId(set.objectives, 'AO2'), { id: 'AO2', objective: 'Docs', progress: 'Docs: stated', issues: ['Docs: a risk'], eta: 'Unknown: not measured', status: 'active', reason: null,
-    created: change(manager, first, 'checkpoint'), stated: change(manager, first, 'checkpoint') });
+    created: change(manager, first, 1), stated: change(manager, first, 1), closed: null });
   assert.deepEqual(byId(set.rules, 'AR2'), { id: 'AR2', rule: 'Keep cadence', source: 'assistant', scope: 'This session', status: 'active', reason: null,
-    created: change(manager, first, 'checkpoint'), stated: change(manager, first, 'checkpoint') });
-  assert.equal(set.events, 1); assert.deepEqual(set.last, change(manager, first, 'checkpoint'));
+    created: change(manager, first, 1), stated: change(manager, first, 1), closed: null });
+  assert.equal(set.events, 1); assert.deepEqual(set.last, change(manager, first, 1));
 
   // AO1 is restated in other words, AO2 completed, AO3 left out; AR1 kept, AR2 left out, one rule added.
   const second = checkpointNow(manager, 'r2', { objectives: [objective('AO1', 'Parser, with recovery'), objective('AO2', 'Docs', 'Complete'), objective(null, 'Release')], rules: [rule('AR1', 'Mockups first'), rule(null, 'Ask before pushing')] });
@@ -88,7 +86,7 @@ test('edits add, change, complete, retire and reopen entries; each keeps where i
   const a2 = edit(manager, { action: 'add_rule', id: 'AR1', rule: 'Mockups first', source: 'user', scope: 'This UI change' });
   let set = currentSet(manager.getBranch());
   assert.deepEqual(byId(set.objectives, 'AO1'), { id: 'AO1', objective: 'Parser', progress: null, issues: null, eta: null, status: 'active', reason: null,
-    created: change(manager, a1, 'tool'), stated: change(manager, a1, 'tool') });
+    created: change(manager, a1, null), stated: change(manager, a1, null), closed: null });
   assert.equal(byId(set.rules, 'AR1').created.entryId, a2);
   const u1 = edit(manager, { action: 'update', id: 'AO1', fields: { progress: 'Grammar done', issues: ['Recovery missing'], eta: 'About a day' } });
   edit(manager, { action: 'update', id: 'AR1', fields: { scope: 'Every interface change' } });
@@ -139,11 +137,14 @@ test('an edit that does not fit the record is refused with a reason the model ca
   edit(manager, { action: 'add_rule', id: 'AR1', rule: 'Mockups first', source: 'user', scope: 'This UI change' });
   edit(manager, { action: 'add_rule', id: 'AR2', rule: 'Old convention', source: 'assistant', scope: 'Earlier' });
   edit(manager, { action: 'retire', id: 'AR2', reason: 'No longer applies' });
+  edit(manager, { action: 'add_objective', id: 'AO3', objective: 'Cache', progress: null, issues: null, eta: null });
+  edit(manager, { action: 'retire', id: 'AO3', reason: 'Cancelled' });
   const set = currentSet(manager.getBranch());
   const refused = [
     [{ action: 'update', id: 'AO9', fields: { progress: 'x' } }, /AO9 is not in the record/],
     [{ action: 'update', id: 'AR9', fields: { scope: 'x' } }, /AR9 is not in the record/],
     [{ action: 'complete', id: 'AO2', progress: 'Again', issues: [] }, /AO2 is already complete/],
+    [{ action: 'complete', id: 'AO3', progress: 'After retirement', issues: [] }, /AO3 is retired, not active; reopen it first/],
     [{ action: 'complete', id: 'AR1', progress: 'x', issues: [] }, /only an objective can be completed/],
     [{ action: 'retire', id: 'AO2', reason: 'x' }, /AO2 is complete, not active/],
     [{ action: 'retire', id: 'AR2', reason: 'x' }, /AR2 is already retired/],
@@ -154,7 +155,7 @@ test('an edit that does not fit the record is refused with a reason the model ca
     [{ action: 'update', id: 'AO1', fields: { eta: 'Complete' } }, /use the complete action/],
     [{ action: 'add_objective', id: 'AO1', objective: 'Clash', progress: null, issues: null, eta: null }, /AO1 is already in the record/],
     [{ action: 'add_rule', id: 'AR2', rule: 'Clash', source: 'user', scope: 'x' }, /AR2 is already in the record/],
-    [{ action: 'add_objective', id: 'AO3', objective: 'Done already', progress: null, issues: null, eta: 'complete' }, /use the complete action/],
+    [{ action: 'add_objective', id: 'AO4', objective: 'Done already', progress: null, issues: null, eta: 'complete' }, /use the complete action/],
   ];
   for (const [value, expected] of refused) assert.throws(() => previewEdit(set, value), expected, JSON.stringify(value));
   assert.equal(previewEdit(set, { action: 'retire', id: 'AO1', reason: 'Cancelled' }).status, 'retired');
@@ -250,4 +251,99 @@ test('the record given to an inquiry lists active entries, completed objectives 
   const bounded = inquiryRecord(currentSet(many.getBranch())).completed;
   assert.equal(bounded.length, MAX_COMPLETED_TITLES); assert.equal(bounded[0].id, 'AO6', 'the most recently completed ones are kept');
   assert.ok(bounded.every(item => item.objective.length === MAX_COMPLETED_TITLE_CHARS));
+});
+
+// Regression (review): a saved report could create an entry under an ID nobody numbered, which numbering then gave out again.
+test('a saved report that names an entry the record never held is a fault, not a new entry', () => {
+  const phantom = (objectives, rules) => {
+    const manager = SessionManager.inMemory();
+    manager.appendCustomEntry(REPORT_TYPE, { version: 6, requestId: 'phantom', raw: JSON.stringify({ objectives, rules }), error: null, questions: [], assigned: { objectives: [], rules: [] } });
+    return manager;
+  };
+  assert.throws(() => currentSet(phantom([objective('AO1', 'Never numbered')], []).getBranch()), /Invalid saved Cuckoo checkpoint numbering at entry .*: AO1 is not in the record and this checkpoint did not number it/);
+  assert.throws(() => currentSet(phantom([], [rule('AR1', 'Never numbered')]).getBranch()), /Invalid saved Cuckoo checkpoint numbering at entry .*: AR1 is not in the record and this checkpoint did not number it/);
+  // The same reply is sound when the record holds the entry.
+  const sound = SessionManager.inMemory();
+  edit(sound, { action: 'add_objective', id: 'AO1', objective: 'Numbered by the tool', progress: null, issues: null, eta: null });
+  checkpointNow(sound, 'r1', { objectives: [objective('AO1', 'Numbered by the tool')], rules: [] });
+  assert.deepEqual(brief(currentSet(sound.getBranch())).objectives, [['AO1', 'active']]);
+});
+
+// Regression (review): "Complete by Friday" was read as a completion and the objective left the active set.
+test('an estimate is a completion only when nothing but punctuation follows the word Complete', () => {
+  const statusOf = eta => {
+    const manager = SessionManager.inMemory();
+    checkpointNow(manager, 'r1', { objectives: [objective(null, 'Ship', eta)], rules: [] });
+    return currentSet(manager.getBranch()).objectives[0].status;
+  };
+  for (const eta of ['Complete', 'complete', ' Complete ', 'Complete.', 'complete; nothing remains', 'Complete: delivered in the last commit', 'Complete - merged', 'Complete (no remaining work)', 'COMPLETE!']) assert.equal(statusOf(eta), 'complete', eta);
+  for (const eta of ['Complete by Friday', 'Complete once CI passes', 'complete in about an hour', 'Completely unknown', 'Completed', 'Completion expected tomorrow', 'Unknown: complete after review', 'Not complete']) assert.equal(statusOf(eta), 'active', eta);
+  // The tool reads an estimate the same way: what it stores as an estimate is never taken for a completion.
+  const manager = SessionManager.inMemory();
+  edit(manager, { action: 'add_objective', id: 'AO1', objective: 'Ship', progress: null, issues: null, eta: 'Complete by Friday' });
+  assert.equal(currentSet(manager.getBranch()).objectives[0].status, 'active');
+  assert.equal(previewEdit(currentSet(manager.getBranch()), { action: 'update', id: 'AO1', fields: { eta: 'Complete once CI passes' } }).status, 'active');
+  for (const eta of ['Complete', 'Complete.', 'complete: done']) assert.throws(() => previewEdit(currentSet(manager.getBranch()), { action: 'update', id: 'AO1', fields: { eta } }), /use the complete action/, eta);
+});
+
+// Regression (review): edits could build an active record that no checkpoint reply (100000 characters) could restate.
+test('the tool cannot grow the active record beyond what one checkpoint reply can restate', () => {
+  const long = (label, length) => `${label} ${'x'.repeat(length - label.length - 1)}`;
+  // Half of what a reply may hold: the other half is left for progress, issues and estimates.
+  const MAX_ACTIVE_RECORD_CHARS = 50000;
+  const manager = SessionManager.inMemory();
+  const titles = Math.floor(MAX_ACTIVE_RECORD_CHARS / MAX_FIELD_CHARS);
+  for (let index = 1; index <= titles; index++) edit(manager, { action: 'add_objective', id: `AO${index}`, objective: long(`Objective ${index}`, MAX_FIELD_CHARS), progress: null, issues: null, eta: null });
+  let set = currentSet(manager.getBranch());
+  const room = MAX_ACTIVE_RECORD_CHARS - titles * MAX_FIELD_CHARS;
+  assert.throws(() => previewEdit(set, { action: 'add_objective', id: `AO${titles + 1}`, objective: long('One more', room + 1), progress: null, issues: null, eta: null }), /active entries would hold \d+ characters of objectives, rules and scopes; at most 50000/);
+  assert.throws(() => previewEdit(set, { action: 'add_rule', id: 'AR1', rule: long('Rule', room), source: 'user', scope: 'x' }), /at most 50000/, 'a rule counts with its scope');
+  assert.equal(previewEdit(set, { action: 'add_rule', id: 'AR1', rule: long('Rule', room - 1), source: 'user', scope: 'x' }).status, 'active', 'exactly the limit fits');
+  // Progress, issues and estimates are not what a request quotes: they do not count.
+  assert.equal(previewEdit(set, { action: 'update', id: 'AO1', fields: { progress: long('Progress', MAX_FIELD_CHARS), issues: [long('Issue', MAX_FIELD_CHARS)] } }).status, 'active');
+  // Closing an entry makes room; reopening it needs the room back.
+  edit(manager, { action: 'retire', id: 'AO1', reason: 'Room' });
+  edit(manager, { action: 'add_objective', id: `AO${titles + 1}`, objective: long('Replacement', MAX_FIELD_CHARS), progress: null, issues: null, eta: null });
+  set = currentSet(manager.getBranch());
+  assert.throws(() => previewEdit(set, { action: 'reopen', id: 'AO1' }), /at most 50000/);
+  // A checkpoint reply may itself state more than the tool may build; the tool then only accepts what does not add to it.
+  const big = SessionManager.inMemory();
+  checkpointNow(big, 'r1', { objectives: [...Array.from({ length: 8 }, (_, index) => ({ id: null, objective: long(`Stated ${index + 1}`, MAX_FIELD_CHARS), progress: 'p', issues: [], eta: 'Unknown' })),
+    { id: null, objective: long('Short one', 100), progress: 'p', issues: [], eta: 'Unknown' }], rules: [] });
+  set = currentSet(big.getBranch());
+  assert.equal(set.objectives.filter(item => item.status === 'active').length, 9);
+  assert.throws(() => previewEdit(set, { action: 'add_objective', id: 'AO10', objective: 'Short', progress: null, issues: null, eta: null }), /at most 50000/);
+  assert.throws(() => previewEdit(set, { action: 'update', id: 'AO9', fields: { objective: long('Longer', 200) } }), /at most 50000/, 'an edit that lengthens an oversized record is refused');
+  assert.equal(previewEdit(set, { action: 'update', id: 'AO9', fields: { objective: long('Reworded', 100) } }).status, 'active', 'rewording at the same length is accepted');
+  assert.equal(previewEdit(set, { action: 'update', id: 'AO1', fields: { objective: 'Shorter' } }).status, 'active', 'an edit that shortens the record is accepted');
+  assert.equal(previewEdit(set, { action: 'update', id: 'AO1', fields: { progress: 'Only progress' } }).status, 'active');
+  assert.equal(previewEdit(set, { action: 'retire', id: 'AO1', reason: 'Room' }).status, 'retired');
+});
+
+// Regression (review): the panel showed the last change of a completed objective as the time it was completed.
+test('a closed entry keeps the event that closed it while what it says changes later', () => {
+  const manager = SessionManager.inMemory();
+  checkpointNow(manager, 'r1', { objectives: [objective(null, 'Parser'), objective(null, 'Docs'), objective(null, 'Cache')], rules: [rule(null, 'Mockups first')] });
+  const completed = edit(manager, { action: 'complete', id: 'AO1', progress: 'Parser shipped', issues: [] });
+  let set = currentSet(manager.getBranch());
+  assert.deepEqual(byId(set.objectives, 'AO1').closed, change(manager, completed, null)); assert.equal(byId(set.objectives, 'AO2').closed, null);
+  // A later checkpoint reports a new defect in the completed objective, completes the docs and leaves the cache and the rule out.
+  const second = checkpointNow(manager, 'r2', { objectives: [{ ...objective('AO1', 'Parser', 'Complete'), issues: ['A defect found later'] }, objective('AO2', 'Docs', 'Complete')], rules: [] });
+  set = currentSet(manager.getBranch());
+  assert.deepEqual(byId(set.objectives, 'AO1').closed, change(manager, completed, null), 'still completed by the earlier edit');
+  assert.deepEqual(byId(set.objectives, 'AO1').stated, change(manager, second, 2), 'what it says is as of the checkpoint');
+  assert.deepEqual(byId(set.objectives, 'AO2').closed, change(manager, second, 2));
+  assert.deepEqual(byId(set.objectives, 'AO3').closed, change(manager, second, 2), 'the checkpoint that left it out retired it');
+  assert.deepEqual(byId(set.rules, 'AR1').closed, change(manager, second, 2));
+  const corrected = edit(manager, { action: 'update', id: 'AO2', fields: { issues: ['No index yet'] } });
+  set = currentSet(manager.getBranch());
+  assert.deepEqual(byId(set.objectives, 'AO2').closed, change(manager, second, 2)); assert.deepEqual(byId(set.objectives, 'AO2').stated, change(manager, corrected, null));
+  // Closed entries are listed by their last statement, so one that got a new caveat is seen first.
+  assert.deepEqual(closedEntries(set).shown.map(item => item.id), ['AO2', 'AO1', 'AO3', 'AR1']);
+  // Reopening clears it; closing again records the new event.
+  edit(manager, { action: 'reopen', id: 'AO1' }); edit(manager, { action: 'reopen', id: 'AR1' });
+  set = currentSet(manager.getBranch());
+  assert.equal(byId(set.objectives, 'AO1').closed, null); assert.equal(byId(set.rules, 'AR1').closed, null);
+  const retired = edit(manager, { action: 'retire', id: 'AR1', reason: 'Dropped again' });
+  assert.deepEqual(byId(currentSet(manager.getBranch()).rules, 'AR1').closed, change(manager, retired, null));
 });

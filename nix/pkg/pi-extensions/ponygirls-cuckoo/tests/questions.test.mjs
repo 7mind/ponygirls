@@ -96,8 +96,8 @@ test('malformed question files fail visibly instead of silently asking nothing',
 test('the inquiry is unchanged without standing questions and otherwise requests exactly one answer per question', () => {
   // Length and SHA-256 of the base inquiry: a session without standing questions and without a record receives exactly
   // that request. A deliberate change of the base wording updates both values; the last one added ids and the record.
-  assert.equal(inquiryText([], [], EMPTY_RECORD).length, 4745);
-  assert.equal(createHash('sha256').update(inquiryText([], [], EMPTY_RECORD), 'utf8').digest('hex'), '4604f4a91c2ef9e6b490e0477f9fb0cc6599eeae14b0c8fd7bff11d9567e74db');
+  assert.equal(inquiryText([], [], EMPTY_RECORD).length, 4780);
+  assert.equal(createHash('sha256').update(inquiryText([], [], EMPTY_RECORD), 'utf8').digest('hex'), 'db515483489281cc084fb6138f61c0162e18b595349add6ab4d99a7b756ecbc4');
   assert.equal(INQUIRY, inquiryText([], [], EMPTY_RECORD));
   assert.doesNotMatch(INQUIRY, /answers|[Ss]tanding question/);
   const text = inquiryText(asked, [], EMPTY_RECORD);

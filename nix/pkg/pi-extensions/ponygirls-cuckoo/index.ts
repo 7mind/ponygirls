@@ -13,8 +13,8 @@ import { CuckooVectors } from './src/vector-runtime.ts';
 import { CuckooCritic } from './src/critic-runtime.ts';
 import { nativeNetworkServices, type CuckooNetworkServices } from './src/network-services.ts';
 import { growthTokens, policyText, validatePolicy } from './src/policy.ts';
-import { REPORT_TYPE, cancelledCheckpoint, capturedCheckpoint, checkpointRequestIds, checkpoints, type Checkpoint } from './src/report.ts';
-import { EMPTY_SET, currentSet, inquiryRecord, knownIds, nextNumbers, unnumberedCompleted } from './src/current.ts';
+import { REPORT_TYPE, cancelledCheckpoint, capturedCheckpoint, checkpointRequestIds, checkpoints, closedCheckpoints, rejectedCheckpoint, type Checkpoint } from './src/report.ts';
+import { EMPTY_SET, currentSet, inquiryRecord, knownIds, nextNumbers, unnumberedCompleted, type CurrentSet } from './src/current.ts';
 import { createUpdateTool } from './src/update.ts';
 import { COMMENT_RESPONSE, COMMENT_RESPONSE_TYPE, COMMENT_TYPE, commentDelivery, commentRecord, savedComments, undeliveredComments, type CommentDelivery } from './src/comments.ts';
 import { FileQuestionStore, QUESTIONS_FILE, StandingQuestions, questionsText, type AskedQuestion, type QuestionScope, type QuestionStore } from './src/questions.ts';
@@ -44,7 +44,14 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
   function inquiryFor(ctx: ExtensionContext, asked: readonly AskedQuestion[]): string {
     const branch = ctx.sessionManager.getBranch();
     const set = currentSet(branch);
+    // Its reply will need numbers from the whole session: a session that cannot be numbered gets no inquiry.
+    nextNumbers(ctx.sessionManager.getEntries());
     return inquiryText(asked, unnumberedCompleted(checkpoints(branch), set), inquiryRecord(set));
+  }
+  /** The current set of the branch; when its saved data cannot be read, the empty set and the reason, so that reports stay viewable. */
+  function recordOf(ctx: ExtensionContext): { readonly set: CurrentSet; readonly fault: string | null } {
+    try { return { set: currentSet(ctx.sessionManager.getBranch()), fault: null }; }
+    catch (error) { return { set: EMPTY_SET, fault: String(error) }; }
   }
   let deliveryFault: string | null = null;
   /** The message carrying this branch's undelivered comments, or null when there are none. */
@@ -108,14 +115,17 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
       const config = features.refresh(ctx);
       display.showJson = config.showJson;
       const reports = checkpoints(ctx.sessionManager.getBranch());
-      const current = currentSet(ctx.sessionManager.getBranch());
+      const current = recordOf(ctx);
       stateOnBranch(ctx.sessionManager.getBranch());
-      // Unreadable standing questions stop inquiries but must not hide the saved reports.
-      try { standing.read(ctx); fault = null; } catch (error) { warn(ctx, error); }
-      view.publish(ctx, reports, current, config.enabled, fault, display.showJson !== previous);
+      // Unreadable standing questions, or an unreadable record, stop inquiries but must not hide the saved reports.
+      let problem: unknown = current.fault;
+      try { standing.read(ctx); } catch (error) { problem = error; }
+      if (problem === null) fault = null; else warn(ctx, problem);
+      view.publish(ctx, reports, current.set, config.enabled, fault, display.showJson !== previous);
     } catch (error) { warn(ctx, error); view.publish(ctx, [], EMPTY_SET, false, fault, display.showJson !== previous); }
   }
-  function statusIntro(ctx: ExtensionContext, reports: readonly import('./src/report.ts').Checkpoint[]): string {
+  /** `recordFault` is why the current set cannot be shown, or null. */
+  function statusIntro(ctx: ExtensionContext, recordFault: string | null): string {
     features.refresh(ctx);
     const settings = configuration.read(ctx);
     const config = settings.effective;
@@ -126,7 +136,7 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
     let questions: string, questionFault = '';
     try { questions = `${standing.read(ctx).effective.length} asked at every checkpoint (/cuckoo questions)`; }
     catch (error) { questions = 'unavailable; no inquiry is issued until this is corrected'; questionFault = `Error: Standing questions are unavailable: ${String(error)}\n`; }
-    return questionFault + `Cuckoo: ${config.enabled ? 'ON' : 'OFF'} (${config.enabledSource})\n` +
+    return (recordFault === null ? '' : `Error: The current set is unavailable: ${recordFault}\n`) + questionFault + `Cuckoo: ${config.enabled ? 'ON' : 'OFF'} (${config.enabledSource})\n` +
       `Growth policy: ${policyText(config.policy)} (${config.policySource}); next inquiry: ${next}.\n` +
       `Pending checkpoint: ${state?.pending === null || state === null ? 'none' : state.pending.requestId}.\n` +
       `Global defaults: ${preferences.path}\n` +
@@ -137,8 +147,8 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
   }
   function status(ctx: ExtensionContext): CuckooContent {
     const branch = ctx.sessionManager.getBranch();
-    const reports = checkpoints(branch);
-    return reportContent(reports, statusIntro(ctx, reports), savedComments(branch), currentSet(branch), now());
+    const current = recordOf(ctx);
+    return reportContent(checkpoints(branch), statusIntro(ctx, current.fault), savedComments(branch), current.set, now());
   }
   function cancel(ctx: ExtensionContext, reason: string): void {
     manualRequested = false;
@@ -279,8 +289,8 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
         }
         if (trimmed.split(/\s+/).join(' ') === 'inquire now') { inquire(ctx); return; }
         if (trimmed === '' || trimmed === 'reports' || trimmed === 'status') {
-          const reports = checkpoints(ctx.sessionManager.getBranch());
-          await view.showReports(ctx, reports, statusIntro(ctx, reports), currentSet(ctx.sessionManager.getBranch())); return;
+          const current = recordOf(ctx);
+          await view.showReports(ctx, checkpoints(ctx.sessionManager.getBranch()), statusIntro(ctx, current.fault), current.set); return;
         }
         if (trimmed === 'history') { await view.showHistory(ctx, ctx.sessionManager.getEntries(), ctx.sessionManager.getBranch()); return; }
         const signal = ctx.signal ?? new AbortController().signal;
@@ -310,8 +320,8 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
   });
   pi.registerShortcut(REPORTS_SHORTCUT.key, { description: 'View Cuckoo objectives and progress', handler: async ctx => {
     try {
-      const reports = checkpoints(ctx.sessionManager.getBranch());
-      await view.showReports(ctx, reports, statusIntro(ctx, reports), currentSet(ctx.sessionManager.getBranch()));
+      const current = recordOf(ctx);
+      await view.showReports(ctx, checkpoints(ctx.sessionManager.getBranch()), statusIntro(ctx, current.fault), current.set);
     } catch (error) { warn(ctx, error); }
   } });
   pi.on('session_start', (_event, ctx) => {
@@ -351,7 +361,7 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
     }
   });
   pi.on('context', (event, ctx) => {
-    const closed = new Map<string, Checkpoint>(checkpoints(ctx.sessionManager.getBranch()).map(report => [report.requestId, report]));
+    const closed = closedCheckpoints(ctx.sessionManager.getBranch());
     return { messages: event.messages.map(message => {
       if (message.role !== 'custom' || message.customType !== INQUIRY_TYPE) return message;
       const details: unknown = message.details;
@@ -373,9 +383,15 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
       if (message.role !== 'assistant') throw new Error('Cuckoo turn boundary must carry an assistant response');
       const raw = message.content.filter(part => part.type === 'text').map(part => part.text).join('\n');
       // The reply may name the entries this branch ever held; its new ones take the next numbers of the whole session.
-      const result = capturedCheckpoint(previous.pending.requestId, raw, previous.pending.questions, knownIds(currentSet(branch)), nextNumbers(ctx.sessionManager.getEntries()));
+      // When that record cannot be read the reply is kept unnumbered and the checkpoint still ends: a pending one blocks every tool.
+      let result: Checkpoint;
       if (!completed || message.stopReason !== 'stop' || message.content.some(part => part.type === 'toolCall')) {
-        result.report = null; result.assigned = null; result.error = 'Checkpoint response interrupted, failed, or attempted tool use; no retry';
+        result = rejectedCheckpoint(previous.pending.requestId, raw, previous.pending.questions, 'Checkpoint response interrupted, failed, or attempted tool use; no retry');
+      } else try {
+        const known = knownIds(currentSet(branch)); const next = nextNumbers(ctx.sessionManager.getEntries());
+        result = capturedCheckpoint(previous.pending.requestId, raw, previous.pending.questions, known, next);
+      } catch (error) {
+        result = rejectedCheckpoint(previous.pending.requestId, raw, previous.pending.questions, `The record of this session cannot be read, so the reply was not numbered: ${String(error)}`);
       }
       const resume = completed && (previous.pending.resume || message.content.some(part => part.type === 'toolCall'));
       const entries: SessionBoundaryDraft[] = [...base,

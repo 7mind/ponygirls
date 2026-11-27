@@ -113,7 +113,7 @@ test('the current set lists active objectives, then active rules, then closed en
   assert.match(text, /AO2\. Number the entries\n {5}Progress: {4}Request text done\n {5}Issues: {6}- Number the entries: a risk\n {5}ETA: {9}Unknown: not measured\n {5}As of: {7}checkpoint 3 · 10m ago/);
   assert.match(text, /AO4\. Show the set in the panel\n {5}Progress: {4}Mockup published\n {5}Issues: {6}- Show the set in the panel: a risk\n {5}ETA: {9}Unknown: waits for the answer\n {5}As of: {7}cuckoo_update · 4m ago/);
   // An objective added with a title only: nothing is invented for what was not stated.
-  assert.match(text, /AO6\. Describe it in the README\n {5}Progress: {4}Not stated yet\n {5}As of: {7}cuckoo_update · 2m ago\n\n {2}Session-local rules/);
+  assert.match(text, /AO6\. Describe it in the README\n {5}Not stated: {2}progress, issues, ETA\n {5}As of: {7}cuckoo_update · 2m ago\n\n {2}Session-local rules/);
   assert.match(text, /AR4 user: {8}Mockup before the panel changes \(scope: This change\)/, 'as checkpoint 3 restated it');
   // Closed: a rule a checkpoint left out, an objective the model retired, an objective it completed.
   assert.match(text, /AR3 assistant: {3}British spelling \(scope: This change\)\n {9}Retired: {5}checkpoint 3 · 10m ago\n {9}Reason: {6}Left out of that checkpoint; no reason was given/);
@@ -140,8 +140,11 @@ test('enter focuses the current set, the arrows and tab walk its entries in the 
   lines = clean(panel.render(100));
   assert.ok(lines.some(line => /^▌ now │/.test(line)), 'back in the list, the current set still selected');
   assert.equal(f.views.at(-1).closed, false);
+  // In list focus the arrows select rows; Tab still moves the entry cursor, here from AO5 to the entry after it.
   panel.handleInput(TAB);
-  assert.equal(marked(clean(panel.render(100))).length > 0, true, 'tab selects an entry in list focus too');
+  assert.match(marked(clean(panel.render(100)))[0], /AO1\. Survey the reports/, 'tab moves the entry cursor in list focus too');
+  panel.handleInput('\x1b[Z');
+  assert.match(marked(clean(panel.render(100)))[0], /AO5\. Port the harness/, 'and shift-tab moves it back');
   await close(f, opened);
 });
 
@@ -187,6 +190,42 @@ test('saved reports show IDs where they have them and positions where they were 
   // The focused title counts saved checkpoints, not the row of the current set.
   panel.handleInput(ENTER);
   assert.match(clean(panel.render(100))[0], /^── Cuckoo checkpoint 1 of 2 ─/);
+  await close(f, opened);
+});
+
+// Regression (review): a completed objective restated later showed the restatement as its completion.
+test('a completed objective keeps when it was completed; a later statement about it is shown as such', async () => {
+  const b = branchBuilder();
+  b.checkpoint('req-1', { objectives: [objective(null, 'Ship the parser'), objective(null, 'Write the docs')], rules: [] }, 60);
+  b.edit({ action: 'complete', id: 'AO1', progress: 'Parser shipped', issues: [] }, 50);
+  b.edit({ action: 'complete', id: 'AO2', progress: 'Docs published', issues: ['No index yet'] }, 40);
+  // The checkpoint reports a defect found in the parser after it was completed.
+  b.checkpoint('req-2', { objectives: [{ id: 'AO1', objective: 'Ship the parser', progress: 'Parser shipped', issues: ['Recovery fails on empty input'], eta: 'Complete' }], rules: [] }, 20);
+  const f = fixture(); const opened = await open(f, b.entries);
+  const text = clean(opened.panel.render(100)).join('\n');
+  assert.match(text, /AO1\. Ship the parser\n {5}Complete: {4}cuckoo_update · 50m ago\n {5}Delivered: {3}Parser shipped\n {5}Caveats: {5}- Recovery fails on empty input\n {5}As of: {7}checkpoint 2 · 20m ago/);
+  assert.match(text, /AO2\. Write the docs\n {5}Complete: {4}cuckoo_update · 40m ago\n {5}Delivered: {3}Docs published\n {5}Caveats: {5}- No index yet\n\n/, 'no As of line when nothing was said after the completion');
+  order(text, ['Closed · newest first', 'AO1. Ship the parser', 'AO2. Write the docs']);
+  await close(f, opened);
+});
+
+// Regression (review): fields the model had not stated were left out without a word once progress was stated.
+test('an active objective names the fields the model has not stated', async () => {
+  const b = branchBuilder();
+  b.edit({ action: 'add_objective', id: 'AO1', objective: 'Title only', progress: null, issues: null, eta: null }, 30);
+  b.edit({ action: 'add_objective', id: 'AO2', objective: 'With progress', progress: 'Half done', issues: null, eta: null }, 29);
+  b.edit({ action: 'add_objective', id: 'AO3', objective: 'Without an estimate', progress: 'Started', issues: [], eta: null }, 28);
+  b.edit({ action: 'add_objective', id: 'AO4', objective: 'Fully stated', progress: 'Started', issues: ['One risk'], eta: 'About an hour' }, 27);
+  b.edit({ action: 'add_objective', id: 'AO5', objective: 'Reopened', progress: null, issues: null, eta: null }, 26);
+  b.edit({ action: 'complete', id: 'AO5', progress: 'Delivered once', issues: ['A caveat'] }, 25);
+  b.edit({ action: 'reopen', id: 'AO5' }, 24);
+  const f = fixture(); const opened = await open(f, b.entries);
+  const text = clean(opened.panel.render(100)).join('\n');
+  assert.match(text, /AO1\. Title only\n {5}Not stated: {2}progress, issues, ETA\n {5}As of:/);
+  assert.match(text, /AO2\. With progress\n {5}Progress: {4}Half done\n {5}Not stated: {2}issues, ETA\n {5}As of:/);
+  assert.match(text, /AO3\. Without an estimate\n {5}Progress: {4}Started\n {5}Issues: {6}None known\n {5}Not stated: {2}ETA\n {5}As of:/, 'an empty issues list was stated: none known');
+  assert.match(text, /AO4\. Fully stated\n {5}Progress: {4}Started\n {5}Issues: {6}- One risk\n {5}ETA: {9}About an hour\n {5}As of:/);
+  assert.match(text, /AO5\. Reopened\n {5}Progress: {4}Delivered once\n {5}Issues: {6}- A caveat\n {5}Not stated: {2}ETA\n {5}As of: {7}cuckoo_update · 24m ago/, 'a reopened objective has no estimate yet');
   await close(f, opened);
 });
 
@@ -262,7 +301,7 @@ test('the themed status text puts the current set first, and its summary counts 
   const rendered = reportContent(checkpoints(entries), 'Cuckoo: ON', [], set, NOW).render(styled, 200);
   order(rendered, ['<accent><b>Current set</b></accent>', '<accent><b>AO2. Number the entries</b></accent>', '<warning><b>Session-local rules</b></warning>', '<muted><b>Closed</b></muted>',
     '<muted><b>AO1. Survey the reports</b></muted>', '<accent><b>Checkpoint 3</b></accent>', 'Status and configuration']);
-  assert.match(rendered, /<success><b>Complete:<\/b><\/success>/); assert.match(rendered, /<muted>Not stated yet<\/muted>/);
+  assert.match(rendered, /<success><b>Complete:<\/b><\/success>/); assert.match(rendered, /<muted><b>Not stated:<\/b><\/muted> {2}progress, issues, ETA/);
   assert.equal(currentSummary(set, NOW), '4 active objectives · 3 active rules · last change: cuckoo_update · 2m ago');
   assert.deepEqual(currentBlocks(styled, set, 100, NOW).flatMap(block => block.entry === null ? [] : [block.entry]), ['AO2', 'AO3', 'AO4', 'AO6', 'AR1', 'AR2', 'AR4', 'AR3', 'AO5', 'AO1'],
     'one block per entry: active objectives, active rules, then closed entries newest first');

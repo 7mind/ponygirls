@@ -61,6 +61,11 @@ test('additions return the IDs Cuckoo assigned; later calls name entries by them
   const first = await f.call({ action: 'add_objective', objective: 'Ship the parser' });
   assert.deepEqual({ id: first.id, kind: first.kind, status: first.status, action: first.action, activeObjectives: first.activeObjectives, activeRules: first.activeRules },
     { id: 'AO1', kind: 'objective', status: 'active', action: 'add_objective', activeObjectives: 1, activeRules: 0 });
+  // The registered tool draws its own transcript row from what the call returned.
+  const tool = f.tools.get(UPDATE_TOOL); const plain = { fg: (_color, text) => text, bold: text => text };
+  const drawn = { args: { action: 'add_objective', objective: 'Ship the parser' }, expanded: false, isPartial: false, isError: false };
+  assert.deepEqual(tool.renderCall(drawn.args, plain, drawn).render(100), []);
+  assert.deepEqual(tool.renderResult({ content: [{ type: 'text', text: JSON.stringify(first) }], details: first }, { expanded: false }, plain, drawn).render(100), ['cuckoo_update add_objective → AO1 · Ship the parser']);
   assert.match(first.notice, /not .*approval|authorization/i);
   const second = await f.call({ action: 'add_objective', objective: 'Write the docs', progress: 'Outline exists', issues: ['No reviewer yet'], eta: 'About a day' });
   assert.equal(second.id, 'AO2');
@@ -97,7 +102,8 @@ test('arguments that do not belong to the action, and edits that do not fit the 
     [{ action: 'add_rule', rule: 'No scope', source: 'user' }, /add_rule requires .*scope/],
     [{ action: 'add_rule', rule: 'Bad source', source: 'system', scope: 'x' }, /source must be user or assistant/],
     [{ action: 'add_rule', rule: 'With progress', source: 'user', scope: 'x', progress: 'x' }, /does not accept progress/],
-    [{ action: 'update', id: 'AO1' }, /at least one of objective, progress, issues, eta/],
+    [{ action: 'update', id: 'AO1' }, /update of AO1 must change at least one of objective, progress, issues, eta/],
+    [{ action: 'update', id: 'AR1' }, /update of AR1 must change at least one of rule, source, scope/],
     [{ action: 'update', progress: 'No id' }, /update requires id/],
     [{ action: 'update', id: 'AO1', scope: 'A rule field' }, /AO1 is an objective; update accepts objective, progress, issues, eta/],
     [{ action: 'update', id: 'AR1', progress: 'An objective field' }, /AR1 is a rule; update accepts rule, source, scope/],

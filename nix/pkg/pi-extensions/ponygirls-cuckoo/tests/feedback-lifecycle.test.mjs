@@ -400,6 +400,28 @@ test('the same question id in both stores is reported with the id and both files
   assert.ok(f.notifications.at(-1)[0].includes(`Standing question id ${question.id} is used in both memory:questions and ${path}`), f.notifications.at(-1)[0]);
 });
 
+// Regression (review): an edit that could not be read made the panel refuse to open and the badge drop every report.
+test('an edit that cannot be read does not hide saved reports: status and the panel still open and say the current set is unavailable', async t => {
+  const f = fixture(t);
+  f.boundary(assistant('baseline')); await f.checkpointed(plainReport);
+  f.manager.appendCustomEntry('cuckoo.edit', { version: 2, edit: {} });
+  f.ctx.mode = 'rpc';
+  const before = f.notifications.length;
+  await f.command('status');
+  const output = f.notifications.slice(before).map(args => args[0]).join('\n');
+  assert.match(output, /Error: The current set is unavailable: Error: Invalid saved Cuckoo edit at entry/);
+  assert.match(output, /AO1\. Ship Cuckoo\n   Progress: Testing/, 'the saved report is still shown');
+  assert.doesNotMatch(output, /^Current set/m, 'no current set is made up');
+  f.ctx.mode = 'tui';
+  const shown = f.command(''); await tick();
+  const screen = f.views.at(-1).component.render(120).join('\n');
+  assert.match(screen, /Error: The current set is unavailable/); assert.match(screen, /AO1\. Ship Cuckoo/); assert.doesNotMatch(screen, /\bnow │/);
+  assert.ok(screen.indexOf('The current set is unavailable') < screen.indexOf('AO1. Ship Cuckoo'), 'the fault is shown above the report');
+  f.views.at(-1).component.handleInput(ESCAPE); await shown;
+  f.handlers.get('turn_start')({}, f.ctx);
+  assert.ok(f.notifications.some(args => args[1] === 'error' && /Invalid saved Cuckoo edit.*automatic inquiries stopped/.test(args[0])));
+});
+
 test('a comment on a checkpoint of another branch, made from history, is delivered with that provenance', async t => {
   const f = fixture(t);
   f.boundary(assistant('baseline')); const fork = f.manager.getLeafId();

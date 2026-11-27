@@ -3,7 +3,7 @@ import { wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { PLAIN_THEME, formatAgo, type UiFg, type UiTheme } from '@ponygirls/pi-ui';
 import { checkpoints, historyText, issuesText, REPORT_TYPE, reportText, type Checkpoint } from './report.ts';
 import { commentsOn, savedComments, type NodeRef, type ShownComment } from './comments.ts';
-import { UPDATE_TOOL, closedEntries, type Change, type CurrentObjective, type CurrentRule, type CurrentSet } from './current.ts';
+import { UPDATE_TOOL, closedEntries, type Change, type ClosedEntry, type CurrentRule, type CurrentSet } from './current.ts';
 
 export interface CuckooContent {
   title: string;
@@ -16,7 +16,7 @@ const RULE_COMMENT_INDENT = '     ';
 const LABEL_WIDTH = 13;
 const MIN_INLINE_VALUE_WIDTH = 16;
 const LEGACY_ABSENT = 'Not recorded (legacy report)';
-const UNSTATED = 'Not stated yet';
+const UNSTATED = 'Not stated';
 /**
  * Where a field stands: its indent, what a missing value reads, and an optional tag (an entry ID) in a column of
  * `tagWidth` before the label, on the first line only.
@@ -131,19 +131,26 @@ export function currentSummary(set: CurrentSet, nowMs: number): string {
   return set.last === null ? counts : `${counts} · last change: ${statedText(set.last, nowMs)}`;
 }
 
-function closedObjective(theme: UiTheme, item: CurrentObjective, width: number, nowMs: number): string[] {
+/** A statement made about a closed entry after it was closed, such as a caveat found later; nothing when there was none. */
+function laterStatement(theme: UiTheme, item: ClosedEntry, width: number, nowMs: number, place: FieldPlace): string[] {
+  return item.stated.position === item.closed.position ? [] : field(theme, 'As of', statedText(item.stated, nowMs), 'muted', width, place).split('\n');
+}
+
+function closedObjective(theme: UiTheme, item: Exclude<ClosedEntry, CurrentRule>, width: number, nowMs: number): string[] {
   const lines = numberedHeading(theme, item.objective, `${item.id}. `, width, 'muted').split('\n');
   if (item.status === 'complete') return [...lines,
-    ...field(theme, 'Complete', statedText(item.stated, nowMs), 'success', width, CURRENT_FIELD).split('\n'),
+    ...field(theme, 'Complete', statedText(item.closed, nowMs), 'success', width, CURRENT_FIELD).split('\n'),
     ...field(theme, 'Delivered', item.progress, 'muted', width, CURRENT_FIELD).split('\n'),
-    ...field(theme, 'Caveats', issuesText(item.issues), 'warning', width, CURRENT_FIELD).split('\n')];
+    ...field(theme, 'Caveats', issuesText(item.issues), 'warning', width, CURRENT_FIELD).split('\n'),
+    ...laterStatement(theme, item, width, nowMs, CURRENT_FIELD)];
   return [...lines, ...retiredFields(theme, item, width, nowMs, CURRENT_FIELD)];
 }
 
 /** How and why an entry was retired: the model's reason, or the checkpoint that no longer listed it. */
-function retiredFields(theme: UiTheme, item: CurrentObjective | CurrentRule, width: number, nowMs: number, place: FieldPlace): string[] {
-  const reason = item.reason === null ? (item.stated.via === 'checkpoint' ? 'Left out of that checkpoint; no reason was given' : 'No reason was given') : item.reason;
-  return [...field(theme, 'Retired', statedText(item.stated, nowMs), 'muted', width, place).split('\n'), ...field(theme, 'Reason', reason, 'muted', width, place).split('\n')];
+function retiredFields(theme: UiTheme, item: ClosedEntry, width: number, nowMs: number, place: FieldPlace): string[] {
+  const reason = item.reason === null ? (item.closed.via === 'checkpoint' ? 'Left out of that checkpoint; no reason was given' : 'No reason was given') : item.reason;
+  return [...field(theme, 'Retired', statedText(item.closed, nowMs), 'muted', width, place).split('\n'), ...field(theme, 'Reason', reason, 'muted', width, place).split('\n'),
+    ...laterStatement(theme, item, width, nowMs, place)];
 }
 
 /** One run of lines of the current set; `entry` is the ID of the entry they show, null for headings and spacing. */
@@ -157,17 +164,19 @@ export function currentBlocks(theme: UiTheme, set: CurrentSet, width: number, no
   const rules = set.rules.filter(item => item.status === 'active');
   const objectives = set.objectives.filter(item => item.status === 'active');
   const { shown, older } = closedEntries(set);
-  const ruleIds = idColumn([...rules, ...shown.filter((item): item is CurrentRule => 'rule' in item)]);
+  const ruleIds = idColumn([...rules, ...shown.filter(item => 'rule' in item)]);
   const blocks: CurrentBlock[] = [];
   if (objectives.length === 0) blocks.push({ entry: null, lines: [theme.fg('muted', 'No active objectives.')] });
   objectives.forEach((item, index) => {
     if (index > 0) blocks.push({ entry: null, lines: [''] });
+    // An objective added with the tool, or reopened, may not say everything yet: one line names what it leaves unstated.
+    const unstated = [...(item.progress === null ? ['progress'] : []), ...(item.issues === null ? ['issues'] : []), ...(item.eta === null ? ['ETA'] : [])];
     blocks.push({ entry: item.id, lines: [
       ...numberedHeading(theme, item.objective, `${item.id}. `, width, 'accent').split('\n'),
-      ...field(theme, 'Progress', item.progress, 'accent', width, CURRENT_FIELD).split('\n'),
-      // An objective the tool added may say nothing about these yet; one line says so, under Progress.
+      ...(item.progress === null ? [] : field(theme, 'Progress', item.progress, 'accent', width, CURRENT_FIELD).split('\n')),
       ...(item.issues === null ? [] : field(theme, 'Issues', issuesText(item.issues), 'warning', width, CURRENT_FIELD).split('\n')),
       ...(item.eta === null ? [] : field(theme, 'ETA', item.eta, 'accent', width, CURRENT_FIELD).split('\n')),
+      ...(unstated.length === 0 ? [] : field(theme, UNSTATED, unstated.join(', '), 'muted', width, CURRENT_FIELD).split('\n')),
       ...field(theme, 'As of', statedText(item.stated, nowMs), 'muted', width, CURRENT_FIELD).split('\n')] });
   });
   blocks.push({ entry: null, lines: ['', heading(theme, 'Session-local rules', 'warning'),

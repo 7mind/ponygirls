@@ -111,7 +111,6 @@ export function createUpdateTool(dependencies: UpdateToolDependencies): ToolDefi
       // Numbers are taken only when the call is an addition: every branch of the session counts.
       const edit = requestedEdit(params as Arguments, kind => entryId(kind, nextNumbers(ctx.sessionManager.getEntries())[kind]));
       const outcome = previewEdit(currentSet(ctx.sessionManager.getBranch()), edit);
-      dependencies.assertAllowed(ctx);
       dependencies.pi.appendEntry(EDIT_TYPE, editRecord(edit));
       const details: UpdateToolDetails = { ...outcome, action: (params as { action: UpdateAction }).action, notice: NOTICE };
       return { content: [{ type: 'text', text: JSON.stringify(details) }], details };
