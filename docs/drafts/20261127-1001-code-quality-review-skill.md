@@ -350,7 +350,8 @@ started. The skill is v0.4, used unchanged.
   reader model changes, and without a positive control a thin result could
   not be told from readers that do not see. Answer key outside every tree,
   SHA-256 `5a4e4eba885efe9888ae956237caa6fa38ebb39af7de39dca8ddcf47ff2bbaa3`.
-  The JVM suite must pass on the planted commit before the supervisor starts.
+  The JVM suite must pass on the planted commit before the supervisor starts
+  (it did: 24 suites, 303 cases, 98 s).
 - **Supervisor.** One fresh subagent, the session's model, thinking high,
   with the skill file, the request and the instruction files; not told about
   the plants; keeps notes on where the text failed it.
@@ -714,7 +715,10 @@ numbers above.
 - Pilot first wave done (section 10); the run directory is
   `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-04aa8cceee04-1795776647075/debug/cqr-20261127-1051`
   (`report.md`, `friction.md`, `hypotheses.jsonl`, `spikes/`, `spike-worktrees.tsv`).
-- Not done: the held-out run (section 7.2), the other partitions, the
+- Held-out run started 27 Nov 2026 12:49 UTC on skill `b69805bf`; its run
+  directory will be under
+  `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-03f3b2a7b890-1795783717555/debug/`.
+- Not done: scoring and reporting the held-out run, the other partitions, the
   Haystack skill-draft record, installation under `nix/pkg/llm-skills/skills/`.
 - Scratch material outside the repository, not needed to continue:
   `/tmp/cq-research` (prior-art downloads, clone-detector probes, the old
