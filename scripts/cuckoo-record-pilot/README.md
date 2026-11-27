@@ -866,8 +866,9 @@ of 24 held-out work sessions in arm A and in 9 of 24 in arm B (20 were required)
   completed. The first messages of `h1` and `h2` are built alike ("just sketch the welcome here for now and leave
   the other two for later"; "just sketch the speech here for now and leave the blurb for later"), and the results
   are 10 of 12 and 0 of 12: the batch does not show what makes the difference. The wording has a clause for the case
-  ("even when the message asks only for a first step of it"), written against `single`; it is not reliable beyond
-  it.
+  ("even when the message asks only for a first step of it"), written against `single`. The batch compared whole
+  wordings, so it says nothing about that clause alone; it says that the wording as a whole does not make the first
+  entry reliable in scenarios it was not developed on.
 - **Closing before the delivery.** After the first message of `h1` or `h2`, which ask for a sketch, an objective was
   already complete in: sonnet A 1 of 24 sessions, sonnet B 4 of 24 (reopened when the user asked to finish it in 2;
   a second completion refused in 1), fable A 6 of 12 (all in `h2`; reopened in 5, two with a refused call, which is
