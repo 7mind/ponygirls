@@ -1,12 +1,11 @@
 package haystack.auth
 
 import haystack.domain.{Fault, Principal, QualifiedId}
-import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, Path}
-import java.security.MessageDigest
 import java.net.URI
-import java.util.Locale
-import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,DeclaredDirectory,ImperativeSettings,Password,PersistentCookie,Secrets,TotpVault}
+import ponygirls.auth.{AccountUser,AccountToken,DeclaredDirectory,ImperativeSettings,PersistentCookie,Secrets}
+import ponygirls.auth.boundary
+import ponygirls.auth.boundary.{BoundaryRefused,CanonicalOrigin,ConfigRefusal,CookieNames,CredentialAccept,CredentialSelection,DeclaredUsers,
+  DigestFile,ExactCredentialFile,ImperativeConfig,OriginPolicy,PresentedHeaders,Refusal,RequestAuthority,SessionCookie}
 
 final case class TokenConfig(id: String, hashFile: String)
 final case class UserConfig(id: String, userType: String, displayName: String, tokens: Vector[TokenConfig],
@@ -23,208 +22,126 @@ final case class AuthConfig(activityProjectId: String, users: Vector[UserConfig]
   allowedHosts: Vector[String] = Vector.empty, allowedOrigins: Vector[String] = Vector.empty,
   insecureHttpOrigins: Vector[String] = Vector.empty, rateLimit: Option[RateLimit] = None, accounts: Option[AccountsConfig] = None)
 
+/** Haystack's failure codes and messages for the refusals of the shared boundary (`ponygirls.auth.boundary`). */
+private object Refused {
+  def fault(refusal: Refusal): Fault = refusal match {
+    case Refusal.DisallowedHost => Fault("forbidden", "disallowed host")
+    case Refusal.AmbiguousOrigin => Fault("forbidden", "ambiguous origin")
+    case Refusal.DisallowedOrigin => Fault("forbidden", "disallowed origin")
+    case Refusal.OriginHostMismatch => Fault("forbidden", "origin/host mismatch")
+    case Refusal.SameOriginProofMissing => Fault("forbidden", "missing or invalid origin")
+    case Refusal.BrowserSessionRequired => Fault("unauthorized", "browser session required")
+    case Refusal.CookieNotAccepted => Fault("unauthorized", "cookie not accepted")
+    case Refusal.DuplicateSessionCookie => Fault("ambiguous-credentials", "duplicate session cookies")
+    case Refusal.AmbiguousCredentials => Fault("ambiguous-credentials", "ambiguous credentials")
+    case Refusal.InvalidCredentials => Fault("unauthorized", "invalid credentials")
+  }
+  def fault(refusal: ConfigRefusal): Fault = Fault("config", refusal match {
+    case ConfigRefusal.MalformedOrigin => "invalid origin"
+    case ConfigRefusal.NonCanonicalOrigin => "invalid canonical origin"
+    case ConfigRefusal.InsecureOriginNotDedicated => "insecure origins require a dedicated allowed HTTP authority"
+    case ConfigRefusal.NoUsers => "at least one user required"
+    case ConfigRefusal.DuplicateUserId => "duplicate user id"
+    case ConfigRefusal.DuplicateLogin => "duplicate login"
+    case ConfigRefusal.InvalidPasswordCredentials => "invalid password credentials"
+    case ConfigRefusal.InvalidLogin => "invalid login"
+    case ConfigRefusal.InvalidPasswordFile => "invalid password credential file"
+    case ConfigRefusal.InvalidUser => "invalid user"
+    case ConfigRefusal.NoCredentials => "user has no credentials"
+    case ConfigRefusal.DuplicateTokenId => "duplicate token id"
+    case ConfigRefusal.InvalidTokenId => "invalid token id"
+    case ConfigRefusal.UnreadableCredentialFile => "unreadable credential file"
+    case ConfigRefusal.MalformedCredentialFile => "malformed credential file"
+    case ConfigRefusal.DigestAssignedTwice => "digest assigned twice"
+    case ConfigRefusal.AccountsFlagsWithoutSwitch => "accounts.signup and accounts.enrollment require accounts.enabled"
+    case ConfigRefusal.AccountsKeyFile => "accounts.keyFile must be an absolute runtime path"
+    case ConfigRefusal.AccountsIssuer => "accounts.issuer required"
+    case ConfigRefusal.AccountsAdmin => "accounts require an enabled declarative admin"
+  })
+  def apply[A](body: => A): A = try body catch { case BoundaryRefused(refusal) => throw fault(refusal) }
+  def configured[A](result: Either[ConfigRefusal, A]): A = result.fold(refusal => throw fault(refusal), identity)
+}
+
 object Tokens {
   def hash(token: String): String = {
     if (!Secrets.canonical(token)) throw Fault("unauthorized", "invalid credentials")
     Secrets.digest(token)
   }
-  private def read(path: String, length: Int, pattern: String): String = {
-    // At most exact bytes + optional LF + one overflow byte. A malformed
-    // runtime file cannot force allocation proportional to its source size.
-    val raw = try {
-      val input = Files.newInputStream(Path.of(path))
-      try input.readNBytes(length + 2) finally input.close()
-    } catch { case _: Exception => throw Fault("config", "unreadable credential file") }
-    val body = if (raw.lastOption.contains(10.toByte)) raw.dropRight(1) else raw
-    if (body.length != length || body.exists(b => b < 0 || b == 0 || b == 10 || b == 13)) throw Fault("config", "malformed credential file")
-    val text = new String(body, StandardCharsets.US_ASCII)
-    if (!text.matches(pattern)) throw Fault("config", "malformed credential file")
-    text
+  def readToken(path: String): String = {
+    val token = Refused.configured(ExactCredentialFile.read(path, 43, "[A-Za-z0-9_-]{43}"))
+    if (!Secrets.canonical(token)) throw Refused.fault(ConfigRefusal.MalformedCredentialFile)
+    token
   }
-  def readToken(path: String): String = { val token = read(path, 43, "[A-Za-z0-9_-]{43}"); if (!Secrets.canonical(token)) throw Fault("config", "malformed credential file"); token }
-  def readDigest(path: String): String = read(path, 64, "[0-9a-f]{64}")
+  def readDigest(path: String): String = Refused.configured(DigestFile.read(path))
 }
 
 /** `users` are the declarative users; `imperative` exists only while the master switch `auth.accounts.enabled` is on. */
 final class Auth private(val config: AuthConfig, val users: Vector[AccountUser], val declared: DeclaredDirectory,
-  val imperative: Option[ImperativeSettings], digests: Vector[(Array[Byte], Principal)]) {
+  val imperative: Option[ImperativeSettings], tokens: boundary.ConfiguredTokens) {
   /** Configured tokens only: an imperative user has none. */
-  def configuredTokens(owner:String):Vector[AccountToken]=config.users.find(_.id==owner).toVector.flatMap(_.tokens).map(t=>AccountToken(t.id,t.id,"configured",None,false,Vector("api")))
-  def authenticate(token: String): Option[Principal] = {
-    if (!Secrets.canonical(token)) return None
-    val presented = Tokens.hash(token).getBytes(StandardCharsets.US_ASCII)
-    var result: Option[Principal] = None
-    digests.foreach { case (digest, principal) => if (MessageDigest.isEqual(presented, digest)) result = Some(principal) }
-    result
-  }
+  def configuredTokens(owner: String): Vector[AccountToken] = tokens.listed(owner)
+  def authenticate(token: String): Option[Principal] = tokens.authenticate(token).map(t => Principal(t.userId, t.userType, t.tokenId))
 }
 object Auth {
   /** Service name bound into the associated data of every encrypted TOTP secret. */
   val ServiceName = "haystack"
-  private val NixStore = "/nix/store/"
-  /** Design §6.2–§6.3: the creation flags never imply the master switch; the master switch requires the key
-    * file, an issuer and an enabled declarative admin; the remaining bounds are checked by `ImperativeSettings`.
-    */
-  private def imperative(accounts: Option[AccountsConfig], declared: DeclaredDirectory): Option[ImperativeSettings] = accounts.flatMap { a =>
-    if (!a.enabled && (a.signup.enabled || a.enrollment.enabled)) throw Fault("config", "accounts.signup and accounts.enrollment require accounts.enabled")
-    Option.when(a.enabled) {
-      val keyFile = a.keyFile.filter(path => path.startsWith("/") && !path.startsWith(NixStore)).getOrElse(throw Fault("config", "accounts.keyFile must be an absolute runtime path"))
-      val issuer = a.issuer.getOrElse(throw Fault("config", "accounts.issuer required"))
-      if (!declared.users.exists(user => user.enabled && declared.admins(user.id))) throw Fault("config", "accounts require an enabled declarative admin")
-      ImperativeSettings(ServiceName, a.signup.enabled, a.signup.requireApproval, a.enrollment.enabled, a.signup.maxUsers,
-        java.time.Duration.ofSeconds(a.enrollment.ttlSeconds), issuer, a.reservedUsernames.toSet, TotpVault.load(Path.of(keyFile), ServiceName))
-    }
-  }
+  private def declaredUser(user: UserConfig): boundary.DeclaredUserConfig =
+    boundary.DeclaredUserConfig(user.id, user.userType, user.displayName, user.tokens.map(t => boundary.DeclaredTokenConfig(t.id, t.hashFile)),
+      user.login, user.passwordHashFile, user.enabled, user.admin)
+  private def accounts(a: AccountsConfig): boundary.ImperativeAccountsConfig =
+    boundary.ImperativeAccountsConfig(a.enabled, a.keyFile, a.signup.enabled, a.signup.requireApproval, a.signup.maxUsers,
+      a.enrollment.enabled, a.enrollment.ttlSeconds, a.issuer, a.reservedUsernames)
   def load(config: AuthConfig): Auth = {
     QualifiedId.encodeComponent(config.activityProjectId)
-    if (config.users.isEmpty) throw Fault("config", "at least one user required")
-    def unique(values: Vector[String], message: String): Unit = if (values.distinct.size != values.size) throw Fault("config", message)
-    unique(config.users.map(_.id), "duplicate user id")
-    config.allowedOrigins.foreach(Origin.canonical)
-    config.insecureHttpOrigins.foreach { raw =>
-      val uri = Origin.canonical(raw)
-      val conflicts = config.allowedOrigins.exists { other =>
-        val u = Origin.canonical(other)
-        u.getScheme == "https" && u.getHost == uri.getHost && (Origin.authority(u) == Origin.authority(uri) || Origin.port(u) == Origin.port(uri))
-      }
-      if (uri.getScheme != "http" || !config.allowedOrigins.contains(raw) || !config.allowedHosts.exists(_.equalsIgnoreCase(uri.getHost)) || conflicts)
-        throw Fault("config", "insecure origins require a dedicated allowed HTTP authority")
-    }
-    // Baseline ECMAScript /[^\\s:]{1,n}/ counts UTF16 units. Java's
-    // isWhitespace additionally classifies U+001C..001F as separators and Java
-    // regex quantifiers count supplementary code points; neither may alter
-    // an acknowledged author/token identity or credential mapping.
-    def idWhitespace(c:Char):Boolean =
-      c >= '\u0009' && c <= '\u000d' || c == ' ' || c == '\u00a0' || c == '\u1680' ||
-      c >= '\u2000' && c <= '\u200a' || c == '\u2028' || c == '\u2029' ||
-      c == '\u202f' || c == '\u205f' || c == '\u3000' || c == '\ufeff'
-    def validId(value:String,max:Int):Boolean=value.nonEmpty && value.length<=max && !value.exists(c=>c==':' || idWhitespace(c))
-    unique(config.users.flatMap(_.login), "duplicate login")
-    val users = config.users.map { user =>
-      if (user.login.isDefined != user.passwordHashFile.isDefined || user.login.isDefined && user.userType != "human") throw Fault("config", "invalid password credentials")
-      user.login.foreach { login =>
-        if (login.isEmpty || login.length > 128 || login != login.trim || login.exists(_.isControl)) throw Fault("config", "invalid login")
-      }
-      val passwordHash=user.passwordHashFile.map { path =>
-        try Password.readHash(Path.of(path)) catch { case _: Exception => throw Fault("config", "invalid password credential file") }
-      }
-      AccountUser(user.id,user.userType,user.displayName,user.login,passwordHash,user.enabled,AccountOrigin.Declarative)
-    }
-    val entries = config.users.flatMap { user =>
-      if (!validId(user.id,128) || !Set("human", "agent").contains(user.userType)) throw Fault("config", "invalid user")
-      if (user.tokens.isEmpty && user.login.isEmpty) throw Fault("config", "user has no credentials")
-      unique(user.tokens.map(_.id), "duplicate token id")
-      user.tokens.map { token =>
-        if (!validId(token.id,64)) throw Fault("config", "invalid token id")
-        Tokens.readDigest(token.hashFile) -> Principal(user.id, user.userType, token.id)
-      }
-    }
-    unique(entries.map(_._1), "digest assigned twice")
-    val declared = DeclaredDirectory(users, config.users.filter(_.admin).map(_.id).toSet)
-    new Auth(config, users, declared, imperative(config.accounts, declared), entries.filter { case (_,principal)=>users.exists(u=>u.id==principal.userId && u.enabled) }.map { case (digest, principal) => digest.getBytes(StandardCharsets.US_ASCII) -> principal })
+    val users = config.users.map(declaredUser)
+    // The origin checks run between the user-id checks and the remaining user checks, as before the move.
+    Refused.configured(DeclaredUsers.identities(users))
+    Refused.configured(OriginPolicy.load(config.allowedHosts, config.allowedOrigins, config.insecureHttpOrigins, config.cookieSecure))
+    val declared = Refused.configured(DeclaredUsers.load(users))
+    val imperative = Refused.configured(ImperativeConfig.settings(ServiceName, config.accounts.map(accounts), declared.directory))
+    new Auth(config, declared.users, declared.directory, imperative, declared.tokens)
   }
 }
 
 object Origin {
-  def port(uri: URI): Int = if (uri.getPort >= 0) uri.getPort else if (uri.getScheme == "https") 443 else 80
-  def authority(uri: URI): String = uri.getHost.toLowerCase(Locale.ROOT) + ":" + port(uri)
-  def canonical(value: String): URI = {
-    val uri = try new URI(value) catch { case _: Exception => throw Fault("config", "invalid origin") }
-    val scheme = uri.getScheme
-    if (!Set("http", "https").contains(scheme) || uri.getPort > 65535 || uri.getHost == null || uri.getRawUserInfo != null || uri.getRawQuery != null || uri.getRawFragment != null || Option(uri.getRawPath).exists(_.nonEmpty) || uri.getHost != uri.getHost.toLowerCase(Locale.ROOT) || uri.getPort == (if (scheme == "https") 443 else 80))
-      throw Fault("config", "invalid canonical origin")
-    uri
-  }
-  def requestAuthority(host: String): URI = {
-    if (host.isEmpty || host.exists(c => c.isWhitespace || "/@?#\\".contains(c))) throw Fault("forbidden", "disallowed host")
-    val uri = try new URI("http://" + host) catch { case _: Exception => throw Fault("forbidden", "disallowed host") }
-    if (uri.getHost == null || uri.getPort > 65535 || uri.getRawUserInfo != null) throw Fault("forbidden", "disallowed host")
-    uri
-  }
+  def port(uri: URI): Int = CanonicalOrigin.port(uri)
+  def authority(uri: URI): String = CanonicalOrigin.authority(uri)
+  def canonical(value: String): URI = Refused.configured(CanonicalOrigin.parse(value))
+  def requestAuthority(host: String): URI = Refused(RequestAuthority.parse(host))
 }
 final case class RequestHeaders(host: String, authorization: Vector[String] = Vector.empty, cookie: Vector[String] = Vector.empty,
-  origin: Vector[String] = Vector.empty, fetchSite: Option[String] = None, accountRequest: Vector[String] = Vector.empty)
+  origin: Vector[String] = Vector.empty, fetchSite: Option[String] = None, accountRequest: Vector[String] = Vector.empty) {
+  def presented: PresentedHeaders = PresentedHeaders(host, authorization, cookie, origin, fetchSite, accountRequest)
+}
 final case class Authenticated(principal: Principal, token: String, cookie: Boolean, secureCookie: Boolean) {
   override def toString:String=s"Authenticated($principal,<redacted>,$cookie,$secureCookie)"
 }
 final case class Presented(token:String,cookie:Boolean,secureCookie:Boolean) {
   override def toString:String=s"Presented(<redacted>,$cookie,$secureCookie)"
 }
+/** Haystack's cookie names and origin policy over the shared transport rules (`ponygirls.auth.boundary`). */
 object Sessions {
   val SecureName = "__Host-haystack"
   val PlainName = "haystack-dev"
+  private val Names = CookieNames(SecureName, PlainName)
   val MaxAge: Long = PersistentCookie.maxAgeSeconds
-  def name(secure: Boolean): String = if (secure) SecureName else PlainName
-  def serialize(token: Option[String], secure: Boolean): String =
-    s"${name(secure)}=${token.getOrElse("")}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${if (token.isDefined) MaxAge else 0}" + (if (secure) "; Secure" else "")
-  def cookie(headers: RequestHeaders, cookieName: String): Option[String] = {
-    val values = headers.cookie.flatMap(_.split(";").toVector).flatMap { part =>
-      val index = part.indexOf('=')
-      if (index >= 0 && part.take(index).trim == cookieName) Some(part.drop(index + 1).trim) else None
-    }
-    if (values.size > 1) throw Fault("ambiguous-credentials", "duplicate session cookies")
-    values.headOption
-  }
-  def secure(config: AuthConfig, headers: RequestHeaders): Boolean = {
-    val request = Origin.requestAuthority(headers.host)
-    config.cookieSecure && !config.insecureHttpOrigins.exists(raw => Origin.authority(Origin.canonical(raw)) == Origin.authority(request))
-  }
-  def validateTransport(config: AuthConfig, headers: RequestHeaders): Unit = {
-    val request = Origin.requestAuthority(headers.host)
-    if (!config.allowedHosts.exists(_.equalsIgnoreCase(request.getHost))) throw Fault("forbidden", "disallowed host")
-    if (headers.origin.size > 1) throw Fault("forbidden", "ambiguous origin")
-    headers.origin.headOption.foreach { origin =>
-      if (!config.allowedOrigins.contains(origin)) throw Fault("forbidden", "disallowed origin")
-      val selected = config.insecureHttpOrigins.find(raw => Origin.authority(Origin.canonical(raw)) == Origin.authority(request))
-      if (selected.exists(_ != origin) || (selected.isEmpty && config.insecureHttpOrigins.contains(origin))) throw Fault("forbidden", "origin/host mismatch")
-    }
-  }
-  def csrf(config: AuthConfig, headers: RequestHeaders): Unit = {
-    if (!(headers.origin.size == 1 && config.allowedOrigins.contains(headers.origin.head)) && !(headers.origin.isEmpty && headers.fetchSite.contains("same-origin")))
-      throw Fault("forbidden", "missing or invalid origin")
-  }
+  private def policy(config: AuthConfig): OriginPolicy =
+    Refused.configured(OriginPolicy.load(config.allowedHosts, config.allowedOrigins, config.insecureHttpOrigins, config.cookieSecure))
+  def name(secure: Boolean): String = Names.name(secure)
+  def serialize(token: Option[String], secure: Boolean): String = SessionCookie.serialize(name(secure), token, secure)
+  def cookie(headers: RequestHeaders, cookieName: String): Option[String] = Refused(SessionCookie.select(headers.cookie, cookieName))
+  def secure(config: AuthConfig, headers: RequestHeaders): Boolean = Refused(policy(config).secureCookie(headers.presented))
+  def validateTransport(config: AuthConfig, headers: RequestHeaders): Unit = Refused(policy(config).validateTransport(headers.presented))
+  def csrf(config: AuthConfig, headers: RequestHeaders): Unit = Refused(policy(config).csrf(headers.presented))
   /** Sent by the shared account module (shared/account-web/account-client.js) with every account-plane request. */
-  val AccountRequestHeader = "X-Account-Request"
-  val AccountRequestValue = "1"
-  /**
-   * On an opted-in plain-HTTP origin, browsers send neither Origin nor Sec-Fetch-Site with a same-origin GET (Fetch
-   * Metadata is limited to secure contexts), so `csrf` cannot recognise the account module's reads there. Only for
-   * such a safe read (`safeRead`: GET) on an insecure-HTTP origin does the module's custom header prove same origin
-   * instead: a cross-origin page cannot add a custom header without a CORS preflight, and this server grants none.
-   * Writes keep requiring Origin (browsers send it with every POST).
-   */
-  def accountTransport(config:AuthConfig,headers:RequestHeaders,safeRead:Boolean):Unit={
-    validateTransport(config,headers)
-    val authority=Origin.requestAuthority(headers.host)
-    val insecureOrigin=config.insecureHttpOrigins.exists(raw=>Origin.authority(Origin.canonical(raw))==Origin.authority(authority))
-    val headerProof=safeRead && insecureOrigin && headers.origin.isEmpty && headers.fetchSite.isEmpty && headers.accountRequest==Vector(AccountRequestValue)
-    if(!headerProof) csrf(config,headers)
-    val request=Origin.requestAuthority(headers.host)
-    def matches(raw:String):Boolean={
-      val origin=Origin.canonical(raw)
-      val port=if(request.getPort>=0)request.getPort else if(origin.getScheme=="https")443 else 80
-      origin.getHost.equalsIgnoreCase(request.getHost) && Origin.port(origin)==port
-    }
-    if(!config.allowedOrigins.exists(matches) || headers.origin.exists(raw=> !matches(raw))) throw Fault("forbidden","origin/host mismatch")
-    if(headers.authorization.nonEmpty) throw Fault("unauthorized","browser session required")
-    cookie(headers,SecureName);cookie(headers,PlainName)
-    ()
-  }
+  val AccountRequestHeader = OriginPolicy.AccountRequestHeader
+  val AccountRequestValue = OriginPolicy.AccountRequestValue
+  /** `OriginPolicy.accountTransport`: on an opted-in plain-HTTP origin, a GET proves same origin with the account request header. */
+  def accountTransport(config:AuthConfig,headers:RequestHeaders,safeRead:Boolean):Unit=
+    Refused(policy(config).accountTransport(headers.presented, safeRead, Names))
   def resolve(config: AuthConfig, headers: RequestHeaders, mutate: Boolean = false, mcp: Boolean = false): Presented = {
-    validateTransport(config, headers)
-    val secureCookie = secure(config, headers)
-    val session = cookie(headers, name(secureCookie))
-    if (headers.authorization.size > 1) throw Fault("ambiguous-credentials", "ambiguous credentials")
-    if (mcp && (cookie(headers, SecureName).isDefined || cookie(headers, PlainName).isDefined)) throw Fault("unauthorized", "cookie not accepted")
-    if (headers.authorization.nonEmpty && session.isDefined) throw Fault("ambiguous-credentials", "ambiguous credentials")
-    val bearer = headers.authorization.headOption.map { value =>
-      if (!value.matches("Bearer [^\\s]+")) throw Fault("unauthorized", "invalid credentials")
-      value.drop(7)
-    }
-    val token = bearer.orElse(if (mcp) None else session).getOrElse(throw Fault("unauthorized", "invalid credentials"))
-    if (!Secrets.canonical(token)) throw Fault("unauthorized", "invalid credentials")
-    val isCookie = bearer.isEmpty
-    if (mutate && isCookie) csrf(config, headers)
-    Presented(token, isCookie, secureCookie)
+    val accept = if (mcp) CredentialAccept.BearerOnly else CredentialAccept.BearerOrCookie
+    val selected = Refused(CredentialSelection.resolve(policy(config), Names, headers.presented, accept, mutate))
+    Presented(selected.secret, selected.cookie, selected.secureCookie)
   }
 }
