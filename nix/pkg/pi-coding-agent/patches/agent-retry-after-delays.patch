@@ -1,5 +1,5 @@
 diff --git a/packages/ai/src/api/anthropic-messages.ts b/packages/ai/src/api/anthropic-messages.ts
-index b031c28..d106599 100644
+index 8e3427c..6e32bdf 100644
 --- a/packages/ai/src/api/anthropic-messages.ts
 +++ b/packages/ai/src/api/anthropic-messages.ts
 @@ -38,6 +38,7 @@ import type {
@@ -10,7 +10,7 @@ index b031c28..d106599 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { shortHash } from "../utils/hash.ts";
  import { headersToRecord } from "../utils/headers.ts";
-@@ -1170,6 +1171,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
+@@ -1055,6 +1056,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
  		} catch (error) {
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = error instanceof Error ? withCauseDetail(error) : JSON.stringify(error);
@@ -19,7 +19,7 @@ index b031c28..d106599 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/azure-openai-responses.ts b/packages/ai/src/api/azure-openai-responses.ts
-index ec98e33..9175002 100644
+index 253d574..e70f0cf 100644
 --- a/packages/ai/src/api/azure-openai-responses.ts
 +++ b/packages/ai/src/api/azure-openai-responses.ts
 @@ -2,7 +2,7 @@ import { AzureOpenAI } from "openai";
@@ -31,7 +31,7 @@ index ec98e33..9175002 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { headersToRecord } from "../utils/headers.ts";
  import { getIdentityHeaders } from "../utils/identity.ts";
-@@ -120,6 +120,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
+@@ -116,6 +116,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
  		} catch (error) {
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatAzureOpenAIError(error);
@@ -40,10 +40,10 @@ index ec98e33..9175002 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/bedrock-converse-stream.ts b/packages/ai/src/api/bedrock-converse-stream.ts
-index 6f6facf..4457968 100644
+index a268a19..7f5835e 100644
 --- a/packages/ai/src/api/bedrock-converse-stream.ts
 +++ b/packages/ai/src/api/bedrock-converse-stream.ts
-@@ -49,7 +49,7 @@ import type {
+@@ -50,7 +50,7 @@ import type {
  	ToolResultMessage,
  } from "../types.ts";
  import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
@@ -52,7 +52,7 @@ index 6f6facf..4457968 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { providerHeadersToRecord } from "../utils/headers.ts";
  import { type ClientIdentity, getClientVersion } from "../utils/identity.ts";
-@@ -392,6 +392,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
+@@ -401,6 +401,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
  			flushOpenBlocks(openBlocks, output);
  			output.stopReason = options.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatBedrockError(error);
@@ -61,10 +61,10 @@ index 6f6facf..4457968 100644
  				appendBedrockFailureDiagnostic(output, error, responseRequestId);
  			}
 diff --git a/packages/ai/src/api/google-generative-ai.ts b/packages/ai/src/api/google-generative-ai.ts
-index 213eff5..369572f 100644
+index 1fc9869..e2dd49a 100644
 --- a/packages/ai/src/api/google-generative-ai.ts
 +++ b/packages/ai/src/api/google-generative-ai.ts
-@@ -19,7 +19,7 @@ import type {
+@@ -20,7 +20,7 @@ import type {
  	ToolCall,
  	TranscriptContext,
  } from "../types.ts";
@@ -73,7 +73,7 @@ index 213eff5..369572f 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { providerHeadersToRecord } from "../utils/headers.ts";
  import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
-@@ -288,6 +288,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
+@@ -302,6 +302,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
  		} catch (error) {
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatProviderError(normalizeProviderError(error));
@@ -82,7 +82,7 @@ index 213eff5..369572f 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/google-vertex.ts b/packages/ai/src/api/google-vertex.ts
-index 07f78af..494331f 100644
+index dc529f7..bde5696 100644
 --- a/packages/ai/src/api/google-vertex.ts
 +++ b/packages/ai/src/api/google-vertex.ts
 @@ -22,7 +22,7 @@ import type {
@@ -94,7 +94,7 @@ index 07f78af..494331f 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { providerHeadersToRecord } from "../utils/headers.ts";
  import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
-@@ -303,6 +303,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
+@@ -317,6 +317,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
  		} catch (error) {
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatProviderError(normalizeProviderError(error));
@@ -103,7 +103,7 @@ index 07f78af..494331f 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/mistral-conversations.ts b/packages/ai/src/api/mistral-conversations.ts
-index 69e3f1d..d29ff33 100644
+index 4a7a8e7..90d705d 100644
 --- a/packages/ai/src/api/mistral-conversations.ts
 +++ b/packages/ai/src/api/mistral-conversations.ts
 @@ -14,7 +14,7 @@ import type {
@@ -115,7 +115,7 @@ index 69e3f1d..d29ff33 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { shortHash } from "../utils/hash.ts";
  import { headersToRecord } from "../utils/headers.ts";
-@@ -170,6 +170,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
+@@ -171,6 +171,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
  		} catch (error) {
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatMistralError(error);
@@ -124,7 +124,7 @@ index 69e3f1d..d29ff33 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/openai-codex-responses.ts b/packages/ai/src/api/openai-codex-responses.ts
-index e226805..4d9312b 100644
+index cc52de6..f72f42c 100644
 --- a/packages/ai/src/api/openai-codex-responses.ts
 +++ b/packages/ai/src/api/openai-codex-responses.ts
 @@ -25,7 +25,7 @@ import {
@@ -159,7 +159,7 @@ index e226805..4d9312b 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/openai-completions.ts b/packages/ai/src/api/openai-completions.ts
-index 7255249..15f463f 100644
+index 1e1c623..c698867 100644
 --- a/packages/ai/src/api/openai-completions.ts
 +++ b/packages/ai/src/api/openai-completions.ts
 @@ -35,7 +35,7 @@ import type {
@@ -171,7 +171,7 @@ index 7255249..15f463f 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { shortHash } from "../utils/hash.ts";
  import { headersToRecord } from "../utils/headers.ts";
-@@ -701,6 +701,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
+@@ -632,6 +632,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
  			}
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatProviderError(normalizeProviderError(error));
@@ -180,7 +180,7 @@ index 7255249..15f463f 100644
  			// normalizeProviderError already stringifies the parsed body (error.error)
  			// into errorMessage, so only append the raw metadata when it is not already
 diff --git a/packages/ai/src/api/openai-responses.ts b/packages/ai/src/api/openai-responses.ts
-index 0ff9f8b..21a37a9 100644
+index b9b50be..9b19f89 100644
 --- a/packages/ai/src/api/openai-responses.ts
 +++ b/packages/ai/src/api/openai-responses.ts
 @@ -15,7 +15,7 @@ import type {
@@ -192,7 +192,7 @@ index 0ff9f8b..21a37a9 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { headersToRecord } from "../utils/headers.ts";
  import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
-@@ -264,6 +264,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+@@ -260,6 +260,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
  			} else {
  				output.errorMessage = errorMessage;
  			}
@@ -201,7 +201,7 @@ index 0ff9f8b..21a37a9 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/pi-messages.ts b/packages/ai/src/api/pi-messages.ts
-index 3316a56..202845a 100644
+index 9c3e0d3..5dcd8d3 100644
 --- a/packages/ai/src/api/pi-messages.ts
 +++ b/packages/ai/src/api/pi-messages.ts
 @@ -25,6 +25,7 @@ import type {
@@ -212,7 +212,7 @@ index 3316a56..202845a 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
  import { getIdentityHeaders } from "../utils/identity.ts";
-@@ -102,12 +103,21 @@ type PiMessagesErrorBody = {
+@@ -103,12 +104,21 @@ type PiMessagesErrorBody = {
  export class PiMessagesResponseError extends Error {
  	code?: string;
  	readonly diagnosticDetails: JsonObject;
@@ -236,7 +236,7 @@ index 3316a56..202845a 100644
  	}
  }
  
-@@ -156,7 +166,7 @@ function createPiMessagesResponseError(
+@@ -157,7 +167,7 @@ function createPiMessagesResponseError(
  		...(errorBody?.error === undefined ? {} : { error: errorBody.error as JsonValue }),
  		...(errorBody ? {} : { body: truncateDiagnosticString(body) }),
  		timestampMs: Date.now(),
@@ -245,7 +245,7 @@ index 3316a56..202845a 100644
  }
  
  function createEmptyUsage(): PiMessagesUsage {
-@@ -349,6 +359,7 @@ function createErrorEvent(model: Model<"pi-messages">, error: unknown, aborted:
+@@ -329,6 +339,7 @@ function createErrorEvent(model: Model<"pi-messages">, error: unknown, aborted:
  		usage: createEmptyUsage(),
  		stopReason: reason,
  		errorMessage: error instanceof Error ? error.message : String(error),
@@ -274,10 +274,10 @@ index 87797db..d967b5e 100644
  		timestamp: options.timestamp ?? Date.now(),
  	};
 diff --git a/packages/ai/src/types.ts b/packages/ai/src/types.ts
-index 5aad0e8..0b77b48 100644
+index 87d5827..5885b80 100644
 --- a/packages/ai/src/types.ts
 +++ b/packages/ai/src/types.ts
-@@ -607,6 +607,11 @@ export interface AssistantMessage {
+@@ -623,6 +623,11 @@ export interface AssistantMessage {
  	stopReason: StopReason;
  	deferred?: DeferredHandle;
  	errorMessage?: string;
@@ -327,10 +327,10 @@ index f94a029..20fa8da 100644
  /**
   * Probe the HTTP status, first numeric hit wins, in SDK-field order:
 diff --git a/packages/ai/src/utils/provider-retry.ts b/packages/ai/src/utils/provider-retry.ts
-index 9d7ef81..78c1bc2 100644
+index 883bdbf..f68c8cb 100644
 --- a/packages/ai/src/utils/provider-retry.ts
 +++ b/packages/ai/src/utils/provider-retry.ts
-@@ -50,18 +50,32 @@ function validateServerRetryDelayMs(
+@@ -58,18 +58,32 @@ function validateServerRetryDelayMs(
  	return delayMs;
  }
  
@@ -369,10 +369,10 @@ index 9d7ef81..78c1bc2 100644
  
  	const exponentialDelay = Math.min(0.5 * 2 ** retryIndex, 8) * 1000;
 diff --git a/packages/ai/src/utils/retry.ts b/packages/ai/src/utils/retry.ts
-index ec893e1..2f02792 100644
+index 829996e..9526486 100644
 --- a/packages/ai/src/utils/retry.ts
 +++ b/packages/ai/src/utils/retry.ts
-@@ -146,10 +146,24 @@ export interface RetryPolicy {
+@@ -188,10 +188,24 @@ export interface RetryPolicy {
  
  export const DEFAULT_MAX_AGENT_RETRY_DELAY_MS = 60_000;
  
@@ -399,7 +399,7 @@ index ec893e1..2f02792 100644
  }
  
  /** Optional callbacks emitted by {@link retryAssistantCall} around each retry. */
-@@ -242,7 +256,7 @@ export async function retryAssistantCall(
+@@ -284,7 +298,7 @@ export async function retryAssistantCall(
  
  		attempt++;
  		lastRetry = { attempt, errorMessage: response.errorMessage || "Unknown error" };
@@ -444,10 +444,10 @@ index b6e2367..bbad7aa 100644
 +	});
 +});
 diff --git a/packages/ai/test/openai-codex-stream.test.ts b/packages/ai/test/openai-codex-stream.test.ts
-index 23b2608..a2bd53b 100644
+index 3b46bbf..587594f 100644
 --- a/packages/ai/test/openai-codex-stream.test.ts
 +++ b/packages/ai/test/openai-codex-stream.test.ts
-@@ -2650,6 +2650,45 @@ describe("openai-codex streaming", () => {
+@@ -3059,6 +3059,45 @@ describe("openai-codex streaming", () => {
  		expect(fetchMock).toHaveBeenCalledTimes(1);
  	});
  
@@ -494,7 +494,7 @@ index 23b2608..a2bd53b 100644
  		const token = mockToken();
  		const encoder = new TextEncoder();
 diff --git a/packages/ai/test/pi-messages.test.ts b/packages/ai/test/pi-messages.test.ts
-index 78d7328..c29fe14 100644
+index 796a3d3..5de9a5b 100644
 --- a/packages/ai/test/pi-messages.test.ts
 +++ b/packages/ai/test/pi-messages.test.ts
 @@ -39,6 +39,9 @@ async function startServer(options: ResponderOptions): Promise<{ baseUrl: string
@@ -517,7 +517,7 @@ index 78d7328..c29fe14 100644
  			for (const event of options.events ?? []) {
  				response.write(`data: ${JSON.stringify(event)}\n\n`);
  			}
-@@ -295,6 +295,21 @@ describe("pi-messages", () => {
+@@ -312,6 +312,21 @@ describe("pi-messages", () => {
  		expect(([] as unknown as Record<string, unknown>).polluted).toBeUndefined();
  	});
  
@@ -540,18 +540,19 @@ index 78d7328..c29fe14 100644
  		const { baseUrl } = await startServer({
  			events: [
 diff --git a/packages/ai/test/provider-retry.test.ts b/packages/ai/test/provider-retry.test.ts
-index b8e5c21..a7a9c8f 100644
+index e8bbe1f..a79b65b 100644
 --- a/packages/ai/test/provider-retry.test.ts
 +++ b/packages/ai/test/provider-retry.test.ts
-@@ -1,5 +1,5 @@
+@@ -1,6 +1,6 @@
  import { afterEach, describe, expect, it, vi } from "vitest";
+ import type { ProviderResponse } from "../src/types.ts";
 -import { retryProviderRequest } from "../src/utils/provider-retry.ts";
 +import { parseRetryAfterMs, retryProviderRequest } from "../src/utils/provider-retry.ts";
  
  function providerError(status: number | undefined, headers?: Record<string, string>): Error {
  	return Object.assign(new Error(`Provider error: ${status}`), {
-@@ -87,3 +87,26 @@ describe("provider request retries", () => {
- 		expect(vi.getTimerCount()).toBe(0);
+@@ -160,3 +160,26 @@ describe("provider request error responses", () => {
+ 		expect(onErrorResponse).not.toHaveBeenCalled();
  	});
  });
 +
@@ -578,10 +579,10 @@ index b8e5c21..a7a9c8f 100644
 +	});
 +});
 diff --git a/packages/ai/test/retry.test.ts b/packages/ai/test/retry.test.ts
-index 4b3395c..58e7b4e 100644
+index 340dd14..9dc68db 100644
 --- a/packages/ai/test/retry.test.ts
 +++ b/packages/ai/test/retry.test.ts
-@@ -179,6 +179,16 @@ describe("retryDelayMs", () => {
+@@ -281,6 +281,16 @@ describe("retryDelayMs", () => {
  		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 5000 }, 5)).toBe(5000);
  		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 0 }, 5)).toBe(0);
  	});
@@ -598,35 +599,11 @@ index 4b3395c..58e7b4e 100644
  });
  
  describe("retryAssistantCall", () => {
-@@ -242,6 +252,23 @@ describe("retryAssistantCall", () => {
- 		expect(onRetryScheduled.mock.calls.map((call) => call[2])).toEqual([10, 15, 15, 15]);
- 	});
- 
-+	it("schedules retries at the server-requested delay", async () => {
-+		// Regression for #9595.
-+		let n = 0;
-+		const policy: RetryPolicy = { enabled: true, maxRetries: 1, baseDelayMs: 10 };
-+		const produce = vi.fn(async () => {
-+			n++;
-+			return n < 2
-+				? fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated", retryAfterMs: 1200 })
-+				: fauxAssistantMessage("recovered");
-+		});
-+		const onRetryScheduled = vi.fn();
-+
-+		await retryAssistantCall(produce, policy, undefined, { onRetryScheduled });
-+
-+		expect(onRetryScheduled.mock.calls.map((call) => call[2])).toEqual([1200]);
-+	});
-+
- 	it("stops retrying once a call succeeds", async () => {
- 		let n = 0;
- 		const produce = vi.fn(async () => {
 diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
-index f76247d..d5032b7 100644
+index 3967ae0..db4dc08 100644
 --- a/packages/coding-agent/src/core/agent-session.ts
 +++ b/packages/coding-agent/src/core/agent-session.ts
-@@ -3918,7 +3918,8 @@ export class AgentSession {
+@@ -3930,7 +3930,8 @@ export class AgentSession {
  	}
  
  	/**
@@ -636,7 +613,7 @@ index f76247d..d5032b7 100644
  	 * @returns true if the caller should continue the agent, false otherwise
  	 */
  	private async _prepareRetry(message: AssistantMessage): Promise<boolean> {
-@@ -3935,7 +3936,7 @@ export class AgentSession {
+@@ -3947,7 +3948,7 @@ export class AgentSession {
  			return false;
  		}
  
@@ -689,10 +666,10 @@ index 206b25b..97c5fce 100644
  		const created = await createSession({ failCount: 1, delayAssistantMessageEndMs: 40 });
  
 diff --git a/packages/durable/src/harness/compaction.ts b/packages/durable/src/harness/compaction.ts
-index 65b855d..561b689 100644
+index f4c180a..228a80f 100644
 --- a/packages/durable/src/harness/compaction.ts
 +++ b/packages/durable/src/harness/compaction.ts
-@@ -197,7 +197,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint,
+@@ -200,7 +200,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint,
  				isRetryableAssistantError(message) &&
  				policy.enabled &&
  				attempt <= policy.maxRetries;
@@ -702,10 +679,10 @@ index 65b855d..561b689 100644
  				await recordUsage(
  					tx,
 diff --git a/packages/durable/src/harness/generation.ts b/packages/durable/src/harness/generation.ts
-index 6e6e0f4..e13c625 100644
+index 588adc5..a8fb581 100644
 --- a/packages/durable/src/harness/generation.ts
 +++ b/packages/durable/src/harness/generation.ts
-@@ -834,7 +834,7 @@ async function classify(
+@@ -898,7 +898,7 @@ async function classify(
  		isRetryableAssistantError(message) &&
  		policy.enabled &&
  		attempt <= policy.maxRetries;
@@ -714,3 +691,31 @@ index 6e6e0f4..e13c625 100644
  	await runtime.commit(async (tx): Promise<Next> => {
  		// Read before the first table write; only a failure uses it.
  		const failure = retry ? undefined : await prepareFailure(tx, runtime);
+diff --git a/packages/ai/test/retry.test.ts b/packages/ai/test/retry.test.ts
+index 9dc68db..b45be41 100644
+--- a/packages/ai/test/retry.test.ts
++++ b/packages/ai/test/retry.test.ts
+@@ -355,6 +355,23 @@ describe("retryAssistantCall", () => {
+ 	});
+ 
+ 	// Regression for #10506.
++	it("schedules retries at the server-requested delay", async () => {
++		// Regression for #9595.
++		let n = 0;
++		const policy: RetryPolicy = { enabled: true, maxRetries: 1, baseDelayMs: 10 };
++		const produce = vi.fn(async () => {
++			n++;
++			return n < 2
++				? fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated", retryAfterMs: 1200 })
++				: fauxAssistantMessage("recovered");
++		});
++		const onRetryScheduled = vi.fn();
++
++		await retryAssistantCall(produce, policy, undefined, { onRetryScheduled });
++
++		expect(onRetryScheduled.mock.calls.map((call) => call[2])).toEqual([1200]);
++	});
++
+ 	it("stops retrying once a call succeeds and removes backoff abort listeners", async () => {
+ 		const controller = new AbortController();
+ 		let n = 0;

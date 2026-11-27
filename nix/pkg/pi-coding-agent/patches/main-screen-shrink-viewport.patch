@@ -4,14 +4,9 @@ Date: Fri, 6 Nov 2026 13:35:21 +0000
 Subject: [PATCH] fix(tui): backport non-clearing shrink viewport restoration
 
 Backport f3a5defc79f7cbca98b07765d2b7cebd2ea22895 onto the pinned 1.4.0 runtime without changing its OSC/output handling, APIs, dependencies, or model catalog. Preserve the same renderer regression coverage and bounded image-aware viewport replay.
----
- packages/tui/src/tui-main-screen.ts           |  67 +++++++---
- .../tui/test/tui-main-screen-mouse.test.ts    |   3 +-
- packages/tui/test/tui-render.test.ts          | 119 ++++++++++++++++++
- 3 files changed, 174 insertions(+), 15 deletions(-)
 
 diff --git a/packages/tui/src/tui-main-screen.ts b/packages/tui/src/tui-main-screen.ts
-index 55b3902..5f96a56 100644
+index 4a78f09..adefbae 100644
 --- a/packages/tui/src/tui-main-screen.ts
 +++ b/packages/tui/src/tui-main-screen.ts
 @@ -273,6 +273,15 @@ export class TuiMainScreen extends TuiBase implements TUI {
@@ -167,10 +162,10 @@ index 55b3902..5f96a56 100644
  			return;
  		}
  
-@@ -588,7 +627,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
- 					logRedraw(
- 						`kitty image pre-clear would scroll (${imageStartScreenRow} + ${imageReservedRows} > ${height})`,
- 					);
+@@ -587,7 +626,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 				// Moving back up to the image's first row only fails when the image is taller than the screen.
+ 				if (imageReservedRows > height) {
+ 					logRedraw(`kitty image taller than screen (${imageReservedRows} > ${height})`);
 -					fullRender(true);
 +					fullRender("clear");
  					return;
@@ -191,10 +186,10 @@ index 4f83924..8074625 100644
  		terminal.sendInput(`\x1b[<0;2;${row + 1}M`);
  		tui.renderNow();
 diff --git a/packages/tui/test/tui-render.test.ts b/packages/tui/test/tui-render.test.ts
-index 39fa9bb..66d4ae1 100644
+index 334e8e3..9615075 100644
 --- a/packages/tui/test/tui-render.test.ts
 +++ b/packages/tui/test/tui-render.test.ts
-@@ -642,6 +642,125 @@ describe("TUI resize handling", () => {
+@@ -735,6 +735,125 @@ describe("TUI resize handling", () => {
  });
  
  describe("TUI content shrinkage", () => {

@@ -741,6 +741,8 @@ function effortCompat(model: Model<any>): EffortCompat | undefined {
 	if (compat === undefined) return undefined;
 	return {
 		...("forceAdaptiveThinking" in compat ? { forceAdaptiveThinking: compat.forceAdaptiveThinking } : {}),
+		...("thinkingFormat" in compat ? { thinkingFormat: compat.thinkingFormat } : {}),
+		...("supportsReasoningEffort" in compat ? { supportsReasoningEffort: compat.supportsReasoningEffort } : {}),
 		...("supportsThinkingTokenBudget" in compat ? { supportsThinkingTokenBudget: compat.supportsThinkingTokenBudget } : {}),
 		...("thinkingTokenBudgetField" in compat ? { thinkingTokenBudgetField: compat.thinkingTokenBudgetField } : {}),
 	};

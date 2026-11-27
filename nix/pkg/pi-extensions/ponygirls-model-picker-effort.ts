@@ -27,7 +27,7 @@ export const DEFAULT_THINKING_BUDGETS: Readonly<Record<BudgetLevel, number>> = {
 /** Mirrors pi-ai api/simple-options MIN_ANSWER_TOKENS: tokens always left for the answer. */
 export const MIN_ANSWER_TOKENS = 1024;
 
-export type GoogleApi = "google-generative-ai" | "google-vertex";
+export type GoogleThinkingLevel = BudgetLevel | "xhigh";
 
 interface GoogleBudgetTable {
 	idFragment: string;
@@ -39,14 +39,10 @@ const GEMINI_25_FLASH_LITE: GoogleBudgetTable = { idFragment: "2.5-flash-lite", 
 const GEMINI_25_FLASH: GoogleBudgetTable = { idFragment: "2.5-flash", budgets: { minimal: 128, low: 2048, medium: 8192, high: 24576 } };
 
 /**
- * pi-ai's Gemini 2.5 budget tables (getGoogleBudget, one copy per API), first
- * matching id fragment wins. Vertex has no flash-lite table: its flash-lite
- * models match the flash one.
+ * pi-ai's shared Gemini 2.5 budget tables (google-shared getGoogleBudget),
+ * first matching id fragment wins for either Google API.
  */
-export const GOOGLE_BUDGET_TABLES: Readonly<Record<GoogleApi, readonly GoogleBudgetTable[]>> = {
-	"google-generative-ai": [GEMINI_25_PRO, GEMINI_25_FLASH_LITE, GEMINI_25_FLASH],
-	"google-vertex": [GEMINI_25_PRO, GEMINI_25_FLASH],
-};
+const GOOGLE_BUDGET_TABLES: readonly GoogleBudgetTable[] = [GEMINI_25_PRO, GEMINI_25_FLASH_LITE, GEMINI_25_FLASH];
 
 /** getGoogleBudget's result for a model without a table: Gemini decides (dynamic thinking). */
 export const GOOGLE_DYNAMIC_BUDGET = -1;
@@ -65,6 +61,8 @@ export interface EffortModel {
 
 export interface EffortCompat {
 	forceAdaptiveThinking?: boolean;
+	thinkingFormat?: string;
+	supportsReasoningEffort?: boolean;
 	supportsThinkingTokenBudget?: boolean;
 	thinkingTokenBudgetField?: string;
 }
@@ -72,9 +70,10 @@ export interface EffortCompat {
 /** How the model's API carries the thinking level. */
 export type ThinkingApi =
 	| { kind: "effort-only" }
+	| { kind: "toggle" }
 	| { kind: "budget"; field: string }
 	| { kind: "adaptive" }
-	| { kind: "google-budget"; api: GoogleApi }
+	| { kind: "google-budget" }
 	| { kind: "google-level" }
 	| { kind: "no-reasoning" }
 	| { kind: "unmodelled"; api: string };
@@ -82,6 +81,7 @@ export type ThinkingApi =
 /** What is sent for one level. */
 export type ThinkingWire =
 	| { kind: "off" }
+	| { kind: "enabled" }
 	| { kind: "effort"; value: string }
 	| { kind: "budget"; tokens: number; custom: boolean }
 	| { kind: "adaptive"; effort: string }
@@ -103,10 +103,8 @@ const EFFORT_ONLY_APIS: ReadonlySet<string> = new Set(["openai-codex-responses",
 const ANTHROPIC_BUDGET_FIELD = "budget_tokens";
 /** pi-ai's openai-completions field for `supportsThinkingTokenBudget` (vLLM). */
 const COMPLETIONS_DEFAULT_BUDGET_FIELD = "thinking_token_budget";
-const GOOGLE_LEVELS: ReadonlySet<string> = new Set(["minimal", "low", "medium", "high"]);
-
-function isGoogleApi(api: string): api is GoogleApi {
-	return api in GOOGLE_BUDGET_TABLES;
+function isGoogleLevel(level: string): level is GoogleThinkingLevel {
+	return level === "minimal" || level === "low" || level === "medium" || level === "high" || level === "xhigh";
 }
 
 export function isThinkingLevel(value: string): value is ThinkingLevelName {
@@ -127,9 +125,10 @@ function completionsBudgetField(compat: EffortCompat | undefined): string | unde
 /** Mirrors pi-ai google-shared usesGoogleThinkingLevel: Gemini 3+/Gemma 4 take a discrete level. */
 export function usesGoogleThinkingLevel(model: Pick<EffortModel, "id">): boolean {
 	const id = model.id.toLowerCase();
+	const major = id.match(/gemini(?:-live)?-(\d+)/)?.[1];
 	return (
 		/gemini-3(?:\.\d+)?-(?:pro|flash)/.test(id) ||
-		/gemini-(?:[4-9]|[1-9]\d)/.test(id) ||
+		(major !== undefined && Number.parseInt(major, 10) >= 4) ||
 		id === "gemini-flash-latest" ||
 		id === "gemini-flash-lite-latest" ||
 		/gemma-?4/.test(id)
@@ -141,10 +140,17 @@ export function thinkingApi(model: EffortModel): ThinkingApi {
 	if (model.api === "anthropic-messages") {
 		return model.compat?.forceAdaptiveThinking === true ? { kind: "adaptive" } : { kind: "budget", field: ANTHROPIC_BUDGET_FIELD };
 	}
-	if (isGoogleApi(model.api)) return usesGoogleThinkingLevel(model) ? { kind: "google-level" } : { kind: "google-budget", api: model.api };
+	if (model.api === "google-generative-ai" || model.api === "google-vertex") {
+		return usesGoogleThinkingLevel(model) ? { kind: "google-level" } : { kind: "google-budget" };
+	}
 	if (model.api === "openai-completions") {
 		const field = completionsBudgetField(model.compat);
 		if (field !== undefined) return { kind: "budget", field };
+		// Pi normalizes the legacy models.json format "ant-ling" to "deepseek".
+		const format = model.compat?.thinkingFormat;
+		if ((format === "deepseek" || format === "ant-ling") && model.compat?.supportsReasoningEffort === false) {
+			return { kind: "toggle" };
+		}
 	}
 	if (EFFORT_ONLY_APIS.has(model.api)) return { kind: "effort-only" };
 	return { kind: "unmodelled", api: model.api };
@@ -182,17 +188,18 @@ export function adaptiveEffort(model: Pick<EffortModel, "thinkingLevelMap">, lev
 }
 
 /** Mirrors pi-ai google-shared resolveGoogleThinkingLevel; undefined where pi-ai would reject the mapping. */
-export function googleLevel(model: EffortModel, level: ThinkingLevelName): string | undefined {
+export function googleLevel(model: EffortModel, level: ThinkingLevelName): GoogleThinkingLevel | undefined {
 	const mapped = model.thinkingLevelMap?.[level];
 	const resolved = typeof mapped === "string" ? mapped.toLowerCase() : level;
-	return GOOGLE_LEVELS.has(resolved) ? resolved : undefined;
+	return isGoogleLevel(resolved) ? resolved : undefined;
 }
 
-/** Mirrors pi-ai getGoogleBudget (of `api`) for a resolved Google level. */
-export function googleBudget(api: GoogleApi, modelId: string, level: BudgetLevel, custom: ThinkingBudgets): number {
+/** Mirrors pi-ai google-shared getGoogleBudget for a resolved Google level. */
+export function googleBudget(modelId: string, resolved: GoogleThinkingLevel, custom: ThinkingBudgets): number {
+	const level = budgetLevel(resolved);
 	const override = custom[level];
 	if (override !== undefined) return override;
-	const table = GOOGLE_BUDGET_TABLES[api].find((entry) => modelId.includes(entry.idFragment));
+	const table = GOOGLE_BUDGET_TABLES.find((entry) => modelId.includes(entry.idFragment));
 	return table ? table.budgets[level] : GOOGLE_DYNAMIC_BUDGET;
 }
 
@@ -201,6 +208,8 @@ function wireFor(model: EffortModel, api: ThinkingApi, level: ThinkingLevelName,
 	switch (api.kind) {
 		case "effort-only":
 			return { kind: "effort", value: model.thinkingLevelMap?.[level] ?? level };
+		case "toggle":
+			return { kind: "enabled" };
 		case "budget":
 			return { kind: "budget", tokens: sharedCeilingBudget(level, model.maxTokens, custom), custom: custom[budgetLevel(level)] !== undefined };
 		case "adaptive":
@@ -212,8 +221,8 @@ function wireFor(model: EffortModel, api: ThinkingApi, level: ThinkingLevelName,
 		case "google-budget": {
 			const resolved = googleLevel(model, level);
 			if (resolved === undefined) return { kind: "unmodelled" };
-			const tokens = googleBudget(api.api, model.id, resolved as BudgetLevel, custom);
-			return tokens === GOOGLE_DYNAMIC_BUDGET ? { kind: "dynamic" } : { kind: "budget", tokens, custom: custom[resolved as BudgetLevel] !== undefined };
+			const tokens = googleBudget(model.id, resolved, custom);
+			return tokens === GOOGLE_DYNAMIC_BUDGET ? { kind: "dynamic" } : { kind: "budget", tokens, custom: custom[budgetLevel(resolved)] !== undefined };
 		}
 		case "no-reasoning":
 			return { kind: "off" };
@@ -223,7 +232,7 @@ function wireFor(model: EffortModel, api: ThinkingApi, level: ThinkingLevelName,
 }
 
 /** The level name a wire value stands for, when it is one. */
-function wireLevel(level: ThinkingLevelName, wire: ThinkingWire): string | undefined {
+function wireLevel(model: EffortModel, api: ThinkingApi, level: ThinkingLevelName, wire: ThinkingWire): string | undefined {
 	switch (wire.kind) {
 		case "effort":
 			return wire.value;
@@ -231,8 +240,10 @@ function wireLevel(level: ThinkingLevelName, wire: ThinkingWire): string | undef
 			return wire.effort;
 		case "google-level":
 			return wire.level;
-		case "budget":
-			return level === "off" ? undefined : budgetLevel(level);
+		case "budget": {
+			const resolved = api.kind === "google-budget" ? googleLevel(model, level) : level;
+			return resolved === undefined || resolved === "off" ? undefined : budgetLevel(resolved);
+		}
 		default:
 			return undefined;
 	}
@@ -252,7 +263,7 @@ export function effortRows(model: EffortModel, levels: readonly ThinkingLevelNam
 	return levels.map((level) => {
 		const wire = wires.get(level)!;
 		const row: EffortRow = { level, meter: meterSteps(level), wire };
-		const named = wireLevel(level, wire);
+		const named = wireLevel(model, api, level, wire);
 		if (named !== undefined && named !== level && isThinkingLevel(named)) {
 			const other = wires.get(named);
 			if (other !== undefined && sameWire(other, wire)) row.sameAs = named;

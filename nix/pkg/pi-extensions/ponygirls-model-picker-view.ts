@@ -136,6 +136,8 @@ function wireText(theme: UiTheme, wire: ThinkingWire): [string, string] {
 	switch (wire.kind) {
 		case "off":
 			return [theme.fg("muted", "thinking off"), ""];
+		case "enabled":
+			return [theme.fg("muted", "thinking enabled"), ""];
 		case "effort":
 			return [`${theme.fg("muted", "effort ")}${theme.fg("text", wire.value)}`, ""];
 		case "budget":
@@ -175,6 +177,8 @@ export function effortFooter(api: ThinkingApi, model: EffortModel, rows: readonl
 	switch (api.kind) {
 		case "effort-only":
 			return `effort-only API: no thinking-token cap; shares the ${out} output`;
+		case "toggle":
+			return "thinking on/off: the API does not receive an effort level";
 		case "budget":
 			return `budget API (${api.field}): answer keeps ≥ ${groupDigits(MIN_ANSWER_TOKENS)} of the ${out} output${custom}`;
 		case "adaptive":

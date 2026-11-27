@@ -522,6 +522,7 @@ test("thinkingApi classifies the APIs by how they carry the level", () => {
 	assert.deepEqual(thinkingApi(model({ api: "openai-codex-responses" })), { kind: "effort-only" });
 	assert.deepEqual(thinkingApi(model({ api: "azure-openai-responses" })), { kind: "effort-only" });
 	assert.deepEqual(thinkingApi(model({ api: "openai-completions" })), { kind: "effort-only" });
+	assert.deepEqual(thinkingApi(model({ api: "openai-completions", compat: { thinkingFormat: "deepseek", supportsReasoningEffort: true } })), { kind: "effort-only" });
 	assert.deepEqual(thinkingApi(model({ api: "openai-completions", compat: { supportsThinkingTokenBudget: true } })), {
 		kind: "budget",
 		field: "thinking_token_budget",
@@ -532,7 +533,7 @@ test("thinkingApi classifies the APIs by how they carry the level", () => {
 	});
 	assert.deepEqual(thinkingApi(model({ api: "anthropic-messages" })), { kind: "budget", field: "budget_tokens" });
 	assert.deepEqual(thinkingApi(model({ api: "anthropic-messages", compat: { forceAdaptiveThinking: true } })), { kind: "adaptive" });
-	assert.deepEqual(thinkingApi(model({ api: "google-generative-ai", id: "gemini-2.5-pro" })), { kind: "google-budget", api: "google-generative-ai" });
+	assert.deepEqual(thinkingApi(model({ api: "google-generative-ai", id: "gemini-2.5-pro" })), { kind: "google-budget" });
 	assert.deepEqual(thinkingApi(model({ api: "google-vertex", id: "gemini-3-pro-preview" })), { kind: "google-level" });
 	assert.deepEqual(thinkingApi(model({ api: "bedrock-converse-stream" })), { kind: "unmodelled", api: "bedrock-converse-stream" });
 	assert.deepEqual(thinkingApi(model({ reasoning: false })), { kind: "no-reasoning" });
@@ -593,13 +594,23 @@ test("Gemini 2.5 uses the budget table, Gemini 3 a level, others are dynamic", (
 		{ kind: "budget", tokens: 128, custom: false },
 		{ kind: "budget", tokens: 32768, custom: false },
 	]);
-	const three = effortRows(model({ api: "google-vertex", id: "gemini-3-flash-preview" }), ["low"], {});
-	assert.deepEqual(three[0]!.wire, { kind: "google-level", level: "low" });
+	const three = effortRows(model({ api: "google-vertex", id: "gemini-3-flash-preview", thinkingLevelMap: { xhigh: "XHIGH" } }), ["low", "xhigh"], {});
+	assert.deepEqual(three.map((row) => row.wire), [
+		{ kind: "google-level", level: "low" },
+		{ kind: "google-level", level: "xhigh" },
+	]);
 	const other = effortRows(model({ api: "google-generative-ai", id: "gemini-2.0-flash-thinking" }), ["low"], {});
 	assert.deepEqual(other[0]!.wire, { kind: "dynamic" });
-	assert.equal(googleBudget("google-generative-ai", "gemini-2.0-flash", "low", { low: 999 }), 999);
-	assert.equal(googleBudget("google-generative-ai", "gemini-2.5-flash-lite", "minimal", {}), 512);
-	assert.equal(googleBudget("google-vertex", "gemini-2.5-flash-lite", "minimal", {}), 128);
+	assert.equal(googleBudget("gemini-2.0-flash", "low", { low: 999 }), 999);
+	for (const api of ["google-generative-ai", "google-vertex"]) {
+		const lite = model({ api, id: "gemini-2.5-flash-lite", thinkingLevelMap: { low: "XHIGH", xhigh: "xhigh" } });
+		const rows = effortRows(lite, ["minimal", "low", "high", "xhigh"], { high: 30_000 });
+		assert.deepEqual(rows[0]!.wire, { kind: "budget", tokens: 512, custom: false });
+		for (const row of [rows[1]!, rows[3]!]) {
+			assert.deepEqual(row.wire, { kind: "budget", tokens: 30_000, custom: true });
+			assert.equal(row.sameAs, "high");
+		}
+	}
 });
 
 // --- drift: the mirrored rules against the pinned pi-ai dist -----------------
@@ -687,28 +698,81 @@ test("drift: the adaptive effort mapping matches pi-ai", () => {
 	}
 });
 
-const GOOGLE_IDS: readonly string[] = [
+const GOOGLE_BUDGET_IDS = [
 	"gemini-2.5-pro",
 	"gemini-2.5-flash",
 	"gemini-2.5-flash-lite",
 	"gemini-2.5-flash-lite-preview-06-17",
 	"gemini-2.0-flash-thinking",
+];
+const GOOGLE_LEVEL_IDS = [
 	"gemini-3-pro-preview",
 	"gemini-3.1-flash",
 	"gemini-4-argon",
+	"host-gemini-live-4-preview",
 	"gemini-flash-latest",
 	"gemini-flash-lite-latest",
 	"gemma-4-27b",
 	"gemma4-9b",
 ];
 
-test("drift: the Gemini budget tables match pi-ai's getGoogleBudget (both Google APIs)", () => {
-	for (const api of ["google-generative-ai", "google-vertex"] as const) {
-		const file = `api/${api}.js`;
-		const real = distFunction<(model: { id: string }, level: string, custom?: ThinkingBudgets) => number>(file, "getGoogleBudget");
-		for (const id of GOOGLE_IDS) {
-			for (const level of ["minimal", "low", "medium", "high"] as const) {
-				for (const custom of DRIFT_BUDGETS) assert.equal(googleBudget(api, id, level, custom), real({ id }, level, custom), `${file} ${id} ${level}`);
+type StreamSimple<Payload> = (
+	subject: EffortModel & { baseUrl: string; input: ["text"] },
+	context: { messages: [] },
+	options: {
+		apiKey: string;
+		reasoning: ThinkingLevelName;
+		thinkingBudgets: ThinkingBudgets;
+		transport: "sse";
+		fetch: () => never;
+		onPayload: (payload: Payload) => never;
+	},
+) => { result(): Promise<{ errorMessage?: string }> };
+
+/** Capture the actual provider request at the last point before transport. No real credentials or network. */
+async function requestPayload<Payload>(
+	streamSimple: StreamSimple<Payload>, subject: EffortModel, reasoning: ThinkingLevelName, thinkingBudgets: ThinkingBudgets = {},
+): Promise<Payload> {
+	const stop = "captured test payload before transport";
+	const codexToken = Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "test" } })).toString("base64url");
+	let captured: Payload | undefined;
+	const result = await streamSimple({ ...subject, baseUrl: "https://example.invalid", input: ["text"] }, { messages: [] }, {
+		apiKey: subject.api === "openai-codex-responses" ? `test.${codexToken}.test` : "sk-test",
+		reasoning,
+		thinkingBudgets,
+		transport: "sse",
+		fetch: () => { throw new Error("unexpected network request"); },
+		onPayload: (payload) => {
+			captured = payload;
+			throw new Error(stop);
+		},
+	}).result();
+	assert.equal(result.errorMessage, stop, `${subject.api} ${subject.id} ${reasoning}`);
+	assert.ok(captured);
+	return captured;
+}
+
+test("drift: both Google APIs send the Gemini budget or discrete level the picker displays", async () => {
+	for (const api of ["google-generative-ai", "google-vertex"]) {
+		const { streamSimple } = (await import(piAiDist(`api/${api}.js`))) as {
+			streamSimple: StreamSimple<{ config: { thinkingConfig: { thinkingBudget?: number; thinkingLevel?: string } } }>;
+		};
+		for (const id of [...GOOGLE_BUDGET_IDS, ...GOOGLE_LEVEL_IDS]) {
+			const subject = model({ api, id, thinkingLevelMap: { xhigh: "XHIGH", max: "HIGH" } });
+			for (const level of ALL_ON) {
+				for (const custom of DRIFT_BUDGETS) {
+					const { config: { thinkingConfig } } = await requestPayload(streamSimple, subject, level, custom);
+					const wire = effortRows(subject, [level], custom)[0]!.wire;
+					const label = `${api} ${id} ${level} ${JSON.stringify(custom)}`;
+					if (wire.kind === "google-level") {
+						assert.equal(thinkingConfig.thinkingLevel, wire.level.toUpperCase(), label);
+						assert.equal(thinkingConfig.thinkingBudget, undefined, label);
+					} else {
+						assert.ok(wire.kind === "budget" || wire.kind === "dynamic", label);
+						assert.equal(thinkingConfig.thinkingBudget, wire.kind === "budget" ? wire.tokens : -1, label);
+						assert.equal(thinkingConfig.thinkingLevel, undefined, label);
+					}
+				}
 			}
 		}
 	}
@@ -719,7 +783,7 @@ test("drift: the Gemini level/budget split matches pi-ai's usesGoogleThinkingLev
 		usesGoogleThinkingLevel(model: { id: string }): boolean;
 		resolveGoogleThinkingLevel(model: EffortModel, level: string): string;
 	};
-	for (const id of [...GOOGLE_IDS, "Gemini-3-Pro", "gemini-10-x", "gemini-2.5-pro-exp"]) {
+	for (const id of [...GOOGLE_BUDGET_IDS, ...GOOGLE_LEVEL_IDS, "Gemini-3-Pro", "gemini-10-x", "gemini-2.5-pro-exp"]) {
 		assert.equal(usesGoogleThinkingLevel({ id }), real.usesGoogleThinkingLevel({ id }), id);
 	}
 	for (const thinkingLevelMap of [undefined, { xhigh: "HIGH", minimal: "low" }, { high: "ultra" }]) {
@@ -736,10 +800,49 @@ test("drift: the Gemini level/budget split matches pi-ai's usesGoogleThinkingLev
 	}
 });
 
-test("drift: effort-only APIs still send thinkingLevelMap[level] ?? level", () => {
-	for (const file of ["api/openai-responses.js", "api/openai-codex-responses.js", "api/azure-openai-responses.js", "api/openai-completions.js"]) {
-		const source = readFileSync(piAiDist(file), "utf-8");
-		assert.ok(source.includes("model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort"), file);
+test("drift: Ant Ling sends a thinking toggle, not the selected effort", async () => {
+	const catalog = JSON.parse(readFileSync(piAiDist("providers/data/ant-ling.json"), "utf-8")) as {
+		"openai-completions": Record<string, EffortModel>;
+	};
+	const { streamSimple } = (await import(piAiDist("api/openai-completions.js"))) as {
+		streamSimple: StreamSimple<{ thinking?: { type: string }; reasoning_effort?: string }>;
+	};
+	const entries = catalog["openai-completions"];
+	const flash = entries["chat:Ling-3.1-flash"]!;
+	for (const subject of [
+		flash,
+		entries["chat:Ling-3.0-flash"]!,
+		{ ...flash, compat: { ...flash.compat, thinkingFormat: "ant-ling" } },
+	]) {
+		const id = `${subject.id} (${subject.compat?.thinkingFormat})`;
+		assert.equal(subject.thinkingLevelMap?.high, "high", id);
+		const on = await requestPayload(streamSimple, subject, "high");
+		const off = await requestPayload(streamSimple, subject, "off");
+		assert.deepEqual(on.thinking, { type: "enabled" }, id);
+		assert.deepEqual(off.thinking, { type: "disabled" }, id);
+		assert.equal(on.reasoning_effort, undefined, id);
+		assert.equal(off.reasoning_effort, undefined, id);
+		const rows = effortRows(subject, ["off", "high"], {});
+		assert.deepEqual(rows.map((row) => row.wire), [{ kind: "off" }, { kind: "enabled" }], id);
+		assert.match(effortRow(PLAIN_THEME, 70, rows[1]!, false), /thinking enabled/);
+		assert.doesNotMatch(effortRow(PLAIN_THEME, 70, rows[1]!, false), /effort high/);
+		assert.match(effortFooter(thinkingApi(subject), subject, rows), /does not receive an effort level/);
+	}
+});
+
+test("drift: effort-only APIs send the mapped and default effort values the picker displays", async () => {
+	for (const api of ["openai-responses", "openai-codex-responses", "azure-openai-responses", "openai-completions"]) {
+		const { streamSimple } = (await import(piAiDist(`api/${api}.js`))) as {
+			streamSimple: StreamSimple<{ reasoning?: { effort: string }; reasoning_effort?: string }>;
+		};
+		const subject = model({ api, thinkingLevelMap: { minimal: "low", xhigh: "high", max: "max" } });
+		for (const level of ALL_ON) {
+			const payload = await requestPayload(streamSimple, subject, level);
+			const wire = effortRows(subject, [level], {})[0]!.wire;
+			const label = `${api} ${level}`;
+			assert.equal(wire.kind, "effort", label);
+			assert.equal(api === "openai-completions" ? payload.reasoning_effort : payload.reasoning?.effort, wire.value, label);
+		}
 	}
 });
 

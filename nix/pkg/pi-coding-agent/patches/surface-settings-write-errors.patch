@@ -1,8 +1,8 @@
 diff --git a/packages/coding-agent/src/core/settings-manager.ts b/packages/coding-agent/src/core/settings-manager.ts
-index 99bbead..8db23af 100644
+index 2505bb0..7b6ba56 100644
 --- a/packages/coding-agent/src/core/settings-manager.ts
 +++ b/packages/coding-agent/src/core/settings-manager.ts
-@@ -173,6 +173,8 @@ export interface SettingsError {
+@@ -175,6 +175,8 @@ export interface SettingsError {
  	error: Error;
  }
  
@@ -11,7 +11,7 @@ index 99bbead..8db23af 100644
  type SettingsPaths = Partial<Record<SettingsScope, string>>;
  
  function toSettingsError(scope: SettingsScope, error: unknown, path?: string): SettingsError {
-@@ -283,6 +285,7 @@ export class SettingsManager {
+@@ -285,6 +287,7 @@ export class SettingsManager {
  	private projectSettingsLoadError: Error | null = null; // Track if project settings file had parse errors
  	private writeQueue: Promise<void> = Promise.resolve();
  	private errors: SettingsError[];
@@ -19,7 +19,7 @@ index 99bbead..8db23af 100644
  	private settingsPaths: SettingsPaths;
  
  	private constructor(
-@@ -583,7 +586,14 @@ export class SettingsManager {
+@@ -599,7 +602,14 @@ export class SettingsManager {
  				this.clearModifiedScope(scope);
  			})
  			.catch((error) => {
@@ -35,7 +35,7 @@ index 99bbead..8db23af 100644
  			});
  	}
  
-@@ -671,6 +681,14 @@ export class SettingsManager {
+@@ -687,6 +697,14 @@ export class SettingsManager {
  		await this.writeQueue;
  	}
  
@@ -51,10 +51,10 @@ index 99bbead..8db23af 100644
  		const drained = [...this.errors];
  		this.errors = [];
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index 2a7d6f2..9f5133e 100644
+index 4da31e0..41015b4 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-@@ -552,6 +552,7 @@ export class InteractiveMode {
+@@ -640,6 +640,7 @@ export class InteractiveMode {
  
  	// Agent subscription unsubscribe function
  	private unsubscribe?: () => void;
@@ -62,7 +62,7 @@ index 2a7d6f2..9f5133e 100644
  	private signalCleanupHandlers: Array<() => void> = [];
  
  	// Track if editor is in bash mode (text starts with !)
-@@ -2227,6 +2228,12 @@ export class InteractiveMode {
+@@ -2308,6 +2309,12 @@ export class InteractiveMode {
  
  		this.unsubscribe?.();
  		this.unsubscribe = undefined;
@@ -73,9 +73,9 @@ index 2a7d6f2..9f5133e 100644
 +			);
 +		});
  		this.programStatus.reset();
+ 		this.programResume?.report();
  		this.applyRuntimeSettings();
- 
-@@ -7343,6 +7350,7 @@ export class InteractiveMode {
+@@ -7442,6 +7449,7 @@ export class InteractiveMode {
  		if (this.unsubscribe) {
  			this.unsubscribe();
  		}
@@ -84,13 +84,13 @@ index 2a7d6f2..9f5133e 100644
  			this.stopInteractiveTui(fullscreenExitOutput);
  			this.isInitialized = false;
 diff --git a/packages/coding-agent/test/settings-manager.test.ts b/packages/coding-agent/test/settings-manager.test.ts
-index 5ff78de..97c5f51 100644
+index fa25f78..70576da 100644
 --- a/packages/coding-agent/test/settings-manager.test.ts
 +++ b/packages/coding-agent/test/settings-manager.test.ts
-@@ -3,7 +3,12 @@ import { homedir } from "os";
- import { join } from "path";
+@@ -4,7 +4,12 @@ import { join } from "path";
  import { afterEach, beforeEach, describe, expect, it } from "vitest";
  import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
+ import { SETTINGS_DEFAULTS } from "../src/core/settings-defaults.ts";
 -import { type Settings, SettingsManager } from "../src/core/settings-manager.ts";
 +import {
 +	type Settings,
@@ -101,7 +101,7 @@ index 5ff78de..97c5f51 100644
  
  describe("SettingsManager", () => {
  	const testDir = join(process.cwd(), "test-settings-tmp");
-@@ -251,6 +256,34 @@ describe("SettingsManager", () => {
+@@ -313,6 +318,34 @@ describe("SettingsManager", () => {
  			]);
  			expect(manager.drainErrors()).toEqual([]);
  		});

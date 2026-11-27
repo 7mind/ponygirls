@@ -128,8 +128,8 @@ function renderFacts(theme: UiTheme, width: number, groups: readonly FactGroup[]
 
 interface Content {
   width: number;
-  facts: string[] | null;
-  details: string[] | null;
+  facts: readonly string[] | null;
+  details: readonly string[] | null;
 }
 
 /**
@@ -144,7 +144,7 @@ export class FactsView extends ReadOnlyBodyPager<FactsViewOptions> {
 
   override invalidate(): void { this.content = null; this.detailsText.invalidate(); }
 
-  private body(width: number): string[] {
+  private body(width: number): readonly string[] {
     const { theme, facts, details } = this.options;
     if (this.content === null || this.content.width !== width) this.content = { width, facts: null, details: null };
     const content = this.content;

@@ -1,8 +1,8 @@
 diff --git a/packages/coding-agent/src/config.ts b/packages/coding-agent/src/config.ts
-index 5a9552d..2b8affc 100644
+index b3eef2e..5f8d425 100644
 --- a/packages/coding-agent/src/config.ts
 +++ b/packages/coding-agent/src/config.ts
-@@ -679,3 +679,8 @@ export function getSessionsDir(): string {
+@@ -695,3 +695,8 @@ export function getSessionsDir(): string {
  export function getDebugLogPath(): string {
  	return join(getAgentDir(), `${APP_NAME}-debug.log`);
  }
@@ -12,7 +12,7 @@ index 5a9552d..2b8affc 100644
 +	return join(getAgentDir(), `${APP_NAME}-captured-output.log`);
 +}
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index d8e2390..2b33580 100644
+index e5432b0..4da31e0 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 @@ -20,6 +20,7 @@ import {
@@ -23,7 +23,7 @@ index d8e2390..2b33580 100644
  	EditorComponent,
  	Keybinding,
  	KeyId,
-@@ -42,6 +43,7 @@ import {
+@@ -43,6 +44,7 @@ import {
  	matchesKey,
  	Spacer,
  	setCapabilityOverrides,
@@ -31,15 +31,15 @@ index d8e2390..2b33580 100644
  	setKeybindings,
  	type Terminal,
  	Text,
-@@ -62,6 +64,7 @@ import {
+@@ -63,6 +65,7 @@ import {
  	detectInstallChange,
  	getAgentDir,
  	getAuthPath,
 +	getCapturedOutputLogPath,
  	getDebugLogPath,
  	getDocsPath,
- 	VERSION,
-@@ -519,6 +522,11 @@ export class InteractiveMode {
+ 	usesDefaultAgentDir,
+@@ -606,6 +609,11 @@ export class InteractiveMode {
  	private lastStatusSpacer: Spacer | undefined = undefined;
  	private lastStatusText: ThemedText | undefined = undefined;
  	private lastStatusMessage = "";
@@ -51,7 +51,7 @@ index d8e2390..2b33580 100644
  	private managedToolStatusStarted = false;
  
  	// Streaming message tracking
-@@ -655,6 +663,7 @@ export class InteractiveMode {
+@@ -753,6 +761,7 @@ export class InteractiveMode {
  			onRightClickPaste: this.onRightClickPaste,
  			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
  			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
@@ -59,7 +59,7 @@ index d8e2390..2b33580 100644
  		});
  		this.ui = createInteractiveTuiReference(() => this.renderer);
  		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
-@@ -3983,6 +3992,51 @@ export class InteractiveMode {
+@@ -4076,6 +4085,51 @@ export class InteractiveMode {
  		this.ui.requestRender();
  	}
  
@@ -223,10 +223,10 @@ index 0000000..6811f05
 +	});
 +});
 diff --git a/packages/tui/src/index.ts b/packages/tui/src/index.ts
-index 8b4f9ea..72eef6f 100644
+index c7d9b3d..c1efd46 100644
 --- a/packages/tui/src/index.ts
 +++ b/packages/tui/src/index.ts
-@@ -117,7 +117,13 @@ export { formatProgramStatus, type ProgramStatus } from "./program-status.ts";
+@@ -125,7 +125,13 @@ export { formatProgramStatus, type ProgramStatus } from "./program-status.ts";
  // Input buffering for batch splitting
  export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
  // Terminal interface and implementations

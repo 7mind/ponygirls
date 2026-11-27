@@ -1,15 +1,16 @@
 diff --git a/packages/tui/src/stdin-buffer.ts b/packages/tui/src/stdin-buffer.ts
+index 9661b27..47a77e4 100644
 --- a/packages/tui/src/stdin-buffer.ts
 +++ b/packages/tui/src/stdin-buffer.ts
-@@ -22,6 +22,7 @@
+@@ -22,6 +22,7 @@ import { EventEmitter } from "events";
  const ESC = "\x1b";
  const DEFAULT_SEQUENCE_TIMEOUT_MS = 50;
  const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
 +const LEGACY_PAGE_KEYS = ["\x1b[[5~", "\x1b[[6~"];
  const BRACKETED_PASTE_START = "\x1b[200~";
  const BRACKETED_PASTE_END = "\x1b[201~";
- // Color and program-status OSC replies, XTVersion, and Kitty graphics replies.
-@@ -207,6 +208,17 @@
+ const MOUSE_REPORT_HEADER_PATTERN = /^\x1b\[(?:<|M)/;
+@@ -195,6 +196,17 @@ function extractCompleteSequences(buffer: string): { sequences: string[]; remain
  
  		// Try to extract a sequence starting at this position
  		if (remaining.startsWith(ESC)) {
@@ -25,17 +26,16 @@ diff --git a/packages/tui/src/stdin-buffer.ts b/packages/tui/src/stdin-buffer.ts
 +				}
 +			}
  			const terminalReply = isControlString(remaining) && TERMINAL_REPLY_HEADER_PATTERN.test(remaining);
+ 			const mouseReport = MOUSE_REPORT_HEADER_PATTERN.test(remaining);
  			// Find the end of this escape sequence
- 			let seqEnd = 1;
 diff --git a/packages/tui/test/stdin-buffer.test.ts b/packages/tui/test/stdin-buffer.test.ts
+index 0166d5f..3f41a97 100644
 --- a/packages/tui/test/stdin-buffer.test.ts
 +++ b/packages/tui/test/stdin-buffer.test.ts
-@@ -98,6 +98,17 @@
- 			processInput(";20;5m");
- 			assert.deepStrictEqual(emittedSequences, ["\x1b[<35;20;5m"]);
+@@ -100,6 +100,17 @@ describe("StdinBuffer", () => {
  			assert.strictEqual(buffer.getBuffer(), "");
-+		});
-+
+ 		});
+ 
 +		it("keeps legacy paging keys intact across chunk boundaries", () => {
 +			for (const sequence of ["\x1b[[5~", "\x1b[[6~"]) {
 +				for (let split = 1; split < sequence.length; split++) {
@@ -45,6 +45,8 @@ diff --git a/packages/tui/test/stdin-buffer.test.ts b/packages/tui/test/stdin-bu
 +					assert.deepStrictEqual(emittedSequences, [sequence, "x"]);
 +				}
 +			}
- 		});
- 
++		});
++
  		it("should buffer incomplete CSI sequence", () => {
+ 			processInput("\x1b[");
+ 			assert.deepStrictEqual(emittedSequences, []);

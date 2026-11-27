@@ -1,9 +1,9 @@
 import { ScrollView, VStack, type Component, type TuiMouseEvent } from "@earendil-works/pi-tui";
 
 export interface PanelParts {
-  header: string[];
-  body: string[];
-  footer: string[];
+  header: readonly string[];
+  body: readonly string[];
+  footer: readonly string[];
 }
 
 class PanelScrollView extends ScrollView {
