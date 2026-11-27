@@ -71,6 +71,19 @@ object StartFailure {
     s"""$service failure stage=$stage code=${failure.code} error=${failure.errorClass} message="$message"""" + bound.fold("")(" port=" + _)
   }
 
+  /** A failure and the start step it failed in; `port` is the listen port of a step that binds. */
+  final case class StageFailure(stage: String, port: Option[Int], error: Throwable) extends RuntimeException(stage, error)
+  /** Names the start step that failed; the innermost stage wins, a failure outside every stage is `start`. */
+  def staged(name: String, port: Option[Int] = None): PartialFunction[Throwable, Throwable] = {
+    case error if !error.isInstanceOf[StageFailure] => StageFailure(name, port, error)
+  }
+  def stage[A](name: String, work: => IO[A], port: Option[Int] = None): IO[A] = IO.defer(work).adaptError(staged(name, port))
+  /** The stage, bind port and cause of a failed start. */
+  def unstage(error: Throwable): (String, Option[Int], Throwable) = error match {
+    case failed: StageFailure => (failed.stage, failed.port, failed.error)
+    case other => ("start", None, other)
+  }
+
   /** cats-effect hands IOApp's `reportFailure` the failures no fiber observed. A failed listener acquisition reaches both
     * that hook (Ember's background fiber) and the command's handler, in either order. Reports are held until the command
     * settles; then the failure the handler reports (the same instance) is dropped and every other report is printed. */

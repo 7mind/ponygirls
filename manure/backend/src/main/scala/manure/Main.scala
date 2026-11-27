@@ -9,6 +9,7 @@ import manure.plugins.{ManurePlugin,RuntimeServices}
 import manure.storage.{ConfinedDirectory,RelativeName,RootLease,RootLocked}
 import ponygirls.auth.CredentialGate
 import ponygirls.runtime.{CatsIOInjector,DatabaseWait,JdbcDatabase,JdbcFailure,JdbcPoolSizing,Migration,StartFailure}
+import ponygirls.runtime.StartFailure.{StageFailure,stage,staged,unstage}
 import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry}
 import org.http4s.ember.server.EmberServerBuilder
 import scala.concurrent.duration.*
@@ -37,7 +38,6 @@ object Main extends IOApp:
     case List("--config",path) => runServer(path).as(ExitCode.Success)
     case _ => IO.println("usage: manure-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json | --config CONFIG.json | plan-root-identity CONFIG.json PRIVATE_PLAN.json PRIOR_VOLUME_EVIDENCE | migrate-root-identity CONFIG.json PRIVATE_PLAN.json EXPECTED_SHA256").as(ExitCode.Error)
   }(safeFailure)
-  private final case class StageFailure(stage: String,port: Option[Int],error: Throwable) extends RuntimeException(stage,error)
   /** Enumerated category by exact failure type only; never message, path or cause detail. StartFailure walks causes and
     * suppressed exceptions: distage wraps any provisioning-step failure into izumi.* (ProvisioningException) with no
     * cause and the actual failure attached only as a SUPPRESSED exception (FailedProvision.toThrowable). A
@@ -52,17 +52,12 @@ object Main extends IOApp:
     case _: java.nio.file.FileSystemException => ("filesystem","file system failure")
     case _: java.io.IOException => ("io","input/output failure")
     case _: IllegalArgumentException => ("configuration","invalid configuration")
-  /** Names the start step that failed; the innermost stage wins, a failure outside every stage is `start`. */
-  private def staged(name: String,port: Option[Int] = None): PartialFunction[Throwable,Throwable] =
-    case error if !error.isInstanceOf[StageFailure] => StageFailure(name,port,error)
-  private def stage[A](name: String,work: => IO[A],port: Option[Int] = None): IO[A] = IO.defer(work).adaptError(staged(name,port))
   private def safeFailure(error: Throwable): IO[ExitCode] =
     val (label,port,cause) = error match
-      case s: StageFailure => (s.stage,s.port,s.error)
       // The other unstaged database work is buildResources' initialization transaction after `schema`; its domain
       // refusals stay raw for Main.resources callers, its JDBC failures are the database's.
       case jdbc: JdbcFailure => ("database",None,jdbc)
-      case other => ("start",None,other)
+      case other => unstage(other)
     val classified = StartFailure.classify(cause,category)
     val failure = if classified.code == StartFailure.Internal && cause.getClass.getName.startsWith("izumi.") then classified.copy(code = "wiring") else classified
     // Enumerated stage/category and fixed text ONLY. No stack/cause/SQL/path/provider detail.

@@ -4,6 +4,7 @@ import cats.effect.{IO,IOApp,ExitCode,Resource}
 import cats.syntax.all.*
 import distage.*
 import ponygirls.runtime.{DatabaseWait,JdbcDatabase,JdbcPoolSizing,CatsIOInjector,StartFailure}
+import ponygirls.runtime.StartFailure.{stage,staged,unstage}
 import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry,RetrievalProfile}
 import ponygirls.retrieval.postgres.PostgresRetrieval
 import haystack.auth.{Auth,AccountService,ImperativeRuntime}
@@ -35,10 +36,6 @@ object Main extends IOApp {
     case _=>IO.println("usage: haystack-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json").as(ExitCode.Error)
   })(failure)
 
-  private final case class StageFailure(stage:String,port:Option[Int],error:Throwable) extends RuntimeException(stage,error)
-  /** Names the start step that failed; the innermost stage wins, a failure outside every stage is `start`. */
-  private def staged(name:String,port:Option[Int]=None):PartialFunction[Throwable,Throwable]={ case error if !error.isInstanceOf[StageFailure]=>StageFailure(name,port,error) }
-  private def stage[A](name:String,work: =>IO[A],port:Option[Int]=None):IO[A]=IO.defer(work).adaptError(staged(name,port))
   /** Fault texts are fixed only for configuration faults; a migration refusal is fixed text and a row count. */
   private val known:StartFailure.Known={
     case refused:MigrationRefused=>("migration-refused",refused.getMessage)
@@ -47,10 +44,7 @@ object Main extends IOApp {
     case account:AccountFailure=>(account.code,account.code)
   }
   private def failure(error:Throwable):IO[ExitCode]={
-    val (name,port,cause)=error match{
-      case failed:StageFailure=>(failed.stage,failed.port,failed.error)
-      case other=>("start",None,other)
-    }
+    val (name,port,cause)=unstage(error)
     IO { unobserved.settle(Some(cause)); System.err.println(StartFailure.line("haystack",name,StartFailure.classify(cause,known),port)) }.as(ExitCode.Error)
   }
   /** IOApp's default prints the stack trace of a failure no fiber observed; one sanitized `background` line instead. */

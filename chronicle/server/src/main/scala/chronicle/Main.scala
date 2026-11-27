@@ -7,6 +7,7 @@ import com.comcast.ip4s.{Host,Port}
 import distage.*
 import izumi.distage.model.definition.Lifecycle
 import ponygirls.runtime.{DatabaseWait,StartFailure}
+import ponygirls.runtime.StartFailure.{stage,unstage}
 import scala.concurrent.duration.*
 
 final class RuntimeServices(val database: Database,val http: Http,val worker: Worker,val archive: PostgresArchive,val logger: logstage.IzLogger)
@@ -46,11 +47,6 @@ object Main extends IOApp {
       }.as(ExitCode.Success)
     case _ => IO.println("usage: chronicle-server serve CONFIG.json | serve-standby CONFIG.json (writable API, no background workers) | migrate CONFIG.json | reseed-claim-order CONFIG.json (server stopped) | password-hash (stdin)").as(ExitCode.Error)
   })(failure)
-  private final case class StageFailure(stage: String,port: Option[Int],error: Throwable) extends RuntimeException(stage,error)
-  /** Names the start step that failed; the innermost stage wins, a failure outside every stage is `start`. */
-  private def stage[A](name: String,work: => IO[A],port: Option[Int] = None): IO[A] = IO.defer(work).adaptError {
-    case error if !error.isInstanceOf[StageFailure] => StageFailure(name,port,error)
-  }
   /** A refused start names its reason and remedy. Every `migration-required` and `config` detail in this server is fixed
     * text, code constants (table and index names, the operator's remedy) and database counts or sizes; any other detail
     * can carry a value, so only its code is printed. */
@@ -59,10 +55,7 @@ object Main extends IOApp {
     case other: DomainError => (other.code,other.code)
   }
   private def failure(error: Throwable): IO[ExitCode] = {
-    val (name,port,cause) = error match {
-      case failed: StageFailure => (failed.stage,failed.port,failed.error)
-      case other => ("start",None,other)
-    }
+    val (name,port,cause) = unstage(error)
     IO.blocking { unobserved.settle(Some(cause)); System.err.println(StartFailure.line("chronicle",name,StartFailure.classify(cause,known),port)) }.as(ExitCode.Error)
   }
   /** IOApp's default prints the stack trace of a failure no fiber observed; one sanitized `background` line instead. */
