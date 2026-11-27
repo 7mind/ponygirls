@@ -3,7 +3,8 @@ import { CURSOR_MARKER, Editor, matchesKey, Key, truncateToWidth, visibleWidth, 
 import { BORDER_ORDER, CustomViewToggle, HINT, KEY, borderBadge, borderBadgeCompact, fit, fitRight, frameRule, frameTitle, keyHints, PanelLayout, type BorderBadge, type FrameTitle, type KeyHint, type PanelParts, type UiTheme } from '@ponygirls/pi-ui';
 import type { Checkpoint } from './report.ts';
 import { checkpoints as collectCheckpoints, REPORT_TYPE } from './report.ts';
-import { checkpointBlocks, reportContent, historyContent, terminalText } from './presentation.ts';
+import { checkpointBlocks, currentBlocks, currentSummary, reportContent, historyContent, terminalText } from './presentation.ts';
+import { EMPTY_SET, type CurrentSet } from './current.ts';
 import { commentNodes, commentText, sameNode, type CommentDraft, type CommentNode, type SavedComment, type ShownComment } from './comments.ts';
 
 const BADGE_GLYPH = '🐦';
@@ -98,34 +99,47 @@ function scrollPosition(lineCount: number, start: number, end: number): string {
   return `${start > 0 ? '↑ ' : ''}lines ${start + 1}–${end} of ${lineCount}${end < lineCount ? ' ↓' : ''}`;
 }
 
-interface TableItem {
+interface CheckpointItem {
+  kind: 'checkpoint';
   checkpoint: Checkpoint;
   id: string;
   meta: string;
   timestamp?: string;
   currentBranch?: boolean;
 }
+/** The first row of the report list once the branch has a current set: what its entries are now, not a saved answer. */
+interface CurrentItem { kind: 'current'; set: CurrentSet }
+type TableItem = CheckpointItem | CurrentItem;
+const CURRENT_TITLE = 'Current set';
+/** What the comment keys say on the row of the current set: comments belong to the saved report they were made on. */
+const COMMENTS_ON_CHECKPOINTS = 'Comments are made on a saved checkpoint: select one in the list.';
+const activeObjectives = (set: CurrentSet): number => set.objectives.filter(item => item.status === 'active').length;
 
 export class CuckooView {
   private readonly pane = new CustomViewToggle();
   private active = true;
   private readonly inquire: (ctx: ExtensionContext) => void;
   private readonly comments: CommentHost;
+  private readonly now: () => number;
   private lastReports: readonly Checkpoint[] = [];
+  private lastCurrent: CurrentSet = EMPTY_SET;
   private lastFault: string | null = null;
   private lastEnabled = false;
-  constructor(inquire: (ctx: ExtensionContext) => void, comments: CommentHost) { this.inquire = inquire; this.comments = comments; }
+  /** `now` is the clock the ages in the current set are counted from. */
+  constructor(inquire: (ctx: ExtensionContext) => void, comments: CommentHost, now: () => number) { this.inquire = inquire; this.comments = comments; this.now = now; }
 
-  async showReports(ctx: ExtensionContext, reports: readonly Checkpoint[], intro: string): Promise<void> {
+  /** `current` is the current set of the branch the reports are from; without numbered reports or edits it has no row. */
+  async showReports(ctx: ExtensionContext, reports: readonly Checkpoint[], intro: string, current: CurrentSet): Promise<void> {
     if (ctx.mode !== 'tui' || !ctx.hasUI) {
-      ctx.ui.notify(terminalText(reportContent(reports, intro, this.comments.saved(ctx, 'branch')).plain), 'info');
+      ctx.ui.notify(terminalText(reportContent(reports, intro, this.comments.saved(ctx, 'branch'), current, this.now()).plain), 'info');
       return;
     }
-    const items: TableItem[] = [...reports].reverse().map(r => ({
+    const items: TableItem[] = [...(current.events === 0 ? [] : [{ kind: 'current' as const, set: current }]), ...[...reports].reverse().map((r): TableItem => ({
+      kind: 'checkpoint',
       checkpoint: r,
       id: terminalText(r.requestId),
       meta: r.report === null ? 'invalid' : `${r.report.objectives.length} objectives`,
-    }));
+    }))];
     await this.showTable(ctx, { title: 'Cuckoo objectives and progress', noun: 'checkpoint', items, intro, emptyMessage: 'No Cuckoo reports on this branch yet.', commentScope: 'branch' });
   }
 
@@ -139,6 +153,7 @@ export class CuckooView {
     const items: TableItem[] = [...answers].reverse().map(entry => {
       const cp = collectCheckpoints([entry])[0];
       return {
+        kind: 'checkpoint',
         checkpoint: cp,
         id: terminalText(entry.id),
         meta: `${cp.report === null ? 'invalid' : `${cp.report.objectives.length} objectives`}`,
@@ -159,6 +174,7 @@ export class CuckooView {
     if (!this.active) return;
     let requested = false;
     const host = this.comments;
+    const now = this.now;
     const closeReason = (): PanelClose => !this.active ? 'shutdown' : requested ? 'inquire' : 'close';
     await this.pane.toggle(ctx.ui, (tui, theme, keys, done) => {
       const state = { selectedIndex: 0, topRow: 0, scrollOffset: 0, node: null as number | null, focus: 'list' as Focus };
@@ -271,9 +287,15 @@ export class CuckooView {
           return tableRows;
         }
 
+        /** The items of the selected row that can be commented on: those of a saved report. */
         private selectedNodes(): CommentNode[] {
           const item = opts.items[state.selectedIndex];
-          return item === undefined ? [] : commentNodes(item.checkpoint);
+          return item === undefined || item.kind !== 'checkpoint' ? [] : commentNodes(item.checkpoint);
+        }
+        /** Whether the selected row has items to walk: the entries of the current set, or what can be commented on. */
+        private hasItems(): boolean {
+          const item = opts.items[state.selectedIndex];
+          return item !== undefined && item.kind === 'current' ? item.set.objectives.length + item.set.rules.length > 0 : this.selectedNodes().length > 0;
         }
 
         /** Node line ranges for the current state. Recomputed on demand: keys can arrive without a frame in between. */
@@ -406,6 +428,7 @@ export class CuckooView {
 
         private startComment(): void {
           const item = opts.items[state.selectedIndex];
+          if (item !== undefined && item.kind === 'current') { notice = COMMENTS_ON_CHECKPOINTS; return; }
           const index = this.nodeFromView(1);
           if (item === undefined || index === null) { notice = 'This checkpoint has no rule, objective or answer to comment on.'; return; }
           const node = this.selectedNodes()[index];
@@ -433,6 +456,7 @@ export class CuckooView {
 
         private removeStaged(): void {
           const item = opts.items[state.selectedIndex];
+          if (item !== undefined && item.kind === 'current') { notice = COMMENTS_ON_CHECKPOINTS; return; }
           const node = state.node === null ? undefined : this.selectedNodes()[state.node];
           if (item === undefined || node === undefined) { notice = 'Select an item with tab first.'; return; }
           const index = staged.findLastIndex(value => value.requestId === item.checkpoint.requestId && sameNode(value.target, node.ref));
@@ -474,8 +498,10 @@ export class CuckooView {
         private hints(): KeyHint[] {
           const inquire: KeyHint = { key: 'i', action: 'inquire now' };
           if (opts.items.length === 0) return [inquire, HINT.close];
-          const hasItems = this.selectedNodes().length > 0;
-          const comment: KeyHint[] = [
+          const hasItems = this.hasItems();
+          // The comment keys act on the items of a saved report; the current set, whose entries can be walked, takes none.
+          const selected = opts.items[state.selectedIndex];
+          const comment: KeyHint[] = selected.kind === 'current' ? [] : [
             ...(hasItems ? [{ key: 'c', action: 'comment' }] : []),
             ...(staged.length === 0 ? [] : [{ key: 'x', action: 'remove new comment' }]),
           ];
@@ -547,6 +573,9 @@ export class CuckooView {
           const maxRows = this.maxTableRows();
           ensureVisible(total, maxRows);
           const ordinal = total - state.selectedIndex;
+          // The row of the current set is not a saved checkpoint: it has a name instead of a number and is not counted.
+          const selectedItem = opts.items[state.selectedIndex];
+          const savedCount = opts.items.filter(item => item.kind === 'checkpoint').length;
           const header: string[] = [];
           const titles: string[] = [];
           if (this.tableShown()) {
@@ -555,6 +584,10 @@ export class CuckooView {
             const rows: TableRow[] = [];
             for (let i = state.topRow; i < visibleEnd && i < total; i++) {
               const item = opts.items[i];
+              if (item.kind === 'current') {
+                rows.push({ cells: ['now', 'objectives and rules as the model last stated them', String(activeObjectives(item.set)), 'current'], selected: i === state.selectedIndex });
+                continue;
+              }
               const objCount = item.checkpoint.report?.objectives.length ?? 0;
               rows.push({
                 cells: [
@@ -569,43 +602,55 @@ export class CuckooView {
             // Which rows of a longer list are shown; the pane's name outlasts it at narrow widths.
             const shownRows = total > maxRows ? [{ title: opts.title, meta: `${state.topRow + 1}–${visibleEnd} of ${total}` }] : [];
             header.push(fittingTitle(theme, w, [...shownRows, { title: opts.title }]), ...tableLines(theme, columns, rows, w));
-            titles.push(`${ITEM_TITLE[opts.noun]} ${ordinal}`);
+            titles.push(selectedItem.kind === 'current' ? CURRENT_TITLE : `${ITEM_TITLE[opts.noun]} ${ordinal}`);
+          } else if (selectedItem.kind === 'current') {
+            titles.push(`Cuckoo ${CURRENT_TITLE.toLowerCase()}`, CURRENT_TITLE);
           } else {
             // The table that numbers the rows is hidden, so the title says which one of how many this is.
-            titles.push(`Cuckoo ${opts.noun} ${ordinal} of ${total}`, `${ITEM_TITLE[opts.noun]} ${ordinal} of ${total}`);
+            titles.push(`Cuckoo ${opts.noun} ${ordinal} of ${savedCount}`, `${ITEM_TITLE[opts.noun]} ${ordinal} of ${savedCount}`);
           }
 
-          // Detail
-          const selectedItem = opts.items[state.selectedIndex];
-          const comments = shown();
-          const commentCount = comments.filter(item => item.requestId === selectedItem.checkpoint.requestId).length;
-          const metaParts: string[] = [terminalText(selectedItem.checkpoint.requestId)];
-          if (selectedItem.timestamp) metaParts.push(terminalText(selectedItem.timestamp));
-          if (selectedItem.currentBranch !== undefined) metaParts.push(selectedItem.currentBranch ? 'current branch' : 'other branch');
-          if (selectedItem.id && selectedItem.id !== terminalText(selectedItem.checkpoint.requestId)) {
-            metaParts.push(`entry ${selectedItem.id}`);
-          }
-          if (selectedItem.checkpoint.report !== null) {
-            const count = selectedItem.checkpoint.report.objectives.length;
-            metaParts.push(`${count} objective${count === 1 ? '' : 's'} · saved self-report, not live verification`);
+          // Detail: one muted line about the selected row, then its blocks; `item` marks the lines of one selectable item.
+          const blockWidth = Math.max(20, w - 2 * NODE_GUTTER);
+          let lead: string;
+          let blocks: readonly { readonly item: boolean; readonly lines: readonly string[] }[];
+          if (selectedItem.kind === 'current') {
+            const nowMs = now();
+            lead = `${currentSummary(selectedItem.set, nowMs)} · the model's own account, not live verification`;
+            blocks = currentBlocks(theme, selectedItem.set, blockWidth, nowMs).map(block => ({ item: block.entry !== null, lines: block.lines }));
           } else {
-            metaParts.push('invalid · saved attempt');
+            const comments = shown();
+            const commentCount = comments.filter(item => item.requestId === selectedItem.checkpoint.requestId).length;
+            const metaParts: string[] = [terminalText(selectedItem.checkpoint.requestId)];
+            if (selectedItem.timestamp) metaParts.push(terminalText(selectedItem.timestamp));
+            if (selectedItem.currentBranch !== undefined) metaParts.push(selectedItem.currentBranch ? 'current branch' : 'other branch');
+            if (selectedItem.id && selectedItem.id !== terminalText(selectedItem.checkpoint.requestId)) {
+              metaParts.push(`entry ${selectedItem.id}`);
+            }
+            if (selectedItem.checkpoint.report !== null) {
+              const count = selectedItem.checkpoint.report.objectives.length;
+              metaParts.push(`${count} objective${count === 1 ? '' : 's'} · saved self-report, not live verification`);
+            } else {
+              metaParts.push('invalid · saved attempt');
+            }
+            if (commentCount > 0) metaParts.push(`${commentCount} comment${commentCount === 1 ? '' : 's'}`);
+            lead = metaParts.join(' · ');
+            blocks = checkpointBlocks(theme, selectedItem.checkpoint, blockWidth, comments).map(block => ({ item: block.node !== null, lines: block.lines }));
           }
-          if (commentCount > 0) metaParts.push(`${commentCount} comment${commentCount === 1 ? '' : 's'}`);
 
-          // Body: errors first, then the report's metadata and detail, then status
+          // Body: errors first, then the lead line and detail, then status
           const bodyLines: string[] = [];
           for (const line of errorLines) bodyLines.push(...wrapTextWithAnsi(line, w));
           if (errorLines.length > 0) bodyLines.push('');
-          bodyLines.push(...wrapTextWithAnsi(theme.fg('muted', metaParts.join(' · ')), w), '');
+          bodyLines.push(...wrapTextWithAnsi(theme.fg('muted', lead), w), '');
           const nodes: LineRange[] = [];
           const contentWidth = Math.max(1, w - NODE_GUTTER);
-          for (const block of checkpointBlocks(theme, selectedItem.checkpoint, Math.max(20, w - 2 * NODE_GUTTER), comments)) {
+          for (const block of blocks) {
             const start = bodyLines.length;
-            const selected = block.node !== null && state.node === nodes.length;
+            const selected = block.item && state.node === nodes.length;
             const gutter = selected ? `${theme.fg('accent', '▌')} ` : ' '.repeat(NODE_GUTTER);
             for (const line of block.lines) for (const piece of wrapTextWithAnsi(line, contentWidth)) bodyLines.push(w > NODE_GUTTER ? `${gutter}${piece}` : piece);
-            if (block.node !== null) nodes.push({ start, end: bodyLines.length });
+            if (block.item) nodes.push({ start, end: bodyLines.length });
           }
           bodyLines.push('');
           for (const line of statusLines) bodyLines.push(...wrapTextWithAnsi(line, w));
@@ -751,17 +796,20 @@ export class CuckooView {
     if (requested && this.active) this.inquire(ctx);
   }
 
-  publish(ctx: ExtensionContext, reports: readonly Checkpoint[], enabled: boolean, fault: string | null, repaint = false): void {
+  /** `current` is the current set of the branch the reports are from. */
+  publish(ctx: ExtensionContext, reports: readonly Checkpoint[], current: CurrentSet, enabled: boolean, fault: string | null, repaint = false): void {
     this.lastReports = reports;
+    this.lastCurrent = current;
     this.lastFault = fault;
     this.lastEnabled = enabled;
     if (!this.active) return;
-    const showBadge = enabled || reports.length > 0 || fault !== null;
+    const showBadge = enabled || reports.length > 0 || current.events > 0 || fault !== null;
     if (!showBadge && !repaint) { ctx.ui.setWidget('cuckoo', undefined); return; }
     const latest = reports.at(-1);
     const valid = reports.findLast(value => value.report !== null);
-    // The objective count of the last valid report; nothing before the first one.
-    const count = valid === undefined || valid.report === null ? '' : String(valid.report.objectives.length);
+    // The active objectives of the current set; for a branch without one, the objective count of the last valid report;
+    // nothing before the first one.
+    const count = current.events > 0 ? String(activeObjectives(current)) : valid === undefined || valid.report === null ? '' : String(valid.report.objectives.length);
     const warning = fault !== null || (latest !== undefined && latest.report === null);
     const compact = `${count}${warning ? '!' : ''}`;
     const badge: BorderBadge = {
@@ -781,7 +829,7 @@ export class CuckooView {
           if (!this.active || event.type !== 'click' || event.button !== 'left' || ctx.mode !== 'tui' || !ctx.hasUI) return undefined;
           const intro = this.lastFault !== null ? `Error: ${this.lastFault}` :
             this.lastEnabled ? 'Cuckoo: ON (badge)' : 'Cuckoo: OFF (badge)';
-          void this.showReports(ctx, this.lastReports, intro);
+          void this.showReports(ctx, this.lastReports, intro, this.lastCurrent);
           return { handled: true };
         },
       };

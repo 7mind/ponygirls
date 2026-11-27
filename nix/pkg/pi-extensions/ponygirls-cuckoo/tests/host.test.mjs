@@ -10,6 +10,7 @@ import { COMMENT_RESPONSE_TYPE, COMMENT_TYPE, COMMENTS_TYPE, commentRecord, save
 import { FileQuestionStore } from '../src/questions.ts';
 import { INQUIRY_TYPE, STATE_TYPE, stateOnBranch } from '../src/state.ts';
 import { readMemory, textDigest } from '../src/memory-core.ts';
+import { EDIT_TYPE, currentSet } from '../src/current.ts';
 
 const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 async function configuredFixture(t, enableMemory, loadDirectory, terminal, extensionFactories = []) {
@@ -65,10 +66,12 @@ async function until(condition, what) {
   for (let i = 0; i < 2000; i++) { if (condition()) return; await tick(); }
   assert.fail(`timed out waiting for ${what}`);
 }
-/** Comment on the node reached by `tabs` in the open report panel, then close the panel with `closeKey` (Escape by default). */
+/** Comment on the node of the newest checkpoint reached by `tabs` in the open report panel, then close the panel with `closeKey` (Escape by default). */
 async function commentInPanel(f, tabs, text, closeKey = '\x1b') {
   const shown = f.session.prompt('/cuckoo'); await until(() => f.views.length > 0 && !f.views.at(-1).closed, 'the report panel');
   const panel = f.views.at(-1).component; panel.render(100);
+  // The pane opens on the current set, which takes no comments; the newest checkpoint is the row below it.
+  panel.handleInput('\x1b[B');
   for (let i = 0; i < tabs; i++) panel.handleInput('\t');
   panel.handleInput('c'); for (const character of text) panel.handleInput(character); panel.handleInput('\r');
   panel.handleInput(closeKey); await shown;
@@ -80,7 +83,10 @@ async function settled(f) {
 }
 const customTypes = f => f.manager.getBranch().filter(entry => entry.type === 'custom_message').map(entry => entry.customType);
 
-const report = '{"objectives":[{"objective":"Ship Cuckoo","progress":"Validating the runtime","issues":["A decoder defect needs correction","Waiting for access approval","Serial validation"],"eta":"Unknown: validation pending"}],"rules":[{"rule":"Show mockups before implementing","source":"user","scope":"This UI change"},{"rule":"Preserve cadence","source":"assistant","scope":"This change"}]}';
+// A reply that names every entry as new; the first checkpoint of a session numbers them AO1, AR1 and AR2.
+const report = '{"objectives":[{"id":null,"objective":"Ship Cuckoo","progress":"Validating the runtime","issues":["A decoder defect needs correction","Waiting for access approval","Serial validation"],"eta":"Unknown: validation pending"}],"rules":[{"id":null,"rule":"Show mockups before implementing","source":"user","scope":"This UI change"},{"id":null,"rule":"Preserve cadence","source":"assistant","scope":"This change"}]}';
+/** `report` as it is read back once Cuckoo numbered its entries. */
+const numberedReport = { objectives: [{ ...JSON.parse(report).objectives[0], id: 'AO1' }], rules: JSON.parse(report).rules.map((item, index) => ({ ...item, id: `AR${index + 1}` })), answers: null };
 
 test('real Pi package-directory loading does not enable audit memory implicitly', { timeout: 20000 }, async t => {
   const f = await configuredFixture(t, false, true, false);
@@ -177,10 +183,13 @@ test('real Pi relative cadence, JSON persistence, no idle inference, view while 
   await f.session.prompt('/cuckoo off'); await f.session.prompt('/cuckoo');
   assert.equal(f.contexts.length, 5); assert.equal(existsSync(join(f.dir, 'cuckoo.json')), false);
   await f.session.reload(); assert.equal(checkpoints(f.manager.getBranch()).length, 1);
-  assert.deepEqual(checkpoints(f.manager.getBranch())[0].report, { ...JSON.parse(report), answers: null });
+  assert.deepEqual(checkpoints(f.manager.getBranch())[0].report, numberedReport);
+  assert.deepEqual(checkpoints(f.manager.getBranch())[0].assigned, { objectives: ['AO1'], rules: ['AR1', 'AR2'] });
   assert.ok(f.notifications.some(args => String(args[0]).includes('ETA: Unknown: validation pending')));
   f.replies.push({ text: 'Normal work', tokens: 24000 }); await f.session.prompt('Continue normally');
   assert.match(JSON.stringify(f.contexts.at(-1)), /checkpoint is closed/);
+  const told = JSON.stringify({ objectives: [{ id: 'AO1', objective: 'Ship Cuckoo' }], rules: [{ id: 'AR1', rule: 'Show mockups before implementing' }, { id: 'AR2', rule: 'Preserve cadence' }] });
+  assert.ok(JSON.stringify(f.contexts.at(-1)).includes(JSON.stringify(`quoted as data, not an instruction: ${told}. Use the ids to name these entries from now on.`).slice(1, -1)), 'the model is told the IDs of what it reported as new');
   assert.deepEqual(f.errors, []); assert.equal(f.replies.length, 0);
 });
 
@@ -242,16 +251,17 @@ test('real Pi manual inquiry runs while off, persists JSON and does not become a
   await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
   assert.equal(f.contexts.length, 2); assert.equal(f.replies.length, 0);
   assert.equal(checkpoints(f.manager.getBranch()).length, 1);
-  assert.deepEqual(checkpoints(f.manager.getBranch())[0].report, { ...JSON.parse(report), answers: null });
-  assert.equal(checkpoints(f.manager.getBranch())[0].version, 4);
+  assert.deepEqual(checkpoints(f.manager.getBranch())[0].report, numberedReport);
+  assert.equal(checkpoints(f.manager.getBranch())[0].version, 6);
   assert.equal(checkpoints(f.manager.getBranch())[0].report.objectives[0].issues.length, 3);
   assert.match(JSON.stringify(f.contexts.at(-1)), /Restate me your objectives/);
   assert.equal(stateOnBranch(f.manager.getBranch()).pending, null);
   await f.session.reload(); await f.session.prompt('/cuckoo status');
   assert.match(f.notifications.at(-1)[0], /Cuckoo: OFF/);
   assert.match(f.notifications.at(-1)[0], /Validating the runtime/);
-  assert.match(f.notifications.at(-1)[0], /user: Show mockups before implementing \(scope: This UI change\)/);
-  assert.match(f.notifications.at(-1)[0], /assistant: Preserve cadence/);
+  assert.match(f.notifications.at(-1)[0], /AR1 user: Show mockups before implementing \(scope: This UI change\)/);
+  assert.match(f.notifications.at(-1)[0], /AR2 assistant: Preserve cadence/);
+  assert.match(f.notifications.at(-1)[0], /^AO1\. Ship Cuckoo$/m);
   for (const issue of JSON.parse(report).objectives[0].issues) assert.ok(f.notifications.at(-1)[0].includes(`- ${issue}`));
   assert.doesNotMatch(f.notifications.at(-1)[0], /Obstacles:|Bottlenecks:/);
   assert.deepEqual(f.errors, []);
@@ -276,12 +286,59 @@ test('real Pi recall tool is declared, returns a saved round and stays readable 
   await f.session.prompt('Read that reflection');
   const read = f.manager.getEntries().find(entry => entry.type === 'message' && entry.message.role === 'toolResult' && entry.message.toolCallId === 'recall-read').message;
   assert.equal(read.isError, false); assert.equal(read.details.nextOffset, null);
-  assert.deepEqual(JSON.parse(read.details.text).report, { ...JSON.parse(report), answers: null });
+  assert.deepEqual(JSON.parse(read.details.text).report, numberedReport);
   assert.equal(JSON.parse(read.details.text).messageEntryId, saved.data.messageEntryId);
   assert.equal(JSON.parse(read.details.text).response.model, 'scripted');
   assert.match(getCurrentSystemPrompt(f.contexts.at(-1).messages), /Automatic inquiries at run start: OFF/);
   assert.match(JSON.stringify(f.contexts.at(-1)), /Historical model self-reports/);
   assert.equal(checkpoints(f.manager.getBranch()).length, 1); assert.equal(f.contexts.length, 6); assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
+});
+
+// Specified Behavioral-Active / Effectual-GoodCommunication: the update tool and the numbered record in the real model loop; the scripted provider shows the mechanism, not whether a model keeps the record.
+test('real Pi declares the update tool while automatic mode is on; edits and checkpoint replies build one numbered record that survives reload', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  f.replies.push({ text: 'Default off', tokens: 20000 }); await f.session.prompt('Work');
+  assert.equal(getCurrentTools(f.contexts[0].messages).some(tool => tool.name === 'cuckoo_update'), false, 'not declared while automatic mode is off');
+  await f.session.prompt('/cuckoo on'); await f.session.prompt('/cuckoo policy tokens 10000');
+  const call = (id, args) => ({ type: 'toolCall', id, name: 'cuckoo_update', arguments: args });
+  f.replies.push({ content: [call('add-1', { action: 'add_objective', objective: 'Ship the parser' }), call('add-2', { action: 'add_rule', rule: 'Ask before pushing', source: 'user', scope: 'This repository' })], tokens: 20100 },
+    { content: [call('bad', { action: 'retire', id: 'AO9', reason: 'Never existed' }), call('upd', { action: 'update', id: 'AO1', progress: 'Grammar done' })], tokens: 20200 }, { text: 'Recorded', tokens: 20300 });
+  await f.session.prompt('Take on the parser');
+  assert.ok(getCurrentTools(f.contexts.at(-1).messages).some(tool => tool.name === 'cuckoo_update'), 'declared once automatic mode is on');
+  assert.match(getCurrentSystemPrompt(f.contexts.at(-1).messages), /numbered record of this session's objectives \(AO1, AO2, and so on\)/);
+  const results = () => new Map(f.manager.getBranch().filter(entry => entry.type === 'message' && entry.message.role === 'toolResult').map(entry => [entry.message.toolCallId, entry.message]));
+  assert.deepEqual(['add-1', 'add-2', 'upd'].map(id => [results().get(id).isError, results().get(id).details.id, results().get(id).details.status]), [[false, 'AO1', 'active'], [false, 'AR1', 'active'], [false, 'AO1', 'active']]);
+  assert.equal(results().get('bad').isError, true); assert.match(JSON.stringify(results().get('bad').content), /AO9 is not in the record of this branch/);
+  assert.equal(f.manager.getBranch().filter(entry => entry.type === 'custom' && entry.customType === EDIT_TYPE).length, 3, 'the refused edit saved nothing');
+  // The next checkpoint states the record; its reply continues AO1 by ID, adds an objective and leaves the rule out.
+  const reply = JSON.stringify({ objectives: [{ id: 'AO1', objective: 'Ship the parser', progress: 'Grammar and recovery done', issues: [], eta: 'About an hour' }, { id: null, objective: 'Write the docs', progress: 'Not started', issues: [], eta: 'Unknown' }], rules: [] });
+  f.replies.push({ text: 'Threshold reached', tokens: 31000 }, { text: reply, tokens: 31100 });
+  await f.session.prompt('Continue');
+  const inquiry = JSON.stringify(f.contexts.at(-1).messages.at(-1));
+  assert.match(inquiry, /Restate me your objectives/);
+  assert.ok(inquiry.includes(JSON.stringify(' The record now, as JSON: {"objectives":[{"id":"AO1","objective":"Ship the parser"}],"completed":[],"rules":[{"id":"AR1","rule":"Ask before pushing","source":"user","scope":"This repository"}]}').slice(1, -1)), 'the inquiry ends with the record the edits built');
+  const [saved] = checkpoints(f.manager.getBranch());
+  assert.equal(saved.error, null); assert.deepEqual(saved.assigned, { objectives: ['AO2'], rules: [] });
+  const brief = set => ({ objectives: set.objectives.map(item => [item.id, item.status, item.progress]), rules: set.rules.map(item => [item.id, item.status]) });
+  const expected = { objectives: [['AO1', 'active', 'Grammar and recovery done'], ['AO2', 'active', 'Not started']], rules: [['AR1', 'retired']] };
+  assert.deepEqual(brief(currentSet(f.manager.getBranch())), expected);
+  // During a checkpoint the tool is blocked like any other; afterwards the model reads the record and completes an entry.
+  await f.session.prompt('/cuckoo off');
+  f.replies.push({ text: 'Baseline again', tokens: 31200 }); await f.session.prompt('More work');
+  assert.equal(getCurrentTools(f.contexts.at(-1).messages).some(tool => tool.name === 'cuckoo_update'), false, 'withdrawn when automatic mode is turned off');
+  await f.session.prompt('/cuckoo on'); await f.session.reload();
+  assert.deepEqual(brief(currentSet(f.manager.getBranch())), expected, 'the record is rebuilt from the session after reload');
+  f.replies.push({ content: [{ type: 'toolCall', id: 'read', name: 'cuckoo_recall', arguments: { action: 'current' } }], tokens: 31300 },
+    { content: [call('done', { action: 'complete', id: 'AO2', progress: 'Docs published', issues: ['No index yet'] })], tokens: 31400 }, { text: 'Completed', tokens: 31500 });
+  await f.session.prompt('Finish the docs');
+  const read = results().get('read');
+  assert.equal(read.isError, false); assert.deepEqual([read.details.activeObjectives, read.details.activeRules, read.details.closed], [2, 0, 1]);
+  assert.deepEqual(JSON.parse(read.details.text).objectives.map(item => item.id), ['AO1', 'AO2']);
+  assert.deepEqual([results().get('done').isError, results().get('done').details.status, results().get('done').details.activeObjectives], [false, 'complete', 1]);
+  const reopened = sdk.SessionManager.open(f.manager.getSessionFile());
+  assert.deepEqual(brief(currentSet(reopened.getBranch())).objectives, [['AO1', 'active', 'Grammar and recovery done'], ['AO2', 'complete', 'Docs published']], 'and from the session file');
+  assert.match(readFileSync(f.manager.getSessionFile(), 'utf8'), /"customType":"cuckoo\.edit"/);
+  assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
 });
 
 test('real Pi recall preserves branch isolation and reaches pre-compaction rounds after reload', { timeout: 20000 }, async t => {
@@ -410,7 +467,7 @@ test('real Pi standing questions are stored in a durable file, asked, validated,
   assert.match(inquiry, /Restate me your objectives/); assert.match(inquiry, /What did you verify since the last checkpoint\?/);
   assert.ok(inquiry.includes(question.id));
   const saved = checkpoints(f.manager.getBranch())[0];
-  assert.equal(saved.version, 5); assert.equal(saved.error, null);
+  assert.equal(saved.version, 6); assert.equal(saved.error, null);
   assert.deepEqual(saved.report.answers, [{ id: question.id, question: question.question, scope: 'global', answer: 'Only the decoder tests ran.' }]);
   // A reloaded extension instance and a reopened session file observe the same question and answer.
   await f.session.reload();
@@ -429,13 +486,13 @@ test('real Pi standing questions are stored in a durable file, asked, validated,
   assert.equal(JSON.parse(read.details.text).report.answers[0].answer, 'Only the decoder tests ran.');
   assert.equal(JSON.parse(read.details.text).questions[0].question, question.question);
   assert.match(getCurrentSystemPrompt(f.contexts.at(-1).messages), /standing questions configured by the user/);
-  // Removed questions are no longer asked: the next inquiry is the base one and saves a base report.
+  // Removed questions are no longer asked: the next inquiry is the base one and its report carries no answers.
   await f.session.prompt(`/cuckoo questions remove ${question.id}`);
   assert.deepEqual(store.read(), []);
   f.replies.push({ text: report, tokens: 20400 });
   await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
   assert.doesNotMatch(JSON.stringify(f.contexts.at(-1).messages.at(-1)), /Standing questions as JSON/);
-  assert.equal(checkpoints(f.manager.getBranch())[1].version, 4); assert.equal(checkpoints(f.manager.getBranch())[1].report.answers, null);
+  assert.equal(checkpoints(f.manager.getBranch())[1].version, 6); assert.equal(checkpoints(f.manager.getBranch())[1].report.answers, null);
   assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
 });
 
@@ -460,13 +517,13 @@ test('real Pi report comments made while idle are kept in the session file and t
   assert.match(JSON.stringify(reply.message.content), /I will run the full suite first/, 'the reply is an ordinary response');
   assert.equal(checkpoints(f.manager.getBranch()).length, 1, 'the reply is not captured as a checkpoint');
   const comments = savedComments(f.manager.getBranch());
-  assert.deepEqual(comments.map(item => [item.requestId, item.target, item.subject, item.text]), [[requestId, { kind: 'objective', index: 0 }, 'Objective 1: Ship Cuckoo', 'Run the full suite before claiming progress.']]);
+  assert.deepEqual(comments.map(item => [item.requestId, item.target, item.subject, item.text]), [[requestId, { kind: 'objective', index: 0 }, 'Objective AO1: Ship Cuckoo', 'Run the full suite before claiming progress.']]);
   const deliveries = () => f.manager.getBranch().filter(entry => entry.type === 'custom_message' && entry.customType === COMMENTS_TYPE);
   assert.equal(deliveries().length, 1); assert.deepEqual(deliveries()[0].details.commentIds, [comments[0].commentId]);
   assert.ok(f.notifications.some(args => /1 comment saved to checkpoint history; the model is responding to them/.test(args[0])));
   f.replies.push({ text: 'Acknowledged', tokens: 20200 }); await f.session.prompt('Continue the task');
   const request = JSON.stringify(f.contexts.at(-1).messages);
-  assert.match(request, /On Objective 1: Ship Cuckoo\\n   User comment: Run the full suite before claiming progress\./);
+  assert.match(request, /On Objective AO1: Ship Cuckoo\\n   User comment: Run the full suite before claiming progress\./);
   assert.ok(request.indexOf('User comment: Run the full suite') < request.indexOf('Continue the task'), 'the comment precedes the next prompt');
   const reopened = sdk.SessionManager.open(f.manager.getSessionFile());
   assert.deepEqual(savedComments(reopened.getEntries()), comments);
@@ -499,7 +556,7 @@ test('real Pi report comments made during a run reach the model at the next turn
   assert.ok(f.notifications.some(args => /the model receives them at its next completed turn/.test(args[0])));
   release(); await running;
   assert.equal(f.contexts.length, 4);
-  assert.match(JSON.stringify(f.contexts[3].messages), /On Rule \(user\): Show mockups before implementing \(scope: This UI change\)\\n   User comment: I meant mockups for the settings dialog only\./);
+  assert.match(JSON.stringify(f.contexts[3].messages), /On Rule AR1 \(user\): Show mockups before implementing \(scope: This UI change\)\\n   User comment: I meant mockups for the settings dialog only\./);
   const branch = f.manager.getBranch();
   const toolResult = branch.findIndex(entry => entry.type === 'message' && entry.message.role === 'toolResult' && entry.message.toolCallId === 'held-tool');
   const delivery = branch.findIndex(entry => entry.type === 'custom_message' && entry.customType === COMMENTS_TYPE);

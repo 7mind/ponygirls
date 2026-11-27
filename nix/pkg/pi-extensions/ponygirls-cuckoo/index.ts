@@ -13,11 +13,13 @@ import { CuckooVectors } from './src/vector-runtime.ts';
 import { CuckooCritic } from './src/critic-runtime.ts';
 import { nativeNetworkServices, type CuckooNetworkServices } from './src/network-services.ts';
 import { growthTokens, policyText, validatePolicy } from './src/policy.ts';
-import { REPORT_TYPE, answeredCheckpoint, checkpointRequestIds, checkpoints, completedObjectives } from './src/report.ts';
+import { REPORT_TYPE, cancelledCheckpoint, capturedCheckpoint, checkpointRequestIds, checkpoints, closedCheckpoints, rejectedCheckpoint, type Checkpoint } from './src/report.ts';
+import { EMPTY_SET, currentSet, inquiryRecord, knownIds, nextNumbers, unnumberedCompleted, type CurrentSet } from './src/current.ts';
+import { createUpdateTool } from './src/update.ts';
 import { COMMENT_RESPONSE, COMMENT_RESPONSE_TYPE, COMMENT_TYPE, commentDelivery, commentRecord, savedComments, undeliveredComments, type CommentDelivery } from './src/comments.ts';
-import { FileQuestionStore, QUESTIONS_FILE, StandingQuestions, questionsText, type QuestionScope, type QuestionStore } from './src/questions.ts';
-import { RECALL_TOOL, RECALL_NOTICE, MODEL_GUIDANCE, DEFAULT_LIST_ITEMS, MAX_LIST_ITEMS, DEFAULT_READ_CHARS, MAX_READ_CHARS, MAX_RESPONSE_BYTES, recallRounds, type RecallRequest } from './src/recall.ts';
-import { INQUIRY_TYPE, RESUME, RESUME_TYPE, STATE_TYPE, inquiryDue, inquiryText, observe, stateOnBranch, type State } from './src/state.ts';
+import { FileQuestionStore, QUESTIONS_FILE, StandingQuestions, questionsText, type AskedQuestion, type QuestionScope, type QuestionStore } from './src/questions.ts';
+import { RECALL_TOOL, RECALL_NOTICE, CURRENT_NOTICE, MODEL_GUIDANCE, DEFAULT_LIST_ITEMS, MAX_LIST_ITEMS, DEFAULT_READ_CHARS, MAX_READ_CHARS, MAX_RESPONSE_BYTES, recallRounds, type RecallRequest } from './src/recall.ts';
+import { INQUIRY_TYPE, RESUME, RESUME_TYPE, STATE_TYPE, closedInquiryText, inquiryDue, inquiryText, observe, stateOnBranch, type State } from './src/state.ts';
 import { CuckooView, REPORTS_SHORTCUT, type CommentHost } from './src/view.ts';
 import { CuckooSettingsView, bindSettingsCallbacks } from './src/settings-view.ts';
 import { reportContent, terminalText, type CuckooContent } from './src/presentation.ts';
@@ -37,6 +39,20 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
   const vectors = new CuckooVectors(features, taskConsents, networkServices);
   const critic = new CuckooCritic(pi, features, taskConsents, networkServices);
   const workflows = [{ name: 'transfer', runtime: transfer }, { name: 'vectors', runtime: vectors }, { name: 'critic', runtime: critic }] as const;
+  features.registerEnabledTool(createUpdateTool({ pi, assertAllowed: ctx => { features.requireEnabled(ctx, 'cuckoo_update is unavailable'); } }));
+  /** The checkpoint request for the branch as it stands: the questions asked, the record to restate, and what was completed before numbering. */
+  function inquiryFor(ctx: ExtensionContext, asked: readonly AskedQuestion[]): string {
+    const branch = ctx.sessionManager.getBranch();
+    const set = currentSet(branch);
+    // Its reply will need numbers from the whole session: a session that cannot be numbered gets no inquiry.
+    nextNumbers(ctx.sessionManager.getEntries());
+    return inquiryText(asked, unnumberedCompleted(checkpoints(branch), set), inquiryRecord(set));
+  }
+  /** The current set of the branch; when its saved data cannot be read, the empty set and the reason, so that reports stay viewable. */
+  function recordOf(ctx: ExtensionContext): { readonly set: CurrentSet; readonly fault: string | null } {
+    try { return { set: currentSet(ctx.sessionManager.getBranch()), fault: null }; }
+    catch (error) { return { set: EMPTY_SET, fault: String(error) }; }
+  }
   let deliveryFault: string | null = null;
   /** The message carrying this branch's undelivered comments, or null when there are none. */
   function pendingDelivery(ctx: ExtensionContext): CommentDelivery | null {
@@ -81,7 +97,8 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
       } catch (error) { commentFault(ctx, error); }
     },
   };
-  let view = new CuckooView(inquire, commentHost);
+  const now = (): number => Date.now();
+  let view = new CuckooView(inquire, commentHost, now);
   let settingsView = new CuckooSettingsView();
   let manualRequested = false;
   let fault: string | null = null;
@@ -98,13 +115,17 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
       const config = features.refresh(ctx);
       display.showJson = config.showJson;
       const reports = checkpoints(ctx.sessionManager.getBranch());
+      const current = recordOf(ctx);
       stateOnBranch(ctx.sessionManager.getBranch());
-      // Unreadable standing questions stop inquiries but must not hide the saved reports.
-      try { standing.read(ctx); fault = null; } catch (error) { warn(ctx, error); }
-      view.publish(ctx, reports, config.enabled, fault, display.showJson !== previous);
-    } catch (error) { warn(ctx, error); view.publish(ctx, [], false, fault, display.showJson !== previous); }
+      // Unreadable standing questions, or an unreadable record, stop inquiries but must not hide the saved reports.
+      let problem: unknown = current.fault;
+      try { standing.read(ctx); } catch (error) { problem = error; }
+      if (problem === null) fault = null; else warn(ctx, problem);
+      view.publish(ctx, reports, current.set, config.enabled, fault, display.showJson !== previous);
+    } catch (error) { warn(ctx, error); view.publish(ctx, [], EMPTY_SET, false, fault, display.showJson !== previous); }
   }
-  function statusIntro(ctx: ExtensionContext, reports: readonly import('./src/report.ts').Checkpoint[]): string {
+  /** `recordFault` is why the current set cannot be shown, or null. */
+  function statusIntro(ctx: ExtensionContext, recordFault: string | null): string {
     features.refresh(ctx);
     const settings = configuration.read(ctx);
     const config = settings.effective;
@@ -115,7 +136,7 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
     let questions: string, questionFault = '';
     try { questions = `${standing.read(ctx).effective.length} asked at every checkpoint (/cuckoo questions)`; }
     catch (error) { questions = 'unavailable; no inquiry is issued until this is corrected'; questionFault = `Error: Standing questions are unavailable: ${String(error)}\n`; }
-    return questionFault + `Cuckoo: ${config.enabled ? 'ON' : 'OFF'} (${config.enabledSource})\n` +
+    return (recordFault === null ? '' : `Error: The current set is unavailable: ${recordFault}\n`) + questionFault + `Cuckoo: ${config.enabled ? 'ON' : 'OFF'} (${config.enabledSource})\n` +
       `Growth policy: ${policyText(config.policy)} (${config.policySource}); next inquiry: ${next}.\n` +
       `Pending checkpoint: ${state?.pending === null || state === null ? 'none' : state.pending.requestId}.\n` +
       `Global defaults: ${preferences.path}\n` +
@@ -125,15 +146,16 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
       `Use /cuckoo history for saved answers across all session branches.`;
   }
   function status(ctx: ExtensionContext): CuckooContent {
-    const reports = checkpoints(ctx.sessionManager.getBranch());
-    return reportContent(reports, statusIntro(ctx, reports), savedComments(ctx.sessionManager.getBranch()));
+    const branch = ctx.sessionManager.getBranch();
+    const current = recordOf(ctx);
+    return reportContent(checkpoints(branch), statusIntro(ctx, current.fault), savedComments(branch), current.set, now());
   }
   function cancel(ctx: ExtensionContext, reason: string): void {
     manualRequested = false;
     const state = stateOnBranch(ctx.sessionManager.getBranch());
     if (state === null || (state.pending === null && !state.resuming)) return;
     if (state.pending !== null) {
-      pi.appendEntry(REPORT_TYPE, { ...answeredCheckpoint(state.pending.requestId, '', state.pending.questions), error: reason });
+      pi.appendEntry(REPORT_TYPE, cancelledCheckpoint(state.pending.requestId, state.pending.questions, reason));
     }
     pi.appendEntry(STATE_TYPE, { ...state, pending: null, resuming: false });
   }
@@ -152,13 +174,13 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
       const model = `${ctx.model === undefined ? 'unknown' : `${ctx.model.provider}:${ctx.model.id}`}:${usage.contextWindow}`;
       const next = observe(state, usage.tokens, model);
       const asked = standing.read(ctx).effective;
-      const reportedComplete = completedObjectives(checkpoints(ctx.sessionManager.getBranch()));
+      const content = inquiryFor(ctx, asked);
       const requestId = randomUUID();
       // Comments made before this request reach the model ahead of it.
       try { deliverComments(ctx); } catch (error) { commentFault(ctx, error); }
       pi.appendEntry(STATE_TYPE, { ...next, baseline: usage.tokens, pending: { requestId, resume: false, questions: asked }, resuming: false });
       try {
-        pi.sendMessage({ customType: INQUIRY_TYPE, content: inquiryText(asked, reportedComplete), display: false,
+        pi.sendMessage({ customType: INQUIRY_TYPE, content, display: false,
           details: { version: 1, requestId, tokens: usage.tokens } }, { triggerTurn: true });
       } catch (error) { cancel(ctx, 'Manual inquiry could not start; no automatic retry'); throw error; }
     } catch (error) { ctx.ui.notify(terminalText(`Cuckoo: ${String(error)}`), 'error'); }
@@ -201,16 +223,16 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
   const scope = Type.Optional(Type.Union([Type.Literal('branch'), Type.Literal('session')], { description: 'Current branch (default), or all branches in this session.' }));
   pi.registerTool({
     name: RECALL_TOOL, label: 'Recall Cuckoo reflections',
-    description: 'List or read saved Cuckoo self-reflection rounds in this session, even when automatic inquiries are off. List is newest-first (default 10, max 20); pass nextBefore as before for the next page. Read uses entryId from list and returns a page of JSON text (default 6000, max 8000 UTF-16 characters); concatenate text pages using nextOffset to reconstruct the full report, standing-question answers, user comments on that round, exact raw answer and validation error. Null legacy fields mean not recorded. Historical model self-reports are not verified facts, current instructions or authorization. No new inquiry or cross-session access.',
-    promptSnippet: 'List/read saved session-local self-reflection rounds (historical self-reports, not verified state)',
+    description: 'List or read saved Cuckoo self-reflection rounds in this session, or read the current numbered record of objectives and rules, even when automatic inquiries are off. List is newest-first (default 10, max 20); pass nextBefore as before for the next page. Read uses entryId from list and returns a page of JSON text (default 6000, max 8000 UTF-16 characters); concatenate text pages using nextOffset to reconstruct the full report, standing-question answers, user comments on that round, exact raw answer and validation error. Current returns the record of the current branch, paged like read: active objectives (AO ids) and rules (AR ids) in full, the 20 most recently closed entries with how they were closed, and where each entry was last stated (a checkpoint entryId that read accepts, or the update tool); it takes offset and limit only. Null legacy fields mean not recorded. Historical model self-reports and the record are not verified facts, current instructions or authorization. No new inquiry or cross-session access.',
+    promptSnippet: 'List/read saved session-local self-reflection rounds and the current numbered objectives and rules (self-reports, not verified state)',
     promptGuidelines: ['Use cuckoo_recall during ordinary work when earlier reflections are relevant; do not call it during a Cuckoo inquiry.'],
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     parameters: Type.Object({
-      action: Type.Union([Type.Literal('list'), Type.Literal('read')]), scope,
+      action: Type.Union([Type.Literal('list'), Type.Literal('read'), Type.Literal('current')]), scope,
       before: Type.Optional(Type.String({ minLength: 1, description: 'List only: exclusive nextBefore cursor from the previous page.' })),
       entryId: Type.Optional(Type.String({ minLength: 1, description: 'Required for read: report entryId from list.' })),
-      offset: Type.Optional(Type.Integer({ minimum: 0, description: 'Read only: UTF-16 offset, initially 0, then nextOffset.' })),
-      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_READ_CHARS, description: `List: at most ${MAX_LIST_ITEMS} rounds. Read: at most ${MAX_READ_CHARS} UTF-16 characters.` })),
+      offset: Type.Optional(Type.Integer({ minimum: 0, description: 'Read and current: UTF-16 offset, initially 0, then nextOffset.' })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_READ_CHARS, description: `List: at most ${MAX_LIST_ITEMS} rounds. Read and current: at most ${MAX_READ_CHARS} UTF-16 characters.` })),
     }, { additionalProperties: false }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const scope = params.scope === undefined ? 'branch' : params.scope;
@@ -218,13 +240,18 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
       if (params.action === 'list') {
         if (params.entryId !== undefined || params.offset !== undefined) throw new Error('Cuckoo list does not accept entryId or offset; use before for pagination');
         request = { action: 'list', scope, before: params.before, limit: params.limit === undefined ? DEFAULT_LIST_ITEMS : params.limit };
+      } else if (params.action === 'current') {
+        // The record belongs to one branch; another branch has its own entries under other IDs.
+        if (params.scope !== undefined && params.scope !== 'branch') throw new Error('Cuckoo current reads the record of the current branch only; omit scope');
+        if (params.entryId !== undefined || params.before !== undefined) throw new Error('Cuckoo current does not accept entryId or before; use offset for pagination');
+        request = { action: 'current', offset: params.offset === undefined ? 0 : params.offset, limit: params.limit === undefined ? DEFAULT_READ_CHARS : params.limit };
       } else {
         if (params.entryId === undefined) throw new Error('Cuckoo read requires entryId from list');
         if (params.before !== undefined) throw new Error('Cuckoo read does not accept before; use offset for pagination');
         request = { action: 'read', scope, entryId: params.entryId, offset: params.offset === undefined ? 0 : params.offset, limit: params.limit === undefined ? DEFAULT_READ_CHARS : params.limit };
       }
       const result = recallRounds(ctx.sessionManager.getEntries(), ctx.sessionManager.getBranch(), request);
-      const details = { sessionId: ctx.sessionManager.getSessionId(), notice: RECALL_NOTICE, ...result };
+      const details = { sessionId: ctx.sessionManager.getSessionId(), notice: request.action === 'current' ? CURRENT_NOTICE : RECALL_NOTICE, ...result };
       const text = JSON.stringify(details);
       if (Buffer.byteLength(text, 'utf8') > MAX_RESPONSE_BYTES) throw new Error('Cuckoo recall metadata exceeds the response size limit; no partial result returned');
       return { content: [{ type: 'text', text }], details };
@@ -262,8 +289,8 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
         }
         if (trimmed.split(/\s+/).join(' ') === 'inquire now') { inquire(ctx); return; }
         if (trimmed === '' || trimmed === 'reports' || trimmed === 'status') {
-          const reports = checkpoints(ctx.sessionManager.getBranch());
-          await view.showReports(ctx, reports, statusIntro(ctx, reports)); return;
+          const current = recordOf(ctx);
+          await view.showReports(ctx, checkpoints(ctx.sessionManager.getBranch()), statusIntro(ctx, current.fault), current.set); return;
         }
         if (trimmed === 'history') { await view.showHistory(ctx, ctx.sessionManager.getEntries(), ctx.sessionManager.getBranch()); return; }
         const signal = ctx.signal ?? new AbortController().signal;
@@ -293,15 +320,15 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
   });
   pi.registerShortcut(REPORTS_SHORTCUT.key, { description: 'View Cuckoo objectives and progress', handler: async ctx => {
     try {
-      const reports = checkpoints(ctx.sessionManager.getBranch());
-      await view.showReports(ctx, reports, statusIntro(ctx, reports));
+      const current = recordOf(ctx);
+      await view.showReports(ctx, checkpoints(ctx.sessionManager.getBranch()), statusIntro(ctx, current.fault), current.set);
     } catch (error) { warn(ctx, error); }
   } });
   pi.on('session_start', (_event, ctx) => {
     features.start(ctx);
     settingsView.dispose(); settingsView = new CuckooSettingsView();
     manualRequested = false;
-    view = new CuckooView(inquire, commentHost);
+    view = new CuckooView(inquire, commentHost, now);
     try { cancel(ctx, 'Checkpoint interrupted by reload or session replacement; no automatic retry'); } catch (error) { warn(ctx, error); }
     refresh(ctx);
   });
@@ -334,12 +361,13 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
     }
   });
   pi.on('context', (event, ctx) => {
-    const closed = new Set(checkpoints(ctx.sessionManager.getBranch()).map(report => report.requestId));
+    const closed = closedCheckpoints(ctx.sessionManager.getBranch());
     return { messages: event.messages.map(message => {
       if (message.role !== 'custom' || message.customType !== INQUIRY_TYPE) return message;
       const details: unknown = message.details;
-      if (typeof details !== 'object' || details === null || !('requestId' in details) || typeof details.requestId !== 'string' || !closed.has(details.requestId)) return message;
-      return { ...message, content: 'This Cuckoo checkpoint is closed or cancelled. Its historical inquiry is no longer active; follow the current user task.' };
+      if (typeof details !== 'object' || details === null || !('requestId' in details) || typeof details.requestId !== 'string') return message;
+      const report = closed.get(details.requestId);
+      return report === undefined ? message : { ...message, content: closedInquiryText(report) };
     }) };
   });
   pi.on('tool_call', (_event, ctx) => {
@@ -354,9 +382,16 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
       const message = event.message;
       if (message.role !== 'assistant') throw new Error('Cuckoo turn boundary must carry an assistant response');
       const raw = message.content.filter(part => part.type === 'text').map(part => part.text).join('\n');
-      const result = answeredCheckpoint(previous.pending.requestId, raw, previous.pending.questions);
+      // The reply may name the entries this branch ever held; its new ones take the next numbers of the whole session.
+      // When that record cannot be read the reply is kept unnumbered and the checkpoint still ends: a pending one blocks every tool.
+      let result: Checkpoint;
       if (!completed || message.stopReason !== 'stop' || message.content.some(part => part.type === 'toolCall')) {
-        result.report = null; result.error = 'Checkpoint response interrupted, failed, or attempted tool use; no retry';
+        result = rejectedCheckpoint(previous.pending.requestId, raw, previous.pending.questions, 'Checkpoint response interrupted, failed, or attempted tool use; no retry');
+      } else try {
+        const known = knownIds(currentSet(branch)); const next = nextNumbers(ctx.sessionManager.getEntries());
+        result = capturedCheckpoint(previous.pending.requestId, raw, previous.pending.questions, known, next);
+      } catch (error) {
+        result = rejectedCheckpoint(previous.pending.requestId, raw, previous.pending.questions, `The record of this session cannot be read, so the reply was not numbered: ${String(error)}`);
       }
       const resume = completed && (previous.pending.resume || message.content.some(part => part.type === 'toolCall'));
       const entries: SessionBoundaryDraft[] = [...base,
@@ -378,13 +413,13 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
     const state = observe(previous, usage.tokens, model);
     if (!manualRequested && !inquiryDue(state, config.policy, usage.contextWindow)) return { entries: [...base, stateDraft(state)] };
     const asked = standing.read(ctx).effective;
-    const reportedComplete = completedObjectives(checkpoints(branch));
+    const content = inquiryFor(ctx, asked);
     manualRequested = false;
     const requestId = randomUUID();
     const resume = (event.message.role === 'assistant' && (event.message.stopReason === 'toolUse' || event.message.content.some(part => part.type === 'toolCall'))) || event.continue;
     return { entries: [...base,
       stateDraft({ ...state, baseline: usage.tokens, pending: { requestId, resume, questions: asked }, resuming: false }),
-      { type: 'custom_message', customType: INQUIRY_TYPE, content: inquiryText(asked, reportedComplete), display: false, details: { version: 1, requestId, tokens: usage.tokens } }], continue: true };
+      { type: 'custom_message', customType: INQUIRY_TYPE, content, display: false, details: { version: 1, requestId, tokens: usage.tokens } }], continue: true };
   }
   pi.on('turn_end', (event: TurnEndEvent, ctx) => {
     try { event.entries.push(...critic.ordinaryBoundary(event, ctx)); }

@@ -13,7 +13,7 @@ const entry = (version, text) => ({ type: 'custom', customType: REPORT_TYPE, id:
 
 // Specified Behavioral-Active / Blackbox-Group: versioned contract and all projections, not semantic model quality.
 test('v4 consolidates three conceptual categories into one bounded issues list', () => {
-  assert.deepEqual(parseReport(raw), { objectives: [objective], rules: [], answers: null });
+  assert.deepEqual(parseReport(raw), { objectives: [{ id: null, ...objective }], rules: [], answers: null });
   assert.equal(checkpoint('current', raw).version, 4);
   const parse = value => parseReport(JSON.stringify({ objectives: [{ ...objective, issues: value }], rules: [] }));
   assert.deepEqual(parse([]).objectives[0].issues, []);
@@ -28,7 +28,7 @@ test('v4 consolidates three conceptual categories into one bounded issues list',
 
 test('inquiry and awareness consider obstacles and bottlenecks but request only an issues array', () => {
   const example = JSON.parse(INQUIRY.match(/JSON only: (\{"objectives":.*?\})\./)[1]);
-  assert.deepEqual(Object.keys(example.objectives[0]).sort(), ['eta', 'issues', 'objective', 'progress']);
+  assert.deepEqual(Object.keys(example.objectives[0]).sort(), ['eta', 'id', 'issues', 'objective', 'progress']);
   assert.ok(Array.isArray(example.objectives[0].issues));
   for (const text of [INQUIRY, MODEL_GUIDANCE]) {
     assert.match(text, /obstacles/); assert.match(text, /bottlenecks/); assert.match(text, /issues (?:array|list)/);

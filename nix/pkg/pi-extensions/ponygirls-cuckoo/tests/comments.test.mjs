@@ -5,6 +5,7 @@ import { COMMENT_TYPE, COMMENTS_TYPE, MAX_COMMENT_CHARS, commentDelivery, commen
 import { REPORT_TYPE, answeredCheckpoint, checkpoint, checkpoints, historyText, reportText } from '../src/report.ts';
 import { checkpointBlocks, checkpointDetail, historyContent, reportContent } from '../src/presentation.ts';
 import { recallRounds } from '../src/recall.ts';
+import { EMPTY_SET } from '../src/current.ts';
 
 const theme = { fg: (_token, text) => text, bold: text => text, bg: (_token, text) => text };
 const asked = [{ id: 'q-verify', question: 'What did you verify?', scope: 'global' }];
@@ -55,7 +56,7 @@ test('comments persist as their own history entries and survive a session reopen
   assert.equal(saved[0].subject, 'Objective 1: Ship the panel'); assert.equal(saved[0].text, 'Test the editor first.\nThen the mouse.');
   assert.deepEqual(savedComments(structuredClone(manager.getEntries())), saved);
   for (const text of [reportText(checkpoints(manager.getBranch()), saved), historyText(manager.getEntries(), manager.getBranch()),
-    reportContent(checkpoints(manager.getBranch()), '', saved).plain, historyContent(manager.getEntries(), manager.getBranch()).plain,
+    reportContent(checkpoints(manager.getBranch()), '', saved, EMPTY_SET, 0).plain, historyContent(manager.getEntries(), manager.getBranch()).plain,
     checkpointDetail(theme, value, 120, saved), historyContent(manager.getEntries(), manager.getBranch()).render(theme, 120)]) {
     assert.match(text, /Comment:?\s*[([]2026-11-17T21:00:00\.000Z[)\]]:? Test the editor first\./);
     assert.ok(text.includes('Then the mouse.')); assert.ok(text.includes('I did not ask for this.')); assert.ok(text.includes('Verify the renderer too.'));
