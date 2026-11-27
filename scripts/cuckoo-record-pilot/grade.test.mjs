@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CHECKPOINT_SCENARIO, RECORD, TOOL_SCENARIOS } from './scenarios.mjs';
 import { OBJECTIVE_IDS, RULE_IDS, gradeCheckpoint, gradeTools } from './grade.mjs';
+import { bySubject } from './results.mjs';
 
 // Scripted cases for every category the pilot reports, undesired ones included, under both codings.
 const objective = (id, title, eta = 'Unknown') => ({ id, objective: title, progress: 'p', issues: [], eta });
@@ -134,4 +135,10 @@ test('undesired tool sessions are named: nothing recorded, late and duplicate en
   assert.deepEqual(merged.completions, { a: 'active by its turn, complete at the end', b: 'complete by its turn, complete at the end' });
   const title = gradeTools(toolSession([{ calls: [], after: { objectives: [entry('AO1', 'Propose a title for the report')], rules: [] } }], { objectives: [], rules: [] }), TOOL_SCENARIOS[1]);
   assert.deepEqual(title.oneTurnRecorded, ['AO1 active: Propose a title for the report']); assert.deepEqual(title.overRecorded, []);
+});
+
+test('a session another model answered is set apart; one without reply metadata is the subject\'s', () => {
+  const session = (id, respondingModels) => ({ id, model: 'subject', ...(respondingModels === undefined ? {} : { respondingModels }) });
+  const { own, foreign } = bySubject([session('a', ['subject']), session('b', ['subject', 'fallback']), session('c', ['fallback']), session('d', undefined), session('e', [])]);
+  assert.deepEqual(own.map(item => item.id), ['a', 'd', 'e']); assert.deepEqual(foreign.map(item => item.id), ['b', 'c']);
 });

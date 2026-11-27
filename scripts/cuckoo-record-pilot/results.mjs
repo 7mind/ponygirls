@@ -10,6 +10,15 @@ export function loadResults(path) {
 }
 export const labelOf = path => basename(path).replace(/\.jsonl$/, '');
 
+/**
+ * Sessions the subject itself answered, and those in which another model answered at least once (a server-side
+ * fallback). The second kind is reported apart and not graded with its cell.
+ */
+export function bySubject(results) {
+  const foreign = result => result.respondingModels !== undefined && result.respondingModels.some(model => model !== result.model);
+  return { own: results.filter(result => !foreign(result)), foreign: results.filter(foreign) };
+}
+
 /** A session without what rescoring does not need: the seeded snapshot and the snapshots after each round. Answers are cut to their first 300 characters. */
 export function compact(result) {
   const { seeded: _seeded, ...kept } = result;

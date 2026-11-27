@@ -88,10 +88,48 @@ Change. `gradeTools` reports `merged`: entries that carry several stated objecti
 is unchanged and still printed; the tables add the line "of these, as one entry for several objectives". A scripted
 case covers it. No run was repeated.
 
+## Amendment 3 (2026-11-27, after an independent fact check of this pilot; tooling and wording only)
+
+A reader who had not done the work compared this README and the runner with the stored runs. Its points, and what
+changed:
+
+- The analysis printed sessions answered by another model but still graded them with their cell, against the
+  protocol. `analyze.mjs` and `summarize.mjs` now leave such sessions out of every total and list them
+  (`bySubject`, with a scripted case). No stored session is affected: none was answered by another model, and the
+  tables are unchanged line for line.
+- "Every request is checked" said more than the runner does. Stated precisely under "What the runner checks" below.
+- `DRY=1` was described as a canary without its limits. Stated below.
+- The exploratory batch was described as "7 checkpoint sessions per subject"; it was 8 and 6. Corrected below.
+- The two tool cells differ in more than the tool definitions. Stated under "Limits".
+
+### What the runner checks
+
+After a session has run, on **every** request it sent: there is a leading system prompt; no system message inside
+the conversation carries text (the empty messages that only carry the effort are allowed); at most one open inquiry
+is present and, when present, it is the last message that is not a system message. On the **first** request only:
+the working directory in the prompt is the one the run chose and names nothing; the hashes of the system text and of
+the tool definitions; the model named; the effort in force; for checkpoint cells, whether the seeded reply is in
+context. A session that fails a check is marked failed and is not graded; its requests have been sent by then.
+
+Effort and model. On this path (Pi 1.5.2, pi-ai `api/anthropic-messages.js`, models with mid-conversation effort) the
+top-level `output_config.effort` of a request is the constant `low`, and the level for each reply is set by an empty
+system message inside the conversation; the SDK's source says so in a comment ("Effort markers set the level for
+every reply. The top-level effort is part of the cached prompt, so it stays fixed"). The runner records the last such
+marker of the first request, and every request of the stored runs carries the configured level in its markers
+(checked over all stored first and last requests). That the provider applies the marker is the SDK's statement, not
+something this pilot verified. Pi sets `responseModel` on a reply only when the provider's reply names another model
+than the one requested (same file), so a live reply without it was reported by the provider as the requested model;
+the seeded assistant messages carry the subject's name by construction and say nothing about the provider.
+
+`DRY=1` stops each request before it is sent and runs the same checks. It builds the first request of a checkpoint
+session and the first request of each turn of a tool session; requests that depend on a reply (a second inquiry, a
+continuation after a tool call) are not built. Every dry session ends as `invalid-report` and the process exits
+non-zero by design: it is an inspection of request shape, not a passing smoke test.
+
 ## Exploratory batch (before registration; kept, labelled)
 
-Run first, with an earlier runner (`.local/cuckoo-ledger/pilot/` in the main checkout, not tracked): fable/high and
-haiku/low, 7 checkpoint sessions per subject and 14 tool sessions with only Cuckoo's tools. Reading its requests and
+Run first, with an earlier runner (`.local/cuckoo-ledger/pilot/` in the main checkout, not tracked): fable/high (8
+checkpoint and 8 tool sessions) and haiku/low (6 and 6), with only Cuckoo's tools declared, after one smoke session. Reading its requests and
 replies found three defects of the instrument, corrected here:
 
 1. The seeded transcripts had no leading system message. In the variant without the numbered exchange Pi therefore
@@ -308,5 +346,8 @@ Bounds are execution controls: 6 concurrent sessions; per session 3 (checkpoint)
 - Seeded short sessions do not show behaviour in long working sessions, over many checkpoints, or under real
   compaction; the `compacted` variant imitates only the absence of the exchange.
 - No task in the tool cells needs another tool, so the model never has to choose between the record and work.
+- `tools-builtins` differs from `tools-only` in the tool definitions and in the system text Pi derives from them (the
+  tool list and the built-in tools' guidelines: 6255 against 5541 characters). The pilot does not separate the two,
+  and the built-in tools were blocked, which a subject that calls one learns in its first turn.
 - Key patterns recognise the scripted subjects; a reply that rewords beyond them is listed as unclear and read.
 - One coder, the grader's author, read the flagged replies.

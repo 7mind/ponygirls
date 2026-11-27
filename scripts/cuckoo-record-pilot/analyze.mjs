@@ -3,19 +3,19 @@
 // Checkpoint sessions are graded under both codings (see grade.mjs); totals name their coding.
 import { TOOL_SCENARIOS } from './scenarios.mjs';
 import { gradeCheckpoint, gradeTools } from './grade.mjs';
-import { loadResults } from './results.mjs';
+import { bySubject, loadResults } from './results.mjs';
 
 const count = (map, key) => map.set(key, (map.get(key) ?? 0) + 1);
 const spread = map => [...map].sort().map(([key, value]) => `${key} ${value}`).join(', ');
 
 for (const directory of process.argv.slice(2)) {
-  const results = loadResults(directory);
+  const { own: results, foreign } = bySubject(loadResults(directory));
   console.log(`\n# ${directory}: ${results.length} sessions, ${results.filter(item => item.status === 'completed').length} completed${results[0] === undefined ? '' : ` · ${results[0].model}/${results[0].thinking}`}`);
   const profiles = new Set(results.flatMap(item => item.profile === undefined ? [] : [`${item.profile.systemSha256.slice(0, 12)}/${item.profile.toolsSha256.slice(0, 12)}`]));
   if (profiles.size > 0) console.log(`model-facing profile (system text with the cwd normalised / tool definitions): ${[...profiles].join(' ; ')}${profiles.size === 1 ? '' : '  <-- NOT IDENTICAL ACROSS RUNS'}`);
   const efforts = new Set(results.flatMap(item => item.profile === undefined ? [] : [String(item.profile.effort)]));
-  const foreign = results.filter(item => item.respondingModels !== undefined && item.respondingModels.some(model => model !== item.model));
-  if (efforts.size > 0) console.log(`effort in the request: ${[...efforts].join(', ')} · sessions answered by another model: ${foreign.length}${foreign.length === 0 ? '' : ` (${foreign.map(item => `${item.id}: ${item.respondingModels.join('+')}`).join('; ')})  <-- REPORT APART`}`);
+  if (efforts.size > 0) console.log(`effort in the request: ${[...efforts].join(', ')}`);
+  console.log(`sessions answered by another model, left out of everything below: ${foreign.length}${foreign.length === 0 ? '' : ` (${foreign.map(item => `${item.id}: ${item.respondingModels.join('+')}`).join('; ')})`}`);
   for (const item of results.filter(entry => entry.status !== 'completed')) console.log(`NOT COMPLETED ${item.id}: ${item.status} ${JSON.stringify(item.errors).slice(0, 300)}`);
   const checkpoint = results.filter(item => item.kind === 'checkpoint'), tools = results.filter(item => item.kind === 'tools');
   if (checkpoint.length > 0) {

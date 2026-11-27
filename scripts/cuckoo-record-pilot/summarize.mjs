@@ -3,9 +3,9 @@
 // Checkpoint numbers use coding v2; the v1 differences are printed underneath.
 import { TOOL_SCENARIOS } from './scenarios.mjs';
 import { gradeCheckpoint, gradeTools } from './grade.mjs';
-import { loadResults } from './results.mjs';
+import { bySubject, loadResults } from './results.mjs';
 
-const columns = process.argv.slice(2).map(argument => { const [name, paths] = argument.split('='); return { name, results: paths.split(',').flatMap(loadResults) }; });
+const columns = process.argv.slice(2).map(argument => { const [name, paths] = argument.split('='); const { own, foreign } = bySubject(paths.split(',').flatMap(loadResults)); return { name, results: own, foreign }; });
 const of = (count, total) => `${count} of ${total}`;
 const table = (rows, heads) => [`| | ${heads.join(' | ')} |`, `|---|${heads.map(() => '---').join('|')}|`, ...rows.map(([label, ...cells]) => `| ${label} | ${cells.join(' | ')} |`)].join('\n');
 
@@ -50,6 +50,7 @@ const TOOL_ROWS = ['Sessions (four user turns, then one inquiry)', 'Every stated
   'An arithmetic question recorded as an objective', 'A request answered in its own turn recorded as an objective', 'Duplicate entries', 'Sessions with a refused call', 'Sessions in which a built-in tool was called (blocked)',
   '`cuckoo_update` calls per session', 'Provider requests beyond one per turn'];
 
+console.log(`Sessions answered by another model, left out of the tables: ${columns.map(column => `${column.name}: ${column.foreign.length === 0 ? 'none' : column.foreign.map(item => `${item.cell} ${item.id}`).join(', ')}`).join(' · ')}`);
 for (const variant of ['visible', 'compacted']) {
   const cells = columns.map(column => checkpointCells(column.results, variant));
   if (cells.every(cell => cell === null)) continue;

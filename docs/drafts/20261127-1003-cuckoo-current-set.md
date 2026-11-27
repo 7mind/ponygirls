@@ -259,8 +259,10 @@ completions.
   comment key, focus and End, a checkpoint row with IDs, a second checkpoint, a title-only objective, a completed
   objective restated later, sizes 60x24 to 140x40, clean exits, a relaunch with `--continue` in regular mode, and a
   session file with an edit of an unknown version (badge `!`, the error line above the saved report, refused tool
-  calls and inquiry). Found there: the start-up notice about such a fault does not reach the terminal; the badge and
-  the panel show it. Mouse clicks were not exercised.
+  calls and inquiry). Seen there: in a continued session the start-up notice about such a fault stands at the top of
+  the transcript, above the replayed history, so it is off screen unless the user scrolls up; what stays visible is
+  the badge and the panel's error line. That placement is Pi's and is the same for Cuckoo's other start-up faults.
+  Mouse clicks were not exercised.
 - **Live models.** `scripts/cuckoo-record-pilot` (protocol, runner, grader with scripted cases, stored runs and the
   full tables in its README). Extension at `6f31b542`, synthetic content, three subjects of one provider family,
   144 sessions, all completed. A first batch with an earlier runner was exploratory: reading its requests showed that
@@ -302,13 +304,16 @@ completions.
   What this shows. The ID protocol holds for all three subjects on a record of realistic size, also when the exchange
   that numbered it is out of context. Whether the record is current *between* checkpoints depends on the model: the
   strongest at high effort kept it current in every session; the middle one keeps a coarser record and, beside the
-  built-in tools, recorded no objective when the user's request did not enumerate them; the weakest at low effort
-  records rules and rarely objectives. For the latter two the record is as current as their last checkpoint, which is
+  built-in tools, recorded no objective in 10 of 12 sessions of the scenario whose request does not enumerate them
+  (and in none of the 12 by the turn that stated them); the weakest at low effort records rules and rarely
+  objectives. For the latter two the record is as current as their last checkpoint, which is
   the behaviour before this change, with IDs added. Whether to lengthen the interval is therefore a per-model choice
   of the user; the default is unchanged.
 
   What it does not show. There is no work in the tool sessions and the built-in tools were declared but blocked, so
-  the model never chooses between the record and a task. Sessions are short: nothing here is about long sessions,
+  the model never chooses between the record and a task. Declaring the built-in tools also changes the system text
+  Pi derives from them (the tool list and their guidelines), so the difference between the two tool cells is not
+  attributable to the tool definitions alone. Sessions are short: nothing here is about long sessions,
   many checkpoints or real compaction. One provider family; cells of 12 to 24 sessions. In a chat turn each use of
   the tool costs one more provider request; in a working turn the call can ride with other tool calls, which was not
   measured. The wording of the guidance was not changed after these results: a change would need the whole batch
