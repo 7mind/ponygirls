@@ -31,13 +31,14 @@ reports on one branch.
 | Pairs with at least one such loss | 517 of 620 (open objectives) | 603 of 620 |
 
 Correction, 27 Nov 2026. The first version of the survey script read each session file into one string and, without
-saying so, skipped the one file that is too large for that (1.08 GB, about 100 reports). Its figures, on 591 reports
+saying so, skipped the one file that is too large for that (1.08 GB, 88 reports). Its figures, on 591 reports
 in 77 sessions, were: 427 of 519 pairs lose an open objective and 506 of 519 a rule; at most 62 rules and 11415
 characters of rule text in a report; 8 objectives at the 90th percentile. Those figures stood in the decision
 question Q182, on the mockup page, and behind the size of the pilot's seeded record. The shares are the same to
 within a point (82 and 97 per cent then, 83 and 97 now); the largest report is larger than stated (99 rules, 14222
 characters). The table above is from the corrected script, which streams every file and stops on one it cannot read;
-it also includes the five reports this task's own session had saved by then. Found while checking that reports saved
+it was run three hours after the first and so also holds the 19 reports saved meanwhile (5 by this task's own
+session, 14 by other sessions on the host). Found while checking that reports saved
 by the deployed extension decode identically with the new code (`legacy-differential.mjs`: 732 of 732 entries of
 versions 2 to 4, same decoding and same plain text, no entry numbered).
 
