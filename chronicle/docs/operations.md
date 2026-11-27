@@ -404,6 +404,29 @@ ignores the key but refuses an `indexing` section without the three capacities.
   `mode=apply` with the confirmation it names); a later start migrates again (ages lost). Before an older rollback run it
   first.
 
+## Provider back-off (`indexing.providerBackoff`)
+
+- **Off (default)** every model-provider failure is recorded as before: the job is Queued again at once, its attempt
+  charged, and Failed at the fifth. Read at start (NixOS: `indexing.providerBackoff`); a value that is not a boolean
+  refuses the start (`indexing.providerBackoff must be true or false`). On, the server logs `provider back-off on …` once
+  it serves.
+- **The hold.** A failure at annotation or embedding answered HTTP 429, 503 or 529 holds the job with its attempt
+  refunded; HTTP 500, 502, 504, 408, a deadline (`model-timeout`) or a transport failure (`model-transport`) holds it with
+  the attempt charged, and at the fifth attempt fails it. Held = Queued with `lease_until` 1, 2, 4, 8, then 15 minutes
+  ahead by `transient_failures`, the count of failures in a row without saved progress shared with database holds; the
+  tenth fails the job with the code of that failure, and so does a failure on its window's tenth annotation reservation.
+  `error` keeps the provider code and `failure_stage` its stage; `waiting_since` and `bulk` are kept, so the job returns at
+  its place in the waiting order. One line per hold: `job held jobId=… code=… httpStatus=… stage=… class=refunded|charged
+  hold=k holdEnds=… reservation=…`. Other statuses are recorded as before; 401, 403 and 404 also log `model provider
+  configuration alert …`. RetryJob clears a hold; Retry failed does not touch held (Queued) jobs.
+- **The lane cool-down.** After such a failure the lane that ran the job waits 1, 2, 4, 8, then 15 minutes before its next
+  claim (`indexing lane paused lane=… upstream=… level=… pauseSeconds=…`); a completed answer of the upstream that failed
+  resets it (`indexing lane cool-down reset …`). In memory only: a restart clears it. Under the waiting order lane 0 keeps
+  the large-job permit while paused. Other lanes are not delayed.
+- **Switching it off** with jobs held: they stay Queued until their `lease_until`, then are claimed and recorded as before;
+  the shared count and refunded attempts stay as they are. The Activity page reads every held row (database holds too)
+  `Hold ends HH:MM (back-off)` with `Prior: <error>`.
+
 ## Models
 
 An annotation model must honor the structured JSON contract in the server README. Source text is untrusted input, never instructions to execute tools. The model chooses semantic chunk boundaries over bounded, numbered source fragments; the server verifies complete, non-overlapping coverage and constructs the original spans itself.

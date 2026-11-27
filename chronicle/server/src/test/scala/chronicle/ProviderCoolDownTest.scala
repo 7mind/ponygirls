@@ -98,7 +98,7 @@ class ProviderCoolDownTest extends munit.FunSuite {
   }}
   test("Cool-down: a paused lane makes no claim before its pause ends and claims again after it, while the other lanes keep claiming (waiting order, 3 lanes)") {
     lanes(ClaimOrderSetting.Waiting) { l =>
-      val pause=2.seconds
+      val pause=4.seconds
       val claims=new ConcurrentLinkedQueue[(Int,Long,Option[UUID])]()
       @volatile var held=Option.empty[Long]
       val traced=new ProviderForwardingArchive(l.archive) {
@@ -115,7 +115,10 @@ class ProviderCoolDownTest extends munit.FunSuite {
         val deadline=10.seconds.fromNow
         while(held.isEmpty && deadline.hasTimeLeft()) Thread.sleep(20)
         assert(held.nonEmpty,"the job was held")
-        Thread.sleep((pause+1500.millis).toMillis)
+        val lane=claims.asScala.collectFirst { case (lane,_,Some(job)) if job==id => lane }.get; val end=held.get+pause.toNanos
+        // Until the paused lane's next claim after its pause (bounded): the events are ordered by the pause, not by a sleep.
+        val bound=(pause+30.seconds).fromNow
+        while(!claims.asScala.exists((index,at,_) => index==lane && at>=end) && bound.hasTimeLeft()) Thread.sleep(20)
       } finally fiber.cancel.unsafeRunSync()
       val trace=claims.asScala.toList; val start=held.get; val end=start+pause.toNanos
       val lane=trace.collectFirst { case (lane,_,Some(job)) if job==id => lane }.get
@@ -123,7 +126,7 @@ class ProviderCoolDownTest extends munit.FunSuite {
       assertEquals(during.filter(_._1==lane),Nil,s"lane $lane claimed during its pause")
       assert(trace.exists((index,at,_) => index==lane && at>=end),s"lane $lane claims again after its pause: $trace")
       (0 until 3).filter(_!=lane).foreach(other => assert(during.exists(_._1==other),s"lane $other kept claiming during lane $lane's pause: $trace"))
-      assertEquals(l.log.lines.count(_.startsWith(s"indexing lane paused lane=$lane upstream=Annotation level=1 pauseSeconds=2")),1)
+      assertEquals(l.log.lines.count(_.startsWith(s"indexing lane paused lane=$lane upstream=Annotation level=1 pauseSeconds=4")),1)
     }
   }
   for(order <- List(ClaimOrderSetting.Waiting,ClaimOrderSetting.SourceId)) {
@@ -133,7 +136,8 @@ class ProviderCoolDownTest extends munit.FunSuite {
         val id=l.archive.ingest("a",Fixtures.snapshot()).jobId; l.stub.chat=_ => 429
         l.db.transaction { c => Sql.exec(c,"UPDATE ch_jobs SET total_windows=150 WHERE id=?",id); () }
         val admission=ModelAdmission.make(l.config.indexing).unsafeRunSync()
-        val w=workerWith(l.archive,l.config,l.client,l.log.logger,admission,Worker.CoolDown(3.seconds,2,3.seconds))
+        // A pause far longer than the check: the lane is cancelled once the permit is observed.
+        val w=workerWith(l.archive,l.config,l.client,l.log.logger,admission,Worker.CoolDown(60.seconds,2,60.seconds))
         val fiber=w.lane(0).start.unsafeRunSync()
         try {
           val deadline=10.seconds.fromNow

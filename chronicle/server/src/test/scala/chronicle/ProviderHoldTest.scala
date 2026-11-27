@@ -296,6 +296,33 @@ class ProviderHoldTest extends munit.FunSuite {
       }
     }
   }
+  test("Fenced record: a worker lane stays idle for the failure back-off after a hold is recorded, and not shorter") { scenario() { s =>
+    s.stub.chat=_ => 429
+    val backoff=Worker.FailureBackoff(300.millis)
+    @volatile var recordedAt=0L
+    val recording=new ProviderForwardingArchive(s.archive) {
+      override def holdProvider(c: Claim,failure: ProviderFailure,deadline: Deadline): ProviderOutcome = { val outcome=super.holdProvider(c,failure,deadline); recordedAt=System.nanoTime(); outcome }
+    }
+    val id=s.ingest("a")
+    val w=new Worker(recording,new OpenAIProblemPassageAnnotator(ProviderBackoffFixtures.http(s.client,s.config),s.config),new OpenAIEmbedder(ProviderBackoffFixtures.http(s.client,s.config),s.config),
+      s.config,IndexProfileCatalog.current(s.config),ModelAdmission.make(s.config.indexing).unsafeRunSync(),s.log.logger,backoff,ModelFixtures.snapshots)
+    assert(s.claim(w))
+    val idle=(System.nanoTime()-recordedAt).nanos
+    assertHeld(s.row(id),0,"model-http","Annotation",1)
+    assert(idle>=backoff.delay,s"worker lane resumed $idle after the hold was recorded")
+  }}
+  test("Fenced record: a hold that cannot be recorded is logged, the job keeps its lease, and the lane goes on") { scenario() { s =>
+    s.stub.chat=n => if(n==1) 429 else 200
+    val failing=new ProviderForwardingArchive(s.archive) {
+      override def holdProvider(c: Claim,failure: ProviderFailure,deadline: Deadline): ProviderOutcome = throw new IllegalStateException("synthetic record failure")
+    }
+    val id=s.ingest("a"); val w=s.worker(failing)
+    assert(s.claim(w))
+    assertEquals((s.row(id).state,s.row(id).attempts,s.row(id).error),("Running",1,None),"nothing recorded: the job keeps its lease")
+    val unrecorded=s.lines("job failure not recorded"); assertEquals(unrecorded.size,1)
+    assert(unrecorded.head.matches(s"job failure not recorded jobId=$id failureCode=model-http code=worker-fault exceptionClass=java\\.lang\\.IllegalStateException sqlState=unavailable origin=\\S+"),unrecorded.head)
+    val other=s.ingest("b"); assert(s.claim(w)); assertEquals(s.row(other).state,"Complete")
+  }}
   test("Fenced record: a held job stays held while its owner's indexing is off and after it is on again, until its hold ends") { scenario() { s =>
     s.stub.chat=n => if(n==1) 429 else 200
     val id=s.ingest("a"); val w=s.worker()
