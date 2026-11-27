@@ -57,7 +57,7 @@ final case class EmbeddingConfig(endpoint: String, model: String, revision: Stri
   * and the rest of the window is asked; off, it is rejected `annotation-partition-incomplete` and the whole window asked
   * again. Not part of the index profile. `claimOrder` (read at start; indexing-claim-order spec §6): `SourceId` is today's
   * order, `Waiting` the waiting order of ClaimOrder with `bulkLanes` bulk-preferring lanes (ignored under `SourceId`). */
-final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int,embeddingBatchSize: Int,incrementalPublication: Boolean=true,metadataHorizonWindows: Int=ProblemRows.metadataHorizonWindows,publicationStatementTimeout: Option[FiniteDuration]=None,annotationContinuations: Boolean=false,claimOrder: ClaimOrderSetting=ClaimOrderSetting.SourceId,bulkLanes: Int=1) {
+final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int,embeddingBatchSize: Int,incrementalPublication: Boolean=true,metadataHorizonWindows: Int=ProblemRows.metadataHorizonWindows,publicationStatementTimeout: Option[FiniteDuration]=None,annotationContinuations: Boolean=false,claimOrder: ClaimOrderSetting=ClaimOrderSetting.SourceId,bulkLanes: Int=1,providerBackoff: Boolean=false) {
   def validate(): Unit = {
     Check(annotationSessions>=1 && annotationSessions<=8,"config","annotation session capacity must be 1..8")
     Check(embeddingRequests>=1 && embeddingRequests<=32,"config","embedding request capacity must be 1..32")
