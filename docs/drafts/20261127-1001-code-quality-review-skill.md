@@ -530,7 +530,7 @@ v0.3's changes have had no independent reading.
 
 Run as registered in section 7.1; the skill was v0.3. The supervisor's run
 directory, with its 120 kB report and its notes on the skill text, is
-`debug/cqr-20261127-1051` in its harness work tree (path in section 12).
+`debug/cqr-20261127-1051` in its harness work tree (path in section 13).
 
 **Outcome on `haystack/server` production code** (2,640 lines, 49,520 tokens
 with the plants):
@@ -691,7 +691,117 @@ numbers above.
     file, a lower thinking level, cheaper reader models, fewer lenses per
     partition chosen from the leads.
 
-## 12. State, for resuming
+## 12. Held-out run (27 Nov 2026, 12:49 to 13:56 UTC)
+
+Run as registered in section 7.2 on skill v0.4 (`b69805bf`), without
+interference. The supervisor's run directory
+(`debug/20261127-1249-cqr-manure-backend` in its harness work tree) holds its
+report, its residue file and 41 notes on the skill text.
+
+**Outcome on `manure/backend`** (production 5,261 lines and 75,301 tokens,
+tests 5,005 lines and 100,648 tokens, plants included):
+
+- Five readers on `moonshotai/Kimi-K3.1-Pro` (four groups on production
+  code, one on test code), ten lens passes, 29 records, none inadmissible.
+- 15 went to refutation (the cap), 2 were cut as untested, 2 deferred, 10
+  stood behind a twin or a preferred record.
+- The refuters killed 4. The supervisor doubted 2 of those and asked a second
+  refuter: one kill was confirmed, one was not and went to its spike as an
+  unchecked falsifier. End: 3 refuted, 12 supported.
+- 5 spikes, all confirmed, each with a negative control that fails a test:
+  16 lines and 213 tokens of production code and 5 lines and 69 tokens of
+  test code smaller. Three are real findings: `SecretCodec` re-implements
+  the shared `Secrets` (8 lines, 91 tokens), `Payloads.hasLive` has no
+  caller (4 lines, 46 tokens), two test set-ups repeat one drain loop (5
+  lines, 67 test tokens). Two are plants, measured at exactly their planted
+  size.
+- 7 supported hypotheses stayed unmeasured behind the spike cap.
+
+**Plants** (answer key hash as registered; all verified by site overlap):
+
+| Plant | Found by a reader | End state |
+|---|---|---|
+| P1 renamed copy of `SecretCodec.sha256` | yes | refuted: "a test is weakened", because the test and the code would call the same helper again |
+| P2 unused `Artifact.remainingSeconds` | yes | confirmed, 1 line and 21 tokens |
+| P3 pass-through `CatalogueReader` | yes | confirmed, 3 lines and 55 tokens |
+| P4 hand-rolled `exists` | yes, under three lenses | refuted, also by the second refuter: "inlining would repeat code", because the one-line predicate occurs twice elsewhere |
+| P5 one validator written three times | yes | supported, not spiked |
+| P6 unused helper in test support | yes | untested: cut by the refutation cap |
+
+**Against what was stated before the run.**
+
+1. *Readers on the open model: met.* None of 29 records inadmissible; five of
+   five production plants found, and the one in the tests. Two reservations.
+   The readers returned 29 records, against 55 from the four group readers of
+   the first wave on half as much code; the run cannot say whether the code
+   or the model is the reason. And one reader claimed a complete read that
+   the tool logs contradict (four shared README files never reached it).
+2. *Refutation repaired: not met.* The supervisor overruled no kill alone,
+   but 2 of 4 kills needed a second opinion (stated limit: a third). Worse,
+   and not foreseen in the criteria: two of the three final kills reject
+   changes that are known to be sound, because they restore the code as it
+   stood one commit earlier. Both kills had an observer by the letter of
+   v0.4.
+3. *Ranking repaired: met.* All five production plants reached refutation.
+   The plant in the tests was cut by the cap.
+4. *Cost.* 37.71 USD as the harness reports it, in 67 minutes: supervisor
+   21.75, spikers 5.39, refuters and second opinions 3.11, stub generations
+   for the model switch 0.88, readers 6.58 (nominal: they ran on a model the
+   employer hosts). Without the readers 31.13, against an expectation of
+   under 50. The first wave cost 121.83 for half as much code.
+
+**What counts against v0.4.**
+
+- *Reading still kills sound changes.* Two of five production plants died in
+  refutation. The first wave showed the same weakness from the other side:
+  of two kills the supervisor overruled there, the spikes confirmed one
+  change and failed the other. In both runs the executed test was right
+  where readers disagreed. Refutation by reading earns its cost as
+  preparation (differences, guarding tests, things for the spike to check);
+  as a gate on questions of behaviour it is not reliable.
+- *Twins share a fate across lenses.* The kill of P4 came from a falsifier of
+  the abstraction-fitness card and took the library-underuse and reinvention
+  records of the same change with it.
+- *Spikes were not isolated.* Two spikers wrote their test output into the
+  same directory under the shared home directory; one overwrote the other's
+  evidence. A spiker noticed, the procedure did not.
+- *A reader's own account of what it read is not evidence*, and a bundle is
+  not "a few calls": the read tool returns about 24 kB per call, so a reader
+  needed 14 to 17 calls for the production bundle.
+- *The calibration slots* took two of five spikes for the two smallest
+  changes while supported ones predicting 6 to 19 lines stayed unmeasured.
+- *History only ever counts against a hypothesis.* "This restores what stood
+  until the last commit" has no weight in the text.
+
+**Limits of this run.** Tuned text, group readers, bundles, another reader
+model and another codebase changed together. The plants sit in the newest
+commit, which the supervisor and one refuter noticed in the history (after
+the readers had answered; readers had no history). JVM suites only: the
+native executable and the full verification were not run for any spike.
+
+### Candidates for v0.5, not applied
+
+1. Reading refutes only what reading can prove: feasibility, project rules,
+   contract changes, the token balance. Questions of behaviour become checks
+   for the spike, and only a run refutes them; the spike cap rises
+   accordingly (a spike cost about 1.10 USD here, a refutation about 0.20).
+2. A kill by one lens's falsifier does not kill a twin from another lens.
+3. Card and rule wording: "inlining would repeat code" means the abstraction
+   has two or more callers; "a test is weakened" means the patch edits or
+   removes assertions; `reword` also covers a hypothesis that holds at all
+   sites but one; "can observe" against "does observe".
+4. One scratch directory per spiker, named by the supervisor.
+5. Reader coverage from tool logs where the harness keeps them; bundles cut
+   to the read tool's size.
+6. Calibration: one slot, or none below a cap of ten.
+7. History as a lead (lines changed recently) and as support ("restores the
+   previous code").
+8. Smaller: a status for records in flight; `confirmed` with ledger entries
+   still open; a subset wrapper that drifts from the project's runner; the
+   yield columns; `passes.tsv` for group readers. The skill is 53 kB and
+   should shrink.
+
+## 13. State, for resuming
 
 - Branch `code-quality-review-skill`, work tree
   `.worktrees/wt-ponygirls-code-quality-review-skill`; not merged. Commits:
@@ -715,11 +825,14 @@ numbers above.
 - Pilot first wave done (section 10); the run directory is
   `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-04aa8cceee04-1795776647075/debug/cqr-20261127-1051`
   (`report.md`, `friction.md`, `hypotheses.jsonl`, `spikes/`, `spike-worktrees.tsv`).
-- Held-out run started 27 Nov 2026 12:49 UTC on skill `b69805bf`; its run
-  directory will be under
-  `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-03f3b2a7b890-1795783717555/debug/`.
-- Not done: scoring and reporting the held-out run, the other partitions, the
-  Haystack skill-draft record, installation under `nix/pkg/llm-skills/skills/`.
+- Held-out run done (section 12) on skill `b69805bf`; its run directory is
+  `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-03f3b2a7b890-1795783717555/debug/20261127-1249-cqr-manure-backend`
+  (`report.md`, `residue.md`, `friction.md`, `hypotheses.jsonl`, `spikes/`).
+  Five more spike work trees with staged patches are left in place.
+- Not done: v0.5 (candidates in section 12), the review of the remaining
+  code, applying any confirmed change, installation under
+  `nix/pkg/llm-skills/skills/`. Waiting for the user's decision on how to go
+  on.
 - Scratch material outside the repository, not needed to continue:
   `/tmp/cq-research` (prior-art downloads, clone-detector probes, the old
   script versions used for the reproductions).
