@@ -58,6 +58,7 @@ implemented by the shared `@ponygirls/pi-ui` kit.
 
 | Extension | What it does |
 |---|---|
+| `ponygirls-yolo-badge` | Shows an amber **YOLO** warning on the prompt editor’s top-left border unless the yolo launcher marks the process with `SMIND_SANDBOXED=1`. Falls back to an amber `!` if Pi only gives it one to three cells. It’s an indicator, not a sandbox check or permission control. |
 | `ponygirls-model-picker` | Compacts pi's footer into one line (path, session, native stats) and hides its model suffix (`setFooterOptions`), and keeps a **clickable model / thinking-effort indicator on the input border** (bottom right, e.g. `mimo-v2.6-pro ⌃⇧M • high ⌃⇧E`) with the `ctrl+shift+m` / `ctrl+shift+e` shortcuts that open the same menus. **All** shows the latest generations by default; `ctrl+a` toggles older models without changing saved favourites. |
 | `ponygirls-openai-fast` | `/fast on\|off\|status` requests OpenAI priority processing (`openai` and `openai-codex`) without changing the model or reasoning effort. Defaults to **on**; the preference persists in Pi's agent directory as `openai-fast.json`. Status distinguishes the requested tier from the provider-reported tier; priority is not guaranteed and may cost more. |
 | `ponygirls-model-stats` | Measures every provider response (time to first token, total span, decode tok/s) and shows per-model distributions in the `/perf` pane, one period at a time. |

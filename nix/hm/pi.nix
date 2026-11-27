@@ -962,6 +962,7 @@ in
             # is deliberately off; MCP tools use `deferred` / `direct`
             # exposure instead (see piMcpJson).
             "-builtin:codemode"
+            "${piExtensions}/ponygirls-yolo-badge.ts"
             "${piExtensions}/ponygirls-quirk-kimi-401-retry.ts"
             # /fast on|off|status: persistent OpenAI priority processing, without changing reasoning.
             "${piExtensions}/ponygirls-openai-fast.ts"

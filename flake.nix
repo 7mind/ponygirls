@@ -874,6 +874,13 @@
           '';
           subagents-policy-shape = subagentsPolicyShapeCheck;
           tokemon = self.packages.${system}.tokemon;
+          ponygirls-yolo-badge = pkgs.runCommand "ponygirls-yolo-badge-test" {
+            nativeBuildInputs = [ pkgs.nodejs ];
+            PI_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+          } ''
+            node --test ${self.packages.${system}.ponygirls-pi-extensions}/ponygirls-yolo-badge.test.mjs
+            touch $out
+          '';
           ponygirls-quirk-kimi-401-retry = pkgs.runCommand "ponygirls-quirk-kimi-401-retry-test" {
             nativeBuildInputs = [ pkgs.bun ];
           } ''
