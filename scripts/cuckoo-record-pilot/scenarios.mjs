@@ -5,7 +5,7 @@
 const objective = (title, key, progress = 'In progress.', eta = 'Unknown: not estimated yet') => ({ title, key, progress, eta });
 const rule = (text, source, key, scope = 'This session') => ({ text, source, key, scope });
 
-/** Checkpoint fidelity: a record of realistic size (8 objectives, 25 rules: the median and 90th percentile of the saved reports), then a conversation that changes it. */
+/** Checkpoint fidelity: a record of realistic size (25 rules, the median of saved reports; 8 objectives, one above their 90th percentile), then a conversation that changes it. */
 export const RECORD = {
   objectives: [
     objective('Migrate the billing exporter to the new job queue', /billing exporter|exporter/i, 'Exporter builds against the new queue client.'),

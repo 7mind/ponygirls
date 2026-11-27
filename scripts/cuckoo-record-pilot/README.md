@@ -14,7 +14,7 @@ description and guidelines) as shipped at the commit under test.
 
 | Cell | Session | Measures |
 |---|---|---|
-| `checkpoint-visible` | Seeded: Pi's own leading system message, a numbered checkpoint of 8 objectives and 25 rules (the median and 90th percentile of saved reports) with its inquiry and reply in context, then a conversation that completes one objective, cancels one, adds one and lifts one rule. Two live inquiries. | IDs in the replies |
+| `checkpoint-visible` | Seeded: Pi's own leading system message, a numbered checkpoint of 8 objectives and 25 rules (see amendment 4 for where the sizes come from) with its inquiry and reply in context, then a conversation that completes one objective, cancels one, adds one and lifts one rule. Two live inquiries. | IDs in the replies |
 | `checkpoint-compacted` | The same, with the numbered exchange absent from model context, as after a compaction. The record reaches the model only through the inquiry. | IDs without the exchange |
 | `tools-only` | Four live user turns, then one inquiry. Only `cuckoo_update` and `cuckoo_recall` are declared. Two scenarios. | Unprompted use of the tool |
 | `tools-builtins` | The same with Pi's built-in tools (`read`, `bash`, `edit`, `write`) declared as in a working session. Their execution is blocked and recorded; no task needs them. | The same beside other tools |
@@ -125,6 +125,14 @@ the seeded assistant messages carry the subject's name by construction and say n
 session and the first request of each turn of a tool session; requests that depend on a reply (a second inquiry, a
 continuation after a tool call) are not built. Every dry session ends as `invalid-report` and the process exits
 non-zero by design: it is an inspection of request shape, not a passing smoke test.
+
+## Amendment 4 (2026-11-27, after the batch; wording only)
+
+The seeded record has 25 rules, the median of saved reports, and 8 objectives, which was their 90th percentile in the
+survey the protocol was written from. That survey had skipped one large session file; over all files the 90th
+percentile is 7 objectives (median 3) and the median is still 25 rules (90th percentile 41). The record is one
+objective above the percentile it was meant to sit at. The fixture is unchanged; only its description here and the
+comment in `scenarios.mjs` were corrected.
 
 ## Exploratory batch (before registration; kept, labelled)
 

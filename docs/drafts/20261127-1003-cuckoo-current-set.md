@@ -18,16 +18,28 @@ this way, what was decided, and what the validation showed and did not show.
 ## Observed before the change
 
 Survey of the saved reports under `~/.pi/agent/sessions` (`.local/cuckoo-ledger/survey-identity.mjs`, output
-`survey-identity-before.txt`): 591 valid reports in 77 sessions, 519 pairs of consecutive valid reports on one branch.
+`survey-identity-all-files.txt`): 694 valid reports of versions 3 to 5 in 79 sessions, 620 pairs of consecutive valid
+reports on one branch.
 
 | | Objectives | Rules |
 |---|---|---|
-| Per report, median / 90th percentile / maximum | 3 / 8 / 18 | 25 / 41 / 62 |
-| Text per report, median / 90th percentile (characters) | 286 / 760 (titles) | 3825 / 6879 (rule and scope) |
-| Texts of a report found unchanged in the previous one | 586 | 5288 |
-| Texts of a report not in the previous one | 1392 | 8195 |
-| Texts of the previous report missing from the next | 95 after `Complete`, 1260 still open | 7699 |
-| Pairs with at least one such loss | 427 of 519 (open objectives) | 506 of 519 |
+| Per report, median / 90th percentile / maximum | 3 / 7 / 18 | 25 / 41 / 99 |
+| Text per report, median / 90th percentile / maximum (characters) | 286 / 756 / 1738 (titles) | 3933 / 7272 / 14222 (rule and scope) |
+| Texts of a report found unchanged in the previous one | 660 | 5845 |
+| Texts of a report not in the previous one | 1679 | 10686 |
+| Texts of the previous report missing from the next | 120 after `Complete`, 1512 still open | 10177 |
+| Pairs with at least one such loss | 517 of 620 (open objectives) | 603 of 620 |
+
+Correction, 27 Nov 2026. The first version of the survey script read each session file into one string and, without
+saying so, skipped the one file that is too large for that (1.08 GB, about 100 reports). Its figures, on 591 reports
+in 77 sessions, were: 427 of 519 pairs lose an open objective and 506 of 519 a rule; at most 62 rules and 11415
+characters of rule text in a report; 8 objectives at the 90th percentile. Those figures stood in the decision
+question Q182, on the mockup page, and behind the size of the pilot's seeded record. The shares are the same to
+within a point (82 and 97 per cent then, 83 and 97 now); the largest report is larger than stated (99 rules, 14222
+characters). The table above is from the corrected script, which streams every file and stops on one it cannot read;
+it also includes the five reports this task's own session had saved by then. Found while checking that reports saved
+by the deployed extension decode identically with the new code (`legacy-differential.mjs`: 732 of 732 entries of
+versions 2 to 4, same decoding and same plain text, no entry numbered).
 
 Comparison is by text after lower-casing and collapsing whitespace. The sampled losses are rewordings ("Unify LK128
 corpus embedding under …" became "Unify LK128 embedding under …"), splits and merges, and objectives that were dropped
