@@ -588,9 +588,11 @@ with the built-in tools declared (hashes `07499ee7b2c1` and `354f2ce07dbd`), 551
 
 **Held-out scenarios.** Written by a subagent of another model family (gpt-6.2-sol) from the seven points of the
 desired behaviour, the format and the list of subjects to avoid; it was told to read no file and its reply named
-only the file and its hash. The protocol was committed at 13:30 UTC, the file was written at 13:33, the wording was
-frozen at 13:43, and the file was read after that. It is `heldout.mjs`, unchanged (SHA-256 `2959702f…`). The scripted check of its keys against the author's example
-titles and the user's own words passed; no fixture was corrected. `h1`: three deliverables stated in running prose,
+only the file and its hash. Its session log shows four tool calls, all on that file (write, its own check, one edit,
+the check again, 13:32:49 to 13:33:20 UTC), so it read nothing else. The protocol was committed at 13:30, the first
+development run ended at 13:35, the wording was frozen at 13:43, and the file was read after that. It is
+`heldout.mjs`, unchanged (SHA-256 `2959702f…`). The scripted check of its keys against the author's example titles
+and the user's own words passed; no fixture was corrected. `h1`: three deliverables stated in running prose,
 one cancelled, one accepted, one still open, one rule, one plain question. `h2`: two deliverables, a third added in
 the second message, one cancelled, two accepted, one rule. `h3`: one label built in parts. `h4`: questions and small
 requests, one rule.
