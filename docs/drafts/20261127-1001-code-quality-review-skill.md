@@ -1,4 +1,4 @@
-# Code-quality review skill: design draft v0.3
+# Code-quality review skill: design draft v0.4
 
 Status: proposal for discussion, 27 Nov 2026. Nothing here has been run end
 to end. The text has had two independent readings and one re-reading of the
@@ -226,6 +226,12 @@ Decisions, each with the alternative it was chosen over:
 7. **Tracking.** No Linear issue was named for this work, so nothing was
    written there. Say if it should be tracked and where. **Decided 27 Nov
    2026 (Q186): not tracked in Linear.**
+8. **After the first wave** (asked 27 Nov 2026). **Q193: tune the text from
+   the first wave, then one held-out run on the manure backend with the cost
+   cuts (group readers, one bundled file per partition, readers on the
+   employer-hosted open models), and report before anything further. Q194:
+   production and test tokens count together; moving code from one to the
+   other is not a gain.**
 
 ## 7. Proposed test
 
@@ -330,6 +336,51 @@ Fixed on 27 Nov 2026 after Q185 and before any pilot agent was started.
   starts more than 35 agents, or runs longer than three hours.
 - **Tuning.** The skill text changes only for failures observed in the run,
   each logged in section 11 with the observation.
+
+### 7.2 Held-out run, registered before the run
+
+Fixed on 27 Nov 2026 after Q193 and Q194 and before any agent of this run was
+started. The skill is v0.4, used unchanged.
+
+- **Tree.** Base `031b0c2b` (`manure/backend` is unchanged since `e44b2924`)
+  plus one planted commit, `03f3b2a7`, on a local branch that is never
+  merged. Six plants: five in production code, of the same kinds as in the
+  first wave (+20 lines, +317 tokens), and one unused helper in test support
+  (+1 line, +21 tokens). The plants are my addition to the decided run: the
+  reader model changes, and without a positive control a thin result could
+  not be told from readers that do not see. Answer key outside every tree,
+  SHA-256 `5a4e4eba885efe9888ae956237caa6fa38ebb39af7de39dca8ddcf47ff2bbaa3`.
+  The JVM suite must pass on the planted commit before the supervisor starts.
+- **Supervisor.** One fresh subagent, the session's model, thinking high,
+  with the skill file, the request and the instruction files; not told about
+  the plants; keeps notes on where the text failed it.
+- **Request.** Review `manure/backend` with the structural pack. Two
+  partitions: its production code, read by the four affinity groups, and its
+  test code, read by the group for tests. Bundles as in the skill. Readers on
+  `moonshotai/Kimi-K3.1-Pro`, thinking high, with
+  `deepseek-ai/DeepSeek-V4-Pro-0813` as the model to change to if section
+  10's threshold on inadmissible records trips. Refuters `gpt-6.2-sol`,
+  spikers the session's model, both thinking high. Caps: 10 hypotheses per
+  lens pass, 15 to refutation, 5 spikes. Stop after section 8; apply nothing.
+- **Measured.** Per stage: agents, tokens, cost as the harness reports it,
+  wall time. Records and the share inadmissible; plants found; kills, second
+  opinions and `reword` verdicts; spike results.
+- **Stated before the run.**
+  1. Readers on the open model are good enough if at most a third of their
+     records are inadmissible and at least four of the five production
+     plants are found.
+  2. Refutation is repaired if no kill is overruled by the supervisor alone
+     and at most a third of the kills go to a second opinion.
+  3. Ranking is repaired if every plant among P1 to P5 that a reader found
+     reaches refutation.
+  4. Cost: an expectation, not a criterion. Supervisor, refuters and spikers
+     together under 50 USD; the readers run on models the employer hosts,
+     for which the harness reports a nominal cost that is not billed to us.
+- **Plant scoring and monitor rules** as in section 7.1.
+- **Confounded by design.** Tuned text, group readers, bundles, another
+  reader model and another codebase change together. The run can show
+  whether the combination works; it cannot attribute a difference to one of
+  them.
 
 ## 8. Known weaknesses of the draft
 
@@ -526,8 +577,14 @@ against 8).
 **Cost, as the harness reports it.** 121.83 USD in all: readers 81.51,
 refuters 5.10 (14 agents on `gpt-6.2-sol`), spikers 6.39, probe 0.27,
 supervisor 28.56. A reader cost 4.42 to 8.36 USD for a partition of about
-63,000 tokens; 92% of reader input was cache reads over many turns. 33
-subagents, 95 minutes. The Anthropic account's extra-usage figure did not move
+63,000 tokens. 33 subagents, 95 minutes. Where the reader money went
+(worked out afterwards from the per-reader figures, which fit prices of 0.20
+USD per million tokens read from cache, 10 per million written to it and 40
+per million of output): for the nine per-lens readers 23.7 USD of output,
+23.8 of fresh input and 5.6 of cache reads. So 92% of the reader tokens were
+cache reads, but only a tenth of the reader cost; reading in fewer calls can
+save that tenth at most, and the levers are the reader model, the number of
+readers and their output. The Anthropic account's extra-usage figure did not move
 during the run (4,892.18 USD at 11:39 UTC), so the gateway is billed
 elsewhere.
 
@@ -555,8 +612,35 @@ to one agent without a check on it.
 
 ## 11. Tuning log
 
-Candidates from the first wave, not yet applied. Sources: the supervisor's 34
-notes (F01 to F34 in its `friction.md`) and the numbers above.
+### v0.4, 27 Nov 2026: from the first wave
+
+Each change answers an observation of the first wave (F-numbers are the
+supervisor's notes) or a decision; the candidates as first listed follow
+below.
+
+| Area | Changed in the skill | From |
+|---|---|---|
+| Falsifiers | A falsifier is observed only with its observer, cited by path and lines; lifetime, order and cost count only where something can observe them | F20, F33 |
+| Refutation | Refuters and spikers get the list of section 0 and the pack's falsifiers; verdict `reword` for a change that stands but cannot be carried out as worded; the supervisor no longer overrules a kill: a doubted falsifier goes to a second refuter, and stays `unchecked` for the spike unless both observe it; rules for verdicts are written down before reading them | F18, F20, F21, F26, F27, F33 |
+| Spike | Guarding tests must be among the executed cases; a patch that removes tests needs a fault in the production code they reached; the comparison file is written outside the work tree; patches are taken from the work tree | F25, F26, F27, F29 |
+| Ranking | Intervention classes defined; records with the same intervention are twins; the refutation cap is filled class by class in turn; the two lowest-ranked are the calibration spikes | F11, F15, F17, F22, plants P1 and P2 |
+| Currency | Production and test tokens count together and a move is not a gain; "tokens added are not fewer than tokens removed" is a falsifier of every structural hypothesis | Q194, F13, F28 |
+| Records | Anchor may be 30 characters of a long line; one intervention per record; guards by file and case; suspected defects go to a list, not a status | F12, F14, F16, F29 |
+| Scoping | Lenses by kind of partition; documents listed by file; a test-subset command that lists executed cases, run once before the spikes; where the frozen tree may live | F01, F04, F06, F08, F24 |
+| Groups | A pass per lens is defined and made visible by one line per Look-for item; the comparison's numbers stand beside the allocation choice | F07, F30 |
+| Leads and tools | Clone thresholds in tokens, with a fallback without a detector; occurrence counts where no unused report exists; answers saved byte for byte; history as files for a refuter without a shell | F02, F03, F09, F10 |
+| Report | `report.md` for the reader and `residue.md` for the file, both generated from the records; cost per stage with what the tools do not report | F31, F32, F34 |
+| Watch | Thresholds apply from five records; the share of kills sent for a second opinion is watched | F23 |
+| Cost | One bundled file per partition and one for the documents | Q193 |
+
+Not changed: several small hypotheses sharing one refuter and one spike; a
+token prediction in the record; the script's lexer. The skill grew to 52 KB.
+None of v0.4 has been read by anyone else; the held-out run is its check.
+
+### Candidates as listed after the first wave
+
+Sources: the supervisor's 34 notes (F01 to F34 in its `friction.md`) and the
+numbers above.
 
 1. **Refutation.** State who or what observes each observed falsifier; give
    refuters and spikers the list of section 0, with "and something observes
@@ -600,7 +684,11 @@ notes (F01 to F34 in its `friction.md`) and the numbers above.
 
 - Branch `code-quality-review-skill`, work tree
   `.worktrees/wt-ponygirls-code-quality-review-skill`; not merged. Commits:
-  `cf738b4e` (v0), `4bf77c32` (v0.1), `7f1ed212` (v0.2); v0.3 follows.
+  `cf738b4e` (v0), `4bf77c32` (v0.1), `7f1ed212` (v0.2), `4225bf3e` (v0.3);
+  v0.4 follows.
+- Held-out tree: local branch `manure-backend-helpers`, work tree
+  `.worktrees/wt-ponygirls-manure-helpers`, planted commit `03f3b2a7`. Never
+  merge or push it. Answer key: `/tmp/cq-research/pilot2/plants.md`.
 - Pilot tree: local branch `haystack-server-helpers`, work tree
   `.worktrees/wt-ponygirls-haystack-helpers`, planted commit `04aa8cce`.
   Never merge or push it. Answer key and pilot scratch: `/tmp/cq-research/pilot`.
@@ -608,17 +696,15 @@ notes (F01 to F34 in its `friction.md`) and the numbers above.
   `00256bb27785abbc468e779cbae26880` (v0.3, this note at `9317d925`, the
   pilot's report and notes); the earlier `b747a13411cf09afe1394f74b227897e`
   holds v0.2.
-- Decision inbox: Q183 to Q186 answered (section 6). Open: Q193 (how to
-  continue after the first wave), Q194 (whether moving test-only code out of
-  production counts as a saving). Open in chat only: the lens set, the name
-  and the home of the skill.
+- Decision inbox: Q183 to Q186, Q193 and Q194 answered (section 6). Open in
+  chat only: the lens set, the name and the home of the skill.
 - Left in place after the wave: five spike work trees with staged patches
   (listed in the run directory's `spike-worktrees.tsv`), the planted branch
   and its work tree. All subagents are closed.
 - Pilot first wave done (section 10); the run directory is
   `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-04aa8cceee04-1795776647075/debug/cqr-20261127-1051`
   (`report.md`, `friction.md`, `hypotheses.jsonl`, `spikes/`, `spike-worktrees.tsv`).
-- Not done: tuning (section 11), the held-out run, the other partitions, the
+- Not done: the held-out run (section 7.2), the other partitions, the
   Haystack skill-draft record, installation under `nix/pkg/llm-skills/skills/`.
 - Scratch material outside the repository, not needed to continue:
   `/tmp/cq-research` (prior-art downloads, clone-detector probes, the old
