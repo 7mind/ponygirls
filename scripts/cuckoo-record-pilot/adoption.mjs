@@ -1,7 +1,7 @@
 // Batch 2: the registered adoption rule (README, "Adoption rule" and amendment 5) applied to stored runs.
 // Usage: node adoption.mjs DIR
-// DIR holds the runs of both arms under the labels of the batch: <subject>-<A|B>-<cell>, each a results directory or a
-// <label>.jsonl file. Prints every point of the rule with the counts it is read from, and the verdict.
+// DIR holds the runs of both arms under the labels of the batch: <subject>-<A|B>-<cell>, each a results directory, a
+// <label>.jsonl file or a <label>.jsonl.gz file. Prints every point of the rule with the counts it is read from, and the verdict.
 // Counts are compared as the rule states them; the number of graded sessions of each arm is printed beside them, since
 // a failed run is not replaced and unequal numbers make a count comparison unfair to the smaller arm.
 import { existsSync } from 'node:fs';
@@ -15,8 +15,8 @@ if (dir === undefined) throw new Error('Usage: node adoption.mjs DIR');
 const SUBJECT = 'sonnet', OTHERS = ['fable', 'haiku'];
 /** The sessions of a label that the subject itself answered; a missing label is an error, not an empty cell. */
 function load(label) {
-  const path = existsSync(join(dir, label)) ? join(dir, label) : join(dir, `${label}.jsonl`);
-  if (!existsSync(path)) throw new Error(`No runs for ${label} under ${dir}`);
+  const path = [join(dir, label), join(dir, `${label}.jsonl`), join(dir, `${label}.jsonl.gz`)].find(candidate => existsSync(candidate));
+  if (path === undefined) throw new Error(`No runs for ${label} under ${dir}`);
   const { own, foreign } = bySubject(loadResults(path));
   if (foreign.length > 0) console.log(`note: ${label}: ${foreign.length} session(s) answered by another model are left out`);
   return own;

@@ -340,6 +340,13 @@ node analyze.mjs results/fable-tools-builtins.jsonl                             
 node summarize.mjs "fable/high=results/fable-tools-only.jsonl,results/fable-tools-builtins.jsonl" ...
 node export-results.mjs results <out>/<label> ...
 node --test grade.test.mjs
+
+# Batch 2: the eight record scenarios, two arms under the labels <subject>-<A|B>-<cell>
+SCENARIO_SET=record ./run.sh sonnet-B-tools-builtins <frozen copy, arm B> <out> 12 claude-sonnet-5-5 medium tools-builtins
+node record-summary.mjs "sonnet A=<out>/sonnet-A-tools-builtins" "sonnet B=<out>/sonnet-B-tools-builtins"   # tables
+node record-summary.mjs --sessions "sonnet B=results/batch2/sonnet-B-tools-builtins.jsonl.gz"               # per session
+node adoption.mjs results/batch2                                                                              # the rule
+node export-results.mjs --gz results/batch2 <out>/<label> ...
 ```
 
 Give the runner a frozen copy of the extension (for example `git archive <commit>` into a scratch directory with the
@@ -361,6 +368,13 @@ Bounds are execution controls: 6 concurrent sessions; per session 3 (checkpoint)
 - One coder, the grader's author, read the flagged replies.
 
 ## Batch 2: the wording of the guidance for `cuckoo_update`
+
+In short: batch 1 showed that sonnet/medium keeps one entry for a whole request, or none. A reworded guidance was
+developed in three rounds, frozen, and compared with the shipped one on 576 sessions with held-out scenarios by a
+blind author. The registered rule for adopting it holds, by one session on its main point; the wording is adopted.
+With it sonnet records objectives as separate entries and retires cancelled ones, records every rule, and makes
+about twice as many extra provider requests. It still misses a deliverable whose first message asks only for a
+sketch (0 of 12 in both held-out cases), so "keeps the record as specified" is not claimed. Details below.
 
 ### Protocol (registered 2026-11-27, before any run of this batch)
 
@@ -651,3 +665,249 @@ amendment 6; one `bash` call (blocked) in each `h2` session; in one `h1` session
 | Final checkpoint sound | 6 of 6 | 12 of 12 | 6 of 6 |
 | **No surplus entries** (registered rule) | 0 of 6 | 8 of 12 | 6 of 6 |
 | of a request its own reply answers | 6 of 6 | 4 of 12 | 0 of 6 |
+
+### Results of batch 2 (2026-11-27)
+
+576 sessions, all completed; none was answered by another model than its subject. Arms A and B of a subject ran at
+the same time, with the runner at `15f27a45` and a clean tree. Every cell was sent one profile, and the profiles are
+the ones recorded at the freeze (system text `07499ee7b2c1` and `354f2ce07dbd` with the built-in tools declared,
+`9fa30787ad66` and `811806fce31a` without). Stored runs: `results/batch2/<subject>-<arm>-<cell>.jsonl.gz`; the
+development rounds and the fixture check under `results/batch2/development/`. Full tables as printed by the tools:
+`results/batch2/summary-tools-builtins.md`, `summary-tools-only.md`, `summary-checkpoints.md`, `adoption.txt`. The
+tools give the same output from the stored files as from the run directories.
+
+#### The adoption rule
+
+`node adoption.mjs results/batch2`: **the rule holds**, point 1 by one session.
+
+| Point | Reading | Arm A | Arm B | |
+|---|---|---|---|---|
+| 1 | sonnet, `h1` and `h2` together: an entry of its own for every stated objective, by its turn | 1 of 24 | 10 of 24 | +9, needed +8 |
+| 1 | the same, `h1` alone | 1 of 12 | 10 of 12 | |
+| 1 | the same, `h2` alone | 0 of 12 | 0 of 12 | no effect |
+| 2 | sonnet, *no surplus entries* in `chat`, `single`, `h3`, `h4` | 12 of 12 each | 12 of 12 each | |
+| 2 | sonnet, sessions with an entry made of a question, in the four work scenarios | 0 | 0 | |
+| 3 | sonnet, *every rule recorded by its turn*, per scenario | 12, 12, 8, 12, 12, 0, 1, 0 of 12 | 12 of 12 in all eight | order: `build`, `report`, `chat`, `single`, `h1` to `h4` |
+| 4 | fable, *record right*, per scenario | 6 of 6 except `h2` 4 of 6 | 6 of 6 in all eight | |
+| 4 | fable, *no surplus entries* | 6 of 6 except `report` 0 of 6 | 6 of 6 in all eight | |
+| 4 | haiku, *record right*, per scenario | 0 of 6 in all eight | 5, 6, 5, 0, 5, 1, 5, 1 of 6 | same order |
+| 4 | haiku, *no surplus entries* | 6 of 6 in all eight | 6 of 6 except `single` 5 of 6 | |
+| 5 | checkpoint replies invalid, with a wrong ID, a restatement as new or a dropped entry | 0 of 48, 0 of 24, 0 of 24 | 0 of 48, 0 of 24, 0 of 24 | sonnet, fable, haiku |
+| 6 | sonnet, *no surplus rules* | 12 of 12 except `report` 9 of 12 | 12 of 12 in all eight | |
+
+"Keeps the record as specified" may **not** be said of sonnet/medium with either wording: *record right* holds in 1
+of 24 held-out work sessions in arm A and in 9 of 24 in arm B (20 were required).
+
+#### Built-in tools declared, per scenario
+
+***Record right* (registered reading)**
+
+| Scenario | sonnet A | sonnet B | fable A | fable B | haiku A | haiku B |
+|---|---|---|---|---|---|---|
+| `build` (development, work) | 0 of 12 | 10 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 5 of 6 |
+| `report` (development, work) | 0 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 6 of 6 |
+| `chat` (development, control) | 8 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 5 of 6 |
+| `single` (development, single) | 0 of 12 | 9 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 0 of 6 |
+| `h1` (held-out, work) | 1 of 12 | 9 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 5 of 6 |
+| `h2` (held-out, work) | 0 of 12 | 0 of 12 | 4 of 6 | 6 of 6 | 0 of 6 | 1 of 6 |
+| `h3` (held-out, single) | 0 of 12 | 0 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 5 of 6 |
+| `h4` (held-out, control) | 0 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 1 of 6 |
+
+**An entry of its own for every stated objective, by its turn (point 1 of the rule)**
+
+| Scenario | sonnet A | sonnet B | fable A | fable B | haiku A | haiku B |
+|---|---|---|---|---|---|---|
+| `build` (development, work) | 0 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 5 of 6 |
+| `report` (development, work) | 0 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 6 of 6 |
+| `single` (development, single) | 0 of 12 | 9 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 0 of 6 |
+| `h1` (held-out, work) | 1 of 12 | 10 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 5 of 6 |
+| `h2` (held-out, work) | 0 of 12 | 0 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 2 of 6 |
+| `h3` (held-out, single) | 0 of 12 | 0 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 6 of 6 |
+
+**No objective entry at all**
+
+| Scenario | sonnet A | sonnet B | fable A | fable B | haiku A | haiku B |
+|---|---|---|---|---|---|---|
+| `build` (development, work) | 0 of 12 | 0 of 12 | 0 of 6 | 0 of 6 | 4 of 6 | 0 of 6 |
+| `report` (development, work) | 9 of 12 | 0 of 12 | 0 of 6 | 0 of 6 | 6 of 6 | 0 of 6 |
+| `single` (development, single) | 2 of 12 | 0 of 12 | 0 of 6 | 0 of 6 | 6 of 6 | 1 of 6 |
+| `h1` (held-out, work) | 0 of 12 | 0 of 12 | 0 of 6 | 0 of 6 | 5 of 6 | 0 of 6 |
+| `h2` (held-out, work) | 12 of 12 | 0 of 12 | 0 of 6 | 0 of 6 | 5 of 6 | 0 of 6 |
+| `h3` (held-out, single) | 12 of 12 | 1 of 12 | 0 of 6 | 0 of 6 | 6 of 6 | 0 of 6 |
+
+**Every objective closed the way it ended, in its turn**
+
+| Scenario | sonnet A | sonnet B | fable A | fable B | haiku A | haiku B |
+|---|---|---|---|---|---|---|
+| `build` (development, work) | 0 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 5 of 6 |
+| `report` (development, work) | 0 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 6 of 6 |
+| `single` (development, single) | 10 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 4 of 6 |
+| `h1` (held-out, work) | 1 of 12 | 11 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 5 of 6 |
+| `h2` (held-out, work) | 0 of 12 | 1 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 2 of 6 |
+| `h3` (held-out, single) | 0 of 12 | 11 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 6 of 6 |
+
+**Every rule recorded by its turn**
+
+| Scenario | sonnet A | sonnet B | fable A | fable B | haiku A | haiku B |
+|---|---|---|---|---|---|---|
+| `build` (development, work) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `report` (development, work) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `chat` (development, control) | 8 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 5 of 6 |
+| `single` (development, single) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `h1` (held-out, work) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 1 of 6 | 6 of 6 |
+| `h2` (held-out, work) | 0 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `h3` (held-out, single) | 1 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 2 of 6 | 6 of 6 |
+| `h4` (held-out, control) | 0 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 0 of 6 | 1 of 6 |
+
+***No surplus entries* (registered reading)**
+
+| Scenario | sonnet A | sonnet B | fable A | fable B | haiku A | haiku B |
+|---|---|---|---|---|---|---|
+| `build` (development, work) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `report` (development, work) | 10 of 12 | 11 of 12 | 0 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `chat` (development, control) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `single` (development, single) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 5 of 6 |
+| `h1` (held-out, work) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `h2` (held-out, work) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `h3` (held-out, single) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `h4` (held-out, control) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+
+***No surplus rules* (amendment 5)**
+
+| Scenario | sonnet A | sonnet B | fable A | fable B | haiku A | haiku B |
+|---|---|---|---|---|---|---|
+| `build` (development, work) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `report` (development, work) | 9 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `chat` (development, control) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `single` (development, single) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `h1` (held-out, work) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `h2` (held-out, work) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `h3` (held-out, single) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 5 of 6 | 6 of 6 |
+| `h4` (held-out, control) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+
+**Final checkpoint sound**
+
+| Scenario | sonnet A | sonnet B | fable A | fable B | haiku A | haiku B |
+|---|---|---|---|---|---|---|
+| `build` (development, work) | 10 of 12 | 10 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `report` (development, work) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `chat` (development, control) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `single` (development, single) | 12 of 12 | 11 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `h1` (held-out, work) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `h2` (held-out, work) | 12 of 12 | 10 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+| `h3` (held-out, single) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 5 of 6 |
+| `h4` (held-out, control) | 12 of 12 | 12 of 12 | 6 of 6 | 6 of 6 | 6 of 6 | 6 of 6 |
+
+**`cuckoo_update` calls per session**
+
+| Scenario | sonnet A | sonnet B | fable A | fable B | haiku A | haiku B |
+|---|---|---|---|---|---|---|
+| `build` (development, work) | 3 to 6 (median 5) | 8 | 8 | 8 to 10 (median 10) | 2 to 4 (median 2) | 8 to 9 (median 8) |
+| `report` (development, work) | 1 to 5 (median 1) | 5 to 7 (median 6) | 6 | 5 to 6 (median 5) | 1 | 5 |
+| `chat` (development, control) | 0 to 1 (median 1) | 1 | 1 | 1 | 0 | 0 to 1 (median 1) |
+| `single` (development, single) | 1 to 3 (median 3) | 3 | 3 to 4 (median 3) | 4 to 5 (median 4) | 1 | 1 to 5 (median 3) |
+| `h1` (held-out, work) | 4 to 7 (median 5) | 6 to 9 (median 7) | 7 to 8 (median 8) | 8 | 0 to 3 (median 0) | 5 to 7 (median 7) |
+| `h2` (held-out, work) | 0 | 5 to 7 (median 5) | 9 to 13 (median 10) | 7 to 9 (median 9) | 1 to 3 (median 1) | 5 to 11 (median 5) |
+| `h3` (held-out, single) | 0 to 1 (median 0) | 1 to 3 (median 3) | 3 to 4 (median 4) | 4 to 5 (median 4) | 0 to 2 (median 0) | 4 |
+| `h4` (held-out, control) | 0 | 1 | 1 | 1 | 0 | 0 to 1 (median 0) |
+
+**Provider requests beyond one per turn**
+
+| Scenario | sonnet A | sonnet B | fable A | fable B | haiku A | haiku B |
+|---|---|---|---|---|---|---|
+| `build` (development, work) | 2 to 4 (median 4) | 5 | 6 | 5 to 6 (median 6) | 1 to 3 (median 1) | 4 to 5 (median 4) |
+| `report` (development, work) | 1 to 3 (median 1) | 4 | 4 | 4 | 1 | 4 |
+| `chat` (development, control) | 0 to 1 (median 1) | 1 | 1 | 1 | 0 | 0 to 1 (median 1) |
+| `single` (development, single) | 1 to 2 (median 2) | 2 to 3 (median 3) | 3 | 3 to 4 (median 3) | 1 | 1 to 4 (median 2) |
+| `h1` (held-out, work) | 3 to 4 (median 4) | 3 to 5 (median 3) | 3 to 4 (median 4) | 4 | 0 to 2 (median 0) | 3 |
+| `h2` (held-out, work) | 0 | 3 to 4 (median 3) | 5 to 8 (median 5) | 3 to 4 (median 4) | 1 to 2 (median 1) | 3 to 7 (median 3) |
+| `h3` (held-out, single) | 0 to 1 (median 0) | 1 to 2 (median 2) | 3 | 3 to 4 (median 3) | 0 to 1 (median 0) | 3 |
+| `h4` (held-out, control) | 0 | 1 | 1 | 1 | 0 | 0 to 1 (median 0) |
+
+#### Only Cuckoo's tools declared (sonnet/medium, six sessions per scenario, arm A → arm B)
+
+| Scenario | *Record right* | Own entry per objective by its turn | Every rule by its turn | *No surplus entries* |
+|---|---|---|---|---|
+| `build` (development, work) | 0/6 → 6/6 | 0/6 → 6/6 | 6/6 → 6/6 | 6/6 → 6/6 |
+| `report` (development, work) | 0/6 → 6/6 | 0/6 → 6/6 | 6/6 → 6/6 | 1/6 → 5/6 |
+| `chat` (development, control) | 6/6 → 6/6 | n/a | 6/6 → 6/6 | 6/6 → 6/6 |
+| `single` (development, single) | 0/6 → 6/6 | 0/6 → 6/6 | 6/6 → 6/6 | 6/6 → 6/6 |
+| `h1` (held-out, work) | 4/6 → 6/6 | 4/6 → 6/6 | 6/6 → 6/6 | 6/6 → 6/6 |
+| `h2` (held-out, work) | 0/6 → 2/6 | 0/6 → 2/6 | 6/6 → 6/6 | 6/6 → 6/6 |
+| `h3` (held-out, single) | 0/6 → 6/6 | 0/6 → 6/6 | 5/6 → 6/6 | 6/6 → 6/6 |
+| `h4` (held-out, control) | 6/6 → 6/6 | n/a | 6/6 → 6/6 | 6/6 → 6/6 |
+
+#### What was read by hand
+
+- **What the new wording changes for sonnet.** Under arm A sonnet keeps one entry for a whole request (`build` 12 of
+  12 sessions, `h1` 11 of 12) or no objective at all (`report` 9, `h2` 12, `h3` 12 of 12). Under arm B there is no
+  merged entry in any of the 96 sessions and an objective entry in every work and single-deliverable session but one;
+  the cancelled objective is retired, in an entry of its own, in 48 of 48 work sessions (1 of 48 in arm A).
+- **What it does not change: a deliverable whose first message asks only for a sketch or a first part.** In `h2` the
+  first message asks to "just sketch the speech here for now". In 11 of 12 arm-B sessions the speech never gets an
+  entry, also not when the next message asks to finish it; in 1 it gets one a turn late. The other two deliverables
+  of `h2` get their entries in their turn in 12 of 12, the cancelled one is retired, the invitation completed. In
+  `h3` ("start with just the opening phrase here") the label gets its entry one turn late in 11 of 12 and never in 1.
+  The wording has a clause for exactly this ("even when the message asks only for a first step of it"). It was
+  written against the development scenario `single`, where it gives 9 of 12 in this batch (6 of 6 in the last
+  development round), and it carries to neither held-out case. With only Cuckoo's tools declared the same subject
+  records the label of `h3` in its turn in 6 of 6 and the three deliverables of `h2` in 2 of 6.
+- **Closing before the delivery.** After the first message of `h1` or `h2`, which ask for a sketch, an objective was
+  already complete in: sonnet A 1 of 24 sessions, sonnet B 4 of 24 (reopened when the user asked to finish it in 2;
+  a second completion refused in 1), fable A 6 of 12 (all in `h2`; reopened in 5, two with a refused call, which is
+  why fable A has 4 of 6 there), fable B 0 of 12, haiku A 0 of 12, haiku B 2 of 12 (both reopened). Neither wording
+  says that a sketch is not a delivery. The row "closed before the turn that settles it" of the full tables also
+  counts completions made in the turn that delivers, one turn before the user's acceptance, which both wordings
+  allow; it is not a count of defects.
+- **Refused calls**, arm B: 2 of 96 sonnet sessions (both `h1`: the completion just mentioned, and one session that
+  recorded two of three deliverables and then used the retired one's ID for the third), 1 of 48 haiku sessions, none
+  for fable. Arm A: 2 of 48 fable sessions.
+- **The final checkpoint repeats a completion made with the tool**: sonnet A in 2 of the 31 sessions that had such a
+  completion, sonnet B in 5 of 70, haiku B in 1 of 34 (haiku A 0 of 4), fable 0 of 36 in both arms. The sentence the
+  new wording adds about this changes nothing that these numbers can show.
+- **Rules under the shipped wording.** Batch 1 found that every subject recorded every rule; its two scenarios give a
+  rule in a message of its own. Here arm A records a rule that comes inside a message with other content in 0 of 12
+  (`h2`), 1 of 12 (`h3`) and 0 of 12 (`h4`) sonnet sessions, and haiku A in 0 of 6 (`chat`, `h4`), 1 of 6 (`h1`) and
+  2 of 6 (`h3`). Arm B: sonnet 96 of 96; haiku 6 of 6 except `chat` 5 of 6 and `h4` 1 of 6 (a control scenario: the
+  rule opens a message that goes on with a question, and nothing else in the session calls for the tool).
+- **Surplus.** No entry was made of a question in any of the 384 sessions with the built-in tools. The request that
+  its own reply answers (a title, in `report`) became an objective for fable A in 6 of 6 and fable B in 0 of 6, for
+  sonnet A in 2 of 12 and sonnet B in 1 of 12. Surplus rules attributed to the user, all in arm A: sonnet in 3 of 12
+  `report` sessions, where the cancellation of the fact-check, which no objective entry could take, was written down
+  as a rule ("Do not fact-check the risk section; legal will handle it"), and haiku once in `h3`, for an instruction
+  about the label's opening. None in arm B. haiku B once made a second entry for one objective (`single`).
+- **haiku/low.** Arm A: an objective entry in 4 of 36 work and single-deliverable sessions. Arm B: in 35 of 36, with
+  *record right* in 5 or 6 of 6 in `build`, `report`, `h1` and `h3`; in `single` the plan is entered in the second,
+  third or fourth turn or not at all (0 of 6 in its turn), and `h2` goes as for sonnet (4 of 6 without the speech).
+- **fable/high.** The two arms make the same number of calls (251 in 48 sessions each). What differs is named above:
+  no premature completion in `h2` and no entry for the title request in `report`.
+- **Cost.** Each turn that edits the record is one more provider request. Over the eight scenarios with the built-in
+  tools: sonnet 186 calls and 137 extra requests in arm A against 412 and 271 in arm B, in 96 sessions each (1.4
+  against 2.8 extra requests in a session of four turns and one checkpoint); haiku 41 and 33 against 208 and 131 in
+  48; fable 251 and 168 against 251 and 156 in 48.
+- **Built-in tools.** fable called one (blocked) in 23 of 48 sessions in either arm, to look for a file the request
+  might refer to; haiku in 1 and 2; sonnet in none.
+- **Checkpoints** (seeded record, both variants): all 192 replies valid, every ID reference right, nothing restated
+  as new or dropped, in both arms. The rule the user lifted is handled as in batch 1 (left out, kept under its ID
+  with the new meaning, or replaced by a new rule); the arms do not differ in a way these numbers can show.
+
+#### Reading, by the registered rule
+
+- The wording is adopted: every point of the rule holds. Point 1 holds by one session (+9 against +8), and the whole
+  effect on that reading is in `h1`; in `h2` no session of either arm has an entry of its own for every objective.
+- The reading the rule was written for understates what changed in `h2` and `h3`: from no objective entry at all (24
+  of 24 sessions in arm A) to an entry for two of three deliverables in their turn (`h2`, 12 of 12) and for the one
+  deliverable a turn late (`h3`, 11 of 12). It also hides nothing: by the registered readings those sessions are not
+  right, and they are counted so.
+- No guard shows harm: in no scenario and for no subject is arm B lower than arm A on a registered reading by more
+  than the rule allows, and in most it is higher. The rules a user gives are recorded far more reliably (sonnet 57 of
+  96 sessions against 96 of 96), which the batch was not designed to show.
+- What may be said: with the new wording sonnet/medium records objectives as separate entries and retires cancelled
+  ones; it does not yet "keep the record as specified" (9 of 24 held-out work sessions right). The open defects are
+  the deliverable that starts with a sketch or a first part, and completion before delivery.
+- Not tested: sessions with real work and working tools, long sessions, other provider families, a tool set between
+  the two tried here. The held-out scenarios are four, by one author; `h2` and `h3` share the feature that defeats the
+  wording, so "0 of 12" twice is one finding, not two.
+
+A second candidate was not frozen. If one is written, `h2` and `h3` become development scenarios for it and it needs
+held-out scenarios its author has not seen.
