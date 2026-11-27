@@ -689,7 +689,7 @@ account see the same; a token of an administrator's account is an ordinary token
 
 **An administrator on a browser session**, in addition to the rows above for their own account:
 
-| | Q209 option 1 or 3, request without `othersDirect` | Option 1 or 3, with `othersDirect: true` | Option 2 |
+| | Q209 option 1 or 3, request with `othersDirect: false` | Option 1 or 3, with `othersDirect: true` | Option 2 |
 |---|---|---|---|
 | The list of every room, with a mark for rooms of which the account is not a member | yes | yes | yes |
 | Room messages and the roster of any room | yes | yes | yes |
@@ -739,7 +739,7 @@ shape of a request or a result.
 | `Participant` | adds `displayName`; `agent` and `ackedSeq` become optional and are absent for a person | People have a display name, no agent identification, and a private read mark. |
 | `RoomInfo` | adds `archivedAt`, `archivedBy` | Section 5.5. |
 | `RoomsResult` | holds `RoomEntry` (membership, joined, counts of people and agents, time of the last visible message, the caller's read mark and unread counts) | The room list of the dashboard. The extension does not call `rooms` **[repo]** (`pilot:.../ponygirls-blabber/src/client.ts`). |
-| `Message` | `sender` and a new `senderKind` are present for Chat only; adds `actor`, and `event` for System; `agent` becomes optional | People as senders; System messages that no participant caused (archive by an administrator who has not joined). |
+| `Message` | `sender` and a new `senderKind` become optional: present for Chat, and for a System message that a participant of the room caused; adds `actor`, and `event` for System; `agent` becomes optional | People as senders; System messages that no participant caused (archive by an administrator who has not joined). |
 | `Outlook` | adds `Present` | Section 5.3. |
 | `AttachRequest` | unchanged shape; the nick `human` is refused | Reserved for people. |
 | `JoinRequest`, `JoinResult`, `LeaveRequest`, `SayRequest`, `MarkReadRequest`, `MarkReadResult` | new | Section 5. |
@@ -2089,7 +2089,7 @@ limit. A fix that adds states and draws new findings is replaced by one that rem
 - Depends on: U0. Parallel with: the mockup.
 - Exit check:
   - `BABOON=<the pinned 0.0.200 executable> blabber/scripts/generate.sh && git diff --exit-code -- blabber/generated`
-  - `nix develop .#backend --command bash scripts/backend-sbt.sh -batch blabberContracts/compile`
+  - `nix develop .#backend --command bash scripts/backend-sbt.sh blabberContracts/compile </dev/null`
   - `nix build .#ponygirls-pi-extensions` (it builds the TypeScript codecs)
 - Size: the pilot's model is 59 lines; appendix A is about twice that.
 - Risk: low. The wire freeze (U1f) may reopen a few items.
@@ -2728,7 +2728,7 @@ root data MarkReadResult { room: str readSeq: i32 }
 // caller may not see. The reader has caught up when next equals head. With after above the head the result is
 // empty and next is head: the cursor is not of this room.
 // othersDirect: true asks for direct messages between other accounts as well. Only an administrator on a browser
-// session may ask, and only where the service allows it; otherwise the request is forbidden. Absent or false: no
+// session may ask, and only where the service allows it; otherwise the request is forbidden. false: no
 // such message is read or returned.
 root data HistoryRequest { room: str before: opt[i32] after: opt[i32] limit: i32 othersDirect: bit }
 root data HistoryResult { messages: lst[Message] head: i32 next: i32 }
@@ -2766,7 +2766,7 @@ root data SearchCapabilities { modes: lst[SearchMode] directModes: lst[SearchMod
 // From the client: kind "ping" with nonce and clientTs; room, when present, names the room that a visible tab shows.
 // From the server: "pong" echoes nonce and clientTs and adds serverTs; "room" says that something was committed in
 // a room the account may read now, and gives its head; "rooms" says: read whoami and rooms again (the list, the
-// administrator role or the right to read a room changed). f64 is used only for these clock values.
+// administrator role or the right to read a room changed). The f64 members of this frame are clock values only.
 root data LiveFrame { kind: str nonce: opt[str] clientTs: opt[f64] serverTs: opt[f64] room: opt[str] head: opt[i32] }
 ```
 
