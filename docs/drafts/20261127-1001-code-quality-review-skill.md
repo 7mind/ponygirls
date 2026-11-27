@@ -608,8 +608,13 @@ notes (F01 to F34 in its `friction.md`) and the numbers above.
   `00256bb27785abbc468e779cbae26880` (v0.3, this note at `9317d925`, the
   pilot's report and notes); the earlier `b747a13411cf09afe1394f74b227897e`
   holds v0.2.
-- Decision inbox: Q183 to Q186 answered (section 6). Open in chat only: the
-  lens set, the name and the home of the skill.
+- Decision inbox: Q183 to Q186 answered (section 6). Open: Q193 (how to
+  continue after the first wave), Q194 (whether moving test-only code out of
+  production counts as a saving). Open in chat only: the lens set, the name
+  and the home of the skill.
+- Left in place after the wave: five spike work trees with staged patches
+  (listed in the run directory's `spike-worktrees.tsv`), the planted branch
+  and its work tree. All subagents are closed.
 - Pilot first wave done (section 10); the run directory is
   `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-04aa8cceee04-1795776647075/debug/cqr-20261127-1051`
   (`report.md`, `friction.md`, `hypotheses.jsonl`, `spikes/`, `spike-worktrees.tsv`).
