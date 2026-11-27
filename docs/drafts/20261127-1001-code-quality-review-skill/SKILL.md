@@ -32,9 +32,10 @@ reads only cited lines. A **reader** applies one lens to one partition. A
 its own work tree and measures it. Without subagents, play the roles yourself
 in this order and report that refutation was not independent.
 
-A **lens pack** is a set of lens cards with one currency. Sections 0 to 10 are
-the same for every pack; a pack supplies its currency, what its readers leave
-alone, and when a spike passes. The structural pack is written out below.
+A **lens pack** is a set of lens cards with one currency. The pipeline is the
+same for every pack; a pack supplies its currency, what its readers leave
+alone, and its empirical test. The structural pack is written out below, and
+section 7 is its test.
 
 ## 0. Ground rules
 
@@ -56,9 +57,9 @@ alone, and when a spike passes. The structural pack is written out below.
   | `refuted` | an independent reader produced a counterexample | 6 |
   | `supported` | survived refutation; a candidate, not yet measured | 6 |
   | `failed` | the spike did not hold up | 7 |
-  | `confirmed` | measured, invariants held, a test notices a fault | 7 |
+  | `confirmed` | measured, invariants held, a test notices a fault (for a pure deletion: no reference remains) | 7 |
   | `confirmed-unguarded` | measured, but no test notices a fault | 7 |
-  | `deferred` | needs a decision only the user can take | any |
+  | `deferred` | needs a decision only the user can take | 5 |
   | `defect-candidate` | a suspected defect found on the way | 5 |
 
 - **What no proposal may be bought with** (any one refutes or fails it, unless
@@ -106,6 +107,9 @@ alone, and when a spike passes. The structural pack is written out below.
    read in full: at most a third of the reader model's context window,
    estimating tokens as bytes ÷ 3. Split larger ones by subdirectory. Test
    trees are partitions of their own.
+7. **Inner loop.** From the project's documents, record in `scope.md` the
+   build and test commands of each component in scope, or that it has none.
+   Spikers get them from there.
 
 ## 2. Leads
 
@@ -134,7 +138,8 @@ Hand each reader only the leads of its lens and partition.
 
 - Count reader runs (partitions × lenses) and their reading cost (sum of
   partition bytes ÷ 3, once per run). Set caps: hypotheses per pass (default
-  10), hypotheses sent to refutation, spikes.
+  10), hypotheses sent to refutation, spikes. An alternative promoted in
+  section 5 is refuted outside the cap.
 - Default allocation is one reader per lens per partition. If that exceeds
   the budget, reduce in this order and say what was reduced: (a) merge lenses
   into the pack's affinity groups, where one reader makes one pass per lens,
@@ -207,18 +212,21 @@ Mechanical checks first; they need no judgment and remove invented material.
    reason. Do not repair a record on the reader's behalf. A site in an
    `unmeasured` format is admissible, but the hypothesis cannot be measured
    and stays a candidate.
-2. **Cluster** hypotheses whose sites overlap. Except for rivals (next step),
+2. **Decisions.** A record that needs a new dependency, changes a contract,
+   or by its own account does not improve the pack's currency becomes
+   `deferred` and goes no further.
+3. **Cluster** hypotheses whose sites overlap. Except for rivals (next step),
    one hypothesis of a cluster goes forward and the others become
    `alternative`. Precedence: delete, then reuse what the repository has, then
    use a locked library, then generalize what exists, then introduce a new
    abstraction. When the one that went forward is refuted or fails, the next
    alternative goes forward in its place.
-3. **Rivals.** Opposite interventions on the same sites (merge them, split
+4. **Rivals.** Opposite interventions on the same sites (merge them, split
    it) both go to refutation, marked as rivals.
-4. **By-products.** Copies that differ where one looks wrong are
+5. **By-products.** Copies that differ where one looks wrong are
    `defect-candidate`s: list them for reproduction under the project's defect
    procedure.
-5. **Rank** by predicted effect, higher risk lower. Cut to the refutation cap
+6. **Rank** by predicted effect, higher risk lower. Cut to the refutation cap
    and mark the rest `untested`.
 
 ## 6. Refutation
@@ -258,11 +266,13 @@ a check for the spike. `not-refuted` becomes `supported`.
 
 ## 7. Spikes
 
-Spike `supported` hypotheses in rank order until the spike cap is used. Where
-the cap allows, include two low-ranked ones, so that the calibration of
-section 8 is not drawn from the best cases only. What the cap leaves out stays
-`supported`. Each spiker works in its own work tree of the frozen commit and
-gets one hypothesis.
+Spike `supported` hypotheses in rank order until the spike cap is used. When
+the cap is five or more and more hypotheses wait than it admits, give two of
+its slots to hypotheses from the lower half of the ranking, so that the
+calibration of section 8 is not drawn from the best cases only. A hypothesis
+with an `unmeasured` site is not spiked. What is not spiked stays `supported`,
+with the reason. Each spiker works in its own work tree of the frozen commit
+and gets one hypothesis.
 
 ```text
 Implement exactly this one change in your own work tree of commit <sha>.
@@ -271,22 +281,26 @@ Touch no other checkout. Commit nothing to a shared branch. Push nothing.
  paths of measure.py and of the baseline manifest; the project's inner-loop commands>
 0. Before editing, run the narrowest tests that cover the sites and keep the
    list or count of executed cases. If they fail, stop: `failed`, baseline
-   not green.
-1. Make the smallest patch that implements the intervention at the stated sites.
+   not green. If no test covers the sites, say so and go on.
+1. Make the smallest patch that implements the intervention at the stated
+   sites, and stage it (`git add -A`) before building anything.
 2. Build or type-check every component the patch touches. Run the same tests
    and compare the executed cases with step 0.
 3. For the remaining risk and for each listed difference, show by a run, not
    by argument, that the patch leaves it alone: a check that passes on the
-   base commit and with the patch.
-4. Stage everything (`git add -A`) and measure, from the root of your work
-   tree: `python3 <measure.py> --compare <baseline manifest> > after.tsv`.
-   Every file of the patch must appear among the changed, added and removed
-   files it prints. Name any that does not: it is not measured.
+   base commit and with the patch. Afterwards delete the check, or stage it
+   if it is a test the project should keep, and say which.
+4. `git status --porcelain` must now show the staged patch and nothing else:
+   remove build output that is not ignored. Then measure, from the root of
+   your work tree: `python3 <measure.py> --compare <baseline manifest> >
+   after.tsv`. Every file of the patch must be a row of the baseline manifest
+   or of `after.tsv`. Name any that is not: it is not measured.
 5. Negative control: put one deliberate fault into the changed code path,
    confirm that a test fails, remove the fault. If nothing fails, say
-   `unguarded`. A pure deletion has no changed path: instead search the whole
-   repository again for references to the deleted names and build every
-   component that could refer to them.
+   `unguarded`; without a covering test in step 0 it is `unguarded` too. A
+   pure deletion has no changed path: instead search the whole repository
+   again for references to the deleted names and build every component that
+   could refer to them.
 Stop and report `failed` when the tests pass only after changing behaviour
 or a test; when the change needs edits beyond the stated sites that cancel
 the gain; when <the pack's pass condition> is not met; or when code moved
@@ -319,11 +333,12 @@ The working set is every `confirmed` and `confirmed-unguarded` hypothesis.
 2. Working set: id, lens, intervention, sites, measured effect, status,
    guarding tests, risk. Then the measured total. Effects of hypotheses that
    share sites do not add up; say which ones overlap.
-3. Candidates: every `supported` hypothesis with its predicted effect, and
-   the calibration: the median, over spiked hypotheses whose prediction was
-   not zero, of measured ÷ predicted change in lines (production and test
-   together), with the number of ratios. With fewer than three ratios write
-   "insufficient data" and give no estimate.
+3. Candidates: every `supported` hypothesis with its predicted effect and
+   the reason it was not spiked, and the calibration: the median, over spikes
+   that produced a measurement and whose prediction was not zero, of measured
+   ÷ predicted change in lines (production and test together), with the
+   number of ratios. With fewer than three ratios write "insufficient data"
+   and give no estimate.
 4. `deferred`: a new dependency, a contract change, a proposal that improves
    something other than the pack's currency.
 5. `refuted` and `failed`, each with its counterexample or reason, so that
@@ -565,14 +580,19 @@ Each card goes to a reader verbatim; its kill tests also go to the refuter.
 
 ## Other lens packs
 
-A pack defines four things and leaves sections 0 to 10 alone: its currency
-with the record's `predicted` field; what is out of scope for its readers;
-what admits a hypothesis to refutation; when a spike passes. Write the lens
-cards (question, look for, skip, record must state, kill tests) before
-running a lens. A lens without a currency and a kill test produces opinions:
-do not run it. The rows below are starting points, not tested packs.
+A pack defines its currency with the record's `predicted` field, what is out
+of scope for its readers, and its empirical test with the unit of its
+calibration. Section 7 as written is the structural pack's test: a patch that
+must keep behaviour. A pack whose hypotheses are not such patches (a
+suspected defect, a slow path, a misleading name) replaces the brief of
+section 7 with its own executed test. What stays for every pack: records,
+mechanical admissibility, independent refutation, and that only an executed
+test admits a hypothesis to the working set. Write the lens cards (question,
+look for, skip, record must state, kill tests) before running a lens. A lens
+without a currency and a kill test produces opinions: do not run it. The rows
+below are starting points, not tested packs.
 
-| Pack | Example lenses | Currency and prediction | A spike passes when |
+| Pack | Example lenses | Currency and prediction | The test passes when |
 |---|---|---|---|
 | correctness | edge cases, failure handling, concurrency, resource lifetime | a failure: the input and the wrong result | a test or minimal reproduction fails for the predicted reason before any fix |
 | security | trust boundaries, authorization consistency, injection, secrets | a path from an input to a consequence | a proof of concept succeeds against an isolated instance; a cited data-flow trace alone stays a candidate |
@@ -593,44 +613,54 @@ numbers beside another counter. Comments and Python docstrings count as
 nothing; a string counts the tokens inside it, so embedded SQL is code. Known
 miscounts: a JavaScript regular-expression literal that contains `//`; nested
 block comments; shell here-documents and SQL dollar-quoted bodies are read as
-code. Where a patch's gain sits in such a construct, check the delta by
-reading the diff.
+code; a Python file this interpreter cannot parse keeps its docstrings (the
+script says so on standard error). Where a patch's gain sits in such a
+construct, check the delta by reading the diff.
 
 ```python
 #!/usr/bin/env python3
 """Size manifest of hand-written code in a git work tree, one row per file: path, partition, role, lines, tokens, bytes.
-  measure.py [--depth N] [--exclude RE] [--test RE] PATH... > manifest.tsv     baseline (run inside the work tree)
+  measure.py [--depth N] [--exclude RE] [--test RE] PATH... > manifest.tsv     baseline (run at the root of the work tree)
   measure.py --compare manifest.tsv > after.tsv                               same arguments as the baseline, plus deltas
 Counts tracked and untracked files as they are on disk; skips ignored files, symbolic links and other formats."""
-import argparse, ast, collections, json, os, re, subprocess, sys
+import argparse, ast, bisect, collections, json, os, re, subprocess, sys
 KIND = {'.scala': 'c', '.java': 'c', '.kt': 'c', '.ts': 'c', '.tsx': 'c', '.js': 'c', '.mjs': 'c', '.cjs': 'c', '.jsx': 'c',
         '.c': 'c', '.h': 'c', '.cc': 'c', '.cpp': 'c', '.go': 'c', '.rs': 'c', '.cs': 'c', '.swift': 'c', '.css': 'c',
-        '.py': 'p', '.sh': 's', '.bash': 's', '.zsh': 's', '.rb': 's', '.nix': 'n', '.sql': 'd'}
+        '.py': 'p', '.sh': 's', '.bash': 's', '.zsh': 's', '.nix': 'n', '.sql': 'd'}
 ONE_LINE = r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\''
-MANY_LINES = r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\''
+DOUBLE = r'"(?:\\.|[^"\\])*"'
 STRING = {'c': r'"""(?:\\.|.)*?"""|`(?:\\.|[^`\\])*`|' + ONE_LINE, 'p': r'"""(?:\\.|.)*?"""|\'\'\'(?:\\.|.)*?\'\'\'|' + ONE_LINE,
-          's': MANY_LINES, 'n': r"''.*?''|" + MANY_LINES, 'd': MANY_LINES}
+          's': DOUBLE + r"|'[^']*'", 'n': r"''(?:'''|''\$|''\\.|(?!'').)*''|" + DOUBLE, 'd': r"'(?:''|[^'])*'|" + r'"[^"]*"'}
 COMMENT = {'c': r'//[^\n]*|/\*.*?\*/', 'p': r'\#[^\n]*', 's': r'(?<![^\s;])\#[^\n]*', 'n': r'\#[^\n]*|/\*.*?\*/', 'd': r'--[^\n]*|/\*.*?\*/'}
 TOKEN = r'[A-Za-z_$][\w$]*|\d[\w.]*|[^\s\w]'
 EXCLUDE = r'(^|/)(generated|vendor|third_party|node_modules|dist|build|target)/|\.min\.|\.lock$|-lock\.json$'
 TEST = r'(^|/)(tests?(-[a-z]+)?|__tests__|specs?|e2e|fixtures)/|[._-](test|spec)\.|(Test|Suite|Spec)\.[a-z]+$|(^|/)test_[^/]*$'
 
-def docstring_lines(text):
+def docstring_spans(text, path):
     try:
         tree = ast.parse(text)
     except (SyntaxError, ValueError):
-        return set()
+        print('measure.py: %s: this interpreter cannot parse it; its docstrings count as code' % path, file=sys.stderr)
+        return [], []
+    rows = text.split('\n')
+    starts = [0]
+    for row in rows:
+        starts.append(starts[-1] + len(row) + 1)
+    at = lambda line, col: starts[line - 1] + len(rows[line - 1].encode()[:col].decode(errors='ignore'))
     owners = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
     firsts = (node.body[0] for node in ast.walk(tree) if isinstance(node, owners) and node.body)
-    return {s.lineno - 1 for s in firsts if isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) and isinstance(s.value.value, str)}
+    spans = sorted((at(s.lineno, s.col_offset), at(s.end_lineno, s.end_col_offset)) for s in firsts
+                   if isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) and isinstance(s.value.value, str))
+    return [a for a, _ in spans], [b for _, b in spans]
 
-def measure(text, kind):
-    docs = docstring_lines(text) if kind == 'p' else set()
+def measure(text, kind, path):
+    doc_from, doc_to = docstring_spans(text, path) if kind == 'p' else ([], [])
     tokens, lines = 0, set()
     for m in re.finditer('(?P<s>%s)|(?P<c>%s)|(?P<t>%s)' % (STRING[kind], COMMENT[kind], TOKEN), text, re.S):
-        first = text.count('\n', 0, m.start())
-        if m.lastgroup == 'c' or (m.lastgroup == 's' and first in docs and not text[text.rfind('\n', 0, m.start()) + 1:m.start()].strip()):
+        doc = bisect.bisect_right(doc_from, m.start()) - 1
+        if m.lastgroup == 'c' or (doc >= 0 and m.start() < doc_to[doc]):
             continue  # comments and docstrings count as nothing
+        first = text.count('\n', 0, m.start())
         if m.lastgroup == 's':  # a string counts the tokens inside it and the non-blank lines it spans: embedded SQL is code
             tokens += len(re.findall(TOKEN, m.group()))
             lines.update(first + i for i, part in enumerate(m.group().split('\n')) if part.strip())
@@ -641,34 +671,44 @@ def measure(text, kind):
 
 def manifest(paths, depth, exclude, test):
     listing = subprocess.run(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--'] + paths,
-                             check=True, capture_output=True, text=True).stdout
-    for path in sorted(set(filter(None, listing.split('\0')))):
+                             check=True, capture_output=True).stdout
+    for path in sorted(os.fsdecode(raw) for raw in set(filter(None, listing.split(b'\0')))):
         kind = KIND.get(os.path.splitext(path)[1])
-        if kind is None or re.search(exclude, path) or os.path.islink(path) or not os.path.isfile(path):
+        if kind is None or (exclude and re.search(exclude, path)) or os.path.islink(path) or not os.path.isfile(path):
             continue  # other formats, excluded paths, symbolic links, files deleted from the work tree
-        if '\t' in path or '\n' in path:
+        if not path.isprintable():
             sys.exit('measure.py: unsupported file name: %r' % path)
         with open(path, encoding='utf-8', errors='replace') as fh:
             text = fh.read()
-        n_lines, n_tokens = measure(text, kind)
-        yield path, '/'.join(path.split('/')[:depth]), 'test' if re.search(test, path) else 'prod', n_lines, n_tokens, len(text.encode())
+        n_lines, n_tokens = measure(text, kind, path)
+        role = 'test' if test and re.search(test, path) else 'prod'
+        yield path, '/'.join(path.split('/')[:depth]), role, n_lines, n_tokens, len(text.encode())
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument('paths', nargs='*'); ap.add_argument('--depth', type=int); ap.add_argument('--exclude'); ap.add_argument('--test')
 ap.add_argument('--compare', metavar='BASELINE.tsv')
 a = ap.parse_args()
-given = {k: v for k, v in (('paths', a.paths), ('depth', a.depth), ('exclude', a.exclude), ('test', a.test)) if v}
+if a.depth is not None and a.depth < 1:
+    ap.error('--depth must be at least 1')
+given = {k: v for k, v in (('paths', a.paths or None), ('depth', a.depth), ('exclude', a.exclude), ('test', a.test)) if v is not None}
 old = {}
 if a.compare:
     with open(a.compare, encoding='utf-8') as fh:
-        args = json.loads(fh.readline()[1:])
+        head = fh.readline()
+        if not head.startswith('#{'):
+            sys.exit('measure.py: %s was not written by this version of the script; make the baseline again' % a.compare)
+        args = json.loads(head[1:])
         if any(args[k] != v for k, v in given.items()):
             sys.exit('measure.py: arguments differ from the baseline %s; pass none to reuse them' % json.dumps(args))
-        old = {row[0]: row for row in (line.rstrip('\n').split('\t') for line in fh)}
+        for line in fh:
+            row = line.rstrip('\n').split('\t')
+            if len(row) != 6:
+                sys.exit('measure.py: malformed row in %s: %r' % (a.compare, line))
+            old[row[0]] = row
 else:
-    args = {'paths': a.paths, 'depth': a.depth or 2, 'exclude': a.exclude or EXCLUDE, 'test': a.test or TEST}
     if not a.paths:
         ap.error('PATH... is required without --compare')
+    args = {'paths': a.paths, 'depth': 2, 'exclude': EXCLUDE, 'test': TEST, **given}
 rows = {r[0]: r for r in manifest(args['paths'], args['depth'], args['exclude'], args['test'])}
 print('#' + json.dumps(args))
 for r in rows.values():
@@ -680,10 +720,11 @@ for sign, table in ((1, rows), (-1, old)):
             for name, value in (('lines', n_lines), ('tokens', n_tokens)):
                 total[key + (name, sign)] += int(value)
 for path in sorted(set(rows) | set(old)) if a.compare else ():
-    now, was = rows.get(path, (0,) * 6), old.get(path, (0,) * 6)
-    if (int(now[3]), int(now[4])) != (int(was[3]), int(was[4])):
-        state = 'added' if path not in old else 'removed' if path not in rows else 'changed'
-        print('%-8s lines %+6d tokens %+7d  %s' % (state, int(now[3]) - int(was[3]), int(now[4]) - int(was[4]), path), file=sys.stderr)
+    now, was = rows.get(path), old.get(path)
+    d_lines, d_tokens = ((int(now[i]) if now else 0) - (int(was[i]) if was else 0) for i in (3, 4))
+    if now is None or was is None or d_lines or d_tokens:
+        state = 'added' if was is None else 'removed' if now is None else 'changed'
+        print('%-8s lines %+6d tokens %+7d  %s' % (state, d_lines, d_tokens, path), file=sys.stderr)
 for part, role in sorted({k[:2] for k in total}):
     cur = [total[(part, role, name, 1)] for name in ('lines', 'tokens')]
     delta = '  delta lines %+d tokens %+d' % tuple(c - total[(part, role, name, -1)] for c, name in zip(cur, ('lines', 'tokens'))) if a.compare else ''

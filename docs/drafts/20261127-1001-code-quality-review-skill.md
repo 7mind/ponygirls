@@ -1,8 +1,9 @@
-# Code-quality review skill: design draft v0.1
+# Code-quality review skill: design draft v0.2
 
 Status: proposal for discussion, 27 Nov 2026. Nothing here has been run end
-to end. The text has had two independent readings (section 9); the script has
-been tested on small cases and on this repository. The draft skill is
+to end. The text has had two independent readings and one re-reading of the
+revision (section 9); the script has been tested on small cases and on this
+repository. The draft skill is
 `20261127-1001-code-quality-review-skill/SKILL.md` (one file, as
 `nix/pkg/llm-skills` packages skills); `measure.py` beside it is the script
 embedded in the skill, byte for byte.
@@ -26,11 +27,11 @@ tables excluded. Counted by the draft's `measure.py`.
 
 | Tree | Production lines | Production tokens | Test lines | Test tokens | Bytes |
 |---|---:|---:|---:|---:|---:|
-| chronicle | 33,309 | 704,421 | 43,063 | 1,021,434 | 6.7 MB |
+| chronicle | 33,312 | 704,462 | 43,063 | 1,021,434 | 6.7 MB |
 | haystack | 10,834 | 225,667 | 11,036 | 257,574 | 1.7 MB |
 | manure | 17,112 | 269,998 | 23,033 | 413,803 | 2.7 MB |
 | shared | 7,954 | 151,877 | 7,403 | 138,000 | 1.2 MB |
-| total | 69,209 | 1,351,963 | 84,535 | 1,830,811 | 12.2 MB |
+| total | 69,212 | 1,352,004 | 84,535 | 1,830,811 | 12.2 MB |
 
 Three observations decide parts of the design.
 
@@ -166,10 +167,12 @@ Decisions, each with the alternative it was chosen over:
    records means the brief or model is at fault; more than two thirds refuted
    means the card is too loose for this codebase and gets a recorded
    amendment; nothing admissible on two partitions parks the lens.
-10. **A pack supplies four things** (currency with its prediction field, what
-    readers leave alone, what admits a hypothesis, when a spike passes) and
-    the pipeline supplies the rest. Without that split the structural gate
-    ("tokens must fall") would reject every performance or correctness
+10. **A pack supplies its currency, what readers leave alone, and its
+    empirical test**; the pipeline supplies records, mechanical
+    admissibility, independent refutation and the rule that only an executed
+    test admits a hypothesis. The spike of section 7 is the structural pack's
+    test. Without that split the structural gate ("tokens must fall", "the
+    tests were green before") would reject every performance or correctness
     proposal.
 
 ## 5. Where the draft departs from the sketch
@@ -270,7 +273,7 @@ the gateway provider this session runs on is unknown.
 
 ## 8. Known weaknesses of the draft
 
-- 41 KB, of which about 13 KB are lens cards and 6 KB the script; the largest
+- 44 KB, of which about 13 KB are lens cards and 7 KB the script; the largest
   installed skill is 40 KB and most are 4 to 21 KB. Trimming should follow
   the pilot, which shows which sentences carry weight.
 - Every threshold and cap (ten hypotheses per pass, a third, two thirds, five
@@ -349,6 +352,46 @@ the rewrite, against the unchanged old file:
 | Python `return (` / `"""required payload"""` / `)` in a function | 3 lines, 8 tokens | 4 lines, 16 tokens |
 | a definition moved from a tracked file into a new untracked one | tokens −13 | tokens +4 |
 | a tracked file deleted without `git rm` | `FileNotFoundError` | reported as removed |
+
+**Re-reading of v0.1** (commit `4bf77c32`) by `gpt-6.2-sol`, read-only. Of
+the 28 findings it judged 19 resolved, 8 partly resolved and one (nested
+comments) documented and unresolved as intended, and it reported ten new
+defects, all accepted. Changes made for v0.2:
+
+- **Procedure.** The spiker stages its patch before building, and the tree
+  must show nothing else before it is measured (build output could enter the
+  patch and the count); patch coverage is checked by membership in the two
+  manifests (a file whose counts did not change was called unmeasured); a
+  spike can proceed without a covering test and is then at most
+  `confirmed-unguarded`; the project's build and test commands are recorded
+  during scoping; `deferred` is assigned by a step of reconciliation;
+  hypotheses with unmeasurable sites are kept out of the spike queue; a
+  promoted alternative is refuted outside the cap; the two calibration
+  spikes are taken only when the cap and the pool allow.
+- **Packs.** Section 7 is now stated to be the structural pack's test. A
+  pack whose hypotheses are not behaviour-preserving patches supplies its
+  own executed test: a correctness pack's failing reproduction would have
+  been stopped by "baseline not green".
+- **Script.** Docstrings are removed by their span in the syntax tree, and an
+  unparsable Python file is announced; shell single quotes no longer treat a
+  backslash as an escape; Nix `''${` and `'''` no longer end a string; SQL
+  `''` is an escaped quote; file names are read as bytes and unsupported ones
+  refused; `--depth 0` and a baseline without a header are refused with a
+  message; added and removed files are listed even when they count nothing.
+  Ruby was dropped from the supported formats.
+
+| Input | v0.1 | v0.2 |
+|---|---|---|
+| Nix `x = '' echo ''${HOME} # not a comment ''; y = 1` | 11 tokens | 21 |
+| shell `x='path\'`, a comment line, `y='z'` | 3 lines, 16 tokens | 2 lines, 11 tokens |
+| Python function with only `r"""raw docstring"""` and `return 1` | 3 lines, 16 tokens | 2 lines, 7 tokens |
+| a new file holding only a comment | not listed | listed as added |
+| `--depth 0` | ran with depth 2 | refused |
+| baseline file without a header | traceback | message |
+| file name containing a carriage return | file skipped silently | refused |
+
+There was no third reading. v0.2's changes are unreviewed except by the tests
+above; the pilot is the next check.
 
 ## 10. Tuning log
 
