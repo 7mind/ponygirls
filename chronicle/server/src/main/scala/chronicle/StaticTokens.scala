@@ -5,7 +5,7 @@ import java.nio.file.attribute.PosixFilePermission
 import java.sql.Connection
 import java.time.Instant
 import java.util.UUID
-import scala.util.Using
+import ponygirls.runtime.BoundedSecretFile
 
 object StaticTokens {
   private def hash(t: StaticTokenConfig): String = {
@@ -15,9 +15,7 @@ object StaticTokens {
       val forbidden=Set(PosixFilePermission.OTHERS_READ,PosixFilePermission.OTHERS_WRITE,PosixFilePermission.OTHERS_EXECUTE)
       import scala.jdk.CollectionConverters.*
       Check(Files.getPosixFilePermissions(path).asScala.intersect(forbidden).isEmpty,"config","static token credential must not be world-accessible")
-      val bytes=Using.resource(Files.newInputStream(path))(_.readNBytes(4097))
-      Check(bytes.length<=4096,"config","invalid static token credential")
-      val secret=new String(bytes,java.nio.charset.StandardCharsets.UTF_8).stripTrailing()
+      val secret=BoundedSecretFile.read(path,4096).stripTrailing()
       Check(secret.length>=43 && secret.length<=1024 && secret.matches("[A-Za-z0-9_+/.=-]+") && secret.distinct.length>=16,"config","static token credential must be strong")
       Wire.hash(secret)
     } catch { case d: DomainError => throw d; case _: Exception => throw DomainError("config","cannot load static token credential") }
