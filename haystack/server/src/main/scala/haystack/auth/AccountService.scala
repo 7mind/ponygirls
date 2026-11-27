@@ -3,8 +3,9 @@ package haystack.auth
 import cats.effect.IO
 import haystack.domain.{Fault,Principal}
 import io.circe.Json
-import ponygirls.auth.{AccountIssued,AccountRefusal,AccountRefused,AccountReply,Authority,BearerSecretPasswords,Captured,ConnectionTransactions,DeclarativeAccountService,DeclaredInstallation,IdentityHistory,IndexingPolicy,IndexingService,ImperativeSettings,SharedAccountStorage,SignedIn}
+import ponygirls.auth.{AccountIssued,AccountRefusal,AccountRefused,AccountReply,Authority,BearerSecretPasswords,Captured,ConnectionTransactions,DeclarativeAccountService,DeclaredInstallation,IdentityHistory,Identified,IndexingPolicy,IndexingService,ImperativeSettings,SharedAccountStorage,SignedIn}
 import ponygirls.auth.boundary
+import ponygirls.auth.boundary.{BoundaryRefused,ConfigRefused}
 import ponygirls.runtime.JdbcDatabase
 import java.sql.Connection
 import scala.util.Using
@@ -42,6 +43,9 @@ final class AccountService(database:JdbcDatabase,getAuth:()=>Auth,imperative:Imp
   def suspended(auth:Auth):IO[Int]=faults(shared.suspended(auth))
   def resolve(headers:RequestHeaders,mutate:Boolean=false,mcp:Boolean=false):IO[Authenticated]=
     faults(shared.resolve(auth=>Sessions.select(auth.config,headers,mutate,mcp))).map(AccountService.authenticated)
+  /** A caller of the shared `ServiceCallers` as Haystack's `Authenticated`, their refusals as Haystack's `Fault`s. */
+  def caller(identified:IO[Identified]):IO[Authenticated]=
+    faults(identified.adaptError { case refused@(_:BoundaryRefused|_:ConfigRefused)=>Refused.asFault(refused) }).map(found=>AccountService.authenticated(found.captured))
   def live(captured:Authenticated):IO[Boolean]=faults(shared.live(AccountService.captured(captured)))
   def login(login:String,password:String,previous:Option[String]):IO[SignedIn]=faults(shared.login(login,password,previous))
   def imperativeLogin(auth:Auth,settings:ImperativeSettings,body:Json,presented:Option[String],clientAddress:String):IO[AccountReply]=

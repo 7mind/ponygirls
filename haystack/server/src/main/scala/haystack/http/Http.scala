@@ -16,8 +16,8 @@ import org.typelevel.ci.CIString
 import org.typelevel.vault.Key
 import io.circe.Json
 import ponygirls.auth.{AccountFailure,ClientAddress}
-import ponygirls.auth.boundary.SecureAttribute
-import ponygirls.auth.http4s.{AccountPlane,AccountPlaneSettings,LoginAdmission}
+import ponygirls.auth.boundary.{CredentialAccept,SecureAttribute}
+import ponygirls.auth.http4s.{AccountPlane,AccountPlaneSettings,ActorRule,CallerRoute,LoginAdmission,RouteCredential,ServiceCallerSettings,ServiceCallers}
 import scala.concurrent.duration.*
 import java.nio.file.{Files,Path}
 
@@ -41,14 +41,15 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     if(bytes.length>maxBytes) throw Fault("too-large","body too large")
     parse(bytes)
   }
+  /** The callers of Haystack's own routes: either credential, no actor header; `/mcp` takes a bearer token only and
+    * refuses a session cookie before any lookup. */
+  private val callers=new ServiceCallers[Auth](accounts.shared,ServiceCallerSettings[Auth](_.config.originPolicy,Sessions.Cookies,SecureAttribute.Last))
+  private def route(mutate:Boolean,mcp:Boolean):CallerRoute=
+    CallerRoute(if(mcp)CredentialAccept.BearerOnly else CredentialAccept.BearerOrCookie,RouteCredential.Either,mutate,ActorRule.NotRequired)
   /** Initial auth admits bounded body work only. Dispatch must use the same
     * still-current identity/transport after that asynchronous read completes. */
   private def revalidate(r:Request[IO],captured:Authenticated,mutate:Boolean=false,mcp:Boolean=false):IO[Authenticated]=
-    accounts.resolve(headers(r),mutate,mcp).map { current=>
-      if(current.principal!=captured.principal || current.token!=captured.token || current.cookie!=captured.cookie)
-        throw Fault("unauthorized","request authority changed")
-      current
-    }
+    accounts.caller(callers.recheck(r,route(mutate,mcp),AccountService.captured(captured)))
   private def authorizedBody(r:Request[IO],captured:Authenticated,mutate:Boolean=false,mcp:Boolean=false):IO[Json]=
     body(r).flatTap(_=>revalidate(r,captured,mutate,mcp).void)
   private def version(r:Request[IO]):Unit={
@@ -60,13 +61,11 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
   /** The identity that admits a request, before its body and handler. */
   private def admitted(r:Request[IO],mutate:Boolean):IO[Authenticated]=IO.defer {
     version(r)
-    accounts.resolve(headers(r),mutate).flatTap(resolved=>IO(limiter.check(resolved.principal,getAuth().config.rateLimit)))
+    accounts.caller(callers.admit(r,route(mutate,mcp=false))).flatTap(resolved=>IO(limiter.check(resolved.principal,getAuth().config.rateLimit)))
   }
   /** `current` is the last check before delivery: its principal labels the log row and its browser session is renewed. */
-  private def delivered(response:Response[IO],current:Authenticated):Response[IO]={
-    val labelled=response.withAttribute(authenticatedPrincipal,current.principal)
-    if(current.cookie)labelled.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(current.token),current.secureCookie))) else labelled
-  }
+  private def delivered(response:Response[IO],current:Authenticated):Response[IO]=
+    callers.renewed(response.withAttribute(authenticatedPrincipal,current.principal),AccountService.captured(current))
   /** A handler that waits (a read, a write): the captured identity is checked once more when its result exists, and
     * only then is the result rendered. A caller revoked meanwhile is unauthorized, whatever `render` would answer. */
   private def authedResult[A](r:Request[IO],mutate:Boolean)(f:Authenticated=>IO[A])(render:A=>Response[IO]):IO[Response[IO]]=
