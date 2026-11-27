@@ -267,6 +267,12 @@ completions.
 - **Nix.** The flake checks whose derivations differ from the base (16 of 102, all the Pi extension checks, since
   they share one source derivation) were built at `7ece6521` and at `6f31b542`: all passed, `ponygirls-cuckoo` with
   660 and 673 tests. They are built once more on the merged tree; the final report states that result.
+- **Real saved sessions** (read only; `.local/cuckoo-ledger/legacy-differential.mjs`, `perf-large-session.mjs`). All
+  732 report entries that the deployed extension had saved under `~/.pi/agent/sessions` (versions 2 to 4, 79 session
+  files) decode with the new code to the same content and the same plain text as with the old code, with no ID and no
+  numbering; no file yields a current set or reserves a number. On the largest of those sessions (158,380 entries, 88
+  reports) the work done at each turn boundary takes about 24 ms (reading the reports 12.7 ms, deriving the set
+  11.5 ms) against 12.4 ms before; numbering for a tool call or a captured reply reads all entries in 8 ms.
 - **Real terminal.** Pi 1.5.2 in a private tmux server with a scripted provider (`.local/cuckoo-ledger/pty/`, four
   runs): transcript rows for successful and refused calls, badge, panel opening on the current set, the refused
   comment key, focus and End, a checkpoint row with IDs, a second checkpoint, a title-only objective, a completed
