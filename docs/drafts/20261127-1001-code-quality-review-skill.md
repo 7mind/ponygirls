@@ -908,10 +908,8 @@ native executable and the full verification were not run for any spike.
   `b747a13411cf09afe1394f74b227897e` (v0.2).
 - Haystack: `corporate-activity:skill-draft-code-quality-review`, revision 1
   (v0.4 complete, evidence of both runs, known defects), attention required.
-- Decision inbox: Q183 to Q186, Q193 and Q194 answered (section 6). Open:
-  Q202 (how to go on after the held-out run), Q203 (whether to apply the five
-  confirmed real changes). Open in chat only: the lens set, the name and the
-  home of the skill.
+- Decision inbox: Q183 to Q186, Q193, Q194, Q202 and Q203 answered (section
+  6). Open in chat only: the lens set, the name and the home of the skill.
 - Left in place after the wave: five spike work trees with staged patches
   (listed in the run directory's `spike-worktrees.tsv`), the planted branch
   and its work tree. All subagents are closed.
@@ -922,10 +920,19 @@ native executable and the full verification were not run for any spike.
   `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-03f3b2a7b890-1795783717555/debug/20261127-1249-cqr-manure-backend`
   (`report.md`, `residue.md`, `friction.md`, `hypotheses.jsonl`, `spikes/`).
   Five more spike work trees with staged patches are left in place.
-- Not done: v0.5 (candidates in section 12), the review of the remaining
-  code, applying any confirmed change, installation under
-  `nix/pkg/llm-skills/skills/`. Waiting for the user's decision on how to go
-  on.
+- Q203 applied 27 Nov 2026: the five confirmed real changes are on main as
+  `226908f5`, `1241db7f` (haystack server), `96329e0b`, `ed425e0c`,
+  `323d2497` (manure backend), fast-forwarded from `bb9e490a`. Measured on
+  main: production 24 lines and 388 tokens smaller, tests 4 lines and 58
+  tokens smaller. The JVM suites pass on the result (haystack 40 suites and
+  758 cases, manure 24 suites and 303 cases); `scripts/verify` was not run,
+  by the user's decision, so the native executables and the browser suites
+  have not seen these changes.
+- Cross-service run (section 7.3) started 27 Nov 2026 16:32 UTC on base
+  `bb9e490a` with skill v0.5 (`14840099`); its run directory will be under
+  `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-bb9e490a48f8-1795797135454/debug/`.
+- Not done: scoring and reporting the cross-service run, the review of the
+  remaining code, installation under `nix/pkg/llm-skills/skills/`.
 - Scratch material outside the repository, not needed to continue:
   `/tmp/cq-research` (prior-art downloads, clone-detector probes, the old
   script versions used for the reproductions).
