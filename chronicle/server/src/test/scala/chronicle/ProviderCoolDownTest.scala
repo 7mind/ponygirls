@@ -40,6 +40,7 @@ class ProviderCoolDownTest extends munit.FunSuite {
     assert(Worker.Answers.answered(Left(ModelRejection.from(ModelRejectionReason.ModelJsonInvalid))))
     assert(Worker.Answers.answered(Left(DomainError("model-output","invalid embedding"))))
     assert(Worker.Answers.answered(Left(DomainError("model-output/truncated","x"))))
+    assert(!Worker.Answers.answered(Left(ModelRejection.from(ModelRejectionReason.ResponseByteBound))),"the response-byte bound: a body cut off before its end")
     List[Throwable](new ModelHttpStatus(429,"model returned HTTP 429"),DomainError("model-http","model returned HTTP 200"),DomainError("model-timeout","model deadline exceeded"),
       DomainError("model-transport","model transport failed"),DomainError("stale-claim","x"),new RuntimeException("x")).foreach(error => assert(!Worker.Answers.answered(Left(error)),error.toString))
   }
@@ -104,6 +105,27 @@ class ProviderCoolDownTest extends munit.FunSuite {
         if(backoff) assertEquals(observed,Worker.Attempt(None,Set(annotation,embedding)))
         else assert(observed eq Worker.Attempt.unobserved,s"no answer state with the flag off: $observed")
       }
+    }
+  }
+  test("Cool-down: an oversized streaming 2xx cut off before its end is no completed answer: the lane's level stays, and the next provider failure takes the incremented pause") {
+    lanes(ClaimOrderSetting.SourceId) { l =>
+      val id=l.archive.ingest("a",Fixtures.snapshot()).jobId
+      // Chat: 429; then, in the next attempt, a 200 whose streamed body exceeds the response bound (the client stops
+      // reading at maxResponseBytes + 1, before the body ends: a response-byte-bound rejection, asked again), then 429.
+      l.stub.chat=n => if(n==2) 200 else 429
+      l.stub.oversized=_==2
+      assert(l.stub.oversizedBytes>l.config.annotation.maxResponseBytes*16)
+      val w=workerWith(l.archive,l.config,l.client,l.log.logger,ModelAdmission.make(l.config.indexing).unsafeRunSync(),coolDown)
+      val lane=new w.Lane(0)
+      assertEquals(w.step(lane).unsafeRunSync(),1.second,"429: the first pause")
+      l.rewind(id)
+      assertEquals(w.step(lane).unsafeRunSync(),2.seconds,"the cut-off 2xx did not reset the level: the 429 after it takes the second pause")
+      assertEquals(l.stub.chatCalls.get,3)
+      assertEquals(lane.pause.current,(2,Some(annotation)))
+      assertEquals(l.log.lines.filter(_.startsWith("indexing lane")),List(
+        "indexing lane paused lane=0 upstream=Annotation level=1 pauseSeconds=1","indexing lane paused lane=0 upstream=Annotation level=2 pauseSeconds=2"))
+      assertEquals(l.db.transaction(c => Sql.rows(c,"SELECT rejection_reason FROM ch_annotation_attempts WHERE job_id=? ORDER BY attempt",id)(r => Option(r.getString(1)))),
+        List(None,Some(ModelRejectionReason.ResponseByteBound.value),None),"the cut-off answer was rejected as response-byte-bound")
     }
   }
   test("Cool-down: off, a lane never pauses after a provider failure") { lanes(ClaimOrderSetting.SourceId,backoff=false) { l =>

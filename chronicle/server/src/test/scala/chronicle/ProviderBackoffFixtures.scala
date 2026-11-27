@@ -22,6 +22,10 @@ final class ProviderStub(val base: String) {
   @volatile var partial: Int => Boolean = _ => false
   @volatile var stall: (String,Int) => Boolean = (_,_) => false
   @volatile var beforeChat: Int => Unit = _ => ()
+  /** That 200 answer of `/chat` is a streamed body of `oversizedBytes`, far above any response bound (the client reads
+    * maxBytes + 1 of it and stops, before its end). */
+  @volatile var oversized: Int => Boolean = _ => false
+  val oversizedBytes: Int = 4*1024*1024
   val stallFor: scala.concurrent.duration.FiniteDuration = scala.concurrent.duration.DurationInt(2).seconds
   def configure(config: Config): Config =
     config.copy(annotation=config.annotation.copy(endpoint=s"$base/chat"),embedding=config.embedding.copy(endpoint=s"$base/embedding"))
@@ -55,7 +59,12 @@ object ProviderStub {
       }
       (path,call,status,answer)
     }.flatMap { (path,call,status,answer) =>
-      val response=if(status==200) Response[IO](Status.Ok).withEntity(answer()) else Response[IO](Status.fromInt(status).toOption.get).withEntity("{}")
+      val stub=holder.get
+      val chunk=fs2.Chunk.array(("{\"choices\":[" + " "*8180).getBytes(java.nio.charset.StandardCharsets.UTF_8).take(8192))
+      val response=
+        if(status==200 && path=="/chat" && stub.oversized(call)) Response[IO](Status.Ok).withBodyStream(fs2.Stream.chunk(chunk).repeatN((stub.oversizedBytes/8192).toLong))
+        else if(status==200) Response[IO](Status.Ok).withEntity(answer())
+        else Response[IO](Status.fromInt(status).toOption.get).withEntity("{}")
       if(holder.get.stall(path,call)) IO.sleep(holder.get.stallFor).as(response) else IO.pure(response)
     }}
     EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpApp(app).build.map { server =>

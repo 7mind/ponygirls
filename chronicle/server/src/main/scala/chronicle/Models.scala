@@ -785,15 +785,19 @@ object Worker {
         IO(if(answered(result)) { seen.updateAndGet(_+stage); () }) *> IO.fromEither(result)
       }
     }
-    /** A completed 2xx exchange: the call returned, or its answer was rejected for its content (a ModelRejection or a
-      * `model-output` code, which only an answer read in full can give); a non-2xx status, a deadline or a transport
-      * failure (also after 2xx headers) is no answer. */
+    /** A completed 2xx exchange: the call returned, or its answer, read in full, was rejected for its content (a
+      * ModelRejection or a `model-output` code). No answer: a non-2xx status, a deadline or a transport failure (also after
+      * 2xx headers), and the response-byte bound, whose body JsonHttp cuts off at maxBytes + 1 bytes, before its end. */
     def answered(result: Either[Throwable,?]): Boolean = result match {
       case Right(_) => true
-      case Left(error) => ModelRejection.classify(error).nonEmpty || (error match {
-        case DomainError(code,_) => code=="model-output" || code.startsWith("model-output/")
-        case _ => false
-      })
+      case Left(error) => ModelRejection.classify(error) match {
+        case Some(rejection) if rejection.reason==ModelRejectionReason.ResponseByteBound => false
+        case Some(_) => true
+        case None => error match {
+          case DomainError(code,_) => code=="model-output" || code.startsWith("model-output/")
+          case _ => false
+        }
+      }
     }
   }
   /** A lane's cool-down (provider back-off option c): `delay(level)` before its next claim after its `level`-th provider
