@@ -226,6 +226,23 @@ When the user names rows (or "all actionable"):
 5. Report what landed vs what was skipped, with old → new versions, and the
    commit hash when step 4 ran.
 
+### Source packages with an ordered patch stack
+
+- **Replay before rebasing.** Apply the old stack in order to a fresh exact
+  upstream tree and retain the rejects, then rebase each patch sequentially.
+  An applying patch is not semantic preservation: remove a local hunk only
+  when an equivalent implementation is present upstream.
+- **Ledger.** Total/carried/rebased counts; per patch, the upstream reference
+  and drop condition. `Carried unchanged` is unproven when context moved.
+- **Independent semantic review after green builds.** One upgrade (five
+  patches carried, twelve rebased; one repository) built green, then review
+  found four defects: two ordering/await races, `Retry-After` metadata dropped
+  across an adapter boundary, ANSI/OSC/APC sequences replayed through a
+  renderer. Prove each actionable finding with a failing regression before
+  fixing it, then rerun the affected checks and re-review the corrected stack.
+- **Installed closure.** Build source and installation closures; a workspace
+  that compiles but is omitted from installation is not a complete closure.
+
 ## Rules of engagement
 
 - **Manual trigger only.** Do not run this audit because the user edited a
