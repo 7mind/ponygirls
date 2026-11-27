@@ -582,7 +582,7 @@ v0.3's changes have had no independent reading.
 
 Run as registered in section 7.1; the skill was v0.3. The supervisor's run
 directory, with its 120 kB report and its notes on the skill text, is
-`debug/cqr-20261127-1051` in its harness work tree (path in section 13).
+`debug/cqr-20261127-1051` in its harness work tree (path in section 14).
 
 **Outcome on `haystack/server` production code** (2,640 lines, 49,520 tokens
 with the plants):
@@ -888,7 +888,107 @@ native executable and the full verification were not run for any spike.
    yield columns; `passes.tsv` for group readers. The skill is 53 kB and
    should shrink.
 
-## 13. State, for resuming
+## 13. Cross-service run (27 Nov 2026, 16:32 to 19:05 UTC)
+
+Run as registered in section 7.3 on skill v0.5 (`14840099`), base
+`bb9e490a`, without interference. The supervisor's run directory
+(`debug/20261127-cqr-cross-service` in its harness work tree) holds its
+report, residue file and 34 notes on the skill text.
+
+**Outcome.** The partition is 31 production files of the three servers
+(chronicle 15, haystack 9, manure 7; manure has no MCP endpoint): 4,691
+lines, 99,197 tokens.
+
+- Three readers on `moonshotai/Kimi-K3.1-Pro` returned 14 records of 60
+  allowed, none inadmissible, and named 52 further candidates that they did
+  not write up, mostly as token-neutral or as having too many variation
+  points. The wiring lens returned nothing.
+- 9 went to reading: 1 refuted, 1 deferred, 7 supported. All 7 were spiked.
+- 6 confirmed, 1 failed (12 lines fewer, 5 tokens more: the same session
+  helper in haystack's `AccountService` that failed with the same numbers in
+  the first wave).
+- Measured working set: production 27 lines and 617 tokens smaller, net of
+  what the patches add under `shared/`; tests 18 tokens larger.
+
+| Confirmed | Net production effect |
+|---|---|
+| Secret primitives of all three servers delegate to the shared `Secrets` | 10 lines, 264 tokens |
+| The start-stage wrapper of the three `Main` files moves to shared service-runtime | 6 lines, 211 tokens |
+| Chronicle's `StaticTokens` reads through the shared bounded secret-file reader | 2 lines, 49 tokens |
+| Signup and enrollment value types with their defaults, shared | 3 lines, 48 tokens |
+| Static-root containment check of chronicle and haystack, shared | 1 line more, 28 tokens fewer |
+| Five part-upload routes of chronicle's `Http` through one typed helper | 7 lines, 17 tokens |
+
+The first of these is two thirds on main already: the haystack and manure
+parts were applied under Q203 after this run's tree was frozen.
+
+**Against what was stated before the run.**
+
+1. *Known positives: met.* The readers reported the re-implementations of
+   the shared `Secrets`, in all three services.
+2. *Refutation: mixed.* Two kills by reading. One stood, on a card
+   criterion (the surviving implementation would need an option per caller).
+   One was doubted, was not upheld by the second refuter and went to its
+   spike as an open check, as the text now prescribes; the change was
+   confirmed. One doubted of two is over the stated third, though two kills
+   are too few for a rate. No kill rested on behaviour. Without plants in
+   this run nothing shows whether the kill that stood was right.
+3. *Isolation: met.* No spiker wrote into another's scratch directory.
+4. *The question the run was for.* Confirmed hypotheses remove 56 lines
+   inside the partition files, 1.19% of the partition, and 27 lines net
+   (0.58%); nothing supported was left unmeasured; one deferred record
+   predicts 9 lines (0.19%). That is under the 2% stated before the run: the
+   run does not support that the three services duplicate a substantial part
+   of these families. What they share is a handful of small helpers.
+5. *Cost: not met.* 107.03 USD as the harness reports it: supervisor 50.69,
+   spikers 47.87, refuters and the second opinion 3.63, readers 4.63
+   (nominal), set-up 0.23. Supervisor, refuters and spikers together 102.19
+   against an expectation of under 60. Seven spikes took 112 minutes.
+
+**What bounds this result.**
+
+- *The test gate was noisy.* The host's load average was 50 to 340 during
+  the spikes, partly from other work. Timing-bound tests failed at random on
+  the base commit as well as with patches. For four of the six confirmed
+  changes "confirmed" means that repeated runs did not tell the patch from
+  the base, not that every run was green. The skill has no rule for a
+  failure that a rerun does not reproduce; this is also why the spikes cost
+  6.84 USD each against 1.08 in the held-out run.
+- *Readers were sparing.* 14 records and 52 candidates set aside by their
+  own estimate; 24 of the 36 production files of `shared/` were read in full
+  by no reader. The low yield is measured for what was proposed, not proven
+  for what was not.
+- JVM suites only; `scripts/verify`, the native executables and the browser
+  suites were not run.
+
+**Candidates for a v0.6, not applied.** A rule for test failures that do not
+reproduce (alternate base and patch, compare rates, never retry until
+green), and spikes one at a time on a loaded host. The refuted and failed
+lists of earlier runs as input to a new run. A rule for "few records, many
+self-rejected candidates". Who sorts falsifiers into hard and behaviour; a
+status for a doubted kill; the scope in the refuter's brief. A digest of each
+shared module for the reinvention reader. The supervisor's own cost, which
+was the largest item in two of three runs.
+
+### After three runs
+
+| Run | Code read (production) | Confirmed, real | Cost as reported |
+|---|---|---|---|
+| First wave, haystack server | 2,640 lines | 12 lines, 251 tokens | 121.83 USD |
+| Held-out, manure backend | 5,261 lines (and 5,005 of tests) | 12 lines, 137 tokens; tests 5 lines, 67 tokens | 37.71 USD |
+| Cross-service, five families | 4,691 lines | 27 lines, 617 tokens net | 107.03 USD |
+
+The procedure does what it was built for: no reader invented a path or a
+quote in 166 records, eleven of eleven planted smells were found, every
+change in a working set was measured and behaviour-checked, and two changes
+that looked like savings were stopped by the token gate or by a fault
+injection. On this code it finds little: between 0.3% and 1.2% of what was
+read. The first measurement already pointed that way (0.5% literal
+duplication in production code, most clones in tests); the three runs show
+that re-implementation, which a clone detector cannot see, is not much larger
+here.
+
+## 14. State, for resuming
 
 - Branch `code-quality-review-skill`, work tree
   `.worktrees/wt-ponygirls-code-quality-review-skill`; not merged. Commits:
@@ -928,11 +1028,17 @@ native executable and the full verification were not run for any spike.
   758 cases, manure 24 suites and 303 cases); `scripts/verify` was not run,
   by the user's decision, so the native executables and the browser suites
   have not seen these changes.
-- Cross-service run (section 7.3) started 27 Nov 2026 16:32 UTC on base
-  `bb9e490a` with skill v0.5 (`14840099`); its run directory will be under
-  `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-bb9e490a48f8-1795797135454/debug/`.
-- Not done: scoring and reporting the cross-service run, the review of the
-  remaining code, installation under `nix/pkg/llm-skills/skills/`.
+- Cross-service run done (section 13) on base `bb9e490a` with skill v0.5
+  (`14840099`); its run directory is
+  `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-bb9e490a48f8-1795797135454/debug/20261127-cqr-cross-service`
+  (`report.md`, `residue.md`, `friction.md`, `spikes/`). Seven more spike
+  work trees with staged patches are left in place, and scratch under
+  `/tmp/cqr-xsvc-bb9e490a/`.
+- Not done: applying the six cross-service changes (they need a quiet host
+  and `scripts/verify chronicle`), the review of the remaining code (web
+  clients, CLIs, the Python client, chronicle outside the five families), a
+  v0.6, installation under `nix/pkg/llm-skills/skills/`. Waiting for the
+  user's decision.
 - Scratch material outside the repository, not needed to continue:
   `/tmp/cq-research` (prior-art downloads, clone-detector probes, the old
   script versions used for the reproductions).
