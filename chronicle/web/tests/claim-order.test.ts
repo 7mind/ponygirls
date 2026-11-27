@@ -27,10 +27,21 @@ test('every reason under the waiting order, with the count in its class queue or
   assert.equal(line(job(JobState.Running, new ActivityJobWaiting_LeaseExpiredAwaitingReclaim(), { ahead: 0n, lease: '2026-11-25T16:54:00Z' }), W), 'Lease ended @16:54 · 0 ahead in the fresh queue | Worker stopped renewing · any lane may reclaim it');
   assert.equal(line(job(JobState.Running, new ActivityJobWaiting_LeaseExhaustedPending(), { lease: '2026-11-25T16:54:00Z' }), W), 'Lease ended @16:54 · attempt limit reached | The next claim ends it lease-exhausted; retry it then');
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_AwaitingReclaim(), { ahead: 2n }), W), 'Indexing settings changed · 2 ahead in the fresh queue | Its running attempt no longer counts · an eligible lane may reclaim it');
-  assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_Held('2026-11-25T17:30:00Z'), { error: 'model-http' }), W), 'Retrying after @17:30 (back-off) | Prior: model-http · rejoins the fresh order at @17:30');
+  assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_Held('2026-11-25T17:30:00Z'), { error: 'model-http' }), W), 'Hold ends @17:30 (back-off) | Prior: model-http');
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_BlockedByOlderRevision(6)), W), 'Waiting for older revision r6 (still running) | Joins the fresh order when r6 ends');
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_IndexingOff()), W), 'Indexing is turned off for your account | Waits until indexing is on (Account settings)');
   assert.equal(line(job(JobState.Queued, new ActivityJobWaiting_Queued(), { bulk: undefined }), W), 'Queued | Claimable · lane 0 takes it', 'no count where the order has none');
+});
+test('a held row: "Hold ends HH:MM (back-off)" and, when recorded, "Prior: <error>", in every order and class (owner\'s wording, Q178 item 4)', () => {
+  const held = (error: string | undefined, bulk: boolean) => job(JobState.Queued, new ActivityJobWaiting_Held('2026-11-25T17:30:00Z'), error === undefined ? { bulk } : { error, bulk });
+  for (const order of [ActivityClaimOrder.Waiting, ActivityClaimOrder.SourceId, undefined]) {
+    for (const bulk of [false, true]) {
+      assert.equal(line(held('model-http', bulk), order), 'Hold ends @17:30 (back-off) | Prior: model-http');
+      assert.equal(line(held('database-transient', bulk), order), 'Hold ends @17:30 (back-off) | Prior: database-transient');
+      assert.equal(line(held(undefined, bulk), order), 'Hold ends @17:30 (back-off) | ');
+    }
+  }
+  assert.deepEqual(stateLabel(held('model-http', false)), { text: 'Held', status: 'status status-idle', title: 'Stored state: Queued, with a future attempt time' }, 'the state label is unchanged');
 });
 test('the source-id order names the claim order and the permit, never a class queue; an unknown order names neither', () => {
   const S = ActivityClaimOrder.SourceId;

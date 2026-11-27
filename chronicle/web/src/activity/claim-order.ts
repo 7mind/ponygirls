@@ -118,7 +118,7 @@ export interface WhyText { readonly main: string; readonly ahead: Ahead | null; 
 const LARGE_JOB_WINDOWS = 100;
 const PLURAL_WINDOWS = (total: number | undefined) => total === undefined ? 'an unknown number of windows' : `${total.toLocaleString()} window${total === 1 ? '' : 's'}`;
 export function why(row: JobRow, order: ActivityClaimOrder | undefined, time: (iso: string) => string): WhyText {
-  const w = row.waiting, position = ahead(row, order), cls = jobClass(row.bulk), prior = row.job.error === undefined ? '' : `Prior: ${row.job.error} · `;
+  const w = row.waiting, position = ahead(row, order), cls = jobClass(row.bulk);
   const queue = order === ActivityClaimOrder.Waiting && cls !== 'unclassified' ? `the ${cls} order` : 'the claim order';
   const at = (text: string) => position === null ? text : `${text} · `;
   if (w instanceof ActivityJobWaiting_Queued) {
@@ -140,7 +140,8 @@ export function why(row: JobRow, order: ActivityClaimOrder | undefined, time: (i
   }
   if (w instanceof ActivityJobWaiting_RunningWithoutLease) return { main: 'Running without a lease', ahead: null, after: '', sub: 'No claim takes a job without a lease · retry it', running: false };
   if (w instanceof ActivityJobWaiting_AwaitingReclaim) return { main: at('Indexing settings changed'), ahead: position, after: position === null ? '' : position.suffix, sub: 'Its running attempt no longer counts · an eligible lane may reclaim it', running: false };
-  if (w instanceof ActivityJobWaiting_Held) return { main: `Retrying after ${time(w.nextAttemptAt)} (back-off)`, ahead: null, after: '', sub: `${prior}rejoins ${queue} at ${time(w.nextAttemptAt)}`, running: false };
+  // A hold ending is not a retry promise (a large job must first be sized and deferred again): the owner's wording, Q178 item 4.
+  if (w instanceof ActivityJobWaiting_Held) return { main: `Hold ends ${time(w.nextAttemptAt)} (back-off)`, ahead: null, after: '', sub: row.job.error === undefined ? '' : `Prior: ${row.job.error}`, running: false };
   if (w instanceof ActivityJobWaiting_BlockedByOlderRevision) return { main: `Waiting for older revision r${w.revision} (still running)`, ahead: null, after: '', sub: `Joins ${queue} when r${w.revision} ends`, running: false };
   if (w instanceof ActivityJobWaiting_IndexingOff) return { main: 'Indexing is turned off for your account', ahead: null, after: '', sub: 'Waits until indexing is on (Account settings)', running: false };
   if (w instanceof ActivityJobWaiting_ProfileNotRun) return { main: 'Your index profile is not run by this server', ahead: null, after: '', sub: 'Rebuild archive index (Maintenance) to resume', running: false };

@@ -108,7 +108,7 @@ try {
     assert.match(await text(why(page, 'exhausted')), /^Lease ended \d\d:\d\d · attempt limit reached/);
     assert.match(await text(why(page, 'running')), /^Running · windows 120\/300 Lease active until \d\d:\d\d · not waiting$/);
     assert.equal(await text(cell(page, 'jobs', ROWS.running, 'State')), 'Running');
-    assert.match(await text(why(page, 'held')), /^Retrying after \d\d:\d\d \(back-off\) Prior: model-http · rejoins the fresh order at \d\d:\d\d$/);
+    assert.match(await text(why(page, 'held')), /^Hold ends \d\d:\d\d \(back-off\) Prior: model-http$/);
     assert.equal(await text(cell(page, 'jobs', ROWS.held, 'State')), 'Held');
     assert.match(await text(why(page, 'blocked')), /^Waiting for older revision r6 \(still running\) Joins the fresh order when r6 ends$/);
     assert.equal(await text(cell(page, 'jobs', ROWS.blocked, 'State')), 'Blocked');
