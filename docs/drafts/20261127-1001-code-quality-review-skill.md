@@ -1002,12 +1002,13 @@ here.
   `04aa8cce` (its work tree is removed). Never merge or push it. Answer key
   and pilot scratch: `/tmp/cq-research/pilot`.
 - Published, public, expiring 27 Dec 2026: Manure artifact
-  `759b1d0dd27d3ea9a78992b0594cf250` (v0.4, this note at `56bd3254`, the
-  reports and notes of both runs); earlier ones:
+  `ff9658ab13163498edafb152a63091ed` (v0.5, this note at `4e459815`, the
+  reports and notes of all three runs); earlier ones:
+  `759b1d0dd27d3ea9a78992b0594cf250` (v0.4, two runs),
   `00256bb27785abbc468e779cbae26880` (v0.3 and the first wave),
   `b747a13411cf09afe1394f74b227897e` (v0.2).
-- Haystack: `corporate-activity:skill-draft-code-quality-review`, revision 1
-  (v0.4 complete, evidence of both runs, known defects), attention required.
+- Haystack: `corporate-activity:skill-draft-code-quality-review`, revision 2
+  (v0.5 complete, evidence of three runs, known defects), attention required.
 - Decision inbox: Q183 to Q186, Q193, Q194, Q202 and Q203 answered (section
   6). Open in chat only: the lens set, the name and the home of the skill.
 - Left in place after the wave: five spike work trees with staged patches
