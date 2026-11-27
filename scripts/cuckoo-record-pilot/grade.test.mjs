@@ -275,3 +275,18 @@ test('batch 2, held-out scenarios: every key recognises its own deliverable or r
     }
   }
 });
+
+test('batch 2, amendment 6: an objective closed before the turn that settles it is named, and nothing else changes', () => {
+  // (a) is accepted in the third message; here it is completed after the first and stays complete.
+  const early = gradeRecord(buildSession([[as('complete')(a), b, c], [as('complete')(a), b, c], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), as('retired')(c)]]), scenarioOf('build'));
+  assert.deepEqual(early.closedEarly, ['a: complete after turn 1']); assert.deepEqual([early.fates.a, early.recordRight], ['right', true]);
+  // Completed, reopened and completed again in its turn: still named.
+  const again = gradeRecord(buildSession([[as('complete')(a), b, c], [a, b, c], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), as('retired')(c)]]), scenarioOf('build'));
+  assert.deepEqual(again.closedEarly, ['a: complete after turn 1']);
+  const onTime = gradeRecord(buildSession([[a, b, c], [a, b, c], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), as('retired')(c)]]), scenarioOf('build'));
+  assert.deepEqual(onTime.closedEarly, []);
+  // An objective that is to stay open: closed after any turn, even when it is active again at the end.
+  const open = { ...scenarioOf('build'), objectives: { ...scenarioOf('build').objectives, c: { key: /checklist/i, at: 0, fate: ['open'] } } };
+  const closedThenOpen = gradeRecord(buildSession([[a, b, c], [a, b, as('retired')(c)], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), c]]), open);
+  assert.deepEqual([closedThenOpen.closedEarly, closedThenOpen.fates.c], [['c: retired after turn 2'], 'right']);
+});

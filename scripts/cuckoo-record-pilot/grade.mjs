@@ -165,7 +165,7 @@ export function gradeRecord(result, scenario) {
     updateCalls: updates.flat().length, refused: updates.flat().filter(call => call.result !== null && call.result.isError).map(call => call.result.text.slice(0, 120)),
     recallCalls: result.turns.flatMap(turn => turn.calls).filter(call => call.name === 'cuckoo_recall').length,
     blockedCalls: (result.blockedCalls ?? []).map(call => call.name), extraRequests: result.requests - (result.turns.length + 1),
-    own: {}, any: {}, fates: {}, rules: {}, merged: [], duplicates: [], extras: { questions: [], oneTurn: [], other: [] }, extraRules: { user: [], assistant: [] }, entries: end === null ? 0 : end.objectives.length, final: null,
+    own: {}, any: {}, fates: {}, rules: {}, merged: [], duplicates: [], extras: { questions: [], oneTurn: [], other: [] }, extraRules: { user: [], assistant: [] }, closedEarly: [], entries: end === null ? 0 : end.objectives.length, final: null,
   };
   for (const [name, objective] of stated) {
     out.own[name] = when(firstTurn(snapshot => ownOf(snapshot, name).length > 0), objective.at);
@@ -175,6 +175,10 @@ export function gradeRecord(result, scenario) {
     const statusAt = snapshot => { const found = snapshot === null ? [] : ownOf(snapshot, name); return found.length === 0 ? 'no own entry' : found.map(item => item.status).join('/'); };
     const atEnd = statusAt(end), inTurn = fate === 'open' ? atEnd : statusAt(after(turn));
     out.fates[name] = atEnd === wanted && inTurn === wanted ? 'right' : atEnd === wanted ? `${wanted} at the end, ${inTurn} in its turn` : `${atEnd} at the end, wanted ${wanted}`;
+    // Amendment 6: its own entry was complete or retired after a turn before the one that settles it (for an open
+    // objective: after any turn). Whether that is premature depends on the scenario; see the README.
+    const early = result.turns.findIndex((item, index) => (fate === 'open' || index < turn) && ownOf(item.after, name).some(entry => entry.status !== 'active'));
+    if (early !== -1) out.closedEarly.push(`${name}: ${ownOf(result.turns[early].after, name).map(entry => entry.status).join('/')} after turn ${early + 1}`);
   }
   for (const [name, rule] of Object.entries(scenario.rules)) {
     const turn = firstTurn(snapshot => rulesOf(snapshot, rule.key).length > 0);

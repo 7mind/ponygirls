@@ -29,6 +29,7 @@ const ROWS = [
   ['Sessions with an entry that holds several objectives', g => of(g.filter(x => x.grade.merged.length > 0).length, g.length), 'work'],
   ['No objective entry at all', g => of(g.filter(x => x.grade.entries === 0).length, g.length)],
   ['Every objective closed the way it ended, in its turn', g => of(g.filter(x => x.grade.allFatesRight).length, g.length), 'work'],
+  ['Sessions that closed an objective before the turn that settles it (amendment 6, not judged)', g => of(g.filter(x => x.grade.closedEarly.length > 0).length, g.length), 'work'],
   ['Cancelled objective retired at the end', (g, c, scenario) => { const names = Object.entries(scenario.objectives).filter(([, o]) => o.fate[0] === 'retired').map(([name]) => name);
     return names.length === 0 ? 'n/a' : of(g.filter(x => names.every(name => x.grade.fates[name] === 'right' || x.grade.fates[name].startsWith('retired at the end'))).length, g.length); }, 'work'],
   ['Every rule recorded by its turn', g => of(g.filter(x => x.grade.allRulesByTurn).length, g.length)],
@@ -47,6 +48,12 @@ const ROWS = [
   ['Provider requests beyond one per turn', g => g.length === 0 ? 'n/a' : spread(g.map(x => x.grade.extraRequests))],
 ];
 
+// What each column's sessions were sent, by tool set: the hashes are equal within an arm and cell and differ between arms.
+for (const column of columns) for (const toolset of ['builtins', 'cuckoo']) {
+  const sessions = column.results.filter(item => item.toolset === toolset && item.profile !== undefined); if (sessions.length === 0) continue;
+  const profiles = new Map(); for (const item of sessions) { const key = `${item.profile.requestModel} effort ${item.profile.effort} system ${item.profile.systemSha256.slice(0, 12)} tools ${item.profile.toolsSha256.slice(0, 12)}`; profiles.set(key, (profiles.get(key) ?? 0) + 1); }
+  console.log(`Sent, ${column.name}, ${toolsetName(toolset)}: ${[...profiles].map(([key, n]) => `${key} (${n} sessions)`).join(' | ')}${profiles.size === 1 ? '' : '  <-- MORE THAN ONE PROFILE'}`);
+}
 console.log(`Sessions answered by another model, left out: ${columns.map(column => `${column.name}: ${column.foreign.length === 0 ? 'none' : column.foreign.map(item => `${item.cell} ${item.id}`).join(', ')}`).join(' · ')}`);
 for (const toolset of ['builtins', 'cuckoo']) for (const scenario of RECORD_SCENARIOS) {
   const cells = columns.map(column => cell(column, toolset, scenario));
@@ -57,7 +64,7 @@ for (const toolset of ['builtins', 'cuckoo']) for (const scenario of RECORD_SCEN
     data.forEach((item, index) => { for (const failed of item.failed) console.log(`${shown[index].name} ${failed.id}: FAILED ${JSON.stringify(failed.errors).slice(0, 200)}`);
       for (const { result, grade } of item.graded) console.log(`${shown[index].name} ${result.id}: ${grade.recordRight ? 'right' : 'NOT right'}${grade.noExtras ? '' : ', SURPLUS'} · calls ${JSON.stringify(grade.callsPerTurn)} · own ${JSON.stringify(grade.own)} · fates ${JSON.stringify(grade.fates)} · rules ${JSON.stringify(grade.rules)}` +
         `${grade.merged.length === 0 ? '' : ` · merged ${JSON.stringify(grade.merged)}`}${grade.noExtras ? '' : ` · extras ${JSON.stringify(grade.extras)} duplicates ${JSON.stringify(grade.duplicates)}`}${grade.refused.length === 0 ? '' : ` · refused ${JSON.stringify(grade.refused)}`}` +
-        `${grade.blockedCalls.length === 0 ? '' : ` · blocked ${grade.blockedCalls.join(',')}`}${grade.extraRules.user.length + grade.extraRules.assistant.length === 0 ? '' : ` · extra rules ${JSON.stringify(grade.extraRules)}`} · final ${JSON.stringify(grade.final)}`); });
+        `${grade.blockedCalls.length === 0 ? '' : ` · blocked ${grade.blockedCalls.join(',')}`}${grade.extraRules.user.length + grade.extraRules.assistant.length === 0 ? '' : ` · extra rules ${JSON.stringify(grade.extraRules)}`}${grade.closedEarly.length === 0 ? '' : ` · closed early ${JSON.stringify(grade.closedEarly)}`} · final ${JSON.stringify(grade.final)}`); });
     continue;
   }
   const rows = ROWS.filter(([, , only]) => only === undefined || scenario.kind === only || (only === 'work' && scenario.kind === 'single'));

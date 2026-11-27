@@ -469,6 +469,121 @@ for reading, not counted. The registered readings are unchanged. The adoption ru
 
 6. *Surplus rules.* In every scenario arm B has *no surplus rules* in at most 2 sessions fewer than arm A.
 
+### Amendment 6 (2026-11-27, written while the registered batch ran; before any of its results was read)
+
+Observation. In the fixture check (below) fable/high in arm A completed the curtain speech of `h2` after the first
+message, which asks for a sketch only, reopened it and completed it again in the next turn. All eight sessions were
+graded *record right*: the grader reads an objective's status after the turn that settles it and at the end, so it
+does not see a closing that came too early.
+
+Change. `gradeRecord` lists the objectives whose own entry was complete or retired after a turn before the one that
+settles them (`closedEarly`; scripted case), and the summary counts such sessions. Reported, not judged. The
+scenarios name the turn in which the user accepts a deliverable; a subject that completes it one turn earlier, in the
+turn that delivers it, does what both wordings of the tool allow ("nothing is left to do"). It is premature only
+where the closing comes before the delivery: after the first message of `h1` or `h2`, which ask for a sketch. Those
+are counted apart in "What was read by hand".
+
+Also added while the batch ran, without touching the runner or the scenarios: `adoption.mjs`, the adoption rule as
+code, checked on constructed inputs that trip each point in turn and pass the two allowed boundary cases; and a line
+in `record-summary.mjs` that prints what each column's sessions were sent (model, effort, the two hashes).
+
+### Development (kept; not evidence for the wording)
+
+Three rounds, sonnet/medium, `tools-builtins`, the four development scenarios, six sessions each, arm B only; all 72
+sessions completed. Arm A for the same subject and cell is in the table of the next section (0 of 12 *record right*
+in `build` and in `report`).
+
+- Round 1 said what an objective is and asked for one entry per deliverable. Entries of their own appeared in every
+  `build` and `report` session, but in `single` the objective was added one turn late in 6 of 6 (the first message
+  asks only for a first part), and the final checkpoint repeated a completion in 3 of 24 sessions.
+- Round 2 added when to look ("before you answer a user message, check whether it brings a new deliverable, accepts
+  or cancels one, or gives an instruction") and that a completed objective is left out of the next checkpoint answer.
+  *Record right* in 24 of 24. New defect, found by reading: a rule attributed to the user for an instruction about one
+  deliverable in 4 of 6 `build` sessions (amendment 5).
+- Round 3 said that a rule is a standing instruction and that an instruction about one deliverable belongs to its
+  objective. *Record right* in 24 of 24, no surplus rule. The request for a title in `report`, which its own reply
+  answers, became an objective in 3 of 6 sessions (1 and 2 of 6 in the rounds before).
+
+**tools-builtins, scenario build (development, work)**
+
+| | round 1 | round 2 | round 3 |
+|---|---|---|---|
+| **Record right** (registered rule) | 5 of 6 | 6 of 6 | 6 of 6 |
+| An entry of its own for every stated objective, by its turn | 6 of 6 | 6 of 6 | 6 of 6 |
+| Every objective closed the way it ended, in its turn | 6 of 6 | 6 of 6 | 6 of 6 |
+| Every rule recorded by its turn | 6 of 6 | 6 of 6 | 6 of 6 |
+| Final checkpoint repeats a completion made with the tool | 1 of 6 | 0 of 6 | 0 of 6 |
+| **No surplus entries** (registered rule) | 6 of 6 | 6 of 6 | 6 of 6 |
+| of a request its own reply answers | 0 of 6 | 0 of 6 | 0 of 6 |
+| **No surplus rules** (amendment 5) | 6 of 6 | 2 of 6 | 6 of 6 |
+| `cuckoo_update` calls per session | 8 | 8 to 10 (median 9) | 8 |
+| Provider requests beyond one per turn | 4 to 5 (median 5) | 4 to 5 (median 5) | 5 |
+
+**tools-builtins, scenario report (development, work)**
+
+| | round 1 | round 2 | round 3 |
+|---|---|---|---|
+| **Record right** (registered rule) | 5 of 6 | 6 of 6 | 6 of 6 |
+| An entry of its own for every stated objective, by its turn | 6 of 6 | 6 of 6 | 6 of 6 |
+| Every objective closed the way it ended, in its turn | 6 of 6 | 6 of 6 | 6 of 6 |
+| Every rule recorded by its turn | 6 of 6 | 6 of 6 | 6 of 6 |
+| Final checkpoint repeats a completion made with the tool | 1 of 6 | 0 of 6 | 0 of 6 |
+| **No surplus entries** (registered rule) | 5 of 6 | 4 of 6 | 3 of 6 |
+| of a request its own reply answers | 1 of 6 | 2 of 6 | 3 of 6 |
+| **No surplus rules** (amendment 5) | 6 of 6 | 6 of 6 | 6 of 6 |
+| `cuckoo_update` calls per session | 5 to 6 (median 5) | 5 to 7 (median 6) | 5 to 7 (median 6) |
+| Provider requests beyond one per turn | 4 | 4 to 5 (median 4) | 4 |
+
+**tools-builtins, scenario chat (development, control)**
+
+| | round 1 | round 2 | round 3 |
+|---|---|---|---|
+| **Record right** (registered rule) | 6 of 6 | 6 of 6 | 6 of 6 |
+| Every rule recorded by its turn | 6 of 6 | 6 of 6 | 6 of 6 |
+| Final checkpoint repeats a completion made with the tool | 0 of 6 | 0 of 6 | 0 of 6 |
+| **No surplus entries** (registered rule) | 6 of 6 | 6 of 6 | 6 of 6 |
+| of a request its own reply answers | 0 of 6 | 0 of 6 | 0 of 6 |
+| **No surplus rules** (amendment 5) | 6 of 6 | 6 of 6 | 6 of 6 |
+| `cuckoo_update` calls per session | 1 | 1 | 1 |
+| Provider requests beyond one per turn | 1 | 1 | 1 |
+
+**tools-builtins, scenario single (development, single)**
+
+| | round 1 | round 2 | round 3 |
+|---|---|---|---|
+| **Record right** (registered rule) | 0 of 6 | 6 of 6 | 6 of 6 |
+| An entry of its own for every stated objective, by its turn | 0 of 6 | 6 of 6 | 6 of 6 |
+| Every objective closed the way it ended, in its turn | 6 of 6 | 6 of 6 | 6 of 6 |
+| Every rule recorded by its turn | 6 of 6 | 6 of 6 | 6 of 6 |
+| Final checkpoint repeats a completion made with the tool | 1 of 6 | 0 of 6 | 0 of 6 |
+| **No surplus entries** (registered rule) | 6 of 6 | 6 of 6 | 6 of 6 |
+| of a request its own reply answers | 0 of 6 | 0 of 6 | 0 of 6 |
+| **No surplus rules** (amendment 5) | 6 of 6 | 6 of 6 | 6 of 6 |
+| `cuckoo_update` calls per session | 3 | 3 | 3 to 4 (median 3) |
+| Provider requests beyond one per turn | 2 | 3 | 3 to 4 (median 3) |
+
+**Freeze.** Commit `2ae3376f`: the wording of round 3 with the tool's name written into three more guidelines (Pi lists
+the guidelines of all tools as one flat list, and a test of the extension requires each to name its tool); that form
+was first run in the registered batch. Guidelines: 6 items, 2108 characters joined by newlines, SHA-256 `225a0d04…`;
+description: 1530 characters, SHA-256 `09f3346c…`. On stopped requests the two arms differ in those lines of the
+system text and in the definition of `cuckoo_update`, and in nothing else: system text 6230 against 7423 characters
+with the built-in tools declared (hashes `07499ee7b2c1` and `354f2ce07dbd`), 5516 against 6709 without (`9fa30787ad66`,
+`811806fce31a`); tool definitions `e6d59e0e214b` and `793b7c70e6d2`, `485d6b501f50` and `3b3380abd263`.
+
+**Held-out scenarios.** Written by a subagent of another model family (gpt-6.2-sol) from the seven points of the
+desired behaviour, the format and the list of subjects to avoid; it was told to read no file and its reply named
+only the file and its hash. The file was written at 13:33 UTC, ten minutes before the freeze commit, and read after
+it. It is `heldout.mjs`, unchanged (SHA-256 `2959702f…`). The scripted check of its keys against the author's example
+titles and the user's own words passed; no fixture was corrected. `h1`: three deliverables stated in running prose,
+one cancelled, one accepted, one still open, one rule, one plain question. `h2`: two deliverables, a third added in
+the second message, one cancelled, two accepted, one rule. `h3`: one label built in parts. `h4`: questions and small
+requests, one rule.
+
+**Fixture check.** fable/high, arm A, `tools-builtins`, two sessions per held-out scenario: 8 of 8 completed and
+*record right*, so no fixture asks for something that subject cannot reach. Seen in them: the early completion of
+amendment 6; one `bash` call (blocked) in each `h2` session; in one `h1` session a rule added at the checkpoint for
+"hold off on finishing the card".
+
 ### Arm A before the batch: the stored runs of batch 1 under this batch's coding
 
 `node record-summary.mjs` over `results/*tools*.jsonl` (sonnet: the registered sessions and the top-up together).
