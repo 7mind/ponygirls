@@ -56,7 +56,10 @@ final case class EmbeddingConfig(endpoint: String, model: String, revision: Stri
   * `annotationContinuations` (ANNOT2, read at start): an annotation answer that stops at a fragment boundary keeps its parts
   * and the rest of the window is asked; off, it is rejected `annotation-partition-incomplete` and the whole window asked
   * again. Not part of the index profile. `claimOrder` (read at start; indexing-claim-order spec §6): `SourceId` is today's
-  * order, `Waiting` the waiting order of ClaimOrder with `bulkLanes` bulk-preferring lanes (ignored under `SourceId`). */
+  * order, `Waiting` the waiting order of ClaimOrder with `bulkLanes` bulk-preferring lanes (ignored under `SourceId`).
+  * `providerBackoff` (read at start; provider back-off, design note 20261126-1845, owner's decisions Q177/Q178): a classified
+  * model-provider failure holds its job (ProviderBackoff) and pauses the lane that ran it; off, every provider failure is
+  * recorded as before. */
 final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int,embeddingBatchSize: Int,incrementalPublication: Boolean=true,metadataHorizonWindows: Int=ProblemRows.metadataHorizonWindows,publicationStatementTimeout: Option[FiniteDuration]=None,annotationContinuations: Boolean=false,claimOrder: ClaimOrderSetting=ClaimOrderSetting.SourceId,bulkLanes: Int=1,providerBackoff: Boolean=false) {
   def validate(): Unit = {
     Check(annotationSessions>=1 && annotationSessions<=8,"config","annotation session capacity must be 1..8")
@@ -86,8 +89,10 @@ object IndexingCapacity {
   /** The start failures of a present `indexing.claimOrder` / `indexing.bulkLanes` of the wrong kind (name the key only). */
   val claimOrderInvalid = "indexing.claimOrder must be \"source-id\" or \"waiting\""
   val bulkLanesInvalid = "indexing.bulkLanes must be an integer"
+  /** The start failure of a present `indexing.providerBackoff` that is not a boolean (names the key, not the value). */
+  val providerBackoffInvalid = "indexing.providerBackoff must be true or false"
   /** Decoding failures whose message names the key, reported as they are by Config.load. */
-  val namedFailures: Set[String] = Set(continuationsInvalid,claimOrderInvalid,bulkLanesInvalid)
+  val namedFailures: Set[String] = Set(continuationsInvalid,claimOrderInvalid,bulkLanesInvalid,providerBackoffInvalid)
   /** A publication's statements (P1-P3) run up to this long: after a database restart the vector index is read from disk. */
   val publicationStatementTimeout: FiniteDuration = 5.minutes
   val maximumPublicationStatementTimeout: FiniteDuration = 1.hour
@@ -232,7 +237,9 @@ object Config {
         .toRight(io.circe.DecodingFailure(IndexingCapacity.claimOrderInvalid,cursor.downField("claimOrder").history)))
       bulk <- cursor.downField("bulkLanes").focus.fold(Right(IndexingCapacity.defaults.bulkLanes))(value => value.asNumber.flatMap(_.toInt)
         .toRight(io.circe.DecodingFailure(IndexingCapacity.bulkLanesInvalid,cursor.downField("bulkLanes").history)))
-    } yield IndexingCapacity(annotation,embedding,batch,incremental,horizon,publication.map(_.millis),continued,order,bulk)
+      backoff <- cursor.downField("providerBackoff").focus.fold(Right(IndexingCapacity.defaults.providerBackoff))(_.asBoolean
+        .toRight(io.circe.DecodingFailure(IndexingCapacity.providerBackoffInvalid,cursor.downField("providerBackoff").history)))
+    } yield IndexingCapacity(annotation,embedding,batch,incremental,horizon,publication.map(_.millis),continued,order,bulk,backoff)
   }
   given Decoder[JdbcLimits] = Decoder.instance { cursor => for {
     connections <- cursor.get[Int]("maxConnections")
@@ -363,6 +370,13 @@ trait SessionArchive extends IndexCheckpoints {
     * the whole try by `deadline` (R-a2 M1): the job held Queued with back-off and its attempt refunded, or Failed after the
     * consecutive limit. */
   def holdTransient(claim: Claim, stage: Option[IndexingStage], deadline: Deadline): TransientOutcome
+  /** Records a classified model-provider failure of the attempt (`indexing.providerBackoff`, ProviderBackoff) in the fenced
+    * transaction of `fail`, the whole try by `deadline`: held Queued with back-off by the shared consecutive count, its
+    * attempt refunded for a refusal; Failed with its code at the attempt limit (charged), the consecutive limit or its
+    * window's last reservation; parked as `fail` parks a claim the owner's indexing no longer admits. Only the database
+    * archive records one; with the flag off no worker calls it. */
+  def holdProvider(claim: Claim, failure: ProviderFailure, deadline: Deadline): ProviderOutcome =
+    throw DomainError("internal","this archive records no provider back-off")
 }
 object SnapshotProjection {
   def text(value: String): String = value.replace("\u0000", "\\u0000")

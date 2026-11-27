@@ -29,6 +29,7 @@ object ChroniclePlugin extends PluginDef {
   }
   make[ModelUsageView]
   make[ExpressionHintIndex].from[PostgresExpressionHintIndex]
+  make[ModelHttp.Statuses].from { (config: Config) => ModelHttp.Statuses.of(config) }
   make[ModelHttp]
   make[ProblemPassageAnnotator].from[OpenAIProblemPassageAnnotator]
   make[Embedder].from[OpenAIEmbedder]

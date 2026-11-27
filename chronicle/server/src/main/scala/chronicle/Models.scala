@@ -60,12 +60,25 @@ object ModelHttp {
   def client(config: Config): Resource[IO,Client[IO]] =
     JsonHttp.client(transportTimeout(config))
   def transportTimeout(config: Config): FiniteDuration = config.annotation.timeoutSeconds.max(config.embedding.timeoutSeconds).seconds
+  /** Whether a non-2xx answer is raised as ModelHttpStatus, its status taken from the response (`indexing.providerBackoff`
+    * on), or as before, a DomainError whose detail names the status. */
+  final case class Statuses(typed: Boolean)
+  object Statuses {
+    val untyped: Statuses = Statuses(false)
+    def of(config: Config): Statuses = Statuses(config.indexing.providerBackoff)
+  }
 }
-final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: ModelAdmission) {
+/** A non-2xx answer of a model endpoint (`model-http`, the detail JsonHttp gives it) with the status its response carried:
+  * the provider back-off classifies by this value, never by the text. */
+final class ModelHttpStatus(val status: Int,detail: String) extends DomainError("model-http",detail)
+final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: ModelAdmission,statuses: ModelHttp.Statuses) {
+  def this(client: Client[IO],telemetry: ModelTelemetry,admission: ModelAdmission) = this(client,telemetry,admission,ModelHttp.Statuses.untyped)
   def post(context: ModelCallContext,endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json): IO[Json] =
     postDecoded(context,endpoint,credentialFile,timeout,maxBytes,payload)(identity)
   def postDecoded[A](context: ModelCallContext,endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json,beforeDispatch: IO[Unit]=IO.unit)(decode: Json => A): IO[A] = IO.defer {
-    admission.request(context.purpose).use { _ => Ref.of[IO,ProviderUsage](ProviderUsage.unknown).flatMap { usage =>
+    admission.request(context.purpose).use { _ => (Ref.of[IO,ProviderUsage](ProviderUsage.unknown),Ref.of[IO,Option[Int]](None)).flatMapN { (usage,status) =>
+      // Typed statuses: the response's status, recorded as the exchange starts; otherwise the client as before.
+      val exchange=if(statuses.typed) Client[IO](request => client.run(request).evalTap(response => status.set(Some(response.status.code)))) else client
       Resource.makeCase(telemetry.begin(context)) { (ticket,exit) =>
         val outcome=exit match {
           case Resource.ExitCase.Succeeded => ModelCallOutcome.Complete
@@ -77,7 +90,7 @@ final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: Mo
         JsonHttp.credential(credentialFile).flatMap { credential =>
           // Admission and credential I/O can wait. Recheck here, without keeping JDBC resources across dispatch.
           // This is the authorization point, not a guarantee of recall once dispatch is authorized.
-          beforeDispatch *> JsonHttp.postF(client,endpoint,credential,timeout.seconds,maxBytes,payload) { json =>
+          beforeDispatch *> JsonHttp.postF(exchange,endpoint,credential,timeout.seconds,maxBytes,payload) { json =>
             usage.set(ProviderUsage.parse(json,context.purpose)).as(json).map(decode)
           }
         }
@@ -85,6 +98,7 @@ final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: Mo
             case error: RetrievalError => error.code match {
               case "model-response-bound" => IO.raiseError(ModelRejection.from(ModelRejectionReason.ResponseByteBound))
               case "model-json" => IO.raiseError(ModelRejection.from(ModelRejectionReason.ModelJsonInvalid))
+              case "model-http" if statuses.typed => status.get.flatMap(observed => IO.raiseError(observed.fold(DomainError(error.code,error.detail))(new ModelHttpStatus(_,error.detail))))
               case _ => IO.raiseError(DomainError(error.code,error.detail))
             }
             case error => IO.raiseError(error)
@@ -126,6 +140,8 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   /** `indexing.annotationContinuations` (ANNOT2), read once from the process's configuration: the one switch between the
     * annotation chain and the whole-window path every annotation of this worker takes. */
   private val annotationContinuations = config.indexing.annotationContinuations
+  /** `indexing.providerBackoff`, read once from the process's configuration (ProviderBackoff). */
+  private val providerBackoff = config.indexing.providerBackoff
   private val idleDelay = 1.second
   private final class AnnotationExhausted(val reason: String) extends RuntimeException(AnnotationAttempts.exhaustedCode) {
     def code: String = if(reason==AnnotationAttempts.callLimitReason) AnnotationAttempts.reservationExhaustedCode else AnnotationAttempts.exhaustedCode
@@ -157,7 +173,8 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     }
     FailureDetails(reason,status.fold("unavailable")(_.toString),rejection.map(_.safeDetails).getOrElse(Json.obj()))
   }
-  private final case class StagedFailure(stage: IndexingStage,error: Throwable) extends RuntimeException
+  /** A failure of a stage; `reservation`: the window's reservation an annotation call used (provider back-off, decision 3). */
+  private final case class StagedFailure(stage: IndexingStage,error: Throwable,reservation: Option[Int]=None) extends RuntimeException
   /** A failure of `continueAnnotation`, the window's paid-answer write while it continues (ANNOT2): it leaves the chain
     * unstaged, as a failure of `acceptAnnotation` and of the checkpoint write does (G2 D4 reversed per orchestrator 20:46Z). */
   private final class PaidWriteFailure(val error: Throwable) extends RuntimeException
@@ -208,7 +225,8 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       val exceptionClass=error.getClass.getName
       val origin=failureOrigin(error); val details=failureDetails(error); val reason=details.reason; val httpStatus=details.httpStatus; val structure=details.structure.noSpaces
       val annotationAttempt=if(attempt==0) "checkpoint" else attempt.toString
-      IO(logger.warn(s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total stage=$stage annotationAttempt=$annotationAttempt annotationRejectionLimit=${AnnotationAttempts.rejectionLimit} code=$code exceptionClass=$exceptionClass origin=$origin reason=$reason httpStatus=$httpStatus structure=$structure")) *> IO.raiseError(StagedFailure(failureStage,error))
+      IO(logger.warn(s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total stage=$stage annotationAttempt=$annotationAttempt annotationRejectionLimit=${AnnotationAttempts.rejectionLimit} code=$code exceptionClass=$exceptionClass origin=$origin reason=$reason httpStatus=$httpStatus structure=$structure")) *>
+        IO.raiseError(StagedFailure(failureStage,error,Option.when(failureStage==IndexingStage.Annotation && attempt>0)(attempt)))
     }
     /** Reserve after admission: an answer still needs a fenced acceptance, and a refused waiter spends no reservation. */
     private def authorizedAnnotation[A](reserve: => AnnotationReservation,index: Int)(send: IO[Unit] => IO[A]): IO[(Int,Either[Throwable,A])] =
@@ -552,16 +570,22 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     val work=Dispatcher.sequential[IO](await=true).use(dispatcher => passages(claim,large,Worker.messageFetch(config,snapshots,dispatcher)))
     val renew=(IO.sleep(leases.renewal) *> IO(Deadline.now).flatMap(at => IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current")) *> IO(lease.renewed(at)))).foreverM
     IO.race(work,renew).void.handleErrorWith { failure =>
-      val (stage,error)=failure match { case StagedFailure(stage,error) => (Some(stage),error); case error => (None,error) }
+      val (stage,error,reservation)=failure match { case StagedFailure(stage,error,reservation) => (Some(stage),error,reservation); case error => (None,error,None) }
+      val provider=if(providerBackoff) ProviderBackoff.classify(stage,error) else None
       error match {
         case error: DomainError if Worker.fatal(error) => IO.raiseError(error)
         case _ if Worker.transient(error) => holdTransient(claim,stage,error,lease)
+        case _ if provider.nonEmpty && stage.nonEmpty => holdProvider(claim,ProviderFailure(failureCode(error),stage.get,provider.get,reservation),error,lease)
         case _ =>
           val code=failureCode(error)
           val exceptionClass=error.getClass.getName
           val origin=failureOrigin(error); val details=failureDetails(error); val reason=details.reason; val httpStatus=details.httpStatus
           val sqlState=Worker.sqlState(error)
-          IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code exceptionClass=$exceptionClass sqlState=$sqlState origin=$origin reason=$reason httpStatus=$httpStatus")) *> IO.blocking {
+          val alert=if(providerBackoff) ProviderBackoff.alert(stage,error) else None
+          IO(alert.foreach { status =>
+            val failureStage=stage.fold("none")(_.toString)
+            logger.warn(s"model provider configuration alert jobId=${claim.jobId} stage=$failureStage code=$code httpStatus=$status: recorded as before, not held")
+          }) *> IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code exceptionClass=$exceptionClass sqlState=$sqlState origin=$origin reason=$reason httpStatus=$httpStatus")) *> IO.blocking {
             stage match { case Some(value) => archive.fail(claim,code,value); case None => archive.fail(claim,code) }
           }.handleErrorWith {
             case fatal: DomainError if Worker.fatal(fatal) => IO.raiseError(fatal)
@@ -580,21 +604,48 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   private def holdTransient(claim: Claim,stage: Option[IndexingStage],error: Throwable,lease: AttemptLease): IO[Unit] = {
     val sqlState=error match { case sql: java.sql.SQLException => Option(sql.getSQLState).getOrElse("none"); case _ => "none" }
     val errorClass=error.getClass.getSimpleName; val failureStage=stage.fold("none")(_.toString); val code=Jobs.transientCode
-    def record(last: Throwable): IO[TransientOutcome] = IO(Deadline.now).flatMap { now =>
-      val end=lease.end; val deadline=if(now+leases.recordTry<end) now+leases.recordTry else end
-      if(end-now<BlockingJdbcDatabase.minimumTry) IO.raiseError(last)
-      else IO.blocking(archive.holdTransient(claim,stage,deadline)).handleErrorWith {
-        case refused if JdbcTransient.job(refused) || Worker.lockTimeout(refused) || JdbcTransient.deadline(refused) => IO.sleep(failureBackoff.delay.min(lease.timeLeft.max(Duration.Zero))) *> record(refused)
-        case other => IO.raiseError(other)
-      }
-    }
-    record(error).flatMap {
+    fencedRecord(lease,error)(deadline => archive.holdTransient(claim,stage,deadline)).flatMap {
       case TransientOutcome.Held(consecutive,nextAttemptAt) =>
         IO(logger.warn(s"job held jobId=${claim.jobId} code=$code sqlState=$sqlState class=$errorClass stage=$failureStage consecutive=$consecutive nextAttemptAt=$nextAttemptAt"))
       case TransientOutcome.Exhausted(consecutive) =>
         IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code sqlState=$sqlState class=$errorClass stage=$failureStage consecutive=$consecutive nextAttemptAt=none"))
       case TransientOutcome.Ended =>
         IO(logger.info(s"job not held jobId=${claim.jobId} code=$code sqlState=$sqlState class=$errorClass stage=$failureStage: the claim ended"))
+    }.handleErrorWith {
+      case fatal: DomainError if Worker.fatal(fatal) => IO.raiseError(fatal)
+      case recording => failureNotRecorded(claim,code,recording)
+    } *> IO.sleep(failureBackoff.delay)
+  }
+  /** A failure record's tries (`holdTransient`): `write` by one deadline min(now + `leases.recordTry`, the tracked lease end),
+    * tried again after a failure back-off (at most the lease left) while the database cannot take it, a try's lock wait ran
+    * out, or a try reached its deadline, as long as the lease has `minimumTry` left; then the last error is raised. */
+  private def fencedRecord[A](lease: AttemptLease,first: Throwable)(write: Deadline => A): IO[A] = {
+    def record(last: Throwable): IO[A] = IO(Deadline.now).flatMap { now =>
+      val end=lease.end; val deadline=if(now+leases.recordTry<end) now+leases.recordTry else end
+      if(end-now<BlockingJdbcDatabase.minimumTry) IO.raiseError(last)
+      else IO.blocking(write(deadline)).handleErrorWith {
+        case refused if JdbcTransient.job(refused) || Worker.lockTimeout(refused) || JdbcTransient.deadline(refused) => IO.sleep(failureBackoff.delay.min(lease.timeLeft.max(Duration.Zero))) *> record(refused)
+        case other => IO.raiseError(other)
+      }
+    }
+    record(first)
+  }
+  /** A classified model-provider failure (`indexing.providerBackoff`, ProviderBackoff): recorded as `holdTransient` records
+    * a database one, by `archive.holdProvider` in tries of the same bounds; one line per outcome (a hold: its job, stage,
+    * code, HTTP status, hold number and end). No model is called meanwhile. */
+  private def holdProvider(claim: Claim,failure: ProviderFailure,error: Throwable,lease: AttemptLease): IO[Unit] = {
+    val code=failure.code; val stage=failure.stage.toString; val failureClass=failure.failureClass.key
+    val httpStatus=ProviderBackoff.status(error).fold("unavailable")(_.toString); val reservation=failure.reservation.fold("none")(_.toString)
+    fencedRecord(lease,error)(deadline => archive.holdProvider(claim,failure,deadline)).flatMap {
+      case ProviderOutcome.Held(hold,holdEnds) =>
+        IO(logger.warn(s"job held jobId=${claim.jobId} code=$code httpStatus=$httpStatus stage=$stage class=$failureClass hold=$hold holdEnds=$holdEnds reservation=$reservation"))
+      case ProviderOutcome.Failed(consecutive,terminal) =>
+        val limit=terminal.fold("recorded")(_.key)
+        IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code httpStatus=$httpStatus stage=$stage class=$failureClass consecutive=$consecutive limit=$limit reservation=$reservation"))
+      case ProviderOutcome.Parked =>
+        IO(logger.info(s"job not held jobId=${claim.jobId} code=$code httpStatus=$httpStatus stage=$stage: the owner's indexing no longer admits the claim, parked"))
+      case ProviderOutcome.Ended =>
+        IO(logger.info(s"job not held jobId=${claim.jobId} code=$code httpStatus=$httpStatus stage=$stage: the claim ended"))
     }.handleErrorWith {
       case fatal: DomainError if Worker.fatal(fatal) => IO.raiseError(fatal)
       case recording => failureNotRecorded(claim,code,recording)

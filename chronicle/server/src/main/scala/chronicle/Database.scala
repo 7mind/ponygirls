@@ -968,13 +968,7 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
   private def failAt(claim: Claim,code: String,stage: Option[IndexingStage]): Unit = db.transaction { c =>
     val exhausted=AnnotationAttempts.terminal(code) || code==IndexingBudget.exceededCode
     val eligibility=ownerIndexing(c,claim)
-    eligibility.filterNot(_.admits(claim)).foreach { _ =>
-      sourceHead(c,claim).filter(_ => lockJob(c,claim)).foreach { head =>
-        // Parking is bookkeeping only, even after lease expiry. It cannot touch a later attempt (job fence+run+epoch).
-        if(head>claim.revision) Jobs.supersede(c,s"UPDATE ch_jobs SET ${Jobs.superseding},attempts=attempts-1 WHERE $claimedJob RETURNING id",jobArgs(claim)*)
-        else Sql.exec(c,s"UPDATE ch_jobs SET state='Queued',attempts=attempts-1,lease_until=NULL,fence=fence+1,completed_windows=0,total_windows=NULL WHERE $claimedJob",jobArgs(claim)*)
-      }
-    }
+    eligibility.filterNot(_.admits(claim)).foreach(_ => park(c,claim))
     eligibility.filter(_.admits(claim)).flatMap(_ => sourceHead(c,claim)).filter(_ => lockJob(c,claim)).foreach { head =>
       // A job of an older revision is never queued again: where it would be, it ends superseded.
       val superseded=head>claim.revision && Sql.one(c,s"SELECT attempts<${Jobs.attemptLimit} AND NOT ? FROM ch_jobs WHERE $validJob",(List[Sql.Param](exhausted)++jobArgs(claim))*)(_.getBoolean(1)).contains(true)
@@ -982,6 +976,59 @@ final class PostgresArchive(private[chronicle] val db: Database, config: Config,
       else Sql.exec(c,s"UPDATE ch_jobs SET state=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN 'Failed' ELSE 'Queued' END,error=?,failure_stage=NULLIF(?,''),lease_until=NULL,transient_failures=0,transient_range=NULL,completed_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN completed_windows ELSE 0 END,total_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN total_windows ELSE NULL END WHERE $validJob",(List[Sql.Param](exhausted,code.take(64),stage.fold("")(_.toString),exhausted,exhausted)++jobArgs(claim))*)
     }
   }
+  /** `failAt`'s record of a claim its owner's indexing no longer admits: the job parked Queued with the claim's attempt
+    * refunded (or superseded under a newer head), whatever its lease; true when the claim still held the job. */
+  private def park(c: Connection,claim: Claim): Boolean =
+    sourceHead(c,claim).filter(_ => lockJob(c,claim)).exists { head =>
+      // Parking is bookkeeping only, even after lease expiry. It cannot touch a later attempt (job fence+run+epoch).
+      if(head>claim.revision) Jobs.supersede(c,s"UPDATE ch_jobs SET ${Jobs.superseding},attempts=attempts-1 WHERE $claimedJob RETURNING id",jobArgs(claim)*)
+      else Sql.exec(c,s"UPDATE ch_jobs SET state='Queued',attempts=attempts-1,lease_until=NULL,fence=fence+1,completed_windows=0,total_windows=NULL WHERE $claimedJob",jobArgs(claim)*)
+      true
+    }
+  /** The provider branch of the failure record (`indexing.providerBackoff`, ProviderBackoff), fenced as `failAt`: a claim
+    * the owner's indexing no longer admits is parked as `failAt` parks it; otherwise the claim's Running job with a valid
+    * lease, the whole try by `deadline`. The count of consecutive failures (`transient_failures`, shared with the database
+    * holds) restarts at 1 when the attempt committed progress. The job is Failed with the failure's code when the call
+    * used its window's last reservation, at the consecutive limit, or for a charged failure at the attempt limit; else
+    * held Queued until `delay(k)` from now (`waiting_since` and `bulk` kept), a refusal's attempt refunded. A job of an
+    * older revision is never queued again: where it would be held, it ends superseded. Only a row the fenced UPDATE
+    * returns is reported; a record of this attempt that committed although its acknowledgement was lost is read again
+    * (the row still carries the claim's fence and run), not written twice. */
+  override def holdProvider(claim: Claim,failure: ProviderFailure,deadline: Deadline): ProviderOutcome = db.transactionWithin(deadline) { c =>
+    val eligibility=ownerIndexing(c,claim)
+    if(eligibility.exists(!_.admits(claim))) { if(park(c,claim)) ProviderOutcome.Parked else ProviderOutcome.Ended }
+    else eligibility.flatMap(_ => sourceHead(c,claim)).filter(_ => lockJob(c,claim))
+      .flatMap(head => Sql.one(c,s"SELECT attempts,transient_failures FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(r => (head,r.getInt(1),r.getInt(2)))) match {
+      case None => recordedProvider(c,claim,failure.code).getOrElse(ProviderOutcome.Ended)
+      case Some((head,attempts,previous)) =>
+        val consecutive=if(claim.attempt.progressed) 1 else previous+1
+        val terminal=
+          if(failure.reservation.exists(_>=AnnotationAttempts.reservationLimit)) Some(ProviderTerminal.ReservationLimit)
+          else if(consecutive>=Jobs.transientBackoff.limit) Some(ProviderTerminal.ConsecutiveLimit)
+          else if(!failure.refunded && attempts>=Jobs.attemptLimit) Some(ProviderTerminal.AttemptLimit)
+          else None
+        val refund=if(failure.refunded) 1 else 0
+        val stopped=claim.attempt.stoppedRange
+        val values=List[Sql.Param](refund,failure.code.take(64),failure.stage.toString,consecutive,stopped.nonEmpty,stopped.getOrElse(0),claim.attempt.progressed)
+        val recorded="attempts=attempts-?,error=?,failure_stage=?,transient_failures=?,transient_range=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE transient_range END"
+        terminal match {
+          case Some(limit) =>
+            Sql.one(c,s"UPDATE ch_jobs SET state='Failed',lease_until=NULL,$recorded WHERE $validJob RETURNING transient_failures",(values++jobArgs(claim))*)(r => ProviderOutcome.Failed(r.getInt(1),Some(limit)))
+              .getOrElse(ProviderOutcome.Ended)
+          case None if head>claim.revision =>
+            Jobs.supersede(c,s"UPDATE ch_jobs SET ${Jobs.superseding} WHERE $validJob RETURNING id",jobArgs(claim)*); ProviderOutcome.Ended
+          case None =>
+            val delay=Jobs.transientBackoff.delay(consecutive).toSeconds.toInt
+            Sql.one(c,s"""UPDATE ch_jobs SET state='Queued',$recorded,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
+              WHERE $validJob RETURNING transient_failures,lease_until""",(values++List[Sql.Param](delay)++jobArgs(claim))*)(r => ProviderOutcome.Held(r.getInt(1),r.getTimestamp(2).toInstant))
+              .getOrElse(ProviderOutcome.Ended)
+        }
+    }
+  }
+  private def recordedProvider(c: Connection,claim: Claim,code: String): Option[ProviderOutcome] =
+    Sql.one(c,s"SELECT state,transient_failures,lease_until FROM ch_jobs WHERE $jobIdentity AND (state='Failed' OR (state='Queued' AND lease_until IS NOT NULL)) AND error=?",(jobArgs(claim):+code.take(64))*) { r =>
+      if(r.getString(1)=="Queued") ProviderOutcome.Held(r.getInt(2),r.getTimestamp(3).toInstant) else ProviderOutcome.Failed(r.getInt(2),None)
+    }
   /** The transient branch of the failure record (restart-robustness spec §4), fenced as `failAt`: the claim's Running job
     * with a valid lease, the whole try by `deadline` (R-a2 M1). Held, its claim's attempt refunded, until `delay(k)`
     * from now, or Failed at the limit; the count restarts at 1 when the attempt committed progress. Only a row the fenced
