@@ -1,6 +1,6 @@
 # Account HTTP code: one shared implementation for Haystack, Manure and Chronicle
 
-Status: stages 1 and 2 on `main`; stage 3 done, reviewed, review round done; stages 4 and 5 and three fixes follow. This file records the work for a reader
+Status: stages 1 and 2 on `main`; stage 3 done, reviewed, two review rounds done; stages 4 and 5 and three fixes follow. This file records the work for a reader
 who has not seen the plan it condenses (`account-glue-dedup.md`, a survey kept outside the repository).
 
 ## What the work is and why
@@ -358,6 +358,83 @@ disable it). Each at the assertion of its rule.
 suites, 766 cases (the new `HttpAccountReadsTest`; the 765 before unchanged). `manureServer` and `chronicleServer`
 `Test/compile` pass. Not run: `scripts/verify`, native, browser, VM.
 
+## Stage 3, last review round
+
+A focused review of the first round found twelve points; the owner accepted them as a closed list with item 13 (my own
+open points) and a relaxed stop rule (Haystack's, Manure's and Chronicle's behaviour and their tests from before the
+refactor do not change; the refactor's own suites may change where an item requires it).
+
+1. *F1.* `identify` and `standing` take the whole decision under one configuration: a configured token is decided
+   under the current one without waiting; otherwise, inside the lookup's transaction callback, the configuration is
+   read again and the transport rule, the credential selection, the configured-token precedence and the lookup all
+   use it. Haystack's `resolve` path is unchanged (its reads test passes unchanged).
+2. *F2.* Notifications are delivered by `committed`: observed, the transaction and the delivery run in one
+   uncancelable region, and a failure the storage reports as after the commit (`AccountStorage.afterCommit`,
+   `ConnectionTransactions.afterCommit`; `ConnectionTransactions.jdbc(database)` recognises `JdbcDatabase`'s
+   `database-close-failed`) is raised after delivering. Each callback is isolated: a failure is reported to
+   `AccountLifecycle.Observed.log` as one line with the kind and the id (the failure's class, never its message) and
+   changes neither the result nor later notifications. No queue. The README says callbacks must be quick and must not
+   block.
+3. *F3.* `reloaded(next, publish)`: installs, publishes through `publish`, then tells; a failing notification is
+   logged and the reload stays successful. Unobserved (Haystack) it is `next.flatTap(install).attempt.flatTap(publish)`,
+   with Haystack's façade passing a `publish` that does nothing and publishing itself afterwards, as before.
+4. *F4.* `ConfiguredTokens.sameFor(other, owner)` (ids and digests; per check, ids and digest files): a reload that
+   removes or rotates an owner's configured token tells `accountChanged` for the owner.
+5. *F5.* What is told as ended is carried out of the committing operation: `loginReplacing`'s replaced credential
+   (declared sign-in), `SharedAccountSessions.establishing` through `RecordingSessions` (imperative sign-up,
+   redemption, recovery; the in-memory store records the same), the deleted session of the separate replacement
+   transaction after a `Refused` imperative sign-in (item 6), the session a sign-out deleted, the token a revocation
+   revoked. The reply-and-lookup inference is gone; account changes are recorded in the transaction by the sessions
+   port (`revokeSessions`, `revokeTokens`, `activated`, `updated`, and the new hook `adminChanged`, which does nothing
+   by default so that Manure's and Chronicle's implementations are unchanged).
+6. *F6.* With `Refused`, `imperativeLogin` dispatches the sign-in without the presented cookie (no read or lock of the
+   earlier session's owner for a wrong or refused password); once a sign-in succeeded, the earlier session, if still
+   live, is deleted in its own transaction and told. `Accepted` (Haystack) is unchanged. The declared path already
+   verified before any session work.
+7. *F7 (no change).* With `Refused`, every canonical candidate password is looked up among all configured digests
+   (the same constant-time comparison over every digest, hit or miss) and among issued tokens (one read by digest). A
+   string that is a bearer secret can therefore cost more work than one that is not; that difference can tell an
+   attacker only whether the string is a bearer secret, which presenting the same string as `Authorization: Bearer`
+   answers directly. The remaining difference, named: on a hit of a live issued token of a declared owner,
+   `Accounts.bearer` reads the owner's fingerprint row once more; on a miss it does not.
+8. *F8.* A bearer secret offered as a new password no longer fails in the hasher: the hasher marks it, the operation
+   runs its password-independent checks, and only an operation that completed is turned into `weak-password` and
+   rolled back. A taken or reserved name stays `username-unavailable`, a malformed one `invalid`, disabled sign-up
+   `not-found`.
+9. *F9.* Approval (and every activation: sign-up, redemption) tells `accountChanged`; a reload that turns the master
+   switch on tells every active imperative account it restores.
+10. *F10.* `OneHostAnyCookie` checks the presence of either cookie name (`SessionCookie.present`) before any value is
+    read: a bearer beside duplicate cookies of one name is `AmbiguousCredentials`; `FirstHostClassCookie` still answers
+    `DuplicateSessionCookie`. Typed refusals asserted.
+11. *F11.* Assertions of the stage 1 to 3 suites that could print a secret, a cookie value or a value derived from one
+    now compare with `assert(a == b, fixed message)` or report booleans: `SessionCookieSuite`,
+    `CredentialSelectionSuite`, `DeclaredUsersSuite`, `OriginPolicySuite` (stage 1), `AccountPlaneContract` (stage 2),
+    `ServiceCallersContract` (stage 3). Conditions unchanged.
+12. *F12.* The sign-up test signs up the same name with an allowed password after the refusal.
+13. Tests for the lifecycle at sign-up, redemption and recovery (each tells the session it replaced and the account),
+    and for `weak-password` at redemption (the code is not consumed: it redeems afterwards) and at recovery (the
+    password is unchanged).
+
+**Edits to suites of stages 1 to 3.** Construction and plumbing: `MemoryAccountStorage` (records into the lifecycle
+record, `afterCommit`), `AccountPlaneContract` and `AccountPlaneSuites` (new members passed through), the stage-3
+suites (the probe, the published configuration, the consumer's policy in `ChatSnapshot`). Assertions: item 11's
+messages (conditions unchanged); in `ServiceCallersContract` the expectations items 5, 9 and 12 change (a sign-up now
+tells its activation, a password change tells its account rather than an inferred session, the refused sign-up is
+followed by a sign-up of the same name), and effects run off the test's thread no longer assert (a gate's reload
+fails its effect instead): an `assert` evaluating a blocking condition held the suite's monitor while a gate's
+assertion on another thread waited for it (observed as a deadlock in a thread dump).
+
+**Failing first.** One run with each rule of this round reverted to the present head's behaviour (the early selection
+and precedence kept, delivery after the transaction and unisolated, told before published, tokens not compared,
+reply-inferred replacement with the cookie passed to the sign-in, the hasher throwing, activation and restoration not
+told, duplicate cookies selected): 11 consumer cases failed on the in-memory store, 12 on PostgreSQL (the
+sign-up/redemption/recovery case also there: the reverted activation lives in the shared tables' recorder), and the
+imperative case of `PostgresDeclaredRefusalSuite` failed with PostgreSQL's lock timeout; each at the assertion of its
+rule.
+
+**Verification (inner loop).** Shared: 27 suites, 285 cases, PostgreSQL cases executed, no skip. Haystack JVM: 43
+suites, 766 cases. `manureServer` and `chronicleServer` `Test/compile`. Not run: `scripts/verify`, native, browser, VM.
+
 ## Recorded, not fixed
 
 Each item was noticed and deliberately left. "Read" means read from the code; "reproduced" means a test or run
@@ -413,15 +490,21 @@ showed it.
   branching, kept apart so that the account plane's resolution does exactly what it did. Read.
 - `PostgresServiceCallersSuite` creates the test table `consumer_declared_ids` in the owned database and empties it; it
   does not drop it. Read.
-- The stage-2 suite `AccountPlaneContract` has assertions whose failure text can print a session secret (its comparison
-  of ended sessions, its cookie comparisons, its redaction clue); only its construction site may change. Read.
 - A refused bearer-secret password is verified as a fresh random secret: it would verify against a stored hash with
   probability 2^-256. The wrong-password path still rolls back its read-only transaction, as before; no written work is
   rolled back on either path. Read.
-- A lifecycle notification that fails after its commit fails the operation's answer although the commit stands, as
-  Haystack's `endSession` does. With `Observed`, an imperative sign-in looks up the presented cookie once more to name
-  the session it replaces. Sessions revoked in bulk are told by account, not by id. A configured token removed or
-  rotated by a reload is not told (bearer requests are checked on every request and wake). Read.
+- Sessions revoked in bulk are told by account, not by id. Read.
 - `HttpAccountReadsTest` re-registers PostgreSQL's JDBC driver behind its recorder in the JVM-wide `DriverManager` for
   the test; Haystack's suites run in sbt's JVM, one at a time. `PostgresDeclaredRefusalSuite` waits for PostgreSQL's
   200 ms `lock_timeout` only when the owner's lock is attempted, which the code under test must not do. Read.
+- With `Observed`, a mutation and its delivery are one uncancelable region, including the wait for a connection: a
+  cancelled request still waits for its connection and completes its mutation. Unobserved (Haystack) is unchanged.
+  Read.
+- With `Refused`, replacing the earlier session after a sign-in is a second transaction: a request cancelled between
+  them keeps the earlier session (its browser never received the new cookie either). Read.
+- With `Refused`, a sign-up refused for a bearer-secret password keeps its per-address successful-sign-up slot: the
+  dispatcher keeps the slot inside the transaction that is then rolled back. Read.
+- `ConnectionTransactions.jdbc` names `JdbcTransactionEngine`'s failure code `database-close-failed` as a literal of its
+  own. `ConfiguredTokens.sameFor` compares a per-check owner by token ids and digest files, not file contents. A failure
+  to read the imperative accounts a master-switch change affects is logged, and those accounts are not told. Read.
+- The `assert(a == b, message)` form of item 11 no longer prints a diff for any mismatch, secret or not. Read.
