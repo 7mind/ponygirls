@@ -70,7 +70,7 @@ export class PiToolRegistry implements ToolRegistry {
       // A custom prompt replaces the default one, which is where the tool list and the rules are.
       promptLinesSent: !options.customPrompt,
       declared: this.declared(),
-      model: model === undefined ? null : { api: model.api, contextWindow: model.contextWindow },
+      model: model === undefined ? null : { id: model.id, contextWindow: model.contextWindow },
     };
   }
 

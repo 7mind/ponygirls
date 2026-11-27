@@ -103,27 +103,28 @@ test("a tool that is no longer active is shown as registered, even while the tra
 });
 
 test("an entry keeps its source, namespace, hints and provenance", () => {
-  const catalog = catalogOf({ model: { api: "openai-completions", contextWindow: 200_000 } });
+  const catalog = catalogOf({ model: { id: "scripted", contextWindow: 200_000 } });
   const issue = entry(catalog, "mcp__linear__save_issue");
   assert.deepEqual(issue.origin, { kind: "mcp", name: "linear" });
   assert.deepEqual(issue.namespace, { name: "mcp__linear", description: null });
   assert.deepEqual(issue.hints, { readOnly: false, destructive: false, idempotent: true, openWorld: null });
   assert.equal(issue.provenance.path, "builtin:mcp");
   assert.deepEqual(entry(catalog, "secret").origin, { kind: "extension", name: "secret" });
-  assert.deepEqual(catalog.model, { api: "openai-completions", contextWindow: 200_000 });
+  assert.deepEqual(catalog.model, { id: "scripted", contextWindow: 200_000 });
 });
 
-test("costs use the token ratios measured for the model's API family, and pi's rule otherwise", () => {
+test("costs use the token ratios measured for the model's family, and pi's rule otherwise", () => {
   const lines: PromptLines = { snippet: "Read file contents", guidelines: ["Use read instead of cat."] };
   const promptLines = new Map([["read", lines]]);
-  const claude = catalogOf({ active: ["read"], promptLines, model: { api: "anthropic-messages", contextWindow: 1_000_000 } });
-  const measured = basisFor("anthropic-messages");
+  const claude = catalogOf({ active: ["read"], promptLines, model: { id: "claude-haiku-5-5", contextWindow: 1_000_000 } });
+  const measured = basisFor("claude-haiku-5-5");
+  assert.equal(measured.measuredFor, "Claude");
   assert.equal(claude.basis, measured);
   assert.deepEqual(entry(claude, "read").cost, {
     declaration: declarationTokens(declarationOf(READ), measured),
     promptLines: promptLineTokens("read", lines, measured),
   });
-  for (const model of [null, { api: "google-generative-ai", contextWindow: 1_000_000 }]) {
+  for (const model of [null, { id: "kimi-k2.6", contextWindow: 1_000_000 }]) {
     const other = catalogOf({ active: ["read"], promptLines, model });
     assert.equal(other.basis, PI_BASIS);
     assert.equal(entry(other, "read").cost.declaration, declarationTokens(declarationOf(READ), PI_BASIS));

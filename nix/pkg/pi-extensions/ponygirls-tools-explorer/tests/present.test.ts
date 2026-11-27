@@ -10,8 +10,8 @@ import type { PromptLines, RegisteredTool, RegistrySnapshot, SessionModel } from
 import { PI_BASIS, basisFor } from "../src/tokens.ts";
 import { declared, extensionFile, mcpTool, snapshot, tool } from "./fixtures.ts";
 
-const CLAUDE: SessionModel = { api: "anthropic-messages", contextWindow: 1_000_000 };
-const OTHER: SessionModel = { api: "openai-completions", contextWindow: 200_000 };
+const CLAUDE: SessionModel = { id: "claude-haiku-5-5", contextWindow: 1_000_000 };
+const OTHER: SessionModel = { id: "kimi-k2.6", contextWindow: 200_000 };
 
 function entryOf(registered: RegisteredTool, overrides: Partial<Omit<RegistrySnapshot, "tools">>): ToolEntry {
   const entry = findEntry(buildCatalog(snapshot([registered], overrides)), registered.name);
@@ -98,18 +98,18 @@ test("the cost fact gives the estimate, its parts with their ratios, and where t
   const lines: PromptLines = { snippet: "Read file contents", guidelines: ["Use read instead of cat."] };
   const read = tool("read", {});
   const active = entryOf(read, { active: ["read"], promptLines: new Map([["read", lines]]), model: CLAUDE });
-  assert.deepEqual(costFacts(active, basisFor(CLAUDE.api), CLAUDE), [
+  assert.deepEqual(costFacts(active, basisFor(CLAUDE.id), CLAUDE), [
     tokenText(active.cost.declaration + active.cost.promptLines),
     `declaration ${tokenText(active.cost.declaration)} at 2.7 characters per token`,
     `prompt lines ${tokenText(active.cost.promptLines)} at 3.1`,
-    "measured for anthropic-messages models",
+    "measured for Claude models",
   ]);
   const inactive = entryOf(read, { model: OTHER });
   assert.deepEqual(costFacts(inactive, PI_BASIS, OTHER), [
     `${tokenText(inactive.cost.declaration)} if loaded`,
     `declaration ${tokenText(inactive.cost.declaration)} at 4 characters per token`,
     "no prompt lines",
-    "pi's rule: nothing measured for openai-completions models",
+    "pi's rule: nothing measured for kimi-k2.6",
   ]);
 });
 
@@ -124,12 +124,14 @@ test("the cost fact says when a tool is not charged, and why", () => {
   assert.equal(custom[2], "prompt lines not sent");
 });
 
-test("the basis is named by the model's API family, or by its absence", () => {
-  assert.equal(basisText(basisFor(CLAUDE.api), CLAUDE), "measured for anthropic-messages models");
-  assert.equal(basisText(PI_BASIS, OTHER), "pi's rule: nothing measured for openai-completions models");
+test("the basis is named by the model family it was measured for, or says why pi's rule applies", () => {
+  assert.equal(basisText(basisFor(CLAUDE.id), CLAUDE), "measured for Claude models");
+  assert.equal(basisText(basisFor("gpt-6.2"), { id: "gpt-6.2", contextWindow: 400_000 }), "measured for GPT models");
+  assert.equal(basisText(PI_BASIS, OTHER), "pi's rule: nothing measured for kimi-k2.6");
   assert.equal(basisText(PI_BASIS, null), "pi's rule: no model is selected");
-  assert.equal(basisLine(basisFor(CLAUDE.api), CLAUDE), "Estimates: 2.7 characters per token for declarations, 3.1 for prompt lines; measured for anthropic-messages models.");
-  assert.equal(basisLine(PI_BASIS, OTHER), "Estimates: 4 characters per token; pi's rule: nothing measured for openai-completions models.");
+  assert.equal(basisText(PI_BASIS, { id: "evil\u001b[2J", contextWindow: 1 }), "pi's rule: nothing measured for evil\\u001b[2J");
+  assert.equal(basisLine(basisFor(CLAUDE.id), CLAUDE), "Estimates: 2.7 characters per token for declarations, 3.1 for prompt lines; measured for Claude models.");
+  assert.equal(basisLine(PI_BASIS, OTHER), "Estimates: 4 characters per token; pi's rule: nothing measured for kimi-k2.6.");
 });
 
 test("hints are worded for both answers and left out when unstated", () => {

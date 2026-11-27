@@ -99,8 +99,8 @@ export function sourceFactsOf(entry: ToolEntry, home: string): string[] {
 
 /** Where the ratios of an estimate come from, so a figure is not read as a provider's count. */
 export function basisText(basis: TokenBasis, model: SessionModel | null): string {
-  if (model === null) return "pi's rule: no model is selected";
-  return basis.source === "measured" ? `measured for ${displayLine(model.api)} models` : `pi's rule: nothing measured for ${displayLine(model.api)} models`;
+  if (basis.measuredFor !== null) return `measured for ${basis.measuredFor} models`;
+  return model === null ? "pi's rule: no model is selected" : `pi's rule: nothing measured for ${displayLine(model.id)}`;
 }
 
 /** One sentence for output without a detail view to explain the estimates in. */

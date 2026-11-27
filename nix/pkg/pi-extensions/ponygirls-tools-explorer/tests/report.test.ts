@@ -16,7 +16,7 @@ const TOOLS = [
 ];
 
 function catalogOf(overrides: Partial<Omit<RegistrySnapshot, "tools">>): ToolCatalog {
-  return buildCatalog(snapshot(TOOLS, { active: ["read", "bg_task"], model: { api: "anthropic-messages", contextWindow: 2_000 }, ...overrides }));
+  return buildCatalog(snapshot(TOOLS, { active: ["read", "bg_task"], model: { id: "claude-haiku-5-5", contextWindow: 2_000 }, ...overrides }));
 }
 
 function tokens(catalog: ToolCatalog, ...names: string[]): string {
@@ -29,7 +29,7 @@ test("the summary gives the totals, the basis of the estimates and a line per so
   const lines = summaryReport(catalog).split("\n");
   assert.equal(lines[0], `Tools: 5 registered · 2 active, ${tokens(catalog, "read", "bg_task")} tok (${shareText(summary.windowShare!, catalog.model!)}) · `
     + `3 inactive, ${tokens(catalog, "grep", "mcp__linear__save_issue", "mcp__linear__get_issue")} tok if loaded`);
-  assert.equal(lines[1], "Estimates: 2.7 characters per token for declarations, 3.1 for prompt lines; measured for anthropic-messages models.");
+  assert.equal(lines[1], "Estimates: 2.7 characters per token for declarations, 3.1 for prompt lines; measured for Claude models.");
   assert.equal(lines[2], "");
   assert.deepEqual(lines.slice(3).map((line) => line.split(/ {2,}/)), [
     ["SOURCE", "TOOLS", "ACTIVE", "ACTIVE TOK", "ALL TOK"],
@@ -60,7 +60,7 @@ test("a filter lists the matching tools with state, estimate and source", () => 
   const catalog = catalogOf({ active: ["read", "mcp__linear__get_issue"] });
   const lines = toolsReport(catalog, "issue").split("\n");
   assert.equal(lines[0], 'Tools matching "issue": 2 of 5');
-  assert.equal(lines[1], "Estimates: 2.7 characters per token for declarations, 3.1 for prompt lines; measured for anthropic-messages models.");
+  assert.equal(lines[1], "Estimates: 2.7 characters per token for declarations, 3.1 for prompt lines; measured for Claude models.");
   assert.deepEqual(lines.slice(3).map((line) => line.split(/ {2,}/)), [
     ["TOOL", "STATE", "TOKENS", "SOURCE"],
     ["mcp__linear__get_issue", "● active", tokens(catalog, "mcp__linear__get_issue"), "mcp · linear"],

@@ -30,8 +30,8 @@ export const CONTRACT_TOOLS: readonly ContractTool[] = [
   { name: "probe_codemode", description: "A probe scripts can call", parameters: QUERY, exposure: "codemode", activeOnRegistration: false, promptLines: NO_LINES },
   { name: "probe_hidden", description: "An unreachable probe", parameters: QUERY, exposure: "hidden", activeOnRegistration: false, promptLines: NO_LINES },
 ];
-/** The model both registries run with: an API family without measured token ratios. */
-export const CONTRACT_MODEL: SessionModel = { api: "openai-completions", contextWindow: 100_000 };
+/** The model both registries run with: one of no measured family, so estimates follow pi's rule. */
+export const CONTRACT_MODEL: SessionModel = { id: "scripted", contextWindow: 100_000 };
 
 export interface RegistryUnderTest {
   registry: ToolRegistry;
@@ -104,7 +104,7 @@ export function registryContract(label: string, make: RegistryFactory): void {
     assert.deepEqual(snapshot.withheld, []);
   });
 
-  test(`${label}: reports the API family and context window of the model`, async (t) => {
+  test(`${label}: reports the id and context window of the model`, async (t) => {
     const { registry } = await make(t);
     assert.deepEqual(registry.snapshot().model, CONTRACT_MODEL);
   });

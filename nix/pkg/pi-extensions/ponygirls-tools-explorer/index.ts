@@ -25,11 +25,8 @@ export type ProcessOutput = (text: string) => void;
 
 export function toolsExplorer(write: ProcessOutput): (pi: ExtensionAPI) => void {
   return (pi) => {
-    let view = new CustomViewToggle();
-    pi.on("session_start", () => {
-      view.dispose();
-      view = new CustomViewToggle();
-    });
+    // pi runs this factory again for every session and reload, so the view is one session's.
+    const view = new CustomViewToggle();
     pi.on("session_shutdown", () => { view.dispose(); });
 
     pi.registerCommand(COMMAND, {

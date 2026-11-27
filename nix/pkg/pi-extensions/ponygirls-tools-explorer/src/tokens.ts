@@ -1,9 +1,10 @@
 /**
- * Token estimates. pi has no tokenizer, and what a declaration costs depends
- * on the provider: its tokenizer and the form it rewrites tool declarations
- * into. The estimate is therefore characters over a ratio measured for the
- * API family of the current model, or pi's own ratio where none was measured.
- * live-calibration.mjs measures the ratios again; README.md has the method.
+ * Token estimates. pi has no tokenizer, and providers count the same tool
+ * declarations very differently: Claude models report about twice as many
+ * tokens for them as GPT models. The estimate is therefore characters over a
+ * ratio measured for the model's family, or pi's own ratio where none was
+ * measured. calibration/live-calibration.ts measures the ratios again;
+ * README.md has the method.
  */
 import type { PromptLines, ToolDeclaration } from "./registry.ts";
 
@@ -11,30 +12,43 @@ import type { PromptLines, ToolDeclaration } from "./registry.ts";
 export interface TokenBasis {
   declaration: number;
   promptLine: number;
-  /** `measured` for the API family of the model, `pi` for pi's own rule. */
-  source: "measured" | "pi";
+  /** The model family the ratios were measured for; `null` for pi's own rule. */
+  measuredFor: string | null;
 }
 
 /** The ratio of pi's own `estimateTokens`, which it applies to everything. */
 export const PI_CHARS_PER_TOKEN = 4;
-export const PI_BASIS: TokenBasis = { declaration: PI_CHARS_PER_TOKEN, promptLine: PI_CHARS_PER_TOKEN, source: "pi" };
+export const PI_BASIS: TokenBasis = { declaration: PI_CHARS_PER_TOKEN, promptLine: PI_CHARS_PER_TOKEN, measuredFor: null };
+
+interface MeasuredFamily {
+  /** The model ids of the family, under whatever provider and namespace. */
+  ids: RegExp;
+  basis: TokenBasis;
+}
 
 /**
- * Provider-reported prompt tokens of requests that differ only in the declared
- * tools or in a block of prompt lines, 2026-11-27 (README.md, "Token estimates"):
- * - anthropic-messages: claude-haiku-5-5 and claude-fable-5-2, 195 declarations
- *   of 290,459 characters for 107,664 tokens; prompt lines 5,622 for 1,811.
- * - openai-codex-responses: gpt-6.2, 75 declarations of 110,518 characters for
- *   20,565 tokens; prompt lines 5,622 for 1,124.
+ * From the prompt tokens providers reported for pi requests that differ only
+ * in a sample of tool declarations or of prompt lines
+ * (calibration/live-calibration.ts; README.md, "Token estimates"). Measured
+ * 2026-11-27 with pi 1.5.2. The ratio varied a little between samples of real
+ * tools; each value is the middle of what was seen:
+ * - Claude (claude-haiku-5-5 and claude-fable-5-2): declarations 2.64 to 2.77,
+ *   prompt lines 3.06 to 3.10.
+ * - GPT (gpt-6.2): declarations 5.30 to 5.48, prompt lines 4.97 to 5.00.
+ *
+ * A family is recognized by the model's id, not by pi's API name: a gateway
+ * serves Claude under an API name of its own, and Anthropic-compatible APIs
+ * also serve other vendors' models, for which nothing was measured.
  */
-export const MEASURED_BASES: Readonly<Record<string, TokenBasis>> = {
-  "anthropic-messages": { declaration: 2.7, promptLine: 3.1, source: "measured" },
-  "openai-codex-responses": { declaration: 5.4, promptLine: 5, source: "measured" },
-};
+const MEASURED_FAMILIES: readonly MeasuredFamily[] = [
+  { ids: /(?:^|[/.])claude-/i, basis: { declaration: 2.7, promptLine: 3.1, measuredFor: "Claude" } },
+  { ids: /(?:^|[/.])gpt-\d/i, basis: { declaration: 5.4, promptLine: 5, measuredFor: "GPT" } },
+];
 
-/** The basis for a model's API family (pi's `model.api`); pi's rule without a model or a measurement. */
-export function basisFor(api: string | null): TokenBasis {
-  return api !== null && Object.hasOwn(MEASURED_BASES, api) ? MEASURED_BASES[api]! : PI_BASIS;
+/** The basis for a model, by its id; pi's rule without a model or without a measurement for its family. */
+export function basisFor(modelId: string | null): TokenBasis {
+  const family = modelId === null ? undefined : MEASURED_FAMILIES.find((candidate) => candidate.ids.test(modelId));
+  return family === undefined ? PI_BASIS : family.basis;
 }
 
 export function estimateTokens(text: string, charsPerToken: number): number {

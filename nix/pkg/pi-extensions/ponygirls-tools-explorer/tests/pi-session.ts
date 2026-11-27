@@ -7,20 +7,33 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
-import { createAssistantMessageEventStream, type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, getCurrentTools, type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
 import {
   createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager,
-  type AgentSession, type ExtensionAPI, type ExtensionCommandContext, type ExtensionError, type ExtensionFactory,
+  type AgentSession, type ExtensionAPI, type ExtensionCommandContext, type ExtensionError, type ExtensionFactory, type ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent";
 
 export type NotifyLevel = "info" | "warning" | "error";
+export type Notify = (message: string, level: NotifyLevel) => void;
 
-export const SCRIPTED_API = "openai-completions";
+/** How the session is bound: nobody watching (a print run), a client that is notified (RPC), or the terminal UI. */
+export type SessionUi =
+  | { mode: "print" }
+  | { mode: "rpc"; notify: Notify }
+  | { mode: "tui"; notify: Notify; custom: ExtensionUIContext["custom"] };
+
+export const SCRIPTED_MODEL = "scripted";
 export const SCRIPTED_CONTEXT_WINDOW = 100_000;
 const PROVIDER = "tools-explorer-fixture";
-const MODEL = "scripted";
+const SCRIPTED_API = "openai-completions";
 const CONTEXT_COMMAND = "probe-context";
 const USAGE: Usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+
+/** The names of the tools a request told the provider about. */
+export function requestedTools(request: string): string[] {
+  const context = JSON.parse(request) as { messages: { role: string }[] };
+  return getCurrentTools(context.messages).map((tool) => tool.name).sort();
+}
 
 export interface PiSessionOptions {
   /** Registers the tools and commands the test needs. */
@@ -29,8 +42,9 @@ export interface PiSessionOptions {
   extensionPaths: readonly string[];
   /** A custom system prompt, as SYSTEM.md or --system-prompt sets one. */
   systemPrompt: string | null;
-  /** Receives what the session shows with `ui.notify`; `null` for a session nobody watches. */
-  notify: ((message: string, level: NotifyLevel) => void) | null;
+  /** An allowlist of tools, as `--tools` passes one; `null` for pi's default selection. */
+  toolAllowlist: readonly string[] | null;
+  ui: SessionUi;
 }
 
 export interface PiSession {
@@ -70,7 +84,7 @@ export async function startPiSession(t: TestContext, options: PiSessionOptions):
   const requests: string[] = [];
   runtime.registerProvider(PROVIDER, {
     baseUrl: "http://fixture.invalid", apiKey: "fixture-only", api: SCRIPTED_API,
-    models: [{ id: MODEL, name: "Scripted", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: SCRIPTED_CONTEXT_WINDOW, maxTokens: 1000 }],
+    models: [{ id: SCRIPTED_MODEL, name: "Scripted", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: SCRIPTED_CONTEXT_WINDOW, maxTokens: 1000 }],
     streamSimple(model, requestContext) {
       requests.push(JSON.stringify(requestContext));
       const stream = createAssistantMessageEventStream();
@@ -86,18 +100,23 @@ export async function startPiSession(t: TestContext, options: PiSessionOptions):
       return stream;
     },
   });
-  const model = runtime.getModel(PROVIDER, MODEL);
+  const model = runtime.getModel(PROVIDER, SCRIPTED_MODEL);
   assert.ok(model, "the scripted model is registered");
   const { session } = await createAgentSession({
     cwd: dir, agentDir: dir, modelRuntime: runtime, model, thinkingLevel: "off", settingsManager, resourceLoader: loader,
     sessionManager: SessionManager.create(dir, dir),
+    ...(options.toolAllowlist === null ? {} : { tools: [...options.toolAllowlist] }),
   });
   const errors: ExtensionError[] = [];
-  const notify = options.notify;
+  const ui = options.ui;
   await session.bindExtensions({
-    mode: "rpc",
+    mode: ui.mode,
     onError: (error) => { errors.push(error); },
-    ...(notify === null ? {} : { uiContext: { ...session.extensionRunner.getUIContext(), notify: (message: string, level?: NotifyLevel) => notify(message, level ?? "info") } }),
+    ...(ui.mode === "print" ? {} : { uiContext: {
+      ...session.extensionRunner.getUIContext(),
+      notify: (message: string, level?: NotifyLevel) => ui.notify(message, level ?? "info"),
+      ...(ui.mode === "tui" ? { custom: ui.custom } : {}),
+    } }),
   });
   t.after(async () => {
     await session.abort();

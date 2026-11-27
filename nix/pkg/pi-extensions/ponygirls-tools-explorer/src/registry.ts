@@ -59,8 +59,8 @@ export interface PromptLines {
 
 /** The session's current model, as far as the explorer needs it. */
 export interface SessionModel {
-  /** pi's API family of the model, such as `anthropic-messages`; it decides the token ratios. */
-  api: string;
+  /** The model's id, such as `claude-haiku-5-5`; its family decides the token ratios. */
+  id: string;
   contextWindow: number;
 }
 

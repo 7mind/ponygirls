@@ -80,7 +80,7 @@ function paneOver(t: TestContext, registry: ToolRegistry, options: OpenOptions):
 
 function open(t: TestContext, overrides: Partial<OpenOptions>): Opened {
   const options = { ...DEFAULTS, ...overrides };
-  const registry = new InMemoryToolRegistry({ tools: options.tools, active: options.active, promptLines: new Map(), model: { api: "openai-completions", contextWindow: 100_000 } });
+  const registry = new InMemoryToolRegistry({ tools: options.tools, active: options.active, promptLines: new Map(), model: { id: "scripted", contextWindow: 100_000 } });
   registry.request();
   return { ...paneOver(t, registry, options), registry };
 }
@@ -333,6 +333,21 @@ test("a narrow pane drops columns and names them; the tool and its state stay", 
   const narrower = screen(pane, 44);
   assert.equal(narrower[1], "  TOOL                      STATE");
   assert.ok(narrower.includes("  hidden at this width: Tokens, Description"));
+});
+
+// regression: seen in a real pi terminal at 80 columns, where the share of the window pushed the last tab out.
+test("a narrow title gives up the share of the window before it gives up a tab", (t) => {
+  // As many tools, and as costly, as the session it was seen in: the title is as wide as it was there.
+  const many = Array.from({ length: 195 }, (_unused, index) => tool(`tool_${String(index).padStart(3, "0")}`, { description: "word ".repeat(240) }));
+  const { pane } = open(t, { tools: many, active: many.slice(0, 36).map((item) => item.name) });
+  const title = (width: number): string => screen(pane, width)[0]!;
+  assert.match(title(120), / ~\d\d\.\dk tok active /);
+  assert.match(title(120), /^── Tools {3}all 195 {3}active 36 {3}inactive 159 {2}─+ ~[\d.]+k tok active · \d+\.\d% of 100k ──$/);
+  assert.match(title(88), / tok active · \d+\.\d% of 100k ──$/, "the share stays while every tab fits beside it");
+  assert.match(title(80), /^── Tools {3}all 195 {3}active 36 {3}inactive 159 {2}─+ ~[\d.]+k tok active ──$/);
+  assert.match(title(70), /^── Tools {3}all 195 {3}active 36 {3}inactive 159 {2}─+ ~[\d.]+k tok active ──$/);
+  assert.match(title(60), /^── Tools {3}all 195 {3}active 36 {2}› ─+ ~[\d.]+k tok active ──$/, "narrower still, the kit shows the tabs around the current one");
+  for (const width of [120, 80, 70, 60]) assert.equal(title(width).length, width);
 });
 
 test("esc and q close the pane from the list", (t) => {
@@ -679,6 +694,52 @@ test("with a height from pi's layout the list fills it and regrows after a resiz
   const large = frame(30);
   assert.ok(toolRows(large).length > toolRows(small).length);
   assert.equal(large[large.length - 1], "status");
+});
+
+// regression: found in a real pi terminal, where a ten-line detail kept a nine-line body and a position line.
+test("a detail that fits the height pi gives the pane is shown whole, without a position line", (t) => {
+  const { pane } = open(t, { filter: "bash", rows: 40 });
+  const root = new VStack([
+    { component: { render: () => ["chat"], invalidate() {} }, basis: 0, grow: 1 },
+    { component: pane, grow: 0 },
+    { component: { render: () => ["status"], invalidate() {} }, shrink: 0 },
+  ]);
+  /** A few frames: pi draws again whenever a layout pass changed the body's height. */
+  const settled = (): string[] => {
+    for (let frame = 0; frame < 4; frame++) renderLayoutFrame(root, WIDTH, 40, () => {});
+    return plain(renderLayoutFrame(root, WIDTH, 40, () => {}).lines);
+  };
+  assert.ok(settled().some((line) => /^▌ bash /.test(line)));
+  press(pane, KEY.enter);
+  const detail = settled();
+  const title = detail.findIndex((line) => line.startsWith("── bash "));
+  assert.notEqual(title, -1, detail.join("\n"));
+  const shown = detail.slice(title, detail.indexOf("status"));
+  assert.equal(shown.some((line) => /^ {2}lines \d+-\d+ of \d+$/.test(line)), false, shown.join("\n"));
+  assert.ok(shown.includes("    The tool takes no parameters."), "the last line of the detail is on screen");
+  assert.equal(shown[shown.length - 2], "─".repeat(WIDTH));
+});
+
+test("a detail longer than the height pi gives the pane keeps its position line, and the body fills the rest", (t) => {
+  const { pane } = open(t, { filter: "save_issue", rows: 40 });
+  const root = new VStack([
+    { component: { render: () => ["chat"], invalidate() {} }, basis: 0, grow: 1 },
+    { component: pane, grow: 0 },
+    { component: { render: () => ["status"], invalidate() {} }, shrink: 0 },
+  ]);
+  const settled = (): string[] => {
+    for (let frame = 0; frame < 4; frame++) renderLayoutFrame(root, WIDTH, 20, () => {});
+    return plain(renderLayoutFrame(root, WIDTH, 20, () => {}).lines);
+  };
+  settled();
+  press(pane, KEY.enter);
+  const detail = settled();
+  // 20 rows less the status line: the title, 15 lines of text, the position line, the rule and the hints.
+  assert.equal(detail.length, 20);
+  assert.match(detail[0]!, /^── mcp__linear__save_issue /);
+  assert.match(detail[16]!, /^ {2}lines 1-15 of \d+$/);
+  assert.equal(detail[17], "─".repeat(WIDTH));
+  assert.equal(detail[19], "status");
 });
 
 test("the wheel moves the selection in the list and scrolls the detail", (t) => {

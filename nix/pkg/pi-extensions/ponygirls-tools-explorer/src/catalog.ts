@@ -43,7 +43,7 @@ export interface ToolEntry {
 
 export interface ToolCatalog {
   entries: readonly ToolEntry[];
-  /** What the costs were estimated with: the ratios of the model's API family, or pi's rule. */
+  /** What the costs were estimated with: the ratios of the model's family, or pi's rule. */
   basis: TokenBasis;
   /** `null` while no model is selected. */
   model: SessionModel | null;
@@ -99,7 +99,7 @@ function deliveryOf(state: ToolState, declared: boolean): Delivery {
 export function buildCatalog(snapshot: RegistrySnapshot): ToolCatalog {
   const active = new Set(snapshot.active);
   const withheld = new Set(snapshot.withheld);
-  const basis = basisFor(snapshot.model === null ? null : snapshot.model.api);
+  const basis = basisFor(snapshot.model === null ? null : snapshot.model.id);
   const entries = snapshot.tools.map((tool): ToolEntry => {
     const state = stateOf(tool, active.has(tool.name), withheld.has(tool.name));
     const declared = snapshot.declared.get(tool.name);

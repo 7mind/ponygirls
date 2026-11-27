@@ -22,8 +22,13 @@ import type { ToolRegistry } from "./registry.ts";
 
 /** How often an open pane reads the registry again. */
 export const REFRESH_MS = 1000;
-/** Rows that never hold list or detail lines: the pane's title, rule, hints and notice, and pi's footer. */
+/**
+ * Rows a pane that has to take its height from the terminal leaves to everything but its body: its title,
+ * position line, rule, hints and notice, and pi's footer.
+ */
 const CHROME_ROWS = 9;
+/** The line under a scrolled detail that says which lines are shown. */
+const POSITION_ROWS = 1;
 const FILTER_KEY = "/";
 const FILTER_PROMPT = `${FILTER_KEY} `;
 /** The cell the input draws its cursor in behind the text. */
@@ -107,7 +112,7 @@ export class ToolsPane extends PanelLayout implements InlinePane, Focusable {
   override invalidate(): void {
     super.invalidate();
     this.jsonCache = null;
-    this.filterInput?.invalidate();
+    if (this.filterInput !== null) this.filterInput.invalidate();
   }
 
   // ---- state ---------------------------------------------------------------------
@@ -324,9 +329,15 @@ export class ToolsPane extends PanelLayout implements InlinePane, Focusable {
   private titleLine(width: number): string {
     const th = this.deps.theme;
     const budget = budgetText(this.summary, this.catalog.model);
-    const right = `${th.fg("text", budget.tokens)}${budget.share === null ? "" : th.fg("dim", ` · ${budget.share}`)}`;
     const tabs = { labels: TABS.map((tab) => tabLabel(this.summary, tab)), active: TABS.indexOf(this.query.tab) };
-    return frameTitle(th, width, { title: "Tools", tabs, right }, "none").line;
+    const tokens = th.fg("text", budget.tokens);
+    const titled = (right: string) => frameTitle(th, width, { title: "Tools", tabs, right }, "none");
+    if (budget.share !== null) {
+      // The share of the window is the first thing a narrow title gives up: every tab stays on the line.
+      const whole = titled(`${tokens}${th.fg("dim", ` · ${budget.share}`)}`);
+      if (whole.tabSpans.length === TABS.length) return whole.line;
+    }
+    return titled(tokens).line;
   }
 
   /** The filter and how many tools of the tab it leaves; `null` without a filter. */
@@ -440,11 +451,17 @@ export class ToolsPane extends PanelLayout implements InlinePane, Focusable {
     const state = th.fg(stateColor(stateTone(entry)), stateLabel(entry.state));
     const header = [frameTitle(th, width, { title: displayLine(entry.name), right: state }, "none").line];
     const lines = this.detailLines(detail, entry, width);
-    const rows = this.bodyRows();
+    const footer = this.footer(width, [], this.detailHints(detail, entry));
+    // Whether the position line is needed is decided from the pane's whole height: decided from the height
+    // the text has now, the line would stay after the text fits without it. Its row is the text's otherwise.
+    const fixed = header.length + footer.length;
+    const room = Math.max(1, this.height(this.deps.rows() - CHROME_ROWS + fixed + POSITION_ROWS) - fixed);
+    const positioned = lines.length > room;
+    const rows = positioned ? Math.max(1, room - POSITION_ROWS) : room;
     const scroll = Math.max(0, Math.min(detail.scroll, lines.length - rows));
     if (!this.isMeasuring) detail.scroll = scroll;
     const body = lines.slice(scroll, scroll + rows);
-    const position = lines.length > rows ? this.note(`lines ${scroll + 1}-${scroll + body.length} of ${lines.length}`, width) : [];
-    return { header, body, footer: this.footer(width, position, this.detailHints(detail, entry)) };
+    const position = positioned ? [truncateToWidth(th.fg("dim", `${this.gutter()}lines ${scroll + 1}-${scroll + body.length} of ${lines.length}`), width, "…")] : [];
+    return { header, body, footer: [...position, ...footer] };
   }
 }

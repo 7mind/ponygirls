@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  MEASURED_BASES, PI_BASIS, PI_CHARS_PER_TOKEN, basisFor, declarationText, declarationTokens, estimateTokens, promptLineText, promptLineTokens,
+  PI_BASIS, PI_CHARS_PER_TOKEN, basisFor, declarationText, declarationTokens, estimateTokens, promptLineText, promptLineTokens,
   type TokenBasis,
 } from "../src/tokens.ts";
 
@@ -19,15 +19,24 @@ test("an estimate is the character count over the ratio, rounded up", () => {
 
 test("pi's rule is four characters per token for declarations and prompt lines alike", () => {
   assert.equal(PI_CHARS_PER_TOKEN, 4);
-  assert.deepEqual(PI_BASIS, { declaration: 4, promptLine: 4, source: "pi" });
+  assert.deepEqual(PI_BASIS, { declaration: 4, promptLine: 4, measuredFor: null });
 });
 
-test("measured API families use their ratios; every other one, and no model, falls back to pi's rule", () => {
-  assert.deepEqual(basisFor("anthropic-messages"), { declaration: 2.7, promptLine: 3.1, source: "measured" });
-  assert.deepEqual(basisFor("openai-codex-responses"), { declaration: 5.4, promptLine: 5, source: "measured" });
-  assert.deepEqual(Object.keys(MEASURED_BASES).sort(), ["anthropic-messages", "openai-codex-responses"]);
-  for (const api of ["openai-completions", "openai-responses", "google-generative-ai", "", "toString", "constructor"]) {
-    assert.equal(basisFor(api), PI_BASIS, api);
+test("Claude and GPT models use the ratios measured for their family, under any provider's naming", () => {
+  const claude = { declaration: 2.7, promptLine: 3.1, measuredFor: "Claude" };
+  for (const id of ["claude-haiku-5-5", "claude-fable-5-2", "claude-3-5-sonnet-latest", "anthropic/claude-sonnet-5", "us.anthropic.claude-sonnet-4-5-20250929-v1:0", "Claude-Opus-5"]) {
+    assert.deepEqual(basisFor(id), claude, id);
+  }
+  const gpt = { declaration: 5.4, promptLine: 5, measuredFor: "GPT" };
+  for (const id of ["gpt-6.2", "gpt-6.2-sol", "gpt-4o", "openai/gpt-5.5", "azure.gpt-5-mini"]) {
+    assert.deepEqual(basisFor(id), gpt, id);
+  }
+});
+
+test("every other model, and no model, falls back to pi's rule", () => {
+  // Other vendors' models are served over the same APIs and under similar names; none of them was measured.
+  for (const id of ["kimi-k2.6", "MiniMax-M2.5", "glm-5", "gemini-3-pro", "o4-mini", "gpt-oss-120b", "chatgpt-4o-latest", "not-claude-1", "claude", "gpt", ""]) {
+    assert.equal(basisFor(id), PI_BASIS, id);
   }
   assert.equal(basisFor(null), PI_BASIS);
 });
@@ -54,14 +63,14 @@ test("a tool without prompt lines adds nothing to the prompt", () => {
 });
 
 test("declarations and prompt lines each use their own ratio of the basis", () => {
-  const basis: TokenBasis = { declaration: 2, promptLine: 10, source: "measured" };
+  const basis: TokenBasis = { declaration: 2, promptLine: 10, measuredFor: "a test" };
   assert.equal(declarationTokens(DECLARATION, basis), Math.ceil(declarationText(DECLARATION).length / 2));
   assert.equal(promptLineTokens("read", LINES, basis), Math.ceil(promptLineText("read", LINES).length / 10));
 });
 
 test("a denser tokenizer makes the same declaration cost more tokens", () => {
-  const anthropic = declarationTokens(DECLARATION, basisFor("anthropic-messages"));
+  const claude = declarationTokens(DECLARATION, basisFor("claude-haiku-5-5"));
   const pi = declarationTokens(DECLARATION, PI_BASIS);
-  const codex = declarationTokens(DECLARATION, basisFor("openai-codex-responses"));
-  assert.ok(anthropic > pi && pi > codex, `${anthropic} > ${pi} > ${codex}`);
+  const gpt = declarationTokens(DECLARATION, basisFor("gpt-6.2"));
+  assert.ok(claude > pi && pi > gpt, `${claude} > ${pi} > ${gpt}`);
 });

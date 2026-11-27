@@ -1,49 +1,30 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import { getCurrentTools } from "@earendil-works/pi-ai";
-import { estimateTokens as piEstimateTokens, type ExtensionAPI, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import { estimateTokens as piEstimateTokens, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
+import { ToolActivation } from "../src/activation.ts";
 import { buildCatalog, findEntry, isCharged } from "../src/catalog.ts";
 import { PiToolRegistry } from "../src/pi-registry.ts";
 import type { JsonSchema } from "../src/registry.ts";
 import { PI_BASIS, declarationTokens, promptLineText } from "../src/tokens.ts";
-import { SCRIPTED_API, SCRIPTED_CONTEXT_WINDOW, startPiSession, type PiSession } from "./pi-session.ts";
-import { CONTRACT_MODEL, CONTRACT_TOOLS, registryContract } from "./registry-contract.ts";
-
-const PROBED = { content: [{ type: "text" as const, text: "probed" }], details: undefined };
-
-function registerProbes(pi: ExtensionAPI): void {
-  for (const tool of CONTRACT_TOOLS) {
-    pi.registerTool({
-      name: tool.name,
-      label: tool.name,
-      description: tool.description,
-      parameters: tool.parameters as TSchema,
-      exposure: tool.exposure,
-      defaultActive: tool.activeOnRegistration,
-      ...(tool.promptLines.snippet === null ? {} : { promptSnippet: tool.promptLines.snippet }),
-      promptGuidelines: [...tool.promptLines.guidelines],
-      execute: async () => PROBED,
-    });
-  }
-}
+import { SCRIPTED_CONTEXT_WINDOW, SCRIPTED_MODEL, requestedTools, startPiSession, type PiSession } from "./pi-session.ts";
+import { PROBED, registerProbes } from "./probes.ts";
+import { CONTRACT_MODEL, registryContract } from "./registry-contract.ts";
 
 interface Started extends PiSession {
   registry: PiToolRegistry;
 }
 
-async function start(t: TestContext, extension: ExtensionFactory, systemPrompt: string | null): Promise<Started> {
-  const session = await startPiSession(t, { extension, extensionPaths: [], systemPrompt, notify: null });
+async function startWith(t: TestContext, extension: ExtensionFactory, systemPrompt: string | null, toolAllowlist: readonly string[] | null): Promise<Started> {
+  const session = await startPiSession(t, { extension, extensionPaths: [], systemPrompt, toolAllowlist, ui: { mode: "print" } });
   return { ...session, registry: new PiToolRegistry(session.pi, session.ctx) };
 }
 
-/** The tools the provider was told about in a request. */
-function requestedTools(request: string): string[] {
-  const context = JSON.parse(request) as { messages: { role: string }[] };
-  return getCurrentTools(context.messages).map((tool) => tool.name).sort();
+function start(t: TestContext, extension: ExtensionFactory, systemPrompt: string | null): Promise<Started> {
+  return startWith(t, extension, systemPrompt, null);
 }
 
-assert.deepEqual({ api: SCRIPTED_API, contextWindow: SCRIPTED_CONTEXT_WINDOW }, CONTRACT_MODEL);
+assert.deepEqual({ id: SCRIPTED_MODEL, contextWindow: SCRIPTED_CONTEXT_WINDOW }, CONTRACT_MODEL);
 
 registryContract("pi session", async (t) => {
   const started = await start(t, registerProbes, null);
@@ -121,6 +102,24 @@ test("pi session: a declaration an orchestrating tool withholds is active, repor
   assert.equal(sent.includes("probe_direct"), false);
   assert.equal(sent.includes("probe_orchestrator"), true);
   assert.equal(ctx.getSystemPrompt().includes("- probe_direct: Probe directly"), false, "its prompt lines are left out with it");
+});
+
+test("pi session: an MCP tool the --tools selection does not match stays registered, and loading it is reported as not activated", async (t) => {
+  const { registry, errors } = await startWith(t, (pi) => {
+    registerProbes(pi);
+    pi.registerTool({
+      name: "mcp__probe__direct", label: "direct", description: "A directly exposed tool of the probe server",
+      parameters: { type: "object", properties: {} } as TSchema,
+      namespace: { name: "mcp__probe" },
+      execute: async () => PROBED,
+    });
+  }, null, ["read", "probe_direct"]);
+  const before = registry.snapshot();
+  assert.deepEqual(before.tools.map((tool) => tool.name).sort(), ["mcp__probe__direct", "probe_direct", "read"], "the selection keeps other tools out of the session");
+  assert.deepEqual([...before.active].sort(), ["probe_direct", "read"]);
+  assert.deepEqual(new ToolActivation(registry).load("mcp__probe__direct"), { kind: "refused", name: "mcp__probe__direct", reason: "not-activated" });
+  assert.deepEqual(registry.snapshot().active, before.active);
+  assert.deepEqual(errors, []);
 });
 
 test("pi session: namespace, hints and provenance come through as pi records them", async (t) => {

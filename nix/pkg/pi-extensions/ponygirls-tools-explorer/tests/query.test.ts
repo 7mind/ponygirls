@@ -85,7 +85,7 @@ test("a filter keeps tools where every word occurs in the name, the source or th
 });
 
 test("the summary counts tools and tokens overall and per source", () => {
-  const catalog = catalogOf({ model: { api: "openai-completions", contextWindow: 10_000 } });
+  const catalog = catalogOf({ model: { id: "scripted", contextWindow: 10_000 } });
   const summary = summarize(catalog);
   const charged = ACTIVE.reduce((sum, name) => sum + tokensOf(catalog, name), 0);
   const all = TOOLS.reduce((sum, item) => sum + tokensOf(catalog, item.name), 0);
@@ -119,11 +119,11 @@ test("a withheld tool is active but its tokens are not charged", () => {
 
 test("without a model there is no share of a context window", () => {
   assert.equal(summarize(catalogOf({ model: null })).windowShare, null);
-  assert.equal(summarize(catalogOf({ model: { api: "openai-completions", contextWindow: 0 } })).windowShare, null);
+  assert.equal(summarize(catalogOf({ model: { id: "scripted", contextWindow: 0 } })).windowShare, null);
 });
 
 test("an empty catalog summarizes to zeros", () => {
-  assert.deepEqual(summarize(buildCatalog(snapshot([], { model: { api: "openai-completions", contextWindow: 1000 } }))), {
+  assert.deepEqual(summarize(buildCatalog(snapshot([], { model: { id: "scripted", contextWindow: 1000 } }))), {
     all: 0, active: 0, inactive: 0, chargedTokens: 0, inactiveTokens: 0, windowShare: 0, sources: [],
   });
 });
