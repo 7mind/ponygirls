@@ -13,8 +13,7 @@ production tokens in all for about 267 USD as the harness reports cost. Of
 the eleven real changes that measured spikes confirmed, eight are on main
 (33 production lines and 721 tokens; section 15), one was dropped when
 another session's refactor took over its code, and two were left out as too
-small. Section 14
-lists what was found and not applied.
+small. Section 14 lists what was found and not applied.
 
 This note is a chronological record. Sections 1 to 9 are the proposal as it
 stood before the first run and were not rewritten afterwards; the runs, the
