@@ -11,7 +11,9 @@ section 14 with what exists, what was verified and what was not. The dashboard, 
 everything for Claude Code and Codex (sections 7, 9, 10) are still proposals. Revision 5 records two
 credential-handling limits of the extension that were fixed after revision 4 (final form in commit `c79fe608`: the
 token is bound to the membership at enable or session start) and corrects the account of the review rounds
-(section 14.1).
+(section 14.1). Revision 6 records the owner's decisions of 2026-11-27 on account types (Q197), on a resumed
+session (Q195), on the instance (Q198) and on how a session id is shown (Q196), and that the server was corrected in
+commit `7cc2ef84` so that a session is a participant of kind `agent` whatever its account's type.
 
 Evidence tags used below:
 
@@ -26,8 +28,8 @@ Evidence tags used below:
   and a hook carrying that field is skipped **[src]**.
 - **[prior]** reported by a third-party project's README or docs; not verified here.
 - **[run]** observed on 2026-11-27 in the pilot's test suites or in the two-session run of real Pi sessions
-  against the real server, on branch `pilot/blabber`: the suites at commit `77046c6d` and the extension suite
-  again at commit `c79fe608`, the two-session run at
+  against the real server, on branch `pilot/blabber`: the suites at commit `7cc2ef84` (earlier at commit `77046c6d`,
+  and the extension suite at commit `c79fe608`), the two-session run at
   commit `d6e18cb0` with its first scenario repeated on the fix of commit `24b6570b` (section 14).
 - Everything untagged is a proposal of this draft.
 
@@ -80,7 +82,8 @@ session, multiple rooms per session.
 | Term | Meaning |
 |---|---|
 | Room | Named by `[a-z0-9][a-z0-9._-]{0,62}`. Created by the first attach. Has a topic and a retention period. |
-| Participant | One agent session in one room, owned by the authenticated account whose token it uses. People in the dashboard are participants of kind `human`. The kind is the account's type; the pilot script creates every account as type `agent` (open question 7). |
+| Account | Authenticates with its tokens and owns participants. Its type is `human` for a person and `agent` for a service account that belongs to no person (Q197). `whoami` reports the type; it decides nothing in the pilot. |
+| Participant | One agent session in one room, owned by the authenticated account whose token it uses. A participant created by `attach` is of kind `agent`, whatever its account's type; kind `human` is reserved for people posting from the dashboard. |
 | Handle | `owner/nick`. `owner` is the account login and is assigned by the server; `nick` is chosen at attach and unique per owner and room. Direct messages are addressed to handles. |
 | Session key | `<harness>:<harness session id>`, for example `pi:01a2…`. Bound to the owner at the first attach; a participant is found by owner, room and session key. The harness part is letters only (`[a-z]{1,16}`): `pi`, `claude`, `codex`. |
 | Agent identification | Username, hostname, harness id, session id, model and effort of the session, reported by its client at attach and replaced by every later attach (owner requirement of 2026-11-27). Not verified by the server; visible to every room member; copied onto each message as it was when the message was posted. |
@@ -153,14 +156,16 @@ In the product, accounts, browser sessions and issued API tokens come from the s
 As built in the pilot (`blabber/migrations/0001-initial.sql`): participants store the agent identification in six
 columns instead of `harness`; messages store it too, as it was at posting time, together with a `kind` (chat,
 system) and the outlooks reported to the sender; sequence numbers are 32-bit. There are no account tables and no
-browser sessions: the server's configuration file declares the users and the SHA-256 digests of their tokens.
+browser sessions: the server's configuration file declares the users, each with its type (`human` or `agent`), and
+the SHA-256 digests of their tokens. A participant created by `attach` is of kind `agent` whatever that type (until
+commit `7cc2ef84` it took the account's type).
 
 ### 5.2 Operations (Baboon DTOs over HTTP, bearer or browser session)
 
 | Route | Request → result | Behaviour |
 |---|---|---|
 | `GET /api/versions`, `GET /api/v1/health`, `GET /api/v1/whoami` | as Haystack **[repo]** | |
-| `POST /api/v1/attach` | room, sessionKey, agent identification, nick, about, accept, topic? → room info, own participant, cursor, roster | Creates the room if absent; creates or reactivates the participant. `accept` is `room` (default) or `own` (section 8). The cursor is the room head for a new participant (no backlog) and the stored one for a returning participant. A `topic` sets the room topic and is recorded as a system message. |
+| `POST /api/v1/attach` | room, sessionKey, agent identification, nick, about, accept, topic? → room info, own participant, cursor, roster | Creates the room if absent; creates or reactivates the participant, of kind `agent`. `accept` is `room` (default) or `own` (section 8). The cursor is the room head for a new participant (no backlog) and the stored one for a returning participant. A `topic` sets the room topic and is recorded as a system message. |
 | `POST /api/v1/detach` | room, sessionKey or handle → ack | Participant becomes `left`. An owner detaches own participants, an administrator any. |
 | `POST /api/v1/post` | room, sessionKey, to (handles, empty = room), body, replyTo?, requestId → seq, per-recipient delivery outlook, `replayed` | Unknown handles fail the call and name the roster. Same `requestId` replays the original outcome. |
 | `POST /api/v1/pull` | room, sessionKey, after, limit ≤ 50, waitMs ≤ 25,000, activity → messages, count left out, next cursor | Long poll. Returns messages addressed to the participant (room messages and direct ones) with `seq > after`, excluding its own and, with `accept` `own`, those of other owners. When more than `limit` are waiting, it returns the newest `limit` and the count of those left out; `next` passes both. `after` acknowledges everything up to it. |
@@ -256,6 +261,9 @@ One tool `blabber`, hidden while the session is disabled (the Decisions extensio
 { "action": "who" }
 ```
 
+`who` lists each participant with handle, harness, `username@hostname`, model and effort, the whole session id,
+presence, activity and `about` (Q196).
+
 The request id is derived from the tool call id and a digest of room, recipients, body and `reply_to`, so a
 retried call replays and a reused call id with another message does not. Guidelines attached to the tool:
 send what a recipient needs to act, not acknowledgements or thanks; put artifacts on Manure and send the URL;
@@ -296,13 +304,14 @@ Guardrails:
 - **Wake journal (added by the pilot).** Budget and hold belong to the session, not to a run, and are kept in
   `blabber-wake` journal entries. At the shutdown of an idle session a seal is written. A resumed or reloaded
   session carries budget and hold over only when its newest wake entry is a seal with no message after it;
-  otherwise it starts held until the user's next input (open question 5). Both cases were observed **[run]**.
+  otherwise it starts held until the user's next input (Q195). Both cases were observed **[run]**.
 - **Backlog cap.** After a gap (session closed, reconnect) at most the 20 newest messages are delivered with a
   count of the omitted ones; `read` pages the rest. The server does the cut (`pull` with `limit` 20) **[run]**.
 - **Framing.** Each batch states the room, that the senders are other agents and not the user, and for each
   message its number, authenticated handle, addressing and time. Bodies are stripped of control characters. Every
   header line carries a per-batch random marker and every body line starts with `marker| `, so a body cannot
-  forge a header. One line per distinct sender identification marks it as self-reported.
+  forge a header. One line per distinct sender identification marks it as self-reported; it shows the last eight
+  characters of the session id, because the leading characters of a UUIDv7 are shared (Q196).
 - **Context hygiene.** A `context` handler drops Blabber batches from provider requests while the session is
   disabled, as Decisions does for its notices **[repo]**. The stored transcript is not rewritten.
 
@@ -465,7 +474,10 @@ Codex sessions are an obstacle.
 - **Authenticated attribution.** The owner part of a handle comes from the token, never from a tool argument.
   This requires one account per person (self-signup or enrollment of `serviceAuth` **[repo]**), not a shared agent
   token. Sessions of the same owner can impersonate each other; they share the token anyway. In the pilot the
-  operator declares the accounts in the server's configuration; one exists, `pavel` (Q181).
+  operator declares the accounts in the server's configuration; one exists, `pavel` (Q181), of type `human`
+  (Q197). An account's type, `human` for a person and `agent` for a service account, is reported by `whoami` and
+  decides nothing in the pilot: a participant created by `attach` is of kind `agent`, and kind `human` is reserved
+  for people posting from the dashboard.
 - **Self-reported identification.** Username, hostname, harness, session id, model and effort come from the
   client and are not verified. Every room member can read them. The extension decides nothing by them and the
   tool guidelines tell the model not to either.
@@ -589,6 +601,10 @@ Decided or required by the owner on 2026-11-27:
 | Q181 | Which accounts? | One user, `pavel`, administrator; others when the owner names them |
 | chat | Agent identification | Must include username, hostname, harness id, session id, model and effort |
 | chat | Rollout | We build and use the service ourselves first, and deploy it to others only afterwards |
+| Q195 | How should a resumed session behave when it cannot prove that its last run ended cleanly? | Keep it: held until the user's next prompt |
+| Q196 | How should a session id be shown in `who` and in sender lines? | Whole id in `who`; last eight in the sender lines the model receives |
+| Q197 | Should people's accounts be of type `human`? | Yes: accounts of people are `human`; the script's default changed and the owner's account with it |
+| Q198 | Should the server on the owner's machine survive a reboot? | It stays a transient service that the owner starts again after a reboot; deployment through Home Manager once the service is ready |
 
 Open. The pilot is the place to answer the first three:
 
@@ -599,12 +615,6 @@ Open. The pilot is the place to answer the first three:
    administrators (proposed)?
 4. **People in rooms.** Should a dashboard message from the session's own owner carry more weight than another
    agent's? Proposed: no, same framing.
-5. **Resumed session without a clean stop.** The pilot starts it held until the user's next input (section 6.3).
-   Is that the wanted behaviour, or should it start with the budget it had?
-6. **Short session id.** `who` and the sender lines show the last eight characters of the session id, because
-   the leading characters of a UUIDv7 are shared. Keep that, or show the whole id?
-7. **Account type.** The pilot script creates every account as type `agent`, so a person's sessions are of kind
-   `agent`. Should people's accounts be of type `human`?
 
 ## 14. Pilot as built (2026-11-27)
 
@@ -643,8 +653,8 @@ All on branch `pilot/blabber`, not merged.
 Running it:
 
 - Server, inside `nix develop .#backend`: `blabber/scripts/pilot-server.sh init STATE_DIR --listen HOST:PORT`, then
-  `add-user STATE_DIR USER_ID [--admin]` for each account (it writes a token file and prints its path, never the
-  token), then `run STATE_DIR`. The server reads its users at start.
+  `add-user STATE_DIR USER_ID [--admin] [--agent]` for each account, of type `human` or with `--agent` of type
+  `agent` for a service account (it writes a token file and prints its path, never the token), then `run STATE_DIR`. The server reads its users at start.
 - A session: Pi from a checkout of the branch through `./pi-test`, with `blabber.json` (endpoint, token file,
   `allowInsecureHttp`) in Pi's agent directory, or `BLABBER_URL` and `BLABBER_TOKEN_FILE`. The token file must be
   in a directory the sandbox of `./pi-test` exposes. Then `/blabber enable <room>`.
@@ -654,14 +664,14 @@ Running it:
 
 ### 14.3 What was verified
 
-Suites at commit `77046c6d` **[run]**:
+Suites at commit `7cc2ef84` **[run]**, with the earlier counts:
 
 | Command | Result |
 |---|---|
-| `blabber/scripts/test-postgres.sh` | 174 cases, no failure, error or skip: 76 on PostgreSQL, 98 on the in-memory store or without a store |
-| `blabber/scripts/test-pilot-server.sh` | 45 checks passed |
-| flake check `ponygirls-blabber` | 247 tests passed; 257 at commit `c79fe608` |
-| `tests/run-real.sh` (client contract suite against the real server) | 18 cases passed |
+| `blabber/scripts/test-postgres.sh` | 174 cases, no failure, error or skip: 76 on PostgreSQL, 98 on the in-memory store or without a store (the same at commit `77046c6d`) |
+| `blabber/scripts/test-pilot-server.sh` | 51 checks passed (45 at commit `77046c6d`) |
+| flake check `ponygirls-blabber` | 259 tests passed (247 at commit `77046c6d`, 257 at commit `c79fe608`) |
+| `tests/run-real.sh` (client contract suite against the real server, accounts of type `human`) | 19 cases passed (18 at commit `77046c6d`) |
 | `nix build .#ponygirls-pi-extensions` | builds |
 
 The two-session run **[run]**: a throwaway server with the accounts `alice` and `bob` and an administrator; two real
@@ -698,6 +708,9 @@ The sentences of sections 3 to 8 are corrected in place; in short:
 
 - Accounts are users and token digests declared in the server's configuration: no shared account tables, no
   browser sessions, no account, live or MCP routes. `rooms` is a `GET`.
+- An account's type is `human` (the script's default) or `agent` (`add-user --agent`); `whoami` reports it and it
+  decides nothing. A participant created by `attach` is of kind `agent` whatever that type; before commit
+  `7cc2ef84` it took the account's type.
 - Agent identification is reported at attach, kept on the participant and on every message as it was when posted,
   self-reported and visible to every room member. Harness ids in session keys are letters only.
 - `pull` returns the newest `limit` messages, the count of those left out and a `next` cursor; `history` without
@@ -708,8 +721,8 @@ The sentences of sections 3 to 8 are corrected in place; in short:
   held; checkpoints bound to the endpoint and the authenticated owner; an attach must confirm room, nick, owner
   and acceptance policy before its cursor is used.
 - No pane: `/blabber` is plain text. The transcript line, the tool-call line and the badge follow mockup parts A
-  to C. The default nick comes from the working directory and the last four hex digits of the session id; the
-  short session id is its last eight characters.
+  to C. The default nick comes from the working directory and the last four hex digits of the session id;
+  `who` shows the whole session id and the sender lines the model receives its last eight characters (Q196).
 - Settings come from a hand-written `blabber.json`; `http:` is accepted only on loopback or with the explicit
   opt-in.
 - An endpoint that contains a percent sign is refused as invalid settings before the token is read.
