@@ -234,7 +234,7 @@ Decisions, each with the alternative it was chosen over:
 skill file and the scope and acts as supervisor; it reports and applies
 nothing; its spikes live in throwaway worktrees. This session watches the run
 against a checklist and changes the skill text only for failures it observed,
-each logged in section 9.
+each logged in section 11.
 
 Checklist (did the text steer the agent): tree frozen; symbolic links and
 generated code outside `generated/` excluded; plan presented before fan-out;
@@ -329,7 +329,7 @@ Fixed on 27 Nov 2026 after Q185 and before any pilot agent was started.
   the supervisor writes into a checkout it does not own, pushes or merges,
   starts more than 35 agents, or runs longer than three hours.
 - **Tuning.** The skill text changes only for failures observed in the run,
-  each logged in section 10 with the observation.
+  each logged in section 11 with the observation.
 
 ## 8. Known weaknesses of the draft
 
@@ -474,11 +474,129 @@ refuter and nothing later read them. Changes made for v0.3:
 
 v0.3's changes have had no independent reading.
 
-## 10. Tuning log
+## 10. Pilot, first wave (27 Nov 2026, 10:51 to 12:26 UTC)
 
-Empty: no run yet.
+Run as registered in section 7.1; the skill was v0.3. The supervisor's run
+directory, with its 120 kB report and its notes on the skill text, is
+`debug/cqr-20261127-1051` in its harness work tree (path in section 12).
 
-## 11. State, for resuming
+**Outcome on `haystack/server` production code** (2,640 lines, 49,520 tokens
+with the plants):
+
+- 13 readers returned 123 records on 45 topics; none inadmissible.
+- 19 hypotheses went to refutation (15 under the cap, 4 promoted
+  alternatives). The refuters called 15 refuted; the supervisor accepted 9
+  kills and overruled 6 after reading the cited lines.
+- 5 spikes: 3 confirmed, together 21 lines and 302 tokens smaller, each with a
+  negative control that fails a test; 2 failed. One failure was caught by the
+  token gate (12 lines fewer, 5 tokens more); the other deleted the only test
+  guarding live code, found by the spiker's fault injection.
+- At the end: 3 confirmed, 5 supported and unmeasured, 9 refuted, 2 failed,
+  17 deferred, 21 untested (cap), 64 alternatives, 2 defect candidates.
+- Two of the three confirmed changes are real findings, not plants: token
+  helpers in `Auth.scala` that re-implement `shared/service-auth` (159 tokens),
+  and string overloads used only by tests (92 tokens).
+
+**Plants** (answer key hash as registered):
+
+| Plant | Arm A | Arm B | End state |
+|---|---|---|---|
+| P1 renamed copy of `Text.extractWords` in the parser | found | found | untested: cut by the refutation cap |
+| P2 unused `QualifiedId.decodeKeyOption` | found | found | untested: cut by the refutation cap |
+| P3 pass-through `ItemGateway` | found | found | supported, not spiked |
+| P4 hand-rolled `joinWords` | found | found | confirmed: 10 lines and 62 tokens, exactly the planted size |
+| P5 one query written three times | found | found | supported, not spiked |
+
+Both arms found all five, which bounds recall from above only. The caps then
+cut two of them: ranking by predicted lines sent large deletions forward and
+left every three-line reuse or deletion untested.
+
+**Allocation rule.** Arm B (four group readers) cost 28.31 USD against 53.20
+USD for arm A (nine readers), 53% of it, and its records covered all eight
+topics that ended supported or confirmed (two of them inside one composite
+record). The registered rule asked for at least 80% of the topics at no more
+than half the cost: the cost condition is missed by three points, so by the
+rule one reader per lens stays the default. Beside the rule: the two
+`reinvention` readers had the same allocation and agreed no better with each
+other (8 of 12 topics shared) than the arms did (29 of 45), so one run cannot
+separate the allocations on coverage; and the later lenses of a group came
+back thinner (under-generalization 3 records against 9, library-underuse 4
+against 8).
+
+**Cost, as the harness reports it.** 121.83 USD in all: readers 81.51,
+refuters 5.10 (14 agents on `gpt-6.2-sol`), spikers 6.39, probe 0.27,
+supervisor 28.56. A reader cost 4.42 to 8.36 USD for a partition of about
+63,000 tokens; 92% of reader input was cache reads over many turns. 33
+subagents, 95 minutes. The Anthropic account's extra-usage figure did not move
+during the run (4,892.18 USD at 11:39 UTC), so the gateway is billed
+elsewhere.
+
+**Checklist of section 7.** Met: tree frozen and removed; generated code
+excluded; plan written before fan-out; reader briefs free of conclusions and
+of plant names (the names occur only in mechanical lead lists); anchors
+checked mechanically with negative controls; kills checked against the cited
+lines; spikes measured by the script, with tests before and after and a
+negative control; patches read by the supervisor; nothing unmeasured in the
+working set; residue reported. Not exercised: symbolic links, `test-support`
+on a test tree (the request's wording kept tests out of this wave).
+Deviations: anchors accepted as a verbatim part of a line; refuters had no
+shell and got site history as files; one empty probe file created and removed
+in the harness directory; five spike work trees left in place.
+
+**Monitor rules.** No interrupt: 33 agents (limit 35), 95 minutes (limit 180),
+no push or merge, the user's checkout untouched.
+
+**What counts against the skill.** Refutation is the weak stage. The refuter
+marked falsifiers observed from a property alone, without anyone who observes
+it, so 6 of 15 kills had to be overruled; and the supervisor's own
+adjudication erred twice in 19 (one kill accepted against its own rule, one
+kill overruled that the spike then proved right). The text gave the last word
+to one agent without a check on it.
+
+## 11. Tuning log
+
+Candidates from the first wave, not yet applied. Sources: the supervisor's 34
+notes (F01 to F34 in its `friction.md`) and the numbers above.
+
+1. **Refutation.** State who or what observes each observed falsifier; give
+   refuters and spikers the list of section 0, with "and something observes
+   it" on lifetime, order and cost; send every overruled kill to the spike as
+   an unchecked falsifier; let a second refuter, not the supervisor, break a
+   tie; a kill of the wording (the literal edit does not compile) is not a
+   kill of the change (F18, F20, F21, F26, F27, F33).
+2. **Deletion that removes a test.** The negative control is a fault in the
+   production code that test reached, not a reference search (F27).
+3. **Ranking and caps.** Ranking by predicted lines starves the small, safe
+   classes; rank inside precedence classes or reserve slots, and let several
+   small hypotheses of one class share a refuter and a spike. Say which
+   low-ranked ones are spiked for calibration (F17, F22; plants P1 and P2).
+4. **Currency.** Decide whether moving test-only code out of production
+   counts (production tokens fall, test tokens rise by as much): four readers
+   ranked exactly that first and it was deferred (F13). Predict tokens, not
+   only lines, or check the token balance before spending a spike (F28).
+5. **Records.** Anchor: a verbatim part of one line (F12). One intervention
+   per record (F14). Define the precedence classes, and treat records with
+   the same intervention as twins, not alternatives (F11, F15). Guards as
+   selectors a runner accepts, checked at admissibility (F29). Defect
+   candidates as a by-product list, not a status (F16).
+6. **Scoping.** Which lens runs on which kind of partition (F06). Name the
+   contract documents in `scope.md` (F08). An inner-loop command that runs a
+   named subset and lists the executed cases, run once before the spikes
+   (F04, F24). The comparison file outside the spike's work tree (F25).
+   Where the frozen tree may live so that subagents can read it (F01).
+7. **Groups.** Drop "one pass per lens" or define it; the later lenses of a
+   group got less attention (F30, F07).
+8. **Leads and tools.** A clone lead without the network and without a line
+   threshold; what to give the dead-weight reader when no unused report
+   exists; how to save answers verbatim (F02, F03, F10).
+9. **Report.** Separate what the user must read from what must be on file:
+   the full section 8 came to 120 kB (F34).
+10. **Cost.** Readers are 87% of subagent cost. Untested ways to cut it: one
+    bundled file per partition and per document set instead of a read per
+    file, a lower thinking level, cheaper reader models, fewer lenses per
+    partition chosen from the leads.
+
+## 12. State, for resuming
 
 - Branch `code-quality-review-skill`, work tree
   `.worktrees/wt-ponygirls-code-quality-review-skill`; not merged. Commits:
@@ -490,8 +608,11 @@ Empty: no run yet.
   `b747a13411cf09afe1394f74b227897e`.
 - Decision inbox: Q183 to Q186 answered (section 6). Open in chat only: the
   lens set, the name and the home of the skill.
-- Not done: the pilot (section 7.1), the Haystack skill-draft record (to be
-  written after the pilot), installation under `nix/pkg/llm-skills/skills/`.
+- Pilot first wave done (section 10); the run directory is
+  `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-04aa8cceee04-1795776647075/debug/cqr-20261127-1051`
+  (`report.md`, `friction.md`, `hypotheses.jsonl`, `spikes/`, `spike-worktrees.tsv`).
+- Not done: tuning (section 11), the held-out run, the other partitions, the
+  Haystack skill-draft record, installation under `nix/pkg/llm-skills/skills/`.
 - Scratch material outside the repository, not needed to continue:
   `/tmp/cq-research` (prior-art downloads, clone-detector probes, the old
   script versions used for the reproductions).
