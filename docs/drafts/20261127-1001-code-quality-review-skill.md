@@ -1118,7 +1118,8 @@ scripts, and chronicle outside the five families.
 - **Skill.** Draft v0.6 in `20261127-1001-code-quality-review-skill/SKILL.md`
   (50.5 kB, not run; v0.3 to v0.5 were each run once). Not installed:
   nothing is under `nix/pkg/llm-skills/skills/`. In Haystack as
-  `corporate-activity:skill-draft-code-quality-review`, attention required.
+  `corporate-activity:skill-draft-code-quality-review`, revision 3 (v0.6 in
+  full, the evidence of the three runs, known defects), attention required.
 - **Beside this note:** `measure.py` (the script embedded in the skill, byte
   for byte), `cross-service-patches/` (the six patches of the third run),
   `answer-keys/` (the planted smells of the first two runs; their SHA-256
@@ -1148,9 +1149,11 @@ scripts, and chronicle outside the five families.
   that each staged patch is kept in its run directory; the local branches
   `haystack-server-helpers` and `manure-backend-helpers`.
 - **Published** (public, expiring 27 Dec 2026): Manure artifact
-  `ff9658ab13163498edafb152a63091ed` holds v0.5 and the reports of all
-  three runs; earlier snapshots are `759b1d0dd27d3ea9a78992b0594cf250`,
-  `00256bb27785abbc468e779cbae26880` and `b747a13411cf09afe1394f74b227897e`.
+  `f5faf8d04975a5059b0d1f102badcdfd` holds v0.6, this note at `133e4e6d`,
+  the patches, the answer keys and the reports of all three runs; earlier
+  snapshots are `ff9658ab13163498edafb152a63091ed`,
+  `759b1d0dd27d3ea9a78992b0594cf250`, `00256bb27785abbc468e779cbae26880`
+  and `b747a13411cf09afe1394f74b227897e`.
 - **Decisions:** Q183 to Q186, Q193, Q194, Q202, Q203, Q222 and Q223, all
   answered (section 6). Never answered, asked in chat only: whether the nine
   lenses are right, and the name and home of the skill.
