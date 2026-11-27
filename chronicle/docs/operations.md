@@ -412,20 +412,30 @@ ignores the key but refuses an `indexing` section without the three capacities.
   it serves.
 - **The hold.** A failure at annotation or embedding answered HTTP 429, 503 or 529 holds the job with its attempt
   refunded; HTTP 500, 502, 504, 408, a deadline (`model-timeout`) or a transport failure (`model-transport`) holds it with
-  the attempt charged, and at the fifth attempt fails it. Held = Queued with `lease_until` 1, 2, 4, 8, then 15 minutes
-  ahead by `transient_failures`, the count of failures in a row without saved progress shared with database holds; the
-  tenth fails the job with the code of that failure, and so does a failure on its window's tenth annotation reservation.
-  `error` keeps the provider code and `failure_stage` its stage; `waiting_since` and `bulk` are kept, so the job returns at
-  its place in the waiting order. One line per hold: `job held jobId=… code=… httpStatus=… stage=… class=refunded|charged
-  hold=k holdEnds=… reservation=…`. Other statuses are recorded as before; 401, 403 and 404 also log `model provider
-  configuration alert …`. RetryJob clears a hold; Retry failed does not touch held (Queued) jobs.
+  the attempt charged. Held = Queued with `lease_until` 1, 2, 4, 8, then 15 minutes ahead by `transient_failures`, the
+  count of failures in a row without saved progress shared with database holds; `error` keeps the provider code and
+  `failure_stage` its stage; `waiting_since` and `bulk` are kept, so the job returns at its place in the waiting order.
+  RetryJob clears a hold; Retry failed does not touch held (Queued) jobs. Other statuses are recorded as before.
+- **Record outcomes and their lines** (logstage renders each field as `name=argument=value`; the native server, e.g.
+  `httpStatus=httpStatus=429`): a confirmed hold logs `job held … code=code=… httpStatus=httpStatus=… stage=stage=…
+  class=failureClass=refunded|charged hold=hold=K holdEnds=holdEnds=… reservation=reservation=…`; a terminal outcome logs
+  no hold but `job failed … class=failureClass=… consecutive=consecutive=N
+  limit=limit=attempt-limit|consecutive-limit|reservation-limit …` (a charged failure at the fifth attempt, the tenth in a
+  row, the window's tenth annotation reservation), or `limit=limit=recorded` when a record whose commit acknowledgement was
+  lost is read back as Failed; a claim the owner's indexing no longer admits is parked as before (`job not held … parked`);
+  a claim that ended (lease, newer revision, owner target) records nothing (`job not held … the claim ended`). After
+  `job failure not recorded …` the outcome is unknown: read the row — Running with its lease and charge (reclaimed after
+  the lease), or a hold or failure that committed although its acknowledgement was lost. 401, 403 and 404 also log
+  `model provider configuration alert …`.
 - **The lane cool-down.** After such a failure the lane that ran the job waits 1, 2, 4, 8, then 15 minutes before its next
   claim (`indexing lane paused lane=… upstream=… level=… pauseSeconds=…`); a completed answer of the upstream that failed
   resets it (`indexing lane cool-down reset …`). In memory only: a restart clears it. Under the waiting order lane 0 keeps
   the large-job permit while paused. Other lanes are not delayed.
 - **Switching it off** with jobs held: they stay Queued until their `lease_until`, then are claimed and recorded as before;
   the shared count and refunded attempts stay as they are. The Activity page reads every held row (database holds too)
-  `Hold ends HH:MM (back-off)` with `Prior: <error>`.
+  `Hold ends HH:MM (back-off)` with `Prior: <error>`. Rolling back only the image needs no order: an older release ignores
+  the extra `providerBackoff` key. Rolling back the NixOS module itself needs the option removed from the host
+  configuration before or with it (an older module has no such option).
 
 ## Models
 
