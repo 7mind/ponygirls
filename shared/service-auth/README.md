@@ -1,8 +1,11 @@
 # Shared service accounts
 
 `serviceAuth` owns password verification, opaque browser sessions, issued API
-credentials, and the separately versioned account JSON protocol. It does not own
-service permissions, origins, HTTP admission, database connections or transactions.
+credentials, the separately versioned account JSON protocol and the mechanisms of the
+request boundary (`ponygirls.auth.boundary`, below). Each service owns its policy
+values: allowed hosts and origins, cookie names, which rule variants it selects, and
+the failure codes, messages and statuses of every refusal. It does not own service
+permissions, database connections or transactions.
 `AccountSql` receives the caller's existing `Connection`; initialize once at startup
 and reconcile the complete loaded declarative directory on startup/configuration
 replacement before accepting account operations. Reconciliation persists current
@@ -45,6 +48,32 @@ References to password/hash files are runtime secrets, never Nix-store values.
 - Persistent cookies use 400-day browser retention, refreshed on use. This is not
   a session timeout. Browsers may cap/evict cookies or users may clear them; the
   server cannot guarantee retention of client-side storage indefinitely.
+
+## Request boundary (`ponygirls.auth.boundary`)
+
+HTTP-neutral transport and configuration rules; nothing in the package imports an
+HTTP library. Request-time rules throw `BoundaryRefused(Refusal)`; configuration
+loaders return `Either[ConfigRefusal, A]`. A service maps each refusal to its own
+failure with an exhaustive match, so a refusal added here cannot fall through to a
+generic 503. Refusals and failures never carry a presented secret.
+
+| Mechanism | What the service passes |
+|---|---|
+| `CanonicalOrigin`, `RequestAuthority` | — (canonical `scheme://host[:port]` origins; the authority a `Host` names) |
+| `OriginPolicy.load`, `secureCookie`, `validateTransport`, `csrf`, `accountTransport` | allowed host names, allowed origins, opted-in plain-HTTP origins, `cookieSecure` |
+| `SessionCookie.serialize`, `select` | cookie name, `SecureAttribute` (`Last` or `BeforeMaxAge`), `CookieValue` (`Trimmed` or `Exact`) |
+| `CredentialSelection.resolve` | `SessionCookies` (secure and plain names, value reading), `CredentialAccept` per route, `mutate` |
+| `DeclaredUsers.load` | parsed users (`DeclaredUserConfig`), `DeclaredIdRules`, `DigestRead` (`Snapshot` or `PerCheck`), `DigestReader` (`Stream` or `Bounded`) |
+| `ConfiguredTokens` | — (lookup by secret or digest; listing with `source: "configured"` and scope `api`) |
+| `ImperativeConfig.settings` | service name, parsed `accounts` settings, the declared directory |
+
+`OriginPolicy` is the origin model of Haystack: host names admitted on any port,
+an Origin of the request's own security class, a cookie write proven by an allowed
+`Origin` or by `Sec-Fetch-Site: same-origin` without one, and the account plane on
+the exact authority, where an opted-in plain-HTTP origin's GET may prove same origin
+with `X-Account-Request: 1` instead. Services with another origin model keep it and
+use the other mechanisms. Configuration parsing (key names, file layout) stays in the
+service; the loaders take parsed values. Users today: Haystack.
 
 ## Account HTTP protocol v1
 
