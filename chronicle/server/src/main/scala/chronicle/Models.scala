@@ -133,7 +133,9 @@ final class OpenAIEmbedder(http: ModelHttp,config: Config) extends Embedder {
     }
   }
 }
-final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger,failureBackoff: Worker.FailureBackoff,snapshots: SnapshotAdmission,leases: Worker.Leases) {
+final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger,failureBackoff: Worker.FailureBackoff,snapshots: SnapshotAdmission,leases: Worker.Leases,coolDown: Worker.CoolDown) {
+  def this(archive: SessionArchive,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger,failureBackoff: Worker.FailureBackoff,snapshots: SnapshotAdmission,leases: Worker.Leases) =
+    this(archive,problemAnnotator,embedder,config,profiles,admission,logger,failureBackoff,snapshots,leases,Worker.CoolDown.production)
   def this(archive: SessionArchive,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger,failureBackoff: Worker.FailureBackoff,snapshots: SnapshotAdmission) =
     this(archive,problemAnnotator,embedder,config,profiles,admission,logger,failureBackoff,snapshots,Worker.Leases.production)
   private val leaseSeconds = leases.lease.toSeconds.toInt
@@ -179,7 +181,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     * unstaged, as a failure of `acceptAnnotation` and of the checkpoint write does (G2 D4 reversed per orchestrator 20:46Z). */
   private final class PaidWriteFailure(val error: Throwable) extends RuntimeException
   private def publishStage(run: => IO[Unit]): IO[Unit] = IO.defer(run).handleErrorWith(error => IO.raiseError(StagedFailure(IndexingStage.Publication,error)))
-  private final class Windows(claim: Claim,total: Int) {
+  private final class Windows(claim: Claim,total: Int,answers: Worker.Answers) {
     private val dimensions=config.embedding.dimensions
     /** Decisions and embedding parts this attempt took from another run's accepted work (ingest-limits spec §5.4). */
     val reusedDecisions=new java.util.concurrent.atomic.AtomicInteger(0)
@@ -210,7 +212,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
           IO { if(continuations>0) { continuedWindows.incrementAndGet(); () } }.as((merged,attempt))
       })
       else accepted(key)(json => (ProblemPassages.decode(window,state.carry.nonEmpty,json),0),value => CheckpointJson.decision(value._1))(
-        annotate(key,index)(authorize => problemAnnotator.annotateGuarded(claim.owner,window,state.carry,authorize)
+        annotate(key,index)(authorize => answers.observed(IndexingStage.Annotation)(problemAnnotator.annotateGuarded(claim.owner,window,state.carry,authorize))
           .flatTap(value => IO(ProblemPassages.validate(window,state.carry.nonEmpty,value)))))
     def report(completed: Int): IO[Unit] = IO.blocking {
       Check(archive.progress(claim,completed,total),"stale-claim","indexing claim is no longer current")
@@ -301,7 +303,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     private def ask(key: CheckpointKey,window: ProblemPassages.Window,state: ProblemPassages.State,index: Int,chain: Chain): IO[(ProblemPassages.Decision,Int,Int)] =
       IO((chain.partial.fold(window)(value => ProblemPassages.tail(window,value.covered)),chain.partial.fold(state.carry)(value => ProblemPassages.carryAfter(state,window,value.kept.parts)))).flatMap { (request,previous) =>
         authorizedAnnotation(archive.reserveAnnotation(claim,key,chain.prefix),index) { authorize =>
-          problemAnnotator.annotateGuarded(claim.owner,request,previous,authorize).flatMap { answer =>
+          answers.observed(IndexingStage.Annotation)(problemAnnotator.annotateGuarded(claim.owner,request,previous,authorize)).flatMap { answer =>
             IO { val merged=ProblemPassages.merge(chain.covered,chain.kept,answer); (merged,ProblemPassages.coverage(window,state.carry.nonEmpty,merged)) }
           }
         }.flatMap {
@@ -348,9 +350,9 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       val parts=batches.zipWithIndex.traverse_ { (batch,part) =>
         val key=IndexCheckpoints.embedding(claim,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,batch)
         def validated(vectors: List[List[Double]]): List[List[Double]] = { CheckpointJson.validateVectors(vectors,batch.size,dimensions); vectors }
-        accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(IO.defer {
+        accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(answers.observed(IndexingStage.Embedding)(IO.defer {
           embedder.documentsGuarded(claim.owner,batch.map(_.text),IO.blocking(archive.authorizeModelDispatch(claim)))
-        }.map(validated))
+        }).map(validated))
       }
       // A part accepted under another batch size addresses other pieces: none of the window's parts is reused.
       (admitted *> parts.recoverWith { case _: CheckpointInputMismatch =>
@@ -502,7 +504,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   }
   /** A job whose published generation it may continue (ingest-limits spec §5.6.2) indexes and publishes the windows from
     * that generation's cut on; any other one all its windows. Large is what the job indexes. */
-  private def passages(claim: Claim,large: LargeJobs,fetch: MessageFetch): IO[Unit] = IO.blocking(archive.publicationParent(claim)).flatMap { parent =>
+  private def passages(claim: Claim,large: LargeJobs,fetch: MessageFetch,answers: Worker.Answers): IO[Unit] = IO.blocking(archive.publicationParent(claim)).flatMap { parent =>
     IO.blocking(count(claim,fetch,parent)).flatMap { total =>
       val indexed=total-parent.fold(0)(_.cut.window)
       if(indexed>LargeJobs.windows && large==LargeJobs.Skipped)
@@ -510,7 +512,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
           case None => logger.info(s"large job deferred jobId=${claim.jobId} totalWindows=$total indexedWindows=$indexed largeJobWindows=${LargeJobs.windows}")
           case Some(waitingSeconds) => logger.info(s"large job deferred jobId=${claim.jobId} totalWindows=$total indexedWindows=$indexed largeJobWindows=${LargeJobs.windows} waitingSeconds=$waitingSeconds")
         })
-      else indexWindows(claim,ProblemPassages.Source(claim.messages.reader(fetch)),total,parent) *> publish(claim,total,fetch,parent)
+      else indexWindows(claim,ProblemPassages.Source(claim.messages.reader(fetch)),total,parent,answers) *> publish(claim,total,fetch,parent)
     }
   }
   /** Back to the queue with its window count and without the attempt: claims that skip large jobs pass it by. */
@@ -520,8 +522,8 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     * between windows only the passage state with its bounded carry is kept. A window whose input (source and carry) an
     * earlier run of the source accepted reuses that output by reference (§5.4): after an append, the windows below the
     * previous revision's last one. */
-  private def indexWindows(claim: Claim,source: ProblemPassages.Source,total: Int,parent: Option[PublicationParent]): IO[Unit] = {
-    val windows=new Windows(claim,total)
+  private def indexWindows(claim: Claim,source: ProblemPassages.Source,total: Int,parent: Option[PublicationParent],answers: Worker.Answers): IO[Unit] = {
+    val windows=new Windows(claim,total,answers)
     // A window reads its messages from the database.
     def loop(state: ProblemPassages.State,index: Int): IO[Unit] = IO.blocking(source.next(state.nextSource)).flatMap {
       case None =>
@@ -566,16 +568,22 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     def end: Deadline = tracked
     def timeLeft: FiniteDuration = tracked.timeLeft
   }
-  private def process(claim: Claim,large: LargeJobs,lease: AttemptLease): IO[Unit] = {
-    val work=Dispatcher.sequential[IO](await=true).use(dispatcher => passages(claim,large,Worker.messageFetch(config,snapshots,dispatcher)))
+  /** One attempt of `claim`; what its lane learns of it (Worker.Attempt): the stage of a classified provider failure that
+    * ended it (only with `indexing.providerBackoff`), and the upstreams that answered one of its calls with a completed 2xx. */
+  private def process(claim: Claim,large: LargeJobs,lease: AttemptLease): IO[Worker.Attempt] = {
+    val answers=new Worker.Answers
+    attempt(claim,large,lease,answers).map(failed => Worker.Attempt(failed,answers.upstreams))
+  }
+  private def attempt(claim: Claim,large: LargeJobs,lease: AttemptLease,answers: Worker.Answers): IO[Option[IndexingStage]] = {
+    val work=Dispatcher.sequential[IO](await=true).use(dispatcher => passages(claim,large,Worker.messageFetch(config,snapshots,dispatcher),answers))
     val renew=(IO.sleep(leases.renewal) *> IO(Deadline.now).flatMap(at => IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current")) *> IO(lease.renewed(at)))).foreverM
-    IO.race(work,renew).void.handleErrorWith { failure =>
+    IO.race(work,renew).as(Option.empty[IndexingStage]).handleErrorWith { failure =>
       val (stage,error,reservation)=failure match { case StagedFailure(stage,error,reservation) => (Some(stage),error,reservation); case error => (None,error,None) }
       val provider=if(providerBackoff) ProviderBackoff.classify(stage,error) else None
       error match {
         case error: DomainError if Worker.fatal(error) => IO.raiseError(error)
-        case _ if Worker.transient(error) => holdTransient(claim,stage,error,lease)
-        case _ if provider.nonEmpty && stage.nonEmpty => holdProvider(claim,ProviderFailure(failureCode(error),stage.get,provider.get,reservation),error,lease)
+        case _ if Worker.transient(error) => holdTransient(claim,stage,error,lease).as(None)
+        case _ if provider.nonEmpty && stage.nonEmpty => holdProvider(claim,ProviderFailure(failureCode(error),stage.get,provider.get,reservation),error,lease).as(stage)
         case _ =>
           val code=failureCode(error)
           val exceptionClass=error.getClass.getName
@@ -590,7 +598,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
           }.handleErrorWith {
             case fatal: DomainError if Worker.fatal(fatal) => IO.raiseError(fatal)
             case error => failureNotRecorded(claim,code,error)
-          } *> IO.sleep(failureBackoff.delay)
+          } *> IO.sleep(failureBackoff.delay).as(None)
       }
     }
   }
@@ -666,11 +674,11 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       // A claim decodes no message (ingest-limits spec §5.2.1): it waits for no snapshot admission.
       IO(Deadline.now).flatMap(claimed => IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds,large)).redeemWith(claimFailed,{
         case None => IO.pure(Worker.Iteration.Idle)
-        case Some(claim) => process(claim,large,new AttemptLease(claimed)).as(Worker.Iteration.Processed)
+        case Some(claim) => process(claim,large,new AttemptLease(claimed)).map(Worker.Iteration.Processed(_))
       }))
     }
   }
-  def once: IO[Boolean] = iteration.map(_==Worker.Iteration.Processed)
+  def once: IO[Boolean] = iteration.map(_.processed)
   /** `indexing.claimOrder` (read at start). */
   private val claimOrder = ClaimOrderMode.of(config)
   /** One claim of `lane` in the waiting order (ClaimOrder); lane 0 runs it holding the large-job permit (`inLane`). A
@@ -680,38 +688,117 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       case ClaimOutcome.Idle | ClaimOutcome.Contended => IO.pure(Worker.Iteration.Idle)
       case ClaimOutcome.Claimed(claim) =>
         IO(claim.facts.foreach(facts => logger.log(izumi.logstage.api.Log.Level.Info)(izumi.logstage.api.Log.Message.raw(ClaimFacts.logLine(claim.jobId,facts,lane,java.time.Instant.now()))))) *>
-          process(claim,lane.large,new AttemptLease(claimed)).as(Worker.Iteration.Processed)
+          process(claim,lane.large,new AttemptLease(claimed)).map(Worker.Iteration.Processed(_))
     }))
   }
   /** Lane 0 of the waiting order owns the large-job permit while it runs; the other lanes never take it. */
   private def inLane[A](lane: ClaimLane)(work: IO[A]): IO[A] = (if(lane.kind==ClaimLane.Kind.Large) admission.largeJobOwned else Resource.unit[IO]).use(_ => work)
   /** One claim of `lane` in the waiting order (tests): true when a job was processed. */
-  def onceInLane(lane: ClaimLane): IO[Boolean] = inLane(lane)(laneIteration(lane)).map(_==Worker.Iteration.Processed)
+  def onceInLane(lane: ClaimLane): IO[Boolean] = inLane(lane)(laneIteration(lane)).map(_.processed)
+  /** A worker lane: its index and its cool-down (`indexing.providerBackoff`), in this process's memory only. */
+  private[chronicle] final class Lane(val index: Int) {
+    val pause = new Worker.LanePause(coolDown)
+  }
+  /** One iteration of `lane` (its claim of the waiting order, else today's) and how long the lane then waits before its next
+    * claim: after an attempt nothing, or with `indexing.providerBackoff` its cool-down (Worker.LanePause); idle the idle
+    * delay; after a failed claim the failure back-off. Under the waiting order lane 0 holds the large-job permit throughout
+    * (`inLane` around the whole loop), its pause included. */
+  private[chronicle] def step(lane: Lane): IO[FiniteDuration] = (claimOrder match {
+    case ClaimOrderMode.SourceId => iteration
+    case ClaimOrderMode.Waiting(bulkLanes) => laneIteration(ClaimLane.of(lane.index,bulkLanes))
+  }).flatMap {
+    case Worker.Iteration.Processed(attempt) => if(providerBackoff) paused(lane,attempt) else IO.pure(Duration.Zero)
+    case Worker.Iteration.Idle => IO.pure(idleDelay)
+    case Worker.Iteration.ClaimFailed => IO.pure(failureBackoff.delay)
+  }
+  private def paused(lane: Lane,attempt: Worker.Attempt): IO[FiniteDuration] = IO(lane.pause.after(attempt)).flatMap { change =>
+    val index=lane.index
+    IO(change.reset.foreach(upstream => logger.info(s"indexing lane cool-down reset lane=$index upstream=$upstream"))) *>
+      IO(change.paused.foreach { (upstream,level,pause) =>
+        val seconds=pause.toSeconds
+        logger.warn(s"indexing lane paused lane=$index upstream=$upstream level=$level pauseSeconds=$seconds")
+      }).as(change.delay)
+  }
+  /** The loop of lane `index`: its iterations, each followed by the wait `step` gives. */
+  private[chronicle] def lane(index: Int): IO[Nothing] = {
+    val value=new Lane(index)
+    val loop=step(value).flatMap(delay => if(delay==Duration.Zero) IO.unit else IO.sleep(delay)).foreverM
+    claimOrder match {
+      case ClaimOrderMode.SourceId => loop
+      case ClaimOrderMode.Waiting(bulkLanes) => inLane(ClaimLane.of(index,bulkLanes))(loop)
+    }
+  }
   def run: IO[Nothing] = {
     val retired=IO(config.maxSmallJobBudgetBytes.foreach(value => logger.warn(s"retired configuration key ignored key=maxSmallJobBudgetBytes value=$value: a job's heap is one window, bounded by maxIndexingBudgetBytes")))
-    val lane: IO[Nothing]=iteration.flatMap {
-      case Worker.Iteration.Processed => IO.unit
-      case Worker.Iteration.Idle => IO.sleep(idleDelay)
-      case Worker.Iteration.ClaimFailed => IO.sleep(failureBackoff.delay)
-    }.foreverM
     val publication=IO {
       val incremental=config.indexing.incrementalPublication; val horizon=config.indexing.metadataHorizonWindows
       logger.info(s"indexing publication incrementalPublication=$incremental metadataHorizonWindows=$horizon")
     }
-    def ordered(value: ClaimLane): IO[Nothing] = inLane(value)(laneIteration(value).flatMap {
-      case Worker.Iteration.Processed => IO.unit
-      case Worker.Iteration.Idle => IO.sleep(idleDelay)
-      case Worker.Iteration.ClaimFailed => IO.sleep(failureBackoff.delay)
-    }.foreverM)
-    val lanes=claimOrder match {
-      case ClaimOrderMode.SourceId => List.fill(config.indexing.annotationSessions)(lane)
-      case ClaimOrderMode.Waiting(bulkLanes) => List.tabulate(config.indexing.annotationSessions)(index => ordered(ClaimLane.of(index,bulkLanes)))
-    }
+    val lanes=List.tabulate(config.indexing.annotationSessions)(lane)
     retired *> publication *> lanes.parSequence.map(_.head)
   }
 }
 object Worker {
-  private enum Iteration { case Processed,Idle,ClaimFailed }
+  private enum Iteration {
+    case Processed(attempt: Attempt)
+    case Idle,ClaimFailed
+    def processed: Boolean = this match { case Processed(_) => true; case _ => false }
+  }
+  /** What a lane learns of an attempt it ran (provider back-off, lane cool-down): the stage of the classified provider
+    * failure that ended it (None: none, or `indexing.providerBackoff` off), and the upstreams (stages) that answered a call
+    * of the attempt with a completed 2xx exchange. */
+  private[chronicle] final case class Attempt(providerFailure: Option[IndexingStage],answered: Set[IndexingStage])
+  /** The upstreams that answered an attempt's calls with a completed 2xx: the call returned, or its answer was rejected
+    * for its content (a ModelRejection or a `model-output` code, which only an answer read in full can give); a non-2xx
+    * status, a deadline or a transport failure (also after 2xx headers) is no answer. */
+  private[chronicle] final class Answers {
+    private val seen=new java.util.concurrent.atomic.AtomicReference[Set[IndexingStage]](Set.empty)
+    def upstreams: Set[IndexingStage] = seen.get
+    def observed[A](stage: IndexingStage)(call: IO[A]): IO[A] = call.attempt.flatMap { result =>
+      IO(if(Answers.answered(result)) { seen.updateAndGet(_+stage); () }) *> IO.fromEither(result)
+    }
+  }
+  private[chronicle] object Answers {
+    def answered(result: Either[Throwable,?]): Boolean = result match {
+      case Right(_) => true
+      case Left(error) => ModelRejection.classify(error).nonEmpty || (error match {
+        case DomainError(code,_) => code=="model-output" || code.startsWith("model-output/")
+        case _ => false
+      })
+    }
+  }
+  /** A lane's cool-down (provider back-off option c): `delay(level)` before its next claim after its `level`-th provider
+    * failure without a reset: base, then times `factor` up to `cap`. */
+  final case class CoolDown(base: FiniteDuration,factor: Int,cap: FiniteDuration) {
+    def delay(level: Int): FiniteDuration = Iterator.iterate(base.min(cap))(value => (value*factor.toLong).min(cap)).drop(level-1).next()
+  }
+  object CoolDown {
+    /** 1, 2, 4, 8, then 15 minutes. */
+    val production: CoolDown = CoolDown(60.seconds,2,15.minutes)
+  }
+  /** What one attempt did to a lane's cool-down: the upstream whose completed 2xx reset it, and the pause it started. */
+  private[chronicle] final case class PauseChange(reset: Option[IndexingStage],paused: Option[(IndexingStage,Int,FiniteDuration)]) {
+    def delay: FiniteDuration = paused.fold(Duration.Zero)(_._3)
+  }
+  /** One lane's cool-down, in memory (a restart clears it): after a provider failure of the attempt the lane just ran
+    * (Attempt.providerFailure), the lane waits `delay(level)` before its next claim, the level one more than before; only a
+    * completed 2xx from the upstream that failed last, in a later attempt of the lane, resets the level (applied before
+    * that attempt's own failure, which then starts at the first pause). Other attempts change nothing and pause nothing. */
+  private[chronicle] final class LanePause(coolDown: CoolDown) {
+    private var level=0
+    private var failed=Option.empty[IndexingStage]
+    def current: (Int,Option[IndexingStage]) = synchronized((level,failed))
+    def after(attempt: Attempt): PauseChange = synchronized {
+      val reset=failed.filter(attempt.answered)
+      if(reset.nonEmpty) { level=0; failed=None }
+      attempt.providerFailure match {
+        case Some(stage) =>
+          level+=1; failed=Some(stage)
+          PauseChange(reset,Some((stage,level,coolDown.delay(level))))
+        case None => PauseChange(reset,None)
+      }
+    }
+  }
   /** How long the job of a claim of the waiting order (ClaimFacts) has waited; None under today's order. */
   private def waitingSeconds(claim: Claim): Option[Long] =
     claim.facts.flatMap(_.waitingSince).map(since => java.time.Duration.between(since,java.time.Instant.now()).getSeconds)

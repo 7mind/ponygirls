@@ -85,6 +85,12 @@ object ProviderBackoffFixtures {
     new Worker(archive,new OpenAIProblemPassageAnnotator(http,config),new OpenAIEmbedder(http,config),config,IndexProfileCatalog.current(config),
       ModelAdmission.make(config.indexing).unsafeRunSync(),logger,ModelFixtures.failureBackoff,ModelFixtures.snapshots)
   }
+  /** As `worker`, with its model admission and its lanes' cool-down given. */
+  def workerWith(archive: SessionArchive,config: Config,client: org.http4s.client.Client[IO],logger: logstage.IzLogger,admission: ModelAdmission,coolDown: Worker.CoolDown): Worker = {
+    val http=ProviderBackoffFixtures.http(client,config)
+    new Worker(archive,new OpenAIProblemPassageAnnotator(http,config),new OpenAIEmbedder(http,config),config,IndexProfileCatalog.current(config),
+      admission,logger,ModelFixtures.failureBackoff,ModelFixtures.snapshots,Worker.Leases.production,coolDown)
+  }
   /** The production ModelHttp of `config` (its statuses typed when `indexing.providerBackoff` is on) over `client`. */
   def http(client: org.http4s.client.Client[IO],config: Config): ModelHttp = {
     val clock=new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO])
