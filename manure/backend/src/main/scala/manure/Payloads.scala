@@ -20,7 +20,6 @@ trait Payloads:
   def truncateTo(a: Artifact, path: String, end: Long): Unit
   def complete(a: Artifact, live: Boolean): Boolean
   def structureComplete(a: Artifact, live: Boolean): Boolean
-  def hasLive(a: Artifact): Boolean
   def publish(a: Artifact, fault: String => Unit): Unit
   def forceLive(a: Artifact, fault: String => Unit): Unit
   def cleanupStage(a: Artifact): Unit
@@ -119,9 +118,6 @@ final class FilesystemPayloads(root: ConfinedDirectory, limits: Limits) extends 
         }
       }
     catch case _: IOException | _: DomainError => false
-  def hasLive(a: Artifact): Boolean =
-    try { root.forceDirectory(name(prefix(a,true))); true }
-    catch case _: NoSuchFileException => false
   private def forceTree(a: Artifact, live: Boolean): Unit =
     val base = prefix(a,live)
     val topology = root.tree(name(base),limits.cleanupEntries,65)

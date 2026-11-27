@@ -20,7 +20,7 @@ final class AcquisitionFailureSuite extends FunSuite:
     BackendFixture.resource(true).use { f =>
       var captured: Option[ConfinedFile] = None
       val payloads = new Payloads:
-        export f.payloads.{initialize,stage,sidecar,write,receiptValid,truncateTo,complete,structureComplete,hasLive,publish,forceLive,cleanupStage,cleanup,cleanupOrphans}
+        export f.payloads.{initialize,stage,sidecar,write,receiptValid,truncateTo,complete,structureComplete,publish,forceLive,cleanupStage,cleanup,cleanupOrphans}
         def open(a: Artifact,path: String): ConfinedFile =
           val file = f.payloads.open(a,path); captured=Some(file); file
       val armed = new AtomicBoolean(false)
