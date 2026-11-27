@@ -1,4 +1,4 @@
-import { Type, type Static } from 'typebox';
+import { Type } from 'typebox';
 import { StringEnum } from '@earendil-works/pi-ai';
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { EDIT_TYPE, UPDATE_TOOL, currentSet, editRecord, nextNumbers, previewEdit, type EditOutcome } from './current.ts';
@@ -24,7 +24,6 @@ export const updateToolSchema = Type.Object({
   scope: text('add_rule (required); update of a rule: when and where the rule applies.'),
   reason: text('retire (required): why the entry no longer applies.'),
 }, { additionalProperties: false });
-export type UpdateToolInput = Static<typeof updateToolSchema>;
 
 export interface UpdateToolDependencies {
   readonly pi: Pick<ExtensionAPI, 'appendEntry'>;

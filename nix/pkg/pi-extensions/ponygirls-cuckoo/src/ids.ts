@@ -19,10 +19,3 @@ export function parseEntryId(value: unknown): { kind: EntryKind; number: number 
   if (match === null) return null;
   return { kind: match[1] === ID_PREFIX.objective ? 'objective' : 'rule', number: Number(match[2]) };
 }
-
-/** A well-formed ID of the given kind, as saved data must hold it. */
-export function savedEntryId(value: unknown, kind: EntryKind): string {
-  const parsed = parseEntryId(value);
-  if (parsed === null || parsed.kind !== kind) throw new Error(`Invalid saved Cuckoo ${kind} id`);
-  return value as string;
-}

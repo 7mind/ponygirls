@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { REPORT_TYPE, MAX_OBJECTIVES, MAX_RULES, capturedCheckpoint, cancelledCheckpoint, checkpoint, checkpoints, reportText, historyText } from '../src/report.ts';
-import { entryId, parseEntryId, savedEntryId } from '../src/ids.ts';
+import { entryId, parseEntryId } from '../src/ids.ts';
 
 const objective = (id, title, eta = 'Unknown: not measured') => ({ id, objective: title, progress: 'Stated', issues: ['One known risk'], eta });
 const rule = (id, text, source = 'user') => ({ id, rule: text, source, scope: 'This session' });
@@ -19,9 +19,6 @@ test('entry IDs are AO or AR followed by a positive number without leading zeros
   assert.deepEqual(parseEntryId('AR3'), { kind: 'rule', number: 3 });
   for (const value of ['AO0', 'AO01', 'ao1', 'AO', 'AO1 ', ' AO1', 'A01', 'AO1.5', 'AO-1', 'AX1', 'AO1234567890', '', null, undefined, 1, {}, ['AO1']]) assert.equal(parseEntryId(value), null, String(value));
   for (const value of [0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER, 1e9]) assert.throws(() => entryId('objective', value), /exhausted or invalid/, String(value));
-  assert.equal(savedEntryId('AR9', 'rule'), 'AR9');
-  assert.throws(() => savedEntryId('AR9', 'objective'), /Invalid saved Cuckoo objective id/);
-  assert.throws(() => savedEntryId('nine', 'rule'), /Invalid saved Cuckoo rule id/);
 });
 
 // Specified Behavioral-Active / Blackbox-Atomic: what capture does with the ids of a reply.
