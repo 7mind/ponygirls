@@ -33,6 +33,9 @@ prompt, no prompt patch stands inside the conversation, an inquiry is the last m
 reply is in context exactly in the `visible` variant. A run that fails a check is failed, not graded. Each run records
 hashes of its system text (working directory normalised) and tool definitions; `analyze.mjs` prints them per cell and
 flags a cell whose runs differ. `DRY=1` builds every session and stops each request before it is sent: the canary.
+The request's model and the effort in force are read from the request, not from the runner's arguments. The gateway
+may let another model answer (server-side fallback); Pi records that on the reply, the runner collects it per session,
+and a session another model answered is reported apart from its cell.
 
 **Outcomes** (`grade.mjs`; scripted cases for each in `grade.test.mjs`).
 

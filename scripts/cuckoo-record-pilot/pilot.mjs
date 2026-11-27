@@ -124,7 +124,10 @@ function payloadProfile(payloads, work) {
   const cwdSection = /<cwd>\n(.*)\n<\/cwd>/.exec(system);
   if (cwdSection === null || cwdSection[1] !== work) throw new Error('The working-directory section of the system prompt is not the directory this run chose');
   const tools = payloads[0].tools.filter(tool => tool.name !== '__pi_deferred_placeholder__');
-  return { systemChars: system.length, systemSha256: hash(system.split(work).join('<CWD>')), toolNames: tools.map(tool => tool.name).sort(), toolsSha256: hash(JSON.stringify(tools.map(tool => JSON.stringify(tool)).sort())),
+  // The effort in force: the last in-conversation marker where the model takes one, else the request's own setting.
+  const marker = payloads[0].messages.findLast(message => message.role === 'system' && message.output_config !== undefined);
+  const effort = marker !== undefined ? marker.output_config.effort : payloads[0].output_config !== undefined ? payloads[0].output_config.effort : null;
+  return { requestModel: payloads[0].model, effort, systemChars: system.length, systemSha256: hash(system.split(work).join('<CWD>')), toolNames: tools.map(tool => tool.name).sort(), toolsSha256: hash(JSON.stringify(tools.map(tool => JSON.stringify(tool)).sort())),
     inquiryRequests: inquiries, ...(kind === 'checkpoint' ? { seededReplyInContext: JSON.stringify(payloads[0].messages).includes('Migrate the billing exporter to the new job queue\\",\\"progress') } : {}) };
 }
 
@@ -206,6 +209,9 @@ async function run(scenario, rep) {
     // What the subject was actually sent: the system text (its working directory normalised, the only part that differs
     // between runs of a cell) and the tool definitions, hashed so that every run of a cell can be compared with its canary.
     result.profile = payloadProfile(payloads, work);
+    if (result.profile.requestModel !== MODEL) throw new Error(`The request names model ${result.profile.requestModel}`);
+    // The gateway may let another model answer (server-side fallback); Pi then records it on the reply.
+    result.respondingModels = [...new Set(manager.getBranch().flatMap(entry => entry.type === 'message' && entry.message.role === 'assistant' ? [entry.message.responseModel === undefined ? entry.message.model : entry.message.responseModel] : []))];
     if (kind === 'checkpoint' && result.profile.seededReplyInContext !== (variant === 'visible')) throw new Error(`The seeded numbered reply is ${result.profile.seededReplyInContext ? 'in' : 'not in'} model context in the ${variant} variant`);
     writeFileSync(join(directory, 'first-request.json'), JSON.stringify(payloads[0], null, 1));
     writeFileSync(join(directory, 'last-request.json'), JSON.stringify(payloads.at(-1), null, 1));
