@@ -115,24 +115,38 @@ Three more choices of the service, without defaults:
   `Refused`: a password that is the secret of any configured token (whatever its owner's
   state, whether or not its digest is shared: `ConfiguredTokens.configures`) or of a live
   issued token is verified as a wrong password is, on the same path and with the same
-  failure, before any session work (declared logins and every verification of the
-  imperative core); offered as a new password (sign-up, redemption, recovery, password
-  change) it is `weak-password` (`400`) before it is hashed, and the operation's
-  transaction rolls back: nothing stored, no session replaced, nobody signed in.
+  failure (declared logins and every verification of the imperative core). A sign-in is
+  decided without the presented cookie: a wrong or refused one reads and locks no earlier
+  session; once a sign-in succeeded, the earlier session, if still live, ends in a
+  transaction of its own. Offered as a new password (sign-up, redemption, recovery,
+  password change), a bearer secret is `weak-password` (`400`) once the operation's checks
+  that do not depend on the password passed (a taken name stays `username-unavailable`),
+  and the operation's transaction rolls back: nothing kept, no session replaced, nobody
+  signed in.
 - `DeclaredInstallation`. `Reconciled`: the shared check against imperative accounts and
   the reconciliation. `Own`: the service's installation, for example
   `SharedAccountStorage.checked(check)`, which runs the service's own rule on its declared
   ids on the installing connection, under the directory lock, after the shared check and
   before the reconciliation, so that a refused installation writes nothing.
 - `AccountLifecycle`. `Unobserved`: nothing is told and nothing read for it.
-  `Observed(credentialEnded, accountChanged)`: after a commit, never after a rollback,
-  `credentialEnded(id)` for a session ended by sign-out or by a sign-in that replaced it
-  (`session-<uuid>`) and for a revoked issued token (`issued-<uuid>`), and
-  `accountChanged(id)` for an account whose rights ended or changed: disabled or enabled,
-  its administrator role changed, its password changed or recovered (its sessions
-  revoked), its TOTP requirement changed, its declared entry changed or removed by a
-  reload, or suspended by the master switch going off. Sessions revoked in bulk are told
-  through their account, not one by one. Identifiers only, never a secret.
+  `Observed(credentialEnded, accountChanged, log)`: `credentialEnded(id)` for the session
+  (`session-<uuid>`) a sign-out deleted or a sign-in, sign-up, redemption or recovery
+  replaced, and for a revoked issued token (`issued-<uuid>`): the id the committing
+  operation itself deleted or replaced. `accountChanged(id)` for an account whose rights
+  ended or changed: its sessions or tokens revoked in bulk (told through the account, not
+  one by one), disabled or enabled, activated (sign-up, redemption, approval), its
+  password or administrator role changed, its declared entry, administrator flag or
+  configured tokens changed or removed by a reload (a removed or rotated configured
+  token is told as its owner's change: the consumer re-checks that account's
+  credentials), its imperative accounts suspended or restored by the master switch.
+  Delivery: once the commit succeeded, never after a rollback, in a region that cannot
+  be cancelled, and also when releasing the connection afterwards fails (the storage's
+  `afterCommit`; `ConnectionTransactions.jdbc(database)` recognises `JdbcDatabase`'s close
+  failure). Each callback on its own: one that fails is reported to `log` (one line, kind
+  and id, no secret) and changes neither the operation's result nor later
+  notifications. **The callbacks run on the operation's fiber, after its commit: they must
+  be quick and must not block.** No queue. A reload (`reloaded(next, publish)`) installs,
+  then `publish`es its result, then tells; a failing notification does not fail it.
 
 `ImperativeAccounts.administrator` and `ImperativeAccountSql.administrator(c, settings,
 declared, userId)` read an account's effective administrator flag (the rule of the
@@ -143,16 +157,19 @@ authenticated operations) in the caller's transaction.
 `DeclarativeAccountService.identify(select)` resolves a credential as `resolve` does and
 returns an `Identified`: the `Captured` credential, the display name of its directory
 entry and `administrator`, the account's effective flag on a browser session and never
-true for a bearer token. A credential looked up in a transaction is judged against the
-configuration current when the transaction's callback runs, not the one it was selected
-under. `standing(captured)` reads it again (empty once the credential no longer
+true for a bearer token. The whole decision — the transport rule and the credential
+selection, the precedence of configured tokens over issued ones, the lookup — is taken
+under one configuration: for a configured token the current one, without waiting; for a
+lookup, the one read inside its transaction's callback, so that a reload published while
+the check waited for a connection decides all of it. `standing(captured)` reads it again (empty once the credential no longer
 authenticates the same authority); a live socket asks it.
 
 `ServiceCallers[S, C]` (package `ponygirls.auth.http4s`) takes the callers of a service's
 own routes. `ServiceCallerSettings` carries the transport values, `RequestAmbiguity`
 (`FirstHostClassCookie`: the first `Host` decides and only the cookie of the request's
 security class makes a bearer ambiguous; `OneHostAnyCookie`: exactly one `Host`, and a
-bearer beside a session cookie of either name is ambiguous) and `CallerReads[C]`
+bearer beside a session cookie of either name, however often it occurs, is
+`AmbiguousCredentials`) and `CallerReads[C]`
 (`CredentialOnly`: `Captured`, exactly the reads of `resolve`; `WithAdministrator`:
 `Identified`, one more read for an imperative account's flag). Per route the service
 passes a `CallerRoute`: `CredentialAccept` (`BearerOrCookie`, or `BearerOnly`, which
@@ -177,10 +194,11 @@ Blabber's accounts unit uses the module without code of its own for these mechan
 choices, by its contract (`blabber/models/current.baboon`) and design (§4):
 
 ```scala
-val storage = new SharedAccountStorage(transactions, (c, fingerprints) => new ChatIdentityHistory(c, fingerprints))
+val storage = new SharedAccountStorage(ConnectionTransactions.jdbc(database), (c, fingerprints) => new ChatIdentityHistory(c, fingerprints))
 val service = new DeclarativeAccountService[BlabberAuth](storage, () => current, runtime, IndexingService.Blabber,
   indexingPolicy, BearerSecretPasswords.Refused, storage.checked[BlabberAuth](DeclaredIds.check),
-  AccountLifecycle.Observed(credentialEnded = hub.endSession, accountChanged = hub.accountChanged))  // ids, not secrets
+  AccountLifecycle.Observed(credentialEnded = hub.endSession, accountChanged = hub.accountChanged, log = line => log(line)))  // ids, not secrets
+val reload = service.reloaded(load, result => IO(published.set(result)))  // published first, told afterwards
 val plane = new AccountPlane[BlabberAuth](service, AccountPlaneSettings(/* its responses, codes, statuses, audit */
   endSession = _ => IO.unit,  // keyed by the session secret; Blabber's hub is told by credential id above
   loginAdmission = LoginAdmission.Guarded(perClientAddressLimit), /* ... */))
@@ -196,7 +214,8 @@ val whoami = CallerRoute(CredentialAccept.BearerOrCookie, RouteCredential.Either
 Declared users load with `DeclaredIdRules.Blabber`. `CallerRefused(ActorMismatch)` is its
 `conflict` with reason `actor-mismatch`, `ActorRequired` its `invalid`,
 `CredentialKindNotServed` its `forbidden`. Its reload loop publishes a failed reload as
-Haystack's does (the supplier then throws the failure, and every decision fails closed).
+Haystack's does (the supplier then throws the failure, and every decision fails closed);
+`reloaded` publishes through the function it is given, before it tells.
 
 **Login admission.** `LoginAdmission` has no default, and `Unguarded` is a value a service
 has to write out (Haystack does, stating that it never limited declared logins). Blabber
