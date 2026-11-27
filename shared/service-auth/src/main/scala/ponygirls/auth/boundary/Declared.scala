@@ -60,8 +60,10 @@ final case class ConfiguredToken(userId: String, userType: String, tokenId: Stri
   * digest in constant time per digest. */
 trait ConfiguredTokens {
   def authenticate(secret: String): Option[ConfiguredToken]
-  /** Whether the configured token whose digest is `digest` is still `token`. */
-  def live(token: ConfiguredToken, digest: String): Boolean
+  /** Whether a grant persisted for user `userId`, token `tokenId` and token digest `digest` is still live: exactly one
+    * configured token of an enabled user has that digest, and it is that user's token of that id. The user type is
+    * not compared (a persisted grant does not record it); `authenticate` compares it. */
+  def live(userId: String, tokenId: String, digest: String): Boolean
   /** The configured tokens of `owner` as account-protocol metadata (`source: "configured"`, scope `api`). */
   def listed(owner: String): Vector[AccountToken]
 }
@@ -74,7 +76,7 @@ object ConfiguredTokens {
 private abstract class DigestTokens(users: Vector[DeclaredUserConfig]) extends ConfiguredTokens {
   protected def byDigest(digest: String): Option[ConfiguredToken]
   def authenticate(secret: String): Option[ConfiguredToken] = if (Secrets.canonical(secret)) byDigest(Secrets.digest(secret)) else None
-  def live(token: ConfiguredToken, digest: String): Boolean = byDigest(digest).contains(token)
+  def live(userId: String, tokenId: String, digest: String): Boolean = byDigest(digest).exists(token => token.userId == userId && token.tokenId == tokenId)
   def listed(owner: String): Vector[AccountToken] =
     users.find(_.id == owner).toVector.flatMap(_.tokens).map(t => AccountToken(t.id, t.id, ConfiguredTokens.Source, None, false, ConfiguredTokens.Scopes))
   protected def matching(digest: String, stored: Vector[(Array[Byte], ConfiguredToken)]): Vector[ConfiguredToken] = {
@@ -199,18 +201,34 @@ object DeclaredUsers {
 final case class ImperativeAccountsConfig(enabled: Boolean, keyFile: Option[String], signupEnabled: Boolean, requireApproval: Boolean,
   maxUsers: Int, enrollmentEnabled: Boolean, enrollmentTtlSeconds: Long, issuer: Option[String], reservedUsernames: Vector[String])
 
+/** Which key-file paths are runtime paths outside the Nix store. */
+sealed trait KeyFilePolicy {
+  def admits(path: String): Boolean
+}
+object KeyFilePolicy {
+  private val NixStore = "/nix/store"
+  /** Haystack: the text starts with `/` and not with `/nix/store/`; `..` segments are not resolved. */
+  object LiteralStorePrefix extends KeyFilePolicy {
+    def admits(path: String): Boolean = path.startsWith("/") && !path.startsWith(NixStore + "/")
+  }
+  /** Manure: an absolute path whose normalised form is neither the store directory nor below it. */
+  object NormalizedPath extends KeyFilePolicy {
+    def admits(path: String): Boolean = scala.util.Try(Path.of(path)).toOption.exists(p => p.isAbsolute && !p.normalize().startsWith(Path.of(NixStore)))
+  }
+}
+
 object ImperativeConfig {
-  private val NixStore = "/nix/store/"
   /** Design §6.2–§6.3: the creation flags never imply the master switch; the master switch requires the key
     * file, an issuer and an enabled declarative admin; the remaining bounds are checked by `ImperativeSettings`.
     * `None` while the master switch is off. `service` is bound into the associated data of every encrypted TOTP secret.
     */
-  def settings(service: String, accounts: Option[ImperativeAccountsConfig], declared: DeclaredDirectory): Either[ConfigRefusal, Option[ImperativeSettings]] =
+  def settings(service: String, accounts: Option[ImperativeAccountsConfig], declared: DeclaredDirectory,
+      keyFiles: KeyFilePolicy): Either[ConfigRefusal, Option[ImperativeSettings]] =
     accounts match {
       case None => Right(None)
       case Some(a) if !a.enabled => Either.cond(!a.signupEnabled && !a.enrollmentEnabled, None, ConfigRefusal.AccountsFlagsWithoutSwitch)
       case Some(a) => for {
-        keyFile <- a.keyFile.filter(path => path.startsWith("/") && !path.startsWith(NixStore)).toRight(ConfigRefusal.AccountsKeyFile)
+        keyFile <- a.keyFile.filter(keyFiles.admits).toRight(ConfigRefusal.AccountsKeyFile)
         issuer <- a.issuer.toRight(ConfigRefusal.AccountsIssuer)
         _ <- Either.cond(declared.users.exists(user => user.enabled && declared.admins(user.id)), (), ConfigRefusal.AccountsAdmin)
       } yield Some(ImperativeSettings(service, a.signupEnabled, a.requireApproval, a.enrollmentEnabled, a.maxUsers,

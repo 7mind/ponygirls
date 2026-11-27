@@ -162,8 +162,8 @@ final class DeclaredUsersSuite extends munit.FunSuite {
     assertEquals(declared.tokens.authenticate(AliceToken), Some(ConfiguredToken("alice", "human", "browser")))
     assertEquals(declared.tokens.authenticate(BotToken), Some(ConfiguredToken("bot", "agent", "worker")))
     assertEquals(declared.tokens.authenticate(RotationToken), None)
-    assert(declared.tokens.live(ConfiguredToken("alice", "human", "browser"), Secrets.digest(AliceToken)))
-    assert(!declared.tokens.live(ConfiguredToken("bot", "agent", "worker"), Secrets.digest(AliceToken)))
+    assert(declared.tokens.live("alice", "browser", Secrets.digest(AliceToken)))
+    assert(!declared.tokens.live("bot", "worker", Secrets.digest(AliceToken)))
   }
   directory.test("read per check: a rewritten file takes effect at once, a removed or malformed one fails closed alone, a shared digest matches nobody") { dir =>
     val c = users(dir)
@@ -173,8 +173,8 @@ final class DeclaredUsersSuite extends munit.FunSuite {
     write(dir, "alice.sha", Secrets.digest(RotationToken))
     assertEquals(declared.tokens.authenticate(RotationToken), Some(alice))
     assertEquals(declared.tokens.authenticate(AliceToken), None)
-    assert(declared.tokens.live(alice, Secrets.digest(RotationToken)))
-    assert(!declared.tokens.live(alice, Secrets.digest(AliceToken)))
+    assert(declared.tokens.live("alice", "browser", Secrets.digest(RotationToken)))
+    assert(!declared.tokens.live("alice", "browser", Secrets.digest(AliceToken)))
     Files.delete(dir.resolve("bot.sha"))
     assertEquals(declared.tokens.authenticate(BotToken), None)
     assertEquals(declared.tokens.authenticate(RotationToken), Some(alice))
@@ -182,14 +182,14 @@ final class DeclaredUsersSuite extends munit.FunSuite {
     assertEquals(declared.tokens.authenticate(RotationToken), Some(alice))
     write(dir, "bot.sha", Secrets.digest(RotationToken))
     assertEquals(declared.tokens.authenticate(RotationToken), None)
-    assert(!declared.tokens.live(alice, Secrets.digest(RotationToken)))
+    assert(!declared.tokens.live("alice", "browser", Secrets.digest(RotationToken)))
     assertEquals(declared.tokens.authenticate("A" * 42 + "B"), None)
   }
   directory.test("read per check: a disabled user's tokens never authenticate and stay listed; the load still refuses a shared digest") { dir =>
     val c = users(dir)
     val declared = load(c.updated(1, c(1).copy(enabled = false)), DeclaredIdRules.Haystack, DigestRead.PerCheck, DigestReader.Stream).fold(r => fail(s"refused: $r"), identity)
     assertEquals(declared.tokens.authenticate(BotToken), None)
-    assert(!declared.tokens.live(ConfiguredToken("bot", "agent", "worker"), Secrets.digest(BotToken)))
+    assert(!declared.tokens.live("bot", "worker", Secrets.digest(BotToken)))
     assertEquals(declared.tokens.listed("bot").map(_.id), Vector("worker"))
     val shared = c.updated(1, c(1).copy(tokens = Vector(c.head.tokens.head.copy(id = "other"))))
     assertEquals(load(shared, DeclaredIdRules.Haystack, DigestRead.PerCheck, DigestReader.Stream).map(_ => ()), Left(ConfigRefusal.DigestAssignedTwice))
@@ -223,19 +223,87 @@ final class DeclaredUsersSuite extends munit.FunSuite {
     val admin = withPassword(dir, users(dir).head).copy(admin = true)
     val declared = loaded(Vector(admin)).directory
     val key = write(dir, "totp.key", Secrets.generate() + "\n")
-    assertEquals(ImperativeConfig.settings("svc", None, declared), Right(None))
-    assertEquals(ImperativeConfig.settings("svc", Some(accounts(Some(key)).copy(enabled = false)), declared), Right(None))
+    assertEquals(ImperativeConfig.settings("svc", None, declared, KeyFilePolicy.LiteralStorePrefix), Right(None))
+    assertEquals(ImperativeConfig.settings("svc", Some(accounts(Some(key)).copy(enabled = false)), declared, KeyFilePolicy.LiteralStorePrefix), Right(None))
     Vector(accounts(Some(key)).copy(enabled = false, signupEnabled = true), accounts(Some(key)).copy(enabled = false, enrollmentEnabled = true)).foreach { a =>
-      assertEquals(ImperativeConfig.settings("svc", Some(a), declared), Left(ConfigRefusal.AccountsFlagsWithoutSwitch))
+      assertEquals(ImperativeConfig.settings("svc", Some(a), declared, KeyFilePolicy.LiteralStorePrefix), Left(ConfigRefusal.AccountsFlagsWithoutSwitch))
     }
     Vector(None, Some("relative/key"), Some("/nix/store/abc-key")).foreach { keyFile =>
-      assertEquals(ImperativeConfig.settings("svc", Some(accounts(keyFile)), declared), Left(ConfigRefusal.AccountsKeyFile))
+      assertEquals(ImperativeConfig.settings("svc", Some(accounts(keyFile)), declared, KeyFilePolicy.LiteralStorePrefix), Left(ConfigRefusal.AccountsKeyFile))
     }
-    assertEquals(ImperativeConfig.settings("svc", Some(accounts(Some(key)).copy(issuer = None)), declared), Left(ConfigRefusal.AccountsIssuer))
+    assertEquals(ImperativeConfig.settings("svc", Some(accounts(Some(key)).copy(issuer = None)), declared, KeyFilePolicy.LiteralStorePrefix), Left(ConfigRefusal.AccountsIssuer))
     val disabled = loaded(Vector(admin.copy(enabled = false))).directory
-    assertEquals(ImperativeConfig.settings("svc", Some(accounts(Some(key))), disabled), Left(ConfigRefusal.AccountsAdmin))
-    val settings = ImperativeConfig.settings("svc", Some(accounts(Some(key))), declared).fold(r => fail(s"refused: $r"), identity).getOrElse(fail("switch off"))
+    assertEquals(ImperativeConfig.settings("svc", Some(accounts(Some(key))), disabled, KeyFilePolicy.LiteralStorePrefix), Left(ConfigRefusal.AccountsAdmin))
+    val settings = ImperativeConfig.settings("svc", Some(accounts(Some(key))), declared, KeyFilePolicy.LiteralStorePrefix).fold(r => fail(s"refused: $r"), identity).getOrElse(fail("switch off"))
     assertEquals((settings.service, settings.issuer, settings.maxUsers, settings.signup, settings.requireApproval), ("svc", "Service (svc.test)", 100, false, true))
-    assertEquals(intercept[AccountFailure](ImperativeConfig.settings("svc", Some(accounts(Some(dir.resolve("absent").toString))), declared)).code, "config")
+    assertEquals(intercept[AccountFailure](ImperativeConfig.settings("svc", Some(accounts(Some(dir.resolve("absent").toString))), declared, KeyFilePolicy.LiteralStorePrefix)).code, "config")
+  }
+
+  directory.test("a persisted grant is live by user id, token id and digest only while exactly one enabled token has the digest") { dir =>
+    val c = users(dir)
+    val declared = load(c.updated(1, c(1).copy(enabled = false)) :+ c(1).copy(id = "carol", userType = "human", tokens = Vector(DeclaredTokenConfig("worker", write(dir, "carol.sha", Secrets.digest(RotationToken))))),
+      DeclaredIdRules.Manure, DigestRead.PerCheck, DigestReader.Bounded).fold(r => fail(s"refused: $r"), identity)
+    val alice = Secrets.digest(AliceToken)
+    assert(declared.tokens.live("alice", "browser", alice))
+    assert(!declared.tokens.live("alice", "other", alice))
+    assert(!declared.tokens.live("carol", "browser", alice))
+    assert(!declared.tokens.live("bot", "worker", Secrets.digest(BotToken)))
+    assert(declared.tokens.live("carol", "worker", Secrets.digest(RotationToken)))
+    write(dir, "alice.sha", Secrets.digest(RotationToken))
+    assert(!declared.tokens.live("carol", "worker", Secrets.digest(RotationToken)))
+    assert(!declared.tokens.live("alice", "browser", Secrets.digest(RotationToken)))
+    assert(!declared.tokens.live("alice", "browser", alice))
+    Files.delete(dir.resolve("alice.sha"))
+    assert(declared.tokens.live("carol", "worker", Secrets.digest(RotationToken)))
+    assert(!declared.tokens.live("alice", "browser", Secrets.digest(RotationToken)))
+  }
+  directory.test("a fresh load sees a rotated digest and refuses an unreadable one") { dir =>
+    val c = users(dir)
+    val before = loaded(c)
+    write(dir, "alice.sha", Secrets.digest(RotationToken))
+    val after = loaded(c)
+    assertEquals(after.tokens.authenticate(RotationToken), Some(ConfiguredToken("alice", "human", "browser")))
+    assertEquals(after.tokens.authenticate(AliceToken), None)
+    assertEquals(before.tokens.authenticate(AliceToken), Some(ConfiguredToken("alice", "human", "browser")))
+    Files.delete(dir.resolve("bot.sha"))
+    DigestRead.values.foreach { read =>
+      assertEquals(load(c, DeclaredIdRules.Haystack, read, DigestReader.Stream).map(_ => ()), Left(ConfigRefusal.UnreadableCredentialFile))
+    }
+  }
+  directory.test("a digest shared with a disabled user's token is refused at load in both read modes") { dir =>
+    val c = users(dir)
+    val shared = c.updated(1, c(1).copy(enabled = false, tokens = Vector(c.head.tokens.head.copy(id = "other"))))
+    DigestRead.values.foreach { read =>
+      assertEquals(load(shared, DeclaredIdRules.Haystack, read, DigestReader.Stream).map(_ => ()), Left(ConfigRefusal.DigestAssignedTwice))
+    }
+  }
+  directory.test("no loaded value prints a password hash, a digest or a configured secret") { dir =>
+    val alice = withPassword(dir, users(dir).head).copy(admin = true)
+    val declared = loaded(Vector(alice, users(dir)(1)))
+    val hash = declared.users.head.passwordHash.getOrElse(fail("no hash"))
+    val printed = Vector(declared.toString, declared.users.toString, declared.directory.toString, declared.tokens.toString,
+      declared.tokens.authenticate(AliceToken).toString)
+    printed.foreach { text =>
+      Vector(hash, Secrets.digest(AliceToken), Secrets.digest(BotToken), AliceToken, BotToken).foreach(secret => assert(!text.contains(secret), text))
+    }
+  }
+  test("key-file policies: Haystack's literal store prefix and Manure's normalised path differ on the store and on `..`") {
+    import KeyFilePolicy.*
+    Vector("/run/keys/totp", "/nix/storex/key", "/var/lib/svc/totp.key").foreach { path =>
+      assert(LiteralStorePrefix.admits(path), path); assert(NormalizedPath.admits(path), path)
+    }
+    Vector("relative/key", "", "/nix/store/abc-key", "/nix/store/").foreach { path =>
+      assert(!LiteralStorePrefix.admits(path), path); assert(!NormalizedPath.admits(path), path)
+    }
+    assert(LiteralStorePrefix.admits("/nix/store")); assert(!NormalizedPath.admits("/nix/store"))
+    assert(!LiteralStorePrefix.admits("/nix/store/../etc/key")); assert(NormalizedPath.admits("/nix/store/../etc/key"))
+    assert(LiteralStorePrefix.admits("/etc/../nix/store/abc-key")); assert(!NormalizedPath.admits("/etc/../nix/store/abc-key"))
+    assert(LiteralStorePrefix.admits("/run/\u0000key")); assert(!NormalizedPath.admits("/run/\u0000key"))
+  }
+  directory.test("the imperative settings apply the key-file policy they are given") { dir =>
+    val declared = loaded(Vector(withPassword(dir, users(dir).head).copy(admin = true))).directory
+    assertEquals(ImperativeConfig.settings("svc", Some(accounts(Some("/etc/../nix/store/abc-key"))), declared, KeyFilePolicy.NormalizedPath), Left(ConfigRefusal.AccountsKeyFile))
+    assertEquals(ImperativeConfig.settings("svc", Some(accounts(Some("/nix/store"))), declared, KeyFilePolicy.NormalizedPath), Left(ConfigRefusal.AccountsKeyFile))
+    assertEquals(intercept[AccountFailure](ImperativeConfig.settings("svc", Some(accounts(Some("/etc/../nix/store/abc-key"))), declared, KeyFilePolicy.LiteralStorePrefix)).code, "config")
   }
 }

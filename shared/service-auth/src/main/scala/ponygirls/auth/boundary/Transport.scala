@@ -8,7 +8,10 @@ import ponygirls.auth.{PersistentCookie, Secrets}
 /** The request headers the boundary reads. `host` and `fetchSite` are single values the caller selected (absent: an
   * empty host, no fetch site); the other headers are every value in arrival order. */
 final case class PresentedHeaders(host: String, authorization: Vector[String], cookie: Vector[String],
-  origin: Vector[String], fetchSite: Option[String], accountRequest: Vector[String])
+  origin: Vector[String], fetchSite: Option[String], accountRequest: Vector[String]) {
+  override def toString: String =
+    s"PresentedHeaders($host,<${authorization.size} authorization redacted>,<${cookie.size} cookie redacted>,$origin,$fetchSite,$accountRequest)"
+}
 
 /** A configured browser origin: `scheme://host[:port]`, lower-case host, no default port, nothing else. */
 object CanonicalOrigin {
@@ -71,13 +74,46 @@ object SessionCookie {
   }
 }
 
+/** A configured origin. It is parsed when a check first needs it, and the result is kept. */
+private final class ConfiguredOrigin(val raw: String) {
+  lazy val parsed: Either[ConfigRefusal, URI] = CanonicalOrigin.parse(raw)
+  def uri: URI = parsed.fold(refusal => throw ConfigRefused(refusal), identity)
+  lazy val authority: String = CanonicalOrigin.authority(uri)
+}
+
 /** Exact Host and Origin admission over configured host names and canonical origins. An origin listed in
-  * `insecureHttpOrigins` is a plain-HTTP origin on a dedicated authority, where the session cookie is not `Secure`. */
-final class OriginPolicy private (allowedHosts: Vector[String], allowedOrigins: Vector[String], allowedUris: Map[String, URI],
-    insecureHttpOrigins: Vector[(String, URI)], cookieSecure: Boolean) {
+  * `insecureHttpOrigins` is a plain-HTTP origin on a dedicated authority, where the session cookie is not `Secure`.
+  *
+  * The checks parse a configured origin only where they need it, in configuration order, and keep each parse for
+  * the life of the policy: a check that refuses the request before it needs an origin parses none. A policy from
+  * `load` has every origin checked, so its checks never throw `ConfigRefused`; one from `deferred` throws it from the
+  * first check that needs an invalid origin. */
+final class OriginPolicy private (allowedHosts: Vector[String], allowedOrigins: Vector[String], insecureHttpOrigins: Vector[String],
+    cookieSecure: Boolean) {
+  private val allowed: Vector[ConfiguredOrigin] = allowedOrigins.map(new ConfiguredOrigin(_))
+  private val allowedByRaw: Map[String, ConfiguredOrigin] = allowed.reverse.map(origin => origin.raw -> origin).toMap
+  private val insecure: Vector[ConfiguredOrigin] = insecureHttpOrigins.map(new ConfiguredOrigin(_))
   private def refuse(refusal: Refusal): Nothing = throw BoundaryRefused(refusal)
-  private def insecureAt(request: URI): Option[String] =
-    insecureHttpOrigins.collectFirst { case (raw, uri) if CanonicalOrigin.authority(uri) == CanonicalOrigin.authority(request) => raw }
+  private def insecureAt(request: URI): Option[String] = {
+    val authority = CanonicalOrigin.authority(request)
+    insecure.find(_.authority == authority).map(_.raw)
+  }
+
+  /** Every configured origin canonical; an insecure origin is an allowed `http` origin of an allowed host whose
+    * authority and effective port no allowed `https` origin of the same host shares. */
+  def checked: Either[ConfigRefusal, OriginPolicy] = for {
+    uris <- allowed.traverse(_.parsed)
+    _ <- insecure.traverse_ { origin =>
+      origin.parsed.flatMap { uri =>
+        val conflicts = uris.exists { u =>
+          u.getScheme == "https" && u.getHost == uri.getHost && (CanonicalOrigin.authority(u) == CanonicalOrigin.authority(uri) || CanonicalOrigin.port(u) == CanonicalOrigin.port(uri))
+        }
+        if (uri.getScheme != "http" || !allowedOrigins.contains(origin.raw) || !allowedHosts.exists(_.equalsIgnoreCase(uri.getHost)) || conflicts)
+          Left(ConfigRefusal.InsecureOriginNotDedicated)
+        else Right(())
+      }
+    }
+  } yield this
 
   /** Whether the session cookie of this request's authority carries `Secure`. */
   def secureCookie(headers: PresentedHeaders): Boolean = {
@@ -92,7 +128,7 @@ final class OriginPolicy private (allowedHosts: Vector[String], allowedOrigins: 
     headers.origin.headOption.foreach { origin =>
       if (!allowedOrigins.contains(origin)) refuse(Refusal.DisallowedOrigin)
       val selected = insecureAt(request)
-      if (selected.exists(_ != origin) || (selected.isEmpty && insecureHttpOrigins.exists(_._1 == origin))) refuse(Refusal.OriginHostMismatch)
+      if (selected.exists(_ != origin) || (selected.isEmpty && insecureHttpOrigins.contains(origin))) refuse(Refusal.OriginHostMismatch)
     }
   }
   /** Same-origin proof of a cookie write: one allowed Origin, or no Origin and `Sec-Fetch-Site: same-origin`. */
@@ -119,8 +155,8 @@ final class OriginPolicy private (allowedHosts: Vector[String], allowedOrigins: 
       val port = if (request.getPort >= 0) request.getPort else if (origin.getScheme == "https") 443 else 80
       origin.getHost.equalsIgnoreCase(request.getHost) && CanonicalOrigin.port(origin) == port
     }
-    // `validateTransport` admitted only allowed origins, so every presented one is in `allowedUris`.
-    if (!allowedUris.values.exists(matches) || headers.origin.exists(raw => !matches(allowedUris(raw)))) refuse(Refusal.OriginHostMismatch)
+    // `validateTransport` admitted only allowed origins, so every presented one is in `allowedByRaw`.
+    if (!allowed.exists(origin => matches(origin.uri)) || headers.origin.exists(raw => !matches(allowedByRaw(raw).uri))) refuse(Refusal.OriginHostMismatch)
     if (headers.authorization.nonEmpty) refuse(Refusal.BrowserSessionRequired)
     SessionCookie.select(headers.cookie, cookies.secure, cookies.value)
     SessionCookie.select(headers.cookie, cookies.plain, cookies.value)
@@ -132,22 +168,12 @@ object OriginPolicy {
   val AccountRequestHeader = "X-Account-Request"
   val AccountRequestValue = "1"
 
-  /** Every origin canonical; an insecure origin is an allowed `http` origin of an allowed host whose authority and
-    * effective port no allowed `https` origin of the same host shares. */
+  /** A policy whose configured origins are checked when a request check first needs them (`ConfigRefused`). */
+  def deferred(allowedHosts: Vector[String], allowedOrigins: Vector[String], insecureHttpOrigins: Vector[String], cookieSecure: Boolean): OriginPolicy =
+    new OriginPolicy(allowedHosts, allowedOrigins, insecureHttpOrigins, cookieSecure)
+  /** A policy whose configured origins are all checked now (`checked`). */
   def load(allowedHosts: Vector[String], allowedOrigins: Vector[String], insecureHttpOrigins: Vector[String],
-      cookieSecure: Boolean): Either[ConfigRefusal, OriginPolicy] = for {
-    allowed <- allowedOrigins.traverse(raw => CanonicalOrigin.parse(raw).map(raw -> _))
-    insecure <- insecureHttpOrigins.traverse { raw =>
-      CanonicalOrigin.parse(raw).flatMap { uri =>
-        val conflicts = allowed.exists { (_, u) =>
-          u.getScheme == "https" && u.getHost == uri.getHost && (CanonicalOrigin.authority(u) == CanonicalOrigin.authority(uri) || CanonicalOrigin.port(u) == CanonicalOrigin.port(uri))
-        }
-        if (uri.getScheme != "http" || !allowedOrigins.contains(raw) || !allowedHosts.exists(_.equalsIgnoreCase(uri.getHost)) || conflicts)
-          Left(ConfigRefusal.InsecureOriginNotDedicated)
-        else Right(raw -> uri)
-      }
-    }
-  } yield new OriginPolicy(allowedHosts, allowedOrigins, allowed.toMap, insecure, cookieSecure)
+      cookieSecure: Boolean): Either[ConfigRefusal, OriginPolicy] = deferred(allowedHosts, allowedOrigins, insecureHttpOrigins, cookieSecure).checked
 }
 
 /** Which credentials a route takes. */

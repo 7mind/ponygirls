@@ -4,8 +4,8 @@ import haystack.domain.{Fault, Principal, QualifiedId}
 import java.net.URI
 import ponygirls.auth.{AccountUser,AccountToken,DeclaredDirectory,ImperativeSettings,PersistentCookie,Secrets}
 import ponygirls.auth.boundary
-import ponygirls.auth.boundary.{BoundaryRefused,CanonicalOrigin,ConfigRefusal,CookieValue,CredentialAccept,CredentialSelection,DeclaredIdRules,DeclaredUsers,
-  DigestRead,DigestReader,ExactCredentialFile,ImperativeConfig,OriginPolicy,PresentedHeaders,Refusal,RequestAuthority,SecureAttribute,SessionCookie,SessionCookies}
+import ponygirls.auth.boundary.{BoundaryRefused,CanonicalOrigin,ConfigRefused,ConfigRefusal,CookieValue,CredentialAccept,CredentialSelection,DeclaredIdRules,DeclaredUsers,
+  DigestRead,DigestReader,ExactCredentialFile,ImperativeConfig,KeyFilePolicy,OriginPolicy,PresentedHeaders,Refusal,RequestAuthority,SecureAttribute,SessionCookie,SessionCookies}
 
 final case class TokenConfig(id: String, hashFile: String)
 final case class UserConfig(id: String, userType: String, displayName: String, tokens: Vector[TokenConfig],
@@ -20,7 +20,10 @@ final case class RateLimit(windowMs: Long, max: Int) {
 }
 final case class AuthConfig(activityProjectId: String, users: Vector[UserConfig], cookieSecure: Boolean = true,
   allowedHosts: Vector[String] = Vector.empty, allowedOrigins: Vector[String] = Vector.empty,
-  insecureHttpOrigins: Vector[String] = Vector.empty, rateLimit: Option[RateLimit] = None, accounts: Option[AccountsConfig] = None)
+  insecureHttpOrigins: Vector[String] = Vector.empty, rateLimit: Option[RateLimit] = None, accounts: Option[AccountsConfig] = None) {
+  /** Compiled once per configuration value; a reload or `copy` makes a new value and so a new policy. */
+  private[auth] lazy val originPolicy: OriginPolicy = OriginPolicy.deferred(allowedHosts, allowedOrigins, insecureHttpOrigins, cookieSecure)
+}
 
 /** Haystack's failure codes and messages for the refusals of the shared boundary (`ponygirls.auth.boundary`). */
 private object Refused {
@@ -58,7 +61,10 @@ private object Refused {
     case ConfigRefusal.AccountsIssuer => "accounts.issuer required"
     case ConfigRefusal.AccountsAdmin => "accounts require an enabled declarative admin"
   })
-  def apply[A](body: => A): A = try body catch { case BoundaryRefused(refusal) => throw fault(refusal) }
+  def apply[A](body: => A): A = try body catch {
+    case BoundaryRefused(refusal) => throw fault(refusal)
+    case ConfigRefused(refusal) => throw fault(refusal)
+  }
   def configured[A](result: Either[ConfigRefusal, A]): A = result.fold(refusal => throw fault(refusal), identity)
 }
 
@@ -96,9 +102,9 @@ object Auth {
     val users = config.users.map(declaredUser)
     // The origin checks run between the user-id checks and the remaining user checks, as before the move.
     Refused.configured(DeclaredUsers.identities(users))
-    Refused.configured(OriginPolicy.load(config.allowedHosts, config.allowedOrigins, config.insecureHttpOrigins, config.cookieSecure))
+    Refused.configured(config.originPolicy.checked)
     val declared = Refused.configured(DeclaredUsers.load(users, DeclaredIdRules.Haystack, DigestRead.Snapshot, DigestReader.Stream))
-    val imperative = Refused.configured(ImperativeConfig.settings(ServiceName, config.accounts.map(accounts), declared.directory))
+    val imperative = Refused.configured(ImperativeConfig.settings(ServiceName, config.accounts.map(accounts), declared.directory, KeyFilePolicy.LiteralStorePrefix))
     new Auth(config, declared.users, declared.directory, imperative, declared.tokens)
   }
 }
@@ -125,23 +131,21 @@ object Sessions {
   val PlainName = "haystack-dev"
   private val Cookies = SessionCookies(SecureName, PlainName, CookieValue.Trimmed)
   val MaxAge: Long = PersistentCookie.maxAgeSeconds
-  private def policy(config: AuthConfig): OriginPolicy =
-    Refused.configured(OriginPolicy.load(config.allowedHosts, config.allowedOrigins, config.insecureHttpOrigins, config.cookieSecure))
   def name(secure: Boolean): String = Cookies.name(secure)
   def serialize(token: Option[String], secure: Boolean): String = SessionCookie.serialize(name(secure), token, secure, SecureAttribute.Last)
   def cookie(headers: RequestHeaders, cookieName: String): Option[String] = Refused(SessionCookie.select(headers.cookie, cookieName, Cookies.value))
-  def secure(config: AuthConfig, headers: RequestHeaders): Boolean = Refused(policy(config).secureCookie(headers.presented))
-  def validateTransport(config: AuthConfig, headers: RequestHeaders): Unit = Refused(policy(config).validateTransport(headers.presented))
-  def csrf(config: AuthConfig, headers: RequestHeaders): Unit = Refused(policy(config).csrf(headers.presented))
+  def secure(config: AuthConfig, headers: RequestHeaders): Boolean = Refused(config.originPolicy.secureCookie(headers.presented))
+  def validateTransport(config: AuthConfig, headers: RequestHeaders): Unit = Refused(config.originPolicy.validateTransport(headers.presented))
+  def csrf(config: AuthConfig, headers: RequestHeaders): Unit = Refused(config.originPolicy.csrf(headers.presented))
   /** Sent by the shared account module (shared/account-web/account-client.js) with every account-plane request. */
   val AccountRequestHeader = OriginPolicy.AccountRequestHeader
   val AccountRequestValue = OriginPolicy.AccountRequestValue
   /** `OriginPolicy.accountTransport`: on an opted-in plain-HTTP origin, a GET proves same origin with the account request header. */
   def accountTransport(config:AuthConfig,headers:RequestHeaders,safeRead:Boolean):Unit=
-    Refused(policy(config).accountTransport(headers.presented, safeRead, Cookies))
+    Refused(config.originPolicy.accountTransport(headers.presented, safeRead, Cookies))
   def resolve(config: AuthConfig, headers: RequestHeaders, mutate: Boolean = false, mcp: Boolean = false): Presented = {
     val accept = if (mcp) CredentialAccept.BearerOnly else CredentialAccept.BearerOrCookie
-    val selected = Refused(CredentialSelection.resolve(policy(config), Cookies, headers.presented, accept, mutate))
+    val selected = Refused(CredentialSelection.resolve(config.originPolicy, Cookies, headers.presented, accept, mutate))
     Presented(selected.secret, selected.cookie, selected.secureCookie)
   }
 }

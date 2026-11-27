@@ -14,3 +14,5 @@ enum ConfigRefusal {
     NoCredentials, DuplicateTokenId, InvalidTokenId, UnreadableCredentialFile, MalformedCredentialFile, DigestAssignedTwice,
     AccountsFlagsWithoutSwitch, AccountsKeyFile, AccountsIssuer, AccountsAdmin
 }
+/** A configured value a request check needed turned out invalid (only from a policy that was not checked at load). */
+final case class ConfigRefused(refusal: ConfigRefusal) extends RuntimeException(refusal.toString)

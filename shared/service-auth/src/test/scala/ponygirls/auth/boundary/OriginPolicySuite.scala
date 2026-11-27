@@ -109,4 +109,35 @@ final class OriginPolicySuite extends munit.FunSuite {
       refused(Refusal.DuplicateSessionCookie)(p.accountTransport(write.copy(cookie = Vector(s"$name=a; $name=b")), safeRead = false, Names))
     }
   }
+  test("the account plane refuses an Origin of another allowed authority than the one the Host names") {
+    val p = OriginPolicy.load(Vector("ts.test", "other.test"), Vector(Secure, "https://ts.test:9445", "https://other.test"), Vector.empty, true)
+      .fold(r => fail(s"refused: $r"), identity)
+    val write = headers("ts.test:8445", origin = Vector(Secure), cookie = Vector("__Host-svc=" + Session))
+    p.accountTransport(write, safeRead = false, Names)
+    Vector("https://ts.test:9445", "https://other.test").foreach { other =>
+      refused(Refusal.OriginHostMismatch)(p.accountTransport(write.copy(origin = Vector(other)), safeRead = false, Names))
+    }
+  }
+  test("a deferred policy parses a configured origin only when a check needs it and refuses an invalid one then") {
+    val bad = "HTTPS://bad.test"
+    val p = OriginPolicy.deferred(Vector("ts.test", "nb.test"), Vector(Secure, bad), Vector.empty, true)
+    refused(Refusal.DisallowedHost)(p.validateTransport(headers("evil.test", origin = Vector(bad))))
+    p.validateTransport(headers("ts.test:8445"))
+    p.csrf(headers("ts.test:8445", fetchSite = Some("same-origin")))
+    assert(p.secureCookie(headers("ts.test:8445")))
+    p.accountTransport(headers("ts.test:8445", origin = Vector(Secure)), safeRead = false, Names)
+    val first = OriginPolicy.deferred(Vector("ts.test"), Vector(bad, Secure), Vector.empty, true)
+    Vector(1, 2).foreach { _ =>
+      assertEquals(intercept[ConfigRefused](first.accountTransport(headers("ts.test:8445", origin = Vector(Secure)), safeRead = false, Names)).refusal,
+        ConfigRefusal.NonCanonicalOrigin)
+    }
+    assertEquals(first.checked.map(_ => ()), Left(ConfigRefusal.NonCanonicalOrigin))
+    assertEquals(OriginPolicy.deferred(Vector("nb.test"), Vector(Plain), Vector("https://bad.test\\x"), true).checked.map(_ => ()), Left(ConfigRefusal.MalformedOrigin))
+    assert(policy().checked.isRight)
+  }
+  test("the request headers never print a bearer token or a cookie value") {
+    val printed = headers("ts.test:8445", cookie = Vector("__Host-svc=" + Session), authorization = Vector("Bearer " + Session + "x")).toString
+    assert(!printed.contains(Session), printed)
+    assert(printed.contains("ts.test:8445"), printed)
+  }
 }
