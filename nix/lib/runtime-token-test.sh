@@ -14,10 +14,14 @@ reject() {
   ! grep -q "$token" "$work/err"
 }
 for name in HAYSTACK_TOKEN MANURE_TOKEN; do
-  [[ "$(bash "$helper" "$name" "$work/raw")" == "$token" ]]
-  [[ "$(env "$name=$token" bash "$helper" "$name" /missing)" == "$token" ]]
-  [[ "$(env "${name}_FILE=$work/lf" bash "$helper" "$name" /missing)" == "$token" ]]
-  [[ "$(env "$name=" "${name}_FILE=" bash "$helper" "$name" "$work/raw")" == "$token" ]]
+  resolved=$(bash "$helper" "$name" "$work/raw")
+  [[ "$resolved" == "$token" ]]
+  resolved=$(env "$name=$token" bash "$helper" "$name" /missing)
+  [[ "$resolved" == "$token" ]]
+  resolved=$(env "${name}_FILE=$work/lf" bash "$helper" "$name" /missing)
+  [[ "$resolved" == "$token" ]]
+  resolved=$(env "$name=" "${name}_FILE=" bash "$helper" "$name" "$work/raw")
+  [[ "$resolved" == "$token" ]]
   reject env "$name=$token" "${name}_FILE=/missing" bash "$helper" "$name" "$work/raw"
   reject bash "$helper" "$name" ''
   reject env "$name=${token%?}B" bash "$helper" "$name" "$work/raw"

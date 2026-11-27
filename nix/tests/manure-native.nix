@@ -30,9 +30,13 @@ in pkgs.runCommand "manure-native-full-target" ({
   set -euo pipefail
   unset MANURE_URL MANURE_URL_FILE MANURE_TOKEN MANURE_TOKEN_FILE MANURE_CACHE_DIR MANURE_ALLOW_INSECURE_HTTP MANURE_POSIX_LIBRARY
   export MANURE_TEST_ALLOW_CREATEDB=1
-  export MANURE_TEST_JDBC_URL=$(python3 -c 'import json,os;print(json.loads(os.environ["PONYGIRLS_TEST_DATABASE_MANURE"])["jdbcUrl"])')
+  jdbc_url=$(python3 -c 'import json,os;print(json.loads(os.environ["PONYGIRLS_TEST_DATABASE_MANURE"])["jdbcUrl"])')
+  test -n "$jdbc_url"
+  export MANURE_TEST_JDBC_URL=$jdbc_url
   export MANURE_TEST_JDBC_USER=manure
-  export MANURE_TEST_JDBC_PASSWORD_FILE=$(python3 -c 'import json,os;print(json.loads(os.environ["PONYGIRLS_TEST_DATABASE_MANURE"])["passwordFile"])')
+  password_file=$(python3 -c 'import json,os;print(json.loads(os.environ["PONYGIRLS_TEST_DATABASE_MANURE"])["passwordFile"])')
+  test -n "$password_file"
+  export MANURE_TEST_JDBC_PASSWORD_FILE=$password_file
   export PYTHONPATH="$PWD/manure:$PWD/manure/tests"
   # Class shards in NIX_BUILD_CORES (at most 8) worker processes against the one
   # owned cluster. Measured under load 150-190: serial 659 s; the isolated viewer

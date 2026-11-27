@@ -87,12 +87,16 @@ pkgs.runCommand "chronicle-hm-server" {
   bash setup
   test "$(stat -c %a "$TMPDIR/fixture/chronicle/credentials")" = 700
   first=$(cat "$TMPDIR/fixture/chronicle/credentials/alice.pbkdf2")
+  test -n "$first"
   bash setup
-  test "$(cat "$TMPDIR/fixture/chronicle/credentials/alice.pbkdf2")" = "$first"
+  unchanged=$(cat "$TMPDIR/fixture/chronicle/credentials/alice.pbkdf2")
+  test "$unchanged" = "$first"
   printf 'next-password\n' > "$TMPDIR/fixture/password"
   printf 'revision-2\n' > "$TMPDIR/fixture/revision"
   bash setup
-  test "$(cat "$TMPDIR/fixture/chronicle/credentials/alice.pbkdf2")" != "$first"
+  rotated=$(cat "$TMPDIR/fixture/chronicle/credentials/alice.pbkdf2")
+  test -n "$rotated"
+  test "$rotated" != "$first"
   # Cluster runtime/dumps/restores are exercised by shared-postgres. Here
   # verify the actual consumer emits only explicit TCP/credential backup wiring.
   grep -q -- '-h 127.0.0.1' backup
