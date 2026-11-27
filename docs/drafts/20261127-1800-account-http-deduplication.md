@@ -179,6 +179,45 @@ origin-policy boundary (its Host and TLS context, three cookie names), its body 
 login throttle, and statuses that depend on the route; for Chronicle, the reply writer and pipeline as separately
 usable functions. Narrower token scopes need a store and an authorisation model that represent them first.
 
+## Stage 3: what Blabber's accounts unit needs
+
+Written before stage 3's code. Sources, read on 2026-11-27: **R** = `blabber/README.md` of branch `product/blabber`
+at `2c444ad4` (into which `product/blabber-u9` was merged meanwhile), section "For the accounts unit" (lines 363-400)
+unless a line is given; **M** = `blabber/models/current.baboon` there (header comment, `Failure`, `Identity`); **D** =
+`docs/drafts/20261127-1430-blabber-product-design.md` on `main`, read with the owner's later corrections (the shared
+module; administrators are the accounts administrators, only on a browser session, Q209; the browser password is
+separate from every bearer secret; a declared id stays bound to one principal). "After stage 2" is what the shared
+module has at `58c40b55`.
+
+| # | Need | Source | After stage 2 | Missing |
+|---|---|---|---|---|
+| 1 | A caller per request, before the body: account id, account type, credential kind (bearer or browser session), credential id | R 365-369; `Caller` (`blabber/.../domain/Model.scala:116`) | `CredentialSelection.resolve`, `DeclarativeAccountService.resolve` (`Captured`: user id, type, token id, cookie or not) | one call that also gives 2 and 3 |
+| 2 | The account's display name | R 371 (`Caller.displayName` at each `join`) | read only inside the service | the directory entry's display name with the caller |
+| 3 | The administrator flag, read per request, effective only on a browser session | R 369-370, R 142; M `Identity.admin`; D 4.8 (`ImperativeAccountSql.admin` requested) | computed privately inside `ImperativeAccounts` | a public read (service level and connection level) |
+| 4 | A route served by one credential kind only; the other kind is `forbidden` for an authenticated caller, decided first | M header ("forbidden: a route used with the other kind of credential (the caller is authenticated)"); R 139-142; D 4.4 table | `CredentialAccept.BearerOnly` refuses a cookie *before* authentication (Haystack's `/mcp`, `unauthorized`); no browser-only kind | a post-authentication kind check. The earlier list's "cookie-only `CredentialAccept`" would refuse before authentication and contradict M |
+| 5 | `X-Account-Actor` on browser-session requests of the service's own routes (not `whoami`, not the socket): missing or malformed `invalid`, another account's `conflict` with reason `actor-mismatch` | M header, M `Failure` reasons; R 396-398; D 4.5 | `AccountJson.requireActor` (untyped `AccountFailure` codes), applied by the account plane only | the check on domain routes, with typed refusals so that only the mismatch gets the reason |
+| 6 | The same-origin proof for every cookie `POST` | D 4.5 | `CredentialSelection.resolve(mutate = true)` | — (already there) |
+| 7 | The re-check of authority after the body and after a pull's waits, before delivery | R 368; D 4.7 | `live(captured)` (no transport re-check); Haystack's own `revalidate` in its `Http.scala` | a shared re-check for a service's routes |
+| 8 | The session cookie renewed on use | D 4.4 | `SessionCookie.serialize`; Haystack renews in its own `delivered` | a shared renewal for a service's routes |
+| 9 | The live socket's standing: does the browser session still authenticate, is the account an administrator now | R 381-384; `LiveSessions.standing` | `live(captured)` (a boolean) | a re-read giving both |
+| 10 | Ending live connections after logout, a replacing login, any session revocation; `accountChanged` after role, enabled or display-name changes | R 385-389 | `AccountPlaneSettings.endSession` with the session *secret* (logout, replacing login); every dispatcher change reaches `audit` as an event with its target (`account.admin.granted`, `account.disabled`, `account.password.changed`, ...) | see "found, not built" below |
+| 11 | No bearer secret (configured or live issued token) accepted as a password; same `401` as a wrong password | D 4.4, D 4.10 (acceptance); owner's correction | none: any password that verifies signs in | a service choice; Haystack keeps accepting (its stack derives the operator's password from a token file, D 4.10) |
+| 12 | Attempt limits per client address on `POST /login` | D 4.6 table | `LoginAdmission` (required; `Unguarded` must be written out); `AttemptLimiter` | nothing to build in stage 3 (fix 1); the README states what Blabber passes |
+| 13 | Declared ids `[a-z0-9][a-z0-9._-]{0,31}` | D 4.2 | `DeclaredIdRules` (a trait; Haystack's and Manure's values) | Blabber's value |
+| 14 | A declared id bound to one principal: Blabber's own check of the declared ids (`declared_ids`, `reinstatedIds`) in the installing transaction, at start and every reload; refused installation writes nothing | D 4.3; R 399 | `install` = the shared collision check and reconciliation only | an installation hook in the same transaction |
+| 15 | Its own indexing-preference key | D 8.2 | `IndexingService` with three keys | `IndexingService.Blabber` |
+| 16 | `Identity.actor` from the shared rule | R 372-373 | `AccountJson.actor` | — (already there) |
+| 17 | Retained names for imperative creation (chat columns) | D 4.7 end | `SharedAccountStorage(transactions, history)` | — (already there) |
+| 18 | Host and Origin model, cookies `__Host-blabber` / `blabber-dev`; account plane with its one scope, `endSession`, a bearer on the plane `401` | D 4.4-4.6 | `OriginPolicy`, `SessionCookies`, `AccountPlane` | — (already there) |
+| 19 | `LiveSessions.allowsOrigin`: the one `Origin` of an upgrade is the service's own | R 380 | Blabber's configured origins; `OriginPolicy.validateTransport` | — (already there; the count check is Blabber's) |
+
+Choices the mechanisms leave to Blabber's unit, named so that it makes them: whether its own domain code keeps its kind
+check once the shared one runs (4); which of its routes require the actor (5; the socket and `whoami` do not); whether
+it reads the administrator flag in the account transaction at admission or again in its chat transaction (3); how its
+live sockets keep the session secret that the standing re-read needs, since `LiveSessions.standing` receives a
+`Caller` without it (9); its token-id and login rules (13: Haystack's, unless it states others); the content of its
+installation check (14).
+
 ## Recorded, not fixed
 
 Each item was noticed and deliberately left. "Read" means read from the code; "reproduced" means a test or run
