@@ -165,7 +165,7 @@ export function gradeRecord(result, scenario) {
     updateCalls: updates.flat().length, refused: updates.flat().filter(call => call.result !== null && call.result.isError).map(call => call.result.text.slice(0, 120)),
     recallCalls: result.turns.flatMap(turn => turn.calls).filter(call => call.name === 'cuckoo_recall').length,
     blockedCalls: (result.blockedCalls ?? []).map(call => call.name), extraRequests: result.requests - (result.turns.length + 1),
-    own: {}, any: {}, fates: {}, rules: {}, merged: [], duplicates: [], extras: { questions: [], oneTurn: [], other: [] }, entries: end === null ? 0 : end.objectives.length, final: null,
+    own: {}, any: {}, fates: {}, rules: {}, merged: [], duplicates: [], extras: { questions: [], oneTurn: [], other: [] }, extraRules: { user: [], assistant: [] }, entries: end === null ? 0 : end.objectives.length, final: null,
   };
   for (const [name, objective] of stated) {
     out.own[name] = when(firstTurn(snapshot => ownOf(snapshot, name).length > 0), objective.at);
@@ -188,6 +188,11 @@ export function gradeRecord(result, scenario) {
     }
     for (const [name] of stated) { const found = ownOf(end, name); if (found.length > 1) out.duplicates.push(`${name}: ${found.map(title).join(' | ')}`); }
     for (const [name, rule] of Object.entries(scenario.rules)) { const found = rulesOf(end, rule.key); if (found.length > 1) out.duplicates.push(`rule ${name}: ${found.map(item => item.id).join(',')}`); }
+    // Amendment 5: a rule, active or retired, that matches no rule the scenario's user gave for the session. One the
+    // model attributes to the user is surplus (typically an instruction about one deliverable); a convention of its own
+    // is allowed by the definition of a rule and is listed for reading.
+    const ruleKeys = Object.values(scenario.rules).map(rule => rule.key);
+    for (const item of end.rules) if (!ruleKeys.some(key => key.test(`${item.rule} ${item.scope}`))) out.extraRules[item.source === 'user' ? 'user' : 'assistant'].push(`${item.id} ${item.status}: ${item.rule.slice(0, 70)}`);
   }
   const round = result.rounds[0];
   if (round !== undefined && end !== null) {
@@ -211,6 +216,7 @@ export function gradeRecord(result, scenario) {
   out.finalSound = out.final !== null && out.final.invalid === undefined && out.final.completedRepeated.length === 0 && out.final.retiredRevived.length === 0;
   // Entries the record should not hold: made out of a question, a one-turn request or a step, or a second entry for one objective.
   out.noExtras = out.extras.questions.length + out.extras.oneTurn.length + out.extras.other.length + out.duplicates.length === 0;
+  out.noSurplusRules = out.extraRules.user.length === 0;
   out.recordRight = out.allOwnByTurn && out.allFatesRight && out.allRulesByTurn && out.refused.length === 0 && out.finalSound;
   return out;
 }

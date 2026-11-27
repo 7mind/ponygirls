@@ -228,3 +228,15 @@ test('batch 2, a refused call or an unsound final checkpoint makes the record no
   const invalid = gradeRecord(buildSession(turns, 'Error: Unknown objective id AO9'), scenarioOf('build'));
   assert.deepEqual([invalid.final, invalid.finalSound, invalid.recordRight], [{ invalid: 'Error: Unknown objective id AO9' }, false, false]);
 });
+
+test('batch 2, amendment 5: a rule the user did not give for the session is surplus when attributed to the user', () => {
+  const turns = [[a, b, c], [a, b, c], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), as('retired')(c)]];
+  const withRules = rules => toolSession(turns.map((objectives, index) => ({ calls: [], after: { objectives, rules: index >= 1 ? [...bothRules, ...rules] : rules } })), soundFinal);
+  const step = { ...sessionRule('AR3', 'Start with (a) and give only the five bullets'), status: 'retired' }, own = sessionRule('AR4', 'Number the bullets', 'assistant');
+  const graded = gradeRecord(withRules([step, own]), scenarioOf('build'));
+  assert.deepEqual(graded.extraRules, { user: ['AR3 retired: Start with (a) and give only the five bullets'], assistant: ['AR4 active: Number the bullets'] });
+  assert.deepEqual([graded.noSurplusRules, graded.noExtras, graded.recordRight, graded.allRulesByTurn], [false, true, true, true], 'a reading of its own: the registered readings do not change');
+  const clean = gradeRecord(withRules([]), scenarioOf('build'));
+  assert.deepEqual([clean.extraRules, clean.noSurplusRules], [{ user: [], assistant: [] }, true]);
+  assert.equal(gradeRecord(withRules([own]), scenarioOf('build')).noSurplusRules, true, 'a convention of the model\'s own is not surplus');
+});

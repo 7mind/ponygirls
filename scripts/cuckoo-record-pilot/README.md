@@ -454,6 +454,21 @@ wording can be worth merging because entries appear, while closing them in their
 blocked, one provider family, short sessions. One reader who knows the arm reads the flagged sessions. What counts
 as one deliverable is the experimenter's reading in the development scenarios and the author's in the held-out ones.
 
+### Amendment 5 (2026-11-27, during development; before the freeze and before the batch)
+
+Observation. In the second development round the candidate recorded, in 4 of 6 `build` sessions, a rule attributed
+to the user for an instruction about one deliverable ("start with (a) and give only the five bullets"). The grader
+did not see it: it looked for the rules the user gave and for surplus objectives only. The stored runs of batch 1
+hold the same behaviour under arm A in 3 of 18 `build` sessions with the built-in tools declared (fable 1 of 6,
+sonnet 2 of 12).
+
+Change. `gradeRecord` lists the rules, active or retired, that match no rule the scenario's user gave for the session
+(`extraRules`), by the source the model gave them; a scripted case covers it. A session has *no surplus rules* when
+none of them is attributed to the user. A convention the model adopts itself is a rule by definition and is listed
+for reading, not counted. The registered readings are unchanged. The adoption rule gets a sixth point:
+
+6. *Surplus rules.* In every scenario arm B has *no surplus rules* in at most 2 sessions fewer than arm A.
+
 ### Arm A before the batch: the stored runs of batch 1 under this batch's coding
 
 `node record-summary.mjs` over `results/*tools*.jsonl` (sonnet: the registered sessions and the top-up together).

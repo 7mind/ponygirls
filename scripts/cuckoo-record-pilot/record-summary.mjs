@@ -39,6 +39,8 @@ const ROWS = [
   ['of a request its own reply answers', g => of(g.filter(x => x.grade.extras.oneTurn.length > 0).length, g.length)],
   ['other surplus entries (read by hand)', g => of(g.filter(x => x.grade.extras.other.length > 0).length, g.length)],
   ['a second entry for one objective or rule', g => of(g.filter(x => x.grade.duplicates.length > 0).length, g.length)],
+  ['**No surplus rules** (amendment 5)', g => of(g.filter(x => x.grade.noSurplusRules).length, g.length)],
+  ['Sessions with a convention of the model\'s own as a rule (read by hand)', g => of(g.filter(x => x.grade.extraRules.assistant.length > 0).length, g.length)],
   ['Sessions with a refused call', g => of(g.filter(x => x.grade.refused.length > 0).length, g.length)],
   ['Sessions in which a built-in tool was called (blocked)', g => of(g.filter(x => x.grade.blockedCalls.length > 0).length, g.length)],
   ['`cuckoo_update` calls per session', g => g.length === 0 ? 'n/a' : spread(g.map(x => x.grade.updateCalls))],
@@ -55,7 +57,7 @@ for (const toolset of ['builtins', 'cuckoo']) for (const scenario of RECORD_SCEN
     data.forEach((item, index) => { for (const failed of item.failed) console.log(`${shown[index].name} ${failed.id}: FAILED ${JSON.stringify(failed.errors).slice(0, 200)}`);
       for (const { result, grade } of item.graded) console.log(`${shown[index].name} ${result.id}: ${grade.recordRight ? 'right' : 'NOT right'}${grade.noExtras ? '' : ', SURPLUS'} · calls ${JSON.stringify(grade.callsPerTurn)} · own ${JSON.stringify(grade.own)} · fates ${JSON.stringify(grade.fates)} · rules ${JSON.stringify(grade.rules)}` +
         `${grade.merged.length === 0 ? '' : ` · merged ${JSON.stringify(grade.merged)}`}${grade.noExtras ? '' : ` · extras ${JSON.stringify(grade.extras)} duplicates ${JSON.stringify(grade.duplicates)}`}${grade.refused.length === 0 ? '' : ` · refused ${JSON.stringify(grade.refused)}`}` +
-        `${grade.blockedCalls.length === 0 ? '' : ` · blocked ${grade.blockedCalls.join(',')}`} · final ${JSON.stringify(grade.final)}`); });
+        `${grade.blockedCalls.length === 0 ? '' : ` · blocked ${grade.blockedCalls.join(',')}`}${grade.extraRules.user.length + grade.extraRules.assistant.length === 0 ? '' : ` · extra rules ${JSON.stringify(grade.extraRules)}`} · final ${JSON.stringify(grade.final)}`); });
     continue;
   }
   const rows = ROWS.filter(([, , only]) => only === undefined || scenario.kind === only || (only === 'work' && scenario.kind === 'single'));
