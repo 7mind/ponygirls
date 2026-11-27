@@ -19,45 +19,68 @@ FAILURES=0
 TESTS_RUN=0
 WORKDIR="$(mktemp -d)"
 
-# Background helpers (brokers, a fake server) each lead their own process
-# group, so whatever they start in turn -- the brokers' adapters and the hanging
-# adapter's grandchild -- stays in that group. Cleanup ends exactly these groups
-# by id, never processes selected by name, on every way out.
-HELPER_EXIT_POLLS=100
-HELPER_EXIT_POLL_SECONDS=0.05
-ANNOUNCE_BROKER_PID=""
-BROKER_PID=""
-BOGUS_PID=""
+# Background helpers (brokers, a fake server) run under holders. A holder is a
+# coprocess started with job control, so it leads a new process group; it starts
+# its helper in that group and lives until the helper is ended, so the group is
+# never empty and its id cannot pass to another process meanwhile. The holder
+# waits on its coprocess input, whose writing end bash gives only to this shell
+# (close-on-exec, closed in subshells other than command substitutions). When
+# that end closes -- end_helper, cleanup, or this shell dying in any way -- the
+# holder ends its own group: TERM, a bounded wait for the helper, then KILL.
+# The suite never signals a process or group id that it recorded.
+HELPER_TERM_GRACE_SECONDS=2
+declare -A HELPER_END_FD=()
+declare -A HELPER_HOLDER_PID=()
 
-# start_helper CMD...: run CMD in the background as the leader of a new process
-# group (job control is on only for this launch) and set HELPER_PID.
+# Several holders run at once; bash keeps several coprocesses from 5.3 on.
+if (( BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 3) )); then
+  echo "FAIL: this suite needs bash >= 5.3, running $BASH_VERSION" >&2
+  exit 1
+fi
+
+# hold_helper REPORT CMD...: the holder's body. fd 0 is the coprocess input; fd 3
+# and 4 are the caller's stdin and stdout, which CMD gets. The holder reports
+# CMD's process id in REPORT for test cases that check the helper itself.
+hold_helper() {
+  local report="$1"
+  shift
+  trap ':' TERM
+  "$@" 0<&3 1>&4 3<&- 4>&- &
+  printf '%s\n' "$!" > "$report.tmp" && mv "$report.tmp" "$report"
+  read -r _
+  kill -TERM 0
+  sleep "$HELPER_TERM_GRACE_SECONDS" &
+  wait -n
+  kill -KILL 0
+}
+
+# start_helper NAME CMD...: run CMD in the background under a holder; its
+# process id is reported in $WORKDIR/NAME.pid.
 start_helper() {
+  local name="$1"
+  shift
   set -m
-  "$@" &
-  HELPER_PID=$!
+  { coproc HOLDER { hold_helper "$WORKDIR/$name.pid" "$@"; }; } 3<&0 4>&1
   set +m
+  HELPER_END_FD[$name]=${HOLDER[1]}
+  HELPER_HOLDER_PID[$name]=$HOLDER_PID
 }
 
-# end_helper PID: end the helper's process group, reap the helper and wait
-# until no member of the group is left.
+# end_helper NAME: close the holder's input and reap the holder, which has ended
+# its group by then.
 end_helper() {
-  local group="$1" polls=0
-  kill -TERM -- "-$group" 2>/dev/null
-  wait "$group" 2>/dev/null
-  while kill -0 -- "-$group" 2>/dev/null; do
-    polls=$((polls + 1))
-    if [[ $polls -gt $HELPER_EXIT_POLLS ]]; then
-      echo "FAIL: helper process group $group is still running after cleanup" >&2
-      return 1
-    fi
-    sleep "$HELPER_EXIT_POLL_SECONDS"
-  done
+  local name="$1" fd="${HELPER_END_FD[$1]}"
+  exec {fd}>&-
+  wait "${HELPER_HOLDER_PID[$name]}" 2>/dev/null
+  unset "HELPER_END_FD[$name]" "HELPER_HOLDER_PID[$name]"
 }
 
+# cleanup is not interrupted by a further INT or TERM.
 cleanup() {
-  local status=$? group
-  for group in $ANNOUNCE_BROKER_PID $BROKER_PID $BOGUS_PID; do
-    end_helper "$group" || status=1
+  local status=$? name
+  trap '' INT TERM
+  for name in "${!HELPER_END_FD[@]}"; do
+    end_helper "$name"
   done
   rm -rf "$WORKDIR"
   exit "$status"
@@ -221,18 +244,16 @@ printf 'announce-buffer' > "$ANNOUNCE_STATE/buffer"
 serve_one_request() {
   local name="$1"
   shift
-  FAKE_TMUX_STATE="$ANNOUNCE_STATE" start_helper "$PROXY" broker \
+  FAKE_TMUX_STATE="$ANNOUNCE_STATE" start_helper "$name" "$PROXY" broker \
     --listen "$WORKDIR/$name.sock" \
     --tmux-socket /tmp/does-not-need-to-exist.sock \
     --tmux "$FAKE_TMUX" "$@" 2> "$WORKDIR/$name.err"
-  ANNOUNCE_BROKER_PID=$HELPER_PID
   for _ in $(seq 1 50); do
     [[ -S "$WORKDIR/$name.sock" ]] && break
     sleep 0.05
   done
   YOLO_CLIPBOARD_SOCK="$WORKDIR/$name.sock" "$PROXY" client get > "$WORKDIR/$name.out" 2>/dev/null
-  end_helper "$ANNOUNCE_BROKER_PID" || exit 1
-  ANNOUNCE_BROKER_PID=""
+  end_helper "$name"
   if ! STARTUP_STDERR="$(cat "$WORKDIR/$name.err")"; then
     echo "FAIL: stderr of the $name broker is unreadable"
     exit 1
@@ -255,11 +276,10 @@ mkdir -p "$SOCK_DIR"
 chmod 700 "$SOCK_DIR"
 SOCK="$SOCK_DIR/sock"
 
-start_helper "$PROXY" broker \
+start_helper broker "$PROXY" broker \
   --listen "$SOCK" \
   --tmux-socket /tmp/does-not-need-to-exist.sock \
   --tmux "$FAKE_TMUX"
-BROKER_PID=$HELPER_PID
 
 for _ in $(seq 1 50); do
   [[ -S "$SOCK" ]] && break
@@ -517,7 +537,7 @@ assert_eq "next request round-trips" "after-hang" "$GOT"
 # --- Malformed responses (client side): garbage tags and oversized frames
 # are rejected; the strict adapter is not involved at all.
 BOGUS_SOCK="$WORKDIR/bogus.sock"
-start_helper "$_python_path" - "$BOGUS_SOCK" <<'PY'
+start_helper bogus "$_python_path" - "$BOGUS_SOCK" <<'PY'
 import socket
 import struct
 import sys
@@ -530,7 +550,6 @@ for reply in (bytes([77]), bytes([2]) + struct.pack("<I", 1048577), bytes([1]) +
     conn.sendall(reply)
     conn.close()
 PY
-BOGUS_PID=$HELPER_PID
 for _ in $(seq 1 50); do [[ -S "$BOGUS_SOCK" ]] && break; sleep 0.05; done
 YOLO_CLIPBOARD_SOCK="$BOGUS_SOCK" "$PROXY" client get >/dev/null 2>&1
 ST1=$?
@@ -538,13 +557,16 @@ YOLO_CLIPBOARD_SOCK="$BOGUS_SOCK" "$PROXY" client get >/dev/null 2>&1
 ST2=$?
 YOLO_CLIPBOARD_SOCK="$BOGUS_SOCK" "$PROXY" client get >/dev/null 2>&1
 ST3=$?
-wait "$BOGUS_PID" 2>/dev/null || true
-BOGUS_PID=""
+end_helper bogus
 assert_fail "garbage response tag rejected" "$ST1"
 assert_fail "oversized DATA frame rejected" "$ST2"
 assert_fail "oversized ERR frame rejected" "$ST3"
 
-# Broker must still be alive after everything
+# Broker must still be alive after everything; its holder reported its process id.
+if ! BROKER_PID="$(cat "$WORKDIR/broker.pid")"; then
+  echo "FAIL: the broker's holder reported no process id"
+  exit 1
+fi
 kill -0 "$BROKER_PID" 2>/dev/null
 assert_ok "broker still running" "$?"
 
