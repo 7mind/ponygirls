@@ -15,7 +15,9 @@ import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci.CIString
 import org.typelevel.vault.Key
 import io.circe.Json
-import ponygirls.auth.{AccountFailure,AccountJson,AccountReply,ClientAddress,CookieEffect,IndexingAccountEndpoint,ImperativeAccountApi,ImperativeSettings}
+import ponygirls.auth.{AccountFailure,ClientAddress}
+import ponygirls.auth.boundary.SecureAttribute
+import ponygirls.auth.http4s.{AccountPlane,AccountPlaneSettings}
 import scala.concurrent.duration.*
 import java.nio.file.{Files,Path}
 
@@ -30,14 +32,12 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
   private def headers(r:Request[IO]):RequestHeaders=RequestHeaders(all(r,"Host").headOption.getOrElse(""),all(r,"Authorization"),all(r,"Cookie"),all(r,"Origin"),all(r,"Sec-Fetch-Site").headOption,all(r,Sessions.AccountRequestHeader))
   private def json(status:Status,value:Json):Response[IO]=Response[IO](status).withEntity(value.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer"))
   private def ok[A](codec:baboon.runtime.shared.BaboonJsonCodec[A],value:A):Response[IO]=json(Status.Ok,Wire.encode(codec,value))
-  private val AccountBodyLimit=AccountJson.maxBodyBytes
   private def body(r:Request[IO]):IO[Json]=boundedBody(r,Wire.envelopeLimits.maxBytes,Wire.parse)
-  private def accountBody(r:Request[IO]):IO[Json]=boundedBody(r,AccountBodyLimit,AccountJson.parseUtf8)
   private def boundedBody(r:Request[IO],maxBytes:Int,parse:Array[Byte]=>Json):IO[Json]=IO {
     if(r.uri.query.nonEmpty) throw Fault("bad-envelope","query parameters are not supported")
     if(!r.contentType.exists(_.mediaType==MediaType.application.json)) throw Fault("bad-envelope","application/json required")
     if(r.contentLength.exists(_>maxBytes)) throw Fault("too-large","body too large")
-  } *> r.body.take(maxBytes.toLong+1).compile.to(Array).timeout(30.seconds).map { bytes =>
+  } *> r.body.take(maxBytes.toLong+1).compile.to(Array).timeout(Http.BodyTimeout).map { bytes =>
     if(bytes.length>maxBytes) throw Fault("too-large","body too large")
     parse(bytes)
   }
@@ -108,161 +108,35 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     json(status(code),Wire.encode(api.Failure.codecJson,api.Failure(code,message,spans,current)))
   }
   private def handled(operation: =>IO[Response[IO]]):IO[Response[IO]]=IO.defer(operation).handleError(e=>failure(e))
-  private def accountBoundary(r:Request[IO]):Unit=accountBoundary(r,getAuth())
-  private def accountBoundary(r:Request[IO],auth:Auth):Unit={
-    if(all(r,"Host").size!=1 || all(r,"Sec-Fetch-Site").size>1)throw Fault("forbidden","ambiguous host or fetch metadata")
-    if(r.uri.query.nonEmpty)throw Fault("bad-envelope","query parameters are not supported")
-    Sessions.accountTransport(auth.config,headers(r),safeRead=r.method==Method.GET)
-  }
-  private def accountHandled(operation: =>IO[Response[IO]]):IO[Response[IO]]=IO.defer(operation).handleError { error=>
-    val category=error match {
+  /** Haystack's account failure codes: the shared refusals as Haystack's `Fault`s, then the account protocol's codes. */
+  private def accountCode(raw:Throwable):String={
+    val category=Refused.asFault(raw) match {
       case e:AccountFailure=>e.code
       case e:Fault=>e.code
       case _=>"unavailable"
     }
-    val code=category match {
+    category match {
       case "bad-envelope"=>"invalid"
       case "ambiguous-credentials"=>"unauthorized"
       case "invalid"|"unauthorized"|"forbidden"|"not-found"|"conflict"|"rate-limited"|"too-large"=>category
       case _=>"unavailable"
     }
-    json(status(code),AccountJson.failure(code))
-  }
-  private def accountAuthed(r:Request[IO],renew:Boolean)(f:Authenticated=>IO[Response[IO]]):IO[Response[IO]]=IO.defer {
-    accountBoundary(r)
-    accounts.resolve(headers(r)).flatMap { a=>
-      if(!a.cookie)throw Fault("unauthorized","browser session required")
-      IO(limiter.check(a.principal,getAuth().config.rateLimit)) *> f(a).flatMap { response=>
-        if(!renew)IO.pure(response)
-        else IO(accountBoundary(r)) *> revalidate(r,a).map(current=>response.withAttribute(authenticatedPrincipal,current.principal).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(current.token),current.secureCookie))))
-      }
-    }
-  }
-  /** After the body of an account mutation, under one current configuration: the boundary, and the credential the
-    * request presents. While that is still the captured one, the mutation looks the session up itself, in its own
-    * transaction before any effect, and no lookup is made here. Another credential is refused by the full check, with
-    * its answers. */
-  private def accountMutationBoundary(r:Request[IO],captured:Authenticated):IO[Unit]=IO.defer {
-    val auth=getAuth()
-    accountBoundary(r,auth)
-    val offered=Sessions.resolve(auth.config,headers(r))
-    if(offered.token==captured.token && offered.cookie==captured.cookie)IO.unit else revalidate(r,captured).void
-  }
-  private def emptyAccountBody(r:Request[IO],a:Authenticated):IO[Unit]=accountBody(r).flatMap { raw=>
-    if(!raw.asObject.exists(_.isEmpty))throw Fault("bad-envelope","empty object required")
-    accountMutationBoundary(r,a)
-  }
-  private def presented(auth:Auth,r:Request[IO]):(Boolean,Option[String])={
-    val h=headers(r);val secure=Sessions.secure(auth.config,h)
-    (secure,Sessions.cookie(h,Sessions.name(secure)))
   }
   /** The socket peer, or the right-most `X-Forwarded-For` element when the peer is the local reverse proxy. */
   private def clientAddress(r:Request[IO]):String=
     ClientAddress.resolve(r.remoteAddr.fold(Http.UnknownPeer)(_.toString),all(r,"X-Forwarded-For"),peer=>scala.util.Try(java.net.InetAddress.ofLiteral(peer).isLoopbackAddress).getOrElse(false))
-  /** Writes a dispatcher reply after its transaction committed; security events go to the application log
-    * with exactly the shared field allowlist. */
-  private def accountReply(reply:AccountReply,secure:Boolean,previous:Option[String]):IO[Response[IO]]={
-    val response=json(Status.fromInt(reply.status).fold(throw _,identity),reply.body)
-      .putHeaders(reply.retryAfterSeconds.toList.map(seconds=>Header.Raw(CIString("Retry-After"),seconds.toString))*)
-    reply.events.traverse_(event=>IO.println(Json.obj(event.fields.map((name,value)=>name->Json.fromString(value))*).noSpaces)) *> (reply.cookie match {
-      case CookieEffect.Keep=>IO.pure(response)
-      case CookieEffect.Set(secret)=>previous.traverse_(hub.endSession).as(response.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(secret),secure))))
-    })
-  }
-  /** Account paths added for imperative accounts, behind the same boundary as the five existing endpoints. The
-    * configuration is taken again after the body was read: availability, cookie selection and dispatch never use
-    * a snapshot older than the body. */
-  private def imperativeAccount(r:Request[IO]):IO[Response[IO]]={
-    val entity=r.method==Method.POST || r.contentLength.exists(_>0) || r.isChunked
-    (if(entity)accountBody(r).map(Some(_)) else IO.pure(None)).flatMap { body=>
-      accountBoundary(r)
-      val auth=getAuth()
-      auth.imperative match {
-        case None=>IO.pure(json(Status.NotFound,AccountJson.failure("not-found")))
-        case Some(settings)=>
-          val (secure,previous)=presented(auth,r)
-          accounts.imperativeRequest(auth,settings,r.method.name,r.uri.path.renderString.stripPrefix(Http.AccountRoot),body,all(r,"X-Account-Actor"),previous,clientAddress(r))
-            .flatMap(accountReply(_,secure,previous))
-      }
-    }
-  }
-  private def indexingBoundary(r:Request[IO],auth:Auth):Unit={
-    accountBoundary(r,auth)
-    if(r.method==Method.POST){
-      if(all(r,"Origin").size!=1)throw Fault("forbidden","Origin required")
-      if(all(r,"Content-Type").size!=1)throw Fault("bad-envelope","one Content-Type required")
-    }
-  }
-  private def indexingAccount(r:Request[IO]):IO[Response[IO]]={
-    val body:IO[Option[Json]]=if(r.method==Method.POST)accountBody(r).map(Some(_))
-    else r.body.take(1).compile.last.timeout(30.seconds).map { first=>
-      if(first.nonEmpty || r.contentLength.exists(_>0))throw Fault("bad-envelope","GET must not have a body")
-      None
-    }
-    IO(indexingBoundary(r,getAuth())) *> body.flatMap { value=>
-      val auth=getAuth()
-      indexingBoundary(r,auth)
-      val (secure,previous)=presented(auth,r)
-      accounts.indexingRequest(auth,r.method.name,r.uri.path.renderString.stripPrefix(Http.AccountRoot),value,all(r,"X-Account-Actor"),previous,clientAddress(r))
-        .flatMap(accountReply(_,secure,previous))
-    }
-  }
-  /** The shared account protocol: a `503` raised outside the dispatcher once a request was routed to it (for
-    * example an unavailable database or a reload that failed meanwhile) also carries `Retry-After`. */
-  private def imperativeHandled(operation: =>IO[Response[IO]]):IO[Response[IO]]=accountHandled(operation).map { response=>
-    if(response.status!=Status.ServiceUnavailable || response.headers.get(CIString("Retry-After")).nonEmpty)response
-    else response.putHeaders(Header.Raw(CIString("Retry-After"),ImperativeAccountApi.UnavailableRetryAfterSeconds.toString))
-  }
-  /** Fixed telemetry labels of the shared account endpoints. */
-  private def accountLabel(method:Method,path:String):Option[String]=
-    Option.when(path.startsWith(Http.AccountPrefix))(path.stripPrefix(Http.AccountRoot)).flatMap { relative=>
-      IndexingAccountEndpoint.route(method.name,relative).map("account"+_.path)
-        .orElse(ImperativeAccountApi.route(method.name,relative).map("account"+_.endpoint.label))
-    }
+  /** The shared account plane with Haystack's origin policy, cookies, responses, failure codes, application-log
+    * security events (exactly the shared field allowlist), live-socket ends, per-principal rate limit and log label. */
+  private val accountPlane=new AccountPlane[Auth](accounts.shared,AccountPlaneSettings[Auth](
+    current=getAuth,origins=_.config.originPolicy,cookies=Sessions.Cookies,cookieOrder=SecureAttribute.Last,respond=json,failureCode=accountCode,
+    status=status,audit=event=>IO.println(Json.obj(event.fields.map((name,value)=>name->Json.fromString(value))*).noSpaces),endSession=hub.endSession,
+    clientAddress=clientAddress,admitted=a=>limiter.check(AccountService.principal(a.authority),getAuth().config.rateLimit),
+    delivered=(response,a)=>response.withAttribute(authenticatedPrincipal,AccountService.principal(a.authority)),bodyTimeout=Http.BodyTimeout,
+    retryAfterOn503=true,scopes=AccountService.Scopes))
   def routes(ws:WebSocketBuilder2[IO]):HttpRoutes[IO]={
-    val core=HttpRoutes.of[IO] {
+    val core=HttpRoutes.of[IO](accountPlane.routes.orElse {
     case GET -> Root / "api" / "versions" =>IO.pure(ok(api.VersionInfo.codecJson,Wire.versions))
     case GET -> Root / "api" / "v1" / "health" =>IO.pure(ok(api.Ack.codecJson,api.Ack(true)))
-    case r @ POST -> Root / "api" / "account" / "v1" / "login" =>accountHandled {
-      IO(accountBoundary(r)) *> accountBody(r).flatMap { raw=>
-        val auth=getAuth()
-        auth.imperative match {
-          case Some(settings)=>
-            accountBoundary(r)
-            val (secure,previous)=presented(auth,r)
-            imperativeHandled(accounts.imperativeLogin(auth,settings,raw,previous,clientAddress(r)).flatMap(accountReply(_,secure,previous)))
-          case None=>
-            val (login,password)=AccountJson.decodeLogin(raw)
-            accountBoundary(r)
-            val h=headers(r);val secure=Sessions.secure(getAuth().config,h)
-            val previous=Sessions.cookie(h,Sessions.name(secure))
-            accounts.login(login,password,previous).flatMap { signed=>
-              previous.traverse_(hub.endSession).as(json(Status.Ok,Json.obj("user"->AccountJson.user(signed.user))).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(signed.session.secret),secure))))
-            }
-        }
-      }
-    }
-    case r @ GET -> Root / "api" / "account" / "v1" =>accountHandled {accountAuthed(r,true) { a=>
-      accounts.account(a).map(view=>json(Status.Ok,AccountJson.account(view.user,view.tokens,Vector("api"))))
-    }}
-    case r @ POST -> Root / "api" / "account" / "v1" / "tokens" =>accountHandled {accountAuthed(r,true) { a=>
-      accountBody(r).flatMap { raw=>
-        val (name,scopes)=AccountJson.decodeIssue(raw)
-        accountMutationBoundary(r,a) *> accounts.issue(a,name,scopes,all(r,"X-Account-Actor")).map(issued=>json(Status.Ok,AccountJson.issued(issued)))
-      }
-    }}
-    case r @ POST -> Root / "api" / "account" / "v1" / "tokens" / id / "revoke" =>accountHandled {accountAuthed(r,true) { a=>
-      emptyAccountBody(r,a) *> accounts.revoke(a,id,all(r,"X-Account-Actor")).as(json(Status.Ok,Json.obj("ok"->Json.True)))
-    }}
-    case r @ POST -> Root / "api" / "account" / "v1" / "logout" =>accountHandled {accountAuthed(r,false) { a=>
-      emptyAccountBody(r,a) *> accounts.logout(a,all(r,"X-Account-Actor")) *> hub.endSession(a.token).as(json(Status.Ok,Json.obj("ok"->Json.True)).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(None,a.secureCookie))))
-    }}
-    case r if r.uri.path.renderString.startsWith(Http.AccountPrefix) &&
-      IndexingAccountEndpoint.route(r.method.name,r.uri.path.renderString.stripPrefix(Http.AccountRoot)).nonEmpty=>imperativeHandled(indexingAccount(r))
-    case r if r.uri.path.renderString.startsWith(Http.AccountPrefix)=>accountHandled {IO(accountBoundary(r)) *> IO.defer {
-      if(getAuth().imperative.isEmpty)IO.pure(json(Status.NotFound,AccountJson.failure("not-found"))) else imperativeHandled(imperativeAccount(r))
-    }}
-    case r if r.uri.path.renderString.startsWith("/api/account/")=>accountHandled {IO {accountBoundary(r);json(Status.NotFound,AccountJson.failure("not-found"))}}
     case r @ POST -> Root / "api" / "v1" / "login" =>handled {
       IO {version(r);Sessions.validateTransport(getAuth().config,headers(r));Sessions.csrf(getAuth().config,headers(r))} *> body(r).flatMap { raw=>
         Wire.decode(api.LoginRequest.codecJson,raw)
@@ -327,12 +201,12 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     case r if r.uri.path.renderString=="/mcp"=>IO.pure(json(Status.MethodNotAllowed,Json.Null).putHeaders(Header.Raw(CIString("Allow"),"POST")))
     case r if r.method==Method.GET && !r.uri.path.renderString.startsWith("/api/")=>handled(static(r))
     case r if r.uri.path.renderString.startsWith("/api/")=>IO.pure(failure(Fault("not-found","unknown API operation")))
-  }
+  })
     cats.data.Kleisli { request=>
       val start=System.nanoTime()
       core(request).semiflatMap { response=>
         val path=request.uri.path.renderString
-        val label=if(path=="/mcp") "mcp" else if(path.startsWith("/api/")) accountLabel(request.method,path).orElse(path.split("/").lastOption.filter(Set("login","logout","whoami","get","put","search","history","analyze","complete","values","live","retrieve","capabilities","health","versions"))).getOrElse("unknown") else "static"
+        val label=if(path=="/mcp") "mcp" else if(path.startsWith("/api/")) AccountPlane.label(request.method,path).orElse(path.split("/").lastOption.filter(Set("login","logout","whoami","get","put","search","history","analyze","complete","values","live","retrieve","capabilities","health","versions"))).getOrElse("unknown") else "static"
         response.attributes.lookup(authenticatedPrincipal).fold(accounts.resolve(headers(request),mcp=label=="mcp").attempt.map(_.toOption.map(_.principal)))(principal=>IO.pure(Some(principal))).flatMap { principal=>
           val event=Json.obj("requestId"->Json.fromString(java.util.UUID.randomUUID().toString),"route"->Json.fromString(label),"status"->Json.fromInt(response.status.code),"result"->Json.fromString(if(response.status.isSuccess) "ok" else "fault"),"durationMs"->Json.fromLong((System.nanoTime()-start)/1000000)).deepMerge(principal.fold(Json.obj())(p=>Json.obj("userId"->Json.fromString(p.userId),"tokenId"->Json.fromString(p.tokenId))))
           IO.println(event.noSpaces).as(response)
@@ -452,8 +326,8 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
   } yield (outgoing,incoming)
 }
 object Http {
-  private val AccountRoot="/api/account/v1"
-  private val AccountPrefix=AccountRoot+"/"
+  /** How long a request body may take to arrive. */
+  private val BodyTimeout=30.seconds
   /** Bucket of requests without a socket peer: they share one client address, which is stricter, never weaker. */
   private val UnknownPeer="unknown"
 }

@@ -2,7 +2,7 @@ package haystack.auth
 
 import haystack.domain.{Fault, Principal, QualifiedId}
 import java.net.URI
-import ponygirls.auth.{AccountSnapshot,AccountUser,AccountToken,DeclaredDirectory,ImperativeSettings,PersistentCookie,Secrets}
+import ponygirls.auth.{AccountRefused,AccountSnapshot,AccountUser,AccountToken,DeclaredDirectory,ImperativeSettings,PersistentCookie,Secrets}
 import ponygirls.auth.boundary
 import ponygirls.auth.boundary.{BoundaryRefused,CanonicalOrigin,ConfigRefused,ConfigRefusal,CookieValue,CredentialAccept,CredentialSelection,DeclaredIdRules,DeclaredUsers,
   DigestRead,DigestReader,ExactCredentialFile,ImperativeConfig,KeyFilePolicy,OriginPolicy,PresentedHeaders,Refusal,RequestAuthority,SecureAttribute,SessionCookie,SessionCookies}
@@ -22,11 +22,11 @@ final case class AuthConfig(activityProjectId: String, users: Vector[UserConfig]
   allowedHosts: Vector[String] = Vector.empty, allowedOrigins: Vector[String] = Vector.empty,
   insecureHttpOrigins: Vector[String] = Vector.empty, rateLimit: Option[RateLimit] = None, accounts: Option[AccountsConfig] = None) {
   /** Compiled once per configuration value; a reload or `copy` makes a new value and so a new policy. */
-  private[auth] lazy val originPolicy: OriginPolicy = OriginPolicy.deferred(allowedHosts, allowedOrigins, insecureHttpOrigins, cookieSecure)
+  private[haystack] lazy val originPolicy: OriginPolicy = OriginPolicy.deferred(allowedHosts, allowedOrigins, insecureHttpOrigins, cookieSecure)
 }
 
 /** Haystack's failure codes and messages for the refusals of the shared boundary (`ponygirls.auth.boundary`). */
-private object Refused {
+private[haystack] object Refused {
   def fault(refusal: Refusal): Fault = refusal match {
     case Refusal.DisallowedHost => Fault("forbidden", "disallowed host")
     case Refusal.AmbiguousOrigin => Fault("forbidden", "ambiguous origin")
@@ -38,6 +38,14 @@ private object Refused {
     case Refusal.DuplicateSessionCookie => Fault("ambiguous-credentials", "duplicate session cookies")
     case Refusal.AmbiguousCredentials => Fault("ambiguous-credentials", "ambiguous credentials")
     case Refusal.InvalidCredentials => Fault("unauthorized", "invalid credentials")
+    case Refusal.AmbiguousHost => Fault("forbidden", "ambiguous host or fetch metadata")
+    case Refusal.QueryParameters => Fault("bad-envelope", "query parameters are not supported")
+    case Refusal.JsonRequired => Fault("bad-envelope", "application/json required")
+    case Refusal.BodyTooLarge => Fault("too-large", "body too large")
+    case Refusal.BodyOnGet => Fault("bad-envelope", "GET must not have a body")
+    case Refusal.EmptyObjectRequired => Fault("bad-envelope", "empty object required")
+    case Refusal.OriginRequired => Fault("forbidden", "Origin required")
+    case Refusal.OneContentTypeRequired => Fault("bad-envelope", "one Content-Type required")
   }
   def fault(refusal: ConfigRefusal): Fault = Fault("config", refusal match {
     case ConfigRefusal.MalformedOrigin => "invalid origin"
@@ -61,6 +69,13 @@ private object Refused {
     case ConfigRefusal.AccountsIssuer => "accounts.issuer required"
     case ConfigRefusal.AccountsAdmin => "accounts require an enabled declarative admin"
   })
+  /** The `Fault` of a shared refusal; any other error unchanged. */
+  def asFault(error: Throwable): Throwable = error match {
+    case BoundaryRefused(refusal) => fault(refusal)
+    case ConfigRefused(refusal) => fault(refusal)
+    case AccountRefused(refusal) => AccountService.fault(refusal)
+    case other => other
+  }
   def apply[A](body: => A): A = try body catch {
     case BoundaryRefused(refusal) => throw fault(refusal)
     case ConfigRefused(refusal) => throw fault(refusal)
@@ -131,7 +146,7 @@ final case class Presented(token:String,cookie:Boolean,secureCookie:Boolean) {
 object Sessions {
   val SecureName = "__Host-haystack"
   val PlainName = "haystack-dev"
-  private val Cookies = SessionCookies(SecureName, PlainName, CookieValue.Trimmed)
+  private[haystack] val Cookies = SessionCookies(SecureName, PlainName, CookieValue.Trimmed)
   val MaxAge: Long = PersistentCookie.maxAgeSeconds
   def name(secure: Boolean): String = Cookies.name(secure)
   def serialize(token: Option[String], secure: Boolean): String = SessionCookie.serialize(name(secure), token, secure, SecureAttribute.Last)

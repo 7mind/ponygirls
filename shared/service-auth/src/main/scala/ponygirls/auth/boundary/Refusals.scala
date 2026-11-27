@@ -3,7 +3,9 @@ package ponygirls.auth.boundary
 /** Why the request boundary refused. Each service maps a refusal to its own failure code, message and status. */
 enum Refusal {
   case DisallowedHost, AmbiguousOrigin, DisallowedOrigin, OriginHostMismatch, SameOriginProofMissing,
-    BrowserSessionRequired, CookieNotAccepted, DuplicateSessionCookie, AmbiguousCredentials, InvalidCredentials
+    BrowserSessionRequired, CookieNotAccepted, DuplicateSessionCookie, AmbiguousCredentials, InvalidCredentials,
+    // The account plane's envelope: one Host and at most one Sec-Fetch-Site, no query, JSON bodies within the limit.
+    AmbiguousHost, QueryParameters, JsonRequired, BodyTooLarge, BodyOnGet, EmptyObjectRequired, OriginRequired, OneContentTypeRequired
 }
 final case class BoundaryRefused(refusal: Refusal) extends RuntimeException(refusal.toString)
 
