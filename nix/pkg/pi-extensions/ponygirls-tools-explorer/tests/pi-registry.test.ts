@@ -92,6 +92,43 @@ test("pi session: a tool's prompt lines are exactly what the system prompt loses
   assert.ok(withTool.includes(`\n- read: ${read.snippet}\n`));
 });
 
+test("pi session: two effects of tool combinations on the prompt are attributed to no tool (README, Limits)", async (t) => {
+  const { registry, ctx, pi } = await start(t, registerProbes, null);
+  const base = registry.snapshot().active;
+  assert.deepEqual(base.filter((name) => ["bash", "powershell", "grep", "find", "ls"].includes(name)), ["bash"], "the default selection");
+  /** What the prompt has with the tool on top of `others` and not without it, and the other way round. */
+  const effectOf = (name: string, others: readonly string[]): { lost: string[]; gained: string[]; mirrored: string[] } => {
+    pi.setActiveTools([...others, name]);
+    const withTool = ctx.getSystemPrompt().split("\n");
+    const lines = registry.snapshot().promptLines.get(name);
+    assert.ok(lines, name);
+    pi.setActiveTools([...others]);
+    const withoutTool = ctx.getSystemPrompt().split("\n");
+    pi.setActiveTools([...base]);
+    return {
+      lost: withTool.filter((line) => !withoutTool.includes(line)),
+      gained: withoutTool.filter((line) => !withTool.includes(line)),
+      mirrored: promptLineText(name, lines).split("\n").filter((line) => line !== ""),
+    };
+  };
+  const combinationRule = "- Use bash for file operations like ls, rg, find";
+  const withoutBash = base.filter((name) => name !== "bash");
+  // The rule is in the prompt while bash is active and none of grep, find and ls is. It is no line of bash's.
+  const bash = effectOf("bash", withoutBash);
+  assert.deepEqual(bash.lost.filter((line) => !bash.mirrored.includes(line)), [combinationRule]);
+  assert.deepEqual(bash.gained, []);
+  for (const name of ["grep", "find", "ls"]) {
+    const searching = effectOf(name, base);
+    assert.deepEqual([searching.lost, searching.gained], [searching.mirrored, [combinationRule]], `${name} takes the rule out`);
+  }
+  // A rule two active tools share is in the prompt once; each of the two lists it.
+  const powershell = effectOf("powershell", base);
+  const shared = powershell.mirrored.filter((line) => bash.mirrored.includes(line));
+  assert.equal(shared.length, 1);
+  assert.equal(powershell.lost.includes(shared[0]!), false, "it stays while bash is active");
+  assert.deepEqual(powershell.mirrored.filter((line) => !powershell.lost.includes(line) && line !== shared[0]), []);
+});
+
 test("pi session: a custom system prompt leaves the tool lines out", async (t) => {
   const { registry, ctx } = await start(t, registerProbes, "You are a probe.");
   const snapshot = registry.snapshot();

@@ -166,6 +166,13 @@ about 30,000 tokens in total. `--json` prints the result for programs;
   Switching a tool that has prompt lines also makes pi send the changed
   `tools` and `rules` sections of the system prompt once more, which the
   estimate does not include.
+- A tool's prompt lines are counted as pi lists them for that tool. Two
+  effects of combinations are not modelled, and each moves a figure by one
+  line of text. A rule that two active tools share (`bash` and `powershell`
+  share one) is in the prompt once and counted for both. And pi's rule
+  `Use bash for file operations like ls, rg, find` belongs to no tool: it is
+  in the prompt while `bash` or `powershell` is active and none of `grep`,
+  `find` and `ls` is.
 - The pane reads pi's registry again once a second, so tools of MCP servers
   that connect late appear by themselves. The text summary is taken once and
   can miss them when it runs right after start.
@@ -189,7 +196,8 @@ model. That is where the assumptions about pi are checked: a tool activated
 between two requests is declared by the next one and a deactivated one is
 dropped; under pi's rule the explorer's estimate of a declaration equals pi's
 own for the declaration pi sent, apart from the sampling directive; and a
-tool's prompt lines are exactly what the system prompt loses without the tool.
+tool's prompt lines are exactly what the system prompt loses without the
+tool, apart from the two combination effects named under Limits.
 
 ```sh
 nix build .#checks.x86_64-linux.ponygirls-tools-explorer -L
