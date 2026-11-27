@@ -865,11 +865,12 @@ of 24 held-out work sessions in arm A and in 9 of 24 in arm B (20 were required)
 - **The final checkpoint repeats a completion made with the tool**: sonnet A in 2 of the 31 sessions that had such a
   completion, sonnet B in 5 of 70, haiku B in 1 of 34 (haiku A 0 of 4), fable 0 of 36 in both arms. The sentence the
   new wording adds about this changes nothing that these numbers can show.
-- **Rules under the shipped wording.** Batch 1 found that every subject recorded every rule; its two scenarios give a
-  rule in a message of its own. Here arm A records a rule that comes inside a message with other content in 0 of 12
-  (`h2`), 1 of 12 (`h3`) and 0 of 12 (`h4`) sonnet sessions, and haiku A in 0 of 6 (`chat`, `h4`), 1 of 6 (`h1`) and
-  2 of 6 (`h3`). Arm B: sonnet 96 of 96; haiku 6 of 6 except `chat` 5 of 6 and `h4` 1 of 6 (a control scenario: the
-  rule opens a message that goes on with a question, and nothing else in the session calls for the tool).
+- **Rules under the shipped wording.** Batch 1 found that every subject recorded every rule, in its two scenarios.
+  Over the eight of this batch arm A records every rule in its turn in 57 of 96 sonnet sessions and 27 of 48 haiku
+  sessions (fable 48 of 48). Sonnet misses the rule in `h2` (0 of 12), `h3` (1 of 12) and `h4` (0 of 12), where it is
+  one sentence of a longer message, and in a third of the `chat` sessions (8 of 12), where it is a message of its
+  own; haiku in `chat` and `h4` (0 of 6), `h1` (1 of 6) and `h3` (2 of 6). Arm B: sonnet 96 of 96; haiku 42 of 48
+  (`chat` 5 of 6 and `h4` 1 of 6, the two control scenarios, in which nothing else calls for the tool).
 - **Surplus.** No entry was made of a question in any of the 384 sessions with the built-in tools. The request that
   its own reply answers (a title, in `report`) became an objective for fable A in 6 of 6 and fable B in 0 of 6, for
   sonnet A in 2 of 12 and sonnet B in 1 of 12. Surplus rules attributed to the user, all in arm A: sonnet in 3 of 12

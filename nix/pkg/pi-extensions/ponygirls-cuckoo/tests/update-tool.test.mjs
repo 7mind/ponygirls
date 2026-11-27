@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { stream as streamAnthropic } from '@earendil-works/pi-ai/api/anthropic-messages';
 import { registerCuckoo } from '../index.ts';
@@ -38,6 +39,21 @@ function fixture(enabled = true) {
   return { manager, tools, handlers, ctx, activeTools, notifications, call, boundary, edits, tokens: value => { tokens = value; }, command: value => commands.get('cuckoo').handler(value, ctx) };
 }
 const brief = set => ({ objectives: set.objectives.map(item => [item.id, item.status]), rules: set.rules.map(item => [item.id, item.status]) });
+
+// Specified Behavioral-Active / Blackbox-Atomic: the text the model is given for the tool.
+test('the guidance for the update tool is the wording that was measured with live models', () => {
+  const tool = fixture(true).tools.get(UPDATE_TOOL);
+  const sha256 = text => createHash('sha256').update(text, 'utf8').digest('hex');
+  // Length and SHA-256 of the guidelines (joined by newlines) and of the description: the wording frozen for batch 2 of
+  // scripts/cuckoo-record-pilot and adopted by its registered rule. A deliberate change of the wording updates these
+  // values and should come with runs of that pilot; the earlier wording recorded no objective in most of its sessions
+  // with a mid-sized model.
+  assert.equal(tool.promptGuidelines.length, 6);
+  assert.equal(tool.promptGuidelines.join('\n').length, 2108);
+  assert.equal(sha256(tool.promptGuidelines.join('\n')), '225a0d04b2f4fad4408a91df670f7e40e14f9619bf4f9147e04b7a4ba521ab3a');
+  assert.equal(tool.description.length, 1530);
+  assert.equal(sha256(tool.description), '09f3346c61e14246667e59964008e0731f5e987d6e1f4dbd547375f075a94674');
+});
 
 // Specified Behavioral-Active / Blackbox-Group: the registered tool over a real in-memory session tree.
 test('the update tool is declared while automatic mode is on and withdrawn when it is turned off', async () => {
