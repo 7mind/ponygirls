@@ -13,6 +13,14 @@ import ponygirls.retrieval.postgres.PostgresRetrieval
   * filter/publication behavior, not model relevance quality.
   */
 final class MetadataSearchSuite extends FunSuite:
+  private def drain(engine: PostgresRetrieval,c: java.sql.Connection): Unit =
+    var claim=engine.claim(c,30,java.time.Instant.now())
+    while claim.nonEmpty do
+      val work=claim.get
+      if work.chunks.nonEmpty then engine.accept(c,work,0,List.fill(work.chunks.size)(List(1.0,0.0,0.0)))
+      engine.publish(c,work)
+      claim=engine.claim(c,30,java.time.Instant.now())
+
   test("lexical/semantic/hybrid apply all exact metadata filters before counts and bounded selection") {
     BackendFixture.resource(true).use { f =>
       val profile=RetrievalProfile(EmbeddingSpace("controlled-metadata","immutable-v1",3,false,"","","cosine"),"manure-metadata-paths-v2")
@@ -25,14 +33,7 @@ final class MetadataSearchSuite extends FunSuite:
         def query(value: String): IO[List[Double]] = IO.pure(List(1.0,0.0,0.0))
       val search=new Search(f.database.get,f.lease,f.config,f.auth,f.clock,engine,projection,Some(embedding))
       val input=InitUpload("needle",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None,(Vector("needle tag\u0000馬","release") ++ Vector.tabulate(MetadataRules.MaxTags-2)(i => "tag-"+i)),Some("host\u0000例"),Some("/project/𐀀"))
-      def publish: IO[Unit] = f.database.get.transaction { c =>
-        var claim=engine.claim(c,30,java.time.Instant.now())
-        while claim.nonEmpty do
-          val work=claim.get
-          if work.chunks.nonEmpty then engine.accept(c,work,0,List.fill(work.chunks.size)(List(1.0,0.0,0.0)))
-          engine.publish(c,work)
-          claim=engine.claim(c,30,java.time.Instant.now())
-      }
+      def publish: IO[Unit] = f.database.get.transaction(c => drain(engine,c))
       for
         a <- f.artifacts.init(f.identity,input)
         ready <- f.artifacts.finish(f.identity,a.artifact.id)
@@ -106,12 +107,7 @@ final class MetadataSearchSuite extends FunSuite:
         published <- f.artifacts.finish(f.identity,a.artifact.id)
         _ <- f.database.get.transaction { c =>
           engine.initialize(c); projection.put(c,published)
-          var claim=engine.claim(c,30,java.time.Instant.now())
-          while claim.nonEmpty do
-            val work=claim.get
-            if work.chunks.nonEmpty then engine.accept(c,work,0,List.fill(work.chunks.size)(List(1.0,0.0,0.0)))
-            engine.publish(c,work)
-            claim=engine.claim(c,30,java.time.Instant.now())
+          drain(engine,c)
         }
         b <- f.artifacts.init(f.identity,input)
         unpublished <- f.artifacts.finish(f.identity,b.artifact.id)
