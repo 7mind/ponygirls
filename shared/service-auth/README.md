@@ -67,7 +67,7 @@ generic 503. Refusals and failures never carry a presented secret.
 | `SessionCookie.serialize`, `select` | cookie name, `SecureAttribute` (`Last` or `BeforeMaxAge`), `CookieValue` (`Trimmed` or `Exact`) |
 | `CredentialSelection.resolve` | `SessionCookies` (secure and plain names, value reading), `CredentialAccept` per route, `mutate` |
 | `DeclaredUsers.load` | parsed users (`DeclaredUserConfig`), `DeclaredIdRules` (`Haystack`, `Manure`, `Blabber`), `DigestRead` (`Snapshot` or `PerCheck`), `DigestReader` (`Stream` or `Bounded`) |
-| `ConfiguredTokens` | — (lookup by secret; liveness of a persisted grant by user id, token id and digest; listing with `source: "configured"` and scope `api`) |
+| `ConfiguredTokens` | — (lookup by secret; liveness of a persisted grant by user id, token id and digest; listing with `source: "configured"` and scope `api`; `configures`: whether a secret is any configured token's, enabled owner or not) |
 | `ImperativeConfig.settings` | service name, parsed `accounts` settings, the declared directory, `KeyFilePolicy` (`LiteralStorePrefix` or `NormalizedPath`) |
 
 `OriginPolicy` is the origin model of Haystack: host names admitted on any port,
@@ -109,15 +109,31 @@ deriving body and status, and every final response carries exactly one
 only scope the shared tables represent; the account read offers exactly it.
 Users today: Haystack.
 
-Two more choices of the service, without defaults: `BearerSecretPasswords` (`Accepted`:
-a password equal to a bearer secret signs in; `Refused`: the secret of a configured
-token or of a live issued token is refused as a password exactly as a wrong one is,
-after the same verification, on a declared login and on every verification of the
-imperative core) and `DeclaredInstallation` (`Reconciled`: the shared check against
-imperative accounts and the reconciliation; `Own`: the service's installation, for
-example `SharedAccountStorage.checked(check)`, which runs the service's own rule on its
-declared ids on the installing connection, under the directory lock, after the shared
-check and before the reconciliation, so that a refused installation writes nothing).
+Three more choices of the service, without defaults:
+
+- `BearerSecretPasswords`. `Accepted`: a password equal to a bearer secret signs in.
+  `Refused`: a password that is the secret of any configured token (whatever its owner's
+  state, whether or not its digest is shared: `ConfiguredTokens.configures`) or of a live
+  issued token is verified as a wrong password is, on the same path and with the same
+  failure, before any session work (declared logins and every verification of the
+  imperative core); offered as a new password (sign-up, redemption, recovery, password
+  change) it is `weak-password` (`400`) before it is hashed, and the operation's
+  transaction rolls back: nothing stored, no session replaced, nobody signed in.
+- `DeclaredInstallation`. `Reconciled`: the shared check against imperative accounts and
+  the reconciliation. `Own`: the service's installation, for example
+  `SharedAccountStorage.checked(check)`, which runs the service's own rule on its declared
+  ids on the installing connection, under the directory lock, after the shared check and
+  before the reconciliation, so that a refused installation writes nothing.
+- `AccountLifecycle`. `Unobserved`: nothing is told and nothing read for it.
+  `Observed(credentialEnded, accountChanged)`: after a commit, never after a rollback,
+  `credentialEnded(id)` for a session ended by sign-out or by a sign-in that replaced it
+  (`session-<uuid>`) and for a revoked issued token (`issued-<uuid>`), and
+  `accountChanged(id)` for an account whose rights ended or changed: disabled or enabled,
+  its administrator role changed, its password changed or recovered (its sessions
+  revoked), its TOTP requirement changed, its declared entry changed or removed by a
+  reload, or suspended by the master switch going off. Sessions revoked in bulk are told
+  through their account, not one by one. Identifiers only, never a secret.
+
 `ImperativeAccounts.administrator` and `ImperativeAccountSql.administrator(c, settings,
 declared, userId)` read an account's effective administrator flag (the rule of the
 authenticated operations) in the caller's transaction.
@@ -127,24 +143,33 @@ authenticated operations) in the caller's transaction.
 `DeclarativeAccountService.identify(select)` resolves a credential as `resolve` does and
 returns an `Identified`: the `Captured` credential, the display name of its directory
 entry and `administrator`, the account's effective flag on a browser session and never
-true for a bearer token. `standing(captured)` reads it again (empty once the credential
-no longer authenticates the same authority); a live socket asks it.
+true for a bearer token. A credential looked up in a transaction is judged against the
+configuration current when the transaction's callback runs, not the one it was selected
+under. `standing(captured)` reads it again (empty once the credential no longer
+authenticates the same authority); a live socket asks it.
 
-`ServiceCallers[S]` (package `ponygirls.auth.http4s`) takes the callers of a service's
-own routes. Per route the service passes a `CallerRoute`: `CredentialAccept`
-(`BearerOrCookie`, or `BearerOnly`, which refuses a session cookie before any lookup),
-`RouteCredential` (`Bearer`, `BrowserSession`, `Either`: the other kind is refused after
-authentication), `mutate` (a session cookie needs the same-origin proof of a write) and
-`ActorRule` (`Required`: a browser-session request carries exactly one `X-Account-Actor`
-naming the session owner). `admit` runs before the body, in this order: transport and
-the one credential, its authority, the kind the route serves, the actor. `recheck` runs
-after the body and after every wait: the request still presents the admitted credential
-and it still authenticates the same authority, with the administrator flag read again.
-`renewed` renews a browser session's cookie on the response. Refusals: `BoundaryRefused`,
+`ServiceCallers[S, C]` (package `ponygirls.auth.http4s`) takes the callers of a service's
+own routes. `ServiceCallerSettings` carries the transport values, `RequestAmbiguity`
+(`FirstHostClassCookie`: the first `Host` decides and only the cookie of the request's
+security class makes a bearer ambiguous; `OneHostAnyCookie`: exactly one `Host`, and a
+bearer beside a session cookie of either name is ambiguous) and `CallerReads[C]`
+(`CredentialOnly`: `Captured`, exactly the reads of `resolve`; `WithAdministrator`:
+`Identified`, one more read for an imperative account's flag). Per route the service
+passes a `CallerRoute`: `CredentialAccept` (`BearerOrCookie`, or `BearerOnly`, which
+refuses a session cookie before any lookup), `RouteCredential` (`Bearer`,
+`BrowserSession`, `Either`: the other kind is refused after authentication), `mutate` (a
+session cookie needs the same-origin proof of a write) and `ActorRule` (`Required`: a
+browser-session request carries exactly one `X-Account-Actor` naming the session owner).
+`admit` runs before the body, in this order: the ambiguity rule, transport and the one
+credential, its authority, the kind the route serves, the actor. `recheck` runs after the
+body and after every wait: the request still presents the admitted credential and it
+still authenticates the same authority, with what `reads` names read again. `renewed`
+renews a browser session's cookie on the response. Refusals: `BoundaryRefused`,
 `AccountRefused`, and `CallerRefused` (`CredentialKindNotServed`, `ActorRequired`,
-`ActorMismatch`), each mapped by the service. Users today: Haystack (either credential,
-no actor; `/mcp` `BearerOnly`) and the shared suites' test consumer
-(`ServiceCallersContract`), which is wired the way Blabber's accounts unit will be.
+`ActorMismatch`), each mapped by the service. Users today: Haystack
+(`FirstHostClassCookie`, `CredentialOnly`, either credential, no actor; `/mcp`
+`BearerOnly`) and the shared suites' test consumer (`ServiceCallersContract`), which is
+wired the way Blabber's accounts unit will be.
 
 ## What a new service passes (Blabber)
 
@@ -154,11 +179,14 @@ choices, by its contract (`blabber/models/current.baboon`) and design (§4):
 ```scala
 val storage = new SharedAccountStorage(transactions, (c, fingerprints) => new ChatIdentityHistory(c, fingerprints))
 val service = new DeclarativeAccountService[BlabberAuth](storage, () => current, runtime, IndexingService.Blabber,
-  indexingPolicy, BearerSecretPasswords.Refused, storage.checked[BlabberAuth](DeclaredIds.check))
+  indexingPolicy, BearerSecretPasswords.Refused, storage.checked[BlabberAuth](DeclaredIds.check),
+  AccountLifecycle.Observed(credentialEnded = hub.endSession, accountChanged = hub.accountChanged))  // ids, not secrets
 val plane = new AccountPlane[BlabberAuth](service, AccountPlaneSettings(/* its responses, codes, statuses, audit */
-  endSession = hub.endSession, loginAdmission = LoginAdmission.Guarded(perClientAddressLimit), /* ... */))
-val callers = new ServiceCallers[BlabberAuth](service,
-  ServiceCallerSettings(_.originPolicy, SessionCookies("__Host-blabber", "blabber-dev", CookieValue.Trimmed), SecureAttribute.Last))
+  endSession = _ => IO.unit,  // keyed by the session secret; Blabber's hub is told by credential id above
+  loginAdmission = LoginAdmission.Guarded(perClientAddressLimit), /* ... */))
+val callers = new ServiceCallers[BlabberAuth, Identified](service, ServiceCallerSettings(_.originPolicy,
+  SessionCookies("__Host-blabber", "blabber-dev", CookieValue.Trimmed), SecureAttribute.Last,
+  RequestAmbiguity.OneHostAnyCookie, CallerReads.WithAdministrator))
 val attach = CallerRoute(CredentialAccept.BearerOrCookie, RouteCredential.Bearer, mutate = true, ActorRule.Required)
 val say = CallerRoute(CredentialAccept.BearerOrCookie, RouteCredential.BrowserSession, mutate = true, ActorRule.Required)
 val history = CallerRoute(CredentialAccept.BearerOrCookie, RouteCredential.Either, mutate = true, ActorRule.Required)
@@ -167,12 +195,17 @@ val whoami = CallerRoute(CredentialAccept.BearerOrCookie, RouteCredential.Either
 
 Declared users load with `DeclaredIdRules.Blabber`. `CallerRefused(ActorMismatch)` is its
 `conflict` with reason `actor-mismatch`, `ActorRequired` its `invalid`,
-`CredentialKindNotServed` its `forbidden`. **Login admission:** `LoginAdmission` has no
-default, and `Unguarded` is a value a service has to write out (Haystack does, stating
-that it never limited declared logins). Blabber passes `Guarded` with a per-client-address
-limit of password-login attempts (design §4.6); the shared limit for that is the later
-fix 1, and until then a guard the service builds over `AttemptLimiter` answers `429`
-without `Retry-After`, which its contract requires.
+`CredentialKindNotServed` its `forbidden`. Its reload loop publishes a failed reload as
+Haystack's does (the supplier then throws the failure, and every decision fails closed).
+
+**Login admission.** `LoginAdmission` has no default, and `Unguarded` is a value a service
+has to write out (Haystack does, stating that it never limited declared logins). Blabber
+passes `Guarded` with a per-client-address limit of password-login attempts (design
+§4.6); the shared limit for that is the later fix 1. Blabber's contract requires
+`Retry-After` on every `429`. A `429` that a guard raises does not carry it: the plane's
+login path adds `Retry-After` only to a dispatcher reply. Until fix 1, a guard a service
+builds (for example over `AttemptLimiter`) answers a `429` without `Retry-After`, which
+does not meet that contract.
 
 ## Account HTTP protocol v1
 
