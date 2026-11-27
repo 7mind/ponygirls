@@ -29,8 +29,8 @@ let
     cd ${sources.manureTargetTests}
     readelf -lW ${native}/libexec/manure-server > /srv/portable-volume/elf-headers
     readelf -dW ${native}/libexec/manure-server > /srv/portable-volume/elf-dynamic
-    ! grep -q INTERP /srv/portable-volume/elf-headers
-    ! grep -q NEEDED /srv/portable-volume/elf-dynamic
+    if grep -q INTERP /srv/portable-volume/elf-headers; then echo 'unexpected: INTERP program header in elf-headers (dynamically linked server)' >&2; exit 1; fi
+    if grep -q NEEDED /srv/portable-volume/elf-dynamic; then echo 'unexpected: NEEDED entry in elf-dynamic (dynamically linked server)' >&2; exit 1; fi
     exec timeout --foreground --signal=TERM --kill-after=15s 600s python3 ${./with-owned-postgres.py} python3 ${probe}
   '';
 in pkgs.testers.runNixOSTest {

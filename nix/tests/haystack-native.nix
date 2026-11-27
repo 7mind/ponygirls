@@ -20,7 +20,7 @@ in pkgs.runCommand "haystack-native-current-transport" ({
     --replace-fail "'/bin/sh'" "'${pkgs.runtimeShell}'"
   readelf -lW ${native}/libexec/haystack-server > headers.txt
   readelf -dW ${native}/libexec/haystack-server > dynamic.txt
-  ! grep -q INTERP headers.txt
-  ! grep -q NEEDED dynamic.txt
+  if grep -q INTERP headers.txt; then echo 'unexpected: INTERP program header in headers.txt (dynamically linked server)' >&2; exit 1; fi
+  if grep -q NEEDED dynamic.txt; then echo 'unexpected: NEEDED entry in dynamic.txt (dynamically linked server)' >&2; exit 1; fi
   HAYSTACK_REPORT_DIR="$out" python3 ${./with-owned-postgres.py} ${pkgs.runtimeShell} haystack/scripts/test-current.sh
 ''

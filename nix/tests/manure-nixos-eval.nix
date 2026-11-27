@@ -409,13 +409,13 @@ pkgs.runCommandLocal "manure-nixos-eval-test"
   grep -q '"credential":"manure-hash-w-agent-default"' "$tmpl"
   grep -q '"credential":"manure-hash-operator-browser"' "$tmpl"
   # No digest material, no secret paths, no $VAR literals in the template.
-  ! grep -Eq '[0-9a-f]{64}' "$tmpl"
-  ! grep -q '/run/secrets' "$tmpl"
-  ! grep -q 'CREDENTIALS_DIRECTORY' "$tmpl"
-  ! grep -q '"hashFile"' "$tmpl"
+  if grep -Eq '[0-9a-f]{64}' "$tmpl"; then echo 'unexpected: 64-hex-digit digest material in the config template' >&2; exit 1; fi
+  if grep -q '/run/secrets' "$tmpl"; then echo 'unexpected: /run/secrets in the config template' >&2; exit 1; fi
+  if grep -q 'CREDENTIALS_DIRECTORY' "$tmpl"; then echo 'unexpected: CREDENTIALS_DIRECTORY in the config template' >&2; exit 1; fi
+  if grep -q '"hashFile"' "$tmpl"; then echo 'unexpected: "hashFile" in the config template' >&2; exit 1; fi
   pathTmpl=$(grep -o '/nix/store/[^ "]*manure-config.template.json' "$pathLauncherBin" | head -n 1)
   grep -q '"content_mode":"path"' "$pathTmpl"
-  ! grep -q '"content_suffix"' "$pathTmpl"
+  if grep -q '"content_suffix"' "$pathTmpl"; then echo 'unexpected: "content_suffix" in the path-mode config template' >&2; exit 1; fi
   grep -q '"content_mode":"subdomain"' "$tmpl"
   python3 - "$strictLauncherBin" "$anchoredLauncherBin" "$unsafeLauncherBin" <<'PYTEST'
   import json, pathlib, re, sys

@@ -797,20 +797,20 @@
             pkgs.runCommandLocal "haystack-run-test"
               { nativeBuildInputs = [ pkgs.coreutils pkgs.ripgrep ]; }
               ''
-                ! ${goodRun}/bin/haystack-run > no-command.out 2> no-command.err
+                if ${goodRun}/bin/haystack-run > no-command.out 2> no-command.err; then echo 'unexpected: haystack-run without a command succeeded' >&2; exit 1; fi
                 test ! -s no-command.out
-                ! grep -q "${good43}" no-command.err
+                if grep -q "${good43}" no-command.err; then echo 'unexpected: the token in the stderr of haystack-run without a command' >&2; exit 1; fi
                 ${goodRun}/bin/haystack-run true
                 ${goodRun}/bin/haystack-run sh -c 'test "$HAYSTACK_TOKEN" = "${good43}"'
                 ${lfRun}/bin/haystack-run sh -c 'test "$HAYSTACK_TOKEN" = "${good43}"'
-                ! ${badRun}/bin/haystack-run true
-                ! ${missingRun}/bin/haystack-run true
+                if ${badRun}/bin/haystack-run true; then echo 'unexpected: haystack-run accepted a malformed token file' >&2; exit 1; fi
+                if ${missingRun}/bin/haystack-run true; then echo 'unexpected: haystack-run accepted a missing token file' >&2; exit 1; fi
                 HAYSTACK_TOKEN="${good43}" ${missingRun}/bin/haystack-run true
                 HAYSTACK_TOKEN_FILE=${tok44} ${missingRun}/bin/haystack-run true
-                ! env HAYSTACK_TOKEN="${good43}" HAYSTACK_TOKEN_FILE=${tok43} ${goodRun}/bin/haystack-run true
+                if env HAYSTACK_TOKEN="${good43}" HAYSTACK_TOKEN_FILE=${tok43} ${goodRun}/bin/haystack-run true; then echo 'unexpected: haystack-run accepted both HAYSTACK_TOKEN and HAYSTACK_TOKEN_FILE' >&2; exit 1; fi
                 # The wrapper embeds the token FILE path, never its content.
                 ${goodRun}/bin/haystack-run sh -c 'echo "$HAYSTACK_TOKEN"' | grep -q "${good43}"
-                ! rg -q "${good43}" ${goodRun}
+                if rg -q "${good43}" ${goodRun}; then echo 'unexpected: the token content in the haystack-run package' >&2; exit 1; fi
                 touch $out
               '';
           pi-codegraph-wiring = import ./nix/lib/pi-codegraph-test.nix { inherit pkgs; };

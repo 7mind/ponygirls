@@ -98,7 +98,7 @@ pkgs.runCommand "chronicle-hm-server" {
   grep -q -- '-h 127.0.0.1' backup
   grep -q -- '--no-password' backup
   grep -q 'PGPASSWORD' backup
-  ! grep -q 'initdb' backup
+  if grep -q 'initdb' backup; then echo 'unexpected: initdb in the backup script' >&2; exit 1; fi
   echo 'PASS: consumer inertness, explicit database readiness graph, no hidden cluster, runtime credential preservation, TCP backup wiring'
   touch "$out"
 ''

@@ -215,10 +215,10 @@ pkgs.runCommandLocal "manure-hm-eval-test"
 } ''
   grep -q '"manure"' "$mcpJson"
   grep -q 'manure-mcp' "$mcpJson"
-  ! grep -q 'MANURE_TOKEN_FILE' "$mcpJson"
+  if grep -q 'MANURE_TOKEN_FILE' "$mcpJson"; then echo 'unexpected: MANURE_TOKEN_FILE in the Pi mcp.json' >&2; exit 1; fi
   grep -q '"exposure": *"deferred"' "$mcpJson"
   # No secret material, no second transport in the emitted file.
-  ! grep -q 'MANURE_TOKEN[^_]' "$mcpJson"
+  if grep -q 'MANURE_TOKEN[^_]' "$mcpJson"; then echo 'unexpected: MANURE_TOKEN in the Pi mcp.json' >&2; exit 1; fi
   # Lazy wrappers must not require the configured (absent) file for help
   # or protocol initialization. The native client owns call-time validation.
   "$manureClient/bin/manure" --help > cli-help.out

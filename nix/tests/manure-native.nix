@@ -22,8 +22,8 @@ in pkgs.runCommand "manure-native-full-target" ({
   cd source
   readelf -lW ${native}/libexec/manure-server > headers.txt
   readelf -dW ${native}/libexec/manure-server > dynamic.txt
-  ! grep -q INTERP headers.txt
-  ! grep -q NEEDED dynamic.txt
+  if grep -q INTERP headers.txt; then echo 'unexpected: INTERP program header in headers.txt (dynamically linked server)' >&2; exit 1; fi
+  if grep -q NEEDED dynamic.txt; then echo 'unexpected: NEEDED entry in dynamic.txt (dynamically linked server)' >&2; exit 1; fi
   mkdir "$out"
   export REPORT="$out"
   cat > run-target.sh <<'SH'

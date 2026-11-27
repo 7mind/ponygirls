@@ -24,8 +24,8 @@ in runCommand "manure-posix-static-musl-acceptance" {
   # Header audit is necessary but not sufficient: execute that exact ELF below.
   readelf -lW "$out/manure-posix-probe" > "$out/elf-program-headers.txt"
   readelf -dW "$out/manure-posix-probe" > "$out/elf-dynamic.txt"
-  ! grep -q INTERP "$out/elf-program-headers.txt"
-  ! grep -q NEEDED "$out/elf-dynamic.txt"
+  if grep -q INTERP "$out/elf-program-headers.txt"; then echo 'unexpected: INTERP program header in elf-program-headers.txt (dynamically linked probe)' >&2; exit 1; fi
+  if grep -q NEEDED "$out/elf-dynamic.txt"; then echo 'unexpected: NEEDED entry in elf-dynamic.txt (dynamically linked probe)' >&2; exit 1; fi
   "$out/manure-posix-probe" --linked > "$out/native.log" 2>&1 || {
     cat "$out/native.log"; exit 1;
   }
