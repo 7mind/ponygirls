@@ -422,10 +422,10 @@ ignores the key but refuses an `indexing` section without the three capacities.
   no hold but `job failed … class=failureClass=… consecutive=consecutive=N
   limit=limit=attempt-limit|consecutive-limit|reservation-limit …` (a charged failure at the fifth attempt, the tenth in a
   row, the window's tenth annotation reservation), or `limit=limit=recorded` when a record whose commit acknowledgement was
-  lost is read back as Failed; a claim the owner's indexing no longer admits is parked as before (`job not held … parked`);
-  a claim that ended (lease, newer revision, owner target) records nothing (`job not held … the claim ended`). After
-  `job failure not recorded …` the outcome is unknown: read the row — Running with its lease and charge (reclaimed after
-  the lease), or a hold or failure that committed although its acknowledgement was lost. 401, 403 and 404 also log
+  lost is read back as Failed. `job not held … parked` means the owner's indexing no longer admits the claim: one attempt
+  is refunded and the job is parked Queued, or ended as superseded if a newer revision exists. `job not held … the claim
+  ended` can mean either a supersession was recorded or the claim no longer had authority to write. After `job failure
+  not recorded …`, the result is unknown: inspect the row; the record may still have committed. 401, 403 and 404 also log
   `model provider configuration alert …`.
 - **The lane cool-down.** After such a failure the lane that ran the job waits 1, 2, 4, 8, then 15 minutes before its next
   claim (`indexing lane paused lane=… upstream=… level=… pauseSeconds=…`); a completed answer of the upstream that failed
