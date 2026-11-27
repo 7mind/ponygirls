@@ -1161,6 +1161,29 @@
             node --test tests/*.test.ts
             touch $out
           '';
+          ponygirls-tools-explorer = pkgs.runCommand "ponygirls-tools-explorer-test" {
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
+            PI_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            PI_TOOLS_EXPLORER_EXTENSION = "${self.packages.${system}.ponygirls-pi-extensions}/ponygirls-tools-explorer";
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
+          } ''
+            export HOME=$TMPDIR
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-tools-explorer} ponygirls-tools-explorer
+            chmod -R u+w ponygirls-tools-explorer
+            cd ponygirls-tools-explorer
+            mkdir -p node_modules/@earendil-works node_modules/@ponygirls
+            ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
+            ln -s "$PI_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
+            for package in pi-ai pi-agent-core pi-tui; do
+              ln -s "$PI_SDK_ROOT/node_modules/@earendil-works/$package" node_modules/@earendil-works/$package
+            done
+            ln -s "$PI_SDK_ROOT/node_modules/typebox" node_modules/typebox
+            ln -s "$PI_SDK_ROOT/node_modules/@types" node_modules/@types
+            tsc -p tsconfig.json
+            node --test tests/*.test.ts
+            touch $out
+          '';
           ponygirls-bg-tasks =
             let
               pi = self.packages.${system}.pi-coding-agent;

@@ -1007,6 +1007,10 @@ in
             # without Claude, Codex, or yolo profiles.
             "${piExtensions}/ponygirls-tokemon"
             "${piExtensions}/ponygirls-ast-grep"
+            # /tools: every registered tool (built-in, extension, MCP; declared
+            # or deferred) with its state, source, token estimate and schema;
+            # loads and unloads tools for the session. No tool for the model.
+            "${piExtensions}/ponygirls-tools-explorer"
           ] ++ lib.optional codegraphLocal "${piExtensions}/ponygirls-codegraph";
         };
       };
