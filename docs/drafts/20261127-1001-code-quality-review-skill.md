@@ -200,7 +200,8 @@ Decisions, each with the alternative it was chosen over:
 
 1. **Metric.** Tokens as the currency, lines reported beside them? The
    alternative is lines after a formatter, which needs three formatters
-   configured for a codebase that has none.
+   configured for a codebase that has none. **Decided 27 Nov 2026 (Q183):
+   tokens as the currency, lines beside them, as drafted.**
 2. **Allocation.** (a) One agent per lens per partition, as sketched;
    (b) the four groups; (c) run both on the pilot target and choose by yield
    per token. Recommended: (c).
@@ -404,8 +405,9 @@ Empty: no run yet.
   `cf738b4e` (v0), `4bf77c32` (v0.1), `7f1ed212` (v0.2).
 - Published copy of `7f1ed212`, public, expires 27 Dec 2026: Manure artifact
   `b747a13411cf09afe1394f74b227897e`.
-- Open questions in the decision inbox: Q183 (metric), Q184 (admission),
-  Q185 (pilot, models, cap), Q186 (Linear tracking).
+- Decision inbox: Q183 (metric) answered, tokens with lines beside them.
+  Open: Q184 (admission), Q185 (pilot, models, cap), Q186 (Linear tracking).
+  Open in chat only: the lens set, the name and the home of the skill.
 - Not done: the discussion, the pilot, the Haystack skill-draft record (to be
   written after the pilot), installation under `nix/pkg/llm-skills/skills/`.
 - Scratch material outside the repository, not needed to continue:
