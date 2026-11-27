@@ -8,7 +8,7 @@ final class OriginPolicySuite extends munit.FunSuite {
   private val Session = Base64.getUrlEncoder.withoutPadding.encodeToString(Array.fill[Byte](32)(4))
   private val Plain = "http://nb.test:8085"
   private val Secure = "https://ts.test:8445"
-  private val Names = CookieNames("__Host-svc", "svc-dev")
+  private val Names = SessionCookies("__Host-svc", "svc-dev", CookieValue.Trimmed)
   private def policy(hosts: Vector[String] = Vector("nb.test", "ts.test"), origins: Vector[String] = Vector(Plain, Secure),
       insecure: Vector[String] = Vector(Plain), cookieSecure: Boolean = true): OriginPolicy =
     OriginPolicy.load(hosts, origins, insecure, cookieSecure).fold(r => fail(s"refused: $r"), identity)

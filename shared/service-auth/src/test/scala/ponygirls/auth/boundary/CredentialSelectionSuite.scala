@@ -10,7 +10,7 @@ final class CredentialSelectionSuite extends munit.FunSuite {
   private val Session = secret(4)
   private val Plain = "http://nb.test:8085"
   private val Secure = "https://ts.test:8445"
-  private val Names = CookieNames("__Host-svc", "svc-dev")
+  private val Names = SessionCookies("__Host-svc", "svc-dev", CookieValue.Trimmed)
   private val Policy = OriginPolicy.load(Vector("nb.test", "ts.test"), Vector(Plain, Secure), Vector(Plain), true).fold(r => fail(s"refused: $r"), identity)
   private def headers(host: String, authorization: Vector[String] = Vector.empty, cookie: Vector[String] = Vector.empty,
       origin: Vector[String] = Vector.empty, fetchSite: Option[String] = None) = PresentedHeaders(host, authorization, cookie, origin, fetchSite, Vector.empty)

@@ -4,8 +4,8 @@ import haystack.domain.{Fault, Principal, QualifiedId}
 import java.net.URI
 import ponygirls.auth.{AccountUser,AccountToken,DeclaredDirectory,ImperativeSettings,PersistentCookie,Secrets}
 import ponygirls.auth.boundary
-import ponygirls.auth.boundary.{BoundaryRefused,CanonicalOrigin,ConfigRefusal,CookieNames,CredentialAccept,CredentialSelection,DeclaredUsers,
-  DigestFile,ExactCredentialFile,ImperativeConfig,OriginPolicy,PresentedHeaders,Refusal,RequestAuthority,SessionCookie}
+import ponygirls.auth.boundary.{BoundaryRefused,CanonicalOrigin,ConfigRefusal,CookieValue,CredentialAccept,CredentialSelection,DeclaredIdRules,DeclaredUsers,
+  DigestRead,DigestReader,ExactCredentialFile,ImperativeConfig,OriginPolicy,PresentedHeaders,Refusal,RequestAuthority,SecureAttribute,SessionCookie,SessionCookies}
 
 final case class TokenConfig(id: String, hashFile: String)
 final case class UserConfig(id: String, userType: String, displayName: String, tokens: Vector[TokenConfig],
@@ -72,7 +72,7 @@ object Tokens {
     if (!Secrets.canonical(token)) throw Refused.fault(ConfigRefusal.MalformedCredentialFile)
     token
   }
-  def readDigest(path: String): String = Refused.configured(DigestFile.read(path))
+  def readDigest(path: String): String = Refused.configured(DigestReader.Stream.read(path))
 }
 
 /** `users` are the declarative users; `imperative` exists only while the master switch `auth.accounts.enabled` is on. */
@@ -97,7 +97,7 @@ object Auth {
     // The origin checks run between the user-id checks and the remaining user checks, as before the move.
     Refused.configured(DeclaredUsers.identities(users))
     Refused.configured(OriginPolicy.load(config.allowedHosts, config.allowedOrigins, config.insecureHttpOrigins, config.cookieSecure))
-    val declared = Refused.configured(DeclaredUsers.load(users))
+    val declared = Refused.configured(DeclaredUsers.load(users, DeclaredIdRules.Haystack, DigestRead.Snapshot, DigestReader.Stream))
     val imperative = Refused.configured(ImperativeConfig.settings(ServiceName, config.accounts.map(accounts), declared.directory))
     new Auth(config, declared.users, declared.directory, imperative, declared.tokens)
   }
@@ -123,13 +123,13 @@ final case class Presented(token:String,cookie:Boolean,secureCookie:Boolean) {
 object Sessions {
   val SecureName = "__Host-haystack"
   val PlainName = "haystack-dev"
-  private val Names = CookieNames(SecureName, PlainName)
+  private val Cookies = SessionCookies(SecureName, PlainName, CookieValue.Trimmed)
   val MaxAge: Long = PersistentCookie.maxAgeSeconds
   private def policy(config: AuthConfig): OriginPolicy =
     Refused.configured(OriginPolicy.load(config.allowedHosts, config.allowedOrigins, config.insecureHttpOrigins, config.cookieSecure))
-  def name(secure: Boolean): String = Names.name(secure)
-  def serialize(token: Option[String], secure: Boolean): String = SessionCookie.serialize(name(secure), token, secure)
-  def cookie(headers: RequestHeaders, cookieName: String): Option[String] = Refused(SessionCookie.select(headers.cookie, cookieName))
+  def name(secure: Boolean): String = Cookies.name(secure)
+  def serialize(token: Option[String], secure: Boolean): String = SessionCookie.serialize(name(secure), token, secure, SecureAttribute.Last)
+  def cookie(headers: RequestHeaders, cookieName: String): Option[String] = Refused(SessionCookie.select(headers.cookie, cookieName, Cookies.value))
   def secure(config: AuthConfig, headers: RequestHeaders): Boolean = Refused(policy(config).secureCookie(headers.presented))
   def validateTransport(config: AuthConfig, headers: RequestHeaders): Unit = Refused(policy(config).validateTransport(headers.presented))
   def csrf(config: AuthConfig, headers: RequestHeaders): Unit = Refused(policy(config).csrf(headers.presented))
@@ -138,10 +138,10 @@ object Sessions {
   val AccountRequestValue = OriginPolicy.AccountRequestValue
   /** `OriginPolicy.accountTransport`: on an opted-in plain-HTTP origin, a GET proves same origin with the account request header. */
   def accountTransport(config:AuthConfig,headers:RequestHeaders,safeRead:Boolean):Unit=
-    Refused(policy(config).accountTransport(headers.presented, safeRead, Names))
+    Refused(policy(config).accountTransport(headers.presented, safeRead, Cookies))
   def resolve(config: AuthConfig, headers: RequestHeaders, mutate: Boolean = false, mcp: Boolean = false): Presented = {
     val accept = if (mcp) CredentialAccept.BearerOnly else CredentialAccept.BearerOrCookie
-    val selected = Refused(CredentialSelection.resolve(policy(config), Names, headers.presented, accept, mutate))
+    val selected = Refused(CredentialSelection.resolve(policy(config), Cookies, headers.presented, accept, mutate))
     Presented(selected.secret, selected.cookie, selected.secureCookie)
   }
 }

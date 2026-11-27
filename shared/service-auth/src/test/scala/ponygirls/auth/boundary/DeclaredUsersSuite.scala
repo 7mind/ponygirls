@@ -30,8 +30,8 @@ final class DeclaredUsersSuite extends munit.FunSuite {
       None, None, true, false))
   private def withPassword(dir: Path, user: DeclaredUserConfig): DeclaredUserConfig =
     user.copy(login = Some(user.id), passwordHashFile = Some(write(dir, user.id + ".password", Password.hash(AlicePassword.toCharArray))))
-  private def loaded(users: Vector[DeclaredUserConfig]): Declared = DeclaredUsers.load(users).fold(r => fail(s"refused: $r"), identity)
-  private def refusal(users: Vector[DeclaredUserConfig]): ConfigRefusal = DeclaredUsers.load(users).fold(identity, _ => fail("loaded"))
+  private def loaded(users: Vector[DeclaredUserConfig]): Declared = DeclaredUsers.load(users, DeclaredIdRules.Haystack, DigestRead.Snapshot, DigestReader.Stream).fold(r => fail(s"refused: $r"), identity)
+  private def refusal(users: Vector[DeclaredUserConfig]): ConfigRefusal = DeclaredUsers.load(users, DeclaredIdRules.Haystack, DigestRead.Snapshot, DigestReader.Stream).fold(identity, _ => fail("loaded"))
 
   directory.test("configured tokens authenticate their user and token; anything else, non-canonical included, does not") { dir =>
     val base = users(dir)
@@ -68,7 +68,7 @@ final class DeclaredUsersSuite extends munit.FunSuite {
     }
   }
   directory.test("an admin without a login is refused by the declared directory") { dir =>
-    assertEquals(intercept[AccountFailure](DeclaredUsers.load(Vector(users(dir).head.copy(admin = true)))).code, "config")
+    assertEquals(intercept[AccountFailure](DeclaredUsers.load(Vector(users(dir).head.copy(admin = true)), DeclaredIdRules.Haystack, DigestRead.Snapshot, DigestReader.Stream)).code, "config")
   }
   directory.test("user ids, token ids, types and credentials fail closed with their refusal") { dir =>
     val c = users(dir)
@@ -109,15 +109,15 @@ final class DeclaredUsersSuite extends munit.FunSuite {
   }
   directory.test("digest files accept exactly 64 lower-case hex ASCII with at most one final LF") { dir =>
     val good = "a" * 64
-    assertEquals(DigestFile.read(write(dir, "exact", good)), Right(good))
-    assertEquals(DigestFile.read(write(dir, "lf", good + "\n")), Right(good))
+    assertEquals(DigestReader.Stream.read(write(dir, "exact", good)), Right(good))
+    assertEquals(DigestReader.Stream.read(write(dir, "lf", good + "\n")), Right(good))
     Vector("", "abc", "A" * 64, "g" * 64, good + "\n\n", good + "\r\n", good + " ", good + "\u0000", good + "x" * (2 * 1024 * 1024)).zipWithIndex.foreach { (raw, i) =>
-      assertEquals(DigestFile.read(write(dir, s"bad$i", raw)), Left(ConfigRefusal.MalformedCredentialFile))
+      assertEquals(DigestReader.Stream.read(write(dir, s"bad$i", raw)), Left(ConfigRefusal.MalformedCredentialFile))
     }
     val alias = good.getBytes(StandardCharsets.US_ASCII); alias(0) = 0xe1.toByte
     val path = dir.resolve("alias"); Files.write(path, alias)
-    assertEquals(DigestFile.read(path.toString), Left(ConfigRefusal.MalformedCredentialFile))
-    assertEquals(DigestFile.read(dir.resolve("missing").toString), Left(ConfigRefusal.UnreadableCredentialFile))
+    assertEquals(DigestReader.Stream.read(path.toString), Left(ConfigRefusal.MalformedCredentialFile))
+    assertEquals(DigestReader.Stream.read(dir.resolve("missing").toString), Left(ConfigRefusal.UnreadableCredentialFile))
   }
   directory.test("exact credential files take the exact length and pattern and refuse controls and high bytes") { dir =>
     assertEquals(ExactCredentialFile.read(write(dir, "token", AliceToken + "\n"), 43, "[A-Za-z0-9_-]{43}"), Right(AliceToken))
@@ -126,6 +126,96 @@ final class DeclaredUsersSuite extends munit.FunSuite {
       val path = dir.resolve(s"token-$byte"); Files.write(path, bytes)
       assertEquals(ExactCredentialFile.read(path.toString, 43, "[A-Za-z0-9_-]{43}"), Left(ConfigRefusal.MalformedCredentialFile))
     }
+  }
+
+  private def load(users: Vector[DeclaredUserConfig], rules: DeclaredIdRules, read: DigestRead, reader: DigestReader): Either[ConfigRefusal, Declared] =
+    DeclaredUsers.load(users, rules, read, reader)
+  private def manure(users: Vector[DeclaredUserConfig]): Either[ConfigRefusal, Declared] = load(users, DeclaredIdRules.Manure, DigestRead.Snapshot, DigestReader.Stream)
+
+  directory.test("Manure's ids are any non-empty text; an administrator's id holds no NUL; logins keep surrounding spaces") { dir =>
+    val c = users(dir)
+    val token = c.head.tokens.head
+    Vector("alice other", "alice:other", "x" * 500, "al\u0000ice", "\u00e9l\u00e8ve", " alice ").foreach { id =>
+      assert(manure(Vector(c.head.copy(id = id))).isRight, id)
+    }
+    Vector("tok en", "a:b", "x" * 100, "\u0000").foreach { id =>
+      assert(manure(Vector(c.head.copy(tokens = Vector(token.copy(id = id))))).isRight, id)
+    }
+    assertEquals(manure(Vector(c.head.copy(id = ""))).map(_ => ()), Left(ConfigRefusal.InvalidUser))
+    assertEquals(manure(Vector(c.head.copy(tokens = Vector(token.copy(id = ""))))).map(_ => ()), Left(ConfigRefusal.InvalidTokenId))
+    val admin = withPassword(dir, c.head).copy(admin = true)
+    assert(manure(Vector(admin)).isRight)
+    assertEquals(manure(Vector(admin.copy(id = "al\u0000ice"))).map(_ => ()), Left(ConfigRefusal.InvalidUser))
+    assert(manure(Vector(admin.copy(login = Some(" alice ")))).isRight)
+    Vector("", "x" * 129, "al\u0007ice").foreach { login =>
+      assertEquals(manure(Vector(admin.copy(login = Some(login)))).map(_ => ()), Left(ConfigRefusal.InvalidLogin), login)
+    }
+    Vector("alice other", "alice:other", "x" * 129).foreach { id =>
+      assertEquals(load(Vector(c.head.copy(id = id)), DeclaredIdRules.Haystack, DigestRead.Snapshot, DigestReader.Stream).map(_ => ()), Left(ConfigRefusal.InvalidUser), id)
+    }
+  }
+  directory.test("a snapshot keeps the digests of its load; a rewritten or removed file takes effect on the next load") { dir =>
+    val c = users(dir)
+    val declared = load(c, DeclaredIdRules.Haystack, DigestRead.Snapshot, DigestReader.Stream).fold(r => fail(s"refused: $r"), identity)
+    write(dir, "alice.sha", Secrets.digest(RotationToken))
+    Files.delete(dir.resolve("bot.sha"))
+    assertEquals(declared.tokens.authenticate(AliceToken), Some(ConfiguredToken("alice", "human", "browser")))
+    assertEquals(declared.tokens.authenticate(BotToken), Some(ConfiguredToken("bot", "agent", "worker")))
+    assertEquals(declared.tokens.authenticate(RotationToken), None)
+    assert(declared.tokens.live(ConfiguredToken("alice", "human", "browser"), Secrets.digest(AliceToken)))
+    assert(!declared.tokens.live(ConfiguredToken("bot", "agent", "worker"), Secrets.digest(AliceToken)))
+  }
+  directory.test("read per check: a rewritten file takes effect at once, a removed or malformed one fails closed alone, a shared digest matches nobody") { dir =>
+    val c = users(dir)
+    val declared = load(c, DeclaredIdRules.Haystack, DigestRead.PerCheck, DigestReader.Stream).fold(r => fail(s"refused: $r"), identity)
+    val alice = ConfiguredToken("alice", "human", "browser")
+    assertEquals(declared.tokens.authenticate(AliceToken), Some(alice))
+    write(dir, "alice.sha", Secrets.digest(RotationToken))
+    assertEquals(declared.tokens.authenticate(RotationToken), Some(alice))
+    assertEquals(declared.tokens.authenticate(AliceToken), None)
+    assert(declared.tokens.live(alice, Secrets.digest(RotationToken)))
+    assert(!declared.tokens.live(alice, Secrets.digest(AliceToken)))
+    Files.delete(dir.resolve("bot.sha"))
+    assertEquals(declared.tokens.authenticate(BotToken), None)
+    assertEquals(declared.tokens.authenticate(RotationToken), Some(alice))
+    write(dir, "bot.sha", "not-a-digest")
+    assertEquals(declared.tokens.authenticate(RotationToken), Some(alice))
+    write(dir, "bot.sha", Secrets.digest(RotationToken))
+    assertEquals(declared.tokens.authenticate(RotationToken), None)
+    assert(!declared.tokens.live(alice, Secrets.digest(RotationToken)))
+    assertEquals(declared.tokens.authenticate("A" * 42 + "B"), None)
+  }
+  directory.test("read per check: a disabled user's tokens never authenticate and stay listed; the load still refuses a shared digest") { dir =>
+    val c = users(dir)
+    val declared = load(c.updated(1, c(1).copy(enabled = false)), DeclaredIdRules.Haystack, DigestRead.PerCheck, DigestReader.Stream).fold(r => fail(s"refused: $r"), identity)
+    assertEquals(declared.tokens.authenticate(BotToken), None)
+    assert(!declared.tokens.live(ConfiguredToken("bot", "agent", "worker"), Secrets.digest(BotToken)))
+    assertEquals(declared.tokens.listed("bot").map(_.id), Vector("worker"))
+    val shared = c.updated(1, c(1).copy(tokens = Vector(c.head.tokens.head.copy(id = "other"))))
+    assertEquals(load(shared, DeclaredIdRules.Haystack, DigestRead.PerCheck, DigestReader.Stream).map(_ => ()), Left(ConfigRefusal.DigestAssignedTwice))
+  }
+  directory.test("the bounded reader takes regular files, also through a symbolic link or a relative path, and refuses special files and oversize unread") { dir =>
+    val good = "a" * 64
+    val target = write(dir, "digest", good + "\n")
+    val link = dir.resolve("link"); Files.createSymbolicLink(link, Path.of(target))
+    assertEquals(DigestReader.Bounded.read(target), Right(good))
+    assertEquals(DigestReader.Bounded.read(link.toString), Right(good))
+    assertEquals(DigestReader.Bounded.read(Path.of("").toAbsolutePath.relativize(Path.of(target)).toString), Right(good))
+    assertEquals(DigestReader.Bounded.read("/dev/null"), Left(ConfigRefusal.UnreadableCredentialFile))
+    assertEquals(DigestReader.Stream.read("/dev/null"), Left(ConfigRefusal.MalformedCredentialFile))
+    Vector(good + "\nx", good + "\r\n", good + "x" * (2 * 1024 * 1024)).zipWithIndex.foreach { (raw, i) =>
+      assertEquals(DigestReader.Bounded.read(write(dir, s"long$i", raw)), Left(ConfigRefusal.UnreadableCredentialFile))
+      assertEquals(DigestReader.Stream.read(dir.resolve(s"long$i").toString), Left(ConfigRefusal.MalformedCredentialFile))
+    }
+    Vector("", "abc", "A" * 64, "g" * 64, good.dropRight(1) + "\n\n", " " + good.drop(1), good.dropRight(1) + "\u0000").zipWithIndex.foreach { (raw, i) =>
+      assertEquals(DigestReader.Bounded.read(write(dir, s"bad$i", raw)), Left(ConfigRefusal.MalformedCredentialFile), raw)
+    }
+    val alias = good.getBytes(StandardCharsets.US_ASCII); alias(0) = 0xe1.toByte
+    val aliasPath = dir.resolve("alias"); Files.write(aliasPath, alias)
+    assertEquals(DigestReader.Bounded.read(aliasPath.toString), Left(ConfigRefusal.UnreadableCredentialFile))
+    assertEquals(DigestReader.Bounded.read(dir.resolve("missing").toString), Left(ConfigRefusal.UnreadableCredentialFile))
+    val declared = load(users(dir), DeclaredIdRules.Haystack, DigestRead.PerCheck, DigestReader.Bounded).fold(r => fail(s"refused: $r"), identity)
+    assertEquals(declared.tokens.authenticate(AliceToken), Some(ConfiguredToken("alice", "human", "browser")))
   }
 
   private def accounts(keyFile: Option[String]) = ImperativeAccountsConfig(true, keyFile, false, true, 100, false, 86400L, Some("Service (svc.test)"), Vector.empty)

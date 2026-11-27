@@ -5,6 +5,8 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 import java.security.MessageDigest
 import ponygirls.auth.{AccountOrigin, AccountToken, AccountUser, DeclaredDirectory, ImperativeSettings, Password, Secrets, TotpVault}
+import ponygirls.runtime.BoundedSecretFile
+import scala.util.control.NonFatal
 
 /** A runtime credential file of exactly `length` ASCII bytes matching `pattern`, with at most one terminal LF. */
 object ExactCredentialFile {
@@ -24,10 +26,32 @@ object ExactCredentialFile {
   }
 }
 
-/** The SHA-256 digest (64 lower-case hex) of a configured API token, read from its runtime file. */
-object DigestFile {
-  def read(path: String): Either[ConfigRefusal, String] = ExactCredentialFile.read(path, 64, "[0-9a-f]{64}")
+/** Reads the SHA-256 digest (64 lower-case hex ASCII, at most one terminal LF) of a configured API token from its
+  * runtime file. The readers differ in which files they open and how they bound the read. */
+sealed trait DigestReader {
+  def read(path: String): Either[ConfigRefusal, String]
 }
+object DigestReader {
+  private val Length = 64
+  private val Pattern = "[0-9a-f]{64}"
+  /** `ExactCredentialFile`: any path the process can open, read to the exact length plus two bytes. */
+  object Stream extends DigestReader {
+    def read(path: String): Either[ConfigRefusal, String] = ExactCredentialFile.read(path, Length, Pattern)
+  }
+  /** `BoundedSecretFile`: a regular file after resolving symbolic links (a relative path against the working
+    * directory), valid UTF-8, read to the exact length plus one LF; anything else is unreadable. */
+  object Bounded extends DigestReader {
+    def read(path: String): Either[ConfigRefusal, String] = {
+      val text = try Right(BoundedSecretFile.read(Path.of(path).toAbsolutePath, Length + 1).stripSuffix("\n"))
+        catch { case NonFatal(_) => Left(ConfigRefusal.UnreadableCredentialFile) }
+      text.filterOrElse(_.matches(Pattern), ConfigRefusal.MalformedCredentialFile)
+    }
+  }
+}
+
+/** When configured digests are read: once per configuration load, or again on every check (a removed or rewritten
+  * file then takes effect without a reload). */
+enum DigestRead { case Snapshot, PerCheck }
 
 /** Who a configured token authenticates. */
 final case class ConfiguredToken(userId: String, userType: String, tokenId: String)
@@ -36,6 +60,8 @@ final case class ConfiguredToken(userId: String, userType: String, tokenId: Stri
   * digest in constant time per digest. */
 trait ConfiguredTokens {
   def authenticate(secret: String): Option[ConfiguredToken]
+  /** Whether the configured token whose digest is `digest` is still `token`. */
+  def live(token: ConfiguredToken, digest: String): Boolean
   /** The configured tokens of `owner` as account-protocol metadata (`source: "configured"`, scope `api`). */
   def listed(owner: String): Vector[AccountToken]
 }
@@ -44,17 +70,35 @@ object ConfiguredTokens {
   val Scopes: Vector[String] = Vector("api")
 }
 
-/** Digests read once per configuration load; the tokens of disabled users are left out. */
-private final class SnapshotTokens(users: Vector[DeclaredUserConfig], digests: Vector[(Array[Byte], ConfiguredToken)]) extends ConfiguredTokens {
-  def authenticate(secret: String): Option[ConfiguredToken] = {
-    if (!Secrets.canonical(secret)) return None
-    val presented = Secrets.digest(secret).getBytes(StandardCharsets.US_ASCII)
-    var result: Option[ConfiguredToken] = None
-    digests.foreach { case (digest, token) => if (MessageDigest.isEqual(presented, digest)) result = Some(token) }
-    result
-  }
+/** Lookup by digest over the enabled users' configured tokens; listing over every declared user. */
+private abstract class DigestTokens(users: Vector[DeclaredUserConfig]) extends ConfiguredTokens {
+  protected def byDigest(digest: String): Option[ConfiguredToken]
+  def authenticate(secret: String): Option[ConfiguredToken] = if (Secrets.canonical(secret)) byDigest(Secrets.digest(secret)) else None
+  def live(token: ConfiguredToken, digest: String): Boolean = byDigest(digest).contains(token)
   def listed(owner: String): Vector[AccountToken] =
     users.find(_.id == owner).toVector.flatMap(_.tokens).map(t => AccountToken(t.id, t.id, ConfiguredTokens.Source, None, false, ConfiguredTokens.Scopes))
+  protected def matching(digest: String, stored: Vector[(Array[Byte], ConfiguredToken)]): Vector[ConfiguredToken] = {
+    val presented = digest.getBytes(StandardCharsets.US_ASCII)
+    stored.filter((bytes, _) => MessageDigest.isEqual(presented, bytes)).map(_._2)
+  }
+}
+
+/** Digests read once per configuration load; the load refused a digest that two tokens share. */
+private final class SnapshotTokens(users: Vector[DeclaredUserConfig], digests: Vector[(Array[Byte], ConfiguredToken)]) extends DigestTokens(users) {
+  protected def byDigest(digest: String): Option[ConfiguredToken] = matching(digest, digests).lastOption
+}
+
+/** Digests read again on every check: a removed, unreadable or malformed file fails closed for its token alone, and
+  * a digest that several tokens share after the load matches none of them. */
+private final class PerCheckTokens(users: Vector[DeclaredUserConfig], enabled: Vector[(DeclaredTokenConfig, ConfiguredToken)], reader: DigestReader)
+    extends DigestTokens(users) {
+  protected def byDigest(digest: String): Option[ConfiguredToken] = {
+    val current = enabled.flatMap((config, token) => reader.read(config.hashFile).toOption.map(_.getBytes(StandardCharsets.US_ASCII) -> token))
+    matching(digest, current) match {
+      case Vector(token) => Some(token)
+      case _ => None
+    }
+  }
 }
 
 final case class DeclaredTokenConfig(id: String, hashFile: String)
@@ -66,17 +110,16 @@ final case class DeclaredUserConfig(id: String, userType: String, displayName: S
 /** The loaded declared users: account users for reconciliation, the declared directory and the configured tokens. */
 final case class Declared(users: Vector[AccountUser], directory: DeclaredDirectory, tokens: ConfiguredTokens)
 
-object DeclaredUsers {
-  private val UserTypes = Set("human", "agent")
-  private val PasswordUserType = "human"
+/** Which user ids, token ids and logins a service admits. */
+trait DeclaredIdRules {
+  def userId(id: String, admin: Boolean): Boolean
+  def tokenId(id: String): Boolean
+  def login(login: String): Boolean
+}
+object DeclaredIdRules {
   private val MaximumLogin = 128
   private val MaximumUserId = 128
   private val MaximumTokenId = 64
-
-  private def unique(values: Vector[String], refusal: ConfigRefusal): Either[ConfigRefusal, Unit] =
-    Either.cond(values.distinct.size == values.size, (), refusal)
-  private def check(valid: Boolean, refusal: ConfigRefusal): Either[ConfigRefusal, Unit] = Either.cond(valid, (), refusal)
-
   // Baseline ECMAScript /[^\\s:]{1,n}/ counts UTF16 units. Java's
   // isWhitespace additionally classifies U+001C..001F as separators and Java
   // regex quantifiers count supplementary code points; neither may alter
@@ -85,20 +128,44 @@ object DeclaredUsers {
     c >= '\u0009' && c <= '\u000d' || c == ' ' || c == '\u00a0' || c == '\u1680' ||
     c >= '\u2000' && c <= '\u200a' || c == '\u2028' || c == '\u2029' ||
     c == '\u202f' || c == '\u205f' || c == '\u3000' || c == '\ufeff'
-  private def validId(value: String, max: Int): Boolean = value.nonEmpty && value.length <= max && !value.exists(c => c == ':' || idWhitespace(c))
+  private def attributionId(value: String, max: Int): Boolean = value.nonEmpty && value.length <= max && !value.exists(c => c == ':' || idWhitespace(c))
+
+  /** Haystack: ids are author and token attributions (at most 128 and 64 UTF-16 units, no whitespace, no `:`);
+    * logins have no surrounding whitespace. */
+  val Haystack: DeclaredIdRules = new DeclaredIdRules {
+    def userId(id: String, admin: Boolean): Boolean = attributionId(id, MaximumUserId)
+    def tokenId(id: String): Boolean = attributionId(id, MaximumTokenId)
+    def login(login: String): Boolean = login.nonEmpty && login.length <= MaximumLogin && login == login.trim && !login.exists(_.isControl)
+  }
+  /** Manure: ids are arbitrary UTF-8 (`manure/docs/account-auth.md`), except that an administrator's id is
+    * recorded in the text provenance columns of imperative accounts, which cannot hold NUL. */
+  val Manure: DeclaredIdRules = new DeclaredIdRules {
+    def userId(id: String, admin: Boolean): Boolean = id.nonEmpty && !(admin && id.contains('\u0000'))
+    def tokenId(id: String): Boolean = id.nonEmpty
+    def login(login: String): Boolean = login.nonEmpty && login.length <= MaximumLogin && !login.exists(_.isControl)
+  }
+}
+
+object DeclaredUsers {
+  private val UserTypes = Set("human", "agent")
+  private val PasswordUserType = "human"
+
+  private def unique(values: Vector[String], refusal: ConfigRefusal): Either[ConfigRefusal, Unit] =
+    Either.cond(values.distinct.size == values.size, (), refusal)
+  private def check(valid: Boolean, refusal: ConfigRefusal): Either[ConfigRefusal, Unit] = Either.cond(valid, (), refusal)
 
   /** At least one user, and unique user ids. `load` checks this first, too. */
   def identities(users: Vector[DeclaredUserConfig]): Either[ConfigRefusal, Unit] =
     check(users.nonEmpty, ConfigRefusal.NoUsers) *> unique(users.map(_.id), ConfigRefusal.DuplicateUserId)
 
   /** Validates the users, reads their password-hash and digest files and refuses a digest that two tokens share. */
-  def load(users: Vector[DeclaredUserConfig]): Either[ConfigRefusal, Declared] = for {
+  def load(users: Vector[DeclaredUserConfig], rules: DeclaredIdRules, read: DigestRead, reader: DigestReader): Either[ConfigRefusal, Declared] = for {
     _ <- identities(users)
     _ <- unique(users.flatMap(_.login), ConfigRefusal.DuplicateLogin)
     accountUsers <- users.traverse { user =>
       for {
         _ <- check(user.login.isDefined == user.passwordHashFile.isDefined && !(user.login.isDefined && user.userType != PasswordUserType), ConfigRefusal.InvalidPasswordCredentials)
-        _ <- user.login.traverse_(login => check(login.nonEmpty && login.length <= MaximumLogin && login == login.trim && !login.exists(_.isControl), ConfigRefusal.InvalidLogin))
+        _ <- user.login.traverse_(login => check(rules.login(login), ConfigRefusal.InvalidLogin))
         passwordHash <- user.passwordHashFile.traverse { path =>
           try Right(Password.readHash(Path.of(path))) catch { case _: Exception => Left(ConfigRefusal.InvalidPasswordFile) }
         }
@@ -106,12 +173,12 @@ object DeclaredUsers {
     }
     entries <- users.flatTraverse { user =>
       for {
-        _ <- check(validId(user.id, MaximumUserId) && UserTypes.contains(user.userType), ConfigRefusal.InvalidUser)
+        _ <- check(rules.userId(user.id, user.admin) && UserTypes.contains(user.userType), ConfigRefusal.InvalidUser)
         _ <- check(user.tokens.nonEmpty || user.login.nonEmpty, ConfigRefusal.NoCredentials)
         _ <- unique(user.tokens.map(_.id), ConfigRefusal.DuplicateTokenId)
         digests <- user.tokens.traverse { token =>
-          check(validId(token.id, MaximumTokenId), ConfigRefusal.InvalidTokenId).flatMap { _ =>
-            DigestFile.read(token.hashFile).map(_ -> ConfiguredToken(user.id, user.userType, token.id))
+          check(rules.tokenId(token.id), ConfigRefusal.InvalidTokenId).flatMap { _ =>
+            reader.read(token.hashFile).map(digest => (digest, token, ConfiguredToken(user.id, user.userType, token.id)))
           }
         }
       } yield digests
@@ -119,8 +186,12 @@ object DeclaredUsers {
     _ <- unique(entries.map(_._1), ConfigRefusal.DigestAssignedTwice)
   } yield {
     val directory = DeclaredDirectory(accountUsers, users.filter(_.admin).map(_.id).toSet)
-    val enabled = entries.filter { (_, token) => accountUsers.exists(u => u.id == token.userId && u.enabled) }
-    Declared(accountUsers, directory, new SnapshotTokens(users, enabled.map((digest, token) => digest.getBytes(StandardCharsets.US_ASCII) -> token)))
+    val enabled = entries.filter { (_, _, token) => accountUsers.exists(u => u.id == token.userId && u.enabled) }
+    val tokens = read match {
+      case DigestRead.Snapshot => new SnapshotTokens(users, enabled.map((digest, _, token) => digest.getBytes(StandardCharsets.US_ASCII) -> token))
+      case DigestRead.PerCheck => new PerCheckTokens(users, enabled.map((_, config, token) => config -> token), reader)
+    }
+    Declared(accountUsers, directory, tokens)
   }
 }
 

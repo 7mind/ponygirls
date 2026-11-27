@@ -35,20 +35,36 @@ object RequestAuthority {
   }
 }
 
-/** The session cookie's name on a secure and on an opted-in plain-HTTP origin. */
-final case class CookieNames(secure: String, plain: String) {
+/** How a session cookie's value is read: with surrounding whitespace removed, or byte for byte. */
+enum CookieValue(val read: String => String) {
+  case Trimmed extends CookieValue(_.trim)
+  case Exact extends CookieValue(identity)
+}
+/** Where `Secure` stands among the attributes of a serialised session cookie. */
+enum SecureAttribute { case Last, BeforeMaxAge }
+
+/** A service's session cookies under `OriginPolicy`: the name on a secure and on an opted-in plain-HTTP origin, and
+  * how their values are read. */
+final case class SessionCookies(secure: String, plain: String, value: CookieValue) {
   def name(secureCookie: Boolean): String = if (secureCookie) secure else plain
 }
 
 object SessionCookie {
   /** A host-only, HttpOnly, SameSite=Strict session cookie with the persistent lifetime; `None` clears it. */
-  def serialize(name: String, secret: Option[String], secure: Boolean): String =
-    s"$name=${secret.getOrElse("")}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${if (secret.isDefined) PersistentCookie.maxAgeSeconds else 0}" + (if (secure) "; Secure" else "")
+  def serialize(name: String, secret: Option[String], secure: Boolean, order: SecureAttribute): String = {
+    val maxAge = Vector(s"Max-Age=${if (secret.isDefined) PersistentCookie.maxAgeSeconds else 0}")
+    val secureFlag = if (secure) Vector("Secure") else Vector.empty
+    val trailing = order match {
+      case SecureAttribute.Last => maxAge ++ secureFlag
+      case SecureAttribute.BeforeMaxAge => secureFlag ++ maxAge
+    }
+    (Vector(s"$name=${secret.getOrElse("")}", "Path=/", "HttpOnly", "SameSite=Strict") ++ trailing).mkString("; ")
+  }
   /** The value of the cookie `name` across every `Cookie` header; two values are refused, never chosen between. */
-  def select(cookieHeaders: Vector[String], name: String): Option[String] = {
+  def select(cookieHeaders: Vector[String], name: String, value: CookieValue): Option[String] = {
     val values = cookieHeaders.flatMap(_.split(";").toVector).flatMap { part =>
       val index = part.indexOf('=')
-      if (index >= 0 && part.take(index).trim == name) Some(part.drop(index + 1).trim) else None
+      if (index >= 0 && part.take(index).trim == name) Some(value.read(part.drop(index + 1))) else None
     }
     if (values.size > 1) throw BoundaryRefused(Refusal.DuplicateSessionCookie)
     values.headOption
@@ -93,7 +109,7 @@ final class OriginPolicy private (allowedHosts: Vector[String], allowedOrigins: 
    * cannot add a custom header without a CORS preflight, and the service grants none. Writes keep requiring Origin
    * (browsers send it with every POST).
    */
-  def accountTransport(headers: PresentedHeaders, safeRead: Boolean, names: CookieNames): Unit = {
+  def accountTransport(headers: PresentedHeaders, safeRead: Boolean, cookies: SessionCookies): Unit = {
     validateTransport(headers)
     val request = RequestAuthority.parse(headers.host)
     val insecureOrigin = insecureAt(request).nonEmpty
@@ -106,8 +122,8 @@ final class OriginPolicy private (allowedHosts: Vector[String], allowedOrigins: 
     // `validateTransport` admitted only allowed origins, so every presented one is in `allowedUris`.
     if (!allowedUris.values.exists(matches) || headers.origin.exists(raw => !matches(allowedUris(raw)))) refuse(Refusal.OriginHostMismatch)
     if (headers.authorization.nonEmpty) refuse(Refusal.BrowserSessionRequired)
-    SessionCookie.select(headers.cookie, names.secure)
-    SessionCookie.select(headers.cookie, names.plain)
+    SessionCookie.select(headers.cookie, cookies.secure, cookies.value)
+    SessionCookie.select(headers.cookie, cookies.plain, cookies.value)
     ()
   }
 }
@@ -146,13 +162,13 @@ object CredentialSelection {
   /** The transport rule, then exactly one canonical credential: `Authorization: Bearer <secret>` or the session cookie
     * of the request's security class. Two bearers, or a bearer with that cookie, are ambiguous; a `BearerOnly` route
     * refuses either session cookie. A cookie credential of a mutation (`mutate`) needs the same-origin proof. */
-  def resolve(policy: OriginPolicy, names: CookieNames, headers: PresentedHeaders, accept: CredentialAccept, mutate: Boolean): Presented = {
+  def resolve(policy: OriginPolicy, cookies: SessionCookies, headers: PresentedHeaders, accept: CredentialAccept, mutate: Boolean): Presented = {
     policy.validateTransport(headers)
     val secureCookie = policy.secureCookie(headers)
-    val session = SessionCookie.select(headers.cookie, names.name(secureCookie))
+    val session = SessionCookie.select(headers.cookie, cookies.name(secureCookie), cookies.value)
     val bearerOnly = accept == CredentialAccept.BearerOnly
     if (headers.authorization.size > 1) throw BoundaryRefused(Refusal.AmbiguousCredentials)
-    if (bearerOnly && (SessionCookie.select(headers.cookie, names.secure).isDefined || SessionCookie.select(headers.cookie, names.plain).isDefined))
+    if (bearerOnly && (SessionCookie.select(headers.cookie, cookies.secure, cookies.value).isDefined || SessionCookie.select(headers.cookie, cookies.plain, cookies.value).isDefined))
       throw BoundaryRefused(Refusal.CookieNotAccepted)
     if (headers.authorization.nonEmpty && session.isDefined) throw BoundaryRefused(Refusal.AmbiguousCredentials)
     val bearer = headers.authorization.headOption.map { value =>
