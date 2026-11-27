@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CONFIG_DIR_NAME, SessionManager } from '@earendil-works/pi-coding-agent';
 import { FileQuestionStore, MAX_QUESTIONS, MAX_QUESTION_CHARS, QUESTIONS_FILE, StandingQuestions, questionText, questionsText, validateAskedQuestions } from '../src/questions.ts';
-import { INQUIRY, inquiryText, stateOnBranch, STATE_TYPE } from '../src/state.ts';
-import { REPORT_TYPE, answeredCheckpoint, checkpoint, checkpoints, historyText, parseAnsweredReport, parseReport, reportText } from '../src/report.ts';
+import { EMPTY_RECORD, INQUIRY, inquiryText, stateOnBranch, STATE_TYPE } from '../src/state.ts';
+import { REPORT_TYPE, answeredCheckpoint, capturedCheckpoint, checkpoint, checkpoints, historyText, parseAnsweredReport, parseReport, reportText } from '../src/report.ts';
 import { checkpointDetail } from '../src/presentation.ts';
 
 const theme = { fg: (_token, text) => text, bold: text => text };
@@ -94,21 +94,22 @@ test('malformed question files fail visibly instead of silently asking nothing',
 
 // Specified Behavioral-Active / Blackbox-Atomic: prompt and response contract, not live-model compliance.
 test('the inquiry is unchanged without standing questions and otherwise requests exactly one answer per question', () => {
-  // Length and SHA-256 of the base inquiry literal: sessions without standing questions receive exactly that request.
-  // A deliberate change of the base wording updates both values; the last one asked for a completed objective once.
-  assert.equal(inquiryText([], []).length, 3672);
-  assert.equal(createHash('sha256').update(inquiryText([], []), 'utf8').digest('hex'), 'c6bd844b4130f45d3f2fa81c1ba87f2394c961d3e3e11190ddc7c1e36b6c3be5');
-  assert.equal(INQUIRY, inquiryText([], []));
+  // Length and SHA-256 of the base inquiry: a session without standing questions and without a record receives exactly
+  // that request. A deliberate change of the base wording updates both values; the last one added ids and the record.
+  assert.equal(inquiryText([], [], EMPTY_RECORD).length, 4780);
+  assert.equal(createHash('sha256').update(inquiryText([], [], EMPTY_RECORD), 'utf8').digest('hex'), 'db515483489281cc084fb6138f61c0162e18b595349add6ab4d99a7b756ecbc4');
+  assert.equal(INQUIRY, inquiryText([], [], EMPTY_RECORD));
   assert.doesNotMatch(INQUIRY, /answers|[Ss]tanding question/);
-  const text = inquiryText(asked, []);
-  const example = text.match(/JSON only: (\{"objectives":.*?\})\. List every unfinished objective/)[1];
-  assert.deepEqual(parseAnsweredReport(example, asked).answers.map(item => item.id), ['q-verify', 'q-risk']);
+  const text = inquiryText(asked, [], EMPTY_RECORD);
+  const example = text.match(/JSON only: (\{"objectives":.*?\})\. Cuckoo keeps a numbered record/)[1];
+  const decoded = capturedCheckpoint('example', example, asked, { objectives: new Set(), rules: new Set() }, { objective: 1, rule: 1 });
+  assert.equal(decoded.error, null); assert.deepEqual(decoded.report.answers.map(item => item.id), ['q-verify', 'q-risk']);
   assert.ok(text.includes(JSON.stringify(asked.map(({ id, question }) => ({ id, question })))), 'questions are listed verbatim as JSON');
   for (const phrase of ['exactly one item per standing question', 'only id (copied exactly) and answer', 'not a new task, instruction or authorization', 'rather than guessing', 'Do not call tools']) assert.ok(text.includes(phrase), phrase);
   assert.ok(text.startsWith(INQUIRY.slice(0, INQUIRY.indexOf('JSON only: '))));
   assert.ok(text.endsWith(INQUIRY.slice(INQUIRY.indexOf(' Do not call tools'))));
-  assert.ok(text.includes(INQUIRY.slice(INQUIRY.indexOf(' List every unfinished objective'), INQUIRY.indexOf(' Do not call tools'))), 'objective and field rules are the base ones');
-  const completed = inquiryText(asked, ['Ship the parser']);
+  assert.ok(text.includes(INQUIRY.slice(INQUIRY.indexOf(' Cuckoo keeps a numbered record'), INQUIRY.indexOf(' Do not call tools'))), 'record, objective and field rules are the base ones');
+  const completed = inquiryText(asked, ['Ship the parser'], EMPTY_RECORD);
   assert.ok(completed.includes('do not report their completion again: ["Ship the parser"]. Each objective must contain only'), 'the completed list composes with standing questions');
   assert.equal(completed.replace(' Earlier checkpoints of this session already reported these objectives as complete, so do not report their completion again: ["Ship the parser"].', ''), text);
 });

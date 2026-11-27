@@ -7,7 +7,8 @@ import { createMemoryTool, type MemoryToolInput } from './memory-tools.ts';
 import { MemoryScopeEpoch, nativeMemoryRuntime } from './memory-runtime.ts';
 import { stateOnBranch } from './state.ts';
 
-interface FeatureTool { readonly name: string; readonly features: readonly FeatureId[] }
+/** A tool Cuckoo declares to the model only while the settings allow it. */
+interface FeatureTool { readonly name: string; readonly allowed: (settings: EffectivePreferences) => boolean }
 
 export class CuckooFeatures {
   private readonly pi: ExtensionAPI;
@@ -34,8 +35,19 @@ export class CuckooFeatures {
   }
 
   registerTool<Parameters extends TSchema, Details, State>(tool: ToolDefinition<Parameters, Details, State>, features: readonly FeatureId[]): void {
-    if (features.length === 0 || this.tools.some(item => item.name === tool.name)) throw new Error('Invalid Cuckoo feature-tool registration');
-    this.tools.push({ name: tool.name, features: [...features] });
+    if (features.length === 0) throw new Error('Invalid Cuckoo feature-tool registration');
+    const required = [...features];
+    this.register(tool, settings => required.some(id => featureActivation(settings.enabled, settings.features, id).activeBySettings));
+  }
+
+  /** A tool that belongs to Cuckoo itself, not to a feature: declared whenever automatic mode is on. */
+  registerEnabledTool<Parameters extends TSchema, Details, State>(tool: ToolDefinition<Parameters, Details, State>): void {
+    this.register(tool, settings => settings.enabled);
+  }
+
+  private register<Parameters extends TSchema, Details, State>(tool: ToolDefinition<Parameters, Details, State>, allowed: FeatureTool['allowed']): void {
+    if (this.tools.some(item => item.name === tool.name)) throw new Error('Invalid Cuckoo feature-tool registration');
+    this.tools.push({ name: tool.name, allowed });
     this.pi.registerTool({ ...tool, defaultActive: false });
   }
 
@@ -90,7 +102,7 @@ export class CuckooFeatures {
     const identity = JSON.stringify([settings.enabled, settings.features]);
     if (this.configurationIdentity !== null && identity !== this.configurationIdentity) this.invalidate();
     this.configurationIdentity = identity;
-    const allowed = new Set(this.tools.filter(tool => tool.features.some(id => featureActivation(settings.enabled, settings.features, id).activeBySettings)).map(tool => tool.name));
+    const allowed = new Set(this.tools.filter(tool => tool.allowed(settings)).map(tool => tool.name));
     this.select(allowed);
     return settings;
   }
@@ -104,6 +116,14 @@ export class CuckooFeatures {
     }
     this.previousAllowed = allowed;
     if (selected.size !== before.length || before.some(name => !selected.has(name))) this.pi.setActiveTools([...selected]);
+  }
+
+  /** Ordinary work in a session where automatic mode is on: what a tool registered with `registerEnabledTool` needs. `unavailable` names what is refused otherwise. */
+  requireEnabled(ctx: ExtensionContext, unavailable: string): EffectivePreferences {
+    this.requireOrdinaryWork(ctx);
+    const settings = this.refresh(ctx);
+    if (!settings.enabled) throw new Error(`${unavailable}: Cuckoo automatic mode is off`);
+    return settings;
   }
 
   requireFeature(ctx: ExtensionContext, feature: FeatureId): EffectivePreferences {

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { registerCuckoo } from '../index.ts';
 import { inertNetworkServices } from './fixtures/task-network.mjs';
-import { checkpoints } from '../src/report.ts';
+import { REPORT_TYPE, checkpoint, checkpoints } from '../src/report.ts';
+import { currentSet } from '../src/current.ts';
 import { STATE_TYPE, INQUIRY_TYPE, RESUME_TYPE, stateOnBranch } from '../src/state.ts';
 
 const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
@@ -37,23 +38,60 @@ test('default-off is inert; 20k to exactly 23k triggers JSON checkpoint at 15% a
   f.tokens(23000); const issue = f.boundary();
   assert.equal(issue.continue, true); assert.equal(issue.entries.at(-1).customType, INQUIRY_TYPE);
   assert.equal(stateOnBranch(f.manager.getBranch()).baseline, 23000);
-  const reply = f.boundary(assistant('{"objectives":[{"objective":"Ship Cuckoo","progress":"Testing","issues":["Serial validation"],"eta":"Unknown: tests pending"}],"rules":[]}'));
+  const reply = f.boundary(assistant('{"objectives":[{"id":null,"objective":"Ship Cuckoo","progress":"Testing","issues":["Serial validation"],"eta":"Unknown: tests pending"}],"rules":[]}'));
   assert.equal(reply.continue, undefined); assert.equal(checkpoints(f.manager.getBranch())[0].report.objectives.length, 1);
+  assert.equal(checkpoints(f.manager.getBranch())[0].version, 6); assert.equal(checkpoints(f.manager.getBranch())[0].report.objectives[0].id, 'AO1');
   assert.equal(stateOnBranch(f.manager.getBranch()).pending, null);
   assert.ok(!reply.entries.some(entry => entry.customType === INQUIRY_TYPE));
 });
 
-test('an objective reported as complete is named in later inquiries until it is reopened', async () => {
+/** The record an inquiry closes with. */
+const recordOf = content => JSON.parse(content.slice(content.indexOf(' The record now, as JSON: ', content.indexOf(' This request grants no new authority.')) + ' The record now, as JSON: '.length));
+
+test('an inquiry states the record: what a reply numbered, completed and reopened is what the next one is asked to restate', async () => {
   const f = fixture(); await f.command('on'); f.boundary();
-  const report = (objective, eta) => assistant(JSON.stringify({ objectives: [{ objective, progress: 'Stated', issues: ['One caveat'], eta }], rules: [] }));
-  const listed = 'already reported these objectives as complete, so do not report their completion again: ["Ship the parser"].';
-  f.tokens(23000); assert.ok(!f.boundary().entries.at(-1).content.includes('already reported these objectives'), 'nothing was reported yet');
-  f.boundary(report('Ship the parser', 'Complete'));
+  const report = (id, objective, eta, rules = []) => assistant(JSON.stringify({ objectives: [{ id, objective, progress: 'Stated', issues: ['One caveat'], eta }], rules }));
+  f.tokens(23000); const first = f.boundary();
+  assert.deepEqual(recordOf(first.entries.at(-1).content), { objectives: [], completed: [], rules: [] }, 'nothing was recorded yet');
+  f.boundary(report(null, 'Ship the parser', 'Complete', [{ id: null, rule: 'Ask before pushing', source: 'user', scope: 'This repository' }]));
   f.tokens(26450); const second = f.boundary();
-  assert.equal(second.entries.at(-1).customType, INQUIRY_TYPE); assert.ok(second.entries.at(-1).content.includes(listed));
-  f.boundary(report('Ship the parser', 'About an hour: the user asked for a change'));
+  assert.equal(second.entries.at(-1).customType, INQUIRY_TYPE);
+  assert.deepEqual(recordOf(second.entries.at(-1).content), { objectives: [], completed: [{ id: 'AO1', objective: 'Ship the parser' }], rules: [{ id: 'AR1', rule: 'Ask before pushing', source: 'user', scope: 'This repository' }] });
+  assert.doesNotMatch(second.entries.at(-1).content, /already reported these objectives/, 'titles are named separately only for reports saved before numbering');
+  // The reply reopens the completed objective by its id and leaves the rule out.
+  f.boundary(report('AO1', 'Ship the parser', 'About an hour: the user asked for a change'));
   await f.command('inquire now');
-  assert.equal(f.sent.at(-1)[0].customType, INQUIRY_TYPE); assert.ok(!f.sent.at(-1)[0].content.includes('already reported these objectives'), 'a reopened objective is not named');
+  assert.equal(f.sent.at(-1)[0].customType, INQUIRY_TYPE);
+  assert.deepEqual(recordOf(f.sent.at(-1)[0].content), { objectives: [{ id: 'AO1', objective: 'Ship the parser' }], completed: [], rules: [] }, 'a reopened objective is active again; a rule the reply left out is closed');
+  assert.deepEqual(currentSet(f.manager.getBranch()).rules.map(item => [item.id, item.status]), [['AR1', 'retired']]);
+});
+
+test('a reply that names an entry the record never held is invalid, and the record keeps its state', async () => {
+  const f = fixture(); await f.command('on'); f.boundary();
+  const reply = objectives => assistant(JSON.stringify({ objectives, rules: [] }));
+  const item = (id, objective) => ({ id, objective, progress: 'Stated', issues: [], eta: 'Unknown' });
+  f.tokens(23000); f.boundary(); f.boundary(reply([item(null, 'Ship the parser')]));
+  f.tokens(26450); f.boundary(); f.boundary(reply([item('AO1', 'Ship the parser'), item('AO2', 'Invented id')]));
+  const [, invalid] = checkpoints(f.manager.getBranch());
+  assert.equal(invalid.report, null); assert.match(invalid.error, /Unknown objective id AO2/); assert.equal(invalid.assigned, null);
+  assert.deepEqual(currentSet(f.manager.getBranch()).objectives.map(entry => [entry.id, entry.status]), [['AO1', 'active']]);
+  assert.ok(f.notifications.some(args => /Unknown objective id AO2/.test(String(args[0]))), 'the fault is shown');
+  await f.command('inquire now');
+  assert.deepEqual(recordOf(f.sent.at(-1)[0].content).objectives, [{ id: 'AO1', objective: 'Ship the parser' }], 'the next inquiry still states the record as it was');
+});
+
+test('titles completed in reports saved before numbering are named until an entry of the record carries them', async () => {
+  const f = fixture(); await f.command('on');
+  f.manager.appendCustomEntry(REPORT_TYPE, checkpoint('legacy', JSON.stringify({ objectives: [{ objective: 'Ship the parser', progress: 'Shipped', issues: [], eta: 'Complete' }, { objective: 'Write the docs', progress: 'Written', issues: [], eta: 'Complete' }], rules: [] })));
+  f.boundary(); f.tokens(23000); const first = f.boundary();
+  assert.ok(first.entries.at(-1).content.includes('already reported these objectives as complete, so do not report their completion again: ["Ship the parser","Write the docs"].'));
+  assert.deepEqual(recordOf(first.entries.at(-1).content), { objectives: [], completed: [], rules: [] }, 'reports without ids do not enter the record');
+  // The docs are taken up again under an id: from then on the record says whether they are complete.
+  f.boundary(assistant(JSON.stringify({ objectives: [{ id: null, objective: 'Write the docs', progress: 'Reopened', issues: [], eta: 'Unknown' }], rules: [] })));
+  await f.command('inquire now');
+  const content = f.sent.at(-1)[0].content;
+  assert.ok(content.includes('do not report their completion again: ["Ship the parser"].'), 'only the title without an entry is still named');
+  assert.deepEqual(recordOf(content).objectives, [{ id: 'AO1', objective: 'Write the docs' }]);
 });
 
 test('unfinished tool turn resumes once; checkpoint tools blocked and malformed response preserved without retries', async () => {
@@ -74,6 +112,9 @@ test('JSON accompanying tool calls is invalid and retains original response iden
   const saved = f.manager.getBranch().findLast(entry => entry.type === 'custom' && entry.customType === 'cuckoo.report');
   assert.ok(saved.data.messageEntryId); assert.equal(saved.data.content.length, 2);
   assert.equal(checkpoints(f.manager.getBranch())[0].report, null);
+  // Nothing of the rejected reply is saved as valid: no report, and no numbers that a later reader could take as given.
+  assert.equal(saved.data.report, null); assert.equal(saved.data.assigned, null); assert.equal(saved.data.raw, '{"objectives":[],"rules":[]}');
+  assert.match(saved.data.error, /interrupted, failed, or attempted tool use/);
 });
 
 test('length-truncated source tool turn resumes, and forbidden checkpoint tool turns get a bounded normal-task follow-up', async () => {
@@ -280,4 +321,99 @@ test('manual queue respects foreign drafts and pending messages before issuing o
   assert.equal(f.boundary().entries.at(-1).customType, INQUIRY_TYPE);
   f.boundary(assistant('{"objectives":[],"rules":[]}'));
   assert.equal(f.boundary(), undefined);
+});
+
+// Regression (review): saved data this version cannot read, on another branch, let an inquiry start that could not be captured.
+const UNREADABLE_EDIT = { version: 2, edit: {} };
+
+test('a session whose record cannot be numbered issues no inquiry and says why', async () => {
+  const f = fixture(); await f.command('on');
+  const anchor = f.manager.appendCustomEntry('anchor', {});
+  f.manager.appendCustomEntry('cuckoo.edit', UNREADABLE_EDIT);
+  f.manager.branch(anchor); f.handlers.get('session_tree')({}, f.ctx);
+  f.boundary(); f.tokens(23000); f.boundary();
+  const issued = f.manager.getBranch().filter(entry => entry.type === 'custom_message' && entry.customType === INQUIRY_TYPE);
+  assert.equal(issued.length, 0, 'no inquiry was issued');
+  const state = stateOnBranch(f.manager.getBranch());
+  assert.ok(state === null || state.pending === null, 'nothing is pending');
+  assert.ok(f.notifications.some(args => args[1] === 'error' && /Invalid saved Cuckoo edit.*automatic inquiries stopped/.test(args[0])), 'the fault is shown');
+  assert.equal(f.handlers.get('tool_call')({}, f.ctx), undefined, 'tools stay available');
+  await f.command('inquire now');
+  assert.equal(f.sent.length, 0, 'a manual inquiry is refused as well'); assert.match(f.notifications.at(-1)[0], /Invalid saved Cuckoo edit/);
+});
+
+test('a reply that cannot be numbered is kept as an invalid checkpoint with its raw text, and the checkpoint ends', async () => {
+  const f = fixture(); await f.command('on'); f.boundary(); f.tokens(23000);
+  assert.equal(f.boundary().entries.at(-1).customType, INQUIRY_TYPE);
+  assert.equal(f.handlers.get('tool_call')({}, f.ctx).block, true);
+  // While the checkpoint is pending the session gains an entry this version cannot read.
+  f.manager.appendCustomEntry('cuckoo.edit', UNREADABLE_EDIT);
+  const raw = '{"objectives":[{"id":null,"objective":"Ship","progress":"Stated","issues":[],"eta":"Unknown"}],"rules":[]}';
+  f.boundary(assistant(raw));
+  assert.equal(stateOnBranch(f.manager.getBranch()).pending, null, 'the checkpoint ended');
+  assert.equal(f.handlers.get('tool_call')({}, f.ctx), undefined, 'tools are no longer blocked');
+  const saved = f.manager.getBranch().filter(entry => entry.type === 'custom' && entry.customType === REPORT_TYPE).map(entry => entry.data);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].raw, raw); assert.equal(saved[0].report, null); assert.equal(saved[0].assigned, null);
+  assert.match(saved[0].error, /The record of this session cannot be read, so the reply was not numbered: .*Invalid saved Cuckoo edit/);
+  assert.ok(f.notifications.some(args => args[1] === 'warning' && /raw response preserved/.test(args[0])));
+});
+
+// Regression (review): one saved report that could not be read left every closed inquiry active in model context.
+test('closed inquiries are replaced in model context even when a saved report on the branch cannot be read', async () => {
+  const f = fixture(); await f.command('on'); f.boundary(); f.tokens(23000);
+  const inquiry = f.boundary().entries.at(-1);
+  f.boundary(assistant('{"objectives":[{"id":null,"objective":"Ship","progress":"Stated","issues":[],"eta":"Unknown"}],"rules":[]}'));
+  f.manager.appendCustomEntry(REPORT_TYPE, { version: 6, requestId: 'damaged', raw: '{"objectives":[],"rules":[]}', error: null, questions: [], assigned: 'not an object' });
+  const closed = 'This Cuckoo checkpoint is closed or cancelled. Its historical inquiry is no longer active; follow the current user task.';
+  const message = (content, requestId) => ({ role: 'custom', customType: INQUIRY_TYPE, content, display: false, details: { version: 1, requestId, tokens: 1 } });
+  const { messages } = f.handlers.get('context')({ messages: [message(inquiry.content, inquiry.details.requestId), message('What the damaged round asked', 'damaged'), message('Still open', 'not-closed'), { role: 'user', content: 'Untouched' }] }, f.ctx);
+  assert.ok(messages[0].content.startsWith(`${closed} `), 'the readable round is closed'); assert.ok(messages[0].content.includes('"id":"AO1"'), 'and names what it numbered');
+  assert.equal(messages[1].content, closed, 'the unreadable round is closed without that note');
+  assert.equal(messages[2].content, 'Still open'); assert.equal(messages[3].content, 'Untouched');
+});
+
+// Regression (mutation pass): titles from numbered reports must not come back through the list kept for older reports.
+test('a numbered objective that was completed and then reworded and reopened is not named as completed by its old title', async () => {
+  const f = fixture(); await f.command('on'); f.boundary();
+  const reply = (id, title, eta) => assistant(JSON.stringify({ objectives: [{ id, objective: title, progress: 'Stated', issues: [], eta }], rules: [] }));
+  f.tokens(23000); f.boundary(); f.boundary(reply(null, 'Ship the parser', 'Complete'));
+  f.tokens(26450); f.boundary(); f.boundary(reply('AO1', 'Ship the parser with recovery', 'About an hour: reopened'));
+  await f.command('inquire now');
+  const content = f.sent.at(-1)[0].content;
+  assert.doesNotMatch(content, /already reported these objectives/, 'no title list: every completion of this session has an ID');
+  assert.deepEqual(recordOf(content), { objectives: [{ id: 'AO1', objective: 'Ship the parser with recovery' }], completed: [], rules: [] });
+});
+
+// Regression (mutation pass): the set reaches the badge, the shortcut and the status text, and capture numbers across branches.
+const badgeText = f => { const factory = f.widgets.findLast(args => args[0] === 'cuckoo')[1]; return factory({ invalidate() {} }, { fg: (_token, text) => text, bg: (_token, text) => text, bold: text => text }).render(80)[0]; };
+
+test('the badge, the shortcut and the status text show the current set as edits change it', async () => {
+  const f = fixture(); await f.command('on'); f.boundary();
+  const edit = value => f.manager.appendCustomEntry('cuckoo.edit', { version: 1, edit: value });
+  edit({ action: 'add_objective', id: 'AO1', objective: 'Ship the parser', progress: null, issues: null, eta: null });
+  edit({ action: 'add_objective', id: 'AO2', objective: 'Write the docs', progress: null, issues: null, eta: null });
+  f.handlers.get('turn_start')({}, f.ctx);
+  assert.equal(badgeText(f), ' 🐦 2 ', 'two active objectives, before any checkpoint');
+  edit({ action: 'retire', id: 'AO2', reason: 'Cancelled' });
+  f.handlers.get('agent_settled')({ aborted: false }, f.ctx);
+  assert.equal(badgeText(f), ' 🐦 1 ');
+  await f.shortcuts.get('ctrl+alt+c').handler(f.ctx);
+  assert.match(f.notifications.at(-1)[0], /^Current set · 1 active objective · 0 active rules · last change: cuckoo_update/m, 'the shortcut shows the set');
+  assert.match(f.notifications.at(-1)[0], /AO1\. Ship the parser/);
+  await f.command('policy tokens 10000');
+  assert.match(f.notifications.at(-1)[0], /Growth policy: 10000 additional tokens/); assert.match(f.notifications.at(-1)[0], /^Current set · 1 active objective/m, 'and so does the status after a settings change');
+});
+
+test('a checkpoint reply on one branch is numbered after the entries of every other branch', async () => {
+  const f = fixture(); await f.command('on');
+  const anchor = f.manager.appendCustomEntry('anchor', {});
+  const reply = (...titles) => assistant(JSON.stringify({ objectives: titles.map(title => ({ id: null, objective: title, progress: 'Stated', issues: [], eta: 'Unknown' })), rules: [{ id: null, rule: `Rule for ${titles[0]}`, source: 'assistant', scope: 'Here' }] }));
+  f.boundary(); f.tokens(23000); f.boundary(); f.boundary(reply('First branch A', 'First branch B'));
+  assert.deepEqual(checkpoints(f.manager.getBranch())[0].assigned, { objectives: ['AO1', 'AO2'], rules: ['AR1'] });
+  f.manager.branch(anchor); f.handlers.get('session_tree')({}, f.ctx);
+  f.tokens(20000); f.boundary(); f.tokens(23000); f.boundary(); f.boundary(reply('Second branch'));
+  const [second] = checkpoints(f.manager.getBranch());
+  assert.equal(second.error, null); assert.deepEqual(second.assigned, { objectives: ['AO3'], rules: ['AR2'] }, 'the other branch used AO1, AO2 and AR1');
+  assert.deepEqual(currentSet(f.manager.getBranch()).objectives.map(item => item.id), ['AO3']);
 });

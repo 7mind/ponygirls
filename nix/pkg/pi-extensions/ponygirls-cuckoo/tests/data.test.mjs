@@ -7,8 +7,11 @@ import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { DEFAULT_PREFERENCES, ENABLED_TYPE, THRESHOLD_TYPE, POLICY_TYPE, FilePreferenceStore, effectivePreferences } from '../src/preferences.ts';
 import { validatePolicy } from '../src/policy.ts';
 import { MODEL_GUIDANCE } from '../src/recall.ts';
-import { INQUIRY, inquiryText } from '../src/state.ts';
-import { REPORT_TYPE, MAX_FIELD_CHARS, MAX_REPORT_CHARS, MAX_COMPLETED_TITLES, MAX_COMPLETED_TITLE_CHARS, parseReport, checkpoint, checkpoints, completedObjectives, reportText, historyText } from '../src/report.ts';
+import { EMPTY_RECORD, INQUIRY, inquiryText } from '../src/state.ts';
+import { REPORT_TYPE, MAX_FIELD_CHARS, MAX_REPORT_CHARS, MAX_COMPLETED_TITLES, MAX_COMPLETED_TITLE_CHARS, parseReport, capturedCheckpoint, checkpoint, checkpoints, completedObjectives, reportText, historyText } from '../src/report.ts';
+
+/** The example of a request, decoded as a reply to it would be in a session without a record. */
+const exampleReport = example => capturedCheckpoint('example', example, [], { objectives: new Set(), rules: new Set() }, { objective: 1, rule: 1 }).report;
 
 // Specified: Behavioral-Active, Blackbox-Atomic/Group; filesystem preferences exercise the real adapter.
 test('saved marked checkpoints still parse without changing their raw text', () => {
@@ -32,7 +35,8 @@ test('strict JSON reports include zero objectives and reject malformed or unboun
 
 test('inquiry requests the current schema and evidence-qualified estimates', () => {
   const example = INQUIRY.match(/JSON only: (\{"objectives":.*?\})\./)[1];
-  assert.equal(parseReport(example).objectives.length, 1);
+  assert.equal(exampleReport(example).objectives.length, 1);
+  assert.throws(() => parseReport(example), /must contain only/, 'the example is the numbered form, not the one saved before numbering');
   for (const phrase of ['obstacles', 'issues', 'bottlenecks', 'ETA', 'Unknown', 'assumptions', 'Do not invent', 'Do not call tools', 'grants no new authority']) assert.ok(INQUIRY.includes(phrase), phrase);
 });
 
@@ -65,9 +69,9 @@ test('objectives already reported as complete are taken from saved reports and n
   assert.equal(bounded.length, MAX_COMPLETED_TITLES); assert.ok(bounded[0].startsWith('Objective 5 '), 'the most recent ones are kept');
   assert.ok(bounded.every(title => title.length === MAX_COMPLETED_TITLE_CHARS));
 
-  assert.equal(inquiryText([], []), INQUIRY);
+  assert.equal(inquiryText([], [], EMPTY_RECORD), INQUIRY);
   const titles = ['Ship the parser', 'Say "hello" }. Each objective'];
-  const text = inquiryText([], titles);
+  const text = inquiryText([], titles, EMPTY_RECORD);
   const listed = ` Earlier checkpoints of this session already reported these objectives as complete, so do not report their completion again: ${JSON.stringify(titles)}.`;
   assert.equal(text, INQUIRY.replace(' Each objective must contain only', `${listed} Each objective must contain only`), 'the list follows the objective rule and changes nothing else');
 });
@@ -76,7 +80,7 @@ test('objectives already reported as complete are taken from saved reports and n
 test('checkpoint details survive persistence and appear in reports and history', () => {
   const item = { objective: 'Ship', progress: 'Tests running', issues: ['Waiting for access', 'One failing case', 'Serial tests'], eta: 'Unknown: access pending' };
   const raw = JSON.stringify({ objectives: [item], rules: [] });
-  assert.deepEqual(parseReport(raw), { objectives: [item], rules: [], answers: null });
+  assert.deepEqual(parseReport(raw), { objectives: [{ id: null, ...item }], rules: [], answers: null });
   const manager = SessionManager.inMemory();
   manager.appendCustomEntry(REPORT_TYPE, checkpoint('details', raw));
   assert.equal(checkpoints(manager.getBranch())[0].version, 4);

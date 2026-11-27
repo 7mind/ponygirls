@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import { ScrollView, TuiAltScreen, VStack, visibleWidth } from '@earendil-works/pi-tui';
 import { CuckooView } from '../src/view.ts';
 import { checkpoint, REPORT_TYPE } from '../src/report.ts';
+import { EMPTY_SET } from '../src/current.ts';
+
+/** A fixed clock: these panes show no current set, so no age is drawn from it. */
+const clock = () => Date.parse('2026-11-27T12:00:00Z');
 
 const theme = { fg: (_token, text) => text, bg: (_token, text) => text, bold: text => text };
 function styledTheme() {
@@ -30,8 +34,8 @@ test('REPRO: wrapped body lines do not clip at width (no lost characters)', asyn
   // Long config line must be fully visible after scrolling, not truncated by PanelLayout
   const report = checkpoint('r', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] }));
   const longIntro = 'Cuckoo: ON (session)\nGrowth: 15% relative (global); next inquiry: 23000 tokens (baseline 20000). This is a very long config line to test wrapping not clipping.\nPending: none.';
-  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments);
-  const showing = view.showReports(f.ctx, [report], longIntro);
+  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments, clock);
+  const showing = view.showReports(f.ctx, [report], longIntro, EMPTY_SET);
   await tick(); const panel = f.views[0].component;
   // Scroll to end to see full settings; long line wraps across multiple body lines
   panel.handleInput('\x1b[F');
@@ -43,8 +47,8 @@ test('REPRO: wrapped body lines do not clip at width (no lost characters)', asyn
 test('REPRO: runtime error appears before detail, not after settings', async () => {
   const report = checkpoint('r', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] }));
   const faultIntro = 'Error: Something failed\nCuckoo: OFF (global)\nGrowth: window 15 (global); next: waiting.';
-  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments);
-  const showing = view.showReports(f.ctx, [report], faultIntro);
+  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments, clock);
+  const showing = view.showReports(f.ctx, [report], faultIntro, EMPTY_SET);
   await tick(); const panel = f.views[0].component;
   const out = panel.render(80).join('\n');
   // Error must appear BEFORE detail header in the body
@@ -57,8 +61,8 @@ test('REPRO: runtime error appears before detail, not after settings', async () 
 });
 
 test('REPRO: empty state has no table headers, only empty message', async () => {
-  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments);
-  const showing = view.showReports(f.ctx, [], 'Cuckoo: OFF');
+  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments, clock);
+  const showing = view.showReports(f.ctx, [], 'Cuckoo: OFF', EMPTY_SET);
   await tick(); const panel = f.views[0].component;
   const out = panel.render(80).join('\n');
   // Must NOT have table chrome (column headers, rule lines, marker gutter)
@@ -72,8 +76,8 @@ test('REPRO: empty state has no table headers, only empty message', async () => 
 
 test('REPRO: valid report detail meta shows saved self-report qualifier', async () => {
   const report = checkpoint('r', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] }));
-  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments);
-  const showing = view.showReports(f.ctx, [report], '');
+  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments, clock);
+  const showing = view.showReports(f.ctx, [report], '', EMPTY_SET);
   await tick(); const panel = f.views[0].component;
   const out = panel.render(80).join('\n');
   // Detail title meta must include the qualifier text
@@ -84,7 +88,7 @@ test('REPRO: valid report detail meta shows saved self-report qualifier', async 
 test('REPRO: detail header wraps at narrow width preserving all metadata', async () => {
   // Long metadata: timestamp, current branch, entry id, qualifier — must all be recoverable
   const entry = { type: 'custom', id: 'entry-abc-123', parentId: null, timestamp: '2026-11-08T12:00:00Z', customType: REPORT_TYPE, data: checkpoint('hist-req', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] })) };
-  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments);
+  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments, clock);
   const showing = view.showHistory(f.ctx, [entry], [entry]);
   await tick(); const panel = f.views[0].component;
   // At width 40, the report's metadata line wraps across multiple lines; where it breaks is not the subject
@@ -102,8 +106,8 @@ test('REPRO: detail header wraps at narrow width preserving all metadata', async
 test('REPRO: 40×24 fullscreen shows detail (not zero-height body)', async () => {
   const reports = [];
   for (let i = 1; i <= 8; i++) reports.push(checkpoint(`req-${i}`, JSON.stringify({ objectives: [{ objective: `Task ${i}`, progress: 'In progress '.repeat(5), issues: [], eta: 'Unknown' }], rules: [] })));
-  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments);
-  const showing = view.showReports(f.ctx, reports, 'Cuckoo: ON (session)\nGrowth: 15% relative (global); next: 23000 tokens.\nPending: none.\nDefaults: /tmp/c.json\nUse /cuckoo history for saved answers.');
+  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments, clock);
+  const showing = view.showReports(f.ctx, reports, 'Cuckoo: ON (session)\nGrowth: 15% relative (global); next: 23000 tokens.\nPending: none.\nDefaults: /tmp/c.json\nUse /cuckoo history for saved answers.', EMPTY_SET);
   await tick(); const panel = f.views[0].component;
   const out = panel.render(40).join('\n');
   // Must show detail for selected checkpoint (detail before settings in body)
@@ -125,8 +129,8 @@ test('REPRO: 40×24 fullscreen shows detail (not zero-height body)', async () =>
 
 test('REPRO: column width arithmetic does not clip Status to "Statu" or "save…"', async () => {
   const report = checkpoint('test-req', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] }));
-  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments);
-  const showing = view.showReports(f.ctx, [report], '');
+  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments, clock);
+  const showing = view.showReports(f.ctx, [report], '', EMPTY_SET);
   await tick(); const panel = f.views[0].component;
   // At width 40, column header must show "Status" in full
   const out40 = panel.render(40).join('\n');
@@ -145,8 +149,8 @@ test('REPRO: selection change resets detail scroll to top', async () => {
     rules: [],
   }));
   const short = checkpoint('short', JSON.stringify({ objectives: [{ objective: 'Brief', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] }));
-  const f = fixture(theme); f.resize(30); const view = new CuckooView(() => {}, noComments);
-  view.publish(f.ctx, [short, long], true, null);
+  const f = fixture(theme); f.resize(30); const view = new CuckooView(() => {}, noComments, clock);
+  view.publish(f.ctx, [short, long], EMPTY_SET, true, null);
   f.badge().handleMouse(click); await tick();
   const panel = f.views[0].component;
   // Scroll detail down
@@ -160,8 +164,8 @@ test('REPRO: selection change resets detail scroll to top', async () => {
 });
 
 test('REPRO: empty table preserves intro/fault footer text', async () => {
-  const f = fixture(styledTheme()); f.resize(24); const view = new CuckooView(() => {}, noComments);
-  const showing = view.showReports(f.ctx, [], 'Cuckoo: OFF (global)\nGrowth policy: window 15 (global); next inquiry: waiting.\nDefaults: /tmp/c.json');
+  const f = fixture(styledTheme()); f.resize(24); const view = new CuckooView(() => {}, noComments, clock);
+  const showing = view.showReports(f.ctx, [], 'Cuckoo: OFF (global)\nGrowth policy: window 15 (global); next inquiry: waiting.\nDefaults: /tmp/c.json', EMPTY_SET);
   await tick(); const panel = f.views[0].component;
   const out = panel.render(40).join('\n');
   assert.match(out, /No Cuckoo reports/);
@@ -172,7 +176,7 @@ test('REPRO: empty table preserves intro/fault footer text', async () => {
 
 test('REPRO: history view shows entry.id in detail metadata', async () => {
   const entry = { type: 'custom', id: 'entry-abc-123', parentId: null, timestamp: '2026-11-08T01:00:00Z', customType: REPORT_TYPE, data: checkpoint('hist-req', JSON.stringify({ objectives: [{ objective: 'History task', progress: 'Seen', issues: [], eta: 'Complete' }], rules: [] })) };
-  const f = fixture(theme); f.resize(30); const view = new CuckooView(() => {}, noComments);
+  const f = fixture(theme); f.resize(30); const view = new CuckooView(() => {}, noComments, clock);
   const showing = view.showHistory(f.ctx, [entry], [entry]);
   await tick(); const panel = f.views[0].component;
   const out = panel.render(80).join('\n');
@@ -184,7 +188,7 @@ test('REPRO: history view shows entry.id in detail metadata', async () => {
 test('REPRO: detail title sanitizes untrusted timestamp', async () => {
   const badTs = '2026-11-08T01:00:00Z\x1b\x07\r\x9b';
   const entry = { type: 'custom', id: 'entry-1', parentId: null, timestamp: badTs, customType: REPORT_TYPE, data: checkpoint('safe-req', JSON.stringify({ objectives: [], rules: [] })) };
-  const f = fixture(theme); f.resize(30); const view = new CuckooView(() => {}, noComments);
+  const f = fixture(theme); f.resize(30); const view = new CuckooView(() => {}, noComments, clock);
   const showing = view.showHistory(f.ctx, [entry], [entry]);
   await tick(); const panel = f.views[0].component;
   const out = panel.render(80).join('\n');
@@ -197,13 +201,13 @@ test('REPRO: detail title sanitizes untrusted timestamp', async () => {
 // Specified: Behavioral-Active, Blackbox-Group through the shared UI boundary.
 
 test('objective badge preserves zero/unknown/failure distinctions and bounds width', () => {
-  const f = fixture(theme); const view = new CuckooView(() => {}, noComments);
-  view.publish(f.ctx, [], false, null); assert.equal(f.widgets.at(-1)?.[1], undefined);
-  view.publish(f.ctx, [], true, null); assert.equal(f.badge().render(80)[0], ' 🐦 ', 'no report yet: the glyph alone');
+  const f = fixture(theme); const view = new CuckooView(() => {}, noComments, clock);
+  view.publish(f.ctx, [], EMPTY_SET, false, null); assert.equal(f.widgets.at(-1)?.[1], undefined);
+  view.publish(f.ctx, [], EMPTY_SET, true, null); assert.equal(f.badge().render(80)[0], ' 🐦 ', 'no report yet: the glyph alone');
   assert.equal(f.badge().render(120)[0], ' 🐦 · ⌃⌥C ', 'wide: show the shortcut even before a report');
   const valid = checkpoint('one', '{"objectives":[],"rules":[]}');
-  view.publish(f.ctx, [valid], true, null); assert.equal(f.badge().render(80)[0], ' 🐦 0 ');
-  view.publish(f.ctx, [valid, checkpoint('two', 'bad')], false, null);
+  view.publish(f.ctx, [valid], EMPTY_SET, true, null); assert.equal(f.badge().render(80)[0], ' 🐦 0 ');
+  view.publish(f.ctx, [valid, checkpoint('two', 'bad')], EMPTY_SET, false, null);
   assert.equal(f.badge().render(80)[0], ' 🐦 0 ! off ');
   assert.equal(f.badge().render(120)[0], ' 🐦 0 ! off · ⌃⌥C ');
   assert.equal(f.badge().renderCompact(80), '🐦0!');
@@ -214,14 +218,14 @@ test('objective badge preserves zero/unknown/failure distinctions and bounds wid
 });
 
 test('badge repeat-click, keyboard close and disposal share one view', async () => {
-  const f = fixture(theme); const view = new CuckooView(() => {}, noComments);
-  view.publish(f.ctx, [], true, null);
+  const f = fixture(theme); const view = new CuckooView(() => {}, noComments, clock);
+  view.publish(f.ctx, [], EMPTY_SET, true, null);
   const oldBadge = f.badge();
   assert.equal(oldBadge.handleMouse({ type: 'click', button: 'right' }), undefined);
   assert.equal(oldBadge.handleMouse(click).handled, true); await tick();
   assert.equal(f.views.length, 1); assert.equal(f.views[0].options.retainEditorBorders, true);
   oldBadge.handleMouse(click); await tick(); assert.equal(f.views[0].closed, true);
-  const showing = view.showReports(f.ctx, [], ''); await tick();
+  const showing = view.showReports(f.ctx, [], '', EMPTY_SET); await tick();
   f.views[1].component.handleInput('\x1b'); await showing; assert.equal(f.views[1].closed, true);
   oldBadge.handleMouse(click); await tick(); view.dispose(f.ctx); await tick();
   assert.equal(f.views[2].closed, true); assert.equal(f.widgets.at(-1)?.[1], undefined);
@@ -231,8 +235,8 @@ test('badge repeat-click, keyboard close and disposal share one view', async () 
 test('table navigation: j/k and arrows move selection, newest selected by default', async () => {
   const reports = [];
   for (let i = 1; i <= 8; i++) reports.push(checkpoint(`req-${i}`, JSON.stringify({ objectives: [{ objective: `Task ${i}`, progress: 'In progress', issues: [], eta: 'Unknown' }], rules: [] })));
-  const f = fixture(theme); f.resize(40); const view = new CuckooView(() => {}, noComments);
-  view.publish(f.ctx, reports, true, null);
+  const f = fixture(theme); f.resize(40); const view = new CuckooView(() => {}, noComments, clock);
+  view.publish(f.ctx, reports, EMPTY_SET, true, null);
   f.badge().handleMouse(click); await tick();
   const panel = f.views[0].component;
   const output = panel.render(80).join('\n');
@@ -276,8 +280,8 @@ test('table navigation: j/k and arrows move selection, newest selected by defaul
 test('detail pane shows selected checkpoint content and updates on selection change', async () => {
   const r1 = checkpoint('first', JSON.stringify({ objectives: [{ objective: 'First task', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] }));
   const r2 = checkpoint('second', JSON.stringify({ objectives: [{ objective: 'Second task', progress: 'Halfway', issues: ['Blocked', 'Bug found', 'Serial'], eta: 'Tomorrow' }], rules: [] }));
-  const f = fixture(theme); f.resize(40); const view = new CuckooView(() => {}, noComments);
-  view.publish(f.ctx, [r1, r2], true, null);
+  const f = fixture(theme); f.resize(40); const view = new CuckooView(() => {}, noComments, clock);
+  view.publish(f.ctx, [r1, r2], EMPTY_SET, true, null);
   f.badge().handleMouse(click); await tick();
   const panel = f.views[0].component;
   let output = panel.render(80).join('\n');
@@ -299,8 +303,8 @@ test('detail pane shows selected checkpoint content and updates on selection cha
 
 test('invalid report shows error detail with raw output, not parsed fields', async () => {
   const invalid = checkpoint('bad-one', 'not json at all');
-  const f = fixture(theme); f.resize(40); const view = new CuckooView(() => {}, noComments);
-  view.publish(f.ctx, [invalid], true, null);
+  const f = fixture(theme); f.resize(40); const view = new CuckooView(() => {}, noComments, clock);
+  view.publish(f.ctx, [invalid], EMPTY_SET, true, null);
   f.badge().handleMouse(click); await tick();
   const panel = f.views[0].component;
   const output = panel.render(80).join('\n');
@@ -315,8 +319,8 @@ test('detail scroll: ctrl-u/d and Home/End scroll detail independently of table'
     objectives: Array.from({ length: 10 }, (_, i) => ({ objective: `Objective ${i + 1}`, progress: 'Progress '.repeat(20), issues: [], eta: 'Unknown' })),
     rules: [],
   }));
-  const f = fixture(theme); f.resize(30); const view = new CuckooView(() => {}, noComments);
-  view.publish(f.ctx, [long], true, null);
+  const f = fixture(theme); f.resize(30); const view = new CuckooView(() => {}, noComments, clock);
+  view.publish(f.ctx, [long], EMPTY_SET, true, null);
   f.badge().handleMouse(click); await tick();
   const panel = f.views[0].component;
 
@@ -360,12 +364,12 @@ test('fullscreen Page Up and Page Down scroll the focused Cuckoo detail instead 
     layout.addChild(panel, { shrink: 0 });
     tui.setFocus(panel);
   });
-  const view = new CuckooView(() => {}, noComments);
+  const view = new CuckooView(() => {}, noComments, clock);
   const press = data => { sendKey(data); tui.renderNow(); return tui.getScreenLines().join('\n'); };
   tui.setLayoutRoot(layout);
   tui.start();
   try {
-    const showing = view.showReports(f.ctx, [long], '');
+    const showing = view.showReports(f.ctx, [long], '', EMPTY_SET);
     tui.renderNow();
     const initial = tui.getScreenLines().join('\n');
     assert.match(initial, /PgUp\/PgDn scroll detail/);
@@ -386,8 +390,8 @@ test('fullscreen Page Up and Page Down scroll the focused Cuckoo detail instead 
 
 test('empty report panel shows placeholder, still accepts i for inquiry', async () => {
   const f = fixture(theme); const requests = [];
-  const view = new CuckooView(ctx => { requests.push(ctx); }, noComments);
-  view.publish(f.ctx, [], true, null);
+  const view = new CuckooView(ctx => { requests.push(ctx); }, noComments, clock);
+  view.publish(f.ctx, [], EMPTY_SET, true, null);
   f.badge().handleMouse(click); await tick();
   const panel = f.views[0].component;
   const output = panel.render(80).join('\n');
@@ -401,7 +405,7 @@ test('empty report panel shows placeholder, still accepts i for inquiry', async 
 test('showHistory shows entries with timestamps and branch attribution', async () => {
   const older = { type: 'custom', id: 'entry-old', parentId: null, timestamp: '2026-11-07T01:00:00Z', customType: REPORT_TYPE, data: { version: 1, requestId: 'old-req', raw: '{"objectives":[{"objective":"Old","progress":"Seen"}]}', error: null } };
   const newer = { type: 'custom', id: 'entry-new', parentId: null, timestamp: '2026-11-08T01:00:00Z', customType: REPORT_TYPE, data: checkpoint('new-req', '{"objectives":[],"rules":[]}') };
-  const f = fixture(theme); f.resize(40); const view = new CuckooView(() => {}, noComments);
+  const f = fixture(theme); f.resize(40); const view = new CuckooView(() => {}, noComments, clock);
   const showing = view.showHistory(f.ctx, [older, newer], [newer]);
   await tick();
   const panel = f.views[0].component;
@@ -414,9 +418,9 @@ test('showHistory shows entries with timestamps and branch attribution', async (
 });
 
 test('non-terminal view notifies full plain text via reportContent/historyContent', async () => {
-  const f = fixture(theme); f.ctx.mode = 'rpc'; const view = new CuckooView(() => {}, noComments);
+  const f = fixture(theme); f.ctx.mode = 'rpc'; const view = new CuckooView(() => {}, noComments, clock);
   const r = checkpoint('rpc-req', JSON.stringify({ objectives: [{ objective: 'RPC task', progress: 'Done', issues: [], eta: 'Complete' }], rules: [{ rule: 'Show mockups', source: 'user', scope: 'This change' }] }));
-  await view.showReports(f.ctx, [r], 'Cuckoo: ON\nGrowth policy: measured');
+  await view.showReports(f.ctx, [r], 'Cuckoo: ON\nGrowth policy: measured', EMPTY_SET);
   assert.ok(f.notifications.length > 0);
   const msg = f.notifications[0][0];
   assert.match(msg, /RPC task/);
@@ -434,8 +438,8 @@ test('non-terminal view notifies full plain text via reportContent/historyConten
 
 test('panel advertises i and closes before requesting exactly one manual inquiry', async () => {
   const f = fixture(theme); const requests = [];
-  const view = new CuckooView(ctx => { assert.equal(f.views[0].closed, true); requests.push(ctx); }, noComments);
-  view.publish(f.ctx, [checkpoint('one', '{"objectives":[],"rules":[]}')], true, null);
+  const view = new CuckooView(ctx => { assert.equal(f.views[0].closed, true); requests.push(ctx); }, noComments, clock);
+  view.publish(f.ctx, [checkpoint('one', '{"objectives":[],"rules":[]}')], EMPTY_SET, true, null);
   f.badge().handleMouse(click); await tick();
   const panel = f.views[0].component;
   assert.match(panel.render(80).join('\n'), /i.*inquire now/);
@@ -447,15 +451,15 @@ test('panel advertises i and closes before requesting exactly one manual inquiry
 test('settings and fault text appear in footer region', async () => {
   const reports = [checkpoint('req', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Started', issues: [], eta: 'Unknown' }], rules: [] }))];
   const styled = { fg: (token, text) => `<${token}>${text}</${token}>`, bg: (_token, text) => text, bold: text => `<b>${text}</b>` };
-  const f = fixture(styled); f.resize(40); const view = new CuckooView(() => {}, noComments);
-  view.publish(f.ctx, reports, true, null);
+  const f = fixture(styled); f.resize(40); const view = new CuckooView(() => {}, noComments, clock);
+  view.publish(f.ctx, reports, EMPTY_SET, true, null);
   f.badge().handleMouse(click); await tick();
   const output = f.views[0].component.render(120).join('\n');
   assert.match(output, /<muted>Cuckoo:<\/muted> ON \(badge\)/);
   f.views[0].component.handleInput('\x1b'); await tick();
 
   // showReports with detailed intro
-  const showing = view.showReports(f.ctx, reports, 'Cuckoo: ON (session)\nGrowth policy: 15% relative (global); next inquiry: 23000 tokens (baseline 20000).\nPending checkpoint: none.\nGlobal defaults: /tmp/cuckoo.json\nUse /cuckoo history for saved answers.');
+  const showing = view.showReports(f.ctx, reports, 'Cuckoo: ON (session)\nGrowth policy: 15% relative (global); next inquiry: 23000 tokens (baseline 20000).\nPending checkpoint: none.\nGlobal defaults: /tmp/cuckoo.json\nUse /cuckoo history for saved answers.', EMPTY_SET);
   await tick();
   const output2 = f.views[1].component.render(120).join('\n');
   assert.match(output2, /15% relative/);
@@ -466,8 +470,8 @@ test('settings and fault text appear in footer region', async () => {
 test('narrow layout adapts columns and table viewport is bounded', async () => {
   const reports = [];
   for (let i = 1; i <= 12; i++) reports.push(checkpoint(`req-${String(i).padStart(3, '0')}`, JSON.stringify({ objectives: [{ objective: `Task ${i}`, progress: 'Progress', issues: [], eta: 'Unknown' }], rules: [] })));
-  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments);
-  view.publish(f.ctx, reports, true, null);
+  const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {}, noComments, clock);
+  view.publish(f.ctx, reports, EMPTY_SET, true, null);
   f.badge().handleMouse(click); await tick();
   const panel = f.views[0].component;
 
@@ -491,8 +495,8 @@ test('narrow layout adapts columns and table viewport is bounded', async () => {
 
 test('request IDs are sanitized of terminal control bytes', async () => {
   const bad = checkpoint('req\x1b\x07\r\x9b-unsafe', JSON.stringify({ objectives: [{ objective: 'Safe', progress: 'Yes', issues: [], eta: 'Complete' }], rules: [] }));
-  const f = fixture(theme); f.resize(40); const view = new CuckooView(() => {}, noComments);
-  view.publish(f.ctx, [bad], true, null);
+  const f = fixture(theme); f.resize(40); const view = new CuckooView(() => {}, noComments, clock);
+  view.publish(f.ctx, [bad], EMPTY_SET, true, null);
   f.badge().handleMouse(click); await tick();
   const panel = f.views[0].component;
   const output = panel.render(80).join('\n');

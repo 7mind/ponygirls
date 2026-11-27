@@ -4,6 +4,10 @@ import { ScrollView, TuiAltScreen, VStack, visibleWidth } from '@earendil-works/
 import { renderLayoutFrame } from '@earendil-works/pi-tui/dist/layout.js';
 import { CuckooView } from '../src/view.ts';
 import { answeredCheckpoint, checkpoint, REPORT_TYPE } from '../src/report.ts';
+import { EMPTY_SET } from '../src/current.ts';
+
+/** A fixed clock: these panes show no current set, so no age is drawn from it. */
+const clock = () => Date.parse('2026-11-27T12:00:00Z');
 
 const theme = { fg: (_token, text) => text, bg: (_token, text) => text, bold: text => text };
 const ENTER = '\r', ESCAPE = '\x1b', UP = '\x1b[A', DOWN = '\x1b[B', TAB = '\t', PAGE_DOWN = '\x1b[6~', HOME = '\x1b[H', END = '\x1b[F';
@@ -45,8 +49,8 @@ function fixture(saved = []) {
   return { ctx, host, views, notifications, savedCalls, resize: value => { rows = value; }, frameRequests: () => frameRequests };
 }
 async function open(f, reports, intro = 'Cuckoo: ON (session)') {
-  const view = new CuckooView(() => assert.fail('no inquiry was requested'), f.host);
-  const showing = view.showReports(f.ctx, reports, intro);
+  const view = new CuckooView(() => assert.fail('no inquiry was requested'), f.host, clock);
+  const showing = view.showReports(f.ctx, reports, intro, EMPTY_SET);
   await tick();
   return { view, showing, panel: f.views.at(-1).component };
 }
@@ -757,7 +761,7 @@ test('a checkpoint without items offers no item keys; in its focused report the 
 test('history uses the same navigation and names its answers', async () => {
   const entry = (id, timestamp, data) => ({ type: 'custom', id, parentId: null, timestamp, customType: REPORT_TYPE, data });
   const entries = [entry('entry-1', '2026-11-20T10:00:00Z', structuredClone(older)), entry('entry-2', '2026-11-21T10:00:00Z', structuredClone(report))];
-  const f = fixture(); const view = new CuckooView(() => assert.fail('no inquiry was requested'), f.host);
+  const f = fixture(); const view = new CuckooView(() => assert.fail('no inquiry was requested'), f.host, clock);
   const showing = view.showHistory(f.ctx, entries, [entries[1]]); await tick();
   const panel = f.views[0].component;
   let lines = panel.render(140);
@@ -790,13 +794,13 @@ test('fullscreen: enter folds the table, the arrows walk the report instead of t
     layout.addChild(panel, { shrink: 0 });
     tui.setFocus(panel);
   });
-  const view = new CuckooView(() => assert.fail('no inquiry was requested'), f.host);
+  const view = new CuckooView(() => assert.fail('no inquiry was requested'), f.host, clock);
   const screen = () => { tui.renderNow(); tui.renderNow(); return tui.getScreenLines().map(line => line.replace(/\x1b\[[0-9;]*m|\x1b\]8;;[^\x07]*\x07/g, '').trimEnd()); };
   const press = data => { sendKey(data); return screen(); };
   tui.setLayoutRoot(layout);
   tui.start();
   try {
-    const showing = view.showReports(f.ctx, [older, tallReport('tall', [0, 12, 0])], STATUS);
+    const showing = view.showReports(f.ctx, [older, tallReport('tall', [0, 12, 0])], STATUS, EMPTY_SET);
     const list = screen();
     const tableRow = list.findIndex(line => /Request ID/.test(line));
     assert.ok(tableRow > 0, list.join('\n'));
