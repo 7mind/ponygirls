@@ -1,0 +1,53 @@
+# base commit bb9e490a48f88c87a65e1f8773e1bafb02eca581; work tree /home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-wt-ponygirls-bb9e490a48f8-1795797135454-bb9e490a48f8-1795799204540; taken 2026-11-27T17:29:15Z with: git diff --cached bb9e490a48f88c87a65e1f8773e1bafb02eca581
+diff --git a/chronicle/server/src/main/scala/chronicle/Http.scala b/chronicle/server/src/main/scala/chronicle/Http.scala
+index a3a81016..dcc35a3a 100644
+--- a/chronicle/server/src/main/scala/chronicle/Http.scala
++++ b/chronicle/server/src/main/scala/chronicle/Http.scala
+@@ -230,17 +230,12 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
+       // A snapshot can be hundreds of megabytes: even its text decoding stays off the compute pool.
+       IO.blocking { noUrlSecrets(r); origin(r,false); val i = bearer(r); i.requireScope(Scope.Ingest); i }.flatMap(i => snapshots.ingest(r.contentLength)(boundedBytes(r,config.maxBodyBytes).flatMap(bytes => IO.blocking(archive.ingest(i.user.id,Wire.decode(IngestRequest.codecJson,Wire.parse(new String(bytes,java.nio.charset.StandardCharsets.UTF_8)))))))).map(receipt => json(Status.Ok,Wire.encode(IngestReceipt.codecJson,receipt)))
+     }
+-    case r @ GET -> Root / "api" / "ingest" / "uploads" => handle {
+-      // The capability probe: a server without the upload API answers this path 404 without a Failure body.
+-      ingestBearer(r).flatMap(_ => boundedBytes(r,0)).map(_ => json(Status.Ok,Wire.encode(UploadLimits.codecJson,uploads.limits)))
+-    }
+-    case r @ POST -> Root / "api" / "ingest" / "uploads" => handle {
+-      ingestBearer(r).flatMap(i => boundedBody(r,math.min(config.maxBodyBytes,UploadPolicy.maxOpenBytes)).flatMap(raw => IO.blocking(uploads.open(i.user.id,Wire.decode(UploadOpen.codecJson,Wire.parse(raw))))))
+-        .map(state => json(Status.Ok,Wire.encode(UploadState.codecJson,state)))
+-    }
+-    case r @ GET -> Root / "api" / "ingest" / "uploads" / UUIDVar(id) => handle {
+-      ingestBearer(r).flatMap(i => boundedBytes(r,0).flatMap(_ => IO.blocking(uploads.status(i.user.id,id)))).map(state => json(Status.Ok,Wire.encode(UploadState.codecJson,state)))
++    // The capability probe: a server without the upload API answers this path 404 without a Failure body.
++    case r @ GET -> Root / "api" / "ingest" / "uploads" => ingestRoute(r,0)(UploadLimits.codecJson)((_,_) => IO(uploads.limits))
++    case r @ POST -> Root / "api" / "ingest" / "uploads" => ingestRoute(r,math.min(config.maxBodyBytes,UploadPolicy.maxOpenBytes))(UploadState.codecJson) { (i,bytes) =>
++      IO.blocking(uploads.open(i.user.id,Wire.decode(UploadOpen.codecJson,Wire.parse(new String(bytes,java.nio.charset.StandardCharsets.UTF_8)))))
+     }
++    case r @ GET -> Root / "api" / "ingest" / "uploads" / UUIDVar(id) => ingestRoute(r,0)(UploadState.codecJson)((i,_) => IO.blocking(uploads.status(i.user.id,id)))
+     case r @ POST -> Root / "api" / "ingest" / "uploads" / UUIDVar(id) / "parts" => handle {
+       ingestBearer(r).flatMap { i =>
+         def accept(maximum: Int): IO[UploadState] = boundedBytes(r,maximum).flatMap { bytes =>
+@@ -255,12 +250,8 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
+         }
+       }.map(state => json(Status.Ok,Wire.encode(UploadState.codecJson,state)))
+     }
+-    case r @ POST -> Root / "api" / "ingest" / "uploads" / UUIDVar(id) / "commit" => handle {
+-      ingestBearer(r).flatMap(i => boundedBytes(r,0).flatMap(_ => IO.blocking(uploads.commit(i.user.id,id)))).map(receipt => json(Status.Ok,Wire.encode(IngestReceipt.codecJson,receipt)))
+-    }
+-    case r @ POST -> Root / "api" / "ingest" / "uploads" / UUIDVar(id) / "abort" => handle {
+-      ingestBearer(r).flatMap(i => boundedBytes(r,0).flatMap(_ => IO.blocking(uploads.abort(i.user.id,id)))).map(state => json(Status.Ok,Wire.encode(UploadState.codecJson,state)))
+-    }
++    case r @ POST -> Root / "api" / "ingest" / "uploads" / UUIDVar(id) / "commit" => ingestRoute(r,0)(IngestReceipt.codecJson)((i,_) => IO.blocking(uploads.commit(i.user.id,id)))
++    case r @ POST -> Root / "api" / "ingest" / "uploads" / UUIDVar(id) / "abort" => ingestRoute(r,0)(UploadState.codecJson)((i,_) => IO.blocking(uploads.abort(i.user.id,id)))
+     // Every other request under the upload API is answered with a Failure body, so that clients never mistake it for a
+     // server without the API.
+     case r if r.uri.path.renderString=="/api/ingest/uploads" || r.uri.path.renderString.startsWith("/api/ingest/uploads/") => handle(IO.raiseError[Response[IO]](DomainError("not-found","no such upload endpoint")))
+@@ -306,6 +297,9 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
+     case r if r.method==Method.GET && !r.uri.path.renderString.startsWith("/api/") => static(r)
+   }
+   private def ingestBearer(r: Request[IO]): IO[Identity] = IO.blocking { noUrlSecrets(r); origin(r,false); val i=bearer(r); i.requireScope(Scope.Ingest); i }
++  /** A route behind the ingest bearer whose body has at most `maximum` bytes and whose answer is `work`'s result as JSON. */
++  private def ingestRoute[A](r: Request[IO],maximum: Int)(codec: => baboon.runtime.shared.BaboonJsonCodec[A])(work: (Identity,Array[Byte]) => IO[A]): IO[Response[IO]] =
++    handle(ingestBearer(r).flatMap(i => boundedBytes(r,maximum).flatMap(work(i,_))).map(a => json(Status.Ok,Wire.encode(codec,a))))
+   /** The job operations of a token with OperateJobs (CONTRACT.md "Job operations for tokens"): any other credential is
+     * refused before the body is read; a request holds one of the process's permits; an operation outside the allow-list is
+     * refused before dispatch; the owner's budget is charged before any effect (a mutation's only when it executes). */

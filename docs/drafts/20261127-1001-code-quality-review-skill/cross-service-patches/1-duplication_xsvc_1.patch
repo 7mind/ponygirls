@@ -1,0 +1,93 @@
+# base commit bb9e490a48f88c87a65e1f8773e1bafb02eca581; work tree /home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-wt-ponygirls-bb9e490a48f8-1795797135454-bb9e490a48f8-1795799203506; taken 2026-11-27T17:47:22Z with: git diff --cached bb9e490a48f88c87a65e1f8773e1bafb02eca581
+diff --git a/chronicle/server/src/main/scala/chronicle/Core.scala b/chronicle/server/src/main/scala/chronicle/Core.scala
+index 9a2c593e..fb0d18eb 100644
+--- a/chronicle/server/src/main/scala/chronicle/Core.scala
++++ b/chronicle/server/src/main/scala/chronicle/Core.scala
+@@ -5,9 +5,8 @@ import chronicle.api.*
+ import io.circe.{Json, Decoder}
+ import java.nio.charset.StandardCharsets.UTF_8
+ import java.nio.file.{Files, Path}
+-import java.security.{MessageDigest, SecureRandom}
+-import java.util.{UUID, Base64}
+-import ponygirls.auth.IndexingPolicy
++import java.util.UUID
++import ponygirls.auth.{IndexingPolicy, Secrets}
+ import ponygirls.runtime.{BoundedSecretFile, DatabaseWait, JdbcConfig, JdbcLimits, JdbcPoolSizing}
+ import scala.concurrent.duration.*
+ 
+@@ -26,9 +25,9 @@ object Wire {
+   def encode[A](codec: BaboonJsonCodec[A], value: A): Json = codec.encode(ctx, value)
+   def decode[A](codec: BaboonJsonCodec[A], json: Json): A = codec.decode(ctx, json).fold(_ => throw DomainError("invalid", "invalid payload"), identity)
+   def parse(s: String): Json = io.circe.parser.parse(s).fold(_ => throw DomainError("invalid", "invalid JSON"), identity)
+-  def hash(s: String): String = MessageDigest.getInstance("SHA-256").digest(s.getBytes(UTF_8)).map(b => f"${b & 255}%02x").mkString
++  def hash(s: String): String = Secrets.digest(s)
+   def canonical(j: Json): String = j.deepDropNullValues.noSpacesSortKeys
+-  def secret(): String = { val b = new Array[Byte](32); new SecureRandom().nextBytes(b); Base64.getUrlEncoder.withoutPadding.encodeToString(b) }
++  def secret(): String = Secrets.generate()
+ }
+ final case class UserConfig(id: String, login: String, passwordHashFile: String, enabled: Boolean, admin: Boolean)
+ final case class SignupConfig(enabled: Boolean, requireApproval: Boolean, maxUsers: Int)
+diff --git a/haystack/server/src/main/scala/haystack/auth/Auth.scala b/haystack/server/src/main/scala/haystack/auth/Auth.scala
+index 1eb5ec9c..7aa2f1dc 100644
+--- a/haystack/server/src/main/scala/haystack/auth/Auth.scala
++++ b/haystack/server/src/main/scala/haystack/auth/Auth.scala
+@@ -3,10 +3,10 @@ package haystack.auth
+ import haystack.domain.{Fault, Principal, QualifiedId}
+ import java.nio.charset.StandardCharsets
+ import java.nio.file.{Files, Path}
+-import java.security.{MessageDigest, SecureRandom}
++import java.security.MessageDigest
+ import java.net.URI
+-import java.util.{Base64, Locale}
+-import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,DeclaredDirectory,ImperativeSettings,Password,PersistentCookie,TotpVault}
++import java.util.Locale
++import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,DeclaredDirectory,ImperativeSettings,Password,PersistentCookie,Secrets,TotpVault}
+ 
+ final case class TokenConfig(id: String, hashFile: String)
+ final case class UserConfig(id: String, userType: String, displayName: String, tokens: Vector[TokenConfig],
+@@ -24,15 +24,11 @@ final case class AuthConfig(activityProjectId: String, users: Vector[UserConfig]
+   insecureHttpOrigins: Vector[String] = Vector.empty, rateLimit: Option[RateLimit] = None, accounts: Option[AccountsConfig] = None)
+ 
+ object Tokens {
+-  private val encoder = Base64.getUrlEncoder.withoutPadding()
+-  def canonical(token: String): Boolean = token.matches("[A-Za-z0-9_-]{43}") && (try {
+-    val bytes = Base64.getUrlDecoder.decode(token)
+-    bytes.length == 32 && encoder.encodeToString(bytes) == token
+-  } catch { case _: IllegalArgumentException => false })
+-  def generate(): String = { val bytes = new Array[Byte](32); new SecureRandom().nextBytes(bytes); encoder.encodeToString(bytes) }
++  def canonical(token: String): Boolean = Secrets.canonical(token)
++  def generate(): String = Secrets.generate()
+   def hash(token: String): String = {
+     if (!canonical(token)) throw Fault("unauthorized", "invalid credentials")
+-    MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.US_ASCII)).map(b => f"${b & 255}%02x").mkString
++    Secrets.digest(token)
+   }
+   private def read(path: String, length: Int, pattern: String): String = {
+     // At most exact bytes + optional LF + one overflow byte. A malformed
+diff --git a/manure/backend/src/main/scala/manure/Auth.scala b/manure/backend/src/main/scala/manure/Auth.scala
+index e21420f9..335134e7 100644
+--- a/manure/backend/src/main/scala/manure/Auth.scala
++++ b/manure/backend/src/main/scala/manure/Auth.scala
+@@ -6,7 +6,7 @@ import java.security.{MessageDigest, SecureRandom}
+ import java.util.Base64
+ import java.sql.Connection
+ import cats.effect.IO
+-import ponygirls.auth.{AccountCredential,AccountIssued,AccountJson,AccountLogin,AccountOrigin,AccountReply,AccountRequest,AccountSession,AccountSql,AccountToken,AccountUser,AttemptLimiter,CredentialGate,DeclarativeLogin,DeclaredDirectory,IdentityHistory,IndexingAccountTransactions,IndexingPolicy,IndexingPreferenceSql,IndexingPreferences,IndexingService,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,Password,PasswordHasher,SharedAccountSessions,SignedIn,TotpVault}
++import ponygirls.auth.{AccountCredential,AccountIssued,AccountJson,AccountLogin,AccountOrigin,AccountReply,AccountRequest,AccountSession,AccountSql,AccountToken,AccountUser,AttemptLimiter,CredentialGate,DeclarativeLogin,DeclaredDirectory,IdentityHistory,IndexingAccountTransactions,IndexingPolicy,IndexingPreferenceSql,IndexingPreferences,IndexingService,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,Password,PasswordHasher,Secrets,SharedAccountSessions,SignedIn,TotpVault}
+ 
+ object SecretCodec:
+   private val random = new SecureRandom()
+@@ -18,12 +18,7 @@ object SecretCodec:
+   def hex(bytes: Array[Byte]): String = bytes.map(b => f"${b & 0xff}%02x").mkString
+   def sha256(bytes: Array[Byte]): String = hex(MessageDigest.getInstance("SHA-256").digest(bytes))
+   def sha256(value: String): String = sha256(Exact.utf8(value))
+-  def canonical(value: String): Boolean =
+-    if !value.matches("[A-Za-z0-9_-]{43}") then false
+-    else try
+-      val bytes = Base64.getUrlDecoder.decode(value)
+-      bytes.length == 32 && encoder.encodeToString(bytes) == value
+-    catch case _: IllegalArgumentException => false
++  def canonical(value: String): Boolean = Secrets.canonical(value)
+   def equal(a: String, b: String): Boolean = MessageDigest.isEqual(Exact.utf8(a), Exact.utf8(b))
+   def verify(candidate: String, digest: String): Boolean = equal(sha256(candidate), digest)
+   def readHash(path: Path): String =

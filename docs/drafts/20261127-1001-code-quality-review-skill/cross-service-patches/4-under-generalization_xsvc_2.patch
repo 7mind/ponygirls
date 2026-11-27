@@ -1,0 +1,315 @@
+# base commit bb9e490a48f88c87a65e1f8773e1bafb02eca581; work tree /home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-wt-ponygirls-bb9e490a48f8-1795797135454-bb9e490a48f8-1795800296872; taken 2026-11-27T18:07:01Z with: git diff --cached bb9e490a48f88c87a65e1f8773e1bafb02eca581
+diff --git a/chronicle/server/src/main/scala/chronicle/Auth.scala b/chronicle/server/src/main/scala/chronicle/Auth.scala
+index e26f1a0b..dcbc09d1 100644
+--- a/chronicle/server/src/main/scala/chronicle/Auth.scala
++++ b/chronicle/server/src/main/scala/chronicle/Auth.scala
+@@ -22,7 +22,7 @@ object ImperativeAccess {
+       val keyFile=accounts.keyFile.getOrElse(throw AccountFailure("config"))
+       val issuer=accounts.issuer.getOrElse(s"Chronicle (${java.net.URI.create(config.allowedOrigin).getHost})")
+       ImperativeSettings(AccountsConfig.service,accounts.signup.enabled,accounts.signup.requireApproval,accounts.enrollment.enabled,accounts.signup.maxUsers,
+-        java.time.Duration.ofSeconds(accounts.enrollment.ttlSeconds.toLong),issuer,accounts.reservedUsernames.toSet,TotpVault.load(Path.of(keyFile),AccountsConfig.service))
++        java.time.Duration.ofSeconds(accounts.enrollment.ttlSeconds),issuer,accounts.reservedUsernames.toSet,TotpVault.load(Path.of(keyFile),AccountsConfig.service))
+     } catch { case AccountFailure(_) => throw DomainError("config","invalid accounts settings or key file") }
+   /** Reads the key file and the password-hash files. */
+   def load(config: Config): Option[ImperativeAccess] =
+diff --git a/chronicle/server/src/main/scala/chronicle/Core.scala b/chronicle/server/src/main/scala/chronicle/Core.scala
+index 9a2c593e..12dc117d 100644
+--- a/chronicle/server/src/main/scala/chronicle/Core.scala
++++ b/chronicle/server/src/main/scala/chronicle/Core.scala
+@@ -7,7 +7,7 @@ import java.nio.charset.StandardCharsets.UTF_8
+ import java.nio.file.{Files, Path}
+ import java.security.{MessageDigest, SecureRandom}
+ import java.util.{UUID, Base64}
+-import ponygirls.auth.IndexingPolicy
++import ponygirls.auth.{EnrollmentConfig, IndexingPolicy, SignupConfig}
+ import ponygirls.runtime.{BoundedSecretFile, DatabaseWait, JdbcConfig, JdbcLimits, JdbcPoolSizing}
+ import scala.concurrent.duration.*
+ 
+@@ -31,16 +31,11 @@ object Wire {
+   def secret(): String = { val b = new Array[Byte](32); new SecureRandom().nextBytes(b); Base64.getUrlEncoder.withoutPadding.encodeToString(b) }
+ }
+ final case class UserConfig(id: String, login: String, passwordHashFile: String, enabled: Boolean, admin: Boolean)
+-final case class SignupConfig(enabled: Boolean, requireApproval: Boolean, maxUsers: Int)
+-final case class EnrollmentConfig(enabled: Boolean, ttlSeconds: Int)
+ /** Imperative accounts (self-signup, admin enrollment). `enabled` is the master switch: it is never derived from the
+   * creation flags, and turning it off suspends the accounts without revoking anything. */
+ final case class AccountsConfig(enabled: Boolean, keyFile: Option[String], signup: SignupConfig, enrollment: EnrollmentConfig, issuer: Option[String], reservedUsernames: List[String])
+ object AccountsConfig {
+   val service = "chronicle"
+-  val defaultRequireApproval = true
+-  val defaultMaxUsers = 100
+-  val defaultEnrollmentTtlSeconds = 86400
+ }
+ object TokenPolicy { val maximumPerOwner = 100 }
+ /** `operateJobs`: the account-plane scope OperateJobs (JobOperations), given only by naming it in `scopes`. */
+@@ -175,19 +170,19 @@ object Config {
+   private val omittedCreation = false
+   given Decoder[SignupConfig] = Decoder.instance { cursor => for {
+     enabled <- optional(cursor,"enabled",omittedCreation)
+-    requireApproval <- optional(cursor,"requireApproval",AccountsConfig.defaultRequireApproval)
+-    maxUsers <- optional(cursor,"maxUsers",AccountsConfig.defaultMaxUsers)
++    requireApproval <- optional(cursor,"requireApproval",SignupConfig.defaultRequireApproval)
++    maxUsers <- optional(cursor,"maxUsers",SignupConfig.defaultMaxUsers)
+   } yield SignupConfig(enabled,requireApproval,maxUsers) }
+   given Decoder[EnrollmentConfig] = Decoder.instance { cursor => for {
+     enabled <- optional(cursor,"enabled",omittedCreation)
+-    ttlSeconds <- optional(cursor,"ttlSeconds",AccountsConfig.defaultEnrollmentTtlSeconds)
+-  } yield EnrollmentConfig(enabled,ttlSeconds) }
++    ttlSeconds <- present[Int](cursor,"ttlSeconds")
++  } yield EnrollmentConfig(enabled,ttlSeconds.fold(EnrollmentConfig.defaultEnrollmentTtlSeconds)(_.toLong)) }
+   // The master switch is a required member of a present `accounts` object; everything else defaults to off.
+   given Decoder[AccountsConfig] = Decoder.instance { cursor => for {
+     enabled <- cursor.get[Boolean]("enabled")
+     keyFile <- present[String](cursor,"keyFile")
+-    signup <- optional(cursor,"signup",SignupConfig(omittedCreation,AccountsConfig.defaultRequireApproval,AccountsConfig.defaultMaxUsers))
+-    enrollment <- optional(cursor,"enrollment",EnrollmentConfig(omittedCreation,AccountsConfig.defaultEnrollmentTtlSeconds))
++    signup <- optional(cursor,"signup",SignupConfig.default)
++    enrollment <- optional(cursor,"enrollment",EnrollmentConfig.default)
+     issuer <- present[String](cursor,"issuer")
+     reservedUsernames <- optional(cursor,"reservedUsernames",List.empty[String])
+   } yield AccountsConfig(enabled,keyFile,signup,enrollment,issuer,reservedUsernames) }
+diff --git a/chronicle/server/src/test/scala/chronicle/AccountHttpTest.scala b/chronicle/server/src/test/scala/chronicle/AccountHttpTest.scala
+index c4233c1c..099daacf 100644
+--- a/chronicle/server/src/test/scala/chronicle/AccountHttpTest.scala
++++ b/chronicle/server/src/test/scala/chronicle/AccountHttpTest.scala
+@@ -14,7 +14,7 @@ import org.http4s.ember.client.EmberClientBuilder
+ import org.http4s.ember.server.EmberServerBuilder
+ import org.http4s.implicits.*
+ import org.typelevel.ci.CIString
+-import ponygirls.auth.{IndexingPolicy,Totp}
++import ponygirls.auth.{EnrollmentConfig,IndexingPolicy,SignupConfig,Totp}
+ import scala.concurrent.duration.*
+ 
+ class AccountHttpTest extends munit.FunSuite {
+@@ -47,7 +47,7 @@ class AccountHttpTest extends munit.FunSuite {
+     val key=java.nio.file.Files.createTempFile("chronicle-accounts-",".key")
+     java.nio.file.Files.setPosixFilePermissions(key,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))
+     java.nio.file.Files.writeString(key,Wire.secret())
+-    AccountsConfig(true,Some(key.toString),SignupConfig(true,requireApproval,AccountsConfig.defaultMaxUsers),EnrollmentConfig(false,AccountsConfig.defaultEnrollmentTtlSeconds),None,Nil)
++    AccountsConfig(true,Some(key.toString),SignupConfig(true,requireApproval,SignupConfig.defaultMaxUsers),EnrollmentConfig(false,EnrollmentConfig.defaultEnrollmentTtlSeconds),None,Nil)
+   }
+   // Removes the accounts a case created together with their projections, so no later suite sees them.
+   private def clearImperative(database: Database): Unit = database.transaction { c =>
+diff --git a/haystack/server/src/main/scala/haystack/Config.scala b/haystack/server/src/main/scala/haystack/Config.scala
+index 03ed366a..cd5e0649 100644
+--- a/haystack/server/src/main/scala/haystack/Config.scala
++++ b/haystack/server/src/main/scala/haystack/Config.scala
+@@ -3,7 +3,7 @@ package haystack
+ import haystack.auth.*
+ import haystack.domain.Fault
+ import haystack.retrieval.ProjectionPolicy
+-import ponygirls.auth.IndexingPolicy
++import ponygirls.auth.{EnrollmentConfig,IndexingPolicy,SignupConfig}
+ import ponygirls.runtime.{DatabaseWait,JdbcConfig,JdbcLimits,JdbcPoolSizing}
+ import ponygirls.retrieval.EmbeddingEndpoint
+ import io.circe.{Json,HCursor}
+@@ -13,10 +13,6 @@ import scala.concurrent.duration.*
+ final case class RetrievalConfig(policy:ProjectionPolicy,embedding:Option[EmbeddingEndpoint],maxConcurrent:Int,maxQueued:Int,batchSize:Int)
+ final case class Config(listenHost:String,listenPort:Int,webRoot:Option[Path],authReloadMs:Int,auth:AuthConfig,database:JdbcConfig,databaseStartWait:FiniteDuration,databasePool:JdbcPoolSizing,retrieval:RetrievalConfig,indexingPolicy:IndexingPolicy)
+ object Config {
+-  /** Design §6.2 defaults of members that `auth.accounts` may omit. */
+-  private val DefaultRequireApproval=true
+-  private val DefaultMaxUsers=100
+-  private val DefaultEnrollmentTtlSeconds=86400L
+   private def fail():Nothing=throw Fault("config","invalid service configuration")
+   private def expand(raw:String):String={
+     val prefix="$CREDENTIALS_DIRECTORY/"
+@@ -44,11 +40,11 @@ object Config {
+     def member[A:io.circe.Decoder](cursor:HCursor,key:String):Option[A]=cursor.downField(key).focus.map(_=>get[A](cursor,key))
+     def numeric[A:io.circe.Decoder](cursor:HCursor,key:String):Option[A]=cursor.downField(key).focus.map(_=>number[A](cursor,key))
+     val accounts=member[Json](a,"accounts").map { raw=>val x=raw.hcursor
+-      val signup=member[Json](x,"signup").map(_.hcursor).fold(SignupConfig(false,DefaultRequireApproval,DefaultMaxUsers)) { s=>
+-        SignupConfig(get[Boolean](s,"enabled"),member[Boolean](s,"requireApproval").getOrElse(DefaultRequireApproval),numeric[Int](s,"maxUsers").getOrElse(DefaultMaxUsers))
++      val signup=member[Json](x,"signup").map(_.hcursor).fold(SignupConfig.default) { s=>
++        SignupConfig(get[Boolean](s,"enabled"),member[Boolean](s,"requireApproval").getOrElse(SignupConfig.defaultRequireApproval),numeric[Int](s,"maxUsers").getOrElse(SignupConfig.defaultMaxUsers))
+       }
+-      val enrollment=member[Json](x,"enrollment").map(_.hcursor).fold(EnrollmentConfig(false,DefaultEnrollmentTtlSeconds)) { e=>
+-        EnrollmentConfig(get[Boolean](e,"enabled"),numeric[Long](e,"ttlSeconds").getOrElse(DefaultEnrollmentTtlSeconds))
++      val enrollment=member[Json](x,"enrollment").map(_.hcursor).fold(EnrollmentConfig.default) { e=>
++        EnrollmentConfig(get[Boolean](e,"enabled"),numeric[Long](e,"ttlSeconds").getOrElse(EnrollmentConfig.defaultEnrollmentTtlSeconds))
+       }
+       AccountsConfig(get[Boolean](x,"enabled"),member[String](x,"keyFile").map(expand),signup,enrollment,member[String](x,"issuer"),member[Vector[String]](x,"reservedUsernames").getOrElse(Vector.empty))
+     }
+diff --git a/haystack/server/src/main/scala/haystack/auth/Auth.scala b/haystack/server/src/main/scala/haystack/auth/Auth.scala
+index 1eb5ec9c..827826bd 100644
+--- a/haystack/server/src/main/scala/haystack/auth/Auth.scala
++++ b/haystack/server/src/main/scala/haystack/auth/Auth.scala
+@@ -6,7 +6,7 @@ import java.nio.file.{Files, Path}
+ import java.security.{MessageDigest, SecureRandom}
+ import java.net.URI
+ import java.util.{Base64, Locale}
+-import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,DeclaredDirectory,ImperativeSettings,Password,PersistentCookie,TotpVault}
++import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,DeclaredDirectory,EnrollmentConfig,ImperativeSettings,Password,PersistentCookie,SignupConfig,TotpVault}
+ 
+ final case class TokenConfig(id: String, hashFile: String)
+ final case class UserConfig(id: String, userType: String, displayName: String, tokens: Vector[TokenConfig],
+@@ -14,8 +14,6 @@ final case class UserConfig(id: String, userType: String, displayName: String, t
+ /** `auth.accounts` (design §6.1): imperative accounts. Absent means the master switch is off. */
+ final case class AccountsConfig(enabled: Boolean, keyFile: Option[String], signup: SignupConfig, enrollment: EnrollmentConfig,
+   issuer: Option[String], reservedUsernames: Vector[String])
+-final case class SignupConfig(enabled: Boolean, requireApproval: Boolean, maxUsers: Int)
+-final case class EnrollmentConfig(enabled: Boolean, ttlSeconds: Long)
+ final case class RateLimit(windowMs: Long, max: Int) {
+   require(windowMs > 0 && max > 0, "invalid rate limit")
+ }
+diff --git a/haystack/server/src/test/scala/haystack/auth/AccountHttpTest.scala b/haystack/server/src/test/scala/haystack/auth/AccountHttpTest.scala
+index 49e2c389..8020ebeb 100644
+--- a/haystack/server/src/test/scala/haystack/auth/AccountHttpTest.scala
++++ b/haystack/server/src/test/scala/haystack/auth/AccountHttpTest.scala
+@@ -12,7 +12,7 @@ import java.nio.charset.StandardCharsets
+ import org.http4s.{Header,Method,Request,Response,Status,Uri}
+ import org.http4s.server.websocket.WebSocketBuilder2
+ import org.typelevel.ci.CIString
+-import ponygirls.auth.{AccountFailure,AccountJson,IndexingPolicy,Password,PasswordHasher,Secrets,Totp}
++import ponygirls.auth.{AccountFailure,AccountJson,EnrollmentConfig,IndexingPolicy,Password,PasswordHasher,Secrets,SignupConfig,Totp}
+ import ponygirls.retrieval.postgres.PostgresRetrieval
+ import java.nio.file.Path
+ import java.time.{Clock,Instant,ZoneOffset}
+diff --git a/manure/backend/src/main/scala/manure/Config.scala b/manure/backend/src/main/scala/manure/Config.scala
+index ede35d7b..0a69353d 100644
+--- a/manure/backend/src/main/scala/manure/Config.scala
++++ b/manure/backend/src/main/scala/manure/Config.scala
+@@ -3,7 +3,7 @@ package manure
+ import io.circe.{Json, HCursor}
+ import java.net.{InetAddress, URI}
+ import java.nio.file.{Files, Path}
+-import ponygirls.auth.IndexingPolicy
++import ponygirls.auth.{EnrollmentConfig, IndexingPolicy, SignupConfig}
+ import ponygirls.runtime.{DatabaseWait, JdbcConfig, JdbcLimits, JdbcPoolSizing}
+ import scala.concurrent.duration.*
+ 
+@@ -44,13 +44,11 @@ final case class EmbeddingSettings(endpoint: ponygirls.retrieval.EmbeddingEndpoi
+     endpoint.validate()
+     Require(maxConcurrent > 0 && maxQueued >= 0 && batchSize > 0 && batchSize <= endpoint.maxBatch && leaseSeconds >= 3 && leaseSeconds <= 3600 && pollInterval > Duration.Zero, "bad-envelope")
+ 
+-final case class AccountSignupConfig(enabled: Boolean, requireApproval: Boolean, maxUsers: Int)
+-final case class AccountEnrollmentConfig(enabled: Boolean, ttlSeconds: Long)
+ /** The `accounts` block (design §6.1–§6.3). `enabled` is the master switch; it is never derived from the
+   * creation flags. The key file is only named here; service acquisition reads it (`Auth`).
+   */
+-final case class AccountsConfig(enabled: Boolean, keyFile: Option[Path], signup: AccountSignupConfig,
+-  enrollment: AccountEnrollmentConfig, issuer: String, reservedUsernames: Vector[String]):
++final case class AccountsConfig(enabled: Boolean, keyFile: Option[Path], signup: SignupConfig,
++  enrollment: EnrollmentConfig, issuer: String, reservedUsernames: Vector[String]):
+   def validate(users: Vector[UserConfig]): Unit =
+     import ponygirls.auth.ImperativePolicy.*
+     Require(enabled || !signup.enabled && !enrollment.enabled, "bad-envelope")
+@@ -62,12 +60,10 @@ final case class AccountsConfig(enabled: Boolean, keyFile: Option[Path], signup:
+       reservedUsernames.forall(validUsername), "bad-envelope")
+ object AccountsConfig:
+   private val store = Path.of("/nix/store")
+-  private val defaultMaxUsers = 100
+-  private val defaultEnrollmentTtlSeconds = 86400L
+   private val service = "Manure"
+   def defaultIssuer(origin: ApiOrigin): String = service + " (" + origin.host + ")"
+-  val defaultSignup: AccountSignupConfig = AccountSignupConfig(false,true,defaultMaxUsers)
+-  val defaultEnrollment: AccountEnrollmentConfig = AccountEnrollmentConfig(false,defaultEnrollmentTtlSeconds)
++  val defaultSignup: SignupConfig = SignupConfig.default
++  val defaultEnrollment: EnrollmentConfig = EnrollmentConfig.default
+ 
+ final case class Config(
+   listenAddress: String, port: Int, dataDir: Path, apiOrigin: ApiOrigin, contentMode: String,
+@@ -131,10 +127,10 @@ object Config:
+     section(c,"accounts",Set("enabled","key_file","signup","enrollment","issuer","reserved_usernames"),Option.empty[AccountsConfig]) { a =>
+       Some(AccountsConfig(field(a,"enabled"),a.get[Option[String]]("key_file").getOrElse(throw DomainError("bad-envelope")).map(Path.of(_)),
+         section(a,"signup",Set("enabled","require_approval","max_users"),AccountsConfig.defaultSignup) { s =>
+-          AccountSignupConfig(default(s,"enabled",false),default(s,"require_approval",true),default(s,"max_users",AccountsConfig.defaultSignup.maxUsers))
++          SignupConfig(default(s,"enabled",false),default(s,"require_approval",SignupConfig.defaultRequireApproval),default(s,"max_users",SignupConfig.defaultMaxUsers))
+         },
+         section(a,"enrollment",Set("enabled","ttl_s"),AccountsConfig.defaultEnrollment) { e =>
+-          AccountEnrollmentConfig(default(e,"enabled",false),default(e,"ttl_s",AccountsConfig.defaultEnrollment.ttlSeconds))
++          EnrollmentConfig(default(e,"enabled",false),default(e,"ttl_s",EnrollmentConfig.defaultEnrollmentTtlSeconds))
+         },
+         default(a,"issuer",AccountsConfig.defaultIssuer(origin)),default(a,"reserved_usernames",Vector.empty[String])))
+     }
+diff --git a/manure/backend/src/test/scala/manure/AccountsContract.scala b/manure/backend/src/test/scala/manure/AccountsContract.scala
+index f65928d1..0730d93a 100644
+--- a/manure/backend/src/test/scala/manure/AccountsContract.scala
++++ b/manure/backend/src/test/scala/manure/AccountsContract.scala
+@@ -6,7 +6,7 @@ import cats.effect.unsafe.implicits.global
+ import cats.syntax.all.*
+ import java.nio.file.Files
+ import munit.FunSuite
+-import ponygirls.auth.{AccountFailure,AccountRequest,CredentialGate,FastPasswordHasher,Password,Secrets,Totp}
++import ponygirls.auth.{AccountFailure,AccountRequest,CredentialGate,FastPasswordHasher,Password,Secrets,SignupConfig,Totp}
+ 
+ /** Specified-origin behavioral blackbox contract; same cases against the
+   * handwritten metadata dummy and production PostgreSQL/root/FS adapter.
+@@ -241,7 +241,7 @@ abstract class AccountsContract(postgres: Boolean) extends FunSuite:
+ 
+   test("imperative names exclude artifact creators and retired ids; a declaration colliding with an account fails startup") { run { f =>
+     val key = Files.writeString(f.rootPath.resolveSibling("accounts.key"),Secrets.generate())
+-    val settings = AccountsConfig(true,Some(key),AccountSignupConfig(true,false,100),AccountsConfig.defaultEnrollment,"Manure (fixture)",Vector.empty)
++    val settings = AccountsConfig(true,Some(key),SignupConfig(true,false,100),AccountsConfig.defaultEnrollment,"Manure (fixture)",Vector.empty)
+     val users = f.config.users.filterNot(_.id == "other").map(u => if u.id == "loginonly" then u.copy(admin=true) else u)
+     val auth = new Auth(users,Some(settings))
+     val accounts = new Accounts(f.metadata,auth)
+diff --git a/manure/backend/src/test/scala/manure/CheckConfigSuite.scala b/manure/backend/src/test/scala/manure/CheckConfigSuite.scala
+index 77583485..83e23742 100644
+--- a/manure/backend/src/test/scala/manure/CheckConfigSuite.scala
++++ b/manure/backend/src/test/scala/manure/CheckConfigSuite.scala
+@@ -4,7 +4,7 @@ import cats.effect.unsafe.implicits.global
+ import io.circe.Json
+ import java.nio.file.{Files,Path}
+ import java.util.concurrent.TimeUnit
+-import ponygirls.auth.IndexingPolicy
++import ponygirls.auth.{EnrollmentConfig,IndexingPolicy,SignupConfig}
+ import scala.util.Using
+ import munit.FunSuite
+ 
+@@ -156,7 +156,7 @@ final class CheckConfigSuite extends FunSuite:
+     try
+       assertEquals(load(base).map(c => (c.accounts,c.users.map(_.admin))),Some((None,Vector(true))))
+       assertEquals(load(withAccounts(accounts)).flatMap(_.accounts),Some(AccountsConfig(true,Some(Path.of("/run/credentials/accounts-key")),
+-        AccountSignupConfig(true,false,7),AccountEnrollmentConfig(true,600),"Manure (artifacts)",Vector("boss"))))
++        SignupConfig(true,false,7),EnrollmentConfig(true,600),"Manure (artifacts)",Vector("boss"))))
+       assertEquals(load(withAccounts(Json.obj("enabled" -> Json.False))).flatMap(_.accounts),Some(AccountsConfig(false,None,
+         AccountsConfig.defaultSignup,AccountsConfig.defaultEnrollment,"Manure (artifacts.example.test)",Vector.empty)))
+       Vector(
+diff --git a/manure/backend/src/test/scala/manure/HttpSuite.scala b/manure/backend/src/test/scala/manure/HttpSuite.scala
+index 046aa0e1..8d96d200 100644
+--- a/manure/backend/src/test/scala/manure/HttpSuite.scala
++++ b/manure/backend/src/test/scala/manure/HttpSuite.scala
+@@ -8,7 +8,7 @@ import org.http4s.{Header,Method,Request,Uri}
+ import org.typelevel.ci.CIString
+ import manure.{api => wire}
+ import ponygirls.retrieval.UnavailableReason
+-import ponygirls.auth.{AccountJson,CredentialGate,FastPasswordHasher,IndexingPolicy,PasswordHasher,Secrets,Totp}
++import ponygirls.auth.{AccountJson,CredentialGate,FastPasswordHasher,IndexingPolicy,PasswordHasher,Secrets,SignupConfig,Totp}
+ import java.nio.file.Files
+ import java.util.UUID
+ import java.util.concurrent.atomic.AtomicInteger
+@@ -235,7 +235,7 @@ final class HttpSuite extends FunSuite:
+     val origin = "http://127.0.0.1:47329"
+     val key = Files.writeString(f.rootPath.resolveSibling("accounts.key"),Secrets.generate())
+     val h = app(f,c => c.copy(users=c.users.map(u => if u.login.contains("loginonly") then u.copy(admin=true) else u),
+-      accounts=Some(AccountsConfig(true,Some(key),AccountSignupConfig(true,true,100),AccountsConfig.defaultEnrollment,"Manure (127.0.0.1)",Vector.empty))))
++      accounts=Some(AccountsConfig(true,Some(key),SignupConfig(true,true,100),AccountsConfig.defaultEnrollment,"Manure (127.0.0.1)",Vector.empty))))
+     val secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+     val code = Totp.code(Totp.decodeSecret(secret).get,Totp.stepAt(java.time.Instant.ofEpochSecond(f.clock.now.toLong)))
+     def account(method: Method,path: String,body: Option[String],cookie: Option[String],owner: Option[String]): Request[IO] =
+diff --git a/shared/service-auth/src/main/scala/ponygirls/auth/ImperativeModel.scala b/shared/service-auth/src/main/scala/ponygirls/auth/ImperativeModel.scala
+index c70b0bf2..9f6580fc 100644
+--- a/shared/service-auth/src/main/scala/ponygirls/auth/ImperativeModel.scala
++++ b/shared/service-auth/src/main/scala/ponygirls/auth/ImperativeModel.scala
+@@ -127,6 +127,20 @@ final case class ImperativeSettings(service: String, signup: Boolean, requireApp
+       issuer.isEmpty || issuer.length > IssuerMaximumLength || issuer.exists(c => c.isControl || c == ':') ||
+       !reservedUsernames.forall(validUsername)) throw AccountFailure("config")
+ }
++/** The `signup` and `enrollment` members of a service's `accounts` configuration with the defaults of what a file may
++  * omit. Wire names, absence rules and the master switch belong to each service's loader.
++  */
++final case class SignupConfig(enabled: Boolean, requireApproval: Boolean, maxUsers: Int)
++object SignupConfig {
++  val defaultRequireApproval = true
++  val defaultMaxUsers = 100
++  def default: SignupConfig = SignupConfig(false, defaultRequireApproval, defaultMaxUsers)
++}
++final case class EnrollmentConfig(enabled: Boolean, ttlSeconds: Long)
++object EnrollmentConfig {
++  val defaultEnrollmentTtlSeconds = 86400L
++  def default: EnrollmentConfig = EnrollmentConfig(false, defaultEnrollmentTtlSeconds)
++}
+ 
+ /** The declarative users of the service configuration and which of them are administrators. */
+ final case class DeclaredDirectory(users: Vector[AccountUser], admins: Set[String]) {

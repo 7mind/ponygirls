@@ -1,0 +1,94 @@
+# base commit bb9e490a48f88c87a65e1f8773e1bafb02eca581; work tree /home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-wt-ponygirls-bb9e490a48f8-1795797135454-bb9e490a48f8-1795800554089; taken 2026-11-27T18:07:43Z with: git diff --cached bb9e490a48f88c87a65e1f8773e1bafb02eca581
+diff --git a/chronicle/server/src/main/scala/chronicle/Http.scala b/chronicle/server/src/main/scala/chronicle/Http.scala
+index a3a81016..5197351e 100644
+--- a/chronicle/server/src/main/scala/chronicle/Http.scala
++++ b/chronicle/server/src/main/scala/chronicle/Http.scala
+@@ -11,7 +11,7 @@ import org.http4s.websocket.WebSocketFrame
+ import org.typelevel.ci.CIString
+ import java.util.UUID
+ import ponygirls.auth.{AccountJson,AccountFailure,PersistentCookie,AccountCredential,AccountEvent,AccountEventKind,AccountRejection,AccountReply,AccountRequest,AccountSession,ClientAddress,CookieEffect,CredentialEndpoint,DeclarativeLogin,IndexingAccountEndpoint,ImperativeAccountApi,ImperativePolicy,SignedIn}
+-import java.nio.file.{Files,Path}
++import java.nio.file.Path
+ import scala.concurrent.duration.*
+ 
+ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot,protocol: VersionedWire,rpc: BrowserRpc,controls: BrowserControlAdmission,liveness: Http.SocketLiveness,snapshots: SnapshotAdmission,uploads: Uploads,raw: RawStream) {
+@@ -371,11 +371,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
+   }
+   private def static(r: Request[IO]): IO[Response[IO]] = webRoot.path match {
+     case None => NotFound()
+-    case Some(root) => IO.blocking {
+-      val base = Path.of(root).toRealPath(); val relative = r.uri.path.renderString.stripPrefix("/")
+-      val candidate = base.resolve(if(relative.isEmpty) "index.html" else relative).normalize()
+-      if(!candidate.startsWith(base) || !Files.isRegularFile(candidate) || !candidate.toRealPath().startsWith(base)) None else Some(candidate)
+-    }.flatMap {
++    case Some(root) => IO.blocking(ponygirls.runtime.StaticRoot.file(Path.of(root),r.uri.path.renderString)).flatMap {
+       case None => NotFound()
+       case Some(file) =>
+         // Nix store mtimes are normalized: equal-length unversioned entry points can share
+diff --git a/haystack/server/src/main/scala/haystack/http/Http.scala b/haystack/server/src/main/scala/haystack/http/Http.scala
+index a84e00ea..1d95c7f7 100644
+--- a/haystack/server/src/main/scala/haystack/http/Http.scala
++++ b/haystack/server/src/main/scala/haystack/http/Http.scala
+@@ -17,7 +17,7 @@ import org.typelevel.vault.Key
+ import io.circe.Json
+ import ponygirls.auth.{AccountFailure,AccountJson,AccountReply,ClientAddress,CookieEffect,IndexingAccountEndpoint,ImperativeAccountApi,ImperativeSettings}
+ import scala.concurrent.duration.*
+-import java.nio.file.{Files,Path}
++import java.nio.file.Path
+ 
+ /** Transport owns credentials and bounded decoding only. All mutation and
+   * search semantics live in the application/repository shared with MCP. */
+@@ -342,11 +342,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
+   }
+   private def static(r:Request[IO]):IO[Response[IO]]=webRoot match {
+     case None=>IO.pure(json(Status.NotFound,Json.Null))
+-    case Some(root)=>IO.blocking {
+-      val base=root.toRealPath();val relative=r.uri.path.renderString.stripPrefix("/")
+-      val target=base.resolve(if(relative.isEmpty) "index.html" else relative).normalize()
+-      if(!target.startsWith(base)|| !Files.isRegularFile(target)|| !target.toRealPath().startsWith(base)) None else Some(target)
+-    }.flatMap {
++    case Some(root)=>IO.blocking(ponygirls.runtime.StaticRoot.file(root,r.uri.path.renderString)).flatMap {
+       case None=>IO.pure(json(Status.NotFound,Json.Null))
+       case Some(file)=>
+         // Fixed account and shared-ui entrypoints cannot use normalized mtime/size as content identity.
+diff --git a/shared/service-runtime/README.md b/shared/service-runtime/README.md
+index a1ccdeb9..2cb72759 100644
+--- a/shared/service-runtime/README.md
++++ b/shared/service-runtime/README.md
+@@ -152,6 +152,15 @@ migrations fail closed. SQL and ledger inserts commit together; failure rolls ba
+ both. Migration SQL is trusted service/library-owned input, never user SQL.
+ No application tables or domain auth policy belong here.
+ 
++## Static web root
++
++`StaticRoot.file(root: Path, rendered: String): Option[Path]` is the one containment check of Chronicle's and Haystack's
++static routes: the root's real path is resolved on every call, one leading `/` is stripped from the rendered URL path
++(`index.html` for the empty rest), and the normalized candidate is returned only when it lies under the real root, is a
++regular file, and its own real path lies under the real root too (a symbolic link inside the root may not leave it). It
++blocks, decodes nothing and throws a failing real-path lookup (an absent root included); status, headers and caching
++belong to the calling HTTP adapter.
++
+ ## distage / pinned Cats IO
+ 
+ `CatsIOInjector.apply(): izumi.distage.model.Injector[IO]` is the shared distage
+diff --git a/shared/service-runtime/src/main/scala/ponygirls/runtime/StaticRoot.scala b/shared/service-runtime/src/main/scala/ponygirls/runtime/StaticRoot.scala
+new file mode 100644
+index 00000000..7b9e37f0
+--- /dev/null
++++ b/shared/service-runtime/src/main/scala/ponygirls/runtime/StaticRoot.scala
+@@ -0,0 +1,15 @@
++package ponygirls.runtime
++
++import java.nio.file.{Files, Path}
++
++object StaticRoot {
++  /** The regular file under `root` that a rendered URL path names (`index.html` for the empty path), or None when it is
++    * missing, not a regular file, or outside the real root, lexically or through a symbolic link. The root is resolved
++    * on every call; a failing real-path lookup is thrown. No HTTP behaviour: status, headers and caching stay the caller's.
++    */
++  def file(root: Path, rendered: String): Option[Path] = {
++    val base = root.toRealPath(); val relative = rendered.stripPrefix("/")
++    val candidate = base.resolve(if (relative.isEmpty) "index.html" else relative).normalize()
++    if (!candidate.startsWith(base) || !Files.isRegularFile(candidate) || !candidate.toRealPath().startsWith(base)) None else Some(candidate)
++  }
++}
