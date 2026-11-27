@@ -56,7 +56,7 @@ structural pack is written out below, and section 7 is its test.
   | `admitted` | passed the mechanical checks; nothing decided yet | 5 |
   | `deferred` | needs a decision only the user can take | 5 |
   | `alternative` | another record on the same sites went forward | 5 |
-  | `untested` | cut by a cap; says nothing about its merit | 5, 6 |
+  | `untested` | cut by a cap; says nothing about its merit | 5 |
   | `refuted` | reading showed a hard falsifier | 6 |
   | `supported` | no hard falsifier; its checks wait for a spike | 6 |
   | `failed` | a check or a gate failed in the spike | 7 |
@@ -64,8 +64,8 @@ structural pack is written out below, and section 7 is its test.
   | `confirmed-unguarded` | measured, but no test notices a fault | 7 |
 
 - **What no proposal may be bought with** (unless the hypothesis is about
-  exactly that and says so): a test that fails or is skipped, an assertion
-  that the patch removes or loosens, or fewer executed test cases, other
+  exactly that and says so): a test that the patch makes fail or skips, an
+  assertion that it removes or loosens, or fewer executed test cases, other
   than cases that test only deleted code; a changed wire format, CLI,
   configuration key, stored data format or public API; validation, error
   handling or logging removed at a trust boundary; a dependency edge in a
@@ -122,7 +122,8 @@ structural pack is written out below, and section 7 is its test.
 9. **Bundles.** One file per partition holding all its files, each under a
    header with its path, lines numbered; one for the documents; one for the
    shared modules that a reuse lens reads. Cut them at file boundaries into
-   parts that one read call of the reader's tools returns whole.
+   parts that one read call of the reader's tools returns whole, and a
+   larger file by line ranges, repeating its header.
 10. **Earlier runs.** Copy the refuted and failed hypotheses of earlier runs
     on this code into `scope.md`, with their reasons.
 
@@ -157,7 +158,8 @@ leads of its lenses and partition.
 - **Positive controls.** Where little may be found, plant a few smells of
   known kinds in a scratch commit and freeze that: plants found tell
   "nothing to find" from "cannot find". Keep the answer key outside the
-  tree and the planting commit out of the history you give to agents.
+  tree and the planting commit out of the history you give to agents, and
+  report the plants apart from the working set.
 - **Plan**: commit, paths, exclusions, baseline, partitions, readers and
   lenses, models, caps, expected cost. Wait for the user's go-ahead unless
   the request fixed scope and budget.
@@ -236,17 +238,19 @@ Mechanical checks first: they remove invented material.
    cited range (check with a script; never paste an anchor into a shell
    command). An `existing` that names a repository path exists and carries a
    matching anchor; it may lie outside the scope. Every falsifier has a kind
-   and a check, and every guard names a file that exists. What fails is
-   `inadmissible`, with the reason; do not repair a record. What passes is
-   `admitted`. A site in an `unmeasured` format cannot be spiked.
+   and a check, and every guard that names a file names one that exists.
+   What fails is `inadmissible`, with the reason; do not repair a record.
+   What passes is `admitted`. A site in an `unmeasured` format cannot be
+   spiked.
 2. **Decisions and repeats.** A record that needs a new dependency, changes
    a contract, or by its own prediction does not improve the pack's currency
    is `deferred`. A record that repeats a hypothesis refuted or failed in an
    earlier run, without new evidence, takes that status with a reference.
-3. **Classes**, the first that fits: *delete* (code goes; for a wrapper,
-   direct calls replace it), *reuse* (the sites call what the repository
-   already has, shared modules included), *library* (the standard library or
-   a locked dependency), *generalize* (one new form inside existing modules:
+3. **Classes**, the first that fits: *delete* (code goes without
+   replacement; for a wrapper, direct calls replace it), *reuse* (the sites
+   call what the repository already has, shared modules included), *library*
+   (the standard library or a locked dependency), *generalize* (one new form
+   inside existing modules:
    a helper, a parameter, a table, an inlined body, a move, a split, a
    narrowed interface; also a helper added to an existing shared module) or
    *new* (a new type, module or layer).
@@ -329,8 +333,9 @@ A behaviour check is `unchecked` until a spike has run it.
 **Accepting a kill.** Read the cited lines, or redo the count, of every
 `observed`. A question of behaviour is no kill: move it to the checks. If
 you doubt a kill for another reason, give that one falsifier to a second
-refuter: two `observed` refute; otherwise it stays `unchecked` and is
-decided on the patch (section 7). Until then the record stays `admitted`. A
+refuter; the record stays `admitted` meanwhile. Two `observed` refute;
+otherwise the entry is `unchecked`, goes to the spike with the record, and
+is decided on the patch (section 7). A
 rule you want to apply to verdicts goes into `scope.md` before you read
 them, and applies to all of them.
 
@@ -338,8 +343,7 @@ One accepted hard falsifier makes the hypothesis `refuted`. `reword`
 corrects the record, marked as the refuter's correction; the corrected
 record passes steps 1, 2 and 4 of section 5 again. Everything else is
 `supported`, with its checks. A hypothesis whose counted gain is under 40
-tokens is *thin*: it is spiked only if slots are left over, and is otherwise
-`untested`, with the count.
+tokens is *thin*: it is spiked only if slots are left over.
 
 ## 7. Spikes
 
@@ -369,14 +373,14 @@ measurement files go there or stay inside your work tree. Write nowhere else.
    Documentation that the project's rules require for the change belongs to
    the patch.
 2. Build or type-check every component the patch touches. Run the same tests
-   and compare the executed cases with step 0. Rerun a case that fails now
-   and passed before, alone, alternately on the base commit and with the
-   patch, at least three times each: it counts against the patch only if it
-   fails more often with it. Report every run; never rerun until green.
+   and compare the executed cases with step 0. Rerun a case that fails with
+   the patch, alone, alternately on the base commit and with the patch, at
+   least three times each: it counts against the patch only if it fails more
+   often with it. Report every run; never rerun until green.
 3. Run every behaviour check of the ledger on the base commit and with the
    patch; where the ledger names a dependent without a runnable check, write
-   one. A check that passes on the base and fails with the patch is an
-   observed falsifier. A probe you had to build because nothing in the
+   one. A check that passes on the base and fails with the patch, by the
+   rerun rule of step 2 where it is a test, is an observed falsifier. A probe you had to build because nothing in the
    repository observes the difference shows that the difference exists, not
    that anything depends on it: report it as an open point. Say which checks
    you could not run, and why. Afterwards delete your checks, or stage those
@@ -468,14 +472,15 @@ work trees.
 
 ## 10. Watch the run
 
-After the first partition and at the end, look at each lens's numbers; a
-threshold applies only where at least five records of the lens reached the
-stage. Never change a cap or a threshold because of which proposals you like.
+After the first partition and at the end, look at each lens's numbers.
+Except for the low-return rule, a threshold applies only where at least five
+records of the lens reached the stage. Never change a cap or a threshold
+because of which proposals you like.
 
 - More than a third `inadmissible`: fix the brief or change the reader
   model, and repeat the pass.
-- Under a third of the cap returned while the reader set aside more
-  candidates than it wrote up: run the pass once more on another reader
+- Low return: under a third of the cap returned while the reader set aside
+  more candidates than it wrote up: run the pass once more on another reader
   model, with the set-aside list among its leads.
 - More than two thirds `refuted`: the card is too loose here. Add the
   false-positive class to its Skip list for this run, note it in `scope.md`,

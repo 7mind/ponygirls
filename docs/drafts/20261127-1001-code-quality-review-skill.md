@@ -1,4 +1,4 @@
-# Code-quality review skill: design draft v0.5
+# Code-quality review skill: design draft v0.6
 
 Status: proposal for discussion, 27 Nov 2026. Nothing here has been run end
 to end. The text has had two independent readings and one re-reading of the
@@ -238,6 +238,13 @@ Decisions, each with the alternative it was chosen over:
    run on the families the three servers share (Auth, Http, Main, Mcp,
    Config) against `shared/`, and report. Q203: apply all five confirmed real
    changes, without the full verification.**
+10. **How to conclude** (asked 27 Nov 2026). **Q222: stop; merge the docs
+    branch into main, leave the skill as the Haystack draft, keep the six
+    cross-service patches beside the note, remove the spike work trees and
+    the two planted branches; also trim the skill to a v0.6 from the three
+    runs' notes, without further runs, and update the Haystack draft. Q223:
+    apply cross-service changes 1 to 4, one commit each, with
+    `scripts/verify all` on a quiet host.**
 
 ## 7. Proposed test
 
@@ -734,6 +741,56 @@ be safe in several work trees at once, or spikes run one at a time); checks
 not run could be missing from the report; the abstraction-fitness criteria
 were not tied to the kind of intervention; a file larger than one read call
 could not be bundled. Nobody else has read these repairs.
+
+### v0.6, 27 Nov 2026: trim after three runs; not run
+
+Decided under Q222. v0.6 is 50.5 kB against 56.1 kB for v0.5, and fits one
+call of this harness's read tool (51,200 bytes). The lens cards and the
+measurement script are unchanged: they are what the runs exercised, and a
+skill here is a single file, so they cannot move out of it. Everything else
+was rewritten more tightly.
+
+Rules added, each from the notes of a run (X-numbers are the cross-service
+supervisor's notes, H the held-out one's):
+
+| Rule | From |
+|---|---|
+| Tests are run twice on the frozen commit to find flaky cases; a case that fails with a patch is rerun alternately on base and patch and counts only if it fails more often with the patch; reruns are reported, never repeated until green; spikes run one at a time on a loaded host | X27; the cross-service run's test noise |
+| Refuted and failed hypotheses of earlier runs go into `scope.md` and into the reader's brief; a repeat without new evidence takes the earlier status | the session helper that failed twice with the same numbers |
+| A hypothesis whose counted gain is under 40 tokens is thin and spiked last; the refuter gives both token counts | X23; three confirmed changes of 17 to 30 tokens |
+| The reader marks each falsifier hard or behaviour and names the observer; the refuter's brief carries the scope; a doubted kill leaves the record `admitted` | X17, X18, X20 |
+| A lens that returns few records while its reader set many candidates aside is read once more by another model, with that list as leads | X14 |
+| A bundle of the shared modules for the reuse lenses | 24 of 36 shared files unread in the cross-service run |
+| Partitions across components are cut by concern; a helper added to an existing shared module is class "generalize"; twins may cover a part of the sites | X1, X15, X16 |
+| Documentation that the project's rules require belongs to the patch; the supervisor measures each patch itself; the calibration uses the prediction as last corrected | X28, X31, X32 |
+| The supervisor does mechanical steps by script and reads records, not answers | the supervisor was the largest cost in two of three runs |
+
+Removed: the two calibration spike slots; the example column of the
+other-packs table; the clone-detector command line (no run could use it: no
+network); explanatory sentences; the sentence in the description that
+promised packs for correctness, security, performance, readability, idiom
+and conventions, which are untested starting points (the description is 906
+characters now).
+
+One addition is mine and not from a supervisor's note: planted smells as a
+positive control (section 3 of the skill). The two runs that had them could
+be interpreted because of them, and the run without them could not say
+whether its one kill was right.
+
+Not done, because it needs a run to judge: a token prediction in the record;
+a real exclusion for a data table inside a hand-written file; the
+supervisor's cost beyond the one ground rule.
+
+One read of v0.6 (`gpt-6.2-sol`, read-only, against v0.5) gave eight
+findings, all accepted and repaired by changing words, not by adding rules:
+one failing run of a flaky test could still kill a patch through the check
+step; a doubted kill left its record `admitted`, and only `supported`
+records were spiked; the trim had dropped "that names a file" from the guard
+check, "without replacement" from the class delete, and the splitting of a
+file larger than one read call; the low-return rule could not fire under the
+five-record minimum; a thin record that was not spiked had two statuses; the
+positive control did not say that plants are reported apart from the working
+set. Nobody has read the repairs, and v0.6 has not been run.
 
 ### Candidates as listed after the first wave
 
