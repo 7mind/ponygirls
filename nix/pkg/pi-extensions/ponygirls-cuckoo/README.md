@@ -212,11 +212,15 @@ the record current between checkpoints; one edit per call:
   withdrawn when it is turned off; there is no separate setting. Without it the
   record is still built from manual inquiries. It is blocked during a
   checkpoint like every other tool, and it runs one call at a time.
-- Its guidance asks the model to add an objective when it takes one on, to
-  complete or retire it when it is done, cancelled or superseded, to update it
-  when scope, blocking issues or the expected completion change materially, to
-  do the same for session-local rules, and not to use it for routine progress.
-  This is a prose instruction, not a guarantee of model behaviour.
+- Its guidance asks the model to look at the record before it answers a user
+  message: to add one entry per deliverable that its reply does not finish, in
+  the turn that brings it; to complete an objective in the turn in which it is
+  delivered and accepted, and to retire, not complete, one the user cancels or
+  replaces; to record a standing instruction of the user as a rule, but not an
+  instruction about one deliverable; and to add nothing for a question, for a
+  request that its reply answers completely, or for the steps of one
+  deliverable. This is a prose instruction, not a guarantee of model behaviour;
+  a test pins its exact text, because the wording was measured with live models.
 - In the transcript a call is one line while collapsed
   (`cuckoo_update retire AO5 → retired · Superseded by the rewrite`); an error and
   the expanded form show the full text.
@@ -227,18 +231,41 @@ Entries are append-only history in the session file: nothing is deleted, a
 retired entry keeps its last text and reason. Whether a model keeps the record
 current depends on the model; a checkpoint restates the whole record either way.
 
-What a small pilot showed (`scripts/cuckoo-record-pilot`: synthetic sessions of
-four user turns with no work in them, three models of one provider family,
-6 or 12 sessions per model and condition, 144 in all): all three followed the ID protocol in every
-checkpoint reply, also when the exchange that numbered the record was no longer
-in context. Between checkpoints, the strongest model at high effort recorded
-every objective and rule in the turn that stated it, in 24 of 24 sessions; a
-middle model at medium effort kept one entry for a whole request and, once Pi's
-built-in tools were declared beside Cuckoo's, recorded no objective in 10 of 12
-sessions of one scenario; a small model at low effort recorded rules and rarely
-objectives. Every model recorded the rules the user gave. So treat the record
-between checkpoints as current for a model you have seen keep it, and as of the
-last checkpoint otherwise; the interval is yours to set per model.
+What two small pilots showed (`scripts/cuckoo-record-pilot`: synthetic sessions
+of four user turns with no real work in them and Pi's built-in tools declared
+but blocked; three models of one provider family; 144 and 576 sessions):
+
+- All three followed the ID protocol in every checkpoint reply (288 of 288),
+  also when the exchange that numbered the record was no longer in context.
+- The first wording of the guidance worked for the strongest model at high
+  effort only. A middle model at medium effort kept one entry for a whole
+  request or none and missed a rule the user gave in 39 of 96 sessions; a small
+  model at low effort recorded an objective in 4 of 36 sessions and missed a
+  rule in 21 of 48.
+- With the present wording, compared in the second pilot under a rule fixed
+  beforehand: the middle model made no merged entry in 96 sessions, recorded
+  every rule in all 96, retired every cancelled objective, and had every
+  objective in an entry of its own in its turn in 43 of 72 sessions that state
+  one (10 of 36 in the scenarios the wording was not developed on, against 1
+  of 36 before). The small model went from 4 to 35 of 36 sessions with an
+  objective entry and missed a rule in 6 of 48.
+- Still unreliable for the middle and the small model: a deliverable that the
+  first message asks only to sketch or to start gets its entry in that turn in
+  19 of 48 sessions of the middle model and 13 of 24 of the small one, very
+  unevenly by scenario (from 10 of 12 to 0 of 12 for the middle model), and
+  otherwise a turn late or not at all; an objective is sometimes completed
+  when only the sketch was delivered. In 6 of 104 sessions with a completion
+  the next checkpoint repeated it.
+- Each turn that edits the record costs one more provider request: for the
+  middle model 2.8 instead of 1.4 per session of four turns.
+
+So between checkpoints the record is current for the strongest model, usable
+with the gaps above for the other two, and as of the last checkpoint for a
+model you have not seen keep it; the interval is yours to set per model.
+These counts are from sessions that declare six tools. A configured Pi
+declares many more (36 at the start of the session that ran the pilots), and the first
+pilot showed that the tool menu changes what a model records, so watch the
+panel in your own sessions before relying on the record.
 
 Limits of the record:
 
@@ -907,8 +934,8 @@ loop (declaration with Automatic mode, refused calls, reload), the current
 action of recall, the transcript rows, and the current set in the panel, the
 badge and the plain output, and what saved data that cannot be read does to
 each of them. They establish the mechanism, not whether a model keeps the
-record current; `scripts/cuckoo-record-pilot` holds a small live-provider pilot
-of that question with its protocol, stored runs and results. Navigation
+record current; `scripts/cuckoo-record-pilot` holds two small live-provider
+pilots of that question with their protocols, stored runs and results. Navigation
 checks cover both focus states, the arrow rule in both layout paths (every line
 of a report shown in both directions, also through items taller than the view),
 the folding table in a pane sized by its content, what a focus change keeps in

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CHECKPOINT_SCENARIO, RECORD, TOOL_SCENARIOS } from './scenarios.mjs';
-import { OBJECTIVE_IDS, RULE_IDS, gradeCheckpoint, gradeTools } from './grade.mjs';
+import { CHECKPOINT_SCENARIO, RECORD, RECORD_SCENARIOS, TOOL_SCENARIOS } from './scenarios.mjs';
+import { OBJECTIVE_IDS, RULE_IDS, gradeCheckpoint, gradeRecord, gradeTools } from './grade.mjs';
 import { bySubject } from './results.mjs';
 
 // Scripted cases for every category the pilot reports, undesired ones included, under both codings.
@@ -141,4 +141,152 @@ test('a session another model answered is set apart; one without reply metadata 
   const session = (id, respondingModels) => ({ id, model: 'subject', ...(respondingModels === undefined ? {} : { respondingModels }) });
   const { own, foreign } = bySubject([session('a', ['subject']), session('b', ['subject', 'fallback']), session('c', ['fallback']), session('d', undefined), session('e', [])]);
   assert.deepEqual(own.map(item => item.id), ['a', 'd', 'e']); assert.deepEqual(foreign.map(item => item.id), ['b', 'c']);
+});
+
+// ── Batch 2: `gradeRecord`, where only an entry of its own records an objective ──
+const scenarioOf = id => RECORD_SCENARIOS.find(item => item.id === id);
+const as = status => item => ({ ...item, status });
+const bothRules = [r1, r2];
+const soundFinal = { objectives: [], rules: [{ id: 'AR1', rule: r1.rule, source: 'user', scope: 's' }, { id: 'AR2', rule: r2.rule, source: 'user', scope: 's' }] };
+/** The build scenario with the objective entries each turn leaves behind; rules are recorded in their turn. */
+const buildSession = (perTurn, final = soundFinal, calls = []) => toolSession(perTurn.map((objectives, index) => ({ calls: index === 0 ? calls : [], after: { objectives, rules: index >= 1 ? bothRules : [] } })), final);
+
+test('batch 2, the desired session: an entry of its own for every objective, closed the way it ended', () => {
+  const graded = gradeRecord(buildSession([[a, b, c], [a, b, c], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), as('retired')(c)]]), scenarioOf('build'));
+  assert.deepEqual(graded.own, { a: 'by its turn', b: 'by its turn', c: 'by its turn' }); assert.deepEqual(graded.any, graded.own);
+  assert.deepEqual(graded.fates, { a: 'right', b: 'right', c: 'right' });
+  assert.deepEqual(graded.rules, { length: 'by its turn, source user', tables: 'by its turn, source user' });
+  assert.deepEqual([graded.merged, graded.duplicates, graded.extras, graded.entries], [[], [], { questions: [], oneTurn: [], other: [] }, 3]);
+  assert.deepEqual([graded.allOwnByTurn, graded.allAnyByTurn, graded.allFatesRight, graded.allRulesByTurn, graded.finalSound, graded.noExtras, graded.recordRight], [true, true, true, true, true, true, true]);
+});
+
+test('batch 2, one entry for the whole request records no objective, although it names them all', () => {
+  const whole = entry('AO1', 'Deliver three items: (a) a Bazel migration outline, (b) an onboarding note, (c) a CI checklist');
+  const graded = gradeRecord(buildSession([[whole], [whole], [whole], [as('complete')(whole)]]), scenarioOf('build'));
+  assert.deepEqual(graded.own, { a: 'never', b: 'never', c: 'never' });
+  assert.deepEqual(graded.any, { a: 'by its turn', b: 'by its turn', c: 'by its turn' }, 'the reading of batch 1 is kept beside it');
+  assert.deepEqual(graded.fates, { a: 'no own entry at the end, wanted complete', b: 'no own entry at the end, wanted complete', c: 'no own entry at the end, wanted retired' });
+  assert.equal(graded.merged.length, 1); assert.match(graded.merged[0], /^AO1 complete: Deliver three items.* \[a\+b\+c\]$/);
+  assert.deepEqual([graded.allOwnByTurn, graded.allAnyByTurn, graded.allFatesRight, graded.noExtras, graded.recordRight], [false, true, false, true, false]);
+});
+
+test('batch 2, late entries and wrong endings are named', () => {
+  const late = gradeRecord(buildSession([[a], [a, b, c], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), as('retired')(c)]]), scenarioOf('build'));
+  assert.deepEqual(late.own, { a: 'by its turn', b: 'late (turn 2)', c: 'late (turn 2)' }); assert.equal(late.allFatesRight, true); assert.equal(late.recordRight, false);
+  // The cancelled objective completed instead of retired; one completion made a turn late; one left open.
+  const endings = gradeRecord(buildSession([[a, b, c], [a, b, c], [a, b, c], [as('complete')(a), b, as('complete')(c)]]), scenarioOf('build'));
+  assert.deepEqual(endings.fates, { a: 'complete at the end, active in its turn', b: 'active at the end, wanted complete', c: 'complete at the end, wanted retired' });
+  assert.deepEqual([endings.allOwnByTurn, endings.allFatesRight, endings.recordRight], [true, false, false]);
+  const open = { ...scenarioOf('build'), objectives: { ...scenarioOf('build').objectives, c: { key: /checklist/i, at: 0, fate: ['open'] } } };
+  assert.equal(gradeRecord(buildSession([[a, b, c], [a, b, c], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), c]]), open).fates.c, 'right');
+  assert.equal(gradeRecord(buildSession([[a, b, c], [a, b, c], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), as('retired')(c)]]), open).fates.c, 'retired at the end, wanted active');
+});
+
+test('batch 2, entries the record should not hold: a question, a one-turn request, a step, a second entry', () => {
+  const sum = entry('AO4', 'Compute 17 times 23'), other = entry('AO5', 'Tidy up the notes'), again = entry('AO6', 'Bazel migration outline, second draft');
+  const done = [as('complete')(a), as('complete')(b), as('retired')(c)];
+  const graded = gradeRecord(buildSession([[a, b, c], [a, b, c], [as('complete')(a), b, c], [...done, sum, other]]), scenarioOf('build'));
+  assert.deepEqual(graded.extras, { questions: ['AO4 active: Compute 17 times 23'], oneTurn: [], other: ['AO5 active: Tidy up the notes'] });
+  assert.deepEqual([graded.entries, graded.duplicates, graded.noExtras, graded.allOwnByTurn, graded.recordRight], [5, [], false, true, true], 'surplus entries are a reading of their own, beside the record being right');
+  // A second entry for one objective: surplus as well, and the objective's ending can no longer be read.
+  const twice = gradeRecord(buildSession([[a, b, c], [a, b, c], [as('complete')(a), b, c], [...done, again]]), scenarioOf('build'));
+  assert.equal(twice.duplicates.length, 1); assert.match(twice.duplicates[0], /^a: AO1 complete: .* \| AO6 active: /);
+  assert.deepEqual([twice.fates.a, twice.noExtras, twice.recordRight], ['complete/active at the end, wanted complete', false, false]);
+  const summary = entry('AO1', 'Rewrite the executive summary'), check = entry('AO2', 'Fact-check the risk section'), named = entry('AO3', 'Propose a title for the report');
+  const spelling = [sessionRule('AR1', 'Use British spelling')];
+  const report = gradeRecord(toolSession([{ calls: [], after: { objectives: [summary, check], rules: [] } }, { calls: [], after: { objectives: [summary, check], rules: spelling } },
+    { calls: [], after: { objectives: [as('complete')(summary), check], rules: spelling } }, { calls: [], after: { objectives: [as('complete')(summary), as('retired')(check), named], rules: spelling } }],
+    { objectives: [{ id: 'AO3', objective: named.objective, progress: 'p', issues: [], eta: 'Unknown' }], rules: [{ id: 'AR1', rule: 'Use British spelling', source: 'user', scope: 's' }] }), scenarioOf('report'));
+  assert.deepEqual(report.extras, { questions: [], oneTurn: ['AO3 active: Propose a title for the report'], other: [] }); assert.deepEqual([report.recordRight, report.noExtras], [true, false]);
+});
+
+test('batch 2, the control and the single deliverable', () => {
+  const prose = [sessionRule('AR1', 'Answer in plain prose, no bullet lists')]; const proseFinal = { objectives: [], rules: [{ id: 'AR1', rule: prose[0].rule, source: 'user', scope: 's' }] };
+  const chat = objectives => toolSession([{ calls: [], after: { objectives: [], rules: [] } }, { calls: [], after: { objectives, rules: [] } }, { calls: [], after: { objectives, rules: prose } }, { calls: [], after: { objectives, rules: prose } }], proseFinal);
+  const quiet = gradeRecord(chat([]), scenarioOf('chat'));
+  assert.deepEqual([quiet.entries, quiet.noExtras, quiet.allOwnByTurn, quiet.allFatesRight, quiet.recordRight], [0, true, true, true, true]);
+  const noisy = gradeRecord(chat([entry('AO1', 'Explain mutex versus semaphore'), entry('AO2', 'Suggest a name for the photo tool')]), scenarioOf('chat'));
+  assert.deepEqual(noisy.extras, { questions: ['AO1 active: Explain mutex versus semaphore'], oneTurn: ['AO2 active: Suggest a name for the photo tool'], other: [] }); assert.equal(noisy.noExtras, false);
+  const versions = [sessionRule('AR1', 'Give version numbers exactly')]; const versionsFinal = { objectives: [], rules: [{ id: 'AR1', rule: versions[0].rule, source: 'user', scope: 's' }] };
+  const plan = entry('AO1', 'Plan the move of the Postgres 13 cluster to 16');
+  const single = extra => toolSession([{ calls: [], after: { objectives: [plan, ...extra], rules: [] } }, { calls: [], after: { objectives: [plan, ...extra], rules: versions } },
+    { calls: [], after: { objectives: [plan, ...extra], rules: versions } }, { calls: [], after: { objectives: [as('complete')(plan), ...extra], rules: versions } }], versionsFinal);
+  const one = gradeRecord(single([]), scenarioOf('single'));
+  assert.deepEqual([one.own, one.fates, one.noExtras, one.recordRight], [{ plan: 'by its turn' }, { plan: 'right' }, true, true]);
+  const split = gradeRecord(single([entry('AO2', 'List the three main risks'), entry('AO3', 'Cutover sequence for the Postgres upgrade')]), scenarioOf('single'));
+  assert.deepEqual(split.extras.other, ['AO2 active: List the three main risks']); assert.equal(split.duplicates.length, 1); assert.equal(split.noExtras, false);
+  assert.equal(split.fates.plan, 'complete/active at the end, wanted complete', 'a second entry for the same deliverable leaves its ending unclear');
+});
+
+test('batch 2, a refused call or an unsound final checkpoint makes the record not right', () => {
+  const turns = [[a, b, c], [a, b, c], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), as('retired')(c)]];
+  assert.equal(gradeRecord(buildSession(turns, soundFinal, [call({ action: 'retire', id: 'AO9' }, 'AO9 is not in the record')]), scenarioOf('build')).recordRight, false);
+  const repeated = gradeRecord(buildSession(turns, { ...soundFinal, objectives: [{ id: 'AO1', objective: a.objective, progress: 'p', issues: [], eta: 'Complete' }] }), scenarioOf('build'));
+  assert.deepEqual([repeated.final.completedRepeated, repeated.finalSound, repeated.recordRight], [['AO1'], false, false]);
+  const revived = gradeRecord(buildSession(turns, { ...soundFinal, objectives: [{ id: 'AO3', objective: c.objective, progress: 'p', issues: [], eta: 'Unknown' }] }), scenarioOf('build'));
+  assert.deepEqual([revived.final.retiredRevived, revived.recordRight], [['AO3'], false]);
+  const invalid = gradeRecord(buildSession(turns, 'Error: Unknown objective id AO9'), scenarioOf('build'));
+  assert.deepEqual([invalid.final, invalid.finalSound, invalid.recordRight], [{ invalid: 'Error: Unknown objective id AO9' }, false, false]);
+});
+
+test('batch 2, amendment 5: a rule the user did not give for the session is surplus when attributed to the user', () => {
+  const turns = [[a, b, c], [a, b, c], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), as('retired')(c)]];
+  const withRules = rules => toolSession(turns.map((objectives, index) => ({ calls: [], after: { objectives, rules: index >= 1 ? [...bothRules, ...rules] : rules } })), soundFinal);
+  const step = { ...sessionRule('AR3', 'Start with (a) and give only the five bullets'), status: 'retired' }, own = sessionRule('AR4', 'Number the bullets', 'assistant');
+  const graded = gradeRecord(withRules([step, own]), scenarioOf('build'));
+  assert.deepEqual(graded.extraRules, { user: ['AR3 retired: Start with (a) and give only the five bullets'], assistant: ['AR4 active: Number the bullets'] });
+  assert.deepEqual([graded.noSurplusRules, graded.noExtras, graded.recordRight, graded.allRulesByTurn], [false, true, true, true], 'a reading of its own: the registered readings do not change');
+  const clean = gradeRecord(withRules([]), scenarioOf('build'));
+  assert.deepEqual([clean.extraRules, clean.noSurplusRules], [{ user: [], assistant: [] }, true]);
+  assert.equal(gradeRecord(withRules([own]), scenarioOf('build')).noSurplusRules, true, 'a convention of the model\'s own is not surplus');
+});
+
+// The keys of the held-out scenarios against their author's example titles and against the user's own words.
+const USER_PHRASES = {
+  h1: { welcome: 'Short welcome announcement for the Fernwick fair', riddle: 'Riddle for the paper crown hunt', card: 'Thank-you card for the seed swap hosts' },
+  h2: { speech: 'Short curtain speech to open the puppet show', blurb: 'Lost-and-found blurb for the lobby', invitation: 'Short invitation to the cast read-through' },
+  h3: { label: 'Two-sentence label for the museum exhibit about a clock that runs backward' },
+};
+test('batch 2, held-out scenarios: every key recognises its own deliverable or rule and no other', () => {
+  const heldOut = RECORD_SCENARIOS.filter(item => item.role === 'held-out');
+  assert.deepEqual(heldOut.map(item => [item.id, item.kind]), [['h1', 'work'], ['h2', 'work'], ['h3', 'single'], ['h4', 'control']]);
+  for (const scenario of heldOut) {
+    assert.equal(scenario.turns.length, 4, scenario.id);
+    const objectives = Object.entries(scenario.objectives), rules = Object.entries(scenario.rules);
+    const traps = [...scenario.questionExamples, ...scenario.oneTurnExamples];
+    for (const [name, objective] of objectives) {
+      assert.ok(objective.at >= 0 && objective.at <= 3 && (objective.fate[0] === 'open' || (objective.fate[1] >= objective.at && objective.fate[1] <= 3)), `${scenario.id} ${name}: turns`);
+      const titles = [...objective.examples, ...(USER_PHRASES[scenario.id] === undefined ? [] : [USER_PHRASES[scenario.id][name]])];
+      for (const title of titles) {
+        assert.match(title, objective.key, `${scenario.id} ${name}`);
+        for (const [other, value] of objectives) if (other !== name) assert.doesNotMatch(title, value.key, `${scenario.id}: "${title}" also matches ${other}`);
+        if (scenario.questions !== null) assert.doesNotMatch(title, scenario.questions, `${scenario.id}: "${title}" reads as a question`);
+        if (scenario.oneTurn !== null) assert.doesNotMatch(title, scenario.oneTurn, `${scenario.id}: "${title}" reads as a one-turn request`);
+      }
+      for (const trap of traps) assert.doesNotMatch(trap, objective.key, `${scenario.id}: "${trap}" matches ${name}`);
+    }
+    for (const example of scenario.questionExamples) assert.match(example, scenario.questions, scenario.id);
+    for (const example of scenario.oneTurnExamples) assert.match(example, scenario.oneTurn, scenario.id);
+    for (const [name, rule] of rules) {
+      assert.ok(rule.at >= 0 && rule.at <= 3, `${scenario.id} ${name}`);
+      for (const example of rule.examples) { assert.match(example, rule.key, `${scenario.id} ${name}`); for (const [other, value] of rules) if (other !== name) assert.doesNotMatch(example, value.key, `${scenario.id} ${name}/${other}`); }
+      // The rule as the user gave it is in the message `at` names.
+      assert.match(scenario.turns[rule.at], rule.key, `${scenario.id}: message ${rule.at + 1} does not give the rule ${name}`);
+    }
+  }
+});
+
+test('batch 2, amendment 6: an objective closed before the turn that settles it is named, and nothing else changes', () => {
+  // (a) is accepted in the third message; here it is completed after the first and stays complete.
+  const early = gradeRecord(buildSession([[as('complete')(a), b, c], [as('complete')(a), b, c], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), as('retired')(c)]]), scenarioOf('build'));
+  assert.deepEqual(early.closedEarly, ['a: complete after turn 1']); assert.deepEqual([early.fates.a, early.recordRight], ['right', true]);
+  // Completed, reopened and completed again in its turn: still named.
+  const again = gradeRecord(buildSession([[as('complete')(a), b, c], [a, b, c], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), as('retired')(c)]]), scenarioOf('build'));
+  assert.deepEqual(again.closedEarly, ['a: complete after turn 1']);
+  const onTime = gradeRecord(buildSession([[a, b, c], [a, b, c], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), as('retired')(c)]]), scenarioOf('build'));
+  assert.deepEqual(onTime.closedEarly, []);
+  // An objective that is to stay open: closed after any turn, even when it is active again at the end.
+  const open = { ...scenarioOf('build'), objectives: { ...scenarioOf('build').objectives, c: { key: /checklist/i, at: 0, fate: ['open'] } } };
+  const closedThenOpen = gradeRecord(buildSession([[a, b, c], [a, b, as('retired')(c)], [as('complete')(a), b, c], [as('complete')(a), as('complete')(b), c]]), open);
+  assert.deepEqual([closedThenOpen.closedEarly, closedThenOpen.fates.c], [['c: retired after turn 2'], 'right']);
 });

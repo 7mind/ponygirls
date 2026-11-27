@@ -3,7 +3,7 @@
 Base `e44b2924`. Paths under `.local/` are in the main checkout and are not tracked.
 
 **State (2026-11-27): built.** Commits `7ece6521` (the change) and `6f31b542` (corrections after review), then this
-note. The user's reference is `nix/pkg/pi-extensions/ponygirls-cuckoo/README.md`; this note records why it is built
+note; the guidance for the tool was reworded later the same day ("Follow-up" at the end). The user's reference is `nix/pkg/pi-extensions/ponygirls-cuckoo/README.md`; this note records why it is built
 this way, what was decided, and what the validation showed and did not show.
 
 ## Request
@@ -343,9 +343,65 @@ completions.
 - A checkpoint answer that names unchanged rules by ID only. It would shrink the answer by most of its length and
   stop the rewording of rules, at the price of snapshots that are not readable from their own reply.
 - Comments on entries of the current set, and a panel that follows edits while open (decided against for now).
-- A second wording of the guidance aimed at what the pilot showed for the middle model (one entry per objective;
-  retire a cancelled item instead of completing the entry around it; record objectives the user does not enumerate).
-  The harness for measuring it is in the tree.
+- (Done later the same day; see "Follow-up" below.) A second wording of the guidance aimed at what the pilot showed
+  for the middle model.
 - The pilot harnesses under `scripts/cuckoo-pilot` and `scripts/cuckoo-memory-pilot` are frozen experiments in no
   check and were not ported to the numbered reply form; `scripts/cuckoo-memory-pilot` fails the same 9 of 51 tests
   before and after this change.
+
+## Follow-up, 27 Nov 2026: the guidance for `cuckoo_update` reworded
+
+Requested by the user after the report of the first pilot ("perhaps, do it?"). Protocol, runs and results are batch 2
+of `scripts/cuckoo-record-pilot/README.md`; this section is the summary.
+
+**What was done.** The desired behaviour was written down as seven points (an entry of its own per deliverable in the
+turn that states it; nothing for a question, a request the reply answers, or the steps of one deliverable; complete
+on delivery and acceptance; retire on cancellation; rules in their turn; no repeated completion at the checkpoint).
+The grader was made stricter to match (only an entry of its own records an objective) and given scripted cases; the
+rule for adopting a wording was registered before any run. The wording was developed in three rounds on four
+development scenarios with sonnet/medium, frozen (`2ae3376f`), and then compared with the shipped wording in 576
+sessions: both arms at the same time, three subjects, four held-out scenarios written by a subagent of another model
+family that saw neither the wording nor a result.
+
+**Result.** The registered rule holds and the wording is adopted. Its main point holds by one session: sonnet has an
+entry of its own for every stated objective, in its turn, in 10 of 24 held-out work sessions against 1 of 24, where
+9 more were needed. Across all scenarios with the built-in tools declared, shipped wording against the new one:
+
+| | sonnet/medium | haiku/low | fable/high |
+|---|---|---|---|
+| Sessions with an entry that merges several objectives | 26 of 72 → 0 of 72 | 3 of 36 → 1 of 36 | 0 of 36 → 0 of 36 |
+| Every stated objective in an entry of its own by its turn | 1 of 72 → 43 of 72 | 0 of 36 → 24 of 36 | 36 of 36 → 36 of 36 |
+| the same, held-out scenarios only | 1 of 36 → 10 of 36 | 0 of 18 → 13 of 18 | 18 of 18 → 18 of 18 |
+| Every rule recorded in its turn | 57 of 96 → 96 of 96 | 27 of 48 → 42 of 48 | 48 of 48 → 48 of 48 |
+| Cancelled objective retired | 1 of 48 → 48 of 48 | 0 of 24 → 23 of 24 | 24 of 24 → 24 of 24 |
+| Extra provider requests per session of four turns | 1.43 → 2.82 | 0.69 → 2.73 | 3.50 → 3.25 |
+
+No guard of the rule shows harm: no entry made of a question in 384 sessions, no more surplus entries or rules than
+before, checkpoint replies valid and ID-correct in 192 of 192.
+
+**What it does not fix.** A deliverable that the first message asks only to sketch or to start gets its entry in
+that turn unevenly: for sonnet in 10, 0 and 0 of 12 sessions of the three held-out scenarios that have one and in 9
+of 12 of the development scenario its clause was written against; for haiku in 5, 2 and 6 of 6 and in 0 of 6.
+Otherwise the entry comes a turn late or not at all. Two scenarios with nearly the same first message give 10 of 12
+and 0 of 12, so the cause is not known. An objective is
+sometimes completed when only the sketch was delivered (sonnet 4 of 24 sessions, haiku 2 of 12; fable did this with
+the shipped wording in 6 of 12 and not with the new one). A completion made with the tool is repeated at the next
+checkpoint about as often as before (sonnet 5 of 70 sessions that had one, against 2 of 31). By the registered
+reading sonnet's record is right in 9 of 24 held-out work sessions, so the documentation does not say that it keeps
+the record as specified.
+
+**Corrections to the first pilot's reading.** "Every subject recorded every rule the user gave" held for the two
+scenarios of batch 1 only; with the shipped wording sonnet missed a rule in 39 of 96 sessions of batch 2 and haiku in
+21 of 48. And the first batch's "kept the record current" for sonnet with only Cuckoo's tools (24 of 24) counted an
+objective as recorded when one entry named it among others; under the stricter reading it is 0 of 24.
+
+**Limits.** As for the first pilot: synthetic chat sessions of four turns, built-in tools declared but blocked, one
+provider family. Four held-out scenarios by one author, three of which open with the same construction.
+The form that was frozen differs from the last development round by the tool's name written into three guidelines.
+The effect on sessions with real work is not measured, and neither is a tool menu of the size a configured Pi has:
+the pilot's largest menu has six tools, the session that ran it declared 36 at its start.
+
+**Shipped.** `src/update.ts` (guidelines and description), a test that pins their length and SHA-256, the user
+documentation in the extension's README. A second candidate was not attempted; if one is, the four held-out
+scenarios become development scenarios for it and it needs new ones, preferably by more than one author.
+

@@ -1,0 +1,77 @@
+pass  1 h1+h2 together: an entry of its own for every stated objective by its turn, B at least 8 more: A 1 of 24, B 10 of 24
+pass  1 h1: the same, B not lower by more than 2: A 1 of 12, B 10 of 12
+pass  1 h2: the same, B not lower by more than 2: A 0 of 12, B 0 of 12
+=> point 1 (effect): holds
+
+pass  2 chat: no surplus entries, B not lower by more than 2: A 12 of 12, B 12 of 12
+pass  2 single: no surplus entries, B not lower by more than 2: A 12 of 12, B 12 of 12
+pass  2 h3: no surplus entries, B not lower by more than 2: A 12 of 12, B 12 of 12
+pass  2 h4: no surplus entries, B not lower by more than 2: A 12 of 12, B 12 of 12
+pass  2 build: sessions with an entry made of a question, B at most 1 more: A 0 of 12, B 0 of 12
+pass  2 report: sessions with an entry made of a question, B at most 1 more: A 0 of 12, B 0 of 12
+pass  2 h1: sessions with an entry made of a question, B at most 1 more: A 0 of 12, B 0 of 12
+pass  2 h2: sessions with an entry made of a question, B at most 1 more: A 0 of 12, B 0 of 12
+=> point 2 (no surplus): holds
+
+pass  3 build: every rule recorded by its turn, B not lower by more than 2: A 12 of 12, B 12 of 12
+pass  3 report: every rule recorded by its turn, B not lower by more than 2: A 12 of 12, B 12 of 12
+pass  3 chat: every rule recorded by its turn, B not lower by more than 2: A 8 of 12, B 12 of 12
+pass  3 single: every rule recorded by its turn, B not lower by more than 2: A 12 of 12, B 12 of 12
+pass  3 h1: every rule recorded by its turn, B not lower by more than 2: A 12 of 12, B 12 of 12
+pass  3 h2: every rule recorded by its turn, B not lower by more than 2: A 0 of 12, B 12 of 12
+pass  3 h3: every rule recorded by its turn, B not lower by more than 2: A 1 of 12, B 12 of 12
+pass  3 h4: every rule recorded by its turn, B not lower by more than 2: A 0 of 12, B 12 of 12
+=> point 3 (rules): holds
+
+pass  4 fable build: record right, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 fable build: no surplus entries, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 fable report: record right, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 fable report: no surplus entries, B not lower by more than 1: A 0 of 6, B 6 of 6
+pass  4 fable chat: record right, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 fable chat: no surplus entries, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 fable single: record right, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 fable single: no surplus entries, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 fable h1: record right, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 fable h1: no surplus entries, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 fable h2: record right, B not lower by more than 1: A 4 of 6, B 6 of 6
+pass  4 fable h2: no surplus entries, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 fable h3: record right, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 fable h3: no surplus entries, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 fable h4: record right, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 fable h4: no surplus entries, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 haiku build: record right, B not lower by more than 1: A 0 of 6, B 5 of 6
+pass  4 haiku build: no surplus entries, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 haiku report: record right, B not lower by more than 1: A 0 of 6, B 6 of 6
+pass  4 haiku report: no surplus entries, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 haiku chat: record right, B not lower by more than 1: A 0 of 6, B 5 of 6
+pass  4 haiku chat: no surplus entries, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 haiku single: record right, B not lower by more than 1: A 0 of 6, B 0 of 6
+pass  4 haiku single: no surplus entries, B not lower by more than 1: A 6 of 6, B 5 of 6
+pass  4 haiku h1: record right, B not lower by more than 1: A 0 of 6, B 5 of 6
+pass  4 haiku h1: no surplus entries, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 haiku h2: record right, B not lower by more than 1: A 0 of 6, B 1 of 6
+pass  4 haiku h2: no surplus entries, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 haiku h3: record right, B not lower by more than 1: A 0 of 6, B 5 of 6
+pass  4 haiku h3: no surplus entries, B not lower by more than 1: A 6 of 6, B 6 of 6
+pass  4 haiku h4: record right, B not lower by more than 1: A 0 of 6, B 1 of 6
+pass  4 haiku h4: no surplus entries, B not lower by more than 1: A 6 of 6, B 6 of 6
+=> point 4 (other subjects): holds
+
+pass  5 sonnet: checkpoint replies invalid or with a wrong ID, a restatement as new or a dropped entry, B at most 1 more: A 0 of 48, B 0 of 48
+pass  5 fable: checkpoint replies invalid or with a wrong ID, a restatement as new or a dropped entry, B at most 1 more: A 0 of 24, B 0 of 24
+pass  5 haiku: checkpoint replies invalid or with a wrong ID, a restatement as new or a dropped entry, B at most 1 more: A 0 of 24, B 0 of 24
+=> point 5 (checkpoints): holds
+
+pass  6 build: no surplus rules, B not lower by more than 2: A 12 of 12, B 12 of 12
+pass  6 report: no surplus rules, B not lower by more than 2: A 9 of 12, B 12 of 12
+pass  6 chat: no surplus rules, B not lower by more than 2: A 12 of 12, B 12 of 12
+pass  6 single: no surplus rules, B not lower by more than 2: A 12 of 12, B 12 of 12
+pass  6 h1: no surplus rules, B not lower by more than 2: A 12 of 12, B 12 of 12
+pass  6 h2: no surplus rules, B not lower by more than 2: A 12 of 12, B 12 of 12
+pass  6 h3: no surplus rules, B not lower by more than 2: A 12 of 12, B 12 of 12
+pass  6 h4: no surplus rules, B not lower by more than 2: A 12 of 12, B 12 of 12
+=> point 6 (surplus rules): holds
+
+ADOPTION RULE: holds
+"Keeps the record as specified", sonnet arm A: record right in 1 of 24 held-out work sessions (needs 20 of 24): may not be said
+"Keeps the record as specified", sonnet arm B: record right in 9 of 24 held-out work sessions (needs 20 of 24 and point 2): may not be said

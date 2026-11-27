@@ -1,14 +1,15 @@
 // Stored runs: a directory of sessions as the runner writes it (`<label>/<session>/result.json`), or the compact
 // `results/<label>.jsonl` kept in the repository (one session per line, without the request payloads and the answers'
-// full text). Both hold everything the grader reads.
+// full text; batch 2 is kept gzipped as `results/batch2/<label>.jsonl.gz`). All hold everything the grader reads.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 
 export function loadResults(path) {
-  if (statSync(path).isFile()) return readFileSync(path, 'utf8').split('\n').filter(line => line !== '').map(line => JSON.parse(line));
+  if (statSync(path).isFile()) return (path.endsWith('.gz') ? gunzipSync(readFileSync(path)).toString('utf8') : readFileSync(path, 'utf8')).split('\n').filter(line => line !== '').map(line => JSON.parse(line));
   return readdirSync(path).filter(name => existsSync(join(path, name, 'result.json'))).sort().map(name => JSON.parse(readFileSync(join(path, name, 'result.json'), 'utf8')));
 }
-export const labelOf = path => basename(path).replace(/\.jsonl$/, '');
+export const labelOf = path => basename(path).replace(/\.jsonl(?:\.gz)?$/, '');
 
 /**
  * Sessions the subject itself answered, and those in which another model answered at least once (a server-side
