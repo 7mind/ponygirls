@@ -1,4 +1,4 @@
-# Code-quality review skill: design draft v0.4
+# Code-quality review skill: design draft v0.5
 
 Status: proposal for discussion, 27 Nov 2026. Nothing here has been run end
 to end. The text has had two independent readings and one re-reading of the
@@ -232,6 +232,12 @@ Decisions, each with the alternative it was chosen over:
    employer-hosted open models), and report before anything further. Q194:
    production and test tokens count together; moving code from one to the
    other is not a gain.**
+9. **After the held-out run** (asked 27 Nov 2026). **Q202: fix the refutation
+   stage (reading refutes only feasibility, rules and the token balance;
+   behaviour is settled by the spike; isolated spikes), then one cross-service
+   run on the families the three servers share (Auth, Http, Main, Mcp,
+   Config) against `shared/`, and report. Q203: apply all five confirmed real
+   changes, without the full verification.**
 
 ## 7. Proposed test
 
@@ -382,6 +388,52 @@ started. The skill is v0.4, used unchanged.
   reader model and another codebase change together. The run can show
   whether the combination works; it cannot attribute a difference to one of
   them.
+
+### 7.3 Cross-service run, registered before the run
+
+Fixed on 27 Nov 2026 after Q202 and before any agent of this run was started.
+The skill is v0.5, used unchanged.
+
+- **Tree.** Main as it stands when the run starts, without plants. Positive
+  controls come for free: the two re-implementations of the shared `Secrets`
+  that earlier spikes confirmed (haystack's `Tokens`, manure's `SecretCodec`)
+  are still in that commit, because the five changes of Q203 are applied to
+  main only after the run's tree is frozen.
+- **Supervisor.** One fresh subagent, the session's model, thinking high,
+  with the skill file, the request and the instruction files; it keeps notes
+  on where the text failed it.
+- **Request.** One partition across services: the files of
+  `chronicle/server`, `haystack/server` and `manure/backend` that hold
+  authentication and accounts, the HTTP layer, the entry point and wiring,
+  the MCP endpoint and configuration loading (production code). `shared/` is
+  read beside it, may be cited, and may be the home of what is common, so an
+  intervention may have sites there. Lenses: duplication,
+  under-generalization, missing-abstraction, abstraction-fitness, wiring and
+  reinvention, in the groups repetition, shape and siblings. Readers on
+  `moonshotai/Kimi-K3.1-Pro`, with `deepseek-ai/DeepSeek-V4-Pro-0813` as the
+  model to change to; refuters `gpt-6.2-sol`; spikers the session's model;
+  all thinking high. Caps: 10 hypotheses per lens pass, 15 to reading, 8
+  spikes. Baseline over the three server trees and `shared/`. Stop after
+  section 8; apply nothing.
+- **Stated before the run.**
+  1. Known positives: the readers report both re-implementations of the
+     shared `Secrets`.
+  2. Refutation: every kill by reading rests on a hard falsifier
+     (feasibility, a rule or contract, the token balance, a countable card
+     criterion) and none on behaviour; at most a third of the kills are
+     doubted.
+  3. Isolation: no spiker writes into another's scratch directory.
+  4. The question the run is for. Count the production lines that confirmed
+     and supported hypotheses would remove, as a share of the partition:
+     5% or more supports "the services duplicate a substantial part of
+     these families"; under 2% does not; between the two it stays open.
+     What is deferred to the user (new shared modules, contract changes) is
+     counted apart with its predicted effect.
+  5. Cost: an expectation, not a criterion. Supervisor, refuters and spikers
+     together under 60 USD.
+- **Monitor.** No steering. Interrupt only for writes into a checkout the
+  supervisor does not own, a push or merge, more than 40 agents, or more
+  than three hours.
 
 ## 8. Known weaknesses of the draft
 
@@ -647,6 +699,41 @@ uses predicted lines while the spike passes on tokens (now said outright);
 inlining, moving and splitting had no class; a component without tests could
 not finish scoping; an empty reader pass left no trace (`passes.tsv`). These
 repairs have been read by nobody else; the held-out run is their check.
+
+### v0.5, 27 Nov 2026: from the held-out run
+
+H-numbers are the notes of the held-out supervisor.
+
+| Area | Changed in the skill | From |
+|---|---|---|
+| Refutation | Reading refutes only on a hard falsifier: the change is not feasible, a rule or contract forbids it, the tokens do not fall, or a countable criterion of the lens card fails. Behaviour becomes checks that the spike runs. A doubted kill that is really about behaviour moves to the checks | Q202; plants P1 and P4 of the held-out run; H24, H32, H40 |
+| Spikes | A scratch directory per spiker, named by the supervisor; every behaviour check is run on the base commit and with the patch; a probe built for the spike is an open point, not a falsifier; checks that could not be run and open points are listed with the result; the two calibration slots are gone | Q202; H27, H28, H31, H32 |
+| Twins | A criterion of one lens's card refutes only records of that lens; overlap and tie-breaks are defined | H17, H18, H21; plant P4 |
+| Wording | abstraction-fitness: "the abstraction has two or more callers"; section 0: "an assertion that the patch removes or loosens"; `reword` when the change holds at all sites but one or two; history may speak for a hypothesis | H23, H24, H40; plant P1 |
+| Readers | Bundles cut to what one read call returns; coverage from tool logs, not from the reader's statement; one JSON object from a group reader | H12, H13, H30 |
+| Scoping, report | Status `admitted`; places for briefs and refuter output; one pass-log row per lens pass; where the inner loop may run; yield columns | H10, H14, H15, H36, H41 |
+
+One interpretation of mine: Q202 names feasibility, rules and the token
+balance. I kept the lens cards' countable criteria (callers, variation
+points, flags) among what reading may refute on, because they are what stands
+against over-merged abstractions and a run cannot settle them; the one that
+was misread in the held-out run is reworded, and the patch review checks them
+again on the code as written.
+
+Not changed: a token prediction in the record (H16); a data table inside a
+hand-written file, which a path pattern cannot exclude (H2); the size, now
+56 kB.
+
+One read of v0.5 before the run (`gpt-6.2-sol`, read-only, against v0.4)
+gave eight findings, all accepted and repaired: the patch review could still
+fail a hypothesis on behaviour by reading; a hard falsifier known only to
+the reader was lost; twins shared a fate without sharing their falsifiers; a
+missing caller fitted both `refuted` and `reword`; a scratch directory does
+not isolate commands that write to fixed paths (the inner-loop commands must
+be safe in several work trees at once, or spikes run one at a time); checks
+not run could be missing from the report; the abstraction-fitness criteria
+were not tied to the kind of intervention; a file larger than one read call
+could not be bundled. Nobody else has read these repairs.
 
 ### Candidates as listed after the first wave
 

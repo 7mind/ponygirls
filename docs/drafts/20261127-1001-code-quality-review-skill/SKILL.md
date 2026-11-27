@@ -43,15 +43,17 @@ section 7 is its test.
   reviewed checkout changes until the user names proposals to apply (section 9).
 - **No record, no finding.** A proposal exists only as a hypothesis record
   (section 4): sites, one intervention, a prediction, and falsifiers.
-- **Falsifiers have observers.** A falsifier is an observation that would
-  prove the hypothesis wrong, stated with the way to check it. One about
-  behaviour is observed only together with its observer: the caller, test,
-  stored datum, document or consumer that depends on what would change, cited
-  by path and lines. A property of the code that nothing observes is not a
-  falsifier. One about feasibility, a project rule or the currency (the
-  symbol does not exist, a rule forbids the change, the tokens do not fall)
-  is observed with the lines or the count that show it. Every falsifier ends
-  up observed, not observed, or reported as unchecked.
+- **Reading proves what reading can; a run settles behaviour.** A falsifier
+  is an observation that would prove the hypothesis wrong, stated with the
+  way to check it. Reading can show a *hard* one: the change is not feasible
+  (a symbol does not exist, the runtime rules it out), a project rule or
+  contract forbids it, the tokens do not fall, or a countable criterion of
+  the lens card fails (callers, variation points, flags). A falsifier about
+  *behaviour* (something depends on what would change) is never settled by
+  reading: it names its observer (the caller, test, stored datum, document
+  or consumer, by path and lines) and becomes a check that the spike runs.
+  A difference that nothing in the repository observes is not a falsifier.
+  Every falsifier ends up observed, not observed, or reported as unchecked.
 - **Agreement is not evidence.** Several agents proposing or approving the same
   thing establishes nothing. Only a measured spike admits a hypothesis to the
   working set, and no single agent, the supervisor included, settles a
@@ -61,19 +63,21 @@ section 7 is its test.
   | Status | Meaning | Set in |
   |---|---|---|
   | `inadmissible` | a cited path or line does not check out | 5 |
+  | `admitted` | passed the mechanical checks; nothing decided yet | 5 |
   | `deferred` | needs a decision only the user can take | 5 |
   | `alternative` | another record on the same sites went forward in its place | 5 |
   | `untested` | cut by the refutation cap; says nothing about its merit | 5 |
-  | `refuted` | a falsifier was observed, with its observer | 6 |
-  | `supported` | no falsifier observed by reading; a candidate, not yet measured | 6 |
-  | `failed` | the spike did not hold up | 7 |
+  | `refuted` | reading showed a hard falsifier | 6 |
+  | `supported` | no hard falsifier; its behaviour checks wait for a spike | 6 |
+  | `failed` | the spike did not hold up: a check or a gate failed | 7 |
   | `confirmed` | measured, invariants held, a test notices a fault (for a pure deletion: no reference remains) | 7 |
   | `confirmed-unguarded` | measured, but no test notices a fault | 7 |
 
 - **What no proposal may be bought with** (any one refutes or fails it, unless
-  the hypothesis is about exactly that and says so): a test that fails, is
-  skipped or weakened, or a smaller set of executed test cases, other than
-  cases that test only code the hypothesis deletes; a changed wire format,
+  the hypothesis is about exactly that and says so): a test that fails or is
+  skipped, an assertion that the patch removes or loosens, or a smaller set
+  of executed test cases, other than cases that test only code the
+  hypothesis deletes; a changed wire format,
   CLI, configuration key, stored data format or public API; validation, error
   handling or logging removed at a trust boundary; a dependency edge in a
   direction the project does not already allow; and, where something can
@@ -105,8 +109,9 @@ section 7 is its test.
    untracked work files: `scope.md` (commit, paths, exclusions, documents, the
    exact baseline command, the inner-loop commands, the plan, and every rule
    you fix during the run, with the time), `measure.py`, `manifest.tsv`,
-   `leads/`, `bundles/`, `answers/`, `passes.tsv` (one row per reader run:
-   partition, lens, reader, model, records returned, files not read),
+   `leads/`, `bundles/`, `briefs/`, `answers/`, `refutations/`, `passes.tsv`
+   (one row per lens pass: partition, lens, reader, model, records returned,
+   what the reader did not read),
    `hypotheses.jsonl` (one record per line with its status history),
    `defects.md`, `spikes/`, `report.md`, `residue.md`.
 4. **Exclusions.** Find what is not hand-written or not code: generated
@@ -130,13 +135,21 @@ section 7 is its test.
 8. **Inner loop.** For each component in scope record in `scope.md` a build
    command and a command that runs a named subset of its tests and lists the
    executed cases; write a small wrapper where the project's runner cannot do
-   that, and record `none` where a component has no build or no tests. Run
-   what exists once before section 7, in a work tree of the frozen commit
-   other than the frozen tree. Spikers get the commands from there.
+   that, and record `none` where a component has no build or no tests.
+   Prefer the project's runner with its own filter; a wrapper says which
+   project script it mirrors. The commands must be safe to run in several
+   work trees at once: output inside the work tree or in a directory the
+   caller names, no fixed ports or paths. Where that cannot be had, spikes
+   run one at a time. Run what exists once before section 7, in a
+   work tree of the frozen commit other than the frozen tree (your own, if it
+   is at that commit and clean). Spikers get the commands from there.
 9. **Bundles.** For each partition write one file that holds all its files,
    each under a header line with its path and each line prefixed by its
-   number, and one such file for the documents. Readers then read a partition
-   in a few calls instead of one call per file:
+   number, and one such file for the documents. Cut a bundle at file
+   boundaries into parts no larger than one read call of the reader's tools
+   returns (read a large file once to find out), and name the parts in the
+   brief; a file larger than that is split by line ranges, with its path
+   header repeated. Readers then read a partition in order instead of choosing files:
 
    ```sh
    cd <frozen> && while read -r f; do printf '=== %s ===\n' "$f"
@@ -174,8 +187,9 @@ Hand each reader only the leads of its lenses and partition.
 - Count reader runs: one per partition and lens that reads that kind of
   partition. Reading cost: partition bytes ÷ 3, once per run. Set caps:
   hypotheses per lens pass (default 10), hypotheses sent to refutation,
-  spikes. Promoted alternatives (section 5) and second opinions (section 6)
-  are outside the caps.
+  spikes. Only a spike settles behaviour, so plan about as many spikes as
+  hypotheses you expect to survive reading. Promoted alternatives (section
+  5) and second opinions (section 6) are outside the caps.
 - Allocation. Default: one reader per lens. Under a budget: the pack's
   affinity groups, one reader per group. In one comparison the groups cost
   half as much and reached nine tenths of the topics, with fewer records from
@@ -223,7 +237,7 @@ candidate you saw and did not write up; the files you did not read in full.
 ```
 
 A reader that carries several lenses gets their cards in pass order, returns
-one array per lens, and gets this in addition: "Make one pass per lens, in the
+one JSON object with one array per lens, and gets this in addition: "Make one pass per lens, in the
 order given: read its card and its leads again, go through the partition for
 that lens alone, and finish its array and its Look-for lines before the next
 lens. File a finding under the lens whose intervention it matches."
@@ -249,8 +263,10 @@ Hypothesis record (the `predicted` field is the pack's):
 `existing` is null unless the hypothesis reuses something. Save each reader's
 answer byte for byte before touching it: let the reader write it into
 `answers/` if it can write files, otherwise copy the file your tools keep of
-its result. Do not retype it. Log every reader run in `passes.tsv`, also the
-ones that return nothing.
+its result. Do not retype it. Log every lens pass in `passes.tsv`, also the
+ones that return nothing. Where your tools keep a log of a reader's read
+calls, work out from it what the reader received of each bundle: its own
+statement of what it read is not evidence.
 
 ## 5. Admissibility and reconciliation
 
@@ -277,12 +293,16 @@ Mechanical checks first; they need no judgment and remove invented material.
    already has), *library* (the sites call the standard library or a locked
    dependency), *generalize* (the sites are replaced by one new form inside
    the component: a helper, a parameter, a table; also any other rewrite
-   inside existing types and modules, such as a move, a split or a narrowed
-   interface) or *new* (a new type, module or layer).
-4. **Cluster** records whose sites overlap. Records of a cluster with the
-   same class and the same intervention are twins: the one with the larger
-   predicted effect, then the lower risk, stands for all of them; the others
-   are `alternative` and share its fate. Among what is left, and rivals
+   inside existing types and modules, such as an inlined body, a move, a
+   split or a narrowed interface) or *new* (a new type, module or layer).
+4. **Cluster** records whose sites overlap (the same file and intersecting
+   line ranges). Records of a cluster with the same class and the same
+   intervention are twins: the one with the larger predicted effect, then
+   the lower risk, then the lens earlier in the pack, stands for all of
+   them and carries their falsifiers and differences as well; the others are
+   `alternative` and share its fate, except that a criterion of one lens's
+   card refutes or fails only records of that lens, and a twin from another
+   lens then takes its place. Among what is left, and rivals
    (next step) apart, one record goes forward by precedence (delete, reuse,
    library, generalize, new) and the others are `alternative`; when it is
    refuted or fails, the next goes forward in its place. A record that spans otherwise separate clusters is `alternative`
@@ -299,82 +319,96 @@ Mechanical checks first; they need no judgment and remove invented material.
    precedence order, so that small deletions and reuses are not crowded out
    by large rewrites. Mark the rest `untested`.
 
-## 6. Refutation
+## 6. Refutation by reading
+
+Reading cannot settle behaviour: in two runs it killed sound changes when it
+tried, and the spikes were right where readers disagreed. This pass therefore
+refutes only on hard falsifiers and prepares the spike.
 
 A refuter gets a fresh context and, where one is available, a model of
 another family than the reader's; say in the report when it was the same
 family. It receives the claim, the sites, `existing`, the intervention and
 the prediction. Withhold the reader's `differences`, `guards` and
 `falsifiers` in this pass, so that it derives its own. Group hypotheses by
-the nearness of their sites, up to five per refuter. A refuter without a
-shell gets the history of its sites as files (`git log -L` per site, `git
-log --follow` per file).
+the nearness of their sites, up to five per refuter: one block per
+hypothesis in the brief, one answer object per hypothesis back. A refuter
+without a shell gets the history of its sites as files (`git log -L` per
+site, `git log --follow` per file), cut to the last few changes.
 
 ```text
-Try to refute this change hypothesis. Read-only. Tree: <frozen work tree>, commit <sha>.
+Check this change hypothesis by reading. Read-only. Tree: <frozen work tree>, commit <sha>.
 <claim, sites, existing, intervention, predicted>
 <what no proposal may be bought with, from section 0; the pack's and the lens's falsifiers>
 1. Read every site in full and list the differences between them yourself.
-2. Find who depends on each site's exact behaviour: callers, tests, error
-   texts, ordering, logs, serialized forms.
-3. Read the history of each site: did the copies evolve apart, and does a
-   commit message say why?
-4. Look for a project rule, packaging constraint or dependency direction that
-   requires the present shape or forbids the intervention.
-5. If something is to be reused, read it: does the symbol exist at the locked
-   version, and what does it do on empty input, on errors, at its limits?
-6. Check every falsifier given above.
-7. Name the tests that would notice a change of behaviour at these sites, by
-   file and case, or state that you found none.
-A falsifier about behaviour is `observed` only with its observer: who or
-what depends on the thing that would change, cited with path:lines. A
-property of the code that nothing observes is `not observed`. One about
-feasibility, a project rule or the size balance is `observed` with the lines
-or the count that show it.
-Verdict: `refuted` (a falsifier observed); `reword` (the change stands but
-cannot be carried out as worded: it would not compile, a caller is missing
-from the sites; give the correction); otherwise `not-refuted`.
-Return the verdict; your difference list; every falsifier you checked, with
-outcome, observer and lines; the falsifiers reading cannot settle; the
-guarding tests; what you read. Propose no improvements.
+2. Hard falsifiers, which reading can show. The change is not feasible: a
+   symbol is missing at the locked version, the runtime or the packaging
+   rules it out, a dependency would point the wrong way. A project rule or
+   contract forbids it or requires the present shape. The tokens it adds are
+   not fewer than the tokens it removes (estimate both). A countable
+   criterion of the lens card fails (callers, variation points, flags). For
+   each: `observed`, with the lines or the count, or `not observed`.
+3. Behaviour. Find who depends on each site's exact behaviour: callers,
+   tests, error texts, ordering, logs, serialized forms. Do not judge
+   whether the change would break them. For each dependent the change could
+   touch, write a check that a spike can run: the test to execute, or the
+   input and the expected result, with path:lines of the dependent.
+4. History. Did the copies evolve apart, and does a commit message say why?
+   If a recent commit introduced the shape that the hypothesis removes, say
+   so: the earlier code is evidence for the hypothesis.
+5. If something is to be reused, read it: what does it do on empty input, on
+   errors, at its limits? Each difference from the sites is a check for
+   step 3.
+6. Name the tests that exercise these sites, by file and case, or state that
+   you found none.
+A card falsifier that speaks of a caller, test or consumer relying on
+something is a behaviour check for step 3, not a hard falsifier.
+Verdict: `refuted` (a hard falsifier observed that no correction of the
+wording or of the site list removes); `reword` (the change stands but cannot
+be carried out as worded: it would not compile, a caller is missing from the
+sites, or it holds at all sites but one or two; give the correction and
+answer steps 2 to 6 for the corrected change); otherwise `not-refuted`.
+Return the verdict; your difference list; each hard falsifier with its
+outcome; the behaviour checks; the guarding tests; what you read. Propose no
+improvements.
 ```
 
-**Falsifier ledger.** For each hypothesis merge into one list the reader's
-falsifiers, the pack's and the lens's, the refuter's, and every difference
-that only one of the two saw (as "this difference matters"). An entry is
-`observed` (with observer and lines), `not observed` (with the lines or the
-command that show it) or `unchecked`. Entries still unchecked that reading
-can settle go back to the refuter.
+**Falsifier ledger.** For each hypothesis keep one list of every falsifier
+of the reader, of its twins, of the pack, of the lens card and of the
+refuter, and of every difference that only one of them saw. A hard one that
+the refuter did not settle goes back to it once; what is still open then is
+looked at again on the patch (section 7). A behaviour check is `unchecked`
+until a spike has run it.
 
-**Accepting a verdict.** Read the cited lines of every `observed`. Accept it
-when the observer exists there and depends on what the hypothesis changes.
-When you doubt it, do not overrule it: give that one falsifier to a second
-refuter, as the question whether the observer depends on what changes. Two
-`observed` refute. Otherwise, or when no second refuter is to be had, the
-entry is `unchecked` and is not read again: it waits for the spike. A rule
-you want to apply to the verdicts goes into `scope.md` before you read them,
-and applies to all of them.
+**Accepting a kill.** Read the cited lines, or redo the count, of every
+`observed`. If it turns out to be a question of behaviour (somebody might
+depend on something), it is no kill: move it to the behaviour checks. If you
+doubt it for another reason, do not overrule it alone: give that one
+falsifier to a second refuter. Two `observed` refute; otherwise it stays
+`unchecked` and is looked at again on the patch. A criterion of one lens's
+card refutes only records of that lens (section 5). A rule you want to apply to the verdicts goes into
+`scope.md` before you read them, and applies to all of them.
 
-One accepted `observed` makes the hypothesis `refuted`. `reword` is not a
-kill: it corrects the record, marked as the refuter's correction, and the
-corrected record passes steps 1 and 2 of section 5 again. With nothing
-observed and nothing left for reading to settle, the hypothesis is
-`supported`; its unchecked entries go with it to the spike.
+One accepted hard falsifier makes the hypothesis `refuted`. `reword` is not
+a kill: it corrects the record, marked as the refuter's correction, and the
+corrected record passes steps 1, 2 and 4 of section 5 again. Everything else
+is `supported` and waits for a spike, with its checks.
 
 ## 7. Spikes
 
-Spike `supported` hypotheses in the order in which section 5 took them, until
-the spike cap is used. When the cap is five or more and more hypotheses wait than it admits,
-its last two slots go to the two lowest-ranked, so that the calibration of
-section 8 is not drawn from the best cases only. A hypothesis with an
+Only a spike settles behaviour. Spike `supported` hypotheses in the order in
+which section 5 took them, until the spike cap is used. A hypothesis with an
 `unmeasured` site is not spiked. What is not spiked stays `supported`, with
-the reason. Each spiker works in its own work tree of the frozen commit and
-gets one hypothesis.
+the reason. Each spiker gets one hypothesis, its own work tree of the frozen
+commit, and a scratch directory of its own that you create and name in the
+brief. No two spikers share a directory, and none writes to a fixed path
+under the home directory or the system's temporary directory.
 
 ```text
 Implement exactly this one change in your own work tree of commit <sha>.
 Touch no other checkout. Commit nothing to a shared branch. Push nothing.
 Keep the formatting of the surrounding code.
+Scratch directory, yours alone: <path>. Build output, test reports and
+measurement files go there or stay inside your work tree. Write nowhere else.
 <record; its falsifier ledger; the guarding tests; what no proposal may be
  bought with, from section 0; the pack's pass condition; paths of measure.py
  and of the baseline manifest; the inner-loop commands from scope.md>
@@ -387,16 +421,20 @@ Keep the formatting of the surrounding code.
    sites, and stage it (`git add -A`) before building anything.
 2. Build or type-check every component the patch touches. Run the same tests
    and compare the executed cases with step 0.
-3. For every falsifier of the ledger that is still unchecked, try to make
-   the observation by a run, not by argument: a check that passes on the base
-   commit and with the patch shows it `not observed`. Afterwards delete the
-   check, or stage it if it is a test the project should keep, and say which.
+3. Run every behaviour check of the ledger on the base commit and with the
+   patch; where the ledger names a dependent without a runnable check, write
+   one. A check that passes on the base and fails with the patch is an
+   observed falsifier. A probe you had to build because nothing in the
+   repository observes the difference shows that the difference exists, not
+   that anything depends on it: report it as an open point, not as a
+   falsifier. Say which checks you could not run, and why. Afterwards delete
+   your checks, or stage the ones the project should keep, and say which.
 4. `git status --porcelain` must now show the staged patch and nothing else:
    remove build output that is not ignored. Then measure from the root of
-   your work tree, writing outside it: `python3 <measure.py> --compare
-   <baseline manifest> > <temporary directory>/after.tsv`. Every file of the
-   patch must be a row of the baseline manifest or of `after.tsv`. Name any
-   that is not: it is not measured.
+   your work tree: `python3 <measure.py> --compare <baseline manifest> >
+   <scratch directory>/after.tsv`. Every file of the patch must be a row of
+   the baseline manifest or of `after.tsv`. Name any that is not: it is not
+   measured.
 5. Negative control: put one deliberate fault into the changed code path,
    confirm that a test fails, remove the fault. If nothing fails, say
    `unguarded`; without a covering test in step 0 it is `unguarded` too. A
@@ -411,24 +449,28 @@ only after changing behaviour or a test; when the change needs edits beyond
 the stated sites that cancel the gain; when the pack's pass condition is not
 met; or when code moved into a file the script does not measure.
 Return: verdict; each command with its exit status; the comparison output;
-the executed-case comparison; the outcome of each falsifier; the
-negative-control result; every deviation from the hypothesis. Leave the
-patch staged in your work tree.
+the executed-case comparison; the outcome of each check; the
+negative-control result; open points; every deviation from the hypothesis.
+Leave the patch staged in your work tree.
 ```
 
 **Patch review.** Take each patch from the spiker's work tree (`git diff
 --cached <sha>`), not from its reply. Before a result counts, the patch is
 read by someone who did not write it (you, or a refuter): against section 0,
-against the lens's falsifiers, and for what it newly introduces, such as a
-flag parameter, a shared object that was per use, a loop inside a loop over
-the same data, a changed order, a swallowed error. A problem found here makes
-the hypothesis `failed`, or sends it back to the spiker once.
+against the lens card's criteria, now on the code as written, and for what it
+newly introduces, such as a flag parameter, a shared object that was per use,
+a loop inside a loop over the same data, a changed order, a swallowed error.
+A hard violation found here makes the hypothesis `failed`. A suspected
+change of behaviour is not judged by reading here either: it goes back to
+the spiker once, as a check to run on the base commit and with the patch.
 
 Results: `confirmed`; `confirmed-unguarded` (it needs a test that notices a
 fault before it is applied; for a pure deletion the reference search and the
 builds stand in for that test, and the result is `confirmed`); or `failed`
-with the reason. Store each patch as `spikes/<id>.patch` with its base commit.
-A spike is evidence, not a deliverable; nothing is merged from it here.
+with the reason. Checks that the spike could not run and open points are
+written into the record and listed with the result: they do not change it,
+and they are the user's to weigh. Store each patch as `spikes/<id>.patch` with its base commit. A spike
+is evidence, not a deliverable; nothing is merged from it here.
 
 ## 8. Working set and report
 
@@ -441,7 +483,7 @@ reads, in this order:
 1. A summary in one paragraph. Scope: commit, paths, exclusions, baseline
    totals, lenses and partitions run, models used per role.
 2. Working set: id, lens, intervention, sites, measured effect, status,
-   falsifiers checked, guarding tests, risk. Then the measured total. Effects
+   checks run, checks not run and open points, guarding tests, risk. Then the measured total. Effects
    of hypotheses that share sites do not add up; say which ones overlap.
 3. Candidates: every `supported` hypothesis with its predicted effect, its
    falsifiers still unchecked and the reason it was not spiked, and the
@@ -457,8 +499,9 @@ reads, in this order:
 7. Residue in numbers: untested, alternative, inadmissible, candidates not
    written up, partitions and lenses not run, files not read; second opinions
    asked and how they ended.
-8. Yield per lens (proposed, inadmissible, deferred, refuted, supported,
-   failed, confirmed, confirmed-unguarded) and cost per stage: agents, tokens
+8. Yield per lens (proposed, inadmissible, deferred, alternative, untested,
+   refuted, supported, failed, confirmed, confirmed-unguarded) and cost per
+   stage: agents, tokens
    and cost as your tools report them, wall time, and what they do not
    report.
 9. Where things are: run directory, patches, spike work trees.
@@ -643,8 +686,9 @@ Each card goes to a reader verbatim; its falsifiers also go to the refuter.
 - **Record must state.** The intervention as one of inline, delete, split by
   caller group, move to the owner, narrow the interface; and the callers.
 - **Falsifiers.** A second implementation exists or is documented as planned.
-  Inlining would repeat code at two or more sites. The wrapper enforces an
-  invariant.
+  For an inlining: the abstraction has two or more callers, so its body
+  would be copied. A consumer relies on an invariant that the wrapper
+  enforces.
 
 ### wiring
 
@@ -872,5 +916,6 @@ for part, role in sorted({k[:2] for k in total}):
 - A smaller codebase is not the goal when it costs a contract, a guard or a
   reader's understanding; section 0 decides, not the total.
 
-Status: draft. Run once on one partition of one repository and revised from
-what failed there; the revised text has not been run yet.
+Status: draft. Run twice, on one partition each of two services of one
+repository, and revised after each run from what failed; this revision has
+not been run yet.
