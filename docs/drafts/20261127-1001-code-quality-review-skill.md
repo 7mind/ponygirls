@@ -1,4 +1,4 @@
-# Code-quality review skill: design draft v0.2
+# Code-quality review skill: design draft v0.3
 
 Status: proposal for discussion, 27 Nov 2026. Nothing here has been run end
 to end. The text has had two independent readings and one re-reading of the
@@ -204,22 +204,28 @@ Decisions, each with the alternative it was chosen over:
    tokens as the currency, lines beside them, as drafted.**
 2. **Allocation.** (a) One agent per lens per partition, as sketched;
    (b) the four groups; (c) run both on the pilot target and choose by yield
-   per token. Recommended: (c).
+   per token. Recommended: (c). **Decided 27 Nov 2026 (Q185): (c), on
+   haystack.**
 3. **Admission.** The draft admits to the working set only what a spike
    measured; survivors of refutation that were not spiked are listed apart as
    candidates with a calibrated estimate. Is that the bar you meant by
    "tested", or should a refutation attempt by an independent reader be
    enough? The strict bar costs one build and test run per admitted item.
+   **Decided 27 Nov 2026 (Q184): measured only, as drafted.**
 4. **Lens set.** Are the nine right? `test-support` is the one most likely to
    be unwanted: it touches tests, under the rule that the executed cases and
    assertions may not shrink.
-5. **Pilot target, models and budget** (section 7).
+5. **Pilot target, models and budget** (section 7). **Decided 27 Nov 2026
+   (Q185): haystack, both allocations, five planted smells, the session's
+   model for supervisor, readers and spikers, `gpt-6.2-sol` for refuters,
+   stop after the first wave and report the measured cost.**
 6. **Name and home.** `code-quality-review`, installed from
    `nix/pkg/llm-skills/skills/` once it has run; until then on this branch.
    Recording it in Haystack as a skill draft is planned after the pilot, when
    there is evidence to record with it.
 7. **Tracking.** No Linear issue was named for this work, so nothing was
-   written there. Say if it should be tracked and where.
+   written there. Say if it should be tracked and where. **Decided 27 Nov
+   2026 (Q186): not tracked in Linear.**
 
 ## 7. Proposed test
 
@@ -271,6 +277,59 @@ model; refuters on another family, for example `gpt-6.2-sol`; or the
 employer-hosted open models for readers), and a cap. `tokemon` shows the
 Anthropic account's extra usage at 4,892 of 5,000 USD; whether that bounds
 the gateway provider this session runs on is unknown.
+
+### 7.1 Pilot protocol, registered before the run
+
+Fixed on 27 Nov 2026 after Q185 and before any pilot agent was started.
+
+- **Tree.** Base `c5643c26` (haystack and shared are unchanged since
+  `e44b2924`) plus one commit with five planted smells, `04aa8cce`, on a
+  local branch that is never merged. Kinds planted, all in
+  `haystack/server` production code: a renamed copy of a helper, an unused
+  public method, a pass-through class with one user, a hand-rolled
+  standard-library function, one query written three times. Planted size:
+  +27 lines, +423 tokens. The answer key with sites and intended
+  interventions is kept outside every repository tree; its SHA-256 is
+  `c7bb656c758efe6d2974ba967d62b885dbf85b341103d75ce519aa9a80351776`.
+  The JVM suite passes on the base (40 suites, 758 cases, 82 s) and must pass
+  on the planted commit before the supervisor starts.
+- **Supervisor.** One fresh subagent, the session's model, thinking high. It
+  gets the skill file (v0.3, outside the tree), the request below, and the
+  user's and the project's instruction files. It is not told about the
+  plants. It is asked to keep a list of every place where the skill text was
+  unclear, impossible to follow or in conflict with its tools.
+- **Request.** Review `haystack/` with the structural pack; first partition
+  `haystack/server` production code, its tests a partition of their own; put
+  that partition through every lens twice, once with one reader per lens (ids
+  prefixed `A/`) and once with the affinity groups (`B/`), same leads and
+  caps, neither arm seeing the other's answers; from reconciliation on, one
+  pool with the prefixes kept; then stop and write the report. Apply nothing.
+- **First wave** means that first partition through readers, admissibility,
+  refutation and spikes. Caps: 10 hypotheses per lens pass, 15 hypotheses to
+  refutation, 5 spikes.
+- **Models.** Readers and spikers: the session's model, thinking high.
+  Refuters: `gpt-6.2-sol`, thinking high.
+- **Measured per arm:** records returned; inadmissible; clusters; plants
+  found; and, after the pooled stages, refuted, supported, confirmed,
+  confirmed-unguarded and failed; reader tokens and cost as the harness
+  reports them. Per stage: agents, tokens, cost, wall time.
+- **Plant scoring.** Found: an admissible record of the arm cites the planted
+  site (path, and lines overlapping the planted ones) and proposes the
+  intended intervention or an equivalent. Flagged otherwise: it cites the
+  site with another intervention. Overflow only: the plant is named in a
+  reader's list of candidates not written up. Missed: none of these. A plant
+  found under another lens than intended counts as found.
+- **Allocation rule,** as above: groups are preferred if they reach at least
+  80% of the per-lens arm's supported and confirmed clusters at no more than
+  half its reading cost. Plants found are reported beside it and do not
+  enter the rule.
+- **What counts against the skill,** as above, plus: a deviation of the
+  supervisor that the text caused or failed to prevent.
+- **Monitor.** This session watches and does not steer. It interrupts only if
+  the supervisor writes into a checkout it does not own, pushes or merges,
+  starts more than 35 agents, or runs longer than three hours.
+- **Tuning.** The skill text changes only for failures observed in the run,
+  each logged in section 10 with the observation.
 
 ## 8. Known weaknesses of the draft
 
@@ -394,6 +453,27 @@ defects, all accepted. Changes made for v0.2:
 There was no third reading. v0.2's changes are unreviewed except by the tests
 above; the pilot is the next check.
 
+**Discussion, 27 Nov 2026.** Q183: tokens with lines beside them, no change.
+Q184: measured-only admission, no change; with it came the suggestion to ask
+agents for falsifiers on every hypothesis. v0.2 did ask for them, as a field
+called `refuters`, and then never used them: they were withheld from the
+refuter and nothing later read them. Changes made for v0.3:
+
+- The field is `falsifiers`, each an observation with the way to check it, at
+  least two per hypothesis, and the lens cards' "kill tests" carry the same
+  name. A record whose falsifiers cannot be checked is inadmissible.
+- The refuter still works blind first and returns the falsifiers it checked.
+  Then a ledger per hypothesis merges the reader's, the lens's and the
+  refuter's falsifiers and the differences only one of them saw; what reading
+  can settle goes back to the refuter, what needs a run goes to the spike.
+- `refuted` means a falsifier was observed; `supported` means none was and
+  nothing is left that reading could settle; the spike checks the rest; the
+  report shows falsifiers checked and still unchecked.
+- A refuter needs the history of the sites, so it gets a shell to use
+  read-only or the history in its brief.
+
+v0.3's changes have had no independent reading.
+
 ## 10. Tuning log
 
 Empty: no run yet.
@@ -402,13 +482,15 @@ Empty: no run yet.
 
 - Branch `code-quality-review-skill`, work tree
   `.worktrees/wt-ponygirls-code-quality-review-skill`; not merged. Commits:
-  `cf738b4e` (v0), `4bf77c32` (v0.1), `7f1ed212` (v0.2).
+  `cf738b4e` (v0), `4bf77c32` (v0.1), `7f1ed212` (v0.2); v0.3 follows.
+- Pilot tree: local branch `haystack-server-helpers`, work tree
+  `.worktrees/wt-ponygirls-haystack-helpers`, planted commit `04aa8cce`.
+  Never merge or push it. Answer key and pilot scratch: `/tmp/cq-research/pilot`.
 - Published copy of `7f1ed212`, public, expires 27 Dec 2026: Manure artifact
   `b747a13411cf09afe1394f74b227897e`.
-- Decision inbox: Q183 (metric) answered, tokens with lines beside them.
-  Open: Q184 (admission), Q185 (pilot, models, cap), Q186 (Linear tracking).
-  Open in chat only: the lens set, the name and the home of the skill.
-- Not done: the discussion, the pilot, the Haystack skill-draft record (to be
+- Decision inbox: Q183 to Q186 answered (section 6). Open in chat only: the
+  lens set, the name and the home of the skill.
+- Not done: the pilot (section 7.1), the Haystack skill-draft record (to be
   written after the pilot), installation under `nix/pkg/llm-skills/skills/`.
 - Scratch material outside the repository, not needed to continue:
   `/tmp/cq-research` (prior-art downloads, clone-detector probes, the old

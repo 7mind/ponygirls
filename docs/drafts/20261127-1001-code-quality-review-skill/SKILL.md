@@ -42,8 +42,9 @@ section 7 is its test.
 - **Report first.** The deliverable is the report of section 8. Nothing in the
   reviewed checkout changes until the user names proposals to apply (section 9).
 - **No record, no finding.** A proposal exists only as a hypothesis record
-  (section 4): sites, intervention, prediction, and at least one observation
-  that would prove it wrong.
+  (section 4): sites, intervention, prediction, and falsifiers. A falsifier
+  is an observation that would prove the hypothesis wrong, stated with the
+  way to check it. Every falsifier ends up checked or reported as unchecked.
 - **Agreement is not evidence.** Several agents proposing or approving the same
   thing establishes nothing. Only a measured spike admits a hypothesis to the
   working set.
@@ -54,8 +55,8 @@ section 7 is its test.
   | `inadmissible` | a cited path or line does not check out | 5 |
   | `alternative` | lost precedence to another hypothesis on the same sites | 5 |
   | `untested` | cut by the refutation cap; says nothing about its merit | 5 |
-  | `refuted` | an independent reader produced a counterexample | 6 |
-  | `supported` | survived refutation; a candidate, not yet measured | 6 |
+  | `refuted` | a falsifier was observed: a counterexample with path and lines | 6 |
+  | `supported` | no falsifier observed by reading; a candidate, not yet measured | 6 |
   | `failed` | the spike did not hold up | 7 |
   | `confirmed` | measured, invariants held, a test notices a fault (for a pure deletion: no reference remains) | 7 |
   | `confirmed-unguarded` | measured, but no test notices a fault | 7 |
@@ -170,7 +171,10 @@ Return a JSON array of at most <N> hypothesis records in the schema below,
 largest predicted effect first. An empty array is a valid answer.
 - Every site carries an `anchor`: one line copied verbatim from the cited range.
 - List every difference between the sites, also the ones that look harmless.
-- Give at least one refuter: an observation that would prove you wrong.
+- Give at least two falsifiers: observations that would prove you wrong, each
+  with the way to check it (a search, a file to read, a command to run). Make
+  the lens's falsifiers specific to these sites and add what only this case
+  has. "A test fails" or "it might break" is not a falsifier.
 After the array: one line for each further candidate you saw and did not
 write up; then the files you read in full and the files you did not.
 ```
@@ -188,7 +192,7 @@ Hypothesis record (the `predicted` field is the pack's):
   "differences": [{"between": "site 1 and 2", "what": "…", "kind": "parameter | divergence | unknown"}],
   "predicted": {"prod_lines": -40, "test_lines": 0},
   "guards": ["tests believed to exercise the sites, or \"none known\""],
-  "refuters": ["an observation that would prove this wrong"],
+  "falsifiers": [{"observation": "what would prove this wrong", "check": "how to look for it"}],
   "risk": "low | medium | high, and why"
 }
 ```
@@ -208,10 +212,11 @@ Mechanical checks first; they need no judgment and remove invented material.
    into a shell command line. An `existing` that names a repository path must
    exist in the frozen tree and carry a matching anchor; it may lie outside
    the scope. An `existing` that names a library symbol is checked by the
-   refuter, not here. Anything that fails is `inadmissible`, kept with its
-   reason. Do not repair a record on the reader's behalf. A site in an
-   `unmeasured` format is admissible, but the hypothesis cannot be measured
-   and stays a candidate.
+   refuter, not here. Every falsifier names an observation and a way to check
+   it. Anything that fails is `inadmissible`, kept with its reason. Do not
+   repair a record on the reader's behalf. A site in an `unmeasured` format
+   is admissible, but the hypothesis cannot be measured and stays a
+   candidate.
 2. **Decisions.** A record that needs a new dependency, changes a contract,
    or by its own account does not improve the pack's currency becomes
    `deferred` and goes no further.
@@ -234,9 +239,10 @@ Mechanical checks first; they need no judgment and remove invented material.
 A refuter gets a fresh context and, where one is available, a model of
 another family than the reader's; say in the report when it was the same
 family. It receives the claim, the sites, `existing`, the intervention and
-the prediction. Withhold the reader's `differences`, `guards` and `refuters`
-so that it derives them itself. Up to five hypotheses on the same files may
-share one refuter.
+the prediction. Withhold the reader's `differences`, `guards` and
+`falsifiers` in this pass, so that it derives its own. Up to five hypotheses
+on the same files may share one refuter. A refuter needs the history of the
+sites: give it a shell to use read-only, or attach the history to its brief.
 
 ```text
 Try to refute this change hypothesis. Read-only. Tree: <frozen work tree>, commit <sha>.
@@ -250,19 +256,27 @@ Try to refute this change hypothesis. Read-only. Tree: <frozen work tree>, commi
    requires the present shape or forbids the intervention.
 5. If something is to be reused, read it: does the symbol exist at the locked
    version, and what does it do on empty input, on errors, at its limits?
-6. Apply the lens's kill tests: <kill tests from the lens card>.
+6. Check the lens's falsifiers: <falsifiers from the lens card>.
 7. Name the tests that would notice a change of behaviour at these sites, or
    state that you found none.
-Verdict `refuted` needs a concrete counterexample with path:lines: an input,
-a caller, a rule or a commit. Doubt without a counterexample is `not-refuted`
-with the strongest remaining risk stated. Return the verdict, your difference
-list, the guarding tests and what you read. Propose no improvements.
+Verdict `refuted` needs a falsifier you observed: a concrete counterexample
+with path:lines (an input, a caller, a rule, a commit). Doubt without one is
+`not-refuted`. Return the verdict; your difference list; every falsifier you
+checked, as `observed` or `not observed` with the lines that show it; the
+falsifiers you could not settle by reading; the guarding tests; what you
+read. Propose no improvements.
 ```
 
-Then, yourself: read the cited lines of every counterexample before accepting
-a kill, because a wrong kill loses value silently. Compare the refuter's
-difference list with the reader's; a difference only one of them saw becomes
-a check for the spike. `not-refuted` becomes `supported`.
+**Falsifier ledger.** For each hypothesis merge into one list the reader's
+falsifiers, the lens's, the refuter's, and every difference that only one of
+the two saw (as "this difference matters"). An entry is `observed`,
+`not observed` (with the lines or the command that show it) or `unchecked`.
+Give the entries that are still unchecked and that reading can settle back
+to the refuter, or settle them yourself from the cited lines. Before
+accepting an `observed`, read its lines yourself: a wrong kill loses value
+silently. One observed falsifier makes the hypothesis `refuted`. With none
+observed and nothing left that reading could settle, it is `supported`; the
+entries that need a run go with it to the spike.
 
 ## 7. Spikes
 
@@ -277,8 +291,8 @@ and gets one hypothesis.
 ```text
 Implement exactly this one change in your own work tree of commit <sha>.
 Touch no other checkout. Commit nothing to a shared branch. Push nothing.
-<record; the refuter's remaining risk, difference list and guarding tests;
- paths of measure.py and of the baseline manifest; the project's inner-loop commands>
+<record; its falsifier ledger; the guarding tests; paths of measure.py and
+ of the baseline manifest; the project's inner-loop commands>
 0. Before editing, run the narrowest tests that cover the sites and keep the
    list or count of executed cases. If they fail, stop: `failed`, baseline
    not green. If no test covers the sites, say so and go on.
@@ -286,10 +300,10 @@ Touch no other checkout. Commit nothing to a shared branch. Push nothing.
    sites, and stage it (`git add -A`) before building anything.
 2. Build or type-check every component the patch touches. Run the same tests
    and compare the executed cases with step 0.
-3. For the remaining risk and for each listed difference, show by a run, not
-   by argument, that the patch leaves it alone: a check that passes on the
-   base commit and with the patch. Afterwards delete the check, or stage it
-   if it is a test the project should keep, and say which.
+3. For every falsifier of the ledger that is still unchecked, try to make
+   the observation by a run, not by argument: a check that passes on the base
+   commit and with the patch shows it `not observed`. Afterwards delete the
+   check, or stage it if it is a test the project should keep, and say which.
 4. `git status --porcelain` must now show the staged patch and nothing else:
    remove build output that is not ignored. Then measure, from the root of
    your work tree: `python3 <measure.py> --compare <baseline manifest> >
@@ -301,18 +315,19 @@ Touch no other checkout. Commit nothing to a shared branch. Push nothing.
    pure deletion has no changed path: instead search the whole repository
    again for references to the deleted names and build every component that
    could refer to them.
-Stop and report `failed` when the tests pass only after changing behaviour
-or a test; when the change needs edits beyond the stated sites that cancel
-the gain; when <the pack's pass condition> is not met; or when code moved
-into a file the script does not measure.
+Stop and report `failed` when a falsifier is observed; when the tests pass
+only after changing behaviour or a test; when the change needs edits beyond
+the stated sites that cancel the gain; when <the pack's pass condition> is
+not met; or when code moved into a file the script does not measure.
 Return: verdict; the patch (`git diff --cached <sha>`); each command with its
-exit status; the comparison output; the executed-case comparison; the checks
-of step 3; the negative-control result; every deviation from the hypothesis.
+exit status; the comparison output; the executed-case comparison; the outcome
+of each falsifier; the negative-control result; every deviation from the
+hypothesis.
 ```
 
 **Patch review.** Before a result counts, the patch is read by someone who
 did not write it (you, or a refuter): against section 0, against the lens's
-kill tests, and for what it newly introduces, such as a flag parameter, a
+falsifiers, and for what it newly introduces, such as a flag parameter, a
 shared object that was per use, a loop inside a loop over the same data, a
 changed order, a swallowed error. A problem found here makes the hypothesis
 `failed`, or sends it back to the spiker once.
@@ -331,18 +346,19 @@ The working set is every `confirmed` and `confirmed-unguarded` hypothesis.
 1. Scope: commit, paths, exclusions, baseline totals, lenses and partitions
    run, models used per role.
 2. Working set: id, lens, intervention, sites, measured effect, status,
-   guarding tests, risk. Then the measured total. Effects of hypotheses that
-   share sites do not add up; say which ones overlap.
-3. Candidates: every `supported` hypothesis with its predicted effect and
-   the reason it was not spiked, and the calibration: the median, over spikes
+   falsifiers checked, guarding tests, risk. Then the measured total. Effects
+   of hypotheses that share sites do not add up; say which ones overlap.
+3. Candidates: every `supported` hypothesis with its predicted effect, its
+   falsifiers still unchecked and the reason it was not spiked, and the
+   calibration: the median, over spikes
    that produced a measurement and whose prediction was not zero, of measured
    ÷ predicted change in lines (production and test together), with the
    number of ratios. With fewer than three ratios write "insufficient data"
    and give no estimate.
 4. `deferred`: a new dependency, a contract change, a proposal that improves
    something other than the pack's currency.
-5. `refuted` and `failed`, each with its counterexample or reason, so that
-   nobody proposes them again.
+5. `refuted` and `failed`, each with the falsifier observed or the reason, so
+   that nobody proposes them again.
 6. `defect-candidate`s.
 7. Residue: `untested` and `alternative` hypotheses by id; `inadmissible`
    ones by id with the reason; the candidates readers named without writing
@@ -399,7 +415,7 @@ before spending more.
   abstraction-fitness, wiring); excess (dead-weight, library-underuse);
   siblings (reinvention, read across components).
 
-Each card goes to a reader verbatim; its kill tests also go to the refuter.
+Each card goes to a reader verbatim; its falsifiers also go to the refuter.
 
 ### duplication
 
@@ -413,7 +429,7 @@ Each card goes to a reader verbatim; its kill tests also go to the refuter.
   about six lines. Test bodies whose repetition keeps each case readable.
 - **Record must state.** Every difference between the copies, each classified
   as a parameter or a divergence.
-- **Kill tests.** A difference that is intended and would need a flag. Copies
+- **Falsifiers.** A difference that is intended and would need a flag. Copies
   that changed apart, for different reasons, in at least two commits. The
   shared code would have to live where one of the sites may not depend.
 
@@ -434,7 +450,7 @@ Each card goes to a reader verbatim; its kill tests also go to the refuter.
 - **Record must state.** Which implementation becomes the only one and why
   (most complete, best tested, lowest in the dependency order), and the
   differences in behaviour by class of input.
-- **Kill tests.** An input on which the implementations differ and a caller
+- **Falsifiers.** An input on which the implementations differ and a caller
   relies on the difference. The surviving implementation needs an option per
   caller.
 
@@ -454,7 +470,7 @@ Each card goes to a reader verbatim; its kill tests also go to the refuter.
   behaviour can be read (source in the package cache, or documentation of
   that version); the edge cases compared: empty input, errors, encoding,
   concurrency, limits.
-- **Kill tests.** The symbol does not exist at the locked version. An edge
+- **Falsifiers.** The symbol does not exist at the locked version. An edge
   case differs and a test or caller depends on it. The replacement is not
   available in that runtime, or has a worse cost class on unbounded input.
 
@@ -475,7 +491,7 @@ Each card goes to a reader verbatim; its kill tests also go to the refuter.
   which call sites shrink. If size will not fall, the other cost it removes
   (sites to edit per change, states that become unrepresentable, checks that
   become unnecessary); such a record is `deferred` for the user.
-- **Kill tests.** The members do not mean the same thing at every site. The
+- **Falsifiers.** The members do not mean the same thing at every site. The
   owner would have to depend on its users. The abstraction only moves code.
 
 ### under-generalization
@@ -491,7 +507,7 @@ Each card goes to a reader verbatim; its kill tests also go to the refuter.
 - **Record must state.** A table of variants against variation points, the
   single form that replaces them (data table, value, type or function
   parameter, generic component), and its callers.
-- **Kill tests.** More than about three variation points, or any flag or mode
+- **Falsifiers.** More than about three variation points, or any flag or mode
   parameter that selects behaviour. Variants with separate histories. A form
   that needs casts, reflection or dispatch on strings. Materially worse type
   errors or stack traces.
@@ -513,7 +529,7 @@ Each card goes to a reader verbatim; its kill tests also go to the refuter.
   that enforce a policy. Shapes a framework requires. Published contracts.
 - **Record must state.** The intervention as one of inline, delete, split by
   caller group, move to the owner, narrow the interface; and the callers.
-- **Kill tests.** A second implementation exists or is documented as planned.
+- **Falsifiers.** A second implementation exists or is documented as planned.
   Inlining would repeat code at two or more sites. The wrapper enforces an
   invariant.
 
@@ -537,7 +553,7 @@ Each card goes to a reader verbatim; its kill tests also go to the refuter.
   disappears; and, when the component already has a dependency-injection
   library locked, the bindings and lifecycle resources that replace the
   manual code.
-- **Kill tests.** The runtime rules the mechanism out (reflection limits of
+- **Falsifiers.** The runtime rules the mechanism out (reflection limits of
   ahead-of-time images, bundle-less browser code). An object's lifetime or
   sharing changes and something can observe it. Start-up or shutdown order or
   failure behaviour changes. Size rises and no test seam improves.
@@ -558,7 +574,7 @@ Each card goes to a reader verbatim; its kill tests also go to the refuter.
 - **Record must state.** The proof of non-use: the name searched as text in
   code, scripts, build, deployment and documentation files, the entry points
   checked, the producers and stored data checked.
-- **Kill tests.** A reference from outside the code proposed for deletion. A
+- **Falsifiers.** A reference from outside the code proposed for deletion. A
   stored datum or a client version that still needs the path. An error text,
   log line or metric that something consumes.
 
@@ -574,7 +590,7 @@ Each card goes to a reader verbatim; its kill tests also go to the refuter.
   Cases that look alike and pin different behaviour.
 - **Record must state.** That the set of executed cases and their assertions
   stays the same, and how that will be shown.
-- **Kill tests.** The extraction hides what a case tests. A shared fixture
+- **Falsifiers.** The extraction hides what a case tests. A shared fixture
   couples suites that must run on separate databases or processes. The case
   count changes.
 
@@ -588,8 +604,8 @@ suspected defect, a slow path, a misleading name) replaces the brief of
 section 7 with its own executed test. What stays for every pack: records,
 mechanical admissibility, independent refutation, and that only an executed
 test admits a hypothesis to the working set. Write the lens cards (question,
-look for, skip, record must state, kill tests) before running a lens. A lens
-without a currency and a kill test produces opinions: do not run it. The rows
+look for, skip, record must state, falsifiers) before running a lens. A lens
+without a currency and falsifiers produces opinions: do not run it. The rows
 below are starting points, not tested packs.
 
 | Pack | Example lenses | Currency and prediction | The test passes when |
@@ -734,7 +750,7 @@ for part, role in sorted({k[:2] for k in total}):
 ## Boundaries
 
 - Not a diff or merge-request review, and not a substitute for tests.
-- `supported` means one independent reader found no counterexample. It is not
+- `supported` means that no falsifier was observed by reading. It is not
   proof, and it is not in the working set.
 - A spike's tests bound what "behaviour unchanged" means. Where coverage is
   thin, `confirmed-unguarded` is the honest result.
