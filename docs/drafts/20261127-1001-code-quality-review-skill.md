@@ -982,8 +982,8 @@ The procedure does what it was built for: no reader invented a path or a
 quote in 166 records, eleven of eleven planted smells were found, every
 change in a working set was measured and behaviour-checked, and two changes
 that looked like savings were stopped by the token gate or by a fault
-injection. On this code it finds little: between 0.3% and 1.2% of what was
-read. The first measurement already pointed that way (0.5% literal
+injection. On this code it finds little: between 0.2% and 1.2% of the
+production lines read. The first measurement already pointed that way (0.5% literal
 duplication in production code, most clones in tests); the three runs show
 that re-implementation, which a clone detector cannot see, is not much larger
 here.
