@@ -85,7 +85,9 @@ pkgs.runCommand "chronicle-hm-server" {
     substitute ${script} ${name} --replace-fail /fixture "$TMPDIR/fixture"
   '') scripts)}
   bash setup
-  test "$(stat -c %a "$TMPDIR/fixture/chronicle/credentials")" = 700
+  mode=$(stat -c %a "$TMPDIR/fixture/chronicle/credentials")
+  test -n "$mode"
+  test "$mode" = 700
   first=$(cat "$TMPDIR/fixture/chronicle/credentials/alice.pbkdf2")
   test -n "$first"
   bash setup

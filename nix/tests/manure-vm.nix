@@ -315,7 +315,7 @@ assert hmSrc.rev == "7834e82588860aaf780cec1366524456a70898d7";
     edge.wait_until_succeeds("manure-vm-current-client ready")
     strict.wait_until_succeeds("manure-vm-current-client ready")
     # N1: custom storage path owned 0700 by the service user (R2 launcher up).
-    edge.succeed("test \"$(stat -c '%a %U %G' /srv/manure-data)\" = '700 manure manure'")
+    edge.succeed("mode=$(stat -c '%a %U %G' /srv/manure-data); test -n \"$mode\"; test \"$mode\" = '700 manure manure'")
     # N1/M2: generated Version replaces the removed GET health route.
     # No current management DTO is handwritten; installed client/codecs own it.
     probe = "manure-vm-current-client "
@@ -380,7 +380,7 @@ assert hmSrc.rev == "7834e82588860aaf780cec1366524456a70898d7";
     # preserved via typed backend status/body + restored access logs + global
     # errors for non-API contexts (gate liveness is proven once by the
     # probe --selftest above, which drives these same functions).
-    edge.succeed("$(readlink -f /proc/$(systemctl show -p MainPID --value nginx.service)/exe) -c /etc/nginx/nginx.conf -T > /tmp/nginx-T.log 2> /tmp/nginx-T.err")
+    edge.succeed("pid=$(systemctl show -p MainPID --value nginx.service); test -n \"$pid\"; exe=$(readlink -f \"/proc/$pid/exe\"); test -n \"$exe\"; \"$exe\" -c /etc/nginx/nginx.conf -T > /tmp/nginx-T.log 2> /tmp/nginx-T.err")
     edge.succeed("! grep -q 'manure-error.log' /tmp/nginx-T.log")
     edge.succeed("grep -E '^\\s*error_log' /tmp/nginx-T.log > /tmp/error-channels.log")
     edge.succeed("systemctl stop manure.service")
@@ -411,7 +411,7 @@ assert hmSrc.rev == "7834e82588860aaf780cec1366524456a70898d7";
     edge.succeed("before=$(cat /tmp/nginx-pid-before); after=$(systemctl show -p MainPID --value nginx.service); test -n \"$before\"; test -n \"$after\"; test \"$after\" != \"$before\"")
     # Active worker FD identity (not just the displayed name): the worker's
     # access-log FD must resolve to /dev/full itself.
-    edge.succeed("found=0; full=$(stat -Lc '%d:%i' /dev/full); for d in /proc/[0-9]*; do if grep -q 'nginx: worker process' \"$d/cmdline\" 2>/dev/null; then for fd in \"$d\"/fd/*; do if test \"$(stat -Lc '%d:%i' \"$fd\" 2>/dev/null)\" = \"$full\"; then found=1; fi; done; fi; done; test $found -eq 1")
+    edge.succeed("found=0; full=$(stat -Lc '%d:%i' /dev/full); test -n \"$full\"; for d in /proc/[0-9]*; do if grep -q 'nginx: worker process' \"$d/cmdline\" 2>/dev/null; then for fd in \"$d\"/fd/*; do id=$(stat -Lc '%d:%i' \"$fd\" 2>/dev/null) || continue; if test \"$id\" = \"$full\"; then found=1; fi; done; fi; done; test \"$found\" -eq 1")
     # Demonstrate the intended ENOSPC cause directly on the mounted path.
     edge.succeed("if python3 -c \"f=open('/var/log/nginx/manure-access.log','a'); f.write('x'); f.flush()\" 2>/tmp/enospc.err; then echo 'UNEXPECTED-WRITE-SUCCESS' >&2; exit 1; fi; grep -q 'No space left' /tmp/enospc.err")
     edge.succeed("journalctl --show-cursor -n0 -u nginx --no-pager | tail -1 | sed 's/^-- cursor: //' > /tmp/cur-crit")
@@ -420,14 +420,14 @@ assert hmSrc.rev == "7834e82588860aaf780cec1366524456a70898d7";
     edge.succeed("code=$(curl -s -o /dev/null -D /tmp/rdr-crit.hdrs -w '%{http_code}' 'http://api.example.test/api/current/nope?tok=CANARY_RDRCRIT_EE66'); rc=$?; echo \"$code\" > /tmp/code-crit-rdr; test $rc -eq 0")
     edge.succeed("grep -q '^Location: ' /tmp/rdr-crit.hdrs")
     edge.succeed("sleep 1")
-    edge.succeed("journalctl --after-cursor=\"$(cat /tmp/cur-crit)\" -u nginx --no-pager > /tmp/jcrit-nginx.log")
-    edge.succeed("journalctl --after-cursor=\"$(cat /tmp/cur-crit)\" -u manure --no-pager > /tmp/jcrit-manure.log")
+    edge.succeed("cursor=$(cat /tmp/cur-crit); test -n \"$cursor\"; journalctl --after-cursor=\"$cursor\" -u nginx --no-pager > /tmp/jcrit-nginx.log")
+    edge.succeed("cursor=$(cat /tmp/cur-crit); test -n \"$cursor\"; journalctl --after-cursor=\"$cursor\" -u manure --no-pager > /tmp/jcrit-manure.log")
     edge.succeed("PYTHONPATH=/etc/manure-test python3 /etc/manure-test/manure-privacy-check.py --log /tmp/jcrit-nginx.log --log /tmp/jcrit-manure.log --absent CANARY_CRITFULL_CC44 --absent CANARY_RDRCRIT_EE66 --status-file /tmp/code-crit-api --expect 404")
     edge.succeed(probe + "check-notfound --file /tmp/crit-api.json --status-file /tmp/code-crit-api")
     edge.succeed("PYTHONPATH=/etc/manure-test python3 /etc/manure-test/manure-privacy-check.py --log /tmp/jcrit-nginx.log --log /tmp/jcrit-manure.log --status-file /tmp/code-crit-rdr --expect 301")
     # All four Manure contexts (2 API locations + 2 redirects) disable the
     # unsafe native error channel; global diagnostics stay untouched.
-    edge.succeed("test $(grep -c 'error_log /dev/null;' /tmp/nginx-T.log) -eq 4")
+    edge.succeed("count=$(grep -c 'error_log /dev/null;' /tmp/nginx-T.log); test -n \"$count\"; test \"$count\" -eq 4")
     # Every persistent file error channel configured on this host must be
     # free of every canary so far (independent per-channel check; journal
     # channels are covered by the windowed probes above).
@@ -491,7 +491,7 @@ assert hmSrc.rev == "7834e82588860aaf780cec1366524456a70898d7";
     edge.succeed("test ! -e ${hmCacheDir}")
     # The invoked yolo MUST be the evaluated profile's binary (not a shadow
     # on PATH): byte-exact store-path comparison, no name lookup.
-    edge.succeed("echo \"yolo-at: $(command -v yolo) -> $(readlink -f $(command -v yolo))\"; echo \"yolo-want: ${hmYoloDrv}/bin/yolo\"; test \"$(readlink -f $(command -v yolo))\" = \"${hmYoloDrv}/bin/yolo\"")
+    edge.succeed("at=$(command -v yolo); test -n \"$at\"; resolved=$(readlink -f \"$at\"); test -n \"$resolved\"; echo \"yolo-at: $at -> $resolved\"; echo \"yolo-want: ${hmYoloDrv}/bin/yolo\"; test \"$resolved\" = \"${hmYoloDrv}/bin/yolo\"")
     edge.succeed("mkdir -p /srv/manure-hm-fetch")
     edge.succeed("head -c 33554432 /dev/urandom > /tmp/hm-big.bin")
     # Complementary standalone guard probe (guard TEXT only — NOT adapter
@@ -521,7 +521,7 @@ assert hmSrc.rev == "7834e82588860aaf780cec1366524456a70898d7";
     # regular token outside /etc, provably writable outside the sandbox
     # (O_WRONLY open+close, bytes unchanged) so the in-sandbox denial can
     # only come from the contributed RO mount (errno retained there).
-    edge.succeed("test $(stat -c %a /srv/manure-test/token.raw) -eq 600")
+    edge.succeed("mode=$(stat -c %a /srv/manure-test/token.raw); test -n \"$mode\"; test \"$mode\" -eq 600")
     edge.succeed("sha256sum /srv/manure-test/token.raw | cut -d' ' -f1 > /tmp/token-pre")
     edge.succeed("python3 -c \"import os; fd=os.open('/srv/manure-test/token.raw',os.O_WRONLY); os.close(fd)\"")
     edge.succeed("digest=$(sha256sum /srv/manure-test/token.raw | cut -d' ' -f1); pre=$(cat /tmp/token-pre); test -n \"$digest\"; test \"$digest\" = \"$pre\"")
@@ -533,10 +533,10 @@ assert hmSrc.rev == "7834e82588860aaf780cec1366524456a70898d7";
     # requests before the authoritative baseline/observer cursor. Status alone
     # cannot fence a chunk still reading its HTTP body before the process gate.
     # Keep the provider PID, payload root, metadata, credential and cache intact.
-    edge.succeed("systemctl show -p MainPID --value postgresql.service > /tmp/resume-pg-pid; test $(cat /tmp/resume-pg-pid) -gt 0")
+    edge.succeed("systemctl show -p MainPID --value postgresql.service > /tmp/resume-pg-pid; pid=$(cat /tmp/resume-pg-pid); test -n \"$pid\"; test \"$pid\" -gt 0")
     edge.succeed("stat -c '%d:%i' /srv/manure-data > /tmp/resume-root-identity")
     edge.succeed("systemctl stop manure.service nginx.service")
-    edge.succeed("set -eu; for unit in manure nginx; do test $(systemctl show -p MainPID --value $unit.service) -eq 0; test $(systemctl show -p ActiveState --value $unit.service) = inactive; test $(systemctl show -p Result --value $unit.service) = success; test $(systemctl show -p ExecMainStatus --value $unit.service) -ne 9; done")
+    edge.succeed("set -eu; for unit in manure nginx; do pid=$(systemctl show -p MainPID --value \"$unit.service\"); state=$(systemctl show -p ActiveState --value \"$unit.service\"); result=$(systemctl show -p Result --value \"$unit.service\"); status=$(systemctl show -p ExecMainStatus --value \"$unit.service\"); test -n \"$pid\"; test -n \"$state\"; test -n \"$result\"; test -n \"$status\"; test \"$pid\" -eq 0; test \"$state\" = inactive; test \"$result\" = success; test \"$status\" -ne 9; done")
     edge.succeed("systemctl start manure.service nginx.service")
     edge.wait_for_unit("manure.service")
     edge.wait_for_unit("nginx.service")
@@ -546,16 +546,16 @@ assert hmSrc.rev == "7834e82588860aaf780cec1366524456a70898d7";
     edge.wait_until_succeeds(probe + "ready")
     edge.succeed(probe + "version")
     edge.succeed(probe + "snapshot-status --output /srv/manure-hm-fetch")
-    edge.succeed("test $(cat /srv/manure-hm-fetch/rb) -gt 0 && test $(cat /srv/manure-hm-fetch/rb) -lt $(cat /srv/manure-hm-fetch/tot)")
-    edge.succeed("test $(cat /srv/manure-hm-fetch/nr) -gt 0")
-    edge.succeed("PYTHONPATH=/etc/manure-test python3 /etc/manure-test/manure-privacy-check.py --log ${hmCacheDir}/uploads/*.json --absent $(cat /srv/manure-test/token.raw) --absent $(sha256sum /srv/manure-test/token.raw | cut -d' ' -f1)")
+    edge.succeed("rb=$(cat /srv/manure-hm-fetch/rb); tot=$(cat /srv/manure-hm-fetch/tot); test -n \"$rb\"; test -n \"$tot\"; test \"$rb\" -gt 0; test \"$rb\" -lt \"$tot\"")
+    edge.succeed("nr=$(cat /srv/manure-hm-fetch/nr); test -n \"$nr\"; test \"$nr\" -gt 0")
+    edge.succeed("token=$(cat /srv/manure-test/token.raw); digest=$(sha256sum /srv/manure-test/token.raw | cut -d' ' -f1); test -n \"$token\"; test -n \"$digest\"; PYTHONPATH=/etc/manure-test python3 /etc/manure-test/manure-privacy-check.py --log ${hmCacheDir}/uploads/*.json --absent \"$token\" --absent \"$digest\"")
     edge.succeed("stat -c %s /var/log/nginx/manure-vm-chunks.log > /tmp/resume-chunk-offset")
-    edge.succeed("yolo --disable=codegraph --ro-bind /tmp/hm-big.bin,/tmp/hm-big.bin --bind /srv/manure-hm-fetch,/srv/manure-hm-fetch pi -- manure upload /tmp/hm-big.bin --access internal --resume $(cat /srv/manure-hm-fetch/aid1) --json > /srv/manure-hm-fetch/up2.json")
+    edge.succeed("aid=$(cat /srv/manure-hm-fetch/aid1); test -n \"$aid\"; yolo --disable=codegraph --ro-bind /tmp/hm-big.bin,/tmp/hm-big.bin --bind /srv/manure-hm-fetch,/srv/manure-hm-fetch pi -- manure upload /tmp/hm-big.bin --access internal --resume \"$aid\" --json > /srv/manure-hm-fetch/up2.json")
     edge.succeed("grep -q artifact_id /srv/manure-hm-fetch/up2.json")
     edge.succeed("jq -r .artifact_id /srv/manure-hm-fetch/up2.json > /srv/manure-hm-fetch/aid2")
     edge.succeed("PYTHONPATH=/etc/manure-test python3 /etc/manure-test/manure-privacy-check.py --equal-a /srv/manure-hm-fetch/aid1 --equal-b /srv/manure-hm-fetch/aid2")
-    edge.succeed(probe + "check-resume --status /srv/manure-hm-fetch/up-status.json --log /var/log/nginx/manure-vm-chunks.log --start-byte $(cat /tmp/resume-chunk-offset)")
-    edge.succeed("AID=$(jq -r .artifact_id /srv/manure-hm-fetch/up2.json) && yolo --disable=codegraph --bind /srv/manure-hm-fetch,/srv/manure-hm-fetch pi -- manure fetch $AID /srv/manure-hm-fetch/fetched --json")
+    edge.succeed("offset=$(cat /tmp/resume-chunk-offset); test -n \"$offset\"; " + probe + "check-resume --status /srv/manure-hm-fetch/up-status.json --log /var/log/nginx/manure-vm-chunks.log --start-byte \"$offset\"")
+    edge.succeed("aid=$(jq -r .artifact_id /srv/manure-hm-fetch/up2.json); test -n \"$aid\"; yolo --disable=codegraph --bind /srv/manure-hm-fetch,/srv/manure-hm-fetch pi -- manure fetch \"$aid\" /srv/manure-hm-fetch/fetched --json")
     edge.succeed("cmp /tmp/hm-big.bin /srv/manure-hm-fetch/fetched/hm-big.bin")
     edge.succeed("original=$(sha256sum /tmp/hm-big.bin | cut -d' ' -f1); fetched=$(sha256sum /srv/manure-hm-fetch/fetched/hm-big.bin | cut -d' ' -f1); test -n \"$original\"; test \"$original\" = \"$fetched\"")
     edge.succeed("! ls ${hmCacheDir}/uploads/ 2>/dev/null | grep -q .")
