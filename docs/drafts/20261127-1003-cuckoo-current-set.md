@@ -314,7 +314,7 @@ completions.
   the model never chooses between the record and a task. Declaring the built-in tools also changes the system text
   Pi derives from them (the tool list and their guidelines), so the difference between the two tool cells is not
   attributable to the tool definitions alone. Sessions are short: nothing here is about long sessions,
-  many checkpoints or real compaction. One provider family; cells of 12 to 24 sessions. In a chat turn each use of
+  many checkpoints or real compaction. One provider family; cells of 6 to 24 sessions. In a chat turn each use of
   the tool costs one more provider request; in a working turn the call can ride with other tool calls, which was not
   measured. The wording of the guidance was not changed after these results: a change would need the whole batch
   again and a new held-out scenario.
