@@ -137,7 +137,7 @@ final class OriginPolicySuite extends munit.FunSuite {
   }
   test("the request headers never print a bearer token or a cookie value") {
     val printed = headers("ts.test:8445", cookie = Vector("__Host-svc=" + Session), authorization = Vector("Bearer " + Session + "x")).toString
-    assert(!printed.contains(Session), printed)
-    assert(printed.contains("ts.test:8445"), printed)
+    assert(!printed.contains(Session), "the request headers print a credential")
+    assert(printed.contains("ts.test:8445"), "the request headers do not print the host")
   }
 }

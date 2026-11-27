@@ -5,8 +5,9 @@ import cats.syntax.all.*
 import io.circe.Json
 import java.sql.Connection
 import java.time.Clock
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 import ponygirls.auth.boundary.{ConfiguredTokens, Presented}
+import ponygirls.runtime.{JdbcDatabase, JdbcFailure}
 import scala.util.Using
 
 /** Long-lived parts of imperative accounts: the shared dispatcher with its in-memory windows and credential
@@ -93,17 +94,22 @@ object CallerReads {
   }
 }
 
-/** What the account service tells its consumer, after a commit and never after a rollback, with identifiers that are
-  * not secrets. There is no default: each service states its choice. */
+/** What the account service tells its consumer, with identifiers that are not secrets. There is no default: each service
+  * states its choice. */
 enum AccountLifecycle {
   /** Nothing is told, and nothing is read to tell it. */
   case Unobserved
-  /** `credentialEnded`: a browser session (`session-<uuid>`) ended by sign-out or by a sign-in that replaced it, or an
-    * issued token (`issued-<uuid>`) revoked. `accountChanged`: an account whose rights ended or changed (disabled or
-    * enabled, its administrator role changed, its password changed or recovered with its sessions revoked, its TOTP
-    * requirement changed, its declared entry changed or removed by a reload, its imperative accounts suspended by the
-    * master switch); every session of it the change revoked is announced this way, not one by one. */
-  case Observed(credentialEnded: String => IO[Unit], accountChanged: String => IO[Unit])
+  /** `credentialEnded`: a browser session (`session-<uuid>`) that a sign-out deleted or a sign-in, sign-up, redemption or
+    * recovery replaced, or an issued token (`issued-<uuid>`) revoked; the id is the one the committing operation
+    * deleted or replaced. `accountChanged`: an account whose rights ended or changed (sessions or tokens revoked in
+    * bulk, disabled or enabled, activated by sign-up, redemption or approval, its password or administrator role
+    * changed, its declared entry, administrator flag or configured tokens changed or removed by a reload, its
+    * imperative accounts suspended or restored by the master switch). Told once the commit succeeded, never after a
+    * rollback, in a region that cannot be cancelled and whether or not releasing the connection afterwards fails; each
+    * callback on its own: one that fails is reported to `log` (one line, kind and id, no secret) and changes neither
+    * the operation's result nor the other notifications. A reload tells after its consumer published the configuration.
+    * The callbacks run on the operation's fiber: they must be quick and must not block. */
+  case Observed(credentialEnded: String => IO[Unit], accountChanged: String => IO[Unit], log: String => IO[Unit])
 }
 
 /** How startup and every reload install the declared directory. There is no default: each service states its choice. */
@@ -131,25 +137,44 @@ trait AccountStore {
   def tokens(owner: String): Vector[AccountToken]
   def issue(users: Vector[AccountUser], session: AccountCredential, name: String): AccountIssued
   def revoke(users: Vector[AccountUser], session: AccountCredential, id: String): Unit
-  /** The imperative core in this transaction; `directory` reads the merged directory again on every call. */
+  /** The imperative core in this transaction; `directory` reads the merged directory again on every call. What its
+    * operations end and change goes into `record`. */
   def imperative(settings: Option[ImperativeSettings], declared: DeclaredDirectory, directory: () => Vector[AccountUser],
-    hasher: PasswordHasher, clock: Clock): ImperativeAccounts
+    hasher: PasswordHasher, clock: Clock, record: LifecycleRecord): ImperativeAccounts
   def indexing(service: IndexingService, policy: IndexingPolicy): IndexingPreferences
 }
 /** One transaction per call: committed when `work` returns, rolled back when it throws. */
 trait AccountStorage {
   def transaction[A](work: AccountStore => A): IO[A]
+  /** Whether `failure`, raised by `transaction` after its work returned, came after the commit (releasing the
+    * connection failed): what the work did is committed. */
+  def afterCommit(failure: Throwable): Boolean
 }
 
 /** The service's transaction owner over the database of the shared tables. */
 trait ConnectionTransactions {
   def transaction[A](work: Connection => A): IO[A]
+  /** Whether `failure`, raised by `transaction` after its work returned, came after the commit. */
+  def afterCommit(failure: Throwable): Boolean
+}
+object ConnectionTransactions {
+  /** `JdbcTransactionEngine`'s failure for a connection whose close failed after the commit. */
+  private val CloseFailed = "database-close-failed"
+  /** Over a `JdbcDatabase`: its transactions, and its close failure after a commit. */
+  def jdbc(database: JdbcDatabase): ConnectionTransactions = new ConnectionTransactions {
+    def transaction[A](work: Connection => A): IO[A] = database.transaction(work)
+    def afterCommit(failure: Throwable): Boolean = failure match {
+      case JdbcFailure(code, _) => code == CloseFailed
+      case _ => false
+    }
+  }
 }
 
 /** `AccountStore` over the shared tables (`AccountSql`, `ImperativeAccountSql`, `IndexingPreferenceSql`). Owner keys
   * are the user ids. `history` adds the service's own retained identities to the fingerprint rows. */
 final class SharedAccountStorage(transactions: ConnectionTransactions, history: (Connection, IdentityHistory) => IdentityHistory) extends AccountStorage {
   def transaction[A](work: AccountStore => A): IO[A] = transactions.transaction(c => work(store(c)))
+  def afterCommit(failure: Throwable): Boolean = transactions.afterCommit(failure)
   /** The installation of a declared directory with the service's own rule on its declared ids. In one transaction, under
     * the directory lock: the shared check against imperative accounts, then `check` on the same connection with the
     * configuration being installed, then the reconciliation. An error `check` raises refuses the installation, and
@@ -174,9 +199,9 @@ final class SharedAccountStorage(transactions: ConnectionTransactions, history: 
     def issue(users: Vector[AccountUser], session: AccountCredential, name: String): AccountIssued = AccountSql.issue(c, users, session, name)
     def revoke(users: Vector[AccountUser], session: AccountCredential, id: String): Unit = AccountSql.revoke(c, users, session, id)
     def imperative(settings: Option[ImperativeSettings], declared: DeclaredDirectory, directory: () => Vector[AccountUser],
-        hasher: PasswordHasher, clock: Clock): ImperativeAccounts = {
+        hasher: PasswordHasher, clock: Clock, record: LifecycleRecord): ImperativeAccounts = {
       val sessions = new SharedAccountSessions(c, identity, directory)
-      ImperativeAccountSql.accounts(c, settings, declared, sessions, history(c, sessions), hasher, clock)
+      ImperativeAccountSql.accounts(c, settings, declared, new RecordingSessions(sessions, record), history(c, sessions), hasher, clock)
     }
     def indexing(service: IndexingService, policy: IndexingPolicy): IndexingPreferences = IndexingPreferenceSql.store(c, service, policy)
   }
@@ -191,18 +216,38 @@ final class SharedAccountStorage(transactions: ConnectionTransactions, history: 
 final class DeclarativeAccountService[S <: AccountSnapshot[S]](storage: AccountStorage, current: () => S, runtime: ImperativeRuntime,
     indexing: IndexingService, indexingPolicy: IndexingPolicy, passwords: BearerSecretPasswords, installation: DeclaredInstallation[S],
     lifecycle: AccountLifecycle) {
+  import DeclarativeAccountService.*
   /** The configuration last installed; a reload's announcements compare against it. */
   private val installed = new AtomicReference[Option[S]](None)
-  private def ended(credentialId: String): IO[Unit] = lifecycle match {
-    case AccountLifecycle.Unobserved => IO.unit
-    case AccountLifecycle.Observed(credentialEnded, _) => credentialEnded(credentialId)
-  }
-  private def changed(accountIds: Vector[String]): IO[Unit] = lifecycle match {
-    case AccountLifecycle.Unobserved => IO.unit
-    case AccountLifecycle.Observed(_, accountChanged) => accountIds.distinct.traverse_(accountChanged)
-  }
   private def refuse(refusal: AccountRefusal): Nothing = throw AccountRefused(refusal)
   private def directory(store: AccountStore, s: S): Vector[AccountUser] = store.directory(s.imperative, s.declared)
+
+  // ---- lifecycle ----
+
+  /** Each notification on its own: a callback that fails is reported to `log` (kind and id, no secret) and changes
+    * nothing else; a failing report changes nothing either. */
+  private def tell(credentials: Vector[String], accounts: Vector[String]): IO[Unit] = lifecycle match {
+    case AccountLifecycle.Unobserved => IO.unit
+    case AccountLifecycle.Observed(credentialEnded, accountChanged, log) =>
+      def one(kind: String, id: String, callback: String => IO[Unit]): IO[Unit] = IO.defer(callback(id)).handleErrorWith(failure =>
+        IO.defer(log(s"account lifecycle: $kind $id not delivered (${failure.getClass.getName})")).handleError(_ => ()))
+      credentials.distinct.traverse_(one(CredentialEnded, _, credentialEnded)) *> accounts.distinct.traverse_(one(AccountChanged, _, accountChanged))
+  }
+  /** `work` in one transaction with a record of what it ends and changes. Observed, the record is told once the commit
+    * succeeded: the whole runs uncancelably, and a failure the storage reports as after the commit (releasing the
+    * connection) is raised after the record was told. */
+  private def committed[A](work: (AccountStore, LifecycleRecord) => A): IO[A] = lifecycle match {
+    case AccountLifecycle.Unobserved => storage.transaction(store => work(store, new LifecycleRecord))
+    case AccountLifecycle.Observed(_, _, _) => IO.uncancelable { _ =>
+      val record = new LifecycleRecord
+      storage.transaction(store => work(store, record)).attempt.flatMap {
+        case Right(result) => tell(record.credentials, record.accounts).as(result)
+        case Left(failure) if storage.afterCommit(failure) => tell(record.credentials, record.accounts) *> IO.raiseError(failure)
+        case Left(failure) => IO.raiseError(failure)
+      }
+    }
+  }
+
   /** Startup and every reload (design §4.8.5): under the directory lock, a declared id or login equal to an
     * active or disabled imperative account fails closed before the declared directory is reconciled; an `Own`
     * installation adds the service's rule in the same transaction. */
@@ -210,25 +255,47 @@ final class DeclarativeAccountService[S <: AccountSnapshot[S]](storage: AccountS
     case DeclaredInstallation.Reconciled => storage.transaction(store => store.installDeclared(s.declared, s.users))
     case DeclaredInstallation.Own(own) => own(s)
   }) *> IO(installed.set(Some(s)))
-  /** One reload: the next configuration is published only once installed, otherwise its failure is published
-    * and every request fails closed until the configuration is repaired. Once installed, the accounts it changed
-    * against the configuration installed before are announced. */
-  def reloaded(next: IO[S]): IO[Either[Throwable, S]] =
-    next.flatTap(s => IO(installed.get).flatMap(before => install(s) *> before.traverse_(announce(_, s)))).attempt
-  /** The declared accounts whose entry or administrator flag differ, and, when the master switch went off, the
-    * imperative accounts it suspends (one more read, only when observed). */
+  /** One reload: the next configuration is installed and its result `publish`ed (a failure included: every request then
+    * fails closed until the configuration is repaired); then, observed, the accounts it changed against the configuration
+    * installed before are told. Installing, publishing and telling cannot be cancelled; a notification that fails does
+    * not change the result. */
+  def reloaded(next: IO[S], publish: Either[Throwable, S] => IO[Unit]): IO[Either[Throwable, S]] = lifecycle match {
+    case AccountLifecycle.Unobserved => next.flatTap(install).attempt.flatTap(publish)
+    case AccountLifecycle.Observed(_, _, _) => next.attempt.flatMap {
+      case Left(failure) => publish(Left(failure)).as(Left(failure))
+      case Right(s) => IO.uncancelable { _ =>
+        IO(installed.get).flatMap(before => install(s).attempt.flatMap {
+          case Left(failure) => publish(Left(failure)).as(Left(failure))
+          case Right(_) => publish(Right(s)) *> before.traverse_(announce(_, s)).as(Right(s))
+        })
+      }
+    }
+  }
+  /** The declared accounts whose entry, administrator flag or configured tokens differ, and, when the master switch went
+    * off or on, the imperative accounts it suspends or restores (one more read, only when observed). */
   private def announce(before: S, after: S): IO[Unit] = lifecycle match {
     case AccountLifecycle.Unobserved => IO.unit
-    case AccountLifecycle.Observed(_, _) =>
-      val ids = (before.users ++ after.users).map(_.id).distinct
-      val declared = ids.filter(id => before.users.find(_.id == id) != after.users.find(_.id == id) || before.declared.admins(id) != after.declared.admins(id))
-      val suspended = if (before.imperative.nonEmpty && after.imperative.isEmpty)
-        storage.transaction(store => store.directory(before.imperative, before.declared).filter(_.origin == AccountOrigin.Imperative).map(_.id))
-      else IO.pure(Vector.empty)
-      suspended.flatMap(imperative => changed(declared ++ imperative))
+    case AccountLifecycle.Observed(_, _, log) =>
+      val declared = (before.users ++ after.users).map(_.id).distinct.filter(id =>
+        before.users.find(_.id == id) != after.users.find(_.id == id) || before.declared.admins(id) != after.declared.admins(id) ||
+          !after.configured.sameFor(before.configured, id))
+      val switched = (before.imperative, after.imperative) match {
+        case (Some(_), None) => Some(before)
+        case (None, Some(_)) => Some(after)
+        case _ => None
+      }
+      val imperative = switched.fold(IO.pure(Vector.empty[String])) { on =>
+        storage.transaction(store => store.directory(on.imperative, on.declared).filter(_.origin == AccountOrigin.Imperative).map(_.id))
+          .handleErrorWith(failure => IO.defer(log(s"account lifecycle: imperative accounts not read (${failure.getClass.getName})"))
+            .handleError(_ => ()).as(Vector.empty))
+      }
+      imperative.flatMap(ids => tell(Vector.empty, declared ++ ids))
   }
   /** Active imperative accounts that the master switch being off suspends. */
   def suspended(s: S): IO[Int] = if (s.imperative.nonEmpty) IO.pure(0) else storage.transaction(_.activeImperativeUsers())
+
+  // ---- credentials ----
+
   private def authority(c: AccountCredential): Authority = Authority(c.userId, c.userType, c.tokenId)
   private def user(users: Vector[AccountUser], id: String): AccountUser = users.find(u => u.id == id && u.enabled).getOrElse(refuse(AccountRefusal.InvalidCredentials))
   private def authenticate(s: S, secret: String, cookie: Boolean): IO[Option[Authority]] = {
@@ -246,39 +313,41 @@ final class DeclarativeAccountService[S <: AccountSnapshot[S]](storage: AccountS
   def live(captured: Captured): IO[Boolean] = IO.defer {
     authenticate(current(), captured.presented.secret, captured.presented.cookie).map(_.contains(captured.authority))
   }
-  /** `authenticate` with the display name and, for a browser session, the administrator flag. A credential looked up in a
-    * transaction is judged against the configuration current when the transaction's callback runs, not the one
-    * `selected` was chosen under: a reload published while the check waited for a connection decides it. */
-  private def identified(selected: S, presented: Presented): IO[Option[Identified]] = {
-    def found(store: AccountStore, s: S, users: Vector[AccountUser], c: AccountCredential): Identified =
-      Identified(Captured(authority(c), presented), user(users, c.userId).displayName,
-        presented.cookie && accountCore(store, s, () => users).administrator(c.userId))
-    def looked(lookup: (AccountStore, Vector[AccountUser]) => Option[AccountCredential]): IO[Option[Identified]] = storage.transaction { store =>
-      val s = current()
-      val users = directory(store, s)
-      lookup(store, users).map(found(store, s, users, _))
-    }
-    if (presented.cookie) looked((store, users) => store.browser(users, presented.secret))
-    else selected.configured.authenticate(presented.secret) match {
-      case Some(token) => IO.pure(Some(Identified(Captured(Authority(token.userId, token.userType, token.tokenId), presented),
-        user(selected.users, token.userId).displayName, administrator = false)))
-      case None => looked((store, users) => store.bearer(users, presented.secret))
+  private def configuredIdentity(s: S, presented: Presented): Option[Identified] =
+    if (presented.cookie) None
+    else s.configured.authenticate(presented.secret).map(token => Identified(Captured(Authority(token.userId, token.userType, token.tokenId), presented),
+      user(s.users, token.userId).displayName, administrator = false))
+  /** `authenticate` with the display name and, for a browser session, the administrator flag. The whole decision — the
+    * transport rule and the credential `selection` makes, the precedence of configured tokens and the lookup — is taken
+    * under one configuration: the current one for a configured token, decided without waiting; for a lookup, the one
+    * read inside its transaction's callback, so that a reload published while it waited for a connection decides all
+    * of it. */
+  private def identified(selection: S => Presented): IO[Option[Identified]] = IO.defer {
+    val s = current()
+    configuredIdentity(s, selection(s)) match {
+      case found @ Some(_) => IO.pure(found)
+      case None => storage.transaction { store =>
+        val now = current()
+        val presented = selection(now)
+        configuredIdentity(now, presented).orElse {
+          val users = directory(store, now)
+          val found = if (presented.cookie) store.browser(users, presented.secret) else store.bearer(users, presented.secret)
+          found.map(c => Identified(Captured(authority(c), presented), user(users, c.userId).displayName,
+            presented.cookie && accountCore(store, now, () => users, new LifecycleRecord, new AtomicBoolean(false)).administrator(c.userId)))
+        }
+      }
     }
   }
-  /** `resolve` for a service's own routes: the credential `select` chooses under the configuration this decision reads,
-    * with its display name and administrator flag. */
-  def identify(select: S => Presented): IO[Identified] = IO.defer {
-    val s = current(); val selected = select(s)
-    identified(s, selected).map(_.getOrElse(refuse(AccountRefusal.InvalidCredentials)))
-  }
+  /** `resolve` for a service's own routes: the credential `select` chooses, with its display name and administrator
+    * flag. */
+  def identify(select: S => Presented): IO[Identified] = identified(select).map(_.getOrElse(refuse(AccountRefusal.InvalidCredentials)))
   /** The captured credential under the current configuration: empty once it no longer authenticates the same authority,
     * otherwise with the display name and administrator flag read now. */
-  def standing(captured: Captured): IO[Option[Identified]] = IO.defer {
-    identified(current(), captured.presented).map(_.filter(_.captured.authority == captured.authority))
-  }
+  def standing(captured: Captured): IO[Option[Identified]] =
+    identified(_ => captured.presented).map(_.filter(_.captured.authority == captured.authority))
   /** Whether `passwords` keeps `password` from being a password: with `Refused`, the secret of any configured token
     * (enabled owner or not, shared digest or not) or of a live issued token. Every canonical candidate is looked up,
-    * whatever the outcome, so that the lookup does not tell a refused password from a wrong one. */
+    * whatever the outcome. */
   private def bearerSecret(store: AccountStore, s: S, users: => Vector[AccountUser], password: String): Boolean =
     passwords == BearerSecretPasswords.Refused && Secrets.canonical(password) &&
       (s.configured.configures(password) | store.bearer(users, password).nonEmpty)
@@ -292,75 +361,90 @@ final class DeclarativeAccountService[S <: AccountSnapshot[S]](storage: AccountS
     if (authority(found) != captured.authority) refuse(AccountRefusal.AuthorityChanged)
     found
   }
-  /** The declarative password login, with the session it replaced; a refusal is raised, because it persists nothing
-    * (design D27). */
-  private def signIn(login: String, password: String, previous: Option[String]): IO[(SignedIn, Option[AccountCredential])] = storage.transaction { store =>
+
+  // ---- sign-in and the account operations ----
+
+  /** The declarative password login; a refusal is raised, because it persists nothing (design D27). The session it
+    * replaced is the one `loginReplacing` deleted. */
+  private def signIn(login: String, password: String, previous: Option[String]): IO[SignedIn] = committed { (store, record) =>
     val s = current()
     val users = directory(store, s)
     val result = store.loginReplacing(users, login, verifiable(bearerSecret(store, s, users, password), password), previous)
-    (SignedIn(user(users, result.session.credential.userId), result.session), result.replaced)
+    result.replaced.foreach(replaced => record.ended(replaced.tokenId))
+    SignedIn(user(users, result.session.credential.userId), result.session)
   }
-  /** For the imperative dispatcher's declared logins: it announces a replaced session from its reply. */
-  private val declarativeLogin: DeclarativeLogin = (login, password, previous) => signIn(login, password, previous).map(_._1)
-  def login(login: String, password: String, previous: Option[String]): IO[SignedIn] =
-    signIn(login, password, previous).flatTap((_, replaced) => replaced.traverse_(c => ended(c.tokenId))).map(_._1)
+  private val declarativeLogin: DeclarativeLogin = (login, password, previous) => signIn(login, password, previous)
+  def login(login: String, password: String, previous: Option[String]): IO[SignedIn] = signIn(login, password, previous)
   /** One database transaction per imperative operation; it commits whatever the operation returns, so rejections
     * keep their failure counters (design D27). The configuration is read inside the transaction, never taken from
     * the request: a reload published while the request waited (for its body or the credential gate) decides it —
-    * suspension, creation flags and admin flags take effect, and a failed reload fails it closed. */
+    * suspension, creation flags and admin flags take effect, and a failed reload fails it closed. With `Refused`, an
+    * operation that completed with a bearer secret as its new password is `weak-password` and rolls back; one refused
+    * for another reason keeps that reason (its checks that do not depend on the password come first). */
   private val transactions: ImperativeTransactions = new ImperativeTransactions {
-    def run[A](work: ImperativeAccounts => A): IO[A] = storage.transaction { store =>
+    def run[A](work: ImperativeAccounts => A): IO[A] = committed { (store, record) =>
       val s = current()
-      work(accountCore(store, s, () => directory(store, s)))
-    }
-  }
-  private def accountCore(store: AccountStore, s: S, liveDirectory: () => Vector[AccountUser]): ImperativeAccounts =
-    store.imperative(s.imperative, s.declared, liveDirectory, hasher(store, s, liveDirectory), runtime.clock)
-  /** The runtime's hasher. With bearer secrets refused, a bearer secret verifies as a wrong password does, and one
-    * offered as a new password is `weak-password` before it is hashed: the operation's transaction then rolls back,
-    * so nothing is stored, no session replaced and nobody signed in. */
-  private def hasher(store: AccountStore, s: S, liveDirectory: () => Vector[AccountUser]): PasswordHasher = passwords match {
-    case BearerSecretPasswords.Accepted => runtime.hasher
-    case BearerSecretPasswords.Refused => new PasswordHasher {
-      def hash(chars: Array[Char]): String =
-        if (bearerSecret(store, s, liveDirectory(), new String(chars))) throw AccountFailure(DeclarativeAccountService.WeakPassword)
-        else runtime.hasher.hash(chars)
-      def verify(chars: Array[Char], encoded: String): Boolean = {
-        val refused = bearerSecret(store, s, liveDirectory(), new String(chars))
-        runtime.hasher.verify(if (refused) verifiable(refused, "").toCharArray else chars, encoded)
+      val bearerPassword = new AtomicBoolean(false)
+      val result = work(accountCore(store, s, () => directory(store, s), record, bearerPassword))
+      (result: Any) match {
+        case _: AccountOutcome.Completed[?] if bearerPassword.get => throw AccountFailure(WeakPassword)
+        case _ => result
       }
     }
   }
+  private def accountCore(store: AccountStore, s: S, liveDirectory: () => Vector[AccountUser], record: LifecycleRecord,
+      bearerPassword: AtomicBoolean): ImperativeAccounts =
+    store.imperative(s.imperative, s.declared, liveDirectory, hasher(store, s, liveDirectory, bearerPassword), runtime.clock, record)
+  /** The runtime's hasher. With bearer secrets refused, a bearer secret verifies as a wrong password does, and one
+    * offered as a new password is marked in `bearerPassword` (and hashed like any other). */
+  private def hasher(store: AccountStore, s: S, liveDirectory: () => Vector[AccountUser], bearerPassword: AtomicBoolean): PasswordHasher =
+    passwords match {
+      case BearerSecretPasswords.Accepted => runtime.hasher
+      case BearerSecretPasswords.Refused => new PasswordHasher {
+        def hash(chars: Array[Char]): String = {
+          if (bearerSecret(store, s, liveDirectory(), new String(chars))) bearerPassword.set(true)
+          runtime.hasher.hash(chars)
+        }
+        def verify(chars: Array[Char], encoded: String): Boolean = {
+          val refused = bearerSecret(store, s, liveDirectory(), new String(chars))
+          runtime.hasher.verify(if (refused) verifiable(refused, "").toCharArray else chars, encoded)
+        }
+      }
+    }
   /** `POST /login` while the master switch is on: declared logins take `declarativeLogin`, every other login
     * the imperative decision; the reply is decided after commit. `s` is the snapshot taken after the body
-    * was read; it routes the request, and each transaction rereads the configuration. */
+    * was read; it routes the request, and each transaction rereads the configuration. With `Refused`, the sign-in is
+    * decided without the presented cookie, so that a wrong or refused password does no session work; once a sign-in
+    * succeeded, the presented session, if still live, ends in a transaction of its own. */
   def imperativeLogin(s: S, settings: ImperativeSettings, body: Json, presented: Option[String], clientAddress: String): IO[AccountReply] = {
-    // Observed only: which session a sign-in replaces, one more lookup of the presented cookie.
-    val prior = lifecycle match {
-      case AccountLifecycle.Unobserved => IO.pure(None)
-      case AccountLifecycle.Observed(_, _) => presentedSession(s, presented)
+    def request(previous: Option[String]) =
+      AccountRequest(AccountEndpoint.Post, LoginPath, Some(body), Vector.empty, None, previous, clientAddress)
+    passwords match {
+      case BearerSecretPasswords.Accepted => runtime.api.login(settings, s.declared, transactions, declarativeLogin, request(presented))
+      case BearerSecretPasswords.Refused => runtime.api.login(settings, s.declared, transactions, declarativeLogin, request(None)).flatTap { reply =>
+        reply.cookie match {
+          case CookieEffect.Set(_) => replacing(presented)
+          case CookieEffect.Keep => IO.unit
+        }
+      }
     }
-    prior.flatMap(replaced => runtime.api.login(settings, s.declared, transactions, declarativeLogin,
-      AccountRequest(AccountEndpoint.Post, DeclarativeAccountService.LoginPath, Some(body), Vector.empty, None, presented, clientAddress))
-      .flatTap(announced(_, replaced)))
   }
-  /** After a dispatcher reply, whose transaction committed: the presented session a new cookie replaced, and the accounts
-    * whose rights its events changed. */
-  private def announced(reply: AccountReply, presented: Option[AccountCredential]): IO[Unit] = {
-    val replaced = reply.cookie match {
-      case CookieEffect.Set(_) => presented.traverse_(c => ended(c.tokenId))
-      case CookieEffect.Keep => IO.unit
+  /** The presented session, when it is still live, ends: the one this transaction deletes. */
+  private def replacing(presented: Option[String]): IO[Unit] = presented.filter(Secrets.canonical).traverse_ { secret =>
+    committed { (store, record) =>
+      val users = directory(store, current())
+      store.browser(users, secret).foreach { previous =>
+        store.logout(users, secret)
+        record.ended(previous.tokenId)
+      }
     }
-    replaced *> changed(reply.events.filter(e => DeclarativeAccountService.RightsChanging(e.kind)).flatMap(_.target))
   }
   /** Every account path other than the five existing endpoints. The presented cookie is resolved under the
     * merged directory; the dispatcher revalidates it under its owner's lock before any effect. */
   def imperativeRequest(s: S, settings: ImperativeSettings, method: String, path: String, body: Option[Json], actor: Vector[String],
       presented: Option[String], clientAddress: String): IO[AccountReply] =
-    presentedSession(s, presented).flatMap { found =>
-      runtime.api.handle(Some(settings), s.declared, transactions, AccountRequest(method, path, body, actor, found, presented, clientAddress))
-        .flatTap(announced(_, found))
-    }
+    presentedSession(s, presented).flatMap(found =>
+      runtime.api.handle(Some(settings), s.declared, transactions, AccountRequest(method, path, body, actor, found, presented, clientAddress)))
   def indexingRequest(s: S, method: String, path: String, body: Option[Json], actor: Vector[String], presented: Option[String],
       clientAddress: String): IO[AccountReply] = {
     val transactions = new IndexingAccountTransactions {
@@ -372,7 +456,7 @@ final class DeclarativeAccountService[S <: AccountSnapshot[S]](storage: AccountS
           if (!s.unchangedIn(now)) throw AccountFailure("conflict")
           directory(store, now)
         }
-        work(accountCore(store, s, () => liveDirectory()), store.indexing(indexing, indexingPolicy))
+        work(accountCore(store, s, () => liveDirectory(), new LifecycleRecord, new AtomicBoolean(false)), store.indexing(indexing, indexingPolicy))
       }
     }
     presentedSession(s, presented).flatMap(found =>
@@ -386,11 +470,12 @@ final class DeclarativeAccountService[S <: AccountSnapshot[S]](storage: AccountS
   /** `actor` is the `X-Account-Actor` values of the request; `None` for a logout without the account protocol. */
   def logout(captured: Captured, actor: Option[Vector[String]]): IO[Unit] = IO.defer {
     val s = current()
-    storage.transaction { store =>
+    committed { (store, record) =>
       val session = browser(store, s, captured)
       actor.foreach(AccountJson.requireActor(_, session.userId))
       store.logout(directory(store, s), captured.presented.secret)
-    } *> ended(captured.authority.tokenId)
+      record.ended(session.tokenId)
+    }
   }
   def account(captured: Captured): IO[AccountView] = IO.defer {
     val s = current()
@@ -411,12 +496,13 @@ final class DeclarativeAccountService[S <: AccountSnapshot[S]](storage: AccountS
   }
   def revoke(captured: Captured, id: String, actor: Vector[String]): IO[Unit] = IO.defer {
     val s = current()
-    storage.transaction { store =>
+    committed { (store, record) =>
       val session = browser(store, s, captured)
       AccountJson.requireActor(actor, session.userId)
       if (s.configured.listed(session.userId).exists(_.id == id)) refuse(AccountRefusal.ConfiguredTokenImmutable)
       store.revoke(directory(store, s), session, id)
-    } *> ended(id)
+      record.ended(id)
+    }
   }
 }
 object DeclarativeAccountService {
@@ -424,8 +510,6 @@ object DeclarativeAccountService {
   private val LoginPath = "/login"
   /** The account protocol's failure for an unacceptable new password. */
   private val WeakPassword = "weak-password"
-  /** The dispatcher's events of committed changes that end or change the target account's rights. */
-  private val RightsChanging: Set[AccountEventKind] = Set(AccountEventKind.Disabled, AccountEventKind.Enabled, AccountEventKind.AdminGranted,
-    AccountEventKind.AdminRevoked, AccountEventKind.PasswordChanged, AccountEventKind.RecoverySucceeded, AccountEventKind.ResetRedeemed,
-    AccountEventKind.TotpRequiredChanged)
+  private val CredentialEnded = "credentialEnded"
+  private val AccountChanged = "accountChanged"
 }

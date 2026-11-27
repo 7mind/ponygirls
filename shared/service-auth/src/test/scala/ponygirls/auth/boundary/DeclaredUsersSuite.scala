@@ -109,8 +109,8 @@ final class DeclaredUsersSuite extends munit.FunSuite {
   }
   directory.test("digest files accept exactly 64 lower-case hex ASCII with at most one final LF") { dir =>
     val good = "a" * 64
-    assertEquals(DigestReader.Stream.read(write(dir, "exact", good)), Right(good))
-    assertEquals(DigestReader.Stream.read(write(dir, "lf", good + "\n")), Right(good))
+    assert((DigestReader.Stream.read(write(dir, "exact", good))) == (Right(good)), "the credential file read differs")
+    assert((DigestReader.Stream.read(write(dir, "lf", good + "\n"))) == (Right(good)), "the credential file read differs")
     Vector("", "abc", "A" * 64, "g" * 64, good + "\n\n", good + "\r\n", good + " ", good + "\u0000", good + "x" * (2 * 1024 * 1024)).zipWithIndex.foreach { (raw, i) =>
       assertEquals(DigestReader.Stream.read(write(dir, s"bad$i", raw)), Left(ConfigRefusal.MalformedCredentialFile))
     }
@@ -120,7 +120,7 @@ final class DeclaredUsersSuite extends munit.FunSuite {
     assertEquals(DigestReader.Stream.read(dir.resolve("missing").toString), Left(ConfigRefusal.UnreadableCredentialFile))
   }
   directory.test("exact credential files take the exact length and pattern and refuse controls and high bytes") { dir =>
-    assertEquals(ExactCredentialFile.read(write(dir, "token", AliceToken + "\n"), 43, "[A-Za-z0-9_-]{43}"), Right(AliceToken))
+    assert((ExactCredentialFile.read(write(dir, "token", AliceToken + "\n"), 43, "[A-Za-z0-9_-]{43}")) == (Right(AliceToken)), "the credential file read differs")
     Vector(0xc1, 0x80, 0x01, 0x7f, 0x00, 0x0d).foreach { byte =>
       val bytes = AliceToken.getBytes(StandardCharsets.US_ASCII); bytes(5) = byte.toByte
       val path = dir.resolve(s"token-$byte"); Files.write(path, bytes)
@@ -198,9 +198,9 @@ final class DeclaredUsersSuite extends munit.FunSuite {
     val good = "a" * 64
     val target = write(dir, "digest", good + "\n")
     val link = dir.resolve("link"); Files.createSymbolicLink(link, Path.of(target))
-    assertEquals(DigestReader.Bounded.read(target), Right(good))
-    assertEquals(DigestReader.Bounded.read(link.toString), Right(good))
-    assertEquals(DigestReader.Bounded.read(Path.of("").toAbsolutePath.relativize(Path.of(target)).toString), Right(good))
+    assert((DigestReader.Bounded.read(target)) == (Right(good)), "the credential file read differs")
+    assert((DigestReader.Bounded.read(link.toString)) == (Right(good)), "the credential file read differs")
+    assert((DigestReader.Bounded.read(Path.of("").toAbsolutePath.relativize(Path.of(target)).toString)) == (Right(good)), "the credential file read differs")
     assertEquals(DigestReader.Bounded.read("/dev/null"), Left(ConfigRefusal.UnreadableCredentialFile))
     assertEquals(DigestReader.Stream.read("/dev/null"), Left(ConfigRefusal.MalformedCredentialFile))
     Vector(good + "\nx", good + "\r\n", good + "x" * (2 * 1024 * 1024)).zipWithIndex.foreach { (raw, i) =>
@@ -284,7 +284,8 @@ final class DeclaredUsersSuite extends munit.FunSuite {
     val printed = Vector(declared.toString, declared.users.toString, declared.directory.toString, declared.tokens.toString,
       declared.tokens.authenticate(AliceToken).toString)
     printed.foreach { text =>
-      Vector(hash, Secrets.digest(AliceToken), Secrets.digest(BotToken), AliceToken, BotToken).foreach(secret => assert(!text.contains(secret), text))
+      Vector(hash, Secrets.digest(AliceToken), Secrets.digest(BotToken), AliceToken, BotToken).foreach(secret =>
+        assert(!text.contains(secret), "a declared value prints a hash, a digest or a token"))
     }
   }
   test("key-file policies: Haystack's literal store prefix and Manure's normalised path differ on the store and on `..`") {

@@ -527,7 +527,7 @@ final class ImperativeAccounts private[auth] (repository: ImperativeUserReposito
         row <- managed(actor, id)
       } yield {
         store(row.copy(admin = admin), at)
-        ()
+        sessions.adminChanged(row.id)
       })
     }
 

@@ -41,6 +41,8 @@ final class MemoryAccountStorage(clock: Clock) extends AccountStorage {
   private var open = false
   private val accounts = new Accounts(rows, clock)
 
+  /** Nothing follows the commit of an in-memory transaction. */
+  def afterCommit(failure: Throwable): Boolean = false
   def transaction[A](work: AccountStore => A): IO[A] = IO.blocking(synchronized {
     if (open) throw new IllegalStateException("nested transaction")
     open = true
@@ -53,28 +55,33 @@ final class MemoryAccountStorage(clock: Clock) extends AccountStorage {
     } finally open = false
   })
 
-  /** `AccountSessions` and `IdentityHistory` over the in-memory rows, with owner keys equal to user ids. */
-  private final class Sessions(directory: () => Vector[AccountUser]) extends AccountSessions with IdentityHistory {
+  /** `AccountSessions` and `IdentityHistory` over the in-memory rows, with owner keys equal to user ids, recording what
+    * they end and change as `RecordingSessions` does over the shared tables. */
+  private final class Sessions(directory: () => Vector[AccountUser], record: LifecycleRecord) extends AccountSessions with IdentityHistory {
     def lockOwners(declarative: Vector[String], imperative: Vector[String]): Unit = accounts.lockOwners(declarative, imperative)
     def sessionOwner(secret: String): Option[String] =
       Some(secret).filter(Secrets.canonical).flatMap(value => rows.session(Secrets.digest(value))).map(_.owner).filter(owner => directory().exists(_.id == owner))
     def live(session: AccountCredential): Boolean = accounts.live(directory(), session.userId, session.tokenId, session.digest)
-    def establish(user: AccountUser, replaced: Option[String]): AccountSession =
-      accounts.establish(directory().filterNot(_.id == user.id) :+ user, user.id, replaced).session
-    def revokeSessions(userId: String, keep: Option[AccountCredential]): Unit = accounts.revokeSessions(userId, keep)
-    def revokeTokens(userId: String): Unit = accounts.revokeTokens(userId)
-    def activated(user: AccountUser): Unit = ()
-    def updated(user: AccountUser): Unit = ()
+    def establish(user: AccountUser, replaced: Option[String]): AccountSession = {
+      val login = accounts.establish(directory().filterNot(_.id == user.id) :+ user, user.id, replaced)
+      login.replaced.foreach(previous => record.ended(previous.tokenId))
+      login.session
+    }
+    def revokeSessions(userId: String, keep: Option[AccountCredential]): Unit = { accounts.revokeSessions(userId, keep); record.changed(userId) }
+    def revokeTokens(userId: String): Unit = { accounts.revokeTokens(userId); record.changed(userId) }
+    def activated(user: AccountUser): Unit = record.changed(user.id)
+    def updated(user: AccountUser): Unit = record.changed(user.id)
+    override def adminChanged(userId: String): Unit = record.changed(userId)
     def retained(username: String): Boolean = rows.users.keys.exists(id => id == username || id.toLowerCase(java.util.Locale.ROOT) == username)
   }
   private def core(settings: Option[ImperativeSettings], declared: DeclaredDirectory, directory: () => Vector[AccountUser],
-      hasher: PasswordHasher, clock: Clock): ImperativeAccounts = {
-    val sessions = new Sessions(directory)
+      hasher: PasswordHasher, clock: Clock, record: LifecycleRecord): ImperativeAccounts = {
+    val sessions = new Sessions(directory, record)
     imperativeUsers.accounts(settings, declared, sessions, sessions, hasher, clock)
   }
   private object store extends AccountStore {
     def directory(settings: Option[ImperativeSettings], declared: DeclaredDirectory): Vector[AccountUser] =
-      core(settings, declared, () => Vector.empty, PasswordHasher.Pbkdf2, clock).directory
+      core(settings, declared, () => Vector.empty, PasswordHasher.Pbkdf2, clock, new LifecycleRecord).directory
     def installDeclared(declared: DeclaredDirectory, users: Vector[AccountUser]): Unit = {
       rows.lockDirectory()
       directory(None, declared)
@@ -90,7 +97,7 @@ final class MemoryAccountStorage(clock: Clock) extends AccountStorage {
     def issue(users: Vector[AccountUser], session: AccountCredential, name: String): AccountIssued = accounts.issue(users, session, name)
     def revoke(users: Vector[AccountUser], session: AccountCredential, id: String): Unit = accounts.revoke(users, session, id)
     def imperative(settings: Option[ImperativeSettings], declared: DeclaredDirectory, directory: () => Vector[AccountUser],
-        hasher: PasswordHasher, clock: Clock): ImperativeAccounts = core(settings, declared, directory, hasher, clock)
+        hasher: PasswordHasher, clock: Clock, record: LifecycleRecord): ImperativeAccounts = core(settings, declared, directory, hasher, clock, record)
     def indexing(service: IndexingService, policy: IndexingPolicy): IndexingPreferences = new IndexingPreferences {
       def lock(owner: String): Unit = ()
       def get(owner: String): IndexingPreference = preferences.getOrElse(service -> owner, IndexingPreference.inherited)

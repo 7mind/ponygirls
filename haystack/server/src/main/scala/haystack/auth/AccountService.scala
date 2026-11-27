@@ -32,7 +32,7 @@ private final class HaystackIdentityHistory(c:Connection,fingerprints:IdentityHi
   * and transaction owner. Every account decision uses the merged directory: the declared users plus, while
   * `auth.accounts.enabled` is on, the active imperative users. */
 final class AccountService(database:JdbcDatabase,getAuth:()=>Auth,imperative:ImperativeRuntime,indexingPolicy:IndexingPolicy=IndexingPolicy.defaults) {
-  private val transactions=new ConnectionTransactions { def transaction[A](work:Connection=>A):IO[A]=database.transaction(work) }
+  private val transactions=ConnectionTransactions.jdbc(database)
   private[haystack] val shared=new DeclarativeAccountService[Auth](new SharedAccountStorage(transactions,(c,sessions)=>new HaystackIdentityHistory(c,sessions)),
     getAuth,imperative,IndexingService.Haystack,indexingPolicy,
     // Without a supplied hash the Home Manager stack derives the operator's browser password from its token: it signs in.
@@ -41,7 +41,8 @@ final class AccountService(database:JdbcDatabase,getAuth:()=>Auth,imperative:Imp
     AccountLifecycle.Unobserved)
   private def faults[A](operation:IO[A]):IO[A]=operation.adaptError { case refused:AccountRefused=>AccountService.translated(refused) }
   def install(auth:Auth):IO[Unit]=faults(shared.install(auth))
-  def reloaded(next:IO[Auth]):IO[Either[Throwable,Auth]]=shared.reloaded(next)
+  /** The caller publishes the result itself; Haystack is told nothing (`AccountLifecycle.Unobserved`). */
+  def reloaded(next:IO[Auth]):IO[Either[Throwable,Auth]]=shared.reloaded(next,_=>IO.unit)
   def suspended(auth:Auth):IO[Int]=faults(shared.suspended(auth))
   def resolve(headers:RequestHeaders,mutate:Boolean=false,mcp:Boolean=false):IO[Authenticated]=
     faults(shared.resolve(auth=>Sessions.select(auth.config,headers,mutate,mcp))).map(AccountService.authenticated)

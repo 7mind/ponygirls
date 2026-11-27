@@ -57,6 +57,8 @@ trait AccountSessions {
   def activated(user: AccountUser): Unit
   /** The password hash or the enabled state of an imperative user that has been active changed. */
   def updated(user: AccountUser): Unit
+  /** The administrator flag of an imperative user changed. A notification hook; nothing by default. */
+  def adminChanged(userId: String): Unit = ()
 }
 
 /** Whether the service retains a historical identity under this (ASCII-lower-cased) name: design §4.1.3 rule 3. */

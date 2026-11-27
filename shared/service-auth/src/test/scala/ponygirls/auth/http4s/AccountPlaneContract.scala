@@ -117,6 +117,7 @@ abstract class AccountPlaneContract extends munit.FunSuite {
     val transactions = new AtomicInteger
     /** `loginReplacing` is the only store operation that verifies a password. */
     val verifications = new AtomicInteger
+    def afterCommit(failure: Throwable): Boolean = underlying.afterCommit(failure)
     def transaction[A](work: AccountStore => A): IO[A] = IO.defer {
       transactions.incrementAndGet()
       if (broken.get) IO.raiseError(new IllegalStateException("synthetic storage outage"))
@@ -143,7 +144,7 @@ abstract class AccountPlaneContract extends munit.FunSuite {
       def issue(users: Vector[AccountUser], session: AccountCredential, name: String): AccountIssued = store.issue(users, session, name)
       def revoke(users: Vector[AccountUser], session: AccountCredential, id: String): Unit = store.revoke(users, session, id)
       def imperative(settings: Option[ImperativeSettings], declared: DeclaredDirectory, directory: () => Vector[AccountUser],
-          hasher: PasswordHasher, clock: Clock): ImperativeAccounts = store.imperative(settings, declared, directory, hasher, clock)
+          hasher: PasswordHasher, clock: Clock, record: LifecycleRecord): ImperativeAccounts = store.imperative(settings, declared, directory, hasher, clock, record)
       def indexing(service: IndexingService, policy: IndexingPolicy): IndexingPreferences = {
         indexed = true
         store.indexing(service, policy)
@@ -203,24 +204,24 @@ abstract class AccountPlaneContract extends munit.FunSuite {
   test("declared password login sets the session cookie with the service's attributes; the session it replaces is ended and refused") { world() { w =>
     val first = w.login("alice")
     val second = w.login("alice", Some(first))
-    assertEquals(w.ended.asScala.toVector, Vector(first))
+    assert((w.ended.asScala.toVector) == (Vector(first)), "a session cookie or ended session differs")
     assertEquals(intercept[AccountRefused](w.browser(first)).refusal, AccountRefusal.InvalidCredentials)
     assertEquals(code(w.run(Method.GET, "/api/account/v1", None, (read :+ session(first))*)._2), Some("unauthorized"))
     assertEquals(w.browser(second).authority.userId, "alice")
     val (again, body) = w.run(Method.POST, "/api/account/v1/login", Some(s"""{"login":"bob","password":"$Password"}"""), json*)
     assertEquals(body.hcursor.downField("user").get[String]("id").toOption, Some("bob"))
-    assertEquals(setCookie(again), Some(SessionCookie.serialize("__Host-svc", cookieOf(again), true, SecureAttribute.Last)))
+    assert((setCookie(again)) == (Some(SessionCookie.serialize("__Host-svc", cookieOf(again), true, SecureAttribute.Last))), "a session cookie or ended session differs")
     val (wrong, wrongBody) = w.run(Method.POST, "/api/account/v1/login", Some("""{"login":"alice","password":"wrong"}"""), json*)
-    assertEquals((wrong.status, code(wrongBody), setCookie(wrong)), (Status.Unauthorized, Some("unauthorized"), None))
+    assert((wrong.status, code(wrongBody), setCookie(wrong).isEmpty) == (Status.Unauthorized, Some("unauthorized"), true), "a wrong password was not refused without a cookie")
   }}
   test("the plane writes cookies in the attribute order it is given") { world(Defaults.copy(order = SecureAttribute.BeforeMaxAge)) { w =>
     val (response, _) = w.run(Method.POST, "/api/account/v1/login", Some(s"""{"login":"bob","password":"$Password"}"""), json*)
-    assertEquals(setCookie(response), Some(SessionCookie.serialize("__Host-svc", cookieOf(response), true, SecureAttribute.BeforeMaxAge)))
+    assert((setCookie(response)) == (Some(SessionCookie.serialize("__Host-svc", cookieOf(response), true, SecureAttribute.BeforeMaxAge))), "a session cookie or ended session differs")
   }}
   test("a guarded password login is refused by its guard before any password is verified; an admitting guard lets it through") {
     world(Defaults.copy(admission = LoginAdmission.Guarded(_ => IO.raiseError(AccountFailure("rate-limited"))))) { w =>
       val (response, body) = w.run(Method.POST, "/api/account/v1/login", Some(s"""{"login":"alice","password":"$Password"}"""), json*)
-      assertEquals((response.status, code(body), setCookie(response)), (Status.TooManyRequests, Some("rate-limited"), None))
+      assert((response.status, code(body), setCookie(response).isEmpty) == (Status.TooManyRequests, Some("rate-limited"), true), "a guarded login was not refused without a cookie")
       assertEquals(w.store.verifications.get, 0)
     }
     world(Defaults.copy(admission = LoginAdmission.Guarded(_ => IO.unit))) { w =>
@@ -240,7 +241,7 @@ abstract class AccountPlaneContract extends munit.FunSuite {
       Vector(Some("browser") -> Some("configured"), Some(issuedId) -> Some("issued")))
     val advertised = body.hcursor.get[Vector[String]]("scopes").fold(throw _, identity)
     assertEquals(tokens.map(_.hcursor.get[Vector[String]]("scopes").fold(throw _, identity)), Vector(advertised, advertised))
-    assertEquals(setCookie(response), Some(SessionCookie.serialize("__Host-svc", Some(secret), true, SecureAttribute.Last)))
+    assert((setCookie(response)) == (Some(SessionCookie.serialize("__Host-svc", Some(secret), true, SecureAttribute.Last))), "a session cookie or ended session differs")
     assertEquals(response.headers.get(CIString("X-Authority")).map(_.head.value), Some("alice"))
     assertEquals(w.admitted.get, 2)
   }}
@@ -261,8 +262,8 @@ abstract class AccountPlaneContract extends munit.FunSuite {
     assertEquals(w.run(Method.POST, s"/api/account/v1/tokens/$issuedId/revoke", Some("{}"), (owner :+ actor("alice"))*)._1.status, Status.Ok)
     assert(!w.service.live(bearer).unsafeRunSync())
     val (logout, _) = w.run(Method.POST, "/api/account/v1/logout", Some("{}"), (owner :+ actor("alice"))*)
-    assertEquals((logout.status, setCookie(logout)), (Status.Ok, Some(SessionCookie.serialize("__Host-svc", None, true, SecureAttribute.Last))))
-    assertEquals(w.ended.asScala.toVector, Vector(secret))
+    assert(((logout.status, setCookie(logout))) == ((Status.Ok, Some(SessionCookie.serialize("__Host-svc", None, true, SecureAttribute.Last)))), "a session cookie or ended session differs")
+    assert((w.ended.asScala.toVector) == (Vector(secret)), "a session cookie or ended session differs")
     assertEquals(code(w.run(Method.GET, "/api/account/v1", None, (read :+ session(secret))*)._2), Some("unauthorized"))
   }}
   test("the boundary refuses a bearer, a second Host, a query, a foreign Origin, a non-JSON or oversized body and a non-empty logout body") { world() { w =>
@@ -392,7 +393,7 @@ abstract class AccountPlaneContract extends munit.FunSuite {
     val captured = w.browser(secret)
     assert(captured.authority.tokenId.startsWith("session-"))
     Vector(captured.toString, captured.authority.toString, captured.presented.toString).foreach { text =>
-      Vector(secret, Secrets.digest(secret)).foreach(value => assert(!text.contains(value), text))
+      Vector(secret, Secrets.digest(secret)).foreach(value => assert(!text.contains(value), "a browser credential prints its secret or digest"))
     }
   }}
 }
@@ -406,7 +407,7 @@ final class AccountPlaneTypesSuite extends munit.FunSuite {
     val view = AccountView(AccountUser("alice", "human", "Alice", Some("alice"), Some(hash), true, AccountOrigin.Declarative),
       Vector(AccountToken("t", "client", "issued", None, false, Vector("api"))))
     Vector(captured.toString, view.toString, AccountRefused(AccountRefusal.InvalidCredentials).getMessage, captured.authority.toString).foreach { text =>
-      Vector(secret, Secrets.digest(secret), hash).foreach(value => assert(!text.contains(value), text))
+      Vector(secret, Secrets.digest(secret), hash).foreach(value => assert(!text.contains(value), "a type prints a secret, a digest or a password hash"))
     }
   }
   test("telemetry labels name the shared account endpoints only") {

@@ -20,7 +20,7 @@ final class CredentialSelectionSuite extends munit.FunSuite {
 
   test("a bearer needs no same-origin proof; absent or malformed presentations are invalid credentials") {
     val bearer = headers("ts.test:8445", authorization = Vector("Bearer " + Bot))
-    assertEquals(resolve(bearer, mutate = true), Presented(Bot, false, true))
+    assert((resolve(bearer, mutate = true)) == (Presented(Bot, false, true)), "the selected credential differs")
     Vector(Vector.empty, Vector("Basic " + Alice), Vector("bearer " + Alice), Vector("Bearer  " + Alice), Vector("Bearer " + Alice + "\n"),
       Vector("Bearer short"), Vector("Bearer " + "A" * 42 + "B")).foreach { values =>
       refused(Refusal.InvalidCredentials)(resolve(bearer.copy(authorization = values)))
@@ -35,10 +35,10 @@ final class CredentialSelectionSuite extends munit.FunSuite {
   test("only the cookie of the request's security class is taken; the other name is never a fallback") {
     Vector(("nb.test:8085", "svc-dev", false), ("ts.test:8445", "__Host-svc", true)).foreach { (host, name, secure) =>
       val h = headers(host, cookie = Vector(s"other=x; $name=$Session"))
-      assertEquals(resolve(h), Presented(Session, true, secure))
+      assert((resolve(h)) == (Presented(Session, true, secure)), "the selected credential differs")
       val wrong = if (secure) "svc-dev" else "__Host-svc"
       refused(Refusal.InvalidCredentials)(resolve(h.copy(cookie = Vector(s"$wrong=$Session"))))
-      assertEquals(resolve(h.copy(cookie = Vector(s"$name=$Session; $wrong=invalid"))).secret, Session)
+      assert((resolve(h.copy(cookie = Vector(s"$name=$Session; $wrong=invalid"))).secret) == (Session), "the selected credential differs")
     }
     refused(Refusal.InvalidCredentials)(resolve(headers("nb.test:8086", cookie = Vector("svc-dev=" + Session))))
   }
@@ -61,7 +61,7 @@ final class CredentialSelectionSuite extends munit.FunSuite {
     Vector("evil.test", "", "ts.test/path", "ts.test@evil.test", "ts.test\n").foreach { host =>
       refused(Refusal.DisallowedHost)(resolve(headers(host, authorization = Vector("Bearer " + Alice))))
     }
-    assertEquals(resolve(headers("TS.TEST:8445", authorization = Vector("Bearer " + Alice))).secret, Alice)
+    assert((resolve(headers("TS.TEST:8445", authorization = Vector("Bearer " + Alice))).secret) == (Alice), "the selected credential differs")
     Vector(("nb.test:8085", Secure), ("ts.test:8445", Plain)).foreach { (host, origin) =>
       refused(Refusal.OriginHostMismatch)(resolve(headers(host, origin = Vector(origin), cookie = Vector(s"svc-dev=$Session; __Host-svc=$Session"))))
     }
@@ -69,7 +69,7 @@ final class CredentialSelectionSuite extends munit.FunSuite {
   test("a bearer-only route takes the bearer and refuses either session cookie") {
     Vector("nb.test:8085", "ts.test:8445").foreach { host =>
       val base = headers(host, authorization = Vector("Bearer " + Alice))
-      assertEquals(resolve(base, CredentialAccept.BearerOnly).secret, Alice)
+      assert((resolve(base, CredentialAccept.BearerOnly).secret) == (Alice), "the selected credential differs")
       Vector("svc-dev", "__Host-svc").foreach { name =>
         refused(Refusal.CookieNotAccepted)(resolve(base.copy(cookie = Vector(s"$name=$Alice")), CredentialAccept.BearerOnly))
         refused(Refusal.CookieNotAccepted)(resolve(base.copy(authorization = Vector.empty, cookie = Vector(s"$name=$Alice")), CredentialAccept.BearerOnly))

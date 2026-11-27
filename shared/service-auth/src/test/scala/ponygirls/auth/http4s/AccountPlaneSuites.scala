@@ -38,6 +38,7 @@ final class PostgresAccountPlaneSuite extends AccountPlaneContract {
     val c = connection()
     empty(c)
     val transactions = new ConnectionTransactions {
+      def afterCommit(failure: Throwable): Boolean = false
       def transaction[A](work: Connection => A): IO[A] = IO.blocking(c.synchronized {
         try {
           val result = work(c)

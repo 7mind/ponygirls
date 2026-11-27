@@ -63,6 +63,9 @@ object SessionCookie {
     }
     (Vector(s"$name=${secret.getOrElse("")}", "Path=/", "HttpOnly", "SameSite=Strict") ++ trailing).mkString("; ")
   }
+  /** Whether any `Cookie` header names the cookie `name`, however often; no value is read. */
+  def present(cookieHeaders: Vector[String], name: String): Boolean =
+    cookieHeaders.flatMap(_.split(";").toVector).exists(part => part.indexOf('=') >= 0 && part.take(part.indexOf('=')).trim == name)
   /** The value of the cookie `name` across every `Cookie` header; two values are refused, never chosen between. */
   def select(cookieHeaders: Vector[String], name: String, value: CookieValue): Option[String] = {
     val values = cookieHeaders.flatMap(_.split(";").toVector).flatMap { part =>

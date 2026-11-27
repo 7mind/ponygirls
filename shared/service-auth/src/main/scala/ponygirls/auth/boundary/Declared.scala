@@ -69,6 +69,9 @@ trait ConfiguredTokens {
   /** Whether `secret` is the secret of any configured token: of any declared user, enabled or not, whether or not
     * another token shares its digest. Membership, never a credential decision (`authenticate` decides those). */
   def configures(secret: String): Boolean
+  /** Whether `owner` has the same configured tokens here as in `other` (ids and digests; per check, ids and digest
+    * files). A reload that changes them tells the owner's account as changed. */
+  def sameFor(other: ConfiguredTokens, owner: String): Boolean
 }
 object ConfiguredTokens {
   val Source = "configured"
@@ -78,6 +81,12 @@ object ConfiguredTokens {
 /** Lookup by digest over the enabled users' configured tokens; listing over every declared user. */
 private abstract class DigestTokens(users: Vector[DeclaredUserConfig]) extends ConfiguredTokens {
   protected def byDigest(digest: String): Option[ConfiguredToken]
+  /** The owner's configured tokens as compared across a reload. */
+  protected def owned(owner: String): Vector[(String, String)]
+  def sameFor(other: ConfiguredTokens, owner: String): Boolean = other match {
+    case known: DigestTokens => owned(owner) == known.owned(owner)
+    case _ => false
+  }
   /** Every configured digest, of every declared user. */
   protected def everyDigest: Vector[Array[Byte]]
   def configures(secret: String): Boolean = Secrets.canonical(secret) && {
@@ -95,9 +104,11 @@ private abstract class DigestTokens(users: Vector[DeclaredUserConfig]) extends C
 }
 
 /** Digests read once per configuration load; the load refused a digest that two tokens share. */
-private final class SnapshotTokens(users: Vector[DeclaredUserConfig], digests: Vector[(Array[Byte], ConfiguredToken)], every: Vector[Array[Byte]])
-    extends DigestTokens(users) {
-  protected def everyDigest: Vector[Array[Byte]] = every
+private final class SnapshotTokens(users: Vector[DeclaredUserConfig], digests: Vector[(Array[Byte], ConfiguredToken)],
+    entries: Vector[(String, DeclaredTokenConfig, ConfiguredToken)]) extends DigestTokens(users) {
+  protected def everyDigest: Vector[Array[Byte]] = entries.map((digest, _, _) => digest.getBytes(StandardCharsets.US_ASCII))
+  protected def owned(owner: String): Vector[(String, String)] =
+    entries.filter((_, _, token) => token.userId == owner).map((digest, config, _) => config.id -> digest)
   protected def byDigest(digest: String): Option[ConfiguredToken] = matching(digest, digests).lastOption
 }
 
@@ -105,6 +116,7 @@ private final class SnapshotTokens(users: Vector[DeclaredUserConfig], digests: V
   * a digest that several tokens share after the load matches none of them. */
 private final class PerCheckTokens(users: Vector[DeclaredUserConfig], enabled: Vector[(DeclaredTokenConfig, ConfiguredToken)], reader: DigestReader)
     extends DigestTokens(users) {
+  protected def owned(owner: String): Vector[(String, String)] = users.filter(_.id == owner).flatMap(_.tokens).map(t => t.id -> t.hashFile)
   protected def everyDigest: Vector[Array[Byte]] =
     users.flatMap(_.tokens).flatMap(token => reader.read(token.hashFile).toOption).map(_.getBytes(StandardCharsets.US_ASCII))
   protected def byDigest(digest: String): Option[ConfiguredToken] = {
@@ -210,8 +222,7 @@ object DeclaredUsers {
     val directory = DeclaredDirectory(accountUsers, users.filter(_.admin).map(_.id).toSet)
     val enabled = entries.filter { (_, _, token) => accountUsers.exists(u => u.id == token.userId && u.enabled) }
     val tokens = read match {
-      case DigestRead.Snapshot => new SnapshotTokens(users, enabled.map((digest, _, token) => digest.getBytes(StandardCharsets.US_ASCII) -> token),
-        entries.map((digest, _, _) => digest.getBytes(StandardCharsets.US_ASCII)))
+      case DigestRead.Snapshot => new SnapshotTokens(users, enabled.map((digest, _, token) => digest.getBytes(StandardCharsets.US_ASCII) -> token), entries)
       case DigestRead.PerCheck => new PerCheckTokens(users, enabled.map((_, config, token) => config -> token), reader)
     }
     Declared(accountUsers, directory, tokens)

@@ -48,7 +48,8 @@ final class ServiceCallers[S <: AccountSnapshot[S], C](service: DeclarativeAccou
       case RequestAmbiguity.FirstHostClassCookie => ()
       case RequestAmbiguity.OneHostAnyCookie =>
         if (r.headers.headers.count(_.name == HostName) != 1) throw BoundaryRefused(Refusal.AmbiguousHost)
-        val cookie = Vector(settings.cookies.secure, settings.cookies.plain).exists(name => SessionCookie.select(headers.cookie, name, settings.cookies.value).isDefined)
+        // Presence alone: a bearer beside duplicate cookies of one name is ambiguous before the duplicates are looked at.
+        val cookie = Vector(settings.cookies.secure, settings.cookies.plain).exists(SessionCookie.present(headers.cookie, _))
         if (headers.authorization.nonEmpty && cookie) throw BoundaryRefused(Refusal.AmbiguousCredentials)
     }
     CredentialSelection.resolve(settings.origins(s), settings.cookies, headers, route.accept, route.mutate)

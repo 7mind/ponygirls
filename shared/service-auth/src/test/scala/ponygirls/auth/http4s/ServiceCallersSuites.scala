@@ -5,7 +5,7 @@ import cats.effect.unsafe.IORuntime
 import java.sql.{Connection, DriverManager}
 import java.util.concurrent.atomic.AtomicReference
 import ponygirls.auth.{AccountSql, AccountStorage, ConnectionTransactions, DeclaredDirectory, DeclaredInstallation, ImperativeAccountSql, ImperativeSettings,
-  IndexingPreferenceSql, MemoryAccountStorage, PasswordHasher, SharedAccountStorage}
+  IndexingPreferenceSql, LifecycleRecord, MemoryAccountStorage, PasswordHasher, SharedAccountStorage}
 import scala.util.Using
 
 /** The in-memory store; the consumer keeps its declared-id records beside it and changes them in the store's transaction,
@@ -22,7 +22,8 @@ final class MemoryServiceCallersSuite extends ServiceCallersContract {
     })
     def recorded(): Map[String, Boolean] = storage.transaction(_ => ids.get).unsafeRunSync()
     def administrator(settings: Option[ImperativeSettings], declared: DeclaredDirectory, userId: String): Boolean =
-      storage.transaction(_.imperative(settings, declared, () => declared.users, PasswordHasher.Pbkdf2, FrozenTime.clock).administrator(userId)).unsafeRunSync()
+      storage.transaction(_.imperative(settings, declared, () => declared.users, PasswordHasher.Pbkdf2, FrozenTime.clock, new LifecycleRecord)
+        .administrator(userId)).unsafeRunSync()
   })
 }
 
@@ -73,6 +74,7 @@ final class PostgresServiceCallersSuite extends ServiceCallersContract {
     val c = connection()
     empty(c)
     val transactions = new ConnectionTransactions {
+      def afterCommit(failure: Throwable): Boolean = false
       def transaction[A](work: Connection => A): IO[A] = IO.blocking(c.synchronized {
         try {
           val result = work(c)
