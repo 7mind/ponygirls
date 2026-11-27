@@ -9,8 +9,9 @@ Revision 4 (2026-11-27) makes the draft true of the pilot that was built on bran
 decisions of that day (section 13), the corrections found while building (sections 3 to 8 and 12), and a new
 section 14 with what exists, what was verified and what was not. The dashboard, the CLI, the packaging and
 everything for Claude Code and Codex (sections 7, 9, 10) are still proposals. Revision 5 records two
-credential-handling limits of the extension that were fixed after revision 4 (commit `7d5c7161`) and corrects the
-account of the review rounds (section 14.1).
+credential-handling limits of the extension that were fixed after revision 4 (final form in commit `c79fe608`: the
+token is bound to the membership at enable or session start) and corrects the account of the review rounds
+(section 14.1).
 
 Evidence tags used below:
 
@@ -26,7 +27,7 @@ Evidence tags used below:
 - **[prior]** reported by a third-party project's README or docs; not verified here.
 - **[run]** observed on 2026-11-27 in the pilot's test suites or in the two-session run of real Pi sessions
   against the real server, on branch `pilot/blabber`: the suites at commit `77046c6d` and the extension suite
-  again at commit `7d5c7161`, the two-session run at
+  again at commit `c79fe608`, the two-session run at
   commit `d6e18cb0` with its first scenario repeated on the fix of commit `24b6570b` (section 14).
 - Everything untagged is a proposal of this draft.
 
@@ -659,7 +660,7 @@ Suites at commit `77046c6d` **[run]**:
 |---|---|
 | `blabber/scripts/test-postgres.sh` | 174 cases, no failure, error or skip: 76 on PostgreSQL, 98 on the in-memory store or without a store |
 | `blabber/scripts/test-pilot-server.sh` | 45 checks passed |
-| flake check `ponygirls-blabber` | 247 tests passed; 256 at commit `7d5c7161` |
+| flake check `ponygirls-blabber` | 247 tests passed; 257 at commit `c79fe608` |
 | `tests/run-real.sh` (client contract suite against the real server) | 18 cases passed |
 | `nix build .#ponygirls-pi-extensions` | builds |
 
@@ -712,8 +713,9 @@ The sentences of sections 3 to 8 are corrected in place; in short:
 - Settings come from a hand-written `blabber.json`; `http:` is accepted only on loopback or with the explicit
   opt-in.
 - An endpoint that contains a percent sign is refused as invalid settings before the token is read.
-- A token that changes while the session is enabled is caught before the next request of the membership: nothing
-  is sent, the session attaches again under the new token, continues from that owner's checkpoint and says so once.
+- The token is bound to the membership: it is read at `/blabber enable` and at session start, and every request of
+  the membership carries it; a token file replaced while the session is enabled changes nothing until the next
+  enable or start, and a revoked token stops polling with a notice.
 
 ### 14.5 Known limits
 
