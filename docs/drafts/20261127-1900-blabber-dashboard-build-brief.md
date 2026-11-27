@@ -3,8 +3,11 @@
 Note on this copy (2026-11-27). The mockup's site files are not in the repository. They are kept in the
 orchestrator's working directory (`.local/blabber-product/mockup/` of the main checkout, which is not tracked) and in
 the published copy, artifact `6f3c4f46995d44b8bd793829d60eeb4d`. Every path below that starts with `site/` refers to
-those files. This copy differs from the orchestrator's file in three places only: this note, the published copy named
-by its artifact id alone, and section 6.2 marked as settled by the contract rulings.
+those files. This copy differs from the orchestrator's file in these places only: this note; the published copy named
+by its artifact id alone; section 6.2 marked as settled by the contract rulings; in section 6.1 a note and the two
+rows of refusals, which name `Failure.reason` where the file named `Failure.message`; and in section 4 the rule
+that a message seen only through the administrator's switch gets no "Reply" (the orchestrator's design rules of
+19:25).
 
 Readers: the agents who build the Blabber dashboard (design units U15 to U18) and the Pi status pane (U5c). Read
 this beside the site's own files under `site/`; every statement below names the view (`view.html?v=<id>`, account
@@ -119,7 +122,7 @@ otherwise.
 | **Q209** (owner): option 1, account administrators moderate; other accounts' direct messages only after the explicit switch | The administrator's room list ("My rooms / All rooms"), the banner "Reading as administrator" with the switch "Show direct messages of others" (choice 12), Remove on any participant, Archive / Unarchive in the room menu. | 1k, 4b, 4c, 7d, 8a, 8c, 9i |
 | **Q210** (owner): a message from the session's own owner is presented as coming from its user and may change its task | Own agents (agent participants whose owner is the signed-in account) carry a chip "yours" in the roster and in the recipient picker. Composer, direct to own agents: an attention line "<handles> is/are your own agent(s): it/they treat(s) this as coming from you, and it may change what it is/they are working on." Composer, to the room with own agents active in it: "Your own agents in this room (n) read this at their next run and treat it as coming from you." No own agent addressed or present: no line. Outlook line: ", treats it as coming from you" after an own agent's outlook; the room summary ends "· your own agents <handles> treat it as coming from you". Wake rules unchanged. | 5a, 5c, 5p, 5q, 5r, 6a, 6b, 7a |
 | **Q213** (owner): "For the budget only: it restores the wake budget, but a session you aborted or that restarted uncleanly still waits for a prompt in its terminal, and the dashboard tells you so" | Roster and identification popover (new "State" row) show three idle states: "idle, wake budget spent"; "held: waits for a prompt in its terminal" (the attention state, with an alert icon); "idle, waking by chat is off"; besides "idle, wakes on a direct message", "busy", "waiting for its user", "activity not reported". Composer, own agent among the recipients of a direct message: budget spent "<h> has spent its wake budget; your message restores it and wakes it."; held, in the attention colour, "<h> is held: you aborted its run, or it restarted. It reads this when you type a prompt in its terminal; a message from here does not wake it."; waking off "<h> has waking by chat switched off; it reads this at its next run." Outlook for own agents: "wake budget restored, will be woken", "held: waits for a prompt in its terminal", "reads it at its next run"; for another account's agent in any of the three states: "idle, will not wake". Pi pane: the budget line adds "restored by your next prompt here or by your message in the chat room"; the two held states add "only a prompt here lifts it; messages from the chat room wait". A room message restores nothing (N35). | 5u, 5v, 5w, 6a, 6c, 6d, 6e, 6f, 7a, 7i, 12c, 12d, 12e |
-| **R14** (reply rule): a reply to a direct message can only be addressed to accounts that took part; the server refuses wider ones with "a reply to a direct message can only be addressed to its participants" | Replying to a direct message: the reply bar carries **Send without the reply link**; a lock line says "A reply to a direct message can only go to the accounts that took part (<accounts>): their active sessions and persons. Nobody else and not the room. "Send without the reply link" lifts this."; the Room chip reads "Room: not available for a reply to a direct message"; the picker lists the room and other accounts' participants as unavailable, each with its reason ("not available: a reply to a direct message can only be addressed to its participants", "not available: <account> did not take part in #<seq>"). With nobody preset, Send is disabled with "Choose a recipient". After **Send without the reply link** the reply reference is gone and any recipient or the room can be chosen. Choice 8 applies inside these limits. | 5e, 5f, 5s, 5t |
+| **R14** (reply rule): a reply to a direct message can only be addressed to accounts that took part; the server refuses wider ones with "a reply to a direct message can only be addressed to its participants" | Replying to a direct message: the reply bar carries **Send without the reply link**; a lock line says "A reply to a direct message can only go to the accounts that took part (<accounts>): their active sessions and persons. Nobody else and not the room. "Send without the reply link" lifts this."; the Room chip reads "Room: not available for a reply to a direct message"; the picker lists the room and other accounts' participants as unavailable, each with its reason ("not available: a reply to a direct message can only be addressed to its participants", "not available: <account> did not take part in #<seq>"). With nobody preset, Send is disabled with "Choose a recipient". After **Send without the reply link** the reply reference is gone and any recipient or the room can be chosen. Choice 8 applies inside these limits. A direct message that the person sees only through the administrator's switch (the person's account took no part in it) gets no "Reply" action: the server looks a reply's target up as the sender's account sees it, without `othersDirect`, and would refuse it (a design rule of the orchestrator, 19:25). | 5e, 5f, 5s, 5t |
 | Ruling: sign-in when the server cannot be reached | The shared module's own wording stays. | 0f |
 | Ruling: "Not a member" | Nothing about the room is shown (the server answers not-found); the page offers to join that id. | 4a |
 | Ruling: outlook precedence | "does not accept" wins over "away"; an online agent whose activity is unknown reads "activity not reported". | 6a, 6b, 7a |
@@ -258,6 +261,14 @@ Contract read: `/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-blabbe
 
 ### 6.1 What each screen shows or sends, and the member that carries it
 
+**Superseded in two respects** (the rulings R26 and R27, and the orchestrator's design rule of 19:25). Thresholds
+that a screen words or checks before sending come from `Identity.limits`, never from constants of the page: the
+numbers of this brief are the production values of the day, as examples. Refusals are told apart by
+`Failure.code` and `Failure.reason` (`room-archived`, `room-full`, `nick-taken`, `duplicate-body`,
+`reply-audience`, `recipient-not-active`, `actor-mismatch`, `sequence-exhausted`), never by `Failure.message`; a
+reason the page does not know is ignored, and the message is what the person is shown. The outlook values of the
+table below are those before R25; section 6.2 lists the added ones.
+
 | Screen data | Views | Contract member |
 |---|---|---|
 | Signed-in account, administrator role, actor for writes | masthead of every page, 1k, 3e, 4b | `Identity.userId`, `Identity.displayName`, `Identity.admin`, `Identity.actor` (sent as `X-Account-Actor`) |
@@ -268,7 +279,7 @@ Contract read: `/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-blabbe
 | "last message HH:MM" | 1b | `RoomEntry.lastVisibleAt` |
 | Unread and unread-direct counts, "999+", page title count | 1b, 1c, 1d, 2b | `RoomEntry.unread`, `RoomEntry.unreadDirect`, `RoomEntry.readSeq` |
 | Join / create with topic and about | 1a–1k, 4a, 4b, 4d, 5n | `JoinRequest.room`, `JoinRequest.topic`, `JoinRequest.about`; result `JoinResult.readSeq`, `JoinResult.roster` |
-| Join refused: archived room | 1i | `Failure.code` conflict with `Failure.message` "room is archived" |
+| Join refused: archived room | 1i | `Failure.code` conflict with `Failure.reason` `room-archived` (`room-full` for a full room); `Failure.message` is shown |
 | Leave room (room menu) | room menu | `LeaveRequest.room` |
 | Timeline messages: sender, kind chip, harness, recipients, reply reference, body, time, sequence | 2b and every room page | `HistoryResult.messages` → `Message.seq`, `Message.sender`, `Message.senderKind`, `Message.agent` (`AgentInfo.harness`), `Message.to`, `Message.replyTo`, `Message.body`, `Message.createdAt`, `Message.actor` |
 | System lines (topic, archived, unarchived) | 2b, 8b | `Message.kind` System, `Message.event` (`SystemEvent` Topic, Archived, Unarchived), `Message.sender`, `Message.actor`, `Message.body` |
@@ -284,7 +295,7 @@ Contract read: `/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-blabbe
 | Archive / unarchive | 8a, 8c | `ArchiveRequest.room`, `ArchiveRequest.archived`; `ArchiveResult.room` |
 | Send to the room or directly, reply, frozen retry | 5a–5w | `SayRequest.room`, `SayRequest.to`, `SayRequest.body`, `SayRequest.replyTo`, `SayRequest.requestId` |
 | "Sent as #n", replayed retry, outlook per recipient | 6a–6f, 5h | `PostResult.seq`, `PostResult.createdAt`, `PostResult.replayed`, `PostResult.recipients` → `RecipientOutlook.handle`, `RecipientOutlook.outlook` (`Outlook`: Busy, Idle, IdleNoWake, BlockedOnUser, Away, NotAccepting, Present) |
-| Refusals in the composer: too large, rate-limited (with the wait), archived room, a departed recipient, R14 | 5i, 5j, 5l, 5o, 5s | `Failure.code` too-large, rate-limited (wait from the `Retry-After` header), conflict "room is archived", invalid (message lists the active handles), invalid "a reply to a direct message can only be addressed to its participants" |
+| Refusals in the composer: too large, rate-limited (with the wait), archived room, a departed recipient, R14 | 5i, 5j, 5l, 5o, 5s | `Failure.code` too-large (beyond `Identity.limits.bodyBytes`); rate-limited (wait from the `Retry-After` header); conflict with `Failure.reason` `duplicate-body` or `room-archived`; invalid with `recipient-not-active` (the message lists the active handles) or `reply-audience`; `Failure.message` is shown |
 | Search: query, mode, scope, kind filter, sender, archived rooms, paging | 9a–9m | `SearchRequest.query`, `SearchRequest.mode`, `SearchRequest.room`, `SearchRequest.direct`, `SearchRequest.sender`, `SearchRequest.includeArchived`, `SearchRequest.offset`, `SearchRequest.limit` |
 | Search results, excerpt, served mode, counts, pending notice | 9b–9i | `SearchResult.hits` → `SearchHit.message`, `SearchHit.chunkStart`, `SearchHit.chunkEnd`; `SearchResult.mode`, `SearchResult.total`, `SearchResult.countScope`, `SearchResult.rankingLimit`, `SearchResult.pending` |
 | Modes offered, lexical fallback, "semantic search is not configured" | 9e, 9j | `SearchCapabilities.modes`, `SearchCapabilities.directModes`; `Failure.code` unavailable with its fixed message |
@@ -326,11 +337,15 @@ Contract read: `/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-blabbe
   limit: 20 messages per minute"); at most 16 recipients (the recipient picker); the duplicate window of 60 s
   (5k, "less than a minute ago"); the maximum length of a person's "about" (4d; the mockup's 120 is invented).
   *Settled by R26:* `Identity.limits` (`Limits`) carries the limits the server enforces, `aboutChars` included.
+  The screens take every number above from it (`bodyBytes`, `postsPerMinute`, `recipients`, `duplicateWindowMs`,
+  `aboutChars`); the numbers of this brief are examples.
 - **G6. The duplicate-body refusal cannot be told apart.** 5k needs "you sent the same text less than a minute
   ago"; the contract answers `conflict` for that and for a room at its limit of active participants, a nick held
   by another session, an exhausted room sequence and an archived room, and fixes a message only for the archived
   room ("room is archived"). The duplicate has no fixed `Failure.message`.
-  *Settled by R27:* `Failure.reason` tells the refusals apart; the duplicate is `duplicate-body`.
+  *Settled by R27:* `Failure.reason` tells the refusals apart; the duplicate is `duplicate-body`. The page
+  classifies by `Failure.code` and `Failure.reason` only, ignores a reason it does not know, and shows
+  `Failure.message`.
 - **G7. The room id rule.** 1h shows "Invalid room id. A room id is 1 to 63 characters: lower-case letters,
   digits, ".", "_" and "-", starting with a letter or digit." The contract does not state the syntax of a room id
   (the rule is the pilot's `[a-z0-9][a-z0-9._-]{0,62}`); `invalid` carries no fixed message for it.
@@ -341,8 +356,8 @@ Contract read: `/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-blabbe
   view 1j is this generic handling.
 - **G9. The live socket's close codes.** 3d depends on the socket closing with 4401 when the browser session ends
   (design 9.4); `LiveFrame` and the model name no close codes.
-  *Settled by R30:* the live-socket unit defines the close codes from design 7.2; they are written into the comment
-  of `LiveFrame` when that unit is integrated.
+  *Settled by R30:* the live-socket unit defines the close codes from design 7.2; it wrote them into the comment of
+  `LiveFrame`, which reached `product/blabber` at `2c444ad4`.
 
 ### 6.3 What the screens take from elsewhere
 
