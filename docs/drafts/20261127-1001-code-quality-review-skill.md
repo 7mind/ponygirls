@@ -396,3 +396,18 @@ above; the pilot is the next check.
 ## 10. Tuning log
 
 Empty: no run yet.
+
+## 11. State, for resuming
+
+- Branch `code-quality-review-skill`, work tree
+  `.worktrees/wt-ponygirls-code-quality-review-skill`; not merged. Commits:
+  `cf738b4e` (v0), `4bf77c32` (v0.1), `7f1ed212` (v0.2).
+- Published copy of `7f1ed212`, public, expires 27 Dec 2026: Manure artifact
+  `b747a13411cf09afe1394f74b227897e`.
+- Open questions in the decision inbox: Q183 (metric), Q184 (admission),
+  Q185 (pilot, models, cap), Q186 (Linear tracking).
+- Not done: the discussion, the pilot, the Haystack skill-draft record (to be
+  written after the pilot), installation under `nix/pkg/llm-skills/skills/`.
+- Scratch material outside the repository, not needed to continue:
+  `/tmp/cq-research` (prior-art downloads, clone-detector probes, the old
+  script versions used for the reproductions).
