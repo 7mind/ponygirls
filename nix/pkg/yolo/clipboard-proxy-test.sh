@@ -18,7 +18,53 @@ SCHEDULING_TOLERANCE_SECONDS=5
 FAILURES=0
 TESTS_RUN=0
 WORKDIR="$(mktemp -d)"
-trap 'rm -rf "$WORKDIR"; [[ -n "${BROKER_PID:-}" ]] && kill "$BROKER_PID" 2>/dev/null || true' EXIT
+
+# Background helpers (brokers, a fake server) each lead their own process
+# group, so whatever they start in turn -- the brokers' adapters and the hanging
+# adapter's grandchild -- stays in that group. Cleanup ends exactly these groups
+# by id, never processes selected by name, on every way out.
+HELPER_EXIT_POLLS=100
+HELPER_EXIT_POLL_SECONDS=0.05
+ANNOUNCE_BROKER_PID=""
+BROKER_PID=""
+BOGUS_PID=""
+
+# start_helper CMD...: run CMD in the background as the leader of a new process
+# group (job control is on only for this launch) and set HELPER_PID.
+start_helper() {
+  set -m
+  "$@" &
+  HELPER_PID=$!
+  set +m
+}
+
+# end_helper PID: end the helper's process group, reap the helper and wait
+# until no member of the group is left.
+end_helper() {
+  local group="$1" polls=0
+  kill -TERM -- "-$group" 2>/dev/null
+  wait "$group" 2>/dev/null
+  while kill -0 -- "-$group" 2>/dev/null; do
+    polls=$((polls + 1))
+    if [[ $polls -gt $HELPER_EXIT_POLLS ]]; then
+      echo "FAIL: helper process group $group is still running after cleanup" >&2
+      return 1
+    fi
+    sleep "$HELPER_EXIT_POLL_SECONDS"
+  done
+}
+
+cleanup() {
+  local status=$? group
+  for group in $ANNOUNCE_BROKER_PID $BROKER_PID $BOGUS_PID; do
+    end_helper "$group" || status=1
+  done
+  rm -rf "$WORKDIR"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 assert_eq() {
   local desc="$1" expected="$2" actual="$3"
@@ -169,29 +215,36 @@ assert_last_argv() {
 ANNOUNCE_STATE="$WORKDIR/announce-state"
 mkdir -p "$ANNOUNCE_STATE"
 printf 'announce-buffer' > "$ANNOUNCE_STATE/buffer"
-# broker_startup_stderr NAME [broker flags...]: stderr of a broker that served one request.
-broker_startup_stderr() {
-  local name="$1" pid
+# serve_one_request NAME [broker flags...]: a broker serves one request and is
+# ended; STARTUP_STDERR is set to its stderr. It runs in this shell, not in a
+# command substitution, so cleanup on any way out knows the broker.
+serve_one_request() {
+  local name="$1"
   shift
-  FAKE_TMUX_STATE="$ANNOUNCE_STATE" "$PROXY" broker \
+  FAKE_TMUX_STATE="$ANNOUNCE_STATE" start_helper "$PROXY" broker \
     --listen "$WORKDIR/$name.sock" \
     --tmux-socket /tmp/does-not-need-to-exist.sock \
-    --tmux "$FAKE_TMUX" "$@" 2> "$WORKDIR/$name.err" &
-  pid=$!
+    --tmux "$FAKE_TMUX" "$@" 2> "$WORKDIR/$name.err"
+  ANNOUNCE_BROKER_PID=$HELPER_PID
   for _ in $(seq 1 50); do
     [[ -S "$WORKDIR/$name.sock" ]] && break
     sleep 0.05
   done
   YOLO_CLIPBOARD_SOCK="$WORKDIR/$name.sock" "$PROXY" client get > "$WORKDIR/$name.out" 2>/dev/null
-  kill "$pid" 2>/dev/null
-  wait "$pid" 2>/dev/null
-  cat "$WORKDIR/$name.err"
+  end_helper "$ANNOUNCE_BROKER_PID" || exit 1
+  ANNOUNCE_BROKER_PID=""
+  if ! STARTUP_STDERR="$(cat "$WORKDIR/$name.err")"; then
+    echo "FAIL: stderr of the $name broker is unreadable"
+    exit 1
+  fi
 }
-assert_eq "broker prints nothing on startup by default" "" "$(broker_startup_stderr quiet)"
+serve_one_request quiet
+assert_eq "broker prints nothing on startup by default" "" "$STARTUP_STDERR"
 assert_eq "silent broker served its request" "announce-buffer" "$(cat "$WORKDIR/quiet.out")"
+serve_one_request traced --trace
 assert_eq "broker --trace announces its socket" \
   "yolo-clipboard-proxy broker: listening on $WORKDIR/traced.sock (tmux socket /tmp/does-not-need-to-exist.sock)" \
-  "$(broker_startup_stderr traced --trace)"
+  "$STARTUP_STDERR"
 assert_eq "announcing broker served its request" "announce-buffer" "$(cat "$WORKDIR/traced.out")"
 ERR="$("$PROXY" broker --listen "$WORKDIR/unconfigured.sock" 2>&1)"
 assert_fail "broker without a tmux socket fails" "$?"
@@ -202,11 +255,11 @@ mkdir -p "$SOCK_DIR"
 chmod 700 "$SOCK_DIR"
 SOCK="$SOCK_DIR/sock"
 
-"$PROXY" broker \
+start_helper "$PROXY" broker \
   --listen "$SOCK" \
   --tmux-socket /tmp/does-not-need-to-exist.sock \
-  --tmux "$FAKE_TMUX" &
-BROKER_PID=$!
+  --tmux "$FAKE_TMUX"
+BROKER_PID=$HELPER_PID
 
 for _ in $(seq 1 50); do
   [[ -S "$SOCK" ]] && break
@@ -452,8 +505,9 @@ fi
 assert_diagnostic_bound "hang diagnostic" "${ERR#yolo-clipboard-proxy client: }"
 
 # The broker stays available: the next valid request succeeds.
+# The hanging adapter's grandchild stays in the broker's process group and
+# ends with it at cleanup.
 printf 'normal\n' > "$FAKE_STATE/mode"
-pkill -f 'sleep 3600' 2>/dev/null || true
 printf 'after-hang' | "$PROXY" client set
 ST=$?
 assert_ok "broker serves the next valid request after overflow and hang" "$ST"
@@ -463,7 +517,7 @@ assert_eq "next request round-trips" "after-hang" "$GOT"
 # --- Malformed responses (client side): garbage tags and oversized frames
 # are rejected; the strict adapter is not involved at all.
 BOGUS_SOCK="$WORKDIR/bogus.sock"
-"$_python_path" - "$BOGUS_SOCK" <<'PY' &
+start_helper "$_python_path" - "$BOGUS_SOCK" <<'PY'
 import socket
 import struct
 import sys
@@ -476,7 +530,7 @@ for reply in (bytes([77]), bytes([2]) + struct.pack("<I", 1048577), bytes([1]) +
     conn.sendall(reply)
     conn.close()
 PY
-BOGUS_PID=$!
+BOGUS_PID=$HELPER_PID
 for _ in $(seq 1 50); do [[ -S "$BOGUS_SOCK" ]] && break; sleep 0.05; done
 YOLO_CLIPBOARD_SOCK="$BOGUS_SOCK" "$PROXY" client get >/dev/null 2>&1
 ST1=$?
@@ -485,6 +539,7 @@ ST2=$?
 YOLO_CLIPBOARD_SOCK="$BOGUS_SOCK" "$PROXY" client get >/dev/null 2>&1
 ST3=$?
 wait "$BOGUS_PID" 2>/dev/null || true
+BOGUS_PID=""
 assert_fail "garbage response tag rejected" "$ST1"
 assert_fail "oversized DATA frame rejected" "$ST2"
 assert_fail "oversized ERR frame rejected" "$ST3"
