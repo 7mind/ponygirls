@@ -1,9 +1,11 @@
-# Code-quality review skill: design draft v0
+# Code-quality review skill: design draft v0.1
 
 Status: proposal for discussion, 27 Nov 2026. Nothing here has been run end
-to end. The draft skill is `20261127-1001-code-quality-review-skill/SKILL.md`
-(one file, as `nix/pkg/llm-skills` packages skills); `measure.py` beside it is
-the script embedded in the skill, byte for byte.
+to end. The text has had two independent readings (section 9); the script has
+been tested on small cases and on this repository. The draft skill is
+`20261127-1001-code-quality-review-skill/SKILL.md` (one file, as
+`nix/pkg/llm-skills` packages skills); `measure.py` beside it is the script
+embedded in the skill, byte for byte.
 
 ## 1. Task
 
@@ -24,11 +26,11 @@ tables excluded. Counted by the draft's `measure.py`.
 
 | Tree | Production lines | Production tokens | Test lines | Test tokens | Bytes |
 |---|---:|---:|---:|---:|---:|
-| chronicle | 33,263 | 587,122 | 43,063 | 873,909 | 6.7 MB |
-| haystack | 10,834 | 191,546 | 11,036 | 202,841 | 1.7 MB |
-| manure | 17,112 | 226,503 | 23,033 | 323,248 | 2.7 MB |
-| shared | 7,954 | 131,410 | 7,403 | 117,903 | 1.2 MB |
-| total | 69,163 | 1,136,581 | 84,535 | 1,517,901 | 12.2 MB |
+| chronicle | 33,309 | 704,421 | 43,063 | 1,021,434 | 6.7 MB |
+| haystack | 10,834 | 225,667 | 11,036 | 257,574 | 1.7 MB |
+| manure | 17,112 | 269,998 | 23,033 | 413,803 | 2.7 MB |
+| shared | 7,954 | 151,877 | 7,403 | 138,000 | 1.2 MB |
+| total | 69,209 | 1,351,963 | 84,535 | 1,830,811 | 12.2 MB |
 
 Three observations decide parts of the design.
 
@@ -114,9 +116,11 @@ admissibility (paths, verbatim anchors) ─ cluster ─ precedence ─ rank
    │
 refutation ───────────── refuters: fresh context, other model family,
    │                     reader's reasoning withheld ──► refuted | supported
-spikes ───────────────── spikers: own worktree, tests, measured delta,
-   │                     negative control ──► confirmed | unguarded | failed
-working set and report ── stop: "name the ids to apply"
+spikes ───────────────── spikers: own work tree, tests before and after,
+   │                     targeted checks, measured delta, negative control
+patch review ─────────── someone who did not write the patch
+   │                     ──► confirmed | confirmed-unguarded | failed
+working set (measured only) and report ── stop: "name the ids to apply"
    │
 apply, only on request
 ```
@@ -130,19 +134,24 @@ Decisions, each with the alternative it was chosen over:
 2. **Two tests, cheap before dear.** Independent refutation by reading, then
    a spike that builds, tests and measures. Alternative: spike everything
    (each spike is a build and a test run) or validate by reading only (the
-   failure that prior art warns about). Only a measured spike earns
-   `confirmed`; a survivor of refutation is `supported` and labelled as such.
+   failure that prior art warns about). Only a measured spike admits a
+   hypothesis to the working set; a survivor of refutation is `supported`, a
+   candidate listed apart from it.
 3. **Refutation requires a counterexample.** Alternative: a default-no
    reviewer. A wrong acceptance costs one spike; a wrong rejection loses the
    saving silently, so doubt alone must not kill.
 4. **Tokens as currency, lines beside them** (section 2). A proposal predicts
    lines, because people and models estimate lines; the spike measures both,
    and the report gives the ratio of measured to predicted as a calibration
-   factor for everything not spiked.
+   factor for the candidates not spiked.
 5. **Invariants instead of a readability judge.** Tests, test-case inventory,
-   contracts, boundary validation, dependency direction and density are listed
-   as things a saving may not be bought with. Alternative: an LLM score for
-   "readability", which has no test.
+   contracts, boundary validation, dependency direction, object lifetime,
+   order of effects and cost class are listed as things no proposal may be
+   bought with, and denser formatting, deleted comments and code moved out of
+   the script's sight do not count as savings. Alternative: an LLM score for
+   "readability", which has no test. A negative control alone does not show
+   that the particular risk is guarded, so the spiker also checks each named
+   risk by a run, and the patch is read by someone who did not write it.
 6. **A lens against the metric.** A size target pushes towards merging things
    that merely look alike. `abstraction-fitness` proposes inlining, deleting
    and splitting, and the kill tests of the merging lenses (a flag parameter,
@@ -157,6 +166,11 @@ Decisions, each with the alternative it was chosen over:
    records means the brief or model is at fault; more than two thirds refuted
    means the card is too loose for this codebase and gets a recorded
    amendment; nothing admissible on two partitions parks the lens.
+10. **A pack supplies four things** (currency with its prediction field, what
+    readers leave alone, what admits a hypothesis, when a spike passes) and
+    the pipeline supplies the rest. Without that split the structural gate
+    ("tokens must fall") would reject every performance or correctness
+    proposal.
 
 ## 5. Where the draft departs from the sketch
 
@@ -187,9 +201,11 @@ Decisions, each with the alternative it was chosen over:
 2. **Allocation.** (a) One agent per lens per partition, as sketched;
    (b) the four groups; (c) run both on the pilot target and choose by yield
    per token. Recommended: (c).
-3. **Admission.** Is "survived an independent refutation attempt" enough to
-   be listed, labelled `supported`, with spikes for the largest and a
-   calibration sample? The alternative is to spike everything listed.
+3. **Admission.** The draft admits to the working set only what a spike
+   measured; survivors of refutation that were not spiked are listed apart as
+   candidates with a calibrated estimate. Is that the bar you meant by
+   "tested", or should a refutation attempt by an independent reader be
+   enough? The strict bar costs one build and test run per admitted item.
 4. **Lens set.** Are the nine right? `test-support` is the one most likely to
    be unwanted: it touches tests, under the rule that the executed cases and
    assertions may not shrink.
@@ -214,8 +230,9 @@ Checklist (did the text steer the agent): tree frozen; symbolic links and
 generated code outside `generated/` excluded; plan presented before fan-out;
 reader briefs free of the supervisor's conclusions; records valid and anchors
 checked mechanically; refuters given only the permitted fields; kills checked
-by reading the cited lines; spikes measured by the script, with a negative
-control; `supported` and `confirmed` kept apart; residue reported.
+by reading the cited lines; spikes with tests before and after, measured by
+the script, with a negative control; each patch read by someone who did not
+write it; nothing unmeasured in the working set; residue reported.
 
 Stated before any result:
 
@@ -247,25 +264,92 @@ numbers; the skill's plan step exists to stop there.
 
 To settle: models per role (supervisor, readers and spikers on the session's
 model; refuters on another family, for example `gpt-6.2-sol`; or the
-employer-hosted open models for readers), and a cap. `tokemon` shows the Anthropic account's extra
-usage at 4,892 of 5,000 USD; whether that bounds the gateway provider this
-session runs on is unknown.
+employer-hosted open models for readers), and a cap. `tokemon` shows the
+Anthropic account's extra usage at 4,892 of 5,000 USD; whether that bounds
+the gateway provider this session runs on is unknown.
 
 ## 8. Known weaknesses of the draft
 
-- 34 KB, of which 13 KB are lens cards and 4 KB the script; most installed
-  skills are 4 to 21 KB. Trimming should follow the pilot, which shows which
-  sentences carry weight.
+- 41 KB, of which about 13 KB are lens cards and 6 KB the script; the largest
+  installed skill is 40 KB and most are 4 to 21 KB. Trimming should follow
+  the pilot, which shows which sentences carry weight.
 - Every threshold and cap (ten hypotheses per pass, a third, two thirds, five
   per refuter, three variation points) is a choice without data.
 - The four lens groups are a guess about which lenses share a reading mode.
-- The script's lexer is approximate: regular-expression literals and nested
-  template strings can be mis-tokenized. It is used for deltas between two
-  runs of itself, never for absolute comparison with another counter.
+- The script's lexer is approximate. Known miscounts, left in and named in
+  the skill: a JavaScript regular-expression literal containing `//`, nested
+  block comments, shell here-documents and SQL dollar-quoted bodies. It is
+  used for deltas between two runs of itself, never beside another counter.
 - A spike's verdict is bounded by the tests that exist; the negative control
   detects the unguarded case but does not repair it.
 - Nothing addresses a codebase without tests beyond `confirmed-unguarded`.
+- Patch review adds one more reading per spike; whether it finds anything the
+  spiker's checks miss is unknown.
 
-## 9. Tuning log
+## 9. Independent readings before discussion
+
+Two read-only reviewers read v0 (commit `cf738b4e`) with separate concerns.
+Neither ran anything.
+
+| Reviewer | Concern | Findings |
+|---|---|---|
+| `moonshotai/Kimi-K3.1-Pro`, thinking high | cold walk-through: can a fresh agent execute the text for "review `haystack/`" | 14 |
+| `gpt-6.2-sol`, thinking high | adversarial soundness: wrong admissions, silent losses, metric gaming, script defects, requirements | 14 |
+
+Each of the 28 was compared with the passage it cites, and none turned out
+to be wrong. Six script defects were reproduced (table at the end of this
+section); the others about the script were accepted from reading its regular
+expressions. Changes made for v0.1:
+
+- **Script.** Counts untracked files and survives deleted ones (v0 listed the
+  index only: code moved into a new file read as a saving, and a deleted file
+  crashed it); counts the tokens inside strings (v0 counted a template
+  literal as one word, so a concatenation rewritten as a template read as
+  ten tokens cheaper); finds Python docstrings by the syntax tree (v0 dropped
+  any triple-quoted string that began a line, including SQL passed as an
+  argument); shell `${#x}` and Nix `''` strings no longer start a comment;
+  `--compare` reuses the baseline's arguments and refuses others; a file name
+  with a tab is refused.
+- **Admission.** The working set is measured items only; `supported` became a
+  separate candidates list; `confirmed-unguarded` has a place in the report;
+  one status per record, with the step that sets it.
+- **Spikes.** Tests run before the edit as well as after; a check by a run
+  for each named risk and difference; everything staged before measuring and
+  diffing; every patched file accounted for by the measurement; a patch
+  review by someone who did not write it; pure deletions use a reference
+  search and builds where a negative control has no code path to break.
+- **Reconciliation.** Rivals are exempt from one-per-cluster; when the
+  preferred hypothesis of a cluster falls, the next alternative goes forward;
+  anchors are checked without pasting them into a shell; library references
+  are verified by the refuter; scope is separate from what the script can
+  measure.
+- **Report.** Inadmissible, untested and alternative hypotheses by id; the
+  candidates readers named without writing them up; leads left unfollowed
+  when a lens is parked; a defined calibration with "insufficient data".
+- **Packs.** The size gate and the ban on naming proposals moved from the
+  pipeline into the structural pack, so other packs can state their own.
+- **Smaller repairs.** Detector and baseline output directed to the run
+  directory; the first wave may span several waves of five; the dead-weight
+  card no longer asks for comments to be deleted and no longer dies on a
+  reference from inside the deleted code; sampling removed from Boundaries.
+
+Not repaired, by choice: nested block comments, regular-expression literals
+containing `//`, and SQL dollar quotes are documented as known miscounts
+instead of being lexed.
+
+Reproduction of the script defects, old script (as committed in `cf738b4e`)
+against the rewritten one on the same inputs. The reproduction was run after
+the rewrite, against the unchanged old file:
+
+| Input | Old | New |
+|---|---|---|
+| `return prefix + f(x) + g(y)` against the same as a template literal | 29 and 19 tokens | 29 and 38 |
+| shell `n=${#value}; echo "$n"` | 4 tokens | 12 |
+| Nix `let n = ''#tag''; in n` | 4 tokens | 12 |
+| Python `return (` / `"""required payload"""` / `)` in a function | 3 lines, 8 tokens | 4 lines, 16 tokens |
+| a definition moved from a tracked file into a new untracked one | tokens −13 | tokens +4 |
+| a tracked file deleted without `git rm` | `FileNotFoundError` | reported as removed |
+
+## 10. Tuning log
 
 Empty: no run yet.
