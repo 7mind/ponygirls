@@ -807,16 +807,20 @@ native executable and the full verification were not run for any spike.
   `.worktrees/wt-ponygirls-code-quality-review-skill`; not merged. Commits:
   `cf738b4e` (v0), `4bf77c32` (v0.1), `7f1ed212` (v0.2), `4225bf3e` (v0.3);
   v0.4 follows.
-- Held-out tree: local branch `manure-backend-helpers`, work tree
-  `.worktrees/wt-ponygirls-manure-helpers`, planted commit `03f3b2a7`. Never
-  merge or push it. Answer key: `/tmp/cq-research/pilot2/plants.md`.
-- Pilot tree: local branch `haystack-server-helpers`, work tree
-  `.worktrees/wt-ponygirls-haystack-helpers`, planted commit `04aa8cce`.
-  Never merge or push it. Answer key and pilot scratch: `/tmp/cq-research/pilot`.
+- Held-out tree: local branch `manure-backend-helpers`, planted commit
+  `03f3b2a7` (its work tree is removed). Never merge or push it. Answer key:
+  `/tmp/cq-research/pilot2/plants.md`. The spike patches of both runs are
+  based on the planted commits.
+- Pilot tree: local branch `haystack-server-helpers`, planted commit
+  `04aa8cce` (its work tree is removed). Never merge or push it. Answer key
+  and pilot scratch: `/tmp/cq-research/pilot`.
 - Published, public, expiring 27 Dec 2026: Manure artifact
-  `00256bb27785abbc468e779cbae26880` (v0.3, this note at `9317d925`, the
-  pilot's report and notes); the earlier `b747a13411cf09afe1394f74b227897e`
-  holds v0.2.
+  `759b1d0dd27d3ea9a78992b0594cf250` (v0.4, this note at `56bd3254`, the
+  reports and notes of both runs); earlier ones:
+  `00256bb27785abbc468e779cbae26880` (v0.3 and the first wave),
+  `b747a13411cf09afe1394f74b227897e` (v0.2).
+- Haystack: `corporate-activity:skill-draft-code-quality-review`, revision 1
+  (v0.4 complete, evidence of both runs, known defects), attention required.
 - Decision inbox: Q183 to Q186, Q193 and Q194 answered (section 6). Open in
   chat only: the lens set, the name and the home of the skill.
 - Left in place after the wave: five spike work trees with staged patches
