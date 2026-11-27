@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 import java.security.MessageDigest
 import java.util.Base64
+import ponygirls.auth.Secrets
 import scala.jdk.CollectionConverters.*
 
 private[haystack] object AuthFixtures {
@@ -52,10 +53,10 @@ private[haystack] object AuthFixtures {
 class TokensTest extends munit.FunSuite {
   import AuthFixtures.*
   test("generated tokens are independent canonical 32-byte base64url and stable SHA256") {
-    val tokens = Vector.fill(50)(Tokens.generate())
+    val tokens = Vector.fill(50)(Secrets.generate())
     assertEquals(tokens.distinct.size, 50)
     tokens.foreach { token =>
-      assert(Tokens.canonical(token)); assertEquals(token.length, 43)
+      assert(Secrets.canonical(token)); assertEquals(token.length, 43)
       assertEquals(Base64.getUrlDecoder.decode(token).length, 32)
       val expected = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.US_ASCII)).map(b => f"${b & 255}%02x").mkString
       assertEquals(Tokens.hash(token), expected)
@@ -63,18 +64,18 @@ class TokensTest extends munit.FunSuite {
   }
   test("all alternate pad-bit aliases are rejected, canonical zero token remains valid") {
     val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-    assert(Tokens.canonical("A" * 43))
+    assert(Secrets.canonical("A" * 43))
     Vector('B', 'C', 'D').foreach { last =>
       val alias = "A" * 42 + last
       assertEquals(Base64.getUrlDecoder.decode(alias).toVector, Vector.fill[Byte](32)(0))
-      assert(!Tokens.canonical(alias))
+      assert(!Secrets.canonical(alias))
       val failure = intercept[Fault](Tokens.hash(alias))
       assertEquals(failure.code, "unauthorized"); assert(!failure.message.contains(alias))
     }
   }
   Vector("", "short", AliceToken + "\n", AliceToken + " ", AliceToken + "=", "A" * 42 + "Á", "A" * 42 + "+", "A" * 42 + "/").zipWithIndex.foreach { case (token, i) =>
     test(s"malformed direct token presentation $i never hashes") {
-      assert(!Tokens.canonical(token)); assertEquals(intercept[Fault](Tokens.hash(token)).code, "unauthorized")
+      assert(!Secrets.canonical(token)); assertEquals(intercept[Fault](Tokens.hash(token)).code, "unauthorized")
     }
   }
   test("token files accept only exact ASCII token or one terminal LF") { directory { dir =>
@@ -129,7 +130,7 @@ class AuthConfigTest extends munit.FunSuite {
     assertEquals(auth.authenticate(AliceToken), Some(Principal("alice", "human", "browser")))
     assertEquals(auth.authenticate(RotationToken), Some(Principal("alice", "human", "rotation")))
     assertEquals(auth.authenticate(BotToken), Some(Principal("bot", "agent", "worker")))
-    Vector("short", "", "A" * 42 + "B", AliceToken + "\n", AliceToken + " ", "A" * 42 + "Á", Tokens.generate()).foreach { raw => assertEquals(auth.authenticate(raw), None) }
+    Vector("short", "", "A" * 42 + "B", AliceToken + "\n", AliceToken + " ", "A" * 42 + "Á", Secrets.generate()).foreach { raw => assertEquals(auth.authenticate(raw), None) }
   } }
   test("password-only human accounts are valid while partial/agent credentials fail closed") { directory { dir=>
     val cfg=passwordConfig(dir)

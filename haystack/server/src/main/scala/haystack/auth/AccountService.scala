@@ -3,7 +3,7 @@ package haystack.auth
 import cats.effect.{IO,Resource}
 import haystack.domain.{Fault,Principal}
 import io.circe.Json
-import ponygirls.auth.{AccountCredential,AccountFailure,AccountIssued,AccountJson,AccountReply,AccountRequest,AccountSql,AccountToken,AccountUser,AttemptLimiter,CredentialGate,DeclarativeLogin,IdentityHistory,IndexingAccountTransactions,IndexingPolicy,IndexingPreferenceSql,IndexingPreferences,IndexingService,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,PasswordHasher,AccountEndpoint,SharedAccountSessions,SignedIn}
+import ponygirls.auth.{AccountCredential,AccountFailure,AccountIssued,AccountJson,AccountReply,AccountRequest,AccountSql,AccountToken,AccountUser,AttemptLimiter,CredentialGate,DeclarativeLogin,IdentityHistory,IndexingAccountTransactions,IndexingPolicy,IndexingPreferenceSql,IndexingPreferences,IndexingService,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,PasswordHasher,AccountEndpoint,Secrets,SharedAccountSessions,SignedIn}
 import ponygirls.runtime.JdbcDatabase
 import java.sql.Connection
 import java.time.Clock
@@ -123,7 +123,7 @@ final class AccountService(database:JdbcDatabase,getAuth:()=>Auth,imperative:Imp
       .flatMap(imperative.api.handleIndexing(indexingPolicy,auth.declared,indexing,_))
   }
   private def accountRequest(auth:Auth,method:String,path:String,body:Option[Json],actor:Vector[String],presented:Option[String],clientAddress:String):IO[AccountRequest]={
-    val session=presented.filter(Tokens.canonical) match {
+    val session=presented.filter(Secrets.canonical) match {
       case None=>IO.pure(None)
       case Some(token)=>database.transaction(c=>AccountSql.browser(c,directory(c,auth),token))
     }

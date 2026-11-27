@@ -3,10 +3,10 @@ package haystack.auth
 import haystack.domain.{Fault, Principal, QualifiedId}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
-import java.security.{MessageDigest, SecureRandom}
+import java.security.MessageDigest
 import java.net.URI
-import java.util.{Base64, Locale}
-import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,DeclaredDirectory,ImperativeSettings,Password,PersistentCookie,TotpVault}
+import java.util.Locale
+import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,DeclaredDirectory,ImperativeSettings,Password,PersistentCookie,Secrets,TotpVault}
 
 final case class TokenConfig(id: String, hashFile: String)
 final case class UserConfig(id: String, userType: String, displayName: String, tokens: Vector[TokenConfig],
@@ -24,15 +24,9 @@ final case class AuthConfig(activityProjectId: String, users: Vector[UserConfig]
   insecureHttpOrigins: Vector[String] = Vector.empty, rateLimit: Option[RateLimit] = None, accounts: Option[AccountsConfig] = None)
 
 object Tokens {
-  private val encoder = Base64.getUrlEncoder.withoutPadding()
-  def canonical(token: String): Boolean = token.matches("[A-Za-z0-9_-]{43}") && (try {
-    val bytes = Base64.getUrlDecoder.decode(token)
-    bytes.length == 32 && encoder.encodeToString(bytes) == token
-  } catch { case _: IllegalArgumentException => false })
-  def generate(): String = { val bytes = new Array[Byte](32); new SecureRandom().nextBytes(bytes); encoder.encodeToString(bytes) }
   def hash(token: String): String = {
-    if (!canonical(token)) throw Fault("unauthorized", "invalid credentials")
-    MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.US_ASCII)).map(b => f"${b & 255}%02x").mkString
+    if (!Secrets.canonical(token)) throw Fault("unauthorized", "invalid credentials")
+    Secrets.digest(token)
   }
   private def read(path: String, length: Int, pattern: String): String = {
     // At most exact bytes + optional LF + one overflow byte. A malformed
@@ -47,7 +41,7 @@ object Tokens {
     if (!text.matches(pattern)) throw Fault("config", "malformed credential file")
     text
   }
-  def readToken(path: String): String = { val token = read(path, 43, "[A-Za-z0-9_-]{43}"); if (!canonical(token)) throw Fault("config", "malformed credential file"); token }
+  def readToken(path: String): String = { val token = read(path, 43, "[A-Za-z0-9_-]{43}"); if (!Secrets.canonical(token)) throw Fault("config", "malformed credential file"); token }
   def readDigest(path: String): String = read(path, 64, "[0-9a-f]{64}")
 }
 
@@ -57,7 +51,7 @@ final class Auth private(val config: AuthConfig, val users: Vector[AccountUser],
   /** Configured tokens only: an imperative user has none. */
   def configuredTokens(owner:String):Vector[AccountToken]=config.users.find(_.id==owner).toVector.flatMap(_.tokens).map(t=>AccountToken(t.id,t.id,"configured",None,false,Vector("api")))
   def authenticate(token: String): Option[Principal] = {
-    if (!Tokens.canonical(token)) return None
+    if (!Secrets.canonical(token)) return None
     val presented = Tokens.hash(token).getBytes(StandardCharsets.US_ASCII)
     var result: Option[Principal] = None
     digests.foreach { case (digest, principal) => if (MessageDigest.isEqual(presented, digest)) result = Some(principal) }
@@ -228,7 +222,7 @@ object Sessions {
       value.drop(7)
     }
     val token = bearer.orElse(if (mcp) None else session).getOrElse(throw Fault("unauthorized", "invalid credentials"))
-    if (!Tokens.canonical(token)) throw Fault("unauthorized", "invalid credentials")
+    if (!Secrets.canonical(token)) throw Fault("unauthorized", "invalid credentials")
     val isCookie = bearer.isEmpty
     if (mutate && isCookie) csrf(config, headers)
     Presented(token, isCookie, secureCookie)
