@@ -1,8 +1,9 @@
 # Shared service accounts
 
 `serviceAuth` owns password verification, opaque browser sessions, issued API
-credentials, the separately versioned account JSON protocol and the mechanisms of the
-request boundary (`ponygirls.auth.boundary`, below). Each service owns its policy
+credentials, the separately versioned account JSON protocol, the mechanisms of the
+request boundary (`ponygirls.auth.boundary`), the declared users' account service and
+the http4s account plane (below). Each service owns its policy
 values: allowed hosts and origins, cookie names, which rule variants it selects, and
 the failure codes, messages and statuses of every refusal. It does not own service
 permissions, database connections or transactions.
@@ -76,6 +77,32 @@ the exact authority, where an opted-in plain-HTTP origin's GET may prove same or
 with `X-Account-Request: 1` instead. Services with another origin model keep it and
 use the other mechanisms. Configuration parsing (key names, file layout) stays in the
 service; the loaders take parsed values. Users today: Haystack.
+
+## Account service and account plane
+
+`DeclarativeAccountService[S]` (package `ponygirls.auth`, HTTP-neutral) serves the
+declared users' accounts over an `AccountStorage`: credential resolution (configured
+tokens first, then issued tokens; browser sessions), liveness, password login, the
+operations of the five account endpoints, and the imperative and indexing dispatch.
+`S` is the service's configuration snapshot (`AccountSnapshot`: declared users and
+directory, imperative settings, configured tokens); every account decision reads it
+once through the supplier the service passes, inside the transaction where the
+decision has one, so a reload published meanwhile decides it. Refusals are
+`AccountRefused(AccountRefusal)`; the service maps them. `SharedAccountStorage` is the
+store over the shared tables in the service's `ConnectionTransactions`, with the
+service's retained identities as `IdentityHistory`; owner keys are the user ids.
+
+`AccountPlane[S]` (package `ponygirls.auth.http4s`) serves every request under
+`/api/account/`: the five endpoints, the imperative paths (404 with the master switch
+off) and the indexing paths, behind one boundary (exactly one `Host`, at most one
+`Sec-Fetch-Site`, no query, `OriginPolicy.accountTransport`, bounded JSON bodies) and
+with one reply writer (status, body, `Retry-After`, `Set-Cookie`, then the reply's
+security events). `AccountPlaneSettings` carries the service's choices: its
+transport configuration supplier and origin policy, cookie names and attribute order,
+JSON responses, failure codes and statuses, the audit sink, what ends with a session,
+the client address, its admission and labelling of authenticated requests, the body
+timeout, `Retry-After` on a `503` outside the dispatcher, and the offered scopes.
+Users today: Haystack.
 
 ## Account HTTP protocol v1
 
