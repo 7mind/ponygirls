@@ -269,13 +269,14 @@ Under coding v1: fable/high: wrong 0, restated as new 0, lifted rule left out 12
 
 - *Protocol followed* (every reply valid, no wrong ID, no restatement as new, nothing dropped, both checkpoint cells):
   met by all three subjects under coding v2, on 96 of 96 replies and 3011 of 3011 ID references. Under coding v1,
-  which counts a lifted rule's replacement as a restatement, haiku and sonnet do not meet it (6 and 8 items); those
-  items were read and are the replacements described above.
+  which counts a lifted rule's replacement as a restatement and does not know the ID it then gets, haiku and sonnet
+  do not meet it (6 and 8 replacements, each counted once as a restatement and once as a wrong ID); those replies
+  were read and are the replacements described above.
 - *Keeps the record current*: fable/high in 24 of 24 sessions, including the held-out scenario with both tool sets,
   with an entry for each objective. Sonnet/medium in 24 of 24 with only Cuckoo's tools and, with the built-in tools
   declared, in 7 of 12 (`build`) and 0 of 12 (`report`, held out); wherever it recorded objectives it kept one entry
   for the whole request, so the rule is met in a coarser sense than for fable. Haiku/low in 4 of 24.
-  Every subject recorded every rule the user gave in its turn (72 of 72 sessions).
+  Every subject recorded every rule the user gave in its turn (96 of 96 tool sessions).
 - No call was refused and no final checkpoint was invalid in any session. A final checkpoint repeated a completion
   made with the tool in 3 of 12 sonnet `tools-builtins` `build` sessions and nowhere else.
 
