@@ -227,6 +227,19 @@ Entries are append-only history in the session file: nothing is deleted, a
 retired entry keeps its last text and reason. Whether a model keeps the record
 current depends on the model; a checkpoint restates the whole record either way.
 
+What a small pilot showed (`scripts/cuckoo-record-pilot`: synthetic sessions of
+four user turns with no work in them, three models of one provider family,
+12 to 24 sessions per cell): all three followed the ID protocol in every
+checkpoint reply, also when the exchange that numbered the record was no longer
+in context. Between checkpoints, the strongest model at high effort recorded
+every objective and rule in the turn that stated it, in 24 of 24 sessions; a
+middle model at medium effort kept one entry for a whole request and, once Pi's
+built-in tools were declared beside Cuckoo's, recorded no objective in 10 of 12
+sessions of one scenario; a small model at low effort recorded rules and rarely
+objectives. Every model recorded the rules the user gave. So treat the record
+between checkpoints as current for a model you have seen keep it, and as of the
+last checkpoint otherwise; the interval is yours to set per model.
+
 Limits of the record:
 
 - Numbering assumes that one Pi process writes a session at a time, as the
@@ -892,8 +905,10 @@ the fold over checkpoints and edits, what an edit may do, the request text with
 the record, the update tool through its registered form and in the real model
 loop (declaration with Automatic mode, refused calls, reload), the current
 action of recall, the transcript rows, and the current set in the panel, the
-badge and the plain output. They establish the mechanism, not whether a model
-keeps the record current. Navigation
+badge and the plain output, and what saved data that cannot be read does to
+each of them. They establish the mechanism, not whether a model keeps the
+record current; `scripts/cuckoo-record-pilot` holds a small live-provider pilot
+of that question with its protocol, stored runs and results. Navigation
 checks cover both focus states, the arrow rule in both layout paths (every line
 of a report shown in both directions, also through items taller than the view),
 the folding table in a pane sized by its content, what a focus change keeps in
