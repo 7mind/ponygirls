@@ -2,7 +2,7 @@ package haystack.auth
 
 import haystack.domain.{Fault, Principal, QualifiedId}
 import java.net.URI
-import ponygirls.auth.{AccountUser,AccountToken,DeclaredDirectory,ImperativeSettings,PersistentCookie,Secrets}
+import ponygirls.auth.{AccountSnapshot,AccountUser,AccountToken,DeclaredDirectory,ImperativeSettings,PersistentCookie,Secrets}
 import ponygirls.auth.boundary
 import ponygirls.auth.boundary.{BoundaryRefused,CanonicalOrigin,ConfigRefused,ConfigRefusal,CookieValue,CredentialAccept,CredentialSelection,DeclaredIdRules,DeclaredUsers,
   DigestRead,DigestReader,ExactCredentialFile,ImperativeConfig,KeyFilePolicy,OriginPolicy,PresentedHeaders,Refusal,RequestAuthority,SecureAttribute,SessionCookie,SessionCookies}
@@ -83,10 +83,12 @@ object Tokens {
 
 /** `users` are the declarative users; `imperative` exists only while the master switch `auth.accounts.enabled` is on. */
 final class Auth private(val config: AuthConfig, val users: Vector[AccountUser], val declared: DeclaredDirectory,
-  val imperative: Option[ImperativeSettings], tokens: boundary.ConfiguredTokens) {
+  val imperative: Option[ImperativeSettings], val configured: boundary.ConfiguredTokens) extends AccountSnapshot[Auth] {
   /** Configured tokens only: an imperative user has none. */
-  def configuredTokens(owner: String): Vector[AccountToken] = tokens.listed(owner)
-  def authenticate(token: String): Option[Principal] = tokens.authenticate(token).map(t => Principal(t.userId, t.userType, t.tokenId))
+  def configuredTokens(owner: String): Vector[AccountToken] = configured.listed(owner)
+  def authenticate(token: String): Option[Principal] = configured.authenticate(token).map(t => Principal(t.userId, t.userType, t.tokenId))
+  /** A reload that changes neither the configuration nor the declared directory leaves an admitted decision standing. */
+  def unchangedIn(current: Auth): Boolean = (current eq this) || (current.config == config && current.declared == declared)
 }
 object Auth {
   /** Service name bound into the associated data of every encrypted TOTP secret. */
@@ -144,8 +146,11 @@ object Sessions {
   def accountTransport(config:AuthConfig,headers:RequestHeaders,safeRead:Boolean):Unit=
     Refused(config.originPolicy.accountTransport(headers.presented, safeRead, Cookies))
   def resolve(config: AuthConfig, headers: RequestHeaders, mutate: Boolean = false, mcp: Boolean = false): Presented = {
-    val accept = if (mcp) CredentialAccept.BearerOnly else CredentialAccept.BearerOrCookie
-    val selected = Refused(CredentialSelection.resolve(config.originPolicy, Cookies, headers.presented, accept, mutate))
+    val selected = select(config, headers, mutate, mcp)
     Presented(selected.secret, selected.cookie, selected.secureCookie)
+  }
+  private[auth] def select(config: AuthConfig, headers: RequestHeaders, mutate: Boolean, mcp: Boolean): boundary.Presented = {
+    val accept = if (mcp) CredentialAccept.BearerOnly else CredentialAccept.BearerOrCookie
+    Refused(CredentialSelection.resolve(config.originPolicy, Cookies, headers.presented, accept, mutate))
   }
 }
