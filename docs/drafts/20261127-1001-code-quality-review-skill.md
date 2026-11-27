@@ -604,8 +604,10 @@ notes (F01 to F34 in its `friction.md`) and the numbers above.
 - Pilot tree: local branch `haystack-server-helpers`, work tree
   `.worktrees/wt-ponygirls-haystack-helpers`, planted commit `04aa8cce`.
   Never merge or push it. Answer key and pilot scratch: `/tmp/cq-research/pilot`.
-- Published copy of `7f1ed212`, public, expires 27 Dec 2026: Manure artifact
-  `b747a13411cf09afe1394f74b227897e`.
+- Published, public, expiring 27 Dec 2026: Manure artifact
+  `00256bb27785abbc468e779cbae26880` (v0.3, this note at `9317d925`, the
+  pilot's report and notes); the earlier `b747a13411cf09afe1394f74b227897e`
+  holds v0.2.
 - Decision inbox: Q183 to Q186 answered (section 6). Open in chat only: the
   lens set, the name and the home of the skill.
 - Pilot first wave done (section 10); the run directory is
