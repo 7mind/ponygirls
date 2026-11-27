@@ -821,8 +821,10 @@ native executable and the full verification were not run for any spike.
   `b747a13411cf09afe1394f74b227897e` (v0.2).
 - Haystack: `corporate-activity:skill-draft-code-quality-review`, revision 1
   (v0.4 complete, evidence of both runs, known defects), attention required.
-- Decision inbox: Q183 to Q186, Q193 and Q194 answered (section 6). Open in
-  chat only: the lens set, the name and the home of the skill.
+- Decision inbox: Q183 to Q186, Q193 and Q194 answered (section 6). Open:
+  Q202 (how to go on after the held-out run), Q203 (whether to apply the five
+  confirmed real changes). Open in chat only: the lens set, the name and the
+  home of the skill.
 - Left in place after the wave: five spike work trees with staged patches
   (listed in the run directory's `spike-worktrees.tsv`), the planted branch
   and its work tree. All subagents are closed.
