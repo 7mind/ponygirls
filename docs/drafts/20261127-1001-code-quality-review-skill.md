@@ -1126,17 +1126,24 @@ scripts, and chronicle outside the five families.
   are the ones registered in sections 7.1 and 7.2).
 - **Applied to main:** the five changes of Q203 (`226908f5`, `1241db7f`,
   `96329e0b`, `ed425e0c`, `323d2497`; JVM suites only, by decision).
-- **Q223, in progress when this was written:** changes 1 to 4 of the
-  cross-service run are four commits on local branch
-  `apply-cross-service-cleanups` (work tree
-  `.worktrees/wt-ponygirls-apply-cross-service`): chronicle's `Wire.hash`
-  and `Wire.secret` through the shared `Secrets`; the start-stage wrapper in
-  shared service-runtime; `StaticTokens` through the shared bounded reader;
-  signup and enrollment types from shared service-auth. Production 12 lines
-  and 383 tokens smaller, tests 18 tokens larger. The JVM suites of shared,
-  chronicle, haystack and manure pass on them. They are merged only after
-  `scripts/verify all` has passed on the tree that is merged; to resume, run
-  it in that work tree and fast-forward main if it passes.
+- **Q223, in progress when this was written.** Changes 1 to 4 of the
+  cross-service run first stood as four commits on local branch
+  `apply-cross-service-cleanups` (based on `69c11d37`), where the JVM suites
+  of shared, chronicle, haystack and manure passed. Main then gained another
+  session's account refactor (11 commits in `shared/service-auth` and
+  `haystack/server`), and change 4 (signup and enrollment types from shared
+  service-auth) conflicts with it; whether to drop, postpone or apply it is
+  asked in Q225, and its commit `d9fed675` stays on that branch. Changes 1
+  to 3 touch no file that main changed and were cherry-picked onto main as
+  local branch `apply-cross-service-1-3` (work tree
+  `.worktrees/wt-ponygirls-apply-cross-service-1-3`): chronicle's
+  `Wire.hash` and `Wire.secret` through the shared `Secrets`; the
+  start-stage wrapper of the three `Main` files in shared service-runtime;
+  chronicle's `StaticTokens` through the shared bounded reader. They are
+  merged only after `scripts/verify all` has passed on the tree that is
+  merged, run when the host is quiet. To resume: merge main into that
+  branch, run `scripts/verify all` in its work tree, and fast-forward main
+  if it passes.
 - **Run records** (untracked, in the supervisors' harness work trees under
   `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/`):
   `wt-ponygirls-04aa8cceee04-1795776647075/debug/cqr-20261127-1051` (first
@@ -1154,8 +1161,8 @@ scripts, and chronicle outside the five families.
   snapshots are `ff9658ab13163498edafb152a63091ed`,
   `759b1d0dd27d3ea9a78992b0594cf250`, `00256bb27785abbc468e779cbae26880`
   and `b747a13411cf09afe1394f74b227897e`.
-- **Decisions:** Q183 to Q186, Q193, Q194, Q202, Q203, Q222 and Q223, all
-  answered (section 6). Never answered, asked in chat only: whether the nine
+- **Decisions:** Q183 to Q186, Q193, Q194, Q202, Q203, Q222 and Q223
+  answered (section 6); Q225 (change 4) open. Never answered, asked in chat only: whether the nine
   lenses are right, and the name and home of the skill.
 - **Scratch outside the repository,** not needed: `/tmp/cq-research`,
   `/tmp/cqr-xsvc-bb9e490a`.
