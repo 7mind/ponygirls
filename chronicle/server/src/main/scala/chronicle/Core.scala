@@ -5,9 +5,8 @@ import chronicle.api.*
 import io.circe.{Json, Decoder}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files, Path}
-import java.security.{MessageDigest, SecureRandom}
-import java.util.{UUID, Base64}
-import ponygirls.auth.IndexingPolicy
+import java.util.UUID
+import ponygirls.auth.{IndexingPolicy, Secrets}
 import ponygirls.runtime.{BoundedSecretFile, DatabaseWait, JdbcConfig, JdbcLimits, JdbcPoolSizing}
 import scala.concurrent.duration.*
 
@@ -26,9 +25,9 @@ object Wire {
   def encode[A](codec: BaboonJsonCodec[A], value: A): Json = codec.encode(ctx, value)
   def decode[A](codec: BaboonJsonCodec[A], json: Json): A = codec.decode(ctx, json).fold(_ => throw DomainError("invalid", "invalid payload"), identity)
   def parse(s: String): Json = io.circe.parser.parse(s).fold(_ => throw DomainError("invalid", "invalid JSON"), identity)
-  def hash(s: String): String = MessageDigest.getInstance("SHA-256").digest(s.getBytes(UTF_8)).map(b => f"${b & 255}%02x").mkString
+  def hash(s: String): String = Secrets.digest(s)
   def canonical(j: Json): String = j.deepDropNullValues.noSpacesSortKeys
-  def secret(): String = { val b = new Array[Byte](32); new SecureRandom().nextBytes(b); Base64.getUrlEncoder.withoutPadding.encodeToString(b) }
+  def secret(): String = Secrets.generate()
 }
 final case class UserConfig(id: String, login: String, passwordHashFile: String, enabled: Boolean, admin: Boolean)
 final case class SignupConfig(enabled: Boolean, requireApproval: Boolean, maxUsers: Int)
