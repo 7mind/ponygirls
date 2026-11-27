@@ -1,12 +1,21 @@
 # Code-quality review skill: design draft v0.6
 
-Status: proposal for discussion, 27 Nov 2026. Nothing here has been run end
-to end. The text has had two independent readings and one re-reading of the
-revision (section 9); the script has been tested on small cases and on this
-repository. The draft skill is
-`20261127-1001-code-quality-review-skill/SKILL.md` (one file, as
+Status: concluded, 27 Nov 2026 (decision Q222). The skill is a draft, v0.6,
+in `20261127-1001-code-quality-review-skill/SKILL.md` (one file, as
 `nix/pkg/llm-skills` packages skills); `measure.py` beside it is the script
-embedded in the skill, byte for byte.
+embedded in the skill, byte for byte. It is not installed. Versions 0.3, 0.4
+and 0.5 were each run once on this repository (sections 10, 12 and 13); v0.6
+is a trim with the rules those runs called for and has not been run.
+
+Outcome of the review itself: there is little to remove. Confirmed changes
+were 0.2% to 1.2% of the production lines read in each run, about 1,000
+production tokens in all for about 267 USD as the harness reports cost. Nine
+real changes were confirmed by measured spikes; section 15 says which are on
+main. Section 14 lists what was found and not applied.
+
+This note is a chronological record. Sections 1 to 9 are the proposal as it
+stood before the first run and were not rewritten afterwards; the runs, the
+tuning log and the state follow from section 10 on.
 
 ## 1. Task
 
@@ -444,6 +453,8 @@ The skill is v0.5, used unchanged.
 
 ## 8. Known weaknesses of the draft
 
+As of v0.2. Sections 11 to 13 say what the runs changed and added.
+
 - 44 KB, of which about 13 KB are lens cards and 7 KB the script; the largest
   installed skill is 40 KB and most are 4 to 21 KB. Trimming should follow
   the pilot, which shows which sentences carry weight.
@@ -589,7 +600,7 @@ v0.3's changes have had no independent reading.
 
 Run as registered in section 7.1; the skill was v0.3. The supervisor's run
 directory, with its 120 kB report and its notes on the skill text, is
-`debug/cqr-20261127-1051` in its harness work tree (path in section 14).
+`debug/cqr-20261127-1051` in its harness work tree (path in section 15).
 
 **Outcome on `haystack/server` production code** (2,640 lines, 49,520 tokens
 with the plants):
@@ -1045,60 +1056,103 @@ duplication in production code, most clones in tests); the three runs show
 that re-implementation, which a clone detector cannot see, is not much larger
 here.
 
-## 14. State, for resuming
+## 14. Open findings for the owner
 
-- Branch `code-quality-review-skill`, work tree
-  `.worktrees/wt-ponygirls-code-quality-review-skill`; not merged. Commits:
-  `cf738b4e` (v0), `4bf77c32` (v0.1), `7f1ed212` (v0.2), `4225bf3e` (v0.3);
-  v0.4 follows.
-- Held-out tree: local branch `manure-backend-helpers`, planted commit
-  `03f3b2a7` (its work tree is removed). Never merge or push it. Answer key:
-  `/tmp/cq-research/pilot2/plants.md`. The spike patches of both runs are
-  based on the planted commits.
-- Pilot tree: local branch `haystack-server-helpers`, planted commit
-  `04aa8cce` (its work tree is removed). Never merge or push it. Answer key
-  and pilot scratch: `/tmp/cq-research/pilot`.
-- Published, public, expiring 27 Dec 2026: Manure artifact
-  `ff9658ab13163498edafb152a63091ed` (v0.5, this note at `4e459815`, the
-  reports and notes of all three runs); earlier ones:
-  `759b1d0dd27d3ea9a78992b0594cf250` (v0.4, two runs),
-  `00256bb27785abbc468e779cbae26880` (v0.3 and the first wave),
-  `b747a13411cf09afe1394f74b227897e` (v0.2).
-- Haystack: `corporate-activity:skill-draft-code-quality-review`, revision 2
-  (v0.5 complete, evidence of three runs, known defects), attention required.
-- Decision inbox: Q183 to Q186, Q193, Q194, Q202 and Q203 answered (section
-  6). Open: Q222 (how to conclude), Q223 (whether to apply the six
-  cross-service changes, and with which checks). Open in chat only: the lens
-  set, the name and the home of the skill.
-- Left in place after the wave: five spike work trees with staged patches
-  (listed in the run directory's `spike-worktrees.tsv`), the planted branch
-  and its work tree. All subagents are closed.
-- Pilot first wave done (section 10); the run directory is
-  `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-04aa8cceee04-1795776647075/debug/cqr-20261127-1051`
-  (`report.md`, `friction.md`, `hypotheses.jsonl`, `spikes/`, `spike-worktrees.tsv`).
-- Held-out run done (section 12) on skill `b69805bf`; its run directory is
-  `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-03f3b2a7b890-1795783717555/debug/20261127-1249-cqr-manure-backend`
-  (`report.md`, `residue.md`, `friction.md`, `hypotheses.jsonl`, `spikes/`).
-  Five more spike work trees with staged patches are left in place.
-- Q203 applied 27 Nov 2026: the five confirmed real changes are on main as
-  `226908f5`, `1241db7f` (haystack server), `96329e0b`, `ed425e0c`,
-  `323d2497` (manure backend), fast-forwarded from `bb9e490a`. Measured on
-  main: production 24 lines and 388 tokens smaller, tests 4 lines and 58
-  tokens smaller. The JVM suites pass on the result (haystack 40 suites and
-  758 cases, manure 24 suites and 303 cases); `scripts/verify` was not run,
-  by the user's decision, so the native executables and the browser suites
-  have not seen these changes.
-- Cross-service run done (section 13) on base `bb9e490a` with skill v0.5
-  (`14840099`); its run directory is
-  `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/wt-ponygirls-bb9e490a48f8-1795797135454/debug/20261127-cqr-cross-service`
-  (`report.md`, `residue.md`, `friction.md`, `spikes/`). Seven more spike
-  work trees with staged patches are left in place, and scratch under
-  `/tmp/cqr-xsvc-bb9e490a/`.
-- Not done: applying the six cross-service changes (they need a quiet host
-  and `scripts/verify chronicle`), the review of the remaining code (web
-  clients, CLIs, the Python client, chronicle outside the five families), a
-  v0.6, installation under `nix/pkg/llm-skills/skills/`. Waiting for the
-  user's decision.
-- Scratch material outside the repository, not needed to continue:
-  `/tmp/cq-research` (prior-art downloads, clone-detector probes, the old
-  script versions used for the reproductions).
+What the three runs found and did not turn into applied changes. Details are
+in the run reports (paths in section 15). Plants are left out.
+
+**Supported by reading, never measured** (a spike is needed before applying):
+
+| Where | Finding | Predicted |
+|---|---|---|
+| haystack server | `QualifiedId.encodeComponent` checks UTF-16 well-formedness with its own surrogate loop; the JDK's encoder can do it (`A/library-underuse/3`) | 9 lines |
+| haystack server | `ItemMetadata.stamp` is called only by a test; production stamps inline in `Mutation.decide` (`A/dead-weight/7`) | 5 lines, 3 of tests |
+| haystack server | One production `ModuleDef` as composition root, as chronicle has (`B/wiring/1`) | 8 lines more, 30 of tests fewer |
+| manure backend | Four callers repeat the classpath SQL-resource read for migrations (`duplication/prod/1`; the cross-service run deferred the same thing as `reinvention/xsvc/6`) | 9 lines |
+| manure backend | `SweepTrace` hand-writes 21 pass-through `MetadataTxn` methods that Scala's `export` can generate (`test-support/test/2`) | 19 lines of tests |
+| manure backend | No caller: `Artifacts.snapshot`, `ImportReceipt.rootBytes`, `SecretCodec.readToken` (`abstraction-fitness/prod/3`, `/5`, `dead-weight/prod/4`) | 3 lines each |
+| manure backend | `Jdbc.double` reproduces `Option.orNull` (`library-underuse/prod/3`) | 3 lines |
+
+**Confirmed by spike, not applied by decision:** the static-root check shared
+by chronicle and haystack (28 tokens) and the typed helper for five
+part-upload routes of chronicle (17 tokens); patches 5 and 6 beside this
+note.
+
+**Deferred as "not a saving"** (Q194): production code that only tests use,
+first of all haystack's in-memory reference search engine (about 165 lines
+that would move from `src/main` to `src/test`); 17 records in the first run.
+
+**Suspected defects in haystack server, by reading, none reproduced** (first
+run's report, section 6):
+
+- The mapping from a failure to a client code is written at three to four
+  places that disagree: `/mcp` answers a configuration failure with 400 and
+  `config`, REST with 503 `unavailable` (`http/Http.scala:93-130`,
+  `http/Mcp.scala:61-66`).
+- One of three copies of the completion-fragment split lower-cases the whole
+  fragment and then cuts at the colon index of the original
+  (`query/Search.scala:155-157`).
+- `writeSearchProjection` creates two JDBC arrays outside its `try`; the
+  first is not freed if the second fails
+  (`storage/PostgresItemRepository.scala:153-157`).
+- `Wire.retrieved` parses the published version prefix with `.toInt` and no
+  shape check (`http/Wire.scala:39-41`).
+- The declarative login branch reads the auth configuration a second time
+  instead of the request's snapshot (`http/Http.scala:237-238`).
+- `Search.validateSort`'s rejection of an invalid sort has one JVM test, and
+  that test reaches it only through the otherwise unused `parseSearchSort`
+  (`query/Search.scala:23-27`).
+- `PostgresSearch` and `Evaluator` disagree on inputs that the parser makes
+  unreachable (`storage/PostgresSearch.scala:22-49`).
+
+**Tests that failed at random under host load** (cross-service report,
+section 6): `CheckConfigSuite.scala:54` in manure (a 2-second bound on a
+child JVM), `BrowserWebSocketTest.scala:595` and
+`TransientPublicationTest.scala:220` in chronicle.
+
+**Never reviewed:** the web clients, the CLIs, the Python client, the
+scripts, and chronicle outside the five families.
+
+## 15. State
+
+- **Skill.** Draft v0.6 in `20261127-1001-code-quality-review-skill/SKILL.md`
+  (50.5 kB, not run; v0.3 to v0.5 were each run once). Not installed:
+  nothing is under `nix/pkg/llm-skills/skills/`. In Haystack as
+  `corporate-activity:skill-draft-code-quality-review`, attention required.
+- **Beside this note:** `measure.py` (the script embedded in the skill, byte
+  for byte), `cross-service-patches/` (the six patches of the third run),
+  `answer-keys/` (the planted smells of the first two runs; their SHA-256
+  are the ones registered in sections 7.1 and 7.2).
+- **Applied to main:** the five changes of Q203 (`226908f5`, `1241db7f`,
+  `96329e0b`, `ed425e0c`, `323d2497`; JVM suites only, by decision).
+- **Q223, in progress when this was written:** changes 1 to 4 of the
+  cross-service run are four commits on local branch
+  `apply-cross-service-cleanups` (work tree
+  `.worktrees/wt-ponygirls-apply-cross-service`): chronicle's `Wire.hash`
+  and `Wire.secret` through the shared `Secrets`; the start-stage wrapper in
+  shared service-runtime; `StaticTokens` through the shared bounded reader;
+  signup and enrollment types from shared service-auth. Production 12 lines
+  and 383 tokens smaller, tests 18 tokens larger. The JVM suites of shared,
+  chronicle, haystack and manure pass on them. They are merged only after
+  `scripts/verify all` has passed on the tree that is merged; to resume, run
+  it in that work tree and fast-forward main if it passes.
+- **Run records** (untracked, in the supervisors' harness work trees under
+  `/home/pavel/.pi/agent/subagents/01a21c5a-c75a-75bd-8567-4d3202e982bb/worktrees/`):
+  `wt-ponygirls-04aa8cceee04-1795776647075/debug/cqr-20261127-1051` (first
+  wave), `wt-ponygirls-03f3b2a7b890-1795783717555/debug/20261127-1249-cqr-manure-backend`
+  (held-out), `wt-ponygirls-bb9e490a48f8-1795797135454/debug/20261127-cqr-cross-service`
+  (cross-service). Each holds `report.md`, `friction.md`, the records and
+  `spikes/` with every patch. The first two trees are detached at the
+  planted commits `04aa8cce` and `03f3b2a7`, which no branch names any more.
+- **Removed on 27 Nov 2026** (Q222): the 17 spike work trees, after checking
+  that each staged patch is kept in its run directory; the local branches
+  `haystack-server-helpers` and `manure-backend-helpers`.
+- **Published** (public, expiring 27 Dec 2026): Manure artifact
+  `ff9658ab13163498edafb152a63091ed` holds v0.5 and the reports of all
+  three runs; earlier snapshots are `759b1d0dd27d3ea9a78992b0594cf250`,
+  `00256bb27785abbc468e779cbae26880` and `b747a13411cf09afe1394f74b227897e`.
+- **Decisions:** Q183 to Q186, Q193, Q194, Q202, Q203, Q222 and Q223, all
+  answered (section 6). Never answered, asked in chat only: whether the nine
+  lenses are right, and the name and home of the skill.
+- **Scratch outside the repository,** not needed: `/tmp/cq-research`,
+  `/tmp/cqr-xsvc-bb9e490a`.
