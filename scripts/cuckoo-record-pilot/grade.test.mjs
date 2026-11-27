@@ -240,3 +240,38 @@ test('batch 2, amendment 5: a rule the user did not give for the session is surp
   assert.deepEqual([clean.extraRules, clean.noSurplusRules], [{ user: [], assistant: [] }, true]);
   assert.equal(gradeRecord(withRules([own]), scenarioOf('build')).noSurplusRules, true, 'a convention of the model\'s own is not surplus');
 });
+
+// The keys of the held-out scenarios against their author's example titles and against the user's own words.
+const USER_PHRASES = {
+  h1: { welcome: 'Short welcome announcement for the Fernwick fair', riddle: 'Riddle for the paper crown hunt', card: 'Thank-you card for the seed swap hosts' },
+  h2: { speech: 'Short curtain speech to open the puppet show', blurb: 'Lost-and-found blurb for the lobby', invitation: 'Short invitation to the cast read-through' },
+  h3: { label: 'Two-sentence label for the museum exhibit about a clock that runs backward' },
+};
+test('batch 2, held-out scenarios: every key recognises its own deliverable or rule and no other', () => {
+  const heldOut = RECORD_SCENARIOS.filter(item => item.role === 'held-out');
+  assert.deepEqual(heldOut.map(item => [item.id, item.kind]), [['h1', 'work'], ['h2', 'work'], ['h3', 'single'], ['h4', 'control']]);
+  for (const scenario of heldOut) {
+    assert.equal(scenario.turns.length, 4, scenario.id);
+    const objectives = Object.entries(scenario.objectives), rules = Object.entries(scenario.rules);
+    const traps = [...scenario.questionExamples, ...scenario.oneTurnExamples];
+    for (const [name, objective] of objectives) {
+      assert.ok(objective.at >= 0 && objective.at <= 3 && (objective.fate[0] === 'open' || (objective.fate[1] >= objective.at && objective.fate[1] <= 3)), `${scenario.id} ${name}: turns`);
+      const titles = [...objective.examples, ...(USER_PHRASES[scenario.id] === undefined ? [] : [USER_PHRASES[scenario.id][name]])];
+      for (const title of titles) {
+        assert.match(title, objective.key, `${scenario.id} ${name}`);
+        for (const [other, value] of objectives) if (other !== name) assert.doesNotMatch(title, value.key, `${scenario.id}: "${title}" also matches ${other}`);
+        if (scenario.questions !== null) assert.doesNotMatch(title, scenario.questions, `${scenario.id}: "${title}" reads as a question`);
+        if (scenario.oneTurn !== null) assert.doesNotMatch(title, scenario.oneTurn, `${scenario.id}: "${title}" reads as a one-turn request`);
+      }
+      for (const trap of traps) assert.doesNotMatch(trap, objective.key, `${scenario.id}: "${trap}" matches ${name}`);
+    }
+    for (const example of scenario.questionExamples) assert.match(example, scenario.questions, scenario.id);
+    for (const example of scenario.oneTurnExamples) assert.match(example, scenario.oneTurn, scenario.id);
+    for (const [name, rule] of rules) {
+      assert.ok(rule.at >= 0 && rule.at <= 3, `${scenario.id} ${name}`);
+      for (const example of rule.examples) { assert.match(example, rule.key, `${scenario.id} ${name}`); for (const [other, value] of rules) if (other !== name) assert.doesNotMatch(example, value.key, `${scenario.id} ${name}/${other}`); }
+      // The rule as the user gave it is in the message `at` names.
+      assert.match(scenario.turns[rule.at], rule.key, `${scenario.id}: message ${rule.at + 1} does not give the rule ${name}`);
+    }
+  }
+});

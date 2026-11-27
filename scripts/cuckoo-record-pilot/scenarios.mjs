@@ -1,4 +1,5 @@
 // Synthetic scenarios for the live-model pilot of the numbered record. No private content.
+import { HELD_OUT } from './heldout.mjs';
 // Every entry has `key`: a pattern that recognises its subject in a model's wording, so that IDs can be checked mechanically.
 // A reply item whose text matches no key, or several, is reported as unclear and read by hand.
 
@@ -105,7 +106,7 @@ export const TOOL_SCENARIOS = [
  * was written against and `held-out` for those written by someone who had not seen the wording.
  * `build` and `report` have the turns of batch 1.
  */
-export const RECORD_SCENARIOS = [
+const DEVELOPMENT_SCENARIOS = [
   { id: 'build', role: 'development', kind: 'work',
     objectives: { a: { key: /bazel|migrat/i, at: 0, fate: ['complete', 2] }, b: { key: /onboarding/i, at: 0, fate: ['complete', 3] }, c: { key: /checklist/i, at: 0, fate: ['retired', 3] } },
     rules: { length: { key: /120 words|word/i, at: 1 }, tables: { key: /table/i, at: 1 } },
@@ -139,3 +140,9 @@ export const RECORD_SCENARIOS = [
       'Good. Now put the whole plan together in one message, risks first; with that the plan is finished.',
     ] },
 ];
+/**
+ * The held-out scenarios are in `heldout.mjs`, byte for byte as their author wrote them (a model that had seen
+ * neither the candidate wording nor any result; see the README). They add `examples`: titles an assistant might give
+ * an entry, against which the keys are checked in `grade.test.mjs`.
+ */
+export const RECORD_SCENARIOS = [...DEVELOPMENT_SCENARIOS, ...HELD_OUT];
