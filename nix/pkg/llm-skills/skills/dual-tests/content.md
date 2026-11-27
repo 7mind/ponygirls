@@ -179,6 +179,26 @@ runs pass but the production-backed runs fail, the dummy has drifted and
 must be fixed (or the abstract contract must be extended to pin the
 missing behavior).
 
+## Fake Executables and Subprocess Clients
+
+- **Audit each fake against the pinned real program.** List the arguments
+  the tool passes and what it decides from stdout, stderr and exit status;
+  run the real program once with the same arguments in a scratch
+  environment and compare (audit not carried out in the source work).
+  A deployment tool compared the output of
+  `nix-store --add-root ROOT --realise PATH` with PATH; Nix prints ROOT,
+  the fake printed PATH, and 30 tests stayed green.
+- **Fix the fake first, then the code.** With the fake corrected, 29 of
+  those 30 tests failed; record that count, which shows the tests reach
+  the decision.
+- **Keep the pinned real client in the test and put the fake behind it**,
+  as a loopback endpoint that checks method, path, body and conditional
+  fields; give the client explicit test configuration, no inherited
+  credentials or ambient endpoint selection. Real `kubectl` prints the
+  deleted object on success and exits non-zero with no typed body on an
+  HTTP error; a fake answering every delete with a typed success left a
+  typed-failure branch unreachable.
+
 ## Skipping vs. Failing
 
 When the production adapter cannot run (no DB available, offline, etc.)

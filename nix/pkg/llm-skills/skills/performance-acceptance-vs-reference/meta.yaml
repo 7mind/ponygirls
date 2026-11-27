@@ -1,0 +1,15 @@
+name: performance-acceptance-vs-reference
+description: >-
+  Decide whether a candidate meets a rule on a noisy metric compared with a
+  baseline or reference implementation (for example "median at least 98% of the
+  reference's throughput", "latency ratio at most 1.02") on shared, noisy
+  hardware. Covers the rule block written before the first timed run, the
+  rule's false-alarm rate and a sham-candidate power trial, timing the shipped
+  configuration, CPU placement (exclusive cores or a quota over shared CPUs),
+  alternating rounds with per-round ratios, an identical-binary control,
+  undecided cells, production-type hardware as the judge, bisecting small
+  regressions and a provenance table per rule cell. Use when an owner sets a
+  "no performance loss" rule, a merge request must state a speed comparison, or
+  a candidate is compared with a baseline on borrowed hardware. Not for
+  capacity planning, SLO monitoring, microbenchmarks no rule depends on, or
+  proving output equality.

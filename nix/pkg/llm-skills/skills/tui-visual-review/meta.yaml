@@ -1,0 +1,14 @@
+name: tui-visual-review
+description: >-
+  Visual and UX review of a terminal UI (colour, contrast, separators, badges,
+  truncation, panel chrome), for example Pi extensions. Renders real tmux
+  styled captures to PNG for multimodal inspection, computes WCAG contrast from
+  the observed SGR colours, populates Pi extension state through a scripted
+  OpenAI-compatible provider, and renders proposal mockups through the same
+  renderer. Also covers launcher provenance, populated state at several widths,
+  sanitised captures and indexed-colour output. Use it when asked to review
+  colour, contrast, separators or layout of a terminal UI, to compare proposed
+  visual changes with the current rendering, or to check badge or footer
+  truncation at narrow widths. Builds on tui-testing; the two helper scripts
+  are in its appendix. Not for functional or keyboard testing, font or emulator
+  issues, or web UIs.
