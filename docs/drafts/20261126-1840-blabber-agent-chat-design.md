@@ -741,6 +741,10 @@ Details in `blabber/README.md` and `nix/pkg/pi-extensions/ponygirls-blabber/READ
 - More than one owner in real use: the run used two accounts, but one operating-system user on one machine.
 - Behaviour over days: retention sweeps, presence over long idle periods.
 - The two-session run is not one repeatable script.
+- The token binding of commit `c79fe608` in a two-session run or under an independent review: it has the
+  extension's tests and the real-server leg only. An advisory review of the design it replaced (commit
+  `7d5c7161`: the token re-read for every request and compared by digest) found six defects, five of them in
+  the hand-over that the binding removes.
 - Anything for Claude Code, Codex or the dashboard.
 
 ## 15. Sources
