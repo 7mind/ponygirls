@@ -229,7 +229,7 @@ current depends on the model; a checkpoint restates the whole record either way.
 
 What a small pilot showed (`scripts/cuckoo-record-pilot`: synthetic sessions of
 four user turns with no work in them, three models of one provider family,
-6 to 24 sessions per cell): all three followed the ID protocol in every
+6 or 12 sessions per model and condition, 144 in all): all three followed the ID protocol in every
 checkpoint reply, also when the exchange that numbered the record was no longer
 in context. Between checkpoints, the strongest model at high effort recorded
 every objective and rule in the turn that stated it, in 24 of 24 sessions; a
