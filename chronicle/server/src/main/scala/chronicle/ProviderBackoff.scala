@@ -55,6 +55,13 @@ object ProviderBackoff {
     case http: ModelHttpStatus if modelStage(stage) && alertStatuses(http.status) => Some(http.status)
     case _ => None
   }
+  /** The server's line of the back-off, logged once it serves and only when `indexing.providerBackoff` is on (off, the
+    * server logs exactly as before): its hold schedule and consecutive limit, and the lanes' cool-down. */
+  def startLine(config: Config): Option[String] = Option.when(config.indexing.providerBackoff) {
+    val holds=(1 to 5).map(k => Jobs.transientBackoff.delay(k).toMinutes).mkString(",")
+    val pauses=(1 to 5).map(k => Worker.CoolDown.production.delay(k).toMinutes).mkString(",")
+    s"provider back-off on holdMinutes=$holds consecutiveLimit=${Jobs.transientBackoff.limit} laneCoolDownMinutes=$pauses"
+  }
   def status(error: Throwable): Option[Int] = error match {
     case http: ModelHttpStatus => Some(http.status)
     case _ => None

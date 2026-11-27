@@ -94,6 +94,7 @@ object Main extends IOApp {
         IO(startLines.foreach(line => s.logger.info(s"chronicle start $line"))) *>
         // The configured claim order, once serving (a failed start prints only its failure line): the evidence of the mode.
         IO(s.logger.log(izumi.logstage.api.Log.Level.Info)(izumi.logstage.api.Log.Message.raw(ClaimOrder.startLine(config)))) *>
+        IO(ProviderBackoff.startLine(config).foreach(line => s.logger.log(izumi.logstage.api.Log.Level.Info)(izumi.logstage.api.Log.Message.raw(line)))) *>
         stage("serve",background(workersEnabled,s.worker.run))
     },Some(config.listenPort))
     never <- IO.never[Nothing]

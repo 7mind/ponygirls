@@ -77,6 +77,8 @@ let
   # The claim order: the default is rendered as before (the explicit default renders the same file), waiting with its lanes.
   explicitSourceIdServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing = { claimOrder = "source-id"; bulkLanes = 1; }; });
   waitingServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing = { claimOrder = "waiting"; bulkLanes = 2; }; });
+  backoffServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing.providerBackoff = true; });
+  explicitBackoffOffServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing.providerBackoff = false; });
   waitingWith = indexing: server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing = { claimOrder = "waiting"; } // indexing; });
   configFile = cfg: lib.last (lib.splitString " " cfg.systemd.services.chronicle.serviceConfig.ExecStart);
   invalidCapacity = field: value: server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing.${field} = value; });
@@ -151,8 +153,8 @@ assert enabledServer.systemd.services.chronicle.serviceConfig.User == "chronicle
 assert enabledServer.systemd.services.chronicle.serviceConfig.TimeoutStopSec == 60;
 assert enabledServer.smind.services.chronicle.limits.sessionTtlSeconds == 30 * 24 * 60 * 60;
 assert shortSessionServer.smind.services.chronicle.limits.sessionTtlSeconds == 3600;
-assert enabledServer.smind.services.chronicle.indexing == defaultIndexingPolicy // { annotationSessions = 4; embeddingRequests = 8; embeddingBatchSize = 16; annotationContinuations = false; claimOrder = "source-id"; bulkLanes = 1; };
-assert capacityServer.smind.services.chronicle.indexing == defaultIndexingPolicy // { annotationSessions = 8; embeddingRequests = 12; embeddingBatchSize = 3; annotationContinuations = true; claimOrder = "source-id"; bulkLanes = 1; };
+assert enabledServer.smind.services.chronicle.indexing == defaultIndexingPolicy // { annotationSessions = 4; embeddingRequests = 8; embeddingBatchSize = 16; annotationContinuations = false; claimOrder = "source-id"; bulkLanes = 1; providerBackoff = false; };
+assert capacityServer.smind.services.chronicle.indexing == defaultIndexingPolicy // { annotationSessions = 8; embeddingRequests = 12; embeddingBatchSize = 3; annotationContinuations = true; claimOrder = "source-id"; bulkLanes = 1; providerBackoff = false; };
 assert rejectedCapacity "annotationSessions" 0;
 assert rejectedCapacity "annotationSessions" 9;
 assert rejectedCapacity "embeddingRequests" 0;
@@ -162,6 +164,10 @@ assert rejectedCapacity "embeddingBatchSize" 17;
 assert rejectedCapacity "annotationContinuations" 1;
 assert rejectedCapacity "claimOrder" "fifo";
 assert rejectedCapacity "bulkLanes" 0;
+assert rejectedCapacity "providerBackoff" 1;
+assert rejectedCapacity "providerBackoff" "on";
+assert configFile explicitBackoffOffServer == configFile enabledServer;
+assert backoffServer.smind.services.chronicle.indexing.providerBackoff;
 assert enabledServer.smind.services.chronicle.indexing.claimOrder == "source-id" && enabledServer.smind.services.chronicle.indexing.bulkLanes == 1;
 assert configFile explicitSourceIdServer == configFile enabledServer;
 assert ownAssertions waitingServer == [ ];
@@ -192,6 +198,7 @@ pkgs.runCommandLocal "chronicle-modules-test" { nativeBuildInputs = [ pkgs.jq ];
   jq -e '.indexing == {annotationSessions:4,embeddingRequests:8,embeddingBatchSize:16}' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.indexing == {annotationSessions:8,embeddingRequests:12,embeddingBatchSize:3,annotationContinuations:true}' ${lib.last (lib.splitString " " capacityServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.indexing == {annotationSessions:4,embeddingRequests:8,embeddingBatchSize:16,claimOrder:"waiting",bulkLanes:2}' ${configFile waitingServer}
+  jq -e '.indexing == {annotationSessions:4,embeddingRequests:8,embeddingBatchSize:16,providerBackoff:true}' ${configFile backoffServer}
   jq -e '.embedding.sendDimensions == false' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.embedding.sendDimensions == true' ${lib.last (lib.splitString " " sendDimensions.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.allowInsecureHttp == false and .secureCookies == true' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}

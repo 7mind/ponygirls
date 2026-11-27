@@ -44,6 +44,7 @@ let
     # with the waiting order), so a default configuration renders as before.
     indexing = builtins.removeAttrs cfg.indexing (builtins.attrNames indexingPolicy.options
       ++ lib.optional (!cfg.indexing.annotationContinuations) "annotationContinuations"
+      ++ lib.optional (!cfg.indexing.providerBackoff) "providerBackoff"
       ++ lib.optionals (cfg.indexing.claimOrder == "source-id") [ "claimOrder" "bulkLanes" ])
       // indexingPolicy.renderFlags cfg.indexing;
     inherit (cfg.limits) maxBodyBytes maxFiles maxFileBytes maxMessages sessionTtlSeconds;
@@ -104,6 +105,7 @@ in
       annotationContinuations = lib.mkOption { type = lib.types.bool; default = false; description = "Keep an annotation answer that stops at a fragment boundary and ask only the rest of its window (migration 031); off, such an answer is rejected and the whole window asked again. Read at start; not part of the profile identity."; };
       claimOrder = lib.mkOption { type = lib.types.enum [ "source-id" "waiting" ]; default = "source-id"; description = "Order in which indexing lanes claim jobs (read at start). source-id: owner, then source id, the large-job permit taken by whichever lane loops first. waiting: oldest waiting job first within its class (bulk retry-failed and rebuilds versus everything else); lane 0 owns the large-job permit and takes deferred large jobs first; needs annotationSessions >= 3."; };
       bulkLanes = lib.mkOption { type = lib.types.ints.positive; default = 1; description = "With claimOrder waiting: lanes that prefer bulk work (1..annotationSessions-2); the others after lane 0 prefer fresh work. A lane takes the other class when its own has no candidate."; };
+      providerBackoff = lib.mkOption { type = lib.types.bool; default = false; description = "Back off after model-provider failures (read at start): a job answered HTTP 429/503/529 is held with its attempt refunded, one answered 500/502/504/408 or failing by deadline or transport is held with its attempt charged (1, 2, 4, 8, then 15 minutes; the tenth failure in a row without progress fails it), and the lane that ran it pauses 1, 2, 4, 8, then 15 minutes before its next claim. Off, every provider failure is recorded as before."; };
     } // indexingPolicy.options;
     annotation = lib.mkOption { type = lib.types.submodule { options = endpointOptions // {
       requestPolicy = lib.mkOption { type = lib.types.enum [ "strict-json-schema" "strict-json-schema-32k" "glm-max-reasoning" ]; description = "Strict structured-output policy. strict-json-schema-32k raises the output cap to 32768 without provider-specific overrides. glm-max-reasoning enables the GLM-specific template extension. Changes require an explicit owner rebuild."; };

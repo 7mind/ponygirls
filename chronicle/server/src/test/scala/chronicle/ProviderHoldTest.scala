@@ -337,6 +337,43 @@ class ProviderHoldTest extends munit.FunSuite {
     }
   }}
 
+  // ---- Off after on (decision 5, rollback) ----
+  test("Off after on: with held rows and spent reservations, a restart with the flag off leaves them held until their hold ends; then a provider failure is recorded as before (charged, Queued at once, count reset), as in an all-off run except the refunded attempt and the spent reservation") {
+    scenario() { s =>
+      s.stub.chat=_ => 429
+      val held=s.ingest("b"); assert(s.claim(s.worker())); assertHeld(s.row(held),0,"model-http","Annotation",1)
+      val off=s.config.copy(indexing=s.config.indexing.copy(providerBackoff=false))
+      scala.util.Using.resource(new Database(off,IndexProfileCatalog.current(off))) { restarted =>
+        restarted.initialize()
+        val w=s.worker(new PostgresArchive(restarted,off),off)
+        assert(!s.claim(w,off),"held until its hold ends"); assertHeld(s.row(held),0,"model-http","Annotation",1)
+        s.rewind(held); assert(s.claim(w,off))
+        assertEquals(s.row(held),JobRow("Queued",1,Some("model-http"),Some("Annotation"),None,0),"recorded as before")
+        assertEquals(ledger(s.db,held),2,"the reservation spent while on stays spent")
+        val baseline=s.ingest("a"); assert(s.claim(w,off))
+        assertEquals(s.row(baseline),s.row(held),"the all-off row")
+        assertEquals(ledger(s.db,baseline),1)
+        assertEquals(s.lines("job held").size,1,"no hold after the switch")
+      }
+    }
+  }
+  test("Off after on: the shared count carries over: a database hold with the flag off after two provider holds is the third in a row") {
+    scenario() { s =>
+      s.stub.chat=_ => 429
+      val id=s.ingest("a"); val w=s.worker()
+      assert(s.claim(w)); s.rewind(id); assert(s.claim(w)); assertHeld(s.row(id),0,"model-http","Annotation",2)
+      s.rewind(id)
+      val off=s.config.copy(indexing=s.config.indexing.copy(providerBackoff=false))
+      val failing=new ProviderForwardingArchive(s.archive) {
+        override def windowWork(c: Claim,key: CheckpointKey): Option[WindowWork] = throw transientFailure
+      }
+      assert(s.claim(s.worker(failing,off),off))
+      val row=s.row(id)
+      assertEquals(row.copy(leaseSeconds=None),JobRow("Queued",0,Some(Jobs.transientCode),None,None,3))
+      assert(row.leaseSeconds.exists(seconds => seconds>235 && seconds<=240),row.toString)
+    }
+  }
+
   // ---- Retry (decision 6) ----
   test("Retry: RetryJob on a held job clears the hold and the count and moves it to the back of the fresh class; it is claimed at once") { scenario() { s =>
     s.stub.chat=n => if(n==1) 429 else 200
