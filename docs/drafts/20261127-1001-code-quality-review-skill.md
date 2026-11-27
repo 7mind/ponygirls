@@ -634,8 +634,18 @@ below.
 | Cost | One bundled file per partition and one for the documents | Q193 |
 
 Not changed: several small hypotheses sharing one refuter and one spike; a
-token prediction in the record; the script's lexer. The skill grew to 52 KB.
-None of v0.4 has been read by anyone else; the held-out run is its check.
+token prediction in the record; the script's lexer. The skill grew to 53 KB.
+
+One read of v0.4 before the run (`gpt-6.2-sol`, read-only, against v0.3)
+gave eight findings, all accepted and repaired in the text: a disputed
+falsifier could be sent back for reading for ever; `reword` skipped the
+mechanical checks; the observer rule shut out falsifiers that have no
+observer (a missing library symbol, a token balance); a patch whose removed
+tests reached only deleted code could not make its negative control; ranking
+uses predicted lines while the spike passes on tokens (now said outright);
+inlining, moving and splitting had no class; a component without tests could
+not finish scoping; an empty reader pass left no trace (`passes.tsv`). These
+repairs have been read by nobody else; the held-out run is their check.
 
 ### Candidates as listed after the first wave
 

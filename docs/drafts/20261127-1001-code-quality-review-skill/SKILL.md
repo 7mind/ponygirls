@@ -44,11 +44,14 @@ section 7 is its test.
 - **No record, no finding.** A proposal exists only as a hypothesis record
   (section 4): sites, one intervention, a prediction, and falsifiers.
 - **Falsifiers have observers.** A falsifier is an observation that would
-  prove the hypothesis wrong, stated with the way to check it. It is observed
-  only together with its observer: the caller, test, stored datum, document
-  or consumer that depends on what would change, cited by path and lines. A
-  property of the code that nothing observes is not a falsifier. Every
-  falsifier ends up observed, not observed, or reported as unchecked.
+  prove the hypothesis wrong, stated with the way to check it. One about
+  behaviour is observed only together with its observer: the caller, test,
+  stored datum, document or consumer that depends on what would change, cited
+  by path and lines. A property of the code that nothing observes is not a
+  falsifier. One about feasibility, a project rule or the currency (the
+  symbol does not exist, a rule forbids the change, the tokens do not fall)
+  is observed with the lines or the count that show it. Every falsifier ends
+  up observed, not observed, or reported as unchecked.
 - **Agreement is not evidence.** Several agents proposing or approving the same
   thing establishes nothing. Only a measured spike admits a hypothesis to the
   working set, and no single agent, the supervisor included, settles a
@@ -102,9 +105,10 @@ section 7 is its test.
    untracked work files: `scope.md` (commit, paths, exclusions, documents, the
    exact baseline command, the inner-loop commands, the plan, and every rule
    you fix during the run, with the time), `measure.py`, `manifest.tsv`,
-   `leads/`, `bundles/`, `answers/`, `hypotheses.jsonl` (one record per line
-   with its status history), `defects.md`, `spikes/`, `report.md`,
-   `residue.md`.
+   `leads/`, `bundles/`, `answers/`, `passes.tsv` (one row per reader run:
+   partition, lens, reader, model, records returned, files not read),
+   `hypotheses.jsonl` (one record per line with its status history),
+   `defects.md`, `spikes/`, `report.md`, `residue.md`.
 4. **Exclusions.** Find what is not hand-written or not code: generated
    sources (generator headers, codegen directories, build definitions that
    produce files), vendored runtimes, data tables, recorded fixtures. Write
@@ -126,8 +130,9 @@ section 7 is its test.
 8. **Inner loop.** For each component in scope record in `scope.md` a build
    command and a command that runs a named subset of its tests and lists the
    executed cases; write a small wrapper where the project's runner cannot do
-   that. Run both once before section 7, in a work tree of the frozen commit
-   other than the frozen tree. Spikers get them from there.
+   that, and record `none` where a component has no build or no tests. Run
+   what exists once before section 7, in a work tree of the frozen commit
+   other than the frozen tree. Spikers get the commands from there.
 9. **Bundles.** For each partition write one file that holds all its files,
    each under a header line with its path and each line prefixed by its
    number, and one such file for the documents. Readers then read a partition
@@ -244,7 +249,8 @@ Hypothesis record (the `predicted` field is the pack's):
 `existing` is null unless the hypothesis reuses something. Save each reader's
 answer byte for byte before touching it: let the reader write it into
 `answers/` if it can write files, otherwise copy the file your tools keep of
-its result. Do not retype it.
+its result. Do not retype it. Log every reader run in `passes.tsv`, also the
+ones that return nothing.
 
 ## 5. Admissibility and reconciliation
 
@@ -265,12 +271,14 @@ Mechanical checks first; they need no judgment and remove invented material.
 2. **Decisions.** A record that needs a new dependency, changes a contract,
    or by its own prediction does not improve the pack's currency becomes
    `deferred` and goes no further.
-3. **Classes.** Give each record the class of its intervention: *delete*
-   (code goes and nothing replaces it), *reuse* (the sites call something the
-   repository already has), *library* (the sites call the standard library or
-   a locked dependency), *generalize* (the sites are replaced by one new form
-   inside the component: a helper, a parameter, a table) or *new* (a new
-   type, module or layer).
+3. **Classes.** Give each record the first class that fits its intervention:
+   *delete* (code goes; nothing replaces it but, for a wrapper, direct calls
+   to what it wrapped), *reuse* (the sites call something the repository
+   already has), *library* (the sites call the standard library or a locked
+   dependency), *generalize* (the sites are replaced by one new form inside
+   the component: a helper, a parameter, a table; also any other rewrite
+   inside existing types and modules, such as a move, a split or a narrowed
+   interface) or *new* (a new type, module or layer).
 4. **Cluster** records whose sites overlap. Records of a cluster with the
    same class and the same intervention are twins: the one with the larger
    predicted effect, then the lower risk, stands for all of them; the others
@@ -318,9 +326,11 @@ Try to refute this change hypothesis. Read-only. Tree: <frozen work tree>, commi
 6. Check every falsifier given above.
 7. Name the tests that would notice a change of behaviour at these sites, by
    file and case, or state that you found none.
-A falsifier is `observed` only with its observer: who or what depends on the
-thing that would change, cited with path:lines. A property of the code that
-nothing observes is `not observed`.
+A falsifier about behaviour is `observed` only with its observer: who or
+what depends on the thing that would change, cited with path:lines. A
+property of the code that nothing observes is `not observed`. One about
+feasibility, a project rule or the size balance is `observed` with the lines
+or the count that show it.
 Verdict: `refuted` (a falsifier observed); `reword` (the change stands but
 cannot be carried out as worded: it would not compile, a caller is missing
 from the sites; give the correction); otherwise `not-refuted`.
@@ -340,13 +350,15 @@ can settle go back to the refuter.
 when the observer exists there and depends on what the hypothesis changes.
 When you doubt it, do not overrule it: give that one falsifier to a second
 refuter, as the question whether the observer depends on what changes. Two
-`observed` refute; otherwise the entry is `unchecked`. A rule you want to
-apply to the verdicts goes into `scope.md` before you read them, and applies
-to all of them.
+`observed` refute. Otherwise, or when no second refuter is to be had, the
+entry is `unchecked` and is not read again: it waits for the spike. A rule
+you want to apply to the verdicts goes into `scope.md` before you read them,
+and applies to all of them.
 
-One accepted `observed` makes the hypothesis `refuted`. `reword` corrects the
-record, marked as the refuter's correction, and is not a kill. With nothing
-observed and nothing left that reading could settle, the hypothesis is
+One accepted `observed` makes the hypothesis `refuted`. `reword` is not a
+kill: it corrects the record, marked as the refuter's correction, and the
+corrected record passes steps 1 and 2 of section 5 again. With nothing
+observed and nothing left for reading to settle, the hypothesis is
 `supported`; its unchecked entries go with it to the spike.
 
 ## 7. Spikes
@@ -390,9 +402,10 @@ Keep the formatting of the surrounding code.
    `unguarded`; without a covering test in step 0 it is `unguarded` too. A
    pure deletion has no changed path: search the whole repository again for
    references to the deleted names and build every component that could refer
-   to them. If the patch removes tests, put a fault into production code that
-   those tests reached and that stays: a remaining test must fail, otherwise
-   the removed tests were its only guard and the verdict is `failed`.
+   to them. If the patch removes tests that also reached production code
+   which stays, put a fault into that code: a remaining test must fail,
+   otherwise the removed tests were its only guard and the verdict is
+   `failed`. If they reached only the deleted code, say so.
 Stop and report `failed` when a falsifier is observed; when the tests pass
 only after changing behaviour or a test; when the change needs edits beyond
 the stated sites that cancel the gain; when the pack's pass condition is not
@@ -420,8 +433,9 @@ A spike is evidence, not a deliverable; nothing is merged from it here.
 ## 8. Working set and report
 
 The working set is every `confirmed` and `confirmed-unguarded` hypothesis.
-Generate both files below from `hypotheses.jsonl` with a script, so that
-their counts cannot drift from the statuses. `report.md` is what the user
+Generate both files below with a script from `hypotheses.jsonl`,
+`passes.tsv` and `defects.md`, so that their counts cannot drift from the
+statuses. `report.md` is what the user
 reads, in this order:
 
 1. A summary in one paragraph. Scope: commit, paths, exclusions, baseline
@@ -496,7 +510,8 @@ of the lens reached the stage.
 
 - **Currency.** Code size: tokens, with lines beside them, by the script under
   "Measurement". Production and test code count together: moving code from
-  one to the other is not a gain. Readers predict lines; spikes measure both.
+  one to the other is not a gain. Readers predict lines, and section 5
+  defers and ranks by those; spikes measure both and pass on tokens.
 - **Out of scope for readers.** Naming, formatting and style preferences; new
   third-party dependencies.
 - **Falsifier of every hypothesis of this pack.** The tokens the intervention
