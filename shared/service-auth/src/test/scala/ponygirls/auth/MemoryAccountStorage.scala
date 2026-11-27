@@ -4,8 +4,9 @@ import cats.effect.IO
 import java.time.Clock
 
 /** Handwritten in-memory `AccountStorage`: the shared `Accounts` and imperative core over in-memory rows, and
-  * in-memory indexing preferences. One transaction at a time; a transaction that throws leaves every row as it was. */
-final class MemoryAccountStorage extends AccountStorage {
+  * in-memory indexing preferences, on the given clock. One transaction at a time; a transaction that throws leaves
+  * every row as it was. */
+final class MemoryAccountStorage(clock: Clock) extends AccountStorage {
   private final class Rows extends AccountRepository {
     var users = Map.empty[String, StoredUser]
     var sessionRows = Map.empty[String, StoredSession]
@@ -38,7 +39,6 @@ final class MemoryAccountStorage extends AccountStorage {
   private val imperativeUsers = new MemoryImperativeUsers
   private var preferences = Map.empty[(IndexingService, String), IndexingPreference]
   private var open = false
-  private val clock = Clock.systemUTC()
   private val accounts = new Accounts(rows, clock)
 
   def transaction[A](work: AccountStore => A): IO[A] = IO.blocking(synchronized {

@@ -6,11 +6,21 @@ import io.circe.Json
 import org.http4s.{Header, MediaType, Method, Request, Response, Status}
 import org.http4s.dsl.io.*
 import org.typelevel.ci.CIString
-import ponygirls.auth.{AccountEvent, AccountJson, AccountRefusal, AccountRefused, AccountReply, AccountSnapshot, Captured, CookieEffect,
+import ponygirls.auth.{AccountEvent, AccountJson, AccountRefusal, AccountRefused, AccountReply, AccountScopes, AccountSnapshot, Captured, CookieEffect,
   DeclarativeAccountService, ImperativeAccountApi, IndexingAccountEndpoint}
 import ponygirls.auth.boundary.{BoundaryRefused, CredentialAccept, CredentialSelection, OriginPolicy, PresentedHeaders, Refusal,
   SecureAttribute, SessionCookie, SessionCookies}
 import scala.concurrent.duration.FiniteDuration
+
+/** What guards a declared user's password login on the account plane (`POST /login` while imperative accounts are off)
+  * before its password is verified. There is no default: each service states its choice. */
+sealed trait LoginAdmission
+object LoginAdmission {
+  /** Every attempt reaches password verification. */
+  case object Unguarded extends LoginAdmission
+  /** `admit` runs first; an error it raises refuses the attempt with that error's failure. */
+  final case class Guarded(admit: Request[IO] => IO[Unit]) extends LoginAdmission
+}
 
 /** A service's choices for its account plane. `current` is the configuration supplier of its transport decisions
   * (read again where a decision is taken); everything else is the service's policy. */
@@ -21,7 +31,7 @@ final case class AccountPlaneSettings[S](
   cookieOrder: SecureAttribute,
   /** A JSON response with the service's headers. */
   respond: (Status, Json) => Response[IO],
-  /** The account failure code of an error: one of `AccountJson`'s codes; anything unknown is `unavailable`. */
+  /** The account failure code of an error; the plane sends a code the protocol does not know as `unavailable`. */
   failureCode: Throwable => String,
   status: String => Status,
   /** One security event of a reply, written after its transaction committed. */
@@ -36,13 +46,13 @@ final case class AccountPlaneSettings[S](
   bodyTimeout: FiniteDuration,
   /** Whether a `503` raised outside the shared dispatcher on its routes also carries `Retry-After`. */
   retryAfterOn503: Boolean,
-  /** The scopes offered by the account read; issued tokens carry exactly these. */
-  scopes: Vector[String])
+  loginAdmission: LoginAdmission)
 
 /** The account plane under `/api/account/v1` over http4s: the five endpoints of the account protocol (login, account
   * read, token issue and revoke, logout), the imperative and indexing dispatch, and the boundary they share — exactly
   * one Host, at most one `Sec-Fetch-Site`, no query, `OriginPolicy.accountTransport`, bounded JSON bodies. Session
-  * cookies are host-only, `HttpOnly`, `SameSite=Strict`. A request's credential is resolved by the shared service under
+  * cookies are host-only, `HttpOnly`, `SameSite=Strict`. Every final response carries exactly one
+  * `Cache-Control: no-store`, whatever the service's responder writes; issued tokens carry `AccountScopes.Api`. A request's credential is resolved by the shared service under
   * its own configuration snapshot; transport decisions read `settings.current`.
   */
 final class AccountPlane[S <: AccountSnapshot[S]](service: DeclarativeAccountService[S], settings: AccountPlaneSettings[S]) {
@@ -68,8 +78,16 @@ final class AccountPlane[S <: AccountSnapshot[S]](service: DeclarativeAccountSer
     settings.origins(s).accountTransport(headers(r), safeRead = r.method == Method.GET, settings.cookies)
   }
   private def handled(operation: => IO[Response[IO]]): IO[Response[IO]] = IO.defer(operation).handleError { error =>
-    val code = settings.failureCode(error)
+    val code = AccountJson.code(settings.failureCode(error))
     respond(settings.status(code), AccountJson.failure(code))
+  }
+  /** The account protocol's caching rule; a responder that already writes exactly it keeps its headers as they are. */
+  private def noStore(response: Response[IO]): Response[IO] =
+    if (response.headers.headers.filter(_.name == CacheControl).map(_.value) == List(NoStore)) response
+    else response.removeHeader(CacheControl).putHeaders(Header.Raw(CacheControl, NoStore))
+  private def admitLogin(r: Request[IO]): IO[Unit] = settings.loginAdmission match {
+    case LoginAdmission.Unguarded => IO.unit
+    case LoginAdmission.Guarded(admit) => admit(r)
   }
   private def resolve(r: Request[IO]): IO[Captured] =
     service.resolve(s => CredentialSelection.resolve(settings.origins(s), settings.cookies, headers(r), CredentialAccept.BearerOrCookie, mutate = false))
@@ -168,7 +186,8 @@ final class AccountPlane[S <: AccountSnapshot[S]](service: DeclarativeAccountSer
   private val ok: Json = Json.obj("ok" -> Json.True)
 
   /** Every request under `/api/account/`. */
-  val routes: PartialFunction[Request[IO], IO[Response[IO]]] = {
+  val routes: PartialFunction[Request[IO], IO[Response[IO]]] = account.andThen(_.map(noStore))
+  private def account: PartialFunction[Request[IO], IO[Response[IO]]] = {
     case r @ POST -> Root / "api" / "account" / "v1" / "login" => handled {
       IO(boundary(r)) *> accountBody(r).flatMap { raw =>
         val s = settings.current()
@@ -183,14 +202,14 @@ final class AccountPlane[S <: AccountSnapshot[S]](service: DeclarativeAccountSer
             val h = headers(r)
             val secure = settings.origins(settings.current()).secureCookie(h)
             val previous = SessionCookie.select(h.cookie, settings.cookies.name(secure), settings.cookies.value)
-            service.login(login, password, previous).flatMap { signed =>
+            admitLogin(r) *> service.login(login, password, previous).flatMap { signed =>
               previous.traverse_(settings.endSession).as(respond(Status.Ok, Json.obj("user" -> AccountJson.user(signed.user))).putHeaders(cookie(Some(signed.session.secret), secure)))
             }
         }
       }
     }
     case r @ GET -> Root / "api" / "account" / "v1" => handled { authed(r, renew = true) { a =>
-      service.account(a).map(view => respond(Status.Ok, AccountJson.account(view.user, view.tokens, settings.scopes)))
+      service.account(a).map(view => respond(Status.Ok, AccountJson.account(view.user, view.tokens, AccountScopes.Api)))
     }}
     case r @ POST -> Root / "api" / "account" / "v1" / "tokens" => handled { authed(r, renew = true) { a =>
       accountBody(r).flatMap { raw =>
@@ -218,6 +237,8 @@ object AccountPlane {
   private val AccountSpace = "/api/account/"
   val ActorHeader = "X-Account-Actor"
   private val NotFound = "not-found"
+  private val CacheControl = CIString("Cache-Control")
+  private val NoStore = "no-store"
   private val BodyLimit = AccountJson.maxBodyBytes
 
   /** The headers the boundary reads: the first `Host` and `Sec-Fetch-Site` (the account boundary refuses more than one). */

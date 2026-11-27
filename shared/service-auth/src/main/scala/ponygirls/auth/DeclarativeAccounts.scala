@@ -27,6 +27,12 @@ trait AccountSnapshot[S] {
   def unchangedIn(current: S): Boolean
 }
 
+/** The scopes of tokens on the shared tables: issued and configured tokens carry the owner's whole API authority. The
+  * shared store and the services' authorisation represent nothing narrower. */
+object AccountScopes {
+  val Api: Vector[String] = Vector("api")
+}
+
 /** Who a credential authenticates: the user and the token (configured, issued or session) it presents. */
 final case class Authority(userId: String, userType: String, tokenId: String)
 /** A credential the boundary selected and the authority it resolved to. */
@@ -100,10 +106,10 @@ final class SharedAccountStorage(transactions: ConnectionTransactions, history: 
   * tokens; browser sessions), password login, the five account endpoints' operations and the imperative and indexing
   * dispatch. Every account decision reads the configuration once through `current` (in the transaction where the
   * operation has one), so a reload published meanwhile decides it; every decision uses the merged directory. SQL
-  * callbacks never acquire another connection or run an effect synchronously. `scopes` are the scopes of issued tokens.
+  * callbacks never acquire another connection or run an effect synchronously. Issued tokens carry `AccountScopes.Api`.
   */
 final class DeclarativeAccountService[S <: AccountSnapshot[S]](storage: AccountStorage, current: () => S, runtime: ImperativeRuntime,
-    indexing: IndexingService, indexingPolicy: IndexingPolicy, scopes: Vector[String]) {
+    indexing: IndexingService, indexingPolicy: IndexingPolicy) {
   private def refuse(refusal: AccountRefusal): Nothing = throw AccountRefused(refusal)
   private def directory(store: AccountStore, s: S): Vector[AccountUser] = store.directory(s.imperative, s.declared)
   /** Startup and every reload (design §4.8.5): under the directory lock, a declared id or login equal to an
@@ -212,7 +218,7 @@ final class DeclarativeAccountService[S <: AccountSnapshot[S]](storage: AccountS
     storage.transaction { store =>
       // Before the scopes: after the request body this is the only lookup of the session, and one that ended is refused as such.
       val session = browser(store, s, captured)
-      if (requested != scopes) refuse(AccountRefusal.InvalidTokenScopes)
+      if (requested != AccountScopes.Api) refuse(AccountRefusal.InvalidTokenScopes)
       AccountJson.requireActor(actor, session.userId)
       store.issue(directory(store, s), session, name)
     }

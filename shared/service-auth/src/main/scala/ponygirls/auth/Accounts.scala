@@ -57,7 +57,7 @@ private[auth] final class Accounts(repository: AccountRepository, clock: Clock) 
   }
   private def credential(user: AccountUser, id: String, digest: String, browser: Boolean): AccountCredential =
     AccountCredential(user.id, user.userType, id, digest, browser)
-  private def listed(row: StoredToken): AccountToken = AccountToken(row.id, row.name, "issued", Some(row.createdAt.toString), row.revoked, Vector("api"))
+  private def listed(row: StoredToken): AccountToken = AccountToken(row.id, row.name, "issued", Some(row.createdAt.toString), row.revoked, AccountScopes.Api)
   private def pruneRevoked(owner: String): Unit =
     repository.tokens(owner).filter(_.revoked).sortBy(row => (row.createdAt, row.id)).dropRight(Accounts.maximumRetainedRevoked)
       .foreach(old => repository.deleteToken(old.id))

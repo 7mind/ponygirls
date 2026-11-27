@@ -28,9 +28,12 @@ object AccountJson {
   def account(value: AccountUser, tokens: Vector[AccountToken], scopes: Vector[String]): Json =
     Json.obj("user" -> user(value), "tokens" -> Json.arr(tokens.map(token)*), "scopes" -> strings(scopes))
   def issued(value: AccountIssued): Json = Json.obj("token" -> token(value.token), "secret" -> text(value.secret))
-  def failure(code: String): Json = {
-    val safe = if (Set("invalid", "unauthorized", "forbidden", "not-found", "conflict", "rate-limited", "too-large", "unavailable",
+  /** The failure code the protocol sends for `code`: itself when the protocol knows it, otherwise `unavailable`. */
+  def code(code: String): String =
+    if (Set("invalid", "unauthorized", "forbidden", "not-found", "conflict", "rate-limited", "too-large", "unavailable",
       "totp-required", "totp-mismatch", "username-unavailable", "weak-password", "proof-rejected", "pending-approval").contains(code)) code else "unavailable"
+  def failure(code: String): Json = {
+    val safe = this.code(code)
     Json.obj("error" -> Json.obj("code" -> text(safe), "message" -> text(safe.replace('-', ' '))))
   }
   private def fields(value: Json, expected: Set[String]): Unit =

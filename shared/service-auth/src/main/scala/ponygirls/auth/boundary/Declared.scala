@@ -69,7 +69,7 @@ trait ConfiguredTokens {
 }
 object ConfiguredTokens {
   val Source = "configured"
-  val Scopes: Vector[String] = Vector("api")
+  val Scopes: Vector[String] = ponygirls.auth.AccountScopes.Api
 }
 
 /** Lookup by digest over the enabled users' configured tokens; listing over every declared user. */

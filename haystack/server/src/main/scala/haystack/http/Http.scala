@@ -17,7 +17,7 @@ import org.typelevel.vault.Key
 import io.circe.Json
 import ponygirls.auth.{AccountFailure,ClientAddress}
 import ponygirls.auth.boundary.SecureAttribute
-import ponygirls.auth.http4s.{AccountPlane,AccountPlaneSettings}
+import ponygirls.auth.http4s.{AccountPlane,AccountPlaneSettings,LoginAdmission}
 import scala.concurrent.duration.*
 import java.nio.file.{Files,Path}
 
@@ -132,7 +132,9 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     status=status,audit=event=>IO.println(Json.obj(event.fields.map((name,value)=>name->Json.fromString(value))*).noSpaces),endSession=hub.endSession,
     clientAddress=clientAddress,admitted=a=>limiter.check(AccountService.principal(a.authority),getAuth().config.rateLimit),
     delivered=(response,a)=>response.withAttribute(authenticatedPrincipal,AccountService.principal(a.authority)),bodyTimeout=Http.BodyTimeout,
-    retryAfterOn503=true,scopes=AccountService.Scopes))
+    retryAfterOn503=true,
+    // Haystack has never limited declared users' password logins with imperative accounts off; this states that choice.
+    loginAdmission=LoginAdmission.Unguarded))
   def routes(ws:WebSocketBuilder2[IO]):HttpRoutes[IO]={
     val core=HttpRoutes.of[IO](accountPlane.routes.orElse {
     case GET -> Root / "api" / "versions" =>IO.pure(ok(api.VersionInfo.codecJson,Wire.versions))

@@ -33,8 +33,8 @@ private final class HaystackIdentityHistory(c:Connection,fingerprints:IdentityHi
 final class AccountService(database:JdbcDatabase,getAuth:()=>Auth,imperative:ImperativeRuntime,indexingPolicy:IndexingPolicy=IndexingPolicy.defaults) {
   private val transactions=new ConnectionTransactions { def transaction[A](work:Connection=>A):IO[A]=database.transaction(work) }
   private[haystack] val shared=new DeclarativeAccountService[Auth](new SharedAccountStorage(transactions,(c,sessions)=>new HaystackIdentityHistory(c,sessions)),
-    getAuth,imperative,IndexingService.Haystack,indexingPolicy,AccountService.Scopes)
-  private def faults[A](operation:IO[A]):IO[A]=operation.adaptError { case AccountRefused(refusal)=>AccountService.fault(refusal) }
+    getAuth,imperative,IndexingService.Haystack,indexingPolicy)
+  private def faults[A](operation:IO[A]):IO[A]=operation.adaptError { case refused:AccountRefused=>AccountService.translated(refused) }
   def install(auth:Auth):IO[Unit]=faults(shared.install(auth))
   def reloaded(next:IO[Auth]):IO[Either[Throwable,Auth]]=shared.reloaded(next)
   def suspended(auth:Auth):IO[Int]=faults(shared.suspended(auth))
@@ -55,8 +55,6 @@ final class AccountService(database:JdbcDatabase,getAuth:()=>Auth,imperative:Imp
   def revoke(captured:Authenticated,id:String,actor:Vector[String]):IO[Unit]=faults(shared.revoke(AccountService.captured(captured),id,actor))
 }
 object AccountService {
-  /** The scopes of issued tokens: Haystack's API authority. */
-  val Scopes:Vector[String]=Vector("api")
   /** Haystack's failure codes and messages for the refusals of the shared account service. */
   def fault(refusal:AccountRefusal):Fault=refusal match {
     case AccountRefusal.InvalidCredentials=>Fault("unauthorized","invalid credentials")
@@ -64,6 +62,12 @@ object AccountService {
     case AccountRefusal.AuthorityChanged=>Fault("unauthorized","request authority changed")
     case AccountRefusal.InvalidTokenScopes=>Fault("forbidden","invalid token scopes")
     case AccountRefusal.ConfiguredTokenImmutable=>Fault("forbidden","configured tokens are immutable")
+  }
+  /** Haystack's `Fault` for a refusal of the shared account service. */
+  def translated(refused:AccountRefused):Fault={
+    val translated=fault(refused.refusal)
+    refused.getSuppressed.foreach(translated.addSuppressed)
+    translated
   }
   def principal(authority:Authority):Principal=Principal(authority.userId,authority.userType,authority.tokenId)
   def authenticated(captured:Captured):Authenticated=

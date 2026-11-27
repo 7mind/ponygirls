@@ -6,7 +6,7 @@ import ponygirls.auth.{AccountSql, AccountStorage, ConnectionTransactions, Imper
 import scala.util.Using
 
 final class MemoryAccountPlaneSuite extends AccountPlaneContract {
-  protected def withStorage(body: AccountStorage => Unit): Unit = body(new MemoryAccountStorage)
+  protected def withStorage(body: AccountStorage => Unit): Unit = body(new MemoryAccountStorage(FrozenTime.clock))
 }
 
 /** The shared PostgreSQL tables through `SharedAccountStorage`: one connection for the suite, every transaction committed,
@@ -14,12 +14,9 @@ final class MemoryAccountPlaneSuite extends AccountPlaneContract {
 final class PostgresAccountPlaneSuite extends AccountPlaneContract {
   private var opened = Option.empty[Connection]
   private def connection(): Connection = opened.getOrElse {
-    val jdbc = sys.env.get("ACCOUNT_TEST_JDBC")
-    if (jdbc.isEmpty) {
-      assert(!sys.env.contains("ACCOUNT_REQUIRE_POSTGRES"), "PostgreSQL required")
-      assume(false, "PostgreSQL explicitly skipped: use shared/service-auth/scripts/test-postgres.sh")
-    }
-    val created = DriverManager.getConnection(jdbc.get, "account_test", "synthetic-test-password")
+    val jdbc = sys.env.getOrElse("ACCOUNT_TEST_JDBC",
+      fail("PostgreSQL required: run shared/service-auth/scripts/test-postgres.sh or nix/tests/shared-jvm.sh, which own the database and set ACCOUNT_TEST_JDBC"))
+    val created = DriverManager.getConnection(jdbc, "account_test", "synthetic-test-password")
     opened = Some(created)
     created.setAutoCommit(false)
     AccountSql.initialize(created)

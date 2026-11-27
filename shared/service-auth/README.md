@@ -101,7 +101,12 @@ security events). `AccountPlaneSettings` carries the service's choices: its
 transport configuration supplier and origin policy, cookie names and attribute order,
 JSON responses, failure codes and statuses, the audit sink, what ends with a session,
 the client address, its admission and labelling of authenticated requests, the body
-timeout, `Retry-After` on a `503` outside the dispatcher, and the offered scopes.
+timeout, `Retry-After` on a `503` outside the dispatcher, and what guards a declared
+user's password login before its password is verified (`LoginAdmission`, no default).
+The plane normalises a failure code the protocol does not know to `unavailable` before
+deriving body and status, and every final response carries exactly one
+`Cache-Control: no-store`. Issued and configured tokens carry `AccountScopes.Api`, the
+only scope the shared tables represent; the account read offers exactly it.
 Users today: Haystack.
 
 ## Account HTTP protocol v1
