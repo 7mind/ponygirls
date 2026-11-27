@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildCatalog, canLoad, canUnload, findEntry, isActive, isCharged, totalTokens, type ToolCatalog, type ToolEntry } from "../src/catalog.ts";
 import type { PromptLines, RegistrySnapshot, ToolDeclaration } from "../src/registry.ts";
-import { declarationTokens, promptLineTokens } from "../src/tokens.ts";
+import { PI_BASIS, basisFor, declarationTokens, promptLineTokens } from "../src/tokens.ts";
 import { declared, declarationOf, extensionFile, mcpTool, snapshot, tool } from "./fixtures.ts";
 
 const READ = tool("read", {});
 const GREP = tool("grep", {});
-const SEARCH = tool("tool_search", { exposure: "model-only", reachesOtherTools: true });
+const SEARCH = tool("tool_search", { exposure: "model-only" });
 const ISSUE = mcpTool("linear", "save_issue", { hints: { readOnly: false, destructive: false, idempotent: true, openWorld: null } });
 const SCRIPTED = mcpTool("docs", "lookup", { exposure: "codemode" });
 const SECRET = tool("secret", { exposure: "hidden", provenance: extensionFile("/x/secret.ts") });
@@ -59,22 +59,23 @@ test("delivery compares the active set with what the transcript has declared", (
   assert.equal(entry(catalog, "mcp__docs__lookup").delivery, "none");
 });
 
-test("only inactive tools that tool search could load can be loaded, and only those unloaded", () => {
-  const catalog = catalogOf({ active: ["read", "mcp__docs__lookup"] });
+test("every inactive tool can be loaded except a hidden one, and every active tool unloaded", () => {
+  const catalog = catalogOf({ active: ["read", "mcp__docs__lookup"], withheld: ["read"] });
   const loadable = catalog.entries.filter(canLoad).map((item) => item.name);
   const unloadable = catalog.entries.filter(canUnload).map((item) => item.name);
-  assert.deepEqual(loadable, ["mcp__linear__save_issue"]);
-  assert.deepEqual(unloadable, ["mcp__docs__lookup"]);
+  assert.deepEqual(loadable, ["grep", "tool_search", "mcp__linear__save_issue"]);
+  assert.deepEqual(unloadable, ["read", "mcp__docs__lookup"], "a withheld tool is active, so it can be unloaded");
+  for (const item of catalog.entries) assert.equal(canLoad(item) && canUnload(item), false, item.name);
 });
 
 test("cost is the declaration plus the prompt lines the tool adds", () => {
   const lines: PromptLines = { snippet: "Read file contents", guidelines: ["Use read instead of cat."] };
   const catalog = catalogOf({ active: ["read"], promptLines: new Map([["read", lines]]) });
   const read = entry(catalog, "read");
-  assert.deepEqual(read.cost, { declaration: declarationTokens(declarationOf(READ)), promptLines: promptLineTokens("read", lines) });
+  assert.deepEqual(read.cost, { declaration: declarationTokens(declarationOf(READ), PI_BASIS), promptLines: promptLineTokens("read", lines, PI_BASIS) });
   assert.equal(totalTokens(read.cost), read.cost.declaration + read.cost.promptLines);
   assert.deepEqual(read.promptLines, lines);
-  assert.deepEqual(entry(catalog, "grep").cost, { declaration: declarationTokens(declarationOf(GREP)), promptLines: 0 });
+  assert.deepEqual(entry(catalog, "grep").cost, { declaration: declarationTokens(declarationOf(GREP), PI_BASIS), promptLines: 0 });
 });
 
 test("prompt lines cost nothing when a custom system prompt leaves them out", () => {
@@ -90,7 +91,7 @@ test("a declared tool is shown and measured as the model has it", () => {
   const read = entry(catalog, "read");
   assert.equal(read.definition, rewritten);
   assert.equal(read.differsFromRegistered, true);
-  assert.equal(read.cost.declaration, declarationTokens(rewritten));
+  assert.equal(read.cost.declaration, declarationTokens(rewritten, PI_BASIS));
   assert.equal(entry(catalog, "tool_search").differsFromRegistered, false, "the same text and schema is not a difference");
 });
 
@@ -102,13 +103,31 @@ test("a tool that is no longer active is shown as registered, even while the tra
 });
 
 test("an entry keeps its source, namespace, hints and provenance", () => {
-  const catalog = catalogOf({ contextWindow: 200_000 });
+  const catalog = catalogOf({ model: { api: "openai-completions", contextWindow: 200_000 } });
   const issue = entry(catalog, "mcp__linear__save_issue");
-  assert.deepEqual(issue.origin, { kind: "mcp", label: "mcp · linear" });
+  assert.deepEqual(issue.origin, { kind: "mcp", name: "linear" });
   assert.deepEqual(issue.namespace, { name: "mcp__linear", description: null });
   assert.deepEqual(issue.hints, { readOnly: false, destructive: false, idempotent: true, openWorld: null });
   assert.equal(issue.provenance.path, "builtin:mcp");
-  assert.equal(entry(catalog, "tool_search").reachesOtherTools, true);
-  assert.deepEqual(entry(catalog, "secret").origin, { kind: "extension", label: "secret" });
-  assert.equal(catalog.contextWindow, 200_000);
+  assert.deepEqual(entry(catalog, "secret").origin, { kind: "extension", name: "secret" });
+  assert.deepEqual(catalog.model, { api: "openai-completions", contextWindow: 200_000 });
+});
+
+test("costs use the token ratios measured for the model's API family, and pi's rule otherwise", () => {
+  const lines: PromptLines = { snippet: "Read file contents", guidelines: ["Use read instead of cat."] };
+  const promptLines = new Map([["read", lines]]);
+  const claude = catalogOf({ active: ["read"], promptLines, model: { api: "anthropic-messages", contextWindow: 1_000_000 } });
+  const measured = basisFor("anthropic-messages");
+  assert.equal(claude.basis, measured);
+  assert.deepEqual(entry(claude, "read").cost, {
+    declaration: declarationTokens(declarationOf(READ), measured),
+    promptLines: promptLineTokens("read", lines, measured),
+  });
+  for (const model of [null, { api: "google-generative-ai", contextWindow: 1_000_000 }]) {
+    const other = catalogOf({ active: ["read"], promptLines, model });
+    assert.equal(other.basis, PI_BASIS);
+    assert.equal(entry(other, "read").cost.declaration, declarationTokens(declarationOf(READ), PI_BASIS));
+  }
+  assert.ok(entry(claude, "read").cost.declaration > entry(catalogOf({ active: ["read"] }), "read").cost.declaration);
+  assert.equal(catalogOf({}).model, null);
 });

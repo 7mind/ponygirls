@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { ToolActivation } from "../src/activation.ts";
 import { buildCatalog, findEntry, type ToolEntry } from "../src/catalog.ts";
-import type { JsonSchema, PromptLines, RegisteredTool, ToolExposure, ToolRegistry } from "../src/registry.ts";
+import type { JsonSchema, PromptLines, RegisteredTool, SessionModel, ToolExposure, ToolRegistry } from "../src/registry.ts";
 
 export interface ContractTool {
   name: string;
@@ -30,7 +30,8 @@ export const CONTRACT_TOOLS: readonly ContractTool[] = [
   { name: "probe_codemode", description: "A probe scripts can call", parameters: QUERY, exposure: "codemode", activeOnRegistration: false, promptLines: NO_LINES },
   { name: "probe_hidden", description: "An unreachable probe", parameters: QUERY, exposure: "hidden", activeOnRegistration: false, promptLines: NO_LINES },
 ];
-export const CONTRACT_CONTEXT_WINDOW = 100_000;
+/** The model both registries run with: an API family without measured token ratios. */
+export const CONTRACT_MODEL: SessionModel = { api: "openai-completions", contextWindow: 100_000 };
 
 export interface RegistryUnderTest {
   registry: ToolRegistry;
@@ -103,9 +104,9 @@ export function registryContract(label: string, make: RegistryFactory): void {
     assert.deepEqual(snapshot.withheld, []);
   });
 
-  test(`${label}: reports the context window of the model`, async (t) => {
+  test(`${label}: reports the API family and context window of the model`, async (t) => {
     const { registry } = await make(t);
-    assert.equal(registry.snapshot().contextWindow, CONTRACT_CONTEXT_WINDOW);
+    assert.deepEqual(registry.snapshot().model, CONTRACT_MODEL);
   });
 
   test(`${label}: the transcript declares nothing before the first request, then the active set`, async (t) => {
@@ -165,16 +166,42 @@ export function registryContract(label: string, make: RegistryFactory): void {
     assert.equal(entryOf(registry, "probe_codemode").delivery, "none");
   });
 
-  test(`${label}: loading and unloading refuse what tool search could not have loaded`, async (t) => {
+  test(`${label}: a directly exposed tool can be switched off and on again`, async (t) => {
+    const { registry, request } = await make(t);
+    await request();
+    const activation = new ToolActivation(registry);
+    const before = registry.snapshot().active;
+    assert.equal(activation.unload("probe_direct").kind, "unloaded");
+    assert.equal(entryOf(registry, "probe_direct").state, "off");
+    assert.equal(entryOf(registry, "probe_direct").delivery, "removal-pending");
+    assert.deepEqual(registry.snapshot().active, before.filter((name) => name !== "probe_direct"));
+    await request();
+    assert.equal(entryOf(registry, "probe_direct").delivery, "none");
+    assert.equal(activation.load("probe_direct").kind, "loaded");
+    assert.equal(entryOf(registry, "probe_direct").delivery, "next-request");
+    await request();
+    assert.equal(entryOf(registry, "probe_direct").delivery, "declared");
+  });
+
+  test(`${label}: a direct tool registered inactive can be loaded`, async (t) => {
+    const { registry, request } = await make(t);
+    const activation = new ToolActivation(registry);
+    assert.equal(entryOf(registry, "probe_inactive").state, "off");
+    assert.equal(activation.load("probe_inactive").kind, "loaded");
+    assert.equal(entryOf(registry, "probe_inactive").state, "active");
+    await request();
+    assert.equal(entryOf(registry, "probe_inactive").delivery, "declared");
+  });
+
+  test(`${label}: loading and unloading refuse what cannot be done and change nothing`, async (t) => {
     const { registry } = await make(t);
     const activation = new ToolActivation(registry);
     const before = registry.snapshot().active;
     assert.deepEqual(activation.load("no_such_tool"), { kind: "refused", name: "no_such_tool", reason: "unknown-tool" });
-    assert.deepEqual(activation.load("probe_inactive"), { kind: "refused", name: "probe_inactive", reason: "not-loadable" });
-    assert.deepEqual(activation.load("probe_hidden"), { kind: "refused", name: "probe_hidden", reason: "not-loadable" });
-    assert.deepEqual(activation.load("probe_direct"), { kind: "refused", name: "probe_direct", reason: "not-loadable" });
-    assert.deepEqual(activation.unload("probe_direct"), { kind: "refused", name: "probe_direct", reason: "not-unloadable" });
-    assert.deepEqual(activation.unload("probe_deferred"), { kind: "refused", name: "probe_deferred", reason: "not-unloadable" });
+    assert.deepEqual(activation.load("probe_hidden"), { kind: "refused", name: "probe_hidden", reason: "hidden" });
+    assert.deepEqual(activation.load("probe_direct"), { kind: "refused", name: "probe_direct", reason: "already-active" });
+    assert.deepEqual(activation.unload("probe_deferred"), { kind: "refused", name: "probe_deferred", reason: "not-active" });
+    assert.deepEqual(activation.unload("probe_hidden"), { kind: "refused", name: "probe_hidden", reason: "not-active" });
     assert.deepEqual(activation.unload("no_such_tool"), { kind: "refused", name: "no_such_tool", reason: "unknown-tool" });
     assert.deepEqual(registry.snapshot().active, before, "a refusal changes nothing");
   });

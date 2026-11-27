@@ -5,7 +5,7 @@ import type { JsonSchema, PromptLines, RegisteredTool, RegistrySnapshot, ToolDec
 
 export type PiTools = Pick<ExtensionAPI, "getAllTools" | "getActiveTools" | "setActiveTools">;
 /** A command context: only commands can read the prompt options. */
-export type PiSession = Pick<ExtensionCommandContext, "getSystemPromptOptions" | "sessionManager" | "getContextUsage" | "model">;
+export type PiSession = Pick<ExtensionCommandContext, "getSystemPromptOptions" | "sessionManager" | "model">;
 
 interface Transcript {
   leafId: string | null;
@@ -26,7 +26,6 @@ function registeredTool(tool: ToolInfo): RegisteredTool {
       idempotent: annotations.idempotentHint ?? null,
       openWorld: annotations.openWorldHint ?? null,
     },
-    reachesOtherTools: tool.reachesTools !== undefined,
     provenance: { path: sourceInfo.path, source: sourceInfo.source, scope: sourceInfo.scope, origin: sourceInfo.origin, baseDir: sourceInfo.baseDir ?? null },
   };
 }
@@ -56,6 +55,7 @@ export class PiToolRegistry implements ToolRegistry {
 
   snapshot(): RegistrySnapshot {
     const options = this.session.getSystemPromptOptions();
+    const model = this.session.model;
     const snippets = options.toolSnippets ?? {};
     const guidelines = options.toolGuidelines ?? {};
     const promptLines = new Map<string, PromptLines>();
@@ -70,7 +70,7 @@ export class PiToolRegistry implements ToolRegistry {
       // A custom prompt replaces the default one, which is where the tool list and the rules are.
       promptLinesSent: !options.customPrompt,
       declared: this.declared(),
-      contextWindow: this.session.getContextUsage()?.contextWindow ?? this.session.model?.contextWindow ?? null,
+      model: model === undefined ? null : { api: model.api, contextWindow: model.contextWindow },
     };
   }
 

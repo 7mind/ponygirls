@@ -4,20 +4,20 @@
  * stay active; a request makes the transcript declare the active tools.
  * tests/registry-contract.ts holds it to the same clauses as PiToolRegistry.
  */
-import type { PromptLines, RegisteredTool, RegistrySnapshot, ToolDeclaration, ToolRegistry } from "../src/registry.ts";
+import type { PromptLines, RegisteredTool, RegistrySnapshot, SessionModel, ToolDeclaration, ToolRegistry } from "../src/registry.ts";
 
 export interface MemoryRegistryOptions {
   tools: readonly RegisteredTool[];
   active: readonly string[];
   promptLines: ReadonlyMap<string, PromptLines>;
-  contextWindow: number | null;
+  model: SessionModel | null;
 }
 
 export class InMemoryToolRegistry implements ToolRegistry {
   private tools: RegisteredTool[];
   private active: string[];
   private readonly promptLines: Map<string, PromptLines>;
-  private readonly contextWindow: number | null;
+  private model: SessionModel | null;
   private declared = new Map<string, ToolDeclaration>();
   private withheld: string[] = [];
   private promptLinesSent = true;
@@ -28,7 +28,7 @@ export class InMemoryToolRegistry implements ToolRegistry {
     this.tools = [...options.tools];
     this.active = [];
     this.promptLines = new Map(options.promptLines);
-    this.contextWindow = options.contextWindow;
+    this.model = options.model;
     this.setActive(options.active);
   }
 
@@ -40,7 +40,7 @@ export class InMemoryToolRegistry implements ToolRegistry {
       promptLines: new Map(this.promptLines),
       promptLinesSent: this.promptLinesSent,
       declared: new Map(this.declared),
-      contextWindow: this.contextWindow,
+      model: this.model,
     };
   }
 
@@ -83,5 +83,10 @@ export class InMemoryToolRegistry implements ToolRegistry {
 
   setPromptLinesSent(sent: boolean): void {
     this.promptLinesSent = sent;
+  }
+
+  /** Switch the session to another model, as /model does. */
+  setModel(model: SessionModel | null): void {
+    this.model = model;
   }
 }

@@ -4,7 +4,7 @@ import { ToolActivation } from "../src/activation.ts";
 import type { PromptLines, RegisteredTool } from "../src/registry.ts";
 import { extensionFile } from "./fixtures.ts";
 import { InMemoryToolRegistry } from "./memory-registry.ts";
-import { CONTRACT_CONTEXT_WINDOW, CONTRACT_TOOLS, registryContract } from "./registry-contract.ts";
+import { CONTRACT_MODEL, CONTRACT_TOOLS, registryContract } from "./registry-contract.ts";
 
 function contractRegistry(): InMemoryToolRegistry {
   const tools: RegisteredTool[] = CONTRACT_TOOLS.map((tool) => ({
@@ -14,7 +14,6 @@ function contractRegistry(): InMemoryToolRegistry {
     exposure: tool.exposure,
     namespace: null,
     hints: null,
-    reachesOtherTools: false,
     provenance: extensionFile("/fixtures/probes.ts"),
   }));
   const promptLines = new Map<string, PromptLines>(CONTRACT_TOOLS
@@ -24,7 +23,7 @@ function contractRegistry(): InMemoryToolRegistry {
     tools,
     active: CONTRACT_TOOLS.filter((tool) => tool.activeOnRegistration).map((tool) => tool.name),
     promptLines,
-    contextWindow: CONTRACT_CONTEXT_WINDOW,
+    model: CONTRACT_MODEL,
   });
 }
 
@@ -37,7 +36,7 @@ test("a tool pi refuses to activate is reported as not applied, and nothing chan
   const registry = contractRegistry();
   registry.refuse("probe_deferred");
   const before = registry.snapshot().active;
-  assert.deepEqual(new ToolActivation(registry).load("probe_deferred"), { kind: "refused", name: "probe_deferred", reason: "not-applied" });
+  assert.deepEqual(new ToolActivation(registry).load("probe_deferred"), { kind: "refused", name: "probe_deferred", reason: "not-activated" });
   assert.deepEqual(registry.snapshot().active, before);
 });
 

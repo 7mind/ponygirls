@@ -1,6 +1,6 @@
 /**
- * Where a tool comes from, as one short label per source: pi itself, an MCP
- * server, an extension or a package. The label groups the list; the complete
+ * Where a tool comes from, as one source per kind and name: pi itself, an MCP
+ * server, an extension or a package. Sources group the list; the complete
  * provenance record stays on the tool.
  */
 import type { RegisteredTool } from "./registry.ts";
@@ -9,8 +9,8 @@ export type OriginKind = "built-in" | "sdk" | "extension" | "package" | "mcp";
 
 export interface ToolOrigin {
   kind: OriginKind;
-  /** Short name of the source, also the heading of its group. */
-  label: string;
+  /** The server, extension or package; `built-in` and `sdk` for those kinds. */
+  name: string;
 }
 
 /** pi's `sourceInfo.source` for tools it ships, core tools and built-in extensions alike. */
@@ -19,9 +19,9 @@ const BUILTIN_SOURCE = "builtin";
 const SDK_SOURCE = "sdk";
 /** Namespaces of MCP servers are named `mcp__<server>`. */
 const MCP_NAMESPACE_PREFIX = "mcp__";
-const BUILT_IN_LABEL = "built-in";
-const SDK_LABEL = "sdk";
-const LABEL_SEPARATOR = " · ";
+const BUILT_IN_NAME = "built-in";
+const SDK_NAME = "sdk";
+const MCP_LABEL_PREFIX = "mcp · ";
 /** A Nix store entry is `<32-character hash>-<name>`. */
 const NIX_STORE_ENTRY = /^[0-9a-z]{32}-(.+)$/;
 const SCRIPT_SUFFIX = /\.[cm]?[jt]s$/;
@@ -60,12 +60,17 @@ function packageName(source: string): string {
 export function originOf(tool: Pick<RegisteredTool, "namespace" | "provenance">): ToolOrigin {
   const { namespace, provenance } = tool;
   if (namespace !== null && namespace.name.startsWith(MCP_NAMESPACE_PREFIX)) {
-    return { kind: "mcp", label: `mcp${LABEL_SEPARATOR}${namespace.name.slice(MCP_NAMESPACE_PREFIX.length)}` };
+    return { kind: "mcp", name: namespace.name.slice(MCP_NAMESPACE_PREFIX.length) };
   }
-  if (provenance.source === BUILTIN_SOURCE) return { kind: "built-in", label: BUILT_IN_LABEL };
-  if (provenance.source === SDK_SOURCE) return { kind: "sdk", label: SDK_LABEL };
-  if (provenance.origin === "package") return { kind: "package", label: packageName(provenance.source) };
-  return { kind: "extension", label: extensionName(provenance.path) };
+  if (provenance.source === BUILTIN_SOURCE) return { kind: "built-in", name: BUILT_IN_NAME };
+  if (provenance.source === SDK_SOURCE) return { kind: "sdk", name: SDK_NAME };
+  if (provenance.origin === "package") return { kind: "package", name: packageName(provenance.source) };
+  return { kind: "extension", name: extensionName(provenance.path) };
+}
+
+/** The heading of a source: its name, marked for MCP servers. */
+export function originLabel(origin: ToolOrigin): string {
+  return origin.kind === "mcp" ? `${MCP_LABEL_PREFIX}${origin.name}` : origin.name;
 }
 
 /** Code-unit order: the same on every machine, whatever its locale. */
@@ -75,9 +80,9 @@ export function compareText(a: string, b: string): number {
 
 export function compareOrigins(a: ToolOrigin, b: ToolOrigin): number {
   const byKind = KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind);
-  return byKind !== 0 ? byKind : compareText(a.label, b.label);
+  return byKind !== 0 ? byKind : compareText(a.name, b.name);
 }
 
 export function sameOrigin(a: ToolOrigin, b: ToolOrigin): boolean {
-  return a.kind === b.kind && a.label === b.label;
+  return a.kind === b.kind && a.name === b.name;
 }

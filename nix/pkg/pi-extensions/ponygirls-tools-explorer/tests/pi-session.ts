@@ -15,6 +15,7 @@ import {
 
 export type NotifyLevel = "info" | "warning" | "error";
 
+export const SCRIPTED_API = "openai-completions";
 export const SCRIPTED_CONTEXT_WINDOW = 100_000;
 const PROVIDER = "tools-explorer-fixture";
 const MODEL = "scripted";
@@ -68,7 +69,7 @@ export async function startPiSession(t: TestContext, options: PiSessionOptions):
   const runtime = await ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, refreshOnCreate: false });
   const requests: string[] = [];
   runtime.registerProvider(PROVIDER, {
-    baseUrl: "http://fixture.invalid", apiKey: "fixture-only", api: "openai-completions",
+    baseUrl: "http://fixture.invalid", apiKey: "fixture-only", api: SCRIPTED_API,
     models: [{ id: MODEL, name: "Scripted", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: SCRIPTED_CONTEXT_WINDOW, maxTokens: 1000 }],
     streamSimple(model, requestContext) {
       requests.push(JSON.stringify(requestContext));

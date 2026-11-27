@@ -3,6 +3,7 @@ import test from "node:test";
 import { buildCatalog, findEntry, totalTokens, type ToolCatalog } from "../src/catalog.ts";
 import { SORT_KEYS, TABS, filterTerms, listItems, nextOf, selectTools, summarize, type ListItem, type Query } from "../src/query.ts";
 import type { RegistrySnapshot } from "../src/registry.ts";
+import { originLabel } from "../src/origin.ts";
 import { extensionFile, mcpTool, snapshot, tool } from "./fixtures.ts";
 
 const TOOLS = [
@@ -31,7 +32,7 @@ function tokensOf(catalog: ToolCatalog, name: string): number {
 }
 
 function labels(items: readonly ListItem[]): string[] {
-  return items.map((item) => (item.kind === "source" ? `# ${item.summary.origin.label}` : item.entry.name));
+  return items.map((item) => (item.kind === "source" ? `# ${originLabel(item.summary.origin)}` : item.entry.name));
 }
 
 test("tabs and sort keys cycle in their fixed order", () => {
@@ -84,7 +85,7 @@ test("a filter keeps tools where every word occurs in the name, the source or th
 });
 
 test("the summary counts tools and tokens overall and per source", () => {
-  const catalog = catalogOf({ contextWindow: 10_000 });
+  const catalog = catalogOf({ model: { api: "openai-completions", contextWindow: 10_000 } });
   const summary = summarize(catalog);
   const charged = ACTIVE.reduce((sum, name) => sum + tokensOf(catalog, name), 0);
   const all = TOOLS.reduce((sum, item) => sum + tokensOf(catalog, item.name), 0);
@@ -94,7 +95,7 @@ test("the summary counts tools and tokens overall and per source", () => {
   assert.equal(summary.chargedTokens, charged);
   assert.equal(summary.inactiveTokens, all - charged);
   assert.equal(summary.windowShare, charged / 10_000);
-  assert.deepEqual(summary.sources.map((source) => [source.origin.label, source.tools, source.active]), [
+  assert.deepEqual(summary.sources.map((source) => [originLabel(source.origin), source.tools, source.active]), [
     ["built-in", 3, 2],
     ["ponygirls-bg-tasks", 1, 1],
     ["mcp · github", 1, 1],
@@ -117,12 +118,12 @@ test("a withheld tool is active but its tokens are not charged", () => {
 });
 
 test("without a model there is no share of a context window", () => {
-  assert.equal(summarize(catalogOf({ contextWindow: null })).windowShare, null);
-  assert.equal(summarize(catalogOf({ contextWindow: 0 })).windowShare, null);
+  assert.equal(summarize(catalogOf({ model: null })).windowShare, null);
+  assert.equal(summarize(catalogOf({ model: { api: "openai-completions", contextWindow: 0 } })).windowShare, null);
 });
 
 test("an empty catalog summarizes to zeros", () => {
-  assert.deepEqual(summarize(buildCatalog(snapshot([], { contextWindow: 1000 }))), {
+  assert.deepEqual(summarize(buildCatalog(snapshot([], { model: { api: "openai-completions", contextWindow: 1000 } }))), {
     all: 0, active: 0, inactive: 0, chargedTokens: 0, inactiveTokens: 0, windowShare: 0, sources: [],
   });
 });

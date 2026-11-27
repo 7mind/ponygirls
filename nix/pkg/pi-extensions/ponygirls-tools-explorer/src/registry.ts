@@ -46,8 +46,6 @@ export interface RegisteredTool extends ToolDeclaration {
   exposure: ToolExposure;
   namespace: ToolNamespace | null;
   hints: ToolHints | null;
-  /** The tool calls or loads other tools (`codemode`, `tool_search`). */
-  reachesOtherTools: boolean;
   provenance: ToolProvenance;
 }
 
@@ -57,6 +55,13 @@ export interface PromptLines {
   snippet: string | null;
   /** Its rule bullets. */
   guidelines: readonly string[];
+}
+
+/** The session's current model, as far as the explorer needs it. */
+export interface SessionModel {
+  /** pi's API family of the model, such as `anthropic-messages`; it decides the token ratios. */
+  api: string;
+  contextWindow: number;
 }
 
 export interface RegistrySnapshot {
@@ -70,8 +75,8 @@ export interface RegistrySnapshot {
   promptLinesSent: boolean;
   /** The declarations the transcript holds now; empty before the session's first request. */
   declared: ReadonlyMap<string, ToolDeclaration>;
-  /** Context window of the current model, `null` without a model. */
-  contextWindow: number | null;
+  /** `null` while no model is selected. */
+  model: SessionModel | null;
 }
 
 export interface ToolRegistry {

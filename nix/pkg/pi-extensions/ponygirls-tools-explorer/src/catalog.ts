@@ -3,8 +3,8 @@
  * with its state, source, definition and estimated cost.
  */
 import { originOf, type ToolOrigin } from "./origin.ts";
-import type { PromptLines, RegisteredTool, RegistrySnapshot, ToolDeclaration, ToolExposure, ToolHints, ToolNamespace, ToolProvenance } from "./registry.ts";
-import { declarationTokens, promptLineTokens } from "./tokens.ts";
+import type { PromptLines, RegisteredTool, RegistrySnapshot, SessionModel, ToolDeclaration, ToolExposure, ToolHints, ToolNamespace, ToolProvenance } from "./registry.ts";
+import { basisFor, declarationTokens, promptLineTokens, type TokenBasis } from "./tokens.ts";
 
 /**
  * Whether the model has the tool.
@@ -38,18 +38,18 @@ export interface ToolEntry {
   promptLines: PromptLines;
   namespace: ToolNamespace | null;
   hints: ToolHints | null;
-  reachesOtherTools: boolean;
   provenance: ToolProvenance;
 }
 
 export interface ToolCatalog {
   entries: readonly ToolEntry[];
-  contextWindow: number | null;
+  /** What the costs were estimated with: the ratios of the model's API family, or pi's rule. */
+  basis: TokenBasis;
+  /** `null` while no model is selected. */
+  model: SessionModel | null;
 }
 
 const NO_PROMPT_LINES: PromptLines = { snippet: null, guidelines: [] };
-/** Exposures tool search loads from; the pane loads the same ones. */
-const LOADABLE_EXPOSURES: ReadonlySet<ToolExposure> = new Set<ToolExposure>(["deferred", "codemode"]);
 const INACTIVE_STATE: Readonly<Record<ToolExposure, ToolState>> = {
   direct: "off",
   "model-only": "off",
@@ -72,12 +72,13 @@ export function isCharged(entry: ToolEntry): boolean {
   return entry.state === "active";
 }
 
+/** Any tool outside the active set can join it, except one pi keeps unreachable. */
 export function canLoad(entry: ToolEntry): boolean {
-  return !isActive(entry) && LOADABLE_EXPOSURES.has(entry.exposure);
+  return !isActive(entry) && entry.exposure !== "hidden";
 }
 
 export function canUnload(entry: ToolEntry): boolean {
-  return isActive(entry) && LOADABLE_EXPOSURES.has(entry.exposure);
+  return isActive(entry);
 }
 
 function sameDeclaration(a: ToolDeclaration, b: ToolDeclaration): boolean {
@@ -98,6 +99,7 @@ function deliveryOf(state: ToolState, declared: boolean): Delivery {
 export function buildCatalog(snapshot: RegistrySnapshot): ToolCatalog {
   const active = new Set(snapshot.active);
   const withheld = new Set(snapshot.withheld);
+  const basis = basisFor(snapshot.model === null ? null : snapshot.model.api);
   const entries = snapshot.tools.map((tool): ToolEntry => {
     const state = stateOf(tool, active.has(tool.name), withheld.has(tool.name));
     const declared = snapshot.declared.get(tool.name);
@@ -113,17 +115,16 @@ export function buildCatalog(snapshot: RegistrySnapshot): ToolCatalog {
       definition,
       differsFromRegistered: definition !== registered && !sameDeclaration(definition, registered),
       cost: {
-        declaration: declarationTokens(definition),
-        promptLines: snapshot.promptLinesSent ? promptLineTokens(tool.name, promptLines) : 0,
+        declaration: declarationTokens(definition, basis),
+        promptLines: snapshot.promptLinesSent ? promptLineTokens(tool.name, promptLines, basis) : 0,
       },
       promptLines,
       namespace: tool.namespace,
       hints: tool.hints,
-      reachesOtherTools: tool.reachesOtherTools,
       provenance: tool.provenance,
     };
   });
-  return { entries, contextWindow: snapshot.contextWindow };
+  return { entries, basis, model: snapshot.model };
 }
 
 export function findEntry(catalog: ToolCatalog, name: string): ToolEntry | null {

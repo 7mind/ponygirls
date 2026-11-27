@@ -6,9 +6,9 @@ import type { TSchema } from "typebox";
 import { buildCatalog, findEntry, isCharged } from "../src/catalog.ts";
 import { PiToolRegistry } from "../src/pi-registry.ts";
 import type { JsonSchema } from "../src/registry.ts";
-import { declarationTokens, promptLineText } from "../src/tokens.ts";
-import { SCRIPTED_CONTEXT_WINDOW, startPiSession, type PiSession } from "./pi-session.ts";
-import { CONTRACT_CONTEXT_WINDOW, CONTRACT_TOOLS, registryContract } from "./registry-contract.ts";
+import { PI_BASIS, declarationTokens, promptLineText } from "../src/tokens.ts";
+import { SCRIPTED_API, SCRIPTED_CONTEXT_WINDOW, startPiSession, type PiSession } from "./pi-session.ts";
+import { CONTRACT_MODEL, CONTRACT_TOOLS, registryContract } from "./registry-contract.ts";
 
 const PROBED = { content: [{ type: "text" as const, text: "probed" }], details: undefined };
 
@@ -43,7 +43,7 @@ function requestedTools(request: string): string[] {
   return getCurrentTools(context.messages).map((tool) => tool.name).sort();
 }
 
-assert.equal(SCRIPTED_CONTEXT_WINDOW, CONTRACT_CONTEXT_WINDOW);
+assert.deepEqual({ api: SCRIPTED_API, contextWindow: SCRIPTED_CONTEXT_WINDOW }, CONTRACT_MODEL);
 
 registryContract("pi session", async (t) => {
   const started = await start(t, registerProbes, null);
@@ -64,14 +64,14 @@ test("pi session: a loaded tool is in the next request the provider receives, an
   assert.deepEqual(errors, []);
 });
 
-test("pi session: the declaration estimate is pi's own estimate for a message declaring the tool", async (t) => {
+test("pi session: with pi's rule the declaration estimate is pi's own estimate for a message declaring the tool", async (t) => {
   const { registry } = await start(t, registerProbes, null);
   const tools = registry.snapshot().tools;
   assert.ok(tools.some((tool) => tool.name === "read"), "built-in tools are part of the registry");
   for (const tool of tools) {
     const declaration = { name: tool.name, description: tool.description, parameters: JSON.parse(JSON.stringify(tool.parameters)) as JsonSchema };
     const system = { role: "system" as const, content: "", toolsAdded: [declaration], timestamp: 0 };
-    assert.equal(declarationTokens(tool), piEstimateTokens(system), tool.name);
+    assert.equal(declarationTokens(tool, PI_BASIS), piEstimateTokens(system), tool.name);
   }
 });
 
@@ -106,7 +106,6 @@ test("pi session: a declaration an orchestrating tool withholds is active, repor
       name: "probe_orchestrator", label: "probe_orchestrator", description: "Reaches probe_direct on the model's behalf",
       parameters: { type: "object", properties: {} } as TSchema,
       prepareLoadout: () => ({ hiddenDeclarations: ["probe_direct"] }),
-      reachesTools: () => "all",
       execute: async () => PROBED,
     });
   }, null);
@@ -122,9 +121,6 @@ test("pi session: a declaration an orchestrating tool withholds is active, repor
   assert.equal(sent.includes("probe_direct"), false);
   assert.equal(sent.includes("probe_orchestrator"), true);
   assert.equal(ctx.getSystemPrompt().includes("- probe_direct: Probe directly"), false, "its prompt lines are left out with it");
-  const orchestrator = registry.snapshot().tools.find((tool) => tool.name === "probe_orchestrator");
-  assert.ok(orchestrator);
-  assert.equal(orchestrator.reachesOtherTools, true);
 });
 
 test("pi session: namespace, hints and provenance come through as pi records them", async (t) => {
@@ -141,13 +137,12 @@ test("pi session: namespace, hints and provenance come through as pi records the
   const catalog = buildCatalog(registry.snapshot());
   const lookup = findEntry(catalog, "mcp__probe__lookup");
   assert.ok(lookup);
-  assert.deepEqual(lookup.origin, { kind: "mcp", label: "mcp · probe" });
+  assert.deepEqual(lookup.origin, { kind: "mcp", name: "probe" });
   assert.deepEqual(lookup.namespace, { name: "mcp__probe", description: "A server for probing" });
   assert.deepEqual(lookup.hints, { readOnly: true, destructive: null, idempotent: null, openWorld: false });
-  assert.equal(lookup.reachesOtherTools, false);
   const read = findEntry(catalog, "read");
   assert.ok(read);
-  assert.deepEqual(read.origin, { kind: "built-in", label: "built-in" });
+  assert.deepEqual(read.origin, { kind: "built-in", name: "built-in" });
   assert.deepEqual(read.provenance, { path: "builtin:read", source: "builtin", scope: "temporary", origin: "top-level", baseDir: null });
   assert.equal(read.hints, null);
   assert.equal(read.namespace, null);

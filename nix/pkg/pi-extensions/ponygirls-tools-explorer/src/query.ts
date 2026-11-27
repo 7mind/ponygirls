@@ -3,7 +3,7 @@
  * catalog, plus the per-source and overall totals.
  */
 import { isActive, isCharged, totalTokens, type ToolCatalog, type ToolEntry } from "./catalog.ts";
-import { compareOrigins, compareText, sameOrigin, type ToolOrigin } from "./origin.ts";
+import { compareOrigins, compareText, originLabel, sameOrigin, type ToolOrigin } from "./origin.ts";
 
 export type Tab = "all" | "active" | "inactive";
 export const TABS: readonly Tab[] = ["all", "active", "inactive"];
@@ -81,7 +81,7 @@ export function summarize(catalog: ToolCatalog): CatalogSummary {
     inactive: catalog.entries.length - active,
     chargedTokens,
     inactiveTokens,
-    windowShare: catalog.contextWindow === null || catalog.contextWindow <= 0 ? null : chargedTokens / catalog.contextWindow,
+    windowShare: catalog.model === null || catalog.model.contextWindow <= 0 ? null : chargedTokens / catalog.model.contextWindow,
     sources,
   };
 }
@@ -96,7 +96,7 @@ export function filterTerms(filter: string): string[] {
 
 function matches(entry: ToolEntry, terms: readonly string[]): boolean {
   if (terms.length === 0) return true;
-  const text = `${entry.name}\n${entry.origin.label}\n${entry.definition.description}`.toLowerCase();
+  const text = `${entry.name}\n${originLabel(entry.origin)}\n${entry.definition.description}`.toLowerCase();
   return terms.every((term) => text.includes(term));
 }
 
