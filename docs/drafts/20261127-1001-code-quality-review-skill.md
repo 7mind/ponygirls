@@ -9,9 +9,12 @@ is a trim with the rules those runs called for and has not been run.
 
 Outcome of the review itself: there is little to remove. Confirmed changes
 were 0.2% to 1.2% of the production lines read in each run, about 1,000
-production tokens in all for about 267 USD as the harness reports cost. Nine
-real changes were confirmed by measured spikes; section 15 says which are on
-main. Section 14 lists what was found and not applied.
+production tokens in all for about 267 USD as the harness reports cost. Of
+the eleven real changes that measured spikes confirmed, eight are on main
+(33 production lines and 721 tokens; section 15), one was dropped when
+another session's refactor took over its code, and two were left out as too
+small. Section 14
+lists what was found and not applied.
 
 This note is a chronological record. Sections 1 to 9 are the proposal as it
 stood before the first run and were not rewritten afterwards; the runs, the
@@ -1127,18 +1130,26 @@ scripts, and chronicle outside the five families.
   for byte), `cross-service-patches/` (the six patches of the third run),
   `answer-keys/` (the planted smells of the first two runs; their SHA-256
   are the ones registered in sections 7.1 and 7.2).
-- **Applied to main:** the five changes of Q203 (`226908f5`, `1241db7f`,
-  `96329e0b`, `ed425e0c`, `323d2497`; JVM suites only, by decision).
-- **Q223, in progress when this was written.** Changes 1 to 3 of the
-  cross-service run are on local branch `apply-cross-service-1-3` (work tree
-  `.worktrees/wt-ponygirls-apply-cross-service-1-3`), on top of main:
-  chronicle's `Wire.hash` and `Wire.secret` through the shared `Secrets`; the
-  start-stage wrapper of the three `Main` files in shared service-runtime;
-  chronicle's `StaticTokens` through the shared bounded reader. They are
-  merged only after `scripts/verify all` has passed on the tree that is
-  merged, run when the host is quiet. To resume: bring the branch up to
-  main, run `scripts/verify all` in its work tree, and fast-forward main if
-  it passes.
+- **Applied to main, Q203:** five changes from the first two runs
+  (`226908f5`, `1241db7f`, `96329e0b`, `ed425e0c`, `323d2497`): production
+  24 lines and 388 tokens smaller, tests 4 lines and 58 tokens smaller. JVM
+  suites only, by decision.
+- **Applied to main, Q223:** changes 1 to 3 of the cross-service run, as
+  `d81b43d7` (chronicle's `Wire.hash` and `Wire.secret` through the shared
+  `Secrets`), `c8a0b2f1` (the start-stage wrapper of the three `Main` files
+  in shared service-runtime) and `d7c947d7` (chronicle's `StaticTokens`
+  through the shared bounded reader): production 9 lines and 333 tokens
+  smaller, tests unchanged. Verified with `scripts/verify all` on commit
+  `d7c947d7`, clean tree, which main was then fast-forwarded to: 15 member
+  checks built, 29 reused, none failed. Built, with cases: chronicle
+  backend-full 1,464, eval 176, account-e2e 1; haystack jvm 765, native 41;
+  manure backend 303, native 411; shared jvm 402; and without counts the
+  packages chronicle, haystack and manure, haystack-browser, haystack-proxy,
+  manure-client and manure-config. The run started at 20:04 UTC, after the
+  host's load had stayed below 32 (one minute) and 48 (five minutes) on its
+  128 cores for two minutes, and took 516 seconds.
+- **All eight applied changes together:** production 33 lines and 721 tokens
+  smaller, tests 4 lines and 58 tokens smaller.
 - **Change 4 dropped** (Q225). Main gained another session's account
   refactor (11 commits in `shared/service-auth` and `haystack/server`) while
   the changes were being prepared, and change 4 (signup and enrollment types
