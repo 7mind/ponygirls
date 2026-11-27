@@ -87,6 +87,16 @@ class SkillValidationTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("empty", result.stderr)
 
+    # Regression: a description yq cannot count was accepted.
+    def test_non_string_description_is_reported_and_validation_continues(self):
+        bad = self.skill("bad", name="bad", description={"text": "x" * 2000}, content="")
+        later = self.skill("later", name="later", content="")
+        result = self.validate(bad, later)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("skill 'bad': description is not a string", result.stderr)
+        self.assertIn("bad/content.md is empty", result.stderr)
+        self.assertIn("later/content.md is empty", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

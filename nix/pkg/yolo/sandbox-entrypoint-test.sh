@@ -53,11 +53,11 @@ trace_shape() { sed -E 's/^(\++) [0-9]+[.,][0-9]+ /\1 T /' "$1"; }
 stdout="$(run_entrypoint "$WORKDIR/stderr.default")"
 check "command receives the secret and the hook's exported env" \
   test "$stdout" = "$EXPECTED_STDOUT"
-default_stderr="$(< "$WORKDIR/stderr.default")"
+default_stderr="$(cat -- "$WORKDIR/stderr.default")"
 check "default run prints nothing of its own" \
   test "$default_stderr" = ""
 stdout="$(run_entrypoint "$WORKDIR/stderr.zero" YOLO_SANDBOX_TRACE=0)"
-zero_stderr="$(< "$WORKDIR/stderr.zero")"
+zero_stderr="$(cat -- "$WORKDIR/stderr.zero")"
 check "YOLO_SANDBOX_TRACE=0 prints nothing either" \
   test "$stdout|$zero_stderr" = "$EXPECTED_STDOUT|"
 

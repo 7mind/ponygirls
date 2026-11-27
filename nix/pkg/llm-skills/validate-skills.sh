@@ -25,10 +25,13 @@ for meta_file in "$@"; do
   if [ -z "$description" ]; then
     echo "  ERROR: missing required 'description' field" >&2
     errors=$((errors + 1))
+  # yq's string length counts bytes; splitting first counts Unicode characters,
+  # including trailing newlines command substitution strips from $description.
+  # yq fails to split anything but a string.
+  elif ! description_chars=$(yq -r '.description | split("") | length' "$meta_file"); then
+    echo "  ERROR: skill '${skill_dir##*/}': description is not a string" >&2
+    errors=$((errors + 1))
   else
-    # yq's string length counts bytes; splitting first counts Unicode characters,
-    # including trailing newlines command substitution strips from $description.
-    description_chars=$(yq -r '.description | split("") | length' "$meta_file")
     test -n "$description_chars"
     if [ "$description_chars" -gt "$max_description_chars" ]; then
       echo "  ERROR: description must not exceed $max_description_chars characters" >&2
