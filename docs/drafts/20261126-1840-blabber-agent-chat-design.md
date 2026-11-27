@@ -8,7 +8,9 @@ behind every `[bin]` tag (appendix A) and corrections from an independent read o
 Revision 4 (2026-11-27) makes the draft true of the pilot that was built on branch `pilot/blabber`: the owner's
 decisions of that day (section 13), the corrections found while building (sections 3 to 8 and 12), and a new
 section 14 with what exists, what was verified and what was not. The dashboard, the CLI, the packaging and
-everything for Claude Code and Codex (sections 7, 9, 10) are still proposals.
+everything for Claude Code and Codex (sections 7, 9, 10) are still proposals. Revision 5 records two
+credential-handling limits of the extension that were fixed after revision 4 (commit `7d5c7161`) and corrects the
+account of the review rounds (section 14.1).
 
 Evidence tags used below:
 
@@ -23,7 +25,8 @@ Evidence tags used below:
   and a hook carrying that field is skipped **[src]**.
 - **[prior]** reported by a third-party project's README or docs; not verified here.
 - **[run]** observed on 2026-11-27 in the pilot's test suites or in the two-session run of real Pi sessions
-  against the real server, on branch `pilot/blabber`: the suites at commit `77046c6d`, the two-session run at
+  against the real server, on branch `pilot/blabber`: the suites at commit `77046c6d` and the extension suite
+  again at commit `7d5c7161`, the two-session run at
   commit `d6e18cb0` with its first scenario repeated on the fix of commit `24b6570b` (section 14).
 - Everything untagged is a proposal of this draft.
 
@@ -613,7 +616,9 @@ the owner's requirement on agent identification changed the contract (identifica
 messages), and both builders adapted to it.
 
 Each builder ran under a review gate of three rounds by an independent reviewer. Both gates ended at the round
-limit without approval; each round raised new and more remote findings. Selected findings were fixed afterwards,
+limit without approval. The number of findings did not fall from round to round (server: 13, 9 and 9; extension:
+7 in the second round and 8 in the third), and each round's were new; some were substantive and were fixed, others
+concerned remote cases. Selected findings were fixed afterwards,
 and the others are recorded as known limits in the two READMEs. Those later fixes and the interface parts had one
 advisory review or none.
 
@@ -654,7 +659,7 @@ Suites at commit `77046c6d` **[run]**:
 |---|---|
 | `blabber/scripts/test-postgres.sh` | 174 cases, no failure, error or skip: 76 on PostgreSQL, 98 on the in-memory store or without a store |
 | `blabber/scripts/test-pilot-server.sh` | 45 checks passed |
-| flake check `ponygirls-blabber` | 247 tests passed |
+| flake check `ponygirls-blabber` | 247 tests passed; 256 at commit `7d5c7161` |
 | `tests/run-real.sh` (client contract suite against the real server) | 18 cases passed |
 | `nix build .#ponygirls-pi-extensions` | builds |
 
@@ -706,6 +711,9 @@ The sentences of sections 3 to 8 are corrected in place; in short:
   short session id is its last eight characters.
 - Settings come from a hand-written `blabber.json`; `http:` is accepted only on loopback or with the explicit
   opt-in.
+- An endpoint that contains a percent sign is refused as invalid settings before the token is read.
+- A token that changes while the session is enabled is caught before the next request of the membership: nothing
+  is sent, the session attaches again under the new token, continues from that owner's checkpoint and says so once.
 
 ### 14.5 Known limits
 
@@ -720,8 +728,6 @@ Details in `blabber/README.md` and `nix/pkg/pi-extensions/ponygirls-blabber/READ
 - A refused request is logged without user id and token id.
 - The extension needs this flake's Pi (`pi.enqueueMessage`); elsewhere `/blabber enable` refuses.
 - Tabs in message text are kept; there is no client-side body bound beyond the 2 MiB response limit.
-- A token that switches accounts while polling is noticed only at the next attach.
-- A percent-encoded token next to an invalid escape in the endpoint is not recognized.
 - Seen in the run: a session that crashed is reported to senders as idle until the 60 s presence window passes;
   `who` shows the last activity of a participant that left; in Pi's editor, Enter on an argument completion of
   `/blabber` completes the word and a second Enter submits.
